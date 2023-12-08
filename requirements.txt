@@ -1,7 +1,9 @@
 numpy
 pandas
 datetime
-unittest
 matplotlib
 math
 os
+json
+sklearn
+typing
