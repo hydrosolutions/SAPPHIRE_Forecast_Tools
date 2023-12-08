@@ -7,7 +7,7 @@ import datetime as dt
 import math
 import os
 
-import forecast_library as fl
+from iEasyHydroForecast import forecast_library as fl
 
 class TestGetLastDayOfMonth(unittest.TestCase):
     def test_get_last_day_of_month_with_valid_date(self):

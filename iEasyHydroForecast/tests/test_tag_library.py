@@ -1,6 +1,6 @@
 import unittest
 import datetime as dt
-import tag_library as tl
+from iEasyHydroForecast import tag_library as tl
 import pandas as pd
 
 class TestTagLibrary(unittest.TestCase):
