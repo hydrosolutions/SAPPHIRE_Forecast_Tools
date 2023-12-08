@@ -27,7 +27,7 @@ jobs:
     - name: Set PYTHONPATH
       run: |
         # Adding the iEasyHydroForecast folder to the PYTHONPATH
-        echo echo "PYTHONPATH=${GITHUB_WORKSPACE}/iEasyHydroForecast" >> $GITHUB_ENV
+        echo "PYTHONPATH=${GITHUB_WORKSPACE}/iEasyHydroForecast" >> $GITHUB_ENV
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
