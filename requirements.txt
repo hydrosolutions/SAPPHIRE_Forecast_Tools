@@ -2,7 +2,6 @@ numpy
 pandas
 datetime
 matplotlib
-math
 os
 json
 sklearn
