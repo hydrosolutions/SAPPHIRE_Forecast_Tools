@@ -2,5 +2,5 @@ numpy
 pandas
 datetime
 matplotlib
-sklearn
+scikit-learn
 typing
