@@ -1,0 +1,28 @@
+{
+  "stations_available_for_forecast": {
+    "12345": {
+      "name_ru": ["р.Ак-Егзампле-у.р.Отер-Суу"],
+      "river_ru": ["Ак-Егзампле"],
+      "punkt_ru": ["у.р.Отер-Суу"],
+      "name_eng": ["r.Ak-Example - Inflow Other-Suu"],
+      "river_eng": ["Ak-Example"],
+      "punkt_eng": ["Inflow Other-Suu"],
+      "lat": [42.5],
+      "long": [4.9],
+      "code": [12345], 
+      "display_p": [true]
+    },
+    "12346": {
+      "name_ru": ["р.Ак-Егзампле2-у.р.Отер-Суу2"],
+      "river_ru": ["Ак-Егзампле2"],
+      "punkt_ru": ["у.р.Отер-Суу2"],
+      "name_eng": ["r.Ak-Example2 - Inflow Other-Suu2"],
+      "river_eng": ["Ak-Example2"],
+      "punkt_eng": ["Inflow Other-Suu2"],
+      "lat": [42.5],
+      "long": [4.9],
+      "code": [12346], 
+      "display_p": [true]
+    }
+  }
+}
