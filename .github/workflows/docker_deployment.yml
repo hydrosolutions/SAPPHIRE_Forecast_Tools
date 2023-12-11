@@ -1,4 +1,4 @@
-name: Dockerize rscript
+name: Dockerize say_hello_script
 
 on: [push]
 
@@ -14,9 +14,9 @@ jobs:
             # 
             - name: Build Docker image
               run: |
-                docker build -t say_hello ./iEasyHydroForecast
+                docker build -t say_hello ./iEasyHydroForecast/Dockerfile
 
             # Use the output from the `hello` step
             - name: Run Docker image
               run: |
-                docker run say_hello "Professor Moody"
+                docker run say_hello 
