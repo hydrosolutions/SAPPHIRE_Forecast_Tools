@@ -1,3 +1,5 @@
+name: Dockerize rscript
+
 on: [push]
 
 jobs: 
@@ -9,11 +11,12 @@ jobs:
             # repository.
             - name: Checkout
               uses: actions/checkout@v4
-            - name: Hello world action step
-              id: hello
-              uses: iEasyHydroForecast/test_deployment
-              with: 
-                  who-to-greet: 'Moon'
+            # 
+            - name: Build Docker image
+              run: |
+                docker build -t say_hello ./iEasyHydroForecast
+
             # Use the output from the `hello` step
-            - name: Get the output time
-              run: echo "The time was ${{ steps.hello.outputs.time }}"
+            - name: Run Docker image
+              run: |
+                docker run say_hello "Professor Moody"
