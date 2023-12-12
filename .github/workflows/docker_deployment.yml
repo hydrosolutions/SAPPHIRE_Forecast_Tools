@@ -14,7 +14,7 @@ jobs:
             # 
             - name: Build Docker image
               run: |
-                docker build -t say_hello ./iEasyHydroForecast/Dockerfile
+                docker build -t say_hello ../iEasyHydroForecast/Dockerfile
 
             # Use the output from the `hello` step
             - name: Run Docker image
