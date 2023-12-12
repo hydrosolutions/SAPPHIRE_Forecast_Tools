@@ -1,5 +1,8 @@
 name: Test & deploy iEasyHydroForecast
 
+env: 
+    IMAGE_NAME: mabesa/sapphire
+    TOOL_NAME_iEasyHydroForecast: iEasyHydroForecast 
 on:
   push:
     branches: [ "main" ]
@@ -54,15 +57,32 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v4
 
-    # Set script permissions
-    - name: Set script permissions
+    # Generate the image tag name
+    - name: Generate the image tag name
       run: |
-        chmod +x ./iEasyHydroForecast/deploy.sh
-    
+        echo "IMAGE_TAG=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+
+    # Rename the image
+    - name: Rename the image
+      run: |
+        echo "IMAGE_TAG="$TOOL_NAME_iEasyHydroForecast-$IMAGE_TAG" >> $GITHUB_ENV
+
     # Run the dockerization & deployment script
     - name: Build Docker image
       run: |
-        bash ./iEasyHydroForecast/deploy.sh
+        docker build -t "$IMAGE_NAME:$IMAGE_TAG" ./iEasyHydroForecast 
+
+    # Log in to the Docker registry
+    - name: Log in to the Docker registry
+      uses: docker/login-action@v1
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+
+    # Push the image to Dockerhub
+    - name: Push the image to Dockerhub
+      run: |
+        docker push "$IMAGE_NAME:$IMAGE_TAG"
 
 
   hello_world_job:
