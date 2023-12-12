@@ -11,12 +11,18 @@ jobs:
             # repository.
             - name: Checkout
               uses: actions/checkout@v4
-            # 
+
+            # Set script permissions
+            - name: Set script permissions
+              run: |
+                chmod +x ./iEasyHydroForecast/test_deploy.sh
+
+            # Build Docker image
             - name: Build Docker image
               run: |
                 docker build -t say_hello ./iEasyHydroForecast
 
-            # Use the output from the `hello` step
+            # Run the Docker image
             - name: Run Docker image
               run: |
                 docker run say_hello 
