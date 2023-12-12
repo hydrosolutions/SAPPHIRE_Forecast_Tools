@@ -1,7 +1,7 @@
 #!/bin/sh
 
 # Define variables for Docker image names and tags
-IMAGE_NAME="mabesa/SAPPHIRE"
+IMAGE_NAME="mabesa/sapphire"
 IMAGE_TAG=$(git rev-parse --short HEAD) # first 7 characters of the current commit hash
 TOOL_NAME="iEasyHydroForecast"
 IMAGE_TAG="${TOOL_NAME}-${IMAGE_TAG}"
