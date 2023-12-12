@@ -42,7 +42,7 @@ jobs:
       run: |
         python -m unittest discover -s iEasyHydroForecast/tests -p 'test_*.py'
 
-        
+
   push_to_Dckerhub:
     needs: lint_and_test
     runs-on: ubuntu-latest
@@ -62,7 +62,7 @@ jobs:
     # Run the dockerization & deployment script
     - name: Build Docker image
       run: |
-        bash deploy.sh
+        bash ./iEasyHydroForecast/deploy.sh
 
 
   hello_world_job:
