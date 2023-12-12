@@ -42,6 +42,29 @@ jobs:
       run: |
         python -m unittest discover -s iEasyHydroForecast/tests -p 'test_*.py'
 
+        
+  push_to_Dckerhub:
+    needs: lint_and_test
+    runs-on: ubuntu-latest
+    name: A job to push the Docker image to Dockerhub
+    
+    steps: 
+    # To use this repository's private action, you must check out the
+    # repository.
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    # Set script permissions
+    - name: Set script permissions
+      run: |
+        chmod +x ./iEasyHydroForecast/deploy.sh
+    
+    # Run the dockerization & deployment script
+    - name: Build Docker image
+      run: |
+        bash deploy.sh
+
+
   hello_world_job:
     needs: lint_and_test
     runs-on: ubuntu-latest
