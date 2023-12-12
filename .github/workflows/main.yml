@@ -65,7 +65,7 @@ jobs:
     # Rename the image
     - name: Rename the image
       run: |
-        echo "IMAGE_TAG="$TOOL_NAME_iEasyHydroForecast-$IMAGE_TAG" >> $GITHUB_ENV
+        echo "IMAGE_TAG=$TOOL_NAME_iEasyHydroForecast-$IMAGE_TAG" >> $GITHUB_ENV
 
     # Run the dockerization & deployment script
     - name: Build Docker image
