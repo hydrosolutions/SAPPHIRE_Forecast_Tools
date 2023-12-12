@@ -7,7 +7,7 @@ on:
     branches: [ "main" ]
 
 jobs:
-  build:
+  lint_and_test:
 
     runs-on: ubuntu-latest
     strategy:
@@ -43,6 +43,7 @@ jobs:
         python -m unittest discover -s iEasyHydroForecast/tests -p 'test_*.py'
 
   hello_world_job:
+    needs: lint_and_test
     runs-on: ubuntu-latest
     name: A job to say hello
     
