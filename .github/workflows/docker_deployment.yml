@@ -25,4 +25,4 @@ jobs:
             # Run the Docker image
             - name: Run Docker image
               run: |
-                docker run say_hello 
+                docker run say_hello Moon
