@@ -15,7 +15,7 @@ jobs:
             # Set script permissions
             - name: Set script permissions
               run: |
-                chmod +x ./iEasyHydroForecast/test_deploy.sh
+                chmod +x ./iEasyHydroForecast/say_hello.sh
 
             # Build Docker image
             - name: Build Docker image
