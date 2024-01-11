@@ -1,8 +1,8 @@
 name: Test & deploy iEasyHydroForecast
 
-env: 
+env:
     IMAGE_NAME: mabesa/sapphire
-    TOOL_NAME_iEasyHydroForecast: iEasyHydroForecast 
+    TOOL_NAME_iEasyHydroForecast: iEasyHydroForecast
 on:
   push:
     branches: [ "main" ]
@@ -31,10 +31,10 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        python -m pip install flake8 
+        python -m pip install flake8
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
         pip install git+https://github.com/hydrosolutions/ieasyhydro-python-sdk
-        pip install -e apps/iEasyHydroForecast
+        pip install -e ./apps/iEasyHydroForecast
     - name: Lint with flake8
       run: |
         # stop the build if there are Python syntax errors or undefined names
@@ -42,16 +42,17 @@ jobs:
         # exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
         flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
     - name: Test with unittest
+      working-directory: ./apps
       run: |
-        python -m unittest discover -s apps/iEasyHydroForecast/tests -p 'test_*.py'
+        python -m unittest discover -s iEasyHydroForecast/tests -p 'test_*.py'
 
 
   push_to_Dckerhub:
     needs: lint_and_test
     runs-on: ubuntu-latest
     name: A job to push the Docker image to Dockerhub
-    
-    steps: 
+
+    steps:
     # To use this repository's private action, you must check out the
     # repository.
     - name: Checkout
@@ -70,7 +71,7 @@ jobs:
     # Run the dockerization & deployment script
     - name: Build Docker image
       run: |
-        docker build -t "$IMAGE_NAME:$IMAGE_TAG" ./iEasyHydroForecast 
+        docker build -t "$IMAGE_NAME:$IMAGE_TAG" ./iEasyHydroForecast
 
     # Log in to the Docker registry
     - name: Log in to the Docker registry
@@ -89,23 +90,23 @@ jobs:
     needs: lint_and_test
     runs-on: ubuntu-latest
     name: A job to say hello
-    
-    steps: 
-    # To use this repository's private action, you must check out the 
+
+    steps:
+    # To use this repository's private action, you must check out the
     # repository.
     - name: Checkout
       uses: actions/checkout@v4
-    
+
     # Set script permissions
     - name: Set script permissions
       run: |
         chmod +x ./apps/iEasyHydroForecast/say_hello.sh
-    
+
     # Build Docker image
     - name: Build Docker image
       run: |
         docker build -t say_hello ./apps/iEasyHydroForecast
-    
+
     # Run the Docker image
     - name: Run Docker image
       run: |
