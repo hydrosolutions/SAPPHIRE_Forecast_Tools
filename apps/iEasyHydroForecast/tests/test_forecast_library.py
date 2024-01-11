@@ -5,9 +5,11 @@ import unittest
 import datetime as dt
 import math
 import os
+import sys
 
 from iEasyHydroForecast import forecast_library as fl
 
+print(sys.path)
 
 class TestGetLastDayOfMonth(unittest.TestCase):
     def test_get_last_day_of_month_with_valid_date(self):
