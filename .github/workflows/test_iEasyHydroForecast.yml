@@ -28,12 +28,7 @@ jobs:
       run: |
         # Adding the iEasyHydroForecast folder to the PYTHONPATH
         echo "PYTHONPATH=${GITHUB_WORKSPACE}/apps/iEasyHydroForecast" >> $GITHUB_ENV
-    - name: Show PYTHONPATH
-      run: |
-        # echo $PYTHONPATH
         echo $PYTHONPATH
-        # echo $GITHUB_ENV
-        echo $GITHUB_ENV
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
@@ -41,6 +36,9 @@ jobs:
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
         pip install git+https://github.com/hydrosolutions/ieasyhydro-python-sdk
         pip install -e ./apps/iEasyHydroForecast
+    - name: Check installed packages
+      run: |
+        pip list
     - name: Lint with flake8
       run: |
         # stop the build if there are Python syntax errors or undefined names
