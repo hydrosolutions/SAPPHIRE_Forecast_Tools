@@ -87,7 +87,7 @@ class TestGetPentad(unittest.TestCase):
         date = dt.date(2022, 1, 1)
         pentad = tl.get_pentad_in_year(date)
         self.assertEqual(pentad, '1')
-        self.assertEqual(tl.get_pentad_in_year('2022-12-29'), '36')
+        self.assertEqual(tl.get_pentad_in_year('2022-12-29'), '72')
 
     def test_invalid_date(self):
         # Test with an invalid date

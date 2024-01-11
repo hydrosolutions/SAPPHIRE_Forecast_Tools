@@ -685,9 +685,11 @@ class TestQrange(unittest.TestCase):
             'observation_std0674': [50.0, 20.0, 2.2]
         })
         result0 = fl.Site.from_df_get_qrange_discharge(site0, '1', df1)
-        # result1 = fl.Site.from_df_get_qrange_discharge(site1, '1', df1)
-        # result2 = fl.Site.from_df_get_qrange_discharge(site2, '2', df1)
+        result1 = fl.Site.from_df_get_qrange_discharge(site1, '1', df1)
+        result2 = fl.Site.from_df_get_qrange_discharge(site2, '2', df1)
         print('DEBUG: result0 = ', result0)
+        print('DEBUG: result1 = ', result1)
+        print('DEBUG: result2 = ', result2)
         print('DEBUG: site0.fc_qmin = ', site0.fc_qmin)
         assert site0.fc_qmin == '17.8'
         assert site0.fc_qmax == '22.2'
