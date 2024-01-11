@@ -10,7 +10,7 @@ class TestTagLibrary(unittest.TestCase):
         self.assertTrue(tl.is_gregorian_date('1583-10-15'))
         self.assertTrue(tl.is_gregorian_date('1583-12-31'))
         self.assertTrue(tl.is_gregorian_date(dt.datetime(2022, 5, 15)))
-    
+
     def test_is_gregorian_date_invalid_date(self):
         self.assertFalse(tl.is_gregorian_date('not a date'))
         self.assertFalse(tl.is_gregorian_date('2022-02-29'))
@@ -78,26 +78,26 @@ class TestGetPentadInYear(unittest.TestCase):
 
 
 class TestGetPentad(unittest.TestCase):
-    
+
     def test_valid_date(self):
         # Test with a valid date
         date = dt.date(2022, 1, 1)
         pentad = tl.get_pentad_in_year(date)
         self.assertEqual(pentad, '1')
         self.assertEqual(tl.get_pentad_in_year('2022-12-29'), '36')
-        
+
     def test_invalid_date(self):
         # Test with an invalid date
         date = '2022-13-01'
         pentad = tl.get_pentad_in_year(date)
         self.assertIsNone(pentad)
-        
+
     def test_non_gregorian_date(self):
         # Test with a non-Gregorian date
         date = dt.date(1222, 1, 14)
         pentad = tl.get_pentad_in_year(date)
         self.assertIsNone(pentad)
-        
+
     def test_string_input(self):
         # Test with a string input
         date = '2022-01-01'
@@ -121,7 +121,7 @@ class TestGetPentad(unittest.TestCase):
         self.assertEqual(tl.get_pentad('2022-02-21'), '5')
         self.assertEqual(tl.get_pentad('2022-02-25'), '5')
         self.assertEqual(tl.get_pentad('2022-02-26'), '6')
-        
+
     def test_invalid_date(self):
         self.assertIsNone(tl.get_pentad('2022-02-29'))
         self.assertIsNone(tl.get_pentad('2022-13-01'))
@@ -132,10 +132,10 @@ class TestGetPentad(unittest.TestCase):
         self.assertIsNone(tl.get_pentad('1581-10-15'))
         self.assertIsNone(tl.get_pentad('2100-01-01'))
         self.assertIsNone(tl.get_pentad('not a date'))
-    
+
 
 class TestGetStuffForBulletinWriting(unittest.TestCase):
-    
+
     def test_get_pentad_first_day(self):
         self.assertEqual(tl.get_pentad_first_day('2022-05-15'), '11')
         self.assertEqual(tl.get_pentad_first_day('2022-05-01'), '1')

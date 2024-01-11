@@ -9,7 +9,7 @@ def is_gregorian_date(date: Union[str, dt.datetime]) -> bool:
     Check if a date string is using the Gregorian calendar.
 
     Parameters:
-        date (str or datetime.datetime): A string representing a date in the 
+        date (str or datetime.datetime): A string representing a date in the
         format 'YYYY-MM-DD' or a datetime.
 
     Returns:
@@ -26,17 +26,17 @@ def is_gregorian_date(date: Union[str, dt.datetime]) -> bool:
         >>> is_gregorian_date('not a date')
         False
     """
-    try: 
+    try:
         # Return None if the input is an integer
         if isinstance(date, int):
             raise ValueError('Input is an integer and not a date or datestring.')
-        
+
         # Convert the input to a datetime object if it's a string
         if isinstance(date, str):
             try:
                 date = dt.datetime.strptime(date, '%Y-%m-%d').date()
             except ValueError:
-                raise ValueError('Input is not a valid date or datestring.') 
+                raise ValueError('Input is not a valid date or datestring.')
 
         # check if the year is before 1582
         if date.year < 1582:
@@ -45,10 +45,10 @@ def is_gregorian_date(date: Union[str, dt.datetime]) -> bool:
         if date.year > 2099:
             # raise a ValueError if the year is after 2099
             raise ValueError('Date is not using the Gregorian calendar')
-        
+
         # return True if the date is using the Gregorian calendar
         return True
-    
+
     except ValueError as e:
         return False
 
@@ -58,13 +58,13 @@ def add_pentad_in_year_column(df):
     Add a 'pentad' column to a pandas DataFrame with a 'Date' column.
 
     Parameters:
-        df (pandas.DataFrame): A pandas DataFrame with a 'Date' column 
+        df (pandas.DataFrame): A pandas DataFrame with a 'Date' column
             containing either datetime objects or datetime strings.
 
     Returns:
         pandas.DataFrame: The input DataFrame with a new 'pentad' column added.
-            Pendads in a year can go from 1 for January 1 to 5 to 72 for 
-            December 26 to 31. 
+            Pendads in a year can go from 1 for January 1 to 5 to 72 for
+            December 26 to 31.
 
     Examples:
         >>> df = pd.DataFrame({'Date': ['2022-05-15', '2022-05-16']})
@@ -116,11 +116,11 @@ def get_pentad(date):
     Get the pentad of the month for a given date.
 
     Parameters:
-        date (str or datetime.datetime): A string or datetime representing a 
+        date (str or datetime.datetime): A string or datetime representing a
             date (string should be in the format 'YYYY-MM-DD').
 
     Returns:
-        str: A string representing the pentad of the month, or None if the 
+        str: A string representing the pentad of the month, or None if the
             input is not a valid date or is not using the Gregorian calendar.
 
     Examples:
@@ -140,27 +140,27 @@ def get_pentad(date):
         if not is_gregorian_date(date):
             # return None if the input is not using the Gregorian calendar
             return None
-        
+
         # calculate the pentad number
         pentad = min((date.day - 1) // 5 + 1, 6)
-    
+
         # return the pentad number as a string
         return str(pentad)
-        
+
     except ValueError:
         # return None if the input is not a valid date
         return None
-    
+
 def get_pentad_in_year(date):
     """
     Get the pentad of the year for a given date.
 
     Parameters:
-        date (str or datetime.datetime): A string or datetime representing a 
+        date (str or datetime.datetime): A string or datetime representing a
             date (string should be in the format 'YYYY-MM-DD').
 
     Returns:
-        str: A string representing the pentad of the month, or None if the 
+        str: A string representing the pentad of the month, or None if the
             input is not a valid date or is not using the Gregorian calendar.
 
     Examples:
@@ -180,18 +180,18 @@ def get_pentad_in_year(date):
         if not is_gregorian_date(date):
             # return None if the input is not using the Gregorian calendar
             return None
-        
+
         # calculate the pentad number
         pentad = min((date.day - 1) // 5 + 1, 6)
         pentad_in_year = (date.month - 1) * 6 + pentad
-    
+
         # return the pentad number as a string
         return str(pentad_in_year)
-        
+
     except ValueError:
         # return None if the input is not a valid date
         return None
-    
+
 def get_pentad_first_day(date_str):
     """
     Returns the first day of the pentad of the month for a given date string.
@@ -200,7 +200,7 @@ def get_pentad_first_day(date_str):
         date_str (str): A string representing a date in the format 'YYYY-MM-DD'.
 
     Returns:
-        str: A string representing the first day of the pentad for the input 
+        str: A string representing the first day of the pentad for the input
             date string, in the format 'D'.
 
         If the input date string is not a valid date, returns None.
@@ -208,25 +208,25 @@ def get_pentad_first_day(date_str):
     try:
         # parse the input date string into a datetime object
         date = dt.datetime.strptime(date_str, '%Y-%m-%d').date()
-    
+
     except ValueError:
         # return None if the input is not a valid date
         return None
-    
+
     # Test if the date is using the Gregorian calendar
     if not is_gregorian_date(date_str):
         # return None if the input is not using the Gregorian calendar
         return None
-    
+
     # calculate the pentad number
     pentad = (date.day - 1) // 5 + 1
-    
+
     # make sure the pentad number is not larger than 6
     pentad = min(pentad, 6)
-    
+
     # calculate the first day of the pentad
     first_day = 5 * (pentad - 1) + 1
-    
+
     # return the first day of the pentad as a string
     return str(first_day)
 
@@ -238,7 +238,7 @@ def get_pentad_last_day(date_str):
         date_str (str): A string representing a date in the format 'YYYY-MM-DD'.
 
     Returns:
-        str: A string representing the last day of the pentad for the input 
+        str: A string representing the last day of the pentad for the input
             date string, in the format 'D'.
 
         If the input date string is not a valid date, returns None.
@@ -246,16 +246,16 @@ def get_pentad_last_day(date_str):
     try:
         # parse the input date string into a datetime object
         date = dt.datetime.strptime(date_str, '%Y-%m-%d').date()
-    
+
     except ValueError:
         # return None if the input is not a valid date
         return None
-    
+
     # Test if the date is using the Gregorian calendar
     if not is_gregorian_date(date_str):
         # return None if the input is not using the Gregorian calendar
         return None
-    
+
     # The day 28 exists in every month. 4 days later, it's always next month
     next_month = date.replace(day=1) + dt.timedelta(days=31)
     # subtracting the number of the current day brings us back one month
@@ -263,7 +263,7 @@ def get_pentad_last_day(date_str):
 
     # calculate the pentad number
     pentad = (date.day - 1) // 5 + 1
-    
+
     # calculate the last day of the pentad
     last_day = 5 * pentad
 
@@ -281,7 +281,7 @@ def get_year(date_str):
         date_str (str): A string representing a date in the format 'YYYY-MM-DD'.
 
     Returns:
-        str: A string representing the year number for the input date string, in 
+        str: A string representing the year number for the input date string, in
             the format 'YYYY'.
 
         If the input date string is not a valid date, returns None.
@@ -292,45 +292,45 @@ def get_year(date_str):
     except ValueError:
         # return None if the input is not a valid date
         return None
-    
+
     # Test if the date is using the Gregorian calendar
     if not is_gregorian_date(date_str):
         # return None if the input is not using the Gregorian calendar
         return None
-    
+
     # calculate the year number
     year = date.year
-    
+
     # return the year number as a string
     return str(year)
 
 def get_month_str_case1(date_str):
     """
-    Returns the name of the month for a given date string, in Russian case 1 
+    Returns the name of the month for a given date string, in Russian case 1
         (nominative).
 
     Args:
         date_str (str): A string representing a date in the format 'YYYY-MM-DD'.
 
     Returns:
-        str: A string representing the name of the month for the input date 
+        str: A string representing the name of the month for the input date
             string, in Russian.
 
         If the input date string is not a valid date, returns None.
     """
-    
+
     try:
         # parse the input date string into a datetime object
         date = dt.datetime.strptime(date_str, '%Y-%m-%d').date()
     except ValueError:
         # return None if the input is not a valid date
         return None
-    
+
     # Test if the date is using the Gregorian calendar
     if not is_gregorian_date(date_str):
         # return None if the input is not using the Gregorian calendar
         return None
-    
+
     # calculate the month number
     month = date.month
 
@@ -361,20 +361,20 @@ def get_month_str_case1(date_str):
         month_str = 'декабрь'
     else:
         return None
-    
+
     # return the month name as a string
     return month_str
 
 def get_month_str_case2(date_str):
     """
-    Returns the name of the month for a given date string, in Russian, in the 
+    Returns the name of the month for a given date string, in Russian, in the
     second case.
 
     Args:
         date_str (str): A string representing a date in the format 'YYYY-MM-DD'.
 
     Returns:
-        str: A string representing the name of the month for the input date 
+        str: A string representing the name of the month for the input date
             string, in Russian, in the second case.
 
         If the input date string is not a valid date, returns None.
@@ -385,12 +385,12 @@ def get_month_str_case2(date_str):
     except ValueError:
         # return None if the input is not a valid date
         return None
-    
+
     # Test if the date is using the Gregorian calendar
     if not is_gregorian_date(date_str):
         # return None if the input is not using the Gregorian calendar
         return None
-    
+
     # calculate the month number
     month = date.month
 
@@ -421,7 +421,7 @@ def get_month_str_case2(date_str):
         month_str = 'декабря'
     else:
         return None
-    
+
     # return the month name as a string
     return month_str
 

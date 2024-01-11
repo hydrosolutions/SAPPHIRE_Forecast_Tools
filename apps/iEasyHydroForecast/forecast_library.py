@@ -20,11 +20,11 @@ def get_last_day_of_month(date: dt.date) -> dt.date:
     Get the last day of the month for a given date.
 
     Parameters:
-        date (datetime.date): A date object representing the date to get the 
+        date (datetime.date): A date object representing the date to get the
         last day of the month for.
 
     Returns:
-        datetime.date: A date object representing the last day of the month for 
+        datetime.date: A date object representing the last day of the month for
         the input date.
 
     Raises:
@@ -39,12 +39,12 @@ def get_last_day_of_month(date: dt.date) -> dt.date:
         # Check if the input date is a datetime.date object
         if not isinstance(date, dt.date):
             raise TypeError('Input date must be a datetime.date object')
-    
+
         # Raise an error if date is a string
         if isinstance(date, str):
             raise TypeError('Input date must be a datetime.date object, not a string')
-        
-    
+
+
         # Get the first day of the next month
         first_day_of_next_month = dt.date(date.year, date.month, 1) + dt.timedelta(days=32)
 
@@ -71,9 +71,9 @@ def get_predictor_dates(input_date: str, n: int):
         n (int): The number of days to go back.
 
     Returns:
-        list: A list of datetime.date objects representing the dates from 
+        list: A list of datetime.date objects representing the dates from
             input_date - n to input_date - 1.
-    
+
     Raises:
         TypeError: If input_date is not a datetime.date object.
         ValueError: If n is not a positive integer.
@@ -82,10 +82,10 @@ def get_predictor_dates(input_date: str, n: int):
         >>> get_predictor_dates('2021-05-15', 3)
         [datetime.date(2021, 5, 14), datetime.date(2021, 5, 13), datetime.date(2021, 5, 12)]
     '''
-    try: 
+    try:
         # Convert dates in dates_list to datetime.date objects
         input_date = dt.datetime.strptime(input_date, '%Y-%m-%d').date()
-        
+
         if not isinstance(n, int) or n <= 0:
             raise ValueError('n must be a positive integer')
 
@@ -93,9 +93,9 @@ def get_predictor_dates(input_date: str, n: int):
         for i in range(1, n+1):
             date = input_date - dt.timedelta(days=i)
             date_list.append(date)
-        
+
         return date_list
-    
+
     except (TypeError, ValueError) as e:
         print(f'Error in get_predictor_dates: {e}')
         return None
@@ -107,16 +107,16 @@ def get_predictor_dates(input_date: str, n: int):
 
 def round_discharge(value: float) -> str:
     '''
-    Round discharge to 0 decimals for values ge 100, to 1 decimal for values 
-    ge 10 and to 2 decimals for values ge 0. 
+    Round discharge to 0 decimals for values ge 100, to 1 decimal for values
+    ge 10 and to 2 decimals for values ge 0.
 
     Args:
         value (str): The discharge value to round.
 
     Returns:
-        str: The rounded discharge value. An empty string is returned in case of 
-            a negative input value. 
-    
+        str: The rounded discharge value. An empty string is returned in case of
+            a negative input value.
+
     Examples:
         >>> round_discharge(0.0)
         '0'
@@ -139,7 +139,7 @@ def round_discharge(value: float) -> str:
         >>> round_discharge(1000.123)
         '1000'
     '''
-    try: 
+    try:
         if not isinstance(value, float):
             raise TypeError('Input value must be a float')
         if isinstance(value, str):
@@ -150,7 +150,7 @@ def round_discharge(value: float) -> str:
         # Test if the input value is close to zero
         elif math.isclose(value, 0.0):
             return "0"
-        elif value > 0.0 and value < 10.0: 
+        elif value > 0.0 and value < 10.0:
             return "{:.2f}".format(round(value, 2))
         elif value >= 10.0 and value < 100.0:
             return "{:.1f}".format(round(value, 1))
@@ -162,37 +162,37 @@ def round_discharge(value: float) -> str:
     except Exception as e:
         print(f'Error in round_discharge: {e}')
         return None
-    
+
 
 
 def perform_linear_regression(
-        data_df: pd.DataFrame, station_col: str, pentad_col: str, discharge_sum_col: str, 
+        data_df: pd.DataFrame, station_col: str, pentad_col: str, discharge_sum_col: str,
         discharge_avg_col: str, forecast_pentad: int) -> pd.DataFrame:
     '''
     Perform a linear regression for each station & pentad in a DataFrame.
 
-    Details: 
-    The linear regression is performed for the forecast pentad of the year 
-    (value between 1 and 72).  
+    Details:
+    The linear regression is performed for the forecast pentad of the year
+    (value between 1 and 72).
 
     Args:
-        data_df (pd.DataFrame): The DataFrame containing the data to perform the 
+        data_df (pd.DataFrame): The DataFrame containing the data to perform the
             linear regression on.
         station_col (str): The name of the column containing the station codes.
         pentad_col (str): The name of the column containing the pentad values.
-        discharge_sum_col (str): The name of the column containing the discharge 
+        discharge_sum_col (str): The name of the column containing the discharge
             sum values.
-        discharge_avg_col (str): The name of the column containing the discharge 
+        discharge_avg_col (str): The name of the column containing the discharge
             average values.
-        forecast_pentad(int): The pentad of the year to perform the linear 
-            regression for. Must be a value between 1 and 72.  
+        forecast_pentad(int): The pentad of the year to perform the linear
+            regression for. Must be a value between 1 and 72.
 
     Returns:
-        pd.DataFrame: A DataFrame containing the columns of the input data frame 
-            plus the columns 'slope', 'intercept' and 'forecasted_discharge'. 
+        pd.DataFrame: A DataFrame containing the columns of the input data frame
+            plus the columns 'slope', 'intercept' and 'forecasted_discharge'.
             The rows of the DataFrame are filtered to the forecast pentad.
 
-    Examples: 
+    Examples:
         >>> data = {'station': ['A', 'A', 'B', 'B', 'C', 'C'],
                     'pentad': [1, 2, 1, 2, 1, 2],
                     'discharge_sum': [100, 200, 150, 250, 120, 180],
@@ -206,7 +206,7 @@ def perform_linear_regression(
         5        C       2            180             18    0.0       180.0                  18.0
 
     '''
-    # Test that all input types are as expected. 
+    # Test that all input types are as expected.
     if not isinstance(data_df, pd.DataFrame):
         raise TypeError('data_df must be a pandas.DataFrame object')
     if not isinstance(station_col, str):
@@ -221,23 +221,23 @@ def perform_linear_regression(
         raise TypeError('forecast_pentad must be an integer')
     if not all(column in data_df.columns for column in [station_col, pentad_col, discharge_sum_col, discharge_avg_col]):
         raise ValueError('DataFrame is missing one or more required columns')
-    
+
     # Test that the required columns exist in the input DataFrame.
     required_columns = [station_col, pentad_col, discharge_sum_col, discharge_avg_col]
     missing_columns = [col for col in required_columns if not hasattr(data_df, col)]
     if missing_columns:
         raise ValueError(f"DataFrame is missing one or more required columns: {missing_columns}")
-    
 
-    # Make sure pentad_col is of type int and values therein are between 1 and 
-    # 72. 
+
+    # Make sure pentad_col is of type int and values therein are between 1 and
+    # 72.
     data_df[pentad_col] = data_df[pentad_col].astype(float)
     if not all(data_df[pentad_col].between(1, 72)):
         raise ValueError(f'Values in column {pentad_col} are not between 1 and 72')
 
     # Filter for the forecast pentad
     data_dfp = data_df[data_df[pentad_col] == float(forecast_pentad)]
-    
+
     # Test if data_df is empty
     if data_dfp.empty:
         raise ValueError(f'DataFrame is empty after filtering for pentad {forecast_pentad}')
@@ -251,7 +251,7 @@ def perform_linear_regression(
     for station in data_dfp[station_col].unique():
         # filter for station and pentad. If the DataFrame is empty,
         # raise an error.
-        try: 
+        try:
             station_data = data_dfp[(data_dfp[station_col] == station)]
             # Test if station_data is empty
             if station_data.empty:
@@ -259,26 +259,26 @@ def perform_linear_regression(
         except ValueError as e:
             print(f'Error in perform_linear_regression when filtering for station data: {e}')
 
-        # Drop NaN values, i.e. keep only the time steps where both 
-        # discharge_sum and discharge_avg are not NaN. These correspond to the 
-        # time steps where we produce a forecast. 
+        # Drop NaN values, i.e. keep only the time steps where both
+        # discharge_sum and discharge_avg are not NaN. These correspond to the
+        # time steps where we produce a forecast.
         station_data = station_data.dropna()
-            
+
         # Get the discharge_sum and discharge_avg columns
         discharge_sum = station_data[discharge_sum_col].values.reshape(-1, 1)
         discharge_avg = station_data[discharge_avg_col].values.reshape(-1, 1)
-        
+
         # Perform the linear regression
         model = LinearRegression().fit(discharge_sum, discharge_avg)
-        
+
         # Get the slope and intercept
         slope = model.coef_[0][0]
         intercept = model.intercept_[0]
         # forecasted_discharge = slope * discharge_sum + intercept
-        
+
         # Print the slope and intercept
         print(f'Station: {station}, pentad: {forecast_pentad}, slope: {slope}, intercept: {intercept}')
-            
+
         # # Create a scatter plot with the regression line
         # fig = px.scatter(station_data, x=discharge_sum_col, y=discharge_avg_col, color=station_col)
         # fig.add_trace(px.line(x=discharge_sum.flatten(), y=model.predict(discharge_sum).flatten()).data[0])
@@ -287,7 +287,7 @@ def perform_linear_regression(
         # Store the slope and intercept in the data_df
         data_dfp.loc[(data_dfp[station_col] == station), 'slope'] = slope
         data_dfp.loc[(data_dfp[station_col] == station), 'intercept'] = intercept
-    
+
         # Calculate the forecasted discharge for the current station and forecast_pentad
         data_dfp.loc[(data_dfp[station_col] == station),'forecasted_discharge'] = \
             slope * data_dfp.loc[(data_dfp[station_col] == station), discharge_sum_col] + intercept
@@ -296,26 +296,26 @@ def perform_linear_regression(
 
 
 
-def calculate_forecast_skill(data_df: pd.DataFrame, station_col: str, 
-                             pentad_col: str, observation_col: str, 
+def calculate_forecast_skill(data_df: pd.DataFrame, station_col: str,
+                             pentad_col: str, observation_col: str,
                              simulation_col: str) -> pd.DataFrame:
     """
     Calculates the forecast skill for each group in the input data.
 
     Args:
-        data (pandas.DataFrame): The input data containing the observation and 
+        data (pandas.DataFrame): The input data containing the observation and
             simulation data.
-        station_col (str): The name of the column containing the station 
+        station_col (str): The name of the column containing the station
             identifier.
         pentad_col (str): The name of the column containing the pentad data.
-        observation_col (str): The name of the column containing the observation 
+        observation_col (str): The name of the column containing the observation
             data.
-        simulation_col (str): The name of the column containing the simulation 
+        simulation_col (str): The name of the column containing the simulation
             data.
 
     Returns:
-        pandas.DataFrame: The modified input data with additional columns 
-            containing the forecast skill information, namely abolute error, 
+        pandas.DataFrame: The modified input data with additional columns
+            containing the forecast skill information, namely abolute error,
             observation_std0674 and flag.
     """
 
@@ -347,7 +347,7 @@ def calculate_forecast_skill(data_df: pd.DataFrame, station_col: str,
 
             # Set the flag if the error is smaller than 0.674 times the standard deviation of the observation data
             flag = absolute_error < 0.674 * observation_std
-            
+
             # Delta is 0.674 times the standard deviation of the observation data
             # This is the measure for the allowable uncertainty of a good forecast
             observation_std0674 = 0.674 * observation_std
@@ -359,9 +359,9 @@ def calculate_forecast_skill(data_df: pd.DataFrame, station_col: str,
 
     return data_df
 
-    
 
-def generate_issue_and_forecast_dates(data_df: pd.DataFrame, datetime_col: str, 
+
+def generate_issue_and_forecast_dates(data_df: pd.DataFrame, datetime_col: str,
                                       station_col: str, discharge_col: str):
     """
     Generate issue and forecast dates for each station in the input DataFrame.
@@ -369,7 +369,7 @@ def generate_issue_and_forecast_dates(data_df: pd.DataFrame, datetime_col: str,
     Arg:
     data_df (pandas.DataFrame):
         The input DataFrame containing the data for each station.
-    datetime_col (str): 
+    datetime_col (str):
         The name of the column containing the datetime information.
     station_col (str)
         The name of the column containing the station information.
@@ -394,7 +394,7 @@ def generate_issue_and_forecast_dates(data_df: pd.DataFrame, datetime_col: str,
         # Define the start and end dates for the date range
         start_date = data_df[datetime_col].dt.date.min()
         end_date = data_df[datetime_col].dt.date.max()
-    
+
         years = range(start_date.year, end_date.year+1)  # Specify the desired years
         months = range(1, 13)  # Specify the desired months
         days = [5, 10, 15, 20, 25]  # Specify the desired days
@@ -429,15 +429,15 @@ def generate_issue_and_forecast_dates(data_df: pd.DataFrame, datetime_col: str,
             # Get the station and the issue date
             # station = row[station_col]
             issue_date = row['Date']
-            
+
             # Get the discharge values for the station and the issue date
             discharge_values = data_df[#(data_df[station_col] == station) &
                                    (data_df['Date'] >= (issue_date - pd.DateOffset(days=3)).date()) &
                                     (data_df['Date'] < issue_date)][discharge_col]
-            
+
             # Sum up the discharge values
             discharge_sum = discharge_values.sum()
-            
+
             # Get the index of the issue date
             issue_date_index = data_df[data_df['Date'] == issue_date].index[0]
 
@@ -449,12 +449,12 @@ def generate_issue_and_forecast_dates(data_df: pd.DataFrame, datetime_col: str,
             # Get the station and the forecast date
             # station = row[station_col]
             forecast_date = row['Date']
-            
+
             # Get the discharge values for the station and the forecast date
             discharge_values = data_df[#(data_df[station_col] == station) &
                                     (data_df['Date'] > forecast_date) &
                                    (data_df['Date'] <= (forecast_date + pd.DateOffset(days=5)).date())][discharge_col]
-            
+
             # Calculate the average discharge
             discharge_avg = discharge_values.mean(skipna=True)
 
@@ -465,11 +465,11 @@ def generate_issue_and_forecast_dates(data_df: pd.DataFrame, datetime_col: str,
             data_df.loc[forecast_date_index, 'discharge_avg'] = discharge_avg
 
         return(data_df)
-    
+
     # Test if the input data contains the required columns
     if not all(column in data_df.columns for column in [datetime_col, station_col, discharge_col]):
         raise ValueError(f'DataFrame is missing one or more required columns: {datetime_col, station_col, discharge_col}')
-        
+
     # Apply the calculation function to each group based on the 'station' column
     modified_data = data_df.groupby(station_col).apply(apply_calculation, datetime_col = datetime_col, discharge_col = discharge_col)
 
@@ -490,7 +490,7 @@ def load_all_station_data_from_JSON(file_path: str) -> pd.DataFrame:
     Raises:
         ValueError: If the JSON file cannot be read.
     """
-    try: 
+    try:
         with open(file_path) as f:
             config_all = json.load(f)
 
@@ -500,8 +500,8 @@ def load_all_station_data_from_JSON(file_path: str) -> pd.DataFrame:
             if not isinstance(config_all['stations_available_for_forecast'], dict):
                 raise ValueError('Value of key "stations_available_for_forecast" is not a dictionary')
 
-            # Check that each station has keys "name_ru", "river_ru", "punkt_ru", 
-            # "name_eng", "river_eng", "punkt_eng", "lat", "long", "code" and 
+            # Check that each station has keys "name_ru", "river_ru", "punkt_ru",
+            # "name_eng", "river_eng", "punkt_eng", "lat", "long", "code" and
             # "display_p"
             for key, value in config_all['stations_available_for_forecast'].items():
                 if not isinstance(value, dict):
@@ -515,7 +515,7 @@ def load_all_station_data_from_JSON(file_path: str) -> pd.DataFrame:
                 if 'code' not in value:
                     raise ValueError(f'Station "{key}" does not have key "code"')
 
-            # Let's try another import of the json file. 
+            # Let's try another import of the json file.
             json_object = config_all['stations_available_for_forecast']
 
             # Create an empty DataFrame to store the station data
@@ -525,15 +525,15 @@ def load_all_station_data_from_JSON(file_path: str) -> pd.DataFrame:
             for key in json_object.keys():
                 # Create a new DataFrame with the station data
                 station_df = pd.DataFrame.from_dict(json_object[key], orient='index').T
-    
+
                 # Add a column to the DataFrame with the header string
                 station_df['header'] = key
-    
+
                 # Append the station data to the main DataFrame
                 df = pd.concat([df, station_df], ignore_index=True)
 
             # Filter for code starting with 1
-            # Currently commented out to allow for the main code to update the 
+            # Currently commented out to allow for the main code to update the
             # config all stations file.
             # df = df[df['code'].astype(str).str.startswith('1')]
 
@@ -541,9 +541,9 @@ def load_all_station_data_from_JSON(file_path: str) -> pd.DataFrame:
             df['site_code'] = df['code'].astype(str)
             return df
 
-    except FileNotFoundError as e: 
+    except FileNotFoundError as e:
         raise FileNotFoundError('Could not read config file. Error message: {}'.format(e))
-    except ValueError as e: 
+    except ValueError as e:
         raise ValueError('Could not read config file. Error message: {}'.format(e))
 
 # endregion
@@ -551,7 +551,7 @@ def load_all_station_data_from_JSON(file_path: str) -> pd.DataFrame:
 
 # === Forecast classes ===
 # region Class definitions
-class Site: 
+class Site:
     """
     Represents a site for which discharge forecasts are produced.
 
@@ -573,7 +573,7 @@ class Site:
         slope (float): The slope of the linear regression.
         intercept (float): The intercept of the linear regression.
         delta (float): 0.674 times the standard deviation of the observation data.
-        
+
     Methods:
         __repr__(): Returns a string representation of the Site object.
         from_dataframe(df: pd.DataFrame) -> list: Creates a list of Site objects from a DataFrame.
@@ -590,11 +590,11 @@ class Site:
         - region (str): The region that the site is located in (typically oblast).
         - basin (str): The basin that the site is located in.
     """
-    def __init__(self, code: str, name = "Name", river_name = "River", 
-                 punkt_name = "Punkt", lat = 0.0, lon = 0.0, region = "Region", 
-                 basin = "Basin", predictor = -10000.0, fc_qmin = -10000.0, 
-                 fc_qmax = -10000.0, fc_qexp = -10000.0, qnorm = -10000.0, 
-                 perc_norm = -10000.0, qdanger = -10000.0, slope = -10000.0, 
+    def __init__(self, code: str, name = "Name", river_name = "River",
+                 punkt_name = "Punkt", lat = 0.0, lon = 0.0, region = "Region",
+                 basin = "Basin", predictor = -10000.0, fc_qmin = -10000.0,
+                 fc_qmax = -10000.0, fc_qexp = -10000.0, qnorm = -10000.0,
+                 perc_norm = -10000.0, qdanger = -10000.0, slope = -10000.0,
                  intercept = -10000.0, delta = -10000.0):
         """
         Initializes a new Site object.
@@ -647,8 +647,8 @@ class Site:
     def from_df_calculate_forecast(cls, site, pentad: str, df: pd.DataFrame):
         '''
         Calculate forecast from slope and intercept in the DataFrame.
-        
-        Args: 
+
+        Args:
             site (Site): The site object to calculate forecast for.
             pentad (str): The pentad of the year to calculate forecast for.
             df (pd.DataFrame): The DataFrame containing the slope and intercept data.
@@ -660,10 +660,10 @@ class Site:
             # Test that df contains columns 'Code' and 'pentad'
             if not all(column in df.columns for column in ['Code', 'pentad_in_year', 'slope', 'intercept']):
                 raise ValueError(f'DataFrame is missing one or more required columns: {"Code", "pentad_in_year", "slope", "intercept"}')
-            
+
             # Convert pentad to float
             pentad = float(pentad)
-            
+
             # Get the slope and intercept for the site
             slope = df[(df['Code'] == site.code) & (df['pentad_in_year'] == pentad)]['slope'].values[0]
             intercept = df[(df['Code'] == site.code) & (df['pentad_in_year'] == pentad)]['intercept'].values[0]
@@ -671,17 +671,17 @@ class Site:
             # Write slope and intercept to site
             site.slope = round(slope, 5)
             site.intercept = round(intercept, 5)
-            
+
             # Calculate the expected discharge forecasted for the next pentad
             qpexpd = slope * float(site.predictor) + intercept
 
-            # What happens if qpexpd is negative? We assign 0 discharge. 
+            # What happens if qpexpd is negative? We assign 0 discharge.
             if qpexpd < 0.0:
                 qpexpd = 0.0
-            
+
             # Write the expected discharge forecasted for the next pentad to self.fc_qexp
             site.fc_qexp = round_discharge(qpexpd)
-            
+
             # Return the expected discharge forecasted for the next pentad
             return qpexpd
         except ValueError as e:
@@ -691,8 +691,8 @@ class Site:
             print(f'Note: No slope and intercept for site {site.code} in DataFrame. Returning None.')
             return None
 
-    @classmethod 
-    def calculate_percentages_norm(cls, site): 
+    @classmethod
+    def calculate_percentages_norm(cls, site):
         '''
         From the norm discharge and the expected discharge, calculate the percentage of the norm discharge.
 
@@ -702,15 +702,15 @@ class Site:
         Returns:
             str: The percentage of the norm discharge.
         '''
-        try: 
+        try:
             perc_norm = float(site.fc_qexp) / float(site.qnorm) * 100
             #print(f'perc_norm: {perc_norm}, site.fc_qexp: {site.fc_qexp}, site.qnorm: {site.qnorm}')
 
-            if perc_norm < 0.0 or perc_norm > 500.0: 
+            if perc_norm < 0.0 or perc_norm > 500.0:
                 site.perc_norm = " "
             elif perc_norm == 0.0:
                 site.perc_norm = "0"
-            else: 
+            else:
                 site.perc_norm = str(round(perc_norm))
         except Exception as e:
             print(e)
@@ -719,9 +719,9 @@ class Site:
     @classmethod
     def from_df_get_norm_discharge(cls, site, pentad: str, df: pd.DataFrame):
         '''
-        Get norm discharge from DataFrame. 
+        Get norm discharge from DataFrame.
 
-        Args: 
+        Args:
             site (Site): The site object to get norm discharge for.
             pentad (str): The pentad of the year to get norm discharge for.
             df (pd.DataFrame): The DataFrame containing the norm discharge data.
@@ -733,10 +733,10 @@ class Site:
             # Test that df contains columns 'Code' and 'pentad'
             if not all(column in df.columns for column in ['Code', 'pentad_in_year']):
                 raise ValueError(f'DataFrame is missing one or more required columns: {"Code", "pentad_in_year"}')
-            
+
             # Convert pentad to float
             pentad = float(pentad)
-            
+
             # Also convert the column 'pentad_in_year' to float
             df['pentad_in_year'] = df['pentad_in_year'].astype(float)
 
@@ -752,17 +752,17 @@ class Site:
             return qnorm
         except Exception as e:
             print(f'Error {e}. Returning " ".')
-            return " "   
+            return " "
 
-    @classmethod 
+    @classmethod
     def from_df_get_predictor(cls, site, df: pd.DataFrame, predictor_dates):
         '''
-        Calculate predictor from df. 
+        Calculate predictor from df.
 
-        Args: 
+        Args:
             site (Site): The site object to get predictor for.
             df (pd.DataFrame): The DataFrame containing the predictor data.
-            predictor_dates (list): dates for which to collect the predictor data. 
+            predictor_dates (list): dates for which to collect the predictor data.
 
         Returns:
             float: The predictor for the current pentad.
@@ -777,12 +777,12 @@ class Site:
             # Test that df contains columns 'Code' 'discharge_sum' and 'Date'
             if not all(column in df.columns for column in ['Code', 'discharge_sum', 'Date']):
                 raise ValueError(f'DataFrame is missing one or more required columns: {"Code", "discharge_sum", "Date"}')
-            
+
             # Get the predictor for the site
             predictor = df[(df['Code'] == site.code) & (df['Date'].isin(predictor_dates))]['discharge_sum'].mean(skipna=True)
-            
-            # Note: Should the predictor be a negative number, we cannot make a 
-            # forecast. round_discharge will assign an empty string " ".  
+
+            # Note: Should the predictor be a negative number, we cannot make a
+            # forecast. round_discharge will assign an empty string " ".
 
             # Write the predictor value to self.predictor
             site.predictor = float(round_discharge(predictor))
@@ -796,9 +796,9 @@ class Site:
     @classmethod
     def from_df_get_qrange_discharge(cls, site, pentad: str, df: pd.DataFrame):
         '''
-        Get qpmin & qpmax discharge from DataFrame. 
+        Get qpmin & qpmax discharge from DataFrame.
 
-        Args: 
+        Args:
             site (Site): The site object to get norm discharge for.
             pentad (str): The pentad to get norm discharge for.
             df (pd.DataFrame): The DataFrame containing the norm discharge data.
@@ -810,7 +810,7 @@ class Site:
             # Test that df contains columns 'Code' and 'pentad'
         if not all(column in df.columns for column in ['Code', 'pentad_in_year']):
             raise ValueError(f'DataFrame is missing one or more required columns: {"Code", "pentad_in_year"}')
-            
+
             # Convert pentad to float
         pentad = float(pentad)
 
@@ -819,13 +819,13 @@ class Site:
 
             # Get the discharge ranges for the site
         delta = df[(df['Code'] == site.code) & (df['pentad_in_year'] == pentad)]['observation_std0674'].values[0]
-            
+
         qpmin = float(site.fc_qexp) - delta
         qpmax = float(site.fc_qexp) + delta
 
         site.delta = round(delta, 5)
-            
-            # Make sure none of the boundary values are negative. 
+
+            # Make sure none of the boundary values are negative.
         if qpmin < 0.0:
             qpmin = 0.0
             # qpmax really should never be negative, but just in case.
@@ -833,13 +833,13 @@ class Site:
             qpmax = 0.0
 
             # Test if both qpmin and qpmax are 0.0 then return " "
-        if qpmin == 0.0 and qpmax == 0.0: 
+        if qpmin == 0.0 and qpmax == 0.0:
             site.fc_qmin = " "
             site.fc_qmax = " "
-                
-        else: 
-                # Write the lower and upper bound of the discharge forecast to 
-                # Site.fc_qmin and Site.fc_qmax. 
+
+        else:
+                # Write the lower and upper bound of the discharge forecast to
+                # Site.fc_qmin and Site.fc_qmax.
             site.fc_qmin = round_discharge(qpmin)  # -> string
             site.fc_qmax = round_discharge(qpmax)  # -> string
 
@@ -850,20 +850,20 @@ class Site:
         #except Exception as e:
             #print(f'Note: No norm discharge for site {site.code} in DataFrame. Returning None.')
             #site.fc_qmin = " "
-            #site.fc_qmax = " " 
+            #site.fc_qmax = " "
             #return None
 
     @classmethod
     def from_DB_get_dangerous_discharge(cls, sdk, site):
         '''
-        Get dangerous discharge from DB. 
+        Get dangerous discharge from DB.
 
-        The DB connection hast to be established using: 
+        The DB connection hast to be established using:
         load_dotenv()
         ieh_sdk = IEasyHydroSDK()
-        in the main code. 
+        in the main code.
 
-        Args: 
+        Args:
             sdk (fl.SDK): The SDK connection object set up by calling
             site (Site): The site object to get dangerous discharge for.
 
@@ -885,18 +885,18 @@ class Site:
             print(f'    Note: No dangerous discharge for site {site.code} in DB. Returning " ".')
             site.qdanger = " "
             return " "
-        
+
     @classmethod
     def from_DB_get_predictor(cls, sdk, site, dates, lagdays=20):
         '''
-        Calculate predictor from data retrieved from the data base. 
+        Calculate predictor from data retrieved from the data base.
 
-        The DB connection hast to be established using: 
+        The DB connection hast to be established using:
         load_dotenv()
         ieh_sdk = IEasyHydroSDK()
-        in the main code. 
+        in the main code.
 
-        Args: 
+        Args:
             sdk (fl.SDK): The SDK connection object set up by calling
             site (Site): The site object to get dangerous discharge for.
             dates (list): A list of dates to get the predictor for.
@@ -909,23 +909,23 @@ class Site:
             # Test that dates is a list of dates
             if not all(isinstance(date, dt.date) for date in dates):
                 raise ValueError(f'dates is not a list of dates')
-            
+
             L = len(dates)
-        
+
             # Define the date filter for the data request
             filters = BasicDataValueFilters(
                 local_date_time__gte=min(dates),
                 local_date_time__lte=max(dates)
             )
             print(f'Reading data from site {site.code} with date range from {filters["local_date_time__gte"]} to {filters["local_date_time__lte"]}.')
-            
+
             predictor_discharge = sdk.get_data_values_for_site(
-                site.code, 
-                'discharge_daily_average', 
+                site.code,
+                'discharge_daily_average',
                 filters=filters)
-            
+
             # Test if we have data or if some of the data is smaller than 0
-            # Increase the number of lag days to go back for averaging if any of 
+            # Increase the number of lag days to go back for averaging if any of
             # the above is true
             if not predictor_discharge or any(d['data_value'] < 0 for d in predictor_discharge['data_values']):
                 # go back up to 20 days to retrieve data
@@ -936,8 +936,8 @@ class Site:
                         local_date_time__lte=filters['local_date_time__lte']
                     )
                     predictor_discharge = sdk.get_data_values_for_site(
-                        site.code, 
-                        'discharge_daily_average',                 
+                        site.code,
+                        'discharge_daily_average',
                         filters=filters)
                     counter += 1
                     print(f'Note: Not enough data retrieved from DB. New date range from {filters["local_date_time__gte"]} to {filters["local_date_time__lte"]}.')
@@ -957,20 +957,20 @@ class Site:
                         local_date_time__lte=filters['local_date_time__lte']
                     )
                     predictor_discharge = sdk.get_data_values_for_site(
-                        site.code, 
-                        'discharge_daily_average', 
+                        site.code,
+                        'discharge_daily_average',
                         filters=filters)
                     counter += 1
                     print(f'Note: Not enough data retrieved from DB. New date range from {filters["local_date_time__gte"]} to {filters["local_date_time__lte"]}.')
-                    predictor_discharge = predictor_discharge['data_values']    
+                    predictor_discharge = predictor_discharge['data_values']
 
             # Create a DataFrame from the predictor_discharge list
             df = pd.DataFrame(predictor_discharge)
-            
+
             # Convert values smaller than 0 to NaN
             df.loc[df['data_value'] < 0, 'data_value'] = np.nan
-            
-            # If we still have missing data, we interpolate the existing data. 
+
+            # If we still have missing data, we interpolate the existing data.
             # We take the average of the existing data to fill the gaps.
             if (len(df) < L):
                 # Get the average of the existing data
@@ -978,14 +978,14 @@ class Site:
                 q_avg = np.nansum(df['data_value']) / length
 
                 df.loc[len(df)] = pd.DataFrame({
-                    'data_value': q_avg, 
-                    'local_date_time': None, 
+                    'data_value': q_avg,
+                    'local_date_time': None,
                     'utc_date_time': None})
-            
+
             # Sum the discharge over the past L days
             q = np.nansum(df['data_value'])
-            
-            if q < 0.0: 
+
+            if q < 0.0:
                 q == np.nan
             site.predictor = q
 
