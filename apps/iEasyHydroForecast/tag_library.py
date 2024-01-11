@@ -1,8 +1,9 @@
 import datetime as dt
 import pandas as pd
-from typing import Union, Any, List, Optional
+from typing import Union
 
 # region tag get_value_fn function
+
 
 def is_gregorian_date(date: Union[str, dt.datetime]) -> bool:
     """
@@ -49,7 +50,7 @@ def is_gregorian_date(date: Union[str, dt.datetime]) -> bool:
         # return True if the date is using the Gregorian calendar
         return True
 
-    except ValueError as e:
+    except ValueError:
         return False
 
 
@@ -111,6 +112,7 @@ def add_pentad_in_year_column(df):
         # Raise an error if the input is not a valid date
         raise ValueError('Invalid date') from e
 
+
 def get_pentad(date):
     """
     Get the pentad of the month for a given date.
@@ -150,6 +152,7 @@ def get_pentad(date):
     except ValueError:
         # return None if the input is not a valid date
         return None
+
 
 def get_pentad_in_year(date):
     """
@@ -192,6 +195,7 @@ def get_pentad_in_year(date):
         # return None if the input is not a valid date
         return None
 
+
 def get_pentad_first_day(date_str):
     """
     Returns the first day of the pentad of the month for a given date string.
@@ -229,6 +233,7 @@ def get_pentad_first_day(date_str):
 
     # return the first day of the pentad as a string
     return str(first_day)
+
 
 def get_pentad_last_day(date_str):
     """
@@ -273,6 +278,7 @@ def get_pentad_last_day(date_str):
     # return the first day of the pentad as a string
     return str(last_day)
 
+
 def get_year(date_str):
     """
     Returns the year number for a given date string.
@@ -303,6 +309,7 @@ def get_year(date_str):
 
     # return the year number as a string
     return str(year)
+
 
 def get_month_str_case1(date_str):
     """
@@ -365,6 +372,7 @@ def get_month_str_case1(date_str):
     # return the month name as a string
     return month_str
 
+
 def get_month_str_case2(date_str):
     """
     Returns the name of the month for a given date string, in Russian, in the
@@ -425,6 +433,7 @@ def get_month_str_case2(date_str):
     # return the month name as a string
     return month_str
 
+
 def get_river_name(site):
     '''
     Gets the name of the river for a given site.
@@ -437,7 +446,8 @@ def get_river_name(site):
 
         If the input site is not valid, returns None.
     '''
-    return(site.river_name)
+    return site.river_name
+
 
 def get_site_name(site):
     '''
@@ -451,9 +461,5 @@ def get_site_name(site):
 
         If the input site is not valid, returns None.
     '''
-    return(site.punkt_name)
-
-
-
-
+    return site.punkt_name
 # endregion

@@ -2,12 +2,12 @@ import datetime
 import numpy as np
 import pandas as pd
 import unittest
-import matplotlib.pyplot as plt
 import datetime as dt
 import math
 import os
 
 from iEasyHydroForecast import forecast_library as fl
+
 
 class TestGetLastDayOfMonth(unittest.TestCase):
     def test_get_last_day_of_month_with_valid_date(self):
@@ -37,7 +37,6 @@ class TestGetLastDayOfMonth(unittest.TestCase):
         date = datetime.date(2020, 2, 15)
         last_day_of_month = fl.get_last_day_of_month(date)
         self.assertEqual(last_day_of_month, datetime.date(2020, 2, 29))
-
 
 
 class TestGetPredictorDates(unittest.TestCase):
@@ -82,6 +81,7 @@ class TestGetPredictorDates(unittest.TestCase):
         expected_output = None
         self.assertEqual(fl.get_predictor_dates(input_date, n), expected_output)
 
+
 class TestRoundDischarge(unittest.TestCase):
     def test_round_discharge_with_string_input(self):
         # Test that the function returns none when passed a string
@@ -109,6 +109,7 @@ class TestRoundDischarge(unittest.TestCase):
         self.assertEqual(fl.round_discharge(100.1234), "100")
         self.assertEqual(fl.round_discharge(1000.8234), "1001")
 
+
 class TestPerformLinearRegression(unittest.TestCase):
     def test_perform_linear_regression_with_wrong_input_type(self):
         # Create a test DataFrame
@@ -134,7 +135,6 @@ class TestPerformLinearRegression(unittest.TestCase):
         with self.assertRaises(TypeError):
             fl.perform_linear_regression(df, 'station', 'pentad', 'discharge_sum', 'discharge_avg', 2.0)
 
-
     def test_perform_linear_regression_with_simple_data(self):
         # Create a test DataFrame
         data = {'station': ['A', 'A', 'B', 'B', 'C', 'C'],
@@ -150,7 +150,9 @@ class TestPerformLinearRegression(unittest.TestCase):
         assert isinstance(result, pd.DataFrame)
 
         # Check that the result has the expected columns
-        expected_columns = ['station', 'pentad', 'discharge_sum', 'discharge_avg', 'slope', 'intercept', 'forecasted_discharge']
+        expected_columns = [
+            'station', 'pentad', 'discharge_sum', 'discharge_avg', 'slope',
+            'intercept', 'forecasted_discharge']
         assert all(col in result.columns for col in expected_columns)
 
         # Check that the slope and intercept are correct for each station
@@ -160,19 +162,20 @@ class TestPerformLinearRegression(unittest.TestCase):
             slope = result.loc[(result['station'] == station) & (result['pentad'] == 2), 'slope'].values[0]
             intercept = result.loc[(result['station'] == station) & (result['pentad'] == 2), 'intercept'].values[0]
             forecast_exp = df.loc[(df['station'] == station) & (df['pentad'] == 2), 'discharge_avg'].values[0]
-            forecast_calc = slope * df.loc[(df['station'] == station) & (df['pentad'] == 2), 'discharge_avg'].values[0] + intercept
+            forecast_calc = slope * df.loc[
+                (df['station'] == station) & (df['pentad'] == 2),
+                'discharge_avg'].values[0] + intercept
             assert np.isclose(slope, expected_slopes[station], atol=1e-3)
             assert np.isclose(intercept, expected_intercepts_p2[station], atol=1e-3)
             assert np.isclose(forecast_exp, forecast_calc, atol=1e-3)
 
-
     def test_perform_linear_regression_with_complex_data(self):
         # Create a test DataFrame
-        data = {'station': ['A','A','A','A','A','A','A','A','A','A','A','A',
-                            'A','A','A','A','A','A','A','A','A','A','A','A',
-                            'A','A','A','A','A','A','A','A','A','A','A','A',
-                            'A','A','A','A','A','A','A','A','A','A','A','A',
-                            'B','B','B','B','B','B','B','B','B','B','B','B'],
+        data = {'station': ['A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A',
+                            'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A',
+                            'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A',
+                            'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A',
+                            'B', 'B', 'B', 'B', 'B', 'B', 'B', 'B', 'B', 'B', 'B', 'B'],
                 'pentad': [1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2,
                            3, 3, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4,
                            5, 5, 5, 5, 5, 5, 6, 6, 6, 6, 6, 6,
@@ -241,7 +244,9 @@ class TestPerformLinearRegression(unittest.TestCase):
         assert isinstance(result_p72, pd.DataFrame)
 
         # Check that the result has the expected columns
-        expected_columns = ['station', 'pentad', 'discharge_sum', 'discharge_avg', 'slope', 'intercept', 'forecasted_discharge']
+        expected_columns = [
+            'station', 'pentad', 'discharge_sum', 'discharge_avg', 'slope',
+            'intercept', 'forecasted_discharge']
         assert all(col in result_p1.columns for col in expected_columns)
         assert all(col in result_p2.columns for col in expected_columns)
         assert all(col in result_p3.columns for col in expected_columns)
@@ -268,7 +273,10 @@ class TestPerformLinearRegression(unittest.TestCase):
             forecast = slope * df.loc[(df['station'] == station) & (df['pentad'] == 1), 'discharge_sum'].values[0] + intercept
             assert np.isclose(slope, expected_slopes_p1[station], atol=1e-3)
             assert np.isclose(intercept, expected_intercepts_p1[station], atol=1e-3)
-            assert np.isclose(forecast, df.loc[(df['station'] == station) & (df['pentad'] == 1), 'forecast_exp'].values[0], atol=1e-2)
+            assert np.isclose(
+                forecast,
+                df.loc[(df['station'] == station) & (df['pentad'] == 1),
+                       'forecast_exp'].values[0], atol=1e-2)
 
         for station in expected_slopes_p2.keys():
             slope = result_p2.loc[(result_p2['station'] == station) & (result_p2['pentad'] == 2), 'slope'].values[0]
@@ -276,25 +284,37 @@ class TestPerformLinearRegression(unittest.TestCase):
             forecast = slope * df.loc[(df['station'] == station) & (df['pentad'] == 2), 'discharge_sum'].values[0] + intercept
             assert np.isclose(slope, expected_slopes_p2[station], atol=1e-3)
             assert np.isclose(intercept, expected_intercepts_p2[station], atol=1e-3)
-            assert np.isclose(forecast, df.loc[(df['station'] == station) & (df['pentad'] == 2), 'forecast_exp'].values[0], atol=1e-2)
+            assert np.isclose(
+                forecast,
+                df.loc[(df['station'] == station) & (df['pentad'] == 2),
+                       'forecast_exp'].values[0], atol=1e-2)
 
         for station in expected_slopes_p3.keys():
             slope = result_p3.loc[(result_p3['station'] == station) & (result_p3['pentad'] == 3), 'slope'].values[0]
             intercept = result_p3.loc[(result_p3['station'] == station) & (result_p3['pentad'] == 3), 'intercept'].values[0]
             forecast = slope * df.loc[(df['station'] == station) & (df['pentad'] == 3), 'discharge_sum'].values[0] + intercept
-            assert np.isclose(forecast, df.loc[(df['station'] == station) & (df['pentad'] == 3), 'forecast_exp'].values[0], atol=1e-2)
+            assert np.isclose(
+                forecast,
+                df.loc[(df['station'] == station) & (df['pentad'] == 3),
+                       'forecast_exp'].values[0], atol=1e-2)
             assert np.isclose(slope, expected_slopes_p3[station], atol=1e-3)
             assert np.isclose(intercept, expected_intercepts_p3[station], atol=1e-3)
             slope = result_p5.loc[(result_p5['station'] == station) & (result_p5['pentad'] == 5), 'slope'].values[0]
             intercept = result_p5.loc[(result_p5['station'] == station) & (result_p5['pentad'] == 5), 'intercept'].values[0]
             forecast = slope * df.loc[(df['station'] == station) & (df['pentad'] == 5), 'discharge_sum'].values[0] + intercept
-            assert np.isclose(forecast, df.loc[(df['station'] == station) & (df['pentad'] == 5), 'forecast_exp'].values[0], atol=1e-2)
+            assert np.isclose(
+                forecast,
+                df.loc[(df['station'] == station) & (df['pentad'] == 5),
+                       'forecast_exp'].values[0], atol=1e-2)
             assert np.isclose(slope, expected_slopes_p3[station], atol=1e-3)
             assert np.isclose(intercept, expected_intercepts_p3[station], atol=1e-3)
             slope = result_p7.loc[(result_p7['station'] == station) & (result_p7['pentad'] == 7), 'slope'].values[0]
             intercept = result_p7.loc[(result_p7['station'] == station) & (result_p7['pentad'] == 7), 'intercept'].values[0]
             forecast = slope * df.loc[(df['station'] == station) & (df['pentad'] == 7), 'discharge_sum'].values[0] + intercept
-            assert np.isclose(forecast, df.loc[(df['station'] == station) & (df['pentad'] == 7), 'forecast_exp'].values[0], atol=1e-2)
+            assert np.isclose(
+                forecast,
+                df.loc[(df['station'] == station) & (df['pentad'] == 7),
+                       'forecast_exp'].values[0], atol=1e-2)
             assert np.isclose(slope, expected_slopes_p3[station], atol=1e-3)
             assert np.isclose(intercept, expected_intercepts_p3[station], atol=1e-3)
 
@@ -302,21 +322,35 @@ class TestPerformLinearRegression(unittest.TestCase):
             slope = result_p4.loc[(result_p4['station'] == station) & (result_p4['pentad'] == 4), 'slope'].values[0]
             intercept = result_p4.loc[(result_p4['station'] == station) & (result_p4['pentad'] == 4), 'intercept'].values[0]
             forecast = slope * df.loc[(df['station'] == station) & (df['pentad'] == 4), 'discharge_sum'].values[0] + intercept
-            assert np.isclose(forecast, df.loc[(df['station'] == station) & (df['pentad'] == 4), 'forecast_exp'].values[0], atol=1e-2)
+            assert np.isclose(
+                forecast,
+                df.loc[(df['station'] == station) & (df['pentad'] == 4),
+                       'forecast_exp'].values[0], atol=1e-2)
             assert np.isclose(slope, expected_slopes_p4[station], atol=1e-3)
             assert np.isclose(intercept, expected_intercepts_p4[station], atol=1e-3)
             slope = result_p6.loc[(result_p6['station'] == station) & (result_p6['pentad'] == 6), 'slope'].values[0]
             intercept = result_p6.loc[(result_p6['station'] == station) & (result_p6['pentad'] == 6), 'intercept'].values[0]
             forecast = slope * df.loc[(df['station'] == station) & (df['pentad'] == 6), 'discharge_sum'].values[0] + intercept
-            assert np.isclose(forecast, df.loc[(df['station'] == station) & (df['pentad'] == 6), 'forecast_exp'].values[0], atol=1e-2)
+            assert np.isclose(
+                forecast,
+                df.loc[
+                    (df['station'] == station) & (df['pentad'] == 6),
+                    'forecast_exp'].values[0], atol=1e-2)
             assert np.isclose(slope, expected_slopes_p4[station], atol=1e-3)
             assert np.isclose(intercept, expected_intercepts_p4[station], atol=1e-3)
             slope = result_p72.loc[(result_p72['station'] == station) & (result_p72['pentad'] == 72), 'slope'].values[0]
-            intercept = result_p72.loc[(result_p72['station'] == station) & (result_p72['pentad'] == 72), 'intercept'].values[0]
+            intercept = result_p72.loc[
+                (result_p72['station'] == station) & (result_p72['pentad'] == 72),
+                'intercept'].values[0]
             forecast = slope * df.loc[(df['station'] == station) & (df['pentad'] == 72), 'discharge_sum'].values[0] + intercept
-            assert np.isclose(forecast, df.loc[(df['station'] == station) & (df['pentad'] == 72), 'forecast_exp'].values[0], atol=1e-2)
+            assert np.isclose(
+                forecast,
+                df.loc[
+                    (df['station'] == station) & (df['pentad'] == 72),
+                    'forecast_exp'].values[0], atol=1e-2)
             assert np.isclose(slope, expected_slopes_p4[station], atol=1e-3)
             assert np.isclose(intercept, expected_intercepts_p4[station], atol=1e-3)
+
 
 class TestCalculateForecastSkill(unittest.TestCase):
     def test_calculate_forecast_skill(self):
@@ -339,10 +373,13 @@ class TestCalculateForecastSkill(unittest.TestCase):
             'simulation': [9.0, 11.0, 9.0, 11.0]
         })
         result_df2 = fl.calculate_forecast_skill(data_df2, 'station', 'pentad', 'observation', 'simulation')
-        #print(result_df2['observation_std0674'].tolist())
+        # print(result_df2['observation_std0674'].tolist())
         assert result_df2['absolute_error'].tolist() == [0.0, 1.0, 2.0, 1.0]
-        assert result_df2['observation_std0674'].tolist() == [0.870130258447933, 0.870130258447933, 0.870130258447933, 0.870130258447933]
+        assert result_df2['observation_std0674'].tolist() == [
+            0.870130258447933, 0.870130258447933, 0.870130258447933,
+            0.870130258447933]
         assert result_df2['flag'].tolist() == [True, False, False, False]
+
 
 class TestGenerateIssueAndForecastDates(unittest.TestCase):
     def setUp(self):
@@ -455,8 +492,8 @@ class TestGenerateIssueAndForecastDates(unittest.TestCase):
         # Test that negative discharge values are handled correctly
         self.data_df.loc[3, 'discharge'] = -1
         output = fl.generate_issue_and_forecast_dates(self.data_df, 'datetime', 'station', 'discharge')
-        self.assertEqual((output.iloc[4, 5]),9.0)
-        self.assertEqual((output.iloc[4, 6]),8.0)
+        self.assertEqual((output.iloc[4, 5]), 9.0)
+        self.assertEqual((output.iloc[4, 6]), 8.0)
 
     def test_missing_data(self):
         # Test that missing data is handled correctly
@@ -466,6 +503,7 @@ class TestGenerateIssueAndForecastDates(unittest.TestCase):
         self.assertEqual(output['discharge_sum'].tolist()[4], 9.0)
         self.assertTrue(output['issue_date'].tolist()[4])
         self.assertTrue(math.isnan(output['discharge_avg'].tolist()[4]))
+
 
 class TestLoadAllStationDataFromJSON(unittest.TestCase):
     def test_load(self):
@@ -487,10 +525,12 @@ class TestLoadAllStationDataFromJSON(unittest.TestCase):
         with self.assertRaises(FileNotFoundError):
             fl.load_all_station_data_from_JSON('not_a_real_file.json')
 
+
 class TestSite(unittest.TestCase):
     def setUp(self):
-        self.site = fl.Site(code='ABC123', name='Site 1', river_name='River A', punkt_name='Punkt B',
-                          lat=45.0, lon=-120.0, region='Region X', basin='Basin Y')
+        self.site = fl.Site(code='ABC123', name='Site 1', river_name='River A',
+                            punkt_name='Punkt B', lat=45.0, lon=-120.0,
+                            region='Region X', basin='Basin Y')
         self.df = pd.DataFrame({
             'Code': ['15194', '15195', 'ABC123', '15194', '15195', 'ABC123', '15194', '15195', 'ABC123', 'ABC123'],
             'pentad_in_year': ['1', '1', '1', '2', '2', '2', '3', '3', '3', '4'],
@@ -572,14 +612,14 @@ class TestSite(unittest.TestCase):
         # We do not have a test for this one as I don't know how to set up a
         # fake connection to the DB. We can test that the method returns " "
         # if the connection fails.
-        result = fl.Site.from_DB_get_dangerous_discharge(sdk = 's', site = self.site)
+        result = fl.Site.from_DB_get_dangerous_discharge(sdk='s', site=self.site)
         self.assertEqual(result, " ")
 
     def test_from_DB_get_predictor(self):
         # Same problem for testing here as for from_DB_get_dangerous_discharge.
         # We can test that the method returns none if the connection fails.
-        result = fl.Site.from_DB_get_predictor(sdk = 's', site = self.site,
-                                               dates = 'a')
+        result = fl.Site.from_DB_get_predictor(sdk='s', site=self.site,
+                                               dates='a')
         self.assertEqual(result, None)
 
     def test_from_dataframe(self):
@@ -630,6 +670,7 @@ class TestCalculatePercentage(unittest.TestCase):
         fl.Site.calculate_percentages_norm(site5)
         assert site5.perc_norm == '200'
 
+
 class TestQrange(unittest.TestCase):
     def test_from_df_get_qrange_discharge(self):
         # Test case 1: Normal input
@@ -642,8 +683,8 @@ class TestQrange(unittest.TestCase):
             'observation_std0674': [50.0, 20.0, 2.2]
         })
         result0 = fl.Site.from_df_get_qrange_discharge(site0, '1', df1)
-        result1 = fl.Site.from_df_get_qrange_discharge(site1, '1', df1)
-        result2 = fl.Site.from_df_get_qrange_discharge(site2, '2', df1)
+        # result1 = fl.Site.from_df_get_qrange_discharge(site1, '1', df1)
+        # result2 = fl.Site.from_df_get_qrange_discharge(site2, '2', df1)
         print('DEBUG: result0 = ', result0)
         print('DEBUG: site0.fc_qmin = ', site0.fc_qmin)
         assert site0.fc_qmin == '17.8'
@@ -652,7 +693,6 @@ class TestQrange(unittest.TestCase):
         assert site1.fc_qmax == '150'
         assert site2.fc_qmin == '180'
         assert site2.fc_qmax == '220'
-
 
 
 if __name__ == '__main__':

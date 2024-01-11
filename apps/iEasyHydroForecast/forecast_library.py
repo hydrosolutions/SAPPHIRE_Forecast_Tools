@@ -8,13 +8,8 @@ from ieasyhydro_sdk.filters import BasicDataValueFilters
 
 from sklearn.linear_model import LinearRegression
 
-import tag_library as tl
-
 # === Functions ===
 # region Function definitions
-
-
-
 def get_last_day_of_month(date: dt.date) -> dt.date:
     """
     Get the last day of the month for a given date.
@@ -44,7 +39,6 @@ def get_last_day_of_month(date: dt.date) -> dt.date:
         if isinstance(date, str):
             raise TypeError('Input date must be a datetime.date object, not a string')
 
-
         # Get the first day of the next month
         first_day_of_next_month = dt.date(date.year, date.month, 1) + dt.timedelta(days=32)
 
@@ -59,8 +53,6 @@ def get_last_day_of_month(date: dt.date) -> dt.date:
     except AttributeError as e:
         # Raise an error if the input date is not a valid date
         raise ValueError('Input date is not a valid datetime.date object') from e
-
-
 
 def get_predictor_dates(input_date: str, n: int):
     '''
@@ -102,8 +94,6 @@ def get_predictor_dates(input_date: str, n: int):
     except AttributeError as e:
         print(f'Error in get_predictor_dates: {e}')
         return None
-
-
 
 def round_discharge(value: float) -> str:
     '''
@@ -162,8 +152,6 @@ def round_discharge(value: float) -> str:
     except Exception as e:
         print(f'Error in round_discharge: {e}')
         return None
-
-
 
 def perform_linear_regression(
         data_df: pd.DataFrame, station_col: str, pentad_col: str, discharge_sum_col: str,
@@ -228,7 +216,6 @@ def perform_linear_regression(
     if missing_columns:
         raise ValueError(f"DataFrame is missing one or more required columns: {missing_columns}")
 
-
     # Make sure pentad_col is of type int and values therein are between 1 and
     # 72.
     data_df[pentad_col] = data_df[pentad_col].astype(float)
@@ -289,12 +276,10 @@ def perform_linear_regression(
         data_dfp.loc[(data_dfp[station_col] == station), 'intercept'] = intercept
 
         # Calculate the forecasted discharge for the current station and forecast_pentad
-        data_dfp.loc[(data_dfp[station_col] == station),'forecasted_discharge'] = \
+        data_dfp.loc[(data_dfp[station_col] == station), 'forecasted_discharge'] = \
             slope * data_dfp.loc[(data_dfp[station_col] == station), discharge_sum_col] + intercept
 
     return data_dfp
-
-
 
 def calculate_forecast_skill(data_df: pd.DataFrame, station_col: str,
                              pentad_col: str, observation_col: str,
@@ -324,15 +309,16 @@ def calculate_forecast_skill(data_df: pd.DataFrame, station_col: str,
         raise ValueError(f'DataFrame is missing one or more required columns: {station_col, pentad_col, observation_col, simulation_col}')
 
     # Initialize the slope and intercept columns to 0 and 1
-    data_df.loc[:,'absolute_error'] = 0.0
-    data_df.loc[:,'observation_std0674'] = 0.0
-    data_df.loc[:,'flag'] = 0.0
+    data_df.loc[:, 'absolute_error'] = 0.0
+    data_df.loc[:, 'observation_std0674'] = 0.0
+    data_df.loc[:, 'flag'] = 0.0
 
     # Loop over each station and pentad
     for station in data_df[station_col].unique():
         for pentad in data_df[pentad_col].unique():
             # Get the data for the station and pentad
-            station_data = data_df.loc[(data_df[station_col] == station) & (data_df[pentad_col] == pentad),:]
+            station_data = data_df.loc[
+                (data_df[station_col] == station) & (data_df[pentad_col] == pentad), :]
 
             # Drop NaN values
             station_data = station_data.dropna()
@@ -353,13 +339,17 @@ def calculate_forecast_skill(data_df: pd.DataFrame, station_col: str,
             observation_std0674 = 0.674 * observation_std
 
             # Store the slope and intercept in the data_df
-            data_df.loc[(data_df[station_col] == station) & (data_df[pentad_col] == pentad), 'absolute_error'] = absolute_error
-            data_df.loc[(data_df[station_col] == station) & (data_df[pentad_col] == pentad), 'observation_std0674'] = observation_std0674
-            data_df.loc[(data_df[station_col] == station) & (data_df[pentad_col] == pentad), 'flag'] = flag
+            data_df.loc[
+                (data_df[station_col] == station) & (data_df[pentad_col] == pentad),
+                'absolute_error'] = absolute_error
+            data_df.loc[
+                (data_df[station_col] == station) & (data_df[pentad_col] == pentad),
+                'observation_std0674'] = observation_std0674
+            data_df.loc[
+                (data_df[station_col] == station) & (data_df[pentad_col] == pentad),
+                'flag'] = flag
 
     return data_df
-
-
 
 def generate_issue_and_forecast_dates(data_df: pd.DataFrame, datetime_col: str,
                                       station_col: str, discharge_col: str):
@@ -418,7 +408,7 @@ def generate_issue_and_forecast_dates(data_df: pd.DataFrame, datetime_col: str,
         # Merge the issue_date_df with data_df
         data_df['Date'] = data_df[datetime_col].dt.date
         data_df = data_df.merge(issue_date_df, how='left', on='Date')
-        #print(data_df.head(n=10))
+        # print(data_df.head(n=10))
 
         # Initialize data_df['discharge_sum'] and data_df['discharge_avg'] to NaN
         data_df['discharge_sum'] = np.nan
@@ -431,9 +421,9 @@ def generate_issue_and_forecast_dates(data_df: pd.DataFrame, datetime_col: str,
             issue_date = row['Date']
 
             # Get the discharge values for the station and the issue date
-            discharge_values = data_df[#(data_df[station_col] == station) &
-                                   (data_df['Date'] >= (issue_date - pd.DateOffset(days=3)).date()) &
-                                    (data_df['Date'] < issue_date)][discharge_col]
+            discharge_values = data_df[  # (data_df[station_col] == station) &
+                (data_df['Date'] >= (issue_date - pd.DateOffset(days=3)).date()) &
+                (data_df['Date'] < issue_date)][discharge_col]
 
             # Sum up the discharge values
             discharge_sum = discharge_values.sum()
@@ -451,9 +441,9 @@ def generate_issue_and_forecast_dates(data_df: pd.DataFrame, datetime_col: str,
             forecast_date = row['Date']
 
             # Get the discharge values for the station and the forecast date
-            discharge_values = data_df[#(data_df[station_col] == station) &
-                                    (data_df['Date'] > forecast_date) &
-                                   (data_df['Date'] <= (forecast_date + pd.DateOffset(days=5)).date())][discharge_col]
+            discharge_values = data_df[  # (data_df[station_col] == station) &
+                (data_df['Date'] > forecast_date) &
+                (data_df['Date'] <= (forecast_date + pd.DateOffset(days=5)).date())][discharge_col]
 
             # Calculate the average discharge
             discharge_avg = discharge_values.mean(skipna=True)
@@ -464,18 +454,17 @@ def generate_issue_and_forecast_dates(data_df: pd.DataFrame, datetime_col: str,
             # Store the discharge average
             data_df.loc[forecast_date_index, 'discharge_avg'] = discharge_avg
 
-        return(data_df)
+        return data_df
 
     # Test if the input data contains the required columns
     if not all(column in data_df.columns for column in [datetime_col, station_col, discharge_col]):
         raise ValueError(f'DataFrame is missing one or more required columns: {datetime_col, station_col, discharge_col}')
 
     # Apply the calculation function to each group based on the 'station' column
-    modified_data = data_df.groupby(station_col).apply(apply_calculation, datetime_col = datetime_col, discharge_col = discharge_col)
+    modified_data = data_df.groupby(station_col).apply(
+        apply_calculation, datetime_col=datetime_col, discharge_col=discharge_col)
 
     return modified_data
-
-
 
 def load_all_station_data_from_JSON(file_path: str) -> pd.DataFrame:
     """
@@ -590,12 +579,12 @@ class Site:
         - region (str): The region that the site is located in (typically oblast).
         - basin (str): The basin that the site is located in.
     """
-    def __init__(self, code: str, name = "Name", river_name = "River",
-                 punkt_name = "Punkt", lat = 0.0, lon = 0.0, region = "Region",
-                 basin = "Basin", predictor = -10000.0, fc_qmin = -10000.0,
-                 fc_qmax = -10000.0, fc_qexp = -10000.0, qnorm = -10000.0,
-                 perc_norm = -10000.0, qdanger = -10000.0, slope = -10000.0,
-                 intercept = -10000.0, delta = -10000.0):
+    def __init__(self, code: str, name="Name", river_name="River",
+                 punkt_name="Punkt", lat=0.0, lon=0.0, region="Region",
+                 basin="Basin", predictor=-10000.0, fc_qmin=-10000.0,
+                 fc_qmax=-10000.0, fc_qexp=-10000.0, qnorm=-10000.0,
+                 perc_norm=-10000.0, qdanger=-10000.0, slope=-10000.0,
+                 intercept=-10000.0, delta=-10000.0):
         """
         Initializes a new Site object.
 
@@ -687,7 +676,7 @@ class Site:
         except ValueError as e:
             print(e)
             return None
-        except Exception as e:
+        except Exception:
             print(f'Note: No slope and intercept for site {site.code} in DataFrame. Returning None.')
             return None
 
@@ -704,7 +693,7 @@ class Site:
         '''
         try:
             perc_norm = float(site.fc_qexp) / float(site.qnorm) * 100
-            #print(f'perc_norm: {perc_norm}, site.fc_qexp: {site.fc_qexp}, site.qnorm: {site.qnorm}')
+            # print(f'perc_norm: {perc_norm}, site.fc_qexp: {site.fc_qexp}, site.qnorm: {site.qnorm}')
 
             if perc_norm < 0.0 or perc_norm > 500.0:
                 site.perc_norm = " "
@@ -772,7 +761,7 @@ class Site:
             predictor_dates = pd.to_datetime(predictor_dates)
 
             # Convert 'Date' column of df to datetime format
-            df.loc[:,'Date'] = pd.to_datetime(df['Date'])
+            df.loc[:, 'Date'] = pd.to_datetime(df['Date'])
 
             # Test that df contains columns 'Code' 'discharge_sum' and 'Date'
             if not all(column in df.columns for column in ['Code', 'discharge_sum', 'Date']):
@@ -806,8 +795,7 @@ class Site:
         Returns:
             str: The lower and upper ranges for the discharge forecast.
         '''
-        #try:
-            # Test that df contains columns 'Code' and 'pentad'
+        # Test that df contains columns 'Code' and 'pentad'
         if not all(column in df.columns for column in ['Code', 'pentad_in_year']):
             raise ValueError(f'DataFrame is missing one or more required columns: {"Code", "pentad_in_year"}')
 
@@ -817,7 +805,7 @@ class Site:
         # Convert 'pentad_in_year' column of df to float
         df['pentad_in_year'] = df['pentad_in_year'].astype(float)
 
-            # Get the discharge ranges for the site
+        # Get the discharge ranges for the site
         delta = df[(df['Code'] == site.code) & (df['pentad_in_year'] == pentad)]['observation_std0674'].values[0]
 
         qpmin = float(site.fc_qexp) - delta
@@ -825,7 +813,7 @@ class Site:
 
         site.delta = round(delta, 5)
 
-            # Make sure none of the boundary values are negative.
+        # Make sure none of the boundary values are negative.
         if qpmin < 0.0:
             qpmin = 0.0
             # qpmax really should never be negative, but just in case.
@@ -838,20 +826,16 @@ class Site:
             site.fc_qmax = " "
 
         else:
-                # Write the lower and upper bound of the discharge forecast to
-                # Site.fc_qmin and Site.fc_qmax.
+            # Write the lower and upper bound of the discharge forecast to
+            # Site.fc_qmin and Site.fc_qmax.
             site.fc_qmin = round_discharge(qpmin)  # -> string
             site.fc_qmax = round_discharge(qpmax)  # -> string
 
         print(site.fc_qmin, site.fc_qmax)
 
-            # Return the norm discharge value
+        # Return the norm discharge value
         return qpmin, qpmax
-        #except Exception as e:
-            #print(f'Note: No norm discharge for site {site.code} in DataFrame. Returning None.')
-            #site.fc_qmin = " "
-            #site.fc_qmax = " "
-            #return None
+
 
     @classmethod
     def from_DB_get_dangerous_discharge(cls, sdk, site):
@@ -872,7 +856,8 @@ class Site:
         '''
         try:
             # Get the dangerous discharge for the site
-            dangerous_discharge = sdk.get_data_values_for_site(site.code, 'dangerous_discharge')['data_values'][0]['data_value']
+            dangerous_discharge = sdk.get_data_values_for_site(
+                site.code, 'dangerous_discharge')['data_values'][0]['data_value']
 
             # Write the dangerous discharge value to self.qdanger
             q = round_discharge(dangerous_discharge)
@@ -881,7 +866,7 @@ class Site:
 
             # Return the dangerous discharge value
             return dangerous_discharge
-        except Exception as e:
+        except Exception:
             print(f'    Note: No dangerous discharge for site {site.code} in DB. Returning " ".')
             site.qdanger = " "
             return " "
@@ -908,7 +893,7 @@ class Site:
         try:
             # Test that dates is a list of dates
             if not all(isinstance(date, dt.date) for date in dates):
-                raise ValueError(f'dates is not a list of dates')
+                raise ValueError('Dates is not a list of dates')
 
             L = len(dates)
 
@@ -951,7 +936,7 @@ class Site:
             # Check if we have enough data
             if len(predictor_discharge) < L:
                 counter = 0
-                while(len(predictor_discharge) < L and counter < lagdays):
+                while (len(predictor_discharge) < L and counter < lagdays):
                     filters = BasicDataValueFilters(
                         local_date_time__gte=filters['local_date_time__gte'] - dt.timedelta(days=1),
                         local_date_time__lte=filters['local_date_time__lte']
@@ -991,7 +976,7 @@ class Site:
 
             # Return the dangerous discharge value
             return q
-        except Exception as e:
+        except Exception:
             print(f'Note: No daily discharge data for site {site.code} in DB. Returning None.')
             return None
 
@@ -1032,4 +1017,3 @@ class Site:
             return []
 
 # endregion
-

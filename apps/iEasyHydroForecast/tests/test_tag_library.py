@@ -3,6 +3,7 @@ import datetime as dt
 from iEasyHydroForecast import tag_library as tl
 import pandas as pd
 
+
 class TestTagLibrary(unittest.TestCase):
     def test_is_gregorian_date_valid_date(self):
         self.assertTrue(tl.is_gregorian_date('2022-05-15'))
@@ -15,6 +16,7 @@ class TestTagLibrary(unittest.TestCase):
         self.assertFalse(tl.is_gregorian_date('not a date'))
         self.assertFalse(tl.is_gregorian_date('2022-02-29'))
         self.assertFalse(tl.is_gregorian_date('1581-12-31'))
+
 
 class TestAddPentadInYearColumn(unittest.TestCase):
     def test_add_pentad_in_year_column(self):
@@ -43,6 +45,7 @@ class TestAddPentadInYearColumn(unittest.TestCase):
         with self.assertRaises(ValueError):
             tl.add_pentad_in_year_column(df)
 
+
 class TestGetPentadInYear(unittest.TestCase):
     def test_valid_date(self):
         # Test a valid date
@@ -53,7 +56,7 @@ class TestGetPentadInYear(unittest.TestCase):
         self.assertEqual(tl.get_pentad_in_year('2022-01-30'), '6')
         self.assertEqual(tl.get_pentad_in_year('2022-02-02'), '7')
         self.assertEqual(tl.get_pentad_in_year('2022-12-29'), '72')
-        self.assertEqual(tl.get_pentad_in_year(dt.datetime(2022,12,31)), '72')
+        self.assertEqual(tl.get_pentad_in_year(dt.datetime(2022, 12, 31)), '72')
 
     def test_invalid_date(self):
         # Test an invalid date
@@ -104,8 +107,8 @@ class TestGetPentad(unittest.TestCase):
         pentad = tl.get_pentad_in_year(date)
         self.assertEqual(pentad, '1')
 
-    def test_valid_date(self):
-        self.assertEqual(tl.get_pentad(dt.datetime(2022,5,15)), '3')
+    def test_valid_date_some_more(self):
+        self.assertEqual(tl.get_pentad(dt.datetime(2022, 5, 15)), '3')
         self.assertEqual(tl.get_pentad('2022-05-15'), '3')
         self.assertEqual(tl.get_pentad('2022-05-01'), '1')
         self.assertEqual(tl.get_pentad('2022-05-31'), '6')
@@ -122,7 +125,7 @@ class TestGetPentad(unittest.TestCase):
         self.assertEqual(tl.get_pentad('2022-02-25'), '5')
         self.assertEqual(tl.get_pentad('2022-02-26'), '6')
 
-    def test_invalid_date(self):
+    def test_invalid_date_some_more(self):
         self.assertIsNone(tl.get_pentad('2022-02-29'))
         self.assertIsNone(tl.get_pentad('2022-13-01'))
         self.assertIsNone(tl.get_pentad('2022-00-01'))
