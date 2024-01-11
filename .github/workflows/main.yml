@@ -71,7 +71,7 @@ jobs:
     # Run the dockerization & deployment script
     - name: Build Docker image
       run: |
-        docker build -t "$IMAGE_NAME:$IMAGE_TAG" ./iEasyHydroForecast
+        docker build -t "$IMAGE_NAME:$IMAGE_TAG" ./apps/iEasyHydroForecast
 
     # Log in to the Docker registry
     - name: Log in to the Docker registry
