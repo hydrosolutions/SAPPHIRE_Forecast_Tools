@@ -15,12 +15,12 @@ jobs:
             # Set script permissions
             - name: Set script permissions
               run: |
-                chmod +x ./iEasyHydroForecast/say_hello.sh
+                chmod +x ./apps/iEasyHydroForecast/say_hello.sh
 
             # Build Docker image
             - name: Build Docker image
               run: |
-                docker build -t say_hello ./iEasyHydroForecast
+                docker build -t say_hello ./apps/iEasyHydroForecast
 
             # Run the Docker image
             - name: Run Docker image
