@@ -10,6 +10,7 @@ from sklearn.linear_model import LinearRegression
 
 # === Functions ===
 # region Function definitions
+
 def get_last_day_of_month(date: dt.date) -> dt.date:
     """
     Get the last day of the month for a given date.
@@ -54,6 +55,7 @@ def get_last_day_of_month(date: dt.date) -> dt.date:
         # Raise an error if the input date is not a valid date
         raise ValueError('Input date is not a valid datetime.date object') from e
 
+
 def get_predictor_dates(input_date: str, n: int):
     '''
     Returns a list of dates from input_date - n to input_date - 1.
@@ -94,6 +96,7 @@ def get_predictor_dates(input_date: str, n: int):
     except AttributeError as e:
         print(f'Error in get_predictor_dates: {e}')
         return None
+
 
 def round_discharge(value: float) -> str:
     '''
@@ -152,6 +155,7 @@ def round_discharge(value: float) -> str:
     except Exception as e:
         print(f'Error in round_discharge: {e}')
         return None
+
 
 def perform_linear_regression(
         data_df: pd.DataFrame, station_col: str, pentad_col: str, discharge_sum_col: str,
@@ -281,6 +285,7 @@ def perform_linear_regression(
 
     return data_dfp
 
+
 def calculate_forecast_skill(data_df: pd.DataFrame, station_col: str,
                              pentad_col: str, observation_col: str,
                              simulation_col: str) -> pd.DataFrame:
@@ -350,6 +355,7 @@ def calculate_forecast_skill(data_df: pd.DataFrame, station_col: str,
                 'flag'] = flag
 
     return data_df
+
 
 def generate_issue_and_forecast_dates(data_df: pd.DataFrame, datetime_col: str,
                                       station_col: str, discharge_col: str):
@@ -465,6 +471,7 @@ def generate_issue_and_forecast_dates(data_df: pd.DataFrame, datetime_col: str,
         apply_calculation, datetime_col=datetime_col, discharge_col=discharge_col)
 
     return modified_data
+
 
 def load_all_station_data_from_JSON(file_path: str) -> pd.DataFrame:
     """
@@ -835,7 +842,6 @@ class Site:
 
         # Return the norm discharge value
         return qpmin, qpmax
-
 
     @classmethod
     def from_DB_get_dangerous_discharge(cls, sdk, site):
