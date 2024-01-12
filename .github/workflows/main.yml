@@ -1,7 +1,7 @@
 name: Test & deploy iEasyHydroForecast
 
 env:
-    IMAGE_NAME: mabesa/sapphire
+    IMAGE_NAME: mabesa/sapphire-dashboard
     TOOL_NAME_iEasyHydroForecast: iEasyHydroForecast
 on:
   push:
