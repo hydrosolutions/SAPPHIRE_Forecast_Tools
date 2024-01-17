@@ -1,5 +1,5 @@
 #!/bin/sh -l
-echo "Let us see if watchtower montioring works"
+echo "Now let us see if tag latest is working"
 echo "Hello $1! Greetings from watchtower!"
 time=$(date)
 echo "The current time is : $time"
