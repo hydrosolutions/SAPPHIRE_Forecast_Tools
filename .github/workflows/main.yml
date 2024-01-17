@@ -86,28 +86,4 @@ jobs:
         docker push "$IMAGE_NAME:$IMAGE_TAG"
 
 
-  #hello_world_job:
-    #needs: lint_and_test
-    #runs-on: ubuntu-latest
-    #name: A job to say hello
 
-    #steps:
-    # To use this repository's private action, you must check out the
-    # repository.
-    #- name: Checkout
-    #  uses: actions/checkout@v4
-
-    # Set script permissions
-    #- name: Set script permissions
-    #  run: |
-    #    chmod +x ./apps/iEasyHydroForecast/say_hello.sh
-
-    # Build Docker image
-    #- name: Build Docker image
-    #  run: |
-    #    docker build -t say_hello ./apps/iEasyHydroForecast
-
-    # Run the Docker image
-    #- name: Run Docker image
-    #  run: |
-    #    docker run say_hello Moon
