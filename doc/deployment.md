@@ -12,7 +12,7 @@ Start a Watchtower instance to automatically update the application when a new v
 docker run -d \
   --name watchtower \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  containrrr/watchtower --label-enable
+  containrrr/watchtower --label-enable --interval 30
 ```
 The label-enable option tells watchtower to only update containers that have the label com.centurylinklabs.watchtower.enable=true in their run command (see below).
 
