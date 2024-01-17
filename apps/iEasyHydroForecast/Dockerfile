@@ -9,6 +9,3 @@ RUN chmod +x /app/say_hello.sh
 
 # Code file to execute when the docker container starts up (`entrypoint.sh`)
 ENTRYPOINT ["/app/say_hello.sh"]
-
-# Add a command that will ensure the container runs for a long time to test watchtower
-CMD ["tail", "-f", "/dev/null"]
