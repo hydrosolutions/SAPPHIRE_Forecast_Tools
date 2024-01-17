@@ -2,5 +2,5 @@
 
 echo "Hello $1"
 time=$(date)
-echo "time=$time" 
+echo "The current time is : $time"
 
