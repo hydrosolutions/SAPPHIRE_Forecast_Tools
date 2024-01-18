@@ -27,8 +27,7 @@ jobs:
     # Run the dockerization & deployment script
     - name: Build Docker image
       run: |
-        #docker build --no-cache -t linreg_test -f .apps/forecast_linreg/Dockerfile .
-        docker build --no-cache -t station_dashboard -f ./apps/configuration_dashboard/dockerfile .
+        docker build --no-cache -t "$IMAGE_NAME:$IMAGE_TAG" -f ./apps/configuration_dashboard/dockerfile .
 
     # Log in to the Docker registry
     - name: Log in to the Docker registry
