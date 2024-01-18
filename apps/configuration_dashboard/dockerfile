@@ -1,0 +1,81 @@
+# Import the shiny image from rocker (this is not available for ARM architecture)
+FROM rocker/shiny:4
+
+# sf needs a couple of additional libraries that are installed here
+RUN apt-get update && apt-get install -y \
+    --no-install-recommends \
+    libssl-dev \
+    libcurl4-gnutls-dev \
+    xdg-utils \
+    libudunits2-dev \
+    libproj-dev \
+    libgdal-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install the required R packages, Rcpp required for sf
+RUN install2.r --error --skipinstalled \
+    Rcpp \
+    udunits2 \
+    shiny \
+    jsonlite \
+    ggplot2 \
+    plotly \
+    readxl \
+    leaflet \
+    leaflet.extras \
+    dplyr \
+    RColorBrewer \
+    DT \
+    scales \
+    sf \
+    raster \
+    terra \
+    shinydashboard \
+    shinyWidgets \
+    here
+
+# To be able to add other folders to the docker app, we need to set the project
+# root to the root of this repository (SAPPHIRE_forecast_tools):
+
+# Local folder structure during development:
+# SAPPHIRE_forecast_tools
+#   |__ data
+#   |__ apps
+#        |__ config
+#        |__ configuration_dashboard
+
+# Local folder structure in Docker container:
+# /app
+#   |__ data
+#   |__ apps
+#        |__ config
+#        |__ configuration_dashboard
+#
+# That means building the image with the following flag:
+# -f apps/configuration_dashboard/Dockerfile
+
+WORKDIR /app
+
+# Volumes that are shared with the host are not added to the image.
+COPY configuration_dashboard /app
+
+# Set an environment variable for within the docker container
+ENV IN_DOCKER_CONTAINER=true
+
+EXPOSE 3647
+
+CMD ["R", "-e", "shiny::runApp('forecast_configuration.R', port = 3647, host = '0.0.0.0')"]
+
+# Instructions for local testing (see also doc/development.md):
+# cd to SAPPHIRE_forecast_tools
+
+# Build the image (not available yet for ARM architecture, newer Macs)
+# docker build --no-cache -t station_dashboard -f ./apps/configuration_dashboard/dockerfile .
+
+# Run the image locally for testing (not for deployment)
+# docker run -e "IN_DOCKER_CONTAINER=True" -v <full_path_to>/config:/app/apps/config -v <full_path_to>/data:/app/data -p 3647:3647 --name station_dashboard
+
+
+
+
+
