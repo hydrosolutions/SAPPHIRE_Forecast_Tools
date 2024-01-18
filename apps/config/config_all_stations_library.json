@@ -1,0 +1,92 @@
+{
+    "stations_available_for_forecast": {
+        "2176": {
+            "id": [
+                1.0
+            ],
+            "basin": [
+                "Sihl"
+            ],
+            "lat": [
+                47.368327
+            ],
+            "long": [
+                8.527410
+            ],
+            "country": [
+                "Switzerland"
+            ],
+            "is_virtual": [
+                true
+            ],
+            "region": [
+                "Mittelland"
+            ],
+            "site_type": [
+                "automatic-discharge"
+            ],
+            "name_ru": [
+                "Sihl - Zurich, Sihlhölzli"
+            ],
+            "organization_id": [
+                1
+            ],
+            "elevation": [
+                0.0
+            ],
+            "river_ru": [
+                "Sihl"
+            ],
+            "punkt_ru": [
+                "Zurich, Sihlhölzli"
+            ],
+            "code": [
+                2176
+            ]
+        },
+        "2256": {
+            "id": [
+                2.0
+            ],
+            "basin": [
+                "Rosegbach"
+            ],
+            "lat": [
+                46.489914
+            ],
+            "long": [
+                9.897889
+            ],
+            "country": [
+                "Switzerland"
+            ],
+            "is_virtual": [
+                true
+            ],
+            "region": [
+                "East"
+            ],
+            "site_type": [
+                "automatic-discharge"
+            ],
+            "name_ru": [
+                "Rosegbach - Pontresina"
+            ],
+            "organization_id": [
+                1
+            ],
+            "elevation": [
+                0.0
+            ],
+            "river_ru": [
+                "Rosegbach"
+            ],
+            "punkt_ru": [
+                "Pontresina"
+            ],
+            "code": [
+                2256
+            ]
+        }
+    }
+}
