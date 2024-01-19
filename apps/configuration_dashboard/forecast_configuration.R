@@ -32,7 +32,7 @@ if (Sys.getenv("IN_DOCKER_CONTAINER")=="") {
   # Environment variable IN_DOCKER_CONTAINER is set. Run from docker container
   setwd(here()) #sometimes setwd() function can be error-prone, restart the R session can help 
   print(getwd())
-  readRenviron("config/.env")
+  readRenviron("../config/.env")
 }
 
 config_dir = Sys.getenv("ieasyforecast_configuration_path")
