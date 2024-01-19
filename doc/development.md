@@ -3,9 +3,18 @@
 This document describes how to develop the application.
 
 ## Prerequisites
-The softwar has been developed on a Mac computer and packaged with Ubuntu base images using Docker using GitHub Actions (with workflow instructions in .github/workflows/main.yml). Albeit not strictly necessary for the further development of the software, we suggest that you install Docker on your computer so you can test dockerization of sofware components locally. The Docker installation instructions can be found [here](https://docs.docker.com/install/).
+The softwar has been developed on a Mac computer and packaged with Ubuntu base images using Docker using GitHub Actions (with workflow instructions in .github/workflows/main.yml).
 
-### Configuration dashboard
+### Install Git & clone repository
+We recomment the installation of GitHub Desktop to manage the repository. The installation instructions can be found [here](https://desktop.github.com/). You can then clone this repository to your computer.
+
+### Install Docker
+Albeit not strictly necessary for the further development of the software, we suggest that you install Docker on your computer so you can test dockerization of sofware components locally. The Docker installation instructions can be found [here](https://docs.docker.com/install/).
+
+
+### Instructions specific to the tools
+
+#### Configuration dashboard
 The forecast configuration dashboard is written in R and uses the Shiny framework. To run the dashboard locally, you need to install R. The installation instructions can be found [here](https://rstudio-education.github.io/hopr/starting.html). We recommend RStudio as an IDE for R development. The installation instructions can be found [here](https://posit.co/download/rstudio-desktop/).
 
 You will further need to install the following R packages (you can do so by running the following commands in the R console):

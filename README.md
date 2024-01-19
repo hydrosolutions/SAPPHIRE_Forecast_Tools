@@ -1,7 +1,7 @@
 ![example workflow](https://github.com/hydrosolutions/SAPPHIRE_Forecast_Tools/actions/workflows/main.yml/badge.svg)
 
 # SAPPHIRE_forecast_tools
-Tools for operational hydrological forecasting for Central Asian hydromets. The tools are co-designed with the Kyrgyz Hydrometeorological Services as part of the ongoing [SAPPHIRE project](https://www.hydrosolutions.ch/projects/sapphire-central-asia) and funded by the Swiss Agency for Development and Cooperation.
+Tools for operational hydrological forecasting for Central Asian hydromets. The tools are co-designed with the Kyrgyz Hydrometeorological Services as part of the ongoing [SAPPHIRE project](https://www.hydrosolutions.ch/projects/sapphire-central-asia) and funded by the [Swiss Agency for Development and Cooperation](https://www.eda.admin.ch/eda/en/home/fdfa/organisation-fdfa/directorates-divisions/sdc.html).
 
 The tools are designed to be deployed on a local computer with access to operational hydrometerological data and the [iEasyHydro](https://ieasyhydro.org) database. This repository holds data from the public domain for demonstration.
 
@@ -63,3 +63,6 @@ The SAPPHIRE Forecast Tools are deployed using the Docker system. The deployment
 
 # Development
 If you wish to run the forecast tools individually and locally for development purposes, you can do so by following the instructions in the file doc/development.md.
+
+## Collaboration
+Input from users is welcome. Please use the GitHub issue tracker to report bugs or suggest improvements. If you would like to contribute to the code, please fork the repository and submit a pull request. We will review the pull request and merge it if it fits the scope of the project. Please note that this is an open source project released under the MIT license, under which all contrubutions fall. Contributors are expected to adhere to the [Contributor Covenant code of conduct](https://www.contributor-covenant.org/).

@@ -57,7 +57,7 @@ RUN install2.r --error --skipinstalled \
 WORKDIR /app
 
 # Volumes that are shared with the host are not added to the image.
-COPY apps/configuration_dashboard /app
+COPY apps/configuration_dashboard /app/apps/configuration_dashboard
 
 # Set an environment variable for within the docker container
 ENV IN_DOCKER_CONTAINER=true
