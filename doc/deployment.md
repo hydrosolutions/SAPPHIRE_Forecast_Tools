@@ -29,17 +29,7 @@ The sections below describe the steps that are required to deploy the forecast t
 ### .env
 As the file system structure may differ between the development platform and the host machine, the SAPPHIRE forecast tools read in a .env file which may be a copy of the .env_develop file, when run within a docker container.
 
-Copy .env_develop to .env and edit the file where required (if for example the locations for the bulletin templates on the host machine differs from the location of the bulletin templates in this repository).
-
-The following snippet from .env_develop shows the paths that may need to be edited:
-
-**Configuration dashboard:**
-You will have to change the file name to match the administrative boundaries of your country. We recommend that you do not change the path ieasyforecast_gis_directory_path but rather copy your administrative boundary layers to ieasyforecast_gis_directory_path. You can use official shapefile layers by your countries administration or download publicly available layers from the [GADM website](https://gadm.org/data.html). The layers must be in the WGS84 coordinate system (EPSG:4326).
-```
-# In .env adapt the name of the administrative boundaries file to one of your country.
-ieasyforecast_country_borders_file_name=gadm41_CHE_shp/gadm41_CHE_1.shp
-```
-Please note that we do not recommend changing the paths and names of the configuration files in apps/config.
+Copy .env_develop to .env and edit the file where required (if for example the locations for the bulletin templates on the host machine differs from the location of the bulletin templates in this repository). Please read the instructions about the configuration of the .env file in the file [doc/configuration.md](doc/configuration.md).
 
 ### Configuration dashboard
 Pull the latest image from Docker Hub:
@@ -59,7 +49,9 @@ docker run -d --label=com.centurylinklabs.watchtower.enable=true -e "IN_DOCKER_C
 
 Make sure the image and tool names in bat/configuration.bat are correct for the host machine. For example, if you are using a different image name, you will have to replace fcconfig in line 1 with your image name. If you have changed the port number in the run command, you will have to change the port number in line 2 of bat/configuration.bat.
 
-Create a shortcut to bat/configuration_dashboard/configuration.bat on your desktop. You can edit the icon of the shortcut by opening the preferences. Double click the shortcut to open the dashboard in a browser window.
+Create a shortcut to bat/configuration_dashboard/configuration.bat on your desktop. You can edit the icon of the shortcut by opening the preferences and selecting the icon available at bat/configuration_dashboard/Station.ico.
+
+Now you're done! Double click the shortcut to open the dashboard in a browser window.
 
 ### Forecast dashboard
 ```bash

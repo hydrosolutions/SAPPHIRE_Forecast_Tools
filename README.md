@@ -9,7 +9,7 @@ Note that this repository is **WORK IN PROGRESS**.
 
 # Overview
 3 tools are currently deployed via Docker and provided in this repository (see folder apps):
-  - A dashboard to configure the forecast tools
+  - A dashboard to configure the forecast tools (currently only available in Russian language)
   - A tool to produce linear regression forecasts as currently employed by the Kyrgyz Hydrometeorological Services
   - A dashboard to visualize and download the forecasts
 
@@ -45,8 +45,11 @@ Potentially sensitive data that needs to be provided by a hydromet (for example 
             A collection of python functions that are used by the linear regression tool.
    |__ bat
        Batch files for Windows that are used to open a browser window to the dashboards
-#       |__ configuration.bat
-            Opens the forecast configuration dashboard in a Google Chrome browser. The content of the bat file may need to be adapted to deployment conditions.
+        |__ configuration_dashboard
+#            |__ configuration.bat
+                 Opens the forecast configuration dashboard in a Google Chrome browser. The content of the bat file may need to be adapted to deployment conditions.
+             |__ Station.ico
+                 Icon for the shortcut to the forecast configuration dashboard.
 #  |__ data
        Example data to demonstrate how the forecast tools work. The Needs to be replaced with data by the hydromet organization for deployment. The data and file formats are described in more detail in the file doc/deployment.md.
         |__ daily_runoff
@@ -58,15 +61,14 @@ Potentially sensitive data that needs to be provided by a hydromet (for example 
             Deployment instructions
 ```
 
-The following figure shows how the software components interact with each other through configuration files and data files.
-
-<img src="doc/www/io.png" alt="IO" width="600"/>
+# Configuration
+The SAPPHIRE Forecast Tools interact with each other through a number of files. The configuration of these files and paths is described in detail in the file [doc/configuration.md](doc/configuration.md).
 
 # Deployment
-The SAPPHIRE Forecast Tools are deployed using the Docker system. The deployment of the forecast tools is described in detail in the file doc/deployment.md.
+The SAPPHIRE Forecast Tools are deployed using the Docker system. The deployment of the forecast tools is described in detail in the file [doc/deployment.md](doc/deployment.md).
 
 # Development
-If you wish to run the forecast tools individually and locally for development purposes, you can do so by following the instructions in the file doc/development.md.
+If you wish to run the forecast tools individually and locally for development purposes, you can do so by following the instructions in the file [doc/development.md](doc/deployment.md).
 
 ## Collaboration
 Input from users is welcome. Please use the GitHub issue tracker to report bugs or suggest improvements. If you would like to contribute to the code, please fork the repository and submit a pull request. We will review the pull request and merge it if it fits the scope of the project. Please note that this is an open source project released under the MIT license, under which all contrubutions fall. Contributors are expected to adhere to the [Contributor Covenant code of conduct](https://www.contributor-covenant.org/).
