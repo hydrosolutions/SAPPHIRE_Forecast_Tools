@@ -17,11 +17,18 @@ Start a Watchtower instance to automatically update the application when a new v
 docker run -d \
   --name watchtower \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  containrrr/watchtower --label-enable --interval 30
+  containrrr/watchtower --label-enable --interval 30 --cleanup
 ```
-The label-enable option tells watchtower to only update containers that have the label com.centurylinklabs.watchtower.enable=true in their run command (see below). The interval option tells watchtower to check for new versions every 30 seconds. After testing, this intervall can be increased.
+The label-enable option tells watchtower to only update containers that have the label com.centurylinklabs.watchtower.enable=true in their run command (see below). The interval option tells watchtower to check for new versions every 30 seconds. After testing, this intervall can be increased. The cleanup option tells watchtower to remove old images after updating the container.
 
 ## Deployment
+The sections below describe the steps that are required to deploy the forecast tools on the host machine.
+
+### .env
+As the file system structure may differ between the development platform and the host machine, the SAPPHIRE forecast tools read in a .env file which may be a copy of the .env_develop file, when run within a docker container.
+
+Copy .env_develop to .env and edit the file where required (if for example the locations for the bulletin templates on the host machine differs from the location of the bulletin templates in this repository).
+
 
 ### Configuration dashboard
 Pull the latest image from Docker Hub:
