@@ -1,6 +1,6 @@
 # Deployment
 
-This repository uses GitHub Actions to automatize the deployment of the forecast tools. Every time a release is published or edited, the updated image will be deployed automatically on the host machine where the Docker repositories are watched for updates. The following section describes the steps that are required on the host machine to deploy the forecast tools.
+This repository uses GitHub Actions to automatize the deployment of the forecast tools. Every time a release is published or edited, the updated image will be deployed automatically on the host machine where the Docker repositories are watched for updates. The following section describes the steps that are required on the host machine to initially deploy the forecast tools.
 
 ## Prerequisites
 Perform the following steps the computer where the forecast tools are deployed.
@@ -31,6 +31,15 @@ As the file system structure may differ between the development platform and the
 
 Copy .env_develop to .env and edit the file where required (if for example the locations for the bulletin templates on the host machine differs from the location of the bulletin templates in this repository).
 
+The following snippet from .env_develop shows the paths that may need to be edited:
+
+**Configuration dashboard:**
+You will have to change the file name to match the administrative boundaries of your country. We recommend that you do not change the path ieasyforecast_gis_directory_path but rather copy your administrative boundary layers to ieasyforecast_gis_directory_path. You can use official shapefile layers by your countries administration or download publicly available layers from the [GADM website](https://gadm.org/data.html). The layers must be in the WGS84 coordinate system (EPSG:4326).
+```
+# In .env adapt the name of the administrative boundaries file to one of your country.
+ieasyforecast_country_borders_file_name=gadm41_CHE_shp/gadm41_CHE_1.shp
+```
+Please note that we do not recommend changing the paths and names of the configuration files in apps/config.
 
 ### Configuration dashboard
 Pull the latest image from Docker Hub:
@@ -39,16 +48,18 @@ docker pull mabesa/sapphire-configuration:latest
 ```
 Run the image:
 ```bash
-docker run -d --label=com.centurylinklabs.watchtower.enable=true -e "IN_DOCKER_CONTAINER=True" -v <full_path_to>/config:/app/apps/config -v <full_path_to>/data:/app/data -p 3647:3647 --name fcdashboard mabesa/sapphire-configuration:latest
+docker run -d --label=com.centurylinklabs.watchtower.enable=true -e "IN_DOCKER_CONTAINER=True" -v <full_path_to>/config:/app/apps/config -v <full_path_to>/data:/app/data -v <full_path_to>/bat:/app/bat -p 3647:3647 --name fcconfig mabesa/sapphire-configuration:latest
 ```
 Replace <full_path_to> with your local path to the folders. The -v option mounts the folders on the host machine to the folders in the docker container. The -p option maps the port 3647 on the host machine to the port 3647 in the docker container. The -e option sets the environment variable IN_DOCKER_CONTAINER to True. This is required to run the dashboard locally in the docker container. The --label option tells watchtower to update the container when a new version is available.
 
 An example run command is:
 ```bash
-docker run -d --label=com.centurylinklabs.watchtower.enable=true -e "IN_DOCKER_CONTAINER=True" -v /home/sarah/SAPPHIRE_Forecast_Tools/apps/config:/app/apps/config -v /home/sarah/SAPPHIRE_Forecast_Tools/data:/app/data -p 3647:3647 --name fcconfiguration mabesa/sapphire-configuration:latest
+docker run -d --label=com.centurylinklabs.watchtower.enable=true -e "IN_DOCKER_CONTAINER=True" -v /home/sarah/SAPPHIRE_Forecast_Tools/apps/config:/app/apps/config -v /home/sarah/SAPPHIRE_Forecast_Tools/data:/app/data -v /home/sarah/SAPPHIRE_Forecast_Tools/bat:/app/bat -p 3647:3647 --name fcconfig mabesa/sapphire-configuration:latest
 ```
 
+Make sure the image and tool names in bat/configuration.bat are correct for the host machine. For example, if you are using a different image name, you will have to replace fcconfig in line 1 with your image name. If you have changed the port number in the run command, you will have to change the port number in line 2 of bat/configuration.bat.
 
+Create a shortcut to bat/configuration_dashboard/configuration.bat on your desktop. You can edit the icon of the shortcut by opening the preferences. Double click the shortcut to open the dashboard in a browser window.
 
 ### Forecast dashboard
 ```bash
