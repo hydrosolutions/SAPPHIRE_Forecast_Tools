@@ -43,6 +43,10 @@ Potentially sensitive data that needs to be provided by a hydromet (for example 
 
         |__ iEasyHydroForecast
             A collection of python functions that are used by the linear regression tool.
+   |__ bat
+       Batch files for Windows that are used to open a browser window to the dashboards
+#       |__ configuration.bat
+            Opens the forecast configuration dashboard in a Google Chrome browser. The content of the bat file may need to be adapted to deployment conditions.
 #  |__ data
        Example data to demonstrate how the forecast tools work. The Needs to be replaced with data by the hydromet organization for deployment. The data and file formats are described in more detail in the file doc/deployment.md.
         |__ daily_runoff

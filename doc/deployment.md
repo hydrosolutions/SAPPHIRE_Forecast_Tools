@@ -8,7 +8,6 @@ Perform the following steps the computer where the forecast tools are deployed.
 ### Download this repository
 Download the [repository](https://github.com/hydrosolutions/SAPPHIRE_Forecast_Tools) to the host machine. The repository can be downloaded as a zip file from the GitHub website. Unzip the file and move the folder to the desired location on the host machine. This allows you to only perform minimal edits to the configuration files within the designed folder structure.
 
-
 ### Install Docker & run Watchtower
 Install the software [Docker](https://docs.docker.com/install/)
 
@@ -20,6 +19,9 @@ docker run -d \
   containrrr/watchtower --label-enable --interval 30 --cleanup
 ```
 The label-enable option tells watchtower to only update containers that have the label com.centurylinklabs.watchtower.enable=true in their run command (see below). The interval option tells watchtower to check for new versions every 30 seconds. After testing, this intervall can be increased. The cleanup option tells watchtower to remove old images after updating the container.
+
+### Install Chrome Browser
+Chrome browser was used to visualized the dashboards in this project. The use of a different browser has not been tested. If you prefer to use a different browser, you will have to edit the bat files bat/configuration.bat and bat/dashboard.bat in the bat folder.
 
 ## Deployment
 The sections below describe the steps that are required to deploy the forecast tools on the host machine.
@@ -45,6 +47,7 @@ An example run command is:
 ```bash
 docker run -d --label=com.centurylinklabs.watchtower.enable=true -e "IN_DOCKER_CONTAINER=True" -v /home/sarah/SAPPHIRE_Forecast_Tools/apps/config:/app/apps/config -v /home/sarah/SAPPHIRE_Forecast_Tools/data:/app/data -p 3647:3647 --name fcconfiguration mabesa/sapphire-configuration:latest
 ```
+
 
 
 ### Forecast dashboard
