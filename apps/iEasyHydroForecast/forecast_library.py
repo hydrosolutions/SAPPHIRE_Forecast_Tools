@@ -720,14 +720,14 @@ class Site:
 
         Args:
             site (Site): The site object to get norm discharge for.
-            pentad (str): The pentad of the year to get norm discharge for.
+            pentad_in_year (str): The pentad of the year to get norm discharge for.
             df (pd.DataFrame): The DataFrame containing the norm discharge data.
 
         Returns:
             str: The norm discharge value.
         '''
         try:
-            # Test that df contains columns 'Code' and 'pentad'
+            # Test that df contains columns 'Code' and 'pentad_in_year'
             if not all(column in df.columns for column in ['Code', 'pentad_in_year']):
                 raise ValueError(f'DataFrame is missing one or more required columns: {"Code", "pentad_in_year"}')
 
@@ -739,8 +739,6 @@ class Site:
 
             # Get the norm discharge for the site
             qnorm = df[(df['Code'] == site.code) & (df['pentad_in_year'] == pentad)]['discharge_avg'].values[0]
-
-            # print(qnorm)
 
             # Write the norm discharge value to self.qnorm
             site.qnorm = round_discharge(qnorm)

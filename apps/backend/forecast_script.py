@@ -425,6 +425,7 @@ if __name__ == "__main__":
     logging.info("-Filtering db_sites for stations ...")
 
     stations_str = [str(station) for station in stations]
+
     db_sites = db_sites[db_sites["site_code"].isin(stations_str)]
     logging.info(
         f"   Producing forecasts for {len(db_sites)} station(s), namely: {db_sites['site_code'].values}"
@@ -593,16 +594,18 @@ if __name__ == "__main__":
     logging.info("-Reading discharge data from Excel sheets ...")
     print("-Reading discharge data from Excel sheets ...")
 
-    # Create a library with the file names for the stations
+    # Get a list of the excel files containing the daily discharge data available
+    # in the data/daily_runoff directory
+    daily_discharge_files = os.listdir(os.getenv("ieasyforecast_daily_discharge_path"))
+
+    # Create a dataframe with the station IDs and the file names. The station
+    # IDs are in the first part of the file names, before the first underscore.
+    # The filenames are the full path to the files.
     library = pd.DataFrame(
         {
-            "station": ["15194", "16936"],
-            "file": [
-                os.getenv("ieasyforecast_daily_discharge_15194"),
-                os.getenv("ieasyforecast_daily_discharge_16936"),
-            ],
-        }
-    )
+            "station": [file.split('_')[0] for file in daily_discharge_files],
+            "file": [os.path.join(os.getenv("ieasyforecast_daily_discharge_path"), file) for file in daily_discharge_files]
+        })
 
     # Initiate the dictionary for the data
     data_dict = {}
@@ -698,7 +701,7 @@ if __name__ == "__main__":
 
     # Combine the data from the DB and the Excel sheets. Check for duplicate
     # dates and keep the data from the DB.
-    combined_data = pd.concat([combined_data, db_data]).drop_duplicates(subset=['Date', 'Code'], keep='last')
+    combined_data = pd.concat([combined_data, db_data]).drop_duplicates(subset=['Date', 'Code'], keep='first')
 
     # Filter combined_data for dates before today (to simulate offline mode)
     combined_data = combined_data[combined_data['Date'] <= today]
@@ -747,19 +750,21 @@ if __name__ == "__main__":
     # Groupp modified_data by Code and calculate the mean over discharge_avg
     # while ignoring NaN values
     norm_discharge = modified_data.reset_index(drop=True).groupby(['Code', 'pentad_in_year'], as_index=False)['discharge_avg'].apply(lambda x: x.mean(skipna=True))
-    # print('DEBUG: norm_discharge: \n', norm_discharge.head(10), '\n',
-    #       norm_discharge.tail(10))
+    print('DEBUG: norm_discharge: \n', norm_discharge.head(20), '\n',
+          norm_discharge.tail(2))
 
     # Get the pentad of the bulletin date. This gives the pentad of the month.
     forecast_pentad = tl.get_pentad(bulletin_date)
     # Get the pentad of the year of the bulletin_date. We perform the linear
     # regression on all data from the same pentad of the year.
     forecast_pentad_of_year = tl.get_pentad_in_year(bulletin_date)
-    # print('\n\n\nDEBUG: bulletin_date: ', bulletin_date)
-    # print('DEBUG: forecast_pentad_of_year: ', forecast_pentad_of_year, '\n\n\n')
+    print('\n\n\nDEBUG: bulletin_date: ', bulletin_date)
+    print('DEBUG: forecast_pentad_of_year: ', forecast_pentad_of_year, '\n\n\n')
 
     # Now we need to write the discharge_avg for the current pentad to the site: Site
+    print("DEBUG: fc_sites: ", fc_sites)
     for site in fc_sites:
+        print(f'    Calculating norm discharge for site {site.code} ...')
         fl.Site.from_df_get_norm_discharge(site, forecast_pentad_of_year, norm_discharge)
 
     print(f'   {len(fc_sites)} Norm discharge calculated, namely:\n{[site.qnorm for site in fc_sites]}')
@@ -812,29 +817,17 @@ if __name__ == "__main__":
 
         # Write this data to a dump (pickle the data) for subsequent visualization
         # in the forecast dashboard.
-        hydrograph_pentad_file = os.path.join(
+        hydrograph_pentad_file_csv = os.path.join(
             os.getenv("ieasyforecast_intermediate_data_path"),
             os.getenv("ieasyforecast_hydrograph_pentad_file"))
 
-        pickleon = open(hydrograph_pentad_file, "wb")
-        pickle.dump(hydrograph_pentad, pickleon)
-        pickleon.close()
-        # write copies of these files to csv
-        # replace .pkl with .csv in the hydrograph_pentad_file
-        hydrograph_pentad_file_csv = hydrograph_pentad_file.replace('.pkl', '.csv')
         # Write the hydrograph_pentad to csv
         hydrograph_pentad.to_csv(hydrograph_pentad_file_csv)
 
-        hydrograph_day_file = os.path.join(
+        hydrograph_day_file_csv = os.path.join(
             os.getenv("ieasyforecast_intermediate_data_path"),
             os.getenv("ieasyforecast_hydrograph_day_file"))
 
-        pickleon = open(hydrograph_day_file, "wb")
-        pickle.dump(hydrograph_day, pickleon)
-        pickleon.close()
-
-        # replace .pkl with .csv in the hydrograph_day_file
-        hydrograph_day_file_csv = hydrograph_day_file.replace('.pkl', '.csv')
         # Write the hydrograph_day to csv
         hydrograph_day.to_csv(hydrograph_day_file_csv)
 
