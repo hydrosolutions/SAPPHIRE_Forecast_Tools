@@ -50,7 +50,7 @@ conda activate my_environment
 ```
 Our workflow may be inconsistent but here is what worked for us: We then installed the following packages in the terminal (note that this will take some time):
 ```bash
-cd apps/linreg
+cd apps/backend
 pip install -r requirements.txt
 ```
 The backend can read data from excel and/or from the iEasyHydro database (both from the online and from the local version of the software). If you wish to use the iEasyHydro database, you will need to install the iEasyHydro SKD library. More information on this library that can be used to access your organizations iEasyHydro database can be found [here](https://github.com/hydrosolutions/ieasyhydro-python-sdk). You will further need to manually install the library [iEasyReports](https://github.com/hydrosolutions/ieasyreports) that allows the backend of the forecast tools to write bulletins in a similar fashion as the software iEasyHydro. And finally you will need to load the iEasyHydroForecast library that comes with this package. You will therefore further need to install the following packages in the terminal:
