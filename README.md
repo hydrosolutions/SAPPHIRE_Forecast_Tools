@@ -10,7 +10,7 @@ Note that this repository is **WORK IN PROGRESS**.
 # Overview
 3 tools are currently deployed via Docker and provided in this repository (see folder apps):
   - A dashboard to configure the forecast tools (currently only available in Russian language)
-  - A tool to produce linear regression forecasts as currently employed by the Kyrgyz Hydrometeorological Services
+  - A tool to produce forecasts (in the present version linear regressions as currently employed by the Kyrgyz Hydrometeorological Services)
   - A dashboard to visualize and download the forecasts
 
 ## Folder structure
@@ -19,6 +19,23 @@ Potentially sensitive data that needs to be provided by a hydromet (for example 
 ```
   SAPPHIRE_FORECAST_TOOLS
    |__ apps
+       The software components of the SAPPHIRE Forecast Tools.
+        |__ backend
+            The backend of the forecast tools. This is the component that produces the forecasts.
+             |__ .dockerignore
+                 Lists files and folders that are not copied to the docker image.
+             |__ Dockerfile
+                 Dockerfile to build the docker image for the forecast backend.
+             |__ forecast_script.py
+                 The python script that runs the forecast backend.
+             |__ requirements.txt
+                 List of python packages that need to be installed in the docker image.
+             |__ run_offline_mode.py
+                 The python script that runs the forecast backend in offline mode. Used for testing and development and to produce hindcasts.
+             |__ run_online_mode.py
+                 The python script that runs the forecast backend in online mode. Used in deployment.
+             |__ setup.py
+                 Setup file for the forecast backend. Makes sure the backend finds the iEasyHydroForecast library.
         |__ config
             Configuration of the forecast tools. The content of the files needs to be adapted to deployment conditions.
 #            |__ .env
@@ -40,7 +57,6 @@ Potentially sensitive data that needs to be provided by a hydromet (for example 
                  Dockerfile to build the docker image for the forecast configuration dashboard.
              |__ forecast_configuration.R
                  The R script that runs the forecast configuration dashboard.
-
         |__ iEasyHydroForecast
             A collection of python functions that are used by the linear regression tool.
    |__ bat
@@ -56,9 +72,22 @@ Potentially sensitive data that needs to be provided by a hydromet (for example 
             Daily discharge data for the development of the forecast models. The data is stored in Excel files. The paths to these files are configured in the .env file.
         |__ GIS
             GIS data for the forecast configuration dashboard. The data is stored in shape files. The paths to these files are configured in the .env file.
+        |__ templates
+            Templates for the forecast bulletins. The templates are stored in Excel files. The paths to these files are configured in the .env file.
+#            |__ pentad_forecast_bulletin_template.xlsx
+                 Template for the pentad forecast bulletin. Edit accoring to your reporting requirements.
    |__ doc
+       Documentation of the forecast tools.
+        |__ www
+            Static files (images) used by the documentation.
+        |__ configuration.md
+            Configuration instructions
         |__ deployment.md
             Deployment instructions
+        |__ development.md
+            Instructions for local development
+        |__ user_guide.md
+            User guide with instructions of how to use the forecast tools once they are deployed.
 ```
 
 # Configuration
@@ -69,6 +98,9 @@ The SAPPHIRE Forecast Tools are deployed using the Docker system. The deployment
 
 # Development
 If you wish to run the forecast tools individually and locally for development purposes, you can do so by following the instructions in the file [doc/development.md](doc/deployment.md).
+
+# User guide
+Once the forecast tools are deployed, the user can configure the forecast tools and visualize and download the forecasts using the forecast configuration dashboard and the forecast dashboard. The user guide is available in Russian language in the file [doc/user_guide.md](doc/user_guide.md).
 
 ## Collaboration
 Input from users is welcome. Please use the GitHub issue tracker to report bugs or suggest improvements. If you would like to contribute to the code, please fork the repository and submit a pull request. We will review the pull request and merge it if it fits the scope of the project. Please note that this is an open source project released under the MIT license, under which all contrubutions fall. Contributors are expected to adhere to the [Contributor Covenant code of conduct](https://www.contributor-covenant.org/).

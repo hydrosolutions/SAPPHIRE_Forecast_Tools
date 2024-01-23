@@ -1,0 +1,3 @@
+# Python scripts for hydrological forecasting using linear regression
+The forecast tools were developed to digitize the short-term forecasting process
+of the Kyrgyz Hydromet in the SAPPHIRE project in 2023 & 2024.

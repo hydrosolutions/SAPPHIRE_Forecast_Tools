@@ -50,4 +50,25 @@ ieasyforecast_country_borders_file_name=gadm41_CHE_shp/gadm41_CHE_1.shp
 ```
 Please note that we do not recommend changing the paths and names of the configuration files in apps/config.
 
+### Configuration of the iEasyHydro SDK library
+The SAPPHIRE Forecast Tools are designed to be able to use the iEasyHydro database (either the online or the locally installed version) as a source of discharge data. The iEasyHydro SDK library is used to access the iEasyHydro database. For the following instructions, we assume that you have access to the iEasyHydro database. If you do not have access, you should discuss with you IT administration.
+```
+# In .env_develop, configure the iEasyHydro SDK library to access your
+# organizations iEasyHydro database.
+IEASYHYDRO_HOST=http://localhost:9000
+IEASYHYDRO_USERNAME=<user_name>
+IEASYHYDRO_PASSWORD=<password>
+ORGANIZATION_ID=1
+```
+You will need to adapt the port, user_name and password.
 
+If you need to configure the forecast tools for the deployed version of the software, you will need to adapt the following lines in .env:
+```
+# In .env, configure the iEasyHydro SDK library to access your
+# organizations iEasyHydro database.
+IEASYHYDRO_HOST=http://host.docker.internal:9000
+IEASYHYDRO_USERNAME=<user_name>
+IEASYHYDRO_PASSWORD=<password>
+ORGANIZATION_ID=1
+```
+You will need to adapt the port, user_name and password.
