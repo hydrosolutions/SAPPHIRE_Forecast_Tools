@@ -311,7 +311,7 @@ if __name__ == "__main__":
         os.getenv("ieasyforecast_config_file_all_stations"))
 
     config_all = fl.load_all_station_data_from_JSON(config_all_file)
-    print("\n\nDEBUG: config_all:\n", config_all)
+
     logging.info(f"   {len(config_all)} discharge station(s) found, namely\n{config_all['code'].values}")
 
     ## Merge information from db_sites and config_all. This is in fact only
@@ -459,8 +459,6 @@ if __name__ == "__main__":
         if isinstance(db_sites[col][0], list):
             db_sites[col] = db_sites[col].apply(lambda x: x[0])
 
-    print("\n\nDEBUG: db_sites:\n", db_sites)
-
     fc_sites = fl.Site.from_dataframe(
         db_sites[["site_code", "site_name", "river_ru", "punkt_ru", "latitude", "longitude", "region", "basin"]]
     )
@@ -479,6 +477,9 @@ if __name__ == "__main__":
         print(
             f'   {len(fc_sites)} Dangerous discharge gotten from DB, namely:\n{[site.qdanger for site in fc_sites]}')
     else:
+        # Assign " " to qdanger for each site
+        for site in fc_sites:
+            site.qdanger = " "
         print("INFO: No access to iEasyHydro database. Therefore no dangerous discharge is assigned to sites.")
 
     # The forecast is done one day before the beginning of each pentad
@@ -776,19 +777,14 @@ if __name__ == "__main__":
     # Groupp modified_data by Code and calculate the mean over discharge_avg
     # while ignoring NaN values
     norm_discharge = modified_data.reset_index(drop=True).groupby(['Code', 'pentad_in_year'], as_index=False)['discharge_avg'].apply(lambda x: x.mean(skipna=True))
-    print('DEBUG: norm_discharge: \n', norm_discharge.head(20), '\n',
-          norm_discharge.tail(2))
 
     # Get the pentad of the bulletin date. This gives the pentad of the month.
     forecast_pentad = tl.get_pentad(bulletin_date)
     # Get the pentad of the year of the bulletin_date. We perform the linear
     # regression on all data from the same pentad of the year.
     forecast_pentad_of_year = tl.get_pentad_in_year(bulletin_date)
-    print('\n\n\nDEBUG: bulletin_date: ', bulletin_date)
-    print('DEBUG: forecast_pentad_of_year: ', forecast_pentad_of_year, '\n\n\n')
 
     # Now we need to write the discharge_avg for the current pentad to the site: Site
-    print("DEBUG: fc_sites: ", fc_sites)
     for site in fc_sites:
         print(f'    Calculating norm discharge for site {site.code} ...')
         fl.Site.from_df_get_norm_discharge(site, forecast_pentad_of_year, norm_discharge)
@@ -888,10 +884,7 @@ if __name__ == "__main__":
         for site in fc_sites:
             fl.Site.from_DB_get_predictor(ieh_sdk, site, predictor_dates, lagdays=20)
 
-        logging.info(
-            f'   {len(fc_sites)} Predictor discharge gotten from DB, namely:\n{[site.predictor for site in fc_sites]}')
-        print(f'   {len(fc_sites)} Predictor discharge gotten from DB, namely:\n{[site.predictor for site in fc_sites]}')
-
+        # Special case for virtual stations
         # For reservoir some inflows there is no data in the DB
         # Check if code 16936 is in fc_sites
         # If it is, then we need to get the predictor from the sum of other sites,
@@ -913,7 +906,6 @@ if __name__ == "__main__":
                 if site.code == '16936':
                     site.predictor = tok_predictor
 
-        #print(f'   {len(fc_sites)} Predictor discharge gotten from DB, namely:\n{[[site.code, site.predictor] for site in fc_sites]}')
         logging.info(f'   {len(fc_sites)} Predictor discharge gotten from DB, namely:\n{[[site.code, site.predictor] for site in fc_sites]}')
         print(f'   {len(fc_sites)} Predictor discharge gotten from DB, namely:\n{[[site.code, site.predictor] for site in fc_sites]}')
 
@@ -1009,8 +1001,6 @@ if __name__ == "__main__":
             requires_header=False,
             custom_settings=settings
         )
-
-        print("\n\nDEBUG: fc_sites: \n", fc_sites[0].river_name, fc_sites[0].punkt_name)
 
         report_generator.validate()
         report_generator.generate_report(list_objects=fc_sites, output_filename=filename)
