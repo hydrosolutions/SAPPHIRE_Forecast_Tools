@@ -106,7 +106,7 @@ if __name__ == "__main__":
     # file to use
     if os.getenv("IN_DOCKER_CONTAINER") == "True":
         print(f"Running in docker container. Loading environment variables from .env")
-        env_file_path = "../config/.env"
+        env_file_path = "apps/config/.env"
         load_dotenv(env_file_path)
 
     else:
@@ -428,7 +428,7 @@ if __name__ == "__main__":
             restrict_stations_config = json.load(json_file)
             restrict_stations = restrict_stations_config["stationsID"]
             print("WARNING: Station selection for forecasting restricted to: ", restrict_stations)
-            print("         set ieasyforecast_restrict_stations_file in .env or .env_develop to null to remove restriction.")
+            print("         To remove restriction set ieasyforecast_restrict_stations_file in .env or .env_develop to null.")
 
     # Only keep stations that are in the file ieasyforecast_restrict_stations_file
     stations = [station for station in stations if station in restrict_stations]
@@ -624,6 +624,25 @@ if __name__ == "__main__":
     # Get a list of the excel files containing the daily discharge data available
     # in the data/daily_runoff directory
     daily_discharge_files = os.listdir(os.getenv("ieasyforecast_daily_discharge_path"))
+
+    # Print a warning if there are no files found in the ieasyforecast_daily_discharge_path
+    if len(daily_discharge_files) == 0:
+        print("WARNING: No files found in the directory data/daily_runoff.")
+        # If in addition to seeing no excel sheets, we do not have access to the
+        # iEasyHydro databae, throw an error and exit the script.
+        if backend_has_access_to_db == False:
+            print("ERROR: No files found in the directory data/daily_runoff and no access to the iEasyHydro database.")
+            print("       Please check the data/daily_runoff directory and/or the access to the iEasyHydro database.")
+            print("       No forecasts possible. Exiting the script.")
+            logging.error("No files found in the directory data/daily_runoff and no access to the iEasyHydro database.")
+            logging.error("Please check the data/daily_runoff directory and/or the access to the iEasyHydro database.")
+            logging.error("No forecasts possible. Exiting the script.")
+            exit()
+
+    # If an excel file is open on Mac OS, it creates a temporary file with the
+    # same name as the original file but starting with a tilde (~).
+    # We want to ignore these files.
+    daily_discharge_files = [file for file in daily_discharge_files if not file.startswith('~')]
 
     # Create a dataframe with the station IDs and the file names. The station
     # IDs are in the first part of the file names, before the first underscore.

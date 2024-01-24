@@ -156,3 +156,6 @@ apps/configuration_dashboard/.Rhistory
 
 # Ignore all files in data/reports
 data/reports/*
+
+# Ignore temporary files
+data/daily_runoff/~*.xlsx

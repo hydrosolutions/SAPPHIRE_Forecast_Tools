@@ -39,7 +39,7 @@ COPY apps/backend /app/apps/backend
 # for vulnerabilities in dockerhub. The -y flag automatically anwwers yes to all
 # prompts.
 RUN --mount=type=cache,target=/root/.cache/pip \
-    --mount=type=bind,source=./pentad_forecast_linreg/requirements.txt,target=/app/requirements.txt \
+    --mount=type=bind,source=apps/backend/requirements.txt,target=/app/apps/backend/requirements.txt \
     # Update the packages to the latest OS version
     apt-get update && \
     apt-get install -y gcc git libkrb5-dev && \
@@ -51,13 +51,13 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     apt-get clean && \
     # update python packages \
     pip install --upgrade pip setuptools wheel tornado && \
-    pip install --trusted-host pypi.python.org -r requirements.txt && \
+    pip install --trusted-host pypi.python.org -r /app/apps/backend/requirements.txt && \
     pip install git+https://github.com/hydrosolutions/ieasyreports.git@main && \
     pip install git+https://github.com/hydrosolutions/ieasyhydro-python-sdk && \
-    pip install --no-cache-dir ./iEasyHydroForecast
+    pip install --no-cache-dir /app/apps/iEasyHydroForecast
 
 # Expose the port that the application listens on.
 EXPOSE 8801
 
 # Run the application.
-CMD ["sh", "-c", "PYTHONPATH=/app/iEasyHydroForecast python run_offline_mode.py"]
+CMD ["sh", "-c", "PYTHONPATH=/app/apps/iEasyHydroForecast python apps/backend/run_offline_mode.py"]

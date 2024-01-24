@@ -14,12 +14,14 @@ from dotenv import load_dotenv
 # Load environment variables
 if os.getenv("IN_DOCKER_CONTAINER") == "True":
     print(f"Running in docker container. Loading environment variables from .env")
-    env_file_path = "../config/.env"
+    env_file_path = "apps/config/.env"
     load_dotenv(env_file_path)
 else:
     print(f"Running locally. Loading environment variables from .env_develop")
     env_file_path = "../config/.env_develop"
     load_dotenv(env_file_path)
+# Print if a file exists at the env_file_path location
+print(f"File exists at {env_file_path}: {os.path.isfile(env_file_path)}")
 
 # Check if the file ieasyforecast_last_successful_run_file is available in
 # ieasyforecast_intermediate_data_path.
@@ -56,6 +58,9 @@ while current_day <= date_end:
     # Call main.py with the current date as a command-line argument
     # Add the file as argument to forecast.py can identify if it is called from
     # run_offline_mode.py or from run_online_mode.py
-    subprocess.run(["python", "forecast_script.py", str(current_day), __file__])
+    if os.getenv("IN_DOCKER_CONTAINER") == "True":
+        subprocess.run(["python3", "apps/backend/forecast_script.py", str(current_day), __file__])
+    else:
+        subprocess.run(["python", "forecast_script.py", str(current_day), __file__])
     # Increment the current day by one day
     current_day += datetime.timedelta(days=1)

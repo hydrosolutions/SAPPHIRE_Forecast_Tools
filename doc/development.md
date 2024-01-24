@@ -84,7 +84,7 @@ docker build --no-cache -t station_dashboard -f ./apps/configuration_dashboard/d
 ```
 Run the image locally for testing (not for deployment). Replace <full_path_to> with your local path to the folders.
 ```bash
-docker run -e "IN_DOCKER_CONTAINER=True" -v <full_path_to>/config:/app/apps/config -v <full_path_to>/data:/app/data -p 3647:3647 --name station_dashboard
+docker run -e "IN_DOCKER_CONTAINER=True" -v <full_path_to>/config:/app/apps/config -v <full_path_to>/data:/app/data -p 3647:3647 --name station_dashboard_container station_dashboard
 ```
 
 ### Backend
@@ -92,7 +92,10 @@ The backend is dockerized using the Dockerfile in the apps/backend folder. Docke
 ```bash
 docker build --no-cache -t forecast_backend -f ./apps/backend/Dockerfile .
 ```
-
+Run the image locally for testing (not for deployment). Replace <full_path_to> with your local path to the folders.
+```bash
+docker run -e "IN_DOCKER_CONTAINER=True" -v <full_path_to>/config:/app/apps/config -v <full_path_to>/data:/app/data -v <full_path_to>/internal_data:/app/apps/internal_data -p 3647:3647 --name forecast_backend_container forecast_backend
+```
 
 
 
