@@ -20,22 +20,22 @@ ENV PYTHONUNBUFFERED=1
 # is running in a container.
 ENV IN_DOCKER_CONTAINER=true
 
-# Setting the working directory to /app 
+# Setting the working directory to /app
 WORKDIR /app
 
 # Copy the source code into the container.
-# Note: It is not possible to include files from a parent directory in a docker 
-# image. The way to do it would  
-COPY ./iEasyHydroForecast/ ./iEasyHydroForecast
-# All files in the current directory are copied into the container into 
+# Note: It is not possible to include files from a parent directory in a docker
+# image. The way to do it would
+COPY apps/iEasyHydroForecast/ /app/apps/iEasyHydroForecast
+# All files in the current directory are copied into the container into
 # directory app.
-COPY ./pentad_forecast_linreg/ /app
+COPY apps/backend /app/apps/backend
 
 # Download dependencies as a separate step to take advantage of Docker's caching.
 # Leverage a cache mount to /root/.cache/pip to speed up subsequent builds.
 # Leverage a bind mount to requirements.txt to avoid having to copy them into
 # into this layer.
-# Update libraries of the operating system. Especially the ones which are flaged 
+# Update libraries of the operating system. Especially the ones which are flaged
 # for vulnerabilities in dockerhub. The -y flag automatically anwwers yes to all
 # prompts.
 RUN --mount=type=cache,target=/root/.cache/pip \
@@ -54,10 +54,10 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --trusted-host pypi.python.org -r requirements.txt && \
     pip install git+https://github.com/hydrosolutions/ieasyreports.git@main && \
     pip install git+https://github.com/hydrosolutions/ieasyhydro-python-sdk && \
-    pip install --no-cache-dir ./iEasyHydroForecast 
+    pip install --no-cache-dir ./iEasyHydroForecast
 
 # Expose the port that the application listens on.
 EXPOSE 8801
 
 # Run the application.
-CMD ["sh", "-c", "PYTHONPATH=/app/iEasyHydroForecast python run_online_mode.py"]
+CMD ["sh", "-c", "PYTHONPATH=/app/iEasyHydroForecast python run_offline_mode.py"]

@@ -105,7 +105,7 @@ if __name__ == "__main__":
     # file to use
     if os.getenv("IN_DOCKER_CONTAINER") == "True":
         print(f"Running in docker container. Loading environment variables from .env")
-        env_file_path = "config/.env"
+        env_file_path = "../config/.env"
         load_dotenv(env_file_path)
 
     else:
@@ -135,6 +135,22 @@ if __name__ == "__main__":
     if day not in days :
         print(f"Run for date {today}. No forecast date, no forecast will be run.")
         logging.info(f"Run for date {today}. No forecast date, no forecast will be run.")
+        # Store last successful run date
+        print("Storing last successful run date ...")
+        logging.info("Storing last successful run date ...")
+
+        # Path to the file
+        last_run_file = os.path.join(
+            os.getenv("ieasyforecast_intermediate_data_path"),
+            os.getenv("ieasyforecast_last_successful_run_file")
+        )
+        # Overwrite the file with the current date
+        with open(last_run_file, "w") as f:
+            f.write(today.strftime("%Y-%m-%d"))
+            f.flush()
+
+        print("   ... done")
+        logging.info("   ... done")
         exit()  # exit the program
     else:
         print(f"Runnig forecast for {today}.")
@@ -1127,4 +1143,23 @@ if __name__ == "__main__":
 
     # endregion
     print("   ... done")
+
+    # === Store last successful run date ===
+    # region Store last successful run date
+    print("Storing last successful run date ...")
+    logging.info("Storing last successful run date ...")
+
+    # Path to the file
+    last_run_file = os.path.join(
+        os.getenv("ieasyforecast_intermediate_data_path"),
+        os.getenv("ieasyforecast_last_successful_run_file")
+    )
+    # Overwrite the file with the current date
+    with open(last_run_file, "w") as f:
+        f.write(today_str)
+        f.flush()
+
+    print("   ... done")
+    logging.info("   ... done")
+    # endregion
 # endregion

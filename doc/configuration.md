@@ -2,6 +2,8 @@
 
 The different software components of the SAPPHIRE Forecast Tools interact with each other through input and output files (see following figure for an overview)
 
+TODO: UPDATE FIGURE
+
 <img src="www/io.png" alt="IO" width="700"/>
 
 ## Configuration of the forecast tools
@@ -32,7 +34,7 @@ The SAPPHIRE forecast tools need to have an overview over which stations are ava
 - code (int): Gauge station code. Example value: 12176
 
 ### Intermediate results of the forecast tools
-Intermediate results are written by the linear regression tool and read by the forecast dashboard. We recommend not changing the path ieasyforecast_intermediate_data_path nor the names of the intermediate files.
+Intermediate results are written by the linear regression tool and read by the forecast dashboard. We recommend not changing the path ieasyforecast_intermediate_data_path nor the names of the intermediate files and we further recommend not manually editing any files in the path ieasyforecast_intermediate_data_path. The files are written by the backend tool and read by the forecast dashboard.
 ```
 # Snipped of .env. We recommend NOT editing the following lines.
 ieasyforecast_intermediate_data_path=../internal_data
@@ -40,7 +42,11 @@ ieasyforecast_hydrograph_day_file=hydrograph_day.pkl
 ieasyforecast_hydrograph_pentad_file=hydrograph_pentad.pkl
 ieasyforecast_results_file=offline_forecasts_pentad.csv
 ```
-
+The backend further stores the date of the last successful run in the file ieasyforecast_last_successful_run_file. The file is stored under ieasyforecast_intermediate_data_path and is used to determine from which date the forecast should be run. It is updated by the backend.
+```
+# Snipped of .env. We recommend NOT editing the following lines.
+ieasyforecast_last_successful_run_file=last_successful_run.txt
+```
 
 ### Configuration of the forecast configuration dashboard
 You will have to change the file name to match the administrative boundaries of your country. We recommend that you do not change the path ieasyforecast_gis_directory_path but rather copy your administrative boundary layers to ieasyforecast_gis_directory_path. You can use official shapefile layers by your countries administration or download publicly available layers from the [GADM website](https://gadm.org/data.html). The layers must be in the WGS84 coordinate system (EPSG:4326).

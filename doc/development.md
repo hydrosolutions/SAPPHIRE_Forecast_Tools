@@ -38,6 +38,7 @@ In your Finder or Explorer window, navigate to apps/configuration_dashboard/ and
 You can verify your confirmed edits in the dashboard in your local copies of the files apps/config/config_output.json and apps/config/config_station_selection.json.
 
 ### The backend
+#### Prerequisites
 We recommend the use of Visual Studio Code for developping the backend. The installation instructions can be found [here](https://code.visualstudio.com/download). You will need to install the Python extension for Visual Studio Code. The installation instructions can be found [here](https://code.visualstudio.com/docs/languages/python).
 
 We further use conda for managing the Python environment. The installation instructions can be found [here](https://docs.conda.io/projects/conda/en/latest/user-guide/install/). Once conda is installed, you can create a new conda environment by running the following command in the terminal:
@@ -61,26 +62,13 @@ pip install -e ../iEasyHydroForecast
 ```
 If you wish to use data from your organizations iEasyHydro database, you will need to configure the apps/config/.env_develop file (see [doc/configuration.md](doc/configuration.md) for more detailed instructions). We recommend testing your configuration by running a few example queries from the [documentation of the SDK library](https://github.com/hydrosolutions/ieasyhydro-python-sdk) in a jupyter notebook.
 
+#### How to run the backend locally
 You can then run the forecast backend in the offline mode to simulate opearational forecasting in the past by running the following command in the terminal:
 ```bash
-python run_offline_mode.py 2000 1 1 2000 1 31
+python run_offline_mode.py 2010 1 1 2010 1 31
 ```
-This will run the linear regression tool for the period of January first 2000 to January 31st 2000. You can change the dates to your liking. The tool will write the results to the file apps/internal_data/forecasts_pentad.csv.
-
-To run the linear regression tool in the online mode, type the following command in the terminal:
-```bash
-python run_online_mode.py
-```
-
-Both online and offline mode will produce the following outputs:
-For review by the user:
-- A forecast bulletin for each forecast horizon and station in the folder data/bulletins
-- If the option is selected in the configuration dashboard, an excel sheet for each station in the folder data/pentadal_forecasts containing the linear regression forecasts as traditionally produced by the Kyrgyz Hydrometeorological Services
-
-Intermediate results for internal use:
-- Daily discharge data for each station in the folder apps/internal_data/hydrographs_day.pkl
-- Pentadal discharge data for each station in the folder apps/internal_data/hydrographs_pentad.pkl
-- A csv file with the forecasts for each station in the folder apps/internal_data/forecasts_pentad.csv
+This will run the linear regression tool for the period of January first 2010 to January 31st 2010. You can change the dates to your liking but make sure that you have data available for the production of the linear regression models and for forecasting. The tool will write the results to the file *ieasyforecast_results_file*, apps/internal_data/forecasts_pentad.csv.
+If you have daily data available from 2000 to the present time, we recommend starting the forecast from 2010 onwards. This gives the backend tool 10 years of data (from 2000 to 2010) to build a linear regression model. Each year, the linear regression model will be updated with the data from the previous year. That means, the parameters of the linear regression model $y=a \cdot x+b$ will change each year. If you are interested in the model parameters, they are provided in the *ieasyforecast_results_file*, apps/internal_data/forecasts_pentad.csv.
 
 ### Forecast dashboard
 
@@ -99,7 +87,11 @@ Run the image locally for testing (not for deployment). Replace <full_path_to> w
 docker run -e "IN_DOCKER_CONTAINER=True" -v <full_path_to>/config:/app/apps/config -v <full_path_to>/data:/app/data -p 3647:3647 --name station_dashboard
 ```
 
-
+### Backend
+The backend is dockerized using the Dockerfile in the apps/backend folder. Dockerization has been tested under both Ubuntu running on Windows or Mac OS operating systems. To build the docker image locally, run the following command in the root directory of the repository:
+```bash
+docker build --no-cache -t forecast_backend -f ./apps/backend/Dockerfile .
+```
 
 
 
