@@ -1,4 +1,4 @@
-name: Test-deploy forecast configuration
+name: Test-deploy backend
 
 env:
     IMAGE_NAME: mabesa/sapphire-backend
