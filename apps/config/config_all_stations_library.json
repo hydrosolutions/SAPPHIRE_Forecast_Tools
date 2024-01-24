@@ -5,13 +5,13 @@
                 1.0
             ],
             "basin": [
-                "Sihl"
+                "Rhein"
             ],
             "lat": [
                 47.368327
             ],
             "long": [
-                8.527410
+                8.52741
             ],
             "country": [
                 "Switzerland"
@@ -42,6 +42,9 @@
             ],
             "code": [
                 12176
+            ],
+            "header": [
+                "12176"
             ]
         },
         "12256": {
@@ -49,7 +52,7 @@
                 2.0
             ],
             "basin": [
-                "Rosegbach"
+                "Inn"
             ],
             "lat": [
                 46.489914
@@ -86,6 +89,56 @@
             ],
             "code": [
                 12256
+            ],
+            "header": [
+                "12256"
+            ]
+        },
+        "12305": {
+            "id": [
+                3.0
+            ],
+            "basin": [
+                "Rhein"
+            ],
+            "lat": [
+                47.398081
+            ],
+            "long": [
+                9.257193
+            ],
+            "country": [
+                "Switzerland"
+            ],
+            "is_virtual": [
+                true
+            ],
+            "region": [
+                "East"
+            ],
+            "site_type": [
+                "automatic-discharge"
+            ],
+            "name_ru": [
+                "Glatt - Zellersmühle"
+            ],
+            "organization_id": [
+                1
+            ],
+            "elevation": [
+                0.0
+            ],
+            "river_ru": [
+                "Glatt"
+            ],
+            "punkt_ru": [
+                "Zellersmühle"
+            ],
+            "code": [
+                12305
+            ],
+            "header": [
+                "12305"
             ]
         }
     }

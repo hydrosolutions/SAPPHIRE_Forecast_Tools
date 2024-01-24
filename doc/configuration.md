@@ -2,6 +2,8 @@
 
 The different software components of the SAPPHIRE Forecast Tools interact with each other through input and output files (see following figure for an overview)
 
+TODO: UPDATE FIGURE
+
 <img src="www/io.png" alt="IO" width="700"/>
 
 ## Configuration of the forecast tools
@@ -15,7 +17,7 @@ ieasyforecast_config_file_output=config_output.json
 ```
 
 ### The config all stations library file
-The SAPPHIRE forecast tools need to have an overview over which stations are available for forecasting. This information is stored in the config_all_stations_library.json file. The file is a list of dictionaries, where each dictionary contains information about one station. The station code is used as the key of the dictionary. Please note that the present version of the software it is assumed that gauge stations do not start with the character '3'. Currently, only the Russian river and site names are used in the forecast dashboard. Please refer to the file config/config_all_station_library.json for a working example. All entries marked with an * are exported by the iEasyHydro SKD library from the iEasyHydro database by default but the values are not used in the Forecast Tools. If you have to set up the all stations configuration file manually, you may use dummy data for the entries marked with *. The following information is stored for each station:
+The SAPPHIRE forecast tools need to have an overview over which stations are available for forecasting. This information is stored in the config_all_stations_library.json file. The file is a list of dictionaries, where each dictionary contains information about one station. The station code is used as the key of the dictionary. Please note that the present version of the software it is assumed that gauge stations start with the character '1'. Currently, only the Russian river and site names are used in the forecast dashboard. Please refer to the file config/config_all_station_library.json for a working example. All entries marked with an * are exported by the iEasyHydro SKD library from the iEasyHydro database by default but the values are not used in the Forecast Tools. If you have to set up the all stations configuration file manually, you may use dummy data for the entries marked with *. The following information is stored for each station:
 - *id (float): Site identifier exported from iEasyHydro SKD. Example value: 1.0
 - basin (string): Name of the river basin. Example value: "Sihl"
 - lat (float): Latitude of station. Example value: 47.368327
@@ -32,7 +34,7 @@ The SAPPHIRE forecast tools need to have an overview over which stations are ava
 - code (int): Gauge station code. Example value: 12176
 
 ### Intermediate results of the forecast tools
-Intermediate results are written by the linear regression tool and read by the forecast dashboard. We recommend not changing the path ieasyforecast_intermediate_data_path nor the names of the intermediate files.
+Intermediate results are written by the linear regression tool and read by the forecast dashboard. We recommend not changing the path ieasyforecast_intermediate_data_path nor the names of the intermediate files and we further recommend not manually editing any files in the path ieasyforecast_intermediate_data_path. The files are written by the backend tool and read by the forecast dashboard.
 ```
 # Snipped of .env. We recommend NOT editing the following lines.
 ieasyforecast_intermediate_data_path=../internal_data
@@ -40,7 +42,11 @@ ieasyforecast_hydrograph_day_file=hydrograph_day.pkl
 ieasyforecast_hydrograph_pentad_file=hydrograph_pentad.pkl
 ieasyforecast_results_file=offline_forecasts_pentad.csv
 ```
-
+The backend further stores the date of the last successful run in the file ieasyforecast_last_successful_run_file. The file is stored under ieasyforecast_intermediate_data_path and is used to determine from which date the forecast should be run. It is updated by the backend.
+```
+# Snipped of .env. We recommend NOT editing the following lines.
+ieasyforecast_last_successful_run_file=last_successful_run.txt
+```
 
 ### Configuration of the forecast configuration dashboard
 You will have to change the file name to match the administrative boundaries of your country. We recommend that you do not change the path ieasyforecast_gis_directory_path but rather copy your administrative boundary layers to ieasyforecast_gis_directory_path. You can use official shapefile layers by your countries administration or download publicly available layers from the [GADM website](https://gadm.org/data.html). The layers must be in the WGS84 coordinate system (EPSG:4326).
@@ -72,3 +78,12 @@ IEASYHYDRO_PASSWORD=<password>
 ORGANIZATION_ID=1
 ```
 You will need to adapt the port, user_name and password.
+
+### Configuration of the iEasyReports library
+
+### Configuration to facilitate testing of the tools
+During development or deployment, you may want to focus only on selected stations. While all stations can be selected in the forecast configuration dashboard, you may want to limit the stations for which the actual forecast is produced. We use this option during the development of the forecast tools where we focus on a few stations for the implementation of the backend and the forecast dashboard. List the stations you wish to produce forecasts for in the file config_development_restrict_station_selection.json. The file has the same format as config_station_selection.json.
+```
+ieasyforecast_restrict_stations_file=../config/config_development_restrict_station_selection.json
+```
+For the deployment of the software or to not filter for a subset of the stations, you can set the value to null. The backend will check if the station selection is restricted and prints a warning to the console if this is the case so that it is not forgotten during deployment.

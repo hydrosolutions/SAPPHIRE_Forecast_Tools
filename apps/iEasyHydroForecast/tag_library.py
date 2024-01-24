@@ -91,14 +91,12 @@ def add_pentad_in_year_column(df):
 
         # Get the day of the month for each date
         day_series = date_series.dt.day
-        print(day_series)
 
         # Get the month of the year for each date
         month_series = date_series.dt.month
 
         # Calculate the pentad of the month using integer division
         pentad_series = ((day_series - 1) // 5 + 1).clip(upper=6)
-        print(pentad_series)
 
         # If month is 1 then pentad is 1 to 6, if month is 2 then pentad is 7 to 12, etc.
         # Add the month number to the pentad number to get the pentad of the year
