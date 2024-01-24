@@ -87,6 +87,7 @@ if __name__ == "__main__":
     calling_script = args[1]
 
     # Test if the string contains the word "run_offline_mode"
+    # Please note that the online_mode is being deprecated.
     if re.search("run_offline_mode", calling_script):
         # If it does, set the offline_mode flag to True
         offline_mode = True
@@ -310,6 +311,7 @@ if __name__ == "__main__":
         os.getenv("ieasyforecast_config_file_all_stations"))
 
     config_all = fl.load_all_station_data_from_JSON(config_all_file)
+    print("\n\nDEBUG: config_all:\n", config_all)
     logging.info(f"   {len(config_all)} discharge station(s) found, namely\n{config_all['code'].values}")
 
     ## Merge information from db_sites and config_all. This is in fact only
@@ -450,6 +452,14 @@ if __name__ == "__main__":
     ## Formatting db_sites to a list of Sites objects
     print("-Formatting db_sites to a list of Sites objects ...")
     logging.info("-Formatting db_sites to a list of Sites objects ...")
+
+    # Make sure the entries are not lists
+    for col in db_sites.columns:
+        # Check if content is a list
+        if isinstance(db_sites[col][0], list):
+            db_sites[col] = db_sites[col].apply(lambda x: x[0])
+
+    print("\n\nDEBUG: db_sites:\n", db_sites)
 
     fc_sites = fl.Site.from_dataframe(
         db_sites[["site_code", "site_name", "river_ru", "punkt_ru", "latitude", "longitude", "region", "basin"]]
@@ -975,12 +985,8 @@ if __name__ == "__main__":
     print("Writing forecast outputs ...")
     logging.info("Writing forecast bulletin ...")
 
-    # In off-line mode we don't necessarily want to write bulletins (except for
-    # demonstration).
-    if offline_mode == True:
-        write_bulletin = True
-    else:
-        write_bulletin = True
+    # Option to turn off bulletin writing, may be used during development only.
+    write_bulletin = True
 
     # Format the date as a string in the format "YYYY_MM_DD"
     today_str = today.strftime("%Y_%m_%d")
@@ -1003,6 +1009,8 @@ if __name__ == "__main__":
             requires_header=False,
             custom_settings=settings
         )
+
+        print("\n\nDEBUG: fc_sites: \n", fc_sites[0].river_name, fc_sites[0].punkt_name)
 
         report_generator.validate()
         report_generator.generate_report(list_objects=fc_sites, output_filename=filename)
