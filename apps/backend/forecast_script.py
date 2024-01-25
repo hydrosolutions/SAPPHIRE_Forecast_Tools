@@ -1173,7 +1173,7 @@ if __name__ == "__main__":
     )
     # Overwrite the file with the current date
     with open(last_run_file, "w") as f:
-        f.write(today_str)
+        f.write(today.strftime("%Y-%m-%d"))
         f.flush()
 
     print("   ... done")

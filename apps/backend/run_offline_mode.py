@@ -37,6 +37,10 @@ last_run_file = os.path.join(
 try:
     with open(last_run_file, "r") as file:
         last_successful_run_date = file.read()
+        # We expect the date to be in the format YYYY-MM-DD. Let's allow dates
+        # in the format YYYY_MM_DD as well.
+        # If the date is in the format YYYY_MM_DD, replace the _ with -
+        last_successful_run_date = last_successful_run_date.replace("_", "-")
         last_successful_run_date = datetime.datetime.strptime(last_successful_run_date, "%Y-%m-%d").date()
 except FileNotFoundError:
     last_successful_run_date = datetime.date.today() - datetime.timedelta(days=1)

@@ -55,6 +55,22 @@ Create a shortcut to bat/configuration_dashboard/configuration.bat on your deskt
 Now you're done! Double click the shortcut to open the dashboard in a browser window.
 
 ### Backend
+Pull the docker image from Docker Hub. Open a terminal and run the following command:
+```bash
+docker pull mabesa/sapphire-backend:latest
+```
+Run the image:
+```bash
+docker run -d --label=com.centurylinklabs.watchtower.enable=true -e "IN_DOCKER_CONTAINER=True" -v <full_path_to>/apps/config:/app/apps/config -v <full_path_to>/apps/internal_data:/app/apps/internal_data -v <full_path_to>/data:/app/data -v <full_path_to>/bat:/app/bat -p 9000:8801 --name fcbackend mabesa/sapphire-backend:latest
+```
+Replace <full_path_to> with your local path to the folders. The -v option mounts the folders on the host machine to the folders in the docker container. The -e option sets the environment variable IN_DOCKER_CONTAINER to True. This is required to run the dashboard locally in the docker container. The --label option tells watchtower to update the container when a new version is available.
+Note that you'll only need the -p option if you wish to open a port to access the iEasyHydro database. In that case you'll need to make sure the port mapping is correct.
+
+Now we set up the Task Scheduler on Windows to restart the backend every day at 10 a.m. Open the Task Scheduler and create a new task. Give the task a name and select the option to run the task with the highest privileges whether user is logged on or not. Under Triggers select the option to run the task daily at 10 a.m. Under Actions select the bat file /bat/backend/backend.bat. Under Conditions select the option to wake the computer to run the task. Under Settings select the option to stop the existing instance if the task is already running when the task scheduler wants to start it. Click OK to save the task.
+
+TODO: comments about the task scheduler user/user group to choose
+
+To test if the task scheduler works, you can run the task manually. You can also check the task history to see if the task was run successfully.
 
 
 ### Forecast dashboard
