@@ -41,6 +41,13 @@ try:
 except FileNotFoundError:
     last_successful_run_date = datetime.date.today() - datetime.timedelta(days=1)
 
+# Check if the forecasts have already been run for today
+# If yes, exit the program
+# If no, run the forecasts for today
+if last_successful_run_date == datetime.date.today():
+    print("Forecasts have already been run for today. Exiting the program.")
+    sys.exit()
+
 # Set the start and end dates
 # Start date is the last successful run date + 1 day
 # End date is today

@@ -60,4 +60,4 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 EXPOSE 8801
 
 # Run the application.
-CMD ["sh", "-c", "PYTHONPATH=/app/apps/iEasyHydroForecast python apps/backend/run_offline_mode.py"]
+CMD ["sh", "-c", "PYTHONPATH=/app/apps/iEasyHydroForecast python apps/backend/run_offline_mode.py && sleep 86400"]
