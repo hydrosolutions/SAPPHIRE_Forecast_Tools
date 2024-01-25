@@ -5,6 +5,50 @@ from typing import Union
 # region tag get_value_fn function
 
 
+def get_pentad_first_day_of_year(date_str):
+    """
+    Returns the first day of the pentad of the year for a given date string.
+
+    Args:
+        date_str (str): A string representing a date in the format 'YYYY-MM-DD'.
+
+    Returns:
+        str: A string representing the first day of the pentad for the input
+            date string, in the format 'D'.
+
+        If the input date string is not a valid date, returns None.
+    """
+    try:
+        # parse the input date string into a datetime object
+        date = dt.datetime.strptime(date_str, '%Y-%m-%d').date()
+
+    except ValueError:
+        # return None if the input is not a valid date
+        return None
+
+    # Test if the date is using the Gregorian calendar
+    if not is_gregorian_date(date_str):
+        # return None if the input is not using the Gregorian calendar
+        return None
+
+    # calculate the pentad number
+    pentad = (date.day - 1) // 5 + 1
+
+    # make sure the pentad number is not larger than 6
+    pentad = min(pentad, 6)
+
+    # calculate the first day of the pentad
+    first_day = 5 * (pentad - 1) + 1
+
+    # Get the date of the first day of the pentad
+    date_first_day = date.replace(day=first_day)
+
+    # Get day of the year from the date
+    day_of_year = date_first_day.timetuple().tm_yday
+
+    # return the first day of the pentad as a string
+    return str(day_of_year)
+
 def is_gregorian_date(date: Union[str, dt.datetime]) -> bool:
     """
     Check if a date string is using the Gregorian calendar.

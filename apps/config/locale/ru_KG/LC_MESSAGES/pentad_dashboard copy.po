@@ -1,0 +1,245 @@
+# Russian translations for PACKAGE package.
+# Copyright (C) 2024 THE PACKAGE'S COPYRIGHT HOLDER
+# This file is distributed under the same license as the PACKAGE package.
+# Beatrice Marti marti@hydrosolutions.ch, 2024.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: PACKAGE VERSION\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2024-01-22 14:33+0100\n"
+"PO-Revision-Date: 2024-01-22 14:37+0100\n"
+"Last-Translator: Beatrice Marti <marti@hydrosolutions.ch>\n"
+"Language-Team: Russian <marti@hydrosolutions.ch>\n"
+"Language: ru_KG\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=3; plural=(n%10==1 && n%100!=11 ? 0 : n%10>=2 && n"
+"%10<=4 && (n%100<10 || n%100>=20) ? 1 : 2);\n"
+
+#: pentad_dashboard.py:126 pentad_dashboard.py:167
+msgid "Jan"
+msgstr "Янв"
+
+#: pentad_dashboard.py:127 pentad_dashboard.py:168
+msgid "Feb"
+msgstr "Фев"
+
+#: pentad_dashboard.py:128 pentad_dashboard.py:169
+msgid "Mar"
+msgstr "Мар"
+
+#: pentad_dashboard.py:129 pentad_dashboard.py:170
+msgid "Apr"
+msgstr "Апр"
+
+#: pentad_dashboard.py:130 pentad_dashboard.py:171
+msgid "May"
+msgstr "Май"
+
+#: pentad_dashboard.py:131 pentad_dashboard.py:172
+msgid "Jun"
+msgstr "Июн"
+
+#: pentad_dashboard.py:132 pentad_dashboard.py:173
+msgid "Jul"
+msgstr "Июл"
+
+#: pentad_dashboard.py:133 pentad_dashboard.py:174
+msgid "Aug"
+msgstr "Авг"
+
+#: pentad_dashboard.py:134 pentad_dashboard.py:175
+msgid "Sep"
+msgstr "Сен"
+
+#: pentad_dashboard.py:135 pentad_dashboard.py:176
+msgid "Oct"
+msgstr "Окт"
+
+#: pentad_dashboard.py:136 pentad_dashboard.py:177
+msgid "Nov"
+msgstr "Ноя"
+
+#: pentad_dashboard.py:137 pentad_dashboard.py:178
+msgid "Dec"
+msgstr "Дек"
+
+#: pentad_dashboard.py:189
+msgid "Month, pentad in month"
+msgstr "Месяц, пентада в месяце"
+
+#: pentad_dashboard.py:258
+msgid ""
+"Warning: No recent forecast available for the selected station. Showing the "
+"latest forecast data available. Please check if the Forecast Tools are "
+"running."
+msgstr "Внимание: для выбранной станции нет свежего прогноза. Показаны последние доступные данные прогноза. Пожалуйста, проверьте, работают ли инструменты прогнозирования."
+
+#: pentad_dashboard.py:542
+msgid "Select discharge station:"
+msgstr "Выбрать гидропост:"
+
+#: pentad_dashboard.py:547
+msgid "Select forecast range for display:"
+msgstr "Выберите диапазон прогноза для отображения:"
+
+#: pentad_dashboard.py:548 pentad_dashboard.py:549 pentad_dashboard.py:905
+msgid "0.674 sigma"
+msgstr "0.674 сигма"
+
+#: pentad_dashboard.py:548
+msgid "Manual range, select value below"
+msgstr "Ручной диапазон, выберите значение ниже"
+
+#: pentad_dashboard.py:554
+msgid "Manual range (%)"
+msgstr "Ручной диапазон %"
+
+#: pentad_dashboard.py:649 pentad_dashboard.py:732 pentad_dashboard.py:838
+#: pentad_dashboard.py:903
+msgid "Station "
+msgstr "Гидропост "
+
+#: pentad_dashboard.py:649 pentad_dashboard.py:732 pentad_dashboard.py:838
+#: pentad_dashboard.py:903
+msgid " on "
+msgstr " за "
+
+#: pentad_dashboard.py:650
+msgid "Sum of runoff over the past 3 days: "
+msgstr "Сумма расхода за 3 дня: "
+
+#: pentad_dashboard.py:650 pentad_dashboard.py:734
+msgid " m3/s"
+msgstr " м3/с"
+
+#: pentad_dashboard.py:651
+msgid "Forecast horizon for "
+msgstr "Горизонт прогноза для "
+
+#: pentad_dashboard.py:651 pentad_dashboard.py:733
+msgid " pentad "
+msgstr " пентада "
+
+#: pentad_dashboard.py:678 pentad_dashboard.py:766
+msgid "Multi-year average"
+msgstr "Среднее многолетнее значение"
+
+#: pentad_dashboard.py:682 pentad_dashboard.py:770
+msgid "Current year"
+msgstr "Текущий год"
+
+#: pentad_dashboard.py:686 pentad_dashboard.py:786
+msgid "90-percentile range"
+msgstr "90-процентильный диапазон"
+
+#: pentad_dashboard.py:690 pentad_dashboard.py:790
+msgid "50-percentile range"
+msgstr "50-процентильный диапазон"
+
+#: pentad_dashboard.py:694
+msgid "Day of the year (starting from January 1)"
+msgstr "День года (начиная с 1 января)"
+
+#: pentad_dashboard.py:694 pentad_dashboard.py:799
+msgid "River discharge [m3/s]"
+msgstr "Расход воды [м3/с]"
+
+#: pentad_dashboard.py:733
+msgid " (forecast for "
+msgstr " (прогноза для "
+
+#: pentad_dashboard.py:733
+msgid ")"
+msgstr ")"
+
+#: pentad_dashboard.py:734 pentad_dashboard.py:735 pentad_dashboard.py:736
+#: pentad_dashboard.py:738
+msgid "m3/s"
+msgstr "м3/с"
+
+#: pentad_dashboard.py:735
+msgid "Expected forecast: "
+msgstr "Ожидаемый прогноз: "
+
+#: pentad_dashboard.py:736 pentad_dashboard.py:738
+msgid "Forecast range: "
+msgstr "Диапазон прогноза: "
+
+#: pentad_dashboard.py:774
+msgid "Current year forecast"
+msgstr "Прогноз на текущий год"
+
+#: pentad_dashboard.py:778 pentad_dashboard.py:782
+msgid "Current year forecast range"
+msgstr "Диапазон прогноза на текущий год"
+
+#: pentad_dashboard.py:778
+msgid "sigma"
+msgstr "сигма"
+
+#: pentad_dashboard.py:799 pentad_dashboard.py:866 pentad_dashboard.py:946
+msgid "Pentad of the month (starting from January 1)"
+msgstr "Пентада месяца (начиная с 1 января)"
+
+#: pentad_dashboard.py:839 pentad_dashboard.py:904
+msgid "data from"
+msgstr "данные за"
+
+#: pentad_dashboard.py:840
+msgid "Average effectiveness: "
+msgstr "Средняя эффективность: "
+
+#: pentad_dashboard.py:844 pentad_dashboard.py:847 pentad_dashboard.py:866
+msgid "Effectiveness"
+msgstr "Эффективность"
+
+#: pentad_dashboard.py:905 pentad_dashboard.py:906
+msgid "Average accuracy"
+msgstr "Средняя оправдываемость"
+
+#: pentad_dashboard.py:946 pentad_dashboard.py:1014
+msgid "Forecast accuracy"
+msgstr "Оправдываемость прогноза"
+
+#: pentad_dashboard.py:988
+msgid "disclaimer_who"
+msgstr "<p>Панель прогнозов была разработана компанией <a href='https://www.hydrosolutions.ch/' target='_blank'>hydrosolutions GmbH</a> в рамках проекта SAPPHIRE Central Asia при финансовой поддержке <a href='https://www.eda.admin.ch/eda/en/home/fdfa/organisation-fdfa/directorates-divisions/sdc.html' target='_blank'>Швейцарского Агентства Развития и Сотрудничества</a>.</p>"
+
+#: pentad_dashboard.py:989
+msgid "disclaimer_waranty"
+msgstr "Данные, используемые в этой панели, предоставлены системой iEasyHydro, которой управляет отдел оперативной гидрологии Кыргызгидромета."
+
+#: pentad_dashboard.py:992
+msgid "Last updated on "
+msgstr "Последнее обновление "
+
+#: pentad_dashboard.py:998
+msgid "Predictors"
+msgstr "предикторы"
+
+#: pentad_dashboard.py:1001
+msgid "Hydrograph"
+msgstr "Гидрограф"
+
+#: pentad_dashboard.py:1005 pentad_dashboard.py:1008
+msgid "Forecast"
+msgstr "Прогноз"
+
+#: pentad_dashboard.py:1011
+msgid "Effectiveness of the methods"
+msgstr "Эффективность методов"
+
+#: pentad_dashboard.py:1017
+msgid "Disclaimer"
+msgstr "Информация об ответственности"
+
+#: pentad_dashboard.py:1033
+msgid "Notifications"
+msgstr "Уведомления"
+
+#: pentad_dashboard.py:1049
+msgid "SAPPHIRE Central Asia - Pentadal forecast dashboard"
+msgstr "SAPPHIRE Central Asia - Панель управления пентадными прогнозами"
