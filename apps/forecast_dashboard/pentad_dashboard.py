@@ -28,6 +28,9 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 
 # Construct the path to the iEasyHydroForecast directory
 forecast_dir = os.path.join(script_dir, '..', 'iEasyHydroForecast')
+# Test if the forecast dir exists and print a warning if it does not
+if not os.path.isdir(forecast_dir):
+    raise Exception("Directory not found: " + forecast_dir)
 
 # Add the forecast directory to the Python path
 sys.path.append(forecast_dir)

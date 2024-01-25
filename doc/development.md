@@ -97,5 +97,9 @@ Run the image locally for testing (not for deployment). Replace <full_path_to> w
 docker run -e "IN_DOCKER_CONTAINER=True" -v <full_path_to>/apps/config:/app/apps/config -v <full_path_to>/data:/app/data -v <full_path_to>/apps/internal_data:/app/apps/internal_data -p 9000:8801 --name forecast_backend_container forecast_backend
 ```
 
-
+### Forecast dashboard
+The forecast dashboard is dockerized using the Dockerfile in the apps/forecast_dashboard folder. To build the docker image locally, run the following command in the root directory of the repository:
+```bash
+docker build --no-cache -t forecast_dashboard -f ./apps/forecast_dashboard/Dockerfile .
+```
 
