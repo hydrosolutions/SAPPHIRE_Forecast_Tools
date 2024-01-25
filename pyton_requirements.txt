@@ -1,6 +1,5 @@
 numpy
 pandas
 datetime
-matplotlib
 scikit-learn
 typing
