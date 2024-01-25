@@ -20,8 +20,9 @@ docker run -d \
 ```
 The label-enable option tells watchtower to only update containers that have the label com.centurylinklabs.watchtower.enable=true in their run command (see below). The interval option tells watchtower to check for new versions every 30 seconds. After testing, this intervall can be increased. The cleanup option tells watchtower to remove old images after updating the container.
 
-### Install Chrome Browser
+### Install Chrome Browser -> TODO: check if this is still necessary
 Chrome browser was used to visualized the dashboards in this project. The use of a different browser has not been tested. If you prefer to use a different browser, you will have to edit the bat files bat/configuration.bat and bat/dashboard.bat in the bat folder.
+The configuration dashboard also works in the edge browser.
 
 ## Deployment
 The sections below describe the steps that are required to deploy the forecast tools on the host machine.
