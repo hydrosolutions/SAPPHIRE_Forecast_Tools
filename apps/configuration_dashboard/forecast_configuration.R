@@ -27,12 +27,20 @@ if (Sys.getenv("IN_DOCKER_CONTAINER")=="") {
   setwd(here())
   print(getwd())
   setwd("apps/configuration_dashboard")
+  # Test if the file .env_develop exists. 
+  if (!file.exists("../config/.env_develop")) {
+    stop("File ../config/.env_develop not found. ")
+  }
   readRenviron("../config/.env_develop")
 } else { 
   # Environment variable IN_DOCKER_CONTAINER is set. Run from docker container
   setwd(here()) #sometimes setwd() function can be error-prone, restart the R session can help 
   print(getwd())
-  readRenviron("../config/.env")
+  # Test if the file .env_develop exists. 
+  if (!file.exists("apps/config/.env")) {
+    stop("File apps/config/.env not found. ")
+  }
+  readRenviron("apps/config/.env")
 }
 
 config_dir = Sys.getenv("ieasyforecast_configuration_path")
