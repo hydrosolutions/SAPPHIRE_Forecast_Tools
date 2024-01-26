@@ -36,6 +36,7 @@ if (Sys.getenv("IN_DOCKER_CONTAINER")=="") {
 } else { 
   print("Running from docker container")
   # Environment variable IN_DOCKER_CONTAINER is set. Run from docker container
+  setwd("/app")
   print(getwd())
   # Test if the file .env exists. 
   if (!file.exists("apps/config/.env")) {
