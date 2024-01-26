@@ -74,13 +74,17 @@ To test if the task scheduler works, you can run the task manually. You can also
 
 
 ### Forecast dashboard
+Pull the docker image from Docker Hub. Open a terminal and run the following command:
 ```bash
 docker pull mabesa/sapphire-dashboard:latest
-docker run -d --label=com.centurylinklabs.watchtower.enable=true -e "IN_DOCKER_CONTAINER=True" -v <full_path_to>/apps/config:/app/apps/config -v <full_path_to>/apps/internal_data:/app/apps/internal_data -v <full_path_to>/data:/app/data -v <full_path_to>/bat:/app/bat -p 5006:5006 --name fcbackend mabesa/sapphire-dashboard:latest
-
 ```
+Run the image:
+```bash
+docker run -d --label=com.centurylinklabs.watchtower.enable=true -e "IN_DOCKER_CONTAINER=True" -v <full_path_to>/apps/config:/app/apps/config -v <full_path_to>/apps/internal_data:/app/apps/internal_data -v <full_path_to>/data:/app/data -v <full_path_to>/bat:/app/bat -p 5006:5006 --name fcbackend mabesa/sapphire-dashboard:latest
+```
+Note that you will have to replace <full_path_to> with the full path to your local repository.
 
-
+Make sure that the image name is correct in the .bat file. Then create a shortcut to bat/dashboard.bat on your desktop. You can edit the icon of the shortcut by opening the preferences and selecting the icon available at bat/dashboard/Station.ico.
 
 
 
