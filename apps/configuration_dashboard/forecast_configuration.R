@@ -37,14 +37,19 @@ if (Sys.getenv("IN_DOCKER_CONTAINER")=="") {
   print("Running from docker container")
   # Environment variable IN_DOCKER_CONTAINER is set. Run from docker container
   setwd(here()) #sometimes setwd() function can be error-prone, restart the R session can help 
+  setwd("../../")
   print(getwd())
   # Test if the file .env exists. 
-  if (!file.exists("../config/.env")) {
-    stop("File ../config/.env not found. ")
+  if (!file.exists("apps/config/.env")) {
+    stop("File apps/config/.env not found. ")
   }
-  readRenviron("../config/.env")
+  readRenviron("apps/config/.env")
 }
 
+# Test if directory exists
+if (!dir.exists(Sys.getenv("ieasyforecast_configuration_path"))) {
+  stop("Directory ", Sys.getenv("ieasyforecast_configuration_path"), " not found. ")
+}
 config_dir = Sys.getenv("ieasyforecast_configuration_path")
 config_all_stations_file_name = Sys.getenv("ieasyforecast_config_file_all_stations")
 config_station_selection_file_name = Sys.getenv("ieasyforecast_config_file_station_selection") #station selection
@@ -57,9 +62,17 @@ gis_shape_file_name = Sys.getenv("ieasyforecast_country_borders_file_name")
 
 # 2 Data
 ## Load shapefile
+# Test if file exists
+if (!file.exists(paste0(gis_data_dir,"/",gis_shape_file_name))) {
+  stop("File ", paste0(gis_data_dir,"/",gis_shape_file_name), " not found. ")
+}
 shp_file <- st_read(paste0(gis_data_dir,"/",gis_shape_file_name))
 
 ## JSON 
+# Test if file exists
+if (!file.exists(paste0(config_dir,"/", config_all_stations_file_name))) {
+  stop("File ", paste0(config_dir,"/", config_all_stations_file_name), " not found. ")
+}
 station_library <- fromJSON(paste0(config_dir,"/", config_all_stations_file_name))
 
 ### Filter out stations whose IDs start with "3" (in the Central Asian context this 
@@ -71,7 +84,15 @@ filtered_station_library <- station_library
 filtered_station_library$stations_available_for_forecast <- station_library$stations_available_for_forecast[filtered_ids]
 station_library <- filtered_station_library
 
+# Test if file exists
+if (!file.exists(paste0(config_dir,"/",config_station_selection_file_name))) {
+  stop("File ", paste0(config_dir,"/",config_station_selection_file_name), " not found. ")
+}
 config_outputs_Q <- fromJSON(paste0(config_dir,"/",config_station_selection_file_name))
+# Test if file exists
+if (!file.exists(paste0(config_dir,"/",config_output_file_name))) {
+  stop("File ", paste0(config_dir,"/",config_output_file_name), " not found. ")
+}
 excel_config <- jsonlite::fromJSON(paste0(config_dir,"/",config_output_file_name))
 
 ### Coordinates from JSON for map
@@ -378,6 +399,10 @@ server <- function(input, output, session){
   #remember what stations were selected
   
   selected_stations_from_json <- reactive({
+    # Test if the file exists
+    if (!file.exists(paste0(config_dir,"/",config_station_selection_file_name))) {
+      paste("File",paste0(config_dir,"/",config_station_selection_file_name),"not found.")
+    }
     config_outputs_Q <- fromJSON(paste0(config_dir,"/",config_station_selection_file_name))
     config_outputs_Q$stationsID
   })
@@ -425,6 +450,10 @@ server <- function(input, output, session){
   selected_station_ids <- reactiveVal()
   
   load_config_outputs <- function() {
+    # Test if file exists
+    if (!file.exists(paste0(config_dir,"/",config_station_selection_file_name))) {
+      paste("File",paste0(config_dir,"/",config_station_selection_file_name),"not found.")
+    }
     config_outputs <- fromJSON(paste0(config_dir,"/",config_station_selection_file_name))
     selected_station_ids(config_outputs$stationsID)
   }
