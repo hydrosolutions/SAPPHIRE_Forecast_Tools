@@ -9,9 +9,14 @@ Perform the following steps the computer where the forecast tools are deployed.
 Download the [repository](https://github.com/hydrosolutions/SAPPHIRE_Forecast_Tools) to the host machine. The repository can be downloaded as a zip file from the GitHub website. Unzip the file and move the folder to the desired location on the host machine. This allows you to only perform minimal edits to the configuration files within the designed folder structure.
 
 ### Install Docker & run Watchtower
-Install the software [Docker](https://docs.docker.com/install/)
+Install the software [Docker](https://docs.docker.com/install/). Note that you will need administrator rights to install Docker successfully.
 
-Start a Watchtower instance to automatically update the application when a new version is available:
+Start a Watchtower instance to automatically update the application when a new version is available by typing the following command in a Unix terminal. If you are using Windows, you should have Linux for Window (WSL) installed and use the Linux terminal. To check if your wsl is ready for use, open a PwerShell window and type:
+```bash
+wsl
+```
+If you get an error message, you may have to trubble shoot your wsl installation. See [this link](https://docs.microsoft.com/en-us/windows/wsl/install-win10) for more information.
+
 ```bash
 docker run -d \
   --name watchtower \
@@ -20,12 +25,13 @@ docker run -d \
 ```
 The label-enable option tells watchtower to only update containers that have the label com.centurylinklabs.watchtower.enable=true in their run command (see below). The interval option tells watchtower to check for new versions every 30 seconds. After testing, this intervall can be increased. The cleanup option tells watchtower to remove old images after updating the container.
 
-### Install Chrome Browser -> TODO: check if this is still necessary
-Chrome browser was used to visualized the dashboards in this project. The use of a different browser has not been tested. If you prefer to use a different browser, you will have to edit the bat files bat/configuration.bat and bat/dashboard.bat in the bat folder.
-The configuration dashboard also works in the edge browser.
+Note that you should not stop the running containers for the watchtower to be able to automatically deploy software updates.
+
+### Install Chrome Browser (optional)
+Chrome browser was used to visualized the dashboards in this project. If you prefer to use a different browser, you will have to edit the bat files bat/configuration.bat and bat/dashboard.bat in the bat folder.
 
 ## Deployment
-The sections below describe the steps that are required to deploy the forecast tools on the host machine.
+The sections below describe the steps that are required to deploy the forecast tools on the host machine. If you want to test the tools with the demo data, you don't need to adapt the files in the apps/config folder and skip the .env chapter below.
 
 ### .env
 As the file system structure may differ between the development platform and the host machine, the SAPPHIRE forecast tools read in a .env file which may be a copy of the .env_develop file, when run within a docker container.
@@ -47,6 +53,7 @@ An example run command is:
 ```bash
 docker run -d --label=com.centurylinklabs.watchtower.enable=true -e "IN_DOCKER_CONTAINER=True" -v /home/sarah/SAPPHIRE_Forecast_Tools/apps/config:/app/apps/config -v /home/sarah/SAPPHIRE_Forecast_Tools/data:/app/data -v /home/sarah/SAPPHIRE_Forecast_Tools/bat:/app/bat -p 3647:3647 --name fcconfig mabesa/sapphire-configuration:latest
 ```
+Check if the configuration dashboard is running correctly by opening a browser window and typing 127.0.0.1:3647 in the address bar.
 
 Make sure the image and tool names in bat/configuration.bat are correct for the host machine. For example, if you are using a different image name, you will have to replace fcconfig in line 1 with your image name. If you have changed the port number in the run command, you will have to change the port number in line 2 of bat/configuration.bat.
 
@@ -66,6 +73,8 @@ docker run -d --label=com.centurylinklabs.watchtower.enable=true -e "IN_DOCKER_C
 Replace <full_path_to> with your local path to the folders. The -v option mounts the folders on the host machine to the folders in the docker container. The -e option sets the environment variable IN_DOCKER_CONTAINER to True. This is required to run the dashboard locally in the docker container. The --label option tells watchtower to update the container when a new version is available.
 Note that you'll only need the -p option if you wish to open a port to access the iEasyHydro database. In that case you'll need to make sure the port mapping is correct.
 
+Test if the backend is running. You can do this by checking the Logs tab in the Docker Desktop application. If there are recent outputs but there is no error message displayed at the bottom of the log tab, the backend is running correctly.
+
 Now we set up the Task Scheduler on Windows to restart the backend every day at 10 a.m. Open the Task Scheduler and create a new task. Give the task a name and select the option to run the task with the highest privileges whether user is logged on or not. Under Triggers select the option to run the task daily at 10 a.m. Under Actions select the bat file /bat/backend/backend.bat. Under Conditions select the option to wake the computer to run the task. Under Settings select the option to stop the existing instance if the task is already running when the task scheduler wants to start it. Click OK to save the task.
 
 To test if the task scheduler works, you can run the task manually. You can also check the task history to see if the task was run successfully.
@@ -81,6 +90,8 @@ Run the image:
 docker run -d --label=com.centurylinklabs.watchtower.enable=true -e "IN_DOCKER_CONTAINER=True" -v <full_path_to>/apps/config:/app/apps/config -v <full_path_to>/apps/internal_data:/app/apps/internal_data -v <full_path_to>/data:/app/data -v <full_path_to>/bat:/app/bat -p 5006:5006 --name fcbackend mabesa/sapphire-dashboard:latest
 ```
 Note that you will have to replace <full_path_to> with the full path to your local repository.
+
+Test if the dashboard is operational by opening a browser window and typing http://localhost:5006 in the address bar. If the dashboard is displayed correctly, you can close the browser window.
 
 Make sure that the image name is correct in the .bat file. Then create a shortcut to bat/dashboard.bat on your desktop. You can edit the icon of the shortcut by opening the preferences and selecting the icon available at bat/dashboard/Station.ico.
 
