@@ -47,10 +47,23 @@ pn.extension(global_css=[':root { --design-primary-color: #307096; }'])
 # Load .env file
 # Read the environment varialbe IN_DOCKER_CONTAINER to determine which .env
 # file to use
-if os.getenv("IN_DOCKER_CONTAINER") == "True":
+in_docker_flag = str(os.getenv("IN_DOCKER_CONTAINER"))
+if in_docker_flag == "True":
+    # Test if the .env file exists
+    if not os.path.isfile("apps/config/.env"):
+        raise Exception("File not found: " + "apps/config/.env")
+    print("Running in Docker container")
     load_dotenv("apps/config/.env")
 else:
+    # Test if the .env file exists
+    if not os.path.isfile("../config/.env_develop"):
+        raise Exception("File not found: " + "../config/.env_develop")
+    print("Running locally")
     load_dotenv("../config/.env_develop")
+
+# Test if the environment was loaded successfully
+if os.getenv("ieasyforecast_hydrograph_day_file") is None:
+    raise Exception("Environment not loaded. Please check if the .env file is available and if the environment variable IN_DOCKER_CONTAINER is set correctly.")
 
 # Load filenames from the environment file
 # These files are produced by the linreg (linear regression) tool.
@@ -86,7 +99,11 @@ if not os.path.isfile(all_stations_file):
     raise Exception("File not found: " + all_stations_file)
 
 # Icon
-icon_path = os.path.join("www", "Pentad.jpg")
+if in_docker_flag == "True":
+    icon_path = os.path.join("apps", "forecast_dashboard", "www", "Pentad.jpg")
+else:
+    icon_path = os.path.join("www", "Pentad.jpg")
+
 # Test if file exists and thorw an error if not
 if not os.path.isfile(icon_path):
     raise Exception("File not found: " + icon_path)
@@ -1015,7 +1032,19 @@ else:
 
 ## Footer
 # Define the footer of the dashboard
-logos = pn.Row(
+if in_docker_flag == "True":
+    logos = pn.Row(
+        pn.pane.Image(os.path.join(
+            "apps", "forecast_dashboard", "www", "sapphire_project_logo.jpg"),
+            width=70),
+        pn.pane.Image(os.path.join(
+            "apps", "forecast_dashboard", "www", "hydrosolutionsLogo.jpg"),
+            width=100),
+        pn.pane.Image(os.path.join(
+            "apps", "forecast_dashboard", "www", "sdc.jpeg"),
+            width=150))
+else:
+    logos = pn.Row(
         pn.pane.Image(os.path.join(
             "www", "sapphire_project_logo.jpg"),
             width=70),
@@ -1024,8 +1053,8 @@ logos = pn.Row(
             width=100),
         pn.pane.Image(os.path.join(
             "www", "sdc.jpeg"),
-            width=150)
-    )
+            width=150))
+
 footer = pn.Column(
     pn.pane.HTML(_('disclaimer_who')),
     pn.pane.Markdown(_("disclaimer_waranty")),
