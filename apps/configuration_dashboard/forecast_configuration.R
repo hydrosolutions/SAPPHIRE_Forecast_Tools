@@ -21,26 +21,28 @@ library(leaflet)
 # We do this by checking if an environment variable set by the Dockerfile is 
 # present or not. 
 if (Sys.getenv("IN_DOCKER_CONTAINER")=="") {
+  print("Running from local machine")
   # Environment variable IN_DOCKER_CONTAINER is not set. Run from local machine
   # This code assumes that forecast_configuration has been opened in 
   # apps/configuration_dashboard for development
   setwd(here())
-  print(getwd())
   setwd("apps/configuration_dashboard")
+  print(getwd())
   # Test if the file .env_develop exists. 
   if (!file.exists("../config/.env_develop")) {
     stop("File ../config/.env_develop not found. ")
   }
   readRenviron("../config/.env_develop")
 } else { 
+  print("Running from docker container")
   # Environment variable IN_DOCKER_CONTAINER is set. Run from docker container
   setwd(here()) #sometimes setwd() function can be error-prone, restart the R session can help 
   print(getwd())
-  # Test if the file .env_develop exists. 
-  if (!file.exists("apps/config/.env")) {
-    stop("File apps/config/.env not found. ")
+  # Test if the file .env exists. 
+  if (!file.exists("../config/.env")) {
+    stop("File ../config/.env not found. ")
   }
-  readRenviron("apps/config/.env")
+  readRenviron("../config/.env")
 }
 
 config_dir = Sys.getenv("ieasyforecast_configuration_path")

@@ -68,8 +68,6 @@ Note that you'll only need the -p option if you wish to open a port to access th
 
 Now we set up the Task Scheduler on Windows to restart the backend every day at 10 a.m. Open the Task Scheduler and create a new task. Give the task a name and select the option to run the task with the highest privileges whether user is logged on or not. Under Triggers select the option to run the task daily at 10 a.m. Under Actions select the bat file /bat/backend/backend.bat. Under Conditions select the option to wake the computer to run the task. Under Settings select the option to stop the existing instance if the task is already running when the task scheduler wants to start it. Click OK to save the task.
 
-TODO: comments about the task scheduler user/user group to choose
-
 To test if the task scheduler works, you can run the task manually. You can also check the task history to see if the task was run successfully.
 
 

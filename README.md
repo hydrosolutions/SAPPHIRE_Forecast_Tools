@@ -83,13 +83,18 @@ Potentially sensitive data that needs to be provided by a hydromet (for example 
    |__ bat
        Batch files for Windows that are used to open a browser window to the dashboards
         |__ backend
-            |__ backend.bat
+#           |__ backend.bat
                  Stops and re-starts the backend.
         |__ configuration_dashboard
 #            |__ configuration.bat
                  Opens the forecast configuration dashboard in a Google Chrome browser. The content of the bat file may need to be adapted to deployment conditions.
              |__ Station.ico
                  Icon for the shortcut to the forecast configuration dashboard.
+        |__ forecast_dashboard
+#            |__ dashboard.bat
+                 Opens the forecast dashboard in a Google Chrome browser. The content of the bat file may need to be adapted to deployment conditions.
+             |__ Pentad.ico
+                 Icon for the shortcut to the forecast dashboard.
 #  |__ data
        Example data to demonstrate how the forecast tools work. The Needs to be replaced with data by the hydromet organization for deployment. The data and file formats are described in more detail in the file doc/deployment.md.
         |__ daily_runoff

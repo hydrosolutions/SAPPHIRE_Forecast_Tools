@@ -33,14 +33,46 @@ Examples of these files are provided in the repository. You can use them as a te
 ## Daily discharge data
 Daily discharge data for the stations for which forecasts are to be produced. The data must be in the iEasyHydro database or in a local folder. Assuming the iEasyHydro contains operational data and the excel sheets contain data validated by the regime departement, precedence is given to data read from the excel sheets should both data sources be available and overlaps occur. The daily data must be in the format of one excel document per station with excel sheets for each year with dates in the first column and discharge values in m3/s in the second column. The excel files must be named with the station code followed by an underscore and then any name. For example: 12345_river_styx_2000-2020.xlsx (see data/daily_discharge_data for an example).
 
+## Shape file layers of the area of interest
+Shape file layers of the area of interest in the folder data/GIS. The shape files must be in the WGS84 projection. Typically this will be the shape files of the administrative boundaries of the country. Please make sure to make available shp, shx, dbf and prj files.
+
+## Templates for the forecast bulletins
+Templates for the forecast bulletins in the folder data/templates. The templates must be in the xlsx format. The templates can contain several sheets but only the first sheet of the bulletin template is used by the forecast tools to write to. The same logic is used for the bulletin template as in the iEasyHydro software. Terms in the template bulletin indicated by {{}} are replaced by values by the linear regression tool. Please see the list in [doc/bulletin_template_tags.md](doc/bulletin_template_tags.md) for a list of available tags and use the available templates as reference.
+
+
+
 # Output data
-A successful run of the SAPPHIRE Forecast Tools will produce the following outputs:
-For review by the user:
+A successful run of the SAPPHIRE Forecast Tools will produce the forecast bulletins in the .xlsx format and visualizations of the forecasts and forecast errors in the forecast dashboard. The bulletins are written to the folder data/bulletins. The visualizations are produced in the forecast dashboard and can be exported as .png files.
+
+## Forecast bulletins
 - A forecast bulletin for each forecast horizon and station in the folder data/bulletins
 - If the option is selected in the configuration dashboard, an excel sheet for each station in the folder data/pentadal_forecasts containing the linear regression forecasts as traditionally produced by the Kyrgyz Hydrometeorological Services
 
+## Internal output used for visualization of forecasts
 Intermediate results for visualization on the forecast dashboard:
 - Daily discharge data for each station in the folder apps/internal_data/hydrographs_day.pkl
 - Pentadal discharge data for each station in the folder apps/internal_data/hydrographs_pentad.pkl
 - A csv file with the forecasts for each station in the folder apps/internal_data/forecasts_pentad.csv. This file also contains the parameters of the linear regression model.
 Please note that these internal files should not be edited manually by the user. You are, however, welcome to copy them to your local machine for further analysis.
+
+
+# Forecast configuration
+The forecast configuration dashboard is used to select the stations for which forecasts are to be produced. The dashboard is accessed by double-clicking on the station configuration icon on your desktop. The dashboard is currently only available in Russian language. Detailed user instructions are available by clicking on the help button in upper right corner of the dashboard window.
+
+# Forecast dashboard
+The forecast dashboard is used to visualize the forecasts. The dashboard is accessed by double-clicking on the forecast dashboard icon on your desktop. The dashboard can be configured to run in Russian or English. The current version of the dashboard has the following features:
+- A predictor tab that allows to visualize the predictor data for the station selected in the side pane. The predictor data is read from the iEasyHydro database or from the excel sheets.
+- A forecast tab that visualizes the hydrograph with the forecasted discharge for the station selected in the side pane. The forecast is produced by the forecast tools based on past discharge data using the linear regression method.
+The tabs are described in more detail in the following sections.
+
+## Predictor tab
+In the current version of the software, the predictor tab shows
+
+## Forecast tab
+The method to calculate the forecast range can be selected in the side pane. Following options are available:
+a) The forecast range is calculated based on 0.674 times the standard deviation of the observed discharge data.
+b) The forecast range is plus/minus a manually selected percentage of the forecasted discharge.
+
+
+# Installation
+For the installation of the SAPPHIRE Forecast Tools, we use the Docker system. The deployment of the forecast tools is described in detail in the file [doc/deployment.md](doc/deployment.md).
