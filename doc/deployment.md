@@ -76,7 +76,8 @@ To test if the task scheduler works, you can run the task manually. You can also
 ### Forecast dashboard
 ```bash
 docker pull mabesa/sapphire-dashboard:latest
-docker run -d --label=com.centurylinklabs.watchtower.enable=true --name fcdashboard mabesa/sapphire-dashboard:latest
+docker run -d --label=com.centurylinklabs.watchtower.enable=true -e "IN_DOCKER_CONTAINER=True" -v <full_path_to>/apps/config:/app/apps/config -v <full_path_to>/apps/internal_data:/app/apps/internal_data -v <full_path_to>/data:/app/data -v <full_path_to>/bat:/app/bat -p 5006:5006 --name fcbackend mabesa/sapphire-dashboard:latest
+
 ```
 
 

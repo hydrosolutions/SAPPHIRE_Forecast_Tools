@@ -1,4 +1,4 @@
-![deploy forecast config action](https://github.com/hydrosolutions/SAPPHIRE_Forecast_Tools/actions/workflows/deploy_forecast_configuration.yml/badge.svg) ![deploy forecast backend](https://github.com/hydrosolutions/SAPPHIRE_Forecast_Tools/actions/workflows/deploy_backend.yml/badge.svg)
+![deploy forecast config action](https://github.com/hydrosolutions/SAPPHIRE_Forecast_Tools/actions/workflows/deploy_forecast_configuration.yml/badge.svg) ![deploy forecast backend](https://github.com/hydrosolutions/SAPPHIRE_Forecast_Tools/actions/workflows/deploy_backend.yml/badge.svg) ![deploy forecast dashboard](https://github.com/hydrosolutions/SAPPHIRE_Forecast_Tools/actions/workflows/deploy_forecast_dashboard.yml/badge.svg)
 
 # SAPPHIRE_forecast_tools
 Tools for operational hydrological forecasting for Central Asian hydromets. The tools are co-designed with the Kyrgyz Hydrometeorological Services as part of the ongoing [SAPPHIRE project](https://www.hydrosolutions.ch/projects/sapphire-central-asia) and funded by the [Swiss Agency for Development and Cooperation](https://www.eda.admin.ch/eda/en/home/fdfa/organisation-fdfa/directorates-divisions/sdc.html).
