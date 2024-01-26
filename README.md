@@ -102,7 +102,7 @@ Potentially sensitive data that needs to be provided by a hydromet (for example 
         |__ GIS
             GIS data for the forecast configuration dashboard. The data is stored in shape files. The paths to these files are configured in the .env file.
         |__ reports
-            Examples of forecast bulletins produced by the forecast tools.
+            Examples of forecast bulletins produced by the forecast tools. Will be generated automatically if it does not exist.
         |__ templates
             Templates for the forecast bulletins. The templates are stored in Excel files. The paths to these files are configured in the .env file.
 #            |__ pentad_forecast_bulletin_template.xlsx

@@ -107,12 +107,18 @@ if __name__ == "__main__":
     if os.getenv("IN_DOCKER_CONTAINER") == "True":
         print(f"Running in docker container. Loading environment variables from .env")
         env_file_path = "apps/config/.env"
-        load_dotenv(env_file_path)
+        res = load_dotenv(env_file_path, override=True)
+        if res == False:
+            print(f"WARNING: Could not load environment variables from {env_file_path}")
+            logging.warning(f"Could not load environment variables from {env_file_path}")
 
     else:
         print(f"Running locally. Loading environment variables from .env_develop")
         env_file_path = "../config/.env_develop"
-        load_dotenv(env_file_path)
+        res = load_dotenv(dotenv_path=env_file_path, override=True)
+        if res == False:
+            print(f"WARNING: Could not load environment variables from {env_file_path}")
+            logging.warning(f"Could not load environment variables from {env_file_path}")
 
     # Configure logging
     logging.basicConfig(
@@ -165,7 +171,7 @@ if __name__ == "__main__":
     # Test if the backand has access to an iEasyHydro database and set a flag
     # accordingly.
     try:
-        ieh_sdk.get_discharge_sites()
+        test = ieh_sdk.get_discharge_sites()
         print(f"SAPPHIRE forecast tools will use operational data from the iEasyHydro database.")
         #logging.info(f"SAPPHIRE forecast tools will use operational data from the iEasyHydro database.")
         backend_has_access_to_db = True
