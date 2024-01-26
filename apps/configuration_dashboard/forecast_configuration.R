@@ -7,7 +7,6 @@ library(readxl)
 library(dplyr)
 library(jsonlite)
 library(sf)
-library(here)
 ## Shiny related libraries
 library(shiny)
 library(shinydashboard)
@@ -25,6 +24,7 @@ if (Sys.getenv("IN_DOCKER_CONTAINER")=="") {
   # Environment variable IN_DOCKER_CONTAINER is not set. Run from local machine
   # This code assumes that forecast_configuration has been opened in 
   # apps/configuration_dashboard for development
+  library(here)
   setwd(here())
   setwd("apps/configuration_dashboard")
   print(getwd())
@@ -36,8 +36,6 @@ if (Sys.getenv("IN_DOCKER_CONTAINER")=="") {
 } else { 
   print("Running from docker container")
   # Environment variable IN_DOCKER_CONTAINER is set. Run from docker container
-  setwd(here()) #sometimes setwd() function can be error-prone, restart the R session can help 
-  setwd("../../")
   print(getwd())
   # Test if the file .env exists. 
   if (!file.exists("apps/config/.env")) {
@@ -451,6 +449,7 @@ server <- function(input, output, session){
   
   load_config_outputs <- function() {
     # Test if file exists
+    print(getwd())
     if (!file.exists(paste0(config_dir,"/",config_station_selection_file_name))) {
       paste("File",paste0(config_dir,"/",config_station_selection_file_name),"not found.")
     }
