@@ -24,7 +24,7 @@ You may configure the Forecast Tools to generate excell documents with the forec
 
 # Input data
 The SAPPHIRE Forecast Tools require the following input files to be available which will be further described in the linked or following sections:
-- A complete configuration under apps/config (see [doc/configuration.md](doc/configuration.md) for more detailed instructions)
+- A complete configuration under apps/config (see [doc/configuration.md](configuration.md) for more detailed instructions)
 - Either access to daily discharge data as excel files in data/daily_discharge and/or access to the iEasyHydro database (either the online or the locally installed version of the software)
 - Shape file layers of administrative boundaries in the area of your interest in data/GIS
 - Templates for the forecast bulletins in data/templates
@@ -37,7 +37,7 @@ Daily discharge data for the stations for which forecasts are to be produced. Th
 Shape file layers of the area of interest in the folder data/GIS. The shape files must be in the WGS84 projection. Typically this will be the shape files of the administrative boundaries of the country. Please make sure to make available shp, shx, dbf and prj files.
 
 ## Templates for the forecast bulletins
-Templates for the forecast bulletins in the folder data/templates. The templates must be in the xlsx format. The templates can contain several sheets but only the first sheet of the bulletin template is used by the forecast tools to write to. The same logic is used for the bulletin template as in the iEasyHydro software. Terms in the template bulletin indicated by {{}} are replaced by values by the linear regression tool. Please see the list in [doc/bulletin_template_tags.md](doc/bulletin_template_tags.md) for a list of available tags and use the available templates as reference.
+Templates for the forecast bulletins in the folder data/templates. The templates must be in the xlsx format. The templates can contain several sheets but only the first sheet of the bulletin template is used by the forecast tools to write to. The same logic is used for the bulletin template as in the iEasyHydro software. Terms in the template bulletin indicated by {{}} are replaced by values by the linear regression tool. Please see the list in [bulletin_template_tags.md](bulletin_template_tags.md) for a list of available tags and use the available templates as reference.
 
 
 
@@ -75,4 +75,4 @@ b) The forecast range is plus/minus a manually selected percentage of the foreca
 
 
 # Installation
-For the installation of the SAPPHIRE Forecast Tools, we use the Docker system. The deployment of the forecast tools is described in detail in the file [doc/deployment.md](doc/deployment.md).
+For the installation of the SAPPHIRE Forecast Tools, we use the Docker system. The deployment of the forecast tools is described in detail in the file [doc/deployment.md](deployment.md).
