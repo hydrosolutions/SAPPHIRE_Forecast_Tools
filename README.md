@@ -133,5 +133,8 @@ If you wish to run the forecast tools individually and locally for development p
 # User guide
 Once the forecast tools are deployed with the appropriate **input data**, the user can configure the forecast tools and visualize and download the forecasts using the forecast configuration dashboard and the forecast dashboard. The user guide is available in English language in the file [doc/user_guide.md](doc/user_guide.md).
 
+# Data requirements
+The forecast tools rely on the availability of daily average discharge data. The data can be read from the iEasyHydro database or from local excel files. We include plublicly available daily discharge data from the Swiss Federal Office for the Environment (FOEN) in this repository. You find the original data [here](https://www.hydrodaten.admin.ch/en/seen-und-fluesse).
+
 ## Collaboration
 Input from users is welcome. Please use the GitHub issue tracker to report bugs or suggest improvements. If you would like to contribute to the code, please fork the repository and submit a pull request. We will review the pull request and merge it if it fits the scope of the project. Please note that this is an open source project released under the MIT license, under which all contrubutions fall. Contributors are expected to adhere to the [Contributor Covenant code of conduct](https://www.contributor-covenant.org/).

@@ -62,7 +62,7 @@ pip install git+https://github.com/hydrosolutions/ieasyhydro-python-sdk
 pip install git+https://github.com/hydrosolutions/ieasyreports.git@main
 pip install -e ../iEasyHydroForecast
 ```
-If you wish to use data from your organizations iEasyHydro database, you will need to configure the apps/config/.env_develop file (see [doc/configuration.md](doc/configuration.md) for more detailed instructions). We recommend testing your configuration by running a few example queries from the [documentation of the SDK library](https://github.com/hydrosolutions/ieasyhydro-python-sdk) in a jupyter notebook.
+If you wish to use data from your organizations iEasyHydro database, you will need to configure the apps/config/.env_develop file (see [doc/configuration.md](configuration.md) for more detailed instructions). We recommend testing your configuration by running a few example queries from the [documentation of the SDK library](https://github.com/hydrosolutions/ieasyhydro-python-sdk) in a jupyter notebook.
 
 #### How to run the backend locally
 You can then run the forecast backend in the offline mode to simulate opearational forecasting in the past by running the following command in the terminal:

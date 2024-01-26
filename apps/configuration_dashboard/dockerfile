@@ -64,7 +64,7 @@ ENV IN_DOCKER_CONTAINER=true
 
 EXPOSE 3647
 
-CMD ["R", "-e", "shiny::runApp('apps/configuration_dashboard/forecast_configuration.R', port = 3647, host = '0.0.0.0')"]
+CMD ["R", "-e", "setwd('/app'); shiny::runApp('apps/configuration_dashboard/forecast_configuration.R', port = 3647, host = '0.0.0.0', launch.browser=FALSE)"]
 
 # Instructions for local testing (see also doc/development.md):
 # cd to SAPPHIRE_forecast_tools

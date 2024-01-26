@@ -1,4 +1,13 @@
-# Tags available for forecast bulletin templates
+# Bulletin template tags
+Forecast bulletins are written in the xlsx format. The bulletins are written to the folder data/bulletins. The templates can contain several sheets but only the first sheet of the bulletin template is used by the forecast tools to write to. The same logic is used for the bulletin template as in the iEasyHydro software. Terms in the template bulletin indicated by {{}} are replaced by values by the linear regression tool. Please see the list below for a list of available tags and use the available templates as reference.
+
+Two bulletin formats are currently implemented:
+- The regular pentadal forecast bulletin
+- The traditional pentadal forecast sheet
+
+Note that the traditional forecast sheet is only written when the option is selected in the configuration dashboard (tick box Записать Эксель файл).
+
+## Tags available for forecast bulletin templates
 
 The following tags are currently implemented for the regular pentadal forecast bulletin:
 

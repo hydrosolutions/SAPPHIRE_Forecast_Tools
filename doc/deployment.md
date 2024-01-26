@@ -30,7 +30,7 @@ The sections below describe the steps that are required to deploy the forecast t
 ### .env
 As the file system structure may differ between the development platform and the host machine, the SAPPHIRE forecast tools read in a .env file which may be a copy of the .env_develop file, when run within a docker container.
 
-Copy .env_develop to .env and edit the file where required (if for example the locations for the bulletin templates on the host machine differs from the location of the bulletin templates in this repository). Please read the instructions about the configuration of the .env file in the file [doc/configuration.md](doc/configuration.md).
+Copy .env_develop to .env and edit the file where required (if for example the locations for the bulletin templates on the host machine differs from the location of the bulletin templates in this repository). Please read the instructions about the configuration of the .env file in the file [doc/configuration.md](configuration.md).
 
 ### Configuration dashboard
 Pull the latest image from Docker Hub:
