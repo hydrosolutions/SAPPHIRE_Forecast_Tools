@@ -449,7 +449,12 @@ server <- function(input, output, session){
   
   load_config_outputs <- function() {
     # Test if file exists
-    print(getwd())
+    if (Sys.getenv("IN_DOCKER_CONTAINER") == "") {
+      print(getwd())
+    } else {
+      setwd("/app")
+      print(getwd())
+    }
     if (!file.exists(paste0(config_dir,"/",config_station_selection_file_name))) {
       paste("File",paste0(config_dir,"/",config_station_selection_file_name),"not found.")
     }
