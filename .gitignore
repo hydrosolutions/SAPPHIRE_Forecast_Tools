@@ -158,3 +158,7 @@ data/reports/*
 
 # Ignore temporary files
 data/daily_runoff/~*.xlsx
+
+# Ignore environment files used for development and testing
+apps/config/.env_develop_kghm
+apps/backend/tests/test_remote_db_access.py
