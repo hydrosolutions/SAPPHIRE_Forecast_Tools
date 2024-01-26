@@ -1000,7 +1000,7 @@ if __name__ == "__main__":
     write_bulletin = True
 
     # Format the date as a string in the format "YYYY_MM_DD"
-    today_str = today.strftime("%Y_%m_%d")
+    today_str = today.strftime("%Y-%m-%d")
 
     if write_bulletin == True:
         # Get the name of the template file from the environment variables

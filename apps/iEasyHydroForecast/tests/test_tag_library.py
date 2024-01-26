@@ -80,6 +80,22 @@ class TestGetPentadInYear(unittest.TestCase):
         self.assertIsNone(result)
 
 
+class TestGetPentadFirstDayOfYear(unittest.TestCase):
+    def test_valid_date(self):
+        self.assertEqual(tl.get_pentad_first_day_of_year('2022-01-01'), '1')
+        self.assertEqual(tl.get_pentad_first_day_of_year('2022-01-05'), '1')
+        self.assertEqual(tl.get_pentad_first_day_of_year('2022-01-06'), '6')
+        self.assertEqual(tl.get_pentad_first_day_of_year('2022-01-07'), '6')
+
+    def test_invalid_date(self):
+        self.assertIsNone(tl.get_pentad_first_day_of_year('2022-02-30'))
+        self.assertIsNone(tl.get_pentad_first_day_of_year('2022-13-01'))
+
+    def test_non_gregorian_date(self):
+        # Assuming is_gregorian_date returns False for dates before 1582
+        self.assertIsNone(tl.get_pentad_first_day_of_year('1581-12-31'))
+
+
 class TestGetPentad(unittest.TestCase):
 
     def test_valid_date(self):

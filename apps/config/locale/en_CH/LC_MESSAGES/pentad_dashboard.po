@@ -1,0 +1,247 @@
+# English translations for PACKAGE package.
+# Copyright (C) 2024 THE PACKAGE'S COPYRIGHT HOLDER
+# This file is distributed under the same license as the PACKAGE package.
+# Beatrice Marti marti@hydrosolutions.ch, 2024.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: PACKAGE VERSION\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2024-01-22 14:33+0100\n"
+"PO-Revision-Date: 2024-01-22 14:38+0100\n"
+"Last-Translator: Beatrice Marti <marti@hydrosolutions.ch>\n"
+"Language-Team: English\n"
+"Language: en_CH\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+#: pentad_dashboard.py:126 pentad_dashboard.py:167
+msgid "Jan"
+msgstr "Jan"
+
+#: pentad_dashboard.py:127 pentad_dashboard.py:168
+msgid "Feb"
+msgstr "Feb"
+
+#: pentad_dashboard.py:128 pentad_dashboard.py:169
+msgid "Mar"
+msgstr "Mar"
+
+#: pentad_dashboard.py:129 pentad_dashboard.py:170
+msgid "Apr"
+msgstr "Apr"
+
+#: pentad_dashboard.py:130 pentad_dashboard.py:171
+msgid "May"
+msgstr "May"
+
+#: pentad_dashboard.py:131 pentad_dashboard.py:172
+msgid "Jun"
+msgstr "Jun"
+
+#: pentad_dashboard.py:132 pentad_dashboard.py:173
+msgid "Jul"
+msgstr "Jul"
+
+#: pentad_dashboard.py:133 pentad_dashboard.py:174
+msgid "Aug"
+msgstr "Aug"
+
+#: pentad_dashboard.py:134 pentad_dashboard.py:175
+msgid "Sep"
+msgstr "Sep"
+
+#: pentad_dashboard.py:135 pentad_dashboard.py:176
+msgid "Oct"
+msgstr "Oct"
+
+#: pentad_dashboard.py:136 pentad_dashboard.py:177
+msgid "Nov"
+msgstr "Nov"
+
+#: pentad_dashboard.py:137 pentad_dashboard.py:178
+msgid "Dec"
+msgstr "Dec"
+
+#: pentad_dashboard.py:189
+msgid "Month, pentad in month"
+msgstr "Month, pentad in month"
+
+#: pentad_dashboard.py:258
+msgid ""
+"Warning: No recent forecast available for the selected station. Showing the "
+"latest forecast data available. Please check if the Forecast Tools are "
+"running."
+msgstr ""
+"Warning: No recent forecast available for the selected station. Showing the "
+"latest forecast data available. Please check if the Forecast Tools are "
+"running."
+
+#: pentad_dashboard.py:542
+msgid "Select discharge station:"
+msgstr "Select discharge station:"
+
+#: pentad_dashboard.py:547
+msgid "Select forecast range for display:"
+msgstr "Select forecast range for display:"
+
+#: pentad_dashboard.py:548 pentad_dashboard.py:549 pentad_dashboard.py:905
+msgid "0.674 sigma"
+msgstr "0.674 sigma"
+
+#: pentad_dashboard.py:548
+msgid "Manual range, select value below"
+msgstr "Manual range, select value below"
+
+#: pentad_dashboard.py:554
+msgid "Manual range (%)"
+msgstr "Manual range (%)"
+
+#: pentad_dashboard.py:649 pentad_dashboard.py:732 pentad_dashboard.py:838
+#: pentad_dashboard.py:903
+msgid "Station "
+msgstr "Station "
+
+#: pentad_dashboard.py:649 pentad_dashboard.py:732 pentad_dashboard.py:838
+#: pentad_dashboard.py:903
+msgid " on "
+msgstr " on "
+
+#: pentad_dashboard.py:650
+msgid "Sum of runoff over the past 3 days: "
+msgstr "Sum of runoff over the past 3 days: "
+
+#: pentad_dashboard.py:650 pentad_dashboard.py:734
+msgid " m3/s"
+msgstr " m3/s"
+
+#: pentad_dashboard.py:651
+msgid "Forecast horizon for "
+msgstr "Forecast horizon for "
+
+#: pentad_dashboard.py:651 pentad_dashboard.py:733
+msgid " pentad "
+msgstr " pentad "
+
+#: pentad_dashboard.py:678 pentad_dashboard.py:766
+msgid "Multi-year average"
+msgstr "Multi-year average"
+
+#: pentad_dashboard.py:682 pentad_dashboard.py:770
+msgid "Current year"
+msgstr "Current year"
+
+#: pentad_dashboard.py:686 pentad_dashboard.py:786
+msgid "90-percentile range"
+msgstr "90-percentile range"
+
+#: pentad_dashboard.py:690 pentad_dashboard.py:790
+msgid "50-percentile range"
+msgstr "50-percentile range"
+
+#: pentad_dashboard.py:694
+msgid "Day of the year (starting from January 1)"
+msgstr "Day of the year (starting from January 1)"
+
+#: pentad_dashboard.py:694 pentad_dashboard.py:799
+msgid "River discharge [m3/s]"
+msgstr "River discharge [m3/s]"
+
+#: pentad_dashboard.py:733
+msgid " (forecast for "
+msgstr " (forecast for "
+
+#: pentad_dashboard.py:733
+msgid ")"
+msgstr ")"
+
+#: pentad_dashboard.py:734 pentad_dashboard.py:735 pentad_dashboard.py:736
+#: pentad_dashboard.py:738
+msgid "m3/s"
+msgstr "m3/s"
+
+#: pentad_dashboard.py:735
+msgid "Expected forecast: "
+msgstr "Expected forecast: "
+
+#: pentad_dashboard.py:736 pentad_dashboard.py:738
+msgid "Forecast range: "
+msgstr "Forecast range: "
+
+#: pentad_dashboard.py:774
+msgid "Current year forecast"
+msgstr "Current year forecast"
+
+#: pentad_dashboard.py:778 pentad_dashboard.py:782
+msgid "Current year forecast range"
+msgstr "Current year forecast range"
+
+#: pentad_dashboard.py:778
+msgid "sigma"
+msgstr "sigma"
+
+#: pentad_dashboard.py:799 pentad_dashboard.py:866 pentad_dashboard.py:946
+msgid "Pentad of the month (starting from January 1)"
+msgstr "Pentad of the month (starting from January 1)"
+
+#: pentad_dashboard.py:839 pentad_dashboard.py:904
+msgid "data from"
+msgstr "data from"
+
+#: pentad_dashboard.py:840
+msgid "Average effectiveness: "
+msgstr "Average effectiveness: "
+
+#: pentad_dashboard.py:844 pentad_dashboard.py:847 pentad_dashboard.py:866
+msgid "Effectiveness"
+msgstr "Effectiveness"
+
+#: pentad_dashboard.py:905 pentad_dashboard.py:906
+msgid "Average accuracy"
+msgstr "Average accuracy"
+
+#: pentad_dashboard.py:946 pentad_dashboard.py:1014
+msgid "Forecast accuracy"
+msgstr "Forecast accuracy"
+
+#: pentad_dashboard.py:988
+msgid "disclaimer_who"
+msgstr "<p>The forecast dashboard was developed by <a href='https://www.hydrosolutions.ch/' target='_blank'>hydrosolutions GmbH</a> under the project SAPPHIRE Central Asia funded by the <a href='https://www.eda.admin.ch/eda/en/home/fdfa/organisation-fdfa/directorates-divisions/sdc.html' target='_blank'>Swiss Agency for Development and Cooperation</a>.</p>"
+
+#: pentad_dashboard.py:989
+msgid "disclaimer_waranty"
+msgstr "The data used in this dashboard is provided by the iEasyHydro system, which is managed by the Operational Hydrology Department of Kyrgyz Hydromet."
+
+#: pentad_dashboard.py:992
+msgid "Last updated on "
+msgstr "Last updated on "
+
+#: pentad_dashboard.py:998
+msgid "Predictors"
+msgstr "Predictors"
+
+#: pentad_dashboard.py:1001
+msgid "Hydrograph"
+msgstr "Hydrograph"
+
+#: pentad_dashboard.py:1005 pentad_dashboard.py:1008
+msgid "Forecast"
+msgstr "Forecast"
+
+#: pentad_dashboard.py:1011
+msgid "Effectiveness of the methods"
+msgstr "Effectiveness of the methods"
+
+#: pentad_dashboard.py:1017
+msgid "Disclaimer"
+msgstr "Disclaimer"
+
+#: pentad_dashboard.py:1033
+msgid "Notifications"
+msgstr "Notifications"
+
+#: pentad_dashboard.py:1049
+msgid "SAPPHIRE Central Asia - Pentadal forecast dashboard"
+msgstr "SAPPHIRE Central Asia - Pentadal forecast dashboard"

@@ -39,9 +39,9 @@ You can verify your confirmed edits in the dashboard in your local copies of the
 
 ### The backend
 #### Prerequisites
-We recommend the use of Visual Studio Code for developping the backend. The installation instructions can be found [here](https://code.visualstudio.com/download). You will need to install the Python extension for Visual Studio Code. The installation instructions can be found [here](https://code.visualstudio.com/docs/languages/python).
+You will need a Python IDE for development. If you do not alreay have one installed, we recommend the use of Visual Studio Code for developping the backend. The installation instructions can be found [here](https://code.visualstudio.com/download). You will need to install the Python extension for Visual Studio Code. The installation instructions can be found [here](https://code.visualstudio.com/docs/languages/python).
 
-We further use conda for managing the Python environment. The installation instructions can be found [here](https://docs.conda.io/projects/conda/en/latest/user-guide/install/). Once conda is installed, you can create a new conda environment by running the following command in the terminal:
+We use conda for managing the Python environment. The installation instructions can be found [here](https://docs.conda.io/projects/conda/en/latest/user-guide/install/). Once conda is installed, you can create a new conda environment by running the following command in the terminal:
 ```bash
 conda create --name my_environment python=3.10
 ```
@@ -49,7 +49,9 @@ Through the name tag you can specify a recognizable name for the environment (yo
 ```bash
 conda activate my_environment
 ```
-Our workflow may be inconsistent but here is what worked for us: We then installed the following packages in the terminal (note that this will take some time):
+The name of your environment will now appear in brackets in the terminal.
+
+We then install the following packages in the terminal (note that this will take some time):
 ```bash
 cd apps/backend
 pip install -r requirements.txt
@@ -71,7 +73,20 @@ This will run the linear regression tool for the period of January first 2010 to
 If you have daily data available from 2000 to the present time, we recommend starting the forecast from 2010 onwards. This gives the backend tool 10 years of data (from 2000 to 2010) to build a linear regression model. Each year, the linear regression model will be updated with the data from the previous year. That means, the parameters of the linear regression model $y=a \cdot x+b$ will change each year. If you are interested in the model parameters, they are provided in the *ieasyforecast_results_file*, apps/internal_data/forecasts_pentad.csv.
 
 ### Forecast dashboard
+#### Prerequisites
+The forecast dashboard is implemented in python using the panel framework. As for the backend development, we recommend the use of a Python IDE and conda for managing the Python environment. Please refer to the instructions above should you require more information on how to install these tools.
 
+If you have already set up a python environment for the backend, you can activate it by running the following command in the terminal and skipp the installation of python_requirements.txt:
+```bash
+conda activate my_environment
+```
+
+#### How to run the forecast dashboard locally
+To run the forecast dashboard locally, navigate to the apps/forecast_dashboard folder and run the following command in the terminal:
+```bash
+panel serve pentad_dashboard.py --show --autoreload --port 5009
+```
+The options --show, --autoreload, and --port 5009 are optional. The show and autoreload options open your devault browser window (we used chrome) at http://localhost:5009/pentad_dashboard and automatically reload the dashboard if you save changes in the file pentad_dashboard.py. The port option tells you on which port the dashboard is being displayed. Should port 5009 be already occupied on your computer, you can change the number. You can then select the station and view predictors and forecasts in the respective tabs.
 
 ## Dockerization
 
@@ -97,5 +112,15 @@ Run the image locally for testing (not for deployment). Replace <full_path_to> w
 docker run -e "IN_DOCKER_CONTAINER=True" -v <full_path_to>/apps/config:/app/apps/config -v <full_path_to>/data:/app/data -v <full_path_to>/apps/internal_data:/app/apps/internal_data -p 9000:8801 --name forecast_backend_container forecast_backend
 ```
 
+### Forecast dashboard
+The forecast dashboard is dockerized using the Dockerfile in the apps/forecast_dashboard folder. To build the docker image locally, run the following command in the root directory of the repository:
+```bash
+docker build --no-cache -t forecast_dashboard -f ./apps/forecast_dashboard/Dockerfile .
+```
+Run the image locally for testing (not for deployment). Replace <full_path_to> with your local path to the folders.
+```bash
+docker run -e "IN_DOCKER_CONTAINER=True" -v <full_path_to>/data:/app/data -v <full_path_to>/apps/config:/app/apps/config -v <full_path_to>/apps/internal_data/:/app/apps/internal_data -p 5006:5006 --name fcboard forecast_dashboard
+```
+Make sure that the port 5006 is not occupied on your computer. You can change the port number in the command above if necessary but you'll have to edit the port exposed in the docker file and edit the panel serve command in the dockerfile to make sure panel renders the dashboards to your desired port.
 
-
+You can now access the dashboard in your browser at http://localhost:5006/pentad_dashboard and review it's functionality.
