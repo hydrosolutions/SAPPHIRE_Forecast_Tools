@@ -107,15 +107,23 @@ if __name__ == "__main__":
     if os.getenv("IN_DOCKER_CONTAINER") == "True":
         print(f"Running in docker container. Loading environment variables from .env")
         env_file_path = "apps/config/.env"
-        res = load_dotenv(env_file_path, override=True)
+        res = load_dotenv(env_file_path)
+        print("IEASYHYDRO_HOST: ", os.getenv("IEASYHYDRO_HOST"))
         if res == False:
             print(f"WARNING: Could not load environment variables from {env_file_path}")
             logging.warning(f"Could not load environment variables from {env_file_path}")
 
     else:
         print(f"Running locally. Loading environment variables from .env_develop")
+        # For development purposes, you can use an .env file to overwrite the
+        # default environment variables. This is useful if you need to test the
+        # access to the database from your local machine.
         env_file_path = "../config/.env_develop"
+        # Note, we use the override=True flag here to overwrite the environment
+        # variables read from run_offline_mode.py for debugging and testing
+        # purposes.
         res = load_dotenv(dotenv_path=env_file_path, override=True)
+        print("IEASYHYDRO_HOST: ", os.getenv("IEASYHYDRO_HOST"))
         if res == False:
             print(f"WARNING: Could not load environment variables from {env_file_path}")
             logging.warning(f"Could not load environment variables from {env_file_path}")
@@ -320,11 +328,8 @@ if __name__ == "__main__":
 
     logging.info(f"   {len(config_all)} discharge station(s) found, namely\n{config_all['code'].values}")
 
-    ## Merge information from db_sites and config_all. This is in fact only
-    ## needed once to update the config_all file. This should be done manually
-    ## when new stations are added to the DB.
-    # Only do this if we have access to the database
-    '''
+    ## Merge information from db_sites and config_all. Make sure that all sites
+    # in config_all are present in db_sites.
     if backend_has_access_to_db == True:
         print("-Merging information from db_sites and config_all ...")
         logging.info("-Merging information from db_sites and config_all ...")
@@ -338,19 +343,18 @@ if __name__ == "__main__":
         # Edit here if need to add new sites for short-term forecasting.
         new_sites_forecast = pd.DataFrame({
             'site_code': new_sites['site_code'],
-            'basin': "Нарын",
+            'basin': new_sites['basin'],
             'latitude': new_sites['lat'],
             'longitude': new_sites['long'],
-            'country': 'Кыргызстан',
-            'is_virtual': True,
-            'region': 'Нарынская область',
-            'site_type': 'discharge',
+            'country': new_sites['country'],
+            'is_virtual': new_sites['is_virtual'],
+            'region': new_sites['region'],
+            'site_type': new_sites['site_type'],
             'site_name': new_sites['name_ru'],
-            'organization_id': 1,
-            'elevation': 988,
+            'organization_id': new_sites['organization_id'],
+            'elevation': new_sites['elevation'],
         })
         db_sites = pd.concat([db_sites, new_sites_forecast])
-    '''
 
     if backend_has_access_to_db == True:
         # Add information from config_all to db_sites
@@ -451,7 +455,11 @@ if __name__ == "__main__":
     stations_str = [str(station) for station in stations]
 
     db_sites = db_sites[db_sites["site_code"].isin(stations_str)]
+
     logging.info(
+        f"   Producing forecasts for {len(db_sites)} station(s), namely: {db_sites['site_code'].values}"
+    )
+    print(
         f"   Producing forecasts for {len(db_sites)} station(s), namely: {db_sites['site_code'].values}"
     )
 
@@ -460,10 +468,7 @@ if __name__ == "__main__":
     logging.info("-Formatting db_sites to a list of Sites objects ...")
 
     # Make sure the entries are not lists
-    for col in db_sites.columns:
-        # Check if content is a list
-        if isinstance(db_sites[col][0], list):
-            db_sites[col] = db_sites[col].apply(lambda x: x[0])
+    db_sites = db_sites.applymap(lambda x: x[0] if isinstance(x, list) else x)
 
     fc_sites = fl.Site.from_dataframe(
         db_sites[["site_code", "site_name", "river_ru", "punkt_ru", "latitude", "longitude", "region", "basin"]]
@@ -630,6 +635,9 @@ if __name__ == "__main__":
     # Get a list of the excel files containing the daily discharge data available
     # in the data/daily_runoff directory
     daily_discharge_files = os.listdir(os.getenv("ieasyforecast_daily_discharge_path"))
+    # Ignore files that do not start with "1"
+    daily_discharge_files = [file for file in daily_discharge_files if file.startswith('1')]
+    print(f"INFO: daily_discharge_files: {daily_discharge_files}")
 
     # Print a warning if there are no files found in the ieasyforecast_daily_discharge_path
     if len(daily_discharge_files) == 0:
