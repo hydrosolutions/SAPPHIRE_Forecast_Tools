@@ -7,6 +7,7 @@ import numpy as np
 # Import the modules from the forecast library
 import tag_library as tl
 import forecast_library as fl
+import datetime
 logger = logging.getLogger(__name__)
 
 
@@ -284,9 +285,10 @@ def get_station_data(ieh_sdk, backend_has_access_to_db, start_date):
     # Initiate the dictionary for the data
     data_dict = {}
 
-    # Create a vector with numbers from 2000 to 2023, that is the years for
-    # which the data is available in the Excel sheets.
-    years = np.arange(2000, 2024, 1)
+    # Create a vector with numbers from 2000 to the current year, that is the years for
+    # which the data may be available in the Excel sheets.
+    current_year = datetime.date.today().year
+    years = np.arange(2000, (current_year + 1), 1)
 
     # Get the file names for the stations
     for index, row in library.iterrows():
@@ -295,34 +297,44 @@ def get_station_data(ieh_sdk, backend_has_access_to_db, start_date):
 
         # Read the data for the station
         for year in years:
-            df = pd.read_excel(
-                file_path, sheet_name=str(year), header=[0], skiprows=[1],
-                names=['Date', 'Q_m3s'], parse_dates=['Date'],
-                date_format="%d.%m.%Y"
-            )
-            # Sort df by Date
-            df.sort_values(by=['Date'], inplace=True)
+            # If there is no sheet named year, skip the year
+            try:
+                df = pd.read_excel(
+                    file_path, sheet_name=str(year), header=[0], skiprows=[1],
+                    names=['Date', 'Q_m3s'], parse_dates=['Date'],
+                    date_format="%d.%m.%Y"
+                )
+                # Sort df by Date
+                df.sort_values(by=['Date'], inplace=True)
 
-            datetime_column = df.iloc[:, 0]  # Dates are in the first column
-            discharge_column = df.iloc[:, 1]  # Discharges are in the second column
+                datetime_column = df.iloc[:, 0]  # Dates are in the first column
+                discharge_column = df.iloc[:, 1]  # Discharges are in the second column
 
-            data = pd.DataFrame({
-                "Date": datetime_column.values,
-                "Q_m3s": discharge_column.values,
-                "Year": year,
-                "Code": station,
-            })
+                data = pd.DataFrame({
+                    "Date": datetime_column.values,
+                    "Q_m3s": discharge_column.values,
+                    "Year": year,
+                    "Code": station,
+                })
 
-            data_dict[station, year] = data
+                data_dict[station, year] = data
+
+            except:
+                # If there is no sheet for the year, the data frame for that
+                # year will be empty.
+                continue
 
     # Combine all sheets into a single DataFrame
     combined_data = pd.concat(data_dict.values(), ignore_index=True)
 
     # Convert the Date column to datetime
-    combined_data.loc[:, 'Date'] = pd.to_datetime(combined_data.loc[:, 'Date'])
+    combined_data.loc[:,'Date'] = pd.to_datetime(combined_data.loc[:,'Date'])
 
     # Drop rows with missing discharge values
-    combined_data.dropna(subset='Q_m3s', inplace=True)
+    combined_data.dropna(subset = 'Q_m3s', inplace=True)
+
+    # Overwrite the Year column with the actual year based on the date
+    combined_data.loc[:,'Year'] = pd.to_datetime(combined_data.loc[:,'Date']).dt.strftime('%Y')
 
     # Get the latest daily data from DB in addition. The data from the DB takes
     # precedence over the data from the Excel sheets.
