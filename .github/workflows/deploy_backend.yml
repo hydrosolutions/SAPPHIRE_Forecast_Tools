@@ -80,7 +80,7 @@ jobs:
     - name: Test with unittest
       working-directory: ./apps
       run: |
-        python tests/run_tests.py  #-m unittest discover -s backend/tests -p 'test_*.py'
+        python backend/tests/run_tests.py  #-m unittest discover -s backend/tests -p 'test_*.py'
 
   push_to_Dckerhub:
     needs: [lint_and_test_ieasyhydroforecast, lint_and_test_backend]
