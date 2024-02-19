@@ -18,10 +18,10 @@ if os.getenv("IN_DOCKER_CONTAINER") == "True":
     load_dotenv(env_file_path)
 else:
     print(f"Running locally. Loading environment variables from .env_develop")
-    env_file_path = "../config/.env_develop"
+    env_file_path = "../config/.env_develop_kghm"
     load_dotenv(env_file_path)
 # Print if a file exists at the env_file_path location
-print(f"File exists at {env_file_path}: {os.path.isfile(env_file_path)}")
+# print(f"File exists at {env_file_path}: {os.path.isfile(env_file_path)}")
 
 # Check if the file ieasyforecast_last_successful_run_file is available in
 # ieasyforecast_intermediate_data_path.
@@ -70,8 +70,14 @@ while current_day <= date_end:
     # Add the file as argument to forecast.py can identify if it is called from
     # run_offline_mode.py or from run_online_mode.py
     if os.getenv("IN_DOCKER_CONTAINER") == "True":
-        subprocess.run(["python3", "apps/backend/forecast_script.py", str(current_day), __file__])
+        subprocess.run(["python3", "apps/backend/forecast_script.py",
+                        str(current_day),
+                        "--calling_script", __file__,
+                        "--env", env_file_path])
     else:
-        subprocess.run(["python", "forecast_script.py", str(current_day), __file__])
+        subprocess.run(["python", "forecast_script.py",
+                        str(current_day),
+                        "--calling_script", __file__,
+                        "--env", env_file_path])
     # Increment the current day by one day
     current_day += datetime.timedelta(days=1)

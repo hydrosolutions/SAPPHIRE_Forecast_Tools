@@ -32,7 +32,7 @@ if (Sys.getenv("IN_DOCKER_CONTAINER")=="") {
   if (!file.exists("../config/.env_develop")) {
     stop("File ../config/.env_develop not found. ")
   }
-  readRenviron("../config/.env_develop")
+  readRenviron("../config/.env_develop_kghm")
 } else { 
   print("Running from docker container")
   # Environment variable IN_DOCKER_CONTAINER is set. Run from docker container

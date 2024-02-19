@@ -15,7 +15,7 @@ import random as rd
 import logging
 import os
 import sys
-import pickle
+import argparse
 
 # ieasyreports, installed with
 # pip install git+https://github.com/hydrosolutions/ieasyreports.git@main
@@ -78,29 +78,73 @@ You may need to install the library iEasyHydroForcast before running this script
 using the command (-e is for installing the iEasyHydroLibrary library in
 editable mode):
     $ pip install -e ./iEasyHydroForecast
+
+@arg date: The date for which the forecast is run. It is in the format
+        YYYY-MM-DD.
+@arg calling_script (optional): The name of the calling script.
+@arg env (optional): The path to the .env file to load for testing purposes.
+
+@examples:
+    # Run the pentadal forecast for the 5th of May 2021
+    $ python forecast_script.py "2021-05-05"
+
+    # Run the pentadal forecast for the 5th of May 2021 and specify an
+    # environment file
+    $ python forecast_script.py "2021-05-05" --env "tests/.env_develop_test"
+
+    # Run the pentadal forecast for the 5th of May 2021 from another python
+    # script.
+    $ python run_offline_mode.py "2021-05-05" --calling_script __file__
 '''
 if __name__ == "__main__":
+    # Create a parser object
+    parser = argparse.ArgumentParser(description="Forecast script")
+
+    # Add the required arguments
+    parser.add_argument("date", help="Date of the forecast in the format YYYY-MM-DD")
+
+    # Add the optional arguments
+    parser.add_argument("--calling_script", help="Name of the calling script.")
+    parser.add_argument("--env", help="Path to the .env file to load for testing purposes.")
+
+    # Parse the arguments
+    args = parser.parse_args()
+
+    # Access the arguments
+    run_date = args.date
+    calling_script = args.calling_script if args.calling_script else None
+    path_to_env_file = args.env if args.env else None
+    '''
     # Get the command line arguments
     args = sys.argv[1:]
 
     # Get the name of the calling script
     calling_script = args[1]
 
+    # Optional input: Get the path to the .env file to load for testing purposes.
+    if len(args) > 2:
+        path_to_env_file = args[2]
+    '''
+
     # Test if the string contains the word "run_offline_mode"
     # Please note that the online_mode is being deprecated.
+    '''
     if re.search("run_offline_mode", calling_script):
         # If it does, set the offline_mode flag to True
         offline_mode = True
     else:
         # Otherwise, set the offline_mode flag to False
         offline_mode = False
+    '''
+    offline_mode = True
 
     # === Load environment ===
     # region Load environment
     print("\n\n====================================================\n")
     logging.info("\n\n====================================================")
-    print(f"forecast_script called from: {calling_script}")
-    logging.info(f"forecast_script called from: {calling_script}")
+    if calling_script is not None:
+        print(f"forecast_script called from: {calling_script}")
+        logging.info(f"forecast_script called from: {calling_script}")
 
     # Read the environment varialbe IN_DOCKER_CONTAINER to determine which .env
     # file to use
@@ -118,7 +162,11 @@ if __name__ == "__main__":
         # For development purposes, you can use an .env file to overwrite the
         # default environment variables. This is useful if you need to test the
         # access to the database from your local machine.
-        env_file_path = "../config/.env_develop"
+        if path_to_env_file is not None:
+            # If the path to the .env file is provided as an argument, use it.
+            env_file_path = path_to_env_file
+        else:
+            env_file_path = "../config/.env_develop"
         # Note, we use the override=True flag here to overwrite the environment
         # variables read from run_offline_mode.py for debugging and testing
         # purposes.
@@ -137,7 +185,7 @@ if __name__ == "__main__":
     # the month in operational mode. Otherwise, exit the program.
     # Always run the script in offline mode.
     # Get today's date and convert it to datetime
-    today = dt.datetime.strptime(args[0], "%Y-%m-%d")
+    today = dt.datetime.strptime(run_date, "%Y-%m-%d")
 
     # Get the day of the month
     day = today.day
@@ -681,26 +729,32 @@ if __name__ == "__main__":
 
         # Read the data for the station
         for year in years:
-            df = pd.read_excel(
-                file_path, sheet_name=str(year), header=[0], skiprows=[1],
-                names=['Date', 'Q_m3s'], parse_dates=['Date'],
-                date_format="%d.%m.%Y"
-            )
-            # Sort df by Date
-            df.sort_values(by=['Date'], inplace=True)
+            # If there is no sheet named year, skip the year
+            try:
+                df = pd.read_excel(
+                    file_path, sheet_name=str(year), header=[0], skiprows=[1],
+                    names=['Date', 'Q_m3s'], parse_dates=['Date'],
+                    date_format="%d.%m.%Y"
+                )
+                # Sort df by Date
+                df.sort_values(by=['Date'], inplace=True)
 
-            datetime_column = df.iloc[:, 0]  # Dates are in the first column
-            discharge_column = df.iloc[:, 1]  # Discharges are in the second column
+                datetime_column = df.iloc[:, 0]  # Dates are in the first column
+                discharge_column = df.iloc[:, 1]  # Discharges are in the second column
 
-            data = pd.DataFrame({
-                "Date": datetime_column.values,
-                "Q_m3s": discharge_column.values,
-                "Year": year,
-                "Code": station,
-            })
+                data = pd.DataFrame({
+                    "Date": datetime_column.values,
+                    "Q_m3s": discharge_column.values,
+                    "Year": year,
+                    "Code": station,
+                })
 
-            data_dict[station, year] = data
+                data_dict[station, year] = data
 
+            except:
+                # If there is no sheet for the year, the data frame for that
+                # year will be empty.
+                continue
 
     # Combine all sheets into a single DataFrame
     combined_data = pd.concat(data_dict.values(), ignore_index=True)
@@ -710,6 +764,9 @@ if __name__ == "__main__":
 
     # Drop rows with missing discharge values
     combined_data.dropna(subset = 'Q_m3s', inplace=True)
+
+    # Overwrite the Year column with the actual year based on the date
+    combined_data.loc[:,'Year'] = pd.to_datetime(combined_data.loc[:,'Date']).dt.strftime('%Y')
 
     # Get the latest daily data from DB in addition. The data from the DB takes
     # precedence over the data from the Excel sheets.
@@ -807,10 +864,12 @@ if __name__ == "__main__":
     modified_data['pentad'] = modified_data['Date'].apply(tl.get_pentad)
     modified_data['pentad_in_year'] = modified_data['Date'].apply(tl.get_pentad_in_year)
 
+    # TODO: Read norm discharge from the database. Applies for all forecasts
+    # except for the pentadal (as no pentadal norms will be stored in DB).
+
     # Groupp modified_data by Code and calculate the mean over discharge_avg
     # while ignoring NaN values
     norm_discharge = modified_data.reset_index(drop=True).groupby(['Code', 'pentad_in_year'], as_index=False)['discharge_avg'].apply(lambda x: x.mean(skipna=True))
-
     # Get the pentad of the bulletin date. This gives the pentad of the month.
     forecast_pentad = tl.get_pentad(bulletin_date)
     # Get the pentad of the year of the bulletin_date. We perform the linear
@@ -819,7 +878,7 @@ if __name__ == "__main__":
 
     # Now we need to write the discharge_avg for the current pentad to the site: Site
     for site in fc_sites:
-        print(f'    Calculating norm discharge for site {site.code} ...')
+        #print(f'    Calculating norm discharge for site {site.code} ...')
         fl.Site.from_df_get_norm_discharge(site, forecast_pentad_of_year, norm_discharge)
 
     print(f'   {len(fc_sites)} Norm discharge calculated, namely:\n{[site.qnorm for site in fc_sites]}')
@@ -839,6 +898,8 @@ if __name__ == "__main__":
         hydrograph_data = modified_data
         # Convert the Date column to a datetime object
         hydrograph_data['Date'] = pd.to_datetime(hydrograph_data['Date'])
+        # Make sure the Year column is of type string.
+        hydrograph_data['Year'] = hydrograph_data['Year'].astype(str)
 
         # We do not filter February 29 in leap years here but in the dashboard.
 
@@ -853,6 +914,8 @@ if __name__ == "__main__":
         hydrograph_data_pentad = hydrograph_data_pentad.reset_index(drop=True)
         hydrograph_data_day = hydrograph_data_day.reset_index(drop=True)
 
+        print("DEBUG: hydrograph_pentad long: \n", hydrograph_data_pentad.head())
+
         # Reformat the data in the wide format. The day of the year, Code and pentad
         # are the index. The columns are the years. The values are the discharge_avg.
         hydrograph_pentad = hydrograph_data_pentad.pivot_table(index=['Code', 'pentad'], columns='Year', values='discharge_avg')
@@ -865,6 +928,7 @@ if __name__ == "__main__":
         # Convert pentad column to integer
         hydrograph_pentad['pentad'] = hydrograph_pentad['pentad'].astype(int)
         hydrograph_day['day_of_year'] = hydrograph_day['day_of_year'].astype(int)
+        print("DEBUG: hydrograph_pentad wide: \n", hydrograph_pentad.head())
 
         # Set 'Code' and 'pentad'/'day_of_year' as index again
         hydrograph_pentad.set_index(['Code', 'pentad'], inplace=True)
@@ -1193,4 +1257,5 @@ if __name__ == "__main__":
     print("   ... done")
     logging.info("   ... done")
     # endregion
+
 # endregion
