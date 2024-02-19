@@ -4,6 +4,7 @@ import os
 import sys
 
 import gettext  # For translation
+import locale
 
 import panel as pn
 
@@ -49,22 +50,24 @@ pn.extension(global_css=[':root { --design-primary-color: #307096; }'])
 # file to use
 in_docker_flag = str(os.getenv("IN_DOCKER_CONTAINER"))
 if in_docker_flag == "True":
+    path_to_env_file = "apps/config/.env"
     # Test if the .env file exists
-    if not os.path.isfile("apps/config/.env"):
-        raise Exception("File not found: " + "apps/config/.env")
+    if not os.path.isfile(path_to_env_file):
+        raise Exception("File not found: " + path_to_env_file)
     print("Running in Docker container")
-    res = load_dotenv("apps/config/.env")
+    res = load_dotenv(path_to_env_file)
     # Test if res read
     if res is None:
         raise Exception("Could not read .env file")
 else:
     # Test if the .env file exists
-    if not os.path.isfile("../config/.env_develop"):
-        raise Exception("File not found: " + "../config/.env_develop")
+    path_to_env_file = "../config/.env_develop"
+    if not os.path.isfile(path_to_env_file):
+        raise Exception("File not found: " + path_to_env_file)
     print("Running locally")
     # The override flag in read_dotenv is set to allow switching between .env
     # files. Useful when testing different configurations.
-    res = load_dotenv("../config/.env_develop", override=True)
+    res = load_dotenv(path_to_env_file, override=True)
     if res is None:
         raise Exception("Could not read .env_develop file")
     # Print ieasyreports_templates_directory_path from the environment
@@ -126,18 +129,28 @@ today = dt.datetime.now()
 
 # Read the locale from the environment file
 current_locale = os.getenv("ieasyforecast_locale")
-os.environ['LANGUAGE'] = current_locale
+print("\n\nDEBUG: current_locale: ", current_locale)
+#os.environ['LANGUAGE'] = current_locale
 
 # Localization, translation to different languages.
 localedir = os.getenv("ieasyforecast_locale_dir")
+print("DEBUG: localedir: ", localedir)
 # Test if the directory exists
 if not os.path.isdir(localedir):
     raise Exception("Directory not found: " + localedir)
 # Create a translation object
+try:
+    translation = gettext.translation('pentad_dashboard', localedir, languages=[current_locale])
+except FileNotFoundError:
+    # Fallback to the default language if the .mo file is not found
+    translation = gettext.translation('pentad_dashboard', localedir, languages=['ru_KG'])
+_ = translation.gettext
+'''
 gettext.bindtextdomain('pentad_dashboard', localedir)
 gettext.textdomain('pentad_dashboard')
 # use of _("") to translate strings
 _ = gettext.gettext
+'''
 # How to update the translation file:
 # 1. Extract translatable strings from the source code
 # xgettext -o ../config/locale/messages.pot pentad_dashboard.py
@@ -434,19 +447,19 @@ def calculate_pentad_forecast_accuracy(
     # year of the first Date in forecast_pentad_stat.
     # Add a column year to hydrograph_pentad_stat where "Year" is converted to
     # integer.
-    hydrograph_pentad_stat["year"] = hydrograph_pentad_stat["Year"].astype(int)
+    hydrograph_pentad_stat.loc[:, "year"] = hydrograph_pentad_stat.loc[:, "Year"].astype(int)
     hydrograph_pentad_stat = hydrograph_pentad_stat[hydrograph_pentad_stat["year"]>=int(forecast_pentad_stat["Date"].dt.year.min())]
     # Drop the column year
     hydrograph_pentad_stat = hydrograph_pentad_stat.drop(columns=["year"])
 
     # Add the column Year to the forecast_pentad DataFrame
-    forecast_pentad_stat["Year"] = forecast_pentad_stat["Date"].dt.year
+    forecast_pentad_stat.loc[:, "Year"] = forecast_pentad_stat.loc[:, "Date"].dt.year
 
     # Number of years
     noyears = len(forecast_pentad_stat["Year"].unique())
 
     # Merge forecast_pentad fc_qexp by year and pentad to the hydrograph_pentad DataFrame
-    hydrograph_pentad_stat["Year"] = hydrograph_pentad_stat["Year"].astype(int)
+    hydrograph_pentad_stat.loc[:, "Year"] = hydrograph_pentad_stat.loc[:, "Year"].astype(int)
     hydrograph_pentad_stat = hydrograph_pentad_stat.merge(forecast_pentad_stat[["Year", "pentad", "fc_qexp"]],
                                             on=["Year", "pentad"], how="left")
 
@@ -514,11 +527,14 @@ hydrograph_day_all["day_of_year"] = hydrograph_day_all["day_of_year"].astype(int
 hydrograph_day_all['Code'] = hydrograph_day_all['Code'].astype(str)
 # Sort all columns in ascending Code and pentad order
 hydrograph_day_all = hydrograph_day_all.sort_values(by=["Code", "day_of_year"])
-# Remove the day 366 (for leap years)
-hydrograph_day_all = hydrograph_day_all[hydrograph_day_all["day_of_year"] != 366]
+# Remove the day 366 (only if we are not in a leap year)
+# Test if current year is a leap year
+if today.year % 4 != 0:
+    hydrograph_day_all = hydrograph_day_all[hydrograph_day_all["day_of_year"] != 366]
 
 # Read hydrograph data - pentad
 hydrograph_pentad_all = pd.read_csv(hydrograph_pentad_file).reset_index(drop=True)
+print("DEBUG hydrograph_pentad_all: ", hydrograph_pentad_all)
 hydrograph_pentad_all["pentad"] = hydrograph_pentad_all["pentad"].astype(int)
 hydrograph_pentad_all['Code'] = hydrograph_pentad_all['Code'].astype(str)
 # Sort all columns in ascending Code and pentad order
@@ -628,6 +644,7 @@ forecast_pentad_stat = forecast_pentad[forecast_pentad["station_labels"] == stat
 # Test if the dates in forecast_pentad_stat overlap with the dates in
 # hydrograph_pentad.
 # From hydrograph_pentad, return second last column name as integer.
+print("DEBUG: hydrograph_pentad.columns: ", hydrograph_pentad.columns)
 temp_last_year_hydrograph_data = int(hydrograph_pentad.drop(columns='station_labels').columns.values[-1])
 
 # From forecast_pentad_stat, return the year of the lowest date as integer.
@@ -775,8 +792,8 @@ def plot_forecast_data(station_widget, range_selection_widget, manual_range_widg
                                                           "Norm": "Q Норма м3/с",
                                                           "current_year": "Q Текущий год м3/с",})
     # Add a manual forecast range to the dataframe
-    fcdata["fc_qmin_20p"] = fcdata["fc_qexp"] - float(manual_range_widget)/100.0*fcdata["fc_qexp"]
-    fcdata["fc_qmax_20p"] = fcdata["fc_qexp"] + float(manual_range_widget)/100.0*fcdata["fc_qexp"]
+    fcdata.loc[:, "fc_qmin_20p"] = fcdata.loc[:, "fc_qexp"] - float(manual_range_widget)/100.0*fcdata.loc[:, "fc_qexp"]
+    fcdata.loc[:, "fc_qmax_20p"] = fcdata.loc[:, "fc_qexp"] + float(manual_range_widget)/100.0*fcdata.loc[:, "fc_qexp"]
 
     # Filter forecast data for the current year
     fcdata_filtered = fcdata[fcdata["Date"].dt.year == today.year]
@@ -878,6 +895,8 @@ def plot_effectiveness_of_forecast_method(station_widget,
         hydrograph_pentad_effectiveness, forecast_pentad_stat_effectiveness,
         range_selection_widget, manual_range_widget)
     dates_collection = get_current_predictor_and_dates(forecast_pentad, station_widget)
+
+    print("DEBUG hydrograph_pentad_stat_effectiveness: \n", hydrograph_pentad_stat_effectiveness)
 
     # We need to print a suitable date for the figure titles. We use the last
     # date of fcdata_filtered.

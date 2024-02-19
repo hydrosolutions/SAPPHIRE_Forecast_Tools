@@ -161,6 +161,8 @@ data/daily_runoff/~*.xlsx
 
 # Ignore environment files used for development and testing
 apps/config/.env_develop_kghm
-apps/backend/tests/test_remote_db_access.py
-apps/internal_data/*_kghm.csv
 apps/backend/forecast_logs.txt
+apps/internal_data/*_kghm.csv
+
+# Internal tests
+apps/backend/tests/testspecial_*.py
