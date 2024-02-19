@@ -24,7 +24,7 @@ if __name__ == "__main__":
     # Add the forecast directory to the Python path
     sys.path.append(forecast_dir)
     # Discover and run tests
-    suite = unittest.defaultTestLoader.discover('tests', pattern='test_*.py')
+    suite = unittest.defaultTestLoader.discover('.', pattern='test_*.py')
     runner = unittest.TextTestRunner()
     runner.run(suite)
 
