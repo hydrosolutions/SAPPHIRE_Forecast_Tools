@@ -18,7 +18,7 @@ if os.getenv("IN_DOCKER_CONTAINER") == "True":
     load_dotenv(env_file_path)
 else:
     print(f"Running locally. Loading environment variables from .env_develop")
-    env_file_path = "../config/.env_develop_kghm"
+    env_file_path = "../config/.env_develop"
     load_dotenv(env_file_path)
 # Print if a file exists at the env_file_path location
 # print(f"File exists at {env_file_path}: {os.path.isfile(env_file_path)}")

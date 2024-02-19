@@ -1,4 +1,4 @@
-## Shiny dashboard for the selection of river runoff stations for forecasts. 
+## Shiny dashboard for the selection of river runoff stations for forecasts.
 
 # 0 Libraries
 
@@ -16,29 +16,29 @@ library(leaflet)
 
 
 # 1 Configuration
-# Check if this script is run from within a docker container. 
-# We do this by checking if an environment variable set by the Dockerfile is 
-# present or not. 
+# Check if this script is run from within a docker container.
+# We do this by checking if an environment variable set by the Dockerfile is
+# present or not.
 if (Sys.getenv("IN_DOCKER_CONTAINER")=="") {
   print("Running from local machine")
   # Environment variable IN_DOCKER_CONTAINER is not set. Run from local machine
-  # This code assumes that forecast_configuration has been opened in 
+  # This code assumes that forecast_configuration has been opened in
   # apps/configuration_dashboard for development
   library(here)
   setwd(here())
   setwd("apps/configuration_dashboard")
   print(getwd())
-  # Test if the file .env_develop exists. 
+  # Test if the file .env_develop exists.
   if (!file.exists("../config/.env_develop")) {
     stop("File ../config/.env_develop not found. ")
   }
-  readRenviron("../config/.env_develop_kghm")
-} else { 
+  readRenviron("../config/.env_develop")
+} else {
   print("Running from docker container")
   # Environment variable IN_DOCKER_CONTAINER is set. Run from docker container
   setwd("/app")
   print(getwd())
-  # Test if the file .env exists. 
+  # Test if the file .env exists.
   if (!file.exists("apps/config/.env")) {
     stop("File apps/config/.env not found. ")
   }
@@ -67,17 +67,17 @@ if (!file.exists(paste0(gis_data_dir,"/",gis_shape_file_name))) {
 }
 shp_file <- st_read(paste0(gis_data_dir,"/",gis_shape_file_name))
 
-## JSON 
+## JSON
 # Test if file exists
 if (!file.exists(paste0(config_dir,"/", config_all_stations_file_name))) {
   stop("File ", paste0(config_dir,"/", config_all_stations_file_name), " not found. ")
 }
 station_library <- fromJSON(paste0(config_dir,"/", config_all_stations_file_name))
 
-### Filter out stations whose IDs start with "3" (in the Central Asian context this 
-# means that meteo stations are not displayed) and (option) exclude specific 
-# stations (e.g. 9999999999999) from the json of available stations. 
-exclude_ids <- c("9999999999999")   
+### Filter out stations whose IDs start with "3" (in the Central Asian context this
+# means that meteo stations are not displayed) and (option) exclude specific
+# stations (e.g. 9999999999999) from the json of available stations.
+exclude_ids <- c("9999999999999")
 filtered_ids <- names(station_library$stations_available_for_forecast)[sapply(names(station_library$stations_available_for_forecast), function(id) !(grepl("^3", id)) && !(id %in% exclude_ids))]
 filtered_station_library <- station_library
 filtered_station_library$stations_available_for_forecast <- station_library$stations_available_for_forecast[filtered_ids]
@@ -117,17 +117,17 @@ stations_df$id <- as.factor(stations_df$id)
 ui <- dashboardPage(
   # Define the header of the dashboard
   dashboardHeader(title =   tags$div(
-    style = "position: relative; display: flex; justify-content: left; align-items: left;", 
+    style = "position: relative; display: flex; justify-content: left; align-items: left;",
     # Save the jpg in a folder www
     tags$div(tags$img(src='Station.jpg',height='30',width='30'), style = "margin-right:10px;"),
     tags$span("Выбор гидропостов для пентадного прогноза"),
-    tags$button(icon("question-circle"), type = "button", 
-                class = "btn btn-primary", id = "docButton", 
+    tags$button(icon("question-circle"), type = "button",
+                class = "btn btn-primary", id = "docButton",
                 style = "position: absolute; right: 10px; top: 50%; transform: translateY(-50%);"))),
-  
+
   # Define the sidebar of the dashboard
   dashboardSidebar(disable = TRUE),
-  
+
   # Define the body of the dashboard
   dashboardBody(
     tags$head(
@@ -139,7 +139,7 @@ ui <- dashboardPage(
           });
         ")
       ),
-      
+
       tags$style(type="text/css", "
         body, .skin-blue .wrapper, .content-wrapper, .main-content {
         background-color: #f1f1f1;
@@ -151,16 +151,16 @@ ui <- dashboardPage(
           color: transparent;
           caret-color: black;
         }
-  
+
       /* Adjusting the checkbox size */
       input[type='checkbox'] {
         transform: scale(1.5);
         margin-right: 20px;  /* This gives some spacing between the checkbox and the label */
       }
-     
+
       /* Adjusting the label font size */
       .custom-checkbox-label {
-        font-size: 14px; 
+        font-size: 14px;
         margin-left: 10px;
       }
     ",
@@ -169,16 +169,16 @@ ui <- dashboardPage(
                                 .skin-blue .main-header .logo {
                                 background-color: #03112F;
                                 }
-                                
+
                                 /* logo when hovered */
                                 .skin-blue .main-header .logo:hover {
                                 background-color: #03112F;
                                 }
-                                
+
                                 /* navbar (rest of the header) */
                                 .skin-blue .main-header .navbar {
                                 background-color: #03112F;
-                                }"), 
+                                }"),
                  HTML(".main-header .logo {
           background-color: #5B99D6;  /* Blue color from Adrians icon*/
           color: white;               /* Text color */
@@ -207,8 +207,8 @@ ui <- dashboardPage(
           min-width: 250px;
           overflow-y: auto;
           background-color: #f1f1f1;
-          z-index: 1000; 
-          padding-left: 20px;  
+          z-index: 1000;
+          padding-left: 20px;
           padding-top: 80px;
         }
          .scrollable-content {
@@ -218,7 +218,7 @@ ui <- dashboardPage(
         .flex-container {
           display: flex;
           justify-content: space-between;
-          align-items: center; 
+          align-items: center;
           flex-wrap: wrap;
           width: 100%;
         }
@@ -226,7 +226,7 @@ ui <- dashboardPage(
          margin-top: 10px;
          margin-right 10px;
         }
-        
+
         .footer-section {
             position: fixed;
             bottom: 0;
@@ -239,7 +239,7 @@ ui <- dashboardPage(
             z-index: 1000;
         }
         .footer-logo {
-    height: 30px; 
+    height: 30px;
     margin-right: 15px;
     vertical-align: middle;
 }
@@ -247,13 +247,13 @@ ui <- dashboardPage(
     display: inline-block;
     vertical-align: middle;
 }
-             
+
              #.skin-blue .main-header .navbar {background-color: transparent;
             # top: 50px !important; }
-             
+
              .main-sidebar {background-color: transparent;
              top: 60px !important;}
-             
+
              .content-wrapper {background-color: transparent;}
              #.main-footer {background-color: transparent;}
              .container-fluid {max-width: 100%;}
@@ -269,7 +269,7 @@ ui <- dashboardPage(
         left: 13px !important;
         width: 15% !important;
             }
-      
+
       "))
     ),
     div(class = "custom-sidebar",
@@ -289,37 +289,37 @@ ui <- dashboardPage(
         ),
         uiOutput("excel_checkbox_ui"),
         #actionButton("show_docs", "Documentation")
-        
+
     ),#div
-    
+
     div(style = "margin-left: 250px;",
         leafletOutput("map", width = "100%", height = "100%"),
         absolutePanel(id = "controls", class = "sidebarCollapsed sidebarCollapsedNotHovered", fixed = TRUE,
         ) #absolutePanel
     ),#div of the table
-    
-    tags$div(class = "footer-section", 
+
+    tags$div(class = "footer-section",
              #shiny::img(src = "hsol_logo.png", class = "footer-logo"),
              tags$div(class="footer-content",
                       "© 2023 Проект SAPPHIRE Cenetral Asia Разработано hydrosolutions GmbH при поддержке Швейцарского агентства развития и сотрудничества",
-                      #tags$div(class="footer-contact", 
-                      #         "Вебсайт: ", 
+                      #tags$div(class="footer-contact",
+                      #         "Вебсайт: ",
                       #         "www.hydrosolutions.ch | Телефон: +41 43 535 05 80 | Электронна почта: hs@hydrosolutions.ch"
                       #),
              ))
-    
+
   ),#body
-  
-  
+
+
 )#Page
 
 
 # SERVER
 server <- function(input, output, session){
-  
+
   # shiny::setTitle("Выбор гидропостов для пентадного прогноза")
-  
-  
+
+
   # Help and instructions
   observeEvent(input$show_docs, {
     showModal(modalDialog(
@@ -367,13 +367,13 @@ server <- function(input, output, session){
       size = "l"  # Set the size of the modal. Options: c("s", "m", "l")
     ))
   })
-  
-  
-  
-  
-  
-  
-  # Map  
+
+
+
+
+
+
+  # Map
   output$map <- renderLeaflet({
     leaflet(data = stations_df,options = leafletOptions(zoomControl = FALSE )) %>%
       addTiles() %>%
@@ -392,11 +392,11 @@ server <- function(input, output, session){
         radius = 8,
         label = ~paste(id, name_ru),
         labelOptions = labelOptions(direction = 'auto'))
-    
+
   });
-  
+
   #remember what stations were selected
-  
+
   selected_stations_from_json <- reactive({
     # Test if the file exists
     if (!file.exists(paste0(config_dir,"/",config_station_selection_file_name))) {
@@ -405,13 +405,13 @@ server <- function(input, output, session){
     config_outputs_Q <- fromJSON(paste0(config_dir,"/",config_station_selection_file_name))
     config_outputs_Q$stationsID
   })
-  
-  
+
+
   observe({
     # This will run once when the app starts
     updatePickerInput(session, "station", selected = selected_stations_from_json)
   })
-  
+
   #highlighted stations on map when selected on the panel on the left
   selectedStations <- reactive({
     if (is.null(input$station)) {
@@ -443,11 +443,11 @@ server <- function(input, output, session){
         )
     }
   })
-  
-  
+
+
   #existing stations part (load the stations that are selected for forecast from the JSON)
   selected_station_ids <- reactiveVal()
-  
+
   load_config_outputs <- function() {
     # Test if file exists
     if (Sys.getenv("IN_DOCKER_CONTAINER") == "") {
@@ -468,47 +468,47 @@ server <- function(input, output, session){
   observeEvent(input$confirm_save, {
     selected_station_ids(gsub("\\s—.*", "", input$station))
   })
-  
+
   observe({
     updatePickerInput(
-      session, 
-      inputId = "station", 
+      session,
+      inputId = "station",
       selected = selected_station_ids()
     )
   })
-  
+
   # UI to display the currently selected stations
   output$current_selected_stations_ui <- renderUI({
     # Get the IDs of the currently selected stations
     current_selected_ids <- selected_station_ids()
-    
+
     if (is.null(current_selected_ids) || length(current_selected_ids) == 0) {
       return("Нет выбранных гидропостов для прогноза.")
     } else {
       # Find the names corresponding to these IDs
       current_selected_names <- sapply(current_selected_ids, function(x) station_library[["stations_available_for_forecast"]][[x]][["name_ru"]])
-      
+
       # Combine IDs and names
       current_selected_info <- paste(current_selected_ids, current_selected_names, sep = " - ")
-      
+
       # Display the information
       HTML(paste("<p>", current_selected_info, "</p>", collapse = ""))
     }
   })
-  
-  
-  
+
+
+
   # JSON modification (edit the json files when station submit button clicked or Excel checkbox clicked)
   ## reactive values for config
   station_selection_rv <- reactiveVal(fromJSON(paste0(config_dir,"/",config_station_selection_file_name)))
   #station selection
-  choices <- setNames(names(station_library$stations_available_for_forecast), 
-                      sapply(names(station_library$stations_available_for_forecast), 
-                             function(x) paste(x, 
-                                               station_library$stations_available_for_forecast[[x]]$name_ru, 
+  choices <- setNames(names(station_library$stations_available_for_forecast),
+                      sapply(names(station_library$stations_available_for_forecast),
+                             function(x) paste(x,
+                                               station_library$stations_available_for_forecast[[x]]$name_ru,
                                                sep = " — ")))
   updatePickerInput(session, "station", choices = choices)
-  
+
   observeEvent(input$submit, {
     showModal(modalDialog(
       title = "Подтверждение",
@@ -519,52 +519,52 @@ server <- function(input, output, session){
       )
     ))
   })
-  
+
   observeEvent(input$confirm_save, {
     station_data <- station_selection_rv()
     station_data$stationsID <- gsub("\\s—.*", "", input$station)
     station_selection_rv(station_data)
-    
+
     jsonlite::write_json(station_selection_rv(), paste0(config_dir,"/",config_station_selection_file_name), pretty = TRUE)
-    
+
     showNotification("Гидропост(ы) выбраны успешно!", type = "message")
     removeModal()
   })
-  
-  
+
+
   # Excel checkbox
-  
-  
+
+
   updateCheckboxInput(session, "write_excel", value = excel_config$write_excel)
-  
+
   excel_checkbox_rv <- reactiveVal(excel_config$write_excel)
-  
+
   observeEvent(input$dynamic_write_excel, {
     excel_config$write_excel <- input$dynamic_write_excel
     jsonlite::write_json(
-      excel_config, 
-      paste0(config_dir,"/",config_output_file_name), 
-      pretty = TRUE, 
-      flatten = TRUE, 
+      excel_config,
+      paste0(config_dir,"/",config_output_file_name),
+      pretty = TRUE,
+      flatten = TRUE,
       auto_unbox = TRUE)
     updated_excel_config <- fromJSON(paste0(config_dir,"/",config_output_file_name))
     excel_checkbox_rv(updated_excel_config$write_excel)
   })
-  
-  
+
+
   # UI rendering for Excel checkbox
-  
-  output$excel_checkbox_ui <- renderUI({ 
+
+  output$excel_checkbox_ui <- renderUI({
     excel_config <- fromJSON(paste0(config_dir,"/",config_output_file_name))
     div(class = "custom-checkbox-label",
-        checkboxInput("dynamic_write_excel", label = "Записать Эксель файл", 
+        checkboxInput("dynamic_write_excel", label = "Записать Эксель файл",
                       value = excel_config$write_excel)
     )
   })
-  
-  
-  
-  
+
+
+
+
 }
 
 
