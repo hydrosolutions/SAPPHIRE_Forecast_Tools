@@ -51,7 +51,7 @@ def parse_command_line_args() -> tuple[bool, dt.datetime]:
     # Always run the script in offline mode.
     # Get today's date and convert it to datetime
     start_date = dt.datetime.strptime(args[0], "%Y-%m-%d")
-    start_date = dt.datetime.strptime("2024-01-31", "%Y-%m-%d")  # todo temp remove so previous line remains
+    #start_date = dt.datetime.strptime("2024-01-31", "%Y-%m-%d")  # todo temp remove so previous line remains
 
     # Get the day of the month
     day = start_date.day
