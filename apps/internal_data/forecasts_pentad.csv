@@ -9,5 +9,3 @@ date,code,predictor,slope,intercept,delta,fc_qmin,fc_qmax,fc_qexp,qnorm,perc_nor
 2024-01-20,12256,nan,0.30094,-0.00366,0.06032,nan,nan,nan,0.10, ,
 2024-01-25,12176,nan,-0.63499,16.98953,4.26157,nan,nan,nan,7.28, ,
 2024-01-25,12256,nan,0.30135,0.00127,0.05342,nan,nan,nan,0.09, ,
-2021-05-05,12176,nan,-0.5887,15.58156,1.13116,nan,nan,nan,5.58, , 
-2021-05-05,12256,nan,0.19065,2.12683,1.09034,nan,nan,nan,3.97, , 
