@@ -92,6 +92,8 @@ def write_hydrograph_data(modified_data):
     hydrograph_data = modified_data
     # Convert the Date column to a datetime object
     hydrograph_data['Date'] = pd.to_datetime(hydrograph_data['Date'])
+    # Make sure the Year column is of type string.
+    hydrograph_data['Year'] = hydrograph_data['Year'].astype(str)
 
     # We do not filter February 29 in leap years here but in the dashboard.
 
