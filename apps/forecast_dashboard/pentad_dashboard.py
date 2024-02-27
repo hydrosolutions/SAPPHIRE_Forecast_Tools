@@ -129,12 +129,10 @@ today = dt.datetime.now()
 
 # Read the locale from the environment file
 current_locale = os.getenv("ieasyforecast_locale")
-print("\n\nDEBUG: current_locale: ", current_locale)
-#os.environ['LANGUAGE'] = current_locale
 
 # Localization, translation to different languages.
 localedir = os.getenv("ieasyforecast_locale_dir")
-print("DEBUG: localedir: ", localedir)
+
 # Test if the directory exists
 if not os.path.isdir(localedir):
     raise Exception("Directory not found: " + localedir)
@@ -174,7 +172,7 @@ def add_custom_xticklabels_pentad(plot, element):
     # Specify the positions and labels of the ticks. Here we use the first day
     # of each month & pentad per month as a tick.
     ticks = list(range(1,72,1))  # Replace with your desired positions
-    labels = {1:_('Jan')+', 1', 2:'1', 3:'3', 4:'4', 5:'5', 6:'6',
+    labels = {1:_('Jan')+', 1', 2:'2', 3:'3', 4:'4', 5:'5', 6:'6',
               7:_('Feb')+', 1', 8:'2', 9:'3', 10:'4', 11:'5', 12:'6',
               13:_('Mar')+', 1', 14:'2', 15:'3', 16:'4', 17:'5', 18:'6',
               19:_('Apr')+', 1', 20:'2', 21:'3', 22:'4', 23:'5', 24:'6',
@@ -534,7 +532,6 @@ if today.year % 4 != 0:
 
 # Read hydrograph data - pentad
 hydrograph_pentad_all = pd.read_csv(hydrograph_pentad_file).reset_index(drop=True)
-print("DEBUG hydrograph_pentad_all: ", hydrograph_pentad_all)
 hydrograph_pentad_all["pentad"] = hydrograph_pentad_all["pentad"].astype(int)
 hydrograph_pentad_all['Code'] = hydrograph_pentad_all['Code'].astype(str)
 # Sort all columns in ascending Code and pentad order
@@ -550,7 +547,9 @@ forecast_pentad['Date'] = forecast_pentad['Date'].astype('datetime64[ns]')
 forecast_pentad['code'] = forecast_pentad['code'].astype(str)
 # Check if there are duplicates for Date and code columns. If yes, only keep the
 # last one
-forecast_pentad = forecast_pentad.drop_duplicates(subset=['Date', 'code'], keep='last')
+# Print all values where column code is 15102. Sort the values by Date in ascending order.
+# Print the last 20 values.
+forecast_pentad = forecast_pentad.drop_duplicates(subset=['Date', 'code'], keep='last').sort_values('Date')
 # Get the pentad of the year
 forecast_pentad = tl.add_pentad_in_year_column(forecast_pentad)
 # Cast pentad column no number
@@ -644,7 +643,6 @@ forecast_pentad_stat = forecast_pentad[forecast_pentad["station_labels"] == stat
 # Test if the dates in forecast_pentad_stat overlap with the dates in
 # hydrograph_pentad.
 # From hydrograph_pentad, return second last column name as integer.
-print("DEBUG: hydrograph_pentad.columns: ", hydrograph_pentad.columns)
 temp_last_year_hydrograph_data = int(hydrograph_pentad.drop(columns='station_labels').columns.values[-1])
 
 # From forecast_pentad_stat, return the year of the lowest date as integer.
@@ -670,7 +668,7 @@ def plot_daily_hydrograph_data(station_widget, fcdata):
 
     # We need to print a suitable date for the figure titles.
     title_date = dates_collection.latest_forecast_date.strftime('%Y-%m-%d')
-    title_pentad = tl.get_pentad(title_date)
+    title_pentad = str(int(tl.get_pentad(title_date))+1)
     title_month = tl.get_month_str_case2(title_date)
 
     # The predictor range is the last 3 days before the start of each pentad.
@@ -797,6 +795,7 @@ def plot_forecast_data(station_widget, range_selection_widget, manual_range_widg
 
     # Filter forecast data for the current year
     fcdata_filtered = fcdata[fcdata["Date"].dt.year == today.year]
+
     # If fcdata_filtered is empty, use the previous year data
     if fcdata_filtered.empty:
         fcdata_filtered = fcdata[fcdata["Date"].dt.year == today.year - 1]
@@ -805,7 +804,7 @@ def plot_forecast_data(station_widget, range_selection_widget, manual_range_widg
     # date of fcdata_filtered where .
     title_date = dates_collection.latest_forecast_date
     title_date_str = title_date.strftime('%Y-%m-%d')
-    title_pentad = tl.get_pentad(title_date_str)
+    title_pentad = str(int(tl.get_pentad(title_date_str))+1)
     title_month = tl.get_month_str_case2(title_date_str)
 
     # Filter forecast data for the last date
@@ -895,8 +894,6 @@ def plot_effectiveness_of_forecast_method(station_widget,
         hydrograph_pentad_effectiveness, forecast_pentad_stat_effectiveness,
         range_selection_widget, manual_range_widget)
     dates_collection = get_current_predictor_and_dates(forecast_pentad, station_widget)
-
-    print("DEBUG hydrograph_pentad_stat_effectiveness: \n", hydrograph_pentad_stat_effectiveness)
 
     # We need to print a suitable date for the figure titles. We use the last
     # date of fcdata_filtered.

@@ -218,7 +218,7 @@ msgstr "Последнее обновление "
 
 #: pentad_dashboard.py:998
 msgid "Predictors"
-msgstr "предикторы"
+msgstr "Предикторы"
 
 #: pentad_dashboard.py:1001
 msgid "Hydrograph"
