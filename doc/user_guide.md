@@ -19,8 +19,8 @@ You may configure the Forecast Tools to generate excell documents with the forec
 # Important user information
 - Currently, only pentadal forecasts are implemented, follwowing the method currently employed by Kyrgyz Hydromet. Further forecast horizons and forecast methods will be implemented in the coming months and years.
 - We assume that discharge stations start with the character '1'. This is currently hard-coded in the software. If your station codes do not start with '1', please contact us.
-- To save runtime, the current implementation checks the iEasyHydro database for new predictor data only after January 2020. If you need to change this, edit the date in the file apps/forecast_backend/forecast_backend.py in the section getting predictor.
-- Special use cases, like the discharge for virtual reservoirs are currently hardcoded in the backend. This affects station code 16936. If required, this code section with the special case can be commented in the file apps/forecast_backend/forecast_backend.py.
+- To save runtime, the current implementation checks the iEasyHydro database for new predictor data only after January 2020. If you need to change this, edit the date in the file apps/backend/src/data_processing.py in the section getting predictor.
+- Special use cases, like the discharge for virtual reservoirs are currently hardcoded in the backend. This affects station code 16936. If required, this code section with the special case can be commented in the files apps/backend/src/data_processing.py and apps/backend/src/forecasting.py.
 
 # Input data
 The SAPPHIRE Forecast Tools require the following input files to be available which will be further described in the linked or following sections:

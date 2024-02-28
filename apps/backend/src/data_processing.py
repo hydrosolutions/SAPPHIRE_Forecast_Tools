@@ -387,6 +387,73 @@ def get_station_data(ieh_sdk, backend_has_access_to_db, start_date):
     # dates and keep the data from the DB.
     combined_data = pd.concat([combined_data, db_data]).drop_duplicates(subset=['Date', 'Code'], keep='first')
 
+    # Test if station 16936 is in the list of stations. If it is, we check for
+    # data gaps in the combined_data and fill them with a combination from other
+    # stations.
+    if '16936' in combined_data['Code'].values:
+        # Go through the the combined_data for '16936' and check for data gaps.
+        # From the last available date in the combined_data for '16936', we
+        # look for data in the combined_data for other stations, namely '16059',
+        # '16096', '16100', and '16093' and add their values up to write to
+        # station '16936'.
+
+        # Get latest date for which we have data in '16936'
+        last_date_16936 = combined_data[combined_data['Code'] == '16936']['Date'].max()
+
+        # Get the data for the date from the other stations
+        # Test if station 16093 (Torkent) is in the list of stations
+        # (This station is under construction at the time of writing this code)
+        if '16059' in combined_data['Code'].values:
+            data_16059 = combined_data[(combined_data['Code'] == '16059') & (combined_data['Date'] >= last_date_16936)]
+        else:
+            logger.error('Station 16059 is not in the list of stations for forecasting but it is required for forecasting 16936.\n -> Not able to calculate runoff for 16936.\n -> Please select station 16059 for forecasting.')
+            exit()
+        if '16096' in combined_data['Code'].values:
+            data_16096 = combined_data[(combined_data['Code'] == '16096') & (combined_data['Date'] >= last_date_16936)]
+        else:
+            logger.error('Station 16096 is not in the list of stations for forecasting but it is required for forecasting 16936.\n -> Not able to calculate runoff for 16936.\n -> Please select station 16096 for forecasting.')
+            exit()
+        if '16100' in combined_data['Code'].values:
+            data_16100 = combined_data[(combined_data['Code'] == '16100') & (combined_data['Date'] >= last_date_16936)]
+        else:
+            logger.error('Station 16100 is not in the list of stations for forecasting but it is required for forecasting 16936.\n -> Not able to calculate runoff for 16936.\n -> Please select station 16100 for forecasting.')
+            exit()
+        if '16093' in combined_data['Code'].values:
+            data_16093 = combined_data[(combined_data['Code'] == '16093') & (combined_data['Date'] >= last_date_16936)]
+        else:
+            data_16093 = combined_data[(combined_data['Code'] == '16096') & (combined_data['Date'] >= last_date_16936)]
+            data_16093.loc[:, 'Q_m3s'] = 0.6 * data_16093.loc[:,'Q_m3s']
+
+        # Merge data_15059, data_16096, data_16100, and data_16093 by date
+        data_Tok_combined = pd.merge(data_16059, data_16096, on='Date', how='left', suffixes=('_16059', '_16096'))
+        data_16100.rename(columns={'Q_m3s': 'Q_m3s_16100'}, inplace=True)
+        data_Tok_combined = pd.merge(data_Tok_combined, data_16100, on='Date', how='left')
+        data_16093.rename(columns={'Q_m3s': 'Q_m3s_16093'}, inplace=True)
+        data_Tok_combined = pd.merge(data_Tok_combined, data_16093, on='Date', how='left')
+
+        # Sum up all the data and write to '16936'
+        data_Tok_combined['sum'] = data_Tok_combined['Q_m3s_16059'] + \
+            data_Tok_combined['Q_m3s_16096'] + \
+                data_Tok_combined['Q_m3s_16100'] + \
+                    data_Tok_combined['Q_m3s_16093']
+
+        # Append the data_Tok_combined['sum'] to combined_data for '16936'
+        data_Tok_combined['Code'] = '16936'
+        data_Tok_combined['Year'] = data_Tok_combined['Year_16059']
+        data_Tok_combined['Q_m3s'] = data_Tok_combined['sum']
+        data_Tok_combined.drop(columns=['Year_16059', 'Code_16059', 'Year_16096',
+                                        'Code_16096', 'Year_x', 'Code_x',
+                                        'Year_y', 'Code_y',
+                                        'Q_m3s_16059', 'Q_m3s_16096',
+                                        'Q_m3s_16100', 'Q_m3s_16093', 'sum'],
+                               inplace=True)
+
+        print("\nDEBUG data_Tok_combined\n", data_Tok_combined.tail(20))
+
+        combined_data = pd.concat([combined_data, data_Tok_combined], ignore_index=True)
+
+    print('\nDEBUG: combined_data for 16936 after filling data gaps:\n', combined_data[combined_data['Code'] == '16936'])
+
     # Filter combined_data for dates before today (to simulate offline mode)
     combined_data = combined_data[combined_data['Date'] <= start_date]
 
