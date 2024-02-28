@@ -1,6 +1,7 @@
 import logging
 import pandas as pd
 import os
+import datetime as dt
 from . import config
 
 import forecast_library as fl
@@ -201,6 +202,20 @@ def write_forecast_bulletin(settings, start_date, bulletin_date, fc_sites):
 
     # Format the date as a string in the format "YYYY_MM_DD"
     today_str = start_date.strftime("%Y-%m-%d")
+    start_date_year = str(dt.datetime.strptime(bulletin_date, '%Y-%m-%d').date().year)
+    start_date_month_num = dt.datetime.strptime(bulletin_date, '%Y-%m-%d').date().strftime("%m")
+    start_date_month = assign_month_string_to_number(dt.datetime.strptime(bulletin_date, '%Y-%m-%d').date().month)
+    start_date_pentad = tl.get_pentad(bulletin_date)
+
+    # Overwrite settings for theh bulletin folder. In this way we can sort the
+    # bulletins in a separate folder.
+    settings.report_output_path = os.getenv("ieasyreports_report_output_path")
+    settings.report_output_path = os.path.join(
+        settings.report_output_path,
+        "bulletins",
+        "pentad",
+        start_date_year,
+        start_date_month_num + "_" + start_date_month)
 
     if write_bulletin:
         # Get the name of the template file from the environment variables
@@ -208,7 +223,7 @@ def write_forecast_bulletin(settings, start_date, bulletin_date, fc_sites):
 
         # Construct the output filename using the formatted date
         bulletin_output_file = os.getenv("ieasyforecast_bulletin_file_name")
-        filename = f"{today_str}_{bulletin_output_file}"
+        filename = f"{start_date_year}_{start_date_month_num}_{start_date_month}_{start_date_pentad}_{bulletin_output_file}"
 
         report_generator = import_from_string(settings.template_generator_class)(
             tags=bulletin_tags(bulletin_date),
@@ -221,10 +236,62 @@ def write_forecast_bulletin(settings, start_date, bulletin_date, fc_sites):
         report_generator.generate_report(list_objects=fc_sites, output_filename=filename)
         logger.info("   ... done")
 
+def assign_month_string_to_number(month_number):
+    """
+    Converts a month number to its corresponding month name in Russian.
+
+    This function takes an integer from 1 to 12 that represents a month number
+    (where 1 is January and 12 is December) and returns the corresponding month
+    name in Russian.
+
+    Parameters:
+    month_number (int): An integer from 1 to 12 representing the month number.
+
+    Returns:
+    str: The name of the corresponding month in Russian. If the month_number
+    is not in the range 1-12, the function will return None.
+
+    Example:
+    >>> assign_month_string_to_number(1)
+    'Январь'
+    >>> assign_month_string_to_number(12)
+    'Декабрь'
+    """
+    if month_number == 1:
+        return "Январь"
+    elif month_number == 2:
+        return "Февраль"
+    elif month_number == 3:
+        return "Март"
+    elif month_number == 4:
+        return "Апрель"
+    elif month_number == 5:
+        return "Май"
+    elif month_number == 6:
+        return "Июнь"
+    elif month_number == 7:
+        return "Июль"
+    elif month_number == 8:
+        return "Август"
+    elif month_number == 9:
+        return "Сентябрь"
+    elif month_number == 10:
+        return "Октябрь"
+    elif month_number == 11:
+        return "Ноябрь"
+    elif month_number == 12:
+        return "Декабрь"
+    elif month_number < 1 or month_number > 12:
+        return None
 
 def write_forecast_sheets(settings, start_date, bulletin_date, fc_sites, result2_df):
     # Format the date as a string in the format "YYYY_MM_DD"
     today_str = start_date.strftime("%Y-%m-%d")
+    start_date_year = str(dt.datetime.strptime(bulletin_date, '%Y-%m-%d').date().year)
+    start_date_month_num = dt.datetime.strptime(bulletin_date, '%Y-%m-%d').date().strftime("%m")
+    start_date_month = assign_month_string_to_number(dt.datetime.strptime(bulletin_date, '%Y-%m-%d').date().month)
+    start_date_pentad = tl.get_pentad(bulletin_date)
+
     # If forecast sheets are written
     if config.excel_output():
         logger.info("Writing forecast sheets ...")
@@ -238,7 +305,7 @@ def write_forecast_sheets(settings, start_date, bulletin_date, fc_sites, result2
         for site in fc_sites:
 
             # Construct the output filename using the formatted date
-            filename = f"{today_str}_{site.code}_{bulletin_output_file}"
+            filename = f"{start_date_year}_{start_date_month_num}_{start_date_month}_{start_date_pentad}-{site.code}-{bulletin_output_file}"
 
             # This tag is defined here because it's a general tag, and it can't
             # receive a lambda function as a replacement value, it needs to get a
@@ -274,6 +341,18 @@ def write_forecast_sheets(settings, start_date, bulletin_date, fc_sites, result2
                 'qpavg': "",
                 'qpsum': site.predictor
             })
+
+            # Overwrite settings for theh bulletin folder. In this way we can sort the
+            # bulletins in a separate folder.
+            settings.report_output_path = os.getenv("ieasyreports_report_output_path")
+            settings.report_output_path = os.path.join(
+                settings.report_output_path,
+                "forecast_sheets",
+                "pentad",
+                start_date_year,
+                start_date_month_num + "_" + start_date_month,
+                site.code)
+
 
             # directly instantiate the new generator
             report_generator = FakeHeaderTemplateGenerator(

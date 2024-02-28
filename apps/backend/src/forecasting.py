@@ -41,15 +41,34 @@ def get_predictor(modified_data, offline_mode, start_date, fc_sites, ieh_sdk, pr
         # Uzun-Akmat 16100 and Torkent (no code in DB...)
         logger.info('       ... from the DB ...')
         if '16936' in [site.code for site in fc_sites]:
-            tok_contrib_sites = ["16059", "16096", "16100"]
+            # Test if station 16093 (Torkent) is in the list of stations
+            # (This station is under construction at the time of writing this code)
+            if '16093' in [site.code for site in fc_sites]:
+                tok_contrib_sites = ["16059", "16096", "16100", "16093"]
+                torkent_data = True
+            else:
+                tok_contrib_sites = ["16059", "16096", "16100"]
+                torkent_data = False
             tok_sites = []
             for site in tok_contrib_sites:
                 tok_site = fl.Site(site)
                 tok_sites.append(tok_site)
             for site in tok_sites:
                 fl.Site.from_DB_get_predictor(ieh_sdk, site, predictor_dates)
-            # Sum the predictors of the contributing sites
-            tok_predictor = sum([site.predictor for site in tok_sites])
+
+            # Test if there is data in site.predictor for site 16093. If there
+            # is no data, assign 0.6*site.predictor for site 16096 to site 16093.
+            if torkent_data:
+                if tok_sites[3].predictor is None:
+                    tok_sites[3].predictor = 0.6 * tok_sites[1].predictor
+                    # Sum the predictors of the contributing sites
+                    tok_predictor = sum([site.predictor for site in tok_sites])
+            else:
+                 tok_predictor = sum([site.predictor for site in tok_sites]) + \
+                 0.6 * tok_sites[1].predictor
+
+
+
             # Assign the sum to the predictor of the reservoir
             for site in fc_sites:
                 if site.code == '16936':
