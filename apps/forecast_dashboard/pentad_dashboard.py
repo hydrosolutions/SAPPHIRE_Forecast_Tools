@@ -280,13 +280,24 @@ def get_current_predictor_and_dates(forecast_pentad_all: pd.DataFrame,
     # Get the latest forecast date from the forecast data
     output.latest_forecast_date = fcdata_selection["Date"].max()
 
-    # Based on the latest forecast date, get the current forecast horizon
-    output.forecast_start = output.latest_forecast_date + dt.timedelta(days=1)
-    output.forecast_end = output.latest_forecast_date + dt.timedelta(days=5)
+    # Based on the latest forecast date, get the current forecast horizon.
+    # Note that the last pentad of the month has variable length. We need to
+    # account for this.
+    output.forecast_start = output.latest_forecast_date
+
+    if output.latest_forecast_date.month in [1, 3, 5, 7, 8, 10, 12]:
+        output.forecast_end = output.latest_forecast_date + dt.timedelta(days=5)
+    elif output.latest_forecast_date.month in [4, 6, 9, 11]:
+        output.forecast_end = output.latest_forecast_date + dt.timedelta(days=4)
+    elif output.latest_forecast_date.month == 2:
+        if output.latest_forecast_date.year % 4 == 0:
+            output.forecast_end = output.latest_forecast_date + dt.timedelta(days=3)
+        else:
+            output.forecast_end = output.latest_forecast_date + dt.timedelta(days=2)
 
     # Also get the predictor date range
-    output.predictor_start = output.latest_forecast_date - dt.timedelta(days=4.5)
-    output.predictor_end = output.latest_forecast_date - dt.timedelta(days=1.5)
+    output.predictor_start = output.latest_forecast_date - dt.timedelta(days=4)
+    output.predictor_end = output.latest_forecast_date - dt.timedelta(days=1)
 
     # And get the predictor value from the forecast data. If we do not have a
     # predictor value, we set it to NaN. This can happen if the forecast tools
@@ -543,6 +554,10 @@ forecast_pentad = pd.read_csv(forecast_results_file)
 forecast_pentad['Date'] = pd.to_datetime(forecast_pentad['date'], format='%Y-%m-%d')
 # Make sure the date column is in datetime64 format
 forecast_pentad['Date'] = forecast_pentad['Date'].astype('datetime64[ns]')
+# The forecast date is the date on which the forecast was produced. For
+# visualization we need to have the date for which the forecast is valid.
+# We add 1 day to the forecast Date to get the valid date.
+forecast_pentad['Date'] = forecast_pentad['Date'] + pd.Timedelta(days=1)
 # Convert the code column to string
 forecast_pentad['code'] = forecast_pentad['code'].astype(str)
 # Check if there are duplicates for Date and code columns. If yes, only keep the
@@ -550,10 +565,12 @@ forecast_pentad['code'] = forecast_pentad['code'].astype(str)
 # Print all values where column code is 15102. Sort the values by Date in ascending order.
 # Print the last 20 values.
 forecast_pentad = forecast_pentad.drop_duplicates(subset=['Date', 'code'], keep='last').sort_values('Date')
-# Get the pentad of the year
+# Get the pentad of the year.
 forecast_pentad = tl.add_pentad_in_year_column(forecast_pentad)
 # Cast pentad column no number
 forecast_pentad['pentad'] = forecast_pentad['pentad'].astype(int)
+# print the forecast pentad between dates 2023-12-28 and 2024-01-04
+print(forecast_pentad[(forecast_pentad['Date'] >= '2023-12-24') & (forecast_pentad['Date'] <= '2024-01-06')])
 
 # List of stations with forecast data
 station_list = hydrograph_day_all['Code'].unique().tolist()
@@ -667,8 +684,8 @@ def plot_daily_hydrograph_data(station_widget, fcdata):
     data = preprocess_hydrograph_day_data(hydrograph_day)
 
     # We need to print a suitable date for the figure titles.
-    title_date = dates_collection.latest_forecast_date.strftime('%Y-%m-%d')
-    title_pentad = str(int(tl.get_pentad(title_date))+1)
+    title_date = (dates_collection.latest_forecast_date - dt.timedelta(days=1)).strftime('%Y-%m-%d')
+    title_pentad = tl.get_pentad(title_date)
     title_month = tl.get_month_str_case2(title_date)
 
     # The predictor range is the last 3 days before the start of each pentad.
@@ -676,15 +693,15 @@ def plot_daily_hydrograph_data(station_widget, fcdata):
     # it to get the predictor range.
     pentad_start_day = int(tl.get_pentad_first_day_of_year(title_date))
 
-    # Calculate the predictor range from the last_day_of_year with data -1 to -4
-    # Note that here we calculate the precictor differently from what we use in
-    # the linear regression tool. There we fill data gaps.
-    predictor_start = pentad_start_day - 4.5
-    predictor_end = pentad_start_day - 1.5
+    # Get the predictor range
+    predictor_start = int(dates_collection.predictor_start.strftime('%j'))
+    predictor_end = int(dates_collection.predictor_end.strftime('%j'))
+    print("DEBUG: predictor_start, predictor_end", predictor_start, predictor_end)
 
     # Also show the forecast horizon on the figure
-    forecast_horizon_start = pentad_start_day
-    forecast_horizon_end = pentad_start_day + 5
+    forecast_horizon_start = int(dates_collection.forecast_start.strftime('%j'))
+    forecast_horizon_end = int(dates_collection.forecast_end.strftime('%j'))
+    print("DEBUG: forecast_horizon_start, forecast_horizon_end", forecast_horizon_start, forecast_horizon_end)
 
     # Rename the columns
     data = data.rename(columns={"day_of_year": "День года",
@@ -801,11 +818,11 @@ def plot_forecast_data(station_widget, range_selection_widget, manual_range_widg
         fcdata_filtered = fcdata[fcdata["Date"].dt.year == today.year - 1]
 
     # We need to print a suitable date for the figure titles. We use the last
-    # date of fcdata_filtered where .
-    title_date = dates_collection.latest_forecast_date
+    # date of fcdata_filtered.
+    title_date = (dates_collection.latest_forecast_date - dt.timedelta(days=1))
     title_date_str = title_date.strftime('%Y-%m-%d')
-    title_pentad = str(int(tl.get_pentad(title_date_str))+1)
-    title_month = tl.get_month_str_case2(title_date_str)
+    title_pentad = tl.get_pentad(dates_collection.latest_forecast_date.strftime('%Y-%m-%d'))
+    title_month = tl.get_month_str_case2(dates_collection.latest_forecast_date.strftime('%Y-%m-%d'))
 
     # Filter forecast data for the last date
     fcdata = fcdata[fcdata["Date"] == fcdata["Date"].max()]
