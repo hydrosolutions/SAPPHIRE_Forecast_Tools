@@ -1,12 +1,12 @@
-name: Test-deploy forecast dashboard
+name: Deploy forecast dashboard
 
 env:
     IMAGE_NAME: mabesa/sapphire-dashboard
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "deploy" ]
   pull_request:
-    branches: [ "main" ]
+    branches: [ "deploy" ]
 
 jobs:
   lint_and_test_ieasyhydroforecast:
@@ -20,7 +20,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v3
+      uses: actions/setup-python@v5
       with:
         python-version: ${{ matrix.python-version }}
     - name: Set PYTHONPATH
@@ -56,7 +56,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v3
+      uses: actions/setup-python@v5
       with:
         python-version: ${{ matrix.python-version }}
     - name: Set PYTHONPATH
@@ -96,7 +96,7 @@ jobs:
     # Rename the image
     - name: Rename the image
       run: |
-        echo "IMAGE_TAG=latest" >> $GITHUB_ENV
+        echo "IMAGE_TAG=deploy" >> $GITHUB_ENV
 
     # Run the dockerization & deployment script
     - name: Build Docker image
