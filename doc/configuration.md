@@ -80,6 +80,52 @@ ORGANIZATION_ID=1
 You will need to adapt the port, user_name and password.
 
 ### Configuration of the iEasyReports library
+The ieasyreports library reads a template file for a report, fills in the data for the current forecast and stores the data in a file. The path to the template directory is given in ieasyreports_templates_directory_path. The template for the traditional forecast bulletin with the overview over the rivers in one or several basins is given in ieasyforecast_template_pentad_bulletin_file. The template for the traditional forecast sheet with the detailed forecast for one station is given in ieasyforecast_template_pentad_sheet_file. Please consult the example files provided in the data/templates folder for guidance.
+```
+ieasyreports_templates_directory_path=../../data/templates
+ieasyforecast_template_pentad_bulletin_file=pentad_forecast_bulletin_template.xlsx
+ieasyforecast_template_pentad_sheet_file=short_term_trad_sheet_template.xlsx
+```
+Note that the forecast bulletin is always written but the forecast sheets are optional. Whether or not the forecast sheets are written by the forecast tools can be configured using the forecast dashboard. Advanced users can set 'write_excel' in the file config/config_output.json to false. The ieasyreports library uses tags to identify where the data should be inserted. The tags currently available in the forecast tools are listed here: [doc/bulletin_template_tags.md](bulletin_template_tags.md).
+
+The root path where the forecast bulletins and the optional forecast sheets are written to in operational mode is given in ieasyreports_report_output_path. Currently, the bulletins are written to subfolders with the following structure:
+ieasyreports_report_output_path/bulletins/pentad/<forecast_year>/<forecast_month>/<bulletin_for_forecast_pentad>.xlsx.
+The forecast bulletins are named after forecast year, month and pentad. The forecast sheets are written to subfolders with the following structure:
+ieasyreports_report_output_path/forecast_sheets/pentad/<forecast_year>/<forecast_month>/<station_code>/<forecast_sheet_for_forecast_pentad>.xlsx.
+The forecast sheets are named after forecast year, month, pentad and station code. Please note that the forecast tools will add a prefix for the forecast year, month and pentad (and, in the case of the forecast sheets, the station code) to the base name. Please consult the example files provided in the data/reports folder for guidance.
+
+```
+# Path where the forecast bulletins are written to in operational mode
+ieasyreports_report_output_path=../../data/reports
+ieasyforecast_bulletin_file_name=pentadal_forecast_bulletin.xlsx
+ieasyforecast_sheet_file_name=pentadal_forecast_sheet.xlsx
+```
+The base names for the output files is given in ieasyforecast_bulletin_file_name and ieasyforecast_sheet_file_name. The forecast tools will add a prefix for the forecast year, month and pentad (and, in the case of the forecast sheets, the station code) to the base name.
+
+### Configuration for the configuration dashboard
+For visualization of the stations on the map, the forecast configuration dashboard needs to know the path to the administrative boundaries file. The path is given in ieasyforecast_gis_directory_path. The name of the administrative boundaries file is given in ieasyforecast_country_borders_file_name. The file is stored in the path ieasyforecast_gis_directory_path. The file must be in the WGS84 coordinate system (EPSG:4326).
+```
+# Configuration of the assets for the station selection/configuration dashboard
+ieasyforecast_gis_directory_path=../../data/GIS
+ieasyforecast_country_borders_file_name=gadm41_CHE_shp/gadm41_CHE_1.shp
+```
+Please store your own administrative boundary file in the path ieasyforecast_gis_directory_path and adapt the name of the file in the .env file.
+
+### Configuration for reading runoff data from excel
+In addition to reading operational river runoff data from the iEasyHydro database, the forecast tools can read historical runoff data for each forecast station from excel files. The path to the excel file is given in ieasyforecast_daily_discharge_path.
+```
+ieasyforecast_daily_discharge_path=../../data/daily_runoff
+```
+Note that for each station selected for forecasting, the forecast tools will look for a file with the name <station_code_>*.xlsx in the path ieasyforecast_daily_discharge_path. The file must contain at least a sheet with the name '2000' and the following columns: 'date' and 'discharge'. The date column must contain the date in the format 'YYYY-MM-DD' and the discharge column must contain the discharge in m3/s. Please consult the example files provided in the data/daily_runoff folder for guidance. More detailed information abou thte input file format can be found in [doc/user_guide.md](user_guide.md), section Input data.
+
+### Localization
+The forecast dashboard can be configured to run in Russian or English. The ieasyforecast_locale_dir points to the directory with the translation files. The language for the dashboard is set in ieasyforecast_locale. Currently available locales are ru_KG and en_CH for Russian and English respectively.
+```
+# Path for localization of forecast dashboard
+ieasyforecast_locale_dir=../config/locale
+# Set the locale for the dashboard. Available locales are ru_KG and en_CH.
+ieasyforecast_locale=ru_KG
+```
 
 ### Configuration to facilitate testing of the tools
 During development or deployment, you may want to focus only on selected stations. While all stations can be selected in the forecast configuration dashboard, you may want to limit the stations for which the actual forecast is produced. We use this option during the development of the forecast tools where we focus on a few stations for the implementation of the backend and the forecast dashboard. List the stations you wish to produce forecasts for in the file config_development_restrict_station_selection.json. The file has the same format as config_station_selection.json.

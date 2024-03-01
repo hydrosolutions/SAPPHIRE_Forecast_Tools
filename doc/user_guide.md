@@ -57,9 +57,11 @@ Please note that these internal files should not be edited manually by the user.
 
 
 # Forecast configuration
+Once deployed, the forecast dashboard is accessed by double-clicking on the forecast dashboard icon on your desktop. This dashboard is available in Russian language only.
 The forecast configuration dashboard is used to select the stations for which forecasts are to be produced. The dashboard is accessed by double-clicking on the station configuration icon on your desktop. The dashboard is currently only available in Russian language. Detailed user instructions are available by clicking on the help button in upper right corner of the dashboard window.
 
 # Forecast dashboard
+Once deployed, the forecast dashboard is accessed by double-clicking on the forecast dashboard icon on your desktop. The dashboard can be configured to display Russian or English language (see [doc/configuration.md](configuration.md)). Please note that upon reboot of the computer, the dashboard may not display correctly from the start. In this case, please wait a second and reload the browser window.
 The forecast dashboard is used to visualize the forecasts. The dashboard is accessed by double-clicking on the forecast dashboard icon on your desktop. The dashboard can be configured to run in Russian or English. The current version of the dashboard has the following features:
 - A predictor tab that allows to visualize the predictor data for the station selected in the side pane. The predictor data is read from the iEasyHydro database or from the excel sheets.
 - A forecast tab that visualizes the hydrograph with the forecasted discharge for the station selected in the side pane. The forecast is produced by the forecast tools based on past discharge data using the linear regression method.
