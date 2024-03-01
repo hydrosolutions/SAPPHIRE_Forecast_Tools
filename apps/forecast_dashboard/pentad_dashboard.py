@@ -61,7 +61,7 @@ if in_docker_flag == "True":
         raise Exception("Could not read .env file")
 else:
     # Test if the .env file exists
-    path_to_env_file = "../config/.env_develop_kghm"
+    path_to_env_file = "../config/.env_develop"
     if not os.path.isfile(path_to_env_file):
         raise Exception("File not found: " + path_to_env_file)
     print("Running locally")
