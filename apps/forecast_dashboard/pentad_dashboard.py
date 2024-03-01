@@ -506,12 +506,11 @@ def calculate_pentad_forecast_accuracy(
     hydrograph_pentad_stat["forecast_skill_20"] = np.where(hydrograph_pentad_stat["fc_qexp"].isna(), np.nan, hydrograph_pentad_stat["forecast_skill_20"])
 
     # For each pentad, calculate sum of forecast_skill == 1 and divide by the number of years and calculate the mean of std_err
-    hydrograph_pentad_stat_skill = hydrograph_pentad_stat.groupby("pentad")["forecast_skill"].sum().reset_index()
-    hydrograph_pentad_stat_skill_20 = hydrograph_pentad_stat.groupby("pentad")["forecast_skill_20"].sum().reset_index()
+    hydrograph_pentad_stat_skill = hydrograph_pentad_stat.groupby("pentad")["forecast_skill"].mean().reset_index()
+    hydrograph_pentad_stat_skill['forecast_skill'] = hydrograph_pentad_stat_skill['forecast_skill'] * 100.0
+    hydrograph_pentad_stat_skill_20 = hydrograph_pentad_stat.groupby("pentad")["forecast_skill_20"].mean().reset_index()
     hydrograph_pentad_stat_std_err = hydrograph_pentad_stat.groupby("pentad")["std_err"].mean().reset_index(drop=False)
-    hydrograph_pentad_stat_skill["forecast_skill"] = hydrograph_pentad_stat_skill["forecast_skill"] / float(noyears) * 100.0
-    hydrograph_pentad_stat_skill["forecast_skill_20"] = hydrograph_pentad_stat_skill_20["forecast_skill_20"] / float(noyears) * 100.0
-
+    hydrograph_pentad_stat_skill["forecast_skill_20"] = hydrograph_pentad_stat_skill_20["forecast_skill_20"] * 100.0
     # Combine hydrograph_pentad_stat_skill and hydrograph_pentad_stat_std_err into hydrograph_pentad_stat
     hydrograph_pentad_stat = hydrograph_pentad_stat_skill.merge(hydrograph_pentad_stat_std_err, on="pentad", how="left")
 
@@ -569,8 +568,6 @@ forecast_pentad = forecast_pentad.drop_duplicates(subset=['Date', 'code'], keep=
 forecast_pentad = tl.add_pentad_in_year_column(forecast_pentad)
 # Cast pentad column no number
 forecast_pentad['pentad'] = forecast_pentad['pentad'].astype(int)
-# print the forecast pentad between dates 2023-12-28 and 2024-01-04
-print(forecast_pentad[(forecast_pentad['Date'] >= '2023-12-24') & (forecast_pentad['Date'] <= '2024-01-06')])
 
 # List of stations with forecast data
 station_list = hydrograph_day_all['Code'].unique().tolist()
@@ -696,12 +693,10 @@ def plot_daily_hydrograph_data(station_widget, fcdata):
     # Get the predictor range
     predictor_start = int(dates_collection.predictor_start.strftime('%j'))
     predictor_end = int(dates_collection.predictor_end.strftime('%j'))
-    print("DEBUG: predictor_start, predictor_end", predictor_start, predictor_end)
 
     # Also show the forecast horizon on the figure
     forecast_horizon_start = int(dates_collection.forecast_start.strftime('%j'))
     forecast_horizon_end = int(dates_collection.forecast_end.strftime('%j'))
-    print("DEBUG: forecast_horizon_start, forecast_horizon_end", forecast_horizon_start, forecast_horizon_end)
 
     # Rename the columns
     data = data.rename(columns={"day_of_year": "День года",
