@@ -1,4 +1,4 @@
-name: Test-deploy forecast dashboard
+name: Deploy forecast dashboard
 
 env:
     IMAGE_NAME: mabesa/sapphire-dashboard
