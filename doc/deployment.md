@@ -9,7 +9,14 @@ Perform the following steps the computer where the forecast tools are deployed.
 Download the [repository](https://github.com/hydrosolutions/SAPPHIRE_Forecast_Tools) to the host machine. The repository can be downloaded as a zip file from the GitHub website. Unzip the file and move the folder to the desired location on the host machine. This allows you to only perform minimal edits to the configuration files within the designed folder structure.
 
 ### Install Docker & run Watchtower
-Install the software [Docker](https://docs.docker.com/install/). Note that you will need administrator rights to install Docker successfully.
+Install the software [Docker](https://docs.docker.com/install/). Note that you will need administrator rights to install Docker successfully. To allow that Docker services are started when the computer is turned on, you will have to change the settings in the Docker Desktop application. Open the application and go to Settings > General. Select the option to start Docker Desktop when you log in. In addition, you can tell windows to automatically start the docker services by following these steps:
+1. Open the Run dialog by pressing the Windows key + R.
+2. Type services.msc and press Enter.
+3. In the Services window, scroll down to Docker Desktop Service.
+4. Right-click on Docker Desktop Service and select Properties.
+5. In the Properties window, change the Startup type to Automatic.
+6. Click OK to save the changes.
+The above steps are for Windows 10. If you are using a different version of Windows, the steps may differ. They are necessary to ensure that the containers are restarted automatically when the computer was turned off.
 
 Start a Watchtower instance to automatically update the application when a new version is available by typing the following command in a Unix terminal. If you are using Windows, you should have Linux for Window (WSL) installed and use the Linux terminal. To check if your wsl is ready for use, open a PwerShell window and type:
 ```bash
@@ -20,10 +27,11 @@ If you get an error message, you may have to trubble shoot your wsl installation
 ```bash
 docker run -d \
   --name watchtower \
+  --restart always \
   -v /var/run/docker.sock:/var/run/docker.sock \
   containrrr/watchtower --label-enable --interval 30 --cleanup
 ```
-The label-enable option tells watchtower to only update containers that have the label com.centurylinklabs.watchtower.enable=true in their run command (see below). The interval option tells watchtower to check for new versions every 30 seconds. After testing, this intervall can be increased. The cleanup option tells watchtower to remove old images after updating the container.
+The label-enable option tells watchtower to only update containers that have the label com.centurylinklabs.watchtower.enable=true in their run command (see below). The interval option tells watchtower to check for new versions every 30 seconds. After testing, this intervall can be increased. The cleanup option tells watchtower to remove old images after updating the container. We further tell watchtower to restart the container always, for example after the computer was turned off.
 
 Note that you should not stop the running containers for the watchtower to be able to automatically deploy software updates.
 
@@ -45,13 +53,13 @@ docker pull mabesa/sapphire-configuration:latest
 ```
 Run the image:
 ```bash
-docker run -d --label=com.centurylinklabs.watchtower.enable=true -e "IN_DOCKER_CONTAINER=True" -v <full_path_to>/config:/app/apps/config -v <full_path_to>/data:/app/data -v <full_path_to>/bat:/app/bat -p 3647:3647 --name fcconfig mabesa/sapphire-configuration:latest
+docker run -d --label=com.centurylinklabs.watchtower.enable=true -e "IN_DOCKER_CONTAINER=True" -v <full_path_to>/config:/app/apps/config -v <full_path_to>/data:/app/data -v <full_path_to>/bat:/app/bat --restart always -p 3647:3647 --name fcconfig mabesa/sapphire-configuration:latest
 ```
 Replace <full_path_to> with your local path to the folders. The -v option mounts the folders on the host machine to the folders in the docker container. The -p option maps the port 3647 on the host machine to the port 3647 in the docker container. The -e option sets the environment variable IN_DOCKER_CONTAINER to True. This is required to run the dashboard locally in the docker container. The --label option tells watchtower to update the container when a new version is available.
 
 An example run command is:
 ```bash
-docker run -d --label=com.centurylinklabs.watchtower.enable=true -e "IN_DOCKER_CONTAINER=True" -v /home/sarah/SAPPHIRE_Forecast_Tools/apps/config:/app/apps/config -v /home/sarah/SAPPHIRE_Forecast_Tools/data:/app/data -v /home/sarah/SAPPHIRE_Forecast_Tools/bat:/app/bat -p 3647:3647 --name fcconfig mabesa/sapphire-configuration:latest
+docker run -d --label=com.centurylinklabs.watchtower.enable=true -e "IN_DOCKER_CONTAINER=True" -v /home/sarah/SAPPHIRE_Forecast_Tools/apps/config:/app/apps/config -v /home/sarah/SAPPHIRE_Forecast_Tools/data:/app/data -v /home/sarah/SAPPHIRE_Forecast_Tools/bat:/app/bat --restart always -p 3647:3647 --name fcconfig mabesa/sapphire-configuration:latest
 ```
 Check if the configuration dashboard is running correctly by opening a browser window and typing 127.0.0.1:3647 in the address bar.
 
@@ -94,6 +102,8 @@ Note that you will have to replace <full_path_to> with the full path to your loc
 Test if the dashboard is operational by opening a browser window and typing http://localhost:5006 in the address bar. If the dashboard is displayed correctly, you can close the browser window.
 
 Make sure that the image name is correct in the .bat file. Then create a shortcut to bat/dashboard.bat on your desktop. You can edit the icon of the shortcut by opening the preferences and selecting the icon available at bat/dashboard/Station.ico.
+
+Note that the restart option for docker run does not work for the forecast dashboard. Docker services need to be up and running for the forecast dashboard to be able to mount all volumes correctly. The dashboard container is started upon double click on the shortcut. As the start-up of the container can take a few seconds, the dashboard may not be displayed correctly if the container is started before the docker services are up and running. In that case, you can reload the browser window or close the browser window and double click the shortcut again.
 
 
 

@@ -4,6 +4,7 @@ import os
 import sys
 
 import gettext  # For translation
+import locale
 
 import panel as pn
 
@@ -49,22 +50,24 @@ pn.extension(global_css=[':root { --design-primary-color: #307096; }'])
 # file to use
 in_docker_flag = str(os.getenv("IN_DOCKER_CONTAINER"))
 if in_docker_flag == "True":
+    path_to_env_file = "apps/config/.env"
     # Test if the .env file exists
-    if not os.path.isfile("apps/config/.env"):
-        raise Exception("File not found: " + "apps/config/.env")
+    if not os.path.isfile(path_to_env_file):
+        raise Exception("File not found: " + path_to_env_file)
     print("Running in Docker container")
-    res = load_dotenv("apps/config/.env")
+    res = load_dotenv(path_to_env_file)
     # Test if res read
     if res is None:
         raise Exception("Could not read .env file")
 else:
     # Test if the .env file exists
-    if not os.path.isfile("../config/.env_develop"):
-        raise Exception("File not found: " + "../config/.env_develop")
+    path_to_env_file = "../config/.env_develop"
+    if not os.path.isfile(path_to_env_file):
+        raise Exception("File not found: " + path_to_env_file)
     print("Running locally")
     # The override flag in read_dotenv is set to allow switching between .env
     # files. Useful when testing different configurations.
-    res = load_dotenv("../config/.env_develop", override=True)
+    res = load_dotenv(path_to_env_file, override=True)
     if res is None:
         raise Exception("Could not read .env_develop file")
     # Print ieasyreports_templates_directory_path from the environment
@@ -126,18 +129,26 @@ today = dt.datetime.now()
 
 # Read the locale from the environment file
 current_locale = os.getenv("ieasyforecast_locale")
-os.environ['LANGUAGE'] = current_locale
 
 # Localization, translation to different languages.
 localedir = os.getenv("ieasyforecast_locale_dir")
+
 # Test if the directory exists
 if not os.path.isdir(localedir):
     raise Exception("Directory not found: " + localedir)
 # Create a translation object
+try:
+    translation = gettext.translation('pentad_dashboard', localedir, languages=[current_locale])
+except FileNotFoundError:
+    # Fallback to the default language if the .mo file is not found
+    translation = gettext.translation('pentad_dashboard', localedir, languages=['ru_KG'])
+_ = translation.gettext
+'''
 gettext.bindtextdomain('pentad_dashboard', localedir)
 gettext.textdomain('pentad_dashboard')
 # use of _("") to translate strings
 _ = gettext.gettext
+'''
 # How to update the translation file:
 # 1. Extract translatable strings from the source code
 # xgettext -o ../config/locale/messages.pot pentad_dashboard.py
@@ -161,7 +172,7 @@ def add_custom_xticklabels_pentad(plot, element):
     # Specify the positions and labels of the ticks. Here we use the first day
     # of each month & pentad per month as a tick.
     ticks = list(range(1,72,1))  # Replace with your desired positions
-    labels = {1:_('Jan')+', 1', 2:'1', 3:'3', 4:'4', 5:'5', 6:'6',
+    labels = {1:_('Jan')+', 1', 2:'2', 3:'3', 4:'4', 5:'5', 6:'6',
               7:_('Feb')+', 1', 8:'2', 9:'3', 10:'4', 11:'5', 12:'6',
               13:_('Mar')+', 1', 14:'2', 15:'3', 16:'4', 17:'5', 18:'6',
               19:_('Apr')+', 1', 20:'2', 21:'3', 22:'4', 23:'5', 24:'6',
@@ -269,13 +280,24 @@ def get_current_predictor_and_dates(forecast_pentad_all: pd.DataFrame,
     # Get the latest forecast date from the forecast data
     output.latest_forecast_date = fcdata_selection["Date"].max()
 
-    # Based on the latest forecast date, get the current forecast horizon
-    output.forecast_start = output.latest_forecast_date + dt.timedelta(days=1)
-    output.forecast_end = output.latest_forecast_date + dt.timedelta(days=5)
+    # Based on the latest forecast date, get the current forecast horizon.
+    # Note that the last pentad of the month has variable length. We need to
+    # account for this.
+    output.forecast_start = output.latest_forecast_date
+
+    if output.latest_forecast_date.month in [1, 3, 5, 7, 8, 10, 12]:
+        output.forecast_end = output.latest_forecast_date + dt.timedelta(days=5)
+    elif output.latest_forecast_date.month in [4, 6, 9, 11]:
+        output.forecast_end = output.latest_forecast_date + dt.timedelta(days=4)
+    elif output.latest_forecast_date.month == 2:
+        if output.latest_forecast_date.year % 4 == 0:
+            output.forecast_end = output.latest_forecast_date + dt.timedelta(days=3)
+        else:
+            output.forecast_end = output.latest_forecast_date + dt.timedelta(days=2)
 
     # Also get the predictor date range
-    output.predictor_start = output.latest_forecast_date - dt.timedelta(days=4.5)
-    output.predictor_end = output.latest_forecast_date - dt.timedelta(days=1.5)
+    output.predictor_start = output.latest_forecast_date - dt.timedelta(days=4)
+    output.predictor_end = output.latest_forecast_date - dt.timedelta(days=1)
 
     # And get the predictor value from the forecast data. If we do not have a
     # predictor value, we set it to NaN. This can happen if the forecast tools
@@ -434,19 +456,19 @@ def calculate_pentad_forecast_accuracy(
     # year of the first Date in forecast_pentad_stat.
     # Add a column year to hydrograph_pentad_stat where "Year" is converted to
     # integer.
-    hydrograph_pentad_stat["year"] = hydrograph_pentad_stat["Year"].astype(int)
+    hydrograph_pentad_stat.loc[:, "year"] = hydrograph_pentad_stat.loc[:, "Year"].astype(int)
     hydrograph_pentad_stat = hydrograph_pentad_stat[hydrograph_pentad_stat["year"]>=int(forecast_pentad_stat["Date"].dt.year.min())]
     # Drop the column year
     hydrograph_pentad_stat = hydrograph_pentad_stat.drop(columns=["year"])
 
     # Add the column Year to the forecast_pentad DataFrame
-    forecast_pentad_stat["Year"] = forecast_pentad_stat["Date"].dt.year
+    forecast_pentad_stat.loc[:, "Year"] = forecast_pentad_stat.loc[:, "Date"].dt.year
 
     # Number of years
     noyears = len(forecast_pentad_stat["Year"].unique())
 
     # Merge forecast_pentad fc_qexp by year and pentad to the hydrograph_pentad DataFrame
-    hydrograph_pentad_stat["Year"] = hydrograph_pentad_stat["Year"].astype(int)
+    hydrograph_pentad_stat.loc[:, "Year"] = hydrograph_pentad_stat.loc[:, "Year"].astype(int)
     hydrograph_pentad_stat = hydrograph_pentad_stat.merge(forecast_pentad_stat[["Year", "pentad", "fc_qexp"]],
                                             on=["Year", "pentad"], how="left")
 
@@ -484,12 +506,11 @@ def calculate_pentad_forecast_accuracy(
     hydrograph_pentad_stat["forecast_skill_20"] = np.where(hydrograph_pentad_stat["fc_qexp"].isna(), np.nan, hydrograph_pentad_stat["forecast_skill_20"])
 
     # For each pentad, calculate sum of forecast_skill == 1 and divide by the number of years and calculate the mean of std_err
-    hydrograph_pentad_stat_skill = hydrograph_pentad_stat.groupby("pentad")["forecast_skill"].sum().reset_index()
-    hydrograph_pentad_stat_skill_20 = hydrograph_pentad_stat.groupby("pentad")["forecast_skill_20"].sum().reset_index()
+    hydrograph_pentad_stat_skill = hydrograph_pentad_stat.groupby("pentad")["forecast_skill"].mean().reset_index()
+    hydrograph_pentad_stat_skill['forecast_skill'] = hydrograph_pentad_stat_skill['forecast_skill'] * 100.0
+    hydrograph_pentad_stat_skill_20 = hydrograph_pentad_stat.groupby("pentad")["forecast_skill_20"].mean().reset_index()
     hydrograph_pentad_stat_std_err = hydrograph_pentad_stat.groupby("pentad")["std_err"].mean().reset_index(drop=False)
-    hydrograph_pentad_stat_skill["forecast_skill"] = hydrograph_pentad_stat_skill["forecast_skill"] / float(noyears) * 100.0
-    hydrograph_pentad_stat_skill["forecast_skill_20"] = hydrograph_pentad_stat_skill_20["forecast_skill_20"] / float(noyears) * 100.0
-
+    hydrograph_pentad_stat_skill["forecast_skill_20"] = hydrograph_pentad_stat_skill_20["forecast_skill_20"] * 100.0
     # Combine hydrograph_pentad_stat_skill and hydrograph_pentad_stat_std_err into hydrograph_pentad_stat
     hydrograph_pentad_stat = hydrograph_pentad_stat_skill.merge(hydrograph_pentad_stat_std_err, on="pentad", how="left")
 
@@ -514,8 +535,10 @@ hydrograph_day_all["day_of_year"] = hydrograph_day_all["day_of_year"].astype(int
 hydrograph_day_all['Code'] = hydrograph_day_all['Code'].astype(str)
 # Sort all columns in ascending Code and pentad order
 hydrograph_day_all = hydrograph_day_all.sort_values(by=["Code", "day_of_year"])
-# Remove the day 366 (for leap years)
-hydrograph_day_all = hydrograph_day_all[hydrograph_day_all["day_of_year"] != 366]
+# Remove the day 366 (only if we are not in a leap year)
+# Test if current year is a leap year
+if today.year % 4 != 0:
+    hydrograph_day_all = hydrograph_day_all[hydrograph_day_all["day_of_year"] != 366]
 
 # Read hydrograph data - pentad
 hydrograph_pentad_all = pd.read_csv(hydrograph_pentad_file).reset_index(drop=True)
@@ -530,12 +553,18 @@ forecast_pentad = pd.read_csv(forecast_results_file)
 forecast_pentad['Date'] = pd.to_datetime(forecast_pentad['date'], format='%Y-%m-%d')
 # Make sure the date column is in datetime64 format
 forecast_pentad['Date'] = forecast_pentad['Date'].astype('datetime64[ns]')
+# The forecast date is the date on which the forecast was produced. For
+# visualization we need to have the date for which the forecast is valid.
+# We add 1 day to the forecast Date to get the valid date.
+forecast_pentad['Date'] = forecast_pentad['Date'] + pd.Timedelta(days=1)
 # Convert the code column to string
 forecast_pentad['code'] = forecast_pentad['code'].astype(str)
 # Check if there are duplicates for Date and code columns. If yes, only keep the
 # last one
-forecast_pentad = forecast_pentad.drop_duplicates(subset=['Date', 'code'], keep='last')
-# Get the pentad of the year
+# Print all values where column code is 15102. Sort the values by Date in ascending order.
+# Print the last 20 values.
+forecast_pentad = forecast_pentad.drop_duplicates(subset=['Date', 'code'], keep='last').sort_values('Date')
+# Get the pentad of the year.
 forecast_pentad = tl.add_pentad_in_year_column(forecast_pentad)
 # Cast pentad column no number
 forecast_pentad['pentad'] = forecast_pentad['pentad'].astype(int)
@@ -652,7 +681,7 @@ def plot_daily_hydrograph_data(station_widget, fcdata):
     data = preprocess_hydrograph_day_data(hydrograph_day)
 
     # We need to print a suitable date for the figure titles.
-    title_date = dates_collection.latest_forecast_date.strftime('%Y-%m-%d')
+    title_date = (dates_collection.latest_forecast_date - dt.timedelta(days=1)).strftime('%Y-%m-%d')
     title_pentad = tl.get_pentad(title_date)
     title_month = tl.get_month_str_case2(title_date)
 
@@ -661,15 +690,13 @@ def plot_daily_hydrograph_data(station_widget, fcdata):
     # it to get the predictor range.
     pentad_start_day = int(tl.get_pentad_first_day_of_year(title_date))
 
-    # Calculate the predictor range from the last_day_of_year with data -1 to -4
-    # Note that here we calculate the precictor differently from what we use in
-    # the linear regression tool. There we fill data gaps.
-    predictor_start = pentad_start_day - 4.5
-    predictor_end = pentad_start_day - 1.5
+    # Get the predictor range
+    predictor_start = int(dates_collection.predictor_start.strftime('%j'))
+    predictor_end = int(dates_collection.predictor_end.strftime('%j'))
 
     # Also show the forecast horizon on the figure
-    forecast_horizon_start = pentad_start_day
-    forecast_horizon_end = pentad_start_day + 5
+    forecast_horizon_start = int(dates_collection.forecast_start.strftime('%j'))
+    forecast_horizon_end = int(dates_collection.forecast_end.strftime('%j'))
 
     # Rename the columns
     data = data.rename(columns={"day_of_year": "День года",
@@ -775,21 +802,22 @@ def plot_forecast_data(station_widget, range_selection_widget, manual_range_widg
                                                           "Norm": "Q Норма м3/с",
                                                           "current_year": "Q Текущий год м3/с",})
     # Add a manual forecast range to the dataframe
-    fcdata["fc_qmin_20p"] = fcdata["fc_qexp"] - float(manual_range_widget)/100.0*fcdata["fc_qexp"]
-    fcdata["fc_qmax_20p"] = fcdata["fc_qexp"] + float(manual_range_widget)/100.0*fcdata["fc_qexp"]
+    fcdata.loc[:, "fc_qmin_20p"] = fcdata.loc[:, "fc_qexp"] - float(manual_range_widget)/100.0*fcdata.loc[:, "fc_qexp"]
+    fcdata.loc[:, "fc_qmax_20p"] = fcdata.loc[:, "fc_qexp"] + float(manual_range_widget)/100.0*fcdata.loc[:, "fc_qexp"]
 
     # Filter forecast data for the current year
     fcdata_filtered = fcdata[fcdata["Date"].dt.year == today.year]
+
     # If fcdata_filtered is empty, use the previous year data
     if fcdata_filtered.empty:
         fcdata_filtered = fcdata[fcdata["Date"].dt.year == today.year - 1]
 
     # We need to print a suitable date for the figure titles. We use the last
-    # date of fcdata_filtered where .
-    title_date = dates_collection.latest_forecast_date
+    # date of fcdata_filtered.
+    title_date = (dates_collection.latest_forecast_date - dt.timedelta(days=1))
     title_date_str = title_date.strftime('%Y-%m-%d')
-    title_pentad = tl.get_pentad(title_date_str)
-    title_month = tl.get_month_str_case2(title_date_str)
+    title_pentad = tl.get_pentad(dates_collection.latest_forecast_date.strftime('%Y-%m-%d'))
+    title_month = tl.get_month_str_case2(dates_collection.latest_forecast_date.strftime('%Y-%m-%d'))
 
     # Filter forecast data for the last date
     fcdata = fcdata[fcdata["Date"] == fcdata["Date"].max()]

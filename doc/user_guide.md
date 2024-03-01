@@ -19,8 +19,8 @@ You may configure the Forecast Tools to generate excell documents with the forec
 # Important user information
 - Currently, only pentadal forecasts are implemented, follwowing the method currently employed by Kyrgyz Hydromet. Further forecast horizons and forecast methods will be implemented in the coming months and years.
 - We assume that discharge stations start with the character '1'. This is currently hard-coded in the software. If your station codes do not start with '1', please contact us.
-- To save runtime, the current implementation checks the iEasyHydro database for new predictor data only after January 2020. If you need to change this, edit the date in the file apps/forecast_backend/forecast_backend.py in the section getting predictor.
-- Special use cases, like the discharge for virtual reservoirs are currently hardcoded in the backend. This affects station code 16936. If required, this code section with the special case can be commented in the file apps/forecast_backend/forecast_backend.py.
+- To save runtime, the current implementation checks the iEasyHydro database for new predictor data only after January 2020. If you need to change this, edit the date in the file apps/backend/src/data_processing.py in the section getting predictor.
+- Special use cases, like the discharge for virtual reservoirs are currently hardcoded in the backend. This affects station code 16936. If required, this code section with the special case can be commented in the files apps/backend/src/data_processing.py and apps/backend/src/forecasting.py.
 
 # Input data
 The SAPPHIRE Forecast Tools require the following input files to be available which will be further described in the linked or following sections:
@@ -31,7 +31,7 @@ The SAPPHIRE Forecast Tools require the following input files to be available wh
 Examples of these files are provided in the repository. You can use them as a template for your own configuration.
 
 ## Daily discharge data
-Daily discharge data for the stations for which forecasts are to be produced. The data must be in the iEasyHydro database or in a local folder. Assuming the iEasyHydro contains operational data and the excel sheets contain data validated by the regime departement, precedence is given to data read from the excel sheets should both data sources be available and overlaps occur. The daily data must be in the format of one excel document per station with excel sheets for each year with dates in the first column and discharge values in m3/s in the second column. The excel files must be named with the station code followed by an underscore and then any name. For example: 12345_river_styx_2000-2020.xlsx (see data/daily_discharge_data for an example).
+Daily discharge data for the stations for which forecasts are to be produced. The data must be in the iEasyHydro database or in a local folder. Assuming the iEasyHydro contains operational data and the excel sheets contain data validated by the regime departement, precedence is given to data read from the excel sheets should both data sources be available and overlaps occur. The daily data must be in the format of one excel document per station with excel sheets for each year with dates in the first column and discharge values in m3/s in the second column. Please note that we assume that the data available in the excel sheets starts from January 2000. The first sheet in the excel document must therefore be named '2000'. We further assume that each sheet has a header row. The excel files must be named with the station code followed by an underscore and then any name. For example: 12345_river_styx_2000-2020.xlsx (see data/daily_discharge_data for an example).
 
 ## Shape file layers of the area of interest
 Shape file layers of the area of interest in the folder data/GIS. The shape files must be in the WGS84 projection. Typically this will be the shape files of the administrative boundaries of the country. Please make sure to make available shp, shx, dbf and prj files.
@@ -57,9 +57,11 @@ Please note that these internal files should not be edited manually by the user.
 
 
 # Forecast configuration
+Once deployed, the forecast dashboard is accessed by double-clicking on the forecast dashboard icon on your desktop. This dashboard is available in Russian language only.
 The forecast configuration dashboard is used to select the stations for which forecasts are to be produced. The dashboard is accessed by double-clicking on the station configuration icon on your desktop. The dashboard is currently only available in Russian language. Detailed user instructions are available by clicking on the help button in upper right corner of the dashboard window.
 
 # Forecast dashboard
+Once deployed, the forecast dashboard is accessed by double-clicking on the forecast dashboard icon on your desktop. The dashboard can be configured to display Russian or English language (see [doc/configuration.md](configuration.md)). Please note that upon reboot of the computer, the dashboard may not display correctly from the start. In this case, please wait a second and reload the browser window.
 The forecast dashboard is used to visualize the forecasts. The dashboard is accessed by double-clicking on the forecast dashboard icon on your desktop. The dashboard can be configured to run in Russian or English. The current version of the dashboard has the following features:
 - A predictor tab that allows to visualize the predictor data for the station selected in the side pane. The predictor data is read from the iEasyHydro database or from the excel sheets.
 - A forecast tab that visualizes the hydrograph with the forecasted discharge for the station selected in the side pane. The forecast is produced by the forecast tools based on past discharge data using the linear regression method.
