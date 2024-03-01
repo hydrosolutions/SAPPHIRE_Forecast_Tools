@@ -124,3 +124,6 @@ docker run -e "IN_DOCKER_CONTAINER=True" -v <full_path_to>/data:/app/data -v <fu
 Make sure that the port 5006 is not occupied on your computer. You can change the port number in the command above if necessary but you'll have to edit the port exposed in the docker file and edit the panel serve command in the dockerfile to make sure panel renders the dashboards to your desired port.
 
 You can now access the dashboard in your browser at http://localhost:5006/pentad_dashboard and review it's functionality.
+
+## Development workflow
+Development takes place in a git branch created from the main branch. Once the development is finished, the branch is merged into the main branch. This merging requires the approval of a pull requrest by a main developer. The main branch is tested in deployment mode and then merged to the deploy branch. 3rd party users of the forecast tools are requested to pull the tested deploy branch. The deployment is done automatically using GitHub Actions. The workflow instructions can be found in .github/workflows/deploy_*.yml.

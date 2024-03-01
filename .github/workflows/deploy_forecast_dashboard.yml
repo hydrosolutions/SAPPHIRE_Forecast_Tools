@@ -4,9 +4,9 @@ env:
     IMAGE_NAME: mabesa/sapphire-dashboard
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "deploy" ]
   pull_request:
-    branches: [ "main" ]
+    branches: [ "deploy" ]
 
 jobs:
   lint_and_test_ieasyhydroforecast:
@@ -96,7 +96,7 @@ jobs:
     # Rename the image
     - name: Rename the image
       run: |
-        echo "IMAGE_TAG=latest" >> $GITHUB_ENV
+        echo "IMAGE_TAG=deploy" >> $GITHUB_ENV
 
     # Run the dockerization & deployment script
     - name: Build Docker image
