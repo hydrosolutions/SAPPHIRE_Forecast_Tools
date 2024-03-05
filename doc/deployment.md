@@ -81,6 +81,8 @@ docker run -d --label=com.centurylinklabs.watchtower.enable=true -e "IN_DOCKER_C
 Replace <full_path_to> with your local path to the folders. The -v option mounts the folders on the host machine to the folders in the docker container. The -e option sets the environment variable IN_DOCKER_CONTAINER to True. This is required to run the dashboard locally in the docker container. The --label option tells watchtower to update the container when a new version is available.
 Note that you'll only need the -p option if you wish to open a port to access the iEasyHydro database. In that case you'll need to make sure the port mapping is correct.
 
+For testing the backend, we recommend to choose a recent date to start the forecasting for. You can set the date in the file apps/internal_data/last_successful_run.txt to one calendar day before the date you want to start the forecasting. The date must be in the format YYYY-MM-DD. We recommend starting the forecasting one day before the start of the most recent pentad.
+
 Test if the backend is running. You can do this by checking the Logs tab in the Docker Desktop application. If there are recent outputs but there is no error message displayed at the bottom of the log tab, the backend is running correctly.
 
 Now we need to make sure the bat file is set to go. We provide a basic bat file that will start the backend. If you need to set up a connection to the iEasyHydro database as preliminary to run the backend, you may edit the backend file. Below is an example by @maxatp of how to establish an ssh tunnel prior to running the backend:
@@ -144,6 +146,8 @@ Test if the bat file works by double clicking the file. Output without error mes
 Now we set up the Task Scheduler on Windows to restart the backend every day at 10 a.m. Open the Task Scheduler and create a new task. Give the task a name and select the option to run the task with the highest privileges whether user is logged on or not. Under Triggers select the option to run the task daily at 10 a.m. Under Actions select the bat file /bat/backend/backend.bat. Under Conditions select the option to wake the computer to run the task. Under Settings select the option to stop the existing instance if the task is already running when the task scheduler wants to start it. Click OK to save the task.
 
 To test if the task scheduler works, you can run the task manually. You can also check the task history to see if the task was run successfully.
+
+If you deploy for the first time, it is recommended to run hindcasts. This will produce the statistics on model efficiency and forecast errors displayed in the forecast dashboard. To run hindcasts, you will have to set the date in the file apps/internal_data/last_successful_run.txt to one calendar day before the date you want to start the hindcasts. The date must be in the format YYYY-MM-DD. We recommend starting the hindcasts with the date 2004-12-30. The hindcasts will take several hours to days to run. To speed up the process you can set write_excel in config/config_output.yaml to false. You can check the progress of the hindcasts by looking at the logs of the backend container in the Docker Desktop application.
 
 
 ### Forecast dashboard
