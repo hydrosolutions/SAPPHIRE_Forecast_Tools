@@ -39,6 +39,8 @@ Shape file layers of the area of interest in the folder data/GIS. The shape file
 ## Templates for the forecast bulletins
 Templates for the forecast bulletins in the folder data/templates. The templates must be in the xlsx format. The templates can contain several sheets but only the first sheet of the bulletin template is used by the forecast tools to write to. The same logic is used for the bulletin template as in the iEasyHydro software. Terms in the template bulletin indicated by {{}} are replaced by values by the linear regression tool. Please see the list in [bulletin_template_tags.md](bulletin_template_tags.md) for a list of available tags and use the available templates as reference.
 
+Please note that the template files available in this repository are currently only available in Russian language. They assume , as decimal separator and space as thousands separator. If you use different separators, calculations programmed in the excel file will not work and you will have to adjust the template or your language settings (File > Options > Advanced for Windows or Excel > Preferences > Edit for Mac).
+
 
 
 # Output data

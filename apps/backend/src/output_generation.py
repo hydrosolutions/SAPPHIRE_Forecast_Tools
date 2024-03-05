@@ -225,6 +225,17 @@ def write_forecast_bulletin(settings, start_date, bulletin_date, fc_sites):
         bulletin_output_file = os.getenv("ieasyforecast_bulletin_file_name")
         filename = f"{start_date_year}_{start_date_month_num}_{start_date_month}_{start_date_pentad}_{bulletin_output_file}"
 
+        # Make sure that all strings in fc_sites are using comma as the decimal
+        # separator for writing the report.
+        fc_sites_report = fc_sites
+        for site in fc_sites_report:
+            site.fc_qmin = site.fc_qmin.replace('.', ',')
+            site.fc_qmax = site.fc_qmax.replace('.', ',')
+            site.fc_qexp = site.fc_qexp.replace('.', ',')
+            site.qnorm = site.qnorm.replace('.', ',')
+            site.perc_norm = site.perc_norm.replace('.', ',')
+            site.qdanger = site.qdanger.replace('.', ',')
+
         report_generator = import_from_string(settings.template_generator_class)(
             tags=bulletin_tags(bulletin_date),
             template=bulletin_template_file,
@@ -233,7 +244,7 @@ def write_forecast_bulletin(settings, start_date, bulletin_date, fc_sites):
         )
 
         report_generator.validate()
-        report_generator.generate_report(list_objects=fc_sites, output_filename=filename)
+        report_generator.generate_report(list_objects=fc_sites_report, output_filename=filename)
         logger.info("   ... done")
 
 def assign_month_string_to_number(month_number):
@@ -330,8 +341,8 @@ def write_forecast_sheets(settings, start_date, bulletin_date, fc_sites, result2
                 site_data.append({
                     'river_name': site.river_name + " " + site.punkt_name,
                     'year': str(year),
-                    'qpavg': fl.round_discharge(df_year['discharge_avg'].mean()),
-                    'qpsum': fl.round_discharge(df_year['discharge_sum'].mean())
+                    'qpavg': fl.round_discharge(df_year['discharge_avg'].mean()).replace('.', ','),
+                    'qpsum': fl.round_discharge(df_year['discharge_sum'].mean()).replace('.', ',')
                 })
 
             # Add current year and current predictor to site_data
@@ -339,7 +350,7 @@ def write_forecast_sheets(settings, start_date, bulletin_date, fc_sites, result2
                 'river_name': site.river_name + " " + site.punkt_name,
                 'year': str(start_date.year),
                 'qpavg': "",
-                'qpsum': site.predictor
+                'qpsum': format(site.predictor, '.2f').replace('.', ',')
             })
 
             # Overwrite settings for theh bulletin folder. In this way we can sort the
@@ -387,8 +398,18 @@ def write_forecast_sheets(settings, start_date, bulletin_date, fc_sites, result2
 
     # Write the data to a csv file
     with open(offline_forecast_results_file, "a") as f:
+
+        # Make sure that all strings in fc_sites are using point as the decimal
+        fc_sites_report = fc_sites
+        for site in fc_sites_report:
+            site.fc_qmin = site.fc_qmin.replace(',', '.')
+            site.fc_qmax = site.fc_qmax.replace(',', '.')
+            site.fc_qexp = site.fc_qexp.replace(',', '.')
+            site.qnorm = site.qnorm.replace(',', '.')
+            site.perc_norm = site.perc_norm.replace(',', '.')
+            site.qdanger = site.qdanger.replace(',', '.')
         # Write the data
-        for site in fc_sites:
+        for site in fc_sites_report:
             f.write(
                 f"{today_str},{site.code},{site.predictor},{site.slope},{site.intercept},{site.delta},{site.fc_qmin}"
                 f",{site.fc_qmax},{site.fc_qexp},{site.qnorm},{site.perc_norm},{site.qdanger}\n"
