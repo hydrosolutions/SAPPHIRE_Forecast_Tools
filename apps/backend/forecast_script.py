@@ -64,7 +64,7 @@ def main():
 
     # forecasting
     result_df = forecasting.perform_linear_regression(modified_data, forecast_pentad_of_year)
-    forecasting.get_predictor(modified_data, offline_mode, start_date, fc_sites, ieh_sdk, predictor_dates)
+    forecasting.get_predictor(result_df, offline_mode, start_date, fc_sites, ieh_sdk, predictor_dates)
     forecasting.perform_forecast(fc_sites, forecast_pentad_of_year, result_df)
     result2_df = forecasting.calculate_forecast_boundaries(result_df, fc_sites, forecast_pentad_of_year)
 
