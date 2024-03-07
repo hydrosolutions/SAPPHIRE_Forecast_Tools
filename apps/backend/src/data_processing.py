@@ -448,11 +448,7 @@ def get_station_data(ieh_sdk, backend_has_access_to_db, start_date):
                                         'Q_m3s_16100', 'Q_m3s_16093', 'sum'],
                                inplace=True)
 
-        print("\nDEBUG data_Tok_combined\n", data_Tok_combined.tail(20))
-
         combined_data = pd.concat([combined_data, data_Tok_combined], ignore_index=True)
-
-    print('\nDEBUG: combined_data for 16936 after filling data gaps:\n', combined_data[combined_data['Code'] == '16936'])
 
     # Filter combined_data for dates before today (to simulate offline mode)
     combined_data = combined_data[combined_data['Date'] <= start_date]

@@ -166,3 +166,4 @@ apps/internal_data/*_kghm.csv
 
 # Internal tests
 apps/backend/tests/testspecial_*.py
+apps/internal_data/forecasts_pentad_kghm copy.csv

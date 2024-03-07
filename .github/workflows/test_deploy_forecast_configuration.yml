@@ -1,10 +1,12 @@
-name: Deploy forecast configuration
+name: Test-deploy forecast configuration
 
 env:
     IMAGE_NAME: mabesa/sapphire-configuration
 on:
   push:
-    branches: [ "deploy" ]
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
 
 jobs:
   push_to_Dckerhub:
@@ -20,7 +22,7 @@ jobs:
     # Rename the image
     - name: Rename the image
       run: |
-        echo "IMAGE_TAG=deploy" >> $GITHUB_ENV
+        echo "IMAGE_TAG=latest" >> $GITHUB_ENV
 
     # Run the dockerization & deployment script
     - name: Build Docker image
