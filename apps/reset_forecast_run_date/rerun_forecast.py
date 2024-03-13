@@ -26,7 +26,7 @@ def load_environment():
     # Determine .env file path
     if in_docker == "True":
         print("Running in docker container. Loading environment variables from .env")
-        env_file_path = "/apps/config/.env"
+        env_file_path = "app/apps/config/.env"
     else:
         print("Running locally. Loading environment variables from .env_develop")
         env_file_path = "../config/.env_develop"
