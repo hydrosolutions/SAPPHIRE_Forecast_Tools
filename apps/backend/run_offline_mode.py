@@ -1,6 +1,6 @@
-# This python script takes start year, month, day and end year, month, day as
-# command-line arguments. It then calls forecast_script.py for each day in the
-# time period between start date and end date.
+# This python script reads in the last successful run date from a file, identifies
+# the date of the last forecast and reruns the forecasts since then. This script
+# is used in operational mode to run the forecasts for the current day.
 # Note: do not start the program with dates before 2000-01-01, if the first data
 # available in the dataset is from 2000-01-01. We need a few years of data to
 # build the linear regression model.
