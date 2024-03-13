@@ -114,7 +114,10 @@ def calculate_new_forecast_date(last_successful_run_date):
     # Forecasts are produced on the 5th, 10th, 15th, 20th, 25th and last day of each
     # month. To re-run a forecast, the last_successful_run_date is set to the date
     # before the last forecast date.
-    forecast_days = [27, 22, 17, 12, 7, 2]
+    # Get the last day of the month previous to the last_successful_run_date
+    last_day_previous_month = last_successful_run_date.replace(day=1) - datetime.timedelta(days=2)
+    last_day_previous_month = last_day_previous_month.day
+    forecast_days = [last_day_previous_month, 24, 19, 14, 9, 4]
 
     # We need to find the largest day in forecast_days that is smaller than the day
     # of the last successful run date. If the day of the last successful run date is
