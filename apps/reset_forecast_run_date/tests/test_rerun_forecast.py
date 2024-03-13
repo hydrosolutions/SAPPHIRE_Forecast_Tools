@@ -26,17 +26,21 @@ def test_load_environment():
 def test_calculate_new_forecast_date():
     # Test with a date where the day is less than 5
     last_successful_run_date = datetime.date(2022, 2, 4)
-    expected_rerun_forecast_date = datetime.date(2022, 1, 27)
+    expected_rerun_forecast_date = datetime.date(2022, 1, 30)
     assert calculate_new_forecast_date(last_successful_run_date) == expected_rerun_forecast_date
 
     # Test with a date where the day is greater than or equal to 5
     last_successful_run_date = datetime.date(2022, 2, 6)
-    expected_rerun_forecast_date = datetime.date(2022, 2, 2)
+    expected_rerun_forecast_date = datetime.date(2022, 2, 4)
     assert calculate_new_forecast_date(last_successful_run_date) == expected_rerun_forecast_date
 
     # Test with a date where the day is one of the forecast days
     last_successful_run_date = datetime.date(2022, 2, 27)
-    expected_rerun_forecast_date = datetime.date(2022, 2, 22)
+    expected_rerun_forecast_date = datetime.date(2022, 2, 24)
+    assert calculate_new_forecast_date(last_successful_run_date) == expected_rerun_forecast_date
+
+    last_successful_run_date = datetime.date(2022, 1, 31)
+    expected_rerun_forecast_date = datetime.date(2022, 1, 30)
     assert calculate_new_forecast_date(last_successful_run_date) == expected_rerun_forecast_date
 
 def test_write_date():
