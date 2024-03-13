@@ -34,6 +34,10 @@ def test_calculate_new_forecast_date():
     expected_rerun_forecast_date = datetime.date(2022, 2, 4)
     assert calculate_new_forecast_date(last_successful_run_date) == expected_rerun_forecast_date
 
+    last_successful_run_date = datetime.date(2022, 2, 13)
+    expected_rerun_forecast_date = datetime.date(2022, 2, 9)
+    assert calculate_new_forecast_date(last_successful_run_date) == expected_rerun_forecast_date
+
     # Test with a date where the day is one of the forecast days
     last_successful_run_date = datetime.date(2022, 2, 27)
     expected_rerun_forecast_date = datetime.date(2022, 2, 24)
