@@ -254,6 +254,9 @@ def read_discharge_from_excel_sheet(file_path, station, year):
     ValueError: If the dates are not parsed correctly from the sheet.
     ValueError: If the first date is not January 1 of the year.
     '''
+    # Print current working directory
+    #print("current working directory: ", os.getcwd())
+
     # Check if file_path is a valid path
     if not os.path.exists(file_path):
         raise ValueError(f"The file {file_path} does not exist.")
@@ -266,13 +269,13 @@ def read_discharge_from_excel_sheet(file_path, station, year):
     # Try to read the Excel file
     try:
         df = pd.read_excel(
-            file_path, sheet_name=str(year), header=[0], skiprows=[1],
+            file_path, sheet_name=str(year), header=[0],
             names=['Date', 'Q_m3s'], parse_dates=['Date']
         )
     except FileNotFoundError:
         raise ValueError(f"Could not find file {file_path}.")
     except pd.errors.ParserError:
-        raise ValueError(f"Could not parse file {file_path}.")
+        raise ValueError(f"Could not parse file {file_path}. Please verify format.")
 
     # Check if dates are parsed correctly
     if df['Date'].dtype != 'datetime64[ns]':
@@ -297,11 +300,6 @@ def read_discharge_from_excel_sheet(file_path, station, year):
     })
 
     return data
-
-
-
-
-
 
 def get_station_data(ieh_sdk, backend_has_access_to_db, start_date):
     # === Read station data ===
@@ -373,25 +371,9 @@ def get_station_data(ieh_sdk, backend_has_access_to_db, start_date):
 
         # Read the data for the station
         for year in years:
-            # If there is no sheet named year, skip the year
+
             try:
-                df = pd.read_excel(
-                    file_path, sheet_name=str(year), header=[0], skiprows=[1],
-                    names=['Date', 'Q_m3s'], parse_dates=['Date'],
-                    date_format="%d.%m.%Y"
-                )
-                # Sort df by Date
-                df.sort_values(by=['Date'], inplace=True)
-
-                datetime_column = df.iloc[:, 0]  # Dates are in the first column
-                discharge_column = df.iloc[:, 1]  # Discharges are in the second column
-
-                data = pd.DataFrame({
-                    "Date": datetime_column.values,
-                    "Q_m3s": discharge_column.values,
-                    "Year": year,
-                    "Code": station,
-                })
+                data = read_discharge_from_excel_sheet(file_path, station, year)
 
                 data_dict[station, year] = data
 
