@@ -18,6 +18,8 @@ Note that this repository is **WORK IN PROGRESS**.
 ## Folder structure
 All software components are in the apps directory. Files that need to be reviewed and potentially edited or replaced for local deployment are highlighted with a #. They are discussed in more detail in the file doc/deployment.md.
 Potentially sensitive data that needs to be provided by a hydromet (for example daily discharge data used for the development of the forecast models) is stored in the data folder. Here we provide publicly available data examples from Switzerland for demonstration.
+<details>
+<summary>Click to expand the folder structure</summary>
 ```
   SAPPHIRE_FORECAST_TOOLS
    |__ apps
@@ -136,6 +138,7 @@ Potentially sensitive data that needs to be provided by a hydromet (for example 
         |__ user_guide.md
             User guide with instructions of how to use the forecast tools once they are deployed.
 ```
+</details>
 
 # Configuration
 The SAPPHIRE Forecast Tools interact with each other through a number of files. The configuration of these files and paths is described in detail in the file [doc/configuration.md](doc/configuration.md).
