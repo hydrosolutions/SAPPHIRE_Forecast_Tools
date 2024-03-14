@@ -382,6 +382,10 @@ def get_station_data(ieh_sdk, backend_has_access_to_db, start_date):
                 # year will be empty.
                 continue
 
+        # Check if there is any data in data_dict for station station
+        if (station, 2000) not in data_dict.keys():
+            logger.warning(f"No data for station {station} in the Excel sheets.")
+
     # Combine all sheets into a single DataFrame
     combined_data = pd.concat(data_dict.values(), ignore_index=True)
 
