@@ -149,6 +149,8 @@ To test if the task scheduler works, you can run the task manually. You can also
 
 If you deploy for the first time, it is recommended to run hindcasts. This will produce the statistics on model efficiency and forecast errors displayed in the forecast dashboard. To run hindcasts, you will have to set the date in the file apps/internal_data/last_successful_run.txt to one calendar day before the date you want to start the hindcasts. The date must be in the format YYYY-MM-DD. We recommend starting the hindcasts with the date 2004-12-30. The hindcasts will take several hours to days to run. To speed up the process you can set write_excel in config/config_output.yaml to false. You can check the progress of the hindcasts by looking at the logs of the backend container in the Docker Desktop application.
 
+### Triggering re-run of the forecast
+TODO: Add information about how to deploy the trigger a re-run of the forecast.
 
 ### Forecast dashboard
 Pull the docker image from Docker Hub. Open a terminal and run the following command:
@@ -167,5 +169,11 @@ Make sure that the image name is correct in the .bat file. Then create a shortcu
 
 Note that the restart option for docker run does not work for the forecast dashboard. Docker services need to be up and running for the forecast dashboard to be able to mount all volumes correctly. The dashboard container is started upon double click on the shortcut. As the start-up of the container can take a few seconds, the dashboard may not be displayed correctly if the container is started before the docker services are up and running. In that case, you can reload the browser window or close the browser window and double click the shortcut again.
 
-
+## Testing the deployment
+After correct deployment, forecast bulletins should now be produced automatically one day before the beginning of each pentad. We recommend the following strategy to test if the deployment has been successful:
+1. Check the logs of the backend container in the Docker Desktop application. If there are no error messages displayed at the bottom of the log tab, the backend is running correctly.
+2. Check if the forecast bulletins are produced correctly. You can do this by checking the folder data/reports (if you have not reconfigured the output directory for the bulletins).
+3. Run hindcasts for the period 2004-12-30 to the present date. This will produce the statistics on model efficiency and forecast errors displayed in the forecast dashboard. To run hindcasts, you will have to set the date in the file apps/internal_data/last_successful_run.txt to one calendar day before the date you want to start the hindcasts. The date must be in the format YYYY-MM-DD. We recommend starting the hindcasts with the date 2004-12-30. The hindcasts will take several hours to days to run. To speed up the process you can set write_excel in config/config_output.yaml to false. You can check the progress of the hindcasts by looking at the logs of the backend container in the Docker Desktop application. Note that we recommend producing bulletins for the pervious years forecasts that can be cross-examined with your forecasts from the previous year. This is an important step.
+4. Check if the forecast dashboard is operational by doubble-clicking the dashboard icon. If the dashboard is displayed correctly and the displayed data makes sense, you can close the browser window.
+5. Check if the configuration dashboard is operational by double-clicking the icon of the configuration dashboard. Test if the selection of stations has an effect on the results produced by the forecast tools by manually trigggering a re-run of the latest forecast and checking if the changes have an effect on the forecast bulletins and the forecast dashboard. Note that the station selection may still be limited by the apps/config/config_development_restrict_station_selection.yaml.
 
