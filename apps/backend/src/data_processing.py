@@ -232,6 +232,74 @@ def get_predictor_dates(start_date):
     logger.info("   ... done")
     return predictor_dates
 
+def read_discharge_from_excel_sheet(file_path, station, year):
+    '''
+    Read discharge data from a single Excel sheet. The sheet is named after the
+    year for which the data is available.
+
+    Parameters:
+    file_path (str): The path to the Excel file.
+    station (str): The station code.
+    year (int): The year for which the data is available.
+
+    Returns:
+    data (pd.DataFrame): A DataFrame with the discharge data. With columns
+    'Date', 'Q_m3s', 'Year', and 'Code' of types 'datetime', 'float', 'int',
+    and 'string'.
+
+    Raises:
+    ValueError: If the file_path is not a valid path.
+    ValueError: If the file_path is not a valid Excel file.
+    ValueError: If the file_path does not exist.
+    ValueError: If the dates are not parsed correctly from the sheet.
+    ValueError: If the first date is not January 1 of the year.
+    '''
+    # Print current working directory
+    #print("current working directory: ", os.getcwd())
+
+    # Check if file_path is a valid path
+    if not os.path.exists(file_path):
+        raise ValueError(f"The file {file_path} does not exist.")
+
+    # Check if the file_path is a valid Excel file
+    _, ext = os.path.splitext(file_path)
+    if ext.lower() != '.xlsx':
+        raise ValueError(f"The file {file_path} is not an Excel file.")
+
+    # Try to read the Excel file
+    try:
+        df = pd.read_excel(
+            file_path, sheet_name=str(year), header=[0],
+            names=['Date', 'Q_m3s'], parse_dates=['Date']
+        )
+    except FileNotFoundError:
+        raise ValueError(f"Could not find file {file_path}.")
+    except pd.errors.ParserError:
+        raise ValueError(f"Could not parse file {file_path}. Please verify format.")
+
+    # Check if dates are parsed correctly
+    if df['Date'].dtype != 'datetime64[ns]':
+        raise ValueError(f"Dates are not parsed correctly from the sheet {year} in the file {file_path}.")
+
+    # Convert 'Q_m3s' column to float, replacing errors with np.nan
+    df['Q_m3s'] = pd.to_numeric(df['Q_m3s'], errors='coerce')
+
+    # Check if the first date is January 1 of the year
+    if df['Date'].iloc[0] != pd.to_datetime(f'{year}-01-01'):
+        raise ValueError(f"The first date in the sheet {year} in the file {file_path} is not January 1 {year}.")
+
+    # Sort df by Date
+    df.sort_values(by=['Date'], inplace=True)
+
+    # Create the data DataFrame
+    data = pd.DataFrame({
+        "Date": df['Date'].values,
+        "Q_m3s": df['Q_m3s'].values,
+        "Year": year,
+        "Code": station,
+    })
+
+    return data
 
 def get_station_data(ieh_sdk, backend_has_access_to_db, start_date):
     # === Read station data ===
@@ -248,6 +316,12 @@ def get_station_data(ieh_sdk, backend_has_access_to_db, start_date):
     # Read station data from Excel sheets
     logger.info("Reading daily discharge data ...")
     logger.info("-Reading discharge data from Excel sheets ...")
+
+    # Test if the environment variable is set.
+    if os.getenv("ieasyforecast_daily_discharge_path") is None:
+        logger.error(f"The environment variable ieasyforecast_daily_discharge_path is not set. Please set it.")
+        logger.error(f"No forecasts possible. Exiting the script.")
+        exit()
 
     # Get a list of the Excel files containing the daily discharge data available
     # in the data/daily_runoff directory
@@ -297,25 +371,9 @@ def get_station_data(ieh_sdk, backend_has_access_to_db, start_date):
 
         # Read the data for the station
         for year in years:
-            # If there is no sheet named year, skip the year
+
             try:
-                df = pd.read_excel(
-                    file_path, sheet_name=str(year), header=[0], skiprows=[1],
-                    names=['Date', 'Q_m3s'], parse_dates=['Date'],
-                    date_format="%d.%m.%Y"
-                )
-                # Sort df by Date
-                df.sort_values(by=['Date'], inplace=True)
-
-                datetime_column = df.iloc[:, 0]  # Dates are in the first column
-                discharge_column = df.iloc[:, 1]  # Discharges are in the second column
-
-                data = pd.DataFrame({
-                    "Date": datetime_column.values,
-                    "Q_m3s": discharge_column.values,
-                    "Year": year,
-                    "Code": station,
-                })
+                data = read_discharge_from_excel_sheet(file_path, station, year)
 
                 data_dict[station, year] = data
 

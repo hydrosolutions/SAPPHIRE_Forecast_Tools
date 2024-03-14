@@ -127,3 +127,19 @@ You can now access the dashboard in your browser at http://localhost:5006/pentad
 
 ## Development workflow
 Development takes place in a git branch created from the main branch. Once the development is finished, the branch is merged into the main branch. This merging requires the approval of a pull requrest by a main developer. The main branch is tested in deployment mode and then merged to the deploy branch. 3rd party users of the forecast tools are requested to pull the tested deploy branch. The deployment is done automatically using GitHub Actions. The workflow instructions can be found in .github/workflows/deploy_*.yml.
+
+## Testing
+Testing tools are being developed for each tool. This is work in progress and currently not consistently set up yet.
+
+### Backend
+To test the backend, navigate to the apps directory in your terminal, make sure you have the backend requirements installed in your python environment, and type the following command:
+```bash
+python pytest -s backend/tests/test_read_discharge_from_excel_sheet.py
+```
+Further tests for the backend methods are under development.
+
+### Reset run date
+To test the reset run date module navigate to the apps/reset_forecast_run_date directory in your terminal and type the following command:
+```bash
+python pytest -s tests/test_rerun_forecast.py
+```
