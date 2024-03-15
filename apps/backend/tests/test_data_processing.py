@@ -2,7 +2,7 @@ import os
 import pandas as pd
 import pytest
 from unittest.mock import patch, MagicMock
-from backend.src.data_processing import read_discharge_from_excel_sheet
+from backend.src import data_processing
 
 # Run tests from the apps directory and use the following command:
 # python -m pytest backend/tests/test_read_discharge_from_excel_sheet.py
@@ -13,7 +13,7 @@ def test_read_a_file_that_does_not_exist():
     year = 2000
     # Check that call to read_discharge_from_excel_sheet throws ValueError
     with pytest.raises(ValueError):
-        read_discharge_from_excel_sheet(file_path, station, year)
+        data_processing.read_discharge_from_excel_sheet(file_path, station, year)
 
 
 def test_read_discharge_from_good_excel_sheet():
@@ -21,7 +21,7 @@ def test_read_discharge_from_good_excel_sheet():
     file_path = 'backend/tests/test_files/12345_discharge_daily_good_file.xlsx'
     station = '12345'
     year = 2000
-    data = read_discharge_from_excel_sheet(file_path, station, year)
+    data = data_processing.read_discharge_from_excel_sheet(file_path, station, year)
 
     # Check that the returned DataFrame has the expected columns and data
     assert 'Date' in data.columns
@@ -44,7 +44,7 @@ def test_read_discharge_from_slash_date_excel_sheet():
     file_path = 'backend/tests/test_files/12345_discharge_daily_slash_date_file.xlsx'
     station = '12345'
     year = 2000
-    data = read_discharge_from_excel_sheet(file_path, station, year)
+    data = data_processing.read_discharge_from_excel_sheet(file_path, station, year)
 
     # Check that the returned DataFrame has the expected columns and data
     assert 'Date' in data.columns
@@ -70,7 +70,7 @@ def test_read_discharge_from_excel_sheet_with_additional_header_row():
 
     # Call to read_discharge_from_excel_sheet should throw ValueError
     with pytest.raises(ValueError):
-        read_discharge_from_excel_sheet(file_path, station, year)
+        data_processing.read_discharge_from_excel_sheet(file_path, station, year)
 
 def test_sheet_not_found_in_excel_file():
     # Call read_discharge_from_excel_sheet with test parameters
@@ -80,6 +80,6 @@ def test_sheet_not_found_in_excel_file():
 
     # Call to read_discharge_from_excel_sheet should throw ValueError
     with pytest.raises(ValueError):
-        read_discharge_from_excel_sheet(file_path, station, year)
+        data_processing.read_discharge_from_excel_sheet(file_path, station, year)
 
 

@@ -4,13 +4,31 @@ import json
 import sys
 import datetime as dt
 import forecast_library as fl
+import tag_library as tl
 
 from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
 
 
-def store_last_successful_run_date(date):
+def store_last_successful_run_date(date: dt.datetime):
+    '''
+    Store the last successful run date in a file.
+
+    Args:
+        date (datetime): The date of the last successful run.
+
+    Raises:
+        ValueError: If the date is not valid.
+        FileNotFoundError: If the environment variables are not set.
+        IOError: If the write operation fails.
+    '''
+    # Check environment variables
+    intermediate_data_path = os.getenv("ieasyforecast_intermediate_data_path")
+    last_successful_run_file = os.getenv("ieasyforecast_last_successful_run_file")
+    if intermediate_data_path is None or last_successful_run_file is None:
+        raise FileNotFoundError("Environment variables not set")
+
     # Store last successful run date
     logger.info("Storing last successful run date ...")
 
@@ -19,11 +37,22 @@ def store_last_successful_run_date(date):
         os.getenv("ieasyforecast_intermediate_data_path"),
         os.getenv("ieasyforecast_last_successful_run_file")
     )
+
+    # Test if the date is valid and throw an error if it is not
+    # Test if the date is valid and throw an error if it is not
+    if not tl.is_gregorian_date(date):
+        raise ValueError(f"Invalid date: {date}")
+
     # Overwrite the file with the current date
     with open(last_run_file, "w") as f1:
-        f1.write(date.strftime("%Y-%m-%d"))
+        ret = f1.write(date.isoformat())
+
+    # Check if the write was successful
+    if ret is None:
+        raise IOError(f"Could not store last successful run date in {last_run_file}")
 
     logger.info("   ... done")
+    return None
 
 
 def parse_command_line_args() -> tuple[bool, dt.datetime]:
@@ -96,27 +125,71 @@ def load_environment():
 
 
 def get_bulletin_date(start_date: dt.datetime) -> str:
+    """
+    Add 1 day to the start date to get the bulletin date. For pentadal forecasts,
+    the bulletin date first day of a pentad.
+
+    Args:
+        start_date (datetime): The start date of the forecast.
+
+    Returns:
+        str: The bulletin date.
+
+    Raises:
+        TypeError: If the start_date is not a datetime object.
+    """
     # The forecast is done one day before the beginning of each pentad
     # That is on the 5th, 10th, 15th, 20th, 25th and on the last day of each month
+    # Check that start_date is a datetime object
+    if not isinstance(start_date, dt.datetime):
+        raise TypeError("start_date must be a datetime object")
+
     bulletin_date = (start_date + dt.timedelta(days=1)).strftime("%Y-%m-%d")
     logger.info(f"The forecast bulletin date is: {bulletin_date}")
     return bulletin_date
 
 
 def excel_output():
-    # Find out if we are writing excel forecast sheets or not.
-    # If we are, set the excel_output flag to True.
-    # If we are not, set the excel_output flag to False.
+    """
+    Determine whether to write Excel forecast sheets based on a configuration file.
+
+    Returns:
+        bool: True if Excel forecast sheets should be written, False otherwise.
+
+    Raises:
+        EnvironmentError: If necessary environment variables are not set.
+        FileNotFoundError: If the configuration file does not exist.
+        KeyError: If the 'write_excel' key is not in the configuration file.
+    """
+    # Check environment variables
+    configuration_path = os.getenv("ieasyforecast_configuration_path")
+    config_file_output = os.getenv("ieasyforecast_config_file_output")
+    if configuration_path is None or config_file_output is None:
+        raise EnvironmentError("Environment variables not set")
+
     # Read the configuration file
-    config_output_file = os.path.join(
-        os.getenv("ieasyforecast_configuration_path"),
-        os.getenv("ieasyforecast_config_file_output"),
-    )
-    with open(config_output_file, "r") as json_file:
-        config = json.load(json_file)
-        if config["write_excel"]:
-            logger.info("Writing excel forecast sheets.")
-            return True
-        else:
-            logger.info("Not writing excel forecast sheets.")
-            return False
+    config_output_file = os.path.join(configuration_path, config_file_output)
+    try:
+        with open(config_output_file, "r") as json_file:
+            config = json.load(json_file)
+    except FileNotFoundError:
+        logger.error(f"Configuration file {config_output_file} not found.")
+        raise
+
+    # Check if write_excel is set to True or False (and nothing else)
+    if config["write_excel"] not in [True, False]:
+            raise ValueError(f"Invalid value for write_excel: {config['write_excel']}")
+
+    # Check if we should write Excel forecast sheets
+    try:
+        write_excel = config["write_excel"]
+    except KeyError:
+        logger.error("'write_excel' key not found in configuration file.")
+        raise
+
+    # Log the decision and return it
+    if write_excel:
+        logger.info("Writing Excel forecast sheets.")
+    else:
+        logger.info("Not writing Excel forecast sheets.")
+    return write_excel
