@@ -20,6 +20,7 @@ All software components are in the apps directory. Files that need to be reviewe
 Potentially sensitive data that needs to be provided by a hydromet (for example daily discharge data used for the development of the forecast models) is stored in the data folder. Here we provide publicly available data examples from Switzerland for demonstration.
 <details>
 <summary>Click to expand the folder structure</summary>
+
 ```
   SAPPHIRE_FORECAST_TOOLS
    |__ apps
