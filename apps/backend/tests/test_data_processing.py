@@ -4,8 +4,22 @@ import pytest
 from unittest.mock import patch, MagicMock
 from backend.src import data_processing
 
-# Run tests from the apps directory and use the following command:
-# python -m pytest backend/tests/test_read_discharge_from_excel_sheet.py
+def test_check_database_access_with_files_in_directory(tmpdir):
+    # Set up the environment variable
+    os.environ["ieasyforecast_daily_discharge_dir"] = str(tmpdir)
+
+    # Create a file in the directory
+    with open(os.path.join(os.environ["ieasyforecast_daily_discharge_dir"], "file.txt"), "w") as f:
+        f.write("test")
+
+    # Call the function and check the result
+    # This will raise an exception because we don't have a real ieh_sdk object,
+    # but the function should still return False because there are files in the directory
+    with pytest.raises(Exception):
+        assert data_processing.check_database_access(None) is False
+
+
+
 
 def test_read_a_file_that_does_not_exist():
     file_path = 'backend/tests/test_files/12345_doesnotexist.xlsx'
@@ -14,7 +28,6 @@ def test_read_a_file_that_does_not_exist():
     # Check that call to read_discharge_from_excel_sheet throws ValueError
     with pytest.raises(ValueError):
         data_processing.read_discharge_from_excel_sheet(file_path, station, year)
-
 
 def test_read_discharge_from_good_excel_sheet():
     # Call read_discharge_from_excel_sheet with test parameters

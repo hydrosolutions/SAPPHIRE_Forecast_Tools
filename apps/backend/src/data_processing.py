@@ -12,6 +12,28 @@ logger = logging.getLogger(__name__)
 
 
 def check_database_access(ieh_sdk):
+    """
+    Check if the backend has access to an iEasyHydro database.
+
+    Args:
+        ieh_sdk: The iEasyHydro SDK.
+
+    Returns:
+        bool: True if the backend has access to the database, False otherwise.
+
+    Raises:
+        EnvironmentError: If necessary environment variables are not set.
+        Exception: If there is an error connecting to the database.
+    """
+    # Check that ieh_sdk is not None
+    if ieh_sdk is None:
+        raise Exception("Invalid ieh_sdk object")
+
+    # Check environment variable
+    daily_discharge_dir = os.getenv("ieasyforecast_daily_discharge_dir")
+    if daily_discharge_dir is None:
+        raise EnvironmentError("Environment variable not set")
+
     # Test if the backand has access to an iEasyHydro database and set a flag accordingly.
     try:
         ieh_sdk.get_discharge_sites()
