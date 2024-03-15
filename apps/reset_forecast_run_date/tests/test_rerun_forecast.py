@@ -4,7 +4,7 @@ import os
 from reset_forecast_run_date.rerun_forecast import load_environment, parse_last_successful_run_date, calculate_new_forecast_date, write_date
 
 def test_parse_last_successful_run_date():
-    last_run_file = "tests/test_files/test_last_successful_run.txt"
+    last_run_file = "reset_forecast_run_date/tests/test_files/test_last_successful_run.txt"
     # Test with an invalid date in the file
     with open(last_run_file, "w") as file:
         file.write("invalid_date")
@@ -50,7 +50,7 @@ def test_calculate_new_forecast_date():
 def test_write_date():
         # Test with valid parameters
     date = datetime.date.today()
-    file_path = ("tests/test_files/test_file.txt")
+    file_path = ("reset_forecast_run_date/tests/test_files/test_file.txt")
     write_date(date, file_path)
     with open(file_path, "r") as file:
         assert file.read() == date.strftime("%Y-%m-%d")
