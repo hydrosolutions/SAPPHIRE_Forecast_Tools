@@ -240,7 +240,6 @@ def get_fc_sites(ieh_sdk, backend_has_access_to_db, db_sites):
         logger.info("No access to iEasyHydro database. Therefore no dangerous discharge is assigned to sites.")
     return fc_sites
 
-
 def get_predictor_dates(start_date):
     # Get the dates to get the predictor from
     # For pentadal forecasts, the hydromet uses the sum of the last 3 days discharge.
@@ -323,6 +322,120 @@ def read_discharge_from_excel_sheet(file_path, station, year):
 
     return data
 
+def get_daily_discharge_files(backend_has_access_to_db):
+    """
+    Get a list of the Excel files containing the daily discharge data.
+
+    Args:
+        backend_has_access_to_db (bool): Whether the backend has access to the iEasyHydro database.
+
+    Returns:
+        list: A list of daily discharge files.
+
+    Raises:
+        EnvironmentError: If the necessary environment variable is not set.
+        FileNotFoundError: If no files are found in the directory.
+    """
+    # Check environment variable
+    daily_discharge_path = os.getenv("ieasyforecast_daily_discharge_path")
+    if daily_discharge_path is None:
+        logger.error("The environment variable ieasyforecast_daily_discharge_path is not set. Please set it.")
+        raise EnvironmentError("Environment variable not set")
+
+    # Get a list of the Excel files
+    daily_discharge_files = os.listdir(daily_discharge_path)
+    daily_discharge_files = [file for file in daily_discharge_files if file.startswith('1')]
+    logger.info(f"daily_discharge_files: {daily_discharge_files}")
+
+    # Check if there are no files found
+    if not daily_discharge_files:
+        logger.warning("No files found in the directory data/daily_runoff.")
+        if not backend_has_access_to_db:
+            logger.error("No files found in the directory data/daily_runoff and no access to the iEasyHydro database.")
+            logger.error("Please check the data/daily_runoff directory and/or the access to the iEasyHydro database.")
+            raise FileNotFoundError("No files found in the directory and no access to the iEasyHydro database.")
+
+    # Ignore temporary files created by Excel on macOS
+    daily_discharge_files = [file for file in daily_discharge_files if not file.startswith('~')]
+
+    return daily_discharge_files
+
+def get_time_series_from_excel(library):
+    """
+    Get time series data from Excel files.
+
+    Args:
+        library: A dataframe with the station IDs and the file names in rows.
+
+    Returns:
+        DataFrame: A DataFrame containing the combined data from all Excel files.
+
+    Raises:
+        FileNotFoundError: If an Excel file does not exist.
+    """
+    # Initiate the dictionary for the data
+    data_dict = {}
+
+    # Create a vector with numbers from 2000 to the current year, that is the years for
+    # which the data may be available in the Excel sheets.
+    current_year = datetime.date.today().year
+    years = np.arange(2000, (current_year + 1), 1)
+
+    # Suggetsion to speed up the process by leaving out the interrow loop
+    # Read the data for each station
+    for year in years:
+        for _, row in library.iterrows():
+            file_path = row["file"]
+            station = row["station"]
+
+            try:
+                data = read_discharge_from_excel_sheet(file_path, station, year)
+                data_dict[station, year] = data
+            except:
+                continue
+
+    # Check if there is any data in data_dict for each station
+    for station in library["station"].unique():
+        if (station, 2000) not in data_dict.keys():
+            logger.warning(f"No data for station {station} in the Excel sheets.")
+
+    # Test if data dict is empty
+    if not data_dict:
+        logger.error("No data found in the Excel sheets.")
+        raise FileNotFoundError("No data found in the Excel sheets.")
+
+    # Initialize a combined_data DataFrame
+    combined_data = pd.DataFrame()
+
+    # Test if there is only data for one station in the data_dict
+    if len(data_dict) == 1:
+        # Add station and year information to each DataFrame
+        for key, df in data_dict.items():
+            df['station'], df['year'] = key
+
+        # Concatenate the DataFrames
+        combined_data = pd.concat(data_dict.values(), ignore_index=True)
+
+    else:
+        # Combine all sheets into a single DataFrame
+        combined_data = pd.concat(data_dict.values(), ignore_index=True)
+
+    # Test if combined_data is empty and throw an error if it is
+    if combined_data.empty:
+        logger.error("No data found in the Excel sheets.")
+        raise FileNotFoundError("No data found in the Excel sheets.")
+
+    # Convert the Date column to datetime
+    combined_data.loc[:,'Date'] = pd.to_datetime(combined_data.loc[:,'Date'])
+
+    # Drop rows with missing discharge values
+    combined_data.dropna(subset = 'Q_m3s', inplace=True)
+
+    # Overwrite the Year column with the actual year based on the date
+    combined_data.loc[:,'Year'] = pd.to_datetime(combined_data.loc[:,'Date']).dt.year
+
+    return combined_data
+
 def get_station_data(ieh_sdk, backend_has_access_to_db, start_date):
     # === Read station data ===
     # region Read station data
@@ -339,34 +452,8 @@ def get_station_data(ieh_sdk, backend_has_access_to_db, start_date):
     logger.info("Reading daily discharge data ...")
     logger.info("-Reading discharge data from Excel sheets ...")
 
-    # Test if the environment variable is set.
-    if os.getenv("ieasyforecast_daily_discharge_path") is None:
-        logger.error(f"The environment variable ieasyforecast_daily_discharge_path is not set. Please set it.")
-        logger.error(f"No forecasts possible. Exiting the script.")
-        exit()
-
-    # Get a list of the Excel files containing the daily discharge data available
-    # in the data/daily_runoff directory
-    daily_discharge_files = os.listdir(os.getenv("ieasyforecast_daily_discharge_path"))
-    # Ignore files that do not start with "1"
-    daily_discharge_files = [file for file in daily_discharge_files if file.startswith('1')]
-    logger.info(f"daily_discharge_files: {daily_discharge_files}")
-
-    # Print a warning if there are no files found in the ieasyforecast_daily_discharge_path
-    if not daily_discharge_files:
-        logger.warning("No files found in the directory data/daily_runoff.")
-        # If in addition to seeing no Excel sheets, we do not have access to the
-        # iEasyHydro database, throw an error and exit the script.
-        if not backend_has_access_to_db:
-            logger.error("No files found in the directory data/daily_runoff and no access to the iEasyHydro database.")
-            logger.error("Please check the data/daily_runoff directory and/or the access to the iEasyHydro database.")
-            logger.error("No forecasts possible. Exiting the script.")
-            exit()
-
-    # If an Excel file is open on macOS, it creates a temporary file with the
-    # same name as the original file but starting with a tilde (~).
-    # We want to ignore these files.
-    daily_discharge_files = [file for file in daily_discharge_files if not file.startswith('~')]
+    # Get a list of the Excel files
+    daily_discharge_files = get_daily_discharge_files(backend_has_access_to_db)
 
     # Create a dataframe with the station IDs and the file names. The station
     # IDs are in the first part of the file names, before the first underscore.
@@ -378,47 +465,8 @@ def get_station_data(ieh_sdk, backend_has_access_to_db, start_date):
                      for file in daily_discharge_files]
         })
 
-    # Initiate the dictionary for the data
-    data_dict = {}
-
-    # Create a vector with numbers from 2000 to the current year, that is the years for
-    # which the data may be available in the Excel sheets.
-    current_year = datetime.date.today().year
-    years = np.arange(2000, (current_year + 1), 1)
-
-    # Get the file names for the stations
-    for index, row in library.iterrows():
-        file_path = row["file"]
-        station = row["station"]
-
-        # Read the data for the station
-        for year in years:
-
-            try:
-                data = read_discharge_from_excel_sheet(file_path, station, year)
-
-                data_dict[station, year] = data
-
-            except:
-                # If there is no sheet for the year, the data frame for that
-                # year will be empty.
-                continue
-
-        # Check if there is any data in data_dict for station station
-        if (station, 2000) not in data_dict.keys():
-            logger.warning(f"No data for station {station} in the Excel sheets.")
-
-    # Combine all sheets into a single DataFrame
-    combined_data = pd.concat(data_dict.values(), ignore_index=True)
-
-    # Convert the Date column to datetime
-    combined_data.loc[:,'Date'] = pd.to_datetime(combined_data.loc[:,'Date'])
-
-    # Drop rows with missing discharge values
-    combined_data.dropna(subset = 'Q_m3s', inplace=True)
-
-    # Overwrite the Year column with the actual year based on the date
-    combined_data.loc[:,'Year'] = pd.to_datetime(combined_data.loc[:,'Date']).dt.strftime('%Y')
+    # Get the time series data from the Excel files
+    combined_data = get_time_series_from_excel(library)
 
     # Get the latest daily data from DB in addition. The data from the DB takes
     # precedence over the data from the Excel sheets.
