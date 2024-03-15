@@ -4,7 +4,7 @@ env:
     IMAGE_NAME: mabesa/sapphire-rerun
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "deploy" ]
 
 jobs:
   lint_and_test_reset_forecast:
