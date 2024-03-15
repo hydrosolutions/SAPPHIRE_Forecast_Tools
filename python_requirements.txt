@@ -6,3 +6,4 @@ typing
 panel
 holoviews
 bokeh
+pytest
