@@ -133,7 +133,7 @@ Testing tools are being developed for each tool. This is work in progress.
 
 To run all tests, navigate to the apps directory in your terminal and type the following command:
 ```bash
-python -m pytest -s
+SAPPHIRE_TEST_ENV=True python -m pytest -s
 ```
-The -s is optional, it will print output from your functions to the terminal.
+SAPPHIRE_TEST_ENV=True defines an environment variable TEST_ENV to true. We use this environment variable to set up temporary test environments. The -s is optional, it will print output from your functions to the terminal.
 

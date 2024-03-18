@@ -18,6 +18,9 @@ def test_check_database_access_with_files_in_directory(tmpdir):
     with pytest.raises(Exception):
         assert data_processing.check_database_access(None) is False
 
+    # Clean up the environment variable
+    os.environ.pop("ieasyforecast_daily_discharge_dir")
+
 
 def test_read_a_file_that_does_not_exist():
     file_path = 'backend/tests/test_files/12345_doesnotexist.xlsx'
@@ -112,11 +115,14 @@ def test_get_daily_discharge_files_with_files_in_directory(tmpdir):
     # Filter for files with .xlsx extension
     expected_file_list = [f for f in expected_file_list if f.endswith(".xlsx")]
 
+    # Filter for files that start with "1"
+    expected_file_list = [f for f in expected_file_list if f.startswith("1")]
+
     # Test that the file names returned are found also in the expected_file_list
     assert data_processing.get_daily_discharge_files(False) == expected_file_list
 
     # Clean up the environment variable
-    del os.environ["ieasyforecast_daily_discharge_path"]
+    os.environ.pop("ieasyforecast_daily_discharge_path")
 
 def test_get_daily_discharge_files_without_files_in_directory(tmpdir):
     # Set up the environment variable
@@ -168,6 +174,8 @@ def test_get_time_series_from_excel_with_valid_file():
     # Last value of Q_m3s, rounded to 1 digit, should be 9.5
     assert result['Q_m3s'].iloc[-1].round(1) == 9.5
 
+    # Clean up the environment variable
+    os.environ.pop("ieasyforecast_daily_discharge_path")
 
 def test_get_time_series_from_excel_with_invalid_file():
     # Set up the environment variable
@@ -181,3 +189,8 @@ def test_get_time_series_from_excel_with_invalid_file():
 
     with pytest.raises(FileNotFoundError):
         data_processing.get_time_series_from_excel(daily_discharge_files)
+
+    # Clean up the environment variable
+    os.environ.pop("ieasyforecast_daily_discharge_path")
+
+

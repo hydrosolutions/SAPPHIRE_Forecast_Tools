@@ -11,17 +11,23 @@ from dotenv import load_dotenv
 logger = logging.getLogger(__name__)
 
 
-def store_last_successful_run_date(date: dt.datetime):
+def store_last_successful_run_date(date: dt.date):
     '''
     Store the last successful run date in a file.
 
     Args:
-        date (datetime): The date of the last successful run.
+        date (date): The date of the last successful run.
 
     Raises:
         ValueError: If the date is not valid.
         FileNotFoundError: If the environment variables are not set.
         IOError: If the write operation fails.
+
+    Returns:
+        None
+
+    Example:
+        store_last_successful_run_date(dt.date(2022, 1, 1)) # Stores the date January 1, 2022
     '''
     # Check environment variables
     intermediate_data_path = os.getenv("ieasyforecast_intermediate_data_path")
@@ -66,7 +72,7 @@ def parse_command_line_args() -> tuple[bool, dt.datetime]:
     args = sys.argv[1:]
 
     # Get the name of the calling script
-    calling_script = args[1]
+    calling_script = args[2]
 
     # Test if the string contains the word "run_offline_mode", and sets to True or False accordingly
     # Please note that the online_mode is being deprecated.
@@ -103,24 +109,33 @@ def parse_command_line_args() -> tuple[bool, dt.datetime]:
 def load_environment():
     """
     Load environment variables from a .env file based on the context (Docker or local development).
+
+    Returns:
+        str: The path to the environment file.
+    Raises:
+        FileNotFoundError: If the environment file is not found.
     """
     # Read the environment variable IN_DOCKER_CONTAINER to determine which .env file to use
     if os.getenv("IN_DOCKER_CONTAINER") == "True":
-        logger.info(f"Running in docker container. Loading environment variables from .env")
         env_file_path = "apps/config/.env"
-        res = load_dotenv(env_file_path)
+    elif os.getenv("SAPPHIRE_TEST_ENV") == "True":
+        env_file_path = "backend/tests/test_files/.env_develop_test"
     else:
-        logger.info(f"Running locally. Loading environment variables from .env_develop")
-        # For development purposes, you can use an .env file to overwrite the
-        # default environment variables. This is useful if you need to test the
-        # access to the database from your local machine.
         env_file_path = "../config/.env_develop"
-        # Note, we use the override=True flag here to overwrite the environment
-        # variables read from run_offline_mode.py for debugging and testing purposes.
-        res = load_dotenv(dotenv_path=env_file_path, override=True)
-    logger.info(f"IEASYHYDRO_HOST: {os.getenv('IEASYHYDRO_HOST')}")
+
+    # Test if the file exists
+    if not os.path.exists(env_file_path):
+        raise FileNotFoundError(f"Environment file {env_file_path} not found")
+    # Load the environment variables
+    logger.info(f"Loading environment variables from {env_file_path}")
+    res = load_dotenv(env_file_path)
+    logger.debug(f"IEASYHYDRO_HOST: {os.getenv('IEASYHYDRO_HOST')}")
+    # Test if the environment variables were loaded
     if not res:
         logger.warning(f"Could not load environment variables from {env_file_path}")
+    # Test if specific environment variables were loaded
+    if os.getenv("ieasyforecast_daily_discharge_path") is None:
+        logger.error("config.load_environment(): Environment variable ieasyforecast_daily_discharge_path not set")
     return env_file_path
 
 

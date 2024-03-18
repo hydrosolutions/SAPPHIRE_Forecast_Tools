@@ -11,15 +11,19 @@ import sys
 import os
 from dotenv import load_dotenv
 
+print("=============================================")
 # Load environment variables
 if os.getenv("IN_DOCKER_CONTAINER") == "True":
     print(f"Running in docker container. Loading environment variables from .env")
     env_file_path = "apps/config/.env"
-    load_dotenv(env_file_path)
+elif os.getenv("SAPPHIRE_TEST_ENV") == "True":
+    print(f"Running in test environment. Loading environment variables from .env_test")
+    env_file_path = "backend/tests/test_files/.env_develop_test"
 else:
     print(f"Running locally. Loading environment variables from .env_develop")
     env_file_path = "../config/.env_develop"
-    load_dotenv(env_file_path)
+
+load_dotenv(env_file_path)
 # Print if a file exists at the env_file_path location
 # print(f"File exists at {env_file_path}: {os.path.isfile(env_file_path)}")
 
@@ -71,6 +75,11 @@ while current_day <= date_end:
     # run_offline_mode.py or from run_online_mode.py
     if os.getenv("IN_DOCKER_CONTAINER") == "True":
         subprocess.run(["python3", "apps/backend/forecast_script.py",
+                        str(current_day),
+                        "--calling_script", __file__,
+                        "--env", env_file_path])
+    elif os.getenv("SAPPHIRE_TEST_ENV") == "True":
+        subprocess.run(["python", "backend/forecast_script.py",
                         str(current_day),
                         "--calling_script", __file__,
                         "--env", env_file_path])

@@ -29,8 +29,15 @@ def check_database_access(ieh_sdk):
     if ieh_sdk is None:
         raise Exception("Invalid ieh_sdk object")
 
+    # Test if another env variable is set
+    if os.getenv("ieasyforecast_gis_directory_path") is None:
+        logger.error("The environment variable ieasyforecast_gis_directory_path is not set. Please set it.")
+        raise EnvironmentError("Environment variable not set")
     # Check environment variable
-    daily_discharge_dir = os.getenv("ieasyforecast_daily_discharge_dir")
+    if os.getenv("ieasyforecast_daily_discharge_path") is None:
+        logger.error("data_processing.check_database_access(): The environment variable ieasyforecast_daily_discharge_dir is not set. Please set it.")
+        raise EnvironmentError("Environment variable not set")
+    daily_discharge_dir = os.getenv("ieasyforecast_daily_discharge_path")
     if daily_discharge_dir is None:
         raise EnvironmentError("Environment variable not set")
 
@@ -41,7 +48,7 @@ def check_database_access(ieh_sdk):
         return True
     except Exception as e:
         # Test if there are any files in the data/daily_runoff directory
-        if os.listdir(os.getenv("ieasyforecast_daily_discharge_dir")):
+        if os.listdir(os.getenv("ieasyforecast_daily_discharge_path")):
             logger.info(f"SAPPHIRE forecast tools does not have access to the iEasyHydro database "
                         f"and will use data from the data/daily_runoff directory for forecasting only.")
             return False
@@ -254,7 +261,7 @@ def get_predictor_dates(start_date):
     return predictor_dates
 
 def read_discharge_from_excel_sheet(file_path, station, year):
-    '''
+    """
     Read discharge data from a single Excel sheet. The sheet is named after the
     year for which the data is available.
 
@@ -274,7 +281,7 @@ def read_discharge_from_excel_sheet(file_path, station, year):
     ValueError: If the file_path does not exist.
     ValueError: If the dates are not parsed correctly from the sheet.
     ValueError: If the first date is not January 1 of the year.
-    '''
+    """
     # Print current working directory
     #print("current working directory: ", os.getcwd())
 
@@ -436,43 +443,18 @@ def get_time_series_from_excel(library):
 
     return combined_data
 
-def get_station_data(ieh_sdk, backend_has_access_to_db, start_date):
-    # === Read station data ===
-    # region Read station data
+def get_time_series_from_DB(ieh_sdk, library):
     """
-    # For now we read older station data from Excel sheets and newer station
-    # data from the DB.
-    # Once the upload for daily station data is implemented, we can read the
-    # daily data for forecasting from the DB.
+    Get time series data from a database.
 
-    # We will want to save the station data in objects that can later be used
-    # for bulletin writing.
+    Args:
+        ieh_sdk (object): An object that provides a method to get data values for a site from a database.
+        library (DataFrame): A DataFrame containing the sites to get data for.
+
+    Returns:
+        DataFrame: A DataFrame containing the combined data from all sites.
+
     """
-    # Read station data from Excel sheets
-    logger.info("Reading daily discharge data ...")
-    logger.info("-Reading discharge data from Excel sheets ...")
-
-    # Get a list of the Excel files
-    daily_discharge_files = get_daily_discharge_files(backend_has_access_to_db)
-
-    # Create a dataframe with the station IDs and the file names. The station
-    # IDs are in the first part of the file names, before the first underscore.
-    # The filenames are the full path to the files.
-    library = pd.DataFrame(
-        {
-            "station": [file.split('_')[0] for file in daily_discharge_files],
-            "file": [os.path.join(os.getenv("ieasyforecast_daily_discharge_path"), file)
-                     for file in daily_discharge_files]
-        })
-
-    # Get the time series data from the Excel files
-    combined_data = get_time_series_from_excel(library)
-
-    # Get the latest daily data from DB in addition. The data from the DB takes
-    # precedence over the data from the Excel sheets.
-    logger.info("-Reading latest daily data from DB ...")
-    # Initiate a data frame for the data from the database with the same format
-    # as combined_data
     db_data = pd.DataFrame(columns=['Date', 'Q_m3s', 'Year', 'Code'])
 
     # Iterate over each site in library station
@@ -514,6 +496,48 @@ def get_station_data(ieh_sdk, backend_has_access_to_db, start_date):
         except Exception:
             logger.info(f'    No data for site {row["station"]} in DB.')
             continue
+
+        return db_data
+
+
+def get_station_data(ieh_sdk, backend_has_access_to_db, start_date):
+    # === Read station data ===
+    # region Read station data
+    """
+    # For now we read older station data from Excel sheets and newer station
+    # data from the DB.
+    # Once the upload for daily station data is implemented, we can read the
+    # daily data for forecasting from the DB.
+
+    # We will want to save the station data in objects that can later be used
+    # for bulletin writing.
+    """
+    # Read station data from Excel sheets
+    logger.info("Reading daily discharge data ...")
+    logger.info("-Reading discharge data from Excel sheets ...")
+
+    # Get a list of the Excel files
+    daily_discharge_files = get_daily_discharge_files(backend_has_access_to_db)
+
+    # Create a dataframe with the station IDs and the file names. The station
+    # IDs are in the first part of the file names, before the first underscore.
+    # The filenames are the full path to the files.
+    library = pd.DataFrame(
+        {
+            "station": [file.split('_')[0] for file in daily_discharge_files],
+            "file": [os.path.join(os.getenv("ieasyforecast_daily_discharge_path"), file)
+                     for file in daily_discharge_files]
+        })
+
+    # Get the time series data from the Excel files
+    combined_data = get_time_series_from_excel(library)
+
+    # Get the latest daily data from DB in addition. The data from the DB takes
+    # precedence over the data from the Excel sheets.
+    logger.info("-Reading latest daily data from DB ...")
+    # Initiate a data frame for the data from the database with the same format
+    # as combined_data
+    db_data = get_time_series_from_DB(ieh_sdk, library)
 
     # Combine the data from the DB and the Excel sheets. Check for duplicate
     # dates and keep the data from the DB.
