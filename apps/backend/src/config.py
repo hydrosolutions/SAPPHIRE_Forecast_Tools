@@ -10,6 +10,22 @@ from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
 
+class ForecastFlags:
+    """
+    Class to store the forecast flags. We have flags for each forecast horizon.
+    Depending on the date the forecast tools are called for, they identify the
+    forecast horizons to service by changing the respective flag from False (no
+    forecast produced) to True (forecast produced).
+    """
+    def __init__(self, pentad=False, decad=False, month=False, season=False):
+        self.pentad = pentad
+        self.decad = decad
+        self.month = month
+        self.season = season
+
+    def __repr__(self):
+        return self
+
 
 def store_last_successful_run_date(date: dt.date):
     '''
@@ -88,22 +104,30 @@ def parse_command_line_args() -> tuple[bool, dt.datetime]:
     start_date = dt.datetime.strptime(args[0], "%Y-%m-%d")
     #start_date = dt.datetime.strptime("2024-01-31", "%Y-%m-%d")  # todo temp remove so previous line remains
 
+    # Initialize forecast_flags for each forecast horizon.
+    forecast_flags = ForecastFlags()
+
     # Get the day of the month
     day = start_date.day
     # Get the last day of the month
     last_day = fl.get_last_day_of_month(start_date)
     # Get the list of days for which we want to run the forecast
-    days = [5, 10, 15, 20, 25, last_day.day]
+    # pentadal forecasting
+    days_pentads = [5, 10, 15, 20, 25, last_day.day]
+    days_decads = [10, 20, last_day.day]
 
     # If today is not in days, exit the program.
-    if day not in days:
+    if day not in days_pentads:
         logger.info(f"Run for date {start_date}. No forecast date, no forecast will be run.")
         store_last_successful_run_date(start_date)
         exit()  # exit the program
     else:
         logger.info(f"Running forecast for {start_date}.")
+        forecast_flags.pentad = True
+        if day in days_decads:
+            forecast_flags.decad = True
 
-    return offline_mode, start_date
+    return offline_mode, start_date, forecast_flags
 
 
 def load_environment():
@@ -208,3 +232,5 @@ def excel_output():
     else:
         logger.info("Not writing Excel forecast sheets.")
     return write_excel
+
+

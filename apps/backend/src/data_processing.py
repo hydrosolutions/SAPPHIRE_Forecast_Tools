@@ -247,7 +247,18 @@ def get_fc_sites(ieh_sdk, backend_has_access_to_db, db_sites):
         logger.info("No access to iEasyHydro database. Therefore no dangerous discharge is assigned to sites.")
     return fc_sites
 
-def get_predictor_dates(start_date):
+def get_predictor_dates(start_date, forecast_flags):
+    """
+    Gets dates for which to aggregate the predictors for the linear regression
+    method.
+
+    Arguments:
+        start_date (datetime.date) Date on which the forecast is produced.
+        forecast_flags (config.ForecastFlags) Flags that identify the forecast
+            horizons serviced on start_date
+
+    Return:
+    """
     # Get the dates to get the predictor from
     # For pentadal forecasts, the hydromet uses the sum of the last 3 days discharge.
     predictor_dates = fl.get_predictor_dates(start_date.strftime('%Y-%m-%d'), 3)
@@ -499,6 +510,22 @@ def get_time_series_from_DB(ieh_sdk, library):
 
         return db_data
 
+def filter_roughly_for_outliers(combined_data, window_size=15):
+    # Preliminary filter for outliers
+    # We try filtering out the outliers.
+    # calculate rolling mean and standard deviation
+    rolling_mean = combined_data['Q_m3s'].rolling(window_size).mean()
+    rolling_std = combined_data['Q_m3s'].rolling(window_size).std()
+
+    # calculate upper and lower bounds for outliers
+    num_std = 3
+    upper_bound = rolling_mean + num_std * rolling_std
+    lower_bound = rolling_mean - num_std * rolling_std
+
+    # Set Q_m3m which exceeds lower and upper bounds to nan
+    combined_data.loc[combined_data['Q_m3s'] > upper_bound, 'Q_m3s'] = np.nan
+    combined_data.loc[combined_data['Q_m3s'] < lower_bound, 'Q_m3s'] = np.nan
+    return combined_data
 
 def get_station_data(ieh_sdk, backend_has_access_to_db, start_date):
     # === Read station data ===
@@ -609,22 +636,7 @@ def get_station_data(ieh_sdk, backend_has_access_to_db, start_date):
     # Filter combined_data for dates before today (to simulate offline mode)
     combined_data = combined_data[combined_data['Date'] <= start_date]
 
-    # Preliminary filter for outliers
-    # We try filtering out the outliers.
-    # calculate rolling mean and standard deviation
-    window_size = 15
-    rolling_mean = combined_data['Q_m3s'].rolling(window_size).mean()
-    rolling_std = combined_data['Q_m3s'].rolling(window_size).std()
-
-    # calculate upper and lower bounds for outliers
-    num_std = 3
-    upper_bound = rolling_mean + num_std * rolling_std
-    lower_bound = rolling_mean - num_std * rolling_std
-
-    # Set Q_m3m which exceeds lower and upper bounds to nan
-    combined_data.loc[combined_data['Q_m3s'] > upper_bound, 'Q_m3s'] = np.nan
-    combined_data.loc[combined_data['Q_m3s'] < lower_bound, 'Q_m3s'] = np.nan
-    df_filtered = combined_data
+    df_filtered = filter_roughly_for_outliers(combined_data, window_size=15)
 
     # Make sure the Date column is of type datetime
     df_filtered.loc[:, 'Date'] = pd.to_datetime(df_filtered.loc[:, 'Date'])
