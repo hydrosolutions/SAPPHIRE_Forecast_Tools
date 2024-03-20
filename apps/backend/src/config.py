@@ -67,7 +67,7 @@ def store_last_successful_run_date(date: dt.date):
 
     # Overwrite the file with the current date
     with open(last_run_file, "w") as f1:
-        ret = f1.write(date.isoformat())
+        ret = f1.write(date.strftime('%Y-%m-%d'))
 
     # Check if the write was successful
     if ret is None:
@@ -82,7 +82,9 @@ def parse_command_line_args() -> tuple[bool, dt.datetime]:
     Parse command line arguments to get the calling script and the start date.
 
     Returns:
-        tuple: Tuple containing the offline mode flag, and the start date.
+        tuple: Tuple containing the start date and the forecast flags.
+        The start_date is a datetime object.
+        The forecast_flags is a ForecastFlags object.
     """
     # Get the command line arguments
     args = sys.argv[1:]
@@ -92,7 +94,7 @@ def parse_command_line_args() -> tuple[bool, dt.datetime]:
 
     # Test if the string contains the word "run_offline_mode", and sets to True or False accordingly
     # Please note that the online_mode is being deprecated.
-    offline_mode = "run_offline_mode" in calling_script
+    #offline_mode = "run_offline_mode" in calling_script
 
     logger.info("\n\n====================================================\n")
     logger.info(f"forecast_script called from: {calling_script}")
@@ -102,7 +104,6 @@ def parse_command_line_args() -> tuple[bool, dt.datetime]:
     # Always run the script in offline mode.
     # Get today's date and convert it to datetime
     start_date = dt.datetime.strptime(args[0], "%Y-%m-%d")
-    #start_date = dt.datetime.strptime("2024-01-31", "%Y-%m-%d")  # todo temp remove so previous line remains
 
     # Initialize forecast_flags for each forecast horizon.
     forecast_flags = ForecastFlags()
@@ -127,7 +128,7 @@ def parse_command_line_args() -> tuple[bool, dt.datetime]:
         if day in days_decads:
             forecast_flags.decad = True
 
-    return offline_mode, start_date, forecast_flags
+    return start_date, forecast_flags
 
 
 def load_environment():
@@ -144,6 +145,8 @@ def load_environment():
         env_file_path = "apps/config/.env"
     elif os.getenv("SAPPHIRE_TEST_ENV") == "True":
         env_file_path = "backend/tests/test_files/.env_develop_test"
+    elif os.getenv("SAPPHIRE_OPDEV_ENV") == "True":
+        env_file_path = "../config/.env_develop_kghm"
     else:
         env_file_path = "../config/.env_develop"
 

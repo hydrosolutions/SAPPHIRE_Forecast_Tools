@@ -346,11 +346,16 @@ def write_forecast_sheets(settings, start_date, bulletin_date, fc_sites, result2
                 })
 
             # Add current year and current predictor to site_data
+            # Test if site.predictor is nan. If it is, assign ""
+            if pd.isna(site.predictor):
+                temp_predictor = ""
+            else:
+                temp_predictor = format(site.predictor, '.2f').replace('.', ',')
             site_data.append({
                 'river_name': site.river_name + " " + site.punkt_name,
                 'year': str(start_date.year),
                 'qpavg': "",
-                'qpsum': format(site.predictor, '.2f').replace('.', ',')
+                'qpsum': temp_predictor
             })
 
             # Overwrite settings for theh bulletin folder. In this way we can sort the

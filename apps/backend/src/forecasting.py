@@ -19,16 +19,18 @@ def perform_linear_regression(modified_data, forecast_pentad_of_year):
     return result_df
 
 
-def get_predictor(modified_data, offline_mode, start_date, fc_sites, ieh_sdk, predictor_dates):
-    # === Calculate forecast ===
+def get_predictor(modified_data, start_date, fc_sites, ieh_sdk, backend_has_access_to_db, predictor_dates):
+
     logger.info("Getting predictor ...")
     # region Calculate forecast
     # Get the sum of the last 3 days discharge from the database
     # We get the predictor discharge from the DB only if we are not in
     # operational mode or if the date is after 2020-01-01 in offline mode. This
     # saves runtime.
-    if not offline_mode or start_date.date() > dt.datetime.strptime('2020-01-01', '%Y-%m-%d').date():
-        logger.info("Getting predictor discharge from DB ...")
+    if not backend_has_access_to_db:
+        logger.info("No access to DB. Looking for predictor from in df (excel data) ...")
+    if backend_has_access_to_db and start_date.date() > dt.datetime.strptime('2020-01-01', '%Y-%m-%d').date():
+        logger.info("Looking for predictor in iEasyHydro DB ...")
         # For each site in fc_sites, get the predictor discharge from the DB
         for site in fc_sites:
             fl.Site.from_DB_get_predictor(ieh_sdk, site, predictor_dates, lagdays=20)
@@ -39,7 +41,6 @@ def get_predictor(modified_data, offline_mode, start_date, fc_sites, ieh_sdk, pr
         # If it is, then we need to get the predictor from the sum of other sites,
         # namely Naryn - Uch-Terek 16059 and lateral tributaries Chychkan 16096,
         # Uzun-Akmat 16100 and Torkent (no code in DB...)
-        logger.info('       ... from the DB ...')
         if '16936' in [site.code for site in fc_sites]:
             # Test if station 16093 (Torkent) is in the list of stations
             # (This station is under construction at the time of writing this code)
@@ -74,7 +75,7 @@ def get_predictor(modified_data, offline_mode, start_date, fc_sites, ieh_sdk, pr
                 if site.code == '16936':
                     site.predictor = tok_predictor
 
-        logger.info(f'   {len(fc_sites)} Predictor discharge gotten from DB, namely:'
+        logger.info(f'   {len(fc_sites)} predictor discharge gotten from DB, namely:'
                     f'\n{[[site.code, site.predictor] for site in fc_sites]}')
 
     # If we don't find predictors in the database, we can check the data from
@@ -82,7 +83,6 @@ def get_predictor(modified_data, offline_mode, start_date, fc_sites, ieh_sdk, pr
     # Iterate through sites in fc_sites and see if we can find the predictor
     # in result_df.
     # This is mostly relevant for the offline mode.
-    logger.info('       ... from the df ...')
     for site in fc_sites:
         if site.predictor is None or float(site.predictor) < 0.0:
             logger.info(f'    No predictor found in DB for site {site.code}. Getting predictor from df ...')
@@ -91,9 +91,14 @@ def get_predictor(modified_data, offline_mode, start_date, fc_sites, ieh_sdk, pr
             # Here we need to use modified_data as result_df is filtered to the
             # current pentad of the year and does not contain predictor data.
             site_data1 = modified_data[modified_data['Code'] == site.code]
+            #print("DEBUG: forecasting:get_predictor: site_data1: \n",
+            #      site_data1[['Date', 'Code', 'issue_date', 'discharge_sum']].tail(10))
+            #print("DEBUG: forecasting:get_predictor: [start_date]: ", [start_date])
+            #print("DEBUG: forecasting:get_predictor: predictor_dates: ", predictor_dates)
             # Get the predictor from the data for today
             fl.Site.from_df_get_predictor(site, site_data1, [start_date])
             # print(fl.Site.from_df_get_predictor(site, site_data, predictor_dates))
+            #print("DEBUG: forecasting:get_predictor: site.predictor: ", site.predictor)
 
     logger.info(f'   {len(fc_sites)} Predictor discharge gotten from df, namely:\n'
                 f'{[[site.code, site.predictor] for site in fc_sites]}')

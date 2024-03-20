@@ -19,6 +19,9 @@ if os.getenv("IN_DOCKER_CONTAINER") == "True":
 elif os.getenv("SAPPHIRE_TEST_ENV") == "True":
     print(f"Running in test environment. Loading environment variables from .env_test")
     env_file_path = "backend/tests/test_files/.env_develop_test"
+elif os.getenv("SAPPHIRE_OPDEV_ENV") == "True":
+    print(f"Running in opdev environment. Loading environment variables from .env_opdev")
+    env_file_path = "../config/.env_develop_kghm"
 else:
     print(f"Running locally. Loading environment variables from .env_develop")
     env_file_path = "../config/.env_develop"

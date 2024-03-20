@@ -11,6 +11,21 @@ import datetime
 logger = logging.getLogger(__name__)
 
 
+class PredictorDates:
+    """
+    Store lists of predictor dates, depending on the forecast horizons which are
+    active.
+    """
+    def __init__(self, pentad=[], decad=[], month=[], season=[]):
+        self.pentad = pentad
+        self.decad = decad
+        self.month = month
+        self.season = season
+
+    def __repr__(self):
+        return f"PredictorDates(pentad={self.pentad}, decad={self.decad}, month={self.month}, season={self.season})"
+
+
 def check_database_access(ieh_sdk):
     """
     Check if the backend has access to an iEasyHydro database.
@@ -258,15 +273,27 @@ def get_predictor_dates(start_date, forecast_flags):
             horizons serviced on start_date
 
     Return:
+        list: A list of dates for which to aggregate the predictors for the
+            linear regression method.
     """
+    # Initialise the predictor_dates object
+    predictor_dates = PredictorDates()
     # Get the dates to get the predictor from
-    # For pentadal forecasts, the hydromet uses the sum of the last 3 days discharge.
-    predictor_dates = fl.get_predictor_dates(start_date.strftime('%Y-%m-%d'), 3)
-    # if predictor_dates is None, raise an error
-    if predictor_dates is None:
-        raise ValueError("The predictor dates are not valid.")
+    if forecast_flags.pentad:
+        # For pentadal forecasts, the hydromet uses the sum of the last 3 days discharge.
+        predictor_dates.pentad = fl.get_predictor_dates(start_date.strftime('%Y-%m-%d'), 3)
+        # if predictor_dates is None, raise an error
+        if predictor_dates.pentad is None:
+            raise ValueError("The predictor dates are not valid.")
+    if forecast_flags.decad:
+        # For decad forecasts, the hydromet uses the average of the last 10 days discharge.
+        predictor_dates.decad = fl.get_predictor_dates(start_date.strftime('%Y-%m-%d'), 10)
+        # if predictor_dates is None, raise an error
+        if predictor_dates.decad is None:
+            raise ValueError("The predictor dates are not valid.")
 
-    logger.info(f"   Predictor dates: {predictor_dates}")
+    logger.debug(f"   Predictor dates for pentadal forecasts: {predictor_dates.pentad}")
+    logger.debug(f"   Predictor dates for decad forecasts: {predictor_dates.decad}")
 
     logger.info("   ... done")
     return predictor_dates
@@ -276,22 +303,22 @@ def read_discharge_from_excel_sheet(file_path, station, year):
     Read discharge data from a single Excel sheet. The sheet is named after the
     year for which the data is available.
 
-    Parameters:
-    file_path (str): The path to the Excel file.
-    station (str): The station code.
-    year (int): The year for which the data is available.
+    Args:
+        file_path (str): The path to the Excel file.
+        station (str): The station code.
+        year (int): The year for which the data is available.
 
     Returns:
-    data (pd.DataFrame): A DataFrame with the discharge data. With columns
-    'Date', 'Q_m3s', 'Year', and 'Code' of types 'datetime', 'float', 'int',
-    and 'string'.
+        data (pd.DataFrame): A DataFrame with the discharge data. With columns
+            'Date', 'Q_m3s', 'Year', and 'Code' of types 'datetime', 'float', 'int',
+            and 'string'.
 
     Raises:
-    ValueError: If the file_path is not a valid path.
-    ValueError: If the file_path is not a valid Excel file.
-    ValueError: If the file_path does not exist.
-    ValueError: If the dates are not parsed correctly from the sheet.
-    ValueError: If the first date is not January 1 of the year.
+        ValueError: If the file_path is not a valid path.
+        ValueError: If the file_path is not a valid Excel file.
+        ValueError: If the file_path does not exist.
+        ValueError: If the dates are not parsed correctly from the sheet.
+        ValueError: If the first date is not January 1 of the year.
     """
     # Print current working directory
     #print("current working directory: ", os.getcwd())
@@ -340,12 +367,14 @@ def read_discharge_from_excel_sheet(file_path, station, year):
 
     return data
 
-def get_daily_discharge_files(backend_has_access_to_db):
+def get_daily_discharge_files(backend_has_access_to_db, site_list):
     """
-    Get a list of the Excel files containing the daily discharge data.
+    Get a list of the Excel files containing the daily discharge data. We only
+    read in excel data for the sites in the site_list.
 
     Args:
         backend_has_access_to_db (bool): Whether the backend has access to the iEasyHydro database.
+        site_list (list): A list of Site objects for which to produce forecasts.
 
     Returns:
         list: A list of daily discharge files.
@@ -365,16 +394,34 @@ def get_daily_discharge_files(backend_has_access_to_db):
     daily_discharge_files = [file for file in daily_discharge_files if file.startswith('1')]
     logger.info(f"daily_discharge_files: {daily_discharge_files}")
 
-    # Check if there are no files found
+    # Ignore temporary files created by Excel on macOS
+    daily_discharge_files = [file for file in daily_discharge_files if not file.startswith('~')]
+
+    # Filter for site codes in the site_list. We only want to read in excel data
+    # for the sites in the site_list. Test if the site_list is not empty
+    if site_list:
+        # Get a list of all site codes
+        site_codes = [site.code for site in site_list]
+        # Filter the daily_discharge_files list to only include files that start with a site code
+        daily_discharge_files = [file for file in daily_discharge_files if any(file.startswith(code) for code in site_codes)]
+    else:
+        logger.warning(f"No site list found. Therefore all files in {{daily_discharge_path}} will be read.")
+
+    # Test if we have duplicate codes in the daily_discharge_files list. Compare
+    # the first string part (before "_") of each file name and raise an error
+    # if there are duplicates.
+    codes = [file.split("_")[0] for file in daily_discharge_files]
+    if len(codes) != len(set(codes)):
+        logger.error("Duplicate site codes found in the daily discharge files.")
+        raise ValueError("Duplicate site codes found in the daily discharge files.")
+
+    # Print a warning if daily_discharge_files is empty
     if not daily_discharge_files:
-        logger.warning("No files found in the directory data/daily_runoff.")
+        logger.warning("No files found in the directory data/daily_runoff for the site list.")
         if not backend_has_access_to_db:
             logger.error("No files found in the directory data/daily_runoff and no access to the iEasyHydro database.")
             logger.error("Please check the data/daily_runoff directory and/or the access to the iEasyHydro database.")
             raise FileNotFoundError("No files found in the directory and no access to the iEasyHydro database.")
-
-    # Ignore temporary files created by Excel on macOS
-    daily_discharge_files = [file for file in daily_discharge_files if not file.startswith('~')]
 
     return daily_discharge_files
 
@@ -527,24 +574,32 @@ def filter_roughly_for_outliers(combined_data, window_size=15):
     combined_data.loc[combined_data['Q_m3s'] < lower_bound, 'Q_m3s'] = np.nan
     return combined_data
 
-def get_station_data(ieh_sdk, backend_has_access_to_db, start_date):
+def get_station_data(ieh_sdk, backend_has_access_to_db, start_date, site_list):
     # === Read station data ===
     # region Read station data
     """
-    # For now we read older station data from Excel sheets and newer station
-    # data from the DB.
-    # Once the upload for daily station data is implemented, we can read the
-    # daily data for forecasting from the DB.
+    We read older station data from Excel sheets and newer station
+    data from the DB.
 
-    # We will want to save the station data in objects that can later be used
-    # for bulletin writing.
+    Args:
+        ieh_sdk: The iEasyHydro SDK.
+        backend_has_access_to_db: Whether the backend has access to the iEasyHydro database.
+        start_date: The start date for the forecast.
+        site_list: A list of Site objects.
+
+    Returns:
+        DataFrame: A DataFrame containing the combined data from all stations.
+
+    Raises:
+        FileNotFoundError: If no files are found in the directory.
+
     """
     # Read station data from Excel sheets
     logger.info("Reading daily discharge data ...")
     logger.info("-Reading discharge data from Excel sheets ...")
 
-    # Get a list of the Excel files
-    daily_discharge_files = get_daily_discharge_files(backend_has_access_to_db)
+    # Get a list of the Excel files to read data from
+    daily_discharge_files = get_daily_discharge_files(backend_has_access_to_db, site_list)
 
     # Create a dataframe with the station IDs and the file names. The station
     # IDs are in the first part of the file names, before the first underscore.

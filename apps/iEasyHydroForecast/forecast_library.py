@@ -612,14 +612,14 @@ class Site:
             qnorm (float): The norm discharge for the site.
             qdanger (str): The threshold discharge for a dangerous flood.
         """
-        self.code = code
-        self.name = name
-        self.river_name = river_name
-        self.punkt_name = punkt_name
-        self.lat = lat
-        self.lon = lon
-        self.region = region
-        self.basin = basin
+        self.code = str(code)
+        self.name = str(name)
+        self.river_name = str(river_name)
+        self.punkt_name = str(punkt_name)
+        self.lat = float(lat)
+        self.lon = float(lon)
+        self.region = str(region)
+        self.basin = str(basin)
         self.predictor = predictor
         self.fc_qmin = fc_qmin
         self.fc_qmax = fc_qmax
