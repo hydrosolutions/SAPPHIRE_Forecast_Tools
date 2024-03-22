@@ -98,6 +98,36 @@ def get_predictor_dates(input_date: str, n: int):
         print(f'Error in get_predictor_dates: {e}')
         return None
 
+def round_discharge_trad_bulletin(value: float) -> str:
+    '''
+    Round discharge to 4 decimals for values.
+
+    Args:
+        value (str): The discharge value to round.
+
+    Returns:
+        str: The rounded discharge value. An empty string is returned in case of
+            a negative input value.
+    '''
+    try:
+        if not isinstance(value, float):
+            raise TypeError('Input value must be a float')
+        if isinstance(value, str):
+            raise TypeError('Input value must be a float, not a string')
+        # Return an empty string if the input value is negative
+        if value < 0.0:
+            return " "
+        # Test if the input value is close to zero
+        elif math.isclose(value, 0.0):
+            return "0"
+        else:
+            return "{:.4f}".format(round(value, 4))
+    except TypeError as e:
+        print(f'Error in round_discharge: {e}')
+        return None
+    except Exception as e:
+        print(f'Error in round_discharge: {e}')
+        return None
 
 def round_discharge(value: float) -> str:
     '''
