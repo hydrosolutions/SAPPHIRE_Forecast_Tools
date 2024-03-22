@@ -48,23 +48,36 @@ logger.addHandler(console_handler)
 
 def main():
     # configuration
-    offline_mode, start_date = config.parse_command_line_args()
+    start_date, forecast_flags = config.parse_command_line_args()
     env_file_path = config.load_environment()
-    bulletin_date = config.get_bulletin_date(start_date)
+    bulletin_date = config.get_bulletin_date(start_date) # First day for which the forecast is valid.
 
     # data processing
+    # - set up
     ieh_sdk = IEasyHydroSDK()  # ieasyhydro
     backend_has_access_to_db = data_processing.check_database_access(ieh_sdk)
+    # - identify sites for which to produce forecasts
+    #   reading sites from DB and config files
     db_sites = data_processing.get_db_sites(ieh_sdk, backend_has_access_to_db)
+    #   writing sites information to as list of Site objects
     fc_sites = data_processing.get_fc_sites(ieh_sdk, backend_has_access_to_db, db_sites)
-    predictor_dates = data_processing.get_predictor_dates(start_date)
-    modified_data = data_processing.get_station_data(ieh_sdk, backend_has_access_to_db, start_date)
+    # - identify dates for which to aggregate predictor data
+    predictor_dates = data_processing.get_predictor_dates(start_date, forecast_flags)
+    # Read discharge data from excel and iEasyHydro database
+    modified_data = data_processing.get_station_data(ieh_sdk, backend_has_access_to_db, start_date, fc_sites)
+
     forecast_pentad_of_year = data_processing.get_forecast_pentad_of_year(bulletin_date)
     data_processing.save_discharge_avg(modified_data, fc_sites, forecast_pentad_of_year)
 
-    # forecasting
+    # modelling
+    # The linear regression is performed on past data. Here, the slope and
+    # intercept of the linear regression model are calculated for each site for
+    # the current forecast.
     result_df = forecasting.perform_linear_regression(modified_data, forecast_pentad_of_year)
-    forecasting.get_predictor(result_df, offline_mode, start_date, fc_sites, ieh_sdk, predictor_dates)
+
+    # forecasting
+    # - get predictor from the complete data and write it to site.predictor
+    forecasting.get_predictor(modified_data, start_date, fc_sites, ieh_sdk, backend_has_access_to_db, predictor_dates.pentad)
     forecasting.perform_forecast(fc_sites, forecast_pentad_of_year, result_df)
     result2_df = forecasting.calculate_forecast_boundaries(result_df, fc_sites, forecast_pentad_of_year)
 

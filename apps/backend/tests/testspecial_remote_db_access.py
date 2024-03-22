@@ -28,9 +28,18 @@ print("DEBUG: IEASYHYDRO_HOST: ", os.getenv("IEASYHYDRO_HOST"))
 
 # Load sdk configuration from .env
 ieh_sdk = IEasyHydroSDK()
+
+# Define date filter
+filters = BasicDataValueFilters(
+    local_date_time__gt=dt.datetime(2020, 4, 10),
+    local_date_time__lt=dt.datetime(2020, 4, 30)
+)
+
+# Get data
 qdata = ieh_sdk.get_data_values_for_site(
     '15194',
-    'discharge_daily_average'
+    'discharge_daily_average',
+    filters=filters
 )
 qdata = pd.DataFrame(qdata['data_values'])
 print("get_data_values_for_site:\n", qdata)

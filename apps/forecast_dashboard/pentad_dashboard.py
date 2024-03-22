@@ -55,10 +55,10 @@ if in_docker_flag == "True":
     if not os.path.isfile(path_to_env_file):
         raise Exception("File not found: " + path_to_env_file)
     print("Running in Docker container")
-    res = load_dotenv(path_to_env_file)
-    # Test if res read
-    if res is None:
-        raise Exception("Could not read .env file")
+elif os.getenv("SAPPHIRE_TEST_ENV") == "True":
+    path_to_env_file = "backend/tests/test_files/.env_develop_test"
+elif os.getenv("SAPPHIRE_OPDEV_ENV") == "True":
+    path_to_env_file = "../config/.env_develop_kghm"
 else:
     # Test if the .env file exists
     path_to_env_file = "../config/.env_develop"
@@ -67,12 +67,12 @@ else:
     print("Running locally")
     # The override flag in read_dotenv is set to allow switching between .env
     # files. Useful when testing different configurations.
-    res = load_dotenv(path_to_env_file, override=True)
-    if res is None:
-        raise Exception("Could not read .env_develop file")
+res = load_dotenv(path_to_env_file, override=True)
+if res is None:
+    raise Exception("Could not read .env file: ", path_to_env_file)
     # Print ieasyreports_templates_directory_path from the environment
     # variables
-    print("Configuration read from : ", os.getenv("ieasyforecast_configuration_path"))
+print("Configuration read from : ", os.getenv("ieasyforecast_configuration_path"))
 
 # Test if the environment was loaded successfully
 if os.getenv("ieasyforecast_hydrograph_day_file") is None:
