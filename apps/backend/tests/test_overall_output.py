@@ -255,7 +255,7 @@ def test_overall_output():
     temp2 = temp2.dropna(how='all')
     print(temp)
     print(temp2)
-    #assert expected_hydrograph_df.equals(hydrograph_df), "The hydrograph file is not as expected"
+    assert expected_hydrograph_df.equals(hydrograph_df), "The hydrograph file is not as expected"
 
     # And the same for the hydrograph_day.csv file
     # Test that we now have a file hydrograph_day.csv in internal data
@@ -277,7 +277,7 @@ def test_overall_output():
     temp2 = temp2.dropna(how='all')
     print(temp)
     print(temp2)
-    #assert expected_hydrograph_day_df.equals(hydrograph_day_df), "The hydrograph_day file is not as expected"
+    assert expected_hydrograph_day_df.equals(hydrograph_day_df), "The hydrograph_day file is not as expected"
 
     # Test if a bulletin file is generated
     bulletin_file = os.path.join(
