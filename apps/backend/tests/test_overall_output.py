@@ -247,6 +247,11 @@ def test_overall_output():
     # Read the forecast file
     hydrograph_df = pd.read_csv(hydrograph_file)
     # Compare the two files
+    # Print the differences between the two files. Drop rows where both files
+    # are equal.
+    temp = (expected_hydrograph_df[expected_hydrograph_df != hydrograph_df])
+    temp = temp.dropna(how='all')
+    print(temp)
     assert expected_hydrograph_df.equals(hydrograph_df), "The hydrograph file is not as expected"
 
     # And the same for the hydrograph_day.csv file
