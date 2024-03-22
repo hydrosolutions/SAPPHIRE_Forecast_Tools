@@ -72,7 +72,7 @@ jobs:
         #if [ -f pyton_requirements.txt ]; then pip install -r pyton_requirements.txt; fi
         python -m pip install -r ./apps/backend/requirements.txt
         pip install git+https://github.com/hydrosolutions/ieasyhydro-python-sdk
-        pip install git+https://github.com/hydrosolutions/ieasyhydro-python-sdk
+        pip install git+https://github.com/hydrosolutions/ieasyreports.git@main
         pip install -e ./apps/iEasyHydroForecast
     - name: Lint with flake8
       run: |
