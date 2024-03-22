@@ -83,7 +83,7 @@ jobs:
     - name: Test with pytest
       working-directory: ./apps
       run: |
-        SAPPHIRE_TEST_ENV=True python -m pytest
+        SAPPHIRE_TEST_ENV=True python -m pytest -s backend/tests
 
   push_to_Dckerhub:
     needs: [lint_and_test_ieasyhydroforecast, lint_and_test_backend]
