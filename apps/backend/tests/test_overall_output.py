@@ -286,6 +286,8 @@ def test_overall_output():
     )
     assert os.path.exists(bulletin_file), "The bulletin file was not created"
 
+    # Print the current working directory
+    print(os.getcwd())
     # Test if the file is the same as the expected file
     expected_bulletin_file = "backend/tests/test_files/test_one_step_2022_05_Май_2_pentadal_forecast_bulletin.xlsx"
     assert os.path.exists(expected_bulletin_file), "The expected bulletin file does not exist"
