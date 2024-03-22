@@ -70,7 +70,9 @@ def main():
     data_processing.save_discharge_avg(modified_data, fc_sites, forecast_pentad_of_year)
 
     # modelling
-    # The linear regression is performed on past data.
+    # The linear regression is performed on past data. Here, the slope and
+    # intercept of the linear regression model are calculated for each site for
+    # the current forecast.
     result_df = forecasting.perform_linear_regression(modified_data, forecast_pentad_of_year)
 
     # forecasting

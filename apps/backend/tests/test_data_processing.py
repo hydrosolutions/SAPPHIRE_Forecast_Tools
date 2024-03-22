@@ -234,8 +234,8 @@ def test_get_time_series_from_excel_with_public_repo_data():
                   os.path.join(os.getenv("ieasyforecast_daily_discharge_path"),
                                "12256_Rosegbach_example_river_runoff.xlsx")]})
     result = data_processing.get_time_series_from_excel(daily_discharge_files)
-    print("DEBUG: test_read_data_from_public_repo_data: result: \n", result.head())
-    print(result.tail())
+    #print("DEBUG: test_read_data_from_public_repo_data: result: \n", result.head())
+    #print(result.tail())
 
 
     # Check that the result is a DataFrame with the expected columns

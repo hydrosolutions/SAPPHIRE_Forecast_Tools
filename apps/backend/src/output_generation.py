@@ -341,8 +341,8 @@ def write_forecast_sheets(settings, start_date, bulletin_date, fc_sites, result2
                 site_data.append({
                     'river_name': site.river_name + " " + site.punkt_name,
                     'year': str(year),
-                    'qpavg': fl.round_discharge(df_year['discharge_avg'].mean()).replace('.', ','),
-                    'qpsum': fl.round_discharge(df_year['discharge_sum'].mean()).replace('.', ',')
+                    'qpavg': fl.round_discharge_trad_bulletin(df_year['discharge_avg'].mean()).replace('.', ','),
+                    'qpsum': fl.round_discharge_trad_bulletin(df_year['discharge_sum'].mean()).replace('.', ',')
                 })
 
             # Add current year and current predictor to site_data
@@ -350,7 +350,7 @@ def write_forecast_sheets(settings, start_date, bulletin_date, fc_sites, result2
             if pd.isna(site.predictor):
                 temp_predictor = ""
             else:
-                temp_predictor = format(site.predictor, '.2f').replace('.', ',')
+                temp_predictor = format(site.predictor, '.3f').replace('.', ',')
             site_data.append({
                 'river_name': site.river_name + " " + site.punkt_name,
                 'year': str(start_date.year),

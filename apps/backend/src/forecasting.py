@@ -84,7 +84,7 @@ def get_predictor(modified_data, start_date, fc_sites, ieh_sdk, backend_has_acce
     # in result_df.
     # This is mostly relevant for the offline mode.
     for site in fc_sites:
-        if site.predictor is None or float(site.predictor) < 0.0:
+        if site.predictor is None or float(site.predictor) < 0.0 or start_date.date() < dt.datetime.strptime('2023-01-01', '%Y-%m-%d').date():
             logger.info(f'    No predictor found in DB for site {site.code}. Getting predictor from df ...')
             # print(site.code)
             # Get the data for the site

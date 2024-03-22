@@ -1,8 +1,10 @@
 import os
 import pandas as pd
+import numpy as np
 import shutil
 import datetime as dt
 import subprocess
+from openpyxl import load_workbook
 import time
 from backend.src import config, data_processing, forecasting
 from ieasyhydro_sdk.sdk import IEasyHydroSDK
@@ -312,6 +314,100 @@ def test_overall_output():
     bulletin_df_1 = pd.read_excel(bulletin_file_1)
     # Compare the two files
     assert expected_bulletin_df_1.equals(bulletin_df_1), "The bulletin file is not as expected"
+
+    # Now test if the content of the files is consistent.
+    # The average pentadal discharge in hydrograph_pentad.csv (read to
+    # hydrograph_df) should be consistent with the data in the traditional excel
+    # sheets (read to bulletin_df_0 and bulletin_df_1).
+
+    # Replace all "," with "."
+    hydrograph_df = hydrograph_df.replace(",", ".", regex=True)
+    # Convert all remaining columns to floats
+    hydrograph_df = hydrograph_df.astype(float)
+    # Convert the columns 'Code' and 'pentad' to integer
+    hydrograph_df['Code'] = hydrograph_df['Code'].astype(int)
+    hydrograph_df['pentad'] = hydrograph_df['pentad'].astype(int)
+    # Derive month and pentad of month from the pentad of the year.
+    hydrograph_df['month'] = hydrograph_df['pentad'].apply(lambda x: (x - 1) // 6 + 1).astype(int)
+    hydrograph_df['pentad_of_month'] = hydrograph_df['pentad'].apply(lambda x: (x - 1) % 6 + 1).astype(int)
+
+    # from bulletin_df_0 get rows 2 to 6 and columns 0 to 2 into a new data
+    # frame. The names of the columns are 'year', 'av', 'predictor'
+    bulletin_df_0 = bulletin_df_0.iloc[2:7, 0:3]
+    bulletin_df_0.columns = ['year', 'av', 'predictor']
+    # Replace all "," with "." in the columns 'av' and 'predictor'
+    bulletin_df_0['av'] = bulletin_df_0['av'].replace(",", ".", regex=True)
+    bulletin_df_0['predictor'] = bulletin_df_0['predictor'].replace(",", ".", regex=True)
+    # Convert column 'year' to integer and columns 'av' and 'predictor' to float
+    bulletin_df_0['year'] = bulletin_df_0['year'].astype(int)
+    bulletin_df_0['av'] = bulletin_df_0['av'].astype(float)
+    bulletin_df_0['predictor'] = bulletin_df_0['predictor'].astype(float)
+    # Add columns 'month' and 'pentad_of_month' to bulletin_df_0
+    bulletin_df_0['Code'] = 12176
+    bulletin_df_0['month'] = 5
+    bulletin_df_0['pentad_of_month'] = 2
+
+    # Do the same for bulletin_df_1
+    bulletin_df_1 = bulletin_df_1.iloc[2:7, 0:3]
+    bulletin_df_1.columns = ['year', 'av', 'predictor']
+    bulletin_df_1['av'] = bulletin_df_1['av'].replace(",", ".", regex=True)
+    bulletin_df_1['predictor'] = bulletin_df_1['predictor'].replace(",", ".", regex=True)
+    bulletin_df_1['year'] = bulletin_df_1['year'].astype(int)
+    bulletin_df_1['av'] = bulletin_df_1['av'].astype(float)
+    bulletin_df_1['predictor'] = bulletin_df_1['predictor'].astype(float)
+    bulletin_df_1['Code'] = 12256
+    bulletin_df_1['month'] = 5
+    bulletin_df_1['pentad_of_month'] = 2
+
+    # Concatenate bulletin_df_0 and bulletin_df_1
+    bulletin_df = pd.concat([bulletin_df_0, bulletin_df_1])
+    # Reformat hydrograph_df, columns 2000 to 2022, into long format
+    hydrograph_df = hydrograph_df.melt(id_vars=['Code', 'pentad', 'month', 'pentad_of_month'], var_name='year', value_name='av_hydrograph')
+    # Convert the column 'year' to integer
+    hydrograph_df['year'] = hydrograph_df['year'].astype(int)
+
+    # Merge hydrograph_df and bulletin_df
+    comparison = hydrograph_df.merge(bulletin_df, on=['Code', 'year', 'month', 'pentad_of_month'])
+
+    print_comparison = comparison[['Code', 'year', 'month', 'pentad_of_month', 'av_hydrograph', 'av']]
+    # Round the columns 'av_hydrograph' and 'av' to 2 decimal places
+    print_comparison.loc[:, 'av_hydrograph'] = round(print_comparison.loc[:, 'av_hydrograph'], 2)
+    print_comparison.loc[:, 'av'] = round(print_comparison.loc[:, 'av'], 2)
+
+    # Test if av_hydrograph, rounded to 2 decimal places, is equal to av,
+    # rounded to 2 decimal places
+    assert (print_comparison['av_hydrograph'].dropna() == print_comparison['av'].dropna()).all(), "The hydrograph data is not consistent with the traditional bulletins"
+    # Test if NaNs are at the same location in both columns
+    assert print_comparison['av_hydrograph'].isna().equals(print_comparison['av'].isna()), "The hydrograph data is not consistent with the traditional bulletins"
+
+    # We also want to test if the predictors in the traditional bulletins are
+    # consistent with the predictors in the forecast file (expected_df) file.
+
+    # Get the columns date, code, and predictor from the expected_df
+    expected_df = expected_df[['date', 'code', 'predictor']]
+    # Get the rows for year == 2022, month == 5 and pentad_of_month == 2 from
+    # comparison and get the columns 'year', 'month', 'pentad_of_month', 'Code',
+    # 'predictor' into a new data frame.
+    comparison_predictor = comparison[(comparison['year'] == 2022) & (comparison['month'] == 5) & (comparison['pentad_of_month'] == 2)]
+    comparison_predictor = comparison_predictor[['year', 'month', 'pentad_of_month', 'Code', 'predictor']]
+
+    # Assert that for each code, the predictor value is the same in both data frames.
+    # For station 12176, the predictor should be NaN and for station 12256, the
+    # predictor should be a float.
+    print(forecast_df)
+    assert (np.isnan(comparison_predictor['predictor'].iloc[0]) == np.isnan(forecast_df.loc[forecast_df['code'] == 12176]['predictor'].iloc[0])), "The predictor for code 12176 is not as expected"
+    assert (comparison_predictor['predictor'].iloc[1] == forecast_df.loc[forecast_df['code'] == 12256]['predictor'].iloc[0]), "The predictor for code 12256 is not as expected"
+
+    # Let's now read in the 4th sheet from each of the traditional bulletins and
+    # compare slope, intercept and forecasted value with forecast_df
+    # This can not be implemented as apparently excel documents which are written
+    # by openpyxl do not actually execute the formulas in the cells unless the excel
+    # document is opened and saved in Excel. This is a known issue with openpyxl.
+    # We will therefore skip this test.
+
+    # Manual comparison shows that the values in the traditional bulletins are
+    # not consistent with the values in the forecast files.
+
 
     # Delete tmpdir
     shutil.rmtree(tmpdir)
