@@ -251,7 +251,10 @@ def test_overall_output():
     # are equal.
     temp = (expected_hydrograph_df[expected_hydrograph_df != hydrograph_df])
     temp = temp.dropna(how='all')
+    temp2 = (hydrograph_df[hydrograph_df != expected_hydrograph_df])
+    temp2 = temp2.dropna(how='all')
     print(temp)
+    print(temp2)
     assert expected_hydrograph_df.equals(hydrograph_df), "The hydrograph file is not as expected"
 
     # And the same for the hydrograph_day.csv file
