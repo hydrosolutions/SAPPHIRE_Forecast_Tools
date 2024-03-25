@@ -348,6 +348,8 @@ def test_overall_output():
     hydrograph_df['month'] = hydrograph_df['pentad'].apply(lambda x: (x - 1) // 6 + 1).astype(int)
     hydrograph_df['pentad_of_month'] = hydrograph_df['pentad'].apply(lambda x: (x - 1) % 6 + 1).astype(int)
 
+
+    print("===============\n\n\nDEBUG: Comparing EXCEL files\n\n")
     # from bulletin_df_0 get rows 2 to 6 and columns 0 to 2 into a new data
     # frame. The names of the columns are 'year', 'av', 'predictor'
     bulletin_df_0 = bulletin_df_0.iloc[2:7, 0:3]
@@ -421,10 +423,6 @@ def test_overall_output():
     # by openpyxl do not actually execute the formulas in the cells unless the excel
     # document is opened and saved in Excel. This is a known issue with openpyxl.
     # We will therefore skip this test.
-
-    # Manual comparison shows that the values in the traditional bulletins are
-    # not consistent with the values in the forecast files.
-
 
     # Delete tmpdir
     shutil.rmtree(tmpdir)
