@@ -143,7 +143,7 @@ def save_hydrograph_data_to_csv(hydrograph_pentad, hydrograph_day):
         os.getenv("ieasyforecast_intermediate_data_path"),
         os.getenv("ieasyforecast_hydrograph_day_file"))
 
-    # Write the hydrograph_day to csv
+    # Write the hydrograph_day to csv. Do not print the index.
     ret = hydrograph_day.to_csv(hydrograph_day_file_csv)
     if ret is None:
         logger.info("Hydrograph day data saved to csv file")

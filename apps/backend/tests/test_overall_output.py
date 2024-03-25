@@ -268,9 +268,9 @@ def test_overall_output():
         'expected_2001': expected_hydrograph_df['2001'].values,
         'actual_2001': hydrograph_df['2001'].values,
         'diff_2001': expected_hydrograph_df['2001'] - hydrograph_df['2001'],
-        'expected_2002': expected_hydrograph_df['2022'].values,
-        'actual_2002': hydrograph_df['2022'].values,
-        'diff_2002': expected_hydrograph_df['2022'] - hydrograph_df['2022'],
+        'expected_2002': expected_hydrograph_df['2002'].values,
+        'actual_2002': hydrograph_df['2002'].values,
+        'diff_2002': expected_hydrograph_df['2022'] - hydrograph_df['2002'],
         'expected_2003': expected_hydrograph_df['2003'].values,
         'actual_2003': hydrograph_df['2003'].values,
         'diff_2003': expected_hydrograph_df['2003'] - hydrograph_df['2003'],
@@ -287,6 +287,15 @@ def test_overall_output():
     print("DEBUG: pentad\n", temp[temp['diff_2002'].ne(0.0)].filter(regex='(ed_code|ed_pentad|2002)$'))
     # Print columns that end in '2003' where diff_2003 is not 0
     print("DEBUG: pentad\n", temp[temp['diff_2003'].ne(0.0)].filter(regex='(ed_code|ed_pentad|2003)$'))
+
+    # Test that the code and pentad columns are the same
+    assert temp['diff_code'].abs().max() < 0.01, "The hydrograph data is not as expected"
+    assert temp['diff_pentad'].abs().max() < 0.01, "The hydrograph data is not as expected"
+    # Test if all diff_2000, diff_2001, diff_2002, and diff_2003 are smaller than 0.01
+    assert temp['diff_2000'].abs().max() < 0.01, "The hydrograph data is not as expected"
+    assert temp['diff_2001'].abs().max() < 0.01, "The hydrograph data is not as expected"
+    assert temp['diff_2002'].abs().max() < 0.01, "The hydrograph data is not as expected"
+    assert temp['diff_2003'].abs().max() < 0.01, "The hydrograph data is not as expected"
 
     assert expected_hydrograph_df.equals(hydrograph_df), "The hydrograph file is not as expected"
 
