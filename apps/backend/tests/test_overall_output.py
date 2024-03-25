@@ -195,6 +195,11 @@ def test_overall_output_step_by_step():
 
 
 def test_overall_output():
+    """
+    This test does not complete successfully as GitHub Actions. It is not clear
+    why this is the case and further investigation is needed.
+    """
+
     # Set up the test environment
     # Temporary directory to store output
     tmpdir = "backend/tests/test_files/temp"
