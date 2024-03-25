@@ -6,7 +6,7 @@ import datetime as dt
 import subprocess
 from openpyxl import load_workbook
 import time
-from backend.src import config, data_processing, forecasting
+from backend.src import config, data_processing, forecasting, output_generation
 from ieasyhydro_sdk.sdk import IEasyHydroSDK
 
 # Tests if the backend produces the expected output
@@ -94,6 +94,12 @@ def test_overall_output_step_by_step():
 
     forecast_pentad_of_year = data_processing.get_forecast_pentad_of_year(bulletin_date)
     data_processing.save_discharge_avg(modified_data, fc_sites, forecast_pentad_of_year)
+
+    # Write hydrograph data
+    output_generation.write_hydrograph_data(modified_data)
+
+    # TODO: READ IN DATA AND COMARE TO EXPECTED DATA
+
 
     # Get the predictor into the site object
     forecasting.get_predictor(modified_data, start_date, fc_sites, ieh_sdk, backend_has_access_to_db, predictor_dates.pentad)
