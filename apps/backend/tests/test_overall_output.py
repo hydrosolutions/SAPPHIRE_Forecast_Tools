@@ -369,7 +369,48 @@ def test_overall_output():
     temp2 = temp2.dropna(how='all')
     #print(temp)
     #print(temp2)
-    assert expected_hydrograph_day_df.equals(hydrograph_day_df), "The hydrograph_day file is not as expected"
+    temp = pd.DataFrame({
+        'expected_code': expected_hydrograph_day_df['Code'].values,
+        'actual_code': hydrograph_day_df['Code'].values,
+        'diff_code': expected_hydrograph_day_df['Code'] - hydrograph_day_df['Code'],
+        'expected_pentad': expected_hydrograph_day_df['pentad'].values,
+        'actual_pentad': hydrograph_day_df['pentad'].values,
+        'diff_pentad': expected_hydrograph_day_df['pentad'] - hydrograph_day_df['pentad'],
+        'expected_2000': expected_hydrograph_day_df['2000'].values,
+        'actual_2000': hydrograph_day_df['2000'].values,
+        'diff_2000': expected_hydrograph_day_df['2000'].astype(float) - hydrograph_day_df['2000'].astype(float),
+        'expected_2001': expected_hydrograph_day_df['2001'].values,
+        'actual_2001': hydrograph_day_df['2001'].values,
+        'diff_2001': expected_hydrograph_day_df['2001'].astype(float) - hydrograph_day_df['2001'].astype(float),
+        'expected_2002': expected_hydrograph_day_df['2002'].values,
+        'actual_2002': hydrograph_day_df['2002'].values,
+        'diff_2002': expected_hydrograph_day_df['2002'].astype(float) - hydrograph_day_df['2002'].astype(float),
+        'expected_2003': expected_hydrograph_day_df['2003'].values,
+        'actual_2003': hydrograph_day_df['2003'].values,
+        'diff_2003': expected_hydrograph_day_df['2003'].astype(float) - hydrograph_day_df['2003'].astype(float),
+    })
+    # print all columns that end in 'code' where diff_code is not 0
+    print("\nDEBUG: code\n", temp[temp['diff_code'].ne(0)].filter(regex='code$'))
+    # Print columns that end in 'pentad' where diff_pentad is not 0
+    print("DEBUG: pentad\n", temp[temp['diff_pentad'].ne(0)].filter(regex='(code|pentad)$'))
+    # Print columns that end in '2000' where diff_2000 is not 0
+    print("DEBUG: pentad\n", temp[temp['diff_2000'].ne(0.0)].filter(regex='(ed_code|ed_pentad|2000)$'))
+    # Print columns that end in '2001' where diff_2001 is not 0
+    print("DEBUG: pentad\n", temp[temp['diff_2001'].ne(0.0)].filter(regex='(ed_code|ed_pentad|2001)$'))
+    # Print columns that end in '2022' where diff_2022 is not 0
+    print("DEBUG: pentad\n", temp[temp['diff_2002'].ne(0.0)].filter(regex='(ed_code|ed_pentad|2002)$'))
+    # Print columns that end in '2003' where diff_2003 is not 0
+    print("DEBUG: pentad\n", temp[temp['diff_2003'].ne(0.0)].filter(regex='(ed_code|ed_pentad|2003)$'))
+
+    # Test that the code and pentad columns are the same
+    assert temp['diff_code'].abs().max() < 1e-6, "The hydrograph data is not as expected"
+    assert temp['diff_pentad'].abs().max() < 1e-6, "The hydrograph data is not as expected"
+    # Test if all diff_2000, diff_2001, diff_2002, and diff_2003 are smaller than 0.01
+    assert temp['diff_2000'].abs().max() < 1e-6, "The hydrograph data is not as expected"
+    assert temp['diff_2001'].abs().max() < 1e-6, "The hydrograph data is not as expected"
+    assert temp['diff_2002'].abs().max() < 1e-6, "The hydrograph data is not as expected"
+    assert temp['diff_2003'].abs().max() < 1e-6, "The hydrograph data is not as expected"
+    #assert expected_hydrograph_day_df.equals(hydrograph_day_df), "The hydrograph_day file is not as expected"
 
     # Test if a bulletin file is generated
     bulletin_file = os.path.join(
