@@ -253,8 +253,8 @@ def test_overall_output():
     temp = temp.dropna(how='all')
     temp2 = (hydrograph_df[hydrograph_df != expected_hydrograph_df])
     temp2 = temp2.dropna(how='all')
-    print(temp)
-    print(temp2)
+    #print(temp)
+    #print(temp2)
     assert expected_hydrograph_df.equals(hydrograph_df), "The hydrograph file is not as expected"
 
     # And the same for the hydrograph_day.csv file
@@ -275,8 +275,8 @@ def test_overall_output():
     temp = temp.dropna(how='all')
     temp2 = (hydrograph_day_df[hydrograph_day_df != expected_hydrograph_day_df])
     temp2 = temp2.dropna(how='all')
-    print(temp)
-    print(temp2)
+    #print(temp)
+    #print(temp2)
     assert expected_hydrograph_day_df.equals(hydrograph_day_df), "The hydrograph_day file is not as expected"
 
     # Test if a bulletin file is generated
@@ -297,6 +297,7 @@ def test_overall_output():
     bulletin_df = pd.read_excel(bulletin_file)
     # Compare the two files
     assert expected_bulletin_df.equals(bulletin_df), "The bulletin file is not as expected"
+
 
     # Same for the two traditional bulletins
     # Test if a bulletin file is generated

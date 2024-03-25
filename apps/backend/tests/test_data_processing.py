@@ -1,5 +1,6 @@
 import os
 import pandas as pd
+import numpy as np
 import pytest
 from unittest.mock import patch, MagicMock
 from backend.src import data_processing
@@ -371,3 +372,181 @@ def test_get_station_data_from_another_excel_with_valid_file():
     # Clean up the environment variable
     os.environ.pop("ieasyforecast_daily_discharge_path")
 
+
+def test_add_pentad_issue_date():
+    # Test with valid data
+    data = {
+        'Date': pd.date_range(start='1/1/2022', end='1/31/2022')
+    }
+    df = pd.DataFrame(data)
+    result = data_processing.add_pentad_issue_date(df, datetime_col='Date')
+    assert 'issue_date' in result.columns
+    assert result['issue_date'].dtype == bool
+
+    # Test if the issue_date column is True for days 5, 10, 15, 20, 25, and for
+    # the last day of each month and False for all other days
+    assert result['issue_date'].iloc[4] == True  # 5th day
+    assert result['issue_date'].iloc[9] == True  # 10th day
+    assert result['issue_date'].iloc[14] == True
+    assert result['issue_date'].iloc[19] == True
+    assert result['issue_date'].iloc[24] == True
+    assert result['issue_date'].iloc[30] == True
+    assert result['issue_date'].iloc[0] == False
+    assert result['issue_date'].iloc[1] == False
+    assert result['issue_date'].iloc[2] == False
+    assert result['issue_date'].iloc[3] == False
+    assert result['issue_date'].iloc[5] == False
+    assert result['issue_date'].iloc[6] == False
+    assert result['issue_date'].iloc[7] == False
+    assert result['issue_date'].iloc[8] == False
+    assert result['issue_date'].iloc[10] == False
+    assert result['issue_date'].iloc[11] == False
+    assert result['issue_date'].iloc[12] == False
+    assert result['issue_date'].iloc[13] == False
+    assert result['issue_date'].iloc[15] == False
+    assert result['issue_date'].iloc[16] == False
+
+    assert result['issue_date'].iloc[-3] == False
+    assert result['issue_date'].iloc[-2] == False
+    # The last value should be True
+    assert result['issue_date'].iloc[-1] == True
+
+
+    # Test with non-datetime datetime_col
+    df['datetime_col'] = range(1, 32)
+    with pytest.raises(TypeError):
+        data_processing.add_pentad_issue_date(df, 'datetime_col')
+
+    # Test with missing datetime_col
+    with pytest.raises(KeyError):
+        data_processing.add_pentad_issue_date(df, 'nonexistent_col')
+
+    data = {
+        'Date': pd.date_range(start='1/1/2022', end='1/31/2022')
+    }
+    df = pd.DataFrame(data)
+    # Switch the locations of the first few dates
+    df.loc[0, 'Date'] = pd.Timestamp('2022-01-05')
+    df.loc[4, 'Date'] = pd.Timestamp('2022-01-01')
+    result = data_processing.add_pentad_issue_date(df, datetime_col='Date')
+    # The dates in the resulting data frame should be sorted
+    assert result['issue_date'].iloc[0] == False
+    assert result['issue_date'].iloc[1] == False
+    assert result['issue_date'].iloc[2] == False
+    assert result['issue_date'].iloc[3] == False
+    assert result['issue_date'].iloc[4] == True  # 5th day
+    assert result['issue_date'].iloc[5] == False
+
+
+def test_calculate_3daydischargesum():
+    # Test with valid data
+    data = {
+        'datetime_col': pd.date_range(start='1/1/2022', end='1/31/2022'),
+        'discharge_col': np.random.rand(31),
+        'issue_date': [True if i % 5 == 0 else False for i in range(31)]
+    }
+    df = pd.DataFrame(data)
+    result = data_processing.calculate_3daydischargesum(df, 'datetime_col', 'discharge_col')
+    assert 'discharge_sum' in result.columns
+    assert result['discharge_sum'].dtype == float
+
+    # Test with non-datetime datetime_col
+    df2 = df.copy(deep=True)
+    df2['datetime_col'] = range(1, 32)
+    with pytest.raises(TypeError):
+        data_processing.calculate_3daydischargesum(df2, 'datetime_col', 'discharge_col')
+
+    # Test with missing datetime_col
+    with pytest.raises(KeyError):
+        data_processing.calculate_3daydischargesum(df, 'nonexistent_col', 'discharge_col')
+
+    # Test with missing discharge_col
+    with pytest.raises(KeyError):
+        data_processing.calculate_3daydischargesum(df, 'datetime_col', 'nonexistent_col')
+
+    # Test with reproducible data
+    data = {
+        'Dates': pd.date_range(start='1/1/2022', end='12/31/2022'),
+        'Values': pd.date_range(start='1/1/2022', end='12/31/2022').day
+    }
+    df = pd.DataFrame(data)
+    df = data_processing.add_pentad_issue_date(df, datetime_col='Dates')
+    result = data_processing.calculate_3daydischargesum(df, 'Dates', 'Values')
+
+def test_calculate_pentadaldischargeavg():
+    # Test with reproducible data
+    data = {
+        'Dates': pd.date_range(start='1/1/2022', end='12/31/2022'),
+        'Values': pd.date_range(start='1/1/2022', end='12/31/2022').day
+    }
+    df = pd.DataFrame(data)
+    df = data_processing.add_pentad_issue_date(df, datetime_col='Dates')
+    result0 = data_processing.calculate_3daydischargesum(df, 'Dates', 'Values')
+    result = data_processing.calculate_pentadaldischargeavg(result0, 'Dates', 'Values')
+
+    assert 'discharge_avg' in result.columns
+    assert result['discharge_avg'].dtype == float
+    # The first 4 values should be NaN
+    assert pd.isna(result['discharge_avg'].iloc[0])
+    assert pd.isna(result['discharge_avg'].iloc[1])
+    assert pd.isna(result['discharge_avg'].iloc[2])
+    assert pd.isna(result['discharge_avg'].iloc[3])
+    # The first value that is not NaN should be 8.0
+    assert result['discharge_avg'].iloc[4] == 8.0
+    # Then we have another 4 NaN values
+    assert pd.isna(result['discharge_avg'].iloc[5])
+    assert pd.isna(result['discharge_avg'].iloc[6])
+    assert pd.isna(result['discharge_avg'].iloc[7])
+    assert pd.isna(result['discharge_avg'].iloc[8])
+    # The next value should be 13.0
+    assert result['discharge_avg'].iloc[9] == 13.0
+    # The last value should be NaN
+    assert pd.isna(result['discharge_avg'].iloc[-1])
+    assert result['discharge_avg'].iloc[-7] == 28.0
+
+def test_generate_issue_and_forecast_dates():
+    # Calculate expected result:
+    # Test with reproducible data
+    data = {
+        'Dates': pd.date_range(start='1/1/2022', end='12/31/2022'),
+        'Values': pd.date_range(start='1/1/2022', end='12/31/2022').day,
+        'Stations': ['12345' for i in range(365)]
+    }
+    df = pd.DataFrame(data)
+    df = data_processing.add_pentad_issue_date(df, datetime_col='Dates')
+    result0 = data_processing.calculate_3daydischargesum(df, 'Dates', 'Values')
+    expected_result = data_processing.calculate_pentadaldischargeavg(result0, 'Dates', 'Values')
+
+    # Call the function
+    result = data_processing.generate_issue_and_forecast_dates(
+        df, 'Dates', 'Stations', 'Values')
+
+    # Check that the result is a DataFrame with the expected columns
+    assert isinstance(result, pd.DataFrame)
+    assert 'issue_date' in result.columns
+    assert 'discharge_sum' in result.columns
+    assert 'discharge_avg' in result.columns
+    # Test if the result is the same as the expected result
+    # Test if there are any NaNs in the Stations column
+    assert result['Stations'].isna().sum() == 0
+    assert expected_result['Stations'].isna().sum() == 0
+    # Test if the datatypes are the same
+    assert result['Stations'].dtype == expected_result['Stations'].dtype
+    # Test each column separately. Only compare the values in the columns
+    # because the indices may be different
+    assert (result['Stations'].values == expected_result['Stations'].values).all()
+    assert (result['issue_date'].values == expected_result['issue_date'].values).all()
+    # Print discharge_sum from result and expected_result next to each other in a
+    # DataFrame to visually inspect the values. Also add a column with the difference
+    # between the two columns.
+    temp = pd.DataFrame({'discharge_sum': result['discharge_sum'].values,
+                         'expected_discharge_sum': expected_result['discharge_sum'].values,
+                         'difference': result['discharge_sum'].values - expected_result['discharge_sum'].values})
+    # Drop rows where all 3 columns have NaN
+    temp = temp.dropna(how='all')
+    # Drop rows where the difference is 0.0
+    temp = temp[temp['difference'] != 0.0]
+    #print("\n\nDEBUG: test_generate_issue_and_forecast_dates: result['discharge_sum'] vs expected_result['discharge_sum']: \n",
+    #      temp)
+    assert (result['discharge_sum'].dropna().values == expected_result['discharge_sum'].dropna().values).all()
+    assert (result['discharge_avg'].dropna().values == expected_result['discharge_avg'].dropna().values).all()

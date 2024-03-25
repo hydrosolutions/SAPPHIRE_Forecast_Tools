@@ -137,3 +137,13 @@ SAPPHIRE_TEST_ENV=True python -m pytest -s
 ```
 SAPPHIRE_TEST_ENV=True defines an environment variable TEST_ENV to true. We use this environment variable to set up temporary test environments. The -s is optional, it will print output from your functions to the terminal.
 
+To run tests in a specific file, navigate to the apps directory in your terminal and type the following command:
+```bash
+SAPPHIRE_TEST_ENV=True python -m pytest -s tests/test_file.py
+```
+Replace test_file.py with the name of the file you want to test. To run tests in a specific function, navigate to the apps directory in your terminal and type the following command:
+```bash
+SAPPHIRE_TEST_ENV=True python -m pytest -s tests/test_file.py::test_function
+```
+Replace test_function with the name of the function you want to test.
+

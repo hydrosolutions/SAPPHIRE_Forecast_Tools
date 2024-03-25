@@ -574,6 +574,265 @@ def filter_roughly_for_outliers(combined_data, window_size=15):
     combined_data.loc[combined_data['Q_m3s'] < lower_bound, 'Q_m3s'] = np.nan
     return combined_data
 
+
+def add_pentad_issue_date(data_df, datetime_col):
+    """
+    Adds an 'issue_date' column to the DataFrame. The 'issue_date' column is True if the day in the date column
+    identified by the string datetime_col is in 5, 10, 15, 20, 25, or the last day of the month. Otherwise, it's False.
+
+    Parameters:
+    data_df (DataFrame): The input DataFrame.
+    datetime_col (str): The column identifier for the date column.
+
+    Returns:
+    DataFrame: The input DataFrame with the 'issue_date' column added.
+    """
+    # Check if the datetime_col is in the data_df columns
+    if datetime_col not in data_df.columns:
+        raise KeyError(f"The column {datetime_col} is not in the DataFrame.")
+    # Ensure the datetime_col is of datetime type
+    try:
+        data_df[datetime_col] = pd.to_datetime(data_df[datetime_col], format = "%Y-%m-%d")
+    except:
+        raise TypeError(f"The column {datetime_col} cannot be converted to datetime type.")
+
+    # Ensure the DataFrame is sorted by date
+    data_df = data_df.sort_values(datetime_col)
+
+    # Get the day of the month
+    data_df['day'] = data_df[datetime_col].dt.day
+
+    # Get the last day of each month
+    #data_df['pdoffsetsMonthEnd'] = pd.offsets.MonthEnd(0)  # add one month end offset
+    data_df['end_of_month'] = data_df[datetime_col] + pd.offsets.MonthEnd(0)  # add one month end offset
+    data_df['is_end_of_month'] = data_df[datetime_col].dt.day == data_df['end_of_month'].dt.day
+
+    # Set issue_date to True if the day is 5, 10, 15, 20, 25, or the last day of the month
+    data_df['issue_date'] = data_df['day'].isin([5, 10, 15, 20, 25]) | data_df['is_end_of_month']
+
+    # Drop the temporary columns
+    data_df.drop(['day', 'end_of_month', 'is_end_of_month'], axis=1, inplace=True)
+
+    return data_df
+
+def calculate_3daydischargesum(data_df, datetime_col, discharge_col):
+    """
+    Calculate the 3-day discharge sum for each station in the input DataFrame.
+
+    Args:
+    data_df (pandas.DataFrame):
+        The input DataFrame containing the data for each station.
+    datetime_col (str):
+        The name of the column containing the datetime information.
+    discharge_col (str):
+        The name of the column containing the discharge information.
+
+    Returns:
+    pandas.DataFrame (pandas.DataFrame):
+        The modified DataFrame with the 3-day discharge sum for each station in
+        column 'discharge_sum'.
+    """
+    # Raise a Type error if the datetime_col is not of type datetime
+    if data_df[datetime_col].dtype != 'datetime64[ns]':
+        raise TypeError(f"The column {datetime_col} is not of type datetime.")
+
+    # Ensure the DataFrame is indexed by datetime
+    data_df.set_index(datetime_col, inplace=True)
+
+    # Calculate the rolling sum of the discharge values over a 3-day window
+    data_df['discharge_sum'] = data_df[discharge_col].rolling('3D', closed='left').sum()
+
+    # Set 'discharge_sum' to NaN for rows where 'issue_date' is False
+    data_df.loc[~data_df['issue_date'], 'discharge_sum'] = np.nan
+
+    # Reset the index
+    data_df.reset_index(inplace=True)
+
+    return data_df
+
+def calculate_pentadaldischargeavg(data_df, datetime_col, discharge_col):
+    """
+    Calculate the 5-day discharge average for each station in the input DataFrame.
+
+    Args:
+    data_df (pandas.DataFrame):
+        The input DataFrame containing the data for each station.
+    datetime_col (str):
+        The name of the column containing the datetime information.
+    discharge_col (str):
+        The name of the column containing the discharge information.
+
+    Returns:
+    pandas.DataFrame:
+        The modified DataFrame with the 5-day discharge average for each station in
+        column 'discharge_avg'.
+    """
+    data_df = data_df.copy(deep=True)
+    # Ensure the DataFrame is indexed by datetime
+    data_df.set_index(pd.DatetimeIndex(data_df[datetime_col]), inplace=True)
+
+    # Reverse the DataFrame
+    data_df = data_df.iloc[::-1]
+
+    # Shift the discharge column by 1 day
+    data_df['temp'] = data_df[discharge_col].shift(1)
+
+    # Calculate the rolling average of the discharge values over a 5-day window
+    data_df['discharge_avg'] = data_df['temp'].rolling('5D', closed='right').mean()
+
+    # Drop the temporary column
+    data_df.drop(columns='temp', inplace=True)
+
+    # Reverse the DataFrame again
+    data_df = data_df.iloc[::-1]
+
+    # Reset the index
+    data_df.reset_index(inplace=True, drop=True)
+
+    # Set 'discharge_avg' to NaN for rows where 'issue_date' is False
+    data_df.loc[~data_df['issue_date'], 'discharge_avg'] = np.nan
+
+    return data_df
+
+
+def generate_issue_and_forecast_dates(data_df: pd.DataFrame, datetime_col: str,
+                                      station_col: str, discharge_col: str):
+    """
+    Generate issue and forecast dates for each station in the input DataFrame.
+
+    Arg:
+    data_df (pandas.DataFrame):
+        The input DataFrame containing the data for each station.
+    datetime_col (str):
+        The name of the column containing the datetime information.
+    station_col (str)
+        The name of the column containing the station information.
+    discharge_col (str):
+        The name of the column containing the discharge information.
+
+    Returns:
+    pandas.DataFrame
+        The modified DataFrame with the issue and forecast dates for each station.
+    """
+    def apply_calculation(data_df, datetime_col, discharge_col):
+
+        # Set negative values to nan
+        data_df[discharge_col] = data_df[discharge_col].apply(lambda x: np.nan if x < 0 else x)
+
+        # Fill in data gaps of up to 3 days by linear interpolation
+        data_df[discharge_col] = data_df[discharge_col].interpolate(
+            method='linear', limit_direction='both', limit=3)
+
+        data_df = add_pentad_issue_date(data_df, datetime_col)
+
+        '''
+        # Make sure data_df[datetime_col] is of datetime type
+        data_df[datetime_col] = pd.to_datetime(data_df[datetime_col])
+
+        # Define the start and end dates for the date range
+        start_date = data_df[datetime_col].dt.date.min()
+        end_date = data_df[datetime_col].dt.date.max()
+
+        years = range(start_date.year, end_date.year+1)  # Specify the desired years
+        months = range(1, 13)  # Specify the desired months
+        days = [5, 10, 15, 20, 25]  # Specify the desired days
+
+        # Create a list to store the issue dates
+        issue_date_range_list = []
+
+        # Iterate over the years, months, and days to construct the issue dates
+        for year in years:
+            for month in months:
+                # Get the last day of the month
+                last_day = pd.Timestamp(year, month, 1) + pd.offsets.MonthEnd()
+
+                # Add the specific days and the last day of the month to the issue_date_range_list
+                issue_date_range_list.extend([pd.Timestamp(year, month, day) for day in days + [last_day.day]])
+
+        # Create a DataFrame for the issue dates
+        issue_date_df = pd.DataFrame({'Date': issue_date_range_list, 'issue_date': True})
+        issue_date_df['Date'] = issue_date_df['Date'].dt.date
+
+        # Merge the issue_date_df with data_df
+        data_df['Date'] = data_df[datetime_col].dt.date
+        data_df = data_df.merge(issue_date_df, how='left', on='Date')
+        #print(data_df.head(n=10))
+        '''
+
+        data_df = calculate_3daydischargesum(data_df, datetime_col, discharge_col)
+        '''
+        # Initialize data_df['discharge_sum'] and data_df['discharge_avg'] to NaN
+        data_df['discharge_sum'] = np.nan
+        data_df['discharge_avg'] = np.nan
+
+        # Loop over each issue_date = True in data_df
+        for index, row in data_df[data_df['issue_date'] == True].iterrows():
+            # Get the station and the issue date
+            # station = row[station_col]
+            issue_date = row['Date']
+
+            # Get the discharge values for the station and the issue date
+            discharge_values = data_df[#(data_df[station_col] == station) &
+                                   (data_df['Date'] >= (issue_date - pd.DateOffset(days=3)).date()) &
+                                    (data_df['Date'] < issue_date)][discharge_col]
+
+            # Sum up the discharge values
+            discharge_sum = discharge_values.sum()
+
+            # Get the index of the issue date
+            issue_date_index = data_df[data_df['Date'] == issue_date].index[0]
+
+            # Store the discharge sum
+            data_df.loc[issue_date_index, 'discharge_sum'] = discharge_sum
+        '''
+
+        data_df = calculate_pentadaldischargeavg(data_df, datetime_col, discharge_col)
+
+        '''
+        # Get the last index in the DataFrame for debugging
+        last_index = data_df[data_df['issue_date'] == True].index[-1]
+
+        # Loop over each issue_date = True in data_df
+        for index, row in data_df[data_df['issue_date'] == True].iterrows():
+            # Get the station and the forecast date
+            # station = row[station_col]
+            forecast_date = row['Date']
+            if index == last_index:
+                print("DEBUG: generate_issue_and_forecast_dates: forecast_date:\n", forecast_date)
+
+            # Get the discharge values for the station and the forecast date
+            discharge_values = data_df[#(data_df[station_col] == station) &
+                                    (data_df['Date'] > forecast_date) &
+                                   (data_df['Date'] <= (forecast_date + pd.DateOffset(days=5)).date())][discharge_col]
+            if index == last_index:
+                print("DEBUG: generate_issue_and_forecast_dates: discharge_values:\n", discharge_values)
+            # Calculate the average discharge
+            discharge_avg = discharge_values.mean(skipna=True)
+            if index == last_index:
+                print("DEBUG: generate_issue_and_forecast_dates: discharge_avg:\n", discharge_avg)
+
+            # Get the index of the forecast date
+            forecast_date_index = data_df[data_df['Date'] == forecast_date].index[0]
+            if index == last_index:
+                print("DEBUG: generate_issue_and_forecast_dates: forecast_date_index:\n", forecast_date_index)
+
+            # Store the discharge average
+            data_df.loc[forecast_date_index, 'discharge_avg'] = discharge_avg
+            if index == last_index:
+                print("DEBUG: generate_issue_and_forecast_dates: data_df after storing discharge_avg:\n", data_df.loc[forecast_date_index])
+        '''
+        return(data_df)
+
+    # Test if the input data contains the required columns
+    if not all(column in data_df.columns for column in [datetime_col, station_col, discharge_col]):
+        raise ValueError(f'DataFrame is missing one or more required columns: {datetime_col, station_col, discharge_col}')
+
+    # Apply the calculation function to each group based on the 'station' column
+    modified_data = data_df.groupby(station_col).apply(apply_calculation, datetime_col = datetime_col, discharge_col = discharge_col)
+
+    return modified_data
+
+
 def get_station_data(ieh_sdk, backend_has_access_to_db, start_date, site_list):
     # === Read station data ===
     # region Read station data
@@ -703,7 +962,11 @@ def get_station_data(ieh_sdk, backend_has_access_to_db, start_date, site_list):
 
     logger.info("-Writing issue and forecast dates...")
 
-    modified_data = fl.generate_issue_and_forecast_dates(pd.DataFrame(df_filtered), 'Date', 'Code', 'Q_m3s')
+    #modified_data = fl.generate_issue_and_forecast_dates(pd.DataFrame(df_filtered), 'Date', 'Code', 'Q_m3s')
+    # DEBUGGING generate_issue_and_forecast_dates
+    modified_data = generate_issue_and_forecast_dates(pd.DataFrame(df_filtered), 'Date', 'Code', 'Q_m3s')
+
+
     # Print hydrograph data between June 1, 2023, and June 20, 2023, for site 15194
 
     # Drop the rows with 0 discharge_sum
