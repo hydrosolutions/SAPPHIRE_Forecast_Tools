@@ -95,11 +95,55 @@ def test_overall_output_step_by_step():
     forecast_pentad_of_year = data_processing.get_forecast_pentad_of_year(bulletin_date)
     data_processing.save_discharge_avg(modified_data, fc_sites, forecast_pentad_of_year)
 
+    # Reformat the data for comparison with written data
+    hydrograph_data = output_generation.validate_hydrograph_data(modified_data)
+    hydrograph_pentad, hydrograph_day = output_generation.reformat_hydrograph_data(hydrograph_data)
+
     # Write hydrograph data
     output_generation.write_hydrograph_data(modified_data)
 
-    # TODO: READ IN DATA AND COMARE TO EXPECTED DATA
 
+    # Test if the files were created
+    assert os.path.exists(
+        os.path.join(os.getenv("ieasyforecast_intermediate_data_path"),
+                     os.getenv("ieasyforecast_hydrograph_pentad_file")))
+    assert os.path.exists(
+        os.path.join(os.getenv("ieasyforecast_intermediate_data_path"),
+                        os.getenv("ieasyforecast_hydrograph_day_file")))
+
+    # Read in the files and check the content
+    saved_pentad = pd.read_csv(
+        os.path.join(os.getenv("ieasyforecast_intermediate_data_path"),
+                        os.getenv("ieasyforecast_hydrograph_pentad_file")))
+    saved_day = pd.read_csv(
+        os.path.join(os.getenv("ieasyforecast_intermediate_data_path"),
+                        os.getenv("ieasyforecast_hydrograph_day_file")))
+
+    #print("\n\nDEBUG: test_write_hydrograph_with_valid_data: saved_pentad: \n", saved_pentad.head(10))
+    #print(saved_pentad.tail(10))
+    #print("\n\nDEBUG: test_write_hydrograph_with_valid_data: saved_day: \n", saved_day.head(10))
+    #print(saved_day.tail(10))
+
+    # Check the content of the files column by column
+    assert (saved_pentad['Code'].values.astype(str) == hydrograph_pentad.reset_index()['Code'].values.astype(str)).all()
+    assert (saved_pentad['pentad'].values.astype(str) == hydrograph_pentad.reset_index()['pentad'].values.astype(str)).all()
+
+    # Test if the difference between the values in the '2000' column of
+    # saved_pentad and hydrograph_pentad is less than 1e-6
+    assert (saved_pentad['2000'].values.astype(float) - hydrograph_pentad['2000'].values.astype(float) < 1e-6).all()
+    assert (saved_pentad['2001'].values.astype(float) - hydrograph_pentad['2001'].values.astype(float) < 1e-6).all()
+    assert (saved_pentad['2002'].values.astype(float) - hydrograph_pentad['2002'].values.astype(float) < 1e-6).all()
+    assert (saved_pentad['2003'].values.astype(float) - hydrograph_pentad['2003'].values.astype(float) < 1e-6).all()
+    assert (saved_pentad['2022'].dropna().values.astype(float) - hydrograph_pentad['2022'].dropna().values.astype(float) < 1e-6).all()
+
+    # Do the same for the day data
+    assert (saved_day['Code'].values.astype(str) == hydrograph_day.reset_index()['Code'].values.astype(str)).all()
+    assert (saved_day['day_of_year'].values.astype(str) == hydrograph_day.reset_index()['day_of_year'].values.astype(str)).all()
+    assert (saved_day['2000'].dropna().values.astype(float) - hydrograph_day['2000'].dropna().values.astype(float) < 1e-6).all()
+    assert (saved_day['2001'].dropna().values.astype(float) - hydrograph_day['2001'].dropna().values.astype(float) < 1e-6).all()
+    assert (saved_day['2002'].dropna().values.astype(float) - hydrograph_day['2002'].dropna().values.astype(float) < 1e-6).all()
+    assert (saved_day['2003'].dropna().values.astype(float) - hydrograph_day['2003'].dropna().values.astype(float) < 1e-6).all()
+    assert (saved_day['2022'].dropna().values.astype(float) - hydrograph_day['2022'].dropna().values.astype(float) < 1e-6).all()
 
     # Get the predictor into the site object
     forecasting.get_predictor(modified_data, start_date, fc_sites, ieh_sdk, backend_has_access_to_db, predictor_dates.pentad)
@@ -122,7 +166,7 @@ def test_overall_output_step_by_step():
     assert pd.isna(fc_sites2[1].predictor), "The second predictor is not as expected"
 
     # Clean up the environment
-    shutil.rmtree(tmpdir)
+    #shutil.rmtree(tmpdir)
     os.environ.pop("IEASYHYDRO_HOST")
     os.environ.pop("IEASYHYDRO_USERNAME")
     os.environ.pop("IEASYHYDRO_PASSWORD")
@@ -270,16 +314,16 @@ def test_overall_output():
         'diff_pentad': expected_hydrograph_df['pentad'] - hydrograph_df['pentad'],
         'expected_2000': expected_hydrograph_df['2000'].values,
         'actual_2000': hydrograph_df['2000'].values,
-        'diff_2000': expected_hydrograph_df['2000'] - hydrograph_df['2000'],
+        'diff_2000': expected_hydrograph_df['2000'].astype(float) - hydrograph_df['2000'].astype(float),
         'expected_2001': expected_hydrograph_df['2001'].values,
         'actual_2001': hydrograph_df['2001'].values,
-        'diff_2001': expected_hydrograph_df['2001'] - hydrograph_df['2001'],
+        'diff_2001': expected_hydrograph_df['2001'].astype(float) - hydrograph_df['2001'].astype(float),
         'expected_2002': expected_hydrograph_df['2002'].values,
         'actual_2002': hydrograph_df['2002'].values,
-        'diff_2002': expected_hydrograph_df['2022'] - hydrograph_df['2002'],
+        'diff_2002': expected_hydrograph_df['2002'].astype(float) - hydrograph_df['2002'].astype(float),
         'expected_2003': expected_hydrograph_df['2003'].values,
         'actual_2003': hydrograph_df['2003'].values,
-        'diff_2003': expected_hydrograph_df['2003'] - hydrograph_df['2003'],
+        'diff_2003': expected_hydrograph_df['2003'].astype(float) - hydrograph_df['2003'].astype(float),
     })
     # print all columns that end in 'code' where diff_code is not 0
     print("\nDEBUG: code\n", temp[temp['diff_code'].ne(0)].filter(regex='code$'))
@@ -295,13 +339,13 @@ def test_overall_output():
     print("DEBUG: pentad\n", temp[temp['diff_2003'].ne(0.0)].filter(regex='(ed_code|ed_pentad|2003)$'))
 
     # Test that the code and pentad columns are the same
-    assert temp['diff_code'].abs().max() < 0.01, "The hydrograph data is not as expected"
-    assert temp['diff_pentad'].abs().max() < 0.01, "The hydrograph data is not as expected"
+    assert temp['diff_code'].abs().max() < 1e-6, "The hydrograph data is not as expected"
+    assert temp['diff_pentad'].abs().max() < 1e-6, "The hydrograph data is not as expected"
     # Test if all diff_2000, diff_2001, diff_2002, and diff_2003 are smaller than 0.01
-    assert temp['diff_2000'].abs().max() < 0.01, "The hydrograph data is not as expected"
-    assert temp['diff_2001'].abs().max() < 0.01, "The hydrograph data is not as expected"
-    assert temp['diff_2002'].abs().max() < 0.01, "The hydrograph data is not as expected"
-    assert temp['diff_2003'].abs().max() < 0.01, "The hydrograph data is not as expected"
+    assert temp['diff_2000'].abs().max() < 1e-6, "The hydrograph data is not as expected"
+    assert temp['diff_2001'].abs().max() < 1e-6, "The hydrograph data is not as expected"
+    assert temp['diff_2002'].abs().max() < 1e-6, "The hydrograph data is not as expected"
+    assert temp['diff_2003'].abs().max() < 1e-6, "The hydrograph data is not as expected"
 
     assert expected_hydrograph_df.equals(hydrograph_df), "The hydrograph file is not as expected"
 

@@ -118,6 +118,10 @@ def validate_hydrograph_data(hydrograph_data):
 
     # We do not filter February 29 in leap years here but in the dashboard.
 
+    # Round to 4 decimals
+    hydrograph_data['Q_m3s'] = hydrograph_data['Q_m3s'].round(4)
+    hydrograph_data['discharge_avg'] = hydrograph_data['discharge_avg'].round(4)
+
     # Overwrite pentad in a month with pentad in a year
     hydrograph_data = tl.add_pentad_in_year_column(hydrograph_data)
     # print(hydrograph_data.head())
