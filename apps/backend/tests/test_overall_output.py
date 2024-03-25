@@ -280,13 +280,13 @@ def test_overall_output():
     # Print columns that end in 'pentad' where diff_pentad is not 0
     print("DEBUG: pentad\n", temp[temp['diff_code'].ne(0)].filter(regex='(code|pentad)$'))
     # Print columns that end in '2000' where diff_2000 is not 0
-    print("DEBUG: pentad\n", temp[temp['diff_code'].ne(0)].filter(regex='(ed_code|ed_pentad|2000)$'))
+    print("DEBUG: pentad\n", temp[temp['diff_code'].ne(0.0)].filter(regex='(ed_code|ed_pentad|2000)$'))
     # Print columns that end in '2001' where diff_2001 is not 0
-    print("DEBUG: pentad\n", temp[temp['diff_code'].ne(0)].filter(regex='(ed_code|ed_pentad|2001)$'))
+    print("DEBUG: pentad\n", temp[temp['diff_code'].ne(0.0)].filter(regex='(ed_code|ed_pentad|2001)$'))
     # Print columns that end in '2022' where diff_2022 is not 0
-    print("DEBUG: pentad\n", temp[temp['diff_code'].ne(0)].filter(regex='(ed_code|ed_pentad|2002)$'))
+    print("DEBUG: pentad\n", temp[temp['diff_code'].ne(0.0)].filter(regex='(ed_code|ed_pentad|2002)$'))
     # Print columns that end in '2003' where diff_2003 is not 0
-    print("DEBUG: pentad\n", temp[temp['diff_code'].ne(0)].filter(regex='(ed_code|ed_pentad|2003)$'))
+    print("DEBUG: pentad\n", temp[temp['diff_code'].ne(0.0)].filter(regex='(ed_code|ed_pentad|2003)$'))
 
     assert expected_hydrograph_df.equals(hydrograph_df), "The hydrograph file is not as expected"
 
