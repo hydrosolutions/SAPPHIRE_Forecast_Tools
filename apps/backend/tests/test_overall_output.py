@@ -253,8 +253,41 @@ def test_overall_output():
     temp = temp.dropna(how='all')
     temp2 = (hydrograph_df[hydrograph_df != expected_hydrograph_df])
     temp2 = temp2.dropna(how='all')
-    #print(temp)
-    #print(temp2)
+    print(temp)
+    print(temp2)
+    temp = pd.DataFrame({
+        'expected_code': expected_hydrograph_df['Code'].values,
+        'actual_code': hydrograph_df['Code'].values,
+        'diff_code': expected_hydrograph_df['Code'] - hydrograph_df['Code'],
+        'expected_pentad': expected_hydrograph_df['pentad'].values,
+        'actual_pentad': hydrograph_df['pentad'].values,
+        'diff_pentad': expected_hydrograph_df['pentad'] - hydrograph_df['pentad'],
+        'expected_2000': expected_hydrograph_df['2000'].values,
+        'actual_2000': hydrograph_df['2000'].values,
+        'diff_2000': expected_hydrograph_df['2000'] - hydrograph_df['2000'],
+        'expected_2001': expected_hydrograph_df['2001'].values,
+        'actual_2001': hydrograph_df['2001'].values,
+        'diff_2001': expected_hydrograph_df['2001'] - hydrograph_df['2001'],
+        'expected_2022': expected_hydrograph_df['2022'].values,
+        'actual_2022': hydrograph_df['2022'].values,
+        'diff_2022': expected_hydrograph_df['2022'] - hydrograph_df['2022'],
+        'expected_2003': expected_hydrograph_df['2003'].values,
+        'actual_2003': hydrograph_df['2003'].values,
+        'diff_2003': expected_hydrograph_df['2003'] - hydrograph_df['2003'],
+    })
+    # print all columns that end in 'code' where diff_code is not 0
+    print("\nDEBUG: code\n", temp[temp['diff_code'].ne(0)].filter(regex='code$'))
+    # Print columns that end in 'pentad' where diff_pentad is not 0
+    print("DEBUG: pentad\n", temp[temp['diff_code'].ne(0)].filter(regex='(code|pentad)$'))
+    # Print columns that end in '2000' where diff_2000 is not 0
+    print("DEBUG: pentad\n", temp[temp['diff_code'].ne(0)].filter(regex='(ed_code|ed_pentad|2000)$'))
+    # Print columns that end in '2001' where diff_2001 is not 0
+    print("DEBUG: pentad\n", temp[temp['diff_code'].ne(0)].filter(regex='(ed_code|ed_pentad|2001)$'))
+    # Print columns that end in '2022' where diff_2022 is not 0
+    print("DEBUG: pentad\n", temp[temp['diff_code'].ne(0)].filter(regex='(ed_code|ed_pentad|2002)$'))
+    # Print columns that end in '2003' where diff_2003 is not 0
+    print("DEBUG: pentad\n", temp[temp['diff_code'].ne(0)].filter(regex='(ed_code|ed_pentad|2003)$'))
+
     assert expected_hydrograph_df.equals(hydrograph_df), "The hydrograph file is not as expected"
 
     # And the same for the hydrograph_day.csv file
