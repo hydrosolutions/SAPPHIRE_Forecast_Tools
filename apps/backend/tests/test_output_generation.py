@@ -85,9 +85,9 @@ def test_write_hydrograph_with_valid_data():
     # Read data from files
     modified_data = data_processing.get_station_data(
         ieh_sdk, backend_has_access_to_db, start_date, site_list)
-    print("\n\nDEBUG: test_write_hydrograph_with_valid_data: modified_data: \n",
-          modified_data[['Date', 'Q_m3s', 'issue_date', 'discharge_sum', 'discharge_avg']].head())
-    print(modified_data[['Date', 'Q_m3s', 'issue_date', 'discharge_sum', 'discharge_avg']].tail())
+    #print("\n\nDEBUG: test_write_hydrograph_with_valid_data: modified_data: \n",
+    #      modified_data[['Date', 'Q_m3s', 'issue_date', 'discharge_sum', 'discharge_avg']].head())
+    #print(modified_data[['Date', 'Q_m3s', 'issue_date', 'discharge_sum', 'discharge_avg']].tail())
 
     # Test validate_hydrograph_data with modified_data
     hydrograph_data = output_generation.validate_hydrograph_data(modified_data)
@@ -103,13 +103,201 @@ def test_write_hydrograph_with_valid_data():
     assert modified_data['Code'].iloc[0] == hydrograph_data['Code'].iloc[0]
     assert modified_data['Code'].iloc[-1] == hydrograph_data['Code'].iloc[-1]
 
-    print("\n\nDEBUG: test_write_hydrograph_with_valid_data: hydrograph_data: \n", hydrograph_data.head())
-    print(hydrograph_data.tail())
+    test_hydrograph_2000 = hydrograph_data[hydrograph_data['Year']=='2000']
+    test_hydrograph_2003 = hydrograph_data[hydrograph_data['Year']=='2003']
 
     # Test reformat_hydrograph_data with hydrograph_data
     hydrograph_pentad, hydrograph_day = output_generation.reformat_hydrograph_data(hydrograph_data)
 
-    print("\n\nDEBUG: test_write_hydrograph_with_valid_data: hydrograph_pentad: \n", hydrograph_pentad.head())
-    print(hydrograph_pentad.tail())
-    print("\n\nDEBUG: test_write_hydrograph_with_valid_data: hydrograph_day: \n", hydrograph_day.head())
-    print(hydrograph_day.tail())
+    #print("\n\nDEBUG: test_write_hydrograph_with_valid_data: hydrograph_pentad: \n", hydrograph_pentad.reset_index().head(10))
+    #print(hydrograph_pentad.reset_index().tail(10))
+    #print("\n\nDEBUG: test_write_hydrograph_with_valid_data: hydrograph_day: \n", hydrograph_day.head())
+    #print(hydrograph_day.tail())
+
+    # The first value in hydrograph_pentad['2000'] should be the same as the
+    # fifth value in hydrograph_data['disharge_avg'].
+    # The second value in hydrograph_pentad['2000'] should be the same as the
+    # tenth value in hydrograph_data['disharge_avg'] and so on.
+    assert hydrograph_pentad['2000'].iloc[0] == test_hydrograph_2000['discharge_avg'].iloc[4]
+    assert hydrograph_pentad['2000'].iloc[1] == test_hydrograph_2000['discharge_avg'].iloc[9]
+    assert hydrograph_pentad['2000'].iloc[2] == test_hydrograph_2000['discharge_avg'].iloc[14]
+    assert hydrograph_pentad['2000'].iloc[3] == test_hydrograph_2000['discharge_avg'].iloc[19]
+    assert hydrograph_pentad['2000'].iloc[4] == test_hydrograph_2000['discharge_avg'].iloc[24]
+    assert hydrograph_pentad['2000'].iloc[5] == test_hydrograph_2000['discharge_avg'].iloc[30]
+    assert hydrograph_pentad['2000'].iloc[6] == test_hydrograph_2000['discharge_avg'].iloc[35]
+
+    assert hydrograph_pentad['2003'].iloc[0] == test_hydrograph_2003['discharge_avg'].iloc[4]
+    assert hydrograph_pentad['2003'].iloc[1] == test_hydrograph_2003['discharge_avg'].iloc[9]
+    assert hydrograph_pentad['2003'].iloc[2] == test_hydrograph_2003['discharge_avg'].iloc[14]
+    assert hydrograph_pentad['2003'].iloc[3] == test_hydrograph_2003['discharge_avg'].iloc[19]
+    assert hydrograph_pentad['2003'].iloc[4] == test_hydrograph_2003['discharge_avg'].iloc[24]
+    assert hydrograph_pentad['2003'].iloc[5] == test_hydrograph_2003['discharge_avg'].iloc[30]
+    assert hydrograph_pentad['2003'].iloc[6] == test_hydrograph_2003['discharge_avg'].iloc[35]
+    # The same from the back end. The sixth-to-last value in
+    # hydrograph_pentad['2000'] should be the same as the the last value in
+    # hydrograph_data['disharge_avg'].
+    assert test_hydrograph_2003['discharge_avg'].iloc[-1] == hydrograph_pentad['2003'].iloc[-1]
+    assert test_hydrograph_2003['discharge_avg'].iloc[-7] == hydrograph_pentad['2003'].iloc[-2]
+    assert test_hydrograph_2003['discharge_avg'].iloc[-12] == hydrograph_pentad['2003'].iloc[-3]
+    assert test_hydrograph_2003['discharge_avg'].iloc[-17] == hydrograph_pentad['2003'].iloc[-4]
+    assert test_hydrograph_2003['discharge_avg'].iloc[-22] == hydrograph_pentad['2003'].iloc[-5]
+    assert test_hydrograph_2003['discharge_avg'].iloc[-27] == hydrograph_pentad['2003'].iloc[-6]
+
+    # Set the environment variables
+    # Set environment variables
+    os.environ["ieasyforecast_intermediate_data_path"] = "backend/tests/test_files/tmp"
+    os.environ["ieasyforecast_hydrograph_pentad_file"] = "test_pentad.csv"
+    os.environ["ieasyforecast_hydrograph_day_file"] = "test_day.csv"
+
+    # Create the tmp directory
+    os.makedirs(os.getenv("ieasyforecast_intermediate_data_path"), exist_ok=True)
+
+    # Write the hydrograph data to csv files
+    output_generation.save_hydrograph_data_to_csv(hydrograph_pentad, hydrograph_day)
+
+    # Test if the files were created
+    assert os.path.exists(
+        os.path.join(os.getenv("ieasyforecast_intermediate_data_path"),
+                     os.getenv("ieasyforecast_hydrograph_pentad_file")))
+    assert os.path.exists(
+        os.path.join(os.getenv("ieasyforecast_intermediate_data_path"),
+                        os.getenv("ieasyforecast_hydrograph_day_file")))
+
+    # Read in the files and check the content
+    saved_pentad = pd.read_csv(
+        os.path.join(os.getenv("ieasyforecast_intermediate_data_path"),
+                        os.getenv("ieasyforecast_hydrograph_pentad_file")))
+    saved_day = pd.read_csv(
+        os.path.join(os.getenv("ieasyforecast_intermediate_data_path"),
+                        os.getenv("ieasyforecast_hydrograph_day_file")))
+
+    #print("\n\nDEBUG: test_write_hydrograph_with_valid_data: saved_pentad: \n", saved_pentad.head(10))
+    #print(saved_pentad.tail(10))
+    #print("\n\nDEBUG: test_write_hydrograph_with_valid_data: saved_day: \n", saved_day.head(10))
+    #print(saved_day.tail(10))
+
+    # Check the content of the files column by column
+    assert (saved_pentad['Code'].values.astype(str) == hydrograph_pentad.reset_index()['Code'].values.astype(str)).all()
+    assert (saved_pentad['pentad'].values.astype(str) == hydrograph_pentad.reset_index()['pentad'].values.astype(str)).all()
+
+    # Test if the difference between the values in the '2000' column of
+    # saved_pentad and hydrograph_pentad is less than 1e-6
+    assert (saved_pentad['2000'].values.astype(float) - hydrograph_pentad['2000'].values.astype(float) < 1e-6).all()
+    assert (saved_pentad['2001'].values.astype(float) - hydrograph_pentad['2001'].values.astype(float) < 1e-6).all()
+    assert (saved_pentad['2002'].values.astype(float) - hydrograph_pentad['2002'].values.astype(float) < 1e-6).all()
+    assert (saved_pentad['2003'].values.astype(float) - hydrograph_pentad['2003'].values.astype(float) < 1e-6).all()
+    assert (saved_pentad['2022'].dropna().values.astype(float) - hydrograph_pentad['2022'].dropna().values.astype(float) < 1e-6).all()
+
+    # Do the same for the day data
+    assert (saved_day['Code'].values.astype(str) == hydrograph_day.reset_index()['Code'].values.astype(str)).all()
+    assert (saved_day['day_of_year'].values.astype(str) == hydrograph_day.reset_index()['day_of_year'].values.astype(str)).all()
+    assert (saved_day['2000'].dropna().values.astype(float) - hydrograph_day['2000'].dropna().values.astype(float) < 1e-6).all()
+    assert (saved_day['2001'].dropna().values.astype(float) - hydrograph_day['2001'].dropna().values.astype(float) < 1e-6).all()
+    assert (saved_day['2002'].dropna().values.astype(float) - hydrograph_day['2002'].dropna().values.astype(float) < 1e-6).all()
+    assert (saved_day['2003'].dropna().values.astype(float) - hydrograph_day['2003'].dropna().values.astype(float) < 1e-6).all()
+    assert (saved_day['2022'].dropna().values.astype(float) - hydrograph_day['2022'].dropna().values.astype(float) < 1e-6).all()
+
+    # Do Also write data with write_hydrograph_data and check if the files are
+    # created as expected.
+    output_generation.write_hydrograph_data(modified_data)
+
+    # Test if the files were created
+    assert os.path.exists(
+        os.path.join(os.getenv("ieasyforecast_intermediate_data_path"),
+                     os.getenv("ieasyforecast_hydrograph_pentad_file")))
+    assert os.path.exists(
+        os.path.join(os.getenv("ieasyforecast_intermediate_data_path"),
+                        os.getenv("ieasyforecast_hydrograph_day_file")))
+
+    # Read in the files and check the content
+    saved_pentad = pd.read_csv(
+        os.path.join(os.getenv("ieasyforecast_intermediate_data_path"),
+                        os.getenv("ieasyforecast_hydrograph_pentad_file")))
+    saved_day = pd.read_csv(
+        os.path.join(os.getenv("ieasyforecast_intermediate_data_path"),
+                        os.getenv("ieasyforecast_hydrograph_day_file")))
+
+    #print("\n\nDEBUG: test_write_hydrograph_with_valid_data: saved_pentad: \n", saved_pentad.head(10))
+    #print(saved_pentad.tail(10))
+    #print("\n\nDEBUG: test_write_hydrograph_with_valid_data: saved_day: \n", saved_day.head(10))
+    #print(saved_day.tail(10))
+
+    # Check the content of the files column by column
+    assert (saved_pentad['Code'].values.astype(str) == hydrograph_pentad.reset_index()['Code'].values.astype(str)).all()
+    assert (saved_pentad['pentad'].values.astype(str) == hydrograph_pentad.reset_index()['pentad'].values.astype(str)).all()
+
+    # Test if the difference between the values in the '2000' column of
+    # saved_pentad and hydrograph_pentad is less than 1e-6
+    assert (saved_pentad['2000'].values.astype(float) - hydrograph_pentad['2000'].values.astype(float) < 1e-6).all()
+    assert (saved_pentad['2001'].values.astype(float) - hydrograph_pentad['2001'].values.astype(float) < 1e-6).all()
+    assert (saved_pentad['2002'].values.astype(float) - hydrograph_pentad['2002'].values.astype(float) < 1e-6).all()
+    assert (saved_pentad['2003'].values.astype(float) - hydrograph_pentad['2003'].values.astype(float) < 1e-6).all()
+    assert (saved_pentad['2022'].dropna().values.astype(float) - hydrograph_pentad['2022'].dropna().values.astype(float) < 1e-6).all()
+
+    # Do the same for the day data
+    assert (saved_day['Code'].values.astype(str) == hydrograph_day.reset_index()['Code'].values.astype(str)).all()
+    assert (saved_day['day_of_year'].values.astype(str) == hydrograph_day.reset_index()['day_of_year'].values.astype(str)).all()
+    assert (saved_day['2000'].dropna().values.astype(float) - hydrograph_day['2000'].dropna().values.astype(float) < 1e-6).all()
+    assert (saved_day['2001'].dropna().values.astype(float) - hydrograph_day['2001'].dropna().values.astype(float) < 1e-6).all()
+    assert (saved_day['2002'].dropna().values.astype(float) - hydrograph_day['2002'].dropna().values.astype(float) < 1e-6).all()
+    assert (saved_day['2003'].dropna().values.astype(float) - hydrograph_day['2003'].dropna().values.astype(float) < 1e-6).all()
+    assert (saved_day['2022'].dropna().values.astype(float) - hydrograph_day['2022'].dropna().values.astype(float) < 1e-6).all()
+
+
+    # Delete the tmp directory and all files in it
+    for file in os.listdir(os.getenv("ieasyforecast_intermediate_data_path")):
+        os.remove(os.path.join(os.getenv("ieasyforecast_intermediate_data_path"), file))
+    os.rmdir(os.getenv("ieasyforecast_intermediate_data_path"))
+
+    # Clean up the environment
+    os.environ.pop("ieasyforecast_intermediate_data_path")
+    os.environ.pop("ieasyforecast_hydrograph_pentad_file")
+    os.environ.pop("ieasyforecast_hydrograph_day_file")
+
+
+def test_save_hydrograph_data_to_csv():
+    # Create test data
+    hydrograph_pentad = pd.DataFrame({'A': [1, 2, 3], 'B': [4, 5, 6]}, index=['a', 'b', 'c'])
+    hydrograph_day = pd.DataFrame({'C': [7, 8, 9], 'D': [10, 11, 12]}, index=['a', 'b', 'c'])
+
+    # Give some name to the index
+    hydrograph_pentad.index.name = "Code"
+    hydrograph_day.index.name = "Code"
+
+    # Set environment variables
+    os.environ["ieasyforecast_intermediate_data_path"] = "backend/tests/test_files/tmp"
+    os.environ["ieasyforecast_hydrograph_pentad_file"] = "test_pentad.csv"
+    os.environ["ieasyforecast_hydrograph_day_file"] = "test_day.csv"
+
+    # Create the tmp directory
+    os.makedirs(os.getenv("ieasyforecast_intermediate_data_path"), exist_ok=True)
+
+    # Call the function
+    output_generation.save_hydrograph_data_to_csv(hydrograph_pentad, hydrograph_day)
+
+    # Check that the files were created
+    assert os.path.exists(os.path.join(os.getenv("ieasyforecast_intermediate_data_path"), os.getenv("ieasyforecast_hydrograph_pentad_file")))
+    assert os.path.exists(os.path.join(os.getenv("ieasyforecast_intermediate_data_path"), os.getenv("ieasyforecast_hydrograph_day_file")))
+
+    # Check the content of the files
+    saved_pentad = pd.read_csv(
+        os.path.join(os.getenv("ieasyforecast_intermediate_data_path"),
+                     os.getenv("ieasyforecast_hydrograph_pentad_file")),
+                     index_col="Code")
+    saved_day = pd.read_csv(
+        os.path.join(os.getenv("ieasyforecast_intermediate_data_path"),
+                     os.getenv("ieasyforecast_hydrograph_day_file")),
+                     index_col="Code")
+
+    pd.testing.assert_frame_equal(saved_pentad, hydrograph_pentad)
+    pd.testing.assert_frame_equal(saved_day, hydrograph_day)
+
+    # Delete the tmp directory and all files in it
+    for file in os.listdir(os.getenv("ieasyforecast_intermediate_data_path")):
+        os.remove(os.path.join(os.getenv("ieasyforecast_intermediate_data_path"), file))
+    os.rmdir(os.getenv("ieasyforecast_intermediate_data_path"))
+
+    # Clean up environment
+    os.environ.pop("ieasyforecast_intermediate_data_path")
+    os.environ.pop("ieasyforecast_hydrograph_pentad_file")
+    os.environ.pop("ieasyforecast_hydrograph_day_file")
