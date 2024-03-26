@@ -198,6 +198,10 @@ def test_overall_output():
     """
     This test does not complete successfully as GitHub Actions. It is not clear
     why this is the case and further investigation is needed.
+
+    Output files produced in operational mode on the windows laptop with the
+    same code have been compared with the expected output files manually and are
+    identical.
     """
 
     # Set up the test environment
