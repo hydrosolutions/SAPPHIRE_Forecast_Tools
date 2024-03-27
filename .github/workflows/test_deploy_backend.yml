@@ -72,7 +72,7 @@ jobs:
         #if [ -f pyton_requirements.txt ]; then pip install -r pyton_requirements.txt; fi
         python -m pip install -r ./apps/backend/requirements.txt
         pip install git+https://github.com/hydrosolutions/ieasyhydro-python-sdk
-        pip install git+https://github.com/hydrosolutions/ieasyhydro-python-sdk
+        pip install git+https://github.com/hydrosolutions/ieasyreports.git@main
         pip install -e ./apps/iEasyHydroForecast
     - name: Lint with flake8
       run: |
@@ -83,7 +83,10 @@ jobs:
     - name: Test with pytest
       working-directory: ./apps
       run: |
-        python -m pytest backend/tests/test_read_discharge_from_excel_sheet.py
+        SAPPHIRE_TEST_ENV=True python -m pytest -s backend/tests/test_config.py
+        SAPPHIRE_TEST_ENV=True python -m pytest -s backend/tests/test_data_processing.py
+        SAPPHIRE_TEST_ENV=True python -m pytest -s backend/tests/test_forecasting.py
+        SAPPHIRE_TEST_ENV=True python -m pytest -s backend/tests/test_overall_output.py::test_overall_output_step_by_step
 
   push_to_Dckerhub:
     needs: [lint_and_test_ieasyhydroforecast, lint_and_test_backend]

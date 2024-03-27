@@ -84,13 +84,33 @@ class FakeHeaderTemplateGenerator(DefaultReportGenerator):
 
         self.save_report(output_filename, output_path)
 
+def validate_hydrograph_data(hydrograph_data):
+    """
+    Validates the columns of the hydrograph data.
 
-def write_hydrograph_data(modified_data):
-    # === Write hydrograph data ===
-    logger.info("Writing hydrograph data ...")
-    # Reformat modified_data. Keep columns Q_m3s, Year, Code, discharge_avg, pentad.
-    # Write the day of the year into a new column.
-    hydrograph_data = modified_data
+    Parameters:
+    hydrograph_data (DataFrame): The hydrograph data in the format required for
+        the display in the forecast dashboard.
+
+    Returns:
+    DataFrame: The reformatted hydrograph data in the format required for the
+        display in the forecast dashboard.
+
+    Raises:
+    TypeError: If the hydrograph_data is not a DataFrame.
+    ValueError: If the hydrograph_data is missing the required columns.
+    """
+
+    # Check if the hydrograph_data is a DataFrame
+    if not isinstance(hydrograph_data, pd.DataFrame):
+        raise TypeError("The hydrograph_data must be a DataFrame.")
+
+    # Check if the hydrograph_data has the required columns
+    required_columns = ['Date', 'Year', 'Code', 'Q_m3s', 'discharge_avg', 'pentad']
+    for column in required_columns:
+        if column not in hydrograph_data.columns:
+            raise ValueError(f"The hydrograph_data is missing the '{column}' column.")
+
     # Convert the Date column to a datetime object
     hydrograph_data['Date'] = pd.to_datetime(hydrograph_data['Date'])
     # Make sure the Year column is of type string.
@@ -98,10 +118,63 @@ def write_hydrograph_data(modified_data):
 
     # We do not filter February 29 in leap years here but in the dashboard.
 
+    # Round to 4 decimals
+    hydrograph_data['Q_m3s'] = hydrograph_data['Q_m3s'].round(4)
+    hydrograph_data['discharge_avg'] = hydrograph_data['discharge_avg'].round(4)
+
     # Overwrite pentad in a month with pentad in a year
     hydrograph_data = tl.add_pentad_in_year_column(hydrograph_data)
     # print(hydrograph_data.head())
     hydrograph_data['day_of_year'] = hydrograph_data['Date'].dt.dayofyear
+
+    return hydrograph_data
+
+def save_hydrograph_data_to_csv(hydrograph_pentad, hydrograph_day):
+    # Write this data to csv for subsequent visualization
+    # in the forecast dashboard.
+    hydrograph_pentad_file_csv = os.path.join(
+        os.getenv("ieasyforecast_intermediate_data_path"),
+        os.getenv("ieasyforecast_hydrograph_pentad_file"))
+
+    # Write the hydrograph_pentad to csv
+    ret = hydrograph_pentad.to_csv(hydrograph_pentad_file_csv)
+    if ret is None:
+        logger.info("Hydrograph pentad data saved to csv file")
+    else:
+        logger.error("Hydrograph pentad data not saved to csv file")
+
+    hydrograph_day_file_csv = os.path.join(
+        os.getenv("ieasyforecast_intermediate_data_path"),
+        os.getenv("ieasyforecast_hydrograph_day_file"))
+
+    # Write the hydrograph_day to csv. Do not print the index.
+    ret = hydrograph_day.to_csv(hydrograph_day_file_csv)
+    if ret is None:
+        logger.info("Hydrograph day data saved to csv file")
+    else:
+        logger.error("Hydrograph day data not saved to csv file")
+
+def reformat_hydrograph_data(hydrograph_data):
+    """
+    Reformats the hydrograph data for daily and pentadal output.
+
+    This function selects the necessary columns from the input DataFrame and
+    reformats the data in a wide format where the 'Code' and 'day_of_year'/'pentad'
+    are the index, the columns are the years, and the values are the 'Q_m3s'/'discharge_avg'.
+
+    Parameters:
+    hydrograph_data (DataFrame): The input hydrograph data. This DataFrame should
+        contain columns for 'Code', 'Year', 'day_of_year', 'Q_m3s', 'pentad', and 'discharge_avg'.
+
+    Returns:
+    tuple: A tuple containing two DataFrames. The first DataFrame contains the
+        reformatted data for pentadal output, and the second DataFrame contains
+        the reformatted data for daily output. Both DataFrames have 'Code' and
+        'day_of_year'/'pentad' as the index, 'Year' as the columns, and 'Q_m3s'/'discharge_avg'
+        as the values.
+    """
+    # Select the columns that are needed for the hydrograph data for daily and
+    # pentadal output
     hydrograph_data_day = hydrograph_data[['Code', 'Year', 'day_of_year', 'Q_m3s']]
     hydrograph_data_pentad = hydrograph_data[['Code', 'Year', 'pentad', 'discharge_avg']]
 
@@ -123,25 +196,32 @@ def write_hydrograph_data(modified_data):
     hydrograph_pentad['pentad'] = hydrograph_pentad['pentad'].astype(int)
     hydrograph_day['day_of_year'] = hydrograph_day['day_of_year'].astype(int)
 
+    # We want to have the data sorted by 'Code' and 'pentad'/'day_of_year'
+    hydrograph_pentad.sort_values(by=['Code', 'pentad'], inplace=True)
+    hydrograph_day.sort_values(by=['Code', 'day_of_year'], inplace=True)
+
     # Set 'Code' and 'pentad'/'day_of_year' as index again
     hydrograph_pentad.set_index(['Code', 'pentad'], inplace=True)
     hydrograph_day.set_index(['Code', 'day_of_year'], inplace=True)
 
-    # Write this data to a dump (pickle the data) for subsequent visualization
-    # in the forecast dashboard.
-    hydrograph_pentad_file_csv = os.path.join(
-        os.getenv("ieasyforecast_intermediate_data_path"),
-        os.getenv("ieasyforecast_hydrograph_pentad_file"))
+    return hydrograph_pentad, hydrograph_day
 
-    # Write the hydrograph_pentad to csv
-    hydrograph_pentad.to_csv(hydrograph_pentad_file_csv)
 
-    hydrograph_day_file_csv = os.path.join(
-        os.getenv("ieasyforecast_intermediate_data_path"),
-        os.getenv("ieasyforecast_hydrograph_day_file"))
 
-    # Write the hydrograph_day to csv
-    hydrograph_day.to_csv(hydrograph_day_file_csv)
+def write_hydrograph_data(modified_data):
+    # === Write hydrograph data ===
+    logger.info("Writing hydrograph data ...")
+
+    # Validate the columns of the hydrograph data.
+    # Write the day of the year into a new column.
+    hydrograph_data = validate_hydrograph_data(modified_data)
+
+    # Pivot the hydrograph data to the wide format with daily and pentadal data.
+    hydrograph_pentad, hydrograph_day = reformat_hydrograph_data(hydrograph_data)
+
+    # Save the hydrograph data to csv for subsequent visualization in the
+    # forecast dashboard.
+    save_hydrograph_data_to_csv(hydrograph_pentad, hydrograph_day)
 
     logger.info("   ... done")
 
@@ -341,16 +421,21 @@ def write_forecast_sheets(settings, start_date, bulletin_date, fc_sites, result2
                 site_data.append({
                     'river_name': site.river_name + " " + site.punkt_name,
                     'year': str(year),
-                    'qpavg': fl.round_discharge(df_year['discharge_avg'].mean()).replace('.', ','),
-                    'qpsum': fl.round_discharge(df_year['discharge_sum'].mean()).replace('.', ',')
+                    'qpavg': fl.round_discharge_trad_bulletin(df_year['discharge_avg'].mean()).replace('.', ','),
+                    'qpsum': fl.round_discharge_trad_bulletin(df_year['discharge_sum'].mean()).replace('.', ',')
                 })
 
             # Add current year and current predictor to site_data
+            # Test if site.predictor is nan. If it is, assign ""
+            if pd.isna(site.predictor):
+                temp_predictor = ""
+            else:
+                temp_predictor = format(site.predictor, '.3f').replace('.', ',')
             site_data.append({
                 'river_name': site.river_name + " " + site.punkt_name,
                 'year': str(start_date.year),
                 'qpavg': "",
-                'qpsum': format(site.predictor, '.2f').replace('.', ',')
+                'qpsum': temp_predictor
             })
 
             # Overwrite settings for theh bulletin folder. In this way we can sort the

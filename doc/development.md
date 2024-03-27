@@ -65,12 +65,14 @@ pip install -e ../iEasyHydroForecast
 If you wish to use data from your organizations iEasyHydro database, you will need to configure the apps/config/.env_develop file (see [doc/configuration.md](configuration.md) for more detailed instructions). We recommend testing your configuration by running a few example queries from the [documentation of the SDK library](https://github.com/hydrosolutions/ieasyhydro-python-sdk) in a jupyter notebook.
 
 #### How to run the backend locally
-You can then run the forecast backend in the offline mode to simulate opearational forecasting in the past by running the following command in the terminal:
+Edit the file apps/internal_data/last_successful_run.txt to one day before the first day you wish to run the forecast tools for. For example, if you wish to start running the forecast tools from January 1, 2024, write the date 2023-12-31 as last successful run date. You can then run the forecast backend in the offline mode to simulate opearational forecasting in the past by running the following command in the terminal:
 ```bash
-python run_offline_mode.py 2010 1 1 2010 1 31
+python run_offline_mode.py
 ```
-This will run the linear regression tool for the period of January first 2010 to January 31st 2010. You can change the dates to your liking but make sure that you have data available for the production of the linear regression models and for forecasting. The tool will write the results to the file *ieasyforecast_results_file*, apps/internal_data/forecasts_pentad.csv.
+This will run the linear regression tool for the period of January first 2024 to the current day. You can change the dates to your liking but make sure that you have data available for the production of the linear regression models and for forecasting. Currently, the tools assume that the data availability starts on January 1 2000. The tool will write the results to the file *ieasyforecast_results_file*, apps/internal_data/forecasts_pentad.csv.
 If you have daily data available from 2000 to the present time, we recommend starting the forecast from 2010 onwards. This gives the backend tool 10 years of data (from 2000 to 2010) to build a linear regression model. Each year, the linear regression model will be updated with the data from the previous year. That means, the parameters of the linear regression model $y=a \cdot x+b$ will change each year. If you are interested in the model parameters, they are provided in the *ieasyforecast_results_file*, apps/internal_data/forecasts_pentad.csv.
+
+For development, it may be useful to use a different .env file. We use an environment variable to specify a .env file we use for testing purposes (SAPPHIRE_TEST_ENV, see chapter on testing below) and we use one for development with private data (SAPPHIRE_OPDEV_ENV).
 
 ### Forecast dashboard
 #### Prerequisites
@@ -129,17 +131,21 @@ You can now access the dashboard in your browser at http://localhost:5006/pentad
 Development takes place in a git branch created from the main branch. Once the development is finished, the branch is merged into the main branch. This merging requires the approval of a pull requrest by a main developer. The main branch is tested in deployment mode and then merged to the deploy branch. 3rd party users of the forecast tools are requested to pull the tested deploy branch. The deployment is done automatically using GitHub Actions. The workflow instructions can be found in .github/workflows/deploy_*.yml.
 
 ## Testing
-Testing tools are being developed for each tool. This is work in progress and currently not consistently set up yet.
+Testing tools are being developed for each tool. This is work in progress.
 
-### Backend
-To test the backend, navigate to the apps directory in your terminal, make sure you have the backend requirements installed in your python environment, and type the following command:
+To run all tests, navigate to the apps directory in your terminal and type the following command:
 ```bash
-python pytest -s backend/tests/test_read_discharge_from_excel_sheet.py
+SAPPHIRE_TEST_ENV=True python -m pytest -s
 ```
-Further tests for the backend methods are under development.
+SAPPHIRE_TEST_ENV=True defines an environment variable TEST_ENV to true. We use this environment variable to set up temporary test environments. The -s is optional, it will print output from your functions to the terminal.
 
-### Reset run date
-To test the reset run date module navigate to the apps/reset_forecast_run_date directory in your terminal and type the following command:
+To run tests in a specific file, navigate to the apps directory in your terminal and type the following command:
 ```bash
-python pytest -s tests/test_rerun_forecast.py
+SAPPHIRE_TEST_ENV=True python -m pytest -s tests/test_file.py
 ```
+Replace test_file.py with the name of the file you want to test. To run tests in a specific function, navigate to the apps directory in your terminal and type the following command:
+```bash
+SAPPHIRE_TEST_ENV=True python -m pytest -s tests/test_file.py::test_function
+```
+Replace test_function with the name of the function you want to test.
+

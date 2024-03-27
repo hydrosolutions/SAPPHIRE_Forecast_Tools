@@ -506,6 +506,16 @@ class TestGenerateIssueAndForecastDates(unittest.TestCase):
         self.assertTrue(output['issue_date'].tolist()[4])
         self.assertTrue(math.isnan(output['discharge_avg'].tolist()[4]))
 
+    def test_demo_data_test_case(self):
+        self.data_df = pd.DataFrame({
+            'Date': ['2022-04-26', '2022-04-27', '2022-04-28', '2022-04-29', '2022-04-30',
+                     '2022-05-01', '2022-05-02', '2022-05-03', '2022-05-04', '2022-05-05'],
+            'Q_m3s': [0.74, 0.74, 0.77, 0.84, 0.80, 0.78, 0.81, 0.85, 0.77, 0.74],
+            'Year': [2022]*10,
+            'Code': [12256]*10})
+        output = fl.generate_issue_and_forecast_dates(self.data_df, 'Date', 'Code', 'Q_m3s')
+        print("\n\nDEBUG: test_demo_data_test_case:\n", output)
+
 
 class TestLoadAllStationDataFromJSON(unittest.TestCase):
     def test_load(self):
