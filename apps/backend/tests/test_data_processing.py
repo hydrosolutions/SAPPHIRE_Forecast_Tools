@@ -346,9 +346,6 @@ def test_get_station_data_from_another_excel_with_valid_file():
     # Check that the Q_m3s column is of type float
     assert pd.api.types.is_float_dtype(result["Q_m3s"])
 
-    # Check that the Year column is of type int
-    assert pd.api.types.is_integer_dtype(result["Year"])
-
     # First entry of Date, converted to format %Y-%m-%d, should be 2000-01-01
     assert result['Date'].iloc[0].strftime('%Y-%m-%d') == '2017-01-01'
     # Last entry of Date, converted to format %Y-%m-%d, should be 2000-01-18

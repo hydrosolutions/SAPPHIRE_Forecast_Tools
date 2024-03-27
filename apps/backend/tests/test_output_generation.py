@@ -108,6 +108,8 @@ def test_write_hydrograph_with_valid_data():
 
     # Test reformat_hydrograph_data with hydrograph_data
     hydrograph_pentad, hydrograph_day = output_generation.reformat_hydrograph_data(hydrograph_data)
+    #print("\n\nDEBUG: test_write_hydrograph_with_valid_data: test_hydrograph_2003: \n", test_hydrograph_2003.head(36))
+    #print(test_hydrograph_2003.tail(36))
 
     #print("\n\nDEBUG: test_write_hydrograph_with_valid_data: hydrograph_pentad: \n", hydrograph_pentad.reset_index().head(10))
     #print(hydrograph_pentad.reset_index().tail(10))
@@ -118,15 +120,15 @@ def test_write_hydrograph_with_valid_data():
     # fifth value in hydrograph_data['disharge_avg'].
     # The second value in hydrograph_pentad['2000'] should be the same as the
     # tenth value in hydrograph_data['disharge_avg'] and so on.
-    assert hydrograph_pentad['2000'].iloc[0] == test_hydrograph_2000['discharge_avg'].iloc[4]
-    assert hydrograph_pentad['2000'].iloc[1] == test_hydrograph_2000['discharge_avg'].iloc[9]
-    assert hydrograph_pentad['2000'].iloc[2] == test_hydrograph_2000['discharge_avg'].iloc[14]
+    assert hydrograph_pentad['2000'].iloc[0] == test_hydrograph_2000['discharge_avg'].iloc[4]  # pentad 1
+    assert hydrograph_pentad['2000'].iloc[1] == test_hydrograph_2000['discharge_avg'].iloc[9]  # pentad 2
+    assert hydrograph_pentad['2000'].iloc[2] == test_hydrograph_2000['discharge_avg'].iloc[14]  # pentad 3
     assert hydrograph_pentad['2000'].iloc[3] == test_hydrograph_2000['discharge_avg'].iloc[19]
     assert hydrograph_pentad['2000'].iloc[4] == test_hydrograph_2000['discharge_avg'].iloc[24]
     assert hydrograph_pentad['2000'].iloc[5] == test_hydrograph_2000['discharge_avg'].iloc[30]
     assert hydrograph_pentad['2000'].iloc[6] == test_hydrograph_2000['discharge_avg'].iloc[35]
 
-    assert hydrograph_pentad['2003'].iloc[0] == test_hydrograph_2003['discharge_avg'].iloc[4]
+    assert hydrograph_pentad['2003'].iloc[0] == test_hydrograph_2003['discharge_avg'].iloc[4]  # pentad 1
     assert hydrograph_pentad['2003'].iloc[1] == test_hydrograph_2003['discharge_avg'].iloc[9]
     assert hydrograph_pentad['2003'].iloc[2] == test_hydrograph_2003['discharge_avg'].iloc[14]
     assert hydrograph_pentad['2003'].iloc[3] == test_hydrograph_2003['discharge_avg'].iloc[19]

@@ -555,7 +555,7 @@ def get_time_series_from_DB(ieh_sdk, library):
             logger.info(f'    No data for site {row["station"]} in DB.')
             continue
 
-        return db_data
+    return db_data
 
 def filter_roughly_for_outliers(combined_data, window_size=15):
     # Preliminary filter for outliers
