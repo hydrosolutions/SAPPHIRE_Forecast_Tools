@@ -168,3 +168,4 @@ apps/internal_data/*_kghm.csv
 apps/backend/tests/testspecial_*.py
 apps/internal_data/forecasts_pentad_kghm copy.csv
 apps/internal_data/forecasts_pentad_kghm_full_hindcast.csv
+apps/internal_data/forecasts_pentad_kghm_full_hindcast copy.csv

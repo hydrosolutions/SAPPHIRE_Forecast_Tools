@@ -193,8 +193,9 @@ def reformat_hydrograph_data(hydrograph_data):
     hydrograph_day = hydrograph_day.reset_index()
 
     # Convert pentad column to integer
-    hydrograph_pentad['pentad'] = hydrograph_pentad['pentad'].astype(int)
-    hydrograph_day['day_of_year'] = hydrograph_day['day_of_year'].astype(int)
+    hydrograph_data_pentad.loc['pentad'] = hydrograph_data_pentad['pentad'].astype(int)
+    hydrograph_data_day.loc['day_of_year'] = hydrograph_data_day['day_of_year'].astype(int)
+
 
     # We want to have the data sorted by 'Code' and 'pentad'/'day_of_year'
     hydrograph_pentad.sort_values(by=['Code', 'pentad'], inplace=True)
