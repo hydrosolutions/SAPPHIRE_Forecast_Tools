@@ -204,6 +204,10 @@ def reformat_hydrograph_data(hydrograph_data):
     hydrograph_pentad.set_index(['Code', 'pentad'], inplace=True)
     hydrograph_day.set_index(['Code', 'day_of_year'], inplace=True)
 
+    # Sort index
+    hydrograph_pentad.sort_index(inplace=True)
+    hydrograph_day.sort_index(inplace=True)
+
     return hydrograph_pentad, hydrograph_day
 
 
