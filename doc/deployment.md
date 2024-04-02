@@ -6,9 +6,31 @@ This repository uses GitHub Actions to automatize the deployment of the forecast
 Perform the following steps the computer where the forecast tools are deployed.
 
 ### Download this repository
-Download the [repository](https://github.com/hydrosolutions/SAPPHIRE_Forecast_Tools) to the host machine. The repository can be downloaded as a zip file from the GitHub website. Unzip the file and move the folder to the desired location on the host machine. This allows you to only perform minimal edits to the configuration files within the designed folder structure.
+Download the [repository](https://github.com/hydrosolutions/SAPPHIRE_Forecast_Tools) to the host machine. This will give you the folder structure with which you can quickly deploy the forecast tools. You can, however, also build your own folder structure. If you choose to do so, you will have to adapt the paths in the .env file and the run commands accordingly.
+<details>
+<summary>Instructions for Windows</summary>
+The repository can be downloaded as a zip file from the GitHub website. Unzip the file and move the folder to the desired location on the host machine. This allows you to only perform minimal edits to the configuration files within the designed folder structure.
+</details>
 
-### Install Docker & run Watchtower
+<details>
+<summary>Instructions for Linux</summary>
+Alternatively you can clone the repository using git. On the Linux server (example Amazon EC2 Linux instance) open a terminal and type the following commands:
+
+Install git:
+```bash
+sudo yum install git
+```
+
+Clone the repository:
+
+```bash
+git clone https://github.com/hydrosolutions/SAPPHIRE_Forecast_Tools.git
+```
+</details>
+
+### Install Docker
+<details>
+<summary>Instructions for Windows</summary>
 Install the software [Docker](https://docs.docker.com/install/). Note that you will need administrator rights to install Docker successfully. To allow that Docker services are started when the computer is turned on, you will have to change the settings in the Docker Desktop application. Open the application and go to Settings > General. Select the option to start Docker Desktop when you log in. In addition, you can tell windows to automatically start the docker services by following these steps:
 1. Open the Run dialog by pressing the Windows key + R.
 2. Type services.msc and press Enter.
@@ -23,6 +45,66 @@ Start a Watchtower instance to automatically update the application when a new v
 wsl
 ```
 If you get an error message, you may have to trubble shoot your wsl installation. See [this link](https://docs.microsoft.com/en-us/windows/wsl/install-win10) for more information.
+
+</details>
+
+<details>
+<summary>Instructions for Linux</summary>
+As an example for the deployment on a linux server we choose an Amazon EC2 Linux instance. To install docker on Amazon Linux 2, open a terminal and type the following commands:
+
+Update yum:
+
+```bash
+sudo yum update
+```
+
+Look for docker:
+
+```bash
+sudo yum search docker
+```
+
+Install docker:
+
+```bash
+sudo yum install docker
+```
+
+Allow user ec2-user to run docker:
+
+```bash
+sudo usermod -aG docker ec2-user
+```
+
+Enable docker services:
+
+```bash
+sudo systemctl enable docker.service
+```
+
+Start docker services:
+
+```bash
+sudo systemctl start docker.service
+```
+
+Check if docker services are running:
+
+```bash
+sudo systemctl status docker.service
+```
+
+Check if docker installation was successful:
+
+```bash
+docker run hello-world
+```
+
+</details>
+
+### Run watchtower
+
+To run watchtower, type the following command in the terminal (for windows, we recommend using the Linux terminal in WSL but you can also use the PowerShell):
 
 ```bash
 docker run -d \
@@ -45,6 +127,12 @@ The sections below describe the steps that are required to deploy the forecast t
 Edit the apps/config/.env file where required. If, for example, the locations for the bulletin templates on the host machine differs from the location of the bulletin templates in this repository you need to adapt the path in the .env file. Please carefully follow the instructions about the configuration of the .env file in the file [doc/configuration.md](configuration.md).
 
 If you wish to link the forecast tools with the iEasyHydro database you will have to provide the access credentials in .env and make sure the database is accessible through a port (in the example below we use port 9000).
+
+<details>
+<summary>Notes for deployment on Linux servers</summary>
+Note that if you deploy the tools on a linux server, you will have to either edit the configuration file using the command line (e.g. vi).
+</details>
+
 
 ### Configuration dashboard
 Pull the latest image from Docker Hub:
