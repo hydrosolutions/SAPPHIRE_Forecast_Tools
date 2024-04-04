@@ -91,6 +91,48 @@ def test_overall_output_step_by_step():
     # The last value in discharge sum should be 2.43
     expected_predictor = 2.43
     assert round(modified_data['discharge_sum'].iloc[-1], 2) == expected_predictor, "The last value in discharge sum is not as expected"
+    data_for_comp = modified_data.reset_index(drop=True)[["Code", "Date", "Q_m3s"]]
+    # Only keep data for code 12176
+    data_for_comp = data_for_comp.loc[data_for_comp['Code'] == '12176'][["Date", "Q_m3s"]]
+    print(data_for_comp.head(10))
+
+    # Compare data read with get_station_data with expected data read from excel.
+    # List of sheet names you want to read
+    sheets = ['2000', '2001', '2002', '2003']
+    # Read the data from the sheets
+    dataframes = [pd.read_excel('../data/daily_runoff/12176_Sihl_example_river_runoff.xlsx', sheet_name=sheet) for sheet in sheets]
+    # Concatenate the data
+    sihl_data = pd.concat(dataframes)
+    # Rename the columns to Date and discharge
+    sihl_data.columns = ['Date', 'discharge']
+
+    # Compare the data points read from excel to the ones read from the daily
+    # hydrograph file
+    hydrograph_day = pd.read_csv("backend/tests/test_files/test_one_step_hydrograph_day.csv")
+    # Reformat the hydrograph day data to have the same format as the sihl_data
+    # pivot the hydrograph day data to the long format
+    hydrograph_day = hydrograph_day.melt(id_vars=['Code', 'day_of_year'], var_name='year', value_name='discharge')
+    # Convert the year column to integer
+    hydrograph_day['year'] = hydrograph_day['year'].astype(int)
+    hydrograph_day['day_of_year'] = hydrograph_day['day_of_year'].astype(int)
+
+    # Sort the data
+    hydrograph_day = hydrograph_day.sort_values(['Code', 'year', 'day_of_year'])
+    # Create a date column based on the year and day_of_year columns
+    hydrograph_day["Date"] = hydrograph_day.apply(lambda x: dt.datetime(int(x['year']), 1, 1) + dt.timedelta(days=int(x['day_of_year']) - 1), axis=1)
+
+    # Merge sihl_data with hydrograph_day for code == 12176 by Date
+    merged_data = pd.merge(sihl_data, hydrograph_day.loc[hydrograph_day['Code'] == 12176, ["Date", "discharge"]],
+                           on='Date', how='inner', suffixes=('_excel', '_hydrograph_csv'))
+    # Also merge the data for comp with hydrograph_day for code == 12176 by Date
+    merged_data_comp = pd.merge(merged_data, data_for_comp, on='Date', how='inner')
+
+    # print the rows where discharge_hydrograph_csv and Q_m3s are not the same
+    #print(merged_data_comp.loc[merged_data_comp['discharge_hydrograph_csv'] - merged_data_comp['Q_m3s'] > 1e-6])
+
+    # The columns discharge_hydrograph_csv and Q_m3s should be the same
+    merged_data_comp['diff'] = merged_data_comp['discharge_hydrograph_csv'] - merged_data_comp['Q_m3s']
+    assert merged_data_comp['diff'].max() < 1e-6, "The discharge data is not as expected"
 
     forecast_pentad_of_year = data_processing.get_forecast_pentad_of_year(bulletin_date)
     data_processing.save_discharge_avg(modified_data, fc_sites, forecast_pentad_of_year)
