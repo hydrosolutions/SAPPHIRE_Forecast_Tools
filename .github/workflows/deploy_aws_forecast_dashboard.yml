@@ -65,7 +65,7 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         python -m pip install flake8
-        if [ -f pyton_requirements.txt ]; then pip install -r pyton_requirements.txt; fi
+        then pip install -r pyton_requirements.txt
         pip install git+https://github.com/hydrosolutions/ieasyhydro-python-sdk
         pip install git+https://github.com/hydrosolutions/ieasyhydro-python-sdk
         pip install -e ./apps/iEasyHydroForecast

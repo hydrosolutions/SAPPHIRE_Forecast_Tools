@@ -5,4 +5,4 @@ typing
 panel==1.2.2
 holoviews==1.17.1
 bokeh==3.2.1
-pytest
+pytest>=7.5.0
