@@ -59,7 +59,7 @@ def get_last_day_of_month(date: dt.date) -> dt.date:
 
 def get_predictor_dates(input_date: str, n: int):
     '''
-    Returns a list of dates from input_date - n to input_date - 1.
+    Returns a list of dates from input_date - n to input_date.
 
     Args:
         input_date (strftime): The starting date with format %YYYY-%MM-%DD.
@@ -97,6 +97,50 @@ def get_predictor_dates(input_date: str, n: int):
     except AttributeError as e:
         print(f'Error in get_predictor_dates: {e}')
         return None
+
+
+def get_predictor_datetimes(input_date: str, n: int):
+    '''
+    Returns a list of datetimes from input_date - n 00:00 to input_date 12:00.
+
+    Args:
+        input_date (strftime): The starting date with format %YYYY-%MM-%DD.
+        n (int): The number of days to go back.
+
+    Returns:
+        list: A list of datetime objects representing the start dates & times from
+            input_date - n at 00:00 to end dates & times input_date at 12:00 (local time of
+            data in iEasyHydro DB).
+
+    Raises:
+        TypeError: If input_date is not a datetime.date object.
+        ValueError: If n is not a positive integer.
+
+    Examples:
+        >>> get_predictor_dates('2021-05-15', 3)
+        [datetime.date(2021, 5, 15, 12, 0), datetime.date(2021, 5, 13, 0, 0)]
+    '''
+    try:
+        # Convert dates in dates_list to datetime.date objects
+        input_date = dt.datetime.strptime(input_date, '%Y-%m-%d')
+        print(input_date)
+
+        if not isinstance(n, int) or n <= 0:
+            raise ValueError('n must be a positive integer')
+
+        end_datetime = dt.datetime(input_date.year, input_date.month, input_date.day, 12, 0)
+        start_datetime = end_datetime - dt.timedelta(days=n, hours=12)
+        date_list = [start_datetime, end_datetime]
+
+        return date_list
+
+    except (TypeError, ValueError) as e:
+        print(f'Error in get_predictor_dates: {e}')
+        return None
+    except AttributeError as e:
+        print(f'Error in get_predictor_dates: {e}')
+        return None
+
 
 def round_discharge_trad_bulletin(value: float) -> str:
     '''
@@ -916,6 +960,14 @@ class Site:
         ieh_sdk = IEasyHydroSDK()
         in the main code.
 
+        Details:
+            The function retrieves sub-daily discharge data from the database
+            and sums it up to get the predictor for the current pentad.
+            The pentadal predictor for the pentad starting today + 1 day is
+            calculated as the sum of the average daily discharge of today - 2
+            days plus the average daily discharge of today - 1 day plus the
+            morning discharge of today.
+
         Args:
             sdk (fl.SDK): The SDK connection object set up by calling
             site (Site): The site object to get dangerous discharge for.
@@ -925,6 +977,7 @@ class Site:
         Returns:
             float: The predictor for the current pentad.
         '''
+
         try:
             # Test that dates is a list of dates
             if not all(isinstance(date, dt.date) for date in dates):
@@ -1001,6 +1054,130 @@ class Site:
                     'data_value': q_avg,
                     'local_date_time': None,
                     'utc_date_time': None})
+
+            # Sum the discharge over the past L days
+            q = np.nansum(df['data_value'])
+
+            if q < 0.0:
+                q == np.nan
+            site.predictor = q
+
+            # Return the dangerous discharge value
+            return q
+        except Exception:
+            print(f'Note: No daily discharge data for site {site.code} in DB. Returning None.')
+            return None
+
+    @classmethod
+    def from_DB_get_predictor_for_pentadal_forecast(cls, sdk, site, dates, lagdays=20):
+        '''
+        Calculate predictor from data retrieved from the data base.
+
+        The DB connection hast to be established using:
+        load_dotenv()
+        ieh_sdk = IEasyHydroSDK()
+        in the main code.
+
+        Details:
+            The function retrieves sub-daily discharge data from the database
+            and sums it up to get the predictor for the current pentad.
+            The pentadal predictor for the pentad starting today + 1 day is
+            calculated as the sum of the average daily discharge of today - 2
+            days plus the average daily discharge of today - 1 day plus the
+            morning discharge of today.
+
+        Args:
+            sdk (fl.SDK): The SDK connection object set up by calling
+            site (Site): The site object to get dangerous discharge for.
+            dates (list): A list of dates to get the predictor for.
+            lagdays (int): The number of days to go back to retrieve data.
+
+        Returns:
+            float: The predictor for the current pentad.
+        '''
+
+        try:
+            # Test that dates is a list of dates
+            if not all(isinstance(date, dt.datetime) for date in dates):
+                raise ValueError('Dates is not a list of dates')
+
+            L = len(dates)
+
+            # Define the date filter for the data request
+            filters = BasicDataValueFilters(
+                local_date_time__gte=min(dates),
+                local_date_time__lte=max(dates)
+            )
+            print(f'Reading data from site {site.code} with date range from {filters["local_date_time__gte"]} to {filters["local_date_time__lte"]}.')
+
+            predictor_discharge = sdk.get_data_values_for_site(
+                site.code,
+                'discharge_daily',
+                filters=filters)
+
+            # Test if we have data or if some of the data is smaller than 0
+            # Increase the number of lag days to go back for averaging if any of
+            # the above is true
+            if not predictor_discharge or any(d['data_value'] < 0 for d in predictor_discharge['data_values']):
+                # go back up to 20 days to retrieve data
+                counter = 0
+                while (not predictor_discharge and counter < lagdays):
+                    filters = BasicDataValueFilters(
+                        local_date_time__gte=filters['local_date_time__gte'] - dt.timedelta(days=1),
+                        local_date_time__lte=filters['local_date_time__lte']
+                    )
+                    predictor_discharge = sdk.get_data_values_for_site(
+                        site.code,
+                        'discharge_daily',
+                        filters=filters)
+                    counter += 1
+                    print(f'Note: Not enough data retrieved from DB. New date range from {filters["local_date_time__gte"]} to {filters["local_date_time__lte"]}.')
+
+                # Test if we have data now
+                if not predictor_discharge:
+                    print(f'No recent data for site {site.code} in DB. No forecast available.')
+                    return None
+
+            predictor_discharge = predictor_discharge['data_values']
+            # Check if we have enough data
+            if len(predictor_discharge) < L:
+                counter = 0
+                while (len(predictor_discharge) < L and counter < lagdays):
+                    filters = BasicDataValueFilters(
+                        local_date_time__gte=filters['local_date_time__gte'] - dt.timedelta(days=1),
+                        local_date_time__lte=filters['local_date_time__lte']
+                    )
+                    predictor_discharge = sdk.get_data_values_for_site(
+                        site.code,
+                        'discharge_daily',
+                        filters=filters)
+                    counter += 1
+                    print(f'Note: Not enough data retrieved from DB. New date range from {filters["local_date_time__gte"]} to {filters["local_date_time__lte"]}.')
+                    predictor_discharge = predictor_discharge['data_values']
+
+            # Create a DataFrame from the predictor_discharge list
+            df = pd.DataFrame(predictor_discharge)
+
+            # Convert values smaller than 0 to NaN
+            df.loc[df['data_value'] < 0, 'data_value'] = np.nan
+
+            # If we still have missing data, we interpolate the existing data.
+            # We take the average of the existing data to fill the gaps.
+            if (len(df) < L):
+                # Get the average of the existing data
+                length = np.sum(~np.isnan(df['data_value']))
+                q_avg = np.nansum(df['data_value']) / length
+
+                df.loc[len(df)] = pd.DataFrame({
+                    'data_value': q_avg,
+                    'local_date_time': None,
+                    'utc_date_time': None})
+
+            print("\n\nDEBUG: from_DB_get_predictor_for_pentadal_forecasts: df: ", df)
+            # Aggregate the discharge data to daily values
+            df['Date'] = pd.to_datetime(df['local_date_time']).dt.date
+            df = df.groupby('Date').mean().reset_index()
+            print("\n\nDEBUG: from_DB_get_predictor_for_pentadal_forecasts: df: ", df)
 
             # Sum the discharge over the past L days
             q = np.nansum(df['data_value'])

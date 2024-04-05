@@ -267,6 +267,10 @@ def get_predictor_dates(start_date, forecast_flags):
     Gets dates for which to aggregate the predictors for the linear regression
     method.
 
+    Details:
+        For pentadal forecasts, the hydromet uses the sum of the last 2 days
+        discharge plus the morning discharge of today.
+
     Arguments:
         start_date (datetime.date) Date on which the forecast is produced.
         forecast_flags (config.ForecastFlags) Flags that identify the forecast
@@ -280,7 +284,7 @@ def get_predictor_dates(start_date, forecast_flags):
     predictor_dates = PredictorDates()
     # Get the dates to get the predictor from
     if forecast_flags.pentad:
-        # For pentadal forecasts, the hydromet uses the sum of the last 3 days discharge.
+        # For pentadal forecasts, the hydromet uses the sum of the last 2 days discharge.
         predictor_dates.pentad = fl.get_predictor_dates(start_date.strftime('%Y-%m-%d'), 3)
         # if predictor_dates is None, raise an error
         if predictor_dates.pentad is None:
@@ -288,6 +292,46 @@ def get_predictor_dates(start_date, forecast_flags):
     if forecast_flags.decad:
         # For decad forecasts, the hydromet uses the average of the last 10 days discharge.
         predictor_dates.decad = fl.get_predictor_dates(start_date.strftime('%Y-%m-%d'), 10)
+        # if predictor_dates is None, raise an error
+        if predictor_dates.decad is None:
+            raise ValueError("The predictor dates are not valid.")
+
+    logger.debug(f"   Predictor dates for pentadal forecasts: {predictor_dates.pentad}")
+    logger.debug(f"   Predictor dates for decad forecasts: {predictor_dates.decad}")
+
+    logger.info("   ... done")
+    return predictor_dates
+
+def get_predictor_datetimes(start_date, forecast_flags):
+    """
+    Gets datetimes for which to aggregate the predictors for the linear regression
+    method.
+
+    Details:
+        For pentadal forecasts, the hydromet uses the sum of the last 2 days
+        discharge plus the morning discharge of today.
+
+    Arguments:
+        start_date (datetime.date) Date on which the forecast is produced.
+        forecast_flags (config.ForecastFlags) Flags that identify the forecast
+            horizons serviced on start_date
+
+    Return:
+        list: A list of dates for which to aggregate the predictors for the
+            linear regression method.
+    """
+    # Initialise the predictor_dates object
+    predictor_dates = PredictorDates()
+    # Get the dates to get the predictor from
+    if forecast_flags.pentad:
+        # For pentadal forecasts, the hydromet uses the sum of the last 2 days discharge.
+        predictor_dates.pentad = fl.get_predictor_datetimes(start_date.strftime('%Y-%m-%d'), 2)
+        # if predictor_dates is None, raise an error
+        if predictor_dates.pentad is None:
+            raise ValueError("The predictor dates are not valid.")
+    if forecast_flags.decad:
+        # For decad forecasts, the hydromet uses the average of the last 10 days discharge.
+        predictor_dates.decad = fl.get_predictor_datetimes(start_date.strftime('%Y-%m-%d'), 9)
         # if predictor_dates is None, raise an error
         if predictor_dates.decad is None:
             raise ValueError("The predictor dates are not valid.")
@@ -558,20 +602,47 @@ def get_time_series_from_DB(ieh_sdk, library):
     return db_data
 
 def filter_roughly_for_outliers(combined_data, window_size=15):
+    """
+    Filters outliers in the 'Q_m3s' column of the input DataFrame.
+
+    This function groups the input DataFrame by the 'Code' column and applies a rolling window outlier detection method to the 'Q_m3s' column of each group. Outliers are defined as values that are more than 3 standard deviations away from the rolling mean. These outliers are replaced with NaN.
+
+    Parameters:
+    combined_data (pd.DataFrame): The input DataFrame. Must contain 'Code' and 'Q_m3s' columns.
+    window_size (int, optional): The size of the rolling window used for outlier detection. Default is 15.
+
+    Returns:
+    pd.DataFrame: The input DataFrame with outliers in the 'Q_m3s' column replaced with NaN.
+    """
     # Preliminary filter for outliers
-    # We try filtering out the outliers.
-    # calculate rolling mean and standard deviation
-    rolling_mean = combined_data['Q_m3s'].rolling(window_size).mean()
-    rolling_std = combined_data['Q_m3s'].rolling(window_size).std()
+    def filter_group(group, window_size):
+        # Calculate the rolling mean and standard deviation
+        # Will put NaNs in the first window_size-1 values and therefore not
+        # filter outliers in the first window_size-1 values
+        rolling_mean = group['Q_m3s'].rolling(window_size).mean()
+        rolling_std = group['Q_m3s'].rolling(window_size).std()
 
-    # calculate upper and lower bounds for outliers
-    num_std = 3
-    upper_bound = rolling_mean + num_std * rolling_std
-    lower_bound = rolling_mean - num_std * rolling_std
+        # Calculate the upper and lower bounds for outliers
+        num_std = 3.5  # Number of standard deviations
+        upper_bound = rolling_mean + num_std * rolling_std
+        lower_bound = rolling_mean - num_std * rolling_std
 
-    # Set Q_m3m which exceeds lower and upper bounds to nan
-    combined_data.loc[combined_data['Q_m3s'] > upper_bound, 'Q_m3s'] = np.nan
-    combined_data.loc[combined_data['Q_m3s'] < lower_bound, 'Q_m3s'] = np.nan
+        #print("DEBUG: upper_bound: ", upper_bound)
+        #print("DEBUG: lower_bound: ", lower_bound)
+        #print("DEBUG: Q_m3s: ", group['Q_m3s'])
+
+        # Set Q_m3s which exceeds lower and upper bounds to nan
+        group.loc[group['Q_m3s'] > upper_bound, 'Q_m3s'] = np.nan
+        group.loc[group['Q_m3s'] < lower_bound, 'Q_m3s'] = np.nan
+
+        return group
+
+    # Apply the function to each group
+    combined_data = combined_data.groupby('Code').apply(filter_group, window_size)
+
+    # Ungroup the DataFrame
+    combined_data = combined_data.reset_index(drop=True)
+
     return combined_data
 
 
