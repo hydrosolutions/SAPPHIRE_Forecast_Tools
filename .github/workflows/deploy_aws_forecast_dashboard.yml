@@ -1,4 +1,4 @@
-name: Deploy forecast dashboard
+name: Deploy forecast dashboard to AWS
 
 env:
     IMAGE_NAME: mabesa/sapphire-dashboard
@@ -16,7 +16,10 @@ jobs:
         python-version: ["3.10", "3.11"]
 
     steps:
-    - uses: actions/checkout@v4
+    - name: Check out the repository
+      uses: actions/checkout@v4
+      with:
+        ref: deploy_aws
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v5
       with:
@@ -52,7 +55,10 @@ jobs:
         python-version: ["3.10", "3.11"]
 
     steps:
-    - uses: actions/checkout@v4
+    - name: Check out the repository
+      uses: actions/checkout@v4
+      with:
+        ref: deploy_aws
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v5
       with:
@@ -88,8 +94,10 @@ jobs:
     steps:
     # To use this repository's private action, you must check out the
     # repository.
-    - name: Checkout
+    - name: Check out the repository
       uses: actions/checkout@v4
+      with:
+        ref: deploy_aws
 
     # Rename the image
     - name: Rename the image
