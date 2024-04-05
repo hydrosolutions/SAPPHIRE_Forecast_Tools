@@ -285,7 +285,7 @@ def get_predictor_dates(start_date, forecast_flags):
     # Get the dates to get the predictor from
     if forecast_flags.pentad:
         # For pentadal forecasts, the hydromet uses the sum of the last 2 days discharge.
-        predictor_dates.pentad = fl.get_predictor_dates(start_date.strftime('%Y-%m-%d'), 2)
+        predictor_dates.pentad = fl.get_predictor_dates(start_date.strftime('%Y-%m-%d'), 3)
         # if predictor_dates is None, raise an error
         if predictor_dates.pentad is None:
             raise ValueError("The predictor dates are not valid.")

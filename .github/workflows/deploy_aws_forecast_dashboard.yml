@@ -94,7 +94,7 @@ jobs:
     # Rename the image
     - name: Rename the image
       run: |
-        echo "IMAGE_TAG=deploy" >> $GITHUB_ENV
+        echo "IMAGE_TAG=deployaws" >> $GITHUB_ENV
 
     # Run the dockerization & deployment script
     - name: Build Docker image
