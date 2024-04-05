@@ -65,11 +65,9 @@ jobs:
         echo "PYTHONPATH=${GITHUB_WORKSPACE}/apps/iEasyHydroForecast" >> $GITHUB_ENV
     - name: Install dependencies
       run: |
-        pwd
-        ls
         python -m pip install --upgrade pip
         python -m pip install flake8
-        pip install -r ./pyton_requirements.txt
+        pip install -r ./python_requirements.txt
         pip install git+https://github.com/hydrosolutions/ieasyhydro-python-sdk
         pip install git+https://github.com/hydrosolutions/ieasyhydro-python-sdk
         pip install -e ./apps/iEasyHydroForecast
