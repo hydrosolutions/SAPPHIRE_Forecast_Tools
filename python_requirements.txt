@@ -6,3 +6,4 @@ panel==1.2.2
 holoviews==1.17.1
 bokeh==3.2.1
 pytest>=7.5.0
+dopython-dotenv==1.0.0
