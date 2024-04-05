@@ -58,5 +58,5 @@ EXPOSE 5006
 # CMD test -f apps/forecast_dashboard/pentad_dashboard.py && echo "File exists" || echo "File does not exist"
 
 # Run the application.
-CMD ["panel", "serve", "--allow-websocket-origin=18-185-239-60:5006", "apps/forecast_dashboard/pentad_dashboard.py", "--show", "--autoreload"]
+CMD ["panel", "serve", "--allow-websocket-origin=18.185.239.60:5006", "apps/forecast_dashboard/pentad_dashboard.py", "--show", "--autoreload"]
 
