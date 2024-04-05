@@ -62,7 +62,8 @@ def main():
     #   writing sites information to as list of Site objects
     fc_sites = data_processing.get_fc_sites(ieh_sdk, backend_has_access_to_db, db_sites)
     # - identify dates for which to aggregate predictor data
-    predictor_dates = data_processing.get_predictor_dates(start_date, forecast_flags)
+    #predictor_dates = data_processing.get_predictor_dates(start_date, forecast_flags)
+    predictor_dates = data_processing.get_predictor_datetimes(start_date, forecast_flags)
     # Read discharge data from excel and iEasyHydro database
     modified_data = data_processing.get_station_data(ieh_sdk, backend_has_access_to_db, start_date, fc_sites)
 
@@ -77,7 +78,7 @@ def main():
 
     # forecasting
     # - get predictor from the complete data and write it to site.predictor
-    forecasting.get_predictor(modified_data, start_date, fc_sites, ieh_sdk, backend_has_access_to_db, predictor_dates.pentad)
+    forecasting.get_predictor_from_datetimes(modified_data, start_date, fc_sites, ieh_sdk, backend_has_access_to_db, predictor_dates.pentad)
     forecasting.perform_forecast(fc_sites, forecast_pentad_of_year, result_df)
     result2_df = forecasting.calculate_forecast_boundaries(result_df, fc_sites, forecast_pentad_of_year)
 

@@ -4,10 +4,277 @@ import numpy as np
 import shutil
 import datetime as dt
 import subprocess
+import json
 from openpyxl import load_workbook
 import time
 from backend.src import config, data_processing, forecasting, output_generation
 from ieasyhydro_sdk.sdk import IEasyHydroSDK
+
+def test_overall_output_with_demo_data():
+    # Read data for one station.
+    # Set up the test environment
+    # Temporary directory to store output
+    tmpdir = "backend/tests/test_files/temp2"
+    # Clean up the folder in case it already exists (for example because a previous test failed)
+    if os.path.exists(tmpdir):
+        shutil.rmtree(tmpdir)
+    # Create the directory
+    os.makedirs(tmpdir, exist_ok=True)
+    # Load the environment
+    config.load_environment()
+    # Create the intermediate data directory
+    os.makedirs(
+        os.getenv("ieasyforecast_intermediate_data_path"),
+        exist_ok=True)
+    # Copy the input directories to tmpdir
+    temp_ieasyforecast_configuration_path = os.path.join(tmpdir, "apps/config")
+    temp_ieasyreports_templates_directory_path = os.path.join(tmpdir, "data/templates")
+    temp_ieasyreports_report_output_path = os.path.join(tmpdir, "data/reports")
+    temp_ieasyforecast_gis_directory_path = os.path.join(tmpdir, "data/GIS")
+    temp_ieasyforecast_daily_discharge_path = os.path.join(tmpdir, "data/daily_runoff")
+    temp_ieasyforecast_locale_dir = os.path.join(tmpdir, "apps/config/locale")
+    temp_log_file = os.path.join(tmpdir, "backend.log")
+
+    shutil.copytree("config", temp_ieasyforecast_configuration_path)
+    shutil.copytree("../data", os.path.join(tmpdir, "data"))
+    # Copy the demo data for station 15678 to the data directory
+    shutil.copy("backend/tests/test_files/15678_test_data.xlsx", temp_ieasyforecast_daily_discharge_path)
+    shutil.copy("backend/tests/test_files/15679_test_data.xlsx", temp_ieasyforecast_daily_discharge_path)
+
+    # Update the environment variables to point to the temporary directory
+    os.environ["ieasyforecast_configuration_path"] = temp_ieasyforecast_configuration_path
+    os.environ["ieasyreports_template_directory_path"] = temp_ieasyreports_templates_directory_path
+    os.environ["ieasyreports_report_output_path"] = temp_ieasyreports_report_output_path
+    os.environ["ieasyforecast_gis_directory_path"] = temp_ieasyforecast_gis_directory_path
+    os.environ["ieasyforecast_daily_discharge_path"] = temp_ieasyforecast_daily_discharge_path
+    os.environ["ieasyforecast_locale_dir"] = temp_ieasyforecast_locale_dir
+    os.environ["log_file"] = temp_log_file
+
+    # Edit the configuration files to use the demo data for station 15678
+    # Get the path for the all stations configuration file
+    all_stations_file = os.path.join(
+        os.getenv("ieasyforecast_configuration_path"),
+        os.getenv("ieasyforecast_config_file_all_stations")
+    )
+    # Write meta data for the demo station 15678 to the all stations
+    # configuration file.
+    json_string = '{"15678": {"code": "15678", "name_ru": "Demo station", "river_ru": "Demo river", "punkt_ru": "Demo punkt", "region": "Demo region", "basin": "Demo basin", "lat": 47.0, "long": 8.0, "elevation": 500.0, "country": "Switzerland", "river": "Demo river"}, "15679": {"code": "15679", "name_ru": "Demo station 2", "river_ru": "Demo river 2", "punkt_ru": "Demo punkt 2", "region": "Demo region 2", "basin": "Demo basin 2", "lat": 47.1, "long": 8.1, "elevation": 501.0, "country": "Switzerland", "river": "Demo river 2"}}'
+    # Wrap the JSON string in another object
+    json_dict = {"stations_available_for_forecast": json.loads(json_string)}
+    # Convert the dictionary to a pretty-printed JSON string
+    json_string_pretty = json.dumps(json_dict, ensure_ascii=False, indent=4)
+    # Write the JSON string to a file
+    with open(all_stations_file, 'w', encoding='utf-8') as f:
+        f.write(json_string_pretty)
+    # Also edit the files config_file_station_selection and config_file_output
+    # to use the demo station 15678
+    # Get the path for the station selection configuration file
+    station_selection_file = os.path.join(
+        os.getenv("ieasyforecast_configuration_path"),
+        os.getenv("ieasyforecast_config_file_station_selection")
+    )
+    # Write the code for the demo station 15678 to the station selection
+    # configuration file.
+    json_string = json.dumps({"stationsID": ["15678", "15679"]}, ensure_ascii=False, indent=4)
+    with open(station_selection_file, 'w', encoding='utf-8') as f:
+        f.write(json_string)
+    # Same for the development restriction file
+    restrict_stations_file = os.path.join(
+        os.getenv("ieasyforecast_configuration_path"),
+        os.getenv("ieasyforecast_restrict_stations_file")
+    )
+    json_string = json.dumps({"stationsID": ["15678", "15679"]}, ensure_ascii=False, indent=4)
+    with open(restrict_stations_file, 'w', encoding='utf-8') as f:
+        f.write(json_string)
+    # And now we write the config_output file
+    output_file = os.path.join(
+        os.getenv("ieasyforecast_configuration_path"),
+        os.getenv("ieasyforecast_config_file_output")
+    )
+    json_string = json.dumps({"write_excel": False}, ensure_ascii=False, indent=4)
+    with open(output_file, 'w', encoding='utf-8') as f:
+        f.write(json_string)
+
+    # Define start_date
+    start_date = dt.datetime(2022, 5, 5)
+
+    # Set forecast_flags
+    forecast_flags = config.ForecastFlags(pentad=True)
+
+    # Get bulletin date
+    bulletin_date = config.get_bulletin_date(start_date)
+    assert bulletin_date == "2022-05-06", "The bulletin date is not as expected"
+
+    ieh_sdk = IEasyHydroSDK()  # ieasyhydro
+    backend_has_access_to_db = data_processing.check_database_access(ieh_sdk)
+    assert backend_has_access_to_db == False, "The backend unexpectedly does have access to the database"
+
+    # - identify sites for which to produce forecasts
+    #   reading sites from DB and config files
+    db_sites = data_processing.get_db_sites(ieh_sdk, backend_has_access_to_db)
+    #   writing sites information to as list of Site objects
+    fc_sites = data_processing.get_fc_sites(ieh_sdk, backend_has_access_to_db, db_sites)
+    assert len(fc_sites) == 2, "The number of sites is not as expected"
+    assert fc_sites[0].code == "15678", "The first site code is not as expected"
+    assert fc_sites[1].code == "15679", "The second site code is not as expected"
+    # The predictors should be -10000.0 for both sites as no predictor should be
+    # assigned at this point
+    assert fc_sites[0].predictor == -10000.0, "The first predictor is not as expected"
+
+    # - identify dates for which to aggregate predictor data
+    predictor_dates = data_processing.get_predictor_dates(start_date, forecast_flags)
+    assert predictor_dates.pentad == [dt.date(2022, 5, 4), dt.date(2022, 5, 3), dt.date(2022, 5, 2)], "The predictor date is not as expected"
+
+    # Read discharge data from excel and iEasyHydro database
+    modified_data = data_processing.get_station_data(ieh_sdk, backend_has_access_to_db, start_date, fc_sites)
+
+    forecast_pentad_of_year = data_processing.get_forecast_pentad_of_year(bulletin_date)
+    data_processing.save_discharge_avg(modified_data, fc_sites, forecast_pentad_of_year)
+
+    output_generation.write_hydrograph_data(modified_data)
+
+    # Test if the files were created
+    assert os.path.exists(
+        os.path.join(os.getenv("ieasyforecast_intermediate_data_path"),
+                     os.getenv("ieasyforecast_hydrograph_pentad_file")))
+    assert os.path.exists(
+        os.path.join(os.getenv("ieasyforecast_intermediate_data_path"),
+                        os.getenv("ieasyforecast_hydrograph_day_file")))
+    # Read in the files and check the content
+    saved_pentad = pd.read_csv(
+        os.path.join(os.getenv("ieasyforecast_intermediate_data_path"),
+                        os.getenv("ieasyforecast_hydrograph_pentad_file")))
+    saved_day = pd.read_csv(
+        os.path.join(os.getenv("ieasyforecast_intermediate_data_path"),
+                        os.getenv("ieasyforecast_hydrograph_day_file")))
+
+    # 0. Test if the content of saved_day corresponds to the content of the
+    #   demo data for station 15678
+    # Read all excel sheets for stations 15678 and 15679 into one dataframe
+    # Get a list of strings from 2017 to 2018
+    years = [str(i) for i in range(2017, 2019)]
+    files = [os.path.join(os.getenv("ieasyforecast_daily_discharge_path"), "15678_test_data.xlsx"),
+             os.path.join(os.getenv("ieasyforecast_daily_discharge_path"), "15679_test_data.xlsx")]
+    # Read in data from excel where the sheet names are stored in the years list and concatenate all the dataframes
+    for file in files:
+        temp = pd.concat([pd.read_excel(file, sheet_name=year) for year in years])
+        temp['Code'] = int(file.split("/")[-1].split("_")[0])
+        if file == files[0]:
+            demo_data = temp
+        else:
+            demo_data = pd.concat([demo_data, temp])
+    temp['Code'] = temp['Code'].astype(int)
+    print(demo_data.head(10))
+
+    # Reformat saved_day to long format
+    saved_day_long = saved_day.melt(
+        id_vars=['Code', 'day_of_year'], var_name='Year', value_name='discharge')
+    #print(saved_day_long.head(10))
+    # Derive a date column from the year and day_of_year columns
+    saved_day_long['Code'] = saved_day_long['Code'].astype(int)
+    saved_day_long['Year'] = saved_day_long['Year'].astype(int)
+    saved_day_long['day_of_year'] = saved_day_long['day_of_year'].astype(int)
+    saved_day_long['dates'] = saved_day_long.apply(
+        lambda x: dt.datetime(int(x['Year']), 1, 1) + dt.timedelta(days=int(x['day_of_year']) - 1), axis=1)
+    # Merge saved_day_long with demo_data for code == 15678 by Date
+    merged_data = pd.merge(demo_data, saved_day_long.loc[:, ["Code", "dates", "discharge"]],
+                           on=['Code','dates'], how='inner')
+
+    print(merged_data.head(10))
+    # Print the rows where merged_data['discharge'] and merged_data['values'] are not the same
+    #print(merged_data.loc[abs(merged_data['discharge'] - merged_data['values']) > 1e-6])
+    # With the current settings for dealing with outliers, we have exactly 2
+    # rows where the values are not the same.
+    # Assert if there are exactly 2 rows where the values are not the same
+    assert len(merged_data.loc[abs(merged_data['discharge'] - merged_data['values']) > 1e-6]) == 2
+    # Test if the discharge values are the same
+    #assert max(merged_data['values'].values - merged_data['discharge'].values) < 1e-6
+
+    # 1. Test if the content of saved_pentad corresponds to the content of the
+    #   demo data for station 15678
+    # Reformat saved_pentad to long format
+    saved_pentad_long = saved_pentad.melt(
+        id_vars=['Code', 'pentad'], var_name='Year', value_name='discharge')
+    # Convert the code, pentad and year columns to int
+    saved_pentad_long['Year'] = saved_pentad_long['Year'].astype(int)
+    saved_pentad_long['pentad'] = saved_pentad_long['pentad'].astype(int)
+    saved_pentad_long['Code'] = saved_pentad_long['Code'].astype(int)
+    #print(saved_pentad_long.head(10))
+
+    # 2. Derive pentadal average discharge from saved_day_long
+    # Create a column is_forecast_date in saved_day_long that is True if the day
+    # of the date is either 5, 10, 15, 20 or 25 or the last day of the month.
+    saved_day_long['is_forecast_date'] = saved_day_long['dates'].apply(
+        lambda x: x.day in [5, 10, 15, 20, 25] or x.day == x.to_period('M').to_timestamp().days_in_month)
+
+    # Calculate the average discharge in column discharge_avg for each Code,
+    # Year from one day after is_forecast_date == True to 5 days after
+    # is_forecast_date == True. Group by Code & sort by dates.
+    saved_day_long['avg_ref'] = saved_day_long.groupby('Code')['discharge'].transform(
+        lambda x: x.shift(-5).rolling(5).mean())
+    # For only one station:
+    # saved_day_long['avg_ref'] = saved_day_long['discharge'].shift(-5).rolling(5).mean()
+    # That's a bit cheating with the last pentad of the month which in actual
+    # fact has variable length!
+
+    # Add a column pentad to saved_day_long that is the pentad of the year for
+    # the date. Its an integer from 1 to 72.
+    saved_day_long['pentad'] = saved_day_long['dates'].apply(
+        lambda x: data_processing.get_forecast_pentad_of_year(x))
+    # Convert pentad to int
+    saved_day_long['pentad'] = saved_day_long['pentad'].astype(int)
+
+    # Merge the data in saved_day_long with the data in saved_pentad_long
+    merged_data = pd.merge(
+        saved_day_long, saved_pentad_long,
+        on=['Code', 'Year', 'pentad'], suffixes=('_daily', '_pentad_csv'))
+    print(merged_data.head(20))
+
+    # Where is_forecast_date == True, avg_ref should be the same as
+    # Only keep the rows where is_forecast_date == True
+    merged_data = merged_data.loc[merged_data['is_forecast_date'] == True]
+    # Only print the rows where the difference between avg_ref and
+    # discharge_pentad_csv is larger than 1e-6 and where is_forecast_date == True
+    print(merged_data.loc[abs(merged_data['avg_ref'] - merged_data['discharge_pentad_csv']) > 1e-6])
+    # discharge_pentad_csv
+    assert max(abs(merged_data['avg_ref'] - merged_data['discharge_pentad_csv'])) < 1e-6
+
+    # This works if we have only one station. And it also works when we have 2
+    # stations.
+
+    # Clean up the environment
+    shutil.rmtree(tmpdir)
+    os.environ.pop("IEASYHYDRO_HOST")
+    os.environ.pop("IEASYHYDRO_USERNAME")
+    os.environ.pop("IEASYHYDRO_PASSWORD")
+    os.environ.pop("ieasyforecast_configuration_path")
+    os.environ.pop("ieasyforecast_config_file_all_stations")
+    os.environ.pop("ieasyforecast_config_file_station_selection")
+    os.environ.pop("ieasyforecast_config_file_output")
+    os.environ.pop("ieasyforecast_intermediate_data_path")
+    os.environ.pop("ieasyforecast_hydrograph_day_file")
+    os.environ.pop("ieasyforecast_hydrograph_pentad_file")
+    os.environ.pop("ieasyforecast_results_file")
+    os.environ.pop("ieasyreports_templates_directory_path")
+    os.environ.pop("ieasyforecast_template_pentad_bulletin_file")
+    os.environ.pop("ieasyforecast_template_pentad_sheet_file")
+    os.environ.pop("ieasyreports_report_output_path")
+    os.environ.pop("ieasyforecast_bulletin_file_name")
+    os.environ.pop("ieasyforecast_sheet_file_name")
+    os.environ.pop("ieasyforecast_gis_directory_path")
+    os.environ.pop("ieasyforecast_country_borders_file_name")
+    os.environ.pop("ieasyforecast_daily_discharge_path")
+    os.environ.pop("ieasyforecast_locale_dir")
+    os.environ.pop("log_file")
+    os.environ.pop("log_level")
+    os.environ.pop("ieasyforecast_restrict_stations_file")
+    os.environ.pop("ieasyforecast_last_successful_run_file")
+
+
+
+
+
+
 
 # Tests if the backend produces the expected output
 def test_overall_output_step_by_step():
@@ -91,6 +358,110 @@ def test_overall_output_step_by_step():
     # The last value in discharge sum should be 2.43
     expected_predictor = 2.43
     assert round(modified_data['discharge_sum'].iloc[-1], 2) == expected_predictor, "The last value in discharge sum is not as expected"
+    data_for_comp = modified_data.reset_index(drop=True)[["Code", "Date", "Q_m3s"]]
+    # Only keep data for code 12176
+    data_for_comp = data_for_comp.loc[data_for_comp['Code'] == '12176'][["Date", "Q_m3s"]]
+
+    # Compare data read with get_station_data with expected data read from excel.
+    # List of sheet names you want to read
+    sheets = ['2000', '2001', '2002', '2003']
+    # Read the data from the sheets
+    dataframes = [pd.read_excel('../data/daily_runoff/12176_Sihl_example_river_runoff.xlsx', sheet_name=sheet) for sheet in sheets]
+    # Concatenate the data
+    sihl_data = pd.concat(dataframes)
+    # Rename the columns to Date and discharge
+    sihl_data.columns = ['Date', 'discharge']
+
+    # Compare the data points read from excel to the ones read from the daily
+    # hydrograph file
+    hydrograph_day = pd.read_csv("backend/tests/test_files/test_one_step_hydrograph_day.csv")
+    # Reformat the hydrograph day data to have the same format as the sihl_data
+    # pivot the hydrograph day data to the long format
+    hydrograph_day = hydrograph_day.melt(id_vars=['Code', 'day_of_year'], var_name='year', value_name='discharge')
+    # Convert the year column to integer
+    hydrograph_day['year'] = hydrograph_day['year'].astype(int)
+    hydrograph_day['day_of_year'] = hydrograph_day['day_of_year'].astype(int)
+
+    # Sort the data
+    hydrograph_day = hydrograph_day.sort_values(['Code', 'year', 'day_of_year'])
+    # Create a date column based on the year and day_of_year columns
+    hydrograph_day["Date"] = hydrograph_day.apply(lambda x: dt.datetime(int(x['year']), 1, 1) + dt.timedelta(days=int(x['day_of_year']) - 1), axis=1)
+
+    # Merge sihl_data with hydrograph_day for code == 12176 by Date
+    merged_data = pd.merge(sihl_data, hydrograph_day.loc[hydrograph_day['Code'] == 12176, ["Date", "discharge"]],
+                           on='Date', how='inner', suffixes=('_excel', '_hydrograph_csv'))
+    # Also merge the data for comp with hydrograph_day for code == 12176 by Date
+    merged_data_comp = pd.merge(merged_data, data_for_comp, on='Date', how='inner')
+
+    # Test if modified_data is concistent with hydrograph_day data for all
+    # stations.
+    modified_data_comp2 = modified_data.copy()
+    modified_data_comp2 = modified_data_comp2.reset_index(drop=True)[["Date", "Q_m3s", "Code", 'issue_date', 'discharge_sum', 'discharge_avg', 'pentad_in_year']]
+    modified_data_comp2['Code'] = modified_data_comp2['Code'].astype(int)
+    modified_data_comp2['pentad_in_year'] = modified_data_comp2['pentad_in_year'].astype(int)
+    # Merge the two data frames on Code and Date
+    merged_data_all = pd.merge(
+        modified_data_comp2[['Date', 'Q_m3s', 'Code', 'issue_date', 'discharge_sum', 'discharge_avg', 'pentad_in_year']].reset_index(drop=True),
+        hydrograph_day[['Code', 'Date', 'discharge']].reset_index(drop=True), on=['Code', 'Date'])
+
+    # print the rows where Q_m3s and discharge are not the same
+    #print(merged_data_all.loc[abs(merged_data_all['discharge'] - merged_data_all['Q_m3s']) > 1e-6])
+    # Put this into an assert
+    assert max(abs(merged_data_all['discharge'] - merged_data_all['Q_m3s'])) < 1e-6, "The discharge data is not as expected"
+
+    # Read hydrograph pentad data from csv file
+    hydrograph_pentad = pd.read_csv("backend/tests/test_files/test_one_step_hydrograph_pentad.csv")
+    # Format long
+    hydrograph_pentad = hydrograph_pentad.melt(id_vars=['Code', 'pentad'], var_name='year', value_name='discharge')
+    # Rename pentad to pentad_in_year
+    hydrograph_pentad['pentad_in_year'] = hydrograph_pentad['pentad'].astype(int)
+    # Convert Code and year to int
+    hydrograph_pentad['Code'] = hydrograph_pentad['Code'].astype(int)
+    hydrograph_pentad['year'] = hydrograph_pentad['year'].astype(int)
+
+    # Add a year column to modified_data_comp2 based on the Date column
+    modified_data_comp2['year'] = modified_data_comp2['Date'].dt.year.astype(int)
+
+    # Merge the data in hydrograph_pentad with the data in modified_data_comp2
+    merged_data_pentad = pd.merge(
+        modified_data_comp2, hydrograph_pentad,
+        on=['Code', 'year', 'pentad_in_year'], suffixes=('_daily', '_pentad_csv'))
+    print("\n\nDEBUG: test_overall_output_step_by_step: merged_data_pentad: \n", merged_data_pentad.head(10))
+    #print(merged_data_pentad.tail(10))
+
+    # On issue_date == True, discharge_avg should be the same as discharge.
+    # Only keep the rows where issue_date == True
+    merged_data_pentad = merged_data_pentad.loc[merged_data_pentad['issue_date'] == True]
+    # Only print the rows where the difference between discharge_avg and
+    # discharge is larger than 1e-6 and where issue_date == True
+    #print(merged_data_pentad.loc[abs(merged_data_pentad['discharge_avg'] - merged_data_pentad['discharge']) > 1e-6])
+
+    # Test this with an assert
+    assert max(abs(merged_data_pentad['discharge_avg'] - merged_data_pentad['discharge'])) < 1e-6, "The discharge data is not as expected"
+
+    # Try the reformatting of the hydrograph data again independently and
+    # compare the results with the data in merged_data_pentad.
+    hydrograph_data_test2 = output_generation.validate_hydrograph_data(modified_data)
+    hydrpgraph_pentad_test2, hydrograph_day_test2 = output_generation.reformat_hydrograph_data(hydrograph_data_test2)
+
+    # Format long for hydrograph_pentad
+    hydrograph_pentad_long_test2 = hydrpgraph_pentad_test2.reset_index(drop=False).melt(
+        id_vars=['Code', 'pentad'], var_name='year', value_name='discharge')
+    # Convert the code, pentad and year columns to int
+    hydrograph_pentad_long_test2['year'] = hydrograph_pentad_long_test2['year'].astype(int)
+    hydrograph_pentad_long_test2['pentad'] = hydrograph_pentad_long_test2['pentad'].astype(int)
+    hydrograph_pentad_long_test2['Code'] = hydrograph_pentad_long_test2['Code'].astype(int)
+    # Merge hydrograph_pentad_long_test2 with merged_data_pentad on Code, Year and pentad
+    merged_data_test2 = pd.merge(
+        merged_data_pentad, hydrograph_pentad_long_test2,
+        on=['Code', 'year', 'pentad'], suffixes=('_ref', '_pentad_reformat'))
+
+    # Test if discharge_ref is the same as discharge_pentad_reformat
+    assert max(abs(merged_data_test2['discharge_ref'] - merged_data_test2['discharge_pentad_reformat'])) < 1e-6, "The discharge data is not as expected"
+
+    # The columns discharge_hydrograph_csv and Q_m3s should be the same
+    merged_data_comp['diff'] = merged_data_comp['discharge_hydrograph_csv'] - merged_data_comp['Q_m3s']
+    assert merged_data_comp['diff'].max() < 1e-6, "The discharge data is not as expected"
 
     forecast_pentad_of_year = data_processing.get_forecast_pentad_of_year(bulletin_date)
     data_processing.save_discharge_avg(modified_data, fc_sites, forecast_pentad_of_year)
@@ -98,6 +469,54 @@ def test_overall_output_step_by_step():
     # Reformat the data for comparison with written data
     hydrograph_data = output_generation.validate_hydrograph_data(modified_data)
     hydrograph_pentad, hydrograph_day = output_generation.reformat_hydrograph_data(hydrograph_data)
+
+    # The data in hydrograph_pentad should be consistent with data in
+    # hydrograph_day. The data in hydrograph_pentad should be the sum of the
+    # data in hydrograph_day for each pentad.
+    # Reformat hydrograph_day to long format
+    hydrograph_day_long = hydrograph_day.reset_index(drop=False).melt(
+        id_vars=['Code', 'day_of_year'], var_name='Year', value_name='discharge')
+    # Derive a date column from the year and day_of_year columns
+    hydrograph_day_long['Year'] = hydrograph_day_long['Year'].astype(int)
+    hydrograph_day_long['day_of_year'] = hydrograph_day_long['day_of_year'].astype(int)
+    hydrograph_day_long['Date'] = hydrograph_day_long.apply(
+        lambda x: dt.datetime(x['Year'], 1, 1) + dt.timedelta(days=x['day_of_year'] - 1), axis=1)
+    # Get the pentad of the year for each date
+    hydrograph_day_long['pentad'] = hydrograph_day_long['Date'].apply(lambda x: data_processing.get_forecast_pentad_of_year(x))
+    # Calculate the average discharge for each Code, year and pentad and write it to column 'discharge_avg'
+    hydrograph_day_long['discharge_avg'] = hydrograph_day_long.groupby(['Code', 'Year', 'pentad'])['discharge'].transform('mean')
+    # Drop the duplicates for pentad, Code, Year and write the data to hydrograph_pentad_long
+    hydrograph_pentad_long = hydrograph_day_long.drop_duplicates(subset=['Code', 'Year', 'pentad'])[['Code', 'Year', 'pentad', 'discharge_avg']]
+
+    # Compare the data in hydrograph_pentad_long with the data in hydrograph_pentad
+    # Reformat hydrograph_pentad to long format
+    hydrograph_pentad_long_to_test = hydrograph_pentad.reset_index(drop=False).melt(
+        id_vars=['Code', 'pentad'], var_name='Year', value_name='discharge')
+
+    # Convert the code, pentad and year columns to int
+    hydrograph_pentad_long_to_test['Year'] = hydrograph_pentad_long_to_test['Year'].astype(int)
+    hydrograph_pentad_long_to_test['pentad'] = hydrograph_pentad_long_to_test['pentad'].astype(int)
+    hydrograph_pentad_long_to_test['Code'] = hydrograph_pentad_long_to_test['Code'].astype(int)
+    hydrograph_pentad_long['Year'] = hydrograph_pentad_long['Year'].astype(int)
+    hydrograph_pentad_long['pentad'] = hydrograph_pentad_long['pentad'].astype(int)
+    hydrograph_pentad_long['Code'] = hydrograph_pentad_long['Code'].astype(int)
+    #print(hydrograph_pentad_long_to_test.dtypes)
+    #print(hydrograph_pentad_long_to_test.dtypes)
+
+    # Merge the two dataframes on Code, Year and pentad
+    merged_data = pd.merge(
+        hydrograph_pentad_long_to_test, hydrograph_pentad_long,
+        on=['Code', 'Year', 'pentad'], suffixes=('_to_test', '_daily_agg'))
+
+    #print(hydrograph_day_long.head(10))
+    #print(hydrograph_pentad_long.head(3))
+    #print(hydrograph_pentad_long_to_test.head(3))
+    #print("\n\nDEBUG: \n", merged_data.head(10))
+    #print(merged_data.tail(10))
+
+
+
+
 
     # Write hydrograph data
     output_generation.write_hydrograph_data(modified_data)
@@ -166,7 +585,7 @@ def test_overall_output_step_by_step():
     assert pd.isna(fc_sites2[1].predictor), "The second predictor is not as expected"
 
     # Clean up the environment
-    #shutil.rmtree(tmpdir)
+    shutil.rmtree(tmpdir)
     os.environ.pop("IEASYHYDRO_HOST")
     os.environ.pop("IEASYHYDRO_USERNAME")
     os.environ.pop("IEASYHYDRO_PASSWORD")

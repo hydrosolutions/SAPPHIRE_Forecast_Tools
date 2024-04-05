@@ -32,6 +32,58 @@ def test_validate_hydrograph_data_with_dummy_data():
     with pytest.raises(TypeError):
         output_generation.validate_hydrograph_data("not a dataframe")
 
+def test_output_generated_with_reformat_hydrograph_data_is_consistent():
+    # Test with valid data
+    data = {
+        'Code': ['code1', 'code2', 'code1', 'code2',
+                 'code1', 'code2', 'code1', 'code2',
+                 'code1', 'code2', 'code1', 'code2',
+                 'code1', 'code2', 'code1', 'code2',
+                 'code1', 'code2', 'code1', 'code2',
+                 'code1', 'code2', 'code1', 'code2'],
+        'Year': [2022, 2022, 2023, 2023,
+                 2022, 2022, 2023, 2023,
+                 2022, 2022, 2023, 2023,
+                 2022, 2022, 2023, 2023,
+                 2022, 2022, 2023, 2023,
+                 2022, 2022, 2023, 2023],
+        'day_of_year': [1, 1, 1, 1,
+                        2, 2, 2, 2,
+                        3, 3, 3, 3,
+                        4, 4, 4, 4,
+                        5, 5, 5, 5,
+                        6, 6, 6, 6],
+        'Q_m3s': [1.0, 2.0, 4.0, 5.0,
+                  1.1, 2.1, 4.1, 5.1,
+                  1.2, 2.2, 4.2, 5.2,
+                  1.3, 2.3, 4.3, 5.3,
+                  1.4, 2.4, 4.4, 5.4,
+                  1.5, 2.5, 4.5, 5.5],
+        'pentad': [1, 1, 1, 1,
+                   1, 1, 1, 1,
+                   1, 1, 1, 1,
+                   1, 1, 1, 1,
+                   1, 1, 1, 1,
+                   2, 2, 2, 2]
+    }
+    df = pd.DataFrame(data)
+    # To calculate column discharge_avg, group by Code and pentad and calculate the mean of Q_m3s
+    df['discharge_avg'] = df.groupby(['Code', 'Year', 'pentad'])['Q_m3s'].transform('mean').reset_index(drop=True)
+    df = df.sort_values(['Code', 'Year', 'pentad'])
+    hydrograph_pentad, hydrograph_day = output_generation.reformat_hydrograph_data(df)
+    assert isinstance(hydrograph_pentad, pd.DataFrame)
+    assert isinstance(hydrograph_day, pd.DataFrame)
+    assert 'Code' in hydrograph_pentad.index.names
+    assert 'pentad' in hydrograph_pentad.index.names
+    assert 'Code' in hydrograph_day.index.names
+    assert 'day_of_year' in hydrograph_day.index.names
+
+    assert hydrograph_pentad.iloc[0, 0] == 1.2
+    assert hydrograph_pentad.iloc[1, 1] == 4.5
+    assert hydrograph_day.iloc[0, 0] == 1.0
+    assert hydrograph_day.iloc[1, 1] == 4.1
+
+
 def test_reformat_hydrograph_data():
     # Test with valid data
     data = {
