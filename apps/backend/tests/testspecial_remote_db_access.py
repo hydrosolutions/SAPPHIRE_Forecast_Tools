@@ -31,20 +31,37 @@ ieh_sdk = IEasyHydroSDK()
 
 # Define date filter
 filters = BasicDataValueFilters(
-    local_date_time__gt=dt.datetime(2020, 4, 10),
-    local_date_time__lt=dt.datetime(2020, 4, 30)
+    local_date_time__gte=dt.datetime(2024, 4, 3, hour=0, minute=0, second=0),
+    local_date_time__lt=dt.datetime(2024, 4, 5, hour=12, minute=0, second=0)
 )
 
 # Get data
 qdata = ieh_sdk.get_data_values_for_site(
-    '15194',
+    ['15102'],
     'discharge_daily_average',
     filters=filters
 )
 qdata = pd.DataFrame(qdata['data_values'])
 print("get_data_values_for_site:\n", qdata)
+#print(type(qdata))
 
-sdata = ieh_sdk.get_discharge_sites()
-print("get_discharge_sites:\n", sdata)
+tdata = ieh_sdk.get_data_values_for_site(
+    ['15102'],
+    'discharge_daily',
+    filters=filters,
+)
+tdata = pd.DataFrame(tdata['data_values'])
+print(tdata)
+
+# Get the first row from tdata in the wide format
+#row = pd.DataFrame(tdata.iloc[0]).transpose()
+#print(row)
+
+# add the row to qdata
+#qdata = pd.concat([qdata, row])
+#print(qdata)
+
+#sdata = ieh_sdk.get_discharge_sites()
+#print("get_discharge_sites:\n", sdata)
 
 

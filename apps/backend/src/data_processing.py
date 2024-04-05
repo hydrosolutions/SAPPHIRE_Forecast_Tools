@@ -267,6 +267,10 @@ def get_predictor_dates(start_date, forecast_flags):
     Gets dates for which to aggregate the predictors for the linear regression
     method.
 
+    Details:
+        For pentadal forecasts, the hydromet uses the sum of the last 2 days
+        discharge plus the morning discharge of today.
+
     Arguments:
         start_date (datetime.date) Date on which the forecast is produced.
         forecast_flags (config.ForecastFlags) Flags that identify the forecast
@@ -280,14 +284,54 @@ def get_predictor_dates(start_date, forecast_flags):
     predictor_dates = PredictorDates()
     # Get the dates to get the predictor from
     if forecast_flags.pentad:
-        # For pentadal forecasts, the hydromet uses the sum of the last 3 days discharge.
-        predictor_dates.pentad = fl.get_predictor_dates(start_date.strftime('%Y-%m-%d'), 3)
+        # For pentadal forecasts, the hydromet uses the sum of the last 2 days discharge.
+        predictor_dates.pentad = fl.get_predictor_dates(start_date.strftime('%Y-%m-%d'), 2)
         # if predictor_dates is None, raise an error
         if predictor_dates.pentad is None:
             raise ValueError("The predictor dates are not valid.")
     if forecast_flags.decad:
         # For decad forecasts, the hydromet uses the average of the last 10 days discharge.
         predictor_dates.decad = fl.get_predictor_dates(start_date.strftime('%Y-%m-%d'), 10)
+        # if predictor_dates is None, raise an error
+        if predictor_dates.decad is None:
+            raise ValueError("The predictor dates are not valid.")
+
+    logger.debug(f"   Predictor dates for pentadal forecasts: {predictor_dates.pentad}")
+    logger.debug(f"   Predictor dates for decad forecasts: {predictor_dates.decad}")
+
+    logger.info("   ... done")
+    return predictor_dates
+
+def get_predictor_datetimes(start_date, forecast_flags):
+    """
+    Gets datetimes for which to aggregate the predictors for the linear regression
+    method.
+
+    Details:
+        For pentadal forecasts, the hydromet uses the sum of the last 2 days
+        discharge plus the morning discharge of today.
+
+    Arguments:
+        start_date (datetime.date) Date on which the forecast is produced.
+        forecast_flags (config.ForecastFlags) Flags that identify the forecast
+            horizons serviced on start_date
+
+    Return:
+        list: A list of dates for which to aggregate the predictors for the
+            linear regression method.
+    """
+    # Initialise the predictor_dates object
+    predictor_dates = PredictorDates()
+    # Get the dates to get the predictor from
+    if forecast_flags.pentad:
+        # For pentadal forecasts, the hydromet uses the sum of the last 2 days discharge.
+        predictor_dates.pentad = fl.get_predictor_datetimes(start_date.strftime('%Y-%m-%d'), 2)
+        # if predictor_dates is None, raise an error
+        if predictor_dates.pentad is None:
+            raise ValueError("The predictor dates are not valid.")
+    if forecast_flags.decad:
+        # For decad forecasts, the hydromet uses the average of the last 10 days discharge.
+        predictor_dates.decad = fl.get_predictor_datetimes(start_date.strftime('%Y-%m-%d'), 9)
         # if predictor_dates is None, raise an error
         if predictor_dates.decad is None:
             raise ValueError("The predictor dates are not valid.")

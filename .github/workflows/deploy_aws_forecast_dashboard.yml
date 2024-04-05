@@ -4,7 +4,7 @@ env:
     IMAGE_NAME: mabesa/sapphire-dashboard
 on:
   push:
-    branches: [ "deploy" ]
+    branches: [ "deploy_aws" ]
 
 jobs:
   lint_and_test_ieasyhydroforecast:

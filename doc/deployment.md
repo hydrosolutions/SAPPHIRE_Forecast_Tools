@@ -245,9 +245,10 @@ Pull the docker image from Docker Hub. Open a terminal and run the following com
 ```bash
 docker pull mabesa/sapphire-dashboard:deploy
 ```
+
 Run the image:
 ```bash
-docker run -d --label=com.centurylinklabs.watchtower.enable=true -e "IN_DOCKER_CONTAINER=True" -v <full_path_to>/apps/config:/app/apps/config -v <full_path_to>/apps/internal_data:/app/apps/internal_data -v <full_path_to>/data:/app/data -p 5006:5006 --name fcbackend mabesa/sapphire-dashboard:deploy
+docker run -d --label=com.centurylinklabs.watchtower.enable=true -e "IN_DOCKER_CONTAINER=True" -v <full_path_to>/apps/config:/app/apps/config -v <full_path_to>/apps/internal_data:/app/apps/internal_data -v <full_path_to>/data:/app/data -p 5006:5006 --name fcdashboard mabesa/sapphire-dashboard:deploy
 ```
 Note that you will have to replace <full_path_to> with the full path to your local repository.
 
