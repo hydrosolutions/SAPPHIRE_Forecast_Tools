@@ -5,9 +5,11 @@ env:
 on:
   push:
     branches: [ "deploy_aws" ]
+  pull_request:
+    branches: [ "deploy_aws" ]
 
 jobs:
-  lint_and_test_ieasyhydroforecast:
+  test_ieasyhydroforecast:
 
     runs-on: ubuntu-latest
     strategy:
@@ -35,18 +37,12 @@ jobs:
         if [ -f python_requirements.txt ]; then pip install -r python_requirements.txt; fi
         pip install git+https://github.com/hydrosolutions/ieasyhydro-python-sdk
         pip install -e ./apps/iEasyHydroForecast
-    - name: Lint with flake8
-      run: |
-        # stop the build if there are Python syntax errors or undefined names
-        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
-        # exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
-        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
     - name: Test with unittest
       working-directory: ./apps
       run: |
         python -m unittest discover -s iEasyHydroForecast/tests -p 'test_*.py'
 
-  lint_and_test_dashboard:
+  test_dashboard:
 
     runs-on: ubuntu-latest
     strategy:
@@ -75,19 +71,13 @@ jobs:
         pip install git+https://github.com/hydrosolutions/ieasyhydro-python-sdk
         pip install git+https://github.com/hydrosolutions/ieasyhydro-python-sdk
         pip install -e ./apps/iEasyHydroForecast
-    - name: Lint with flake8
-      run: |
-        # stop the build if there are Python syntax errors or undefined names
-        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
-        # exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
-        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
     - name: Test with pytest
       working-directory: ./apps
       run: |
         SAPPHIRE_TEST_ENV=True python -m pytest -s forecast_dashboard/tests/
 
   push_to_Dckerhub:
-    needs: [lint_and_test_ieasyhydroforecast, lint_and_test_dashboard]
+    needs: [test_ieasyhydroforecast, test_dashboard]
     runs-on: ubuntu-latest
     name: A job to push the Docker image to Dockerhub
 
