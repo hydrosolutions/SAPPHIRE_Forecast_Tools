@@ -20,6 +20,8 @@ import holoviews as hv
 # Set the default backend to 'plotly'
 #pn.extension('bokeh')
 
+import src.dashboard_methods as dm
+
 # Get the absolute path of the directory containing the current script
 cwd = os.getcwd()
 
@@ -48,85 +50,19 @@ pn.extension(global_css=[':root { --design-primary-color: #307096; }'])
 # Load .env file
 # Read the environment varialbe IN_DOCKER_CONTAINER to determine which .env
 # file to use
-in_docker_flag = str(os.getenv("IN_DOCKER_CONTAINER"))
-if in_docker_flag == "True":
-    path_to_env_file = "apps/config/.env"
-    # Test if the .env file exists
-    if not os.path.isfile(path_to_env_file):
-        raise Exception("File not found: " + path_to_env_file)
-    print("Running in Docker container")
-elif os.getenv("SAPPHIRE_TEST_ENV") == "True":
-    path_to_env_file = "backend/tests/test_files/.env_develop_test"
-elif os.getenv("SAPPHIRE_OPDEV_ENV") == "True":
-    path_to_env_file = "../config/.env_develop_kghm"
-else:
-    # Test if the .env file exists
-    path_to_env_file = "../config/.env_develop"
-    if not os.path.isfile(path_to_env_file):
-        raise Exception("File not found: " + path_to_env_file)
-    print("Running locally")
-    # The override flag in read_dotenv is set to allow switching between .env
-    # files. Useful when testing different configurations.
-res = load_dotenv(path_to_env_file, override=True)
-if res is None:
-    raise Exception("Could not read .env file: ", path_to_env_file)
-    # Print ieasyreports_templates_directory_path from the environment
-    # variables
-print("Configuration read from : ", os.getenv("ieasyforecast_configuration_path"))
+in_docker_flag = dm.load_configuration()
 
-# Test if the environment was loaded successfully
-if os.getenv("ieasyforecast_hydrograph_day_file") is None:
-    raise Exception("Environment not loaded. Please check if the .env file is available and if the environment variable IN_DOCKER_CONTAINER is set correctly.")
-
-# Load filenames from the environment file
-# These files are produced by the linreg (linear regression) tool.
-# Daily data
-hydrograph_day_file = os.path.join(
-    os.getenv("ieasyforecast_intermediate_data_path"),
-    os.getenv("ieasyforecast_hydrograph_day_file"))
-# Test if file exists and thorw an error if not
-if not os.path.isfile(hydrograph_day_file):
-    raise Exception("File not found: " + hydrograph_day_file)
-# Pentad data
-hydrograph_pentad_file = os.path.join(
-    os.getenv("ieasyforecast_intermediate_data_path"),
-    os.getenv("ieasyforecast_hydrograph_pentad_file"))
-# Test if file exists and thorw an error if not
-if not os.path.isfile(hydrograph_pentad_file):
-    raise Exception("File not found: " + hydrograph_pentad_file)
-# Forecast results file
-forecast_results_file = os.path.join(
-    os.getenv("ieasyforecast_intermediate_data_path"),
-    os.getenv("ieasyforecast_results_file")
-)
-# Test if file exists and thorw an error if not
-if not os.path.isfile(forecast_results_file):
-    raise Exception("File not found: " + forecast_results_file)
-# Read the file listing all station codes available in the iEasyHydro DB.
-all_stations_file = os.path.join(
-    os.getenv("ieasyforecast_configuration_path"),
-    os.getenv("ieasyforecast_config_file_all_stations")
-)
-# Test if file exists and thorw an error if not
-if not os.path.isfile(all_stations_file):
-    raise Exception("File not found: " + all_stations_file)
-
-# Icon
-if in_docker_flag == "True":
-    icon_path = os.path.join("apps", "forecast_dashboard", "www", "Pentad.jpg")
-else:
-    icon_path = os.path.join("www", "Pentad.jpg")
-
-# Test if file exists and thorw an error if not
-if not os.path.isfile(icon_path):
-    raise Exception("File not found: " + icon_path)
+# Get icon path from config
+icon_path = dm.get_icon_path(in_docker_flag)
 
 # Set primary color to be consistent with the icon color
 pn.extension(global_css=[':root { --design-primary-color: #307096; }'])
 
 # The current date is displayed as the title of each visualization.
 today = dt.datetime.now()
+# endregion
 
+# region Localization
 # Read the locale from the environment file
 current_locale = os.getenv("ieasyforecast_locale")
 
@@ -165,9 +101,6 @@ _ = gettext.gettext
 
 
 # region Local functions
-def remove_bokeh_logo(plot, element):
-    plot.state.toolbar.logo = None
-
 def add_custom_xticklabels_pentad(plot, element):
     # Specify the positions and labels of the ticks. Here we use the first day
     # of each month & pentad per month as a tick.
@@ -334,101 +267,6 @@ def get_current_predictor_and_dates(forecast_pentad_all: pd.DataFrame,
 
     return output
 
-
-def preprocess_hydrograph_day_data(hydrograph_day):
-    # Drop the Code column
-    hydrograph_day = hydrograph_day.drop(columns=["Code", "station_labels"])
-
-    # Melt the DataFrame to simplify the column index
-    hydrograph_day = hydrograph_day.melt(id_vars=["day_of_year"], var_name="Year", value_name="value")
-
-    # Set index to day of year
-    hydrograph_day = hydrograph_day.set_index("day_of_year")
-
-    # Calculate norm and percentiles for each day_of_year over all Years in the hydrograph
-    norm = hydrograph_day.groupby("day_of_year")["value"].mean()
-    perc_05 = hydrograph_day.groupby("day_of_year")["value"].quantile(0.05)
-    perc_25 = hydrograph_day.groupby("day_of_year")["value"].quantile(0.25)
-    perc_75 = hydrograph_day.groupby("day_of_year")["value"].quantile(0.75)
-    perc_95 = hydrograph_day.groupby("day_of_year")["value"].quantile(0.95)
-
-    # Create a new DataFrame with the calculated values
-    hydrograph_norm_perc = pd.DataFrame({
-        "day_of_year": norm.index,
-        "Norm": norm.values,
-        "Perc_05": perc_05.values,
-        "Perc_25": perc_25.values,
-        "Perc_75": perc_75.values,
-        "Perc_95": perc_95.values
-    })
-
-    # Get the current year from the system date
-    current_year = today.year
-    current_year_col = str(current_year)
-
-    # Add the current year data to the DataFrame
-    # Attention: this can become an empty selection if we don't have any data
-    # for the current year yet (e.g. when a new year has just started and no
-    # forecasts have been produced for the new year yet).
-    # To avoid the error, we need to check if the current year is in the
-    # hydrograph_day DataFrame. If it is not, we display the latest year data.
-    if current_year_col in hydrograph_day["Year"].values:
-        current_year_data = hydrograph_day[hydrograph_day["Year"] == str(current_year_col)]["value"].values
-    else:
-        current_year_col = hydrograph_day["Year"].values[-1]
-        current_year_data = hydrograph_day[hydrograph_day["Year"] == str(current_year_col)]["value"].values
-
-    hydrograph_norm_perc["current_year"] = current_year_data
-
-    return(hydrograph_norm_perc)
-
-# Pentad data
-def preprocess_hydrograph_pentad_data(hydrograph_pentad: pd.DataFrame) -> pd.DataFrame:
-    '''
-    Calculates the norm and percentiles for each pentad over all Years in the
-    input hydrograph. Note that the input hydrograph is filtered to only one
-    station.
-    '''
-    # Drop the Code column
-    hydrograph_pentad = hydrograph_pentad.drop(columns=["Code", "station_labels"])
-    # Melt the DataFrame to simplify the column index
-    hydrograph_pentad = hydrograph_pentad.melt(id_vars=["pentad"], var_name="Year", value_name="value")
-
-    # Set index to pentad of year
-    hydrograph_pentad = hydrograph_pentad.set_index("pentad")
-
-    # Calculate norm and percentiles for each day_of_year over all Years in the hydrograph
-    norm = hydrograph_pentad.groupby("pentad")["value"].mean().reset_index(drop=True)
-    perc_05 = hydrograph_pentad.groupby("pentad")["value"].quantile(0.05).reset_index(drop=True)
-    perc_25 = hydrograph_pentad.groupby("pentad")["value"].quantile(0.25).reset_index(drop=True)
-    perc_75 = hydrograph_pentad.groupby("pentad")["value"].quantile(0.75).reset_index(drop=True)
-    perc_95 = hydrograph_pentad.groupby("pentad")["value"].quantile(0.95).reset_index(drop=True)
-
-    # Create a new DataFrame with the calculated values
-    hydrograph_norm_perc = pd.DataFrame({
-        "pentad": norm.index,
-        "Norm": norm.values,
-        "Perc_05": perc_05.values,
-        "Perc_25": perc_25.values,
-        "Perc_75": perc_75.values,
-        "Perc_95": perc_95.values
-    })
-
-    # Get the current year from the system date
-    current_year = today.year
-    current_year_col = str(current_year)
-
-    # If current year data is not available, use the previous year data
-    if current_year_col not in hydrograph_pentad["Year"].values:
-        current_year_col = hydrograph_pentad["Year"].values[-1]
-    current_year_data = hydrograph_pentad[hydrograph_pentad["Year"] == str(current_year_col)]["value"].values
-
-    # Add the current year data to the DataFrame
-    hydrograph_norm_perc["current_year"] = current_year_data
-    hydrograph_norm_perc["pentad"] = hydrograph_norm_perc["pentad"] + 1
-
-    return(hydrograph_norm_perc)
-
 def calculate_pentad_forecast_accuracy(
         hydrograph_pentad_stat: pd.DataFrame,
         forecast_pentad_stat: pd.DataFrame,
@@ -441,6 +279,8 @@ def calculate_pentad_forecast_accuracy(
     We further calculate the forecast accuracy assuming an allowable range of
     plus minus 20% of the expected forecast |𝑄_𝑠𝑖𝑚−𝑄_𝑜𝑏𝑠 |≤ 0.2∙𝑄_𝑜𝑏𝑠.
     '''
+    # Print the code for the selected station
+    #print("DEBUG calculate_pentad_forecast_accuracy: station code", hydrograph_pentad_stat["Code"].unique())
 
     # Drop the Code column
     hydrograph_pentad_stat = hydrograph_pentad_stat.drop(columns=["Code", "station_labels"])
@@ -469,7 +309,7 @@ def calculate_pentad_forecast_accuracy(
 
     # Merge forecast_pentad fc_qexp by year and pentad to the hydrograph_pentad DataFrame
     hydrograph_pentad_stat.loc[:, "Year"] = hydrograph_pentad_stat.loc[:, "Year"].astype(int)
-    hydrograph_pentad_stat = hydrograph_pentad_stat.merge(forecast_pentad_stat[["Year", "pentad", "fc_qexp"]],
+    hydrograph_pentad_stat = hydrograph_pentad_stat.merge(forecast_pentad_stat[["Date", "Year", "pentad", "predictor", "slope", "intercept", "fc_qexp"]],
                                             on=["Year", "pentad"], how="left")
 
     # Calculate forecast accuracy
@@ -494,6 +334,7 @@ def calculate_pentad_forecast_accuracy(
     hydrograph_pentad_stat = hydrograph_pentad_stat.merge(hydrograph_pentad_stderr, on="pentad", how="left")
 
     # Calculate the forecast accuracy for each pentad. If abs_diff <= 0.674*q_obs_std, accuracy flag is 1, else 0
+    hydrograph_pentad_stat["factor"] = 0.674 * hydrograph_pentad_stat["q_obs_std"]
     hydrograph_pentad_stat["forecast_skill"] = np.where(hydrograph_pentad_stat["abs_diff"] <= 0.674*hydrograph_pentad_stat["q_obs_std"], 1, 0)
     hydrograph_pentad_stat["forecast_skill_20"] = np.where(hydrograph_pentad_stat["abs_diff"] <= float(manual_range_widget)/100.0*hydrograph_pentad_stat["q_obs"], 1, 0)
 
@@ -505,6 +346,9 @@ def calculate_pentad_forecast_accuracy(
     hydrograph_pentad_stat["forecast_skill"] = np.where(hydrograph_pentad_stat["fc_qexp"].isna(), np.nan, hydrograph_pentad_stat["forecast_skill"])
     hydrograph_pentad_stat["forecast_skill_20"] = np.where(hydrograph_pentad_stat["fc_qexp"].isna(), np.nan, hydrograph_pentad_stat["forecast_skill_20"])
 
+    #print("DEBUG calculate_pentad_forecast_accuracy: hydrograph_pentad_stat\n", hydrograph_pentad_stat[hydrograph_pentad_stat["pentad"]>18].sort_values(["pentad","Year"]).head(50))
+    #print(hydrograph_pentad_stat.sort_values(["pentad","Year"]).tail(50))
+
     # For each pentad, calculate sum of forecast_skill == 1 and divide by the number of years and calculate the mean of std_err
     hydrograph_pentad_stat_skill = hydrograph_pentad_stat.groupby("pentad")["forecast_skill"].mean().reset_index()
     hydrograph_pentad_stat_skill['forecast_skill'] = hydrograph_pentad_stat_skill['forecast_skill'] * 100.0
@@ -514,7 +358,7 @@ def calculate_pentad_forecast_accuracy(
     # Combine hydrograph_pentad_stat_skill and hydrograph_pentad_stat_std_err into hydrograph_pentad_stat
     hydrograph_pentad_stat = hydrograph_pentad_stat_skill.merge(hydrograph_pentad_stat_std_err, on="pentad", how="left")
 
-    return(hydrograph_pentad_stat)
+    return hydrograph_pentad_stat
 
 # Update widgets based on active tab
 def update_widgets(event):
@@ -527,91 +371,18 @@ def update_widgets(event):
 
 # endregion
 
-# region Read data
-
-# Read hydrograph data - daily
-hydrograph_day_all = pd.read_csv(hydrograph_day_file).reset_index(drop=True)
-hydrograph_day_all["day_of_year"] = hydrograph_day_all["day_of_year"].astype(int)
-hydrograph_day_all['Code'] = hydrograph_day_all['Code'].astype(str)
-# Sort all columns in ascending Code and pentad order
-hydrograph_day_all = hydrograph_day_all.sort_values(by=["Code", "day_of_year"])
-# Remove the day 366 (only if we are not in a leap year)
-# Test if current year is a leap year
-if today.year % 4 != 0:
-    hydrograph_day_all = hydrograph_day_all[hydrograph_day_all["day_of_year"] != 366]
-
-# Read hydrograph data - pentad
-hydrograph_pentad_all = pd.read_csv(hydrograph_pentad_file).reset_index(drop=True)
-hydrograph_pentad_all["pentad"] = hydrograph_pentad_all["pentad"].astype(int)
-hydrograph_pentad_all['Code'] = hydrograph_pentad_all['Code'].astype(str)
-# Sort all columns in ascending Code and pentad order
-hydrograph_pentad_all = hydrograph_pentad_all.sort_values(by=["Code", "pentad"])
-
-# Read forecast results
-forecast_pentad = pd.read_csv(forecast_results_file)
-# Convert the date column to datetime. The format of the date string is %Y-%m-%d.
-forecast_pentad['Date'] = pd.to_datetime(forecast_pentad['date'], format='%Y-%m-%d')
-# Make sure the date column is in datetime64 format
-forecast_pentad['Date'] = forecast_pentad['Date'].astype('datetime64[ns]')
-# The forecast date is the date on which the forecast was produced. For
-# visualization we need to have the date for which the forecast is valid.
-# We add 1 day to the forecast Date to get the valid date.
-forecast_pentad['Date'] = forecast_pentad['Date'] + pd.Timedelta(days=1)
-# Convert the code column to string
-forecast_pentad['code'] = forecast_pentad['code'].astype(str)
-# Check if there are duplicates for Date and code columns. If yes, only keep the
-# last one
-# Print all values where column code is 15102. Sort the values by Date in ascending order.
-# Print the last 20 values.
-forecast_pentad = forecast_pentad.drop_duplicates(subset=['Date', 'code'], keep='last').sort_values('Date')
-# Get the pentad of the year.
-forecast_pentad = tl.add_pentad_in_year_column(forecast_pentad)
-# Cast pentad column no number
-forecast_pentad['pentad'] = forecast_pentad['pentad'].astype(int)
-
-# List of stations with forecast data
+# region Read & pre-process data
+hydrograph_day_all = dm.read_hydrograph_day_file(today)
+hydrograph_pentad_all = dm.read_hydrograph_pentad_file()
+forecast_pentad = dm.read_forecast_results_file()
+# List of stations with forecast data & getting station information from all stations config file
 station_list = hydrograph_day_all['Code'].unique().tolist()
-
-# Read stations json
-with open(all_stations_file, "r") as json_file:
-    all_stations = fl.load_all_station_data_from_JSON(all_stations_file)
-# Convert the code column to string
-all_stations['code'] = all_stations['code'].astype(str)
-# Left-join all_stations['code', 'river_ru', 'punkt_ru'] by 'Code' = 'code'
-station_df=pd.DataFrame(station_list, columns=['Code'])
-station_df=station_df.merge(all_stations.loc[:,['code','river_ru','punkt_ru']],
-                            left_on='Code', right_on='code', how='left')
-
-# Paste together the columns Code, river_ru and punkt_ru to a new column
-# station_labels. river and punkt names are currently only available in Russian.
-station_df['station_labels'] = station_df['Code'] + ' - ' + station_df['river_ru'] + ' ' + station_df['punkt_ru']
+station_list, all_stations, station_df = dm.read_stations_from_file(station_list)
 
 # Add the station_labels column to the hydrograph_day_all DataFrame
-hydrograph_day_all = hydrograph_day_all.merge(
-    all_stations.loc[:,['code','river_ru','punkt_ru']],
-                            left_on='Code', right_on='code', how='left')
-hydrograph_day_all['station_labels'] = hydrograph_day_all['Code'] + ' - ' + hydrograph_day_all['river_ru'] + ' ' + hydrograph_day_all['punkt_ru']
-# Remove the columns river_ru and punkt_ru
-hydrograph_day_all = hydrograph_day_all.drop(columns=['code', 'river_ru', 'punkt_ru'])
-
-# Same for the pentadal data
-hydrograph_pentad_all = hydrograph_pentad_all.merge(
-    all_stations.loc[:,['code','river_ru','punkt_ru']],
-                            left_on='Code', right_on='code', how='left')
-hydrograph_pentad_all['station_labels'] = hydrograph_pentad_all['Code'] + ' - ' + hydrograph_pentad_all['river_ru'] + ' ' + hydrograph_pentad_all['punkt_ru']
-# Remove the columns river_ru and punkt_ru
-hydrograph_pentad_all = hydrograph_pentad_all.drop(columns=['code', 'river_ru', 'punkt_ru'])
-
-# Same for forecast data
-forecast_pentad = forecast_pentad.merge(
-    all_stations.loc[:,['code','river_ru','punkt_ru']],
-    left_on='code', right_on='code', how='left')
-forecast_pentad['station_labels'] = forecast_pentad['code'] + ' - ' + forecast_pentad['river_ru'] + ' ' + forecast_pentad['punkt_ru']
-forecast_pentad = forecast_pentad.drop(columns=['river_ru', 'punkt_ru'])
-
-# Update the station list to include the station labels
-# Write the column station_labels to a list
-station_list = station_df['station_labels'].tolist()
+hydrograph_day_all = dm.add_labels_to_hydrograph_day_all(hydrograph_day_all, all_stations)
+hydrograph_pentad_all = dm.add_labels_to_hydrograph_pentad_all(hydrograph_pentad_all, all_stations)
+forecast_pentad = dm.add_labels_to_forecast_pentad_df(forecast_pentad, all_stations)
 
 # endregion
 
@@ -678,7 +449,7 @@ def plot_daily_hydrograph_data(station_widget, fcdata):
     hydrograph_day = hydrograph_day_all[hydrograph_day_all["station_labels"] == station_widget]
 
     # Reformat data to the hydrograph format with 50 and 90 percentiles and average.
-    data = preprocess_hydrograph_day_data(hydrograph_day)
+    data = dm.preprocess_hydrograph_day_data(hydrograph_day, today)
 
     # We need to print a suitable date for the figure titles.
     title_date = (dates_collection.latest_forecast_date - dt.timedelta(days=1)).strftime('%Y-%m-%d')
@@ -784,7 +555,7 @@ def plot_daily_hydrograph_data(station_widget, fcdata):
     p.opts(responsive=True, title=title,
           xlabel=_("Day of the year (starting from January 1)"), ylabel=_('River discharge [m3/s]'),
           yformatter="%.0f", show_grid=True,
-          hooks=[remove_bokeh_logo, add_custom_xticklabels_daily],
+          hooks=[dm.remove_bokeh_logo, add_custom_xticklabels_daily],
           xlim=(1, 365), legend_position='top_left',
           fontsize={'legend':9}, fontscale=1.2, shared_axes=False)  # ,
             # xticks=[1,32,13,19,25,31,37,43,49,55,61,67])  #, legend_offset=(10, 120))
@@ -794,7 +565,7 @@ def plot_daily_hydrograph_data(station_widget, fcdata):
 def plot_forecast_data(station_widget, range_selection_widget, manual_range_widget):
     fcdata = forecast_pentad[forecast_pentad["station_labels"] == station_widget]
     hydrograph_pentad = hydrograph_pentad_all[hydrograph_pentad_all["station_labels"] == station_widget]
-    hydrograph_pentad = preprocess_hydrograph_pentad_data(hydrograph_pentad)
+    hydrograph_pentad = dm.preprocess_hydrograph_pentad_data(hydrograph_pentad, today)
     dates_collection = get_current_predictor_and_dates(forecast_pentad, station_widget)
 
     # Rename the columns
@@ -892,7 +663,7 @@ def plot_forecast_data(station_widget, range_selection_widget, manual_range_widg
               yformatter="%.1f", show_grid=True, legend_muted=False,
             legend_position='top_left',  # 'right',
             legend_cols=1,
-            hooks=[remove_bokeh_logo, add_custom_xticklabels_pentad], xlim=(1,72),
+            hooks=[dm.remove_bokeh_logo, add_custom_xticklabels_pentad], xlim=(1,72),
             fontsize={'legend':8}, fontscale=1.2, shared_axes=False,
             xticks=[1,7,13,19,25,31,37,43,49,55,61,67])
 
@@ -902,9 +673,12 @@ def plot_effectiveness_of_forecast_method(station_widget,
                                           range_selection_widget, manual_range_widget):
     forecast_pentad_stat_effectiveness = forecast_pentad[forecast_pentad["station_labels"] == station_widget]
     hydrograph_pentad_effectiveness = hydrograph_pentad_all[hydrograph_pentad_all["station_labels"] == station_widget]
+    #print("DEBUG: hydrograph_pentad_effectiveness prior \n", hydrograph_pentad_effectiveness)
+    #print("DEBUG: forecast_pentad_stat_effectiveness prior \n", forecast_pentad_stat_effectiveness)
     hydrograph_pentad_stat_effectiveness = calculate_pentad_forecast_accuracy(
         hydrograph_pentad_effectiveness, forecast_pentad_stat_effectiveness,
         range_selection_widget, manual_range_widget)
+    #print("DEBUG: hydrograph_pentad_stat_effectiveness posterior\n", hydrograph_pentad_stat_effectiveness[hydrograph_pentad_stat_effectiveness["pentad"] == 20])
     dates_collection = get_current_predictor_and_dates(forecast_pentad, station_widget)
 
     # We need to print a suitable date for the figure titles. We use the last
@@ -951,7 +725,7 @@ def plot_effectiveness_of_forecast_method(station_widget,
         .opts(color = "#307096", interpolation='steps-mid',line_width=1, tools=['hover'])
 
     p = hv_empty_effectiveness * hv_08a * hv_06a * hv_forecast_skill_effectiveness * hv_current_forecast_skill_effectiveness
-    p.opts(responsive=True, hooks=[remove_bokeh_logo, add_custom_xticklabels_pentad],
+    p.opts(responsive=True, hooks=[dm.remove_bokeh_logo, add_custom_xticklabels_pentad],
             xticks=list(range(1,72,6)),
             title=title_effectiveness, shared_axes=False,
             legend_position='bottom_left',  # 'right',
@@ -1030,7 +804,7 @@ def plot_forecast_accuracy(station_widget, range_selection_widget, manual_range_
         .opts(color = "#169016", interpolation='steps-mid',line_width=1,
               line_dash="dashed",tools=['hover'])
     p = hv_forecast_skill_accuracy_674 *hv_forecast_skill_accuracy_02 * hv_current_forecast_skill_accuracy_674 * hv_current_forecast_skill_accuracy_02
-    p.opts(responsive=True, hooks=[remove_bokeh_logo, add_custom_xticklabels_pentad],
+    p.opts(responsive=True, hooks=[dm.remove_bokeh_logo, add_custom_xticklabels_pentad],
                                    #add_minor_pentad_ticks, add_custom_xticklabels_pentad],
             xticks=list(range(1,72,6)),
             title=title_accuracy, shared_axes=False,

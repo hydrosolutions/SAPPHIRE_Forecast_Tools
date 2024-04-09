@@ -709,5 +709,16 @@ class TestQrange(unittest.TestCase):
         assert site2.fc_qmax == '220'
 
 
+class TestGetPredictorDatetimes(unittest.TestCase):
+    def test_get_predictor_datetimes(self):
+        # Test case 1: Normal input
+        test_input_date = '2022-05-10'
+        n = 2
+        expected_dates = [dt.datetime(2022, 5, 8, 0, 0),
+                          dt.datetime(2022, 5, 10, 12, 0)]
+        test_dates = fl.get_predictor_datetimes(test_input_date, n)
+        assert test_dates == expected_dates
+
+
 if __name__ == '__main__':
     unittest.main()
