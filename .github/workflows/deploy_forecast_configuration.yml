@@ -14,8 +14,10 @@ jobs:
     steps:
     # To use this repository's private action, you must check out the
     # repository.
-    - name: Checkout
+    - name: Checkout deploy branch
       uses: actions/checkout@v4
+      with:
+        ref: deploy
 
     # Rename the image
     - name: Rename the image

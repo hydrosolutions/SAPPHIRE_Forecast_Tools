@@ -78,7 +78,7 @@ def main():
 
     # forecasting
     # - get predictor from the complete data and write it to site.predictor
-    forecasting.get_predictor_from_datetimes(modified_data, start_date, fc_sites, ieh_sdk, backend_has_access_to_db, predictor_dates.pentad)
+    forecasting.get_predictor(modified_data, start_date, fc_sites, ieh_sdk, backend_has_access_to_db, predictor_dates.pentad)
     forecasting.perform_forecast(fc_sites, forecast_pentad_of_year, result_df)
     result2_df = forecasting.calculate_forecast_boundaries(result_df, fc_sites, forecast_pentad_of_year)
 
