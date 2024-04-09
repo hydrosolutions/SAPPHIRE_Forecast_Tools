@@ -977,7 +977,6 @@ class Site:
         Returns:
             float: The predictor for the current pentad.
         '''
-
         try:
             # Test that dates is a list of dates
             if not all(isinstance(date, dt.date) for date in dates):
@@ -988,7 +987,7 @@ class Site:
             # Define the date filter for the data request
             filters = BasicDataValueFilters(
                 local_date_time__gte=min(dates),
-                local_date_time__lte=max(dates)
+                local_date_time__lte=max(dates)-dt.timedelta(days=1)
             )
             print(f'Reading data from site {site.code} with date range from {filters["local_date_time__gte"]} to {filters["local_date_time__lte"]}.')
 
@@ -1021,6 +1020,8 @@ class Site:
                     return None
 
             predictor_discharge = predictor_discharge['data_values']
+
+            """ this overwrites existing predictor discharge. commented out for now.
             # Check if we have enough data
             if len(predictor_discharge) < L:
                 counter = 0
@@ -1036,12 +1037,37 @@ class Site:
                     counter += 1
                     print(f'Note: Not enough data retrieved from DB. New date range from {filters["local_date_time__gte"]} to {filters["local_date_time__lte"]}.')
                     predictor_discharge = predictor_discharge['data_values']
+            """
+
+            morning_filters = BasicDataValueFilters(
+                local_date_time__gte=max(dates)-dt.timedelta(days=1),
+                local_date_time__lte=max(dates))
+            # Also get todays mornign discharge
+            morning_discharge = sdk.get_data_values_for_site(
+                site.code,
+                'discharge_daily',
+                filters=morning_filters)
+
+            # Test if morning discharge is empty
+            if not morning_discharge:
+                print(f'No morning discharge data for site {site.code} in DB. Assuming yesterdays discharge.')
+                # Get the row with the highest date from predictor discharge
+                morning_discharge = predictor_discharge.tail(1)
+            else:
+                # Only keep the lastest row
+                morning_discharge = pd.DataFrame(morning_discharge['data_values']).tail(1)
+
+            # Make sure morning_discharge is a dataframe
+            morning_discharge = pd.DataFrame(morning_discharge)
 
             # Create a DataFrame from the predictor_discharge list
             df = pd.DataFrame(predictor_discharge)
 
             # Convert values smaller than 0 to NaN
             df.loc[df['data_value'] < 0, 'data_value'] = np.nan
+
+            # Add the morning discharge to the DataFrame
+            df = pd.concat([df, morning_discharge])
 
             # If we still have missing data, we interpolate the existing data.
             # We take the average of the existing data to fill the gaps.
@@ -1064,7 +1090,8 @@ class Site:
 
             # Return the dangerous discharge value
             return q
-        except Exception:
+        except Exception as e:
+            print(f'Exception {e}')
             print(f'Note: No daily discharge data for site {site.code} in DB. Returning None.')
             return None
 
@@ -1079,7 +1106,7 @@ class Site:
         in the main code.
 
         Details:
-            The function retrieves sub-daily discharge data from the database
+            The function retrieves daily discharge data from the database
             and sums it up to get the predictor for the current pentad.
             The pentadal predictor for the pentad starting today + 1 day is
             calculated as the sum of the average daily discharge of today - 2
@@ -1173,11 +1200,11 @@ class Site:
                     'local_date_time': None,
                     'utc_date_time': None})
 
-            print("\n\nDEBUG: from_DB_get_predictor_for_pentadal_forecasts: df: ", df)
+            #print("\n\nDEBUG: from_DB_get_predictor_for_pentadal_forecasts: df: ", df)
             # Aggregate the discharge data to daily values
             df['Date'] = pd.to_datetime(df['local_date_time']).dt.date
             df = df.groupby('Date').mean().reset_index()
-            print("\n\nDEBUG: from_DB_get_predictor_for_pentadal_forecasts: df: ", df)
+            #print("\n\nDEBUG: from_DB_get_predictor_for_pentadal_forecasts: df: ", df)
 
             # Sum the discharge over the past L days
             q = np.nansum(df['data_value'])
