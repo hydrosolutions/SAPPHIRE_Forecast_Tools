@@ -5,6 +5,8 @@ env:
 on:
   push:
     branches: [ "deploy" ]
+  pull_request:
+    branches: [ "deploy" ]
 
 jobs:
   push_to_Dckerhub:

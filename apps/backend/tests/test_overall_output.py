@@ -10,6 +10,8 @@ import time
 from backend.src import config, data_processing, forecasting, output_generation
 from ieasyhydro_sdk.sdk import IEasyHydroSDK
 
+import forecast_library as fl
+
 def test_overall_output_with_demo_data():
     # Read data for one station.
     # Set up the test environment
@@ -22,10 +24,6 @@ def test_overall_output_with_demo_data():
     os.makedirs(tmpdir, exist_ok=True)
     # Load the environment
     config.load_environment()
-    # Create the intermediate data directory
-    os.makedirs(
-        os.getenv("ieasyforecast_intermediate_data_path"),
-        exist_ok=True)
     # Copy the input directories to tmpdir
     temp_ieasyforecast_configuration_path = os.path.join(tmpdir, "apps/config")
     temp_ieasyreports_templates_directory_path = os.path.join(tmpdir, "data/templates")
@@ -33,9 +31,18 @@ def test_overall_output_with_demo_data():
     temp_ieasyforecast_gis_directory_path = os.path.join(tmpdir, "data/GIS")
     temp_ieasyforecast_daily_discharge_path = os.path.join(tmpdir, "data/daily_runoff")
     temp_ieasyforecast_locale_dir = os.path.join(tmpdir, "apps/config/locale")
+    temp_ieasyforecast_intermediate_data_path = os.path.join(tmpdir, "apps/intermediate")
     temp_log_file = os.path.join(tmpdir, "backend.log")
 
+    # Create the intermediate data directory
+    os.makedirs(
+        temp_ieasyforecast_intermediate_data_path,
+        exist_ok=True)
+
+
     shutil.copytree("config", temp_ieasyforecast_configuration_path)
+    if os.path.exists(os.path.join(tmpdir, "data")):
+        shutil.rmtree(os.path.join(tmpdir, "data"))
     shutil.copytree("../data", os.path.join(tmpdir, "data"))
     # Copy the demo data for station 15678 to the data directory
     shutil.copy("backend/tests/test_files/15678_test_data.xlsx", temp_ieasyforecast_daily_discharge_path)
@@ -47,6 +54,7 @@ def test_overall_output_with_demo_data():
     os.environ["ieasyreports_report_output_path"] = temp_ieasyreports_report_output_path
     os.environ["ieasyforecast_gis_directory_path"] = temp_ieasyforecast_gis_directory_path
     os.environ["ieasyforecast_daily_discharge_path"] = temp_ieasyforecast_daily_discharge_path
+    os.environ["ieasyforecast_intermediate_data_path"] = temp_ieasyforecast_intermediate_data_path
     os.environ["ieasyforecast_locale_dir"] = temp_ieasyforecast_locale_dir
     os.environ["log_file"] = temp_log_file
 
@@ -127,6 +135,7 @@ def test_overall_output_with_demo_data():
 
     # Read discharge data from excel and iEasyHydro database
     modified_data = data_processing.get_station_data(ieh_sdk, backend_has_access_to_db, start_date, fc_sites)
+    print("\n\nDEBUG test_overall_output_with_demo_data: modified_data\n", modified_data.tail(60).head(20))
 
     forecast_pentad_of_year = data_processing.get_forecast_pentad_of_year(bulletin_date)
     data_processing.save_discharge_avg(modified_data, fc_sites, forecast_pentad_of_year)
@@ -134,6 +143,8 @@ def test_overall_output_with_demo_data():
     output_generation.write_hydrograph_data(modified_data)
 
     # Test if the files were created
+    #print("\n\nDEBUG: test_overall_output_with_demo_data: os.getenv('ieasyforecast_intermediate_data_path')\n", os.getenv("ieasyforecast_intermediate_data_path"))
+    #print("DEBUG: test_overall_output_with_demo_data: os.listdir(os.getenv('ieasyforecast_intermediate_data_path'))\n", os.listdir(os.getenv("ieasyforecast_intermediate_data_path")))
     assert os.path.exists(
         os.path.join(os.getenv("ieasyforecast_intermediate_data_path"),
                      os.getenv("ieasyforecast_hydrograph_pentad_file")))
@@ -164,7 +175,9 @@ def test_overall_output_with_demo_data():
         else:
             demo_data = pd.concat([demo_data, temp])
     temp['Code'] = temp['Code'].astype(int)
-    print(demo_data.head(10))
+    # Round the values in the demo_data dataframe to 2 decimal places
+    demo_data['values'] = demo_data['values'].apply(fl.round_discharge_to_float)
+    #print("DEBUG: demo_data read from xlsx:\n", demo_data.head(30).tail(5))
 
     # Reformat saved_day to long format
     saved_day_long = saved_day.melt(
@@ -180,9 +193,9 @@ def test_overall_output_with_demo_data():
     merged_data = pd.merge(demo_data, saved_day_long.loc[:, ["Code", "dates", "discharge"]],
                            on=['Code','dates'], how='inner')
 
-    print(merged_data.head(10))
+    #print("\nDEBUG: test_overall_output_with_demo_data: merged_data.head()\n", merged_data.head(30).tail(5))
     # Print the rows where merged_data['discharge'] and merged_data['values'] are not the same
-    #print(merged_data.loc[abs(merged_data['discharge'] - merged_data['values']) > 1e-6])
+    #print("DEBUG: differences between discharge (src: hydrograph_day) and values (src: xls) column:\n", merged_data.loc[abs(merged_data['discharge'] - merged_data['values']) > 1e-6])
     # With the current settings for dealing with outliers, we have exactly 2
     # rows where the values are not the same.
     # Assert if there are exactly 2 rows where the values are not the same
@@ -228,14 +241,17 @@ def test_overall_output_with_demo_data():
     merged_data = pd.merge(
         saved_day_long, saved_pentad_long,
         on=['Code', 'Year', 'pentad'], suffixes=('_daily', '_pentad_csv'))
-    print(merged_data.head(20))
+    print(merged_data.tail(60).head(20))
 
     # Where is_forecast_date == True, avg_ref should be the same as
     # Only keep the rows where is_forecast_date == True
     merged_data = merged_data.loc[merged_data['is_forecast_date'] == True]
+
+    # Round the data in the avg_ref column
+    merged_data['avg_ref'] = merged_data['avg_ref'].apply(fl.round_discharge_to_float)
     # Only print the rows where the difference between avg_ref and
     # discharge_pentad_csv is larger than 1e-6 and where is_forecast_date == True
-    print(merged_data.loc[abs(merged_data['avg_ref'] - merged_data['discharge_pentad_csv']) > 1e-6])
+    print(merged_data.loc[abs(merged_data['avg_ref'] - merged_data['discharge_pentad_csv']) > 1e-6].tail(20))
     # discharge_pentad_csv
     assert max(abs(merged_data['avg_ref'] - merged_data['discharge_pentad_csv'])) < 1e-6
 
@@ -347,6 +363,7 @@ def test_overall_output_step_by_step():
 
     # Read discharge data from excel and iEasyHydro database
     modified_data = data_processing.get_station_data(ieh_sdk, backend_has_access_to_db, start_date, fc_sites)
+    #print("DEBUG: test_overall_output_step_by_step: modified_data\n", modified_data[modified_data['Code']=="12176"].tail(220).head(20))
     # Test that the first date in the dataframe is 2000-01-01
     assert modified_data['Date'][0].strftime('%Y-%m-%d') == dt.datetime(2000, 1, 1).strftime('%Y-%m-%d'), "The first date in the dataframe is not as expected"
     # The last date should be 2022-05-05
@@ -405,6 +422,7 @@ def test_overall_output_step_by_step():
         hydrograph_day[['Code', 'Date', 'discharge']].reset_index(drop=True), on=['Code', 'Date'])
 
     # print the rows where Q_m3s and discharge are not the same
+    #print("DEBUG: test_overall_output_step_by_step: merged_data_all.loc[abs(merged_data_all['discharge'] - merged_data_all['Q_m3s']) > 1e-6]")
     #print(merged_data_all.loc[abs(merged_data_all['discharge'] - merged_data_all['Q_m3s']) > 1e-6])
     # Put this into an assert
     assert max(abs(merged_data_all['discharge'] - merged_data_all['Q_m3s'])) < 1e-6, "The discharge data is not as expected"
@@ -429,15 +447,23 @@ def test_overall_output_step_by_step():
     print("\n\nDEBUG: test_overall_output_step_by_step: merged_data_pentad: \n", merged_data_pentad.head(10))
     #print(merged_data_pentad.tail(10))
 
+
     # On issue_date == True, discharge_avg should be the same as discharge.
     # Only keep the rows where issue_date == True
+    print("\n\nDEBUG: test_overall_output_step_by_step: merged_data_pentad\n", merged_data_pentad[merged_data_pentad['Code'] == 12176].tail(220).head(20))
     merged_data_pentad = merged_data_pentad.loc[merged_data_pentad['issue_date'] == True]
+
+    # Round merged_data_pentad['discharge_avg'] to 3 non-zero digits
+    merged_data_pentad_2 = merged_data_pentad.copy()
+    merged_data_pentad_2['discharge_avg'] = merged_data_pentad_2['discharge_avg'].apply(fl.round_discharge_to_float)
+    merged_data_pentad_2['diff'] = abs(merged_data_pentad_2['discharge_avg'] - merged_data_pentad_2['discharge'])
+
     # Only print the rows where the difference between discharge_avg and
     # discharge is larger than 1e-6 and where issue_date == True
-    #print(merged_data_pentad.loc[abs(merged_data_pentad['discharge_avg'] - merged_data_pentad['discharge']) > 1e-6])
+    print(merged_data_pentad_2[merged_data_pentad_2['diff'] > 1e-6])
 
     # Test this with an assert
-    assert max(abs(merged_data_pentad['discharge_avg'] - merged_data_pentad['discharge'])) < 1e-6, "The discharge data is not as expected"
+    assert max(abs(merged_data_pentad_2['discharge_avg'] - merged_data_pentad_2['discharge'])) < 1e-6, "The discharge data is not as expected"
 
     # Try the reformatting of the hydrograph data again independently and
     # compare the results with the data in merged_data_pentad.
@@ -456,8 +482,15 @@ def test_overall_output_step_by_step():
         merged_data_pentad, hydrograph_pentad_long_test2,
         on=['Code', 'year', 'pentad'], suffixes=('_ref', '_pentad_reformat'))
 
+    # Apply typical rounding used by ope. hydrologists
+    merged_data_test2['discharge_ref'] = merged_data_test2['discharge_ref'].apply(fl.round_discharge_to_float)#.apply(fl.round_discharge)
+
     # Test if discharge_ref is the same as discharge_pentad_reformat
-    assert max(abs(merged_data_test2['discharge_ref'] - merged_data_test2['discharge_pentad_reformat'])) < 1e-6, "The discharge data is not as expected"
+    merged_data_test22 = merged_data_test2
+    merged_data_test22['diff'] = abs(merged_data_test22['discharge_ref'] - merged_data_test22['discharge_pentad_reformat'])
+    print("DEBUG: test_overall_output_step_by_step: merged_data_test22.tail(10)\n", merged_data_test22[merged_data_test22['Code'] == 12176].tail(60).head(20))
+    print(merged_data_test22[(merged_data_test22['diff'] >= 1e-6) & merged_data_test22['Code'] == 12176])
+    assert max(merged_data_test22['diff']) < 1e-6, "The discharge data is not as expected"
 
     # The columns discharge_hydrograph_csv and Q_m3s should be the same
     merged_data_comp['diff'] = merged_data_comp['discharge_hydrograph_csv'] - merged_data_comp['Q_m3s']
