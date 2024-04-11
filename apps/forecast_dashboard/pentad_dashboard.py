@@ -241,6 +241,10 @@ def get_current_predictor_and_dates(forecast_pentad_all: pd.DataFrame,
     except IndexError:
         output.predictor = np.nan
 
+    # If the predictor is larger or equal to 100, we round it to an integer.
+    if output.predictor >= 100:
+        output.predictor = int(output.predictor)
+
     # Let's also put the forecast & forecast ranges into the output
     try:
         output.fc_exp = fcdata_selection[
@@ -509,7 +513,7 @@ def plot_daily_hydrograph_data(station_widget, fcdata):
 
 
     title = _("Station ") + str(station_widget) + _(" on ") + title_date
-    predictor_string=_("Sum of runoff over the past 3 days: ") + f"{dates_collection.predictor:.1f}" + _(" m3/s")
+    predictor_string=_("Sum of runoff over the past 3 days: ") + f"{dates_collection.predictor}" + _(" m3/s")
     forecast_string=_("Forecast horizon for ") + title_pentad + _(" pentad ") + title_month
     ## Bokeh plot
     hv_empty = hv.Scatter([], [], label=predictor_string) \
