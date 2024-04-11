@@ -5,8 +5,6 @@ env:
 on:
   push:
     branches: [ "deploy_aws" ]
-  pull_request:
-    branches: [ "deploy_aws" ]
 
 jobs:
   test_ieasyhydroforecast:
