@@ -241,6 +241,10 @@ def get_current_predictor_and_dates(forecast_pentad_all: pd.DataFrame,
     except IndexError:
         output.predictor = np.nan
 
+    # If the predictor is larger or equal to 100, we round it to an integer.
+    if output.predictor >= 100:
+        output.predictor = int(output.predictor)
+
     # Let's also put the forecast & forecast ranges into the output
     try:
         output.fc_exp = fcdata_selection[
@@ -509,7 +513,7 @@ def plot_daily_hydrograph_data(station_widget, fcdata):
 
 
     title = _("Station ") + str(station_widget) + _(" on ") + title_date
-    predictor_string=_("Sum of runoff over the past 3 days: ") + f"{dates_collection.predictor:.1f}" + _(" m3/s")
+    predictor_string=_("Sum of runoff over the past 3 days: ") + f"{dates_collection.predictor}" + _(" m3/s")
     forecast_string=_("Forecast horizon for ") + title_pentad + _(" pentad ") + title_month
     ## Bokeh plot
     hv_empty = hv.Scatter([], [], label=predictor_string) \
@@ -592,13 +596,21 @@ def plot_forecast_data(station_widget, range_selection_widget, manual_range_widg
 
     # Filter forecast data for the last date
     fcdata = fcdata[fcdata["Date"] == fcdata["Date"].max()]
+    # Check column fc_qexp. If the value is larger than 100, round it to an integer.
+    if fcdata["fc_qexp"].values[0] >= 100:
+        fcdata["fc_qexp"] = fcdata["fc_qexp"].astype(int)
+    # Do the same for fc_qmin and fc_qmax
+    if fcdata["fc_qmin"].values[0] >= 100:
+        fcdata["fc_qmin"] = fcdata["fc_qmin"].astype(int)
+    if fcdata["fc_qmax"].values[0] >= 100:
+        fcdata["fc_qmax"] = fcdata["fc_qmax"].astype(int)
     title = _("Station ") + str(station_widget) + _(" on ") + title_date_str + \
         _(" (forecast for ") + title_pentad + _(" pentad ") + title_month + _(")")
-    forecast_string="Q exp.:" + f"{fcdata['fc_qexp'].values[0]:.1f}" + _(" m3/s") +"\nQ range: " + f"{fcdata['fc_qmin'].values[0]:.1f} - {fcdata['fc_qmax'].values[0]:.1f}" + _("m3/s")
-    fcqexp_string = _("Expected forecast: ") + f"{fcdata['fc_qexp'].values[0]:.1f} " + _("m3/s")
-    fcqrange_string = _("Forecast range: ") + f"{fcdata['fc_qmin'].values[0]:.1f} - {fcdata['fc_qmax'].values[0]:.1f} "+_("m3/s")
+    forecast_string="Q exp.:" + f"{fcdata['fc_qexp'].values[0]}" + _(" m3/s") +"\nQ range: " + f"{fcdata['fc_qmin'].values[0]} - {fcdata['fc_qmax'].values[0]}" + _("m3/s")
+    fcqexp_string = _("Expected forecast: ") + f"{fcdata['fc_qexp'].values[0]} " + _("m3/s")
+    fcqrange_string = _("Forecast range: ") + f"{fcdata['fc_qmin'].values[0]} - {fcdata['fc_qmax'].values[0]} "+_("m3/s")
 
-    fcqrange_string_20p = _("Forecast range: ") + f"{fcdata['fc_qmin_20p'].values[0]:.1f} - {fcdata['fc_qmax_20p'].values[0]:.1f} "+_("m3/s")
+    fcqrange_string_20p = _("Forecast range: ") + f"{fcdata['fc_qmin_20p'].values[0]} - {fcdata['fc_qmax_20p'].values[0]} "+_("m3/s")
 
     fcdata["yerrl"] = fcdata["fc_qexp"] - fcdata["fc_qmin"]
     fcdata["yerru"] = fcdata["fc_qmax"] - fcdata["fc_qexp"]
@@ -683,7 +695,7 @@ def plot_effectiveness_of_forecast_method(station_widget,
 
     # We need to print a suitable date for the figure titles. We use the last
     # date of fcdata_filtered.
-    title_date = dates_collection.latest_forecast_date
+    title_date = (dates_collection.latest_forecast_date - dt.timedelta(days=1))
     title_date_str = title_date.strftime('%Y-%m-%d')
     title_pentad = tl.get_pentad(title_date_str)
     title_month = tl.get_month_str_case2(title_date_str)
@@ -746,7 +758,7 @@ def plot_forecast_accuracy(station_widget, range_selection_widget, manual_range_
 
     # We need to print a suitable date for the figure titles. We use the last
     # date of fcdata_filtered where .
-    title_date = dates_collection.latest_forecast_date
+    title_date = (dates_collection.latest_forecast_date - dt.timedelta(days=1))
     title_date_str = title_date.strftime('%Y-%m-%d')
     title_pentad = tl.get_pentad(title_date_str)
     title_month = tl.get_month_str_case2(title_date_str)

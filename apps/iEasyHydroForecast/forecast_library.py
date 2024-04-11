@@ -141,10 +141,10 @@ def get_predictor_datetimes(input_date: str, n: int):
         print(f'Error in get_predictor_dates: {e}')
         return None
 
-
 def round_discharge_trad_bulletin(value: float) -> str:
     '''
-    Round discharge to 4 decimals for values.
+    Round discharge to 3 decimals for values, analogue to
+    round_discharge_to_float but convert output to str.
 
     Args:
         value (str): The discharge value to round.
@@ -153,25 +153,112 @@ def round_discharge_trad_bulletin(value: float) -> str:
         str: The rounded discharge value. An empty string is returned in case of
             a negative input value.
     '''
-    try:
-        if not isinstance(value, float):
-            raise TypeError('Input value must be a float')
-        if isinstance(value, str):
-            raise TypeError('Input value must be a float, not a string')
-        # Return an empty string if the input value is negative
-        if value < 0.0:
-            return " "
-        # Test if the input value is close to zero
-        elif math.isclose(value, 0.0):
-            return "0"
-        else:
-            return "{:.4f}".format(round(value, 4))
-    except TypeError as e:
-        print(f'Error in round_discharge: {e}')
-        return None
-    except Exception as e:
-        print(f'Error in round_discharge: {e}')
-        return None
+    if value < 0.0:
+        return '0.0'
+    # Test if the input value is close to zero, default tolerance is 1e-9
+    elif math.isclose(value, 0.0, abs_tol=1e-4):
+        return '0.0'
+    elif value > 0.0 and value < 1.0:
+        return "{:.2f}".format(value)
+    elif value >= 1.0 and value < 10.0:
+        return "{:.2f}".format(value)
+    elif value >= 10.0 and value < 100.0:
+        return "{:.1f}".format(value)
+    else:
+        return "{:.0f}".format(value)
+
+def round_discharge_trad_bulletin_3numbers(value: float) -> str:
+    '''
+    Round discharge to 3 decimals for values, analogue to
+    round_discharge_to_float but convert output to str.
+
+    Args:
+        value (str): The discharge value to round.
+
+    Returns:
+        str: The rounded discharge value. An empty string is returned in case of
+            a negative input value.
+    '''
+    if value < 0.0:
+        return '0.0'
+    # Test if the input value is close to zero, default tolerance is 1e-9
+    elif math.isclose(value, 0.0, abs_tol=1e-4):
+        return '0.0'
+    elif value > 0.0 and value < 0.001:
+        return "{:.6f}".format(value)
+    elif value >= 0.001 and value < 0.01:
+        return "{:.5f}".format(value)
+    elif value >= 0.01 and value < 0.1:
+        return "{:.4f}".format(value)
+    elif value >=0.1 and value < 1.0:
+        return "{:.3f}".format(value)
+    elif value >= 1.0 and value < 10.0:
+        return "{:.2f}".format(value)
+    elif value >= 10.0 and value < 100.0:
+        return "{:.1f}".format(value)
+    else:
+        return "{:.0f}".format(value)
+
+
+def round_discharge_to_float(value: float) -> float:
+    '''
+    Round discharge to 3 valid digits.
+
+    Args:
+        value (str): The discharge value to round.
+
+    Returns:
+        float: The rounded discharge value. An empty string is returned in case of
+            a negative input value.
+
+    Examples:
+        >>> round_discharge_to_float(0.0)
+        0.0
+        >>> round_discharge_to_float(0.12345)
+        '0.123'
+        >>> round_discharge_to_float(0.012345)
+        '0.0123'
+        >>> round_discharge_to_float(0.0062315)
+        '0.00623'
+        >>> round_discharge_to_float(1.089)
+        '1.09'
+        >>> round_discharge_to_float(1.238)
+        '1.24'
+        >>> round_discharge_to_float(1.0123)
+        '1.01'
+        >>> round_discharge_to_float(10.123)
+        '10.1'
+        >>> round_discharge_to_float(100.123)
+        '100'
+        >>> round_discharge_to_float(1005.123)
+        '1005'
+    '''
+    if not isinstance(value, float):
+        raise TypeError('Input value must be a float')
+    if isinstance(value, str):
+        raise TypeError('Input value must be a float, not a string')
+
+    # Return 0.0 if the input value is negative
+    if value < 0.0:
+        return 0.0
+    # Test if the input value is close to zero, default tolerance is 1e-9
+    elif math.isclose(value, 0.0, abs_tol=1e-4):
+        return 0.0
+    elif value > 0.0 and value < 0.001:
+        return round(value, 6)
+    elif value >= 0.001 and value < 0.01:
+        return round(value, 5)
+    elif value >= 0.01 and value < 0.1:
+        return round(value, 4)
+    elif value >=0.1 and value < 1.0:
+        return round(value, 3)
+    elif value >= 1.0 and value < 10.0:
+        return round(value, 2)
+    elif value >= 10.0 and value < 100.0:
+        return round(value, 1)
+    else:
+        return round(value, 0)
+
 
 def round_discharge(value: float) -> str:
     '''
@@ -814,8 +901,8 @@ class Site:
             # Get the norm discharge for the site
             qnorm = df[(df['Code'] == site.code) & (df['pentad_in_year'] == pentad)]['discharge_avg'].values[0]
 
-            # Write the norm discharge value to self.qnorm
-            site.qnorm = round_discharge(qnorm)
+            # Write the norm discharge value to self.qnorm as string
+            site.qnorm = round_discharge_trad_bulletin(qnorm)
 
             # Return the norm discharge value
             return qnorm
@@ -854,7 +941,7 @@ class Site:
             # forecast. round_discharge will assign an empty string " ".
 
             # Write the predictor value to self.predictor
-            site.predictor = float(round_discharge(predictor))
+            site.predictor = round_discharge_to_float(predictor)
 
             # Return the predictor value
             return predictor
@@ -1068,6 +1155,14 @@ class Site:
 
             # Add the morning discharge to the DataFrame
             df = pd.concat([df, morning_discharge])
+
+            # Round the data_values to 3 digits. That is, if a value is
+            # 0.123456789, it will be rounded to 0.123 and if a value is 123.456789
+            # it will be rounded to 123.0
+            df['data_value'] = df['data_value'].apply(round_discharge_to_float)
+
+            print("\n\nDEBUG: Site: ", site.code)
+            print("DEBUG: DB data for predictor discharge:\n", df)
 
             # If we still have missing data, we interpolate the existing data.
             # We take the average of the existing data to fill the gaps.

@@ -111,6 +111,25 @@ class TestRoundDischarge(unittest.TestCase):
         self.assertEqual(fl.round_discharge(100.1234), "100")
         self.assertEqual(fl.round_discharge(1000.8234), "1001")
 
+class TestRoundDischargeToFloat(unittest.TestCase):
+    def test_round_discharge_to_float(self):
+        self.assertEqual(fl.round_discharge_to_float(0.0), 0.0)
+        self.assertEqual(fl.round_discharge_to_float(0.12345), 0.123)
+        self.assertEqual(fl.round_discharge_to_float(0.012345), 0.0123)
+        self.assertEqual(fl.round_discharge_to_float(0.0062315), 0.00623)
+        self.assertEqual(fl.round_discharge_to_float(1.089), 1.09)
+        self.assertEqual(fl.round_discharge_to_float(1.238), 1.24)
+        self.assertEqual(fl.round_discharge_to_float(1.0123), 1.01)
+        self.assertEqual(fl.round_discharge_to_float(10.123), 10.1)
+        self.assertEqual(fl.round_discharge_to_float(100.123), 100)
+        self.assertEqual(fl.round_discharge_to_float(1005.123), 1005)
+
+    def test_round_discharge_to_float_with_negative_value(self):
+        self.assertEqual(fl.round_discharge_to_float(-1.0), 0.0)
+
+    def test_round_discharge_to_float_with_non_float_value(self):
+        with self.assertRaises(TypeError):
+            fl.round_discharge_to_float('1.0')
 
 class TestPerformLinearRegression(unittest.TestCase):
     def test_perform_linear_regression_with_wrong_input_type(self):
