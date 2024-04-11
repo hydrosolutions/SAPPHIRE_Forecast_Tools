@@ -183,7 +183,7 @@ def get_predictor(modified_data, start_date, fc_sites, ieh_sdk, backend_has_acce
             # Assign the sum to the predictor of the reservoir
             for site in fc_sites:
                 if site.code == '16936':
-                    site.predictor = tok_predictor
+                    site.predictor = fl.round_discharge_to_float(tok_predictor)
 
         logger.info(f'   {len(fc_sites)} predictor discharge gotten from DB, namely:'
                     f'\n{[[site.code, site.predictor] for site in fc_sites]}')

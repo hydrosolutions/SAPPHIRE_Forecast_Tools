@@ -118,9 +118,9 @@ def validate_hydrograph_data(hydrograph_data):
 
     # We do not filter February 29 in leap years here but in the dashboard.
 
-    # Round to 4 decimals
-    hydrograph_data['Q_m3s'] = hydrograph_data['Q_m3s'].round(4)
-    hydrograph_data['discharge_avg'] = hydrograph_data['discharge_avg'].round(4)
+    # Round to 3 digits as is usual in operational hydrology in Kyrgyzstan
+    hydrograph_data['Q_m3s'] = hydrograph_data['Q_m3s'].apply(fl.round_discharge_to_float)
+    hydrograph_data['discharge_avg'] = hydrograph_data['discharge_avg'].apply(fl.round_discharge_to_float)
 
     # Overwrite pentad in a month with pentad in a year
     hydrograph_data = tl.add_pentad_in_year_column(hydrograph_data)
@@ -425,8 +425,8 @@ def write_forecast_sheets(settings, start_date, bulletin_date, fc_sites, result2
                 site_data.append({
                     'river_name': site.river_name + " " + site.punkt_name,
                     'year': str(year),
-                    'qpavg': fl.round_discharge_trad_bulletin(df_year['discharge_avg'].mean()).replace('.', ','),
-                    'qpsum': fl.round_discharge_trad_bulletin(df_year['discharge_sum'].mean()).replace('.', ',')
+                    'qpavg': fl.round_discharge_trad_bulletin_3numbers(df_year['discharge_avg'].mean()).replace('.', ','),
+                    'qpsum': fl.round_discharge_trad_bulletin_3numbers(df_year['discharge_sum'].mean()).replace('.', ',')
                 })
 
             # Add current year and current predictor to site_data
@@ -434,7 +434,7 @@ def write_forecast_sheets(settings, start_date, bulletin_date, fc_sites, result2
             if pd.isna(site.predictor):
                 temp_predictor = ""
             else:
-                temp_predictor = format(site.predictor, '.3f').replace('.', ',')
+                temp_predictor = fl.round_discharge_trad_bulletin(site.predictor).replace('.', ',')
             site_data.append({
                 'river_name': site.river_name + " " + site.punkt_name,
                 'year': str(start_date.year),
@@ -495,6 +495,7 @@ def write_forecast_sheets(settings, start_date, bulletin_date, fc_sites, result2
             site.fc_qmax = site.fc_qmax.replace(',', '.')
             site.fc_qexp = site.fc_qexp.replace(',', '.')
             site.qnorm = site.qnorm.replace(',', '.')
+            site.predictor = fl.round_discharge_trad_bulletin(site.predictor).replace(',', '.')
             site.perc_norm = site.perc_norm.replace(',', '.')
             site.qdanger = site.qdanger.replace(',', '.')
         # Write the data
