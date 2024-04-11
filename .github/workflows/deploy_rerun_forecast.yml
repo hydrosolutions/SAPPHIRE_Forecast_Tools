@@ -5,6 +5,8 @@ env:
 on:
   push:
     branches: [ "deploy" ]
+  pull_request:
+    branches: [ "deploy" ]
 
 jobs:
   test_reset_forecast:

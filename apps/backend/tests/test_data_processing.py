@@ -646,7 +646,10 @@ def test_generate_issue_and_forecast_dates():
         'Values': pd.date_range(start='1/1/2022', end='12/31/2022').day,
         'Stations': ['12345' for i in range(365)]
     }
+
     df = pd.DataFrame(data)
+    # Make sure we have floats in the Values column
+    df['Values'] = df['Values'].astype(float)
     df = data_processing.add_pentad_issue_date(df, datetime_col='Dates')
     result0 = data_processing.calculate_3daydischargesum(df, 'Dates', 'Values')
     expected_result = data_processing.calculate_pentadaldischargeavg(result0, 'Dates', 'Values')
