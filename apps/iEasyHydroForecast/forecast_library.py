@@ -320,7 +320,7 @@ def round_discharge(value: float) -> str:
 
 
 def perform_linear_regression(
-        data_df: pd.DataFrame, station_col: str, pentad_col: str, discharge_sum_col: str,
+        data_df: pd.DataFrame, station_col: str, pentad_col: str, predictor_col: str,
         discharge_avg_col: str, forecast_pentad: int) -> pd.DataFrame:
     '''
     Perform a linear regression for each station & pentad in a DataFrame.
@@ -334,8 +334,9 @@ def perform_linear_regression(
             linear regression on.
         station_col (str): The name of the column containing the station codes.
         pentad_col (str): The name of the column containing the pentad values.
-        discharge_sum_col (str): The name of the column containing the discharge
-            sum values.
+            pentad is a place holder here. It can be pentad or decad.
+        predictor_col (str): The name of the column containing the discharge
+            predictor values.
         discharge_avg_col (str): The name of the column containing the discharge
             average values.
         forecast_pentad(int): The pentad of the year to perform the linear
@@ -367,17 +368,17 @@ def perform_linear_regression(
         raise TypeError('station_col must be a string')
     if not isinstance(pentad_col, str):
         raise TypeError('pentad_col must be a string')
-    if not isinstance(discharge_sum_col, str):
-        raise TypeError('discharge_sum_col must be a string')
+    if not isinstance(predictor_col, str):
+        raise TypeError('predictor_col must be a string')
     if not isinstance(discharge_avg_col, str):
         raise TypeError('discharge_avg_col must be a string')
     if not isinstance(forecast_pentad, int):
         raise TypeError('forecast_pentad must be an integer')
-    if not all(column in data_df.columns for column in [station_col, pentad_col, discharge_sum_col, discharge_avg_col]):
-        raise ValueError('DataFrame is missing one or more required columns')
+    if not all(column in data_df.columns for column in [station_col, pentad_col, predictor_col, discharge_avg_col]):
+        raise ValueError(f'DataFrame is missing one or more required columns.\n   Required columns: station_col, pentad_col, predictor_col, discharge_avg_col\n   present columns {data_df.columns}')
 
     # Test that the required columns exist in the input DataFrame.
-    required_columns = [station_col, pentad_col, discharge_sum_col, discharge_avg_col]
+    required_columns = [station_col, pentad_col, predictor_col, discharge_avg_col]
     missing_columns = [col for col in required_columns if not hasattr(data_df, col)]
     if missing_columns:
         raise ValueError(f"DataFrame is missing one or more required columns: {missing_columns}")
@@ -418,7 +419,7 @@ def perform_linear_regression(
         station_data = station_data.dropna()
 
         # Get the discharge_sum and discharge_avg columns
-        discharge_sum = station_data[discharge_sum_col].values.reshape(-1, 1)
+        discharge_sum = station_data[predictor_col].values.reshape(-1, 1)
         discharge_avg = station_data[discharge_avg_col].values.reshape(-1, 1)
 
         # Perform the linear regression
@@ -433,7 +434,7 @@ def perform_linear_regression(
         print(f'Station: {station}, pentad: {forecast_pentad}, slope: {slope}, intercept: {intercept}')
 
         # # Create a scatter plot with the regression line
-        # fig = px.scatter(station_data, x=discharge_sum_col, y=discharge_avg_col, color=station_col)
+        # fig = px.scatter(station_data, x=predictor_col, y=discharge_avg_col, color=station_col)
         # fig.add_trace(px.line(x=discharge_sum.flatten(), y=model.predict(discharge_sum).flatten()).data[0])
         # fig.show()
 
@@ -443,7 +444,7 @@ def perform_linear_regression(
 
         # Calculate the forecasted discharge for the current station and forecast_pentad
         data_dfp.loc[(data_dfp[station_col] == station), 'forecasted_discharge'] = \
-            slope * data_dfp.loc[(data_dfp[station_col] == station), discharge_sum_col] + intercept
+            slope * data_dfp.loc[(data_dfp[station_col] == station), predictor_col] + intercept
 
     return data_dfp
 
@@ -944,8 +945,8 @@ class Site:
         '''
         try:
             # Test that df contains columns 'Code' and 'pentad_in_year'
-            if not all(column in df.columns for column in ['Code', 'pentad_in_year']):
-                raise ValueError(f'DataFrame is missing one or more required columns: {"Code", "pentad_in_year"}')
+            if not all(column in df.columns for column in ['Code', 'decad_in_year']):
+                raise ValueError(f'DataFrame is missing one or more required columns: {"Code", "decad_in_year"}')
 
             # Convert pentad to float
             decad_in_year = float(decad_in_year)

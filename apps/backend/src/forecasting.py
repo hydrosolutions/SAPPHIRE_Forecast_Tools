@@ -5,14 +5,27 @@ import forecast_library as fl
 logger = logging.getLogger(__name__)
 
 
-def perform_linear_regression(modified_data, forecast_pentad_of_year):
+def perform_linear_regression_pentad(modified_data, forecast_pentad_of_year):
     # === Perform linear regression ===
     # region Perform linear regression
-    logger.info("Perform linear regression ...")
+    logger.info("Perform linear regression for pentadal forecasts ...")
 
     # Returns a df filtered to the current pentad of the year
     result_df = fl.perform_linear_regression(modified_data, 'Code', 'pentad_in_year', 'discharge_sum', 'discharge_avg',
                                              int(forecast_pentad_of_year))
+
+    logger.info("   ... done")
+    # endregion
+    return result_df
+
+def perform_linear_regression_decad(modified_data, forecast_decad_of_year):
+    # === Perform linear regression ===
+    # region Perform linear regression
+    logger.info("Perform linear regression for decadal forecasts ...")
+
+    # Returns a df filtered to the current pentad of the year
+    result_df = fl.perform_linear_regression(modified_data, 'Code', 'decad_in_year', 'predictor', 'discharge_avg',
+                                             int(forecast_decad_of_year))
 
     logger.info("   ... done")
     # endregion

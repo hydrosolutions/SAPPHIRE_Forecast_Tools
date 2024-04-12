@@ -1224,6 +1224,18 @@ def get_forecast_decad_of_year(bulletin_date):
     # regression on all data from the same pentad of the year.
     return tl.get_decad_in_year(bulletin_date)
 
+def filter_data(data, sites):
+    # Test if we have column Code in the data
+    if 'Code' not in data.columns:
+        raise KeyError("The column 'Code' is not in the DataFrame.")
+
+    # Get a list of site codes
+    site_codes = [site.code for site in sites]
+
+    # Filter the data
+    filtered_data = data[data['Code'].isin(site_codes)]
+
+    return filtered_data
 
 def save_discharge_avg(modified_data, fc_sites, forecast_pentad_of_year):
     # Group modified_data by Code and calculate the mean over discharge_avg
@@ -1252,7 +1264,7 @@ def save_discharge_avg_decad(modified_data, sites_list, forecast_decad_of_year):
     # Now we need to write the discharge_avg for the current decad to the site: Site
     for site in sites_list:
         logger.info(f'    Calculating norm discharge for site {site.code} ...')
-        fl.Site.from_df_get_norm_discharge(site, forecast_decad_of_year, norm_discharge)
+        fl.Site.from_df_get_norm_discharge_decad(site, forecast_decad_of_year, norm_discharge)
 
     logger.info(f'   {len(sites_list)} Norm discharge calculated, namely:\n{[site1.qnorm for site1 in sites_list]}')
     logger.info("   ... done")

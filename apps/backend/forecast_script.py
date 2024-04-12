@@ -70,17 +70,26 @@ def main():
 
     # Read discharge data from excel and iEasyHydro database
     modified_data, modified_data_decad = data_processing.get_station_data(ieh_sdk, backend_has_access_to_db, start_date, fc_sites, forecast_flags)
+    # For decadal forecasts, only keep data for the stations for which we produce decadal forecasts
+    if forecast_flags.decad:
+        modified_data_decad = data_processing.filter_data(modified_data_decad, fc_sites_decad)
 
     forecast_pentad_of_year = data_processing.get_forecast_pentad_of_year(bulletin_date)
-    forecast_decad_of_year = data_processing.get_forecast_decad_of_year(bulletin_date)
     data_processing.save_discharge_avg(modified_data, fc_sites, forecast_pentad_of_year)
-    data_processing.save_discharge_avg_decad(modified_data_decad, fc_sites_decad, forecast_decad_of_year)
+    if forecast_flags.decad:
+        forecast_decad_of_year = data_processing.get_forecast_decad_of_year(bulletin_date)
+        data_processing.save_discharge_avg_decad(modified_data_decad, fc_sites_decad, forecast_decad_of_year)
 
     # modelling
     # The linear regression is performed on past data. Here, the slope and
     # intercept of the linear regression model are calculated for each site for
     # the current forecast.
-    result_df = forecasting.perform_linear_regression(modified_data, forecast_pentad_of_year)
+    result_df = forecasting.perform_linear_regression_pentad(modified_data, forecast_pentad_of_year)
+    if forecast_flags.decad:
+        result_decad_df = forecasting.perform_linear_regression_decad(modified_data_decad, forecast_decad_of_year)
+
+        print(result_decad_df.head(40))
+        return
 
     # forecasting
     # - get predictor from the complete data and write it to site.predictor
