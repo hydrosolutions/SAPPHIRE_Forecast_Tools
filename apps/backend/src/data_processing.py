@@ -389,7 +389,8 @@ def get_predictor_datetimes(start_date, forecast_flags):
             raise ValueError("The predictor dates are not valid.")
     if forecast_flags.decad:
         # For decad forecasts, the hydromet uses the average runoff of the previous decade.
-        predictor_dates.decad = get_predictor_datetimes_for_decadal_forecasts(start_date)
+        #predictor_dates.decad = get_predictor_datetimes_for_decadal_forecasts(start_date)
+        predictor_dates.decad = fl.get_predictor_datetimes(start_date.strftime('%Y-%m-%d'), 9)
         # if predictor_dates is None, raise an error
         if predictor_dates.decad is None:
             raise ValueError("The predictor dates are not valid.")

@@ -822,7 +822,7 @@ class Site:
             f")")
 
     @classmethod
-    def from_df_calculate_forecast(cls, site, pentad: str, df: pd.DataFrame):
+    def from_df_calculate_forecast_pentad(cls, site, pentad: str, df: pd.DataFrame):
         '''
         Calculate forecast from slope and intercept in the DataFrame.
 
@@ -868,6 +868,55 @@ class Site:
         except Exception:
             print(f'Note: No slope and intercept for site {site.code} in DataFrame. Returning None.')
             return None
+
+    @classmethod
+    def from_df_calculate_forecast_decad(cls, site, decad: str, df: pd.DataFrame):
+        '''
+        Calculate forecast from slope and intercept in the DataFrame.
+
+        Args:
+            site (Site): The site object to calculate forecast for.
+            decad (str): The decad of the year to calculate forecast for.
+            df (pd.DataFrame): The DataFrame containing the slope and intercept data.
+
+        Returns:
+            qpexpd (str): The expected discharge forecasted for the next pentad.
+        '''
+        try:
+            # Test that df contains columns 'Code' and 'pentad'
+            if not all(column in df.columns for column in ['Code', 'decad_in_year', 'slope', 'intercept']):
+                raise ValueError(f'DataFrame is missing one or more required columns: {"Code", "decad_in_year", "slope", "intercept"}')
+
+            # Convert pentad to float
+            pentad = float(pentad)
+
+            # Get the slope and intercept for the site
+            slope = df[(df['Code'] == site.code) & (df['decad_in_year'] == pentad)]['slope'].values[0]
+            intercept = df[(df['Code'] == site.code) & (df['decad_in_year'] == pentad)]['intercept'].values[0]
+
+            # Write slope and intercept to site
+            site.slope = round(slope, 5)
+            site.intercept = round(intercept, 5)
+
+            # Calculate the expected discharge forecasted for the next pentad
+            qpexpd = slope * float(site.predictor) + intercept
+
+            # What happens if qpexpd is negative? We assign 0 discharge.
+            if qpexpd < 0.0:
+                qpexpd = 0.0
+
+            # Write the expected discharge forecasted for the next pentad to self.fc_qexp
+            site.fc_qexp = round_discharge(qpexpd)
+
+            # Return the expected discharge forecasted for the next pentad
+            return qpexpd
+        except ValueError as e:
+            print(e)
+            return None
+        except Exception:
+            print(f'Note: No slope and intercept for site {site.code} in DataFrame. Returning None.')
+            return None
+
 
     @classmethod
     def calculate_percentages_norm(cls, site):
@@ -967,7 +1016,7 @@ class Site:
             return " "
 
     @classmethod
-    def from_df_get_predictor(cls, site, df: pd.DataFrame, predictor_dates):
+    def from_df_get_predictor_pentad(cls, site, df: pd.DataFrame, predictor_dates):
         '''
         Calculate predictor from df.
 
@@ -992,6 +1041,45 @@ class Site:
 
             # Get the predictor for the site
             predictor = df[(df['Code'] == site.code) & (df['Date'].isin(predictor_dates))]['discharge_sum'].mean(skipna=True)
+
+            # Note: Should the predictor be a negative number, we cannot make a
+            # forecast. round_discharge will assign an empty string " ".
+
+            # Write the predictor value to self.predictor
+            site.predictor = round_discharge_to_float(predictor)
+
+            # Return the predictor value
+            return predictor
+        except Exception as e:
+            print(f'Error {e}. Returning None.')
+            return None
+
+    @classmethod
+    def from_df_get_predictor_decad(cls, site, df: pd.DataFrame, predictor_dates):
+        '''
+        Calculate predictor from df.
+
+        Args:
+            site (Site): The site object to get predictor for.
+            df (pd.DataFrame): The DataFrame containing the predictor data.
+            predictor_dates (list): dates for which to collect the predictor data.
+
+        Returns:
+            float: The predictor for the current pentad.
+        '''
+        try:
+            # Convert predictor_dates to datetime format
+            predictor_dates = pd.to_datetime(predictor_dates)
+
+            # Convert 'Date' column of df to datetime format
+            df.loc[:, 'Date'] = pd.to_datetime(df['Date'])
+
+            # Test that df contains columns 'Code' 'predictor' and 'Date'
+            if not all(column in df.columns for column in ['Code', 'predictor', 'Date']):
+                raise ValueError(f'DataFrame is missing one or more required columns: {"Code", "predictor", "Date"}')
+
+            # Get the predictor for the site
+            predictor = df[(df['Code'] == site.code) & (df['Date'].isin(predictor_dates))]['predictor'].mean(skipna=True)
 
             # Note: Should the predictor be a negative number, we cannot make a
             # forecast. round_discharge will assign an empty string " ".
@@ -1094,7 +1182,7 @@ class Site:
             return " "
 
     @classmethod
-    def from_DB_get_predictor(cls, sdk, site, dates, lagdays=20):
+    def from_DB_get_predictor_sum(cls, sdk, site, dates, lagdays=20):
         '''
         Calculate predictor from data retrieved from the data base.
 
@@ -1234,6 +1322,159 @@ class Site:
 
             # Sum the discharge over the past L days
             q = np.nansum(df['data_value'])
+
+            if q < 0.0:
+                q == np.nan
+            site.predictor = q
+
+            # Return the dangerous discharge value
+            return q
+        except Exception as e:
+            print(f'Exception {e}')
+            print(f'Note: No daily discharge data for site {site.code} in DB. Returning None.')
+            return None
+
+    @classmethod
+    def from_DB_get_predictor_mean(cls, sdk, site, dates, lagdays=20):
+        '''
+        Calculate predictor from data retrieved from the data base.
+
+        The DB connection hast to be established using:
+        load_dotenv()
+        ieh_sdk = IEasyHydroSDK()
+        in the main code.
+
+        Details:
+            The function retrieves sub-daily discharge data from the database
+            and sums it up to get the predictor for the current pentad.
+            The pentadal predictor for the pentad starting today + 1 day is
+            calculated as the sum of the average daily discharge of today - 2
+            days plus the average daily discharge of today - 1 day plus the
+            morning discharge of today.
+
+        Args:
+            sdk (fl.SDK): The SDK connection object set up by calling
+            site (Site): The site object to get dangerous discharge for.
+            dates (list): A list of dates to get the predictor for.
+            lagdays (int): The number of days to go back to retrieve data.
+
+        Returns:
+            float: The predictor for the current pentad.
+        '''
+        try:
+            # Test that dates is a list of dates
+            if not all(isinstance(date, dt.date) for date in dates):
+                raise ValueError('Dates is not a list of dates')
+
+            L = len(dates)
+
+            # Define the date filter for the data request
+            filters = BasicDataValueFilters(
+                local_date_time__gte=min(dates),
+                local_date_time__lte=max(dates)-dt.timedelta(days=1)
+            )
+            print(f'Reading data from site {site.code} with date range from {filters["local_date_time__gte"]} to {filters["local_date_time__lte"]}.')
+
+            predictor_discharge = sdk.get_data_values_for_site(
+                site.code,
+                'discharge_daily_average',
+                filters=filters)
+
+            # Test if we have data or if some of the data is smaller than 0
+            # Increase the number of lag days to go back for averaging if any of
+            # the above is true
+            if not predictor_discharge or any(d['data_value'] < 0 for d in predictor_discharge['data_values']):
+                # go back up to 20 days to retrieve data
+                counter = 0
+                while (not predictor_discharge and counter < lagdays):
+                    filters = BasicDataValueFilters(
+                        local_date_time__gte=filters['local_date_time__gte'] - dt.timedelta(days=1),
+                        local_date_time__lte=filters['local_date_time__lte']
+                    )
+                    predictor_discharge = sdk.get_data_values_for_site(
+                        site.code,
+                        'discharge_daily_average',
+                        filters=filters)
+                    counter += 1
+                    print(f'Note: Not enough data retrieved from DB. New date range from {filters["local_date_time__gte"]} to {filters["local_date_time__lte"]}.')
+
+                # Test if we have data now
+                if not predictor_discharge:
+                    print(f'No recent data for site {site.code} in DB. No forecast available.')
+                    return None
+
+            predictor_discharge = predictor_discharge['data_values']
+
+            """ this overwrites existing predictor discharge. commented out for now.
+            # Check if we have enough data
+            if len(predictor_discharge) < L:
+                counter = 0
+                while (len(predictor_discharge) < L and counter < lagdays):
+                    filters = BasicDataValueFilters(
+                        local_date_time__gte=filters['local_date_time__gte'] - dt.timedelta(days=1),
+                        local_date_time__lte=filters['local_date_time__lte']
+                    )
+                    predictor_discharge = sdk.get_data_values_for_site(
+                        site.code,
+                        'discharge_daily_average',
+                        filters=filters)
+                    counter += 1
+                    print(f'Note: Not enough data retrieved from DB. New date range from {filters["local_date_time__gte"]} to {filters["local_date_time__lte"]}.')
+                    predictor_discharge = predictor_discharge['data_values']
+            """
+
+            morning_filters = BasicDataValueFilters(
+                local_date_time__gte=max(dates)-dt.timedelta(days=1),
+                local_date_time__lte=max(dates))
+            # Also get todays mornign discharge
+            morning_discharge = sdk.get_data_values_for_site(
+                site.code,
+                'discharge_daily',
+                filters=morning_filters)
+
+            # Test if morning discharge is empty
+            if not morning_discharge:
+                print(f'No morning discharge data for site {site.code} in DB. Assuming yesterdays discharge.')
+                # Get the row with the highest date from predictor discharge
+                morning_discharge = predictor_discharge.tail(1)
+            else:
+                # Only keep the lastest row
+                morning_discharge = pd.DataFrame(morning_discharge['data_values']).tail(1)
+
+            # Make sure morning_discharge is a dataframe
+            morning_discharge = pd.DataFrame(morning_discharge)
+
+            # Create a DataFrame from the predictor_discharge list
+            df = pd.DataFrame(predictor_discharge)
+
+            # Convert values smaller than 0 to NaN
+            df.loc[df['data_value'] < 0, 'data_value'] = np.nan
+
+            # Add the morning discharge to the DataFrame
+            df = pd.concat([df, morning_discharge])
+
+            # Round the data_values to 3 digits. That is, if a value is
+            # 0.123456789, it will be rounded to 0.123 and if a value is 123.456789
+            # it will be rounded to 123.0
+            df['data_value'] = df['data_value'].apply(round_discharge_to_float)
+
+            print("\n\nDEBUG: Site: ", site.code)
+            print("DEBUG: DB data for predictor discharge:\n", df)
+
+            # If we still have missing data, we interpolate the existing data.
+            # We take the average of the existing data to fill the gaps.
+            if (len(df) < L):
+                # Get the average of the existing data
+                length = np.sum(~np.isnan(df['data_value']))
+                q_avg = np.nansum(df['data_value']) / length
+
+                df.loc[len(df)] = pd.DataFrame({
+                    'data_value': q_avg,
+                    'local_date_time': None,
+                    'utc_date_time': None})
+
+            # Sum the discharge over the past L days
+            q = np.nanmean(df['data_value'])
 
             if q < 0.0:
                 q == np.nan

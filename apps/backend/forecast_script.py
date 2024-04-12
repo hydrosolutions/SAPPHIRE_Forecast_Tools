@@ -88,13 +88,20 @@ def main():
     if forecast_flags.decad:
         result_decad_df = forecasting.perform_linear_regression_decad(modified_data_decad, forecast_decad_of_year)
 
-        print(result_decad_df.head(40))
-        return
-
     # forecasting
     # - get predictor from the complete data and write it to site.predictor
-    forecasting.get_predictor(modified_data, start_date, fc_sites, ieh_sdk, backend_has_access_to_db, predictor_dates.pentad)
-    forecasting.perform_forecast(fc_sites, forecast_pentad_of_year, result_df)
+    # Note: must use modified_data here, not result_df.
+    forecasting.get_predictor_pentad(modified_data, start_date, fc_sites, ieh_sdk, backend_has_access_to_db, predictor_dates.pentad)
+    if forecast_flags.decad:
+        forecasting.get_predictor_decad(modified_data_decad, start_date, fc_sites_decad, ieh_sdk, backend_has_access_to_db, predictor_dates.decad)
+
+    forecasting.perform_forecast_pentad(fc_sites, forecast_pentad_of_year, result_df)
+    if forecast_flags.decad:
+        forecasting.perform_forecast_decad(fc_sites_decad, forecast_decad_of_year, result_decad_df)
+
+        print(fc_sites_decad)
+        return
+
     result2_df = forecasting.calculate_forecast_boundaries(result_df, fc_sites, forecast_pentad_of_year)
 
     # output generation

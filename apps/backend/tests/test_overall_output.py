@@ -615,7 +615,7 @@ def test_overall_output_step_by_step():
     assert (saved_day['2022'].dropna().values.astype(float) - hydrograph_day['2022'].dropna().values.astype(float) < 1e-6).all()
 
     # Get the predictor into the site object
-    forecasting.get_predictor(modified_data, start_date, fc_sites, ieh_sdk, backend_has_access_to_db, predictor_dates.pentad)
+    forecasting.get_predictor_pentad(modified_data, start_date, fc_sites, ieh_sdk, backend_has_access_to_db, predictor_dates.pentad)
     # The first predictor should be nan
     assert pd.isna(fc_sites[0].predictor), "The first predictor is not as expected"
     # The second predictor should be expected_predictor
@@ -625,11 +625,11 @@ def test_overall_output_step_by_step():
     assert fc_sites2[0].predictor == -10000.0, "The first predictor is not as expected"
     assert fc_sites2[1].predictor == -10000.0, "The second predictor is not as expected"
 
-    result_df = forecasting.perform_linear_regression(modified_data, forecast_pentad_of_year)
+    result_df = forecasting.perform_linear_regression_pentad(modified_data, forecast_pentad_of_year)
 
     # Get the predictors based on result_df. There should not be a difference to
     # the predictors gained from modified_data.
-    forecasting.get_predictor(result_df, start_date, fc_sites2, ieh_sdk, backend_has_access_to_db, predictor_dates.pentad)
+    forecasting.get_predictor_pentad(result_df, start_date, fc_sites2, ieh_sdk, backend_has_access_to_db, predictor_dates.pentad)
     # Both predictors produced using results_df should be nan
     assert pd.isna(fc_sites2[0].predictor), "The first predictor is not as expected"
     assert pd.isna(fc_sites2[1].predictor), "The second predictor is not as expected"
