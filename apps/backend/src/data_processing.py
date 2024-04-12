@@ -262,6 +262,64 @@ def get_fc_sites(ieh_sdk, backend_has_access_to_db, db_sites):
         logger.info("No access to iEasyHydro database. Therefore no dangerous discharge is assigned to sites.")
     return fc_sites
 
+def get_predictor_datetimes_for_decadal_forecasts(start_date):
+    """
+    Gets datetimes for the start and end of the period for which to aggregate
+    the river runoff data for the linear regression method for decadal runoff
+    forecasts.
+
+    Details:
+        For decadal forecasts, the hydromet uses the average runoff of the
+        previous decade.
+        If start_date.day == last day of the previous month, the hydromet uses
+        the average runoff of the second decade of the previous month. If
+        start_date.day == 10, the hydromet uses the average runoff of the third
+        decade of the previous month. If start_date.day == 20, the hydromet uses
+        the average runoff of the first decade of the current month.
+        Note that the last decade of a month can have variable length; from the
+        21st to the last day of the month.
+
+    Arguments:
+        start_date (datetime.date): Date on which the forecast is produced (i.e.
+        the last day of the previous decade). We expect start_date to be the
+        10th, 20th, or last day of the month. As the last day of the month can
+        be anything from 28 to 31 we will look for days higher than 27.
+
+    Returns:
+        list: A list with start and end datetimes for the period for which to
+        aggregate the river runoff data for the linear regression method for
+        decadal runoff forecasts.
+
+    Raises:
+        TypeError: If start_date is not a datetime or date object.
+        ValueError: If the start_date is not valid.
+    """
+    if not isinstance(start_date, (datetime.datetime, datetime.date)):
+        raise TypeError("start_date must be a datetime or date object")
+
+    if start_date.day > 27:
+        # The hydromet uses the average runoff of the second decade of the previous month.
+        predictor_start_date = start_date
+        predictor_start_date = predictor_start_date.replace(day=11)
+        predictor_end_date = predictor_start_date.replace(day=20)
+
+    elif start_date.day == 10:
+        # The hydromet uses the average runoff of the third decade of the previous month.
+        predictor_start_date = start_date - pd.DateOffset(months=1)
+        predictor_start_date = predictor_start_date.replace(day=21)
+        # Get the last day of the month from predictor_start_date
+        predictor_end_date = predictor_start_date + pd.offsets.MonthEnd(0)
+
+    elif start_date.day == 20:
+        # The hydromet uses the average runoff of the first decade of the current month.
+        predictor_start_date = start_date.replace(day=1)
+        predictor_end_date = start_date.replace(day=10)
+
+    else:
+        raise ValueError(f"The start date {start_date} is not valid.")
+
+    return [predictor_start_date, predictor_end_date]
+
 def get_predictor_dates(start_date, forecast_flags):
     """
     Gets dates for which to aggregate the predictors for the linear regression
@@ -330,8 +388,8 @@ def get_predictor_datetimes(start_date, forecast_flags):
         if predictor_dates.pentad is None:
             raise ValueError("The predictor dates are not valid.")
     if forecast_flags.decad:
-        # For decad forecasts, the hydromet uses the average of the last 10 days discharge.
-        predictor_dates.decad = fl.get_predictor_datetimes(start_date.strftime('%Y-%m-%d'), 9)
+        # For decad forecasts, the hydromet uses the average runoff of the previous decade.
+        predictor_dates.decad = get_predictor_datetimes_for_decadal_forecasts(start_date)
         # if predictor_dates is None, raise an error
         if predictor_dates.decad is None:
             raise ValueError("The predictor dates are not valid.")
@@ -341,6 +399,7 @@ def get_predictor_datetimes(start_date, forecast_flags):
 
     logger.info("   ... done")
     return predictor_dates
+
 
 def read_discharge_from_excel_sheet(file_path, station, year):
     """
@@ -686,6 +745,47 @@ def add_pentad_issue_date(data_df, datetime_col):
 
     return data_df
 
+def add_decad_issue_date(data_df, datetime_col):
+    """
+    Adds an 'issue_date' column to the DataFrame. The 'issue_date' column is
+    True if the day in the date column identified by the string datetime_col is
+    in 10, 20, or the last day of the month. Otherwise, it's False.
+
+    Parameters:
+    data_df (DataFrame): The input DataFrame.
+    datetime_col (str): The column identifier for the date column.
+
+    Returns:
+    DataFrame: The input DataFrame with the 'issue_date' column added.
+    """
+    # Check if the datetime_col is in the data_df columns
+    if datetime_col not in data_df.columns:
+        raise KeyError(f"The column {datetime_col} is not in the DataFrame.")
+    # Ensure the datetime_col is of datetime type
+    try:
+        data_df[datetime_col] = pd.to_datetime(data_df[datetime_col], format = "%Y-%m-%d")
+    except:
+        raise TypeError(f"The column {datetime_col} cannot be converted to datetime type.")
+
+    # Ensure the DataFrame is sorted by date
+    data_df = data_df.sort_values(datetime_col)
+
+    # Get the day of the month
+    data_df['day'] = data_df[datetime_col].dt.day
+
+    # Get the last day of each month
+    #data_df['pdoffsetsMonthEnd'] = pd.offsets.MonthEnd(0)  # add one month end offset
+    data_df['end_of_month'] = data_df[datetime_col] + pd.offsets.MonthEnd(0)  # add one month end offset
+    data_df['is_end_of_month'] = data_df[datetime_col].dt.day == data_df['end_of_month'].dt.day
+
+    # Set issue_date to True if the day is 10, 20, or the last day of the month
+    data_df['issue_date'] = data_df['day'].isin([10, 20]) | data_df['is_end_of_month']
+
+    # Drop the temporary columns
+    data_df.drop(['day', 'end_of_month', 'is_end_of_month'], axis=1, inplace=True)
+
+    return data_df
+
 def calculate_3daydischargesum(data_df, datetime_col, discharge_col):
     """
     Calculate the 3-day discharge sum for each station in the input DataFrame.
@@ -725,6 +825,9 @@ def calculate_pentadaldischargeavg(data_df, datetime_col, discharge_col):
     """
     Calculate the 5-day discharge average for each station in the input DataFrame.
 
+    Note that the last pentad has variable length; from the 26th to the last day
+    of the month. The length of the last pentad can be 3, 4, 5, or 6 days.
+
     Args:
     data_df (pandas.DataFrame):
         The input DataFrame containing the data for each station.
@@ -748,8 +851,11 @@ def calculate_pentadaldischargeavg(data_df, datetime_col, discharge_col):
     # Shift the discharge column by 1 day
     data_df['temp'] = data_df[discharge_col].shift(1)
 
-    # Calculate the rolling average of the discharge values over a 5-day window
-    data_df['discharge_avg'] = data_df['temp'].rolling('5D', closed='right').mean()
+    # Calculate the rolling average of the discharge values over a n-day window
+    data_df['discharge_avg3'] = data_df['temp'].rolling('3D', closed='right').mean()
+    data_df['discharge_avg4'] = data_df['temp'].rolling('4D', closed='right').mean()
+    data_df['discharge_avg5'] = data_df['temp'].rolling('5D', closed='right').mean()
+    data_df['discharge_avg6'] = data_df['temp'].rolling('6D', closed='right').mean()
 
     # Drop the temporary column
     data_df.drop(columns='temp', inplace=True)
@@ -760,14 +866,126 @@ def calculate_pentadaldischargeavg(data_df, datetime_col, discharge_col):
     # Reset the index
     data_df.reset_index(inplace=True, drop=True)
 
+    # Check the dates in the datetime_col. Assign the correct discharge_avg
+    # depending on the last day of the month. We have to check the last day of
+    # the month because the last pentad can have variable length; from the 26th
+    # to the last day of the month. The length of the last pentad can be 3, 4, 5,
+    # or 6 days.
+    # Per default, the discharge_avg is the 5-day discharge_avg
+    data_df['discharge_avg'] = data_df['discharge_avg5']
+    # If the day of the datetime_col is 25 we need to check if the last pentad
+    # has 3, 4, 5, or 6 days.
+    # If the day of the datetime_col is 25 and the last day of the month is 28
+    # we assign the discharge_avg3 to the discharge_avg column. If the day of
+    # the daytime column is 25 and the last day of the month is 29 we assign the
+    # discharge_avg4 to the discharge_avg column and so forth.
+
+    # Assign an endo of month column
+    data_df['dom'] = data_df[datetime_col].dt.day
+    data_df['end_of_month'] = (data_df[datetime_col] + pd.offsets.MonthEnd(0)).dt.day  # add one month end offset
+    data_df.loc[(data_df['dom'] == 25) & (data_df['end_of_month'] == 28), 'discharge_avg'] = data_df['discharge_avg3']
+    data_df.loc[(data_df['dom'] == 25) & (data_df['end_of_month'] == 29), 'discharge_avg'] = data_df['discharge_avg4']
+    data_df.loc[(data_df['dom'] == 25) & (data_df['end_of_month'] == 31), 'discharge_avg'] = data_df['discharge_avg6']
+
+    # Remove the temporary columns
+    data_df.drop(columns=['discharge_avg3', 'discharge_avg4', 'discharge_avg5',
+                          'discharge_avg6', 'dom', 'end_of_month'], inplace=True)
+
     # Set 'discharge_avg' to NaN for rows where 'issue_date' is False
     data_df.loc[~data_df['issue_date'], 'discharge_avg'] = np.nan
 
     return data_df
 
+def calculate_decadaldischargeavg(data_df, datetime_col, discharge_col):
+    """
+    Calculate the 10-day discharge average for each station in the input DataFrame.
 
-def generate_issue_and_forecast_dates(data_df: pd.DataFrame, datetime_col: str,
-                                      station_col: str, discharge_col: str):
+    Note that the last decad can have variable length from the 21st to the last
+    day of the month. The length of the last decad can be 8, 9, 10, or 11 days.
+
+    Args:
+    data_df (pandas.DataFrame):
+        The input DataFrame containing the data for each station.
+    datetime_col (str):
+        The name of the column containing the datetime information.
+    discharge_col (str):
+        The name of the column containing the discharge information.
+
+    Returns:
+    pandas.DataFrame:
+        The modified DataFrame with the 5-day discharge average for each station in
+        column 'discharge_avg'.
+    """
+    data_df = data_df.copy(deep=True)
+    # Ensure the DataFrame is indexed by datetime
+    data_df.set_index(pd.DatetimeIndex(data_df[datetime_col]), inplace=True)
+
+    # Reverse the DataFrame
+    data_df = data_df.iloc[::-1]
+
+    # Shift the discharge column by 1 day
+    data_df['temp'] = data_df[discharge_col].shift(1)
+
+    # Calculate the rolling average of the discharge values over a n-day window
+    data_df['discharge_avg8D'] = data_df['temp'].rolling('8D', closed='right').mean()
+    data_df['discharge_avg9D'] = data_df['temp'].rolling('9D', closed='right').mean()
+    data_df['discharge_avg10D'] = data_df['temp'].rolling('10D', closed='right').mean()
+    data_df['discharge_avg11D'] = data_df['temp'].rolling('11D', closed='right').mean()
+
+    # Per default, the discharge_avg is the 10-day discharge_avg
+    data_df['discharge_avg'] = data_df['discharge_avg10D']
+    data_df['dom'] = data_df[datetime_col].dt.day
+    data_df['end_of_month'] = (data_df[datetime_col] + pd.offsets.MonthEnd(0)).dt.day  # add one month end offset
+
+    data_df.reset_index(drop=True, inplace=True)
+    data_df.loc[(data_df['dom'] == 20) & (data_df['end_of_month'] == 28), 'discharge_avg'] = data_df['discharge_avg8D']
+    data_df.loc[(data_df['dom'] == 20) & (data_df['end_of_month'] == 29), 'discharge_avg'] = data_df['discharge_avg9D']
+    data_df.loc[(data_df['dom'] == 20) & (data_df['end_of_month'] == 31), 'discharge_avg'] = data_df['discharge_avg11D']
+
+    # Remove the temporary columns
+    data_df.drop(columns=['discharge_avg8D', 'discharge_avg9D', 'discharge_avg10D',
+                          'discharge_avg11D', 'dom', 'end_of_month'], inplace=True)
+
+    # Drop the temporary column
+    data_df.drop(columns='temp', inplace=True)
+
+    # Reverse the DataFrame again
+    data_df = data_df.iloc[::-1]
+
+    # The predictor of the current date is the average of the previous
+    # decade. If dom is 20, the predictor is the average of the second decade
+    # which we find in the discharge_avg column at the 10th day of the
+    # month. If dom is the last day of a month, the predictor is the average of
+    # the third decade which we find in the discharge_avg column at the 20th
+    # day of the month. If dom is 10, the predictor is the average of the first
+    # decade which we find in the discharge_avg column at the last day of the
+    # previous month.
+    # Create a temporary DataFrame that drops the NaN values
+    temp_df = data_df[data_df['issue_date'] != False]
+
+    # Shift the 'avg' column in the temporary DataFrame
+    temp_df['avg_shifted'] = temp_df['discharge_avg'].shift(1)
+
+    # Merge the shifted column back into the original DataFrame
+    data_df = data_df.merge(temp_df[['avg_shifted']], left_index=True, right_index=True, how='left')
+
+    # Rename the shifted column to 'pred'
+    data_df.rename(columns={'avg_shifted': 'predictor'}, inplace=True)
+
+    # Reset the index
+    data_df.reset_index(inplace=True, drop=True)
+
+    # Set 'discharge_avg' to NaN for rows where 'issue_date' is False
+    data_df.loc[~data_df['issue_date'], 'discharge_avg'] = np.nan
+    # Same for predictor
+    data_df.loc[~data_df['issue_date'], 'predictor'] = np.nan
+
+    return data_df
+
+
+def generate_issue_and_forecast_dates(data_df_0: pd.DataFrame, datetime_col: str,
+                                      station_col: str, discharge_col: str,
+                                      forecast_flags):
     """
     Generate issue and forecast dates for each station in the input DataFrame.
 
@@ -780,6 +998,8 @@ def generate_issue_and_forecast_dates(data_df: pd.DataFrame, datetime_col: str,
         The name of the column containing the station information.
     discharge_col (str):
         The name of the column containing the discharge information.
+    forecast_flags (config.ForecastFlags):
+        Flags that identify the forecast horizons serviced on start_date.
 
     Returns:
     pandas.DataFrame
@@ -806,17 +1026,43 @@ def generate_issue_and_forecast_dates(data_df: pd.DataFrame, datetime_col: str,
 
         return(data_df)
 
+    def apply_calculation_decad(data_df, datetime_col, discharge_col):
+        # The above functions are valid for pentadal forecasts for Kyg Hydromet.
+        # The following functions are valid for decad forecasts for Kyg Hydromet.
+        # Set negative values to nan
+        data_df[discharge_col] = data_df[discharge_col].apply(lambda x: np.nan if x < 0 else x)
+
+        # Fill in data gaps of up to 3 days by linear interpolation
+        data_df[discharge_col] = data_df[discharge_col].interpolate(
+            method='linear', limit_direction='both', limit=3)
+
+        # Round data to 3 numbers according to the custom of operational hydrology
+        # in Kyrgyzstan.
+        data_df.loc[:, discharge_col] = data_df.loc[:, discharge_col].apply(fl.round_discharge_to_float)
+
+        # Identify the issue dates for the decadal forecasts
+        data_df_decad = add_decad_issue_date(data_df, datetime_col)
+        # Aggregate predictor and target data for the decadal forecasts
+        data_df_decad = calculate_decadaldischargeavg(data_df_decad, datetime_col, discharge_col)
+
+        return(data_df_decad)
+
     # Test if the input data contains the required columns
-    if not all(column in data_df.columns for column in [datetime_col, station_col, discharge_col]):
+    if not all(column in data_df_0.columns for column in [datetime_col, station_col, discharge_col]):
         raise ValueError(f'DataFrame is missing one or more required columns: {datetime_col, station_col, discharge_col}')
 
     # Apply the calculation function to each group based on the 'station' column
-    modified_data = data_df.groupby(station_col).apply(apply_calculation, datetime_col = datetime_col, discharge_col = discharge_col)
+    data_df_decad = data_df_0.copy(deep=True)
+    modified_data = data_df_0.groupby(station_col).apply(apply_calculation, datetime_col = datetime_col, discharge_col = discharge_col)
+    if forecast_flags.decad:
+        modified_data_decad = data_df_decad.groupby(station_col).apply(apply_calculation_decad, datetime_col = datetime_col, discharge_col = discharge_col)
+    else:
+        modified_data_decad = []
 
-    return modified_data
+    return modified_data, modified_data_decad
 
 
-def get_station_data(ieh_sdk, backend_has_access_to_db, start_date, site_list):
+def get_station_data(ieh_sdk, backend_has_access_to_db, start_date, site_list, forecast_flags):
     # === Read station data ===
     # region Read station data
     """
@@ -828,6 +1074,7 @@ def get_station_data(ieh_sdk, backend_has_access_to_db, start_date, site_list):
         backend_has_access_to_db: Whether the backend has access to the iEasyHydro database.
         start_date: The start date for the forecast.
         site_list: A list of Site objects.
+        forecast_flags: The forecast flags. forecast.pentad and forecast.decad are used. They can be True or False.
 
     Returns:
         DataFrame: A DataFrame containing the combined data from all stations.
@@ -947,7 +1194,8 @@ def get_station_data(ieh_sdk, backend_has_access_to_db, start_date, site_list):
 
     #modified_data = fl.generate_issue_and_forecast_dates(pd.DataFrame(df_filtered), 'Date', 'Code', 'Q_m3s')
     # DEBUGGING generate_issue_and_forecast_dates
-    modified_data = generate_issue_and_forecast_dates(pd.DataFrame(df_filtered), 'Date', 'Code', 'Q_m3s')
+    modified_data, modified_data_decad = generate_issue_and_forecast_dates(
+        pd.DataFrame(df_filtered), 'Date', 'Code', 'Q_m3s', forecast_flags=forecast_flags)
 
     # Drop the rows with 0 discharge_sum
     # data_df = modified_data[modified_data['discharge_sum'] != 0]
@@ -958,13 +1206,23 @@ def get_station_data(ieh_sdk, backend_has_access_to_db, start_date, site_list):
     modified_data['pentad'] = modified_data['Date'].apply(tl.get_pentad)
     modified_data['pentad_in_year'] = modified_data['Date'].apply(tl.get_pentad_in_year)
 
-    return modified_data
+    if forecast_flags.decad:
+        # For each Date in modified_data_decad, calculate the decad of the month
+        modified_data_decad['decad_in_month'] = modified_data_decad['Date'].apply(tl.get_decad_in_month)
+        modified_data_decad['decad_in_year'] = modified_data_decad['Date'].apply(tl.get_decad_in_year)
+
+    return modified_data, modified_data_decad
 
 
 def get_forecast_pentad_of_year(bulletin_date):
     # Get the pentad of the year of the bulletin_date. We perform the linear
     # regression on all data from the same pentad of the year.
     return tl.get_pentad_in_year(bulletin_date)
+
+def get_forecast_decad_of_year(bulletin_date):
+    # Get the pentad of the year of the bulletin_date. We perform the linear
+    # regression on all data from the same pentad of the year.
+    return tl.get_decad_in_year(bulletin_date)
 
 
 def save_discharge_avg(modified_data, fc_sites, forecast_pentad_of_year):
@@ -981,4 +1239,20 @@ def save_discharge_avg(modified_data, fc_sites, forecast_pentad_of_year):
         fl.Site.from_df_get_norm_discharge(site, forecast_pentad_of_year, norm_discharge)
 
     logger.info(f'   {len(fc_sites)} Norm discharge calculated, namely:\n{[site1.qnorm for site1 in fc_sites]}')
+    logger.info("   ... done")
+
+def save_discharge_avg_decad(modified_data, sites_list, forecast_decad_of_year):
+    # Group modified_data by Code and calculate the mean over discharge_avg
+    # while ignoring NaN values
+    norm_discharge = (
+        modified_data.reset_index(drop=True).groupby(['Code', 'decad_in_year'], as_index=False)['discharge_avg']
+                      .apply(lambda x: x.mean(skipna=True))
+    )
+
+    # Now we need to write the discharge_avg for the current decad to the site: Site
+    for site in sites_list:
+        logger.info(f'    Calculating norm discharge for site {site.code} ...')
+        fl.Site.from_df_get_norm_discharge(site, forecast_decad_of_year, norm_discharge)
+
+    logger.info(f'   {len(sites_list)} Norm discharge calculated, namely:\n{[site1.qnorm for site1 in sites_list]}')
     logger.info("   ... done")

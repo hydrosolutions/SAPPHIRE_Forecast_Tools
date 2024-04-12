@@ -107,7 +107,7 @@ def test_overall_output_with_demo_data():
     start_date = dt.datetime(2022, 5, 5)
 
     # Set forecast_flags
-    forecast_flags = config.ForecastFlags(pentad=True)
+    forecast_flags = config.ForecastFlags(pentad=True, decad=True)
 
     # Get bulletin date
     bulletin_date = config.get_bulletin_date(start_date)
@@ -134,8 +134,9 @@ def test_overall_output_with_demo_data():
     assert predictor_dates.pentad == [dt.date(2022, 5, 4), dt.date(2022, 5, 3), dt.date(2022, 5, 2)], "The predictor date is not as expected"
 
     # Read discharge data from excel and iEasyHydro database
-    modified_data = data_processing.get_station_data(ieh_sdk, backend_has_access_to_db, start_date, fc_sites)
-    print("\n\nDEBUG test_overall_output_with_demo_data: modified_data\n", modified_data.tail(60).head(20))
+    modified_data, modified_data_decad = data_processing.get_station_data(
+        ieh_sdk, backend_has_access_to_db, start_date, fc_sites, forecast_flags)
+    #print("\n\nDEBUG test_overall_output_with_demo_data: modified_data\n", modified_data.tail(60).head(20))
 
     forecast_pentad_of_year = data_processing.get_forecast_pentad_of_year(bulletin_date)
     data_processing.save_discharge_avg(modified_data, fc_sites, forecast_pentad_of_year)
@@ -228,7 +229,8 @@ def test_overall_output_with_demo_data():
     # For only one station:
     # saved_day_long['avg_ref'] = saved_day_long['discharge'].shift(-5).rolling(5).mean()
     # That's a bit cheating with the last pentad of the month which in actual
-    # fact has variable length!
+    # fact has variable length! With this we can only compare last pentad values
+    # for months with 30 days.
 
     # Add a column pentad to saved_day_long that is the pentad of the year for
     # the date. Its an integer from 1 to 72.
@@ -241,7 +243,6 @@ def test_overall_output_with_demo_data():
     merged_data = pd.merge(
         saved_day_long, saved_pentad_long,
         on=['Code', 'Year', 'pentad'], suffixes=('_daily', '_pentad_csv'))
-    print(merged_data.tail(60).head(20))
 
     # Where is_forecast_date == True, avg_ref should be the same as
     # Only keep the rows where is_forecast_date == True
@@ -249,9 +250,15 @@ def test_overall_output_with_demo_data():
 
     # Round the data in the avg_ref column
     merged_data['avg_ref'] = merged_data['avg_ref'].apply(fl.round_discharge_to_float)
+
+    # Now we drop all months where the Date.day is 25 and which do not have 30
+    # days. That is, we only keep data from April, June, September and November.
+    merged_data = merged_data.loc[~((merged_data['dates'].dt.day == 25) & (merged_data['dates'].dt.days_in_month != 30))]
+
+    #print("\nDEBUG: merged data day & pentad: \n", merged_data.tail(730).head(60))
     # Only print the rows where the difference between avg_ref and
     # discharge_pentad_csv is larger than 1e-6 and where is_forecast_date == True
-    print(merged_data.loc[abs(merged_data['avg_ref'] - merged_data['discharge_pentad_csv']) > 1e-6].tail(20))
+    #print("\n", merged_data.loc[abs(merged_data['avg_ref'] - merged_data['discharge_pentad_csv']) > 1e-6].tail(20))
     # discharge_pentad_csv
     assert max(abs(merged_data['avg_ref'] - merged_data['discharge_pentad_csv'])) < 1e-6
 
@@ -333,7 +340,7 @@ def test_overall_output_step_by_step():
     start_date = dt.datetime(2022, 5, 5)
 
     # Set forecast_flags
-    forecast_flags = config.ForecastFlags(pentad=True)
+    forecast_flags = config.ForecastFlags(pentad=True, decad=True)
 
     # Get bulletin date
     bulletin_date = config.get_bulletin_date(start_date)
@@ -362,7 +369,8 @@ def test_overall_output_step_by_step():
     assert predictor_dates.pentad == [dt.date(2022, 5, 4), dt.date(2022, 5, 3), dt.date(2022, 5, 2)], "The predictor date is not as expected"
 
     # Read discharge data from excel and iEasyHydro database
-    modified_data = data_processing.get_station_data(ieh_sdk, backend_has_access_to_db, start_date, fc_sites)
+    modified_data, modified_data_decad = data_processing.get_station_data(
+        ieh_sdk, backend_has_access_to_db, start_date, fc_sites, forecast_flags)
     #print("DEBUG: test_overall_output_step_by_step: modified_data\n", modified_data[modified_data['Code']=="12176"].tail(220).head(20))
     # Test that the first date in the dataframe is 2000-01-01
     assert modified_data['Date'][0].strftime('%Y-%m-%d') == dt.datetime(2000, 1, 1).strftime('%Y-%m-%d'), "The first date in the dataframe is not as expected"
@@ -458,6 +466,10 @@ def test_overall_output_step_by_step():
     merged_data_pentad_2['discharge_avg'] = merged_data_pentad_2['discharge_avg'].apply(fl.round_discharge_to_float)
     merged_data_pentad_2['diff'] = abs(merged_data_pentad_2['discharge_avg'] - merged_data_pentad_2['discharge'])
 
+    # Now we drop all months where the Date.day is 25 and which do not have 30
+    # days. That is, we only keep data from April, June, September and November.
+    merged_data_pentad_2 = merged_data_pentad_2.loc[~((merged_data_pentad_2['Date'].dt.day == 25) & (merged_data_pentad_2['Date'].dt.days_in_month != 30))]
+
     # Only print the rows where the difference between discharge_avg and
     # discharge is larger than 1e-6 and where issue_date == True
     print(merged_data_pentad_2[merged_data_pentad_2['diff'] > 1e-6])
@@ -488,6 +500,11 @@ def test_overall_output_step_by_step():
     # Test if discharge_ref is the same as discharge_pentad_reformat
     merged_data_test22 = merged_data_test2
     merged_data_test22['diff'] = abs(merged_data_test22['discharge_ref'] - merged_data_test22['discharge_pentad_reformat'])
+
+    # Now we drop all months where the Date.day is 25 and which do not have 30
+    # days. That is, we only keep data from April, June, September and November.
+    merged_data_test22 = merged_data_test22.loc[~((merged_data_test22['Date'].dt.day == 25) & (merged_data_test22['Date'].dt.days_in_month != 30))]
+
     print("DEBUG: test_overall_output_step_by_step: merged_data_test22.tail(10)\n", merged_data_test22[merged_data_test22['Code'] == 12176].tail(60).head(20))
     print(merged_data_test22[(merged_data_test22['diff'] >= 1e-6) & merged_data_test22['Code'] == 12176])
     assert max(merged_data_test22['diff']) < 1e-6, "The discharge data is not as expected"
@@ -644,6 +661,10 @@ def test_overall_output_step_by_step():
     os.environ.pop("log_level")
     os.environ.pop("ieasyforecast_restrict_stations_file")
     os.environ.pop("ieasyforecast_last_successful_run_file")
+
+
+
+
 
 
 def test_overall_output():

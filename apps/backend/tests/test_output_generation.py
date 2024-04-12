@@ -3,7 +3,7 @@ import pandas as pd
 import pytest
 import datetime as dt
 from unittest import mock
-from backend.src import output_generation, data_processing
+from backend.src import output_generation, data_processing, config
 
 import forecast_library as fl
 
@@ -134,9 +134,11 @@ def test_write_hydrograph_with_valid_data():
     ieh_sdk = mock.MagicMock()
     backend_has_access_to_db = False
 
+    forecast_flags = config.ForecastFlags(decad=True, pentad=True)
+
     # Read data from files
-    modified_data = data_processing.get_station_data(
-        ieh_sdk, backend_has_access_to_db, start_date, site_list)
+    modified_data, modified_data_decad = data_processing.get_station_data(
+        ieh_sdk, backend_has_access_to_db, start_date, site_list, forecast_flags)
     #print("\n\nDEBUG: test_write_hydrograph_with_valid_data: modified_data: \n",
     #      modified_data[['Date', 'Q_m3s', 'issue_date', 'discharge_sum', 'discharge_avg']].head())
     #print(modified_data[['Date', 'Q_m3s', 'issue_date', 'discharge_sum', 'discharge_avg']].tail())

@@ -195,6 +195,46 @@ def get_pentad(date):
         # return None if the input is not a valid date
         return None
 
+def get_decad_in_month(date):
+    """
+    Get the decad of the month for a given date.
+
+    Parameters:
+        date (str or datetime.datetime): A string or datetime representing a
+            date (string should be in the format 'YYYY-MM-DD').
+
+    Returns:
+        str: A string representing the decad of the month, or None if the
+            input is not a valid date or is not using the Gregorian calendar.
+
+    Examples:
+        >>> get_pentad('2022-05-10')
+        '2'
+        >>> get_pentad('not a date')
+        None
+        >>> get_pentad('1581-12-31')
+        None
+    """
+    try:
+        # Convert the input to a datetime object if it's a string
+        if isinstance(date, str):
+            date = dt.datetime.strptime(date, '%Y-%m-%d').date()
+
+        # Test if the date is using the Gregorian calendar
+        if not is_gregorian_date(date):
+            # return None if the input is not using the Gregorian calendar
+            return None
+
+        # calculate the decad number
+        decad = min((date.day - 1) // 10 + 1, 3)
+
+        # return the decad number as a string
+        return str(decad)
+
+    except ValueError:
+        # return None if the input is not a valid date
+        return None
+
 
 def get_pentad_in_year(date):
     """
@@ -232,6 +272,49 @@ def get_pentad_in_year(date):
 
         # return the pentad number as a string
         return str(pentad_in_year)
+
+    except ValueError:
+        # return None if the input is not a valid date
+        return None
+
+def get_decad_in_year(date):
+    """
+    Get the decad of the year for a given date.
+
+    Parameters:
+        date (str or datetime.datetime): A string or datetime representing a
+            date (string should be in the format 'YYYY-MM-DD').
+
+    Returns:
+        str: A string representing the decad of the month, or None if the
+            input is not a valid date or is not using the Gregorian calendar.
+
+    Examples:
+        >>> get_decad_in_year('2022-05-15')
+        '14'
+        >>> get_decad_in_year('2022-12-31')
+        '36'
+        >>> get_decad_in_year('not a date')
+        None
+        >>> get_decad_in_year('1581-12-31')
+        None
+    """
+    try:
+        # Convert the input to a datetime object if it's a string
+        if isinstance(date, str):
+            date = dt.datetime.strptime(date, '%Y-%m-%d').date()
+
+        # Test if the date is using the Gregorian calendar
+        if not is_gregorian_date(date):
+            # return None if the input is not using the Gregorian calendar
+            return None
+
+        # calculate the decad number
+        decad = min((date.day - 1) // 10 + 1, 3)
+        decad_in_year = (date.month - 1) * 3 + decad
+
+        # return the pentad number as a string
+        return str(decad_in_year)
 
     except ValueError:
         # return None if the input is not a valid date

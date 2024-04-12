@@ -565,6 +565,7 @@ class TestSite(unittest.TestCase):
         self.df = pd.DataFrame({
             'Code': ['15194', '15195', 'ABC123', '15194', '15195', 'ABC123', '15194', '15195', 'ABC123', 'ABC123'],
             'pentad_in_year': ['1', '1', '1', '2', '2', '2', '3', '3', '3', '4'],
+            'decad_in_year': ['1', '1', '1', '2', '2', '2', '3', '3', '3', '4'],
             'discharge_avg': [10, 20, 30, 40, 50, 6.5, 70, 80, 0.9123, 103.8]
         })
         # For testing perform_linear_regression
@@ -595,11 +596,6 @@ class TestSite(unittest.TestCase):
             'intercept': [0.0, 0.0]
         })
 
-    def test_repr(self):
-        # Check that the __repr__ method returns the expected string
-        expected = 'ABC123'
-        self.assertEqual(repr(self.site), expected)
-
     def test_from_df_calculate_forecast(self):
         # Test that the method returns the correct forecast value
         pentad = 32
@@ -615,6 +611,19 @@ class TestSite(unittest.TestCase):
         forecast = fl.Site.from_df_calculate_forecast(self.site, pentad, self.df_slope_intercept)
         self.assertEqual(forecast, 10.0)
         self.assertEqual(self.site.fc_qexp, "10.0")
+
+    def test_from_df_get_norm_discharge_decad(self):
+        site = self.site
+        df = self.df
+        result = site.from_df_get_norm_discharge(site, '1', df)
+        self.assertEqual(result, 30)
+        self.assertEqual(site.qnorm, '30.0')
+        result = site.from_df_get_norm_discharge(site, '2', df)
+        self.assertEqual(site.qnorm, '6.50')
+        result = site.from_df_get_norm_discharge(site, '3', df)
+        self.assertEqual(site.qnorm, '0.91')
+        result = site.from_df_get_norm_discharge(site, '4', df)
+        self.assertEqual(site.qnorm, '104')
 
     def test_from_df_get_norm_discharge_with_valid_data(self):
         site = self.site

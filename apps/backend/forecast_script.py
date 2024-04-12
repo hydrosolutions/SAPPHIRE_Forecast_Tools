@@ -61,13 +61,20 @@ def main():
     db_sites = data_processing.get_db_sites(ieh_sdk, backend_has_access_to_db)
     #   writing sites information to as list of Site objects
     fc_sites = data_processing.get_fc_sites(ieh_sdk, backend_has_access_to_db, db_sites)
+
+    # We produce decadal forecasts for the Inflow to the Toktogulu reservoir.
+    fc_sites_decad = [site for site in fc_sites if site.code == '16936']
+
     # - identify dates for which to aggregate predictor data
     predictor_dates = data_processing.get_predictor_datetimes(start_date, forecast_flags)
+
     # Read discharge data from excel and iEasyHydro database
-    modified_data = data_processing.get_station_data(ieh_sdk, backend_has_access_to_db, start_date, fc_sites)
+    modified_data, modified_data_decad = data_processing.get_station_data(ieh_sdk, backend_has_access_to_db, start_date, fc_sites, forecast_flags)
 
     forecast_pentad_of_year = data_processing.get_forecast_pentad_of_year(bulletin_date)
+    forecast_decad_of_year = data_processing.get_forecast_decad_of_year(bulletin_date)
     data_processing.save_discharge_avg(modified_data, fc_sites, forecast_pentad_of_year)
+    data_processing.save_discharge_avg_decad(modified_data_decad, fc_sites_decad, forecast_decad_of_year)
 
     # modelling
     # The linear regression is performed on past data. Here, the slope and

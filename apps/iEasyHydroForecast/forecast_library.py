@@ -797,9 +797,28 @@ class Site:
         Returns a string representation of the Site object.
 
         Returns:
-            str: The site code.
+            str: The site code and all other attributes row-by-row.
         """
-        return self.code
+        return (f"Site(\n"
+            f"code={self.code},\n"
+            f"name={self.name},\n"
+            f"river_name={self.river_name},\n"
+            f"punkt_name={self.punkt_name},\n"
+            f"lat={self.lat},\n"
+            f"lon={self.lon},\n"
+            f"region={self.region},\n"
+            f"basin={self.basin},\n"
+            f"predictor={self.predictor},\n"
+            f"fc_qmin={self.fc_qmin},\n"
+            f"fc_qmax={self.fc_qmax},\n"
+            f"fc_qexp={self.fc_qexp},\n"
+            f"qnorm={self.qnorm},\n"
+            f"perc_norm={self.perc_norm},\n"
+            f"qdanger={self.qdanger},\n"
+            f"slope={self.slope},\n"
+            f"intercept={self.intercept},\n"
+            f"delta={self.delta}\n"
+            f")")
 
     @classmethod
     def from_df_calculate_forecast(cls, site, pentad: str, df: pd.DataFrame):
@@ -900,6 +919,42 @@ class Site:
 
             # Get the norm discharge for the site
             qnorm = df[(df['Code'] == site.code) & (df['pentad_in_year'] == pentad)]['discharge_avg'].values[0]
+
+            # Write the norm discharge value to self.qnorm as string
+            site.qnorm = round_discharge_trad_bulletin(qnorm)
+
+            # Return the norm discharge value
+            return qnorm
+        except Exception as e:
+            print(f'Error {e}. Returning " ".')
+            return " "
+
+    @classmethod
+    def from_df_get_norm_discharge_decad(cls, site, decad_in_year: str, df: pd.DataFrame):
+        '''
+        Get norm discharge from DataFrame.
+
+        Args:
+            site (Site): The site object to get norm discharge for.
+            decad_in_year (str): The pentad of the year to get norm discharge for.
+            df (pd.DataFrame): The DataFrame containing the norm discharge data.
+
+        Returns:
+            str: The norm discharge value.
+        '''
+        try:
+            # Test that df contains columns 'Code' and 'pentad_in_year'
+            if not all(column in df.columns for column in ['Code', 'pentad_in_year']):
+                raise ValueError(f'DataFrame is missing one or more required columns: {"Code", "pentad_in_year"}')
+
+            # Convert pentad to float
+            decad_in_year = float(decad_in_year)
+
+            # Also convert the column 'pentad_in_year' to float
+            df['decad_in_year'] = df['decad_in_year'].astype(float)
+
+            # Get the norm discharge for the site
+            qnorm = df[(df['Code'] == site.code) & (df['decad_in_year'] == decad_in_year)]['discharge_avg'].values[0]
 
             # Write the norm discharge value to self.qnorm as string
             site.qnorm = round_discharge_trad_bulletin(qnorm)

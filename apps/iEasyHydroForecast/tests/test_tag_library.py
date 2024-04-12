@@ -95,6 +95,36 @@ class TestGetPentadFirstDayOfYear(unittest.TestCase):
         # Assuming is_gregorian_date returns False for dates before 1582
         self.assertIsNone(tl.get_pentad_first_day_of_year('1581-12-31'))
 
+class TestGetDecad(unittest.TestCase):
+
+    def test_valid_date(self):
+        date = dt.date(2022, 1, 1)
+        decad = tl.get_decad_in_month(date)
+        self.assertEqual(decad, '1')
+        self.assertEqual(tl.get_decad_in_month('2022-01-10'), '1')
+        self.assertEqual(tl.get_decad_in_month('2022-01-11'), '2')
+        self.assertEqual(tl.get_decad_in_month('2022-01-20'), '2')
+        self.assertEqual(tl.get_decad_in_month('2022-01-21'), '3')
+        self.assertEqual(tl.get_decad_in_month('2022-01-30'), '3')
+
+class TestGetDecadInYear(unittest.TestCase):
+    def test_get_decad_in_year_with_string_date(self):
+        self.assertEqual(tl.get_decad_in_year('2022-01-15'), '2')
+        self.assertEqual(tl.get_decad_in_year('2022-05-15'), '14')
+        self.assertEqual(tl.get_decad_in_year('2022-12-31'), '36')
+        self.assertEqual(tl.get_decad_in_year('2022-12-31'), '36')
+
+    def test_get_decad_in_year_with_datetime_date(self):
+        self.assertEqual(tl.get_decad_in_year(dt.datetime(2022, 1, 15)), '2')
+        self.assertEqual(tl.get_decad_in_year(dt.datetime(2022, 5, 15)), '14')
+        self.assertEqual(tl.get_decad_in_year(dt.datetime(2022, 12, 31)), '36')
+
+    def test_get_decad_in_year_with_invalid_date(self):
+        self.assertIsNone(tl.get_decad_in_year('not a date'))
+
+    def test_get_decad_in_year_with_non_gregorian_date(self):
+        self.assertIsNone(tl.get_decad_in_year('1581-12-31'))
+
 
 class TestGetPentad(unittest.TestCase):
 

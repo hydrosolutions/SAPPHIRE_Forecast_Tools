@@ -123,9 +123,10 @@ def parse_command_line_args() -> tuple[bool, dt.datetime]:
         store_last_successful_run_date(start_date)
         exit()  # exit the program
     else:
-        logger.info(f"Running forecast for {start_date}.")
+        logger.info(f"Running pentadal forecast on {start_date}.")
         forecast_flags.pentad = True
         if day in days_decads:
+            logger.info(f"Running decad forecast on {start_date}.")
             forecast_flags.decad = True
 
     return start_date, forecast_flags

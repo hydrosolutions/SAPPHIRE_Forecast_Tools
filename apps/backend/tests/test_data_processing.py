@@ -353,9 +353,19 @@ def test_get_station_data_from_another_excel_with_valid_file():
     # Create a site object with attribute code equal to 15678.
     sites = [fl.Site(code='15678')]
 
-    # Call the function
-    result = data_processing.get_station_data(ieh_sdk, False, start_date, sites)
+    forecast_flags = config.ForecastFlags(pentad=True, decad=True)
 
+    # Call the function
+    result, result_decad = data_processing.get_station_data(
+        ieh_sdk, False, start_date, sites, forecast_flags)
+
+    #print("\n\nDEBUG: test_get_station_data_from_another_excel_with_valid_file: result_decad: \n", result_decad.head(40))
+
+    # DECAD
+    assert round(result_decad['discharge_avg'].iloc[19], 3) == round(1.653636, 3)
+    assert result_decad['discharge_avg'].iloc[19] == result_decad['predictor'].iloc[30]
+
+    # PENTAD
     # Check that the result is a DataFrame with the expected columns
     assert isinstance(result, pd.DataFrame)
 
@@ -420,8 +430,11 @@ def test_get_station_data_from_public_repo_data():
     # Create a site object with attribute code equal to 12176.
     sites = [fl.Site(code='12176'), fl.Site(code='12256')]
 
+    forecast_flags = config.ForecastFlags(pentad=True, decad=True)
+
     # Call the function
-    result = data_processing.get_station_data(ieh_sdk, False, start_date, sites)
+    result, result_decad = data_processing.get_station_data(ieh_sdk, False, start_date, sites,
+                                              forecast_flags)
 
     # Check that the result is a DataFrame with the expected columns
     assert isinstance(result, pd.DataFrame)
@@ -444,14 +457,15 @@ def test_get_station_data_from_public_repo_data():
     # Rename the columns to Date and discharge
     sihl_data.columns = ['Date', 'discharge']
 
-    print(result.head())
-    print(sihl_data.head())
+    #print(result_decad.head(40))
+    #print(result_decad.head(80).tail(40))
+    #print(sihl_data.head(5))
 
     # Merge result for code 12176 with sihl_data by column Date
     data_comparison = pd.merge(result.loc[result['Code'] == '12176', ["Date", "Q_m3s"]], sihl_data, on='Date', how='inner')
     data_comparison['diff'] = data_comparison['Q_m3s'] - data_comparison['discharge']
-    print(sum(data_comparison['diff']))
-    print(data_comparison.head())
+    #print(sum(data_comparison['diff']))
+    #print(data_comparison.head())
 
 
 
@@ -636,7 +650,53 @@ def test_calculate_pentadaldischargeavg():
     assert result['discharge_avg'].iloc[9] == 13.0
     # The last value should be NaN
     assert pd.isna(result['discharge_avg'].iloc[-1])
-    assert result['discharge_avg'].iloc[-7] == 28.0
+    assert result['discharge_avg'].iloc[-7] == 28.5
+
+def test_calculate_decadaldischargeavg():
+    # Test with reproducible data
+    data = {
+        'Dates': pd.date_range(start='1/1/2022', end='12/31/2022'),
+        'Values': pd.date_range(start='1/1/2022', end='12/31/2022').day
+    }
+    df = pd.DataFrame(data)
+    df = data_processing.add_decad_issue_date(df, datetime_col='Dates')
+    result = data_processing.calculate_decadaldischargeavg(df, 'Dates', 'Values')
+
+    #print("\n\nDEBUG: test_calculate_decadaldischargeavg: result: \n", result.head(40))
+    #print(result.tail())
+
+    assert 'discharge_avg' in result.columns
+    assert result['discharge_avg'].dtype == float
+    # The first 4 values should be NaN
+    assert pd.isna(result['discharge_avg'].iloc[0])
+    assert pd.isna(result['discharge_avg'].iloc[1])
+    assert pd.isna(result['discharge_avg'].iloc[2])
+    assert pd.isna(result['discharge_avg'].iloc[3])
+    # The first value that is not NaN should be 8.0
+    assert result['discharge_avg'].iloc[9] == 15.5
+    # Then we have another 4 NaN values
+    assert pd.isna(result['discharge_avg'].iloc[5])
+    assert pd.isna(result['discharge_avg'].iloc[6])
+    assert pd.isna(result['discharge_avg'].iloc[7])
+    assert pd.isna(result['discharge_avg'].iloc[8])
+    # The next value should be 13.0
+    assert result['discharge_avg'].iloc[19] == 26.0
+    # The last value should be NaN
+    assert pd.isna(result['discharge_avg'].iloc[-1])
+
+    assert 'predictor' in result.columns
+    assert result['predictor'].dtype == float
+    # The first 4 values should be NaN
+    assert pd.isna(result['predictor'].iloc[0])
+    assert pd.isna(result['predictor'].iloc[1])
+    assert pd.isna(result['predictor'].iloc[2])
+    assert pd.isna(result['predictor'].iloc[9])
+    assert pd.isna(result['predictor'].iloc[5])
+    assert pd.isna(result['predictor'].iloc[6])
+    assert pd.isna(result['predictor'].iloc[8])
+    assert result['predictor'].iloc[19] == 15.5
+    assert result['predictor'].iloc[30] == 26.0
+    assert result['predictor'].iloc[-1] == 26.0
 
 def test_generate_issue_and_forecast_dates():
     # Calculate expected result:
@@ -647,6 +707,8 @@ def test_generate_issue_and_forecast_dates():
         'Stations': ['12345' for i in range(365)]
     }
 
+    forecast_flags = config.ForecastFlags(pentad=True, decad=True)
+
     df = pd.DataFrame(data)
     # Make sure we have floats in the Values column
     df['Values'] = df['Values'].astype(float)
@@ -654,10 +716,33 @@ def test_generate_issue_and_forecast_dates():
     result0 = data_processing.calculate_3daydischargesum(df, 'Dates', 'Values')
     expected_result = data_processing.calculate_pentadaldischargeavg(result0, 'Dates', 'Values')
 
-    # Call the function
-    result = data_processing.generate_issue_and_forecast_dates(
-        df, 'Dates', 'Stations', 'Values')
+    df_decad = data_processing.add_decad_issue_date(df, datetime_col='Dates')
+    expected_result_decad = data_processing.calculate_decadaldischargeavg(df_decad, 'Dates', 'Values')
 
+    # Call the function
+    result, result_decad = data_processing.generate_issue_and_forecast_dates(
+        df, 'Dates', 'Stations', 'Values', forecast_flags=forecast_flags)
+
+    # DECAD
+    assert isinstance(result_decad, pd.DataFrame)
+    assert isinstance(result_decad, pd.DataFrame)
+    assert 'issue_date' in result_decad.columns
+    assert 'predictor' in result_decad.columns
+    assert 'discharge_avg' in result_decad.columns
+
+    temp = pd.DataFrame({'predictor': result_decad['predictor'].values,
+                         'expected_predictor': expected_result_decad['predictor'].values,
+                         'difference': result_decad['predictor'].values - expected_result_decad['predictor'].values})
+    # Drop rows where all 3 columns have NaN
+    temp = temp.dropna(how='all')
+    # Drop rows where the difference is 0.0
+    temp = temp[temp['difference'] != 0.0]
+    print("\n\nDEBUG: test_generate_issue_and_forecast_dates: result['pred'] vs expected_result['pred']: \n",
+          temp)
+    assert (result_decad['predictor'].dropna().values == expected_result_decad['predictor'].dropna().values).all()
+    assert (result_decad['discharge_avg'].dropna().values == expected_result_decad['discharge_avg'].dropna().values).all()
+
+    # PENTAD
     # Check that the result is a DataFrame with the expected columns
     assert isinstance(result, pd.DataFrame)
     assert 'issue_date' in result.columns
@@ -688,7 +773,7 @@ def test_generate_issue_and_forecast_dates():
     assert (result['discharge_sum'].dropna().values == expected_result['discharge_sum'].dropna().values).all()
     assert (result['discharge_avg'].dropna().values == expected_result['discharge_avg'].dropna().values).all()
 
-def test_generate_issue_and_forecast_dates_with_demo_data():
+def test_generate_issue_and_forecast_dates_for_pentadal_forecasts_with_demo_data():
 
     # Set up the test environment
     # Temporary directory to store output
@@ -894,7 +979,8 @@ def test_generate_issue_and_forecast_dates_with_demo_data():
     df_filtered.sort_values(by=['Code', 'Date'], inplace=True)
 
 
-    modified_data = data_processing.generate_issue_and_forecast_dates(pd.DataFrame(df_filtered), 'Date', 'Code', 'Q_m3s')
+    modified_data, modified_data_decad = data_processing.generate_issue_and_forecast_dates(
+        pd.DataFrame(df_filtered), 'Date', 'Code', 'Q_m3s', forecast_flags=forecast_flags)
     # Make sure we still have data for all stations
     assert len(fc_sites) == len(modified_data['Code'].unique())
     # Add modified_data for Code == 12176 to data_comparison by Date
@@ -907,7 +993,8 @@ def test_generate_issue_and_forecast_dates_with_demo_data():
     # Print where columns Q_F and Q_m3s are not equal
 
     # Read discharge data from excel and iEasyHydro database
-    modified_data2 = data_processing.get_station_data(ieh_sdk, backend_has_access_to_db, start_date, fc_sites)
+    modified_data2, modified_data2_decad = data_processing.get_station_data(
+        ieh_sdk, backend_has_access_to_db, start_date, fc_sites, forecast_flags)
 
     # modified_data['Q_m3s'] should be equal to modified_data2['Q_m3s']
     # for all stations
@@ -951,7 +1038,30 @@ def test_generate_issue_and_forecast_dates_with_demo_data():
 
 
 
+def test_get_predictor_datetimes_for_decadal_forecasts():
+    # Test with start_date.day == 1
+    start_date = dt.datetime(2022, 1, 31)
+    assert data_processing.get_predictor_datetimes_for_decadal_forecasts(start_date) == [dt.datetime(2022, 1, 11), dt.datetime(2022, 1, 20)]
 
+    # Test with start_date.day == 10
+    start_date = dt.datetime(2022, 2, 10)
+    assert data_processing.get_predictor_datetimes_for_decadal_forecasts(start_date) == [dt.datetime(2022, 1, 21), dt.datetime(2022, 1, 31)]
+
+    # Test with start_date.day == 20
+    start_date = dt.datetime(2022, 2, 20)
+    assert data_processing.get_predictor_datetimes_for_decadal_forecasts(start_date) == [dt.datetime(2022, 2, 1), dt.datetime(2022, 2, 10)]
+
+def test_get_predictor_datetimes_for_decadal_forecasts_invalid_date():
+    # Test with invalid start_date.day
+    start_date = dt.datetime(2022, 2, 15)
+    with pytest.raises(ValueError):
+        data_processing.get_predictor_datetimes_for_decadal_forecasts(start_date)
+
+def test_get_predictor_datetimes_for_decadal_forecasts_invalid_type():
+    # Test with invalid start_date type
+    start_date = "2022-02-01"
+    with pytest.raises(TypeError):
+        data_processing.get_predictor_datetimes_for_decadal_forecasts(start_date)
 
 
 

@@ -188,6 +188,11 @@ def get_current_predictor_and_dates(forecast_pentad_all: pd.DataFrame,
     The function also changes, if we have recent forecast data in the forecast
     file and prints a warning if not.
 
+    Details
+    Note that the input dataframe forecast_pentad_all has two date columns:
+    "date" which is the date on which the forecast is produced and
+    "Date" which is the first day of the pentad for which the forecast is made.
+
     Parameters
     forecast_pentad_all: pd.DataFrame - DataFrame containing the forecast
     results for all stations and all dates.
@@ -211,6 +216,7 @@ def get_current_predictor_and_dates(forecast_pentad_all: pd.DataFrame,
     output.current_date = dt.datetime.now()
 
     # Get the latest forecast date from the forecast data
+    # This is the date on which the forecast is produced.
     output.latest_forecast_date = fcdata_selection["Date"].max()
 
     # Based on the latest forecast date, get the current forecast horizon.
@@ -219,18 +225,18 @@ def get_current_predictor_and_dates(forecast_pentad_all: pd.DataFrame,
     output.forecast_start = output.latest_forecast_date
 
     if output.latest_forecast_date.month in [1, 3, 5, 7, 8, 10, 12]:
-        output.forecast_end = output.latest_forecast_date + dt.timedelta(days=5)
+        output.forecast_end = output.latest_forecast_date + dt.timedelta(days=5, hours=23, minutes=50)
     elif output.latest_forecast_date.month in [4, 6, 9, 11]:
-        output.forecast_end = output.latest_forecast_date + dt.timedelta(days=4)
+        output.forecast_end = output.latest_forecast_date + dt.timedelta(days=4, hours=23, minutes=50)
     elif output.latest_forecast_date.month == 2:
         if output.latest_forecast_date.year % 4 == 0:
-            output.forecast_end = output.latest_forecast_date + dt.timedelta(days=3)
+            output.forecast_end = output.latest_forecast_date + dt.timedelta(days=3, hours=23, minutes=50)
         else:
-            output.forecast_end = output.latest_forecast_date + dt.timedelta(days=2)
+            output.forecast_end = output.latest_forecast_date + dt.timedelta(days=2, hours=23, minutes=50)
 
     # Also get the predictor date range
-    output.predictor_start = output.latest_forecast_date - dt.timedelta(days=4)
-    output.predictor_end = output.latest_forecast_date - dt.timedelta(days=1)
+    output.predictor_start = output.latest_forecast_date - dt.timedelta(days=3)
+    output.predictor_end = output.latest_forecast_date - dt.timedelta(days=0, hours=12)
 
     # And get the predictor value from the forecast data. If we do not have a
     # predictor value, we set it to NaN. This can happen if the forecast tools
