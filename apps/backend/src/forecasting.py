@@ -350,7 +350,7 @@ def perform_forecast_decad(fc_sites, forecast_decad_of_year, result_df):
 def calculate_forecast_boundaries(result_df, fc_sites, forecast_pentad_of_year):
     # === Get boundaries of forecast ===
     # region Calculate forecast boundaries
-    logger.info("Calculating forecast boundaries ...")
+    logger.info("Calculating forecast boundaries for pentadal forecasts ...")
     result2_df1 = fl.calculate_forecast_skill(result_df, 'Code', 'pentad_in_year', 'discharge_avg',
                                               'forecasted_discharge')
 
@@ -361,6 +361,29 @@ def calculate_forecast_boundaries(result_df, fc_sites, forecast_pentad_of_year):
 
     for site in fc_sites:
         fl.Site.from_df_get_qrange_discharge(site, forecast_pentad_of_year, result2_df1)
+        fl.Site.calculate_percentages_norm(site)
+
+    logger.info("  ... done")
+    return result2_df1
+
+def calculate_forecast_boundaries_decad(result_df, fc_sites, forecast_decad_of_year):
+    # === Get boundaries of forecast ===
+    # region Calculate forecast boundaries
+    logger.info("Calculating forecast boundaries for decadal forecasts ...")
+    result2_df1 = fl.calculate_forecast_skill(
+        data_df=result_df,
+        station_col='Code',
+        pentad_col='decad_in_year',
+        observation_col='discharge_avg',
+        simulation_col='forecasted_discharge')
+
+    # Select columns in dataframe
+    # print(result2_df.head(60)[['Date','Code','issue_date','discharge_sum','discharge_avg','pentad_in_year']])
+    # print(result2_df.tail(60)[['Date','Code','issue_date','discharge_sum','discharge_avg','pentad_in_year']])
+    # print(result2_df.columns)
+
+    for site in fc_sites:
+        fl.Site.from_df_get_qrange_discharge_decad(site, forecast_decad_of_year, result2_df1)
         fl.Site.calculate_percentages_norm(site)
 
     logger.info("  ... done")

@@ -600,7 +600,7 @@ class TestSite(unittest.TestCase):
         # Test that the method returns the correct forecast value
         pentad = 32
         self.site.predictor = 10.0
-        forecast = fl.Site.from_df_calculate_forecast(self.site, pentad, self.df_slope_intercept)
+        forecast = fl.Site.from_df_calculate_forecast_pentad(self.site, pentad, self.df_slope_intercept)
         self.assertEqual(forecast, 10.0)
         self.assertEqual(self.site.slope, 1.0)
         self.assertEqual(self.site.intercept, 0.0)
@@ -608,7 +608,7 @@ class TestSite(unittest.TestCase):
 
         pentad = 33
         self.site.predictor = 10.0
-        forecast = fl.Site.from_df_calculate_forecast(self.site, pentad, self.df_slope_intercept)
+        forecast = fl.Site.from_df_calculate_forecast_pentad(self.site, pentad, self.df_slope_intercept)
         self.assertEqual(forecast, 10.0)
         self.assertEqual(self.site.fc_qexp, "10.0")
 
@@ -638,14 +638,14 @@ class TestSite(unittest.TestCase):
         result = site.from_df_get_norm_discharge(site, '4', df)
         self.assertEqual(site.qnorm, '104')
 
-    def test_from_df_get_predictor(self):
+    def test_from_df_get_predictor_pentad(self):
         # Test that the method returns the correct predictor value
         predictor_dates = [datetime.date(2022, 5, 3)]
-        predictor = fl.Site.from_df_get_predictor(self.site, self.df_get_predictor, predictor_dates)
+        predictor = fl.Site.from_df_get_predictor_pentad(self.site, self.df_get_predictor, predictor_dates)
         self.assertEqual(predictor, 3)
 
         predictor_dates = [datetime.date(2022, 5, 5)]
-        predictor = fl.Site.from_df_get_predictor(self.site, self.df_get_predictor, predictor_dates)
+        predictor = fl.Site.from_df_get_predictor_pentad(self.site, self.df_get_predictor, predictor_dates)
         self.assertEqual(predictor, 5)
 
     def test_from_DB_get_dangerous_discharge(self):
@@ -658,7 +658,7 @@ class TestSite(unittest.TestCase):
     def test_from_DB_get_predictor(self):
         # Same problem for testing here as for from_DB_get_dangerous_discharge.
         # We can test that the method returns none if the connection fails.
-        result = fl.Site.from_DB_get_predictor(sdk='s', site=self.site,
+        result = fl.Site.from_DB_get_predictor_sum(sdk='s', site=self.site,
                                                dates='a')
         self.assertEqual(result, None)
 

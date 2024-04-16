@@ -1142,7 +1142,61 @@ class Site:
             site.fc_qmin = round_discharge(qpmin)  # -> string
             site.fc_qmax = round_discharge(qpmax)  # -> string
 
-        print(site.fc_qmin, site.fc_qmax)
+        #print(site.fc_qmin, site.fc_qmax)
+
+        # Return the norm discharge value
+        return qpmin, qpmax
+
+    @classmethod
+    def from_df_get_qrange_discharge_decad(cls, site, decad: str, df: pd.DataFrame):
+        '''
+        Get qpmin & qpmax discharge from DataFrame.
+
+        Args:
+            site (Site): The site object to get norm discharge for.
+            decad (str): The decad to get norm discharge for.
+            df (pd.DataFrame): The DataFrame containing the norm discharge data.
+
+        Returns:
+            str: The lower and upper ranges for the discharge forecast.
+        '''
+        # Test that df contains columns 'Code' and 'pentad'
+        if not all(column in df.columns for column in ['Code', 'decad_in_year']):
+            raise ValueError(f'DataFrame is missing one or more required columns: {"Code", "decad_in_year"}')
+
+        # Convert decad to float
+        decad = float(decad)
+
+        # Convert 'decad_in_year' column of df to float
+        df['decad_in_year'] = df['decad_in_year'].astype(float)
+
+        # Get the discharge ranges for the site
+        delta = df[(df['Code'] == site.code) & (df['decad_in_year'] == decad)]['observation_std0674'].values[0]
+
+        qpmin = float(site.fc_qexp) - delta
+        qpmax = float(site.fc_qexp) + delta
+
+        site.delta = round(delta, 5)
+
+        # Make sure none of the boundary values are negative.
+        if qpmin < 0.0:
+            qpmin = 0.0
+            # qpmax really should never be negative, but just in case.
+        if qpmax < 0.0:
+            qpmax = 0.0
+
+            # Test if both qpmin and qpmax are 0.0 then return " "
+        if qpmin == 0.0 and qpmax == 0.0:
+            site.fc_qmin = " "
+            site.fc_qmax = " "
+
+        else:
+            # Write the lower and upper bound of the discharge forecast to
+            # Site.fc_qmin and Site.fc_qmax.
+            site.fc_qmin = round_discharge_trad_bulletin(qpmin)  # -> string
+            site.fc_qmax = round_discharge_trad_bulletin(qpmax)  # -> string
+
+        #print(site.fc_qmin, site.fc_qmax)
 
         # Return the norm discharge value
         return qpmin, qpmax

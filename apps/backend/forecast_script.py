@@ -99,14 +99,17 @@ def main():
     if forecast_flags.decad:
         forecasting.perform_forecast_decad(fc_sites_decad, forecast_decad_of_year, result_decad_df)
 
-        print(fc_sites_decad)
-        return
-
     result2_df = forecasting.calculate_forecast_boundaries(result_df, fc_sites, forecast_pentad_of_year)
+
+    if forecast_flags.decad:
+        result2_decad_df = forecasting.calculate_forecast_boundaries_decad(result_decad_df, fc_sites_decad, forecast_decad_of_year)
 
     # output generation
     settings = Settings(_env_file=env_file_path)  # ieasyreports
     output_generation.write_hydrograph_data(modified_data)
+    if forecast_flags.decad:
+        print(modified_data_decad.head())
+        output_generation.write_hydrograph_data_decad(modified_data_decad)
     output_generation.write_forecast_bulletin(settings, start_date, bulletin_date, fc_sites)
     output_generation.write_forecast_sheets(settings, start_date, bulletin_date, fc_sites, result2_df)
 

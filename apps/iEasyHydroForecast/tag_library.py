@@ -154,6 +154,59 @@ def add_pentad_in_year_column(df):
         # Raise an error if the input is not a valid date
         raise ValueError('Invalid date') from e
 
+def add_decad_in_year_column(df):
+    """
+    Add a 'decad_in_year' column to a pandas DataFrame with a 'Date' column.
+
+    Parameters:
+        df (pandas.DataFrame): A pandas DataFrame with a 'Date' column
+            containing either datetime objects or datetime strings.
+
+    Returns:
+        pandas.DataFrame: The input DataFrame with a new 'decad_in_year' column added.
+            Pendads in a year can go from 1 for January 1 to 10 to 36 for
+            December 21 to 31.
+
+    Examples:
+        >>> df = pd.DataFrame({'Date': ['2022-05-15', '2022-05-16']})
+        >>> add_decad_in_year_column(df)
+               Date decad
+        0 2022-05-15     14
+        1 2022-05-26     15
+    """
+    try:
+        # Check if there is a 'Date' column in the DataFrame
+        if 'Date' not in df.columns:
+            # Return an error if there is no 'Date' column
+            raise ValueError('DataFrame does not have a \'Date\' column')
+
+        # Loop through each row in the 'Date' column and check if the date is valid
+        for date in df['Date']:
+            if not is_gregorian_date(date):
+                # Return an error if there is an invalid date
+                raise ValueError('DataFrame contains invalid date(s)')
+
+        # Convert the 'Date' column to a pandas Series of datetime objects
+        date_series = pd.to_datetime(df['Date'], errors='coerce')
+
+        # Get the day of the month for each date
+        day_series = date_series.dt.day
+
+        # Get the month of the year for each date
+        month_series = date_series.dt.month
+
+        # Calculate the decad of the year
+        decad_series = ((day_series - 1) // 10 + 1).clip(upper=3)
+        decad_in_year_series = (month_series - 1) * 3 + decad_series
+
+        # Add the 'decad_in_year' column to the DataFrame
+        df['decad_in_year'] = decad_in_year_series.astype(str)
+
+        return df
+    except ValueError as e:
+        # Raise an error if the input is not a valid date
+        raise ValueError('Invalid date') from e
+
 
 def get_pentad(date):
     """

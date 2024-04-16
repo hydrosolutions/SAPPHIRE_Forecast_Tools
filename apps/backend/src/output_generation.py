@@ -129,6 +129,49 @@ def validate_hydrograph_data(hydrograph_data):
 
     return hydrograph_data
 
+def validate_hydrograph_data_decad(hydrograph_data):
+    """
+    Validates the columns of the hydrograph data.
+
+    Parameters:
+    hydrograph_data (DataFrame): The hydrograph data in the format required for
+        the display in the forecast dashboard.
+
+    Returns:
+    DataFrame: The reformatted hydrograph data in the format required for the
+        display in the forecast dashboard.
+
+    Raises:
+    TypeError: If the hydrograph_data is not a DataFrame.
+    ValueError: If the hydrograph_data is missing the required columns.
+    """
+
+    # Check if the hydrograph_data is a DataFrame
+    if not isinstance(hydrograph_data, pd.DataFrame):
+        raise TypeError("The hydrograph_data must be a DataFrame.")
+
+    # Check if the hydrograph_data has the required columns
+    required_columns = ['Date', 'Year', 'Code', 'Q_m3s', 'discharge_avg', 'decad_in_year']
+    for column in required_columns:
+        if column not in hydrograph_data.columns:
+            raise ValueError(f"The hydrograph_data is missing the '{column}' column.")
+
+    # Convert the Date column to a datetime object
+    hydrograph_data['Date'] = pd.to_datetime(hydrograph_data['Date'])
+    # Make sure the Year column is of type string.
+    hydrograph_data['Year'] = hydrograph_data['Year'].astype(str)
+
+    # We do not filter February 29 in leap years here but in the dashboard.
+
+    # Round to 3 digits as is usual in operational hydrology in Kyrgyzstan
+    hydrograph_data['Q_m3s'] = hydrograph_data['Q_m3s'].apply(fl.round_discharge_to_float)
+    hydrograph_data['discharge_avg'] = hydrograph_data['discharge_avg'].apply(fl.round_discharge_to_float)
+
+    # print(hydrograph_data.head())
+    hydrograph_data['day_of_year'] = hydrograph_data['Date'].dt.dayofyear
+
+    return hydrograph_data
+
 def save_hydrograph_data_to_csv(hydrograph_pentad, hydrograph_day):
     # Write this data to csv for subsequent visualization
     # in the forecast dashboard.
@@ -154,6 +197,22 @@ def save_hydrograph_data_to_csv(hydrograph_pentad, hydrograph_day):
     else:
         logger.error("Hydrograph day data not saved to csv file")
 
+def save_hydrograph_data_to_csv_decad(hydrograph_decad):
+    # Write this data to csv for subsequent visualization
+    # in the forecast dashboard.
+    hydrograph_decad_file_csv = os.path.join(
+        os.getenv("ieasyforecast_intermediate_data_path"),
+        os.getenv("ieasyforecast_hydrograph_decad_file"))
+
+    # Write the hydrograph_pentad to csv
+    ret = hydrograph_decad.to_csv(hydrograph_decad_file_csv)
+    if ret is None:
+        logger.info("Hydrograph decad data saved to csv file")
+    else:
+        logger.error("Hydrograph decad data not saved to csv file")
+
+
+
 def reformat_hydrograph_data(hydrograph_data):
     """
     Reformats the hydrograph data for daily and pentadal output.
@@ -164,7 +223,8 @@ def reformat_hydrograph_data(hydrograph_data):
 
     Parameters:
     hydrograph_data (DataFrame): The input hydrograph data. This DataFrame should
-        contain columns for 'Code', 'Year', 'day_of_year', 'Q_m3s', 'pentad', and 'discharge_avg'.
+        contain columns for 'Code', 'Year', 'day_of_year', 'Q_m3s', 'pentad',
+        and 'discharge_avg'.
 
     Returns:
     tuple: A tuple containing two DataFrames. The first DataFrame contains the
@@ -210,11 +270,62 @@ def reformat_hydrograph_data(hydrograph_data):
 
     return hydrograph_pentad, hydrograph_day
 
+def reformat_hydrograph_data_decad(hydrograph_data):
+    """
+    Reformats the hydrograph data for decadal output.
+
+    This function selects the necessary columns from the input DataFrame and
+    reformats the data in a wide format where the 'Code' and 'decad_in_year'
+    are the index, the columns are the years, and the values is 'discharge_avg'.
+
+    Parameters:
+    hydrograph_data (DataFrame): The input hydrograph data. This DataFrame should
+        contain columns for 'Code', 'Year', 'day_of_year', 'Q_m3s', 'decad_in_year',
+        and 'discharge_avg'.
+
+    Returns:
+    tuple: A tuple containing two DataFrames. The first DataFrame contains the
+        reformatted data for pentadal output, and the second DataFrame contains
+        the reformatted data for daily output. Both DataFrames have 'Code' and
+        'decad_in_year' as the index, 'Year' as the columns, and 'discharge_avg'
+        as the values.
+    """
+    # Select the columns that are needed for the hydrograph data for decadal output
+    hydrograph_data_decad = hydrograph_data[['Code', 'Year', 'decad_in_year',
+                                             'discharge_avg']]
+
+    # Reset the index of the hydrograph_data_decad DataFrame
+    hydrograph_data_decad = hydrograph_data_decad.reset_index(drop=True)
+
+    # Reformat the data in the wide format. The day of the year, Code and decad
+    # are the index. The columns are the years. The values are the discharge_avg.
+    hydrograph_decad = hydrograph_data_decad.pivot_table(
+        index=['Code', 'decad_in_year'],
+        columns='Year',
+        values='discharge_avg')
+
+    # Reset the index of the hydrograph_decad DataFrame
+    hydrograph_decad = hydrograph_decad.reset_index()
+
+    # Convert decad column to integer
+    hydrograph_decad['decad_in_year'] = hydrograph_decad['decad_in_year'].astype(int)
+
+    # We want to have the data sorted by 'Code' and 'decad_in_year'
+    hydrograph_decad.sort_values(by=['Code', 'decad_in_year'], inplace=True)
+
+    # Set 'Code' and 'decad_in_year' as index again
+    hydrograph_decad.set_index(['Code', 'decad_in_year'], inplace=True)
+
+    # Sort index
+    hydrograph_decad.sort_index(inplace=True)
+
+    return hydrograph_decad
+
 
 
 def write_hydrograph_data(modified_data):
     # === Write hydrograph data ===
-    logger.info("Writing hydrograph data ...")
+    logger.info("Writing hydrograph data for pentadal forecasts ...")
 
     # Validate the columns of the hydrograph data.
     # Write the day of the year into a new column.
@@ -228,6 +339,21 @@ def write_hydrograph_data(modified_data):
     save_hydrograph_data_to_csv(hydrograph_pentad, hydrograph_day)
 
     logger.info("   ... done")
+
+def write_hydrograph_data_decad(modified_data):
+    # === Write hydrograph data ===
+    logger.info("Writing hydrograph data for decadal forecasts ...")
+
+    # Validate the columns of the hydrograph data.
+    # Write the day of the year into a new column.
+    hydrograph_data = validate_hydrograph_data_decad(modified_data)
+
+    # Pivot the hydrograph data to the wide format with daily and pentadal data.
+    hydrograph_decad = reformat_hydrograph_data_decad(hydrograph_data)
+
+    # Save the hydrograph data to csv for subsequent visualization in the
+    # forecast dashboard.
+    save_hydrograph_data_to_csv_decad(hydrograph_decad)
 
 
 def create_tag(name, get_value_fn, description):

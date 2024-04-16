@@ -125,6 +125,28 @@ class TestGetDecadInYear(unittest.TestCase):
     def test_get_decad_in_year_with_non_gregorian_date(self):
         self.assertIsNone(tl.get_decad_in_year('1581-12-31'))
 
+class TestAddDecadInYearColumn(unittest.TestCase):
+    def test_add_decad_in_year_column(self):
+        df = pd.DataFrame({'Date': ['2022-01-01', '2022-12-31']})
+        result = tl.add_decad_in_year_column(df)
+        self.assertIn('decad_in_year', result.columns)
+        self.assertEqual(result.loc[0, 'decad_in_year'], '1')
+        self.assertEqual(result.loc[1, 'decad_in_year'], '36')
+
+    def test_add_pentad_in_year_column_no_date_column(self):
+        df = pd.DataFrame({'NotDate': ['2022-01-01', '2022-12-31']})
+        with self.assertRaises(ValueError, msg='DataFrame does not have a \'Date\' column'):
+            tl.add_decad_in_year_column(df)
+
+    def test_add_pentad_in_year_column_invalid_date(self):
+        df = pd.DataFrame({'Date': ['2022-01-01', 'not a date']})
+        with self.assertRaises(ValueError, msg='DataFrame contains invalid date\(s\)'):
+            tl.add_decad_in_year_column(df)
+
+    def test_add_pentad_in_year_column_empty_dataframe(self):
+        df = pd.DataFrame()
+        with self.assertRaises(ValueError, msg='DataFrame does not have a \'Date\' column'):
+            tl.add_decad_in_year_column(df)
 
 class TestGetPentad(unittest.TestCase):
 
