@@ -515,7 +515,7 @@ def write_forecast_sheets(settings, start_date, bulletin_date, fc_sites, result2
 
     # If forecast sheets are written
     if config.excel_output():
-        logger.info("Writing forecast sheets ...")
+        logger.info("Writing forecast sheets for pentadal forecasts ...")
 
         # Get the name of the template file from the environment variables
         forecast_template_file = os.getenv("ieasyforecast_template_pentad_sheet_file")
@@ -604,7 +604,7 @@ def write_forecast_sheets(settings, start_date, bulletin_date, fc_sites, result2
     # Write a file header if the file does not yet exist
     offline_forecast_results_file = os.path.join(
         os.getenv("ieasyforecast_intermediate_data_path"),
-        os.getenv("ieasyforecast_results_file"))
+        os.getenv("ieasyforecast_pentad_results_file"))
 
     if not os.path.exists(offline_forecast_results_file):
         with open(offline_forecast_results_file, "w") as f:
@@ -635,5 +635,138 @@ def write_forecast_sheets(settings, start_date, bulletin_date, fc_sites, result2
     # endregion
     logger.info("   ... done")
 
-    # === Store last successful run date ===
-    config.store_last_successful_run_date(start_date)
+def write_forecast_sheets_decad(settings, start_date, bulletin_date, fc_sites, result2_df):
+    # Format the date as a string in the format "YYYY_MM_DD"
+    today_str = start_date.strftime("%Y-%m-%d")
+    start_date_year = str(dt.datetime.strptime(bulletin_date, '%Y-%m-%d').date().year)
+    start_date_month_num = dt.datetime.strptime(bulletin_date, '%Y-%m-%d').date().strftime("%m")
+    start_date_month = assign_month_string_to_number(dt.datetime.strptime(bulletin_date, '%Y-%m-%d').date().month)
+    start_date_pentad = tl.get_pentad(bulletin_date)
+    start_date_decad = tl.get_decad_in_month(bulletin_date)
+
+    # If forecast sheets are written
+    if config.excel_output():
+        logger.info("Writing forecast sheets for decadal forecasts ...")
+
+        # Get the name of the template file from the environment variables
+        # We can use the same template file for pentad and decad forecasts
+        forecast_template_file = os.getenv("ieasyforecast_template_pentad_sheet_file")
+
+        # Get the name of the output file from the environment variables
+        bulletin_output_file = os.getenv("ieasyforecast_bulletin_file_name")
+
+        for site in fc_sites:
+
+            # Construct the output filename using the formatted date
+            filename = f"{start_date_year}_{start_date_month_num}_{start_date_month}_{start_date_decad}-{site.code}-{bulletin_output_file}"
+
+            # This tag is defined here because it's a general tag, and it can't
+            # receive a lambda function as a replacement value, it needs to get a
+            # concrete value, so we create a new tag for each site
+
+            # We need to use a trick here because we can use the ieasyreports
+            # library only for printing one line per site. However, here we want
+            # it to print several lines per site. Therefore, we create a dummy
+            # Site object for each year in the data and print it.
+            # Filter result2_df for the current site
+            temp_df = result2_df[result2_df['Code'] == site.code].reset_index(drop=True)
+            # Select columns from temp_df
+            temp_df = temp_df[['Year', 'discharge_avg', 'predictor', 'forecasted_discharge']]
+            # the data frame is already filtered to the current pentad of the year
+            temp_df = temp_df.dropna(subset=['forecasted_discharge'])
+
+            site_data = []
+            # iterate through all the years for the current site
+            for year in temp_df['Year'].unique():
+                df_year = temp_df[temp_df['Year'] == year]
+                print("df_year.head(): \n", df_year.head())
+                print(df_year.tail())
+
+                site_data.append({
+                    'river_name': site.river_name + " " + site.punkt_name,
+                    'year': str(year),
+                    'qpavg': fl.round_discharge_trad_bulletin_3numbers(df_year['discharge_avg'].mean()).replace('.', ','),
+                    'predictor': fl.round_discharge_trad_bulletin_3numbers(df_year['predictor'].mean()).replace('.', ',')
+                })
+
+            # Add current year and current predictor to site_data
+            # Test if site.predictor is nan. If it is, assign ""
+            if pd.isna(site.predictor):
+                temp_predictor = ""
+            else:
+                temp_predictor = fl.round_discharge_trad_bulletin(float(site.predictor)).replace('.', ',')
+            site_data.append({
+                'river_name': site.river_name + " " + site.punkt_name,
+                'year': str(start_date.year),
+                'qpavg': "",
+                'qpsum': temp_predictor
+            })
+
+            # Overwrite settings for theh bulletin folder. In this way we can sort the
+            # bulletins in a separate folder.
+            settings.report_output_path = os.getenv("ieasyreports_report_output_path")
+            settings.report_output_path = os.path.join(
+                settings.report_output_path,
+                "forecast_sheets",
+                "decad",
+                start_date_year,
+                start_date_month_num + "_" + start_date_month,
+                site.code)
+
+
+            # directly instantiate the new generator
+            report_generator = FakeHeaderTemplateGenerator(
+                tags=sheet_tags(bulletin_date),
+                template=forecast_template_file,
+                requires_header=True,
+                custom_settings=settings
+            )
+            report_generator.validate()
+            report_generator.generate_report(
+                list_objects=site_data,
+                output_filename=filename
+            )
+
+        logger.info("   ... done")
+
+    # Write other output
+    logger.info("Writing other output ...")
+
+    # Write the forecasted discharge to a csv file. Print code, predictor,
+    # fc_qmin, fc_qmax, fc_qexp, qnorm, perc_norm, qdanger for each site in
+    # fc_sites
+    # Write a file header if the file does not yet exist
+    offline_forecast_results_file = os.path.join(
+        os.getenv("ieasyforecast_intermediate_data_path"),
+        os.getenv("ieasyforecast_decad_results_file"))
+
+    if not os.path.exists(offline_forecast_results_file):
+        with open(offline_forecast_results_file, "w") as f:
+            f.write("date,code,predictor,slope,intercept,delta,fc_qmin,fc_qmax,fc_qexp,qnorm,perc_norm,qdanger\n")
+            f.flush()
+
+    # Write the data to a csv file
+    with open(offline_forecast_results_file, "a") as f:
+
+        # Make sure that all strings in fc_sites are using point as the decimal
+        fc_sites_report = fc_sites
+        for site in fc_sites_report:
+            site.fc_qmin = site.fc_qmin.replace(',', '.')
+            site.fc_qmax = site.fc_qmax.replace(',', '.')
+            site.fc_qexp = site.fc_qexp.replace(',', '.')
+            site.qnorm = site.qnorm.replace(',', '.')
+            site.predictor = fl.round_discharge_trad_bulletin(float(site.predictor)).replace(',', '.')
+            site.perc_norm = site.perc_norm.replace(',', '.')
+            site.qdanger = site.qdanger.replace(',', '.')
+        # Write the data
+        for site in fc_sites_report:
+            f.write(
+                f"{today_str},{site.code},{site.predictor},{site.slope},{site.intercept},{site.delta},{site.fc_qmin}"
+                f",{site.fc_qmax},{site.fc_qexp},{site.qnorm},{site.perc_norm},{site.qdanger}\n"
+            )
+            f.flush()
+
+    # endregion
+    logger.info("   ... done")
+
+

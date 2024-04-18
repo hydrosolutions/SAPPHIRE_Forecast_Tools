@@ -107,12 +107,15 @@ def main():
     # output generation
     settings = Settings(_env_file=env_file_path)  # ieasyreports
     output_generation.write_hydrograph_data(modified_data)
-    if forecast_flags.decad:
-        print(modified_data_decad.head())
-        output_generation.write_hydrograph_data_decad(modified_data_decad)
     output_generation.write_forecast_bulletin(settings, start_date, bulletin_date, fc_sites)
     output_generation.write_forecast_sheets(settings, start_date, bulletin_date, fc_sites, result2_df)
 
+    if forecast_flags.decad:
+        output_generation.write_hydrograph_data_decad(modified_data_decad)
+        output_generation.write_forecast_sheets_decad(settings, start_date, bulletin_date, fc_sites_decad, result2_decad_df)
+
+    # === Store last successful run date ===
+    config.store_last_successful_run_date(start_date)
 
 # region Main
 '''
