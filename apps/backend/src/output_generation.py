@@ -686,8 +686,9 @@ def write_forecast_sheets_decad(settings, start_date, bulletin_date, fc_sites, r
                     'river_name': site.river_name + " " + site.punkt_name,
                     'year': str(year),
                     'qpavg': fl.round_discharge_trad_bulletin_3numbers(df_year['discharge_avg'].mean()).replace('.', ','),
-                    'predictor': fl.round_discharge_trad_bulletin_3numbers(df_year['predictor'].mean()).replace('.', ',')
+                    'qpsum': fl.round_discharge_trad_bulletin_3numbers(df_year['predictor'].mean()).replace('.', ',')
                 })
+                print("site_data: \n", site_data)
 
             # Add current year and current predictor to site_data
             # Test if site.predictor is nan. If it is, assign ""
