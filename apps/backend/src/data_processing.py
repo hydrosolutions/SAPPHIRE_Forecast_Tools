@@ -245,6 +245,10 @@ def get_fc_sites(ieh_sdk, backend_has_access_to_db, db_sites):
     )
     logger.info(f' {len(fc_sites)} Site object(s) created for forecasting, namely:\n{[site.code for site in fc_sites]}')
 
+    # Sort the fc_sites list by descending site code. They will then be sorted in
+    # ascending order in the forecast bulletins and sheets.
+    fc_sites.sort(key=lambda x: x.code, reverse=True)
+
     # Get dangerous discharge for each site
     # This can be done only if we have access to the database
     if backend_has_access_to_db:
@@ -1245,11 +1249,19 @@ def save_discharge_avg(modified_data, fc_sites, forecast_pentad_of_year):
         modified_data.reset_index(drop=True).groupby(['Code', 'pentad_in_year'], as_index=False)['discharge_avg']
                       .apply(lambda x: x.mean(skipna=True))
     )
+    min_discharge = (
+        modified_data.reset_index(drop=True).groupby(['Code', 'pentad_in_year'], as_index=False)['discharge_avg']
+                        .apply(lambda x: x.min(skipna=True))
+    )
+    max_discharge = (
+        modified_data.reset_index(drop=True).groupby(['Code', 'pentad_in_year'], as_index=False)['discharge_avg']
+                        .apply(lambda x: x.max(skipna=True))
+    )
 
     # Now we need to write the discharge_avg for the current pentad to the site: Site
     for site in fc_sites:
         logger.info(f'    Calculating norm discharge for site {site.code} ...')
-        fl.Site.from_df_get_norm_discharge(site, forecast_pentad_of_year, norm_discharge)
+        fl.Site.from_df_get_norm_discharge(site, forecast_pentad_of_year, norm_discharge, min_discharge, max_discharge)
 
     logger.info(f'   {len(fc_sites)} Norm discharge calculated, namely:\n{[site1.qnorm for site1 in fc_sites]}')
     logger.info("   ... done")
@@ -1261,11 +1273,19 @@ def save_discharge_avg_decad(modified_data, sites_list, forecast_decad_of_year):
         modified_data.reset_index(drop=True).groupby(['Code', 'decad_in_year'], as_index=False)['discharge_avg']
                       .apply(lambda x: x.mean(skipna=True))
     )
+    min_discharge = (
+        modified_data.reset_index(drop=True).groupby(['Code', 'decad_in_year'], as_index=False)['discharge_avg']
+                        .apply(lambda x: x.min(skipna=True))
+    )
+    max_discharge = (
+        modified_data.reset_index(drop=True).groupby(['Code', 'decad_in_year'], as_index=False)['discharge_avg']
+                        .apply(lambda x: x.max(skipna=True))
+    )
 
     # Now we need to write the discharge_avg for the current decad to the site: Site
     for site in sites_list:
         logger.info(f'    Calculating norm discharge for site {site.code} ...')
-        fl.Site.from_df_get_norm_discharge_decad(site, forecast_decad_of_year, norm_discharge)
+        fl.Site.from_df_get_norm_discharge_decad(site, forecast_decad_of_year, norm_discharge, min_discharge, max_discharge)
 
     logger.info(f'   {len(sites_list)} Norm discharge calculated, namely:\n{[site1.qnorm for site1 in sites_list]}')
     logger.info("   ... done")

@@ -476,10 +476,15 @@ def calculate_forecast_skill(data_df: pd.DataFrame, station_col: str,
     if not all(column in data_df.columns for column in [station_col, pentad_col, observation_col, simulation_col]):
         raise ValueError(f'DataFrame is missing one or more required columns: {station_col, pentad_col, observation_col, simulation_col}')
 
-    # Initialize the slope and intercept columns to 0 and 1
+    # Initialize columns
     data_df.loc[:, 'absolute_error'] = 0.0
-    data_df.loc[:, 'observation_std0674'] = 0.0
+    data_df.loc[:, 'observation_std0674'] = 0.0  # delta
     data_df.loc[:, 'flag'] = 0.0
+    data_df.loc[:, 'accuracy'] = 0.0  # percentage of good forecasts
+    data_df.loc[:, 'observation_std'] = 0.0  # sigma
+    data_df.loc[:, 'observation_std_sanity_check'] = 0.0  # sigma
+    data_df.loc[:, 'forecast_std'] = 0.0  # s
+    data_df.loc[:, 'sdivsigma'] = 0.0  # s / sigma, "effectiveness" of the model
 
     # Loop over each station and pentad
     for station in data_df[station_col].unique():
@@ -492,15 +497,27 @@ def calculate_forecast_skill(data_df: pd.DataFrame, station_col: str,
             station_data = station_data.dropna()
 
             # Calculate the absolute error between the simulation data and the observation data
-            absolute_error = abs(station_data[simulation_col] - station_data[observation_col])
+            absolute_error_forecast = abs(station_data[simulation_col] - station_data[observation_col])
+            absolute_error_observed = abs(station_data[observation_col] - station_data[observation_col].mean())
             observation_std = station_data[observation_col].std()
+            # The unbiased sample standard deviation sigma is calculated as
+            # sigma = sqrt(sum((x_i - x_mean)^2) / (n-1))
+            observation_std_sanity_check = math.sqrt(station_data[observation_col].apply(lambda x: (x - station_data[observation_col].mean())**2).sum() / (len(station_data) - 1))
+            # The measure s is calculated as
+            # s = sqrt(sum((x_i - y_i)^2) / (n-2))
+            forecast_std = math.sqrt(station_data.apply(lambda x: (x[observation_col] - x[simulation_col])**2, axis=1).sum() / (len(station_data) - 2))
+            sdivsigma = forecast_std / observation_std
+
             # Note: .std() will yield NaN if there is only one value in the DataFrame
             # Test if the standard deviation is NaN and return 0.0 if it is
             if np.isnan(observation_std):
                 observation_std = 0.0
 
             # Set the flag if the error is smaller than 0.674 times the standard deviation of the observation data
-            flag = absolute_error < 0.674 * observation_std
+            flag = absolute_error_forecast <= 0.674 * observation_std
+
+            # Calculate the accuracy of the forecast
+            accuracy = flag.mean()
 
             # Delta is 0.674 times the standard deviation of the observation data
             # This is the measure for the allowable uncertainty of a good forecast
@@ -509,13 +526,31 @@ def calculate_forecast_skill(data_df: pd.DataFrame, station_col: str,
             # Store the slope and intercept in the data_df
             data_df.loc[
                 (data_df[station_col] == station) & (data_df[pentad_col] == pentad),
-                'absolute_error'] = absolute_error
+                'absolute_error'] = absolute_error_forecast
             data_df.loc[
                 (data_df[station_col] == station) & (data_df[pentad_col] == pentad),
                 'observation_std0674'] = observation_std0674
             data_df.loc[
                 (data_df[station_col] == station) & (data_df[pentad_col] == pentad),
                 'flag'] = flag
+            data_df.loc[
+                (data_df[station_col] == station) & (data_df[pentad_col] == pentad),
+                'observation_std'] = observation_std
+            data_df.loc[
+                (data_df[station_col] == station) & (data_df[pentad_col] == pentad),
+                'observation_std_sanity_check'] = observation_std_sanity_check
+            data_df.loc[
+                (data_df[station_col] == station) & (data_df[pentad_col] == pentad),
+                'forecast_std'] = forecast_std
+            data_df.loc[
+                (data_df[station_col] == station) & (data_df[pentad_col] == pentad),
+                'sdivsigma'] = sdivsigma
+            data_df.loc[
+                (data_df[station_col] == station) & (data_df[pentad_col] == pentad),
+                'accuracy'] = accuracy
+
+    print("DEBUG: fl.calculate_forecast_skill: data_df\n", data_df.head(20))
+    print(data_df.tail(20))
 
     return data_df
 
@@ -753,8 +788,10 @@ class Site:
                  punkt_name="Punkt", lat=0.0, lon=0.0, region="Region",
                  basin="Basin", predictor=-10000.0, fc_qmin=-10000.0,
                  fc_qmax=-10000.0, fc_qexp=-10000.0, qnorm=-10000.0,
+                 qmin=-10000.0, qmax=-10000.0,
                  perc_norm=-10000.0, qdanger=-10000.0, slope=-10000.0,
-                 intercept=-10000.0, delta=-10000.0):
+                 intercept=-10000.0, delta=-10000.0, sdivsigma=-10000.0,
+                 accuracy=-10000.0):
         """
         Initializes a new Site object.
 
@@ -772,6 +809,8 @@ class Site:
             fc_qmax (float): The upper bound of the discharge forecasted for the next pentad.
             fc_qexp (float): The expected discharge forecasted for the next pentad.
             qnorm (float): The norm discharge for the site.
+            qmin (float): The minimum discharge for the site.
+            qmax (float): The maximum discharge for the site.
             qdanger (str): The threshold discharge for a dangerous flood.
         """
         self.code = str(code)
@@ -786,12 +825,16 @@ class Site:
         self.fc_qmin = fc_qmin
         self.fc_qmax = fc_qmax
         self.fc_qexp = fc_qexp
+        self.qmin = qmin
+        self.qmax = qmax
         self.qnorm = qnorm
         self.perc_norm = perc_norm
         self.qdanger = qdanger
         self.slope = slope
         self.intercept = intercept
         self.delta = delta
+        self.sdivsigma = sdivsigma
+        self.accuracy = accuracy
 
     def __repr__(self):
         """
@@ -814,11 +857,15 @@ class Site:
             f"fc_qmax={self.fc_qmax},\n"
             f"fc_qexp={self.fc_qexp},\n"
             f"qnorm={self.qnorm},\n"
+            f"qmin={self.qmin},\n"
+            f"qmax={self.qmax},\n"
             f"perc_norm={self.perc_norm},\n"
             f"qdanger={self.qdanger},\n"
             f"slope={self.slope},\n"
             f"intercept={self.intercept},\n"
             f"delta={self.delta}\n"
+            f"sdivsigma={self.sdivsigma}\n"
+            f"accuracy={self.accuracy}\n"
             f")")
 
     @classmethod
@@ -944,7 +991,7 @@ class Site:
             site.perc_norm = " "
 
     @classmethod
-    def from_df_get_norm_discharge(cls, site, pentad: str, df: pd.DataFrame):
+    def from_df_get_norm_discharge(cls, site, pentad: str, df: pd.DataFrame, df_min: pd.DataFrame, df_max: pd.DataFrame):
         '''
         Get norm discharge from DataFrame.
 
@@ -952,6 +999,8 @@ class Site:
             site (Site): The site object to get norm discharge for.
             pentad_in_year (str): The pentad of the year to get norm discharge for.
             df (pd.DataFrame): The DataFrame containing the norm discharge data.
+            df_min (pd.DataFrame): The DataFrame containing the minimum discharge data.
+            df_max (pd.DataFrame): The DataFrame containing the maximum discharge data.
 
         Returns:
             str: The norm discharge value.
@@ -966,12 +1015,18 @@ class Site:
 
             # Also convert the column 'pentad_in_year' to float
             df['pentad_in_year'] = df['pentad_in_year'].astype(float)
+            df_min['pentad_in_year'] = df_min['pentad_in_year'].astype(float)
+            df_max['pentad_in_year'] = df_max['pentad_in_year'].astype(float)
 
             # Get the norm discharge for the site
             qnorm = df[(df['Code'] == site.code) & (df['pentad_in_year'] == pentad)]['discharge_avg'].values[0]
+            qmin = df_min[(df_min['Code'] == site.code) & (df_min['pentad_in_year'] == pentad)]['discharge_avg'].values[0]
+            qmax = df_max[(df_max['Code'] == site.code) & (df_max['pentad_in_year'] == pentad)]['discharge_avg'].values[0]
 
             # Write the norm discharge value to self.qnorm as string
-            site.qnorm = round_discharge_trad_bulletin(qnorm)
+            site.qnorm = round_discharge(qnorm)
+            site.qmin = round_discharge(qmin)
+            site.qmax = round_discharge(qmax)
 
             # Return the norm discharge value
             return qnorm
@@ -980,7 +1035,8 @@ class Site:
             return " "
 
     @classmethod
-    def from_df_get_norm_discharge_decad(cls, site, decad_in_year: str, df: pd.DataFrame):
+    def from_df_get_norm_discharge_decad(cls, site, decad_in_year: str, df: pd.DataFrame,
+                                         df_min: pd.DataFrame, df_max: pd.DataFrame):
         '''
         Get norm discharge from DataFrame.
 
@@ -988,6 +1044,8 @@ class Site:
             site (Site): The site object to get norm discharge for.
             decad_in_year (str): The pentad of the year to get norm discharge for.
             df (pd.DataFrame): The DataFrame containing the norm discharge data.
+            df_min (pd.DataFrame): The DataFrame containing the minimum discharge data.
+            df_max (pd.DataFrame): The DataFrame containing the maximum discharge data.
 
         Returns:
             str: The norm discharge value.
@@ -1002,12 +1060,18 @@ class Site:
 
             # Also convert the column 'pentad_in_year' to float
             df['decad_in_year'] = df['decad_in_year'].astype(float)
+            df_min['decad_in_year'] = df_min['decad_in_year'].astype(float)
+            df_max['decad_in_year'] = df_max['decad_in_year'].astype(float)
 
             # Get the norm discharge for the site
             qnorm = df[(df['Code'] == site.code) & (df['decad_in_year'] == decad_in_year)]['discharge_avg'].values[0]
+            qmin = df_min[(df_min['Code'] == site.code) & (df_min['decad_in_year'] == decad_in_year)]['discharge_avg'].values[0]
+            qmax = df_max[(df_max['Code'] == site.code) & (df_max['decad_in_year'] == decad_in_year)]['discharge_avg'].values[0]
 
             # Write the norm discharge value to self.qnorm as string
-            site.qnorm = round_discharge_trad_bulletin(qnorm)
+            site.qnorm = round_discharge(qnorm)
+            site.qmin = round_discharge(qmin)
+            site.qmax = round_discharge(qmax)
 
             # Return the norm discharge value
             return qnorm
@@ -1118,6 +1182,8 @@ class Site:
 
         # Get the discharge ranges for the site
         delta = df[(df['Code'] == site.code) & (df['pentad_in_year'] == pentad)]['observation_std0674'].values[0]
+        sdivsigma = df[(df['Code'] == site.code) & (df['pentad_in_year'] == pentad)]['sdivsigma'].values[0]
+        accuracy = df[(df['Code'] == site.code) & (df['pentad_in_year'] == pentad)]['accuracy'].values[0]
 
         qpmin = float(site.fc_qexp) - delta
         qpmax = float(site.fc_qexp) + delta
@@ -1142,6 +1208,9 @@ class Site:
             site.fc_qmin = round_discharge(qpmin)  # -> string
             site.fc_qmax = round_discharge(qpmax)  # -> string
 
+        # Also assign sdivsigma and accuracy to site
+        site.sdivsigma = round_discharge(sdivsigma)
+        site.accuracy = round_discharge(accuracy)
         #print(site.fc_qmin, site.fc_qmax)
 
         # Return the norm discharge value

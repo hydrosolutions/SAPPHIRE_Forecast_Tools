@@ -12,9 +12,28 @@ from typing import Any, List, Optional
 from ieasyreports.core.tags.tag import Tag
 from ieasyreports.utils import import_from_string
 from ieasyreports.core.report_generator import DefaultReportGenerator
-from ieasyreports.exceptions import TemplateNotValidatedException
+from ieasyreports.exceptions import TemplateNotValidatedException, InvalidSettingsException
+from ieasyreports.settings import Settings
 logger = logging.getLogger(__name__)
 
+class WriteForecastToMultipleSheets(DefaultReportGenerator):
+    def __init__(self, tags: List[Tag], template: str, requires_header: bool = False, custom_settings: Settings = None, sheet: int = 0):
+        if custom_settings and not isinstance(custom_settings, Settings):
+            raise InvalidSettingsException(
+                f"`custom_settings` must be a {type(Settings)} instance, got {type(custom_settings)} instead."
+            )
+        self.settings = custom_settings or Settings()
+        self.tags = {tag.name: tag for tag in tags}
+        self.template_filename = template
+        self.template = self.open_template_file()
+        self.sheet = self.template.worksheets[sheet]
+
+        self.validated = False
+
+        self.requires_header_tag = requires_header
+        self.header_tag_info = {}
+        self.data_tags_info = []
+        self.general_tags = {}
 
 class FakeHeaderTemplateGenerator(DefaultReportGenerator):
     # This class is a subclass of the DefaultReportGenerator class and provides a
@@ -211,8 +230,6 @@ def save_hydrograph_data_to_csv_decad(hydrograph_decad):
     else:
         logger.error("Hydrograph decad data not saved to csv file")
 
-
-
 def reformat_hydrograph_data(hydrograph_data):
     """
     Reformats the hydrograph data for daily and pentadal output.
@@ -321,8 +338,6 @@ def reformat_hydrograph_data_decad(hydrograph_data):
 
     return hydrograph_decad
 
-
-
 def write_hydrograph_data(modified_data):
     # === Write hydrograph data ===
     logger.info("Writing hydrograph data for pentadal forecasts ...")
@@ -362,18 +377,22 @@ def create_tag(name, get_value_fn, description):
 
 def bulletin_tags(bulletin_date):
     # === Define tags ===
-    logger.info("Defining bulletin tags ...")
-
     bulletin_tag_details = [
         ("PENTAD", tl.get_pentad(bulletin_date), "Pentad of the month"),
         ("PERC_NORM", lambda obj: obj.perc_norm, "Percentage of norm discharge in current pentad"),
         ("QDANGER", lambda obj: obj.qdanger, "Threshold for dangerous discharge"),
         ("QMAX", lambda obj: obj.fc_qmax, "Maximum forecasted discharge range"),
         ("QMIN", lambda obj: obj.fc_qmin, "Minimum forecasted discharge range"),
+        ("QEXP", lambda obj: obj.fc_qexp, "Expected discharge in current pentad"),
+        ("PREDICTOR", lambda obj: obj.predictor, "Predictor for the forecast"),
+        ("DELTA", lambda obj: obj.delta, "Difference between the expected and norm discharge"),
+        ("SDIVSIGMA", lambda obj: obj.sdivsigma, "s/sigma"),
         ("DAY_END", tl.get_pentad_last_day(bulletin_date), "End day of the pentadal forecast"),
         ("DAY_START", tl.get_pentad_first_day(bulletin_date), "Start day of the pentadal forecast"),
         ("QNORM", lambda obj: obj.qnorm, "Norm discharge in current pentad"),
-        ("BASIN", lambda obj: obj.basin, "Basin of the gauge sites"),
+        ("HYDROGRAPHMIN", lambda obj: obj.qmin, "Minimum value of the hydrograph"),
+        ("HYDROGRAPHMAX", lambda obj: obj.qmax, "Maximum value of the hydrograph"),
+        ("BASIN", lambda obj: tl.get_basin_name(obj.basin), "Basin of the gauge sites"),
         ("RIVER_NAME", lambda obj: obj.river_name, "Name of the river"),
         ("PUNKT_NAME", lambda obj: obj.punkt_name, "Name of the gauge site"),
         ("MONTH_STR_CASE1", tl.get_month_str_case1(bulletin_date), "Name of the month in a string in the first case"),
@@ -385,7 +404,6 @@ def bulletin_tags(bulletin_date):
         ("DASH", "-", "Dash"),
     ]
 
-    logger.info("   ... done")
     return [create_tag(name, fn, desc) for name, fn, desc in bulletin_tag_details]
 
 
@@ -405,10 +423,7 @@ def sheet_tags(bulletin_date):
 def write_forecast_bulletin(settings, start_date, bulletin_date, fc_sites):
     # === Write forecast bulletin ===
     # region Write forecast bulletin
-    logger.info("Writing forecast outputs ...")
-
-    # Option to turn off bulletin writing, may be used during development only.
-    write_bulletin = True
+    logger.info("Writing forecast bulletins for pentadal forecasts ...")
 
     # Format the date as a string in the format "YYYY_MM_DD"
     today_str = start_date.strftime("%Y-%m-%d")
@@ -417,45 +432,79 @@ def write_forecast_bulletin(settings, start_date, bulletin_date, fc_sites):
     start_date_month = assign_month_string_to_number(dt.datetime.strptime(bulletin_date, '%Y-%m-%d').date().month)
     start_date_pentad = tl.get_pentad(bulletin_date)
 
-    # Overwrite settings for theh bulletin folder. In this way we can sort the
+    # Overwrite settings for the bulletin folder. In this way we can sort the
     # bulletins in a separate folder.
     settings.report_output_path = os.getenv("ieasyreports_report_output_path")
     settings.report_output_path = os.path.join(
         settings.report_output_path,
         "bulletins",
         "pentad",
-        start_date_year,
-        start_date_month_num + "_" + start_date_month)
+        start_date_year)#,
+        #start_date_month_num + "_" + start_date_month)
 
-    if write_bulletin:
-        # Get the name of the template file from the environment variables
+    # If we are not in the first pentad of the month, we want to use the
+    # existing bulletin as template to append the new data to it.
+    # Construct the output filename using the formatted date
+    bulletin_output_file = os.getenv("ieasyforecast_bulletin_file_name")
+    filename = f"{start_date_year}_{start_date_month_num}_{start_date_month}_{bulletin_output_file}"
+
+    print("DEBUG: settings.templates_directory_path prior", settings.templates_directory_path)
+    print("       bulletin output file:", filename)
+    # We want to write several bulletin sheets into one excel file.
+    # Test if we are in the first pentad of the month.
+    if int(start_date_pentad) == 1:
+        print("       first pentad of the month")
+        # We can use the default template for the first pentad of the month
         bulletin_template_file = os.getenv("ieasyforecast_template_pentad_bulletin_file")
+        settings.templates_directory_path = os.getenv("ieasyreports_templates_directory_path")
+    else:
+        print("       not the first pentad of the month")
+        # Test if the file exists and revert to the default template if it does not exist
+        if os.path.exists(os.path.join(settings.report_output_path, filename)):
+            print("       bulletin output file already exists")
+            # Overwrite the settings for the templates directory path.
+            bulletin_template_file = filename
+            settings.templates_directory_path = settings.report_output_path
+        else:
+            print("       bulletin output file does not exist")
+            bulletin_template_file = os.getenv("ieasyforecast_template_pentad_bulletin_file")
+            settings.templates_directory_path = os.getenv("ieasyreports_templates_directory_path")
+    print("DEBUG: settings.templates_directory_path", settings.templates_directory_path)
+    print("       bulletin template file:", bulletin_template_file)
+    print("       bulletin output file:", filename)
 
-        # Construct the output filename using the formatted date
-        bulletin_output_file = os.getenv("ieasyforecast_bulletin_file_name")
-        filename = f"{start_date_year}_{start_date_month_num}_{start_date_month}_{start_date_pentad}_{bulletin_output_file}"
+    # Make sure that all strings in fc_sites are using comma as the decimal
+    # separator for writing the report.
+    fc_sites_report = fc_sites
+    for site in fc_sites_report:
+        #print("DEBUG: site:", site)
+        site.fc_qmin = site.fc_qmin.replace('.', ',')
+        site.fc_qmax = site.fc_qmax.replace('.', ',')
+        site.fc_qexp = site.fc_qexp.replace('.', ',')
+        site.predictor = fl.round_discharge(site.predictor).replace('.', ',')
+        site.qnorm = site.qnorm.replace('.', ',')
+        site.perc_norm = site.perc_norm.replace('.', ',')
+        site.qdanger = site.qdanger.replace('.', ',')
+        site.delta = fl.round_discharge(site.delta).replace('.', ',')
+        site.qmin = site.qmin.replace('.', ',')
+        site.qmax = site.qmax.replace('.', ',')
+        site.sdivsigma = site.sdivsigma.replace('.', ',')
 
-        # Make sure that all strings in fc_sites are using comma as the decimal
-        # separator for writing the report.
-        fc_sites_report = fc_sites
-        for site in fc_sites_report:
-            site.fc_qmin = site.fc_qmin.replace('.', ',')
-            site.fc_qmax = site.fc_qmax.replace('.', ',')
-            site.fc_qexp = site.fc_qexp.replace('.', ',')
-            site.qnorm = site.qnorm.replace('.', ',')
-            site.perc_norm = site.perc_norm.replace('.', ',')
-            site.qdanger = site.qdanger.replace('.', ',')
+    #report_generator = import_from_string(settings.template_generator_class)(
+    report_generator = WriteForecastToMultipleSheets(
+        tags=bulletin_tags(bulletin_date),
+        template=bulletin_template_file,
+        requires_header=False,
+        custom_settings=settings,
+        sheet = (int(start_date_pentad) - 1)
+    )
 
-        report_generator = import_from_string(settings.template_generator_class)(
-            tags=bulletin_tags(bulletin_date),
-            template=bulletin_template_file,
-            requires_header=False,
-            custom_settings=settings
-        )
+    report_generator.validate()
+    report_generator.generate_report(list_objects=fc_sites_report, output_filename=filename)
 
-        report_generator.validate()
-        report_generator.generate_report(list_objects=fc_sites_report, output_filename=filename)
-        logger.info("   ... done")
+    # Reset the template directory path in settings
+    settings.templates_directory_path = os.getenv("ieasyreports_templates_directory_path")
+    logger.info("   ... done")
 
 def assign_month_string_to_number(month_number):
     """
@@ -560,7 +609,7 @@ def write_forecast_sheets(settings, start_date, bulletin_date, fc_sites, result2
             if pd.isna(site.predictor):
                 temp_predictor = ""
             else:
-                temp_predictor = fl.round_discharge_trad_bulletin(site.predictor).replace('.', ',')
+                temp_predictor = site.predictor
             site_data.append({
                 'river_name': site.river_name + " " + site.punkt_name,
                 'year': str(start_date.year),
@@ -608,7 +657,7 @@ def write_forecast_sheets(settings, start_date, bulletin_date, fc_sites, result2
 
     if not os.path.exists(offline_forecast_results_file):
         with open(offline_forecast_results_file, "w") as f:
-            f.write("date,code,predictor,slope,intercept,delta,fc_qmin,fc_qmax,fc_qexp,qnorm,perc_norm,qdanger\n")
+            f.write("date,code,predictor,slope,intercept,delta,fc_qmin,fc_qmax,fc_qexp,qnorm,perc_norm,qdanger,sdivsigma,accuracy\n")
             f.flush()
 
     # Write the data to a csv file
@@ -621,14 +670,17 @@ def write_forecast_sheets(settings, start_date, bulletin_date, fc_sites, result2
             site.fc_qmax = site.fc_qmax.replace(',', '.')
             site.fc_qexp = site.fc_qexp.replace(',', '.')
             site.qnorm = site.qnorm.replace(',', '.')
-            site.predictor = fl.round_discharge_trad_bulletin(site.predictor).replace(',', '.')
+            site.predictor = site.predictor.replace(',', '.')
             site.perc_norm = site.perc_norm.replace(',', '.')
             site.qdanger = site.qdanger.replace(',', '.')
+            site.delta = site.delta.replace(',', '.')
+            site.sdivsigma = site.sdivsigma.replace(',', '.')
+            site.accuracy = site.accuracy.replace(',', '.')
         # Write the data
         for site in fc_sites_report:
             f.write(
                 f"{today_str},{site.code},{site.predictor},{site.slope},{site.intercept},{site.delta},{site.fc_qmin}"
-                f",{site.fc_qmax},{site.fc_qexp},{site.qnorm},{site.perc_norm},{site.qdanger}\n"
+                f",{site.fc_qmax},{site.fc_qexp},{site.qnorm},{site.perc_norm},{site.qdanger},{site.sdivsigma},{site.accuracy}\n"
             )
             f.flush()
 
@@ -695,7 +747,7 @@ def write_forecast_sheets_decad(settings, start_date, bulletin_date, fc_sites, r
             if pd.isna(site.predictor):
                 temp_predictor = ""
             else:
-                temp_predictor = fl.round_discharge_trad_bulletin(float(site.predictor)).replace('.', ',')
+                temp_predictor = site.predictor
             site_data.append({
                 'river_name': site.river_name + " " + site.punkt_name,
                 'year': str(start_date.year),
@@ -756,9 +808,12 @@ def write_forecast_sheets_decad(settings, start_date, bulletin_date, fc_sites, r
             site.fc_qmax = site.fc_qmax.replace(',', '.')
             site.fc_qexp = site.fc_qexp.replace(',', '.')
             site.qnorm = site.qnorm.replace(',', '.')
-            site.predictor = fl.round_discharge_trad_bulletin(float(site.predictor)).replace(',', '.')
+            site.delta = site.delta.replace(',', '.')
+            site.predictor = site.predictor.replace(',', '.')
             site.perc_norm = site.perc_norm.replace(',', '.')
             site.qdanger = site.qdanger.replace(',', '.')
+            site.sdivsigma = site.sdivsigma.replace(',', '.')
+            site.accuracy = site.accuracy.replace(',', '.')
         # Write the data
         for site in fc_sites_report:
             f.write(

@@ -373,6 +373,30 @@ def get_decad_in_year(date):
         # return None if the input is not a valid date
         return None
 
+def get_basin_name(string):
+    """
+    Returns a string with the basin name as adjective plus basin.
+
+    Args:
+        string (str): the name of the basin.
+
+    Returns:
+        str: A string representing the name of the basin as adjective plus basin.
+    """
+    if string == "Чу":
+        output = "Чуйский бассейн"
+    elif string == "Талас":
+        output = "Таласский бассейн"
+    elif (string == "Иссык-Куль") or (string == "Иссык Куль"):
+        output = "Иссык-Кульский бассейн"
+    elif string == "Нарын":
+        output = "Нарынский бассейн"
+    elif (string == "Сырдарья") or (string == "Сыр-Дарья"):
+        output = "Сырдарьинский бассейн"
+    elif string == "Кара-Дарья":
+        output = "Кара-Дарьинский бассейн"
+
+    return output
 
 def get_pentad_first_day(date_str):
     """

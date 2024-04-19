@@ -67,11 +67,14 @@ print(qdata)
 
 sites = fl.Site(code=site)
 print(sites)
-fl.Site.from_DB_get_predictor(sdk=ieh_sdk, site=sites, dates=predictor_dates, lagdays=20)
+fl.Site.from_DB_get_predictor_sum(sdk=ieh_sdk, site=sites, dates=predictor_dates, lagdays=20)
 print(sites.predictor)
 print(sum(qdata['data_value']))
 
-#sdata = ieh_sdk.get_discharge_sites()
-#print("get_discharge_sites:\n", sdata)
+sdata = ieh_sdk.get_discharge_sites()
+print("get_discharge_sites:\n", pd.DataFrame(sdata))
+
+# print unique values in the 'basin' column
+print("Unique values in the 'basin' column:\n", pd.DataFrame(sdata)['basin'].unique())
 
 
