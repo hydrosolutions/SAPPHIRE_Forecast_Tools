@@ -61,6 +61,8 @@ def main():
     db_sites = data_processing.get_db_sites(ieh_sdk, backend_has_access_to_db)
     #   writing sites information to as list of Site objects
     fc_sites = data_processing.get_fc_sites(ieh_sdk, backend_has_access_to_db, db_sites)
+    #   special case: rename basin for short-term forecasts (pentad & decad)
+    fc_sites = data_processing.change_basin_for_selected_sites(fc_sites, ["16059", "16096", "16100", "16936"])
 
     # We produce decadal forecasts for the Inflow to the Toktogulu reservoir.
     fc_sites_decad = [site for site in fc_sites if site.code == '16936']
@@ -112,6 +114,7 @@ def main():
 
     if forecast_flags.decad:
         output_generation.write_hydrograph_data_decad(modified_data_decad)
+        output_generation.write_forecast_bulletin_decad(settings, start_date, bulletin_date, fc_sites_decad)
         output_generation.write_forecast_sheets_decad(settings, start_date, bulletin_date, fc_sites_decad, result2_decad_df)
 
     # === Store last successful run date ===

@@ -232,6 +232,23 @@ def get_db_sites(ieh_sdk, backend_has_access_to_db):
     logger.info(f"   Producing forecasts for {len(db_sites)} station(s), namely: {db_sites['site_code'].values}")
     return db_sites
 
+def change_basin_for_selected_sites(all_sites, sites_to_change):
+    """
+    Change the basin for selected sites.
+
+    Args:
+        all_sites (list): A list of Site objects.
+        sites_to_change (list): A list of site codes (str) for which to change the basin name.
+
+    Returns:
+        list: A list of Site objects with updated basin names.
+    """
+    # Change the basin name for the selected sites
+    for site in all_sites:
+        if site.code in sites_to_change:
+            site.basin = "Нарын"
+
+    return all_sites
 
 def get_fc_sites(ieh_sdk, backend_has_access_to_db, db_sites):
     # Formatting db_sites to a list of Sites objects

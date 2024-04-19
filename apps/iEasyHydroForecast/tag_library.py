@@ -288,6 +288,17 @@ def get_decad_in_month(date):
         # return None if the input is not a valid date
         return None
 
+def get_predictor_decad(date):
+
+    current_decad = get_decad_in_month(date)
+    if current_decad == '1':
+        predictor_decad = '3'
+    elif current_decad == '2':
+        predictor_decad = '1'
+    else:
+        predictor_decad = '2'
+
+    return predictor_decad
 
 def get_pentad_in_year(date):
     """
@@ -373,16 +384,25 @@ def get_decad_in_year(date):
         # return None if the input is not a valid date
         return None
 
-def get_basin_name(string):
+def get_basin_name_short_term_forecast(site):
     """
     Returns a string with the basin name as adjective plus basin.
 
     Args:
-        string (str): the name of the basin.
+        site (fl.Site): A site object with attributes basin and code.
 
     Returns:
         str: A string representing the name of the basin as adjective plus basin.
     """
+    string = site.basin
+    #code = site.code
+
+    # For short-term forecasts (pentad & decad), we want to return basin Naryn
+    # for the tributaries to Toktogul inflow.
+    # This concerns the following sites:
+    #naryn_sites = ["16059", "16096", "16100", "16936"]
+    # This special case is handeled earlier, when the sites are read.
+
     if string == "Чу":
         output = "Чуйский бассейн"
     elif string == "Талас":
@@ -392,9 +412,15 @@ def get_basin_name(string):
     elif string == "Нарын":
         output = "Нарынский бассейн"
     elif (string == "Сырдарья") or (string == "Сыр-Дарья"):
+        #if code in naryn_sites:
+        #    output = "Нарынский бассейн"
+        #else:
         output = "Сырдарьинский бассейн"
     elif string == "Кара-Дарья":
         output = "Кара-Дарьинский бассейн"
+    else:
+        # raise an error if the basin is not recognized
+        raise ValueError('Basin not recognized')
 
     return output
 
@@ -512,6 +538,98 @@ def get_year(date_str):
     # return the year number as a string
     return str(year)
 
+def get_month_str_latin(date_str):
+    """
+    Returns the name of the month for a given date string, in Latin number.
+
+    Args:
+        date_str (str): A string representing a date in the format 'YYYY-MM-DD'.
+
+    Returns:
+        str: A string representing the name of the month for the input date
+            string, in Latin number.
+
+        If the input date string is not a valid date, returns None.
+    """
+    try:
+        # parse the input date string into a datetime object
+        date = dt.datetime.strptime(date_str, '%Y-%m-%d').date()
+    except ValueError:
+        # return None if the input is not a valid date
+        return None
+
+    # Test if the date is using the Gregorian calendar
+    if not is_gregorian_date(date_str):
+        # return None if the input is not using the Gregorian calendar
+        return None
+
+    # calculate the month number
+    month = date.month
+
+    month_str = ''
+    if month == 1:
+        month_str = 'I'
+    elif month == 2:
+        month_str = 'II'
+    elif month == 3:
+        month_str = 'III'
+    elif month == 4:
+        month_str = 'IV'
+    elif month == 5:
+        month_str = 'V'
+    elif month == 6:
+        month_str = 'VI'
+    elif month == 7:
+        month_str = 'VII'
+    elif month == 8:
+        month_str = 'VIII'
+    elif month == 9:
+        month_str = 'IX'
+    elif month == 10:
+        month_str = 'X'
+    elif month == 11:
+        month_str = 'XI'
+    elif month == 12:
+        month_str = 'XII'
+    else:
+        return None
+
+    # return the month name as a string
+    return month_str
+
+def get_predcitor_month_latin(date_str):
+
+    current_month = get_month_str_latin(date_str)
+    current_decad = get_decad_in_month(date_str)
+    if current_decad == '1':
+        if current_month == 'I':
+            predictor_month = 'XII'
+        if current_month == 'II':
+            predictor_month = 'I'
+        if current_month == 'III':
+            predictor_month = 'II'
+        if current_month == 'IV':
+            predictor_month = 'III'
+        if current_month == 'V':
+            predictor_month = 'IV'
+        if current_month == 'VI':
+            predictor_month = 'V'
+        if current_month == 'VII':
+            predictor_month = 'VI'
+        if current_month == 'VIII':
+            predictor_month = 'VII'
+        if current_month == 'IX':
+            predictor_month = 'VIII'
+        if current_month == 'X':
+            predictor_month = 'IX'
+        if current_month == 'XI':
+            predictor_month = 'X'
+        if current_month == 'XII':
+            predictor_month = 'XI'
+    else:
+        predictor_month = current_month
+
+    return predictor_month
 
 def get_month_str_case1(date_str):
     """

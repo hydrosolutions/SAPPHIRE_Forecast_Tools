@@ -1770,4 +1770,20 @@ class Site:
             print(f'Error creating Site objects from DataFrame: {e}')
             return []
 
+    @classmethod
+    def change_basin(cls, site, basin):
+        '''
+        Change the basin of the site.
+
+        Args:
+            site (Site): The site object to change the basin for.
+            basin (str): The new basin name.
+
+        Returns:
+            str: The new basin name.
+        '''
+        site.basin = basin
+        return basin
+
+
 # endregion

@@ -3,6 +3,7 @@ import pandas as pd
 import os
 import datetime as dt
 from . import config
+from itertools import groupby
 
 import forecast_library as fl
 import tag_library as tl
@@ -370,12 +371,10 @@ def write_hydrograph_data_decad(modified_data):
     # forecast dashboard.
     save_hydrograph_data_to_csv_decad(hydrograph_decad)
 
-
 def create_tag(name, get_value_fn, description):
     return Tag(name=name, get_value_fn=get_value_fn, description=description)
 
-
-def bulletin_tags(bulletin_date):
+def bulletin_tags_pentadal_forecast(bulletin_date):
     # === Define tags ===
     bulletin_tag_details = [
         ("PENTAD", tl.get_pentad(bulletin_date), "Pentad of the month"),
@@ -392,7 +391,7 @@ def bulletin_tags(bulletin_date):
         ("QNORM", lambda obj: obj.qnorm, "Norm discharge in current pentad"),
         ("HYDROGRAPHMIN", lambda obj: obj.qmin, "Minimum value of the hydrograph"),
         ("HYDROGRAPHMAX", lambda obj: obj.qmax, "Maximum value of the hydrograph"),
-        ("BASIN", lambda obj: tl.get_basin_name(obj.basin), "Basin of the gauge sites"),
+        ("BASIN", lambda obj: tl.get_basin_name_short_term_forecast(obj), "Basin of the gauge sites"),
         ("RIVER_NAME", lambda obj: obj.river_name, "Name of the river"),
         ("PUNKT_NAME", lambda obj: obj.punkt_name, "Name of the gauge site"),
         ("MONTH_STR_CASE1", tl.get_month_str_case1(bulletin_date), "Name of the month in a string in the first case"),
@@ -400,12 +399,11 @@ def bulletin_tags(bulletin_date):
         ("YEAR", tl.get_year(bulletin_date), "Name of the month in a string in the second case"),
         ("DAY_START", tl.get_pentad_first_day(bulletin_date), "Start day of the pentadal forecast"),
         ("DAY_END", tl.get_pentad_last_day(bulletin_date), "End day of the pentadal forecast"),
-        ("PENTAD", tl.get_pentad(bulletin_date), "Pentad of the month"),
+        ("DECAD", tl.get_decad_in_month(bulletin_date), "Decad of the month"),
         ("DASH", "-", "Dash"),
     ]
 
     return [create_tag(name, fn, desc) for name, fn, desc in bulletin_tag_details]
-
 
 def sheet_tags(bulletin_date):
     # Tags
@@ -419,6 +417,59 @@ def sheet_tags(bulletin_date):
     ]
     return [create_tag(name, fn, desc) for name, fn, desc in sheet_tag_details]
 
+def sheet_tags_decad(bulletin_date):
+    # Tags
+    sheet_tag_details = [
+        ("FSHEETS_RIVER_NAME", lambda obj: obj.get("river_name"), "Name of the river"),
+        ("MONTH_STR_CASE1", tl.get_month_str_case1(bulletin_date), "Name of the month in a string in the first case"),
+        ("MONTH_LATIN", tl.get_month_str_latin(bulletin_date), "Name of the month in latin numbers"),
+        ("PREDICTOR_MONTH_LATIN", tl.get_predcitor_month_latin(bulletin_date), "Name of the month in latin numbers for the predictor"),
+        ("DEKAD", tl.get_decad_in_month(bulletin_date), "Decad of the month"),
+        ("PREDICTOR_DEKAD", tl.get_predictor_decad(bulletin_date), "Decad of the month for the predictor"),
+        ("YEARFSHEETS", lambda obj: obj.get("year"), "Year for which the forecast is produced"),
+        ("QPAVG", lambda obj: obj.get("qpavg"), "Average discharge for the current decad and year"),
+        ("PREDICTOR", lambda obj: obj.get("predictor"), "Average discharge for the previous decad and year"),
+    ]
+    return [create_tag(name, fn, desc) for name, fn, desc in sheet_tag_details]
+
+def split_sites_by_basin(sites):
+    # Sort the sites by basin name
+    sorted_sites = sorted(sites, key=lambda site: site.basin)
+
+    # Group the sites by basin name and sort them by code in descending order
+    sites_by_basin = {k: sorted(list(g), key=lambda site: site.code, reverse=True)
+                      for k, g in groupby(sorted_sites, key=lambda site: site.basin)}
+
+    return sites_by_basin
+
+def special_sort(fc_sites):
+    """
+    This function defines special sorting for the sites in the forecast bulletin.
+
+    Args:
+    fc_sites (list): A list of Site objects. Should contain sites for one single
+    basin only.
+
+    Returns:
+    list: A list of Site objects sorted according to the special sorting rules.
+    """
+    chu_site_order = ['15102', '15149', '15171', '15189', '15194', '15214', '15212','15215', '15216']
+    chu_site_order.reverse()
+    naryn_site_order = ['16059', '16100', '16096', '16936']
+    naryn_site_order.reverse()
+
+    # The sites in fc_sites should be in order of chu_site_order and naryn_site_order
+    sorted_sites = []
+    for code in chu_site_order:
+        for fc_site in fc_sites:
+            if fc_site.code == code:
+                sorted_sites.append(fc_site)
+    for site in naryn_site_order:
+        for fc_site in fc_sites:
+            if fc_site.code == site:
+                sorted_sites.append(fc_site)
+
+    return sorted_sites
 
 def write_forecast_bulletin(settings, start_date, bulletin_date, fc_sites):
     # === Write forecast bulletin ===
@@ -432,6 +483,9 @@ def write_forecast_bulletin(settings, start_date, bulletin_date, fc_sites):
     start_date_month = assign_month_string_to_number(dt.datetime.strptime(bulletin_date, '%Y-%m-%d').date().month)
     start_date_pentad = tl.get_pentad(bulletin_date)
 
+    # We want a separate bulletin for each basin in fc_sites.
+    sites_by_basins = split_sites_by_basin(fc_sites)
+
     # Overwrite settings for the bulletin folder. In this way we can sort the
     # bulletins in a separate folder.
     settings.report_output_path = os.getenv("ieasyreports_report_output_path")
@@ -442,68 +496,164 @@ def write_forecast_bulletin(settings, start_date, bulletin_date, fc_sites):
         start_date_year)#,
         #start_date_month_num + "_" + start_date_month)
 
-    # If we are not in the first pentad of the month, we want to use the
-    # existing bulletin as template to append the new data to it.
-    # Construct the output filename using the formatted date
-    bulletin_output_file = os.getenv("ieasyforecast_bulletin_file_name")
-    filename = f"{start_date_year}_{start_date_month_num}_{start_date_month}_{bulletin_output_file}"
+    for basin, sites in sites_by_basins.items():
+        # If we are not in the first pentad of the month, we want to use the
+        # existing bulletin as template to append the new data to it.
+        # Construct the output filename using the formatted date
+        bulletin_output_file = os.getenv("ieasyforecast_bulletin_file_name")
+        filename = f"{start_date_year}_{start_date_month_num}_{start_date_month}_{basin}_{bulletin_output_file}"
 
-    print("DEBUG: settings.templates_directory_path prior", settings.templates_directory_path)
-    print("       bulletin output file:", filename)
-    # We want to write several bulletin sheets into one excel file.
-    # Test if we are in the first pentad of the month.
-    if int(start_date_pentad) == 1:
-        print("       first pentad of the month")
-        # We can use the default template for the first pentad of the month
-        bulletin_template_file = os.getenv("ieasyforecast_template_pentad_bulletin_file")
-        settings.templates_directory_path = os.getenv("ieasyreports_templates_directory_path")
-    else:
-        print("       not the first pentad of the month")
-        # Test if the file exists and revert to the default template if it does not exist
-        if os.path.exists(os.path.join(settings.report_output_path, filename)):
-            print("       bulletin output file already exists")
-            # Overwrite the settings for the templates directory path.
-            bulletin_template_file = filename
-            settings.templates_directory_path = settings.report_output_path
-        else:
-            print("       bulletin output file does not exist")
+        # We want to write several bulletin sheets into one excel file.
+        # Test if we are in the first pentad of the month.
+        if int(start_date_pentad) == 1:
+            # We can use the default template for the first pentad of the month
             bulletin_template_file = os.getenv("ieasyforecast_template_pentad_bulletin_file")
             settings.templates_directory_path = os.getenv("ieasyreports_templates_directory_path")
-    print("DEBUG: settings.templates_directory_path", settings.templates_directory_path)
-    print("       bulletin template file:", bulletin_template_file)
-    print("       bulletin output file:", filename)
+        else:
+            # Test if the file exists and revert to the default template if it does not exist
+            if os.path.exists(os.path.join(settings.report_output_path, filename)):
+                # Overwrite the settings for the templates directory path.
+                bulletin_template_file = filename
+                settings.templates_directory_path = settings.report_output_path
+            else:
+                bulletin_template_file = os.getenv("ieasyforecast_template_pentad_bulletin_file")
+                settings.templates_directory_path = os.getenv("ieasyreports_templates_directory_path")
 
-    # Make sure that all strings in fc_sites are using comma as the decimal
-    # separator for writing the report.
-    fc_sites_report = fc_sites
-    for site in fc_sites_report:
-        #print("DEBUG: site:", site)
-        site.fc_qmin = site.fc_qmin.replace('.', ',')
-        site.fc_qmax = site.fc_qmax.replace('.', ',')
-        site.fc_qexp = site.fc_qexp.replace('.', ',')
-        site.predictor = fl.round_discharge(site.predictor).replace('.', ',')
-        site.qnorm = site.qnorm.replace('.', ',')
-        site.perc_norm = site.perc_norm.replace('.', ',')
-        site.qdanger = site.qdanger.replace('.', ',')
-        site.delta = fl.round_discharge(site.delta).replace('.', ',')
-        site.qmin = site.qmin.replace('.', ',')
-        site.qmax = site.qmax.replace('.', ',')
-        site.sdivsigma = site.sdivsigma.replace('.', ',')
+        # Make sure that all strings in fc_sites are using comma as the decimal
+        # separator for writing the report.
+        fc_sites_report = sites
 
-    #report_generator = import_from_string(settings.template_generator_class)(
-    report_generator = WriteForecastToMultipleSheets(
-        tags=bulletin_tags(bulletin_date),
-        template=bulletin_template_file,
-        requires_header=False,
-        custom_settings=settings,
-        sheet = (int(start_date_pentad) - 1)
-    )
+        # Make sure the sites are sorted in the sequence as requested by KGHM
+        fc_sites_report = special_sort(fc_sites_report)
 
-    report_generator.validate()
-    report_generator.generate_report(list_objects=fc_sites_report, output_filename=filename)
+        for site in fc_sites_report:
+            #print("DEBUG: site:", site)
+            site.fc_qmin = site.fc_qmin.replace('.', ',')
+            site.fc_qmax = site.fc_qmax.replace('.', ',')
+            site.fc_qexp = site.fc_qexp.replace('.', ',')
+            site.predictor = fl.round_discharge(site.predictor).replace('.', ',')
+            site.qnorm = site.qnorm.replace('.', ',')
+            site.perc_norm = site.perc_norm.replace('.', ',')
+            site.qdanger = site.qdanger.replace('.', ',')
+            site.delta = fl.round_discharge(site.delta).replace('.', ',')
+            site.qmin = site.qmin.replace('.', ',')
+            site.qmax = site.qmax.replace('.', ',')
+            site.sdivsigma = site.sdivsigma.replace('.', ',')
 
-    # Reset the template directory path in settings
-    settings.templates_directory_path = os.getenv("ieasyreports_templates_directory_path")
+        #report_generator = import_from_string(settings.template_generator_class)(
+        report_generator = WriteForecastToMultipleSheets(
+            tags=bulletin_tags_pentadal_forecast(bulletin_date),
+            template=bulletin_template_file,
+            requires_header=False,
+            custom_settings=settings,
+            sheet = (int(start_date_pentad) - 1)
+        )
+
+        report_generator.validate()
+        report_generator.generate_report(list_objects=fc_sites_report, output_filename=filename)
+
+        # Reset the template directory path in settings
+        settings.templates_directory_path = os.getenv("ieasyreports_templates_directory_path")
+
+    logger.info("   ... done")
+
+def write_forecast_bulletin_decad(settings, start_date, bulletin_date, fc_sites):
+    # === Write forecast bulletin ===
+    # region Write forecast bulletin
+    logger.info("Writing forecast bulletins for decadal forecasts ...")
+
+    # Format the date as a string in the format "YYYY_MM_DD"
+    today_str = start_date.strftime("%Y-%m-%d")
+    start_date_year = str(dt.datetime.strptime(bulletin_date, '%Y-%m-%d').date().year)
+    start_date_month_num = dt.datetime.strptime(bulletin_date, '%Y-%m-%d').date().strftime("%m")
+    start_date_month = assign_month_string_to_number(dt.datetime.strptime(bulletin_date, '%Y-%m-%d').date().month)
+    start_date_pentad = tl.get_decad_in_month(bulletin_date)
+
+    # We want a separate bulletin for each basin in fc_sites.
+    sites_by_basins = split_sites_by_basin(fc_sites)
+
+    # Overwrite settings for the bulletin folder. In this way we can sort the
+    # bulletins in a separate folder.
+    settings.report_output_path = os.getenv("ieasyreports_report_output_path")
+    settings.report_output_path = os.path.join(
+        settings.report_output_path,
+        "bulletins",
+        "decad",
+        start_date_year)#,
+        #start_date_month_num + "_" + start_date_month)
+
+    for basin, sites in sites_by_basins.items():
+        # If we are not in the first decad of the month, we want to use the
+        # existing bulletin as template to append the new data to it.
+        # Construct the output filename using the formatted date
+        bulletin_output_file = os.getenv("ieasyforecast_bulletin_file_name")
+        filename = f"{start_date_year}_{start_date_month_num}_{start_date_month}_{basin}_{bulletin_output_file}"
+
+        print("DEBUG: settings.templates_directory_path prior", settings.templates_directory_path)
+        print("       bulletin output file:", filename)
+        # We want to write several bulletin sheets into one excel file.
+        # Test if we are in the first decad of the month.
+        if int(start_date_pentad) == 1:
+            print("       first decad of the month")
+            # We can use the default template for the first decad of the month
+            bulletin_template_file = os.getenv("ieasyforecast_template_decad_bulletin_file")
+            settings.templates_directory_path = os.getenv("ieasyreports_templates_directory_path")
+        else:
+            print("       not the first decad of the month")
+            # Test if the file exists and revert to the default template if it does not exist
+            if os.path.exists(os.path.join(settings.report_output_path, filename)):
+                print("       bulletin output file already exists")
+                # Overwrite the settings for the templates directory path.
+                bulletin_template_file = filename
+                settings.templates_directory_path = settings.report_output_path
+            else:
+                print("       bulletin output file does not exist")
+                bulletin_template_file = os.getenv("ieasyforecast_template_pentad_bulletin_file")
+                settings.templates_directory_path = os.getenv("ieasyreports_templates_directory_path")
+        print("DEBUG: settings.templates_directory_path", settings.templates_directory_path)
+        print("       bulletin template file:", bulletin_template_file)
+        print("       bulletin output file:", filename)
+
+        # Make sure that all strings in fc_sites are using comma as the decimal
+        # separator for writing the report.
+        fc_sites_report = sites
+
+        # Make sure the sites are sorted in the sequence as requested by KGHM
+        fc_sites_report = special_sort(fc_sites_report)
+
+        for site in fc_sites_report:
+            #print("DEBUG: site:", site)
+            site.fc_qmin = site.fc_qmin.replace('.', ',')
+            site.fc_qmax = site.fc_qmax.replace('.', ',')
+            site.fc_qexp = site.fc_qexp.replace('.', ',')
+            # If there is no predictor, we want to write an empty string.
+            # Otherwise, we use fl.round_discharge to round the value and
+            # replace the decimal point.
+            site.predictor = "" if fl.round_discharge(site.predictor) is None else fl.round_discharge(site.predictor).replace('.', ',')
+            #site.predictor = fl.round_discharge(site.predictor).replace('.', ',')
+            site.qnorm = site.qnorm.replace('.', ',')
+            site.perc_norm = site.perc_norm.replace('.', ',')
+            site.qdanger = site.qdanger.replace('.', ',')
+            site.delta = "" if fl.round_discharge(site.delta) is None else fl.round_discharge(site.delta).replace('.', ',')
+            site.qmin = site.qmin.replace('.', ',')
+            site.qmax = site.qmax.replace('.', ',')
+            site.sdivsigma = site.sdivsigma.replace('.', ',')
+
+        #report_generator = import_from_string(settings.template_generator_class)(
+        report_generator = WriteForecastToMultipleSheets(
+            tags=bulletin_tags_pentadal_forecast(bulletin_date),
+            template=bulletin_template_file,
+            requires_header=False,
+            custom_settings=settings,
+            sheet = (int(start_date_pentad) - 1)
+        )
+
+        report_generator.validate()
+        report_generator.generate_report(list_objects=fc_sites_report, output_filename=filename)
+
+        # Reset the template directory path in settings
+        settings.templates_directory_path = os.getenv("ieasyreports_templates_directory_path")
+
     logger.info("   ... done")
 
 def assign_month_string_to_number(month_number):
@@ -570,12 +720,12 @@ def write_forecast_sheets(settings, start_date, bulletin_date, fc_sites, result2
         forecast_template_file = os.getenv("ieasyforecast_template_pentad_sheet_file")
 
         # Get the name of the output file from the environment variables
-        bulletin_output_file = os.getenv("ieasyforecast_bulletin_file_name")
+        bulletin_output_file = os.getenv("ieasyforecast_sheet_file_name")
 
         for site in fc_sites:
 
             # Construct the output filename using the formatted date
-            filename = f"{start_date_year}_{start_date_month_num}_{start_date_month}_{start_date_pentad}-{site.code}-{bulletin_output_file}"
+            filename = f"{start_date_year}_{start_date_month_num}_{start_date_month}_{start_date_pentad}_{site.code}_{bulletin_output_file}"
 
             # This tag is defined here because it's a general tag, and it can't
             # receive a lambda function as a replacement value, it needs to get a
@@ -693,7 +843,7 @@ def write_forecast_sheets_decad(settings, start_date, bulletin_date, fc_sites, r
     start_date_year = str(dt.datetime.strptime(bulletin_date, '%Y-%m-%d').date().year)
     start_date_month_num = dt.datetime.strptime(bulletin_date, '%Y-%m-%d').date().strftime("%m")
     start_date_month = assign_month_string_to_number(dt.datetime.strptime(bulletin_date, '%Y-%m-%d').date().month)
-    start_date_pentad = tl.get_pentad(bulletin_date)
+    start_date_decad = tl.get_pentad(bulletin_date)
     start_date_decad = tl.get_decad_in_month(bulletin_date)
 
     # If forecast sheets are written
@@ -701,16 +851,16 @@ def write_forecast_sheets_decad(settings, start_date, bulletin_date, fc_sites, r
         logger.info("Writing forecast sheets for decadal forecasts ...")
 
         # Get the name of the template file from the environment variables
-        # We can use the same template file for pentad and decad forecasts
-        forecast_template_file = os.getenv("ieasyforecast_template_pentad_sheet_file")
+        forecast_template_file = os.getenv("ieasyforecast_template_decad_sheet_file")
+        print("\n\n\nDEBUG: forecast_template_file:", forecast_template_file)
 
         # Get the name of the output file from the environment variables
-        bulletin_output_file = os.getenv("ieasyforecast_bulletin_file_name")
+        bulletin_output_file = os.getenv("ieasyforecast_sheet_file_name")
 
         for site in fc_sites:
 
             # Construct the output filename using the formatted date
-            filename = f"{start_date_year}_{start_date_month_num}_{start_date_month}_{start_date_decad}-{site.code}-{bulletin_output_file}"
+            filename = f"{start_date_year}_{start_date_month_num}_{start_date_month}_{start_date_decad}_{site.code}_{bulletin_output_file}"
 
             # This tag is defined here because it's a general tag, and it can't
             # receive a lambda function as a replacement value, it needs to get a
@@ -731,16 +881,13 @@ def write_forecast_sheets_decad(settings, start_date, bulletin_date, fc_sites, r
             # iterate through all the years for the current site
             for year in temp_df['Year'].unique():
                 df_year = temp_df[temp_df['Year'] == year]
-                print("df_year.head(): \n", df_year.head())
-                print(df_year.tail())
 
                 site_data.append({
                     'river_name': site.river_name + " " + site.punkt_name,
                     'year': str(year),
                     'qpavg': fl.round_discharge_trad_bulletin_3numbers(df_year['discharge_avg'].mean()).replace('.', ','),
-                    'qpsum': fl.round_discharge_trad_bulletin_3numbers(df_year['predictor'].mean()).replace('.', ',')
+                    'predictor': fl.round_discharge_trad_bulletin_3numbers(df_year['predictor'].mean()).replace('.', ',')
                 })
-                print("site_data: \n", site_data)
 
             # Add current year and current predictor to site_data
             # Test if site.predictor is nan. If it is, assign ""
@@ -752,7 +899,7 @@ def write_forecast_sheets_decad(settings, start_date, bulletin_date, fc_sites, r
                 'river_name': site.river_name + " " + site.punkt_name,
                 'year': str(start_date.year),
                 'qpavg': "",
-                'qpsum': temp_predictor
+                'predictor': temp_predictor
             })
 
             # Overwrite settings for theh bulletin folder. In this way we can sort the
@@ -769,7 +916,7 @@ def write_forecast_sheets_decad(settings, start_date, bulletin_date, fc_sites, r
 
             # directly instantiate the new generator
             report_generator = FakeHeaderTemplateGenerator(
-                tags=sheet_tags(bulletin_date),
+                tags=sheet_tags_decad(bulletin_date),
                 template=forecast_template_file,
                 requires_header=True,
                 custom_settings=settings
