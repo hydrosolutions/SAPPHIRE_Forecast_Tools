@@ -97,7 +97,6 @@ def is_gregorian_date(date: Union[str, dt.datetime]) -> bool:
     except ValueError:
         return False
 
-
 def add_pentad_in_year_column(df):
     """
     Add a 'pentad' column to a pandas DataFrame with a 'Date' column.

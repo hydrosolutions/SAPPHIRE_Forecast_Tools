@@ -56,7 +56,6 @@ def get_last_day_of_month(date: dt.date) -> dt.date:
         # Raise an error if the input date is not a valid date
         raise ValueError('Input date is not a valid datetime.date object') from e
 
-
 def get_predictor_dates(input_date: str, n: int):
     '''
     Returns a list of dates from input_date - n to input_date.
@@ -97,7 +96,6 @@ def get_predictor_dates(input_date: str, n: int):
     except AttributeError as e:
         print(f'Error in get_predictor_dates: {e}')
         return None
-
 
 def get_predictor_datetimes(input_date: str, n: int):
     '''
@@ -199,7 +197,6 @@ def round_discharge_trad_bulletin_3numbers(value: float) -> str:
     else:
         return "{:.0f}".format(value)
 
-
 def round_discharge_to_float(value: float) -> float:
     '''
     Round discharge to 3 valid digits.
@@ -259,7 +256,6 @@ def round_discharge_to_float(value: float) -> float:
     else:
         return round(value, 0)
 
-
 def round_discharge(value: float) -> str:
     '''
     Round discharge to 0 decimals for values ge 100, to 1 decimal for values
@@ -317,7 +313,6 @@ def round_discharge(value: float) -> str:
     except Exception as e:
         print(f'Error in round_discharge: {e}')
         return None
-
 
 def perform_linear_regression(
         data_df: pd.DataFrame, station_col: str, pentad_col: str, predictor_col: str,
@@ -448,7 +443,6 @@ def perform_linear_regression(
 
     return data_dfp
 
-
 def calculate_forecast_skill(data_df: pd.DataFrame, station_col: str,
                              pentad_col: str, observation_col: str,
                              simulation_col: str) -> pd.DataFrame:
@@ -549,11 +543,10 @@ def calculate_forecast_skill(data_df: pd.DataFrame, station_col: str,
                 (data_df[station_col] == station) & (data_df[pentad_col] == pentad),
                 'accuracy'] = accuracy
 
-    print("DEBUG: fl.calculate_forecast_skill: data_df\n", data_df.head(20))
-    print(data_df.tail(20))
+    #print("DEBUG: fl.calculate_forecast_skill: data_df\n", data_df.head(20))
+    #print(data_df.tail(20))
 
     return data_df
-
 
 def generate_issue_and_forecast_dates(data_df: pd.DataFrame, datetime_col: str,
                                       station_col: str, discharge_col: str):
@@ -669,7 +662,6 @@ def generate_issue_and_forecast_dates(data_df: pd.DataFrame, datetime_col: str,
         apply_calculation, datetime_col=datetime_col, discharge_col=discharge_col)
 
     return modified_data
-
 
 def load_all_station_data_from_JSON(file_path: str) -> pd.DataFrame:
     """
@@ -963,7 +955,6 @@ class Site:
         except Exception:
             print(f'Note: No slope and intercept for site {site.code} in DataFrame. Returning None.')
             return None
-
 
     @classmethod
     def calculate_percentages_norm(cls, site):
