@@ -17,8 +17,8 @@ import math
 
 #import hvplot.pandas  # Enable interactive
 import holoviews as hv
-# Set the default backend to 'plotly'
-#pn.extension('bokeh')
+# Set the default backend to 'bokeh'
+pn.extension('tabulator')
 
 import src.dashboard_methods as dm
 
@@ -54,9 +54,6 @@ in_docker_flag = dm.load_configuration()
 
 # Get icon path from config
 icon_path = dm.get_icon_path(in_docker_flag)
-
-# Set primary color to be consistent with the icon color
-pn.extension(global_css=[':root { --design-primary-color: #307096; }'])
 
 # The current date is displayed as the title of each visualization.
 today = dt.datetime.now()
@@ -385,6 +382,7 @@ def update_widgets(event):
 hydrograph_day_all = dm.read_hydrograph_day_file(today)
 hydrograph_pentad_all = dm.read_hydrograph_pentad_file()
 forecast_pentad = dm.read_forecast_results_file()
+analysis_pentad_all = dm.read_analysis_file()
 # List of stations with forecast data & getting station information from all stations config file
 station_list = hydrograph_day_all['Code'].unique().tolist()
 station_list, all_stations, station_df = dm.read_stations_from_file(station_list)
@@ -393,6 +391,7 @@ station_list, all_stations, station_df = dm.read_stations_from_file(station_list
 hydrograph_day_all = dm.add_labels_to_hydrograph_day_all(hydrograph_day_all, all_stations)
 hydrograph_pentad_all = dm.add_labels_to_hydrograph_pentad_all(hydrograph_pentad_all, all_stations)
 forecast_pentad = dm.add_labels_to_forecast_pentad_df(forecast_pentad, all_stations)
+analysis_pentad_all = dm.add_labels_to_analysis_pentad_df(analysis_pentad_all, all_stations)
 
 # endregion
 
@@ -434,6 +433,7 @@ warning_text_pane = pn.pane.Markdown(get_current_predictor_and_dates(
 hydrograph_day = hydrograph_day_all[hydrograph_day_all["station_labels"] == station.value]
 hydrograph_pentad = hydrograph_pentad_all[hydrograph_pentad_all["station_labels"] == station.value]
 forecast_pentad_stat = forecast_pentad[forecast_pentad["station_labels"] == station.value]
+analysis_pentad_stat = analysis_pentad_all[analysis_pentad_all["station_labels"] == station.value]
 
 # Test if the dates in forecast_pentad_stat overlap with the dates in
 # hydrograph_pentad.
@@ -571,6 +571,23 @@ def plot_daily_hydrograph_data(station_widget, fcdata):
             # xticks=[1,32,13,19,25,31,37,43,49,55,61,67])  #, legend_offset=(10, 120))
 
     return p
+
+def plot_data_table(station_widget):
+    analysis_pentad = analysis_pentad_all[analysis_pentad_all["station_labels"] == station_widget]
+
+    # Select columns Year, predictor and discharge_avg
+    analysis_pentad = analysis_pentad[["Year", "discharge_sum", "discharge_avg"]]
+
+    # Rename the columns
+    analysis_pentad = analysis_pentad.rename(columns={"discharge_sum": "Predictor",
+                                                      "discharge_avg": "Discharge [m3/s]"})
+
+    print("\n\nDEBUG plot_data_table: analysis_pentad\n", analysis_pentad.head(10))
+
+    # Create a DataTable and make it editable
+    data_table = pn.widgets.Tabulator(value=analysis_pentad, editable=True)
+
+    return data_table
 
 def plot_forecast_data(station_widget, range_selection_widget, manual_range_widget):
     fcdata = forecast_pentad[forecast_pentad["station_labels"] == station_widget]
@@ -843,6 +860,8 @@ daily_hydrograph_plotly = pn.panel(pn.bind(plot_daily_hydrograph_data, station,
 pentad_forecast = pn.panel(pn.bind(plot_forecast_data, station,
                                    range_selection, manual_range),
                            height=500, sizing_mode='stretch_width')
+data_table = pn.panel(pn.bind(plot_data_table, station),
+                      height=300, sizing_mode='stretch_width')
 # If the available forecasts do not overlap with the hydrograph data, we cannot
 # calculate forecast accuracy and effectiveness. In this case, we do not show
 # the plots.
@@ -904,6 +923,11 @@ if no_date_overlap_flag == False:
              ),
          ),
         ),
+        (_('Analysis'),
+         pn.Column(
+                   pn.Row(
+                       pn.Card(data_table, title=_('Data table'))
+                   ))),
         (_('Forecast'),
          pn.Column(
              pn.Row(

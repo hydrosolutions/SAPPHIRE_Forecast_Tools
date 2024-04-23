@@ -135,7 +135,7 @@ def read_hydrograph_pentad_file():
 def read_forecast_results_file():
     forecast_results_file = os.path.join(
         os.getenv("ieasyforecast_intermediate_data_path"),
-        os.getenv("ieasyforecast_results_file")
+        os.getenv("ieasyforecast_pentad_results_file")
     )
     # Test if file exists and thorw an error if not
     if not os.path.isfile(forecast_results_file):
@@ -166,6 +166,28 @@ def read_forecast_results_file():
     forecast_pentad['pentad'] = forecast_pentad['pentad'].astype(int)
 
     return forecast_pentad
+
+def read_analysis_file():
+    file = os.path.join(
+        os.getenv("ieasyforecast_intermediate_data_path"),
+        os.getenv("ieasyforecast_analysis_pentad_file")
+    )
+    # Test if file exists and thorw an error if not
+    if not os.path.isfile(file):
+        raise Exception("File not found: " + file)
+    # Read analysis results
+    analysis_pentad = pd.read_csv(file)
+    # Test if analysis_pentad is empty
+    if analysis_pentad.empty:
+        raise Exception("File is empty: " + file)
+    # Convert the date column to datetime. The format of the date string is %Y-%m-%d.
+    analysis_pentad['Date'] = pd.to_datetime(analysis_pentad['Date'], format='%Y-%m-%d')
+    # Make sure the date column is in datetime64 format
+    analysis_pentad['Date'] = analysis_pentad['Date'].astype('datetime64[ns]')
+    # Cast Code column to string
+    analysis_pentad['Code'] = analysis_pentad['Code'].astype(str)
+
+    return analysis_pentad
 
 def read_stations_from_file(station_list):
 
@@ -224,6 +246,15 @@ def add_labels_to_forecast_pentad_df(forecast_pentad, all_stations):
     forecast_pentad = forecast_pentad.drop(columns=['river_ru', 'punkt_ru'])
 
     return forecast_pentad
+
+def add_labels_to_analysis_pentad_df(analysis_pentad, all_stations):
+    analysis_pentad = analysis_pentad.merge(
+        all_stations.loc[:,['code','river_ru','punkt_ru']],
+        left_on='Code', right_on='code', how='left')
+    analysis_pentad['station_labels'] = analysis_pentad['Code'] + ' - ' + analysis_pentad['river_ru'] + ' ' + analysis_pentad['punkt_ru']
+    analysis_pentad = analysis_pentad.drop(columns=['river_ru', 'punkt_ru'])
+
+    return analysis_pentad
 
 def preprocess_hydrograph_day_data(hydrograph_day, today):
 

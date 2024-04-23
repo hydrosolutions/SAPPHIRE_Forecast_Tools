@@ -972,4 +972,45 @@ def write_forecast_sheets_decad(settings, start_date, bulletin_date, fc_sites, r
     # endregion
     logger.info("   ... done")
 
+def write_pentadal_forecast_data(data: pd.DataFrame):
+    """
+    Writes the data to a csv file for later reating into the forecast dashboard.
 
+    Args:
+    data (pd.DataFrame): The data to be written to a csv file.
+
+    Returns:
+    None
+    """
+
+    # Get the path to the intermediate data folder from the environmental
+    # variables and the name of the ieasyforecast_analysis_pentad_file.
+    # Concatenate them to the output file path.
+    try:
+       output_file_path = os.path.join(
+            os.getenv("ieasyforecast_intermediate_data_path"),
+            os.getenv("ieasyforecast_analysis_pentad_file"))
+    except Exception as e:
+        logger.error("Could not get the output file path.")
+        print(os.getenv("ieasyforecast_intermediate_data_path"))
+        print(os.getenv("ieasyforecast_analysis_pentad_file"))
+        raise e
+
+    # From data dataframe, drop all rows where column issue_date is False.
+    # This is done to remove all rows that are not forecasts.
+    data = data[data['issue_date'] == True]
+
+    # Write the data to a csv file. Raise an error if this does not work.
+    # If the data is written to the csv file, log a message that the data
+    # has been written.
+    try:
+        ret = data.reset_index(drop=True).to_csv(output_file_path, index=False)
+        if ret is None:
+            logger.info(f"Data written to {output_file_path}.")
+        else:
+            logger.error(f"Could not write the data to {output_file_path}.")
+    except Exception as e:
+        logger.error(f"Could not write the data to {output_file_path}.")
+        raise e
+
+    return None

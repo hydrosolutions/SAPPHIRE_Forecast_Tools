@@ -102,6 +102,8 @@ def main():
         forecasting.perform_forecast_decad(fc_sites_decad, forecast_decad_of_year, result_decad_df)
 
     result2_df = forecasting.calculate_forecast_boundaries(result_df, fc_sites, forecast_pentad_of_year)
+    print("\n\ncolumns:\n:", result2_df.columns, "\nresult_df:\n",
+          result2_df.head(), "\n", result2_df.tail(), "\n")
 
     if forecast_flags.decad:
         result2_decad_df = forecasting.calculate_forecast_boundaries_decad(result_decad_df, fc_sites_decad, forecast_decad_of_year)
@@ -109,6 +111,7 @@ def main():
     # output generation
     settings = Settings(_env_file=env_file_path)  # ieasyreports
     output_generation.write_hydrograph_data(modified_data)
+    output_generation.write_pentadal_forecast_data(result2_df)
     output_generation.write_forecast_bulletin(settings, start_date, bulletin_date, fc_sites)
     output_generation.write_forecast_sheets(settings, start_date, bulletin_date, fc_sites, result2_df)
 
