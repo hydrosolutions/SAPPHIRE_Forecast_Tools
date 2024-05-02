@@ -9,14 +9,18 @@ import locale
 import panel as pn
 
 from bokeh.models import FixedTicker, CustomJSTickFormatter, LinearAxis
+from bokeh.models.widgets.tables import NumberFormatter
+from holoviews import streams
 
 import numpy as np
 import pandas as pd
 import datetime as dt
 import math
+import param
 
 #import hvplot.pandas  # Enable interactive
 import holoviews as hv
+from scipy import stats
 # Set the default backend to 'bokeh'
 pn.extension('tabulator')
 
@@ -171,7 +175,6 @@ def add_custom_xticklabels_daily(plot, element):
     # Add the second x-axis to the plot
     plot.state.add_layout(second_x_axis, 'below')
 
-
 # Daily data
 def update_warning_text(event):
     warning_text_pane.object = get_current_predictor_and_dates(
@@ -215,6 +218,9 @@ def get_current_predictor_and_dates(forecast_pentad_all: pd.DataFrame,
     # Get the latest forecast date from the forecast data
     # This is the date on which the forecast is produced.
     output.latest_forecast_date = fcdata_selection["Date"].max()
+
+    # Get forecast pentad
+    output.pentad = tl.get_pentad(output.latest_forecast_date.strftime('%Y-%m-%d'))
 
     # Based on the latest forecast date, get the current forecast horizon.
     # Note that the last pentad of the month has variable length. We need to
@@ -376,6 +382,34 @@ def update_widgets(event):
         range_selection.visible = False
         manual_range.visible = False
 
+def update_button_widget(event):
+    if tabs.active == 1:
+        print_button.visible = True
+    else:
+        print_button.visible = False
+
+def draw_data_table(station_widget):
+    analysis_pentad = dm.select_analysis_data(analysis_pentad_all, station_widget)
+
+    # Only select Year, Precitor and Discharge columns
+    analysis_pentad = analysis_pentad[["Predictor", "Q [m3/s]"]]
+
+    # Calculate the squared difference between predictor and Q
+    analysis_pentad['Δ2'] = (analysis_pentad['Predictor'] - analysis_pentad['Q [m3/s]'])**2
+    analysis_pentad['Δ2'] = round(analysis_pentad['Δ2']).astype(int)
+    #print("\n\nDEBUG plot_data_table: analysis_pentad\n", analysis_pentad.head(10))
+    #print("datatypes: ", analysis_pentad.dtypes)
+
+    # Create a DataTable and make it editable
+    data_table = pn.widgets.Tabulator(
+        value=analysis_pentad,
+        editable=True, formatters={'Year': "{:,}"},
+        selectable='checkbox',
+        selection=analysis_pentad.index.tolist(),
+        theme='bootstrap',
+        editors={int: None, 'float': {'type': 'number'}})
+
+    return data_table
 # endregion
 
 # region Read & pre-process data
@@ -396,8 +430,20 @@ analysis_pentad_all = dm.add_labels_to_analysis_pentad_df(analysis_pentad_all, a
 # endregion
 
 # region Dashboard widgets
-
 ## Create widgets
+# Get current forecast date
+dates = get_current_predictor_and_dates(forecast_pentad, station_list[0])
+today_pentad = dates.pentad
+select_pentad = pn.widgets.Select(name=_("Select pentad:"),
+                                    options=[1, 2, 3, 4, 5, 6],
+                                    value=today_pentad)
+select_month = pn.widgets.Select(name=_("Select month:"),
+                                    options=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+                                    value=dates.latest_forecast_date.month)
+select_year = pn.widgets.Select(name=_("Select year:"),
+                                    options=[2021, 2022, 2023, 2024],
+                                    value=dates.latest_forecast_date.year)
+
 station = pn.widgets.Select(
     name=_("Select discharge station:"),
     options=station_list,
@@ -420,10 +466,17 @@ manual_range = pn.widgets.IntSlider(
 # Initially hide the widget
 manual_range.visible = False
 
+# Todays date pane
+current_forecast_date = pn.pane.Markdown(_("Current forecast date: ") + today.strftime('%Y-%m-%d'),
+                                            style={'white-space': 'pre-wrap'}, width=station.width)
+
 # Warning text pane
 warning_text_pane = pn.pane.Markdown(get_current_predictor_and_dates(
         forecast_pentad, station.value).warning,
         style={'white-space': 'pre-wrap'}, width=station.width)
+
+# Add a button to print the bulletin
+print_button = pn.widgets.Button(name=_("Print bulletin"), button_type="primary")
 
 # endregion
 
@@ -448,6 +501,8 @@ if temp_first_year_forecast_data > temp_last_year_hydrograph_data:
     no_date_overlap_flag = True
 else:
     no_date_overlap_flag = False
+
+tabulator = draw_data_table(station)
 # endregion
 
 # region Update functions
@@ -572,22 +627,75 @@ def plot_daily_hydrograph_data(station_widget, fcdata):
 
     return p
 
-def plot_data_table(station_widget):
-    analysis_pentad = analysis_pentad_all[analysis_pentad_all["station_labels"] == station_widget]
+def point_selected(index):
+    ''' link scatter plot selection to table row '''
+    print('\n\nDEBUG: point_selected: point_selected\n', index)
+    tabulator.selection = index
 
-    # Select columns Year, predictor and discharge_avg
-    analysis_pentad = analysis_pentad[["Year", "discharge_sum", "discharge_avg"]]
+def plot_linear_regression(station_widget, table_selection):
+    print("\n\nDEBUG plot_linear_regression: \n", table_selection)
+    analysis_pentad = dm.select_analysis_data(analysis_pentad_all, station_widget)
 
-    # Rename the columns
-    analysis_pentad = analysis_pentad.rename(columns={"discharge_sum": "Predictor",
-                                                      "discharge_avg": "Discharge [m3/s]"})
+    # Create a scatter plot of the selected data
+    scatter = hv.Scatter(analysis_pentad, kdims="Predictor",
+                         vdims="Q [m3/s]", label="Measured",
+                         selected=[table_selection]) \
+        .opts(color="#307096", size=5, tools=['hover', 'tap'], legend_position='bottom_right',)
 
-    print("\n\nDEBUG plot_data_table: analysis_pentad\n", analysis_pentad.head(10))
+    # Add a linear regression line to the scatter plot
+    slope, intercept, r_value, p_value, std_err = stats.linregress(
+        analysis_pentad["Predictor"], analysis_pentad["Q [m3/s]"])
+    x = np.linspace(analysis_pentad["Predictor"].min(),
+                    analysis_pentad["Predictor"].max(), 100)
+    y = slope * x + intercept
+    line = hv.Curve((x, y), label="Linear regression") \
+        .opts(color="#72D1FA", line_width=2)
+    # Print the linear regression equation
+    equation = f"y = {slope:.3f}x + {intercept:.3f}"
+    r2 = f"R^2 = {r_value**2:.3f}"
+    #pval = f"p = {p_value:.3f}"
+    #stderr = f"stderr = {std_err:.3f}"
+    text = hv.Text(x = analysis_pentad["Predictor"].min(),
+                   y = analysis_pentad["Q [m3/s]"].max(),
+                   text = f"{equation}\n{r2}") \
+        .opts(color="black", text_font_size="10pt", text_align="left",)
+              #xlim=(0, analysis_pentad["Predictor"].max()*1.1),
+              #ylim=(0, analysis_pentad["Q [m3/s]"].max()*1.1))
+    # Add the text to the plot
+    scatter = scatter * line * text
 
-    # Create a DataTable and make it editable
-    data_table = pn.widgets.Tabulator(value=analysis_pentad, editable=True)
+    # Add the line to the scatter plot
+    scatter = scatter * line
+    scatter.opts(hooks=[dm.remove_bokeh_logo]),
 
-    return data_table
+    return scatter
+
+def draw_norm_stats_table(station_widget):
+    analysis_pentad_ns = dm.select_analysis_data(analysis_pentad_all, station_widget)
+    norm_stats = dm.calculate_norm_stats(analysis_pentad_ns)
+    #print("\n\nDEBUG: \n", norm_stats)
+    #print(type(norm_stats))
+
+    norm_stats_table = pn.widgets.Tabulator(
+        value=norm_stats,
+        editable=True, formatters={'Pentad': "{:,}"},
+        theme='bootstrap')
+
+    #print("\n\nDEBUG: \n", norm_stats_table)
+    #print(type(norm_stats_table))
+
+    return norm_stats_table
+
+def draw_forecast_table(station_widget):
+    analysis_pentad_fs = dm.select_analysis_data(analysis_pentad_all, station_widget)
+    fc_stats = dm.calculate_fc_stats(analysis_pentad_fs)
+
+    fc_stats_table = pn.widgets.Tabulator(
+        value=fc_stats,
+        editable=True, formatters={'Pentad': "{:,}"},
+        theme='bootstrap')
+
+    return fc_stats_table
 
 def plot_forecast_data(station_widget, range_selection_widget, manual_range_widget):
     fcdata = forecast_pentad[forecast_pentad["station_labels"] == station_widget]
@@ -860,8 +968,18 @@ daily_hydrograph_plotly = pn.panel(pn.bind(plot_daily_hydrograph_data, station,
 pentad_forecast = pn.panel(pn.bind(plot_forecast_data, station,
                                    range_selection, manual_range),
                            height=500, sizing_mode='stretch_width')
-data_table = pn.panel(pn.bind(plot_data_table, station),
-                      height=300, sizing_mode='stretch_width')
+data_table = pn.panel(pn.bind(draw_data_table, station),
+                      height=300)
+#linear_regression = pn.panel(pn.bind(plot_linear_regression, station),
+#                                height=300, sizing_mode='stretch_width')
+linear_regression = hv.DynamicMap(pn.bind(plot_linear_regression, station, tabulator.param.selection))
+
+norm_table = pn.panel(pn.bind(draw_norm_stats_table, station), height=100)
+forecast_table = pn.panel(pn.bind(draw_forecast_table, station),
+                            height=100)
+
+sel = streams.Selection1D(source=linear_regression)
+sel.param.watch_values(point_selected, 'index')
 # If the available forecasts do not overlap with the hydrograph data, we cannot
 # calculate forecast accuracy and effectiveness. In this case, we do not show
 # the plots.
@@ -919,26 +1037,26 @@ if no_date_overlap_flag == False:
         (_('Predictors'),
          pn.Column(
              pn.Row(
-                 pn.Card(daily_hydrograph_plotly, title=_("Hydrograph")),
+                 pn.Card(daily_hydrograph_plotly, title=_("Hydrograph"))
              ),
          ),
         ),
-        (_('Analysis'),
-         pn.Column(
-                   pn.Row(
-                       pn.Card(data_table, title=_('Data table'))
-                   ))),
         (_('Forecast'),
          pn.Column(
              pn.Row(
-                 pn.Card(pentad_forecast, title=_('Forecast')),
-             ),
+                pn.Card(data_table, title=_('Data table'), collapsed=True),
+                pn.Card(linear_regression, title=_("Linear regression"), collapsed=True)
+                ),
              pn.Row(
-                 pn.Card(pentad_effectiveness, title=_("Effectiveness of the methods")),
-             ),
+                 pn.Card(norm_table, title=_('Norm statistics'), sizing_mode='stretch_width'),),
              pn.Row(
-                 pn.Card(pentad_skill, title=_("Forecast accuracy")),
-             ))
+                 pn.Card(forecast_table, title=_('Forecast table'), sizing_mode='stretch_width')),
+             pn.Row(
+                 pn.Card(pentad_forecast, title=_('Forecast'))),
+             pn.Row(
+                 pn.Card(pentad_effectiveness, title=_("Effectiveness of the methods"))),
+             pn.Row(
+                 pn.Card(pentad_skill, title=_("Forecast accuracy"))))
         ),
         (_('Disclaimer'), footer),
         dynamic=True,
@@ -972,24 +1090,27 @@ else: # If no_date_overlap_flag == True
     )
 
 sidebar = pn.Column(
-    pn.Row(
-        station,
-    ),
-    pn.Row(
-        range_selection,
-    ),
-    pn.Row(
-        manual_range
-    ),
-    pn.Row(
-        pn.Card(warning_text_pane, title=_('Notifications'),
-                width_policy='fit', width=station.width),
-    ),
+    pn.Row(pn.Card(title=f"Forecast for: p{select_pentad.value} m{select_month.value} y{select_year.value}",
+                   width_policy='fit', width=station.width,
+                   collapsible=False)),
+    pn.Row(pn.Card(select_year,
+                   select_month,
+                   select_pentad,
+                   title=_('Change date'),
+                   width_policy='fit', width=station.width,
+                   collapsed=True)),
+    pn.Row(station),
+    pn.Row(range_selection),
+    pn.Row(manual_range),
+    pn.Row(print_button),
+    pn.Row(pn.Card(warning_text_pane, title=_('Notifications'),
+                width_policy='fit', width=station.width)),
 )
 
 
 # Update the widgets conditional on the active tab
 tabs.param.watch(update_widgets, 'active')
+tabs.param.watch(update_button_widget, 'active')
 
 # Update the warning text depending on the station selection
 station.param.watch(update_warning_text, 'value')

@@ -1170,8 +1170,9 @@ def get_station_data(ieh_sdk, backend_has_access_to_db, start_date, site_list, f
         if '16093' in combined_data['Code'].values:
             data_16093 = combined_data[(combined_data['Code'] == '16093') & (combined_data['Date'] >= last_date_16936)]
         else:
+            # 16093 is currently not gauged. We calculate the discharge as 60% of 16096
             data_16093 = combined_data[(combined_data['Code'] == '16096') & (combined_data['Date'] >= last_date_16936)]
-            data_16093.loc[:, 'Q_m3s'] = 0.6 * data_16093.loc[:,'Q_m3s']
+            data_16093.loc[:, 'Q_m3s'] = 0.6 * data_16096.loc[:,'Q_m3s']
 
         # Merge data_15059, data_16096, data_16100, and data_16093 by date
         data_Tok_combined = pd.merge(data_16059, data_16096, on='Date', how='left', suffixes=('_16059', '_16096'))

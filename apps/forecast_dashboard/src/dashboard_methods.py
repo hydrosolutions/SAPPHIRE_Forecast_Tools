@@ -376,10 +376,66 @@ def preprocess_hydrograph_pentad_data(hydrograph_pentad: pd.DataFrame, today) ->
 
     return hydrograph_norm_perc
 
+def select_analysis_data(analysis_pentad_all, station_widget):
+    analysis_pentad = analysis_pentad_all[analysis_pentad_all["station_labels"] == station_widget]
 
+    #print(analysis_pentad.head())
+    #print(analysis_pentad.columns)
 
+    # Select columns Year, predictor and discharge_avg
+    analysis_pentad = analysis_pentad[
+        ["Year", "discharge_sum", "discharge_avg", "accuracy", "sdivsigma",
+         "pentad"]]
 
+    # Rename the columns
+    analysis_pentad = analysis_pentad.rename(
+        columns={"discharge_sum": "Predictor",
+                 "discharge_avg": "Q [m3/s]",
+                 "accuracy": "Accuracy",
+                 "sdivsigma": "Efficiency",
+                 "pentad": "Pentad"})
 
+    # Make sure Year is an integer
+    analysis_pentad["Year"] = analysis_pentad["Year"].astype(int)
+
+    # Reset and drop index
+    analysis_pentad = analysis_pentad.reset_index(drop=True)
+
+    # Set the Year column as index
+    analysis_pentad = analysis_pentad.set_index("Year")
+
+    return analysis_pentad
+
+def calculate_norm_stats(analysis_data):
+    # Calculate the mean and standard deviation of the predictor and discharge_avg
+    norm_stats = pd.DataFrame({
+        "Pentad": [analysis_data["Pentad"].mean()],
+        "Min": [analysis_data["Q [m3/s]"].min()],
+        "Norm": [analysis_data["Q [m3/s]"].mean()],
+        "Max": [analysis_data["Q [m3/s]"].max()]
+    })
+    # Set Pentad as index
+    norm_stats = norm_stats.set_index("Pentad")
+
+    return norm_stats
+
+def calculate_fc_stats(analysis_data):
+    # Calculate the mean and standard deviation of the predictor and discharge_avg
+    fc_stats = pd.DataFrame({
+        "Pentad": [analysis_data["Pentad"].mean()],
+        "Model": "Lin. reg.",
+        "Predictor": [analysis_data["Predictor"].mean()],
+        "Forecast": "TODO",
+        "±δ": "TODO",
+        "Lower": "TODO",
+        "Upper": "TODO",
+        "%P": [analysis_data["Accuracy"].mean()],
+        "s/σ": [analysis_data["Efficiency"].mean()],
+    })
+    # Set Pentad as index
+    fc_stats = fc_stats.set_index("Pentad")
+
+    return fc_stats
 
 # Customization of the Bokeh plots
 

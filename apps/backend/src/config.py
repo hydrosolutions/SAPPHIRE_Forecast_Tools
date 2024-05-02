@@ -76,7 +76,6 @@ def store_last_successful_run_date(date: dt.date):
     logger.info("   ... done")
     return None
 
-
 def parse_command_line_args() -> tuple[bool, dt.datetime]:
     """
     Parse command line arguments to get the calling script and the start date.
@@ -131,7 +130,6 @@ def parse_command_line_args() -> tuple[bool, dt.datetime]:
 
     return start_date, forecast_flags
 
-
 def load_environment():
     """
     Load environment variables from a .env file based on the context (Docker or local development).
@@ -147,7 +145,7 @@ def load_environment():
     elif os.getenv("SAPPHIRE_TEST_ENV") == "True":
         env_file_path = "backend/tests/test_files/.env_develop_test"
     elif os.getenv("SAPPHIRE_OPDEV_ENV") == "True":
-        env_file_path = "../config/.env_develop_kghm"
+        env_file_path = "../../../sensitive_data_forecast_tools/config/.env_develop_kghm"
     else:
         env_file_path = "../config/.env_develop"
 
