@@ -443,6 +443,38 @@ def perform_linear_regression(
 
     return data_dfp
 
+def nse(data: pd.DataFrame, observed_col: str, simulated_col: str):
+    """
+    Calculate the Nash-Sutcliffe Efficiency (NSE) for the observed and simulated data.
+
+    Args:
+        data (pandas.DataFrame): The input data containing the observed and simulated data.
+        observed_col (str): The name of the column containing the observed data.
+        simulated_col (str): The name of the column containing the simulated data.
+
+    Returns:
+        float: The Nash-Sutcliffe Efficiency (NSE) value for the observed and simulated data.
+
+    Raises:
+        ValueError: If the input data is missing one or more required columns.
+
+    """
+    # Test the input. Make sure that the DataFrame contains the required columns
+    if not all(column in data.columns for column in [observed_col, simulated_col]):
+        raise ValueError(f'DataFrame is missing one or more required columns: {observed_col, simulated_col}')
+
+    # Drop NaN values
+    data = data.dropna()
+
+    # Calculate the Nash-Sutcliffe Efficiency (NSE)
+    numerator = ((data[observed_col] - data[simulated_col])**2).sum()
+    denominator = ((data[observed_col] - data[observed_col].mean())**2).sum()
+
+    # Calculate the NSE value
+    nse_value = 1 - (numerator / denominator)
+
+    return nse_value
+
 def calculate_forecast_skill(data_df: pd.DataFrame, station_col: str,
                              pentad_col: str, observation_col: str,
                              simulation_col: str) -> pd.DataFrame:
@@ -1175,6 +1207,7 @@ class Site:
         delta = df[(df['Code'] == site.code) & (df['pentad_in_year'] == pentad)]['observation_std0674'].values[0]
         sdivsigma = df[(df['Code'] == site.code) & (df['pentad_in_year'] == pentad)]['sdivsigma'].values[0]
         accuracy = df[(df['Code'] == site.code) & (df['pentad_in_year'] == pentad)]['accuracy'].values[0]
+        abserr = df[(df['Code'] == site.code) & (df['pentad_in_year'] == pentad)]['absolute_error'].values[0]
 
         qpmin = float(site.fc_qexp) - delta
         qpmax = float(site.fc_qexp) + delta
@@ -1199,9 +1232,10 @@ class Site:
             site.fc_qmin = round_discharge(qpmin)  # -> string
             site.fc_qmax = round_discharge(qpmax)  # -> string
 
-        # Also assign sdivsigma and accuracy to site
-        site.sdivsigma = round_discharge(sdivsigma)
-        site.accuracy = round_discharge(accuracy)
+        # Also assign sdivsigma and accuracy to site.
+        site.sdivsigma = f'{sdivsigma}'
+        site.accuracy = f'{accuracy}'
+        site.abserr = f'{abserr}'
         #print(site.fc_qmin, site.fc_qmax)
 
         # Return the norm discharge value
@@ -1232,6 +1266,9 @@ class Site:
 
         # Get the discharge ranges for the site
         delta = df[(df['Code'] == site.code) & (df['decad_in_year'] == decad)]['observation_std0674'].values[0]
+        sdivsigma = df[(df['Code'] == site.code) & (df['decad_in_year'] == decad)]['sdivsigma'].values[0]
+        accuracy = df[(df['Code'] == site.code) & (df['decad_in_year'] == decad)]['accuracy'].values[0]
+        abserr = df[(df['Code'] == site.code) & (df['decad_in_year'] == decad)]['absolute_error'].values[0]
 
         qpmin = float(site.fc_qexp) - delta
         qpmax = float(site.fc_qexp) + delta
@@ -1255,6 +1292,11 @@ class Site:
             # Site.fc_qmin and Site.fc_qmax.
             site.fc_qmin = round_discharge_trad_bulletin(qpmin)  # -> string
             site.fc_qmax = round_discharge_trad_bulletin(qpmax)  # -> string
+
+        # Also assign sdivsigma and accuracy to site
+        site.sdivsigma = f'{sdivsigma}'
+        site.accuracy = f'{accuracy}'
+        site.abserr = f'{abserr}'
 
         #print(site.fc_qmin, site.fc_qmax)
 

@@ -72,6 +72,9 @@ def main():
 
     # Read discharge data from excel and iEasyHydro database
     modified_data, modified_data_decad = data_processing.get_station_data(ieh_sdk, backend_has_access_to_db, start_date, fc_sites, forecast_flags)
+    # Save daily discharge data for each site to csv
+    output_generation.write_daily_data(modified_data)
+
     # For decadal forecasts, only keep data for the stations for which we produce decadal forecasts
     if forecast_flags.decad:
         modified_data_decad = data_processing.filter_data(modified_data_decad, fc_sites_decad)
