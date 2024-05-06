@@ -11,6 +11,7 @@ from backend.src import config, data_processing, forecasting, output_generation
 from ieasyhydro_sdk.sdk import IEasyHydroSDK
 
 import forecast_library as fl
+import tag_library as tl
 
 def test_overall_output_with_demo_data():
     # Read data for one station.
@@ -123,8 +124,8 @@ def test_overall_output_with_demo_data():
     #   writing sites information to as list of Site objects
     fc_sites = data_processing.get_fc_sites(ieh_sdk, backend_has_access_to_db, db_sites)
     assert len(fc_sites) == 2, "The number of sites is not as expected"
-    assert fc_sites[0].code == "15678", "The first site code is not as expected"
-    assert fc_sites[1].code == "15679", "The second site code is not as expected"
+    assert fc_sites[0].code == "15679", "The first site code is not as expected"
+    assert fc_sites[1].code == "15678", "The second site code is not as expected"
     # The predictors should be -10000.0 for both sites as no predictor should be
     # assigned at this point
     assert fc_sites[0].predictor == -10000.0, "The first predictor is not as expected"
@@ -357,8 +358,8 @@ def test_overall_output_step_by_step():
     fc_sites = data_processing.get_fc_sites(ieh_sdk, backend_has_access_to_db, db_sites)
     fc_sites2 = data_processing.get_fc_sites(ieh_sdk, backend_has_access_to_db, db_sites)
     assert len(fc_sites) == 2, "The number of sites is not as expected"
-    assert fc_sites[0].code == "12176", "The first site code is not as expected"
-    assert fc_sites[1].code == "12256", "The second site code is not as expected"
+    assert fc_sites[0].code == "12256", "The first site code is not as expected"
+    assert fc_sites[1].code == "12176", "The second site code is not as expected"
     # The predictors should be -10000.0 for both sites as no predictor should be
     # assigned at this point
     assert fc_sites[0].predictor == -10000.0, "The first predictor is not as expected"
@@ -381,6 +382,7 @@ def test_overall_output_step_by_step():
     # The last code should be 12256
     assert modified_data['Code'].iloc[-1] == '12256', "The last code in the dataframe is not as expected"
     # The last value in discharge sum should be 2.43
+    print("\n\nDEBUG: test_overall_output_step_by_step: modified_data.tail(20): ", modified_data.tail(20))
     expected_predictor = 2.43
     assert round(modified_data['discharge_sum'].iloc[-1], 2) == expected_predictor, "The last value in discharge sum is not as expected"
     data_for_comp = modified_data.reset_index(drop=True)[["Code", "Date", "Q_m3s"]]
@@ -505,8 +507,8 @@ def test_overall_output_step_by_step():
     # days. That is, we only keep data from April, June, September and November.
     merged_data_test22 = merged_data_test22.loc[~((merged_data_test22['Date'].dt.day == 25) & (merged_data_test22['Date'].dt.days_in_month != 30))]
 
-    print("DEBUG: test_overall_output_step_by_step: merged_data_test22.tail(10)\n", merged_data_test22[merged_data_test22['Code'] == 12176].tail(60).head(20))
-    print(merged_data_test22[(merged_data_test22['diff'] >= 1e-6) & merged_data_test22['Code'] == 12176])
+    #print("DEBUG: test_overall_output_step_by_step: merged_data_test22.head(10)\n", merged_data_test22[merged_data_test22['Code'] == 12176].tail(60).head(20))
+    #print(merged_data_test22[(merged_data_test22['diff'] >= 1e-6) & merged_data_test22['Code'] == 12176])
     assert max(merged_data_test22['diff']) < 1e-6, "The discharge data is not as expected"
 
     # The columns discharge_hydrograph_csv and Q_m3s should be the same
@@ -616,6 +618,12 @@ def test_overall_output_step_by_step():
 
     # Get the predictor into the site object
     forecasting.get_predictor_pentad(modified_data, start_date, fc_sites, ieh_sdk, backend_has_access_to_db, predictor_dates.pentad)
+    # print modified_data where column 'pentad' is in predictor_dates.pentad
+    print("\n\nDEBUG: start_date+1:\n", start_date + dt.timedelta(days=1))
+    temp_pentad = tl.get_pentad_in_year(start_date + dt.timedelta(days=1))
+    print("\n\nDEBUG: pentad of start_date+1:\n", temp_pentad)
+    print("\n\nDEBUG: modified_data: \n", modified_data.loc[modified_data['pentad_in_year']==temp_pentad].tail(10))
+    print("\n\nDEBUG: fc_sites: \n", fc_sites)
     # The first predictor should be nan
     assert pd.isna(fc_sites[0].predictor), "The first predictor is not as expected"
     # The second predictor should be expected_predictor

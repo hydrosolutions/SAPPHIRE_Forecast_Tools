@@ -159,6 +159,13 @@ data/reports/*
 # Ignore temporary files
 data/daily_runoff/~*.xlsx
 
+# Temorary folder with files to be deprecated
+Z/
+
+# Ignore all logs folders and files
+apps/preprocessing/logs/*
+apps/linear_regression/logs/*
+
 # Ignore environment files used for development and testing
 apps/config/.env_develop_kghm
 apps/backend/forecast_logs.txt

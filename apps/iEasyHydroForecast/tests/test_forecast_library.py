@@ -615,27 +615,31 @@ class TestSite(unittest.TestCase):
     def test_from_df_get_norm_discharge_decad(self):
         site = self.site
         df = self.df
-        result = site.from_df_get_norm_discharge(site, '1', df)
+        dfmin = df
+        dfmax = df
+        result = site.from_df_get_norm_discharge(site, '1', df, dfmin, dfmax)
         self.assertEqual(result, 30)
         self.assertEqual(site.qnorm, '30.0')
-        result = site.from_df_get_norm_discharge(site, '2', df)
+        result = site.from_df_get_norm_discharge(site, '2', df, dfmin, dfmax)
         self.assertEqual(site.qnorm, '6.50')
-        result = site.from_df_get_norm_discharge(site, '3', df)
+        result = site.from_df_get_norm_discharge(site, '3', df, dfmin, dfmax)
         self.assertEqual(site.qnorm, '0.91')
-        result = site.from_df_get_norm_discharge(site, '4', df)
+        result = site.from_df_get_norm_discharge(site, '4', df, dfmin, dfmax)
         self.assertEqual(site.qnorm, '104')
 
     def test_from_df_get_norm_discharge_with_valid_data(self):
         site = self.site
         df = self.df
-        result = site.from_df_get_norm_discharge(site, '1', df)
+        dfmin = df
+        dfmax = df
+        result = site.from_df_get_norm_discharge(site, '1', df, dfmin, dfmax)
         self.assertEqual(result, 30)
         self.assertEqual(site.qnorm, '30.0')
-        result = site.from_df_get_norm_discharge(site, '2', df)
+        result = site.from_df_get_norm_discharge(site, '2', df, dfmin, dfmax)
         self.assertEqual(site.qnorm, '6.50')
-        result = site.from_df_get_norm_discharge(site, '3', df)
+        result = site.from_df_get_norm_discharge(site, '3', df, dfmin, dfmax)
         self.assertEqual(site.qnorm, '0.91')
-        result = site.from_df_get_norm_discharge(site, '4', df)
+        result = site.from_df_get_norm_discharge(site, '4', df, dfmin, dfmax)
         self.assertEqual(site.qnorm, '104')
 
     def test_from_df_get_predictor_pentad(self):
@@ -720,7 +724,10 @@ class TestQrange(unittest.TestCase):
         df1 = pd.DataFrame({
             'Code': ['1234', '5678', 'abc'],
             'pentad_in_year': ['1', '2', '1'],
-            'observation_std0674': [50.0, 20.0, 2.2]
+            'observation_std0674': [50.0, 20.0, 2.2],
+            'sdivsigma': [1.0, 2.0, 3.0],
+            'accuracy': [0.54, 0.55, 0.56],
+            'absolute_error': [0.0, 0.0, 0.0],
         })
         result0 = fl.Site.from_df_get_qrange_discharge(site0, '1', df1)
         result1 = fl.Site.from_df_get_qrange_discharge(site1, '1', df1)

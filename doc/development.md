@@ -13,6 +13,7 @@ Albeit not strictly necessary for the further development of the software, we su
 
 
 ### Instructions specific to the tools
+The workflow through the tools is managed with the open-source package [airflow](https://airflow.apache.org/) as follows:
 
 #### Configuration dashboard
 The forecast configuration dashboard is written in R and uses the Shiny framework. To run the dashboard locally, you need to install R. The installation instructions can be found [here](https://rstudio-education.github.io/hopr/starting.html). We recommend RStudio as an IDE for R development. The installation instructions can be found [here](https://posit.co/download/rstudio-desktop/).
@@ -38,25 +39,41 @@ In your Finder or Explorer window, navigate to apps/configuration_dashboard/ and
 You can verify your confirmed edits in the dashboard in your local copies of the files apps/config/config_output.json and apps/config/config_station_selection.json.
 
 ### The backend
+The backend consists of a set of tools that are used to produce forecasts. They are structured into:
+
+- Pre-processing:
+    - pre-processing of river runoff data: This component reads daily river runoff data from excel files and, if access is available, from the iEasyHydro database. The script is intended to run at 11 o'clock every day. It therefore includes daily average discharge data from all dates prior to today and todays morning measurement of river runoff. The data is stored in a csv file.
+    - pre-processing of forcing data: Under development.
+- forecast models:
+    - linear regression: This component reads the pre-processed river runoff data and builds a linear regression model for each station. The model is updated each year with the data from the previous year. The model is used to forecast the river runoff for the next 5 or 10 days. The forecast is stored in a csv file.
+    - LSTM: Under development.
+    - Conceptual hydrological models: Under development.
+- Post-processing:
+    - post-processing of forecasts: Under development.
+
+- iEasyHydroForecast: A helper library that contains functions used by the forecast tools. The library is used to read data from the iEasyHydro database and to write bulletins in a similar fashion as the software iEasyHydro.
+
 #### Prerequisites
 You will need a Python IDE for development. If you do not alreay have one installed, we recommend the use of Visual Studio Code for developping the backend. The installation instructions can be found [here](https://code.visualstudio.com/download). You will need to install the Python extension for Visual Studio Code. The installation instructions can be found [here](https://code.visualstudio.com/docs/languages/python).
 
 We use conda for managing the Python environment. The installation instructions can be found [here](https://docs.conda.io/projects/conda/en/latest/user-guide/install/). Once conda is installed, you can create a new conda environment by running the following command in the terminal:
 ```bash
-conda create --name my_environment python=3.10
+conda create --name my_environment python=3.11
 ```
-Through the name tag you can specify a recognizable name for the environment (you can replace my_environment with a name of your choosing). For development, python 3.10 was used. We therefore recommend you continue development with python 3.10 as well. You can activate the environment by running the following command in the terminal:
+Through the name tag you can specify a recognizable name for the environment (you can replace my_environment with a name of your choosing). We use a different environment for each module of the backend. For development, python 3.10 and 3.11 was used. We therefore recommend you continue development with python 3.10 or 3.11 as well. You can activate the environment by running the following command in the terminal:
 ```bash
 conda activate my_environment
 ```
 The name of your environment will now appear in brackets in the terminal.
 
-We then install the following packages in the terminal (note that this will take some time):
+We show how to proceed with each module based on the example of the preprocessing_runoff tool. The procedure is the same for all modules.
+
+Install the following packages in the terminal (note that this will take some time):
 ```bash
-cd apps/backend
+cd apps/preprocessing_runoff
 pip install -r requirements.txt
 ```
-The backend can read data from excel and/or from the iEasyHydro database (both from the online and from the local version of the software). If you wish to use the iEasyHydro database, you will need to install the iEasyHydro SKD library. More information on this library that can be used to access your organizations iEasyHydro database can be found [here](https://github.com/hydrosolutions/ieasyhydro-python-sdk). You will further need to manually install the library [iEasyReports](https://github.com/hydrosolutions/ieasyreports) that allows the backend of the forecast tools to write bulletins in a similar fashion as the software iEasyHydro. And finally you will need to load the iEasyHydroForecast library that comes with this package. You will therefore further need to install the following packages in the terminal:
+The backend can read data from excel and/or from the iEasyHydro database (both from the online and from the local version of the software). If you wish to use the iEasyHydro database, you will need to install the iEasyHydro SKD library. More information on this library that can be used to access your organizations iEasyHydro database can be found [here](https://github.com/hydrosolutions/ieasyhydro-python-sdk). Some tools require the the library [iEasyReports](https://github.com/hydrosolutions/ieasyreports) that allows the backend of the forecast tools and the forecast dashboards to write bulletins in a similar fashion as the software iEasyHydro. And finally you will need to load the iEasyHydroForecast library that comes with this package. You will therefore further need to install the following packages in the terminal:
 ```bash
 pip install git+https://github.com/hydrosolutions/ieasyhydro-python-sdk
 pip install git+https://github.com/hydrosolutions/ieasyreports.git@main
@@ -64,7 +81,18 @@ pip install -e ../iEasyHydroForecast
 ```
 If you wish to use data from your organizations iEasyHydro database, you will need to configure the apps/config/.env_develop file (see [doc/configuration.md](configuration.md) for more detailed instructions). We recommend testing your configuration by running a few example queries from the [documentation of the SDK library](https://github.com/hydrosolutions/ieasyhydro-python-sdk) in a jupyter notebook.
 
-#### How to run the backend locally
+#### How to run the backend tools locally
+##### Pre-processing of river runoff data
+Establish a connection to the iEasyHydro database by configuring the apps/config/.env_develop file (see [doc/configuration.md](configuration.md) for more detailed instructions). You might require an ssh connection to your local iEasyHydro installation, consult your IT admin for this. You can then run the pre-processing of river runoff data tool with the default .env_develop file by running the following command in the preprocessing_runoff folder in the terminal:
+```bash
+python preprocessing_runoff.py
+```
+Note, we use different .env files for testing and development. We use an environment variable to specify a .env file we use for testing purposes (SAPPHIRE_TEST_ENV, see chapter on testing below) and we use one for development with private data (SAPPHIRE_OPDEV_ENV). During development, we typically use the command:
+```bash
+SAPPHIRE_OPDEV_ENV=True python preprocessing_runoff.py
+```
+
+##### Running the linear regression tool
 Edit the file apps/internal_data/last_successful_run.txt to one day before the first day you wish to run the forecast tools for. For example, if you wish to start running the forecast tools from January 1, 2024, write the date 2023-12-31 as last successful run date. You can then run the forecast backend in the offline mode to simulate opearational forecasting in the past by running the following command in the terminal:
 ```bash
 python run_offline_mode.py
@@ -107,11 +135,11 @@ docker run -e "IN_DOCKER_CONTAINER=True" -v <full_path_to>/config:/app/apps/conf
 ### Backend
 The backend is dockerized using the Dockerfile in the apps/backend folder. Dockerization has been tested under both Ubuntu running on Windows or Mac OS operating systems. To build the docker image locally, run the following command in the root directory of the repository:
 ```bash
-docker build --no-cache -t forecast_backend -f ./apps/backend/Dockerfile .
+docker build --no-cache -t preprocessing_runoff -f ./apps/preprocessing_runoff/Dockerfile .
 ```
 Run the image locally for testing (not for deployment). Replace <full_path_to> with your local path to the folders.
 ```bash
-docker run -e "IN_DOCKER_CONTAINER=True" -v <full_path_to>/apps/config:/app/apps/config -v <full_path_to>/data:/app/data -v <full_path_to>/apps/internal_data:/app/apps/internal_data -p 9000:8801 --name forecast_backend_container forecast_backend
+docker run -e "IN_DOCKER_CONTAINER=True" -v <full_path_to>/apps/config:/app/apps/config -v <full_path_to>/data:/app/data -v <full_path_to>/apps/internal_data:/app/apps/internal_data -p 9000:8801 --name preprocessing_runoff preprocessing_runoff
 ```
 
 ### Forecast dashboard

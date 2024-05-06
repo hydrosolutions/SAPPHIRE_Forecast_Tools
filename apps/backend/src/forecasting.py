@@ -214,20 +214,18 @@ def get_predictor_pentad(modified_data, start_date, fc_sites, ieh_sdk, backend_h
             # Here we need to use modified_data as result_df is filtered to the
             # current pentad of the year and does not contain predictor data.
             site_data1 = modified_data[modified_data['Code'] == site.code]
-            #print("DEBUG: forecasting:get_predictor: site_data1: \n",
-            #      site_data1[['Date', 'Code', 'issue_date', 'discharge_sum']].tail(10))
-            #print("DEBUG: forecasting:get_predictor: [start_date]: ", [start_date])
-            #print("DEBUG: forecasting:get_predictor: predictor_dates: ", predictor_dates)
+            print("DEBUG: forecasting:get_predictor: site_data1: \n",
+                  site_data1[['Date', 'Code', 'issue_date', 'discharge_sum']].tail(10))
+            print("DEBUG: forecasting:get_predictor: [start_date]: ", [start_date])
+            print("DEBUG: forecasting:get_predictor: predictor_dates: ", predictor_dates)
             # Get the predictor from the data for today
             fl.Site.from_df_get_predictor_pentad(site, site_data1, [start_date])
-            # print(fl.Site.from_df_get_predictor(site, site_data, predictor_dates))
-            #print("DEBUG: forecasting:get_predictor: site.predictor: ", site.predictor)
+            print(fl.Site.from_df_get_predictor_pentad(site, site_data1, predictor_dates))
+            print("DEBUG: forecasting:get_predictor: site.predictor: ", site.predictor)
 
     logger.info(f'   {len(fc_sites)} Predictor discharge gotten from df, namely:\n'
                 f'{[[site.code, site.predictor] for site in fc_sites]}')
-    # print result_df from December 24, 2009 to January 6, 2010
-    # print(result_df[(result_df['Date'] >= dt.datetime.strptime('2009-12-24', '%Y-%m-%d').date()) &
-    # (result_df['Date'] <= dt.datetime.strptime('2010-01-06', '%Y-%m-%d').date())])
+    print("DEBUG: forecasting:get_predictor: fc_sites: ", fc_sites)
     logger.info("   ... done")
 
 def get_predictor_decad(modified_data, start_date, fc_sites, ieh_sdk, backend_has_access_to_db, predictor_dates):

@@ -74,7 +74,6 @@ def check_database_access(ieh_sdk):
             logger.error(f"Error connecting to DB: {e}")
             raise e
 
-
 def get_db_sites(ieh_sdk, backend_has_access_to_db):
     # === Read forecast configuration ===
     # Read forecast configuration
@@ -421,7 +420,6 @@ def get_predictor_datetimes(start_date, forecast_flags):
 
     logger.info("   ... done")
     return predictor_dates
-
 
 def read_discharge_from_excel_sheet(file_path, station, year):
     """

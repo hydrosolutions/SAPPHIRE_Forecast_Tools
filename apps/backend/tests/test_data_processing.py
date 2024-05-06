@@ -619,7 +619,12 @@ def test_calculate_3daydischargesum():
     }
     df = pd.DataFrame(data)
     df = data_processing.add_pentad_issue_date(df, datetime_col='Dates')
+
+    print("\n\nDEBUG: test_calculate_3daydischargesum: df: \n", df.head(40))
+
     result = data_processing.calculate_3daydischargesum(df, 'Dates', 'Values')
+
+    print("\n\nDEBUG: test_calculate_3daydischargesum: result: \n", result.head(40))
 
 def test_calculate_pentadaldischargeavg():
     # Test with reproducible data

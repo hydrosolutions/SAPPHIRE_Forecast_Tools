@@ -11,7 +11,6 @@ from sklearn.linear_model import LinearRegression
 # === Functions ===
 # region Function definitions
 
-
 def get_last_day_of_month(date: dt.date) -> dt.date:
     """
     Get the last day of the month for a given date.

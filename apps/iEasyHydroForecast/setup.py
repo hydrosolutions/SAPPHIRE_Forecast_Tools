@@ -9,9 +9,8 @@ setup(
     author='Beatrice Marti',
     author_email='marti@hydrosolutions.ch',
     install_requires=[
-        'numpy',
         'pandas',
-        'datetime',
+        'scikit-learn'
     ],
     classifiers=['License :: OSI Approved :: MIT License',],
     license="MIT",
