@@ -163,8 +163,9 @@ data/daily_runoff/~*.xlsx
 Z/
 
 # Ignore all logs folders and files
-apps/preprocessing_runoff/logs/*
 apps/linear_regression/logs/*
+apps/pipeline/logs/*
+apps/preprocessing_runoff/logs/*
 
 # Ignore environment files used for development and testing
 apps/config/.env_develop_kghm
@@ -178,3 +179,4 @@ apps/internal_data/forecasts_pentad_kghm_full_hindcast.csv
 apps/internal_data/forecasts_pentad_kghm_full_hindcast copy.csv
 apps/internal_data/forecasts_pentad_kghm copy dec dev.csv
 apps/internal_data/forecasts_pentad_kghm_full_hindcast copy 2.csv
+apps/pipeline/logs/log

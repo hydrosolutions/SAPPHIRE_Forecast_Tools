@@ -1,5 +1,7 @@
 import os
+import time
 import subprocess
+from dotenv import load_dotenv
 
 from tempfile import mkdtemp
 import logging
@@ -245,6 +247,21 @@ class HelloWorldExample(luigi.Task):
         print("{task} says: Hello World!".format(task=self.__class__.__name__))
 
 class RunPreprocessingRunoff(luigi.Task):
+
+    def output(self):
+        # Load the configuration file for development mode
+        env_file_path = "../../../sensitive_data_forecast_tools/config/.env_develop_kghm"
+        load_dotenv(dotenv_path=env_file_path)
+
+        # Get the path to the output file
+        output_file_path = os.path.join(
+            os.getenv("ieasyforecast_intermediate_data_path"),
+            os.getenv("ieasyforecast_daily_discharge_file")
+            )
+
+        return luigi.LocalTarget(output_file_path)
+
+
     def run(self):
         print("\n\n{task} says: Running preprocessing runoff!\n\n".format(task=self.__class__.__name__))
 
@@ -257,6 +274,19 @@ class RunPreprocessingRunoff(luigi.Task):
             raise Exception(f"Script {script_path} failed with error: {result.stderr}")
         else:
             print(f"Script {script_path} output: {result.stdout}")
+
+    def complete(self):
+        if not self.output().exists():
+            return False
+
+        # Get the modified time of the output file
+        output_file_mtime = os.path.getmtime(self.output().path)
+
+        # Get the current time
+        current_time = time.time()
+
+        # Check if the output file was modified within the last number of seconds
+        return current_time - output_file_mtime < 10  # 24 * 60 * 60
 
 if __name__ == "__main__":
     luigi.run(['RunPreprocessingRunoff', '--local-scheduler'])
