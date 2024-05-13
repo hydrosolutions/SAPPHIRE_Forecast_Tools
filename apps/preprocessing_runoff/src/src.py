@@ -431,6 +431,13 @@ def get_runoff_data(ieh_sdk=None, date_col='date', discharge_col='discharge', na
             if not db_morning_data.empty:
                 read_data = pd.concat([read_data, db_morning_data], ignore_index=True)
 
+        # Drop rows where 'code' is "NA"
+        read_data = read_data[read_data[code_col] != 'NA']
+
+        # For sanity sake, we round the data to a mac of 3 decimal places
+        read_data[discharge_col] = read_data[discharge_col].round(3)
+
+
         return read_data
 
 def write_data_to_csv(data: pd.DataFrame, column_list=["code", "date", "discharge"]):

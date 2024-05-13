@@ -13,7 +13,9 @@ Albeit not strictly necessary for the further development of the software, we su
 
 
 ### Instructions specific to the tools
-The workflow through the tools is managed with the open-source package [airflow](https://airflow.apache.org/) as follows:
+
+#### Pipeline
+We use the python package Luigi to manage the workflow of the forecast tools. You will find instructions about how to use Luigi [here](https://luigi.readthedocs.io/en/stable/index.html#)
 
 #### Configuration dashboard
 The forecast configuration dashboard is written in R and uses the Shiny framework. To run the dashboard locally, you need to install R. The installation instructions can be found [here](https://rstudio-education.github.io/hopr/starting.html). We recommend RStudio as an IDE for R development. The installation instructions can be found [here](https://posit.co/download/rstudio-desktop/).

@@ -1,8 +1,180 @@
 import os
 import logging
+import datetime as dt
+
 from dotenv import load_dotenv
 
+# Import iEasyHydroForecast libraries
+import forecast_library as fl
+import tag_library as tl
+
 logger = logging.getLogger(__name__)
+
+
+def store_last_successful_run_date(date):
+    '''
+    Store the last successful run date in a file.
+
+    Args:
+        date (date or datetime object): The date of the last successful run.
+
+    Raises:
+        ValueError: If the date is not valid.
+        FileNotFoundError: If the environment variables are not set.
+        IOError: If the write operation fails.
+
+    Returns:
+        None
+
+    Example:
+        store_last_successful_run_date(dt.date(2022, 1, 1)) # Stores the date January 1, 2022
+    '''
+    # Check environment variables
+    intermediate_data_path = os.getenv("ieasyforecast_intermediate_data_path")
+    last_successful_run_file = os.getenv("ieasyforecast_last_successful_run_file")
+    if intermediate_data_path is None or last_successful_run_file is None:
+        raise FileNotFoundError("Environment variables not set")
+
+    # Store last successful run date
+    logger.info("Storing last successful run date ...")
+
+    # Path to the file
+    last_run_file = os.path.join(
+        os.getenv("ieasyforecast_intermediate_data_path"),
+        os.getenv("ieasyforecast_last_successful_run_file")
+    )
+
+    # Convert to datetime object if date is a string or a datetime object
+    if isinstance(date, str):
+        date = dt.datetime.strptime(date, "%Y-%m-%d").date()
+    elif isinstance(date, dt.datetime):
+        date = date.date()
+
+    # Test if the date is valid and throw an error if it is not
+    # Test if the date is valid and throw an error if it is not
+    if not tl.is_gregorian_date(date):
+        raise ValueError(f"Invalid date: {date}")
+
+    # Overwrite the file with the current date
+    with open(last_run_file, "w") as f1:
+        ret = f1.write(date.strftime('%Y-%m-%d'))
+
+    # Check if the write was successful
+    if ret is None:
+        raise IOError(f"Could not store last successful run date in {last_run_file}")
+
+    logger.info("   ... done")
+    return None
+
+def get_last_run_date():
+    """
+    Read the date of the last successful run of the linear regression forecast
+    from the file ieasyforecast_last_successful_run_file. If the file is not
+    available, set the last successful run date to yesterday.
+
+    Returns:
+    last_successful_run_date (datetime.date): The date of the last successful
+    """
+    last_run_file = os.path.join(
+        os.getenv("ieasyforecast_intermediate_data_path"),
+        os.getenv("ieasyforecast_last_successful_run_file")
+        )
+    try:
+        with open(last_run_file, "r") as file:
+            last_successful_run_date = file.read()
+            # We expect the date to be in the format YYYY-MM-DD. Let's allow dates
+            # in the format YYYY_MM_DD as well.
+            # If the date is in the format YYYY_MM_DD, replace the _ with -
+            last_successful_run_date = last_successful_run_date.replace("_", "-")
+            last_successful_run_date = dt.datetime.strptime(last_successful_run_date, "%Y-%m-%d").date()
+    except FileNotFoundError:
+        last_successful_run_date = dt.date.today() - dt.timedelta(days=1)
+
+    logger.debug(f"Last successful run date: {last_successful_run_date}")
+
+    return last_successful_run_date
+
+def define_run_dates():
+    """
+    Identifies the start and end dates for the current call to the linear
+    regression tool.
+    """
+    # The last successful run date is the last time, the forecast tools were
+    # run successfully. This is ypically yesterday.
+    last_successful_run_date = get_last_run_date()
+
+    # The day on which the forecast is produced. In operational mode, this is
+    # day 0 or today. However, the tools can also be run in hindcast mode by
+    # setting the last successful run date to a date in the past. In this case,
+    # the forecast is produced for the day after the last successful run date.
+    date_start = last_successful_run_date + dt.timedelta(days=1)
+
+    # The last day for which a forecast is produced. This is always today.
+    date_end = dt.date.today()
+
+    # The bulletin date is one day after the forecast date. It is the first day
+    # of the preiod for which the forecast is produced.
+    bulletin_date = date_start + dt.timedelta(days=1)
+
+    logger.debug("Running the forecast script for the following dates:")
+    logger.debug(f"Last successful run date: {last_successful_run_date}")
+    logger.debug(f"Start date for forecasts: {date_start}")
+    logger.debug(f"End date for forecasts: {date_end}")
+    logger.debug(f"Bulletin date: {bulletin_date}")
+
+    return date_start, date_end, bulletin_date
+
+
+class ForecastFlags:
+    """
+    Class to store the forecast flags. We have flags for each forecast horizon.
+    Depending on the date the forecast tools are called for, they identify the
+    forecast horizons to service by changing the respective flag from False (no
+    forecast produced) to True (forecast produced).
+
+    Example:
+    # Set flags for daily and pentad forecasts
+    flags = ForecastFlags(day=True, pentad=True)
+    """
+    def __init__(self, day=False, pentad=False, decad=False, month=False, season=False):
+        self.day = day
+        self.pentad = pentad
+        self.decad = decad
+        self.month = month
+        self.season = season
+
+    def __repr__(self):
+        return self
+
+    @classmethod
+    def from_forecast_date_get_flags(start_date):
+        # Initialize forecast_flags for each forecast horizon.
+        forecast_flags = ForecastFlags()
+
+        # Get the day of the month
+        day = start_date.day
+        # Get the last day of the month
+        last_day = fl.get_last_day_of_month(start_date)
+        # Get the list of days for which we want to run the forecast
+        # pentadal forecasting
+        days_pentads = [5, 10, 15, 20, 25, last_day.day]
+        # decadal forecasting
+        days_decads = [10, 20, last_day.day]
+
+        # If today is not in days, exit the program.
+        if day not in days_pentads:
+            logger.info(f"Run for date {start_date}. No forecast date, no forecast will be run.")
+            store_last_successful_run_date(start_date)
+            exit()  # exit the program
+        else:
+            logger.info(f"Running pentadal forecast on {start_date}.")
+            forecast_flags.pentad = True
+            if day in days_decads:
+                logger.info(f"Running decad forecast on {start_date}.")
+                forecast_flags.decad = True
+
+        return forecast_flags
+
 
 def load_environment():
     """
