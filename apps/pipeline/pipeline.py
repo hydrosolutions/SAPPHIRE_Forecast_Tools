@@ -241,11 +241,6 @@ class DockerTask(luigi.Task):
             filesys.remove(self._host_tmp_dir, recursive=True)
 
 
-class HelloWorldExample(luigi.Task):
-
-    def run(self):
-        print("{task} says: Hello World!".format(task=self.__class__.__name__))
-
 class RunPreprocessingRunoff(luigi.Task):
 
     def output(self):

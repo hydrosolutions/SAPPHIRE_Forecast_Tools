@@ -1,3 +1,4 @@
+import os
 import json
 import numpy as np
 import pandas as pd
@@ -762,6 +763,56 @@ def load_all_station_data_from_JSON(file_path: str) -> pd.DataFrame:
         raise FileNotFoundError('Could not read config file. Error message: {}'.format(e))
     except ValueError as e:
         raise ValueError('Could not read config file. Error message: {}'.format(e))
+
+def read_daily_discharge_data_from_csv():
+    """
+    Read the discharge data from a csv file specified in the environment.
+
+    Returns:
+    --------
+    pandas.DataFrame
+        The discharge data with columns 'code', 'date', 'discharge' (in m3/s).
+
+    Raises:
+    -------
+    EnvironmentError
+        If the required environment variables are not set.
+    FileNotFoundError
+        If the specified file does not exist.
+    ValueError
+        If the DataFrame does not contain the required columns.
+    pd.errors.ParserError
+        If the specified file cannot be read as a CSV.
+    """
+
+    # Check if the required environment variables are set
+    data_path = os.getenv("ieasyforecast_intermediate_data_path")
+    discharge_file = os.getenv("ieasyforecast_daily_discharge_file")
+    if data_path is None or discharge_file is None:
+        raise EnvironmentError("The environment variables 'ieasyforecast_intermediate_data_path' and 'ieasyforecast_daily_discharge_file' must be set.")
+
+    file_path = os.path.join(data_path, discharge_file)
+
+    # Check if the specified file exists
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"The specified file {file_path} does not exist.")
+
+    # Read the discharge data from the csv file
+    try:
+        discharge_data = pd.read_csv(file_path, sep=',')
+    except pd.errors.ParserError:
+        raise pd.errors.ParserError(f"The specified file {file_path} cannot be read as a CSV.")
+
+    # Check if the DataFrame contains the required columns
+    required_columns = ['code', 'date', 'discharge']
+    if not all(column in discharge_data.columns for column in required_columns):
+        raise ValueError(f"The DataFrame does not contain the required columns: {required_columns}")
+
+    # Convert the 'date' column to datetime
+    discharge_data['date'] = pd.to_datetime(discharge_data['date'])
+
+    return discharge_data
+
 
 # endregion
 

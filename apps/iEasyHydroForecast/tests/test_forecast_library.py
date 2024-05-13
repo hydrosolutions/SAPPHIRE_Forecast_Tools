@@ -7,6 +7,8 @@ import math
 import os
 import sys
 
+from pandas._testing import assert_frame_equal
+
 from iEasyHydroForecast import forecast_library as fl
 
 print(sys.path)
@@ -753,6 +755,52 @@ class TestGetPredictorDatetimes(unittest.TestCase):
                           dt.datetime(2022, 5, 10, 12, 0)]
         test_dates = fl.get_predictor_datetimes(test_input_date, n)
         assert test_dates == expected_dates
+
+
+class TestReadDailyDischargeDataFromCSV(unittest.TestCase):
+    def setUp(self):
+        os.environ["ieasyforecast_intermediate_data_path"] = "iEasyHydroForecast/tests/test_data"
+        os.environ["ieasyforecast_daily_discharge_file"] = "daily_discharge_data_test_file.csv"
+        self.original_data_path = os.getenv("ieasyforecast_intermediate_data_path")
+        self.original_discharge_file = os.getenv("ieasyforecast_daily_discharge_file")
+
+    def test_no_environment_variables(self):
+        os.environ.pop("ieasyforecast_intermediate_data_path", None)
+        os.environ.pop("ieasyforecast_daily_discharge_file", None)
+        with self.assertRaises(EnvironmentError):
+            fl.read_daily_discharge_data_from_csv()
+
+    def test_file_does_not_exist(self):
+
+        os.environ["ieasyforecast_intermediate_data_path"] = "/path/that/does/not/exist"
+        os.environ["ieasyforecast_daily_discharge_file"] = "file.csv"
+        with self.assertRaises(FileNotFoundError):
+            fl.read_daily_discharge_data_from_csv()
+        os.environ.pop("ieasyforecast_intermediate_data_path")
+        os.environ.pop("ieasyforecast_daily_discharge_file")
+
+
+    def test_file_exists(self):
+        os.environ["ieasyforecast_intermediate_data_path"] = "iEasyHydroForecast/tests/test_data"
+        os.environ["ieasyforecast_daily_discharge_file"] = "daily_discharge_data_test_file.csv"
+        expected_output = pd.DataFrame({
+            'code': [19213, 19213, 19213, 19213, 19213, 19213, 19213, 19213,
+                     11162, 11162, 11162, 11162, 11162, 11162, 11162, 11162, 11162, 11162],
+            'date': pd.to_datetime(['2000-01-01', '2000-01-02', '2000-01-03',
+                                    '2000-01-04', '2000-01-05', '2000-01-06',
+                                    '2000-01-07', '2000-01-08', '2024-05-04',
+                                    '2024-05-05', '2024-05-06', '2024-05-07',
+                                    '2024-05-08', '2024-05-09', '2024-05-10',
+                                    '2024-05-11', '2024-05-12', '2024-05-13']),
+            'discharge': [1.9, 1.9, 1.9, 1.9, 1.9, 1.9, 1.9, 1.85, 33.293,
+                          33.293, 33.293, 34.405, 34.405, 35.535, 35.535, 35.535, 37.849, 37.849]
+        })
+
+        actual_output = fl.read_daily_discharge_data_from_csv()
+        assert_frame_equal(actual_output, expected_output)
+        os.environ.pop("ieasyforecast_intermediate_data_path")
+        os.environ.pop("ieasyforecast_daily_discharge_file")
+
 
 
 if __name__ == '__main__':

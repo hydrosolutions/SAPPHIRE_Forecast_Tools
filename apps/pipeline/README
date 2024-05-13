@@ -1,2 +1,4 @@
 We use the package Luigi to manage the workflow of our forecast pipeline.
 
+The pipeline is composed of several tasks that are executed in a specific order. Each task is a Python class that inherits from the `luigi.Task` class. The `requires` method of a task returns a list of tasks that need to be executed before the current task. The `output` method returns the output of the task. The `run` method contains the code that is executed when the task is run.
+
