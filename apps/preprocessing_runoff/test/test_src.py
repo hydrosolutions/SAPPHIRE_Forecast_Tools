@@ -77,3 +77,54 @@ def test_write_data_to_csv():
     # Remove the output file
     os.remove('preprocessing_runoff/test/test_files/test_runoff_file.csv')
 
+def test_filter_roughly_for_outliers_no_outliers():
+    # Create a DataFrame with no outliers
+    df = pd.DataFrame({
+        'Code': ['A', 'A', 'A', 'B', 'B', 'B'],
+        'Q_m3s': [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+    })
+
+    # Apply the function
+    result = src.filter_roughly_for_outliers(df, 'Code', 'Q_m3s')
+
+    # Drop index
+    result = result.reset_index(drop=True)
+
+    # Check that the result is the same as the input
+    pd.testing.assert_frame_equal(result, df)
+
+def test_filter_roughly_for_outliers_with_outliers():
+    # Create a DataFrame with an outlier
+    df = pd.DataFrame({
+        'Category': ['A', 'A', 'A', 'B', 'B', 'B',
+                 'A', 'A', 'A', 'B', 'B', 'B',
+                 'A', 'A', 'A', 'B', 'B', 'B',
+                 'A', 'A', 'A', 'B', 'B', 'B',
+                 'A', 'A', 'A', 'B', 'B', 'B',
+                 'A', 'A', 'A', 'B', 'B', 'B',
+                 'A', 'A', 'A', 'B', 'B', 'B',
+                 'A', 'A', 'A', 'B', 'B', 'B',
+                 'A', 'A', 'A', 'B', 'B', 'B',
+                 'A', 'A', 'A', 'B', 'B', 'B',
+                 'A', 'A', 'A', 'B', 'B', 'B'],
+        'Values': [1.01, 2.01, 3.01, 4.0, 5.0, 6.0,
+                  1.02, 2.02, 3.02, 4.0, 5.0, 6.0,
+                  1.03, 2.03, 3.03, 4.0, 5.0, 6.0,
+                  1.04, 2.04, 3.04, 4.0, 5.0, 6.0,
+                  1.05, 2.05, 3.05, 4.0, 5.0, 6.0,
+                  1.06, 2.06, 100.0, 4.0, 5.0, 6.0,
+                  1.07, 2.07, 3.07, 4.0, 5.0, 6.0,
+                  1.08, 2.08, 3.08, 4.0, 5.0, 6.0,
+                  1.09, 2.09, 3.09, 4.0, 5.0, 6.0,
+                  1.10, 2.10, 3.10, 4.0, 5.0, 6.0,
+                  1.11, 2.11, 3.11, 4.0, 5.0, 6.0]
+    })
+
+    # Apply the function
+    result = src.filter_roughly_for_outliers(df, 'Category', 'Values', window_size=15)
+
+    # Check that the outlier has been replaced with NaN
+    # There should be exactly one NaN value in the DataFrame column Q_m3s
+    #print(result[result['Values']==100.0])
+    #print(result['Values'].isna().sum())
+    assert result['Values'].isna().sum() == 1

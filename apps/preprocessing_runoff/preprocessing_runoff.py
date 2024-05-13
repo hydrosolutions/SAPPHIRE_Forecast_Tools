@@ -10,6 +10,7 @@ from logging.handlers import TimedRotatingFileHandler
 # pip install git+https://github.com/hydrosolutions/ieasyhydro-python-sdk
 from ieasyhydro_sdk.sdk import IEasyHydroSDK
 
+# Local methods
 from src import src
 
 # Local libraries, installed with pip install -e ./iEasyHydroForecast
@@ -24,6 +25,7 @@ print(forecast_dir)
 # Add the forecast directory to the Python path
 sys.path.append(forecast_dir)
 
+# Import the setup_library module from the iEasyHydroForecast package
 import setup_library as sl
 
 
@@ -36,7 +38,8 @@ if not os.path.exists('logs'):
     os.makedirs('logs')
 
 # Create a file handler to write logs to a file
-file_handler = TimedRotatingFileHandler('logs/logs.log', when='midnight', interval=1, backupCount=10)
+# A new log file is created every <interval> day at <when>. It is kept for <backupCount> days.
+file_handler = TimedRotatingFileHandler('logs/log', when='midnight', interval=1, backupCount=30)
 file_handler.setFormatter(formatter)
 
 # Create a stream handler to print logs to the console
@@ -62,6 +65,9 @@ def main():
 
     The script then saves the discharge data to a csv file for use in the
     forecast tools.
+
+    The names of the columns to be written to the csv file are: 'code', 'date',
+    and 'discharge'.
     """
 
     # Configuration
@@ -75,10 +81,20 @@ def main():
         ieh_sdk = None
 
     # Reading data
-    runoff_data = src.get_runoff_data(ieh_sdk)
+    runoff_data = src.get_runoff_data(
+        ieh_sdk,
+        date_col='date',
+        discharge_col='discharge',
+        name_col='name',
+        code_col='code')
+
+    # Filtering for outliers
+    filtered_data = src.filter_roughly_for_outliers(
+        runoff_data, 'code', 'discharge')
 
     # Save the data
-    ret = src.write_data_to_csv(runoff_data)
+    ret = src.write_data_to_csv(
+        filtered_data, ['code', 'date', 'discharge'])
 
     if ret is None:
         sys.exit(0) # Success

@@ -163,7 +163,7 @@ data/daily_runoff/~*.xlsx
 Z/
 
 # Ignore all logs folders and files
-apps/preprocessing/logs/*
+apps/preprocessing_runoff/logs/*
 apps/linear_regression/logs/*
 
 # Ignore environment files used for development and testing
