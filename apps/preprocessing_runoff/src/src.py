@@ -71,7 +71,8 @@ def filter_roughly_for_outliers(combined_data, group_by='Code', filter_col='Q_m3
     combined_data[filter_col] = combined_data[filter_col].replace('', np.nan)
 
     # Apply the function to each group
-    combined_data = combined_data.groupby(group_by).apply(filter_group, filter_col, window_size)
+    combined_data = combined_data.groupby(group_by).apply(
+        filter_group, filter_col, window_size, include_groups=True)
 
     # Ungroup the DataFrame
     combined_data = combined_data.reset_index(drop=True)
@@ -257,8 +258,7 @@ def read_all_runoff_data_from_excel(date_col='date', discharge_col='discharge', 
         pandas.DataFrame: A DataFrame containing the daily river runoff data.
 
     Raises:
-        FileNotFoundError: If the daily_discharge directory is not found or if
-            there are no files with file ending .xlsx in the directory.
+        None
     """
     # Get the path to the daily_discharge directory
     daily_discharge_dir = os.getenv('ieasyforecast_daily_discharge_path')
@@ -277,7 +277,7 @@ def read_all_runoff_data_from_excel(date_col='date', discharge_col='discharge', 
     df = None
 
     if len(files_multiple_rivers) == 0:
-        raise FileNotFoundError(f"No excel files found in '{daily_discharge_dir}'.")
+        logger.warning(f"No excel files with multiple rivers data found in '{daily_discharge_dir}'.")
     else:
         # Read the data from all files
         for file in files_multiple_rivers:
@@ -308,7 +308,7 @@ def read_all_runoff_data_from_excel(date_col='date', discharge_col='discharge', 
         and f.endswith('.xlsx') and f[0].isdigit()
     ]
     if len(files_single_rivers) == 0:
-        raise FileNotFoundError(f"No excel files found in '{daily_discharge_dir}'.")
+        logger.warning(f"No excel files with single river data found in '{daily_discharge_dir}'.")
     else:
         # Read the data from all files
         for file in files_single_rivers:
@@ -337,7 +337,7 @@ def read_all_runoff_data_from_excel(date_col='date', discharge_col='discharge', 
         df = pd.concat([df, df_single], axis=0)
     else:
         # df is not None and df_single is None. Return df.
-        raise Warning("No data found in the daily discharge directory")
+        logger.warning("No data found in the daily discharge directory")
 
     return df
 
