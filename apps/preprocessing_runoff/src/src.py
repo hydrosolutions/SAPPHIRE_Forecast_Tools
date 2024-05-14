@@ -162,6 +162,80 @@ def read_runoff_data_from_multiple_rivers_xlsx(filename, date_col='date', discha
 
     return df
 
+def read_runoff_data_from_single_river_xlsx(filename, date_col='date', discharge_col='discharge', name_col='name', code_col='code'):
+    """
+    Read daily average river runoff data from an excel sheet.
+
+    The function reads dates from the first column and river runoff data from
+    the second column of the excel sheet. The river name is extracted from the
+    first row of the sheet. The function reads data from all sheets in the excel
+    file and combines them into a single DataFrame. The function replaces
+    missing data with NaN.
+
+    Parameters
+    ----------
+    filename : str
+        Path to the excel sheet containing the river runoff data.
+    date_col : str, optional
+        Name of the column containing the date data. Default is 'date'.
+    discharge_col : str, optional
+        Name of the column containing the river runoff data. Default is 'discharge'.
+    name_col : str, optional
+        Name of the column containing the river name. Default is 'name'.
+    code_col : str, optional
+        Name of the column containing the river code. Default is 'code'.
+
+    Returns
+    -------
+    pandas.DataFrame
+        A DataFrame containing the river runoff data.
+
+    Raises
+    ------
+    FileNotFoundError
+        If the excel file is not found.
+    """
+    # Test if excel file is available
+    try:
+        xls = pd.ExcelFile(filename)
+    except FileNotFoundError:
+        raise FileNotFoundError(f"File '{filename}' not found.")
+
+    # Extract the name of the file from the path filename
+    filename = os.path.basename(filename)
+
+    # Read the river name from the first 5 characters of the file name
+    river_code = filename[:5]
+    river_name = filename[6:-16]
+
+    # Extract all sheet names
+    xls.sheet_names
+
+    # load data from all sheets into a single dataframe
+    df = pd.DataFrame()
+    # the river name is in cell A1 of each sheet
+    # the data starts in row 3 of each sheet where column A contains the time stamp and column B contains the river runoff data.
+    # some of the daily time series data are missing and the corresponding cells contain '-'. There might be a type mismatch.
+    # We want to have all data in a single dataframe df with the following columns: date, river runoff, river.
+    for sheet_name in xls.sheet_names:
+        df_sheet = pd.read_excel(xls, sheet_name, header=0, usecols=[0, 1], names=[date_col, discharge_col])
+        #print(f"Reading sheet '{sheet_name}' \n '{df_sheet.head()}'")
+        # read cell A1 and extract the river name
+        df_sheet[name_col] = river_name
+        df_sheet[code_col] = river_code
+        df = pd.concat([df, df_sheet], axis=0)
+
+    # convert date column to datetime format
+    df[date_col] = pd.to_datetime(df[date_col], format='%d.%m.%Y').dt.date
+
+    # convert discharge column to numeric format
+    df[discharge_col] = pd.to_numeric(df[discharge_col], errors='coerce')
+
+    # replace data in rows with missing values with NaN
+    df[discharge_col] = df[discharge_col].replace('-', float('nan'))
+
+    return df
+
 def read_all_runoff_data_from_excel(date_col='date', discharge_col='discharge', name_col='name', code_col='code'):
     """
     Reads daily river runoff data from all excel sheets in the daily_discharge
@@ -194,19 +268,29 @@ def read_all_runoff_data_from_excel(date_col='date', discharge_col='discharge', 
         raise FileNotFoundError(f"Directory '{daily_discharge_dir}' not found.")
 
     # Get the list of files in the directory
-    files = [
+    files_multiple_rivers = [
         f for f in os.listdir(daily_discharge_dir)
         if os.path.isfile(os.path.join(daily_discharge_dir, f))
-        and f.endswith('.xlsx')
+        and f.endswith('.xlsx') and not f[0].isdigit()
     ]
-    if len(files) == 0:
-        raise FileNotFoundError(f"No excel files found in '{daily_discharge_dir}'.")
+    # Initiate empty dataframe
+    df = None
 
-    # Read the data from all files
-    df = pd.DataFrame()
-    for file in files:
-        file_path = os.path.join(daily_discharge_dir, file)
-        df = pd.concat([df,
+    if len(files_multiple_rivers) == 0:
+        raise FileNotFoundError(f"No excel files found in '{daily_discharge_dir}'.")
+    else:
+        # Read the data from all files
+        for file in files_multiple_rivers:
+            file_path = os.path.join(daily_discharge_dir, file)
+            if df is None:
+                df = read_runoff_data_from_multiple_rivers_xlsx(
+                            filename=file_path,
+                            date_col=date_col,
+                            discharge_col=discharge_col,
+                            name_col=name_col,
+                            code_col=code_col)
+            else:
+                df = pd.concat([df,
                         read_runoff_data_from_multiple_rivers_xlsx(
                             filename=file_path,
                             date_col=date_col,
@@ -214,6 +298,46 @@ def read_all_runoff_data_from_excel(date_col='date', discharge_col='discharge', 
                             name_col=name_col,
                             code_col=code_col)],
                         axis=0)
+
+    # Do the same for files with single rivers
+    df_single = None
+
+    files_single_rivers = [
+        f for f in os.listdir(daily_discharge_dir)
+        if os.path.isfile(os.path.join(daily_discharge_dir, f))
+        and f.endswith('.xlsx') and f[0].isdigit()
+    ]
+    if len(files_single_rivers) == 0:
+        raise FileNotFoundError(f"No excel files found in '{daily_discharge_dir}'.")
+    else:
+        # Read the data from all files
+        for file in files_single_rivers:
+            file_path = os.path.join(daily_discharge_dir, file)
+            if df_single is None:
+                df_single = read_runoff_data_from_single_river_xlsx(
+                            filename=file_path,
+                            date_col=date_col,
+                            discharge_col=discharge_col,
+                            name_col=name_col,
+                            code_col=code_col)
+            else:
+                df_single = pd.concat([df_single,
+                        read_runoff_data_from_single_river_xlsx(
+                            filename=file_path,
+                            date_col=date_col,
+                            discharge_col=discharge_col,
+                            name_col=name_col,
+                            code_col=code_col)],
+                        axis=0)
+
+    # Combine the data from multiple and single rivers
+    if df is None and df_single is not None:
+        df = df_single
+    elif df is not None and df_single is not None:
+        df = pd.concat([df, df_single], axis=0)
+    else:
+        # df is not None and df_single is None. Return df.
+        raise Warning("No data found in the daily discharge directory")
 
     return df
 
@@ -436,7 +560,6 @@ def get_runoff_data(ieh_sdk=None, date_col='date', discharge_col='discharge', na
 
         # For sanity sake, we round the data to a mac of 3 decimal places
         read_data[discharge_col] = read_data[discharge_col].round(3)
-
 
         return read_data
 

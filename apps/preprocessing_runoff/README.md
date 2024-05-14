@@ -5,7 +5,7 @@ We perform a rough filtering of the data to remove outliers. The filtering is ba
 
 ## Input
 - Configuration as described in doc/configuration.md
-- Excel file(s) with daily river runoff data, one file per measurement site. The excel files have 2 header lines and one column for date in the format %d.%m.%Y and discharge as float in m3/s each. The first header line contains the unique code and name of the measurement site, separated by space.
+- Excel file(s) with daily river runoff data, one file per measurement site. The excel files have 2 header lines and one column for date in the format %d.%m.%Y and discharge as float in m3/s each. The first header line contains the unique code and name of the measurement site, separated by space. Some discharge data may come in a different format, with one header line only and the code ID in the name of the file. In this case, the code is extracted from the file name.
 
 ## Output
 - CSV file with daily river runoff data for each site. The file contains the columns 'code', 'date', and 'discharge' (in m3/s).
