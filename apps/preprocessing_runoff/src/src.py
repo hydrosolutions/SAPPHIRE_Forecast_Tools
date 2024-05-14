@@ -512,6 +512,208 @@ def get_todays_morning_discharge_from_iEH_per_site(
 
     return db_df
 
+def fill_gaps_in_reservoir_inflow_data(
+        combined_data: pd.DataFrame,
+        date_col: str,
+        discharge_col: str,
+        code_col: str):
+    """
+    Calculate discharge for virtual stations.
+
+    This function calculates data for the virtual station '16936' (Inflow to the
+    Toktogul reservoir) which is the sum of the data from the stations '16059',
+    '16096', '16100', and '16093'.
+    It further calculates the data for virtual station '15954' (Inflow to the
+    Kirov reservoir) which is equal to the data from station '15102'.
+    It also calculates the data for virtual station '15960' (Inflow to the
+    Orto-Tokoy reservoir) which is equal to the the sum of station '15261' and
+    4*station '15292'.
+
+    Args:
+    combined_data (pd.DataFrame): The input DataFrame. Must contain date_col, discharge_col, and code_col.
+    date_col (str): The name of the column containing the date data.
+    discharge_col (str): The name of the column containing the discharge data.
+    code_col (str): The name of the column containing the station code.
+
+    Returns:
+    pd.DataFrame: The input DataFrame with the calculated data for the virtual stations.
+
+    Raises:
+    ValueError: If the required columns are not in the input DataFrame.
+    """
+    # Check if the required columns are in the DataFrame
+    if date_col not in combined_data.columns:
+        raise ValueError(f"Column '{date_col}' not found in the DataFrame.")
+    if discharge_col not in combined_data.columns:
+        raise ValueError(f"Column '{discharge_col}' not found in the DataFrame.")
+    if code_col not in combined_data.columns:
+        raise ValueError(f"Column '{code_col}' not found in the DataFrame.")
+
+    # Calculate inflow for the Toktogul reservoir
+    if '16936' in combined_data[code_col].values:
+        logger.debug("preprocessing_runoff.src.fill_gaps_in_reservoir_inflow_data: Station 16936 is in the list of stations.")
+        # Go through the the combined_data for '16936' and check for data gaps.
+        # From the last available date in the combined_data for '16936', we
+        # look for data in the combined_data for other stations, namely '16059',
+        # '16096', '16100', and '16093' and add their values up to write to
+        # station '16936'.
+
+        # Get latest date for which we have data in '16936'
+        last_date_16936 = combined_data[combined_data[code_col] == '16936'][date_col].max()
+
+        # Get the data for the date from the other stations
+        # Test if station 16093 (Torkent) is in the list of stations
+        # (This station is under construction at the time of writing this code)
+        if '16059' in combined_data[code_col].values:
+            data_16059 = combined_data[(combined_data[code_col] == '16059') & (combined_data[date_col] >= last_date_16936)].copy()
+        else:
+            logger.error('Station 16059 is not in the list of stations for forecasting but it is required for forecasting 16936.\n -> Not able to calculate runoff for 16936.\n -> Please select station 16059 for forecasting.')
+            exit()
+        if '16096' in combined_data[code_col].values:
+            data_16096 = combined_data[(combined_data[code_col] == '16096') & (combined_data[date_col] >= last_date_16936)].copy()
+        else:
+            logger.error('Station 16096 is not in the list of stations for forecasting but it is required for forecasting 16936.\n -> Not able to calculate runoff for 16936.\n -> Please select station 16096 for forecasting.')
+            exit()
+        if '16100' in combined_data[code_col].values:
+            data_16100 = combined_data[(combined_data[code_col] == '16100') & (combined_data[date_col] >= last_date_16936)].copy()
+        else:
+            logger.error('Station 16100 is not in the list of stations for forecasting but it is required for forecasting 16936.\n -> Not able to calculate runoff for 16936.\n -> Please select station 16100 for forecasting.')
+            exit()
+        if '16093' in combined_data[code_col].values:
+            data_16093 = combined_data[(combined_data[code_col] == '16093') & (combined_data[date_col] >= last_date_16936)].copy()
+        else:
+            # 16093 is currently not gauged. We calculate the discharge as 60% of 16096
+            data_16093 = combined_data[(combined_data[code_col] == '16096') & (combined_data[date_col] >= last_date_16936)].copy()
+            data_16093.loc[:, discharge_col] = 0.6 * data_16096.loc[:, discharge_col]
+
+    else:
+        logger.debug("preprocessing_runoff.src.fill_gaps_in_reservoir_inflow_data: Station 16936 is NOT in the list of stations.")
+        # Get the data for the date from the other stations
+        if '16059' in combined_data[code_col].values:
+            data_16059 = combined_data[combined_data[code_col] == '16059'].copy()
+        else:
+            logger.error('Station 16059 is not in the list of stations for forecasting but it is required for forecasting 16936.\n -> Not able to calculate runoff for 16936.\n -> Please select station 16059 for forecasting.')
+            exit()
+        if '16096' in combined_data[code_col].values:
+            data_16096 = combined_data[combined_data[code_col] == '16096'].copy()
+        else:
+            logger.error('Station 16096 is not in the list of stations for forecasting but it is required for forecasting 16936.\n -> Not able to calculate runoff for 16936.\n -> Please select station 16096 for forecasting.')
+            exit()
+        if '16100' in combined_data[code_col].values:
+            data_16100 = combined_data[combined_data[code_col] == '16100'].copy()
+        else:
+            logger.error('Station 16100 is not in the list of stations for forecasting but it is required for forecasting 16936.\n -> Not able to calculate runoff for 16936.\n -> Please select station 16100 for forecasting.')
+            exit()
+        if '16093' in combined_data[code_col].values:
+            data_16093 = combined_data[combined_data[code_col] == '16093'].copy()
+        else:
+            # 16093 is currently not gauged. We calculate the discharge as 60% of 16096
+            data_16093 = combined_data[combined_data[code_col] == '16096'].copy()
+            data_16093.loc[:, discharge_col] = 0.6 * data_16096.loc[:, discharge_col]
+
+    # Merge data_15059, data_16096, data_16100, and data_16093 by date
+    data_Tok_combined = pd.merge(data_16059, data_16096, on=date_col, how='left', suffixes=('_16059', '_16096'))
+    data_16100.rename(columns={discharge_col: 'discharge_16100'}, inplace=True)
+    data_Tok_combined = pd.merge(data_Tok_combined, data_16100, on=date_col, how='left')
+    data_16093.rename(columns={discharge_col: 'discharge_16093'}, inplace=True)
+    data_Tok_combined = pd.merge(data_Tok_combined, data_16093, on=date_col, how='left')
+
+    # Sum up all the data and write to '16936'
+    data_Tok_combined['predictor'] = data_Tok_combined['discharge_16059'] + \
+        data_Tok_combined['discharge_16096'] + \
+            data_Tok_combined['discharge_16100'] + \
+                data_Tok_combined['discharge_16093']
+
+    # Append the data_Tok_combined['predictor'] to combined_data for '16936'
+    data_Tok_combined[code_col] = '16936'
+    data_Tok_combined[discharge_col] = data_Tok_combined['predictor'].round(3)
+    # Only keep the columns date_col, code_col, and discharge_col
+    data_Tok_combined = data_Tok_combined[[date_col, code_col, discharge_col]]
+
+    combined_data = pd.concat([combined_data, data_Tok_combined], ignore_index=True)
+
+    # The same for the Kirov reservoir
+    if '15960' in combined_data[code_col].values:
+        logger.debug("preprocessing_runoff.src.fill_gaps_in_reservoir_inflow_data: Station 15960 is in the list of stations.")
+        # Go through the the combined_data for '15960' and check for data gaps.
+
+        # Get latest date for which we have data in '15960'
+        last_date_15960 = combined_data[combined_data[code_col] == '15960'][date_col].max()
+
+        # Get the data for the date from the other stations
+        if '15261' in combined_data[code_col].values:
+            data_15261 = combined_data[(combined_data[code_col] == '15261') & (combined_data[date_col] >= last_date_15960)].copy()
+        else:
+            logger.error('Station 15261 is not in the list of stations for forecasting but it is required for forecasting 15960.\n -> Not able to calculate runoff for 15960.\n -> Please select station 15261 for forecasting.')
+            exit()
+        if '15292' in combined_data[code_col].values:
+            data_15292 = combined_data[(combined_data[code_col] == '15292') & (combined_data[date_col] >= last_date_15960)].copy()
+        else:
+            logger.error('Station 15292 is not in the list of stations for forecasting but it is required for forecasting 15960.\n -> Not able to calculate runoff for 15960.\n -> Please select station 15292 for forecasting.')
+            exit()
+
+    else:
+        logger.debug("preprocessing_runoff.src.fill_gaps_in_reservoir_inflow_data: Station 15960 is NOT in the list of stations.")
+        # Get the data for the date from the other stations
+        if '15261' in combined_data[code_col].values:
+            data_15261 = combined_data[combined_data[code_col] == '15261'].copy()
+        else:
+            logger.error('Station 15261 is not in the list of stations for forecasting but it is required for forecasting 15960.\n -> Not able to calculate runoff for 15960.\n -> Please select station 15261 for forecasting.')
+            exit()
+        if '15292' in combined_data[code_col].values:
+            data_15292 = combined_data[combined_data[code_col] == '15292'].copy()
+        else:
+            logger.error('Station 15292 is not in the list of stations for forecasting but it is required for forecasting 15960.\n -> Not able to calculate runoff for 15960.\n -> Please select station 15292 for forecasting.')
+            exit()
+
+    # Merge by date
+    data_Kir_combined = pd.merge(data_15261, data_15292, on=date_col, how='left', suffixes=('_15261', '_15292'))
+
+    # Sum up all the data and write to '15960'
+    data_Kir_combined['predictor'] = data_Kir_combined['discharge_15261'] + \
+        data_Kir_combined['discharge_15292']*4
+
+    # Append the data_Kir_combined['predictor'] to combined_data for '15960'
+    data_Kir_combined[code_col] = '15960'
+    data_Kir_combined[discharge_col] = data_Kir_combined['predictor'].round()
+    # Only keep the columns date_col, code_col, and discharge_col
+    data_Kir_combined = data_Kir_combined[[date_col, code_col, discharge_col]]
+
+    combined_data = pd.concat([combined_data, data_Kir_combined], ignore_index=True)
+
+    # The same for the Orto-Tokoy reservoir
+    if '15954' in combined_data[code_col].values:
+        logger.debug("preprocessing_runoff.src.fill_gaps_in_reservoir_inflow_data: Station 15954 is in the list of stations.")
+        # Go through the the combined_data for '15954' and check for data gaps.
+
+        # Get latest date for which we have data in '15954'
+        last_date_15954 = combined_data[combined_data[code_col] == '15954'][date_col].max()
+
+        # Get the data for the date from the other stations
+        if '15102' in combined_data[code_col].values:
+            data_15102 = combined_data[(combined_data[code_col] == '15102') & (combined_data[date_col] >= last_date_15954)].copy()
+        else:
+            logger.error('Station 15102 is not in the list of stations for forecasting but it is required for forecasting 15954.\n -> Not able to calculate runoff for 15954.\n -> Please select station 15102 for forecasting.')
+            exit()
+
+    else:
+        logger.debug("preprocessing_runoff.src.fill_gaps_in_reservoir_inflow_data: Station 15954 is NOT in the list of stations.")
+        if '15102' in combined_data[code_col].values:
+            # Print the minimum and the maximum dates for station 15102
+            data_15102 = combined_data[combined_data[code_col] == '15102'].copy()
+        else:
+            logger.error('Station 15102 is not in the list of stations for forecasting but it is required for forecasting 15954.\n -> Not able to calculate runoff for 15954.\n -> Please select station 15102 for forecasting.')
+            exit()
+        # Overwrite the code for the station
+        data_15102[code_col] = '15954'
+
+    combined_data = pd.concat([combined_data, data_15102], ignore_index=True)
+
+    # Sort the data by date and code
+    combined_data = combined_data.sort_values(by=[code_col, date_col])
+
+    return combined_data
+
 def get_runoff_data(ieh_sdk=None, date_col='date', discharge_col='discharge', name_col='name', code_col='code'):
     """
     Reads runoff data from excel and, if possible, from iEasyHydro database.
@@ -560,6 +762,9 @@ def get_runoff_data(ieh_sdk=None, date_col='date', discharge_col='discharge', na
 
         # For sanity sake, we round the data to a mac of 3 decimal places
         read_data[discharge_col] = read_data[discharge_col].round(3)
+
+        # Cast the 'code' column to string
+        read_data[code_col] = read_data[code_col].astype(str)
 
         return read_data
 

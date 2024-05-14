@@ -88,9 +88,16 @@ def main():
         name_col='name',
         code_col='code')
 
+    # Calculate data for virtual hydroposts where neccessary
+    filled_data = src.fill_gaps_in_reservoir_inflow_data(
+        runoff_data,
+        date_col='date',
+        discharge_col='discharge',
+        code_col='code')
+
     # Filtering for outliers
     filtered_data = src.filter_roughly_for_outliers(
-        runoff_data, 'code', 'discharge')
+        filled_data, 'code', 'discharge')
 
     # Save the data
     ret = src.write_data_to_csv(
