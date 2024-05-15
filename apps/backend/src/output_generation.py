@@ -974,7 +974,7 @@ def write_forecast_sheets_decad(settings, start_date, bulletin_date, fc_sites, r
 
 def write_pentadal_forecast_data(data: pd.DataFrame):
     """
-    Writes the data to a csv file for later reating into the forecast dashboard.
+    Writes the data to a csv file for later reading into the forecast dashboard.
 
     Args:
     data (pd.DataFrame): The data to be written to a csv file.

@@ -170,9 +170,14 @@ def main():
                 code_col='code',
                 group_col='pentad_in_year')
 
+            # Rename the column discharge_sum to predictor
+            linreg_pentad.rename(columns={'discharge_sum': 'predictor'}, inplace=True)
 
             # Write output files for the current forecast horizon
-            # TODO
+            fl.write_pentad_forecast_data(
+                linreg_pentad[['date', 'issue_date', 'pentad', 'pentad_in_year', 'code',
+                               'predictor', 'discharge_avg', 'slope',
+                               'intercept', 'forecasted_discharge']])
 
         if forecast_flags.decad:
             logger.info(f"Starting decadal forecast for {current_day}. End date: {date_end}. Bulletin date: {bulletin_date}.")
@@ -222,7 +227,7 @@ def main():
                 group_col='decad_in_year')
 
             # Write output files for the current forecast horizon
-            # TODO
+            fl.write_decad_forecast_data(linreg_decad)
 
         # Store the last run date
         sl.store_last_successful_run_date(current_day)

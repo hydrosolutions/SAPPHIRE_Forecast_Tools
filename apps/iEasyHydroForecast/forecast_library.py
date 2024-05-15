@@ -15,7 +15,8 @@ import tag_library as tl
 logger = logging.getLogger(__name__)
 
 # === Functions ===
-# region Function definitions
+# --- Helper tools ---
+# region tools
 
 def get_last_day_of_month(date: dt.date) -> dt.date:
     """
@@ -318,412 +319,6 @@ def round_discharge(value: float) -> str:
     except Exception as e:
         print(f'Error in round_discharge: {e}')
         return None
-
-def perform_linear_regression(
-        data_df: pd.DataFrame, station_col: str, pentad_col: str, predictor_col: str,
-        discharge_avg_col: str, forecast_pentad: int) -> pd.DataFrame:
-    '''
-    Perform a linear regression for each station & pentad in a DataFrame.
-
-    Details:
-    The linear regression is performed for the forecast pentad of the year
-    (value between 1 and 72).
-
-    Args:
-        data_df (pd.DataFrame): The DataFrame containing the data to perform the
-            linear regression on.
-        station_col (str): The name of the column containing the station codes.
-        pentad_col (str): The name of the column containing the pentad values.
-            pentad is a place holder here. It can be pentad or decad.
-        predictor_col (str): The name of the column containing the discharge
-            predictor values.
-        discharge_avg_col (str): The name of the column containing the discharge
-            average values.
-        forecast_pentad(int): The pentad of the year to perform the linear
-            regression for. Must be a value between 1 and 72.
-
-    Returns:
-        pd.DataFrame: A DataFrame containing the columns of the input data frame
-            plus the columns 'slope', 'intercept' and 'forecasted_discharge'.
-            The rows of the DataFrame are filtered to the forecast pentad.
-
-    Examples:
-        >>> data = {'station': ['A', 'A', 'B', 'B', 'C', 'C'],
-                    'pentad': [1, 2, 1, 2, 1, 2],
-                    'discharge_sum': [100, 200, 150, 250, 120, 180],
-                    'discharge_avg': [10, 20, 15, 25, 12, 18]}
-        >>> df = pd.DataFrame(data)
-        >>> result = fl.perform_linear_regression(df, 'station', 'pentad', 'discharge_sum', 'discharge_avg', 2)
-        >>> print(result)
-            station  pentad  discharge_sum  discharge_avg  slope  intercept  forecasted_discharge
-        1        A       2            200             20    0.0       200.0                  20.0
-        3        B       2            250             25    0.0       250.0                  25.0
-        5        C       2            180             18    0.0       180.0                  18.0
-
-    '''
-    # Test that all input types are as expected.
-    if not isinstance(data_df, pd.DataFrame):
-        raise TypeError('data_df must be a pandas.DataFrame object')
-    if not isinstance(station_col, str):
-        raise TypeError('station_col must be a string')
-    if not isinstance(pentad_col, str):
-        raise TypeError('pentad_col must be a string')
-    if not isinstance(predictor_col, str):
-        raise TypeError('predictor_col must be a string')
-    if not isinstance(discharge_avg_col, str):
-        raise TypeError('discharge_avg_col must be a string')
-    if not isinstance(forecast_pentad, int):
-        raise TypeError('forecast_pentad must be an integer')
-    if not all(column in data_df.columns for column in [station_col, pentad_col, predictor_col, discharge_avg_col]):
-        raise ValueError(f'DataFrame is missing one or more required columns.\n   Required columns: station_col, pentad_col, predictor_col, discharge_avg_col\n   present columns {data_df.columns}')
-
-    # Test that the required columns exist in the input DataFrame.
-    required_columns = [station_col, pentad_col, predictor_col, discharge_avg_col]
-    missing_columns = [col for col in required_columns if not hasattr(data_df, col)]
-    if missing_columns:
-        raise ValueError(f"DataFrame is missing one or more required columns: {missing_columns}")
-
-    # Make sure pentad_col is of type int and values therein are between 1 and
-    # 72.
-    data_df[pentad_col] = data_df[pentad_col].astype(float)
-    if not all(data_df[pentad_col].between(1, 72)):
-        raise ValueError(f'Values in column {pentad_col} are not between 1 and 72')
-
-    # Filter for the forecast pentad
-    data_dfp = data_df[data_df[pentad_col] == float(forecast_pentad)]
-
-    # Test if data_df is empty
-    if data_dfp.empty:
-        raise ValueError(f'DataFrame is empty after filtering for pentad {forecast_pentad}')
-
-    # Initialize the slope and intercept columns to 0 and 1
-    data_dfp = data_dfp.assign(slope=1.0)
-    data_dfp = data_dfp.assign(intercept=0.0)
-    data_dfp = data_dfp.assign(forecasted_discharge=-1.0)
-
-    # Loop over each station we have data for
-    for station in data_dfp[station_col].unique():
-        # filter for station and pentad. If the DataFrame is empty,
-        # raise an error.
-        try:
-            station_data = data_dfp[(data_dfp[station_col] == station)]
-            # Test if station_data is empty
-            if station_data.empty:
-                raise ValueError(f'DataFrame is empty after filtering for station {station}')
-        except ValueError as e:
-            print(f'Error in perform_linear_regression when filtering for station data: {e}')
-
-        # Drop NaN values, i.e. keep only the time steps where both
-        # discharge_sum and discharge_avg are not NaN. These correspond to the
-        # time steps where we produce a forecast.
-        station_data = station_data.dropna()
-
-        # Get the discharge_sum and discharge_avg columns
-        discharge_sum = station_data[predictor_col].values.reshape(-1, 1)
-        discharge_avg = station_data[discharge_avg_col].values.reshape(-1, 1)
-
-        # Perform the linear regression
-        model = LinearRegression().fit(discharge_sum, discharge_avg)
-
-        # Get the slope and intercept
-        slope = model.coef_[0][0]
-        intercept = model.intercept_[0]
-        # forecasted_discharge = slope * discharge_sum + intercept
-
-        # Print the slope and intercept
-        logger.debug(f'Station: {station}, pentad: {forecast_pentad}, slope: {slope}, intercept: {intercept}')
-
-        # # Create a scatter plot with the regression line
-        # fig = px.scatter(station_data, x=predictor_col, y=discharge_avg_col, color=station_col)
-        # fig.add_trace(px.line(x=discharge_sum.flatten(), y=model.predict(discharge_sum).flatten()).data[0])
-        # fig.show()
-
-        # Store the slope and intercept in the data_df
-        data_dfp.loc[(data_dfp[station_col] == station), 'slope'] = slope
-        data_dfp.loc[(data_dfp[station_col] == station), 'intercept'] = intercept
-
-        # Calculate the forecasted discharge for the current station and forecast_pentad
-        data_dfp.loc[(data_dfp[station_col] == station), 'forecasted_discharge'] = \
-            slope * data_dfp.loc[(data_dfp[station_col] == station), predictor_col] + intercept
-
-    return data_dfp
-
-def perform_forecast(fc_sites, group_id=None, result_df=None,
-                     code_col='code', group_col='pentad_in_year'):
-    # Perform forecast
-    logger.info("Performing pentad forecast ...")
-
-    # For each site, calculate the forecasted discharge
-    for site in fc_sites:
-        Site.from_df_calculate_forecast(
-            site, group_id=group_id, df=result_df,
-            code_col=code_col, group_col=group_col)
-
-    logger.info(f'   {len(fc_sites)} Forecasts calculated, namely:\n'
-                f'{[[site.code, site.fc_qexp] for site in fc_sites]}')
-
-    logger.info("   ... done")
-
-def nse(data: pd.DataFrame, observed_col: str, simulated_col: str):
-    """
-    Calculate the Nash-Sutcliffe Efficiency (NSE) for the observed and simulated data.
-
-    Args:
-        data (pandas.DataFrame): The input data containing the observed and simulated data.
-        observed_col (str): The name of the column containing the observed data.
-        simulated_col (str): The name of the column containing the simulated data.
-
-    Returns:
-        float: The Nash-Sutcliffe Efficiency (NSE) value for the observed and simulated data.
-
-    Raises:
-        ValueError: If the input data is missing one or more required columns.
-
-    """
-    # Test the input. Make sure that the DataFrame contains the required columns
-    if not all(column in data.columns for column in [observed_col, simulated_col]):
-        raise ValueError(f'DataFrame is missing one or more required columns: {observed_col, simulated_col}')
-
-    # Drop NaN values
-    data = data.dropna()
-
-    # Calculate the Nash-Sutcliffe Efficiency (NSE)
-    numerator = ((data[observed_col] - data[simulated_col])**2).sum()
-    denominator = ((data[observed_col] - data[observed_col].mean())**2).sum()
-
-    # Calculate the NSE value
-    nse_value = 1 - (numerator / denominator)
-
-    return nse_value
-
-def calculate_forecast_skill(data_df: pd.DataFrame, station_col: str,
-                             pentad_col: str, observation_col: str,
-                             simulation_col: str) -> pd.DataFrame:
-    """
-    Calculates the forecast skill for each group in the input data.
-
-    Args:
-        data (pandas.DataFrame): The input data containing the observation and
-            simulation data.
-        station_col (str): The name of the column containing the station
-            identifier.
-        pentad_col (str): The name of the column containing the pentad data.
-        observation_col (str): The name of the column containing the observation
-            data.
-        simulation_col (str): The name of the column containing the simulation
-            data.
-
-    Returns:
-        pandas.DataFrame: The modified input data with additional columns
-            containing the forecast skill information, namely abolute error,
-            observation_std0674 and flag.
-    """
-
-    # Test the input. Make sure that the DataFrame contains the required columns
-    if not all(column in data_df.columns for column in [station_col, pentad_col, observation_col, simulation_col]):
-        raise ValueError(f'DataFrame is missing one or more required columns: {station_col, pentad_col, observation_col, simulation_col}')
-
-    # Initialize columns
-    data_df.loc[:, 'absolute_error'] = 0.0
-    data_df.loc[:, 'observation_std0674'] = 0.0  # delta
-    data_df.loc[:, 'flag'] = 0.0
-    data_df.loc[:, 'accuracy'] = 0.0  # percentage of good forecasts
-    data_df.loc[:, 'observation_std'] = 0.0  # sigma
-    data_df.loc[:, 'observation_std_sanity_check'] = 0.0  # sigma
-    data_df.loc[:, 'forecast_std'] = 0.0  # s
-    data_df.loc[:, 'sdivsigma'] = 0.0  # s / sigma, "effectiveness" of the model
-
-    # Loop over each station and pentad
-    for station in data_df[station_col].unique():
-        for pentad in data_df[pentad_col].unique():
-            # Get the data for the station and pentad
-            station_data = data_df.loc[
-                (data_df[station_col] == station) & (data_df[pentad_col] == pentad), :]
-
-            # Drop NaN values
-            station_data = station_data.dropna()
-
-            # Calculate the absolute error between the simulation data and the observation data
-            absolute_error_forecast = abs(station_data[simulation_col] - station_data[observation_col])
-            absolute_error_observed = abs(station_data[observation_col] - station_data[observation_col].mean())
-            observation_std = station_data[observation_col].std()
-            # The unbiased sample standard deviation sigma is calculated as
-            # sigma = sqrt(sum((x_i - x_mean)^2) / (n-1))
-            observation_std_sanity_check = math.sqrt(station_data[observation_col].apply(lambda x: (x - station_data[observation_col].mean())**2).sum() / (len(station_data) - 1))
-            # The measure s is calculated as
-            # s = sqrt(sum((x_i - y_i)^2) / (n-2))
-            forecast_std = math.sqrt(station_data.apply(lambda x: (x[observation_col] - x[simulation_col])**2, axis=1).sum() / (len(station_data) - 2))
-            sdivsigma = forecast_std / observation_std
-
-            # Note: .std() will yield NaN if there is only one value in the DataFrame
-            # Test if the standard deviation is NaN and return 0.0 if it is
-            if np.isnan(observation_std):
-                observation_std = 0.0
-
-            # Set the flag if the error is smaller than 0.674 times the standard deviation of the observation data
-            flag = absolute_error_forecast <= 0.674 * observation_std
-
-            # Calculate the accuracy of the forecast
-            accuracy = flag.mean()
-
-            # Delta is 0.674 times the standard deviation of the observation data
-            # This is the measure for the allowable uncertainty of a good forecast
-            observation_std0674 = 0.674 * observation_std
-
-            # Store the slope and intercept in the data_df
-            data_df.loc[
-                (data_df[station_col] == station) & (data_df[pentad_col] == pentad),
-                'absolute_error'] = absolute_error_forecast
-            data_df.loc[
-                (data_df[station_col] == station) & (data_df[pentad_col] == pentad),
-                'observation_std0674'] = observation_std0674
-            data_df.loc[
-                (data_df[station_col] == station) & (data_df[pentad_col] == pentad),
-                'flag'] = flag
-            data_df.loc[
-                (data_df[station_col] == station) & (data_df[pentad_col] == pentad),
-                'observation_std'] = observation_std
-            data_df.loc[
-                (data_df[station_col] == station) & (data_df[pentad_col] == pentad),
-                'observation_std_sanity_check'] = observation_std_sanity_check
-            data_df.loc[
-                (data_df[station_col] == station) & (data_df[pentad_col] == pentad),
-                'forecast_std'] = forecast_std
-            data_df.loc[
-                (data_df[station_col] == station) & (data_df[pentad_col] == pentad),
-                'sdivsigma'] = sdivsigma
-            data_df.loc[
-                (data_df[station_col] == station) & (data_df[pentad_col] == pentad),
-                'accuracy'] = accuracy
-
-    #print("DEBUG: fl.calculate_forecast_skill: data_df\n", data_df.head(20))
-    #print(data_df.tail(20))
-
-    return data_df
-
-def load_all_station_data_from_JSON(file_path: str) -> pd.DataFrame:
-    """
-    Loads station data from a JSON file and returns a filtered DataFrame.
-
-    Args:
-        file_path (str): The path to the JSON file.
-
-    Returns:
-        pd.DataFrame: A DataFrame containing the discharge station data.
-
-    Raises:
-        ValueError: If the JSON file cannot be read.
-    """
-    try:
-        with open(file_path) as f:
-            config_all = json.load(f)
-
-            # Check that the JSON object contains the expected keys and values
-            if 'stations_available_for_forecast' not in config_all:
-                raise ValueError('JSON file does not contain expected key "stations_available_for_forecast"')
-            if not isinstance(config_all['stations_available_for_forecast'], dict):
-                raise ValueError('Value of key "stations_available_for_forecast" is not a dictionary')
-
-            # Check that each station has keys "name_ru", "river_ru", "punkt_ru",
-            # "name_eng", "river_eng", "punkt_eng", "lat", "long", "code" and
-            # "display_p"
-            for key, value in config_all['stations_available_for_forecast'].items():
-                if not isinstance(value, dict):
-                    raise ValueError(f'Value of key "{key}" is not a dictionary')
-                if 'name_ru' not in value:
-                    raise ValueError(f'Station "{key}" does not have key "name_ru"')
-                if 'lat' not in value:
-                    raise ValueError(f'Station "{key}" does not have key "lat"')
-                if 'long' not in value:
-                    raise ValueError(f'Station "{key}" does not have key "long"')
-                if 'code' not in value:
-                    raise ValueError(f'Station "{key}" does not have key "code"')
-
-            # Let's try another import of the json file.
-            json_object = config_all['stations_available_for_forecast']
-
-            # Create an empty DataFrame to store the station data
-            df = pd.DataFrame()
-
-            # Loop over the keys in the JSON object
-            for key in json_object.keys():
-                # Create a new DataFrame with the station data
-                station_df = pd.DataFrame.from_dict(json_object[key], orient='index').T
-
-                # Add a column to the DataFrame with the header string
-                station_df['header'] = key
-
-                # Append the station data to the main DataFrame
-                df = pd.concat([df, station_df], ignore_index=True)
-
-            # Filter for code starting with 1
-            # Currently commented out to allow for the main code to update the
-            # config all stations file.
-            # df = df[df['code'].astype(str).str.startswith('1')]
-
-            # Write a column 'site_code' which is 'code' transformed to str
-            df['site_code'] = df['code'].astype(str)
-            return df
-
-    except FileNotFoundError as e:
-        raise FileNotFoundError('Could not read config file. Error message: {}'.format(e))
-    except ValueError as e:
-        raise ValueError('Could not read config file. Error message: {}'.format(e))
-
-def read_daily_discharge_data_from_csv():
-    """
-    Read the discharge data from a csv file specified in the environment.
-
-    Returns:
-    --------
-    pandas.DataFrame
-        The discharge data with columns 'code', 'date', 'discharge' (in m3/s).
-
-    Raises:
-    -------
-    EnvironmentError
-        If the required environment variables are not set.
-    FileNotFoundError
-        If the specified file does not exist.
-    ValueError
-        If the DataFrame does not contain the required columns.
-    pd.errors.ParserError
-        If the specified file cannot be read as a CSV.
-    """
-
-    # Check if the required environment variables are set
-    data_path = os.getenv("ieasyforecast_intermediate_data_path")
-    discharge_file = os.getenv("ieasyforecast_daily_discharge_file")
-    if data_path is None or discharge_file is None:
-        raise EnvironmentError("The environment variables 'ieasyforecast_intermediate_data_path' and 'ieasyforecast_daily_discharge_file' must be set.")
-
-    file_path = os.path.join(data_path, discharge_file)
-
-    # Check if the specified file exists
-    if not os.path.exists(file_path):
-        raise FileNotFoundError(f"The specified file {file_path} does not exist.")
-
-    # Read the discharge data from the csv file
-    try:
-        discharge_data = pd.read_csv(file_path, sep=',')
-    except pd.errors.ParserError:
-        raise pd.errors.ParserError(f"The specified file {file_path} cannot be read as a CSV.")
-
-    # Check if the DataFrame contains the required columns
-    required_columns = ['code', 'date', 'discharge']
-    if not all(column in discharge_data.columns for column in required_columns):
-        raise ValueError(f"The DataFrame does not contain the required columns: {required_columns}")
-
-    # Convert the 'date' column to datetime
-    discharge_data['date'] = pd.to_datetime(discharge_data['date'])
-
-    # Cast the 'code' column to string
-    discharge_data['code'] = discharge_data['code'].astype(str)
-
-    # Sort the DataFrame by 'code' and 'date'
-    discharge_data = discharge_data.sort_values(by=['code', 'date'])
-
-    return discharge_data
 
 def filter_discharge_data_for_code_and_date(
         df,
@@ -1286,6 +881,521 @@ def get_pentadal_and_decadal_data(forecast_flags=None,
 
     return data_pentad, data_decad
 
+# endregion
+
+
+# --- Forecasting ---
+# region forecasting
+
+def perform_linear_regression(
+        data_df: pd.DataFrame, station_col: str, pentad_col: str, predictor_col: str,
+        discharge_avg_col: str, forecast_pentad: int) -> pd.DataFrame:
+    '''
+    Perform a linear regression for each station & pentad in a DataFrame.
+
+    Details:
+    The linear regression is performed for the forecast pentad of the year
+    (value between 1 and 72).
+
+    Args:
+        data_df (pd.DataFrame): The DataFrame containing the data to perform the
+            linear regression on.
+        station_col (str): The name of the column containing the station codes.
+        pentad_col (str): The name of the column containing the pentad values.
+            pentad is a place holder here. It can be pentad or decad.
+        predictor_col (str): The name of the column containing the discharge
+            predictor values.
+        discharge_avg_col (str): The name of the column containing the discharge
+            average values.
+        forecast_pentad(int): The pentad of the year to perform the linear
+            regression for. Must be a value between 1 and 72.
+
+    Returns:
+        pd.DataFrame: A DataFrame containing the columns of the input data frame
+            plus the columns 'slope', 'intercept' and 'forecasted_discharge'.
+            The rows of the DataFrame are filtered to the forecast pentad.
+
+    Examples:
+        >>> data = {'station': ['A', 'A', 'B', 'B', 'C', 'C'],
+                    'pentad': [1, 2, 1, 2, 1, 2],
+                    'discharge_sum': [100, 200, 150, 250, 120, 180],
+                    'discharge_avg': [10, 20, 15, 25, 12, 18]}
+        >>> df = pd.DataFrame(data)
+        >>> result = fl.perform_linear_regression(df, 'station', 'pentad', 'discharge_sum', 'discharge_avg', 2)
+        >>> print(result)
+            station  pentad  discharge_sum  discharge_avg  slope  intercept  forecasted_discharge
+        1        A       2            200             20    0.0       200.0                  20.0
+        3        B       2            250             25    0.0       250.0                  25.0
+        5        C       2            180             18    0.0       180.0                  18.0
+
+    '''
+    # Test that all input types are as expected.
+    if not isinstance(data_df, pd.DataFrame):
+        raise TypeError('data_df must be a pandas.DataFrame object')
+    if not isinstance(station_col, str):
+        raise TypeError('station_col must be a string')
+    if not isinstance(pentad_col, str):
+        raise TypeError('pentad_col must be a string')
+    if not isinstance(predictor_col, str):
+        raise TypeError('predictor_col must be a string')
+    if not isinstance(discharge_avg_col, str):
+        raise TypeError('discharge_avg_col must be a string')
+    if not isinstance(forecast_pentad, int):
+        raise TypeError('forecast_pentad must be an integer')
+    if not all(column in data_df.columns for column in [station_col, pentad_col, predictor_col, discharge_avg_col]):
+        raise ValueError(f'DataFrame is missing one or more required columns.\n   Required columns: station_col, pentad_col, predictor_col, discharge_avg_col\n   present columns {data_df.columns}')
+
+    # Test that the required columns exist in the input DataFrame.
+    required_columns = [station_col, pentad_col, predictor_col, discharge_avg_col]
+    missing_columns = [col for col in required_columns if not hasattr(data_df, col)]
+    if missing_columns:
+        raise ValueError(f"DataFrame is missing one or more required columns: {missing_columns}")
+
+    # Make sure pentad_col is of type int and values therein are between 1 and
+    # 72.
+    data_df[pentad_col] = data_df[pentad_col].astype(float)
+    if not all(data_df[pentad_col].between(1, 72)):
+        raise ValueError(f'Values in column {pentad_col} are not between 1 and 72')
+
+    # Filter for the forecast pentad
+    data_dfp = data_df[data_df[pentad_col] == float(forecast_pentad)]
+
+    # Test if data_df is empty
+    if data_dfp.empty:
+        raise ValueError(f'DataFrame is empty after filtering for pentad {forecast_pentad}')
+
+    # Initialize the slope and intercept columns to 0 and 1
+    data_dfp = data_dfp.assign(slope=1.0)
+    data_dfp = data_dfp.assign(intercept=0.0)
+    data_dfp = data_dfp.assign(forecasted_discharge=-1.0)
+
+    # Loop over each station we have data for
+    for station in data_dfp[station_col].unique():
+        # filter for station and pentad. If the DataFrame is empty,
+        # raise an error.
+        try:
+            station_data = data_dfp[(data_dfp[station_col] == station)]
+            # Test if station_data is empty
+            if station_data.empty:
+                raise ValueError(f'DataFrame is empty after filtering for station {station}')
+        except ValueError as e:
+            print(f'Error in perform_linear_regression when filtering for station data: {e}')
+
+        # Drop NaN values, i.e. keep only the time steps where both
+        # discharge_sum and discharge_avg are not NaN. These correspond to the
+        # time steps where we produce a forecast.
+        station_data = station_data.dropna()
+
+        # Get the discharge_sum and discharge_avg columns
+        discharge_sum = station_data[predictor_col].values.reshape(-1, 1)
+        discharge_avg = station_data[discharge_avg_col].values.reshape(-1, 1)
+
+        # Perform the linear regression
+        model = LinearRegression().fit(discharge_sum, discharge_avg)
+
+        # Get the slope and intercept
+        slope = model.coef_[0][0]
+        intercept = model.intercept_[0]
+        # forecasted_discharge = slope * discharge_sum + intercept
+
+        # Print the slope and intercept
+        logger.debug(f'Station: {station}, pentad: {forecast_pentad}, slope: {slope}, intercept: {intercept}')
+
+        # # Create a scatter plot with the regression line
+        # fig = px.scatter(station_data, x=predictor_col, y=discharge_avg_col, color=station_col)
+        # fig.add_trace(px.line(x=discharge_sum.flatten(), y=model.predict(discharge_sum).flatten()).data[0])
+        # fig.show()
+
+        # Store the slope and intercept in the data_df
+        data_dfp.loc[(data_dfp[station_col] == station), 'slope'] = slope
+        data_dfp.loc[(data_dfp[station_col] == station), 'intercept'] = intercept
+
+        # Calculate the forecasted discharge for the current station and forecast_pentad
+        data_dfp.loc[(data_dfp[station_col] == station), 'forecasted_discharge'] = \
+            slope * data_dfp.loc[(data_dfp[station_col] == station), predictor_col] + intercept
+
+    return data_dfp
+
+def perform_forecast(fc_sites, group_id=None, result_df=None,
+                     code_col='code', group_col='pentad_in_year'):
+    # Perform forecast
+    logger.info("Performing pentad forecast ...")
+
+    # For each site, calculate the forecasted discharge
+    for site in fc_sites:
+        Site.from_df_calculate_forecast(
+            site, group_id=group_id, df=result_df,
+            code_col=code_col, group_col=group_col)
+
+    logger.info(f'   {len(fc_sites)} Forecasts calculated, namely:\n'
+                f'{[[site.code, site.fc_qexp] for site in fc_sites]}')
+
+    logger.info("   ... done")
+
+# endregion
+
+
+# --- Post-processing ---
+# region postprocessing
+
+def nse(data: pd.DataFrame, observed_col: str, simulated_col: str):
+    """
+    Calculate the Nash-Sutcliffe Efficiency (NSE) for the observed and simulated data.
+
+    Args:
+        data (pandas.DataFrame): The input data containing the observed and simulated data.
+        observed_col (str): The name of the column containing the observed data.
+        simulated_col (str): The name of the column containing the simulated data.
+
+    Returns:
+        float: The Nash-Sutcliffe Efficiency (NSE) value for the observed and simulated data.
+
+    Raises:
+        ValueError: If the input data is missing one or more required columns.
+
+    """
+    # Test the input. Make sure that the DataFrame contains the required columns
+    if not all(column in data.columns for column in [observed_col, simulated_col]):
+        raise ValueError(f'DataFrame is missing one or more required columns: {observed_col, simulated_col}')
+
+    # Drop NaN values
+    data = data.dropna()
+
+    # Calculate the Nash-Sutcliffe Efficiency (NSE)
+    numerator = ((data[observed_col] - data[simulated_col])**2).sum()
+    denominator = ((data[observed_col] - data[observed_col].mean())**2).sum()
+
+    # Calculate the NSE value
+    nse_value = 1 - (numerator / denominator)
+
+    return nse_value
+
+def calculate_forecast_skill(data_df: pd.DataFrame, station_col: str,
+                             pentad_col: str, observation_col: str,
+                             simulation_col: str) -> pd.DataFrame:
+    """
+    Calculates the forecast skill for each group in the input data.
+
+    Args:
+        data (pandas.DataFrame): The input data containing the observation and
+            simulation data.
+        station_col (str): The name of the column containing the station
+            identifier.
+        pentad_col (str): The name of the column containing the pentad data.
+        observation_col (str): The name of the column containing the observation
+            data.
+        simulation_col (str): The name of the column containing the simulation
+            data.
+
+    Returns:
+        pandas.DataFrame: The modified input data with additional columns
+            containing the forecast skill information, namely abolute error,
+            observation_std0674 and flag.
+    """
+
+    # Test the input. Make sure that the DataFrame contains the required columns
+    if not all(column in data_df.columns for column in [station_col, pentad_col, observation_col, simulation_col]):
+        raise ValueError(f'DataFrame is missing one or more required columns: {station_col, pentad_col, observation_col, simulation_col}')
+
+    # Initialize columns
+    data_df.loc[:, 'absolute_error'] = 0.0
+    data_df.loc[:, 'observation_std0674'] = 0.0  # delta
+    data_df.loc[:, 'flag'] = 0.0
+    data_df.loc[:, 'accuracy'] = 0.0  # percentage of good forecasts
+    data_df.loc[:, 'observation_std'] = 0.0  # sigma
+    data_df.loc[:, 'observation_std_sanity_check'] = 0.0  # sigma
+    data_df.loc[:, 'forecast_std'] = 0.0  # s
+    data_df.loc[:, 'sdivsigma'] = 0.0  # s / sigma, "effectiveness" of the model
+
+    # Loop over each station and pentad
+    for station in data_df[station_col].unique():
+        for pentad in data_df[pentad_col].unique():
+            # Get the data for the station and pentad
+            station_data = data_df.loc[
+                (data_df[station_col] == station) & (data_df[pentad_col] == pentad), :]
+
+            # Drop NaN values
+            station_data = station_data.dropna()
+
+            # Calculate the absolute error between the simulation data and the observation data
+            absolute_error_forecast = abs(station_data[simulation_col] - station_data[observation_col])
+            absolute_error_observed = abs(station_data[observation_col] - station_data[observation_col].mean())
+            observation_std = station_data[observation_col].std()
+            # The unbiased sample standard deviation sigma is calculated as
+            # sigma = sqrt(sum((x_i - x_mean)^2) / (n-1))
+            observation_std_sanity_check = math.sqrt(station_data[observation_col].apply(lambda x: (x - station_data[observation_col].mean())**2).sum() / (len(station_data) - 1))
+            # The measure s is calculated as
+            # s = sqrt(sum((x_i - y_i)^2) / (n-2))
+            forecast_std = math.sqrt(station_data.apply(lambda x: (x[observation_col] - x[simulation_col])**2, axis=1).sum() / (len(station_data) - 2))
+            sdivsigma = forecast_std / observation_std
+
+            # Note: .std() will yield NaN if there is only one value in the DataFrame
+            # Test if the standard deviation is NaN and return 0.0 if it is
+            if np.isnan(observation_std):
+                observation_std = 0.0
+
+            # Set the flag if the error is smaller than 0.674 times the standard deviation of the observation data
+            flag = absolute_error_forecast <= 0.674 * observation_std
+
+            # Calculate the accuracy of the forecast
+            accuracy = flag.mean()
+
+            # Delta is 0.674 times the standard deviation of the observation data
+            # This is the measure for the allowable uncertainty of a good forecast
+            observation_std0674 = 0.674 * observation_std
+
+            # Store the slope and intercept in the data_df
+            data_df.loc[
+                (data_df[station_col] == station) & (data_df[pentad_col] == pentad),
+                'absolute_error'] = absolute_error_forecast
+            data_df.loc[
+                (data_df[station_col] == station) & (data_df[pentad_col] == pentad),
+                'observation_std0674'] = observation_std0674
+            data_df.loc[
+                (data_df[station_col] == station) & (data_df[pentad_col] == pentad),
+                'flag'] = flag
+            data_df.loc[
+                (data_df[station_col] == station) & (data_df[pentad_col] == pentad),
+                'observation_std'] = observation_std
+            data_df.loc[
+                (data_df[station_col] == station) & (data_df[pentad_col] == pentad),
+                'observation_std_sanity_check'] = observation_std_sanity_check
+            data_df.loc[
+                (data_df[station_col] == station) & (data_df[pentad_col] == pentad),
+                'forecast_std'] = forecast_std
+            data_df.loc[
+                (data_df[station_col] == station) & (data_df[pentad_col] == pentad),
+                'sdivsigma'] = sdivsigma
+            data_df.loc[
+                (data_df[station_col] == station) & (data_df[pentad_col] == pentad),
+                'accuracy'] = accuracy
+
+    #print("DEBUG: fl.calculate_forecast_skill: data_df\n", data_df.head(20))
+    #print(data_df.tail(20))
+
+    return data_df
+
+# endregion
+
+
+# --- I/O ---
+# region io
+
+def load_all_station_data_from_JSON(file_path: str) -> pd.DataFrame:
+    """
+    Loads station data from a JSON file and returns a filtered DataFrame.
+
+    Args:
+        file_path (str): The path to the JSON file.
+
+    Returns:
+        pd.DataFrame: A DataFrame containing the discharge station data.
+
+    Raises:
+        ValueError: If the JSON file cannot be read.
+    """
+    try:
+        with open(file_path) as f:
+            config_all = json.load(f)
+
+            # Check that the JSON object contains the expected keys and values
+            if 'stations_available_for_forecast' not in config_all:
+                raise ValueError('JSON file does not contain expected key "stations_available_for_forecast"')
+            if not isinstance(config_all['stations_available_for_forecast'], dict):
+                raise ValueError('Value of key "stations_available_for_forecast" is not a dictionary')
+
+            # Check that each station has keys "name_ru", "river_ru", "punkt_ru",
+            # "name_eng", "river_eng", "punkt_eng", "lat", "long", "code" and
+            # "display_p"
+            for key, value in config_all['stations_available_for_forecast'].items():
+                if not isinstance(value, dict):
+                    raise ValueError(f'Value of key "{key}" is not a dictionary')
+                if 'name_ru' not in value:
+                    raise ValueError(f'Station "{key}" does not have key "name_ru"')
+                if 'lat' not in value:
+                    raise ValueError(f'Station "{key}" does not have key "lat"')
+                if 'long' not in value:
+                    raise ValueError(f'Station "{key}" does not have key "long"')
+                if 'code' not in value:
+                    raise ValueError(f'Station "{key}" does not have key "code"')
+
+            # Let's try another import of the json file.
+            json_object = config_all['stations_available_for_forecast']
+
+            # Create an empty DataFrame to store the station data
+            df = pd.DataFrame()
+
+            # Loop over the keys in the JSON object
+            for key in json_object.keys():
+                # Create a new DataFrame with the station data
+                station_df = pd.DataFrame.from_dict(json_object[key], orient='index').T
+
+                # Add a column to the DataFrame with the header string
+                station_df['header'] = key
+
+                # Append the station data to the main DataFrame
+                df = pd.concat([df, station_df], ignore_index=True)
+
+            # Filter for code starting with 1
+            # Currently commented out to allow for the main code to update the
+            # config all stations file.
+            # df = df[df['code'].astype(str).str.startswith('1')]
+
+            # Write a column 'site_code' which is 'code' transformed to str
+            df['site_code'] = df['code'].astype(str)
+            return df
+
+    except FileNotFoundError as e:
+        raise FileNotFoundError('Could not read config file. Error message: {}'.format(e))
+    except ValueError as e:
+        raise ValueError('Could not read config file. Error message: {}'.format(e))
+
+def read_daily_discharge_data_from_csv():
+    """
+    Read the discharge data from a csv file specified in the environment.
+
+    Returns:
+    --------
+    pandas.DataFrame
+        The discharge data with columns 'code', 'date', 'discharge' (in m3/s).
+
+    Raises:
+    -------
+    EnvironmentError
+        If the required environment variables are not set.
+    FileNotFoundError
+        If the specified file does not exist.
+    ValueError
+        If the DataFrame does not contain the required columns.
+    pd.errors.ParserError
+        If the specified file cannot be read as a CSV.
+    """
+
+    # Check if the required environment variables are set
+    data_path = os.getenv("ieasyforecast_intermediate_data_path")
+    discharge_file = os.getenv("ieasyforecast_daily_discharge_file")
+    if data_path is None or discharge_file is None:
+        raise EnvironmentError("The environment variables 'ieasyforecast_intermediate_data_path' and 'ieasyforecast_daily_discharge_file' must be set.")
+
+    file_path = os.path.join(data_path, discharge_file)
+
+    # Check if the specified file exists
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"The specified file {file_path} does not exist.")
+
+    # Read the discharge data from the csv file
+    try:
+        discharge_data = pd.read_csv(file_path, sep=',')
+    except pd.errors.ParserError:
+        raise pd.errors.ParserError(f"The specified file {file_path} cannot be read as a CSV.")
+
+    # Check if the DataFrame contains the required columns
+    required_columns = ['code', 'date', 'discharge']
+    if not all(column in discharge_data.columns for column in required_columns):
+        raise ValueError(f"The DataFrame does not contain the required columns: {required_columns}")
+
+    # Convert the 'date' column to datetime
+    discharge_data['date'] = pd.to_datetime(discharge_data['date'])
+
+    # Cast the 'code' column to string
+    discharge_data['code'] = discharge_data['code'].astype(str)
+
+    # Sort the DataFrame by 'code' and 'date'
+    discharge_data = discharge_data.sort_values(by=['code', 'date'])
+
+    return discharge_data
+
+def write_pentad_forecast_data(data: pd.DataFrame):
+    """
+    Writes the data to a csv file for later reading into the forecast dashboard.
+
+    Args:
+    data (pd.DataFrame): The data to be written to a csv file.
+
+    Returns:
+    None
+    """
+
+    # Get the path to the intermediate data folder from the environmental
+    # variables and the name of the ieasyforecast_analysis_pentad_file.
+    # Concatenate them to the output file path.
+    try:
+       output_file_path = os.path.join(
+            os.getenv("ieasyforecast_intermediate_data_path"),
+            os.getenv("ieasyforecast_analysis_pentad_file"))
+    except Exception as e:
+        logger.error("Could not get the output file path.")
+        print(os.getenv("ieasyforecast_intermediate_data_path"))
+        print(os.getenv("ieasyforecast_analysis_pentad_file"))
+        raise e
+
+    # From data dataframe, drop all rows where column issue_date is False.
+    # This is done to remove all rows that are not forecasts.
+    data = data[data['issue_date'] == True]
+
+    # Drop column 'issue_date' as it is not needed in the final output.
+    data = data.drop(columns=['issue_date'])
+
+    # Write the data to a csv file. Raise an error if this does not work.
+    # If the data is written to the csv file, log a message that the data
+    # has been written.
+    try:
+        ret = data.reset_index(drop=True).to_csv(output_file_path, index=False)
+        if ret is None:
+            logger.info(f"Data written to {output_file_path}.")
+        else:
+            logger.error(f"Could not write the data to {output_file_path}.")
+    except Exception as e:
+        logger.error(f"Could not write the data to {output_file_path}.")
+        raise e
+
+    return None
+
+def write_decad_forecast_data(data: pd.DataFrame):
+    """
+    Writes the data to a csv file for later reading into the forecast dashboard.
+
+    Args:
+    data (pd.DataFrame): The data to be written to a csv file.
+
+    Returns:
+    None
+    """
+
+    # Get the path to the intermediate data folder from the environmental
+    # variables and the name of the ieasyforecast_analysis_decad_file.
+    # Concatenate them to the output file path.
+    try:
+       output_file_path = os.path.join(
+            os.getenv("ieasyforecast_intermediate_data_path"),
+            os.getenv("ieasyforecast_analysis_decad_file"))
+    except Exception as e:
+        logger.error("Could not get the output file path.")
+        print(os.getenv("ieasyforecast_intermediate_data_path"))
+        print(os.getenv("ieasyforecast_analysis_decad_file"))
+        raise e
+
+    # From data dataframe, drop all rows where column issue_date is False.
+    # This is done to remove all rows that are not forecasts.
+    data = data[data['issue_date'] == True]
+
+    # Drop column 'issue_date' as it is not needed in the final output.
+    data = data.drop(columns=['issue_date'])
+
+    # Write the data to a csv file. Raise an error if this does not work.
+    # If the data is written to the csv file, log a message that the data
+    # has been written.
+    try:
+        ret = data.reset_index(drop=True).to_csv(output_file_path, index=False)
+        if ret is None:
+            logger.info(f"Data written to {output_file_path}.")
+        else:
+            logger.error(f"Could not write the data to {output_file_path}.")
+    except Exception as e:
+        logger.error(f"Could not write the data to {output_file_path}.")
+        raise e
+
+    return None
 
 # endregion
 
