@@ -10,6 +10,7 @@ import sys
 from pandas._testing import assert_frame_equal
 
 from iEasyHydroForecast import forecast_library as fl
+from iEasyHydroForecast import setup_library as sl
 
 print(sys.path)
 
@@ -43,7 +44,7 @@ class TestGetLastDayOfMonth(unittest.TestCase):
         self.assertEqual(last_day_of_month, datetime.date(2020, 2, 29))
 
 
-class TestGetPredictorDates(unittest.TestCase):
+class TestGetPredictorDates_DEPRECATING(unittest.TestCase):
     def test_valid_input(self):
         # Test with valid input
         input_date = datetime.date(2022, 1, 1).strftime('%Y-%m-%d')
@@ -55,11 +56,11 @@ class TestGetPredictorDates(unittest.TestCase):
             datetime.date(2021, 12, 28),
             datetime.date(2021, 12, 27)
         ]
-        to_test = fl.get_predictor_dates(input_date, n)
+        to_test = fl.get_predictor_dates_deprecating(input_date, n)
         self.assertEqual(to_test, expected_output)
         # Second test with valid input
         self.assertEqual(
-            fl.get_predictor_dates('2022-01-05', 3),
+            fl.get_predictor_dates_deprecating('2022-01-05', 3),
             [datetime.date(2022, 1, 4),
              datetime.date(2022, 1, 3),
              datetime.date(2022, 1, 2)])
@@ -69,21 +70,21 @@ class TestGetPredictorDates(unittest.TestCase):
         input_date = datetime.date(2022, 1, 1)
         n = 5
         expected_output = None
-        self.assertEqual(fl.get_predictor_dates(input_date, n), expected_output)
+        self.assertEqual(fl.get_predictor_dates_deprecating(input_date, n), expected_output)
 
     def test_invalid_n(self):
         # Test with invalid n
         input_date = datetime.date(2022, 1, 1)
         n = -5
         expected_output = None
-        self.assertEqual(fl.get_predictor_dates(input_date, n), expected_output)
+        self.assertEqual(fl.get_predictor_dates_deprecating(input_date, n), expected_output)
 
     def test_invalid_n_type(self):
         # Test with invalid n type
         input_date = datetime.date(2022, 1, 1)
         n = '5'
         expected_output = None
-        self.assertEqual(fl.get_predictor_dates(input_date, n), expected_output)
+        self.assertEqual(fl.get_predictor_dates_deprecating(input_date, n), expected_output)
 
 
 class TestRoundDischarge(unittest.TestCase):
@@ -403,7 +404,7 @@ class TestCalculateForecastSkill(unittest.TestCase):
             0.870130258447933]
         assert result_df2['flag'].tolist() == [True, False, False, False]
 
-
+"""
 class TestGenerateIssueAndForecastDates(unittest.TestCase):
     def setUp(self):
         # Create a sample DataFrame for testing
@@ -536,7 +537,7 @@ class TestGenerateIssueAndForecastDates(unittest.TestCase):
             'Code': [12256]*10})
         output = fl.generate_issue_and_forecast_dates(self.data_df, 'Date', 'Code', 'Q_m3s')
         print("\n\nDEBUG: test_demo_data_test_case:\n", output)
-
+"""
 
 class TestLoadAllStationDataFromJSON(unittest.TestCase):
     def test_load(self):
@@ -565,7 +566,7 @@ class TestSite(unittest.TestCase):
                             punkt_name='Punkt B', lat=45.0, lon=-120.0,
                             region='Region X', basin='Basin Y')
         self.df = pd.DataFrame({
-            'Code': ['15194', '15195', 'ABC123', '15194', '15195', 'ABC123', '15194', '15195', 'ABC123', 'ABC123'],
+            'code': ['15194', '15195', 'ABC123', '15194', '15195', 'ABC123', '15194', '15195', 'ABC123', 'ABC123'],
             'pentad_in_year': ['1', '1', '1', '2', '2', '2', '3', '3', '3', '4'],
             'decad_in_year': ['1', '1', '1', '2', '2', '2', '3', '3', '3', '4'],
             'discharge_avg': [10, 20, 30, 40, 50, 6.5, 70, 80, 0.9123, 103.8]
@@ -614,19 +615,23 @@ class TestSite(unittest.TestCase):
         self.assertEqual(forecast, 10.0)
         self.assertEqual(self.site.fc_qexp, "10.0")
 
-    def test_from_df_get_norm_discharge_decad(self):
+    def test_from_df_get_norm_discharge(self):
         site = self.site
         df = self.df
         dfmin = df
         dfmax = df
-        result = site.from_df_get_norm_discharge(site, '1', df, dfmin, dfmax)
+        result = site.from_df_get_norm_discharge(site, '1', df, dfmin, dfmax,
+                                                 code_col='code', group_col='pentad_in_year', value_col='discharge_avg')
         self.assertEqual(result, 30)
         self.assertEqual(site.qnorm, '30.0')
-        result = site.from_df_get_norm_discharge(site, '2', df, dfmin, dfmax)
+        result = site.from_df_get_norm_discharge(site, '2', df, dfmin, dfmax,
+                                                 code_col='code', group_col='pentad_in_year', value_col='discharge_avg')
         self.assertEqual(site.qnorm, '6.50')
-        result = site.from_df_get_norm_discharge(site, '3', df, dfmin, dfmax)
+        result = site.from_df_get_norm_discharge(site, '3', df, dfmin, dfmax,
+                                                 code_col='code', group_col='pentad_in_year', value_col='discharge_avg')
         self.assertEqual(site.qnorm, '0.91')
-        result = site.from_df_get_norm_discharge(site, '4', df, dfmin, dfmax)
+        result = site.from_df_get_norm_discharge(site, '4', df, dfmin, dfmax,
+                                                 code_col='code', group_col='pentad_in_year', value_col='discharge_avg')
         self.assertEqual(site.qnorm, '104')
 
     def test_from_df_get_norm_discharge_with_valid_data(self):
@@ -634,24 +639,32 @@ class TestSite(unittest.TestCase):
         df = self.df
         dfmin = df
         dfmax = df
-        result = site.from_df_get_norm_discharge(site, '1', df, dfmin, dfmax)
+        result = site.from_df_get_norm_discharge(site, '1', df, dfmin, dfmax,
+                                                 code_col='code', group_col='pentad_in_year', value_col='discharge_avg')
         self.assertEqual(result, 30)
         self.assertEqual(site.qnorm, '30.0')
-        result = site.from_df_get_norm_discharge(site, '2', df, dfmin, dfmax)
+        result = site.from_df_get_norm_discharge(site, '2', df, dfmin, dfmax,
+                                                 code_col='code', group_col='pentad_in_year', value_col='discharge_avg')
         self.assertEqual(site.qnorm, '6.50')
-        result = site.from_df_get_norm_discharge(site, '3', df, dfmin, dfmax)
+        result = site.from_df_get_norm_discharge(site, '3', df, dfmin, dfmax,
+                                                 code_col='code', group_col='pentad_in_year', value_col='discharge_avg')
         self.assertEqual(site.qnorm, '0.91')
-        result = site.from_df_get_norm_discharge(site, '4', df, dfmin, dfmax)
+        result = site.from_df_get_norm_discharge(site, '4', df, dfmin, dfmax,
+                                                 code_col='code', group_col='pentad_in_year', value_col='discharge_avg')
         self.assertEqual(site.qnorm, '104')
 
-    def test_from_df_get_predictor_pentad(self):
+    def test_from_df_get_predictor(self):
         # Test that the method returns the correct predictor value
-        predictor_dates = [datetime.date(2022, 5, 3)]
-        predictor = fl.Site.from_df_get_predictor_pentad(self.site, self.df_get_predictor, predictor_dates)
+        predictor_dates = [datetime.datetime(2022, 5, 3, 0, 0, 0)]
+        predictor = fl.Site.from_df_get_predictor(self.site, self.df_get_predictor, predictor_dates,
+                                                  date_col='Date', code_col='Code',
+                                                  predictor_col='discharge_sum')
         self.assertEqual(predictor, 3)
 
         predictor_dates = [datetime.date(2022, 5, 5)]
-        predictor = fl.Site.from_df_get_predictor_pentad(self.site, self.df_get_predictor, predictor_dates)
+        predictor = fl.Site.from_df_get_predictor(self.site, self.df_get_predictor, predictor_dates,
+                                                  date_col='Date', code_col='Code',
+                                                  predictor_col='discharge_sum')
         self.assertEqual(predictor, 5)
 
     def test_from_DB_get_dangerous_discharge(self):
@@ -795,11 +808,207 @@ class TestReadDailyDischargeDataFromCSV(unittest.TestCase):
             'discharge': [1.9, 1.9, 1.9, 1.9, 1.9, 1.9, 1.9, 1.85, 33.293,
                           33.293, 33.293, 34.405, 34.405, 35.535, 35.535, 35.535, 37.849, 37.849]
         })
+        expected_output = expected_output.sort_values(by=['code', 'date']).reset_index(drop=True)
 
-        actual_output = fl.read_daily_discharge_data_from_csv()
+        # Cast the code column to string
+        expected_output['code'] = expected_output['code'].astype(str)
+
+        actual_output = fl.read_daily_discharge_data_from_csv().reset_index(drop=True)
         assert_frame_equal(actual_output, expected_output)
         os.environ.pop("ieasyforecast_intermediate_data_path")
         os.environ.pop("ieasyforecast_daily_discharge_file")
+
+
+class TestCalculate3DayDischargeSum(unittest.TestCase):
+    def test_calculate_3daydischargesum(self):
+        # Test with valid data
+        data = {
+            'datetime_col': pd.date_range(start='1/1/2022', end='1/31/2022'),
+            'discharge_col': np.random.rand(31),
+            'issue_date': [True if i % 5 == 0 else False for i in range(31)]
+        }
+        df = pd.DataFrame(data)
+        result = fl.calculate_3daydischargesum(df, 'datetime_col', 'discharge_col')
+        self.assertIn('discharge_sum', result.columns)
+        self.assertEqual(result['discharge_sum'].dtype, float)
+
+        # Test with non-datetime datetime_col
+        df2 = df.copy(deep=True)
+        df2['datetime_col'] = range(1, 32)
+        with self.assertRaises(TypeError):
+            fl.calculate_3daydischargesum(df2, 'datetime_col', 'discharge_col')
+
+        # Test with missing datetime_col
+        with self.assertRaises(KeyError):
+            fl.calculate_3daydischargesum(df, 'nonexistent_col', 'discharge_col')
+
+        # Test with missing discharge_col
+        with self.assertRaises(KeyError):
+            fl.calculate_3daydischargesum(df, 'datetime_col', 'nonexistent_col')
+
+        # Test with reproducible data
+        data = {
+            'Dates': pd.date_range(start='1/1/2022', end='12/31/2022'),
+            'Values': pd.date_range(start='1/1/2022', end='12/31/2022').day
+        }
+        df = pd.DataFrame(data)
+        df = fl.add_pentad_issue_date(df, datetime_col='Dates')
+
+        print("\n\nDEBUG: test_calculate_3daydischargesum: df: \n", df.head(40))
+
+        result = fl.calculate_3daydischargesum(df, 'Dates', 'Values')
+
+        print("\n\nDEBUG: test_calculate_3daydischargesum: result: \n", result.head(40))
+
+
+class TestCalculatePentadalDischargeAvg(unittest.TestCase):
+    def test_calculate_pentadaldischargeavg(self):
+        # Test with reproducible data
+        data = {
+            'Dates': pd.date_range(start='1/1/2022', end='12/31/2022'),
+            'Values': pd.date_range(start='1/1/2022', end='12/31/2022').day
+        }
+        df = pd.DataFrame(data)
+        df = fl.add_pentad_issue_date(df, datetime_col='Dates')
+        result0 = fl.calculate_3daydischargesum(df, 'Dates', 'Values')
+        result = fl.calculate_pentadaldischargeavg(result0, 'Dates', 'Values')
+
+        self.assertIn('discharge_avg', result.columns)
+        self.assertEqual(result['discharge_avg'].dtype, float)
+        # The first 4 values should be NaN
+        self.assertTrue(pd.isna(result['discharge_avg'].iloc[0]))
+        self.assertTrue(pd.isna(result['discharge_avg'].iloc[1]))
+        self.assertTrue(pd.isna(result['discharge_avg'].iloc[2]))
+        self.assertTrue(pd.isna(result['discharge_avg'].iloc[3]))
+        # The first value that is not NaN should be 8.0
+        self.assertEqual(result['discharge_avg'].iloc[4], 8.0)
+        # Then we have another 4 NaN values
+        self.assertTrue(pd.isna(result['discharge_avg'].iloc[5]))
+        self.assertTrue(pd.isna(result['discharge_avg'].iloc[6]))
+        self.assertTrue(pd.isna(result['discharge_avg'].iloc[7]))
+        self.assertTrue(pd.isna(result['discharge_avg'].iloc[8]))
+        # The next value should be 13.0
+        self.assertEqual(result['discharge_avg'].iloc[9], 13.0)
+        # The last value should be NaN
+        self.assertTrue(pd.isna(result['discharge_avg'].iloc[-1]))
+        self.assertEqual(result['discharge_avg'].iloc[-7], 28.5)
+
+
+class TestCalculateDecadalDischargeAvg(unittest.TestCase):
+    def test_calculate_decadaldischargeavg(self):
+        # Test with reproducible data
+        data = {
+            'Dates': pd.date_range(start='1/1/2022', end='12/31/2022'),
+            'Values': pd.date_range(start='1/1/2022', end='12/31/2022').day
+        }
+        df = pd.DataFrame(data)
+        df = fl.add_decad_issue_date(df, datetime_col='Dates')
+        result = fl.calculate_decadaldischargeavg(df, 'Dates', 'Values')
+
+        self.assertIn('discharge_avg', result.columns)
+        self.assertEqual(result['discharge_avg'].dtype, float)
+        self.assertTrue(pd.isna(result['discharge_avg'].iloc[0]))
+        self.assertTrue(pd.isna(result['discharge_avg'].iloc[1]))
+        self.assertTrue(pd.isna(result['discharge_avg'].iloc[2]))
+        self.assertTrue(pd.isna(result['discharge_avg'].iloc[3]))
+        self.assertEqual(result['discharge_avg'].iloc[9], 15.5)
+        self.assertTrue(pd.isna(result['discharge_avg'].iloc[5]))
+        self.assertTrue(pd.isna(result['discharge_avg'].iloc[6]))
+        self.assertTrue(pd.isna(result['discharge_avg'].iloc[7]))
+        self.assertTrue(pd.isna(result['discharge_avg'].iloc[8]))
+        self.assertEqual(result['discharge_avg'].iloc[19], 26.0)
+        self.assertTrue(pd.isna(result['discharge_avg'].iloc[-1]))
+
+        self.assertIn('predictor', result.columns)
+        self.assertEqual(result['predictor'].dtype, float)
+        self.assertTrue(pd.isna(result['predictor'].iloc[0]))
+        self.assertTrue(pd.isna(result['predictor'].iloc[1]))
+        self.assertTrue(pd.isna(result['predictor'].iloc[2]))
+        self.assertTrue(pd.isna(result['predictor'].iloc[9]))
+        self.assertTrue(pd.isna(result['predictor'].iloc[5]))
+        self.assertTrue(pd.isna(result['predictor'].iloc[6]))
+        self.assertTrue(pd.isna(result['predictor'].iloc[8]))
+        self.assertEqual(result['predictor'].iloc[19], 15.5)
+        self.assertEqual(result['predictor'].iloc[30], 26.0)
+        self.assertEqual(result['predictor'].iloc[-1], 26.0)
+
+
+class TestDataProcessing(unittest.TestCase):
+    def test_generate_issue_and_forecast_dates(self):
+        # Calculate expected result:
+        # Test with reproducible data
+        data = {
+            'Dates': pd.date_range(start='1/1/2022', end='12/31/2022'),
+            'Values': pd.date_range(start='1/1/2022', end='12/31/2022').day,
+            'Stations': ['12345' for i in range(365)]
+        }
+
+        forecast_flags = sl.ForecastFlags(pentad=True, decad=True)
+
+        df = pd.DataFrame(data)
+        # Make sure we have floats in the Values column
+        df['Values'] = df['Values'].astype(float)
+        df = fl.add_pentad_issue_date(df, datetime_col='Dates')
+        result0 = fl.calculate_3daydischargesum(df, 'Dates', 'Values')
+        expected_result = fl.calculate_pentadaldischargeavg(result0, 'Dates', 'Values')
+
+        df_decad = fl.add_decad_issue_date(df, datetime_col='Dates')
+        expected_result_decad = fl.calculate_decadaldischargeavg(df_decad, 'Dates', 'Values')
+
+        # Call the function
+        result, result_decad = fl.generate_issue_and_forecast_dates(
+            df, 'Dates', 'Stations', 'Values', forecast_flags=forecast_flags)
+
+        # DECAD
+        self.assertIsInstance(result_decad, pd.DataFrame)
+        self.assertIn('issue_date', result_decad.columns)
+        self.assertIn('predictor', result_decad.columns)
+        self.assertIn('discharge_avg', result_decad.columns)
+
+        temp = pd.DataFrame({'predictor': result_decad['predictor'].values,
+                             'expected_predictor': expected_result_decad['predictor'].values,
+                             'difference': result_decad['predictor'].values - expected_result_decad['predictor'].values})
+        # Drop rows where all 3 columns have NaN
+        temp = temp.dropna(how='all')
+        # Drop rows where the difference is 0.0
+        temp = temp[temp['difference'] != 0.0]
+        print("\n\nDEBUG: test_generate_issue_and_forecast_dates: result['pred'] vs expected_result['pred']: \n",
+              temp)
+        np.testing.assert_array_equal(result_decad['predictor'].dropna().values, expected_result_decad['predictor'].dropna().values)
+        np.testing.assert_array_equal(result_decad['discharge_avg'].dropna().values, expected_result_decad['discharge_avg'].dropna().values)
+
+        # PENTAD
+        # Check that the result is a DataFrame with the expected columns
+        self.assertIsInstance(result, pd.DataFrame)
+        self.assertIn('issue_date', result.columns)
+        self.assertIn('discharge_sum', result.columns)
+        self.assertIn('discharge_avg', result.columns)
+        # Test if there are any NaNs in the Stations column
+        self.assertEqual(result['Stations'].isna().sum(), 0)
+        self.assertEqual(expected_result['Stations'].isna().sum(), 0)
+        # Test if the datatypes are the same
+        self.assertEqual(result['Stations'].dtype, expected_result['Stations'].dtype)
+        # Test each column separately. Only compare the values in the columns
+        # because the indices may be different
+        np.testing.assert_array_equal(result['Stations'].values, expected_result['Stations'].values)
+        np.testing.assert_array_equal(result['issue_date'].values, expected_result['issue_date'].values)
+        # Print discharge_sum from result and expected_result next to each other in a
+        # DataFrame to visually inspect the values. Also add a column with the difference
+        # between the two columns.
+        temp = pd.DataFrame({'discharge_sum': result['discharge_sum'].values,
+                             'expected_discharge_sum': expected_result['discharge_sum'].values,
+                             'difference': result['discharge_sum'].values - expected_result['discharge_sum'].values})
+        # Drop rows where all 3 columns have NaN
+        temp = temp.dropna(how='all')
+        # Drop rows where the difference is 0.0
+        temp = temp[temp['difference'] != 0.0]
+        #print("\n\nDEBUG: test_generate_issue_and_forecast_dates: result['discharge_sum'] vs expected_result['discharge_sum']: \n",
+        #      temp)
+        np.testing.assert_array_equal(result['discharge_sum'].dropna().values, expected_result['discharge_sum'].dropna().values)
+        np.testing.assert_array_equal(result['discharge_avg'].dropna().values, expected_result['discharge_avg'].dropna().values)
+
+
+
 
 
 

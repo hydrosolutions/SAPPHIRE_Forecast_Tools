@@ -119,15 +119,21 @@ def define_run_dates():
     # The last day for which a forecast is produced. This is always today.
     date_end = dt.date.today()
 
+    # Basic sanity check in case the script is run multiple times.
+    if date_end == last_successful_run_date:
+        logger.info("The last successful run date is the same as today. "
+                       "No forecast will be produced.")
+        return None, None, None
+
     # The bulletin date is one day after the forecast date. It is the first day
     # of the preiod for which the forecast is produced.
     bulletin_date = date_start + dt.timedelta(days=1)
 
-    logger.debug("Running the forecast script for the following dates:")
-    logger.debug(f"Last successful run date: {last_successful_run_date}")
-    logger.debug(f"Start date for forecasts: {date_start}")
-    logger.debug(f"End date for forecasts: {date_end}")
-    logger.debug(f"Bulletin date: {bulletin_date}")
+    logger.info("Running the forecast script for the following dates:")
+    logger.info(f"Last successful run date: {last_successful_run_date}")
+    logger.info(f"Start date for forecasts: {date_start}")
+    logger.info(f"End date for forecasts: {date_end}")
+    logger.info(f"Bulletin date: {bulletin_date}")
 
     return date_start, date_end, bulletin_date
 
@@ -324,7 +330,7 @@ def get_pentadal_forecast_sites_complicated_method(ieh_sdk, backend_has_access_t
         # This is a special case for Kygryz Hydromet.
         new_sites = config_all[~config_all['site_code'].isin(db_sites['site_code'])]
 
-        # Add new sites (e.g. virtual station for inflow to Toktogul reservoir) to forecast_sites.
+        # Add new sites (e.g. virtual station for inflow reservoirс) to forecast_sites.
         # Edit here if there is need to add new sites for short-term forecasting.
         new_sites_forecast = pd.DataFrame({
             'site_code': new_sites['site_code'],
@@ -339,6 +345,8 @@ def get_pentadal_forecast_sites_complicated_method(ieh_sdk, backend_has_access_t
             'organization_id': new_sites['organization_id'],
             'elevation': new_sites['elevation'],
         })
+        logger.debug(f"Adding new sites to the list of stations available for forecasting, namely")
+        logger.debug(f"{new_sites_forecast['site_code'].values}")
         db_sites = pd.concat([db_sites, new_sites_forecast])
 
     if backend_has_access_to_db:
@@ -422,13 +430,14 @@ def get_pentadal_forecast_sites_complicated_method(ieh_sdk, backend_has_access_t
         with open(config_restrict_station_file, "r") as json_file:
             restrict_stations_config = json.load(json_file)
             restrict_stations = restrict_stations_config["stationsID"]
-            logger.warning(f"Station selection for forecasting restricted to: {restrict_stations}. To remove "
-                           f"restriction set ieasyforecast_restrict_stations_file in .env or .env_develop to null.")
+            logger.warning(f"Station selection for pentadal forecasting restricted to: ...")
+            logger.warning(f"{restrict_stations}.")
+            logger.warning(f" To remove restriction set ieasyforecast_restrict_stations_file in your .env file to null.")
 
     # Only keep stations that are in the file ieasyforecast_restrict_stations_file
     stations = [station for station in stations if station in restrict_stations]
 
-    logger.debug(f"   {len(stations)} station(s) selected for forecasting, namely: {stations}")
+    logger.debug(f"   {len(stations)} station(s) selected for pentadal forecasting, namely: {stations}")
 
     # Filter db_sites for stations
     logger.debug("-Filtering db_sites for stations ...")
@@ -439,6 +448,18 @@ def get_pentadal_forecast_sites_complicated_method(ieh_sdk, backend_has_access_t
     return db_sites
 
 def get_pentadal_forecast_sites(ieh_sdk, backend_has_access_to_db):
+    """
+    Get a list of Site objects and a list of strings for site IDs for which to produce forecasts.
+
+    Args:
+        ieh_sdk: The iEasyHydro SDK.
+        backend_has_access_to_db: True if the backend has access to the database, False otherwise.
+
+    Returns:
+        fc_sites (list): A list of Site objects for which to produce forecasts.
+        site_codes (list): A list of strings for site IDs for which to produce forecasts.
+
+    """
 
     # Identify sites for which to produce forecasts
     db_sites = get_pentadal_forecast_sites_complicated_method(ieh_sdk, backend_has_access_to_db)
@@ -447,8 +468,12 @@ def get_pentadal_forecast_sites(ieh_sdk, backend_has_access_to_db):
     logger.debug("-Formatting db_sites to a list of Sites objects ...")
 
     # Make sure the entries are not lists
-    db_sites = db_sites.applymap(lambda x: x[0] if isinstance(x, list) else x)
+    db_sites = db_sites.map(lambda x: x[0] if isinstance(x, list) else x)
 
+    # Get the unique site codes
+    site_codes = db_sites["site_code"].unique()
+
+    # Create a list of Site objects
     fc_sites = fl.Site.from_dataframe(
         db_sites[["site_code", "site_name", "river_ru", "punkt_ru", "latitude", "longitude", "region", "basin"]]
     )
@@ -461,7 +486,7 @@ def get_pentadal_forecast_sites(ieh_sdk, backend_has_access_to_db):
     # Get dangerous discharge for each site
     # This can be done only if we have access to the database
     if backend_has_access_to_db:
-        logger.info("-Getting dangerous discharge from DB ...")
+        logger.debug("-Getting dangerous discharge from DB ...")
         # Call the from_DB_get_dangerous_discharge method on each Site object
         for site in fc_sites:
             fl.Site.from_DB_get_dangerous_discharge(ieh_sdk, site)
@@ -473,4 +498,73 @@ def get_pentadal_forecast_sites(ieh_sdk, backend_has_access_to_db):
         for site in fc_sites:
             site.qdanger = " "
         logger.info("No access to iEasyHydro database. Therefore no dangerous discharge is assigned to sites.")
-    return fc_sites
+
+    return fc_sites, site_codes
+
+def get_decadal_forecast_sites_from_pentadal_sites(fc_sites_pentad=None, site_list_decad=None):
+    """
+    Get a list of Site objects and a list of strings for site IDs for which to produce forecasts.
+
+    Args:
+        fc_sites_pentad (list): A list of Site objects for which to produce pentadal forecasts.
+        site_list_decad (list): A list of strings for site IDs for which to produce pentadal forecasts.
+
+    Returns:
+        fc_sites_decad (list): A list of Site objects for which to produce forecasts.
+        site_codes_decad (list): A list of strings for site IDs for which to produce forecasts.
+
+    """
+    # From the environment variables, read the station IDs for which to produce
+    # decadal forecasts.
+    station_selection_file = os.path.join(
+        os.getenv("ieasyforecast_configuration_path"),
+        os.getenv("ieasyforecast_config_file_station_selection_decad"))
+
+    with open(station_selection_file, "r") as json_file:
+        config = json.load(json_file)
+        stations = config["stationsID"]
+
+    # Check for the stations filter in the environment variables
+    # We start by reading the environment variable ieasyforecast_restrict_stations_decad_file
+    restrict_stations_file = os.getenv("ieasyforecast_restrict_stations_decad_file")
+    # Check if the environment variable is set to null
+    if restrict_stations_file == "null":
+        # If it is, we don't restrict the stations
+        restrict_stations = False
+    else:
+        # Read the stations filter from the file
+        config_restrict_station_file = os.path.join(
+            os.getenv("ieasyforecast_configuration_path"),
+            os.getenv("ieasyforecast_restrict_stations_decad_file"))
+        with open(config_restrict_station_file, "r") as json_file:
+            restrict_stations_config = json.load(json_file)
+            restrict_stations = restrict_stations_config["stationsID"]
+            logger.warning(f"Station selection for decadal forecasting restricted to: ...")
+            logger.warning(f"{restrict_stations}")
+            logger.warning(f"To remove restriction set ieasyforecast_restrict_stations_decad_file in your .env file to null.")
+
+    # Only keep stations that are in the file ieasyforecast_restrict_stations_file
+    stations = [station for station in stations if station in restrict_stations]
+
+    # Make sure the stations for decadal forecasting are also present in the
+    # stations lists for pentadal forecasting. Add them if they are not.
+    for station in stations:
+        if station not in site_list_decad:
+            logger.error(f"Hydropost {station} selected for decadal forecasting but ...")
+            logger.error(f"   ... not found in the list of stations for pentadal forecasting. ...")
+            logger.error(f"   ... Please add station ID to the station selection config file and ...")
+            logger.error(f"   ... make sure it is not filtered in the restrict station selection file. ")
+
+    logger.debug(f"   {len(stations)} station(s) selected for decadal forecasting, namely: {stations}")
+
+    # Filter fc_sites_pentad for stations
+    logger.debug("-Filtering fc_sites_pentad for stations ...")
+    fc_sites_decad = [site for site in fc_sites_pentad if site.code in stations]
+    logger.debug(f"   Producing forecasts for {len(fc_sites_decad)} station(s), namely\n: {[site.code for site in fc_sites_decad]}")
+
+    return fc_sites_decad, stations
+
+
+
+
+
