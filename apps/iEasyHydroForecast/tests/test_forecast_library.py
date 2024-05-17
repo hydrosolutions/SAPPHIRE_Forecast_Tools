@@ -405,6 +405,7 @@ class TestCalculateForecastSkill(unittest.TestCase):
         assert result_df2['flag'].tolist() == [True, False, False, False]
 
 """
+deprecating this version of the function
 class TestGenerateIssueAndForecastDates(unittest.TestCase):
     def setUp(self):
         # Create a sample DataFrame for testing

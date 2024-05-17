@@ -37,7 +37,7 @@ filters = BasicDataValueFilters(
     local_date_time__lt=predictor_dates[1]
 )
 
-site = '15194'
+site = '15102'
 
 # Get data
 qdata = ieh_sdk.get_data_values_for_site(

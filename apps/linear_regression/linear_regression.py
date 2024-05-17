@@ -89,18 +89,24 @@ def main():
     fc_sites_pentad, site_list_pentad = sl.get_pentadal_forecast_sites(ieh_sdk, has_access_to_db)
     fc_sites_decad, site_list_decad = sl.get_decadal_forecast_sites_from_pentadal_sites(fc_sites_pentad, site_list_pentad)
 
-    # Get pentadal and decadal data for forecasting
+    # Get pentadal and decadal data for forecasting. This is currently done for
+    # pentad as well as for decad forecasts, function overwrites forecast_flags.
     data_pentad, data_decad = fl.get_pentadal_and_decadal_data(
         forecast_flags=forecast_flags,
         site_list_pentad=site_list_pentad,
         site_list_decad=site_list_decad)
 
-    logger.debug(f"Type of data_pentad: {type(data_pentad)}")
-    logger.debug(f"Type of data_decad: {type(data_decad)}")
-    logger.debug(f"Tail of data pentad: {data_pentad[data_pentad['code']=='16936'].tail()}")
+    logger.info(f"Tail of data pentad: {data_pentad.tail()}")
     if forecast_flags.decad:
-        logger.debug(f"Head of data decad: {data_decad.head()}")
+        logger.info(f"Tail of data decad: {data_decad.tail()}")
 
+    # Save pentadal data
+    # TODO
+
+    # Save decadal data
+    if forecast_flags.decad:
+        # TODO
+        pass
 
     # Iterate over the dates
     current_day = forecast_date
@@ -108,18 +114,21 @@ def main():
 
         logger.info(f"\n\n------ Forecast on {current_day} --------------------")
 
-        # Only run in hindcast mode
-        if current_day < date_end:
-            # Update the last run_date in the database
-            current_date, date_end, bulletin_date = sl.define_run_dates()
-            # Update the forecast flags
-            forecast_flags = sl.ForecastFlags.from_forecast_date_get_flags(current_date)
-            logger.debug(f"Forecast flags: {forecast_flags}")
+        # Update the last run_date in the database
+        current_date, date_end, bulletin_date = sl.define_run_dates()
+        # Make sure we have a valid forecast date
+        if not forecast_date:
+            exit()
+        # Update the forecast flags
+        forecast_flags = sl.ForecastFlags.from_forecast_date_get_flags(current_date)
+        logger.debug(f"Forecast flags: {forecast_flags}")
 
         # Test if today is a forecast day for either pentadal and decadal forecasts
         # We only run through the rest of the code in the loop if current_date is a forecast day
         if forecast_flags.pentad:
             logger.info(f"Starting pentadal forecast for {current_day}. End date: {date_end}. Bulletin date: {bulletin_date}.")
+            #logger.debug(f'data_pentad.head(): \n{data_pentad.head()}')
+            #logger.debug(f'data_pentad.tail(): \n{data_pentad.tail()}')
 
             # Filter the discharge data for the sites we need to produce forecasts
             discharge_pentad = fl.filter_discharge_data_for_code_and_date(
@@ -129,7 +138,8 @@ def main():
                 code_col='code',
                 date_col='date')
             # Print the tail of discharge_pentad for code 16936
-            #logger.debug(f"Tail of discharge_pentad for code 16936: {discharge_pentad[discharge_pentad['code'] == '16936'].tail()}")
+            #logger.debug(f"discharge_pentad.head(): \n{discharge_pentad.head()}")
+            #logger.debug(f"discharge_pentad.tail(): \n{discharge_pentad.tail()}")
 
             # Write the predictor to the Site objects
             predictor_dates = fl.get_predictor_dates(current_day, forecast_flags)
@@ -143,7 +153,7 @@ def main():
                 predictor_col='discharge_sum')
 
             # Calculate norm discharge for the pentad forecast
-            forecast_pentad_of_year = tl.get_pentad_in_year(bulletin_date)
+            forecast_pentad_of_year = tl.get_pentad_in_year(current_day)
             fl.save_discharge_avg(
                 discharge_pentad, fc_sites_pentad, group_id=forecast_pentad_of_year,
                 code_col='code', group_col='pentad_in_year', value_col='discharge_avg')
@@ -160,7 +170,8 @@ def main():
                 discharge_avg_col='discharge_avg',
                 forecast_pentad=int(forecast_pentad_of_year))
 
-            logger.debug(f"Linear regression for pentad: {linreg_pentad.head()}")
+            #logger.debug(f"linreg_pentad.head: {linreg_pentad.head()}")
+            #logger.debug(f"linreg_pentad.tail: {linreg_pentad.tail()}")
 
             # Generate the forecast for the current forecast horizon
             fl.perform_forecast(
@@ -171,13 +182,15 @@ def main():
                 group_col='pentad_in_year')
 
             # Rename the column discharge_sum to predictor
-            linreg_pentad.rename(columns={'discharge_sum': 'predictor'}, inplace=True)
+            linreg_pentad.rename(
+                columns={'discharge_sum': 'predictor',
+                         'pentad': 'pentad_in_month'}, inplace=True)
 
             # Write output files for the current forecast horizon
-            fl.write_pentad_forecast_data(
-                linreg_pentad[['date', 'issue_date', 'pentad', 'pentad_in_year', 'code',
-                               'predictor', 'discharge_avg', 'slope',
-                               'intercept', 'forecasted_discharge']])
+            fl.write_linreg_pentad_forecast_data(linreg_pentad)
+
+        else:
+            logger.info(f'No pentadal forecast for {current_day}.')
 
         if forecast_flags.decad:
             logger.info(f"Starting decadal forecast for {current_day}. End date: {date_end}. Bulletin date: {bulletin_date}.")
@@ -191,7 +204,7 @@ def main():
                 date_col='date')
 
             # Write the predictor to the Site objects
-            logger.info(f"Predictor dates: {predictor_dates.decad}")
+            logger.debug(f"Predictor dates: {predictor_dates.decad}")
             fl.get_predictors(
                 data_df=discharge_decad,
                 start_date=max(predictor_dates.decad),
@@ -201,11 +214,10 @@ def main():
                 predictor_col='predictor')
 
             # Calculate norm discharge for the decad forecast
-            forecast_decad_of_year = tl.get_decad_in_year(bulletin_date)
+            forecast_decad_of_year = tl.get_decad_in_year(current_day)
             fl.save_discharge_avg(
                 discharge_decad, fc_sites_decad, group_id=forecast_decad_of_year,
                 code_col='code', group_col='decad_in_year', value_col='discharge_avg')
-
 
             # Perform linear regression for the current forecast horizon
             linreg_decad = fl.perform_linear_regression(
@@ -216,7 +228,7 @@ def main():
                 discharge_avg_col='discharge_avg',
                 forecast_pentad=int(forecast_decad_of_year))
 
-            logger.debug(f"Linear regression for decad: {linreg_decad.head()}")
+            #logger.debug(f"Linear regression for decad: {linreg_decad.head()}")
 
             # Generate the forecast for the current forecast horizon
             fl.perform_forecast(
@@ -227,16 +239,22 @@ def main():
                 group_col='decad_in_year')
 
             # Write output files for the current forecast horizon
-            fl.write_decad_forecast_data(linreg_decad)
+            fl.write_linreg_decad_forecast_data(linreg_decad)
+
+        else:
+            logger.info(f'No decadal forecast for {current_day}.')
 
         # Store the last run date
-        sl.store_last_successful_run_date(current_day)
+        ret = sl.store_last_successful_run_date(current_day)
 
         # Move to the next day
+        logger.info(f"Iteration for {current_day} completed successfully.")
         current_day += dt.timedelta(days=1)
-        logger.info(f"Forecast for {current_day} completed successfully.")
 
-
+    if ret is None:
+        sys.exit(0) # Success
+    else:
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()

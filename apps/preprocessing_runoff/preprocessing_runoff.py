@@ -70,7 +70,7 @@ def main():
     and 'discharge'.
     """
 
-    # Configuration
+    ## Configuration
     # Loads the environment variables from the .env file
     sl.load_environment()
 
@@ -80,13 +80,19 @@ def main():
     if not has_access_to_db:
         ieh_sdk = None
 
-    # Reading data
+    ## Data processing
+    # Reading data from various sources
     runoff_data = src.get_runoff_data(
         ieh_sdk,
         date_col='date',
         discharge_col='discharge',
         name_col='name',
         code_col='code')
+
+    # Some virtual stations may not be in the regime data file nor in the
+    # operational data base. We need to add a hypothetical line for them.
+    check_hydroposts = ['15960', '15954', '16936']
+    runoff_data = src.add_hydroposts(runoff_data, check_hydroposts)
 
     # Calculate data for virtual hydroposts where neccessary
     filled_data = src.fill_gaps_in_reservoir_inflow_data(
@@ -99,7 +105,8 @@ def main():
     filtered_data = src.filter_roughly_for_outliers(
         filled_data, 'code', 'discharge')
 
-    # Save the data
+    ## Save the data
+    # Daily data
     ret = src.write_data_to_csv(
         filtered_data, ['code', 'date', 'discharge'])
 

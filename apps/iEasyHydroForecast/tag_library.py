@@ -2,8 +2,8 @@ import datetime as dt
 import pandas as pd
 from typing import Union
 
-# region tag get_value_fn function
-
+# --- Helper functions ---
+# region helper functions
 
 def get_pentad_first_day_of_year(date_str):
     """
@@ -97,13 +97,14 @@ def is_gregorian_date(date: Union[str, dt.datetime]) -> bool:
     except ValueError:
         return False
 
-def add_pentad_in_year_column(df):
+def add_pentad_in_year_column(df, date_col='Date'):
     """
     Add a 'pentad' column to a pandas DataFrame with a 'Date' column.
 
     Parameters:
-        df (pandas.DataFrame): A pandas DataFrame with a 'Date' column
+        df (pandas.DataFrame): A pandas DataFrame with a 'date' column
             containing either datetime objects or datetime strings.
+        date_col (str): The name of the column containing the dates. Defauls to 'Date'.
 
     Returns:
         pandas.DataFrame: The input DataFrame with a new 'pentad' column added.
@@ -118,19 +119,19 @@ def add_pentad_in_year_column(df):
         1 2022-05-16     28
     """
     try:
-        # Check if there is a 'Date' column in the DataFrame
-        if 'Date' not in df.columns:
-            # Return an error if there is no 'Date' column
-            raise ValueError('DataFrame does not have a \'Date\' column')
+        # Check if there is a date_col column in the DataFrame
+        if date_col not in df.columns:
+            # Return an error if there is no date_col column
+            raise ValueError(f'DataFrame does not have a \'Date\' column called {date_col}')
 
         # Loop through each row in the 'Date' column and check if the date is valid
-        for date in df['Date']:
+        for date in df[date_col]:
             if not is_gregorian_date(date):
                 # Return an error if there is an invalid date
                 raise ValueError('DataFrame contains invalid date(s)')
 
         # Convert the 'Date' column to a pandas Series of datetime objects
-        date_series = pd.to_datetime(df['Date'], errors='coerce')
+        date_series = pd.to_datetime(df[date_col], errors='coerce')
 
         # Get the day of the month for each date
         day_series = date_series.dt.day
@@ -206,6 +207,10 @@ def add_decad_in_year_column(df):
         # Raise an error if the input is not a valid date
         raise ValueError('Invalid date') from e
 
+# endregion
+
+# --- Tag functions ---
+# region tag get_value_fn function
 
 def get_pentad(date):
     """
@@ -461,7 +466,6 @@ def get_pentad_first_day(date_str):
     # return the first day of the pentad as a string
     return str(first_day)
 
-
 def get_pentad_last_day(date_str):
     """
     Returns the last day of the pentad of the month for a given date string.
@@ -504,7 +508,6 @@ def get_pentad_last_day(date_str):
 
     # return the first day of the pentad as a string
     return str(last_day)
-
 
 def get_year(date_str):
     """
@@ -691,7 +694,6 @@ def get_month_str_case1(date_str):
     # return the month name as a string
     return month_str
 
-
 def get_month_str_case2(date_str):
     """
     Returns the name of the month for a given date string, in Russian, in the
@@ -752,7 +754,6 @@ def get_month_str_case2(date_str):
     # return the month name as a string
     return month_str
 
-
 def get_river_name(site):
     '''
     Gets the name of the river for a given site.
@@ -767,7 +768,6 @@ def get_river_name(site):
     '''
     return site.river_name
 
-
 def get_site_name(site):
     '''
     Gets the name of the site for a given site.
@@ -781,4 +781,5 @@ def get_site_name(site):
         If the input site is not valid, returns None.
     '''
     return site.punkt_name
+
 # endregion

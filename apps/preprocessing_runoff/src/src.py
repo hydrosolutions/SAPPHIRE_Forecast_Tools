@@ -9,7 +9,8 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def filter_roughly_for_outliers(combined_data, group_by='Code', filter_col='Q_m3s', window_size=15):
+def filter_roughly_for_outliers(combined_data, group_by='Code',
+                                filter_col='Q_m3s', date_col='date', window_size=15):
     """
     Filters outliers in the cilter_col column of the input DataFrame.
 
@@ -55,6 +56,15 @@ def filter_roughly_for_outliers(combined_data, group_by='Code', filter_col='Q_m3
 
         return group
 
+    def interpolate_group(group, filter_col, date_col):
+        group = group.reset_index()
+        print("DEBUG: group initial reset index: \n", group)
+        group = group.set_index(date_col)
+        group[filter_col] = group[filter_col].resample('D').asfreq().interpolate(method='linear')
+        print("DEBUG: group interpolated: \n", group)
+        group.reset_index()
+        group.set_index('code')
+        return group
 
     # Test if the group_by column is available
     if group_by not in combined_data.columns:
@@ -68,7 +78,7 @@ def filter_roughly_for_outliers(combined_data, group_by='Code', filter_col='Q_m3
     combined_data = combined_data.dropna(subset=[group_by])
 
     # Replace empty places in the filter_col column with NaN
-    combined_data[filter_col] = combined_data[filter_col].replace('', np.nan)
+    combined_data.loc[:, filter_col] = combined_data.loc[:, filter_col].replace('', np.nan)
 
     # Apply the function to each group
     combined_data = combined_data.groupby(group_by).apply(
@@ -76,6 +86,22 @@ def filter_roughly_for_outliers(combined_data, group_by='Code', filter_col='Q_m3
 
     # Ungroup the DataFrame
     combined_data = combined_data.reset_index(drop=True)
+
+    # Make sure the date_col is a datetime object
+    combined_data[date_col] = pd.to_datetime(combined_data[date_col])
+
+    # Interpolate data gaps of length of 1 day
+    combined_data = combined_data.groupby(group_by).apply(
+        interpolate_group, filter_col, date_col)
+
+    # Ungroup the DataFrame
+    combined_data = combined_data.reset_index(drop=True)
+
+    # Convert the date_col back to date format
+    combined_data[date_col] = pd.to_datetime(combined_data[date_col]).dt.date
+
+    # Drop rows with duplicate code and dates, keeping the last one
+    combined_data = combined_data.drop_duplicates(subset=[group_by, date_col], keep='last')
 
     return combined_data
 
@@ -512,6 +538,38 @@ def get_todays_morning_discharge_from_iEH_per_site(
 
     return db_df
 
+def add_hydroposts(combined_data, check_hydroposts):
+    """
+    Check if the virtual hydroposts are in the combined_data and add them if not.
+
+    This function checks if the virtual hydroposts are in the combined_data and
+    adds them if they are not. The virtual hydroposts are '15960' (Inflow to the
+    Orto-Tokoy reservoir), '15954' (Inflow to the Kirov reservoir), and '16936'
+    (Inflow to the Toktogul reservoir).
+
+    Args:
+    combined_data (pd.DataFrame): The input DataFrame. Must contain 'code' column.
+    check_hydroposts (list): A list of the virtual hydroposts to check for.
+
+    Returns:
+    pd.DataFrame: The input DataFrame with the virtual hydroposts added.
+
+    """
+    # Check if the virtual hydroposts are in the combined_data
+    for hydropost in check_hydroposts:
+        if hydropost not in combined_data['code'].values:
+            logger.debug(f"Virtual hydropost {hydropost} is not in the list of stations.")
+            # Add the virtual hydropost to the combined_data
+            new_row = pd.DataFrame({
+                'code': [hydropost],
+                'date': [dt.date.today()],
+                'discharge': [np.nan],
+                'name': [f'Virtual hydropost {hydropost}']
+            })
+            combined_data = pd.concat([combined_data, new_row], ignore_index=True)
+
+    return combined_data
+
 def fill_gaps_in_reservoir_inflow_data(
         combined_data: pd.DataFrame,
         date_col: str,
@@ -740,6 +798,7 @@ def get_runoff_data(ieh_sdk=None, date_col='date', discharge_col='discharge', na
     else:
         # Get the last row for each code in runoff_data
         last_row = read_data.groupby(code_col).tail(1)
+        #print("DEBUG: last_row: \n", last_row)
 
         # For each code in last_row, get the daily average discharge data from the
         # iEasyHydro database using the function get_daily_average_discharge_from_iEH_per_site

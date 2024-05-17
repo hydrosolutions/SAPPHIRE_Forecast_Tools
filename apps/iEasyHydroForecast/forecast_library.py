@@ -468,7 +468,8 @@ def calculate_3daydischargesum(data_df, datetime_col, discharge_col):
     data_df.set_index(datetime_col, inplace=True)
 
     # Calculate the rolling sum of the discharge values over a 3-day window
-    data_df['discharge_sum'] = data_df[discharge_col].rolling('3D', closed='left').sum()
+    # We use todays value and the two previous days values.
+    data_df['discharge_sum'] = data_df[discharge_col].rolling('3D').sum()
 
     # Set 'discharge_sum' to NaN for rows where 'issue_date' is False
     data_df.loc[~data_df['issue_date'], 'discharge_sum'] = np.nan
@@ -798,13 +799,12 @@ def get_predictor_dates(start_date, forecast_flags):
     logger.debug(f"   Predictor dates for pentadal forecasts: {predictor_dates.pentad}")
     logger.debug(f"   Predictor dates for decad forecasts: {predictor_dates.decad}")
 
-    logger.info("   ... done")
     return predictor_dates
 
 def get_predictors(data_df, start_date, fc_sites,
                    code_col='code', date_col='date', predictor_col=None):
 
-    logger.info("Getting predictor for pentadal forecasting ...")
+    logger.debug("Getting predictor for pentadal forecasting ...")
     # Iterate through sites in fc_sites and see if we can find the predictor
     # in result_df.
     # This is mostly relevant for the offline mode.
@@ -820,10 +820,10 @@ def get_predictors(data_df, start_date, fc_sites,
                                    date_col=date_col, code_col=code_col,
                                      predictor_col=predictor_col)
 
-    logger.info(f'   {len(fc_sites)} Predictor discharge gotten from df, namely:\n'
+    logger.debug(f'   {len(fc_sites)} Predictor discharge gotten from df, namely:\n'
                 f'{[[site.code, site.predictor] for site in fc_sites]}')
     #print("DEBUG: forecasting:get_predictor: fc_sites: ", fc_sites)
-    logger.info("   ... done")
+    logger.debug("   ... done")
 
 def get_pentadal_and_decadal_data(forecast_flags=None,
                                   fc_sites_pentad=None, fc_sites_decad=None,
@@ -957,6 +957,8 @@ def perform_linear_regression(
     if not all(data_df[pentad_col].between(1, 72)):
         raise ValueError(f'Values in column {pentad_col} are not between 1 and 72')
 
+    #print("\n\nDEBUG perform_linear_regression: data_df: \n", data_df.tail(10))
+
     # Filter for the forecast pentad
     data_dfp = data_df[data_df[pentad_col] == float(forecast_pentad)]
 
@@ -968,6 +970,8 @@ def perform_linear_regression(
     data_dfp = data_dfp.assign(slope=1.0)
     data_dfp = data_dfp.assign(intercept=0.0)
     data_dfp = data_dfp.assign(forecasted_discharge=-1.0)
+
+    #print("\n\nDEBUG perform_linear_regression: data_dfp: \n", data_dfp.tail(10))
 
     # Loop over each station we have data for
     for station in data_dfp[station_col].unique():
@@ -985,6 +989,8 @@ def perform_linear_regression(
         # discharge_sum and discharge_avg are not NaN. These correspond to the
         # time steps where we produce a forecast.
         station_data = station_data.dropna()
+
+        #print("\n\nDEBUG perform_linear_regression: station_data: \n", station_data.tail(10))
 
         # Get the discharge_sum and discharge_avg columns
         discharge_sum = station_data[predictor_col].values.reshape(-1, 1)
@@ -1019,7 +1025,7 @@ def perform_linear_regression(
 def perform_forecast(fc_sites, group_id=None, result_df=None,
                      code_col='code', group_col='pentad_in_year'):
     # Perform forecast
-    logger.info("Performing pentad forecast ...")
+    logger.debug("Performing pentad forecast ...")
 
     # For each site, calculate the forecasted discharge
     for site in fc_sites:
@@ -1030,7 +1036,7 @@ def perform_forecast(fc_sites, group_id=None, result_df=None,
     logger.info(f'   {len(fc_sites)} Forecasts calculated, namely:\n'
                 f'{[[site.code, site.fc_qexp] for site in fc_sites]}')
 
-    logger.info("   ... done")
+    logger.debug("   ... done")
 
 # endregion
 
@@ -1305,7 +1311,7 @@ def read_daily_discharge_data_from_csv():
 
     return discharge_data
 
-def write_pentad_forecast_data(data: pd.DataFrame):
+def write_linreg_pentad_forecast_data(data: pd.DataFrame):
     """
     Writes the data to a csv file for later reading into the forecast dashboard.
 
@@ -1329,29 +1335,51 @@ def write_pentad_forecast_data(data: pd.DataFrame):
         print(os.getenv("ieasyforecast_analysis_pentad_file"))
         raise e
 
+    #logger.debug(f'data.head: \n{data.head()}')
+    #logger.debug(f'data.tail: \n{data.tail()}')
+
+    # Reset index, dropping the old index
+    data = data.reset_index(drop=True)
+
     # From data dataframe, drop all rows where column issue_date is False.
     # This is done to remove all rows that are not forecasts.
     data = data[data['issue_date'] == True]
 
     # Drop column 'issue_date' as it is not needed in the final output.
-    data = data.drop(columns=['issue_date'])
+    data = data.drop(columns=['issue_date', 'discharge'])
 
-    # Write the data to a csv file. Raise an error if this does not work.
-    # If the data is written to the csv file, log a message that the data
-    # has been written.
-    try:
-        ret = data.reset_index(drop=True).to_csv(output_file_path, index=False)
+    # Round all columns values to 3 digits
+    data = data.round(3)
+
+    # For each code, extract the last row
+    last_line = data.groupby('code').tail(1)
+
+    # Test if the output file already exists
+    if os.path.exists(output_file_path):
+        # Append to the existing file
+        with open(output_file_path, 'a') as f:
+            ret = last_line.to_csv(f, index=False, header=False)
         if ret is None:
             logger.info(f"Data written to {output_file_path}.")
         else:
             logger.error(f"Could not write the data to {output_file_path}.")
-    except Exception as e:
-        logger.error(f"Could not write the data to {output_file_path}.")
-        raise e
+    else:
+        # Write the data to a csv file. Raise an error if this does not work.
+        # If the data is written to the csv file, log a message that the data
+        # has been written.
+        try:
+            ret = last_line.to_csv(output_file_path, index=False)
+            if ret is None:
+                logger.info(f"Data written to {output_file_path}.")
+            else:
+                logger.error(f"Could not write the data to {output_file_path}.")
+        except Exception as e:
+            logger.error(f"Could not write the data to {output_file_path}.")
+            raise e
 
-    return None
+    return ret
 
-def write_decad_forecast_data(data: pd.DataFrame):
+def write_linreg_decad_forecast_data(data: pd.DataFrame):
     """
     Writes the data to a csv file for later reading into the forecast dashboard.
 
@@ -1375,27 +1403,98 @@ def write_decad_forecast_data(data: pd.DataFrame):
         print(os.getenv("ieasyforecast_analysis_decad_file"))
         raise e
 
+    # Reset index, dropping the old index
+    data = data.reset_index(drop=True)
+
     # From data dataframe, drop all rows where column issue_date is False.
     # This is done to remove all rows that are not forecasts.
     data = data[data['issue_date'] == True]
 
     # Drop column 'issue_date' as it is not needed in the final output.
-    data = data.drop(columns=['issue_date'])
+    data = data.drop(columns=['issue_date', 'discharge'])
 
-    # Write the data to a csv file. Raise an error if this does not work.
-    # If the data is written to the csv file, log a message that the data
-    # has been written.
-    try:
-        ret = data.reset_index(drop=True).to_csv(output_file_path, index=False)
+    # Round all columns values to 3 digits
+    data = data.round(3)
+
+    # Extract the last line of the DataFrame
+    last_line = data.groupby('code').tail(1)
+
+    # Test if the output file already exists
+    if os.path.exists(output_file_path):
+        # Append to the existing file
+        with open(output_file_path, 'a') as f:
+            ret = last_line.to_csv(f, index=False, header=False)
         if ret is None:
             logger.info(f"Data written to {output_file_path}.")
         else:
             logger.error(f"Could not write the data to {output_file_path}.")
-    except Exception as e:
-        logger.error(f"Could not write the data to {output_file_path}.")
-        raise e
+    else:
+        # Write the data to a csv file. Raise an error if this does not work.
+        # If the data is written to the csv file, log a message that the data
+        # has been written.
+        try:
+            ret = last_line.to_csv(output_file_path, index=False)
+            if ret is None:
+                logger.info(f"Data written to {output_file_path}.")
+            else:
+                logger.error(f"Could not write the data to {output_file_path}.")
+        except Exception as e:
+            logger.error(f"Could not write the data to {output_file_path}.")
+            raise e
 
-    return None
+    return ret
+
+
+def prepare_hydrograph_data(daily_discharge_data: pd.DataFrame,
+                          date_col='date', discharge_col='discharge_avg',
+                          group_col='pentad_in_year', code_col='code'):
+    logger.info("Writing hydrograph data ...")
+
+    # Some pre-processing prior to writing
+    # Convert the Date column to a datetime object
+    daily_discharge_data[date_col] = pd.to_datetime(daily_discharge_data[date_col])
+    # Add a year column and make sure the year column is of type string.
+    daily_discharge_data['year'] = daily_discharge_data[date_col].year.astype(str)
+    # Write the pentad of the year into a new column.
+    daily_discharge_data = tl.add_pentad_in_year_column(daily_discharge_data, date_col=date_col)
+    # Add day of year to the DataFrame
+    daily_discharge_data['day_of_year'] = daily_discharge_data[date_col].dt.dayofyear
+
+    # Pivot the hydrograph data to the wide format with daily and pentadal data.
+    #hydrograph_pentad, hydrograph_day = reformat_hydrograph_data(daily_discharge_data)
+
+    # Save the hydrograph data to csv for subsequent visualization in the
+    # forecast dashboard.
+    save_hydrograph_data_to_csv(hydrograph_pentad, hydrograph_decad)
+
+    logger.info("   ... done")
+
+def save_hydrograph_data_to_csv(hydrograph_pentad, hydrograph_day):
+    # Write this data to csv for subsequent visualization
+    # in the forecast dashboard.
+    hydrograph_pentad_file_csv = os.path.join(
+        os.getenv("ieasyforecast_intermediate_data_path"),
+        os.getenv("ieasyforecast_hydrograph_pentad_file"))
+
+    # Write the hydrograph_pentad to csv
+    ret = hydrograph_pentad.to_csv(hydrograph_pentad_file_csv)
+    if ret is None:
+        logger.info("Hydrograph pentad data saved to csv file")
+    else:
+        logger.error("Hydrograph pentad data not saved to csv file")
+
+    hydrograph_day_file_csv = os.path.join(
+        os.getenv("ieasyforecast_intermediate_data_path"),
+        os.getenv("ieasyforecast_hydrograph_day_file"))
+
+    # Write the hydrograph_day to csv. Do not print the index.
+    ret = hydrograph_day.to_csv(hydrograph_day_file_csv)
+    if ret is None:
+        logger.info("Hydrograph day data saved to csv file")
+    else:
+        logger.error("Hydrograph day data not saved to csv file")
+
+
 
 # endregion
 

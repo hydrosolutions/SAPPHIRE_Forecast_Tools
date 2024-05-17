@@ -13,6 +13,10 @@ import tag_library as tl
 
 logger = logging.getLogger(__name__)
 
+# === Tools for the initialization of the linear regression forecast ===
+
+# --- Local functions ---------------------------------------------------
+# region local_functions
 
 def store_last_successful_run_date(date):
     '''
@@ -121,8 +125,9 @@ def define_run_dates():
 
     # Basic sanity check in case the script is run multiple times.
     if date_end == last_successful_run_date:
-        logger.info("The last successful run date is the same as today. "
-                       "No forecast will be produced.")
+        logger.info("The forecasts have allready been produced for today. "
+                       "No forecast will be produced."
+                       "Please use the re-run forecast tool to re-run the forecast for today.")
         return None, None, None
 
     # The bulletin date is one day after the forecast date. It is the first day
@@ -131,59 +136,11 @@ def define_run_dates():
 
     logger.info("Running the forecast script for the following dates:")
     logger.info(f"Last successful run date: {last_successful_run_date}")
-    logger.info(f"Start date for forecasts: {date_start}")
-    logger.info(f"End date for forecasts: {date_end}")
-    logger.info(f"Bulletin date: {bulletin_date}")
+    logger.info(f"Current forecast start date for forecast iteration: {date_start}")
+    logger.info(f"End date for forecast iteration: {date_end}")
+    logger.info(f"Current forecast bulletin date: {bulletin_date}")
 
     return date_start, date_end, bulletin_date
-
-
-class ForecastFlags:
-    """
-    Class to store the forecast flags. We have flags for each forecast horizon.
-    Depending on the date the forecast tools are called for, they identify the
-    forecast horizons to service by changing the respective flag from False (no
-    forecast produced) to True (forecast produced).
-
-    Example:
-    # Set flags for daily and pentad forecasts
-    flags = ForecastFlags(day=True, pentad=True)
-    """
-    def __init__(self, day=False, pentad=False, decad=False, month=False, season=False):
-        self.day = day
-        self.pentad = pentad
-        self.decad = decad
-        self.month = month
-        self.season = season
-
-    def __repr__(self):
-        return f"day:{self.day}, pentad:{self.pentad}, decad:{self.decad}, month:{self.month}, season:{self.season}"
-
-    @classmethod
-    def from_forecast_date_get_flags(cls, start_date):
-
-        forecast_flags = cls()
-
-        # Get the day of the month
-        day = start_date.day
-        # Get the last day of the month
-        last_day = fl.get_last_day_of_month(start_date)
-        # Get the list of days for which we want to run the forecast
-        # pentadal forecasting
-        days_pentads = [5, 10, 15, 20, 25, last_day.day]
-        # decadal forecasting
-        days_decads = [10, 20, last_day.day]
-
-        # If today is not in days, exit the program.
-        if day in days_pentads:
-            logger.info(f"Running pentadal forecast on {start_date}.")
-            forecast_flags.pentad = True
-            if day in days_decads:
-                logger.info(f"Running decad forecast on {start_date}.")
-                forecast_flags.decad = True
-
-        return forecast_flags
-
 
 def load_environment():
     """
@@ -270,6 +227,9 @@ def check_database_access(ieh_sdk):
             logger.error(f"Error connecting to DB: {e}")
             raise e
 
+# The functions below are required for the old iEasyHydro App.
+# For using the forecast tools with the new iEasyHydro HF App, we can read the
+# station metadata from the database directly through an API.
 def get_pentadal_forecast_sites_complicated_method(ieh_sdk, backend_has_access_to_db):
     """
     Validate the station metadata and filter for stations required to produce forecasts.
@@ -564,6 +524,59 @@ def get_decadal_forecast_sites_from_pentadal_sites(fc_sites_pentad=None, site_li
 
     return fc_sites_decad, stations
 
+# endregion
+
+
+# --- Classes ----------------------------------------------------------
+# region classes
+
+class ForecastFlags:
+    """
+    Class to store the forecast flags. We have flags for each forecast horizon.
+    Depending on the date the forecast tools are called for, they identify the
+    forecast horizons to service by changing the respective flag from False (no
+    forecast produced) to True (forecast produced).
+
+    Example:
+    # Set flags for daily and pentad forecasts
+    flags = ForecastFlags(day=True, pentad=True)
+    """
+    def __init__(self, day=False, pentad=False, decad=False, month=False, season=False):
+        self.day = day
+        self.pentad = pentad
+        self.decad = decad
+        self.month = month
+        self.season = season
+
+    def __repr__(self):
+        return f"day:{self.day}, pentad:{self.pentad}, decad:{self.decad}, month:{self.month}, season:{self.season}"
+
+    @classmethod
+    def from_forecast_date_get_flags(cls, start_date):
+
+        forecast_flags = cls()
+
+        # Get the day of the month
+        day = start_date.day
+        # Get the last day of the month
+        last_day = fl.get_last_day_of_month(start_date)
+        # Get the list of days for which we want to run the forecast
+        # pentadal forecasting
+        days_pentads = [5, 10, 15, 20, 25, last_day.day]
+        # decadal forecasting
+        days_decads = [10, 20, last_day.day]
+
+        # If today is not in days, exit the program.
+        if day in days_pentads:
+            logger.info(f"Running pentadal forecast on {start_date}.")
+            forecast_flags.pentad = True
+            if day in days_decads:
+                logger.info(f"Running decad forecast on {start_date}.")
+                forecast_flags.decad = True
+
+        return forecast_flags
+
+# endregion
 
 
 
