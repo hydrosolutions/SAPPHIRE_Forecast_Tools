@@ -54,17 +54,18 @@ def filter_roughly_for_outliers(combined_data, group_by='Code',
         group.loc[group[filter_col] > upper_bound, filter_col] = np.nan
         group.loc[group[filter_col] < lower_bound, filter_col] = np.nan
 
+        # Set the date column as the index
+        group[date_col] = pd.to_datetime(group[date_col])
+        group.set_index(date_col, inplace=True)
+
+        # Interpolate gaps of length of max 2 days linearly
+        group[filter_col] = group[filter_col].interpolate(method='time', limit=2)
+
+        # Reset the index
+        group.reset_index(inplace=True)
+
         return group
 
-    def interpolate_group(group, filter_col, date_col):
-        group = group.reset_index()
-        print("DEBUG: group initial reset index: \n", group)
-        group = group.set_index(date_col)
-        group[filter_col] = group[filter_col].resample('D').asfreq().interpolate(method='linear')
-        print("DEBUG: group interpolated: \n", group)
-        group.reset_index()
-        group.set_index('code')
-        return group
 
     # Test if the group_by column is available
     if group_by not in combined_data.columns:
@@ -86,19 +87,6 @@ def filter_roughly_for_outliers(combined_data, group_by='Code',
 
     # Ungroup the DataFrame
     combined_data = combined_data.reset_index(drop=True)
-
-    # Make sure the date_col is a datetime object
-    combined_data[date_col] = pd.to_datetime(combined_data[date_col])
-
-    # Interpolate data gaps of length of 1 day
-    combined_data = combined_data.groupby(group_by).apply(
-        interpolate_group, filter_col, date_col)
-
-    # Ungroup the DataFrame
-    combined_data = combined_data.reset_index(drop=True)
-
-    # Convert the date_col back to date format
-    combined_data[date_col] = pd.to_datetime(combined_data[date_col]).dt.date
 
     # Drop rows with duplicate code and dates, keeping the last one
     combined_data = combined_data.drop_duplicates(subset=[group_by, date_col], keep='last')
