@@ -1,5 +1,4 @@
 import os
-import math
 import pandas as pd
 import numpy as np
 import datetime as dt
@@ -11,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 
 def filter_roughly_for_outliers(combined_data, group_by='Code',
-                                filter_col='Q_m3s', date_col='date', window_size=15):
+                                filter_col='Q_m3s', date_col='date'):
     """
     Filters outliers in the cilter_col column of the input DataFrame.
 
@@ -26,7 +25,6 @@ def filter_roughly_for_outliers(combined_data, group_by='Code',
     combined_data (pd.DataFrame): The input DataFrame. Must contain 'Code' and 'Q_m3s' columns.
     group_by (str, optional): The column to group the data by. Default is 'Code'.
     filter_col (str, optional): The column to filter for outliers. Default is 'Q_m3s'.
-    window_size (int, optional): The size of the rolling window used for outlier detection. Default is 15.
 
     Returns:
     pd.DataFrame: The input DataFrame with outliers in the 'Q_m3s' column replaced with NaN.
@@ -35,7 +33,7 @@ def filter_roughly_for_outliers(combined_data, group_by='Code',
     ValueError: If the group_by column is not found in the input DataFrame.
     """
     # Preliminary filter for outliers
-    def filter_group(group, filter_col, window_size):
+    def filter_group(group, filter_col):
         # Calculate Q1, Q3, and IQR
         Q1 = group[filter_col].quantile(0.25)
         Q3 = group[filter_col].quantile(0.75)
@@ -82,7 +80,7 @@ def filter_roughly_for_outliers(combined_data, group_by='Code',
 
     # Apply the function to each group
     combined_data = combined_data.groupby(group_by).apply(
-        filter_group, filter_col, window_size, include_groups=True)
+        filter_group, filter_col, include_groups=True)
 
     # Ungroup the DataFrame
     combined_data = combined_data.reset_index(drop=True)

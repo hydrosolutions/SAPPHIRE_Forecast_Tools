@@ -55,19 +55,18 @@ logger.addHandler(console_handler)
 
 def main():
     """
-    Pre-processing of discharge data for the SAPPHIRE forecast tools.
+    Pre-processing of weather station data for the SAPPHIRE forecast tools.
 
-    This script reads daily average discharge data from excel sheets and, if
-    access to the iEasyHydro database is available, completes the discharge
-    time series with operational daily average discharge from the database.
-    From the current day, the morning discharge is also read from the database
-    and appended to the time series.
+    This script reads decadal precipitation sums and decadal temperature
+    averages from excel sheets (if such are available) and, if access to the
+    iEasyHydro database is available, completes the time series with operational
+    decadal data from the database.
 
-    The script then saves the discharge data to a csv file for use in the
+    The script then saves the decadal weather data to a csv file for use in the
     forecast tools.
 
     The names of the columns to be written to the csv file are: 'code', 'date',
-    and 'discharge'.
+    'variable', 'value', 'unit'.
     """
 
     ## Configuration
@@ -79,42 +78,43 @@ def main():
     has_access_to_db = sl.check_database_access(ieh_sdk)
     if not has_access_to_db:
         ieh_sdk = None
+        # Log the error and exit as long as we don't have data to read from xlsx
+        logger.error("No access to the iEasyHydro database.")
+        sys.exit(1)
 
     ## Data processing
-    # Reading data from various sources
-    runoff_data = src.get_runoff_data(
-        ieh_sdk,
-        date_col='date',
-        discharge_col='discharge',
-        name_col='name',
-        code_col='code')
+    weather_data = src.get_weather_station_data(
+        ieh_sdk)
 
-    # Some virtual stations may not be in the regime data file nor in the
-    # operational data base. We need to add a hypothetical line for them if they
-    # are not already there.
-    check_hydroposts = ['15960', '15954', '16936']
-    runoff_data = src.add_hydroposts(runoff_data, check_hydroposts)
-
-    # Calculate data for virtual hydroposts where neccessary
-    filled_data = src.fill_gaps_in_reservoir_inflow_data(
-        runoff_data,
-        date_col='date',
-        discharge_col='discharge',
-        code_col='code')
+    print(weather_data.head(10))
+    print(weather_data.tail(10))
 
     # Filtering for outliers
-    filtered_data = src.filter_roughly_for_outliers(
-        filled_data, 'code', 'discharge')
+    #filtered_data = src.filter_roughly_for_outliers(
+    #    weather_data, 'code', 'value')
+
+    # Get norm P (currently not in iEasyHydro)
+    # Cant be implemented yet
+
+    # Calculate percentage of last years data
+    # TODO Reformat data to be able to calculate percentage of last years data
+
+    ## Kriging
+    # TODO Here we can put the Kriging code
+    # TODO Any other data processing that also needs to be done
 
     ## Save the data
-    # Daily data
-    ret = src.write_data_to_csv(
-        filtered_data, ['code', 'date', 'discharge'])
+    # Decadal weather time series
+    #ret = src.write_data_to_csv(
+    #    filtered_data, ['code', 'date', 'discharge'])
 
-    if ret is None:
-        sys.exit(0) # Success
-    else:
-        sys.exit(1)
+    # Raster data to be visualized in the dashboard
+    # TODO: Here we can write the results from Kriging
+
+    #if ret is None:
+    #    sys.exit(0) # Success
+    #else:
+    #    sys.exit(1)
 
 if __name__ == "__main__":
     main()

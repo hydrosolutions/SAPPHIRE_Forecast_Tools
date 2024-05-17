@@ -1,7 +1,7 @@
 # Pre-processing of operational runoff data for hydrological forecasting
-This component allows reads daily river runoff data from excel files and, if access is available, from the iEasyHydro database. The script is intended to run at 11 o'clock every day. It therefore includes daily average discharge data from all dates prior to today and todays morning measurement of river runoff. The data is stored in a csv file.
+This component allows the reading of daily river runoff data from excel files and, if access is available, from the iEasyHydro database. The script is intended to run at 11 o'clock every day. It therefore includes daily average discharge data (in m3/s) from all dates prior to today and todays morning measurement of river runoff. The data is stored in a csv file.
 
-We perform a rough filtering of the data to remove outliers. The filtering is based on the assumption that the discharge should not change too much from one day to the next. We calculate the daily difference of the discharge and remove all values that are more than 3 times the standard deviation from the mean.
+We perform a rough filtering of the data to remove outliers. The filtering is based on the assumption that the discharge should not change too much from one day to the next. We calculate the inter-quartile-range and filter out all values that are below the first quartile minus 1.5 times the inter-quartile-range or above the third quartile plus 1.5 times the inter-quartile-range. The filtered data is then stored in a csv file.
 
 ## Input
 - Configuration as described in doc/configuration.md
