@@ -283,8 +283,51 @@ class RunPreprocessingRunoff(luigi.Task):
         # Check if the output file was modified within the last number of seconds
         return current_time - output_file_mtime < 10  # 24 * 60 * 60
 
+class RunLinearRegression(luigi.Task):
+    def requires(self):
+        return RunPreprocessingRunoff()
+
+    def output(self):
+        # Load the configuration file for development mode
+        env_file_path = "../../../sensitive_data_forecast_tools/config/.env_develop_kghm"
+        load_dotenv(dotenv_path=env_file_path)
+
+        # Get the path to the output file
+        output_file_path = os.path.join(
+            os.getenv("ieasyforecast_intermediate_data_path"),
+            os.getenv("ieasyforecast_last_successful_run_file")
+            )
+
+        return luigi.LocalTarget(output_file_path)
+
+    def run(self):
+        print("\n\n{task} says: Running linear regression!\n\n".format(task=self.__class__.__name__))
+
+        script_path = "../linear_regression/linear_regression.py"
+        env = os.environ.copy()
+        env["SAPPHIRE_OPDEV_ENV"] = "True"
+        result = subprocess.run(["python", script_path], env=env, capture_output=True, text=True)
+
+        if result.returncode != 0:
+            raise Exception(f"Script {script_path} failed with error: {result.stderr}")
+        else:
+            print(f"Script {script_path} output: {result.stdout}")
+
+    def complete(self):
+        if not self.output().exists():
+            return False
+
+        # Get the modified time of the output file
+        output_file_mtime = os.path.getmtime(self.output().path)
+
+        # Get the current time
+        current_time = time.time()
+
+        # Check if the output file was modified within the last number of seconds
+        return current_time - output_file_mtime < 10  # 24 * 60 * 60
+
 if __name__ == "__main__":
-    luigi.run(['RunPreprocessingRunoff', '--local-scheduler'])
+    luigi.run(['RunLinearRegression', '--local-scheduler'])
 
     # Run scripts during development:
     # python pipeline.py RunScript --image-name my-image --local-scheduler

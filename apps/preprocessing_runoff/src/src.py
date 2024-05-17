@@ -1,4 +1,5 @@
 import os
+import math
 import pandas as pd
 import numpy as np
 import datetime as dt
@@ -35,16 +36,14 @@ def filter_roughly_for_outliers(combined_data, group_by='Code',
     """
     # Preliminary filter for outliers
     def filter_group(group, filter_col, window_size):
-        # Calculate the rolling mean and standard deviation
-        # Will put NaNs in the first window_size-1 values and therefore not
-        # filter outliers in the first window_size-1 values
-        rolling_mean = group[filter_col].rolling(window_size).mean()
-        rolling_std = group[filter_col].rolling(window_size).std()
+        # Calculate Q1, Q3, and IQR
+        Q1 = group[filter_col].quantile(0.25)
+        Q3 = group[filter_col].quantile(0.75)
+        IQR = Q3 - Q1
 
         # Calculate the upper and lower bounds for outliers
-        num_std = 3.5  # Number of standard deviations
-        upper_bound = rolling_mean + num_std * rolling_std
-        lower_bound = rolling_mean - num_std * rolling_std
+        upper_bound = Q3 + 1.5 * IQR
+        lower_bound = Q1 - 1.5 * IQR
 
         #print("DEBUG: upper_bound: ", upper_bound)
         #print("DEBUG: lower_bound: ", lower_bound)
@@ -285,7 +284,7 @@ def read_all_runoff_data_from_excel(date_col='date', discharge_col='discharge', 
     files_multiple_rivers = [
         f for f in os.listdir(daily_discharge_dir)
         if os.path.isfile(os.path.join(daily_discharge_dir, f))
-        and f.endswith('.xlsx') and not f[0].isdigit()
+        and f.endswith('.xlsx') and not f[0].isdigit() and not f.startswith('~')
     ]
     # Initiate empty dataframe
     df = None
@@ -319,7 +318,7 @@ def read_all_runoff_data_from_excel(date_col='date', discharge_col='discharge', 
     files_single_rivers = [
         f for f in os.listdir(daily_discharge_dir)
         if os.path.isfile(os.path.join(daily_discharge_dir, f))
-        and f.endswith('.xlsx') and f[0].isdigit()
+        and f.endswith('.xlsx') and f[0].isdigit() and not f.startswith('~')
     ]
     if len(files_single_rivers) == 0:
         logger.warning(f"No excel files with single river data found in '{daily_discharge_dir}'.")
