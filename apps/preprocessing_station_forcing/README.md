@@ -3,9 +3,10 @@ This component allows the reading of decadal precipitatin and temperature data f
 
 The preprocessing station forcing tool uses the same requirements as the preprocessing_discharge tool.
 
+Note that currently, regime data is not available. Also norm data is not yet available.
+
 ## Input
 - Configuration as described in doc/configuration.md
-- Excel file(s) with decadal precipitation and temperature data (optional)
 
 ## Output
 - CSV file with decadal precipitation and temperature data for each site. The file contains the columns 'code', 'date', and 'discharge' (in m3/s).
