@@ -256,7 +256,6 @@ class RunPreprocessingRunoff(luigi.Task):
 
         return luigi.LocalTarget(output_file_path)
 
-
     def run(self):
         print("\n\n{task} says: Running preprocessing runoff!\n\n".format(task=self.__class__.__name__))
 

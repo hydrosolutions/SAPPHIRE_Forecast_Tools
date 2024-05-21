@@ -86,35 +86,41 @@ def main():
     weather_data = src.get_weather_station_data(
         ieh_sdk)
 
-    print(weather_data.head(10))
-    print(weather_data.tail(10))
-
     # Filtering for outliers
-    #filtered_data = src.filter_roughly_for_outliers(
-    #    weather_data, 'code', 'value')
+    filtered_data = src.filter_roughly_for_outliers(
+        weather_data, group_by=['code', 'variable'], filter_col='value',
+        date_col='date')
 
     # Get norm P (currently not in iEasyHydro)
-    # Cant be implemented yet
+    # TODO To be implemented once the upload of norm P and T data is available in iEasyHydro HF
+    # For now, we calculate the precipitation norm data from the decadal data in src.preprocess_station_meteo_data
+
+    # Aggregate decadal data to monthly data
+    monthly_data = src.aggregate_decadal_to_monthly(filtered_data)
 
     # Calculate percentage of last years data
-    # TODO Reformat data to be able to calculate percentage of last years data
+    # TODO Also calculate percentage of norm data once it becomes available through iEasyHydro HF
+    # TODO Reformat data to calculate percentage of last years data
+    decadal_data_for_current_year = src.preprocess_station_meteo_data(filtered_data)
+    monthly_data_for_current_year = src.preprocess_station_meteo_data(monthly_data)
 
     ## Kriging
     # TODO Here we can put the Kriging code
     # TODO Any other data processing that also needs to be done
 
     ## Save the data
-    # Decadal weather time series
-    #ret = src.write_data_to_csv(
-    #    filtered_data, ['code', 'date', 'discharge'])
+    # monthly weather time series
+    ret = src.write_monthly_station_data_to_csv(monthly_data_for_current_year)
+
+    # any other data that might need saving at some later stage
 
     # Raster data to be visualized in the dashboard
     # TODO: Here we can write the results from Kriging
 
-    #if ret is None:
-    #    sys.exit(0) # Success
-    #else:
-    #    sys.exit(1)
+    if ret is None:
+        sys.exit(0) # Success
+    else:
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()

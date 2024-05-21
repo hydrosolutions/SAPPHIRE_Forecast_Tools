@@ -1,329 +1,468 @@
-2024-05-17 16:30:52,022 - INFO - Loading environment variables from ../../../sensitive_data_forecast_tools/config/.env_develop_kghm
-2024-05-17 16:30:52,850 - INFO - Access to iEasyHydro database.
-2024-05-17 16:31:27,729 - INFO - Loading environment variables from ../../../sensitive_data_forecast_tools/config/.env_develop_kghm
-2024-05-17 16:31:28,387 - INFO - Access to iEasyHydro database.
-2024-05-17 16:32:15,049 - INFO - Loading environment variables from ../../../sensitive_data_forecast_tools/config/.env_develop_kghm
-2024-05-17 16:32:15,697 - INFO - Access to iEasyHydro database.
-2024-05-17 16:32:15,995 - INFO - Reading data for site 15256.
-2024-05-17 16:32:23,323 - INFO - Skip reading daily average discharge data for site 15256
-2024-05-17 16:32:30,470 - INFO - Skip reading daily average discharge data for site 15256
-2024-05-17 16:32:30,471 - INFO - No P data found for site 15256.
-2024-05-17 16:32:30,471 - INFO - Reading data for site 15283.
-2024-05-17 16:32:37,529 - INFO - Skip reading daily average discharge data for site 15283
-2024-05-17 16:32:37,843 - INFO - Skip reading daily average discharge data for site 15283
-2024-05-17 16:32:37,844 - INFO - No P data found for site 15283.
-2024-05-17 16:32:37,844 - INFO - Reading data for site 15285.
-2024-05-17 16:32:46,083 - INFO - Skip reading daily average discharge data for site 15285
-2024-05-17 16:32:46,394 - INFO - Skip reading daily average discharge data for site 15285
-2024-05-17 16:32:46,395 - INFO - No P data found for site 15285.
-2024-05-17 16:32:46,395 - INFO - Reading data for site 15287.
-2024-05-17 16:32:53,624 - INFO - Skip reading daily average discharge data for site 15287
-2024-05-17 16:32:53,932 - INFO - Skip reading daily average discharge data for site 15287
-2024-05-17 16:32:53,935 - INFO - No P data found for site 15287.
-2024-05-17 16:32:53,935 - INFO - Reading data for site 15312.
-2024-05-17 16:33:02,246 - INFO - Skip reading daily average discharge data for site 15312
-2024-05-17 16:33:02,564 - INFO - Skip reading daily average discharge data for site 15312
-2024-05-17 16:33:02,566 - INFO - No P data found for site 15312.
-2024-05-17 16:33:02,566 - INFO - Reading data for site 38471.
-2024-05-17 16:33:10,699 - INFO - Skip reading daily average discharge data for site 38471
-2024-05-17 16:33:18,748 - INFO - Skip reading daily average discharge data for site 38471
-2024-05-17 16:33:18,749 - INFO - No P data found for site 38471.
-2024-05-17 16:33:18,749 - INFO - Reading data for site 38349.
-2024-05-17 16:33:24,082 - INFO - Skip reading daily average discharge data for site 38349
-2024-05-17 16:33:24,428 - INFO - Skip reading daily average discharge data for site 38349
-2024-05-17 16:33:24,429 - INFO - No P data found for site 38349.
-2024-05-17 16:33:24,429 - INFO - Reading data for site 38472.
-2024-05-17 16:33:34,038 - INFO - Skip reading daily average discharge data for site 38472
-2024-05-17 16:33:38,951 - INFO - Skip reading daily average discharge data for site 38472
-2024-05-17 16:33:38,951 - INFO - No P data found for site 38472.
-2024-05-17 16:33:38,951 - INFO - Reading data for site 38476.
-2024-05-17 16:33:47,888 - INFO - Skip reading daily average discharge data for site 38476
-2024-05-17 16:33:55,871 - INFO - Skip reading daily average discharge data for site 38476
-2024-05-17 16:33:55,872 - INFO - No P data found for site 38476.
-2024-05-17 16:33:55,872 - INFO - Reading data for site 38871.
-2024-05-17 16:34:05,298 - INFO - Skip reading daily average discharge data for site 38871
-2024-05-17 16:34:11,930 - INFO - Skip reading daily average discharge data for site 38871
-2024-05-17 16:34:11,931 - INFO - No P data found for site 38871.
-2024-05-17 16:34:11,931 - INFO - Reading data for site 38486.
-2024-05-17 16:34:18,268 - INFO - Skip reading daily average discharge data for site 38486
-2024-05-17 16:34:18,610 - INFO - Skip reading daily average discharge data for site 38486
-2024-05-17 16:34:18,612 - INFO - No P data found for site 38486.
-2024-05-17 16:34:18,612 - INFO - Reading data for site 15189.
-2024-05-17 16:34:29,063 - INFO - Skip reading daily average discharge data for site 15189
-2024-05-17 16:34:29,669 - INFO - Skip reading daily average discharge data for site 15189
-2024-05-17 16:34:29,670 - INFO - No P data found for site 15189.
-2024-05-17 16:34:29,670 - INFO - Reading data for site 15214.
-2024-05-17 16:34:37,691 - INFO - Skip reading daily average discharge data for site 15214
-2024-05-17 16:34:38,474 - INFO - Skip reading daily average discharge data for site 15214
-2024-05-17 16:34:38,475 - INFO - No P data found for site 15214.
-2024-05-17 16:34:38,475 - INFO - Reading data for site 15212.
-2024-05-17 16:34:47,123 - INFO - Skip reading daily average discharge data for site 15212
-2024-05-17 16:34:47,700 - INFO - Skip reading daily average discharge data for site 15212
-2024-05-17 16:34:47,702 - INFO - No P data found for site 15212.
-2024-05-17 16:34:47,702 - INFO - Reading data for site 15215.
-2024-05-17 16:34:57,112 - INFO - Skip reading daily average discharge data for site 15215
-2024-05-17 16:34:57,688 - INFO - Skip reading daily average discharge data for site 15215
-2024-05-17 16:34:57,689 - INFO - No P data found for site 15215.
-2024-05-17 16:34:57,689 - INFO - Reading data for site 15216.
-2024-05-17 16:35:06,019 - INFO - Skip reading daily average discharge data for site 15216
-2024-05-17 16:35:06,609 - INFO - Skip reading daily average discharge data for site 15216
-2024-05-17 16:35:06,611 - INFO - No P data found for site 15216.
-2024-05-17 16:35:06,611 - INFO - Reading data for site 15171.
-2024-05-17 16:35:15,241 - INFO - Skip reading daily average discharge data for site 15171
-2024-05-17 16:35:15,852 - INFO - Skip reading daily average discharge data for site 15171
-2024-05-17 16:35:15,854 - INFO - No P data found for site 15171.
-2024-05-17 16:35:15,854 - INFO - Reading data for site 15149.
-2024-05-17 16:35:22,606 - INFO - Skip reading daily average discharge data for site 15149
-2024-05-17 16:35:23,226 - INFO - Skip reading daily average discharge data for site 15149
-2024-05-17 16:35:23,228 - INFO - No P data found for site 15149.
-2024-05-17 16:35:23,229 - INFO - Reading data for site 36921.
-2024-05-17 16:35:32,802 - INFO - Skip reading daily average discharge data for site 36921
-2024-05-17 16:35:33,107 - INFO - Skip reading daily average discharge data for site 36921
-2024-05-17 16:35:33,109 - INFO - No P data found for site 36921.
-2024-05-17 16:35:33,109 - INFO - Reading data for site 15102.
-2024-05-17 16:35:42,237 - INFO - Skip reading daily average discharge data for site 15102
-2024-05-17 16:35:42,558 - INFO - Skip reading daily average discharge data for site 15102
-2024-05-17 16:35:42,559 - INFO - No P data found for site 15102.
-2024-05-17 16:35:42,559 - INFO - Reading data for site 36971.
-2024-05-17 16:35:51,199 - INFO - Skip reading daily average discharge data for site 36971
-2024-05-17 16:36:00,043 - INFO - Skip reading daily average discharge data for site 36971
-2024-05-17 16:36:00,045 - INFO - No P data found for site 36971.
-2024-05-17 16:36:00,045 - INFO - Reading data for site 38359.
-2024-05-17 16:36:07,060 - INFO - Skip reading daily average discharge data for site 38359
-2024-05-17 16:36:13,502 - INFO - Skip reading daily average discharge data for site 38359
-2024-05-17 16:36:13,503 - INFO - No P data found for site 38359.
-2024-05-17 16:36:13,503 - INFO - Reading data for site 38345.
-2024-05-17 16:36:22,424 - INFO - Skip reading daily average discharge data for site 38345
-2024-05-17 16:36:31,200 - INFO - Skip reading daily average discharge data for site 38345
-2024-05-17 16:36:31,203 - INFO - No P data found for site 38345.
-2024-05-17 16:36:31,203 - INFO - Reading data for site 16059.
-2024-05-17 16:36:33,559 - INFO - Skip reading daily average discharge data for site 16059
-2024-05-17 16:36:33,869 - INFO - Skip reading daily average discharge data for site 16059
-2024-05-17 16:36:33,870 - INFO - No P data found for site 16059.
-2024-05-17 16:36:33,871 - INFO - Reading data for site 16096.
-2024-05-17 16:36:38,596 - INFO - Skip reading daily average discharge data for site 16096
-2024-05-17 16:36:38,925 - INFO - Skip reading daily average discharge data for site 16096
-2024-05-17 16:36:38,928 - INFO - No P data found for site 16096.
-2024-05-17 16:36:38,928 - INFO - Reading data for site 16100.
-2024-05-17 16:36:46,444 - INFO - Skip reading daily average discharge data for site 16100
-2024-05-17 16:36:46,764 - INFO - Skip reading daily average discharge data for site 16100
-2024-05-17 16:36:46,765 - INFO - No P data found for site 16100.
-2024-05-17 16:36:46,765 - INFO - Reading data for site 36974.
-2024-05-17 16:36:56,808 - INFO - Skip reading daily average discharge data for site 36974
-2024-05-17 16:37:06,655 - INFO - Skip reading daily average discharge data for site 36974
-2024-05-17 16:37:06,657 - INFO - No P data found for site 36974.
-2024-05-17 16:37:06,658 - INFO - Reading data for site 38355.
-2024-05-17 16:37:16,536 - INFO - Skip reading daily average discharge data for site 38355
-2024-05-17 16:37:26,199 - INFO - Skip reading daily average discharge data for site 38355
-2024-05-17 16:37:26,199 - INFO - No P data found for site 38355.
-2024-05-17 16:37:26,199 - INFO - Reading data for site 16070.
-2024-05-17 16:37:34,711 - INFO - Skip reading daily average discharge data for site 16070
-2024-05-17 16:37:35,231 - INFO - Skip reading daily average discharge data for site 16070
-2024-05-17 16:37:35,232 - INFO - No P data found for site 16070.
-2024-05-17 16:37:35,232 - INFO - Reading data for site 38482.
-2024-05-17 16:37:42,922 - INFO - Skip reading daily average discharge data for site 38482
-2024-05-17 16:37:43,229 - INFO - Skip reading daily average discharge data for site 38482
-2024-05-17 16:37:43,229 - INFO - No P data found for site 38482.
-2024-05-17 16:37:43,230 - INFO - Reading data for site 36969.
-2024-05-17 16:37:51,293 - INFO - Skip reading daily average discharge data for site 36969
-2024-05-17 16:37:51,598 - INFO - Skip reading daily average discharge data for site 36969
-2024-05-17 16:37:51,599 - INFO - No P data found for site 36969.
-2024-05-17 16:37:51,599 - INFO - Reading data for site 38489.
-2024-05-17 16:37:57,697 - INFO - Skip reading daily average discharge data for site 38489
-2024-05-17 16:37:58,011 - INFO - Skip reading daily average discharge data for site 38489
-2024-05-17 16:37:58,013 - INFO - No P data found for site 38489.
-2024-05-17 16:37:58,014 - INFO - Reading data for site 38342.
-2024-05-17 16:38:06,053 - INFO - Skip reading daily average discharge data for site 38342
-2024-05-17 16:38:06,359 - INFO - Skip reading daily average discharge data for site 38342
-2024-05-17 16:38:06,359 - INFO - No P data found for site 38342.
-2024-05-17 16:38:06,359 - INFO - Reading data for site 16134.
-2024-05-17 16:38:15,835 - INFO - Skip reading daily average discharge data for site 16134
-2024-05-17 16:38:16,149 - INFO - Skip reading daily average discharge data for site 16134
-2024-05-17 16:38:16,149 - INFO - No P data found for site 16134.
-2024-05-17 16:38:16,149 - INFO - Reading data for site 16136.
-2024-05-17 16:38:25,211 - INFO - Skip reading daily average discharge data for site 16136
-2024-05-17 16:38:27,658 - INFO - Skip reading daily average discharge data for site 16136
-2024-05-17 16:38:27,659 - INFO - No P data found for site 16136.
-2024-05-17 16:38:27,659 - INFO - Reading data for site 16121.
-2024-05-17 16:38:35,352 - INFO - Skip reading daily average discharge data for site 16121
-2024-05-17 16:38:35,666 - INFO - Skip reading daily average discharge data for site 16121
-2024-05-17 16:38:35,668 - INFO - No P data found for site 16121.
-2024-05-17 16:38:35,668 - INFO - Reading data for site 16127.
-2024-05-17 16:38:45,526 - INFO - Skip reading daily average discharge data for site 16127
-2024-05-17 16:38:45,840 - INFO - Skip reading daily average discharge data for site 16127
-2024-05-17 16:38:45,841 - INFO - No P data found for site 16127.
-2024-05-17 16:38:45,841 - INFO - Reading data for site 16487.
-2024-05-17 16:38:52,766 - INFO - Skip reading daily average discharge data for site 16487
-2024-05-17 16:38:53,076 - INFO - Skip reading daily average discharge data for site 16487
-2024-05-17 16:38:53,077 - INFO - No P data found for site 16487.
-2024-05-17 16:38:53,077 - INFO - Reading data for site 36982.
-2024-05-17 16:39:02,551 - INFO - Skip reading daily average discharge data for site 36982
-2024-05-17 16:39:11,742 - INFO - Skip reading daily average discharge data for site 36982
-2024-05-17 16:39:11,743 - INFO - No P data found for site 36982.
-2024-05-17 16:39:11,743 - INFO - Reading data for site 16139.
-2024-05-17 16:39:18,353 - INFO - Skip reading daily average discharge data for site 16139
-2024-05-17 16:39:18,669 - INFO - Skip reading daily average discharge data for site 16139
-2024-05-17 16:39:18,672 - INFO - No P data found for site 16139.
-2024-05-17 16:39:18,672 - INFO - Reading data for site 16146.
-2024-05-17 16:39:29,026 - INFO - Skip reading daily average discharge data for site 16146
-2024-05-17 16:39:29,376 - INFO - Skip reading daily average discharge data for site 16146
-2024-05-17 16:39:29,377 - INFO - No P data found for site 16146.
-2024-05-17 16:39:29,378 - INFO - Reading data for site 16151.
-2024-05-17 16:39:30,756 - INFO - Skip reading daily average discharge data for site 16151
-2024-05-17 16:39:31,073 - INFO - Skip reading daily average discharge data for site 16151
-2024-05-17 16:39:31,075 - INFO - No P data found for site 16151.
-2024-05-17 16:39:31,075 - INFO - Reading data for site 17462.
-2024-05-17 16:39:33,499 - INFO - Skip reading daily average discharge data for site 17462
-2024-05-17 16:39:33,955 - INFO - Skip reading daily average discharge data for site 17462
-2024-05-17 16:39:33,955 - INFO - No P data found for site 17462.
-2024-05-17 16:39:33,955 - INFO - Reading data for site 16153.
-2024-05-17 16:39:41,299 - INFO - Skip reading daily average discharge data for site 16153
-2024-05-17 16:39:47,564 - INFO - Skip reading daily average discharge data for site 16153
-2024-05-17 16:39:47,565 - INFO - No P data found for site 16153.
-2024-05-17 16:39:47,565 - INFO - Reading data for site 38628.
-2024-05-17 16:39:49,030 - INFO - Skip reading daily average discharge data for site 38628
-2024-05-17 16:39:49,334 - INFO - Skip reading daily average discharge data for site 38628
-2024-05-17 16:39:49,334 - INFO - No P data found for site 38628.
-2024-05-17 16:39:49,334 - INFO - Reading data for site 16159.
-2024-05-17 16:39:58,545 - INFO - Skip reading daily average discharge data for site 16159
-2024-05-17 16:39:58,859 - INFO - Skip reading daily average discharge data for site 16159
-2024-05-17 16:39:58,861 - INFO - No P data found for site 16159.
-2024-05-17 16:39:58,861 - INFO - Reading data for site 16169.
-2024-05-17 16:40:08,716 - INFO - Skip reading daily average discharge data for site 16169
-2024-05-17 16:40:09,032 - INFO - Skip reading daily average discharge data for site 16169
-2024-05-17 16:40:09,034 - INFO - No P data found for site 16169.
-2024-05-17 16:40:09,034 - INFO - Reading data for site 16510.
-2024-05-17 16:40:19,161 - INFO - Skip reading daily average discharge data for site 16510
-2024-05-17 16:40:19,476 - INFO - Skip reading daily average discharge data for site 16510
-2024-05-17 16:40:19,477 - INFO - No P data found for site 16510.
-2024-05-17 16:40:19,478 - INFO - Reading data for site 16160.
-2024-05-17 16:40:27,925 - INFO - Skip reading daily average discharge data for site 16160
-2024-05-17 16:40:28,232 - INFO - Skip reading daily average discharge data for site 16160
-2024-05-17 16:40:28,233 - INFO - No P data found for site 16160.
-2024-05-17 16:40:28,233 - INFO - Reading data for site 38722.
-2024-05-17 16:40:35,566 - INFO - Skip reading daily average discharge data for site 38722
-2024-05-17 16:40:35,871 - INFO - Skip reading daily average discharge data for site 38722
-2024-05-17 16:40:35,873 - INFO - No P data found for site 38722.
-2024-05-17 16:40:35,873 - INFO - Reading data for site 16681.
-2024-05-17 16:40:36,575 - INFO - Skip reading daily average discharge data for site 16681
-2024-05-17 16:40:36,886 - INFO - Skip reading daily average discharge data for site 16681
-2024-05-17 16:40:36,887 - INFO - No P data found for site 16681.
-2024-05-17 16:40:36,887 - INFO - Reading data for site 15025.
-2024-05-17 16:40:45,424 - INFO - Skip reading daily average discharge data for site 15025
-2024-05-17 16:40:45,750 - INFO - Skip reading daily average discharge data for site 15025
-2024-05-17 16:40:45,751 - INFO - No P data found for site 15025.
-2024-05-17 16:40:45,751 - INFO - Reading data for site 15020.
-2024-05-17 16:40:47,987 - INFO - Skip reading daily average discharge data for site 15020
-2024-05-17 16:40:48,295 - INFO - Skip reading daily average discharge data for site 15020
-2024-05-17 16:40:48,296 - INFO - No P data found for site 15020.
-2024-05-17 16:40:48,296 - INFO - Reading data for site 15034.
-2024-05-17 16:40:56,748 - INFO - Skip reading daily average discharge data for site 15034
-2024-05-17 16:40:57,060 - INFO - Skip reading daily average discharge data for site 15034
-2024-05-17 16:40:57,063 - INFO - No P data found for site 15034.
-2024-05-17 16:40:57,063 - INFO - Reading data for site 15013.
-2024-05-17 16:41:06,546 - INFO - Skip reading daily average discharge data for site 15013
-2024-05-17 16:41:07,084 - INFO - Skip reading daily average discharge data for site 15013
-2024-05-17 16:41:07,087 - INFO - No P data found for site 15013.
-2024-05-17 16:41:07,087 - INFO - Reading data for site 15081.
-2024-05-17 16:41:51,797 - INFO - Loading environment variables from ../../../sensitive_data_forecast_tools/config/.env_develop_kghm
-2024-05-17 16:41:52,447 - INFO - Access to iEasyHydro database.
-2024-05-17 16:41:52,725 - INFO - Reading data for site 15256.
-2024-05-17 16:42:00,365 - INFO - Skip reading daily average discharge data for site 15256
-2024-05-17 16:42:07,312 - INFO - Skip reading daily average discharge data for site 15256
-2024-05-17 16:42:07,313 - INFO - No P data found for site 15256.
-2024-05-17 16:42:07,313 - INFO - No T data found for site 15256.
-2024-05-17 16:42:07,313 - INFO - Reading data for site 15283.
-2024-05-17 16:42:14,194 - INFO - Skip reading daily average discharge data for site 15283
-2024-05-17 16:42:14,509 - INFO - Skip reading daily average discharge data for site 15283
-2024-05-17 16:42:14,510 - INFO - No P data found for site 15283.
-2024-05-17 16:42:14,511 - INFO - No T data found for site 15283.
-2024-05-17 16:42:14,511 - INFO - Reading data for site 15285.
-2024-05-17 16:42:22,678 - INFO - Skip reading daily average discharge data for site 15285
-2024-05-17 16:42:22,992 - INFO - Skip reading daily average discharge data for site 15285
-2024-05-17 16:42:22,994 - INFO - No P data found for site 15285.
-2024-05-17 16:42:22,994 - INFO - No T data found for site 15285.
-2024-05-17 16:42:22,994 - INFO - Reading data for site 15287.
-2024-05-17 16:42:30,219 - INFO - Skip reading daily average discharge data for site 15287
-2024-05-17 16:42:30,534 - INFO - Skip reading daily average discharge data for site 15287
-2024-05-17 16:42:30,536 - INFO - No P data found for site 15287.
-2024-05-17 16:42:30,536 - INFO - No T data found for site 15287.
-2024-05-17 16:42:30,537 - INFO - Reading data for site 15312.
-2024-05-17 16:42:39,230 - INFO - Skip reading daily average discharge data for site 15312
-2024-05-17 16:42:39,541 - INFO - Skip reading daily average discharge data for site 15312
-2024-05-17 16:42:39,543 - INFO - No P data found for site 15312.
-2024-05-17 16:42:39,543 - INFO - No T data found for site 15312.
-2024-05-17 16:46:02,372 - INFO - Loading environment variables from ../../../sensitive_data_forecast_tools/config/.env_develop_kghm
-2024-05-17 16:46:03,029 - INFO - Access to iEasyHydro database.
-2024-05-17 16:46:03,301 - INFO - Reading data for site 15256.
-2024-05-17 16:46:10,918 - INFO - Skip reading daily average discharge data for site 15256
-2024-05-17 16:46:17,562 - INFO - Skip reading daily average discharge data for site 15256
-2024-05-17 16:46:17,563 - INFO - No P data found for site 15256.
-2024-05-17 16:46:17,563 - INFO - No T data found for site 15256.
-2024-05-17 16:46:17,563 - INFO - Reading data for site 15283.
-2024-05-17 16:46:24,767 - INFO - Skip reading daily average discharge data for site 15283
-2024-05-17 16:46:25,102 - INFO - Skip reading daily average discharge data for site 15283
-2024-05-17 16:46:25,104 - INFO - No P data found for site 15283.
-2024-05-17 16:46:25,104 - INFO - No T data found for site 15283.
-2024-05-17 16:46:25,104 - INFO - Reading data for site 15285.
-2024-05-17 16:46:33,383 - INFO - Skip reading daily average discharge data for site 15285
-2024-05-17 16:46:33,696 - INFO - Skip reading daily average discharge data for site 15285
-2024-05-17 16:46:33,699 - INFO - No P data found for site 15285.
-2024-05-17 16:46:33,699 - INFO - No T data found for site 15285.
-2024-05-17 16:46:33,699 - INFO - Reading data for site 15287.
-2024-05-17 16:46:40,811 - INFO - Skip reading daily average discharge data for site 15287
-2024-05-17 16:46:41,122 - INFO - Skip reading daily average discharge data for site 15287
-2024-05-17 16:46:41,124 - INFO - No P data found for site 15287.
-2024-05-17 16:46:41,124 - INFO - No T data found for site 15287.
-2024-05-17 16:46:41,124 - INFO - Reading data for site 15312.
-2024-05-17 16:46:49,216 - INFO - Skip reading daily average discharge data for site 15312
-2024-05-17 16:46:49,528 - INFO - Skip reading daily average discharge data for site 15312
-2024-05-17 16:46:49,530 - INFO - No P data found for site 15312.
-2024-05-17 16:46:49,531 - INFO - No T data found for site 15312.
-2024-05-17 16:46:49,531 - INFO - No data found for any site.
-2024-05-17 16:49:46,850 - INFO - Loading environment variables from ../../../sensitive_data_forecast_tools/config/.env_develop_kghm
-2024-05-17 16:49:47,648 - INFO - Access to iEasyHydro database.
-2024-05-17 16:49:47,913 - INFO - Reading data for site 15256.
-2024-05-17 16:49:55,385 - INFO - Skip reading daily average discharge data for site 15256
-2024-05-17 16:50:02,208 - INFO - Skip reading daily average discharge data for site 15256
-2024-05-17 16:50:02,208 - INFO - No P data found for site 15256.
-2024-05-17 16:50:02,209 - INFO - No T data found for site 15256.
-2024-05-17 16:50:02,209 - INFO - Reading data for site 15283.
-2024-05-17 16:50:09,164 - INFO - Skip reading daily average discharge data for site 15283
-2024-05-17 16:50:09,482 - INFO - Skip reading daily average discharge data for site 15283
-2024-05-17 16:50:09,484 - INFO - No P data found for site 15283.
-2024-05-17 16:50:09,484 - INFO - No T data found for site 15283.
-2024-05-17 16:50:09,484 - INFO - Reading data for site 15285.
-2024-05-17 16:50:17,151 - INFO - Skip reading daily average discharge data for site 15285
-2024-05-17 16:50:17,464 - INFO - Skip reading daily average discharge data for site 15285
-2024-05-17 16:50:17,465 - INFO - No P data found for site 15285.
-2024-05-17 16:50:17,465 - INFO - No T data found for site 15285.
-2024-05-17 16:50:17,465 - INFO - Reading data for site 15287.
-2024-05-17 16:50:24,451 - INFO - Skip reading daily average discharge data for site 15287
-2024-05-17 16:50:24,771 - INFO - Skip reading daily average discharge data for site 15287
-2024-05-17 16:50:24,773 - INFO - No P data found for site 15287.
-2024-05-17 16:50:24,773 - INFO - No T data found for site 15287.
-2024-05-17 16:50:24,773 - INFO - Reading data for site 15312.
-2024-05-17 16:50:33,121 - INFO - Skip reading daily average discharge data for site 15312
-2024-05-17 16:50:33,433 - INFO - Skip reading daily average discharge data for site 15312
-2024-05-17 16:50:33,434 - INFO - No P data found for site 15312.
-2024-05-17 16:50:33,434 - INFO - No T data found for site 15312.
-2024-05-17 16:50:33,434 - INFO - No data found for any site.
-2024-05-17 17:00:01,145 - INFO - Loading environment variables from ../../../sensitive_data_forecast_tools/config/.env_develop_kghm
-2024-05-17 17:00:01,804 - INFO - Access to iEasyHydro database.
-2024-05-17 17:00:02,087 - INFO - Reading data for site 15256.
-2024-05-17 17:08:32,683 - INFO - Loading environment variables from ../../../sensitive_data_forecast_tools/config/.env_develop_kghm
-2024-05-17 17:08:33,337 - INFO - Access to iEasyHydro database.
-2024-05-17 17:08:33,618 - INFO - Reading data for site 15256.
-2024-05-17 17:09:25,012 - INFO - Loading environment variables from ../../../sensitive_data_forecast_tools/config/.env_develop_kghm
-2024-05-17 17:09:25,668 - INFO - Access to iEasyHydro database.
-2024-05-17 17:09:25,942 - INFO - Reading data for site 15256.
-2024-05-17 17:17:30,334 - INFO - Loading environment variables from ../../../sensitive_data_forecast_tools/config/.env_develop_kghm
-2024-05-17 17:17:30,979 - INFO - Access to iEasyHydro database.
-2024-05-17 17:17:31,245 - INFO - Reading data for site 15256.
-2024-05-17 17:17:45,264 - INFO - Reading data for site 15283.
-2024-05-17 17:17:52,714 - INFO - Reading data for site 15285.
-2024-05-17 17:18:00,864 - INFO - Skip reading daily average discharge data for site 15285
-2024-05-17 17:18:00,870 - INFO - Reading data for site 15287.
-2024-05-17 17:18:08,155 - INFO - Skip reading daily average discharge data for site 15287
-2024-05-17 17:18:08,161 - INFO - Reading data for site 15312.
-2024-05-17 17:18:16,831 - INFO - Skip reading daily average discharge data for site 15312
+2024-05-21 09:19:23,615 - INFO - Loading environment variables from ../../../sensitive_data_forecast_tools/config/.env_develop_kghm
+2024-05-21 09:19:24,245 - INFO - Access to iEasyHydro database.
+2024-05-21 09:19:24,507 - INFO - Reading data for site 15256.
+2024-05-21 09:19:38,909 - INFO - Reading data for site 15283.
+2024-05-21 09:19:46,427 - INFO - Reading data for site 15285.
+2024-05-21 09:19:54,397 - INFO - Skip reading daily average discharge data for site 15285
+2024-05-21 09:19:54,400 - INFO - Reading data for site 15287.
+2024-05-21 09:20:01,655 - INFO - Skip reading daily average discharge data for site 15287
+2024-05-21 09:20:01,656 - INFO - Reading data for site 15312.
+2024-05-21 09:20:10,244 - INFO - Skip reading daily average discharge data for site 15312
+2024-05-21 09:21:45,096 - INFO - Loading environment variables from ../../../sensitive_data_forecast_tools/config/.env_develop_kghm
+2024-05-21 09:21:45,734 - INFO - Access to iEasyHydro database.
+2024-05-21 09:21:45,989 - INFO - Reading data for site 15256.
+2024-05-21 09:22:00,122 - INFO - Reading data for site 15283.
+2024-05-21 09:22:07,216 - INFO - Reading data for site 15285.
+2024-05-21 09:22:15,528 - INFO - Skip reading daily average discharge data for site 15285
+2024-05-21 09:22:15,531 - INFO - Reading data for site 15287.
+2024-05-21 09:22:22,813 - INFO - Skip reading daily average discharge data for site 15287
+2024-05-21 09:22:22,815 - INFO - Reading data for site 15312.
+2024-05-21 09:22:31,349 - INFO - Skip reading daily average discharge data for site 15312
+2024-05-21 09:25:05,693 - INFO - Loading environment variables from ../../../sensitive_data_forecast_tools/config/.env_develop_kghm
+2024-05-21 09:25:06,330 - INFO - Access to iEasyHydro database.
+2024-05-21 09:25:06,586 - INFO - Reading data for site 15256.
+2024-05-21 09:25:20,845 - INFO - Reading data for site 15283.
+2024-05-21 09:25:27,910 - INFO - Reading data for site 15285.
+2024-05-21 09:25:36,070 - INFO - Skip reading daily average discharge data for site 15285
+2024-05-21 09:25:36,071 - INFO - Reading data for site 15287.
+2024-05-21 09:25:43,196 - INFO - Skip reading daily average discharge data for site 15287
+2024-05-21 09:25:43,200 - INFO - Reading data for site 15312.
+2024-05-21 09:25:51,791 - INFO - Skip reading daily average discharge data for site 15312
+2024-05-21 09:28:27,026 - INFO - Loading environment variables from ../../../sensitive_data_forecast_tools/config/.env_develop_kghm
+2024-05-21 09:28:27,653 - INFO - Access to iEasyHydro database.
+2024-05-21 09:28:27,911 - INFO - Reading data for site 15256.
+2024-05-21 09:28:42,200 - INFO - Reading data for site 15283.
+2024-05-21 09:28:49,877 - INFO - Reading data for site 15285.
+2024-05-21 09:28:57,935 - INFO - Skip reading daily average discharge data for site 15285
+2024-05-21 09:28:57,938 - INFO - Reading data for site 15287.
+2024-05-21 09:29:05,106 - INFO - Skip reading daily average discharge data for site 15287
+2024-05-21 09:29:05,109 - INFO - Reading data for site 15312.
+2024-05-21 09:29:13,603 - INFO - Skip reading daily average discharge data for site 15312
+2024-05-21 10:13:23,305 - INFO - Loading environment variables from ../../../sensitive_data_forecast_tools/config/.env_develop_kghm
+2024-05-21 10:13:23,978 - INFO - Access to iEasyHydro database.
+2024-05-21 10:13:24,267 - INFO - Reading data for site 15256.
+2024-05-21 10:13:38,510 - INFO - Reading data for site 15283.
+2024-05-21 10:13:45,996 - INFO - Reading data for site 15285.
+2024-05-21 10:13:54,338 - INFO - Skip reading daily average discharge data for site 15285
+2024-05-21 10:13:54,341 - INFO - Reading data for site 15287.
+2024-05-21 10:14:01,648 - INFO - Skip reading daily average discharge data for site 15287
+2024-05-21 10:14:01,651 - INFO - Reading data for site 15312.
+2024-05-21 10:14:10,235 - INFO - Skip reading daily average discharge data for site 15312
+2024-05-21 10:15:54,162 - INFO - Loading environment variables from ../../../sensitive_data_forecast_tools/config/.env_develop_kghm
+2024-05-21 10:15:54,791 - INFO - Access to iEasyHydro database.
+2024-05-21 10:15:55,041 - INFO - Reading data for site 15256.
+2024-05-21 10:16:09,064 - INFO - Reading data for site 15283.
+2024-05-21 10:16:16,481 - INFO - Reading data for site 15285.
+2024-05-21 10:16:24,607 - INFO - Skip reading daily average discharge data for site 15285
+2024-05-21 10:16:24,609 - INFO - Reading data for site 15287.
+2024-05-21 10:16:32,025 - INFO - Skip reading daily average discharge data for site 15287
+2024-05-21 10:16:32,027 - INFO - Reading data for site 15312.
+2024-05-21 10:16:40,533 - INFO - Skip reading daily average discharge data for site 15312
+2024-05-21 10:20:07,892 - INFO - Loading environment variables from ../../../sensitive_data_forecast_tools/config/.env_develop_kghm
+2024-05-21 10:20:08,516 - INFO - Access to iEasyHydro database.
+2024-05-21 10:20:08,778 - INFO - Reading data for site 15256.
+2024-05-21 10:20:23,089 - INFO - Reading data for site 15283.
+2024-05-21 10:20:30,338 - INFO - Reading data for site 15285.
+2024-05-21 10:20:38,645 - INFO - Skip reading daily average discharge data for site 15285
+2024-05-21 10:20:38,649 - INFO - Reading data for site 15287.
+2024-05-21 10:20:45,855 - INFO - Skip reading daily average discharge data for site 15287
+2024-05-21 10:20:45,858 - INFO - Reading data for site 15312.
+2024-05-21 10:20:54,609 - INFO - Skip reading daily average discharge data for site 15312
+2024-05-21 10:38:57,021 - INFO - Loading environment variables from ../../../sensitive_data_forecast_tools/config/.env_develop_kghm
+2024-05-21 10:38:57,646 - INFO - Access to iEasyHydro database.
+2024-05-21 10:38:57,896 - INFO - Reading data for site 15256.
+2024-05-21 10:39:12,130 - INFO - Reading data for site 15283.
+2024-05-21 10:39:19,422 - INFO - Reading data for site 15285.
+2024-05-21 10:39:27,725 - INFO - Skip reading daily average discharge data for site 15285
+2024-05-21 10:39:27,726 - INFO - Reading data for site 15287.
+2024-05-21 10:39:34,985 - INFO - Skip reading daily average discharge data for site 15287
+2024-05-21 10:39:34,986 - INFO - Reading data for site 15312.
+2024-05-21 10:39:43,547 - INFO - Skip reading daily average discharge data for site 15312
+2024-05-21 10:41:06,457 - INFO - Loading environment variables from ../../../sensitive_data_forecast_tools/config/.env_develop_kghm
+2024-05-21 10:41:07,201 - INFO - Access to iEasyHydro database.
+2024-05-21 10:41:07,466 - INFO - Reading data for site 15256.
+2024-05-21 10:41:22,928 - INFO - Reading data for site 15283.
+2024-05-21 10:41:30,318 - INFO - Reading data for site 15285.
+2024-05-21 10:41:39,879 - INFO - Skip reading daily average discharge data for site 15285
+2024-05-21 10:41:39,882 - INFO - Reading data for site 15287.
+2024-05-21 10:41:47,753 - INFO - Skip reading daily average discharge data for site 15287
+2024-05-21 10:41:47,757 - INFO - Reading data for site 15312.
+2024-05-21 10:41:56,723 - INFO - Skip reading daily average discharge data for site 15312
+2024-05-21 10:44:42,997 - INFO - Loading environment variables from ../../../sensitive_data_forecast_tools/config/.env_develop_kghm
+2024-05-21 10:44:43,619 - INFO - Access to iEasyHydro database.
+2024-05-21 10:44:43,870 - INFO - Reading data for site 15256.
+2024-05-21 10:44:58,033 - INFO - Reading data for site 15283.
+2024-05-21 10:45:05,294 - INFO - Reading data for site 15285.
+2024-05-21 10:45:13,434 - INFO - Skip reading daily average discharge data for site 15285
+2024-05-21 10:45:13,438 - INFO - Reading data for site 15287.
+2024-05-21 10:45:21,316 - INFO - Skip reading daily average discharge data for site 15287
+2024-05-21 10:45:21,318 - INFO - Reading data for site 15312.
+2024-05-21 10:45:29,997 - INFO - Skip reading daily average discharge data for site 15312
+2024-05-21 10:47:04,982 - INFO - Loading environment variables from ../../../sensitive_data_forecast_tools/config/.env_develop_kghm
+2024-05-21 10:47:05,611 - INFO - Access to iEasyHydro database.
+2024-05-21 10:47:05,888 - INFO - Reading data for site 15256.
+2024-05-21 10:47:19,813 - INFO - Reading data for site 15283.
+2024-05-21 10:47:27,202 - INFO - Reading data for site 15285.
+2024-05-21 10:47:35,459 - INFO - Skip reading daily average discharge data for site 15285
+2024-05-21 10:47:35,462 - INFO - Reading data for site 15287.
+2024-05-21 10:47:42,706 - INFO - Skip reading daily average discharge data for site 15287
+2024-05-21 10:47:42,709 - INFO - Reading data for site 15312.
+2024-05-21 10:47:51,243 - INFO - Skip reading daily average discharge data for site 15312
+2024-05-21 10:50:47,344 - INFO - Loading environment variables from ../../../sensitive_data_forecast_tools/config/.env_develop_kghm
+2024-05-21 10:50:48,003 - INFO - Access to iEasyHydro database.
+2024-05-21 10:50:48,272 - INFO - Reading data for site 15256.
+2024-05-21 10:51:03,312 - INFO - Reading data for site 15283.
+2024-05-21 10:51:10,629 - INFO - Reading data for site 15285.
+2024-05-21 10:51:18,599 - INFO - Skip reading daily average discharge data for site 15285
+2024-05-21 10:51:18,602 - INFO - Reading data for site 15287.
+2024-05-21 10:51:25,892 - INFO - Skip reading daily average discharge data for site 15287
+2024-05-21 10:51:25,894 - INFO - Reading data for site 15312.
+2024-05-21 10:51:34,536 - INFO - Skip reading daily average discharge data for site 15312
+2024-05-21 10:52:40,606 - INFO - Loading environment variables from ../../../sensitive_data_forecast_tools/config/.env_develop_kghm
+2024-05-21 10:52:41,228 - INFO - Access to iEasyHydro database.
+2024-05-21 10:52:41,482 - INFO - Reading data for site 15256.
+2024-05-21 10:52:55,632 - INFO - Reading data for site 15283.
+2024-05-21 10:53:03,001 - INFO - Reading data for site 15285.
+2024-05-21 10:53:11,270 - INFO - Skip reading daily average discharge data for site 15285
+2024-05-21 10:53:11,274 - INFO - Reading data for site 15287.
+2024-05-21 10:53:18,679 - INFO - Skip reading daily average discharge data for site 15287
+2024-05-21 10:53:18,683 - INFO - Reading data for site 15312.
+2024-05-21 10:53:27,385 - INFO - Skip reading daily average discharge data for site 15312
+2024-05-21 10:54:46,828 - INFO - Loading environment variables from ../../../sensitive_data_forecast_tools/config/.env_develop_kghm
+2024-05-21 10:54:47,502 - INFO - Access to iEasyHydro database.
+2024-05-21 10:54:47,814 - INFO - Reading data for site 15256.
+2024-05-21 10:55:05,125 - INFO - Reading data for site 15283.
+2024-05-21 10:55:12,325 - INFO - Reading data for site 15285.
+2024-05-21 10:55:20,376 - INFO - Skip reading daily average discharge data for site 15285
+2024-05-21 10:55:20,379 - INFO - Reading data for site 15287.
+2024-05-21 10:55:27,621 - INFO - Skip reading daily average discharge data for site 15287
+2024-05-21 10:55:27,626 - INFO - Reading data for site 15312.
+2024-05-21 10:55:36,238 - INFO - Skip reading daily average discharge data for site 15312
+2024-05-21 12:46:26,484 - INFO - Loading environment variables from ../../../sensitive_data_forecast_tools/config/.env_develop_kghm
+2024-05-21 12:46:27,120 - INFO - Access to iEasyHydro database.
+2024-05-21 12:46:27,651 - INFO - Reading data for site 15256.
+2024-05-21 12:46:42,075 - INFO - Reading data for site 15283.
+2024-05-21 12:46:49,416 - INFO - Reading data for site 15285.
+2024-05-21 12:46:57,696 - INFO - Skip reading daily average discharge data for site 15285
+2024-05-21 12:46:57,700 - INFO - Reading data for site 15287.
+2024-05-21 12:47:05,024 - INFO - Skip reading daily average discharge data for site 15287
+2024-05-21 12:47:05,026 - INFO - Reading data for site 15312.
+2024-05-21 12:47:13,537 - INFO - Skip reading daily average discharge data for site 15312
+2024-05-21 12:49:16,567 - INFO - Loading environment variables from ../../../sensitive_data_forecast_tools/config/.env_develop_kghm
+2024-05-21 12:49:17,206 - INFO - Access to iEasyHydro database.
+2024-05-21 12:49:17,482 - INFO - Reading data for site 15256.
+2024-05-21 12:49:32,378 - INFO - Reading data for site 15283.
+2024-05-21 12:49:40,026 - INFO - Reading data for site 15285.
+2024-05-21 12:49:48,100 - INFO - Skip reading daily average discharge data for site 15285
+2024-05-21 12:49:48,103 - INFO - Reading data for site 15287.
+2024-05-21 12:49:56,109 - INFO - Skip reading daily average discharge data for site 15287
+2024-05-21 12:49:56,112 - INFO - Reading data for site 15312.
+2024-05-21 12:50:05,133 - INFO - Skip reading daily average discharge data for site 15312
+2024-05-21 12:51:37,201 - INFO - Loading environment variables from ../../../sensitive_data_forecast_tools/config/.env_develop_kghm
+2024-05-21 12:51:37,822 - INFO - Access to iEasyHydro database.
+2024-05-21 12:51:38,090 - INFO - Reading data for site 15256.
+2024-05-21 12:51:52,428 - INFO - Reading data for site 15283.
+2024-05-21 12:51:59,822 - INFO - Reading data for site 15285.
+2024-05-21 12:52:07,752 - INFO - Skip reading daily average discharge data for site 15285
+2024-05-21 12:52:07,754 - INFO - Reading data for site 15287.
+2024-05-21 12:52:15,073 - INFO - Skip reading daily average discharge data for site 15287
+2024-05-21 12:52:15,074 - INFO - Reading data for site 15312.
+2024-05-21 12:52:23,594 - INFO - Skip reading daily average discharge data for site 15312
+2024-05-21 12:58:53,028 - INFO - Loading environment variables from ../../../sensitive_data_forecast_tools/config/.env_develop_kghm
+2024-05-21 12:58:53,655 - INFO - Access to iEasyHydro database.
+2024-05-21 12:58:53,932 - INFO - Reading data for site 15256.
+2024-05-21 12:59:09,874 - INFO - Loading environment variables from ../../../sensitive_data_forecast_tools/config/.env_develop_kghm
+2024-05-21 12:59:10,508 - INFO - Access to iEasyHydro database.
+2024-05-21 12:59:10,777 - INFO - Reading data for site 15256.
+2024-05-21 12:59:25,203 - INFO - Reading data for site 15283.
+2024-05-21 12:59:32,538 - INFO - Reading data for site 15285.
+2024-05-21 12:59:40,785 - INFO - Skip reading daily average discharge data for site 15285
+2024-05-21 12:59:40,788 - INFO - Reading data for site 15287.
+2024-05-21 12:59:48,654 - INFO - Skip reading daily average discharge data for site 15287
+2024-05-21 12:59:48,659 - INFO - Reading data for site 15312.
+2024-05-21 12:59:57,600 - INFO - Skip reading daily average discharge data for site 15312
+2024-05-21 13:01:44,195 - INFO - Loading environment variables from ../../../sensitive_data_forecast_tools/config/.env_develop_kghm
+2024-05-21 13:01:44,819 - INFO - Access to iEasyHydro database.
+2024-05-21 13:01:45,077 - INFO - Reading data for site 15256.
+2024-05-21 13:01:59,191 - INFO - Reading data for site 15283.
+2024-05-21 13:02:06,456 - INFO - Reading data for site 15285.
+2024-05-21 13:02:14,440 - INFO - Skip reading daily average discharge data for site 15285
+2024-05-21 13:02:14,442 - INFO - Reading data for site 15287.
+2024-05-21 13:02:21,780 - INFO - Skip reading daily average discharge data for site 15287
+2024-05-21 13:02:21,783 - INFO - Reading data for site 15312.
+2024-05-21 13:02:30,423 - INFO - Skip reading daily average discharge data for site 15312
+2024-05-21 13:04:30,743 - INFO - Loading environment variables from ../../../sensitive_data_forecast_tools/config/.env_develop_kghm
+2024-05-21 13:05:14,109 - ERROR - No access to the iEasyHydro database.
+2024-05-21 13:05:52,936 - INFO - Loading environment variables from ../../../sensitive_data_forecast_tools/config/.env_develop_kghm
+2024-05-21 13:05:53,565 - INFO - Access to iEasyHydro database.
+2024-05-21 13:05:53,823 - INFO - Reading data for site 15256.
+2024-05-21 13:06:08,124 - INFO - Reading data for site 15283.
+2024-05-21 13:06:15,582 - INFO - Reading data for site 15285.
+2024-05-21 13:06:23,774 - INFO - Skip reading daily average discharge data for site 15285
+2024-05-21 13:06:23,778 - INFO - Reading data for site 15287.
+2024-05-21 13:06:31,347 - INFO - Skip reading daily average discharge data for site 15287
+2024-05-21 13:06:31,351 - INFO - Reading data for site 15312.
+2024-05-21 13:06:40,024 - INFO - Skip reading daily average discharge data for site 15312
+2024-05-21 13:10:16,924 - INFO - Loading environment variables from ../../../sensitive_data_forecast_tools/config/.env_develop_kghm
+2024-05-21 13:10:17,566 - INFO - Access to iEasyHydro database.
+2024-05-21 13:10:17,825 - INFO - Reading data for site 15256.
+2024-05-21 13:10:32,471 - INFO - Reading data for site 15283.
+2024-05-21 13:10:40,103 - INFO - Reading data for site 15285.
+2024-05-21 13:10:48,215 - INFO - Skip reading daily average discharge data for site 15285
+2024-05-21 13:10:48,218 - INFO - Reading data for site 15287.
+2024-05-21 13:10:55,845 - INFO - Skip reading daily average discharge data for site 15287
+2024-05-21 13:10:55,848 - INFO - Reading data for site 15312.
+2024-05-21 13:11:04,327 - INFO - Skip reading daily average discharge data for site 15312
+2024-05-21 13:12:19,448 - INFO - Loading environment variables from ../../../sensitive_data_forecast_tools/config/.env_develop_kghm
+2024-05-21 13:12:20,075 - INFO - Access to iEasyHydro database.
+2024-05-21 13:12:20,356 - INFO - Reading data for site 15256.
+2024-05-21 13:12:35,301 - INFO - Reading data for site 15283.
+2024-05-21 13:12:42,772 - INFO - Reading data for site 15285.
+2024-05-21 13:12:51,376 - INFO - Skip reading daily average discharge data for site 15285
+2024-05-21 13:12:51,380 - INFO - Reading data for site 15287.
+2024-05-21 13:12:58,954 - INFO - Skip reading daily average discharge data for site 15287
+2024-05-21 13:12:58,958 - INFO - Reading data for site 15312.
+2024-05-21 13:13:07,706 - INFO - Skip reading daily average discharge data for site 15312
+2024-05-21 13:18:20,707 - INFO - Loading environment variables from ../../../sensitive_data_forecast_tools/config/.env_develop_kghm
+2024-05-21 13:18:21,343 - INFO - Access to iEasyHydro database.
+2024-05-21 13:18:21,615 - INFO - Reading data for site 15256.
+2024-05-21 13:18:36,985 - INFO - Reading data for site 15283.
+2024-05-21 13:18:44,056 - INFO - Reading data for site 15285.
+2024-05-21 13:18:52,622 - INFO - Skip reading daily average discharge data for site 15285
+2024-05-21 13:18:52,625 - INFO - Reading data for site 15287.
+2024-05-21 13:18:59,930 - INFO - Skip reading daily average discharge data for site 15287
+2024-05-21 13:18:59,934 - INFO - Reading data for site 15312.
+2024-05-21 13:19:08,594 - INFO - Skip reading daily average discharge data for site 15312
+2024-05-21 13:21:32,933 - INFO - Loading environment variables from ../../../sensitive_data_forecast_tools/config/.env_develop_kghm
+2024-05-21 13:21:33,553 - INFO - Access to iEasyHydro database.
+2024-05-21 13:21:33,831 - INFO - Reading data for site 15256.
+2024-05-21 13:21:49,946 - INFO - Reading data for site 15283.
+2024-05-21 13:21:57,369 - INFO - Reading data for site 15285.
+2024-05-21 13:22:05,820 - INFO - Skip reading daily average discharge data for site 15285
+2024-05-21 13:22:05,823 - INFO - Reading data for site 15287.
+2024-05-21 13:22:13,734 - INFO - Skip reading daily average discharge data for site 15287
+2024-05-21 13:22:13,736 - INFO - Reading data for site 15312.
+2024-05-21 13:22:22,346 - INFO - Skip reading daily average discharge data for site 15312
+2024-05-21 13:25:39,555 - INFO - Loading environment variables from ../../../sensitive_data_forecast_tools/config/.env_develop_kghm
+2024-05-21 13:25:41,029 - INFO - Access to iEasyHydro database.
+2024-05-21 13:25:41,355 - INFO - Reading data for site 15256.
+2024-05-21 13:25:55,705 - INFO - Reading data for site 15283.
+2024-05-21 13:26:03,817 - INFO - Reading data for site 15285.
+2024-05-21 13:26:12,171 - INFO - Skip reading daily average discharge data for site 15285
+2024-05-21 13:26:12,174 - INFO - Reading data for site 15287.
+2024-05-21 13:26:19,655 - INFO - Skip reading daily average discharge data for site 15287
+2024-05-21 13:26:19,657 - INFO - Reading data for site 15312.
+2024-05-21 13:26:29,209 - INFO - Skip reading daily average discharge data for site 15312
+2024-05-21 13:29:05,556 - INFO - Loading environment variables from ../../../sensitive_data_forecast_tools/config/.env_develop_kghm
+2024-05-21 13:29:06,171 - INFO - Access to iEasyHydro database.
+2024-05-21 13:29:06,430 - INFO - Reading data for site 15256.
+2024-05-21 13:29:24,195 - INFO - Reading data for site 15283.
+2024-05-21 13:29:32,176 - INFO - Reading data for site 15285.
+2024-05-21 13:29:40,844 - INFO - Skip reading daily average discharge data for site 15285
+2024-05-21 13:29:40,846 - INFO - Reading data for site 15287.
+2024-05-21 13:29:49,083 - INFO - Skip reading daily average discharge data for site 15287
+2024-05-21 13:29:49,084 - INFO - Reading data for site 15312.
+2024-05-21 13:29:57,833 - INFO - Skip reading daily average discharge data for site 15312
+2024-05-21 13:33:19,848 - INFO - Loading environment variables from ../../../sensitive_data_forecast_tools/config/.env_develop_kghm
+2024-05-21 13:33:20,664 - INFO - Access to iEasyHydro database.
+2024-05-21 13:33:21,340 - INFO - Reading data for site 15256.
+2024-05-21 13:33:35,962 - INFO - Reading data for site 15283.
+2024-05-21 13:33:44,146 - INFO - Reading data for site 15285.
+2024-05-21 13:33:52,841 - INFO - Skip reading daily average discharge data for site 15285
+2024-05-21 13:33:52,845 - INFO - Reading data for site 15287.
+2024-05-21 13:34:00,108 - INFO - Skip reading daily average discharge data for site 15287
+2024-05-21 13:34:00,111 - INFO - Reading data for site 15312.
+2024-05-21 13:34:09,105 - INFO - Skip reading daily average discharge data for site 15312
+2024-05-21 13:34:53,158 - INFO - Loading environment variables from ../../../sensitive_data_forecast_tools/config/.env_develop_kghm
+2024-05-21 13:34:53,775 - INFO - Access to iEasyHydro database.
+2024-05-21 13:34:54,030 - INFO - Reading data for site 15256.
+2024-05-21 13:35:08,779 - INFO - Reading data for site 15283.
+2024-05-21 13:35:16,233 - INFO - Reading data for site 15285.
+2024-05-21 13:35:24,610 - INFO - Skip reading daily average discharge data for site 15285
+2024-05-21 13:35:24,613 - INFO - Reading data for site 15287.
+2024-05-21 13:35:32,780 - INFO - Skip reading daily average discharge data for site 15287
+2024-05-21 13:35:32,784 - INFO - Reading data for site 15312.
+2024-05-21 13:35:42,479 - INFO - Skip reading daily average discharge data for site 15312
+2024-05-21 13:38:25,567 - INFO - Loading environment variables from ../../../sensitive_data_forecast_tools/config/.env_develop_kghm
+2024-05-21 13:38:26,888 - INFO - Access to iEasyHydro database.
+2024-05-21 13:38:28,069 - INFO - Reading data for site 15256.
+2024-05-21 13:38:44,704 - INFO - Reading data for site 15283.
+2024-05-21 13:38:52,574 - INFO - Reading data for site 15285.
+2024-05-21 13:39:01,663 - INFO - Skip reading daily average discharge data for site 15285
+2024-05-21 13:39:01,668 - INFO - Reading data for site 15287.
+2024-05-21 13:39:09,092 - INFO - Skip reading daily average discharge data for site 15287
+2024-05-21 13:39:09,095 - INFO - Reading data for site 15312.
+2024-05-21 13:39:19,528 - INFO - Skip reading daily average discharge data for site 15312
+2024-05-21 13:44:48,402 - INFO - Loading environment variables from ../../../sensitive_data_forecast_tools/config/.env_develop_kghm
+2024-05-21 13:44:49,460 - INFO - Access to iEasyHydro database.
+2024-05-21 13:44:49,777 - INFO - Reading data for site 15256.
+2024-05-21 13:45:05,654 - INFO - Reading data for site 15283.
+2024-05-21 13:45:13,799 - INFO - Reading data for site 15285.
+2024-05-21 13:45:22,655 - INFO - Skip reading daily average discharge data for site 15285
+2024-05-21 13:45:22,659 - INFO - Reading data for site 15287.
+2024-05-21 13:45:29,912 - INFO - Skip reading daily average discharge data for site 15287
+2024-05-21 13:45:29,916 - INFO - Reading data for site 15312.
+2024-05-21 13:45:38,590 - INFO - Skip reading daily average discharge data for site 15312
+2024-05-21 13:48:39,734 - INFO - Loading environment variables from ../../../sensitive_data_forecast_tools/config/.env_develop_kghm
+2024-05-21 13:48:40,530 - INFO - Access to iEasyHydro database.
+2024-05-21 13:48:40,863 - INFO - Reading data for site 15256.
+2024-05-21 13:48:56,587 - INFO - Reading data for site 15283.
+2024-05-21 13:49:05,207 - INFO - Reading data for site 15285.
+2024-05-21 13:49:13,433 - INFO - Skip reading daily average discharge data for site 15285
+2024-05-21 13:49:13,439 - INFO - Reading data for site 15287.
+2024-05-21 13:49:21,494 - INFO - Skip reading daily average discharge data for site 15287
+2024-05-21 13:49:21,498 - INFO - Reading data for site 15312.
+2024-05-21 13:49:30,277 - INFO - Skip reading daily average discharge data for site 15312
+2024-05-21 13:54:49,709 - INFO - Loading environment variables from ../../../sensitive_data_forecast_tools/config/.env_develop_kghm
+2024-05-21 13:54:50,462 - INFO - Access to iEasyHydro database.
+2024-05-21 13:54:50,757 - INFO - Reading data for site 15256.
+2024-05-21 13:55:05,371 - INFO - Reading data for site 15283.
+2024-05-21 13:55:13,381 - INFO - Reading data for site 15285.
+2024-05-21 13:55:21,621 - INFO - Skip reading daily average discharge data for site 15285
+2024-05-21 13:55:21,624 - INFO - Reading data for site 15287.
+2024-05-21 13:55:29,411 - INFO - Skip reading daily average discharge data for site 15287
+2024-05-21 13:55:29,414 - INFO - Reading data for site 15312.
+2024-05-21 13:55:38,238 - INFO - Skip reading daily average discharge data for site 15312
+2024-05-21 13:56:50,178 - INFO - Loading environment variables from ../../../sensitive_data_forecast_tools/config/.env_develop_kghm
+2024-05-21 13:56:50,800 - INFO - Access to iEasyHydro database.
+2024-05-21 13:56:51,059 - INFO - Reading data for site 15256.
+2024-05-21 13:57:05,707 - INFO - Reading data for site 15283.
+2024-05-21 13:57:13,408 - INFO - Reading data for site 15285.
+2024-05-21 13:57:22,014 - INFO - Skip reading daily average discharge data for site 15285
+2024-05-21 13:57:22,017 - INFO - Reading data for site 15287.
+2024-05-21 13:57:30,582 - INFO - Skip reading daily average discharge data for site 15287
+2024-05-21 13:57:30,584 - INFO - Reading data for site 15312.
+2024-05-21 13:57:41,814 - INFO - Skip reading daily average discharge data for site 15312
+2024-05-21 14:03:12,637 - INFO - Loading environment variables from ../../../sensitive_data_forecast_tools/config/.env_develop_kghm
+2024-05-21 14:03:13,319 - INFO - Access to iEasyHydro database.
+2024-05-21 14:03:13,577 - INFO - Reading data for site 15256.
+2024-05-21 14:03:28,066 - INFO - Reading data for site 15283.
+2024-05-21 14:03:35,810 - INFO - Reading data for site 15285.
+2024-05-21 14:03:44,205 - INFO - Skip reading daily average discharge data for site 15285
+2024-05-21 14:03:44,208 - INFO - Reading data for site 15287.
+2024-05-21 14:03:52,403 - INFO - Skip reading daily average discharge data for site 15287
+2024-05-21 14:03:52,406 - INFO - Reading data for site 15312.
+2024-05-21 14:04:01,883 - INFO - Skip reading daily average discharge data for site 15312
+2024-05-21 14:16:27,701 - INFO - Loading environment variables from ../../../sensitive_data_forecast_tools/config/.env_develop_kghm
+2024-05-21 14:16:28,325 - INFO - Access to iEasyHydro database.
+2024-05-21 14:16:28,603 - INFO - Reading data for site 15256.
+2024-05-21 14:16:42,812 - INFO - Reading data for site 15283.
+2024-05-21 14:16:50,488 - INFO - Reading data for site 15285.
+2024-05-21 14:16:58,806 - INFO - Skip reading daily average discharge data for site 15285
+2024-05-21 14:16:58,809 - INFO - Reading data for site 15287.
+2024-05-21 14:17:06,291 - INFO - Skip reading daily average discharge data for site 15287
+2024-05-21 14:17:06,295 - INFO - Reading data for site 15312.
+2024-05-21 14:17:14,963 - INFO - Skip reading daily average discharge data for site 15312
+2024-05-21 14:19:17,504 - INFO - Loading environment variables from ../../../sensitive_data_forecast_tools/config/.env_develop_kghm
+2024-05-21 14:19:18,122 - INFO - Access to iEasyHydro database.
+2024-05-21 14:19:18,379 - INFO - Reading data for site 15256.
+2024-05-21 14:19:32,823 - INFO - Reading data for site 15283.
+2024-05-21 14:19:40,238 - INFO - Reading data for site 15285.
+2024-05-21 14:19:48,314 - INFO - Skip reading daily average discharge data for site 15285
+2024-05-21 14:19:48,319 - INFO - Reading data for site 15287.
+2024-05-21 14:19:55,537 - INFO - Skip reading daily average discharge data for site 15287
+2024-05-21 14:19:55,539 - INFO - Reading data for site 15312.
+2024-05-21 14:20:04,211 - INFO - Skip reading daily average discharge data for site 15312
+2024-05-21 14:26:39,318 - INFO - Loading environment variables from ../../../sensitive_data_forecast_tools/config/.env_develop_kghm
+2024-05-21 14:26:39,940 - INFO - Access to iEasyHydro database.
+2024-05-21 14:26:40,200 - INFO - Reading data for site 15256.
+2024-05-21 14:26:54,613 - INFO - Reading data for site 15283.
+2024-05-21 14:27:01,971 - INFO - Reading data for site 15285.
+2024-05-21 14:27:10,252 - INFO - Skip reading daily average discharge data for site 15285
+2024-05-21 14:27:10,257 - INFO - Reading data for site 15287.
+2024-05-21 14:27:17,724 - INFO - Skip reading daily average discharge data for site 15287
+2024-05-21 14:27:17,726 - INFO - Reading data for site 15312.
+2024-05-21 14:27:26,272 - INFO - Skip reading daily average discharge data for site 15312
+2024-05-21 14:27:26,276 - INFO - Reading data for site 38471.
+2024-05-21 14:27:42,590 - INFO - Reading data for site 38349.
+2024-05-21 14:27:48,588 - INFO - Reading data for site 38472.
+2024-05-21 14:28:02,387 - INFO - Reading data for site 38476.
+2024-05-21 14:28:19,644 - INFO - Reading data for site 38871.
+2024-05-21 14:28:35,686 - INFO - Reading data for site 38486.
+2024-05-21 14:28:42,768 - INFO - Reading data for site 15189.
+2024-05-21 14:28:53,478 - INFO - Reading data for site 15214.
+2024-05-21 14:29:02,276 - INFO - Reading data for site 15212.
+2024-05-21 14:29:11,818 - INFO - Reading data for site 15215.
+2024-05-21 14:29:21,736 - INFO - Reading data for site 15216.
+2024-05-21 14:29:30,650 - INFO - Reading data for site 15171.
+2024-05-21 14:29:39,685 - INFO - Reading data for site 15149.
+2024-05-21 14:29:47,223 - INFO - Reading data for site 36921.
+2024-05-21 14:29:56,817 - INFO - Skip reading daily average discharge data for site 36921
+2024-05-21 14:29:56,823 - INFO - Reading data for site 15102.
+2024-05-21 14:30:06,216 - INFO - Skip reading daily average discharge data for site 15102
+2024-05-21 14:30:06,222 - INFO - Reading data for site 36971.
+2024-05-21 14:30:23,426 - INFO - Reading data for site 38359.
+2024-05-21 14:30:36,554 - INFO - Reading data for site 38345.
+2024-05-21 14:30:54,150 - INFO - Reading data for site 16059.
+2024-05-21 14:30:56,761 - INFO - Skip reading daily average discharge data for site 16059
+2024-05-21 14:30:56,769 - INFO - Reading data for site 16096.
+2024-05-21 14:31:01,706 - INFO - Skip reading daily average discharge data for site 16096
+2024-05-21 14:31:01,712 - INFO - Reading data for site 16100.
+2024-05-21 14:31:09,491 - INFO - Reading data for site 36974.
+2024-05-21 14:31:28,992 - INFO - Reading data for site 38355.
+2024-05-21 14:31:48,282 - INFO - Reading data for site 16070.
+2024-05-21 14:31:57,491 - INFO - Reading data for site 38482.
+2024-05-21 14:32:05,391 - INFO - Skip reading daily average discharge data for site 38482
+2024-05-21 14:32:05,402 - INFO - Reading data for site 36969.
+2024-05-21 14:32:13,638 - INFO - Skip reading daily average discharge data for site 36969
+2024-05-21 14:32:13,648 - INFO - Reading data for site 38489.
+2024-05-21 14:32:19,963 - INFO - Skip reading daily average discharge data for site 38489
+2024-05-21 14:32:19,971 - INFO - Reading data for site 38342.
+2024-05-21 14:32:28,089 - INFO - Skip reading daily average discharge data for site 38342
+2024-05-21 14:32:28,100 - INFO - Reading data for site 16134.
+2024-05-21 14:32:37,652 - INFO - Skip reading daily average discharge data for site 16134
+2024-05-21 14:32:37,658 - INFO - Reading data for site 16136.
+2024-05-21 14:32:48,987 - INFO - Reading data for site 16121.
+2024-05-21 14:32:56,991 - INFO - Skip reading daily average discharge data for site 16121
+2024-05-21 14:32:57,000 - INFO - Reading data for site 16127.
+2024-05-21 14:33:06,730 - INFO - Skip reading daily average discharge data for site 16127
+2024-05-21 14:33:06,734 - INFO - Reading data for site 16487.
+2024-05-21 14:33:14,242 - INFO - Skip reading daily average discharge data for site 16487
+2024-05-21 14:33:14,252 - INFO - Reading data for site 36982.
+2024-05-21 14:33:32,544 - INFO - Reading data for site 16139.
+2024-05-21 14:33:39,895 - INFO - Reading data for site 16146.
+2024-05-21 14:33:50,399 - INFO - Reading data for site 16151.
+2024-05-21 14:33:51,787 - INFO - Skip reading daily average discharge data for site 16151
+2024-05-21 14:33:51,800 - INFO - Reading data for site 17462.
+2024-05-21 14:33:54,679 - INFO - Skip reading daily average discharge data for site 17462
+2024-05-21 14:33:54,689 - INFO - Reading data for site 16153.
+2024-05-21 14:34:08,077 - INFO - Reading data for site 38628.
+2024-05-21 14:34:09,541 - INFO - Skip reading daily average discharge data for site 38628
+2024-05-21 14:34:09,555 - INFO - Reading data for site 16159.
+2024-05-21 14:34:19,189 - INFO - Skip reading daily average discharge data for site 16159
+2024-05-21 14:34:19,202 - INFO - Reading data for site 16169.
+2024-05-21 14:34:29,455 - INFO - Skip reading daily average discharge data for site 16169
+2024-05-21 14:34:29,465 - INFO - Reading data for site 16510.
+2024-05-21 14:34:39,938 - INFO - Skip reading daily average discharge data for site 16510
+2024-05-21 14:34:39,950 - INFO - Reading data for site 16160.
+2024-05-21 14:34:48,453 - INFO - Skip reading daily average discharge data for site 16160
+2024-05-21 14:34:48,468 - INFO - Reading data for site 38722.
+2024-05-21 14:34:55,955 - INFO - Skip reading daily average discharge data for site 38722
+2024-05-21 14:34:55,970 - INFO - Reading data for site 16681.
+2024-05-21 14:34:56,994 - INFO - Skip reading daily average discharge data for site 16681
+2024-05-21 14:34:57,003 - INFO - Reading data for site 15025.
+2024-05-21 14:35:05,707 - INFO - Skip reading daily average discharge data for site 15025
+2024-05-21 14:35:05,717 - INFO - Reading data for site 15020.
+2024-05-21 14:35:08,615 - INFO - Skip reading daily average discharge data for site 15020
+2024-05-21 14:35:08,623 - INFO - Reading data for site 15034.
+2024-05-21 14:35:16,846 - INFO - Skip reading daily average discharge data for site 15034
+2024-05-21 14:35:16,856 - INFO - Reading data for site 15013.
+2024-05-21 14:35:27,070 - INFO - Reading data for site 15081.
+2024-05-21 14:35:35,914 - INFO - Skip reading daily average discharge data for site 15081
+2024-05-21 14:35:35,928 - INFO - Reading data for site 15051.
+2024-05-21 14:35:46,320 - INFO - Skip reading daily average discharge data for site 15051
+2024-05-21 14:35:46,329 - INFO - Reading data for site 36954.
+2024-05-21 14:35:51,568 - INFO - Reading data for site 16161.
+2024-05-21 14:36:00,104 - INFO - Skip reading daily average discharge data for site 16161
+2024-05-21 14:36:00,118 - INFO - Reading data for site 38615.
+2024-05-21 14:36:01,040 - INFO - Reading data for site 38613.
+2024-05-21 14:36:05,771 - INFO - Reading data for site 38621.
+2024-05-21 14:36:06,529 - INFO - Reading data for site 36934.
+2024-05-21 14:36:16,143 - INFO - Reading data for site 38353.
+2024-05-21 14:36:26,143 - INFO - Reading data for site 16135.
+2024-05-21 14:36:35,955 - INFO - Skip reading daily average discharge data for site 16135
+2024-05-21 14:36:35,972 - INFO - Reading data for site 15016.
+2024-05-21 14:36:44,669 - INFO - Skip reading daily average discharge data for site 15016
+2024-05-21 14:36:44,684 - INFO - Reading data for site 38358.
+2024-05-21 14:37:01,911 - INFO - Reading data for site 15030.
+2024-05-21 14:37:10,175 - INFO - Skip reading daily average discharge data for site 15030
