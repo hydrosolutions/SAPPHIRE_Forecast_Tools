@@ -912,7 +912,11 @@ def perform_linear_regression(
 
     Returns:
         pd.DataFrame: A DataFrame containing the columns of the input data frame
-            plus the columns 'slope', 'intercept' and 'forecasted_discharge'.
+            plus the columns 'slope', 'intercept' and 'forecasted_discharge',
+            as well as basic flow statistics like average pentadal discharge:
+            q_mean, standard deviation of pentadal discharge: q_std_sigma, and
+            the delta factor used to identifie the acceptable range for a forecast
+            delta = 0.674 * sigma.
             The rows of the DataFrame are filtered to the forecast pentad.
 
     Examples:
@@ -970,6 +974,9 @@ def perform_linear_regression(
     data_dfp = data_dfp.assign(slope=1.0)
     data_dfp = data_dfp.assign(intercept=0.0)
     data_dfp = data_dfp.assign(forecasted_discharge=-1.0)
+    data_dfp = data_dfp.assign(q_mean=0.0)
+    data_dfp = data_dfp.assign(q_std_sigma=0.0)
+    data_dfp = data_dfp.assign(delta=0.0)
 
     #print("\n\nDEBUG perform_linear_regression: data_dfp: \n", data_dfp.tail(10))
 
@@ -989,8 +996,9 @@ def perform_linear_regression(
         # discharge_sum and discharge_avg are not NaN. These correspond to the
         # time steps where we produce a forecast.
         station_data = station_data.dropna()
-
-        #print("\n\nDEBUG perform_linear_regression: station_data: \n", station_data.tail(10))
+        if station_data.empty:
+            logger.info("No data for station {station} in pentad {forecast_pentad}")
+            continue
 
         # Get the discharge_sum and discharge_avg columns
         discharge_sum = station_data[predictor_col].values.reshape(-1, 1)
@@ -999,10 +1007,14 @@ def perform_linear_regression(
         # Perform the linear regression
         model = LinearRegression().fit(discharge_sum, discharge_avg)
 
+        # Calculate discharge statistics
+        q_mean = np.mean(discharge_avg)
+        q_std_sigma = np.std(discharge_avg)
+        delta = 0.674 * q_std_sigma
+
         # Get the slope and intercept
         slope = model.coef_[0][0]
         intercept = model.intercept_[0]
-        # forecasted_discharge = slope * discharge_sum + intercept
 
         # Print the slope and intercept
         logger.debug(f'Station: {station}, pentad: {forecast_pentad}, slope: {slope}, intercept: {intercept}')
@@ -1015,6 +1027,9 @@ def perform_linear_regression(
         # Store the slope and intercept in the data_df
         data_dfp.loc[(data_dfp[station_col] == station), 'slope'] = slope
         data_dfp.loc[(data_dfp[station_col] == station), 'intercept'] = intercept
+        data_dfp.loc[(data_dfp[station_col] == station), 'q_mean'] = q_mean
+        data_dfp.loc[(data_dfp[station_col] == station), 'q_std_sigma'] = q_std_sigma
+        data_dfp.loc[(data_dfp[station_col] == station), 'delta'] = delta
 
         # Calculate the forecasted discharge for the current station and forecast_pentad
         data_dfp.loc[(data_dfp[station_col] == station), 'forecasted_discharge'] = \
@@ -1444,56 +1459,111 @@ def write_linreg_decad_forecast_data(data: pd.DataFrame):
 
     return ret
 
+def write_hydrograph_pentad_data(data: pd.DataFrame):
+    """
+    Writes data to csv file for later reading into the forecast dashboard.
 
-def prepare_hydrograph_data(daily_discharge_data: pd.DataFrame,
-                          date_col='date', discharge_col='discharge_avg',
-                          group_col='pentad_in_year', code_col='code'):
-    logger.info("Writing hydrograph data ...")
+    Args:
+    data (pd.DataFrame): The data to be written to a csv file.
 
-    # Some pre-processing prior to writing
-    # Convert the Date column to a datetime object
-    daily_discharge_data[date_col] = pd.to_datetime(daily_discharge_data[date_col])
-    # Add a year column and make sure the year column is of type string.
-    daily_discharge_data['year'] = daily_discharge_data[date_col].year.astype(str)
-    # Write the pentad of the year into a new column.
-    daily_discharge_data = tl.add_pentad_in_year_column(daily_discharge_data, date_col=date_col)
-    # Add day of year to the DataFrame
-    daily_discharge_data['day_of_year'] = daily_discharge_data[date_col].dt.dayofyear
+    Returns:
+    None
+    """
+    # Drop the rows where the issue dates are False
+    data = data[data['issue_date'] == True]
 
-    # Pivot the hydrograph data to the wide format with daily and pentadal data.
-    #hydrograph_pentad, hydrograph_day = reformat_hydrograph_data(daily_discharge_data)
+    # Drop the issue_date column
+    data = data.drop(columns=['issue_date', 'discharge'])
 
-    # Save the hydrograph data to csv for subsequent visualization in the
-    # forecast dashboard.
-    save_hydrograph_data_to_csv(hydrograph_pentad, hydrograph_decad)
+    # If there is a column called discharge_sum, rename it to predictor
+    if 'discharge_sum' in data.columns:
+        data = data.rename(columns={'discharge_sum': 'predictor'})
 
-    logger.info("   ... done")
+    # Round data in the discharge_avg and predictor columns to 3 decimal places
+    data['discharge_avg'] = data['discharge_avg'].round(3)
+    data['predictor'] = data['predictor'].round(3)
 
-def save_hydrograph_data_to_csv(hydrograph_pentad, hydrograph_day):
-    # Write this data to csv for subsequent visualization
-    # in the forecast dashboard.
-    hydrograph_pentad_file_csv = os.path.join(
-        os.getenv("ieasyforecast_intermediate_data_path"),
-        os.getenv("ieasyforecast_hydrograph_pentad_file"))
+    # Get the path to the intermediate data folder from the environmental
+    # variables and the name of the ieasyforecast_hydrograph_pentad_file.
+    # Concatenate them to the output file path.
+    try:
+         output_file_path = os.path.join(
+                os.getenv("ieasyforecast_intermediate_data_path"),
+                os.getenv("ieasyforecast_hydrograph_pentad_file"))
+    except Exception as e:
+        logger.error("Could not get the output file path.")
+        print(os.getenv("ieasyforecast_intermediate_data_path"))
+        print(os.getenv("ieasyforecast_hydrograph_pentad_file"))
+        raise e
 
-    # Write the hydrograph_pentad to csv
-    ret = hydrograph_pentad.to_csv(hydrograph_pentad_file_csv)
-    if ret is None:
-        logger.info("Hydrograph pentad data saved to csv file")
-    else:
-        logger.error("Hydrograph pentad data not saved to csv file")
+    # Overwrite the file if it already exists
+    if os.path.exists(output_file_path):
+        os.remove(output_file_path)
 
-    hydrograph_day_file_csv = os.path.join(
-        os.getenv("ieasyforecast_intermediate_data_path"),
-        os.getenv("ieasyforecast_hydrograph_day_file"))
+    # Write the data to a csv file. Raise an error if this does not work.
+    # If the data is written to the csv file, log a message that the data
+    # has been written.
+    try:
+        ret = data.to_csv(output_file_path, index=False)
+        logger.info(f"Data written to {output_file_path}.")
+    except Exception as e:
+        logger.error(f"Could not write the data to {output_file_path}.")
+        raise e
 
-    # Write the hydrograph_day to csv. Do not print the index.
-    ret = hydrograph_day.to_csv(hydrograph_day_file_csv)
-    if ret is None:
-        logger.info("Hydrograph day data saved to csv file")
-    else:
-        logger.error("Hydrograph day data not saved to csv file")
+    return ret
 
+def write_hydrograph_decad_data(data: pd.DataFrame):
+    """
+    Writes data to csv file for later reading into the forecast dashboard.
+
+    Args:
+    data (pd.DataFrame): The data to be written to a csv file.
+
+    Returns:
+    None
+    """
+    # Drop the rows where the issue dates are False
+    data = data[data['issue_date'] == True]
+
+    # Drop the issue_date column
+    data = data.drop(columns=['issue_date', 'discharge'])
+
+    # If there is a column called discharge_sum, rename it to predictor
+    if 'discharge_sum' in data.columns:
+        data = data.rename(columns={'discharge_sum': 'predictor'})
+
+    # Round data in the discharge_avg and predictor columns to 3 decimal places
+    data['discharge_avg'] = data['discharge_avg'].round(3)
+    data['predictor'] = data['predictor'].round(3)
+
+    # Get the path to the intermediate data folder from the environmental
+    # variables and the name of the ieasyforecast_hydrograph_pentad_file.
+    # Concatenate them to the output file path.
+    try:
+         output_file_path = os.path.join(
+                os.getenv("ieasyforecast_intermediate_data_path"),
+                os.getenv("ieasyforecast_hydrograph_decad_file"))
+    except Exception as e:
+        logger.error("Could not get the output file path.")
+        print(os.getenv("ieasyforecast_intermediate_data_path"))
+        print(os.getenv("ieasyforecast_hydrograph_decad_file"))
+        raise e
+
+    # Overwrite the file if it already exists
+    if os.path.exists(output_file_path):
+        os.remove(output_file_path)
+
+    # Write the data to a csv file. Raise an error if this does not work.
+    # If the data is written to the csv file, log a message that the data
+    # has been written.
+    try:
+        ret = data.to_csv(output_file_path, index=False)
+        logger.info(f"Data written to {output_file_path}.")
+    except Exception as e:
+        logger.error(f"Could not write the data to {output_file_path}.")
+        raise e
+
+    return ret
 
 
 # endregion

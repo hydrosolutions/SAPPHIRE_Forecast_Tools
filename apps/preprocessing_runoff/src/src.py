@@ -55,8 +55,19 @@ def filter_roughly_for_outliers(combined_data, group_by='Code',
         group[date_col] = pd.to_datetime(group[date_col])
         group.set_index(date_col, inplace=True)
 
+        # Drop duplicates from the index
+        group = group.loc[~group.index.duplicated(keep='first')]
+
+        # Reindex the data frame to include all dates in the range
+        all_dates = pd.date_range(start=group.index.min(), end=group.index.max(), freq='D')
+        group = group.reindex(all_dates)
+        # Make sure the index is called date_col
+        group.index.name = date_col
+
         # Interpolate gaps of length of max 2 days linearly
         group[filter_col] = group[filter_col].interpolate(method='time', limit=2)
+        # Also interpolate the code column
+        group['code'] = group['code'].ffill()
 
         # Reset the index
         group.reset_index(inplace=True)
@@ -540,6 +551,9 @@ def add_hydroposts(combined_data, check_hydroposts):
     pd.DataFrame: The input DataFrame with the virtual hydroposts added.
 
     """
+    # Get the earliest date for which we have data in the combined_data
+    earliest_date = combined_data['date'].min()
+
     # Check if the virtual hydroposts are in the combined_data
     for hydropost in check_hydroposts:
         if hydropost not in combined_data['code'].values:
@@ -547,7 +561,7 @@ def add_hydroposts(combined_data, check_hydroposts):
             # Add the virtual hydropost to the combined_data
             new_row = pd.DataFrame({
                 'code': [hydropost],
-                'date': [dt.date.today()],
+                'date': [earliest_date],
                 'discharge': [np.nan],
                 'name': [f'Virtual hydropost {hydropost}']
             })
@@ -747,8 +761,9 @@ def fill_gaps_in_reservoir_inflow_data(
         else:
             logger.error('Station 15102 is not in the list of stations for forecasting but it is required for forecasting 15954.\n -> Not able to calculate runoff for 15954.\n -> Please select station 15102 for forecasting.')
             exit()
-        # Overwrite the code for the station
-        data_15102[code_col] = '15954'
+
+    # Overwrite the code for the station
+    data_15102[code_col] = '15954'
 
     combined_data = pd.concat([combined_data, data_15102], ignore_index=True)
 

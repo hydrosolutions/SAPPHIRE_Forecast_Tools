@@ -282,6 +282,7 @@ class RunPreprocessingRunoff(luigi.Task):
         # Check if the output file was modified within the last number of seconds
         return current_time - output_file_mtime < 10  # 24 * 60 * 60
 
+
 class RunLinearRegression(luigi.Task):
     def requires(self):
         return RunPreprocessingRunoff()

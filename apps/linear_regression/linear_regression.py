@@ -101,12 +101,11 @@ def main():
         logger.info(f"Tail of data decad: {data_decad.tail()}")
 
     # Save pentadal data
-    # TODO
+    fl.write_hydrograph_pentad_data(data_pentad)
 
     # Save decadal data
     if forecast_flags.decad:
-        # TODO
-        pass
+        fl.write_hydrograph_decad_data(data_decad)
 
     # Iterate over the dates
     current_day = forecast_date
@@ -140,6 +139,9 @@ def main():
             # Print the tail of discharge_pentad for code 16936
             #logger.debug(f"discharge_pentad.head(): \n{discharge_pentad.head()}")
             #logger.debug(f"discharge_pentad.tail(): \n{discharge_pentad.tail()}")
+
+            # Print discharge_data for code == '15194' for april and may 2024
+            #logger.info(f"discharge_pentad[discharge_pentad['code'] == '15194'].tail(50): \n{discharge_pentad[discharge_pentad['code'] == '15194'].tail(50)}")
 
             # Write the predictor to the Site objects
             predictor_dates = fl.get_predictor_dates(current_day, forecast_flags)
