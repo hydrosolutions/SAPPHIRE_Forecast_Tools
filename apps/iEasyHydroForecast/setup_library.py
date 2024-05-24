@@ -15,8 +15,8 @@ logger = logging.getLogger(__name__)
 
 # === Tools for the initialization of the linear regression forecast ===
 
-# --- Local functions ---------------------------------------------------
-# region local_functions
+# --- Load runtime environment ---------------------------------------------------
+# region environment
 
 def store_last_successful_run_date(date):
     '''
@@ -191,6 +191,11 @@ def load_environment():
         logger.error("config.load_environment(): Environment variable ieasyforecast_daily_discharge_path not set")
     return env_file_path
 
+# endregion
+
+
+# --- Tools for accessing the iEasyHydro DB --------------------------------------
+# region iEH_DB
 def check_database_access(ieh_sdk):
     """
     Check if the backend has access to an iEasyHydro database.
@@ -526,6 +531,126 @@ def get_decadal_forecast_sites_from_pentadal_sites(fc_sites_pentad=None, site_li
 
 # endregion
 
+# --- Reading of forecast results ------------------------------------------------
+# region Reading_forecast_results
+
+def read_observed_pentadal_data():
+    """
+    Read the pentadal hydrograph data.
+
+    Returns:
+    data (pandas.DataFrame): The pentadal data.
+
+    Details:
+    The file to read is specified in the environment variable
+    ieasyforecast_hydrograph_pentad_file. It is expected to have a column 'date'
+    with the date of the hydrograph data. If the file has a column 'pentad', it
+    is renamed to 'pentad_in_month'.
+    """
+    # Read the pentadal hydrograph data
+    filepath = os.path.join(
+        os.getenv("ieasyforecast_intermediate_data_path"),
+        os.getenv("ieasyforecast_hydrograph_pentad_file")
+    )
+    data = pd.read_csv(filepath, parse_dates=["date"])
+
+    # Add a column model to the dataframe
+    data["model_long"] = "Observed (Obs)"
+    data["model_short"] = "Obs"
+
+    # If there is a column name 'pentad', rename it to 'pentad_in_month'
+    if 'pentad' in data.columns:
+        data.rename(columns={'pentad': 'pentad_in_month'}, inplace=True)
+
+    return data
+
+def read_linreg_forecasts_pentad():
+    """
+    Read the linear regression forecasts for the pentadal forecast horizon and
+    adds the name of the model to the DataFrame.
+
+    Since the linreg result file currently holds some general runoff statistics,
+    we need to filter these out and return them in a separate DataFrame.
+
+    Returns:
+    forecasts (pandas.DataFrame): The linear regression forecasts for the
+        pentadal forecast horizon with added model_long and model_short columns.
+    stats (pandas.DataFrame): The statistics of the observed data for the
+        pentadal forecast horizon.
+
+    Details:
+    The file to read is specified in the environment variable
+    ieasyforecast_analysis_pentad_file. It is expected to have a column 'date'
+    with the date of the forecast.
+
+    Generally, we expect the following columns in the forecast files:
+    date: The date the forecast is produced for the following pentad
+    code: The unique hydropost identifier
+    forecasted_discharge: The forecasted discharge for the pentad
+
+    Optional columns are, in the case of the linear regression method:
+    predictor: The predictor used in the linear regression model
+    discharge_avg: The average discharge for the pentad used in the linear regression model
+    pentad_in_month: The pentad in the month for which the forecast is produced
+    pentad_in_year: The pentad in the year for which the forecast is produced
+    slope: The slope of the linear regression model
+    intercept: The intercept of the linear regression model
+
+    The following columns are in the linreg forecast result file but referr to
+    general runoff statistics and are later merged to the observed DataFrame:
+    q_mean: The mean discharge over the available data for the forecast pentad
+    q_std_sigma: The standard deviation of the discharge over the available data for the forecast pentad
+        Generally referred to as sigma in the hydromet.
+    delta: The acceptable range for the forecast around the observed discharge.
+        Calculated by the hydromet as 0.674 * q_std_sigma (assuming normal distribution of the pentadal discharge)
+    """
+    # Read the linear regression forecasts for the pentadal forecast horizon
+    filepath = os.path.join(
+        os.getenv("ieasyforecast_intermediate_data_path"),
+        os.getenv("ieasyforecast_analysis_pentad_file")
+    )
+    data = pd.read_csv(filepath, parse_dates=["date"])
+
+    # Drop duplicate rows in date and code if they exist, keeping the last row
+    data.drop_duplicates(subset=["date", "code"], keep="last", inplace=True)
+
+    # Add a column model to the dataframe
+    data["model_long"] = "Linear regression (LR)"
+    data["model_short"] = "LR"
+
+    # Split the data into forecasts and statistics
+    # The statistics are general runoff statistics and are later merged to the
+    # observed DataFrame
+    stats = data[["date", "code", "q_mean", "q_std_sigma", "delta"]]
+    forecasts = data.drop(columns=["q_mean", "q_std_sigma", "delta", "discharge_avg"])
+
+    return forecasts, stats
+
+def read_observed_and_modelled_data_pentade():
+    """
+    Reads results from all forecast methods into a dataframe.
+
+    Returns:
+    forecasts (pandas.DataFrame): The forecasts from all methods.
+    """
+    # Read the observed data
+    observed = read_observed_pentadal_data()
+
+    # Read the linear regression forecasts for the pentadal forecast horizon
+    linreg, stats = read_linreg_forecasts_pentad()
+
+    # Read the forecasts from the other methods
+    # TODO
+
+    # Concatenate the dataframes
+    forecasts = pd.concat([linreg])
+
+    # Merge the general runoff statistics to the observed DataFrame
+    observed = pd.merge(observed, stats, on=["date", "code"], how="left")
+
+    return observed, forecasts
+
+# endregion
 
 # --- Classes ----------------------------------------------------------
 # region classes

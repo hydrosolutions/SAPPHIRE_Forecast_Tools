@@ -1059,9 +1059,11 @@ def perform_forecast(fc_sites, group_id=None, result_df=None,
 # --- Post-processing ---
 # region postprocessing
 
-def nse(data: pd.DataFrame, observed_col: str, simulated_col: str):
+def sdivsigma_nse(data: pd.DataFrame, observed_col: str, simulated_col: str):
     """
-    Calculate the Nash-Sutcliffe Efficiency (NSE) for the observed and simulated data.
+    Calculate the forecast efficacy and the Nash-Sutcliffe Efficiency (NSE) for the observed and simulated data.
+
+    NSE = 1 - s/sigma
 
     Args:
         data (pandas.DataFrame): The input data containing the observed and simulated data.
@@ -1069,7 +1071,7 @@ def nse(data: pd.DataFrame, observed_col: str, simulated_col: str):
         simulated_col (str): The name of the column containing the simulated data.
 
     Returns:
-        float: The Nash-Sutcliffe Efficiency (NSE) value for the observed and simulated data.
+        pandas.Series: A pandas Series containing the forecast efficacy and the NSE value.
 
     Raises:
         ValueError: If the input data is missing one or more required columns.
@@ -1082,16 +1084,83 @@ def nse(data: pd.DataFrame, observed_col: str, simulated_col: str):
     # Drop NaN values
     data = data.dropna()
 
-    # Calculate the Nash-Sutcliffe Efficiency (NSE)
+    # Calculate the numerator and denominator of the NSE formula
     numerator = ((data[observed_col] - data[simulated_col])**2).sum()
     denominator = ((data[observed_col] - data[observed_col].mean())**2).sum()
+
+    # Catch cases where the denomitar is 0
+    if denominator == 0:
+        print("Denominator is 0")
+        print("data\n", data)
+        print("numerator\n", numerator)
+        print("denominator\n", denominator)
+        return np.nan, np.nan
+
+    # Calculate the efficacy of the model
+    sdivsigma = numerator / denominator
 
     # Calculate the NSE value
     nse_value = 1 - (numerator / denominator)
 
-    return nse_value
+    return pd.Series([sdivsigma, nse_value], index=['sdivsigma', 'nse'])
 
-def calculate_forecast_skill(data_df: pd.DataFrame, station_col: str,
+def forecast_accuracy_hydromet(data: pd.DataFrame, observed_col: str, simulated_col: str, delta_col: str):
+    """
+    Calculate the forecast accuracy for the observed and simulated data.
+
+    Args:
+        data (pandas.DataFrame): The input data containing the observed and simulated data.
+        observed_col (str): The name of the column containing the observed data.
+        simulated_col (str): The name of the column containing the simulated data.
+
+    Returns:
+        pandas.Series: A pandas Series containing the forecast accuracy.
+
+    Raises:
+        ValueError: If the input data is missing one or more required columns.
+
+    """
+    # Test the input. Make sure that the DataFrame contains the required columns
+    if not all(column in data.columns for column in [observed_col, simulated_col, delta_col]):
+        raise ValueError(f'DataFrame is missing one or more required columns: {observed_col, simulated_col, delta_col}')
+
+    # Drop NaN values
+    data = data.dropna()
+
+    # Calculate the forecast accuracy
+    accuracy = (abs(data[observed_col] - data[simulated_col]) <= data[delta_col]).mean()
+
+    return pd.Series([accuracy], index=['accuracy'])
+
+def mae(data: pd.DataFrame, observed_col: str, simulated_col: str):
+    """
+    Calculate the mean average error between observed and simulated data
+
+    Args:
+        data (pandas.DataFrame): The input data containing the observed and simulated data.
+        observed_col (str): The name of the column containing the observed data.
+        simulated_col (str): The name of the column containing the simulated data.
+
+    Returns:
+        float: mean average error between observed and simulated data
+
+    Raises:
+        ValueError: If the input data is missing one or more required columns.
+
+    """
+    # Test the input. Make sure that the DataFrame contains the required columns
+    if not all(column in data.columns for column in [observed_col, simulated_col]):
+        raise ValueError(f'DataFrame is missing one or more required columns: {observed_col, simulated_col}')
+
+    # Drop NaN values
+    data = data.dropna()
+
+    # Calculate the mean average error between the observed and simulated data
+    mae = abs(data[observed_col] - data[simulated_col]).mean()
+
+    return pd.Series([mae], index=['mae'])
+
+def calculate_forecast_skill_deprecating(data_df: pd.DataFrame, station_col: str,
                              pentad_col: str, observation_col: str,
                              simulation_col: str) -> pd.DataFrame:
     """
@@ -1195,6 +1264,65 @@ def calculate_forecast_skill(data_df: pd.DataFrame, station_col: str,
     #print(data_df.tail(20))
 
     return data_df
+
+def calculate_skill_metrics_pentade(observed: pd.DataFrame, simulated: pd.DataFrame):
+    """
+    For each model and hydropost in the simulated DataFrame, calculates a number
+    of skill metrics based on the observed DataFrame.
+
+    Args:
+        observed (pd.DataFrame): The DataFrame containing the observed data.
+        simulated (pd.DataFrame): The DataFrame containing the simulated data.
+
+    Returns:
+        pd.DataFrame: The DataFrame containing the skill metrics for each model
+            and hydropost.
+    """
+
+    # Test the input. Make sure that the DataFrames contain the required columns
+    if not all(column in observed.columns for column in ['code', 'date', 'discharge_avg', 'q_mean', 'q_std_sigma', 'delta', 'model_long', 'model_short']):
+        raise ValueError(f'Observed DataFrame is missing one or more required columns: {["code", "date", "discharge_avg", "q_mean", "q_std_sigma", "delta", "model_long", "model_short"]}')
+    if not all(column in simulated.columns for column in ['code', 'date', 'pentad_in_year', 'forecasted_discharge', 'model_long', 'model_short']):
+        raise ValueError(f'Simulated DataFrame is missing one or more required columns: {["code", "date", "pentad_in_year", "forecasted_discharge", "model_long", "model_short"]}')
+
+    # Merge the observed and simulated DataFrames
+    skill_metrics_df = pd.merge(
+        simulated,
+        observed[['code', 'date', 'discharge_avg', 'delta']],
+        on=['code', 'date'])
+
+    # Calculate the skill metrics for each group based on the 'pentad_in_year', 'code' and 'model' columns
+    skill_stats = skill_metrics_df. \
+        groupby(['pentad_in_year', 'code', 'model_long', 'model_short']). \
+        apply(
+            sdivsigma_nse,
+            observed_col='discharge_avg',
+            simulated_col='forecasted_discharge'). \
+        reset_index()
+
+    accuracy_stats = skill_metrics_df. \
+        groupby(['pentad_in_year', 'code', 'model_long', 'model_short']). \
+        apply(
+            forecast_accuracy_hydromet,
+            observed_col='discharge_avg',
+            simulated_col='forecasted_discharge',
+            delta_col='delta').\
+        reset_index()
+
+    mae_stats = skill_metrics_df. \
+        groupby(['pentad_in_year', 'code', 'model_long', 'model_short']). \
+        apply(
+            mae,
+            observed_col='discharge_avg',
+            simulated_col='forecasted_discharge').\
+        reset_index()
+
+    # Merge the skill metrics with the accuracy stats
+    skill_stats = pd.merge(skill_stats, accuracy_stats, on=['pentad_in_year', 'code', 'model_long', 'model_short'])
+    skill_stats = pd.merge(skill_stats, mae_stats, on=['pentad_in_year', 'code', 'model_long', 'model_short'])
+
+    return skill_stats
+
 
 # endregion
 
@@ -1565,6 +1693,40 @@ def write_hydrograph_decad_data(data: pd.DataFrame):
 
     return ret
 
+def save_pentadal_skill_metrics(data: pd.DataFrame):
+    """
+    Saves pentadal skill metrics to a csv file.
+
+    Args:
+    data (pd.DataFrame): The data to be written to a csv file.
+
+    Returns:
+    None
+
+    """
+
+    # Round all values to 4 decimal places
+    data = data.round(4)
+
+    filepath = os.path.join(
+        os.getenv("ieasyforecast_intermediate_data_path"),
+        os.getenv("ieasyforecast_pentadal_skill_metrics_file"))
+
+    # Overwrite the file if it already exists
+    if os.path.exists(filepath):
+        os.remove(filepath)
+
+    # Write the data to a csv file. Raise an error if this does not work.
+    # If the data is written to the csv file, log a message that the data
+    # has been written.
+    try:
+        ret = data.to_csv(filepath, index=False)
+        logger.info(f"Data written to {filepath}.")
+    except Exception as e:
+        logger.error(f"Could not write the data to {filepath}.")
+        raise e
+
+    return ret
 
 # endregion
 
