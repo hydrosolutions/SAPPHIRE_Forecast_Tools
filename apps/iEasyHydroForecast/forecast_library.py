@@ -881,6 +881,44 @@ def get_pentadal_and_decadal_data(forecast_flags=None,
 
     return data_pentad, data_decad
 
+def calculate_pentadal_runoff_stats(data_df, value_col='discharge_avg'):
+    """
+    Calculates runoff statistics that are required for the analysis step and the
+    post-processing step. The statistics are the mean, standard deviation, and
+    delta factor. Further we calculate min, max, and the 5th and 95th percentile
+    as well as the 25th and 75th percentile.
+
+    Args:
+    data_df (pd.DataFrame): The input DataFrame containing the data for each station.
+    value_col (str): The name of the column containing the discharge information.
+
+    Returns:
+    pd.DataFrame: The modified DataFrame with the runoff statistics for each station.
+
+    Raises:
+    ValueError: If the value column is not in the DataFrame.
+    """
+    # Test if the value column is in the data_df columns
+    if value_col not in data_df.columns:
+        raise ValueError(f'The column {value_col} is not in the DataFrame.')
+
+    # Calculate the mean, standard deviation, and delta factor
+    data_df['q_mean'] = data_df[value_col].mean()
+    data_df['q_std_sigma'] = data_df[value_col].std()
+    data_df['delta'] = 0.674 * data_df['q_std_sigma']
+
+    # Calculate the min, max, and the 5th and 95th percentile
+    data_df['q_min'] = data_df[value_col].min()
+    data_df['q_max'] = data_df[value_col].max()
+    data_df['q_5th'] = data_df[value_col].quantile(0.05)
+    data_df['q_95th'] = data_df[value_col].quantile(0.95)
+
+    # Calculate the 25th and 75th percentile
+    data_df['q_25th'] = data_df[value_col].quantile(0.25)
+    data_df['q_75th'] = data_df[value_col].quantile(0.75)
+
+    return data_df
+
 # endregion
 
 
@@ -1587,7 +1625,54 @@ def write_linreg_decad_forecast_data(data: pd.DataFrame):
 
     return ret
 
-def write_hydrograph_pentad_data(data: pd.DataFrame):
+def write_pentad_hydrograph_data(data: pd.DataFrame):
+    """
+    Calculates statistics of the pentadal hydrograph and saves it to a csv file.
+
+    Args:
+    data (pd.DataFrame): The data to be written to a csv file.
+
+    Returns:
+    None
+    """
+
+    # Calculate runoff statistics
+    runoff_stats = data. \
+        reset_index(drop=True). \
+        groupby(['code', 'pentad_in_year']). \
+        apply(calculate_pentadal_runoff_stats). \
+        reset_index(drop=True)
+
+    # Get the path to the intermediate data folder from the environmental
+    # variables and the name of the ieasyforecast_hydrograph_pentad_file.
+    # Concatenate them to the output file path.
+    try:
+        output_file_path = os.path.join(
+            os.getenv("ieasyforecast_intermediate_data_path"),
+            os.getenv("ieasyforecast_hydrograph_pentad_file"))
+    except Exception as e:
+        logger.error("Could not get the output file path.")
+        print(os.getenv("ieasyforecast_intermediate_data_path"))
+        print(os.getenv("ieasyforecast_hydrograph_pentad_file"))
+        raise e
+
+    # Overwrite the file if it already exists
+    if os.path.exists(output_file_path):
+        os.remove(output_file_path)
+
+    # Write the data to a csv file. Raise an error if this does not work.
+    # If the data is written to the csv file, log a message that the data
+    # has been written.
+    try:
+        ret = runoff_stats.to_csv(output_file_path, index=False)
+        logger.info(f"Data written to {output_file_path}.")
+    except Exception as e:
+        logger.error(f"Could not write the data to {output_file_path}.")
+        raise e
+
+    return ret
+
+def write_pentad_time_series_data(data: pd.DataFrame):
     """
     Writes data to csv file for later reading into the forecast dashboard.
 
@@ -1617,11 +1702,11 @@ def write_hydrograph_pentad_data(data: pd.DataFrame):
     try:
          output_file_path = os.path.join(
                 os.getenv("ieasyforecast_intermediate_data_path"),
-                os.getenv("ieasyforecast_hydrograph_pentad_file"))
+                os.getenv("ieasyforecast_pentad_discharge_file"))
     except Exception as e:
         logger.error("Could not get the output file path.")
         print(os.getenv("ieasyforecast_intermediate_data_path"))
-        print(os.getenv("ieasyforecast_hydrograph_pentad_file"))
+        print(os.getenv("ieasyforecast_pentad_discharge_file"))
         raise e
 
     # Overwrite the file if it already exists
@@ -1640,7 +1725,7 @@ def write_hydrograph_pentad_data(data: pd.DataFrame):
 
     return ret
 
-def write_hydrograph_decad_data(data: pd.DataFrame):
+def write_decad_time_series_data(data: pd.DataFrame):
     """
     Writes data to csv file for later reading into the forecast dashboard.
 
@@ -1670,11 +1755,11 @@ def write_hydrograph_decad_data(data: pd.DataFrame):
     try:
          output_file_path = os.path.join(
                 os.getenv("ieasyforecast_intermediate_data_path"),
-                os.getenv("ieasyforecast_hydrograph_decad_file"))
+                os.getenv("ieasyforecast_decad_discharge_file"))
     except Exception as e:
         logger.error("Could not get the output file path.")
         print(os.getenv("ieasyforecast_intermediate_data_path"))
-        print(os.getenv("ieasyforecast_hydrograph_decad_file"))
+        print(os.getenv("ieasyforecast_decad_discharge_file"))
         raise e
 
     # Overwrite the file if it already exists
@@ -1727,6 +1812,25 @@ def save_pentadal_skill_metrics(data: pd.DataFrame):
         raise e
 
     return ret
+
+def save_forecast_data_pentad(observed: pd.DataFrame, simulated: pd.DataFrame):
+    """
+    Save observed pentadal runoff and simulated pentadal runoff for different models to csv.
+
+    Args:
+    observed (pd.DataFrame): The DataFrame containing the observed data.
+    simulated (pd.DataFrame): The DataFrame containing the simulated data.
+
+    Returns:
+    None
+    """
+    filename = os.path.join(
+        os.getenv("ieasyforecast_intermediate_data_path"),
+        os.getenv("ieasyforecast_combined_forecast_pentad_file"))
+
+
+
+    return None
 
 # endregion
 

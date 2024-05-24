@@ -101,11 +101,12 @@ def main():
         logger.info(f"Tail of data decad: {data_decad.tail()}")
 
     # Save pentadal data
-    fl.write_hydrograph_pentad_data(data_pentad)
+    fl.write_pentad_hydrograph_data(data_pentad)
+    fl.write_pentad_time_series_data(data_pentad)
 
     # Save decadal data
     if forecast_flags.decad:
-        fl.write_hydrograph_decad_data(data_decad)
+        fl.write_decad_time_series_data(data_decad)
 
     # Iterate over the dates
     current_day = forecast_date

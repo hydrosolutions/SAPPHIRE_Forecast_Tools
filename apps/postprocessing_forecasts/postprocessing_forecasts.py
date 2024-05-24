@@ -62,6 +62,9 @@ def postprocessing_forecasts():
     # Data processing
     observed, modelled = sl.read_observed_and_modelled_data_pentade()
 
+    # Save the observed and modelled data to CSV files
+    fl.save_forecast_data_pentad(observed, modelled)
+
     # Calculate forecast skill metrics
     skill_metrics = fl.calculate_skill_metrics_pentade(observed, modelled)
 

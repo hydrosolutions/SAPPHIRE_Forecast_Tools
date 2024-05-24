@@ -222,7 +222,7 @@ def check_database_access(ieh_sdk):
     except Exception as e:
         # Test if there are any files in the data/daily_runoff directory
         if os.listdir(os.getenv("ieasyforecast_daily_discharge_path")):
-            logger.debug(f"No access to iEasyHydro database "
+            logger.info(f"No access to iEasyHydro database "
                         f"will use data from the ieasyforecast_daily_discharge_path for forecasting only.")
             return False
         else:
