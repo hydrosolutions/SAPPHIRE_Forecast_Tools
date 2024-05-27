@@ -89,27 +89,34 @@ def main():
         name_col='name',
         code_col='code')
 
-    # Some virtual stations may not be in the regime data file nor in the
-    # operational data base. We need to add a hypothetical line for them if they
-    # are not already there.
-    check_hydroposts = ['15960', '15954', '16936']
-    runoff_data = src.add_hydroposts(runoff_data, check_hydroposts)
+    # Filtering for outliers
+    filtered_data = src.filter_roughly_for_outliers(
+        runoff_data, 'code', 'discharge')
 
-    # Calculate data for virtual hydroposts where neccessary
-    filled_data = src.fill_gaps_in_reservoir_inflow_data(
-        runoff_data,
+    # Reformat to hydrograph data
+    hydrograph = src.from_daily_time_series_to_hydrograph(
+        data_df=filtered_data,
         date_col='date',
         discharge_col='discharge',
         code_col='code')
 
-    # Filtering for outliers
-    filtered_data = src.filter_roughly_for_outliers(
-        filled_data, 'code', 'discharge')
+    # Get dangerous discharge values from iEasyHydro DB
+    if ieh_sdk is not None:
+        hydrograph = src.add_dangerous_discharge(
+            ieh_sdk,
+            hydrograph,
+            code_col='code')
 
     ## Save the data
-    # Daily data
-    ret = src.write_data_to_csv(
-        filtered_data, ['code', 'date', 'discharge'])
+    # Daily time series data
+    ret = src.write_daily_time_series_data_to_csv(
+        data=filtered_data,
+        column_list=['code', 'date', 'discharge'])
+
+    # Daily hydrograph data
+    ret = src.write_daily_hydrograph_data_to_csv(
+        data=hydrograph,
+        column_list=hydrograph.columns.tolist())
 
     if ret is None:
         sys.exit(0) # Success

@@ -2,6 +2,7 @@ import os
 import pandas as pd
 import numpy as np
 import datetime as dt
+import json
 
 from ieasyhydro_sdk.filters import BasicDataValueFilters
 
@@ -40,8 +41,8 @@ def filter_roughly_for_outliers(combined_data, group_by='Code',
         IQR = Q3 - Q1
 
         # Calculate the upper and lower bounds for outliers
-        upper_bound = Q3 + 1.5 * IQR
-        lower_bound = Q1 - 1.5 * IQR
+        upper_bound = Q3 + 2.5 * IQR
+        lower_bound = Q1 - 2.5 * IQR
 
         #print("DEBUG: upper_bound: ", upper_bound)
         #print("DEBUG: lower_bound: ", lower_bound)
@@ -569,212 +570,91 @@ def add_hydroposts(combined_data, check_hydroposts):
 
     return combined_data
 
-def fill_gaps_in_reservoir_inflow_data(
-        combined_data: pd.DataFrame,
-        date_col: str,
-        discharge_col: str,
-        code_col: str):
+def calculate_virtual_stations_data(data_df: pd.DataFrame,
+                                    code_col='code', discharge_col='discharge',
+                                    date_col='date'):
     """
-    Calculate discharge for virtual stations.
 
-    This function calculates data for the virtual station '16936' (Inflow to the
-    Toktogul reservoir) which is the sum of the data from the stations '16059',
-    '16096', '16100', and '16093'.
-    It further calculates the data for virtual station '15954' (Inflow to the
-    Kirov reservoir) which is equal to the data from station '15102'.
-    It also calculates the data for virtual station '15960' (Inflow to the
-    Orto-Tokoy reservoir) which is equal to the the sum of station '15261' and
-    4*station '15292'.
-
-    Args:
-    combined_data (pd.DataFrame): The input DataFrame. Must contain date_col, discharge_col, and code_col.
-    date_col (str): The name of the column containing the date data.
-    discharge_col (str): The name of the column containing the discharge data.
-    code_col (str): The name of the column containing the station code.
-
-    Returns:
-    pd.DataFrame: The input DataFrame with the calculated data for the virtual stations.
-
-    Raises:
-    ValueError: If the required columns are not in the input DataFrame.
     """
-    # Check if the required columns are in the DataFrame
-    if date_col not in combined_data.columns:
-        raise ValueError(f"Column '{date_col}' not found in the DataFrame.")
-    if discharge_col not in combined_data.columns:
-        raise ValueError(f"Column '{discharge_col}' not found in the DataFrame.")
-    if code_col not in combined_data.columns:
-        raise ValueError(f"Column '{code_col}' not found in the DataFrame.")
+    # Get configuration for virtual stations
+    with open(os.path.join(os.getenv('ieasyforecast_configuration_path'),
+                           os.getenv('ieasyforecast_virtual_stations')), 'r') as f:
+        json_data = json.load(f)
+        virtual_stations = json_data['virtualStations'].keys()
+        instructions = json_data['virtualStations']
 
-    # Calculate inflow for the Toktogul reservoir
-    if '16936' in combined_data[code_col].values:
-        logger.debug("preprocessing_runoff.src.fill_gaps_in_reservoir_inflow_data: Station 16936 is in the list of stations.")
-        # Go through the the combined_data for '16936' and check for data gaps.
-        # From the last available date in the combined_data for '16936', we
-        # look for data in the combined_data for other stations, namely '16059',
-        # '16096', '16100', and '16093' and add their values up to write to
-        # station '16936'.
+    # Add the virtual stations to the data if they are not already there
+    data_df = add_hydroposts(data_df, virtual_stations)
 
-        # Get latest date for which we have data in '16936'
-        last_date_16936 = combined_data[combined_data[code_col] == '16936'][date_col].max()
+    # Iterate over the station IDs
+    for station in virtual_stations:
+        # Get the instructions for the station
+        instruction = instructions[station]
+        #print(instruction)
+        weigth_by_station = instruction['weightByStation']
+        #print(weigth_by_station)
 
-        # Get the data for the date from the other stations
-        # Test if station 16093 (Torkent) is in the list of stations
-        # (This station is under construction at the time of writing this code)
-        if '16059' in combined_data[code_col].values:
-            data_16059 = combined_data[(combined_data[code_col] == '16059') & (combined_data[date_col] >= last_date_16936)].copy()
-        else:
-            logger.error('Station 16059 is not in the list of stations for forecasting but it is required for forecasting 16936.\n -> Not able to calculate runoff for 16936.\n -> Please select station 16059 for forecasting.')
-            exit()
-        if '16096' in combined_data[code_col].values:
-            data_16096 = combined_data[(combined_data[code_col] == '16096') & (combined_data[date_col] >= last_date_16936)].copy()
-        else:
-            logger.error('Station 16096 is not in the list of stations for forecasting but it is required for forecasting 16936.\n -> Not able to calculate runoff for 16936.\n -> Please select station 16096 for forecasting.')
-            exit()
-        if '16100' in combined_data[code_col].values:
-            data_16100 = combined_data[(combined_data[code_col] == '16100') & (combined_data[date_col] >= last_date_16936)].copy()
-        else:
-            logger.error('Station 16100 is not in the list of stations for forecasting but it is required for forecasting 16936.\n -> Not able to calculate runoff for 16936.\n -> Please select station 16100 for forecasting.')
-            exit()
-        if '16093' in combined_data[code_col].values:
-            data_16093 = combined_data[(combined_data[code_col] == '16093') & (combined_data[date_col] >= last_date_16936)].copy()
-        else:
-            # 16093 is currently not gauged. We calculate the discharge as 60% of 16096
-            data_16093 = combined_data[(combined_data[code_col] == '16096') & (combined_data[date_col] >= last_date_16936)].copy()
-            data_16093.loc[:, discharge_col] = 0.6 * data_16096.loc[:, discharge_col]
-
-    else:
-        logger.debug("preprocessing_runoff.src.fill_gaps_in_reservoir_inflow_data: Station 16936 is NOT in the list of stations.")
-        # Get the data for the date from the other stations
-        if '16059' in combined_data[code_col].values:
-            data_16059 = combined_data[combined_data[code_col] == '16059'].copy()
-        else:
-            logger.error('Station 16059 is not in the list of stations for forecasting but it is required for forecasting 16936.\n -> Not able to calculate runoff for 16936.\n -> Please select station 16059 for forecasting.')
-            exit()
-        if '16096' in combined_data[code_col].values:
-            data_16096 = combined_data[combined_data[code_col] == '16096'].copy()
-        else:
-            logger.error('Station 16096 is not in the list of stations for forecasting but it is required for forecasting 16936.\n -> Not able to calculate runoff for 16936.\n -> Please select station 16096 for forecasting.')
-            exit()
-        if '16100' in combined_data[code_col].values:
-            data_16100 = combined_data[combined_data[code_col] == '16100'].copy()
-        else:
-            logger.error('Station 16100 is not in the list of stations for forecasting but it is required for forecasting 16936.\n -> Not able to calculate runoff for 16936.\n -> Please select station 16100 for forecasting.')
-            exit()
-        if '16093' in combined_data[code_col].values:
-            data_16093 = combined_data[combined_data[code_col] == '16093'].copy()
-        else:
-            # 16093 is currently not gauged. We calculate the discharge as 60% of 16096
-            data_16093 = combined_data[combined_data[code_col] == '16096'].copy()
-            data_16093.loc[:, discharge_col] = 0.6 * data_16096.loc[:, discharge_col]
-
-    # Merge data_15059, data_16096, data_16100, and data_16093 by date
-    data_Tok_combined = pd.merge(data_16059, data_16096, on=date_col, how='left', suffixes=('_16059', '_16096'))
-    data_16100.rename(columns={discharge_col: 'discharge_16100'}, inplace=True)
-    data_Tok_combined = pd.merge(data_Tok_combined, data_16100, on=date_col, how='left')
-    data_16093.rename(columns={discharge_col: 'discharge_16093'}, inplace=True)
-    data_Tok_combined = pd.merge(data_Tok_combined, data_16093, on=date_col, how='left')
-
-    # Sum up all the data and write to '16936'
-    data_Tok_combined['predictor'] = data_Tok_combined['discharge_16059'] + \
-        data_Tok_combined['discharge_16096'] + \
-            data_Tok_combined['discharge_16100'] + \
-                data_Tok_combined['discharge_16093']
-
-    # Append the data_Tok_combined['predictor'] to combined_data for '16936'
-    data_Tok_combined[code_col] = '16936'
-    data_Tok_combined[discharge_col] = data_Tok_combined['predictor'].round(3)
-    # Only keep the columns date_col, code_col, and discharge_col
-    data_Tok_combined = data_Tok_combined[[date_col, code_col, discharge_col]]
-
-    combined_data = pd.concat([combined_data, data_Tok_combined], ignore_index=True)
-
-    # The same for the Kirov reservoir
-    if '15960' in combined_data[code_col].values:
-        logger.debug("preprocessing_runoff.src.fill_gaps_in_reservoir_inflow_data: Station 15960 is in the list of stations.")
-        # Go through the the combined_data for '15960' and check for data gaps.
-
-        # Get latest date for which we have data in '15960'
-        last_date_15960 = combined_data[combined_data[code_col] == '15960'][date_col].max()
-
-        # Get the data for the date from the other stations
-        if '15261' in combined_data[code_col].values:
-            data_15261 = combined_data[(combined_data[code_col] == '15261') & (combined_data[date_col] >= last_date_15960)].copy()
-        else:
-            logger.error('Station 15261 is not in the list of stations for forecasting but it is required for forecasting 15960.\n -> Not able to calculate runoff for 15960.\n -> Please select station 15261 for forecasting.')
-            exit()
-        if '15292' in combined_data[code_col].values:
-            data_15292 = combined_data[(combined_data[code_col] == '15292') & (combined_data[date_col] >= last_date_15960)].copy()
-        else:
-            logger.error('Station 15292 is not in the list of stations for forecasting but it is required for forecasting 15960.\n -> Not able to calculate runoff for 15960.\n -> Please select station 15292 for forecasting.')
+        # Currently, we only implement the combination function 'sum'. Throw an error if the function is not 'sum'
+        if instruction['combinationFunction'] != 'sum':
+            logger.error(f"Combination function for station {station} is not 'sum'.")
+            logger.error(f"Please implement the combination function '{instruction['combinationFunction']}' for station {station}.")
             exit()
 
-    else:
-        logger.debug("preprocessing_runoff.src.fill_gaps_in_reservoir_inflow_data: Station 15960 is NOT in the list of stations.")
-        # Get the data for the date from the other stations
-        if '15261' in combined_data[code_col].values:
-            data_15261 = combined_data[combined_data[code_col] == '15261'].copy()
-        else:
-            logger.error('Station 15261 is not in the list of stations for forecasting but it is required for forecasting 15960.\n -> Not able to calculate runoff for 15960.\n -> Please select station 15261 for forecasting.')
-            exit()
-        if '15292' in combined_data[code_col].values:
-            data_15292 = combined_data[combined_data[code_col] == '15292'].copy()
-        else:
-            logger.error('Station 15292 is not in the list of stations for forecasting but it is required for forecasting 15960.\n -> Not able to calculate runoff for 15960.\n -> Please select station 15292 for forecasting.')
-            exit()
+        # Get the data for the stations that contribute to the virtual station and multiply them with the weight
+        for contributing_station, weight in weigth_by_station.items():
+            # Make sure the contributing station is not equal to the virtual station
+            if contributing_station == station:
+                logger.error(f"Virtual station {station} cannot contribute to itself.")
+                exit()
 
-    # Merge by date
-    data_Kir_combined = pd.merge(data_15261, data_15292, on=date_col, how='left', suffixes=('_15261', '_15292'))
+            #print(contributing_station, weight)
+            # Get the data for the contributing station
+            data_contributing_station = data_df[data_df[code_col] == contributing_station].copy()
 
-    # Sum up all the data and write to '15960'
-    data_Kir_combined['predictor'] = data_Kir_combined['discharge_15261'] + \
-        data_Kir_combined['discharge_15292']*4
+            # Multiply the discharge data with the weight
+            data_contributing_station[discharge_col] = data_contributing_station[discharge_col] * weight
 
-    # Append the data_Kir_combined['predictor'] to combined_data for '15960'
-    data_Kir_combined[code_col] = '15960'
-    data_Kir_combined[discharge_col] = data_Kir_combined['predictor'].round()
-    # Only keep the columns date_col, code_col, and discharge_col
-    data_Kir_combined = data_Kir_combined[[date_col, code_col, discharge_col]]
+            # Add the data to the virtual station if data_virtual_station exists
+            if 'data_virtual_station' not in locals():
+                data_virtual_station = data_contributing_station
+                # Change code to the code of the virtual station
+                data_virtual_station[code_col] = station
+                # Change the name to the name of the virtual station
+                data_virtual_station['name'] = f'Virtual hydropost {station}'
+            else:
+                # Merge the data for the contributing station with the data_virtual_station
+                data_virtual_station = pd.merge(data_virtual_station, data_contributing_station, on=date_col, how='outer', suffixes=('', '_y'))
+                # Add discharge_y to discharge and discard all _y columns
+                data_virtual_station[discharge_col] = data_virtual_station[discharge_col] + data_virtual_station[discharge_col + '_y']
+                data_virtual_station.drop(columns=[col for col in data_virtual_station.columns if '_y' in col], inplace=True)
 
-    combined_data = pd.concat([combined_data, data_Kir_combined], ignore_index=True)
+            #print("data_virtual_station.tail(10)\n", data_virtual_station.tail(10))
 
-    # The same for the Orto-Tokoy reservoir
-    if '15954' in combined_data[code_col].values:
-        logger.debug("preprocessing_runoff.src.fill_gaps_in_reservoir_inflow_data: Station 15954 is in the list of stations.")
-        # Go through the the combined_data for '15954' and check for data gaps.
+        # Check if we already have data for the virtual station in the data_df dataframe and fill gaps with data_virtual_station
+        if station in data_df[code_col].values:
+            # Get the data for the virtual station
+            data_station = data_df[data_df[code_col] == station].copy()
 
-        # Get latest date for which we have data in '15954'
-        last_date_15954 = combined_data[combined_data[code_col] == '15954'][date_col].max()
+            # Get the latest date for which we have data in the data_df for the virtual station
+            last_date_station = data_station[date_col].max()
 
-        # Get the data for the date from the other stations
-        if '15102' in combined_data[code_col].values:
-            data_15102 = combined_data[(combined_data[code_col] == '15102') & (combined_data[date_col] >= last_date_15954)].copy()
-        else:
-            logger.error('Station 15102 is not in the list of stations for forecasting but it is required for forecasting 15954.\n -> Not able to calculate runoff for 15954.\n -> Please select station 15102 for forecasting.')
-            exit()
+            # Get the data for the date from the other stations
+            data_virtual_station = data_virtual_station[data_virtual_station[date_col] >= last_date_station].copy()
 
-    else:
-        logger.debug("preprocessing_runoff.src.fill_gaps_in_reservoir_inflow_data: Station 15954 is NOT in the list of stations.")
-        if '15102' in combined_data[code_col].values:
-            # Print the minimum and the maximum dates for station 15102
-            data_15102 = combined_data[combined_data[code_col] == '15102'].copy()
-        else:
-            logger.error('Station 15102 is not in the list of stations for forecasting but it is required for forecasting 15954.\n -> Not able to calculate runoff for 15954.\n -> Please select station 15102 for forecasting.')
-            exit()
+            # Merge the data for the virtual station with the data_df
+            data_df = pd.concat([data_df, data_virtual_station], ignore_index=True)
 
-    # Overwrite the code for the station
-    data_15102[code_col] = '15954'
+        # Delete data_virtual_station
+        del data_virtual_station
 
-    combined_data = pd.concat([combined_data, data_15102], ignore_index=True)
-
-    # Sort the data by date and code
-    combined_data = combined_data.sort_values(by=[code_col, date_col])
-
-    return combined_data
+    return data_df
 
 def get_runoff_data(ieh_sdk=None, date_col='date', discharge_col='discharge', name_col='name', code_col='code'):
     """
     Reads runoff data from excel and, if possible, from iEasyHydro database.
+
+    Note: This function will only try to read data from the iEasyHydro database
+    which are already in the excel files.
 
     Args:
         ieh_sdk (object): An object that provides a method to get data values
@@ -790,6 +670,13 @@ def get_runoff_data(ieh_sdk=None, date_col='date', discharge_col='discharge', na
     """
     # Read data from excel files
     read_data = read_all_runoff_data_from_excel(date_col=date_col, discharge_col=discharge_col, name_col=name_col, code_col=code_col)
+
+    # Get virtual station codes from json
+    with open(os.path.join(os.getenv('ieasyforecast_configuration_path'),
+                           os.getenv('ieasyforecast_virtual_stations')), 'r') as f:
+        virtual_stations = json.load(f)['virtualStations'].keys()
+
+    read_data = add_hydroposts(read_data, virtual_stations)
 
     if ieh_sdk is None:
         # We do not have access to an iEasyHydro database
@@ -819,15 +706,116 @@ def get_runoff_data(ieh_sdk=None, date_col='date', discharge_col='discharge', na
         # Drop rows where 'code' is "NA"
         read_data = read_data[read_data[code_col] != 'NA']
 
-        # For sanity sake, we round the data to a mac of 3 decimal places
-        read_data[discharge_col] = read_data[discharge_col].round(3)
-
         # Cast the 'code' column to string
         read_data[code_col] = read_data[code_col].astype(str)
 
+        print(read_data[read_data['code'] == "16936"].tail(10))
+        print(read_data[read_data['code'] == "16059"].tail(10))
+        # Calculate virtual hydropost data where necessary
+        read_data = calculate_virtual_stations_data(read_data)
+        print(read_data[read_data['code'] == "16936"].tail(10))
+        print(read_data[read_data['code'] == "16059"].tail(10))
+
+        # For sanity sake, we round the data to a mac of 3 decimal places
+        read_data[discharge_col] = read_data[discharge_col].round(3)
+
         return read_data
 
-def write_data_to_csv(data: pd.DataFrame, column_list=["code", "date", "discharge"]):
+def from_daily_time_series_to_hydrograph(data_df: pd.DataFrame,
+                                         date_col='date', discharge_col='discharge', code_col='code', name_col='name'):
+    """
+    Calculates daily runoff statistics and writes it to hydrograph format.
+
+    Args:
+    data_df (pd.DataFrame): The daily runoff data.
+    date_col (str, optional): The name of the column containing the date data.
+        Default is 'date'.
+    discharge_col (str, optional): The name of the column containing the discharge data.
+        Default is 'discharge'.
+    code_col (str, optional): The name of the column containing the site code.
+        Default is 'code'.
+
+    Returns:
+    pd.DataFrame: The hydrograph data.
+    """
+    # Based on the date column, write the day of the year to a new column
+    data_df['day_of_year'] = data_df[date_col].dt.dayofyear
+
+    # Drop all rows where the date is the 29th of February
+    data_df = data_df[~((data_df[date_col].dt.month == 2) & (data_df[date_col].dt.day == 29))]
+
+    # Adjust the day_of_year for the 29th of February for leap years
+    data_df.loc[(data_df[date_col].dt.month > 2) & (data_df[date_col].dt.is_leap_year), 'day_of_year'] -= 1
+
+    # Group the data by the code and day_of_year columns and calculate the min,
+    # max, mean, 5th, 25th, 50th, 75th, and 95th percentiles of the discharge.
+    hydrograph_data = data_df.groupby([code_col, 'day_of_year'])[discharge_col].describe(
+        percentiles=[0.05, 0.25, 0.5, 0.75, 0.95])
+
+    # Also get last year and current year data for the hydrograph
+    # Get the current year data
+    current_year = dt.date.today().year
+    current_year_data = data_df[data_df[date_col].dt.year == current_year]
+    # Drop the date column
+    current_year_data = current_year_data.drop(columns=[date_col, name_col])
+    # Rename the discharge column to the current year
+    current_year_data = current_year_data.rename(columns={discharge_col: f"{current_year}"})
+    # last year
+    last_year = current_year - 1
+    last_year_data = data_df[data_df[date_col].dt.year == last_year]
+    # Drop the date column
+    last_year_data = last_year_data.drop(columns=[name_col])
+    # Add 1 year to the date column
+    last_year_data[date_col] = last_year_data[date_col] + pd.DateOffset(years=1)
+    # Rename the discharge column to the last year
+    last_year_data = last_year_data.rename(columns={discharge_col: f"{last_year}"})
+
+    # Add current discharge and last year discharge to the hydrograph data by code and day_of_year
+    hydrograph_data = hydrograph_data.merge(
+        current_year_data.groupby([code_col, 'day_of_year'])[str(current_year)].mean().reset_index(),
+        on=[code_col, 'day_of_year'], how='left', suffixes=('', '_current'))
+    hydrograph_data = hydrograph_data.merge(
+        last_year_data.groupby([code_col, 'day_of_year'])[str(last_year)].mean().reset_index(),
+        on=[code_col, 'day_of_year'], how='left', suffixes=('', '_last_year'))
+    hydrograph_data = hydrograph_data.merge(
+        last_year_data.groupby([code_col, 'day_of_year'])[date_col].first().reset_index(),
+        on=[code_col, 'day_of_year'], how='left', suffixes=('', '_last_year'))
+
+    return hydrograph_data
+
+def add_dangerous_discharge(sdk, hydrograph_data: pd.DataFrame, code_col='code'):
+    """
+    For each unique code in hydrograph_data, add the dangerous discharge value.
+
+    Args:
+    sdk (object): An ieh_sdk object.
+    hydrograph_data (pd.DataFrame): The hydrograph data.
+    code_col (str, optional): The name of the column containing the site code.
+
+    Returns:
+    pd.DataFrame: The hydrograph data with the dangerous discharge values added.
+    """
+
+    # Get the unique codes in hydrograph_data
+    unique_codes = hydrograph_data[code_col].unique()
+
+    # Initialize a column in hydrograph data for dangerous discharge
+    hydrograph_data['dangerous_discharge'] = np.nan
+
+    # For each unique code, get the dangerous discharge value from the iEasyHydro database
+    for code in unique_codes:
+        try:
+            dangerous_discharge = sdk.get_data_values_for_site(
+                    code, 'dangerous_discharge')['data_values'][0]['data_value']
+
+            # Add the dangerous discharge value to the hydrograph_data
+            hydrograph_data.loc[hydrograph_data[code_col] == code, 'dangerous_discharge'] = dangerous_discharge
+        except Exception:
+            continue
+
+    return hydrograph_data
+
+def write_daily_time_series_data_to_csv(data: pd.DataFrame, column_list=["code", "date", "discharge"]):
     """
     Writes the data to a csv file for later reading by other forecast tools.
 
@@ -862,6 +850,62 @@ def write_data_to_csv(data: pd.DataFrame, column_list=["code", "date", "discharg
     for col in column_list:
         if col not in data.columns:
             raise ValueError(f"Column '{col}' not found in the DataFrame.")
+
+    # Round all values to 3 decimal places
+    data = data.round(3)
+
+    # Write the data to a csv file. Raise an error if this does not work.
+    # If the data is written to the csv file, log a message that the data
+    # has been written.
+    try:
+        ret = data.reset_index(drop=True)[column_list].to_csv(output_file_path, index=False)
+        if ret is None:
+            logger.info(f"Data written to {output_file_path}.")
+            return ret
+        else:
+            logger.error(f"Could not write the data to {output_file_path}.")
+    except Exception as e:
+        logger.error(f"Could not write the data to {output_file_path}.")
+        raise e
+
+def write_daily_hydrograph_data_to_csv(data: pd.DataFrame, column_list=["code", "date", "discharge"]):
+    """
+    Writes the data to a csv file for later reading by other forecast tools.
+
+    Reads data from excel sheets and from the database (if access available).
+
+    Args:
+    data (pd.DataFrame): The data to be written to a csv file.
+    column_list (list, optional): The list of columns to be written to the csv file.
+        Default is ["code", "date", "discharge"].
+
+    Returns:
+    None upon success.
+
+    Raises:
+    Exception: If the data cannot be written to the csv file.
+    """
+
+    # Get the path to the intermediate data folder from the environmental
+    # variables and the name of the ieasyforecast_analysis_daily_file.
+    # Concatenate them to the output file path.
+    try:
+       output_file_path = os.path.join(
+            os.getenv("ieasyforecast_intermediate_data_path"),
+            os.getenv("ieasyforecast_hydrograph_day_file"))
+    except Exception as e:
+        logger.error("Could not get the output file path.")
+        print(os.getenv("ieasyforecast_intermediate_data_path"))
+        print(os.getenv("ieasyforecast_hydrograph_day_file"))
+        raise e
+
+    # Test if the columns in column list are available in the dataframe
+    for col in column_list:
+        if col not in data.columns:
+            raise ValueError(f"Column '{col}' not found in the DataFrame.")
+
+    # Round all values to 3 decimal places
+    data = data.round(3)
 
     # Write the data to a csv file. Raise an error if this does not work.
     # If the data is written to the csv file, log a message that the data
