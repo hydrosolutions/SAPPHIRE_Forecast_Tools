@@ -51,7 +51,7 @@ def test_load_configuration_sapphire_test_env():
 
     #clean_up_env_vars()
 
-def test_read_hydrograph_day_file():
+def test_read_hydrograph_day_file_deprecating():
     # Set environment variables
     os.environ["ieasyforecast_intermediate_data_path"] = "backend/tests/test_files"
     os.environ["ieasyforecast_hydrograph_day_file"] = "test_one_step_hydrograph_day.csv"
@@ -60,7 +60,7 @@ def test_read_hydrograph_day_file():
     #ieasyforecast_hydrograph_pentad_file=hydrograph_pentad.csv
     #ieasyforecast_results_file=forecasts_pentad.csv
     today = dt.datetime.strptime('2021-01-01', '%Y-%m-%d')
-    read_data = dm.read_hydrograph_day_file(today)
+    read_data = dm.deprecating_read_hydrograph_day_file(today)
 
     # Read the expected data from the path concatenated with the file name
     expected_data = pd.read_csv("backend/tests/test_files/test_one_step_hydrograph_day.csv")

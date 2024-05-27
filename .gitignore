@@ -187,3 +187,5 @@ apps/preprocessing_station_forcing/logs
 apps/preprocessing_station_forcing/logs/log
 apps/backend/tests/testspecial_visualize_weatherStationStats.ipynb
 
+/apps/postprocessing_forecasts/logs
+apps/postprocessing_forecasts/logs/log

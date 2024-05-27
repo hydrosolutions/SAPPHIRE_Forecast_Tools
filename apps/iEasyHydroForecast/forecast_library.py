@@ -1317,10 +1317,10 @@ def calculate_skill_metrics_pentade(observed: pd.DataFrame, simulated: pd.DataFr
         pd.DataFrame: The DataFrame containing the skill metrics for each model
             and hydropost.
     """
-
+    print("observed: \n", observed.tail(10))
     # Test the input. Make sure that the DataFrames contain the required columns
-    if not all(column in observed.columns for column in ['code', 'date', 'discharge_avg', 'q_mean', 'q_std_sigma', 'delta', 'model_long', 'model_short']):
-        raise ValueError(f'Observed DataFrame is missing one or more required columns: {["code", "date", "discharge_avg", "q_mean", "q_std_sigma", "delta", "model_long", "model_short"]}')
+    if not all(column in observed.columns for column in ['code', 'date', 'discharge_avg', 'model_long', 'model_short', 'delta']):
+        raise ValueError(f'Observed DataFrame is missing one or more required columns: {["code", "date", "discharge_avg", "model_long", "model_short", "delta"]}')
     if not all(column in simulated.columns for column in ['code', 'date', 'pentad_in_year', 'forecasted_discharge', 'model_long', 'model_short']):
         raise ValueError(f'Simulated DataFrame is missing one or more required columns: {["code", "date", "pentad_in_year", "forecasted_discharge", "model_long", "model_short"]}')
 
@@ -1887,7 +1887,7 @@ def save_pentadal_skill_metrics(data: pd.DataFrame):
 
     return ret
 
-def save_forecast_data_pentad(observed: pd.DataFrame, simulated: pd.DataFrame):
+def save_forecast_data_pentad(simulated: pd.DataFrame):
     """
     Save observed pentadal runoff and simulated pentadal runoff for different models to csv.
 
@@ -1902,9 +1902,13 @@ def save_forecast_data_pentad(observed: pd.DataFrame, simulated: pd.DataFrame):
         os.getenv("ieasyforecast_intermediate_data_path"),
         os.getenv("ieasyforecast_combined_forecast_pentad_file"))
 
+    # Only keep relevant columns
+    simulated = simulated[['code', 'date', 'pentad_in_month', 'pentad_in_year', 'forecasted_discharge', 'model_long', 'model_short']]
 
+    # write the data to csv
+    ret = simulated.to_csv(filename, index=False)
 
-    return None
+    return ret
 
 # endregion
 

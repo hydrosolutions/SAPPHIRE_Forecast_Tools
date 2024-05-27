@@ -6,7 +6,7 @@
 
 #FROM ubuntu:latest as build
 
-ARG PYTHON_VERSION=3.10.7
+ARG PYTHON_VERSION=3.11.9
 FROM python:${PYTHON_VERSION}-slim-buster as base
 
 # Prevents Python from writing pyc files.
@@ -58,5 +58,5 @@ EXPOSE 5006
 # CMD test -f apps/forecast_dashboard/pentad_dashboard.py && echo "File exists" || echo "File does not exist"
 
 # Run the application.
-CMD ["panel", "serve", "apps/forecast_dashboard/pentad_dashboard.py", "--show", "--autoreload"]
+CMD ["panel", "serve", "apps/forecast_dashboard/pentad_dashboard.py", "--show", "--autoreload", "--port", "5006", "--allow-websocket-origin", "*"]
 

@@ -34,7 +34,7 @@ def filter_roughly_for_outliers(combined_data, group_by='Code',
     ValueError: If the group_by column is not found in the input DataFrame.
     """
     # Preliminary filter for outliers
-    def filter_group(group, filter_col):
+    def filter_group(group, filter_col, date_col, group_col):
         # Calculate Q1, Q3, and IQR
         Q1 = group[filter_col].quantile(0.25)
         Q3 = group[filter_col].quantile(0.75)
@@ -68,7 +68,7 @@ def filter_roughly_for_outliers(combined_data, group_by='Code',
         # Interpolate gaps of length of max 2 days linearly
         group[filter_col] = group[filter_col].interpolate(method='time', limit=2)
         # Also interpolate the code column
-        group['code'] = group['code'].ffill()
+        group[group_col] = group[group_col].ffill()
 
         # Reset the index
         group.reset_index(inplace=True)
@@ -92,7 +92,7 @@ def filter_roughly_for_outliers(combined_data, group_by='Code',
 
     # Apply the function to each group
     combined_data = combined_data.groupby(group_by).apply(
-        filter_group, filter_col, include_groups=True)
+        filter_group, filter_col, date_col, group_col=group_by) #, include_groups=True)
 
     # Ungroup the DataFrame
     combined_data = combined_data.reset_index(drop=True)

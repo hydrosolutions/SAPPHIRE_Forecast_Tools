@@ -23,7 +23,7 @@ import tag_library as tl
 import forecast_library as fl
 
 
-
+# --- Configuration -----------------------------------------------------------
 def load_configuration():
     """
     Loads the application configuration from an .env file.
@@ -51,7 +51,7 @@ def load_configuration():
     elif os.getenv("SAPPHIRE_TEST_ENV") == "True":
         path_to_env_file = "backend/tests/test_files/.env_develop_test"
     elif os.getenv("SAPPHIRE_OPDEV_ENV") == "True":
-        path_to_env_file = "../config/.env_develop_kghm"
+        path_to_env_file = "../../../sensitive_data_forecast_tools/config/.env_develop_kghm"
     else:
         # Test if the .env file exists
         path_to_env_file = "../config/.env_develop"
@@ -86,8 +86,17 @@ def get_icon_path(in_docker_flag):
 
     return icon_path
 
-def read_hydrograph_day_file(today):
+# --- Reading data -----------------------------------------------------------
+def read_hydrograph_day_file():
+    """
+    Reads the hydrograph_day file from the intermediate data directory.
 
+    Returns:
+        pd.DataFrame: The hydrograph_day data.
+
+    Raises:
+        Exception: If the file is not found or empty.
+    """
     hydrograph_day_file = os.path.join(
         os.getenv("ieasyforecast_intermediate_data_path"),
         os.getenv("ieasyforecast_hydrograph_day_file"))
@@ -101,13 +110,9 @@ def read_hydrograph_day_file(today):
         raise Exception("File is empty: " + hydrograph_day_file)
 
     hydrograph_day_all["day_of_year"] = hydrograph_day_all["day_of_year"].astype(int)
-    hydrograph_day_all['Code'] = hydrograph_day_all['Code'].astype(str)
+    hydrograph_day_all['code'] = hydrograph_day_all['code'].astype(str)
     # Sort all columns in ascending Code and pentad order
-    hydrograph_day_all = hydrograph_day_all.sort_values(by=["Code", "day_of_year"])
-    # Remove the day 366 (only if we are not in a leap year)
-    # Test if current year is a leap year
-    if today.year % 4 != 0:
-        hydrograph_day_all = hydrograph_day_all[hydrograph_day_all["day_of_year"] != 366]
+    hydrograph_day_all = hydrograph_day_all.sort_values(by=["code", "day_of_year"])
 
     return hydrograph_day_all
 
@@ -126,16 +131,16 @@ def read_hydrograph_pentad_file():
         raise Exception("File is empty: " + hydrograph_pentad_file)
 
     hydrograph_pentad_all["pentad"] = hydrograph_pentad_all["pentad"].astype(int)
-    hydrograph_pentad_all['Code'] = hydrograph_pentad_all['Code'].astype(str)
+    hydrograph_pentad_all['code'] = hydrograph_pentad_all['code'].astype(str)
     # Sort all columns in ascending Code and pentad order
-    hydrograph_pentad_all = hydrograph_pentad_all.sort_values(by=["Code", "pentad"])
+    hydrograph_pentad_all = hydrograph_pentad_all.sort_values(by=["code", "pentad"])
 
     return hydrograph_pentad_all
 
 def read_forecast_results_file():
     forecast_results_file = os.path.join(
         os.getenv("ieasyforecast_intermediate_data_path"),
-        os.getenv("ieasyforecast_pentad_results_file")
+        os.getenv("ieasyforecast_combined_forecast_pentad_file")
     )
     # Test if file exists and thorw an error if not
     if not os.path.isfile(forecast_results_file):
@@ -188,6 +193,113 @@ def read_analysis_file():
     analysis_pentad['Code'] = analysis_pentad['Code'].astype(str)
 
     return analysis_pentad
+
+
+def deprecating_read_hydrograph_day_file(today):
+
+    hydrograph_day_file = os.path.join(
+        os.getenv("ieasyforecast_intermediate_data_path"),
+        os.getenv("ieasyforecast_hydrograph_day_file"))
+    # Test if file exists and thorw an error if not
+    if not os.path.isfile(hydrograph_day_file):
+        raise Exception("File not found: " + hydrograph_day_file)
+
+    hydrograph_day_all = pd.read_csv(hydrograph_day_file).reset_index(drop=True)
+    # Test if hydrograph_day_all is empty
+    if hydrograph_day_all.empty:
+        raise Exception("File is empty: " + hydrograph_day_file)
+
+    hydrograph_day_all["day_of_year"] = hydrograph_day_all["day_of_year"].astype(int)
+    hydrograph_day_all['Code'] = hydrograph_day_all['Code'].astype(str)
+    # Sort all columns in ascending Code and pentad order
+    hydrograph_day_all = hydrograph_day_all.sort_values(by=["Code", "day_of_year"])
+    # Remove the day 366 (only if we are not in a leap year)
+    # Test if current year is a leap year
+    if today.year % 4 != 0:
+        hydrograph_day_all = hydrograph_day_all[hydrograph_day_all["day_of_year"] != 366]
+
+    return hydrograph_day_all
+
+def deprecating_read_hydrograph_pentad_file():
+    hydrograph_pentad_file = os.path.join(
+        os.getenv("ieasyforecast_intermediate_data_path"),
+        os.getenv("ieasyforecast_hydrograph_pentad_file"))
+    # Test if file exists and thorw an error if not
+    if not os.path.isfile(hydrograph_pentad_file):
+        raise Exception("File not found: " + hydrograph_pentad_file)
+
+    # Read hydrograph data - pentad
+    hydrograph_pentad_all = pd.read_csv(hydrograph_pentad_file).reset_index(drop=True)
+    # Test if hydrograph_pentad_all is empty
+    if hydrograph_pentad_all.empty:
+        raise Exception("File is empty: " + hydrograph_pentad_file)
+
+    hydrograph_pentad_all["pentad"] = hydrograph_pentad_all["pentad"].astype(int)
+    hydrograph_pentad_all['Code'] = hydrograph_pentad_all['Code'].astype(str)
+    # Sort all columns in ascending Code and pentad order
+    hydrograph_pentad_all = hydrograph_pentad_all.sort_values(by=["Code", "pentad"])
+
+    return hydrograph_pentad_all
+
+def deprecating_read_forecast_results_file():
+    forecast_results_file = os.path.join(
+        os.getenv("ieasyforecast_intermediate_data_path"),
+        os.getenv("ieasyforecast_pentad_results_file")
+    )
+    # Test if file exists and thorw an error if not
+    if not os.path.isfile(forecast_results_file):
+        raise Exception("File not found: " + forecast_results_file)
+    # Read forecast results
+    forecast_pentad = pd.read_csv(forecast_results_file)
+    # Test if forecast_pentad is empty
+    if forecast_pentad.empty:
+        raise Exception("File is empty: " + forecast_results_file)
+    # Convert the date column to datetime. The format of the date string is %Y-%m-%d.
+    forecast_pentad['Date'] = pd.to_datetime(forecast_pentad['date'], format='%Y-%m-%d')
+    # Make sure the date column is in datetime64 format
+    forecast_pentad['Date'] = forecast_pentad['Date'].astype('datetime64[ns]')
+    # The forecast date is the date on which the forecast was produced. For
+    # visualization we need to have the date for which the forecast is valid.
+    # We add 1 day to the forecast Date to get the valid date.
+    forecast_pentad['Date'] = forecast_pentad['Date'] + pd.Timedelta(days=1)
+    # Convert the code column to string
+    forecast_pentad['code'] = forecast_pentad['code'].astype(str)
+    # Check if there are duplicates for Date and code columns. If yes, only keep the
+    # last one
+    # Print all values where column code is 15102. Sort the values by Date in ascending order.
+    # Print the last 20 values.
+    forecast_pentad = forecast_pentad.drop_duplicates(subset=['Date', 'code'], keep='last').sort_values('Date')
+    # Get the pentad of the year.
+    forecast_pentad = tl.add_pentad_in_year_column(forecast_pentad)
+    # Cast pentad column no number
+    forecast_pentad['pentad'] = forecast_pentad['pentad'].astype(int)
+
+    return forecast_pentad
+
+def deprecating_read_analysis_file():
+    file = os.path.join(
+        os.getenv("ieasyforecast_intermediate_data_path"),
+        os.getenv("ieasyforecast_analysis_pentad_file")
+    )
+    # Test if file exists and thorw an error if not
+    if not os.path.isfile(file):
+        raise Exception("File not found: " + file)
+    # Read analysis results
+    analysis_pentad = pd.read_csv(file)
+    # Test if analysis_pentad is empty
+    if analysis_pentad.empty:
+        raise Exception("File is empty: " + file)
+    # Convert the date column to datetime. The format of the date string is %Y-%m-%d.
+    analysis_pentad['Date'] = pd.to_datetime(analysis_pentad['Date'], format='%Y-%m-%d')
+    # Make sure the date column is in datetime64 format
+    analysis_pentad['Date'] = analysis_pentad['Date'].astype('datetime64[ns]')
+    # Cast Code column to string
+    analysis_pentad['Code'] = analysis_pentad['Code'].astype(str)
+
+    return analysis_pentad
+
+
+
 
 def read_stations_from_file(station_list):
 

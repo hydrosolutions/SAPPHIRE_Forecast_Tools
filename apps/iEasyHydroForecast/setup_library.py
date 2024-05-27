@@ -543,14 +543,14 @@ def read_observed_pentadal_data():
 
     Details:
     The file to read is specified in the environment variable
-    ieasyforecast_hydrograph_pentad_file. It is expected to have a column 'date'
+    ieasyforecast_daily_discharge_file. It is expected to have a column 'date'
     with the date of the hydrograph data. If the file has a column 'pentad', it
     is renamed to 'pentad_in_month'.
     """
     # Read the pentadal hydrograph data
     filepath = os.path.join(
         os.getenv("ieasyforecast_intermediate_data_path"),
-        os.getenv("ieasyforecast_hydrograph_pentad_file")
+        os.getenv("ieasyforecast_pentad_discharge_file")
     )
     data = pd.read_csv(filepath, parse_dates=["date"])
 
