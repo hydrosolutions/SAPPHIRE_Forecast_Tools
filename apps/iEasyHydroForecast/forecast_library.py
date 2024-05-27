@@ -881,7 +881,7 @@ def get_pentadal_and_decadal_data(forecast_flags=None,
 
     return data_pentad, data_decad
 
-def calculate_pentadal_runoff_stats(data_df, value_col='discharge_avg'):
+def calculate_runoff_stats(data_df, value_col='discharge_avg'):
     """
     Calculates runoff statistics that are required for the analysis step and the
     post-processing step. The statistics are the mean, standard deviation, and
@@ -918,6 +918,7 @@ def calculate_pentadal_runoff_stats(data_df, value_col='discharge_avg'):
     data_df['q_75th'] = data_df[value_col].quantile(0.75)
 
     return data_df
+
 
 # endregion
 
@@ -1636,12 +1637,25 @@ def write_pentad_hydrograph_data(data: pd.DataFrame):
     None
     """
 
+    # Only keep rows where issue_date is True
+    data = data[data['issue_date'] == True]
+
+    # Drop the issue_date column
+    data = data.drop(columns=['issue_date', 'discharge'])
+
+    # If there is a column called discharge_sum, rename it to predictor
+    if 'discharge_sum' in data.columns:
+        data = data.rename(columns={'discharge_sum': 'predictor'})
+
     # Calculate runoff statistics
     runoff_stats = data. \
         reset_index(drop=True). \
         groupby(['code', 'pentad_in_year']). \
-        apply(calculate_pentadal_runoff_stats). \
+        apply(calculate_runoff_stats). \
         reset_index(drop=True)
+
+    # Round all values to 3 decimal places
+    runoff_stats = runoff_stats.round(3)
 
     # Get the path to the intermediate data folder from the environmental
     # variables and the name of the ieasyforecast_hydrograph_pentad_file.
@@ -1654,6 +1668,66 @@ def write_pentad_hydrograph_data(data: pd.DataFrame):
         logger.error("Could not get the output file path.")
         print(os.getenv("ieasyforecast_intermediate_data_path"))
         print(os.getenv("ieasyforecast_hydrograph_pentad_file"))
+        raise e
+
+    # Overwrite the file if it already exists
+    if os.path.exists(output_file_path):
+        os.remove(output_file_path)
+
+    # Write the data to a csv file. Raise an error if this does not work.
+    # If the data is written to the csv file, log a message that the data
+    # has been written.
+    try:
+        ret = runoff_stats.to_csv(output_file_path, index=False)
+        logger.info(f"Data written to {output_file_path}.")
+    except Exception as e:
+        logger.error(f"Could not write the data to {output_file_path}.")
+        raise e
+
+    return ret
+
+def write_decad_hydrograph_data(data: pd.DataFrame):
+    """
+    Calculates statistics of the decadal hydrograph and saves it to a csv file.
+
+    Args:
+    data (pd.DataFrame): The data to be written to a csv file.
+
+    Returns:
+    None
+    """
+
+    # Only keep rows where issue_date is True
+    data = data[data['issue_date'] == True]
+
+    # Drop the issue_date column
+    data = data.drop(columns=['issue_date', 'discharge'])
+
+    # If there is a column called discharge_sum, rename it to predictor
+    if 'discharge_sum' in data.columns:
+        data = data.rename(columns={'discharge_sum': 'predictor'})
+
+    # Calculate runoff statistics
+    runoff_stats = data. \
+        reset_index(drop=True). \
+        groupby(['code', 'decad_in_year']). \
+        apply(calculate_runoff_stats). \
+        reset_index(drop=True)
+
+    # Round all values to 3 decimal places
+    runoff_stats = runoff_stats.round(3)
+
+    # Get the path to the intermediate data folder from the environmental
+    # variables and the name of the ieasyforecast_hydrograph_pentad_file.
+    # Concatenate them to the output file path.
+    try:
+        output_file_path = os.path.join(
+            os.getenv("ieasyforecast_intermediate_data_path"),
+            os.getenv("ieasyforecast_hydrograph_decad_file"))
+    except Exception as e:
+        logger.error("Could not get the output file path.")
+        print(os.getenv("ieasyforecast_intermediate_data_path"))
+        print(os.getenv("ieasyforecast_hydrograph_decad_file"))
         raise e
 
     # Overwrite the file if it already exists

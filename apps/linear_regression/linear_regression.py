@@ -106,6 +106,7 @@ def main():
 
     # Save decadal data
     if forecast_flags.decad:
+        fl.write_decad_hydrograph_data(data_decad)
         fl.write_decad_time_series_data(data_decad)
 
     # Iterate over the dates
