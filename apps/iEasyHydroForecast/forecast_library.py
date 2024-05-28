@@ -883,10 +883,12 @@ def get_pentadal_and_decadal_data(forecast_flags=None,
 
 def calculate_runoff_stats(data_df, value_col='discharge_avg'):
     """
-    Calculates runoff statistics that are required for the analysis step and the
-    post-processing step. The statistics are the mean, standard deviation, and
-    delta factor. Further we calculate min, max, and the 5th and 95th percentile
-    as well as the 25th and 75th percentile.
+    Calculates runoff statistics for each code and pentad or decad of the year
+    that are required for the analysis step and the post-processing step. The
+    statistics are the mean, standard deviation, and delta factor. Further we
+    calculate min, max, and the 5th and 95th percentile as well as the 25th and
+    75th percentile. We also put the current year and last calendar years data
+    into the DataFrame.
 
     Args:
     data_df (pd.DataFrame): The input DataFrame containing the data for each station.
@@ -902,22 +904,33 @@ def calculate_runoff_stats(data_df, value_col='discharge_avg'):
     if value_col not in data_df.columns:
         raise ValueError(f'The column {value_col} is not in the DataFrame.')
 
-    # Calculate the mean, standard deviation, and delta factor
-    data_df['q_mean'] = data_df[value_col].mean()
-    data_df['q_std_sigma'] = data_df[value_col].std()
-    data_df['delta'] = 0.674 * data_df['q_std_sigma']
+    # Calculate the mean of the discharge values and write it to a new DataFrame.
+    # The DataFrame is already grouped by code and pentad or decad. Keep the
+    # grouping variables and calculate the mean of the discharge values.
+    data_df_stats = data_df.groupby(['code', 'pentad_in_year']).agg({
+    value_col: ['mean', 'min', 'max',
+                lambda x: x.quantile(0.05),  # 5th percentile
+                lambda x: x.quantile(0.25),  # 25th percentile
+                lambda x: x.quantile(0.75),  # 75th percentile
+                lambda x: x.quantile(0.95),  # 95th percentile
+                # Add more aggregations here
+                ]
+    }).reset_index()
 
-    # Calculate the min, max, and the 5th and 95th percentile
-    data_df['q_min'] = data_df[value_col].min()
-    data_df['q_max'] = data_df[value_col].max()
-    data_df['q_5th'] = data_df[value_col].quantile(0.05)
-    data_df['q_95th'] = data_df[value_col].quantile(0.95)
+    # Get last years data from the latest date in the data_df minus 1 year
+    last_year = data_df['date'].max() - pd.DateOffset(years=1)
+    last_year = last_year.year
+    data_df_stats[str(last_year)] = data_df[value_col].loc[data_df['date'].dt.year == last_year]
 
-    # Calculate the 25th and 75th percentile
-    data_df['q_25th'] = data_df[value_col].quantile(0.25)
-    data_df['q_75th'] = data_df[value_col].quantile(0.75)
+    # Get current year data from the latest date in the data_df
+    current_year = data_df['date'].max().year
+    data_df_stats[str(current_year)] = data_df[value_col].loc[data_df['date'].dt.year == current_year]
 
-    return data_df
+    print("data_df_stats:")
+    print(data_df_stats.head(10))
+    print(data_df_stats.tail(10))
+
+    return data_df_stats
 
 
 # endregion
@@ -1651,8 +1664,34 @@ def write_pentad_hydrograph_data(data: pd.DataFrame):
     runoff_stats = data. \
         reset_index(drop=True). \
         groupby(['code', 'pentad_in_year']). \
-        apply(calculate_runoff_stats). \
-        reset_index(drop=True)
+        agg(mean=pd.NamedAgg(column='discharge_avg', aggfunc='mean'),
+            min=pd.NamedAgg(column='discharge_avg', aggfunc='min'),
+            max=pd.NamedAgg(column='discharge_avg', aggfunc='max'),
+            q05=pd.NamedAgg(column='discharge_avg', aggfunc=lambda x: x.quantile(0.05)),
+            q25=pd.NamedAgg(column='discharge_avg', aggfunc=lambda x: x.quantile(0.25)),
+            q75=pd.NamedAgg(column='discharge_avg', aggfunc=lambda x: x.quantile(0.75)),
+            q95=pd.NamedAgg(column='discharge_avg', aggfunc=lambda x: x.quantile(0.95))). \
+        reset_index(drop=False)
+
+    # Get current and last years data for each station and pentad_in_year and
+    # merge to runoff_stats
+    last_year = data['date'].dt.year.max() - 1
+    current_year = data['date'].dt.year.max()
+    last_year_data = data[data['date'].dt.year == last_year]
+    current_year_data = data[data['date'].dt.year == current_year]
+    #last_year_data = last_year_data.drop(columns=['date'])
+    # Add 1 year to date of last_year_data
+    last_year_data.loc[:, 'date'] = last_year_data.loc[:, 'date'] + pd.DateOffset(years=1)
+    current_year_data = current_year_data.drop(columns=['date'])
+    last_year_data = last_year_data.rename(columns={'discharge_avg': str(last_year)}).reset_index(drop=True)
+    current_year_data = current_year_data.rename(columns={'discharge_avg': str(current_year)}).reset_index(drop=True)
+
+    runoff_stats = pd.merge(runoff_stats, last_year_data, on=['code', 'pentad_in_year'], how='left')
+    runoff_stats = pd.merge(runoff_stats, current_year_data[['code', 'pentad_in_year', str(current_year)]], on=['code', 'pentad_in_year'], how='left')
+
+    # Drop the column predictor if it is in runoff_stats
+    if 'predictor' in runoff_stats.columns:
+        runoff_stats = runoff_stats.drop(columns=['predictor'])
 
     # Round all values to 3 decimal places
     runoff_stats = runoff_stats.round(3)
@@ -1711,14 +1750,40 @@ def write_decad_hydrograph_data(data: pd.DataFrame):
     runoff_stats = data. \
         reset_index(drop=True). \
         groupby(['code', 'decad_in_year']). \
-        apply(calculate_runoff_stats). \
-        reset_index(drop=True)
+        agg(mean=pd.NamedAgg(column='discharge_avg', aggfunc='mean'),
+            min=pd.NamedAgg(column='discharge_avg', aggfunc='min'),
+            max=pd.NamedAgg(column='discharge_avg', aggfunc='max'),
+            q05=pd.NamedAgg(column='discharge_avg', aggfunc=lambda x: x.quantile(0.05)),
+            q25=pd.NamedAgg(column='discharge_avg', aggfunc=lambda x: x.quantile(0.25)),
+            q75=pd.NamedAgg(column='discharge_avg', aggfunc=lambda x: x.quantile(0.75)),
+            q95=pd.NamedAgg(column='discharge_avg', aggfunc=lambda x: x.quantile(0.95))). \
+        reset_index(drop=False)
+
+    # Get current and last years data for each station and pentad_in_year and
+    # merge to runoff_stats
+    last_year = data['date'].dt.year.max() - 1
+    current_year = data['date'].dt.year.max()
+    last_year_data = data[data['date'].dt.year == last_year]
+    current_year_data = data[data['date'].dt.year == current_year]
+    #last_year_data = last_year_data.drop(columns=['date'])
+    # Add 1 year to date of last_year_data
+    last_year_data.loc[:, 'date'] = last_year_data.loc[:, 'date'] + pd.DateOffset(years=1)
+    current_year_data = current_year_data.drop(columns=['date'])
+    last_year_data = last_year_data.rename(columns={'discharge_avg': str(last_year)}).reset_index(drop=True)
+    current_year_data = current_year_data.rename(columns={'discharge_avg': str(current_year)}).reset_index(drop=True)
+
+    runoff_stats = pd.merge(runoff_stats, last_year_data, on=['code', 'decad_in_year'], how='left')
+    runoff_stats = pd.merge(runoff_stats, current_year_data[['code', 'decad_in_year', str(current_year)]], on=['code', 'decad_in_year'], how='left')
+
+    # Drop the column predictor if it is in runoff_stats
+    if 'predictor' in runoff_stats.columns:
+        runoff_stats = runoff_stats.drop(columns=['predictor'])
 
     # Round all values to 3 decimal places
     runoff_stats = runoff_stats.round(3)
 
     # Get the path to the intermediate data folder from the environmental
-    # variables and the name of the ieasyforecast_hydrograph_pentad_file.
+    # variables and the name of the ieasyforecast_hydrograph_decad_file.
     # Concatenate them to the output file path.
     try:
         output_file_path = os.path.join(

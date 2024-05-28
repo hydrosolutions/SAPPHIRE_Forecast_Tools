@@ -333,8 +333,8 @@ def read_stations_from_file(station_list):
 def add_labels_to_hydrograph_day_all(hydrograph_day_all, all_stations):
     hydrograph_day_all = hydrograph_day_all.merge(
         all_stations.loc[:,['code','river_ru','punkt_ru']],
-                            left_on='Code', right_on='code', how='left')
-    hydrograph_day_all['station_labels'] = hydrograph_day_all['Code'] + ' - ' + hydrograph_day_all['river_ru'] + ' ' + hydrograph_day_all['punkt_ru']
+                            left_on='code', right_on='code', how='left')
+    hydrograph_day_all['station_labels'] = hydrograph_day_all['code'] + ' - ' + hydrograph_day_all['river_ru'] + ' ' + hydrograph_day_all['punkt_ru']
     # Remove the columns river_ru and punkt_ru
     hydrograph_day_all = hydrograph_day_all.drop(columns=['code', 'river_ru', 'punkt_ru'])
 
@@ -343,8 +343,8 @@ def add_labels_to_hydrograph_day_all(hydrograph_day_all, all_stations):
 def add_labels_to_hydrograph_pentad_all(hydrograph_pentad_all, all_stations):
     hydrograph_pentad_all = hydrograph_pentad_all.merge(
         all_stations.loc[:,['code','river_ru','punkt_ru']],
-                            left_on='Code', right_on='code', how='left')
-    hydrograph_pentad_all['station_labels'] = hydrograph_pentad_all['Code'] + ' - ' + hydrograph_pentad_all['river_ru'] + ' ' + hydrograph_pentad_all['punkt_ru']
+                            left_on='code', right_on='code', how='left')
+    hydrograph_pentad_all['station_labels'] = hydrograph_pentad_all['code'] + ' - ' + hydrograph_pentad_all['river_ru'] + ' ' + hydrograph_pentad_all['punkt_ru']
     # Remove the columns river_ru and punkt_ru
     hydrograph_pentad_all = hydrograph_pentad_all.drop(columns=['code', 'river_ru', 'punkt_ru'])
 
