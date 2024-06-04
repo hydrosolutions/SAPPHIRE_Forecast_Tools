@@ -4,7 +4,7 @@ import datetime as dt
 import pandas as pd
 import time
 from unittest.mock import patch
-from forecast_dashboard.src import dashboard_methods as dm
+from apps.forecast_dashboard.src import processing as dm
 
 
 

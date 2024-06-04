@@ -1,7 +1,6 @@
 import os
 import sys
 import pandas as pd
-from dotenv import load_dotenv
 
 # Get the absolute path of the directory containing the current script
 cwd = os.getcwd()
@@ -24,55 +23,6 @@ import forecast_library as fl
 
 
 # --- Configuration -----------------------------------------------------------
-def load_configuration():
-    """
-    Loads the application configuration from an .env file.
-
-    The function first checks if it's running in a Docker container by looking at the IN_DOCKER_CONTAINER environment variable.
-    If it's running in a Docker container, it loads the configuration from "apps/config/.env".
-    If it's not running in a Docker container, it checks the SAPPHIRE_TEST_ENV and SAPPHIRE_OPDEV_ENV environment variables to determine the path to the .env file.
-    If neither of these variables are set, it loads the configuration from "../config/.env_develop".
-
-    The function also checks if the .env file exists and if the environment was loaded successfully by checking if the ieasyforecast_hydrograph_day_file environment variable is set.
-
-    If any of these checks fail, the function raises an exception.
-
-    Returns:
-        str: The value of the IN_DOCKER_CONTAINER environment variable or 'None'
-           if it's not set.
-    """
-    in_docker_flag = str(os.getenv("IN_DOCKER_CONTAINER"))
-    if in_docker_flag == "True":
-        path_to_env_file = "apps/config/.env"
-        # Test if the .env file exists
-        if not os.path.isfile(path_to_env_file):
-            raise Exception("File not found: " + path_to_env_file)
-        print("Running in Docker container")
-    elif os.getenv("SAPPHIRE_TEST_ENV") == "True":
-        path_to_env_file = "backend/tests/test_files/.env_develop_test"
-    elif os.getenv("SAPPHIRE_OPDEV_ENV") == "True":
-        path_to_env_file = "../../../sensitive_data_forecast_tools/config/.env_develop_kghm"
-    else:
-        # Test if the .env file exists
-        path_to_env_file = "../config/.env_develop"
-        if not os.path.isfile(path_to_env_file):
-            raise Exception("File not found: " + path_to_env_file)
-        print("Running locally")
-        # The override flag in read_dotenv is set to allow switching between .env
-        # files. Useful when testing different configurations.
-    res = load_dotenv(path_to_env_file, override=True)
-    if res is None:
-        raise Exception("Could not read .env file: ", path_to_env_file)
-        # Print ieasyreports_templates_directory_path from the environment
-        # variables
-    print("Configuration read from : ", os.getenv("ieasyforecast_configuration_path"))
-
-    # Test if the environment was loaded successfully
-    if os.getenv("ieasyforecast_hydrograph_day_file") is None:
-        raise Exception("Environment not loaded. Please check if the .env file is available and if the environment variable IN_DOCKER_CONTAINER is set correctly.")
-
-    return in_docker_flag
-
 def get_icon_path(in_docker_flag):
     # Icon
     if in_docker_flag == "True":
@@ -91,6 +41,9 @@ def read_hydrograph_day_file():
     """
     Reads the hydrograph_day file from the intermediate data directory.
 
+    Filters the available data to only include the stations selected for
+    pentadal forecasting.
+
     Returns:
         pd.DataFrame: The hydrograph_day data.
 
@@ -104,7 +57,7 @@ def read_hydrograph_day_file():
     if not os.path.isfile(hydrograph_day_file):
         raise Exception("File not found: " + hydrograph_day_file)
 
-    hydrograph_day_all = pd.read_csv(hydrograph_day_file).reset_index(drop=True)
+    hydrograph_day_all = pd.read_csv(hydrograph_day_file, parse_dates=['date']).reset_index(drop=True)
     # Test if hydrograph_day_all is empty
     if hydrograph_day_all.empty:
         raise Exception("File is empty: " + hydrograph_day_file)
@@ -113,6 +66,32 @@ def read_hydrograph_day_file():
     hydrograph_day_all['code'] = hydrograph_day_all['code'].astype(str)
     # Sort all columns in ascending Code and pentad order
     hydrograph_day_all = hydrograph_day_all.sort_values(by=["code", "day_of_year"])
+
+    return hydrograph_day_all
+
+def read_hydrograph_day_data_for_pentad_forecasting():
+
+    # Read hydrograph data with daily values
+    hydrograph_day_all = read_hydrograph_day_file()
+
+    # Get station ids of stations selected for forecasting
+    filepath = os.path.join(
+        os.getenv("ieasyforecast_configuration_path"),
+        os.getenv("ieasyforecast_config_file_station_selection"))
+    selected_stations = fl.load_selected_stations_from_json(filepath)
+
+    # Filter data for selected stations
+    hydrograph_day_all = hydrograph_day_all[hydrograph_day_all["code"].isin(selected_stations)]
+
+    # Test if there is an environment variable ieasyforecast_restrict_stations_file
+    if os.getenv("ieasyforecast_restrict_stations_file"):
+        filepath = os.path.join(
+            os.getenv("ieasyforecast_configuration_path"),
+            os.getenv("ieasyforecast_restrict_stations_file"))
+        # Read the restricted stations from the environment variable
+        restricted_stations = fl.load_selected_stations_from_json(filepath)
+        # Filter data for restricted stations
+        hydrograph_day_all = hydrograph_day_all[hydrograph_day_all["code"].isin(restricted_stations)]
 
     return hydrograph_day_all
 
@@ -136,6 +115,34 @@ def read_hydrograph_pentad_file():
     hydrograph_pentad_all = hydrograph_pentad_all.sort_values(by=["code", "pentad"])
 
     return hydrograph_pentad_all
+
+def read_linreg_forecast_data():
+    forecast_results_file = os.path.join(
+        os.getenv("ieasyforecast_intermediate_data_path"),
+        os.getenv("ieasyforecast_analysis_pentad_file")
+    )
+
+    # Test if file exists and thorw an error if not
+    if not os.path.isfile(forecast_results_file):
+        raise Exception("File not found: " + forecast_results_file)
+
+    # Read the file
+    linreg_forecast = pd.read_csv(forecast_results_file)
+
+    # Test if linreg_forecast is empty
+    if linreg_forecast.empty:
+        raise Exception("File is empty: " + forecast_results_file)
+
+    # Convert the date column to datetime. The format of the date string is %Y-%m-%d.
+    linreg_forecast['date'] = pd.to_datetime(linreg_forecast['date'], format='%Y-%m-%d')
+
+    # Convert code column to str
+    linreg_forecast['code'] = linreg_forecast['code'].astype(str)
+
+    # We are only interested in the predictor here. We drop the other columns.
+    linreg_forecast = linreg_forecast[['date', 'code', 'predictor']]
+
+    return linreg_forecast
 
 def read_forecast_results_file():
     forecast_results_file = os.path.join(
@@ -194,6 +201,44 @@ def read_analysis_file():
 
     return analysis_pentad
 
+def add_predictor_dates(linreg_predictor, station):
+    """
+    Add start and end days for predictor period and forecast period to the
+    linreg_predictor DataFrame.
+
+    Args:
+        linreg_predictor (pd.DataFrame): The linreg_predictor DataFrame.
+        station (str): The station label.
+
+    Returns:
+        pd.Series: The predictor data for the station.
+    """
+    predictor = linreg_predictor[linreg_predictor['station_labels'] == station].iloc[-1]
+    predictor['predictor_start_date'] = predictor['date'] - pd.DateOffset(days=2)
+    predictor['forecast_start_date'] = predictor['date'] + pd.DateOffset(days=1)
+    predictor['forecast_end_date'] = predictor['date'] + pd.DateOffset(days=6)
+
+    # Round the predictor according to common rules
+    predictor['predictor'] = fl.round_discharge_to_float(predictor['predictor'])
+
+    # Test if the forecast_start_date is 26, set the forecast_end_date to the end of the month of the forecast_start_date
+    if predictor['forecast_start_date'].day == 26:
+        predictor['forecast_end_date'] = predictor['forecast_start_date'] + pd.offsets.MonthEnd(0)
+
+    # Add a day_of_year column to the predictor DataFrame
+    predictor['day_of_year'] = predictor['date'].dayofyear
+    predictor['predictor_start_day_of_year'] = float(predictor['predictor_start_date'].dayofyear) - 0.2
+    predictor['predictor_end_day_of_year'] = float(predictor['day_of_year']) + 0.2
+    predictor['forecast_start_day_of_year'] = predictor['forecast_start_date'].dayofyear - 0.1
+    predictor['forecast_end_day_of_year'] = predictor['forecast_end_date'].dayofyear + 0.8
+
+    # Test if 'date' is a leap year
+    if predictor['date'].year % 4 != 0:
+        predictor['leap_year'] = False
+    else:
+        predictor['leap_year'] = True
+
+    return predictor
 
 def deprecating_read_hydrograph_day_file(today):
 
@@ -301,7 +346,7 @@ def deprecating_read_analysis_file():
 
 
 
-def read_stations_from_file(station_list):
+def read_all_stations_metadata_from_file(station_list):
 
     all_stations_file = os.path.join(
         os.getenv("ieasyforecast_configuration_path"),
@@ -317,13 +362,13 @@ def read_stations_from_file(station_list):
     # Convert the code column to string
     all_stations['code'] = all_stations['code'].astype(str)
     # Left-join all_stations['code', 'river_ru', 'punkt_ru'] by 'Code' = 'code'
-    station_df=pd.DataFrame(station_list, columns=['Code'])
+    station_df=pd.DataFrame(station_list, columns=['code'])
     station_df=station_df.merge(all_stations.loc[:,['code','river_ru','punkt_ru']],
-                            left_on='Code', right_on='code', how='left')
+                            left_on='code', right_on='code', how='left')
 
     # Paste together the columns Code, river_ru and punkt_ru to a new column
     # station_labels. river and punkt names are currently only available in Russian.
-    station_df['station_labels'] = station_df['Code'] + ' - ' + station_df['river_ru'] + ' ' + station_df['punkt_ru']
+    station_df['station_labels'] = station_df['code'] + ' - ' + station_df['river_ru'] + ' ' + station_df['punkt_ru']
 
     # Update the station list with the new station labels
     station_list = station_df['station_labels'].tolist()
@@ -340,6 +385,19 @@ def add_labels_to_hydrograph_day_all(hydrograph_day_all, all_stations):
 
     return hydrograph_day_all
 
+def add_labels_to_forecast_pentad_df(forecast_pentad, all_stations):
+    forecast_pentad = forecast_pentad.merge(
+        all_stations.loc[:,['code','river_ru','punkt_ru']],
+        left_on='code', right_on='code', how='left')
+    forecast_pentad['station_labels'] = forecast_pentad['code'] + ' - ' + forecast_pentad['river_ru'] + ' ' + forecast_pentad['punkt_ru']
+    forecast_pentad = forecast_pentad.drop(columns=['river_ru', 'punkt_ru'])
+
+    return forecast_pentad
+
+
+
+
+
 def add_labels_to_hydrograph_pentad_all(hydrograph_pentad_all, all_stations):
     hydrograph_pentad_all = hydrograph_pentad_all.merge(
         all_stations.loc[:,['code','river_ru','punkt_ru']],
@@ -350,33 +408,27 @@ def add_labels_to_hydrograph_pentad_all(hydrograph_pentad_all, all_stations):
 
     return hydrograph_pentad_all
 
-def add_labels_to_forecast_pentad_df(forecast_pentad, all_stations):
-    forecast_pentad = forecast_pentad.merge(
-        all_stations.loc[:,['code','river_ru','punkt_ru']],
-        left_on='code', right_on='code', how='left')
-    forecast_pentad['station_labels'] = forecast_pentad['code'] + ' - ' + forecast_pentad['river_ru'] + ' ' + forecast_pentad['punkt_ru']
-    forecast_pentad = forecast_pentad.drop(columns=['river_ru', 'punkt_ru'])
-
-    return forecast_pentad
-
 def add_labels_to_analysis_pentad_df(analysis_pentad, all_stations):
     analysis_pentad = analysis_pentad.merge(
         all_stations.loc[:,['code','river_ru','punkt_ru']],
-        left_on='Code', right_on='code', how='left')
-    analysis_pentad['station_labels'] = analysis_pentad['Code'] + ' - ' + analysis_pentad['river_ru'] + ' ' + analysis_pentad['punkt_ru']
+        left_on='code', right_on='code', how='left')
+    analysis_pentad['station_labels'] = analysis_pentad['code'] + ' - ' + analysis_pentad['river_ru'] + ' ' + analysis_pentad['punkt_ru']
     analysis_pentad = analysis_pentad.drop(columns=['river_ru', 'punkt_ru'])
 
     return analysis_pentad
 
-def preprocess_hydrograph_day_data(hydrograph_day, today):
+def deprecating_preprocess_hydrograph_day_data(hydrograph_day, today):
+
+    print("hydrograph_day:\n", hydrograph_day.head())
+    print(hydrograph_day.tail())
 
     # Test that we only have data for one unique code in the data frame.
     # If we have more than one code, we raise an exception.
-    if len(hydrograph_day["Code"].unique()) > 1:
+    if len(hydrograph_day["code"].unique()) > 1:
         raise ValueError("Data frame contains more than one unique code.")
 
     # Drop the Code column
-    hydrograph_day = hydrograph_day.drop(columns=["Code", "station_labels"])
+    hydrograph_day = hydrograph_day.drop(columns=["code", "station_labels"])
 
     # Drop the index
     hydrograph_day = hydrograph_day.reset_index(drop=True)
@@ -548,12 +600,6 @@ def calculate_fc_stats(analysis_data):
     fc_stats = fc_stats.set_index("Pentad")
 
     return fc_stats
-
-# Customization of the Bokeh plots
-
-def remove_bokeh_logo(plot, element):
-    plot.state.toolbar.logo = None
-
 
 
 

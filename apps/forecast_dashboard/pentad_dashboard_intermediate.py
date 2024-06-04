@@ -210,6 +210,8 @@ def get_current_predictor_and_dates(forecast_pentad_all: pd.DataFrame,
     output: object - Object containing the current predictor and the forecast
     and predictor dates.
     '''
+    print(forecast_pentad_all.head())
+    print(station_widget)
     fcdata_selection = forecast_pentad_all[
         forecast_pentad_all["station_labels"] == station_widget]
 
@@ -222,6 +224,10 @@ def get_current_predictor_and_dates(forecast_pentad_all: pd.DataFrame,
 
     # Get the current date
     output.current_date = dt.datetime.now()
+
+    print(type(fcdata_selection["Date"].max()))
+    print(type(fcdata_selection["date"].max()))
+    print(fcdata_selection.tail())
 
     # Get the latest forecast date from the forecast data
     # This is the date on which the forecast is produced.
@@ -255,7 +261,7 @@ def get_current_predictor_and_dates(forecast_pentad_all: pd.DataFrame,
     try:
         output.predictor = fcdata_selection[
             fcdata_selection["Date"] == output.latest_forecast_date]["predictor"].values[0]
-    except IndexError:
+    except (IndexError, KeyError):
         output.predictor = np.nan
 
     # If the predictor is larger or equal to 100, we round it to an integer.
@@ -266,17 +272,17 @@ def get_current_predictor_and_dates(forecast_pentad_all: pd.DataFrame,
     try:
         output.fc_exp = fcdata_selection[
             fcdata_selection["Date"] == output.latest_forecast_date]["fc_qexp"].values[0]
-    except IndexError:
+    except (IndexError, KeyError):
         output.fc_exp = np.nan
     try:
         output.fc_qmin = fcdata_selection[
             fcdata_selection["Date"] == output.latest_forecast_date]["fc_qmin"].values[0]
-    except IndexError:
+    except (IndexError, KeyError):
         output.fc_qmin = np.nan
     try:
         output.fc_qmax = fcdata_selection[
             fcdata_selection["Date"] == output.latest_forecast_date]["fc_qmax"].values[0]
-    except IndexError:
+    except (IndexError, KeyError):
         output.fc_qmax = np.nan
 
     # If the current date is later than the latest forecast date plus 5 days,
@@ -426,19 +432,21 @@ def draw_data_table(station_widget):
 hydrograph_day_all = dm.read_hydrograph_day_file()
 hydrograph_pentad_all = dm.read_hydrograph_pentad_file()
 forecast_pentad = dm.read_forecast_results_file()
-analysis_pentad_all = dm.read_analysis_file()
-print("analysis_pentad_all.head()")
-print(analysis_pentad_all.head())
+#analysis_pentad_all = dm.read_analysis_file()
+#print("analysis_pentad_all.head()")
+#print(analysis_pentad_all.head())
 # List of stations with forecast data & getting station information from all stations config file
-station_list = hydrograph_day_all['code'].unique().tolist()
-station_list, all_stations, station_df = dm.read_stations_from_file(station_list)
+station_list = hydrograph_pentad_all['code'].unique().tolist()
+station_list, all_stations, station_df = dm.read_all_stations_metadata_from_file(station_list)
+print("station_list: ", station_list)
 
 # Add the station_labels column to the hydrograph_day_all DataFrame
 hydrograph_day_all = dm.add_labels_to_hydrograph_day_all(hydrograph_day_all, all_stations)
 hydrograph_pentad_all = dm.add_labels_to_hydrograph_pentad_all(hydrograph_pentad_all, all_stations)
 forecast_pentad = dm.add_labels_to_forecast_pentad_df(forecast_pentad, all_stations)
-analysis_pentad_all = dm.add_labels_to_analysis_pentad_df(analysis_pentad_all, all_stations)
-
+#analysis_pentad_all = dm.add_labels_to_analysis_pentad_df(analysis_pentad_all, all_stations)
+print("hydrograph_day_all.head():\n", hydrograph_day_all.head())
+print(hydrograph_day_all.tail())
 # endregion
 
 # region Dashboard widgets
@@ -479,13 +487,16 @@ manual_range = pn.widgets.IntSlider(
 manual_range.visible = False
 
 # Todays date pane
-current_forecast_date = pn.pane.Markdown(_("Current forecast date: ") + today.strftime('%Y-%m-%d'),
-                                            style={'white-space': 'pre-wrap'}, width=station.width)
+current_forecast_date = pn.pane.Markdown(
+    f"<div style='white-space: pre-wrap'>Current forecast date: {today.strftime('%Y-%m-%d')}</div>",
+    width=station.width)
 
 # Warning text pane
-warning_text_pane = pn.pane.Markdown(get_current_predictor_and_dates(
-        forecast_pentad, station.value).warning,
-        style={'white-space': 'pre-wrap'}, width=station.width)
+warning_text = get_current_predictor_and_dates(forecast_pentad, station.value).warning
+warning_text_pane = pn.pane.Markdown(
+    f"<div style='white-space: pre-wrap'>{warning_text}</div>",
+    width=station.width
+)
 
 # Add a button to print the bulletin
 print_button = pn.widgets.Button(name=_("Print bulletin"), button_type="primary")
@@ -498,11 +509,12 @@ print_button = pn.widgets.Button(name=_("Print bulletin"), button_type="primary"
 hydrograph_day = hydrograph_day_all[hydrograph_day_all["station_labels"] == station.value]
 hydrograph_pentad = hydrograph_pentad_all[hydrograph_pentad_all["station_labels"] == station.value]
 forecast_pentad_stat = forecast_pentad[forecast_pentad["station_labels"] == station.value]
-analysis_pentad_stat = analysis_pentad_all[analysis_pentad_all["station_labels"] == station.value]
+#analysis_pentad_stat = analysis_pentad_all[analysis_pentad_all["station_labels"] == station.value]
 
 # Test if the dates in forecast_pentad_stat overlap with the dates in
 # hydrograph_pentad.
 # From hydrograph_pentad, return second last column name as integer.
+print(hydrograph_pentad.drop(columns='station_labels').columns)
 temp_last_year_hydrograph_data = int(hydrograph_pentad.drop(columns='station_labels').columns.values[-1])
 
 # From forecast_pentad_stat, return the year of the lowest date as integer.
@@ -514,7 +526,7 @@ if temp_first_year_forecast_data > temp_last_year_hydrograph_data:
 else:
     no_date_overlap_flag = False
 
-tabulator = draw_data_table(station)
+#tabulator = draw_data_table(station)
 # endregion
 
 # region Update functions
@@ -980,18 +992,18 @@ daily_hydrograph_plotly = pn.panel(pn.bind(plot_daily_hydrograph_data, station,
 pentad_forecast = pn.panel(pn.bind(plot_forecast_data, station,
                                    range_selection, manual_range),
                            height=500, sizing_mode='stretch_width')
-data_table = pn.panel(pn.bind(draw_data_table, station),
-                      height=300)
+#data_table = pn.panel(pn.bind(draw_data_table, station),
+#                      height=300)
 #linear_regression = pn.panel(pn.bind(plot_linear_regression, station),
 #                                height=300, sizing_mode='stretch_width')
-linear_regression = hv.DynamicMap(pn.bind(plot_linear_regression, station, tabulator.param.selection))
+#linear_regression = hv.DynamicMap(pn.bind(plot_linear_regression, station, tabulator.param.selection))
 
-norm_table = pn.panel(pn.bind(draw_norm_stats_table, station), height=100)
-forecast_table = pn.panel(pn.bind(draw_forecast_table, station),
-                            height=100)
+#norm_table = pn.panel(pn.bind(draw_norm_stats_table, station), height=100)
+#forecast_table = pn.panel(pn.bind(draw_forecast_table, station),
+#                            height=100)
 
-sel = streams.Selection1D(source=linear_regression)
-sel.param.watch_values(point_selected, 'index')
+#sel = streams.Selection1D(source=linear_regression)
+#sel.param.watch_values(point_selected, 'index')
 # If the available forecasts do not overlap with the hydrograph data, we cannot
 # calculate forecast accuracy and effectiveness. In this case, we do not show
 # the plots.

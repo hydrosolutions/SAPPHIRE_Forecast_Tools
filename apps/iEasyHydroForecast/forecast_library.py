@@ -1451,6 +1451,37 @@ def load_all_station_data_from_JSON(file_path: str) -> pd.DataFrame:
     except ValueError as e:
         raise ValueError('Could not read config file. Error message: {}'.format(e))
 
+def load_selected_stations_from_json(file_path: str) -> list:
+    """
+    Load the selected stations from the JSON file.
+
+    Args:
+    file_path (str): The path to the JSON file.
+
+    Returns:
+    list: The list of selected stations.
+
+    Raises:
+    FileNotFoundError: If the JSON file cannot be read.
+    ValueError: If the JSON file does not contain the expected keys and values.
+    """
+    try:
+        with open(file_path) as f:
+            config_all = json.load(f)
+
+            # Check that the JSON object contains the expected keys and values
+            if 'stationsID' not in config_all:
+                raise ValueError('JSON file does not contain expected key "stationsID"')
+            if not isinstance(config_all['stationsID'], list):
+                raise ValueError('Value of key "stationsID" is not a list')
+
+            return config_all['stationsID']
+
+    except FileNotFoundError as e:
+        raise FileNotFoundError('Could not read config file. Error message: {}'.format(e))
+    except ValueError as e:
+        raise ValueError('Could not read config file. Error message: {}'.format(e))
+
 def read_daily_discharge_data_from_csv():
     """
     Read the discharge data from a csv file specified in the environment.

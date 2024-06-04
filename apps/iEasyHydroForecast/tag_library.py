@@ -754,6 +754,72 @@ def get_month_str_case2(date_str):
     # return the month name as a string
     return month_str
 
+def get_month_str_case2_viz(_, date):
+    """
+    Returns the name of the month for a given date string, in Russian, in the
+    second case.
+
+    Args:
+        _ (function): A function that returns the translated string for a given
+            key.
+        date (str or date): A string representing a date in the format 'YYYY-MM-DD'.
+
+    Returns:
+        str: A string representing the name of the month for the input date
+            string, in Russian, in the second case.
+
+        If the input date string is not a valid date, returns None.
+    """
+    # If date is a string, try to parse it to a date
+    if isinstance(date, str):
+        try:
+            date = dt.datetime.strptime(date, '%Y-%m-%d').date()
+        except ValueError:
+            return None
+
+    # If date is not a date, raise a value error
+    if not isinstance(date, dt.date):
+        raise ValueError('Input is not a valid date or datestring.')
+
+    # Test if the date is using the Gregorian calendar
+    if not is_gregorian_date(date):
+        # return None if the input is not using the Gregorian calendar
+        return None
+
+    # calculate the month number
+    month = date.month
+
+    month_str = ''
+    if month == 1:
+        month_str = _('January')
+    elif month == 2:
+        month_str = _('February')
+    elif month == 3:
+        month_str = _('March')
+    elif month == 4:
+        month_str = _('April')
+    elif month == 5:
+        month_str = _('May')
+    elif month == 6:
+        month_str = _('June')
+    elif month == 7:
+        month_str = _('July')
+    elif month == 8:
+        month_str = _('August')
+    elif month == 9:
+        month_str = _('September')
+    elif month == 10:
+        month_str = _('October')
+    elif month == 11:
+        month_str = _('November')
+    elif month == 12:
+        month_str = _('December')
+    else:
+        return None
+
+    # return the month name as a string
+    return month_str
+
 def get_river_name(site):
     '''
     Gets the name of the river for a given site.
