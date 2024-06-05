@@ -6,7 +6,7 @@ import pandas as pd
 import datetime as dt
 import holoviews as hv
 from bokeh.models import FixedTicker, CustomJSTickFormatter, LinearAxis
-from .processing import add_predictor_dates
+from . import processing
 
 # Import local library
 # Get the absolute path of the directory containing the current script
@@ -101,22 +101,23 @@ def add_custom_xticklabels_daily(_, leap_year, plot, element):
     plot.state.add_layout(second_x_axis, 'below')
 
 # Plots for dashboard
-def plot_daily_hydrograph_data(_, hydrograph_day_all, linreg_predictor, station):
+def plot_daily_hydrograph_data(_, hydrograph_day_all, linreg_predictor, station, title_date):
+
+    # Date handling
+    # Set the title date to the date of the last available data if the forecast date is in the future
+    title_pentad = tl.get_pentad(title_date + dt.timedelta(days=1))
+    title_month = tl.get_month_str_case2_viz(_, title_date)
+
     # filter hydrograph_day_all & linreg_predictor by station
-    linreg_predictor = add_predictor_dates(linreg_predictor, station)
-    print("linreg_predictor\n", linreg_predictor)
+    linreg_predictor = processing.add_predictor_dates(linreg_predictor, station, title_date)
 
     data = hydrograph_day_all[hydrograph_day_all['station_labels'] == station]
     current_year = data['date'].dt.year.max()
     last_year = current_year - 1
 
     # Define strings
-    title_date = linreg_predictor['date']
-    title_pentad = tl.get_pentad(title_date + dt.timedelta(days=1))
-    title_month = tl.get_month_str_case2_viz(_, title_date)
-
     title_text = _("Hydropost ") + station + _(" on ") + title_date.strftime("%Y-%m-%d")
-    predictor_string=_("Sum of runoff over the past 3 days: ") + f"{linreg_predictor['predictor']}" + _(" m3/s")
+    predictor_string=_("Sum of runoff over the past 3 days: ") + f"{linreg_predictor['predictor'].values[0]}" + _(" m3/s")
     forecast_string=_("Forecast horizon for ") + title_pentad + _(" pentad of ") + title_month
 
     # Rename columns to be used in the plot to allow internationalization
@@ -140,10 +141,10 @@ def plot_daily_hydrograph_data(_, hydrograph_day_all, linreg_predictor, station)
     # Create a holoviews bokeh plots of the daily hydrograph
     hvspan_predictor = hv.Area(
         pd.DataFrame(
-            {"x":[linreg_predictor['predictor_start_day_of_year'],
-                  linreg_predictor['predictor_start_day_of_year'],
-                  linreg_predictor['predictor_end_day_of_year'],
-                  linreg_predictor['predictor_end_day_of_year']],
+            {"x":[linreg_predictor['predictor_start_day_of_year'].values[0],
+                  linreg_predictor['predictor_start_day_of_year'].values[0],
+                  linreg_predictor['predictor_end_day_of_year'].values[0],
+                  linreg_predictor['predictor_end_day_of_year'].values[0]],
              "y":[0.0, max(data[_('max column name')])*1.1,
                   max(data[_('max column name')])*1.1, 0.0]}),
             kdims=["x"], vdims=["y"], label=predictor_string) \
@@ -152,10 +153,10 @@ def plot_daily_hydrograph_data(_, hydrograph_day_all, linreg_predictor, station)
 
     hvspan_forecast = hv.Area(
         pd.DataFrame(
-            {"x":[linreg_predictor['forecast_start_day_of_year'],
-                  linreg_predictor['forecast_start_day_of_year'],
-                  linreg_predictor['forecast_end_day_of_year'],
-                  linreg_predictor['forecast_end_day_of_year']],
+            {"x":[linreg_predictor['forecast_start_day_of_year'].values[0],
+                  linreg_predictor['forecast_start_day_of_year'].values[0],
+                  linreg_predictor['forecast_end_day_of_year'].values[0],
+                  linreg_predictor['forecast_end_day_of_year'].values[0]],
              "y":[0.0, max(data[_('max column name')])*1.1,
                   max(data[_('max column name')])*1.1, 0.0]}),
             kdims=["x"], vdims=["y"], label=forecast_string) \
@@ -243,8 +244,20 @@ def plot_daily_hydrograph_data(_, hydrograph_day_all, linreg_predictor, station)
         show_grid=True,
         show_legend=True,
         hooks=[remove_bokeh_logo,
-               lambda p, e: add_custom_xticklabels_daily(_, linreg_predictor['leap_year'], p, e)],
+               lambda p, e: add_custom_xticklabels_daily(_, linreg_predictor['leap_year'].iloc[0], p, e)],
         tools=['hover'],
         toolbar='above')
 
     return daily_hydrograph
+
+
+# Texts for dashboard
+def write_date_title(_, date):
+    pentad = tl.get_pentad(date + dt.timedelta(days=1))
+    month = date.month
+    year = date.year
+    text = _("Forecast for ") + _('pentad') + " " + str(pentad) + " of " + str(processing.get_month_name_for_number(_, month)) + ", " + str(year)
+    return f"<h2>{text}</h2>"
+
+
+

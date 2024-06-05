@@ -102,6 +102,12 @@ linreg_predictor = processing.add_labels_to_forecast_pentad_df(linreg_predictor,
 
 
 # region widgets
+forecast_date = linreg_predictor['date'].max().date()
+
+date_picker = pn.widgets.DatePicker(name=_("Select date:"),
+                                    start=dt.datetime((forecast_date.year-1), 1, 5).date(),
+                                    end=forecast_date,
+                                    value=forecast_date)
 
 station = pn.widgets.Select(
     name=_("Select discharge station:"),
@@ -123,10 +129,15 @@ station = pn.widgets.Select(
 daily_hydrograph_plotly = pn.panel(
     pn.bind(
         viz.plot_daily_hydrograph_data,
-        _, hydrograph_day_all, linreg_predictor, station
+        _, hydrograph_day_all, linreg_predictor, station, date_picker
         ),
     min_height=300, sizing_mode='stretch_both'
     )
+
+# Dynamically update sidepanel
+date_title = pn.pane.Markdown(pn.bind(
+    viz.write_date_title,
+    _, date_picker))
 
 
 ## Footer
@@ -223,15 +234,11 @@ else: # If no_date_overlap_flag == True
     )
 
 sidebar = pn.Column(
-    #pn.Row(pn.Card(title=f"Forecast for: p{select_pentad.value} m{select_month.value} y{select_year.value}",
-    #               width_policy='fit', width=station.width,
-    #               collapsible=False)),
-    #pn.Row(pn.Card(select_year,
-    #               select_month,
-    #               select_pentad,
-    #               title=_('Change date'),
-    #               width_policy='fit', width=station.width,
-    #               collapsed=True)),
+    pn.Row(date_title),
+    pn.Row(pn.Card(date_picker,
+                   title=_('Change date'),
+                   width_policy='fit', width=station.width,
+                   collapsed=True)),
     pn.Row(station),
     #pn.Row(range_selection),
     #pn.Row(manual_range),

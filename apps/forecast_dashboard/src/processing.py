@@ -201,7 +201,7 @@ def read_analysis_file():
 
     return analysis_pentad
 
-def add_predictor_dates(linreg_predictor, station):
+def add_predictor_dates(linreg_predictor, station, date):
     """
     Add start and end days for predictor period and forecast period to the
     linreg_predictor DataFrame.
@@ -209,36 +209,81 @@ def add_predictor_dates(linreg_predictor, station):
     Args:
         linreg_predictor (pd.DataFrame): The linreg_predictor DataFrame.
         station (str): The station label.
+        date (datetime.date): The date for which the predictor data is needed.
 
     Returns:
         pd.Series: The predictor data for the station.
     """
-    predictor = linreg_predictor[linreg_predictor['station_labels'] == station].iloc[-1]
+    # Filter the predictor data for the hydropost
+    predictor = linreg_predictor[linreg_predictor['station_labels'] == station]
+
+    # Cast date column to datetime
+    predictor.loc[:, 'date'] = pd.to_datetime(predictor['date'], format='%Y-%m-%d')
+
+    # Make sure predictor is a dataframe
+    if isinstance(predictor, pd.Series):
+        predictor = predictor.to_frame()
+
+    # Identify the next lowest date in the predictor data
+    predictor = predictor[predictor['date'] <= pd.Timestamp(date)]
+    # Get the latest date in the predictor data
+    predictor = predictor.sort_values('date').iloc[-1:]
+
+    print("DEBUG: predictor\n", predictor)
+
+    # Add start and end days for predictor period and forecast period
     predictor['predictor_start_date'] = predictor['date'] - pd.DateOffset(days=2)
     predictor['forecast_start_date'] = predictor['date'] + pd.DateOffset(days=1)
-    predictor['forecast_end_date'] = predictor['date'] + pd.DateOffset(days=6)
+    predictor['forecast_end_date'] = predictor['date'] + pd.DateOffset(days=5)
 
     # Round the predictor according to common rules
-    predictor['predictor'] = fl.round_discharge_to_float(predictor['predictor'])
+    predictor['predictor'] = fl.round_discharge_to_float(predictor['predictor'].values[0])
 
     # Test if the forecast_start_date is 26, set the forecast_end_date to the end of the month of the forecast_start_date
-    if predictor['forecast_start_date'].day == 26:
+    if (predictor['forecast_start_date'].dt.day == 26).any():
         predictor['forecast_end_date'] = predictor['forecast_start_date'] + pd.offsets.MonthEnd(0)
 
     # Add a day_of_year column to the predictor DataFrame
-    predictor['day_of_year'] = predictor['date'].dayofyear
-    predictor['predictor_start_day_of_year'] = float(predictor['predictor_start_date'].dayofyear) - 0.2
-    predictor['predictor_end_day_of_year'] = float(predictor['day_of_year']) + 0.2
-    predictor['forecast_start_day_of_year'] = predictor['forecast_start_date'].dayofyear - 0.1
-    predictor['forecast_end_day_of_year'] = predictor['forecast_end_date'].dayofyear + 0.8
+    predictor['day_of_year'] = predictor['date'].dt.dayofyear
+    predictor['predictor_start_day_of_year'] = float(predictor['predictor_start_date'].dt.dayofyear.iloc[0]) - 0.2
+    predictor['predictor_end_day_of_year'] = float(predictor['day_of_year'].iloc[0]) + 0.2
+    predictor['forecast_start_day_of_year'] = predictor['forecast_start_date'].dt.dayofyear - 0.1
+    predictor['forecast_end_day_of_year'] = predictor['forecast_end_date'].dt.dayofyear + 0.8
 
     # Test if 'date' is a leap year
-    if predictor['date'].year % 4 != 0:
+    if (predictor['date'].dt.year % 4 != 0).any():
         predictor['leap_year'] = False
     else:
         predictor['leap_year'] = True
 
+    #if isinstance(predictor, pd.Series):
+    #    predictor = predictor.to_frame()
+
     return predictor
+
+def get_month_name_for_number(_, month_number):
+    # Make sure month_number is an integer
+    month_number = int(month_number)
+    # Dictionary with month names in different languages
+    month_names = {
+        1: _("January"),
+        2: _("February"),
+        3: _("March"),
+        4: _("April"),
+        5: _("May"),
+        6: _("June"),
+        7: _("July"),
+        8: _("August"),
+        9: _("September"),
+        10: _("October"),
+        11: _("November"),
+        12: _("December")
+    }
+    return month_names[month_number]
+
+
+
+
 
 def deprecating_read_hydrograph_day_file(today):
 
