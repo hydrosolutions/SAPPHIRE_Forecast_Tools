@@ -234,12 +234,12 @@ else: # If no_date_overlap_flag == True
     )
 
 sidebar = pn.Column(
-    pn.Row(date_title),
     pn.Row(pn.Card(date_picker,
-                   title=_('Change date'),
+                   title=_('Date:'),
                    width_policy='fit', width=station.width,
-                   collapsed=True)),
-    pn.Row(station),
+                   collapsed=False)),
+    pn.Row(pn.Card(station,
+                   title=_('Hydropost:'),)),
     #pn.Row(range_selection),
     #pn.Row(manual_range),
     #pn.Row(print_button),
