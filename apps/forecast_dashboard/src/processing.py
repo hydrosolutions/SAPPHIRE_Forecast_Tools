@@ -109,10 +109,37 @@ def read_hydrograph_pentad_file():
     if hydrograph_pentad_all.empty:
         raise Exception("File is empty: " + hydrograph_pentad_file)
 
-    hydrograph_pentad_all["pentad"] = hydrograph_pentad_all["pentad"].astype(int)
+    hydrograph_pentad_all["pentad_in_year"] = hydrograph_pentad_all["pentad_in_year"].astype(int)
     hydrograph_pentad_all['code'] = hydrograph_pentad_all['code'].astype(str)
+    hydrograph_pentad_all['date'] = pd.to_datetime(hydrograph_pentad_all['date'], format='%Y-%m-%d')
     # Sort all columns in ascending Code and pentad order
-    hydrograph_pentad_all = hydrograph_pentad_all.sort_values(by=["code", "pentad"])
+    hydrograph_pentad_all = hydrograph_pentad_all.sort_values(by=["code", "pentad_in_year"])
+
+    return hydrograph_pentad_all
+
+def read_hydrograph_pentad_data_for_pentad_forecasting():
+
+    # Read hydrograph data with daily values
+    hydrograph_pentad_all = read_hydrograph_pentad_file()
+
+    # Get station ids of stations selected for forecasting
+    filepath = os.path.join(
+        os.getenv("ieasyforecast_configuration_path"),
+        os.getenv("ieasyforecast_config_file_station_selection"))
+    selected_stations = fl.load_selected_stations_from_json(filepath)
+
+    # Filter data for selected stations
+    hydrograph_pentad_all = hydrograph_pentad_all[hydrograph_pentad_all["code"].isin(selected_stations)]
+
+    # Test if there is an environment variable ieasyforecast_restrict_stations_file
+    if os.getenv("ieasyforecast_restrict_stations_file"):
+        filepath = os.path.join(
+            os.getenv("ieasyforecast_configuration_path"),
+            os.getenv("ieasyforecast_restrict_stations_file"))
+        # Read the restricted stations from the environment variable
+        restricted_stations = fl.load_selected_stations_from_json(filepath)
+        # Filter data for restricted stations
+        hydrograph_pentad_all = hydrograph_pentad_all[hydrograph_pentad_all["code"].isin(restricted_stations)]
 
     return hydrograph_pentad_all
 
@@ -420,15 +447,16 @@ def read_all_stations_metadata_from_file(station_list):
 
     return station_list, all_stations, station_df
 
-def add_labels_to_hydrograph_day_all(hydrograph_day_all, all_stations):
-    hydrograph_day_all = hydrograph_day_all.merge(
+
+def add_labels_to_hydrograph(hydrograph, all_stations):
+    hydrograph = hydrograph.merge(
         all_stations.loc[:,['code','river_ru','punkt_ru']],
                             left_on='code', right_on='code', how='left')
-    hydrograph_day_all['station_labels'] = hydrograph_day_all['code'] + ' - ' + hydrograph_day_all['river_ru'] + ' ' + hydrograph_day_all['punkt_ru']
+    hydrograph['station_labels'] = hydrograph['code'] + ' - ' + hydrograph['river_ru'] + ' ' + hydrograph['punkt_ru']
     # Remove the columns river_ru and punkt_ru
-    hydrograph_day_all = hydrograph_day_all.drop(columns=['code', 'river_ru', 'punkt_ru'])
+    hydrograph = hydrograph.drop(columns=['code', 'river_ru', 'punkt_ru'])
 
-    return hydrograph_day_all
+    return hydrograph
 
 def add_labels_to_forecast_pentad_df(forecast_pentad, all_stations):
     forecast_pentad = forecast_pentad.merge(

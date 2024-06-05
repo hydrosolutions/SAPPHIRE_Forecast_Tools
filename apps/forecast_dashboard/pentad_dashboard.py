@@ -87,16 +87,23 @@ _ = configure_gettext(current_locale, localedir)
 
 # Daily runoff data
 hydrograph_day_all = processing.read_hydrograph_day_data_for_pentad_forecasting()
+hydrograph_pentad_all = processing.read_hydrograph_pentad_data_for_pentad_forecasting()
+
+# Pentadal forecast data
+# - linreg_predictor: for displaying predictor in predictor tab
 linreg_predictor = processing.read_linreg_forecast_data()
-#print("linreg_predictor\n", linreg_predictor)
+# - forecast results from all models
 
 # Hydroposts metadata
 station_list, all_stations, station_df = processing.read_all_stations_metadata_from_file(
     hydrograph_day_all['code'].unique().tolist())
 
 # Add the station_labels column to the hydrograph_day_all DataFrame
-hydrograph_day_all = processing.add_labels_to_hydrograph_day_all(hydrograph_day_all, all_stations)
+hydrograph_day_all = processing.add_labels_to_hydrograph(hydrograph_day_all, all_stations)
+hydrograph_pentad_all = processing.add_labels_to_hydrograph(hydrograph_pentad_all, all_stations)
 linreg_predictor = processing.add_labels_to_forecast_pentad_df(linreg_predictor, all_stations)
+print("hydrograph_day_all:\n", hydrograph_day_all.columns)
+print("hydrograph_pentad_all:\n", hydrograph_pentad_all.columns)
 
 # endregion
 
@@ -126,18 +133,22 @@ station = pn.widgets.Select(
 
 # region dashboard_layout
 # Dynamically update figures
-daily_hydrograph_plotly = pn.panel(
+daily_hydrograph_plot = pn.panel(
     pn.bind(
         viz.plot_daily_hydrograph_data,
         _, hydrograph_day_all, linreg_predictor, station, date_picker
         ),
     min_height=300, sizing_mode='stretch_both'
     )
+pentad_forecast_plot = pn.panel(
+    pn.bind(
+        viz.plot_pentad_forecast_hydrograph_data,
+        _, hydrograph_pentad_all, linreg_predictor, station, date_picker
+        ),
+    min_height=300, sizing_mode='stretch_both'
+    )
 
 # Dynamically update sidepanel
-date_title = pn.pane.Markdown(pn.bind(
-    viz.write_date_title,
-    _, date_picker))
 
 
 ## Footer
@@ -181,12 +192,12 @@ if no_date_overlap_flag == False:
         (_('Predictors'),
          pn.Column(
              pn.Row(
-                 pn.Card(daily_hydrograph_plotly, title=_("Hydrograph"))
+                 pn.Card(daily_hydrograph_plot, title=_("Hydrograph"))
              ),
          ),
         ),
-        #(_('Forecast'),
-        # pn.Column(
+        (_('Forecast'),
+         pn.Column(
         #     pn.Row(
         #        pn.Card(data_table, title=_('Data table'), collapsed=True),
         #        pn.Card(linear_regression, title=_("Linear regression"), collapsed=True)
@@ -195,13 +206,15 @@ if no_date_overlap_flag == False:
         #         pn.Card(norm_table, title=_('Norm statistics'), sizing_mode='stretch_width'),),
         #     pn.Row(
         #         pn.Card(forecast_table, title=_('Forecast table'), sizing_mode='stretch_width')),
-        #     pn.Row(
-        #         pn.Card(pentad_forecast, title=_('Forecast'))),
+             pn.Row(
+                 pn.Card(pentad_forecast_plot, title=_('Forecast'))
+        ),
         #     pn.Row(
         #         pn.Card(pentad_effectiveness, title=_("Effectiveness of the methods"))),
         #     pn.Row(
-        #         pn.Card(pentad_skill, title=_("Forecast accuracy"))))
-        #),
+        #         pn.Card(pentad_skill, title=_("Forecast accuracy")))
+        )
+        ),
         (_('Disclaimer'), footer),
         dynamic=True,
         sizing_mode='stretch_both'
@@ -212,34 +225,34 @@ else: # If no_date_overlap_flag == True
         (_('Predictors'),
          pn.Column(
              pn.Row(
-                 pn.Card(daily_hydrograph_plotly, title=_("Hydrograph")),
+                 pn.Card(daily_hydrograph_plot, title=_("Hydrograph")),
              ),
          ),
         ),
-        #(_('Forecast'),
-        # pn.Column(
-        #     pn.Row(
-        #         pn.Card(pentad_forecast, title=_('Forecast')),
-        #    ),
+        (_('Forecast'),
+         pn.Column(
+             pn.Row(
+                 pn.Card(pentad_forecast_plot, title=_('Forecast')),
+            ),
         #    pn.Row(
         #         #pn.Card(pentad_effectiveness, title=_("Effectiveness of the methods")),
         #    ),
         #    pn.Row(
         #         #pn.Card(pentad_skill, title=_("Forecast accuracy")),
-        #    ))
-        #),
+            )
+        ),
         (_('Disclaimer'), footer),
         dynamic=True,
         sizing_mode='stretch_both'
     )
 
 sidebar = pn.Column(
+    pn.Row(pn.Card(station,
+                   title=_('Hydropost:'),)),
     pn.Row(pn.Card(date_picker,
                    title=_('Date:'),
                    width_policy='fit', width=station.width,
                    collapsed=False)),
-    pn.Row(pn.Card(station,
-                   title=_('Hydropost:'),)),
     #pn.Row(range_selection),
     #pn.Row(manual_range),
     #pn.Row(print_button),

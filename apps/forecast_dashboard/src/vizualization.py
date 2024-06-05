@@ -101,6 +101,7 @@ def add_custom_xticklabels_daily(_, leap_year, plot, element):
     plot.state.add_layout(second_x_axis, 'below')
 
 # Plots for dashboard
+# region predictor_tab
 def plot_daily_hydrograph_data(_, hydrograph_day_all, linreg_predictor, station, title_date):
 
     # Date handling
@@ -169,6 +170,7 @@ def plot_daily_hydrograph_data(_, hydrograph_day_all, linreg_predictor, station,
         vdims=[_('min column name'), _('max column name')],
         label=_("Full range legend entry")) \
         .opts(color="#eaf0f4",
+              alpha=0.5, muted_alpha=0.1,
               line_width=0)
 
     lower_bound = hv.Curve(
@@ -191,19 +193,58 @@ def plot_daily_hydrograph_data(_, hydrograph_day_all, linreg_predictor, station,
           tools=['hover'],
               show_legend=False)
 
+    line_05 = hv.Curve(
+        data,
+        kdims=[_('day_of_year column name')],
+        vdims=[_('5% column name')],
+        label=_("5-percentile legend entry")) \
+        .opts(color="#d5e2ea",
+              line_width=0,
+              tools=['hover'],
+              show_legend=False)
+    line_95 = hv.Curve(
+        data,
+        kdims=[_('day_of_year column name')],
+        vdims=[_('95% column name')],
+        label=_("95-percentile legend entry")) \
+        .opts(color="#d5e2ea",
+              line_width=0,
+              tools=['hover'],
+              show_legend=False)
     area_05_95 = hv.Area(
         data,
         kdims=[_('day_of_year column name')],
         vdims=[_('5% column name'), _('95% column name')],
         label=_("90-percentile range legend entry")) \
         .opts(color="#d5e2ea",
+              alpha=0.5, muted_alpha=0.1,
               line_width=0)
+
+    line_25 = hv.Curve(
+        data,
+        kdims=[_('day_of_year column name')],
+        vdims=[_('25% column name')],
+        label=_("25-percentile legend entry")) \
+        .opts(color="#c0d4df",
+              line_width=0,
+              tools=['hover'],
+              show_legend=False)
+    line_75 = hv.Curve(
+        data,
+        kdims=[_('day_of_year column name')],
+        vdims=[_('75% column name')],
+        label=_("75-percentile legend entry")) \
+        .opts(color="#c0d4df",
+              line_width=0,
+              tools=['hover'],
+              show_legend=False)
     area_25_75 = hv.Area(
         data,
         kdims=[_('day_of_year column name')],
         vdims=[_('25% column name'), _('75% column name')],
         label=_("50-percentile range legend entry")) \
         .opts(color="#c0d4df",
+              alpha=0.5, muted_alpha=0.1,
               line_width=0)
     mean = hv.Curve(
         data,
@@ -219,8 +260,7 @@ def plot_daily_hydrograph_data(_, hydrograph_day_all, linreg_predictor, station,
         vdims=[ _('Last year column name')],
         label=_('Last year legend entry')) \
         .opts(color="#ca97b7",
-              line_width=2,
-              tools=['hover'])
+              line_width=2)
     current_year = hv.Curve(
         data,
         kdims=[_('day_of_year column name')],
@@ -232,7 +272,8 @@ def plot_daily_hydrograph_data(_, hydrograph_day_all, linreg_predictor, station,
 
     # Overlay the plots
     daily_hydrograph = full_range_area * lower_bound * upper_bound * \
-        area_05_95 * area_25_75 * \
+        area_05_95 * line_05 * line_95 * \
+        area_25_75 * line_25 * line_75 * \
         last_year * hvspan_predictor * hvspan_forecast * \
         mean * current_year
 
@@ -250,14 +291,177 @@ def plot_daily_hydrograph_data(_, hydrograph_day_all, linreg_predictor, station,
 
     return daily_hydrograph
 
+# endregion
 
-# Texts for dashboard
-def write_date_title(_, date):
-    pentad = tl.get_pentad(date + dt.timedelta(days=1))
-    month = date.month
-    year = date.year
-    text = _("Forecast for ") + _('pentad') + " " + str(pentad) + " of " + str(processing.get_month_name_for_number(_, month)) + ", " + str(year)
-    return f"<h2>{text}</h2>"
+# region forecast_tab
+def plot_pentad_forecast_hydrograph_data(_, hydrograph_day_all, linreg_predictor, station, title_date):
 
+    # Date handling
+    # Set the title date to the date of the last available data if the forecast date is in the future
+    title_pentad = tl.get_pentad(title_date + dt.timedelta(days=1))
+    title_month = tl.get_month_str_case2_viz(_, title_date)
+
+    # filter hydrograph_day_all & linreg_predictor by station
+    #linreg_predictor = processing.add_predictor_dates(linreg_predictor, station, title_date)
+
+    data = hydrograph_day_all[hydrograph_day_all['station_labels'] == station]
+    current_year = data['date'].dt.year.max()
+    last_year = current_year - 1
+
+    print("data:\n", data)
+
+    # Define strings
+    title_text = _("Hydropost ") + station + _(" on ") + title_date.strftime("%Y-%m-%d")
+    predictor_string=_("Sum of runoff over the past 3 days: ") #+ f"{linreg_predictor['predictor'].values[0]}" + _(" m3/s")
+    forecast_string=_("Forecast horizon for ") + title_pentad + _(" pentad of ") + title_month
+
+    # Rename columns to be used in the plot to allow internationalization
+    data = data.rename(columns={
+        'pentad_in_year': _('pentad_of_year column name'),
+        'min': _('min column name'),
+        'max': _('max column name'),
+        'q05': _('5% column name'),
+        'q95': _('95% column name'),
+        'q25': _('25% column name'),
+        'q75': _('75% column name'),
+        'mean': _('mean column name'),
+        str(last_year): _('Last year column name'),
+        str(current_year): _('Current year column name')
+        })
+    #linreg_predictor = linreg_predictor.rename({
+    #    'day_of_year': _('day_of_year column name'),
+    #    'predictor': _('Predictor column name')
+    #    })
+
+    # Create a holoviews bokeh plots of the daily hydrograph
+    full_range_area = hv.Area(
+        data,
+        kdims=[_('pentad_of_year column name')],
+        vdims=[_('min column name'), _('max column name')],
+        label=_("Full range legend entry")) \
+        .opts(color="#eaf0f4",
+              alpha=0.5, muted_alpha=0.1,
+              line_width=0)
+
+    lower_bound = hv.Curve(
+        data,
+        kdims=[_('pentad_of_year column name')],
+        vdims=[_('min column name')],
+        label=_("Full range legend entry")) \
+        .opts(color="#eaf0f4",
+          line_width=0,
+          tools=['hover'],
+              show_legend=False)
+
+    upper_bound = hv.Curve(
+        data,
+        kdims=[_('pentad_of_year column name')],
+        vdims=[_('max column name')],
+        label=_("Full range legend entry")) \
+        .opts(color="#eaf0f4",
+          line_width=0,
+          tools=['hover'],
+              show_legend=False)
+
+    line_05 = hv.Curve(
+        data,
+        kdims=[_('pentad_of_year column name')],
+        vdims=[_('5% column name')],
+        label=_("5-percentile legend entry")) \
+        .opts(color="#d5e2ea",
+              line_width=0,
+              tools=['hover'],
+              show_legend=False)
+    line_95 = hv.Curve(
+        data,
+        kdims=[_('pentad_of_year column name')],
+        vdims=[_('95% column name')],
+        label=_("95-percentile legend entry")) \
+        .opts(color="#d5e2ea",
+              line_width=0,
+              tools=['hover'],
+              show_legend=False)
+    area_05_95 = hv.Area(
+        data,
+        kdims=[_('pentad_of_year column name')],
+        vdims=[_('5% column name'), _('95% column name')],
+        label=_("90-percentile range legend entry")) \
+        .opts(color="#d5e2ea",
+              alpha=0.5, muted_alpha=0.1,
+              line_width=0)
+
+    line_25 = hv.Curve(
+        data,
+        kdims=[_('pentad_of_year column name')],
+        vdims=[_('25% column name')],
+        label=_("25-percentile legend entry")) \
+        .opts(color="#c0d4df",
+              line_width=0,
+              tools=['hover'],
+              show_legend=False)
+    line_75 = hv.Curve(
+        data,
+        kdims=[_('pentad_of_year column name')],
+        vdims=[_('75% column name')],
+        label=_("75-percentile legend entry")) \
+        .opts(color="#c0d4df",
+              line_width=0,
+              tools=['hover'],
+              show_legend=False)
+    area_25_75 = hv.Area(
+        data,
+        kdims=[_('pentad_of_year column name')],
+        vdims=[_('25% column name'), _('75% column name')],
+        label=_("50-percentile range legend entry")) \
+        .opts(color="#c0d4df",
+              alpha=0.5, muted_alpha=0.1,
+              line_width=0)
+    mean = hv.Curve(
+        data,
+        kdims=[_('pentad_of_year column name')],
+        vdims=[_('mean column name')],
+        label=_('Mean legend entry')) \
+        .opts(color="#307096",
+              line_width=2,
+              tools=['hover'])
+    last_year = hv.Curve(
+        data,
+        kdims=[_('pentad_of_year column name')],
+        vdims=[ _('Last year column name')],
+        label=_('Last year legend entry')) \
+        .opts(color="#ca97b7",
+              line_width=2)
+    current_year = hv.Curve(
+        data,
+        kdims=[_('pentad_of_year column name')],
+        vdims=[_('Current year column name')],
+        label=_('Current year legend entry')) \
+        .opts(color="#963070",
+              line_width=2,
+              tools=['hover'])
+
+    # Overlay the plots
+    daily_hydrograph = full_range_area * lower_bound * upper_bound * \
+        area_05_95 * line_05 * line_95 * \
+        area_25_75 * line_25 * line_75 * \
+        last_year *  \
+        mean * current_year
+
+    daily_hydrograph.opts(
+        title=title_text,
+        xlabel=_('Pentad of the year'),
+        ylabel=_('Discharge (m³/s)'),
+        height=400,
+        show_grid=True,
+        show_legend=True,
+        hooks=[remove_bokeh_logo],
+        #       lambda p, e: add_custom_xticklabels_daily(_, linreg_predictor['leap_year'].iloc[0], p, e)],
+        tools=['hover'],
+        toolbar='above')
+
+    return daily_hydrograph
+
+
+# endregion
 
 
