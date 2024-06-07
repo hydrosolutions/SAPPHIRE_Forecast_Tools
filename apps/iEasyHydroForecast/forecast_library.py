@@ -866,6 +866,14 @@ def get_pentadal_and_decadal_data(forecast_flags=None,
     # Read discharge data and filter for sites required to produce forecasts
     discharge_all = read_daily_discharge_data_from_csv()
 
+    # Print discharge all for site code 15102, filter for the first 5 days of the years 2023 and 2024
+    print("DEBUG: forecasting:get_pentadal_and_decadal_data: discharge_all: \n",
+          discharge_all[(discharge_all['code'] == "15102") & (discharge_all['date'] < dt.datetime.strptime('2023-01-06', '%Y-%m-%d'))].tail(5))
+    print(discharge_all[(discharge_all['code'] == "15102") & (discharge_all['date'] < dt.datetime.strptime('2023-01-06', '%Y-%m-%d'))].tail(5).mean())
+    print("DEBUG: forecasting:get_pentadal_and_decadal_data: discharge_all: \n",
+            discharge_all[(discharge_all['code'] == "15102") & (discharge_all['date'] < dt.datetime.strptime('2024-01-06', '%Y-%m-%d'))].tail(5))
+    print(discharge_all[(discharge_all['code'] == "15102") & (discharge_all['date'] < dt.datetime.strptime('2024-01-06', '%Y-%m-%d'))].tail(5).mean())
+
     # Aggregate predictors and forecast variables
     data_pentad, data_decad = generate_issue_and_forecast_dates(
         pd.DataFrame(discharge_all),
@@ -873,6 +881,12 @@ def get_pentadal_and_decadal_data(forecast_flags=None,
         station_col='code',
         discharge_col='discharge',
         forecast_flags=forecast_flags)
+
+    # Print the first pentad and decad of the year 2023 and 2024
+    print("DEBUG: forecasting:get_pentadal_and_decadal_data: data_pentad: \n",
+            data_pentad[(data_pentad['date'] < '2023-01-02') & (data_pentad['code'] == '15102')].tail(10))
+    print("DEBUG: forecasting:get_pentadal_and_decadal_data: data_pentad: \n",
+            data_pentad[(data_pentad['date'] < '2024-01-02') & (data_pentad['code'] == '15102')].tail(10))
 
     # Only keep rows for sites in the site_lists
     data_pentad = filter_data(data_pentad, 'code', site_list_pentad)

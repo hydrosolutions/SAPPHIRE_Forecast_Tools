@@ -1,3 +1,11 @@
+# pentad_dashboard.py
+#
+# This script creates a dashboard for the pentadal forecast.
+#
+# Run with the following command:
+# panel serve pentad_dashboard.py --show --autoreload --port 5008
+#
+
 # region load_libraries
 from dotenv import load_dotenv
 import os
@@ -64,9 +72,6 @@ in_docker_flag = load_configuration()
 # Get icon path from config
 icon_path = processing.get_icon_path(in_docker_flag)
 
-# Set the browser tab icon
-#pn.config.favicon = icon_path
-
 # The current date is displayed as the title of each visualization.
 today = dt.datetime.now()
 
@@ -93,6 +98,7 @@ hydrograph_pentad_all = processing.read_hydrograph_pentad_data_for_pentad_foreca
 # - linreg_predictor: for displaying predictor in predictor tab
 linreg_predictor = processing.read_linreg_forecast_data()
 # - forecast results from all models
+forecasts_all = processing.read_forecast_results_file()
 
 # Hydroposts metadata
 station_list, all_stations, station_df = processing.read_all_stations_metadata_from_file(
@@ -102,8 +108,8 @@ station_list, all_stations, station_df = processing.read_all_stations_metadata_f
 hydrograph_day_all = processing.add_labels_to_hydrograph(hydrograph_day_all, all_stations)
 hydrograph_pentad_all = processing.add_labels_to_hydrograph(hydrograph_pentad_all, all_stations)
 linreg_predictor = processing.add_labels_to_forecast_pentad_df(linreg_predictor, all_stations)
-print("hydrograph_day_all:\n", hydrograph_day_all.columns)
-print("hydrograph_pentad_all:\n", hydrograph_pentad_all.columns)
+forecasts_all = processing.add_labels_to_forecast_pentad_df(forecasts_all, all_stations)
+print("forecasts_all:\n", forecasts_all.head())
 
 # endregion
 
@@ -143,7 +149,7 @@ daily_hydrograph_plot = pn.panel(
 pentad_forecast_plot = pn.panel(
     pn.bind(
         viz.plot_pentad_forecast_hydrograph_data,
-        _, hydrograph_pentad_all, linreg_predictor, station, date_picker
+        _, hydrograph_pentad_all, forecasts_all, station, date_picker
         ),
     min_height=300, sizing_mode='stretch_both'
     )
@@ -266,6 +272,7 @@ dashboard = pn.template.BootstrapTemplate(
     sidebar=sidebar,
     collapsed_sidebar=False,
     main=tabs,
+    favicon=icon_path
 )
 
 

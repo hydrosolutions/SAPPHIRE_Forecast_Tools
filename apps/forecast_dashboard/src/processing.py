@@ -26,9 +26,9 @@ import forecast_library as fl
 def get_icon_path(in_docker_flag):
     # Icon
     if in_docker_flag == "True":
-        icon_path = os.path.join("apps", "forecast_dashboard", "www", "Pentad.jpg")
+        icon_path = os.path.join("apps", "forecast_dashboard", "www", "Pentad.png")
     else:
-        icon_path = os.path.join("www", "Pentad.jpg")
+        icon_path = os.path.join("www", "Pentad.png")
 
     # Test if file exists and thorw an error if not
     if not os.path.isfile(icon_path):
@@ -163,6 +163,10 @@ def read_linreg_forecast_data():
     # Convert the date column to datetime. The format of the date string is %Y-%m-%d.
     linreg_forecast['date'] = pd.to_datetime(linreg_forecast['date'], format='%Y-%m-%d')
 
+    # Date is the forecast issue date. To visualize the data for the correct pentad,
+    # we need to add 1 day to the date and re-evaluate the pentad & pentad in year
+    linreg_forecast['Date'] = linreg_forecast['date'] + pd.Timedelta(days=1)
+
     # Convert code column to str
     linreg_forecast['code'] = linreg_forecast['code'].astype(str)
 
@@ -203,6 +207,8 @@ def read_forecast_results_file():
     forecast_pentad = tl.add_pentad_in_year_column(forecast_pentad)
     # Cast pentad column no number
     forecast_pentad['pentad'] = forecast_pentad['pentad'].astype(int)
+    # Add a year column
+    forecast_pentad['year'] = forecast_pentad['Date'].dt.year
 
     return forecast_pentad
 

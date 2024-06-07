@@ -5,7 +5,7 @@ import math
 import pandas as pd
 import datetime as dt
 import holoviews as hv
-from bokeh.models import FixedTicker, CustomJSTickFormatter, LinearAxis
+from bokeh.models import FixedTicker, CustomJSTickFormatter, LinearAxis, DatetimeTickFormatter
 from . import processing
 
 # Import local library
@@ -26,6 +26,15 @@ if not os.path.isdir(forecast_dir):
 sys.path.append(forecast_dir)
 # Import the modules from the forecast library
 import tag_library as tl
+
+
+# Defining colors (as global variables)
+runoff_full_range_color = "#eaf0f4"
+runoff_90percentile_range_color = "#d5e2ea"
+runoff_50percentile_range_color = "#c0d4df"
+runoff_mean_color = "#307096"
+runoff_last_year_color = "#ca97b7"
+runoff_current_year_color = "#963070"
 
 # Customization of the Bokeh plots
 def remove_bokeh_logo(plot, element):
@@ -100,7 +109,122 @@ def add_custom_xticklabels_daily(_, leap_year, plot, element):
     # Add the second x-axis to the plot
     plot.state.add_layout(second_x_axis, 'below')
 
+def add_custom_xticklabels_pentad(_, plot, element):
+    # Specify the positions and labels of the ticks. Here we use the first day
+    # of each month & pentad per month as a tick.
+    ticks = list(range(1,72,1))  # Replace with your desired positions
+    labels = {1:_('Jan')+', 1', 2:'2', 3:'3', 4:'4', 5:'5', 6:'6',
+              7:_('Feb')+', 1', 8:'2', 9:'3', 10:'4', 11:'5', 12:'6',
+              13:_('Mar')+', 1', 14:'2', 15:'3', 16:'4', 17:'5', 18:'6',
+              19:_('Apr')+', 1', 20:'2', 21:'3', 22:'4', 23:'5', 24:'6',
+              25:_('May')+', 1', 26:'2', 27:'3', 28:'4', 29:'5', 30:'6',
+              31:_('Jun')+', 1', 32:'2', 33:'3', 34:'4', 35:'5', 36:'6',
+              37:_('Jul')+', 1', 38:'2', 39:'3', 40:'4', 41:'5', 42:'6',
+              43:_('Aug')+', 1', 44:'2', 45:'3', 46:'4', 47:'5', 48:'6',
+              49:_('Sep')+', 1', 50:'2', 51:'3', 52:'4', 53:'5', 54:'6',
+              55:_('Oct')+', 1', 56:'2', 57:'3', 58:'4', 59:'5', 60:'6',
+              61:_('Nov')+', 1', 62:'2', 63:'3', 64:'4', 65:'5', 66:'6',
+              67:_('Dec')+', 1', 68:'2', 69:'3', 70:'4', 71:'5', 72:'6'}
+
+    # Create a FixedTicker and a FuncTickFormatter with the specified ticks and labels
+    ticker = FixedTicker(ticks=ticks)
+    formatter = CustomJSTickFormatter(code="""
+        var labels = %s;
+        return labels[tick];
+    """ % labels)
+
+    # Set the x-axis ticker and formatter
+    plot.handles['xaxis'].ticker = ticker
+    plot.handles['xaxis'].major_label_overrides = labels
+    plot.handles['xaxis'].formatter = formatter
+    plot.handles['xaxis'].major_label_orientation = math.pi/2
+
 # Plots for dashboard
+# region recyclable_plot_components
+def plot_runoff_line(data, date_col, line_data_col, label_text, color):
+    """
+    Creats a line plot for runoff values. Can be used for daily or pentadal data.
+
+    Args:
+    data DataFrame containing the data to be plotted
+    date_col String name of the column containing the dates
+    line_data_col String name of the column containing the runoff values
+    label_text String legend entry for the line
+    color String color of the line
+
+    Returns:
+    hv.Curve plot of the runoff values
+    """
+    line = hv.Curve(
+        data,
+        kdims=[date_col],
+        vdims=[line_data_col],
+        label=label_text) \
+        .opts(color=color,
+              line_width=2,
+              tools=['hover'])
+
+    return line
+
+def plot_runoff_range_area(
+          data, date_col, min_col, max_col, range_legend_entry, range_color):
+    """
+    Creates an area plot for the range of runoff values. can be used for daily or pentadal data.
+
+    Args:
+    data DataFrame containing the data to be plotted
+    date_col String name of the column containing the dates
+    min_col String name of the column containing the minimum runoff values
+    max_col String name of the column containing the maximum runoff values
+    range_legend_entry String legend entry for the range area
+    range_color String color of the range area
+
+    Returns:
+    hv.Area plot of the range of runoff values
+    """
+    range_area = hv.Area(
+        data,
+        kdims=[date_col],
+        vdims=[min_col, max_col],
+        label=range_legend_entry) \
+            .opts(color=range_color,
+                  alpha=0.5, muted_alpha=0.1,
+                  line_width=0)
+
+    return range_area
+
+def plot_runoff_range_bound(data, date_col, range_bound_col, range_color, hover_tool=True):
+    """
+    Creates a line plot for the range of runoff values. can be used for daily or pentadal data.
+    """
+
+    if hover_tool:
+        boundary_line = hv.Curve(
+            data,
+            kdims=[date_col],
+            vdims=[range_bound_col]) \
+                .opts(
+            color=range_color,
+            line_width=0,
+            line_alpha=0,
+            show_legend=False,
+            tools=['hover'])
+    else:
+        boundary_line = hv.Curve(
+            data,
+            kdims=[date_col],
+            vdims=[range_bound_col]) \
+                .opts(
+            color=range_color,
+            line_width=0,
+            line_alpha=0,
+            show_legend=False,
+            tools=[])
+
+    return boundary_line
+
+# endregion
+
 # region predictor_tab
 def plot_daily_hydrograph_data(_, hydrograph_day_all, linreg_predictor, station, title_date):
 
@@ -111,6 +235,7 @@ def plot_daily_hydrograph_data(_, hydrograph_day_all, linreg_predictor, station,
 
     # filter hydrograph_day_all & linreg_predictor by station
     linreg_predictor = processing.add_predictor_dates(linreg_predictor, station, title_date)
+    print(linreg_predictor)
 
     data = hydrograph_day_all[hydrograph_day_all['station_labels'] == station]
     current_year = data['date'].dt.year.max()
@@ -123,6 +248,7 @@ def plot_daily_hydrograph_data(_, hydrograph_day_all, linreg_predictor, station,
 
     # Rename columns to be used in the plot to allow internationalization
     data = data.rename(columns={
+        'date': _('date column name'),
         'day_of_year': _('day_of_year column name'),
         'min': _('min column name'),
         'max': _('max column name'),
@@ -135,6 +261,7 @@ def plot_daily_hydrograph_data(_, hydrograph_day_all, linreg_predictor, station,
         str(current_year): _('Current year column name')
         })
     linreg_predictor = linreg_predictor.rename({
+        'date': _('date column name'),
         'day_of_year': _('day_of_year column name'),
         'predictor': _('Predictor column name')
         })
@@ -164,118 +291,46 @@ def plot_daily_hydrograph_data(_, hydrograph_day_all, linreg_predictor, station,
         .opts(alpha=0.2, color="#709630", line_width=0,
               muted_alpha=0.05)
 
-    full_range_area = hv.Area(
-        data,
-        kdims=[_('day_of_year column name')],
-        vdims=[_('min column name'), _('max column name')],
-        label=_("Full range legend entry")) \
-        .opts(color="#eaf0f4",
-              alpha=0.5, muted_alpha=0.1,
-              line_width=0)
+    full_range_area = plot_runoff_range_area(
+        data, _('day_of_year column name'), _('min column name'), _('max column name'),
+        _("Full range legend entry"), runoff_full_range_color)
+    lower_bound = plot_runoff_range_bound(
+        data, _('day_of_year column name'), _('min column name'), runoff_full_range_color)
+    upper_bound = plot_runoff_range_bound(
+        data, _('day_of_year column name'), _('max column name'), runoff_full_range_color)
 
-    lower_bound = hv.Curve(
-        data,
-        kdims=[_('day_of_year column name')],
-        vdims=[_('min column name')],
-        label=_("Full range legend entry")) \
-        .opts(color="#eaf0f4",
-          line_width=0,
-          tools=['hover'],
-              show_legend=False)
+    area_05_95 = plot_runoff_range_area(
+        data, _('day_of_year column name'), _('5% column name'), _('95% column name'),
+        _("90-percentile range legend entry"), runoff_90percentile_range_color)
+    line_05 = plot_runoff_range_bound(
+        data, _('day_of_year column name'), _('5% column name'), runoff_90percentile_range_color)
+    line_95 = plot_runoff_range_bound(
+        data, _('day_of_year column name'), _('95% column name'), runoff_90percentile_range_color)
 
-    upper_bound = hv.Curve(
-        data,
-        kdims=[_('day_of_year column name')],
-        vdims=[_('max column name')],
-        label=_("Full range legend entry")) \
-        .opts(color="#eaf0f4",
-          line_width=0,
-          tools=['hover'],
-              show_legend=False)
+    area_25_75 = plot_runoff_range_area(
+        data, _('day_of_year column name'), _('25% column name'), _('75% column name'),
+        _("50-percentile range legend entry"), runoff_50percentile_range_color)
+    line_25 = plot_runoff_range_bound(
+        data, _('day_of_year column name'), _('25% column name'), runoff_50percentile_range_color)
+    line_75 = plot_runoff_range_bound(
+        data, _('day_of_year column name'), _('75% column name'), runoff_50percentile_range_color)
 
-    line_05 = hv.Curve(
-        data,
-        kdims=[_('day_of_year column name')],
-        vdims=[_('5% column name')],
-        label=_("5-percentile legend entry")) \
-        .opts(color="#d5e2ea",
-              line_width=0,
-              tools=['hover'],
-              show_legend=False)
-    line_95 = hv.Curve(
-        data,
-        kdims=[_('day_of_year column name')],
-        vdims=[_('95% column name')],
-        label=_("95-percentile legend entry")) \
-        .opts(color="#d5e2ea",
-              line_width=0,
-              tools=['hover'],
-              show_legend=False)
-    area_05_95 = hv.Area(
-        data,
-        kdims=[_('day_of_year column name')],
-        vdims=[_('5% column name'), _('95% column name')],
-        label=_("90-percentile range legend entry")) \
-        .opts(color="#d5e2ea",
-              alpha=0.5, muted_alpha=0.1,
-              line_width=0)
-
-    line_25 = hv.Curve(
-        data,
-        kdims=[_('day_of_year column name')],
-        vdims=[_('25% column name')],
-        label=_("25-percentile legend entry")) \
-        .opts(color="#c0d4df",
-              line_width=0,
-              tools=['hover'],
-              show_legend=False)
-    line_75 = hv.Curve(
-        data,
-        kdims=[_('day_of_year column name')],
-        vdims=[_('75% column name')],
-        label=_("75-percentile legend entry")) \
-        .opts(color="#c0d4df",
-              line_width=0,
-              tools=['hover'],
-              show_legend=False)
-    area_25_75 = hv.Area(
-        data,
-        kdims=[_('day_of_year column name')],
-        vdims=[_('25% column name'), _('75% column name')],
-        label=_("50-percentile range legend entry")) \
-        .opts(color="#c0d4df",
-              alpha=0.5, muted_alpha=0.1,
-              line_width=0)
-    mean = hv.Curve(
-        data,
-        kdims=[_('day_of_year column name')],
-        vdims=[_('mean column name')],
-        label=_('Mean legend entry')) \
-        .opts(color="#307096",
-              line_width=2,
-              tools=['hover'])
-    last_year = hv.Curve(
-        data,
-        kdims=[_('day_of_year column name')],
-        vdims=[ _('Last year column name')],
-        label=_('Last year legend entry')) \
-        .opts(color="#ca97b7",
-              line_width=2)
-    current_year = hv.Curve(
-        data,
-        kdims=[_('day_of_year column name')],
-        vdims=[_('Current year column name')],
-        label=_('Current year legend entry')) \
-        .opts(color="#963070",
-              line_width=2,
-              tools=['hover'])
+    mean = plot_runoff_line(
+        data, _('date column name'), _('mean column name'),
+        _('Mean legend entry'), runoff_mean_color)
+    last_year = plot_runoff_line(
+        data, _('day_of_year column name'), _('Last year column name'),
+        _('Last year legend entry'), runoff_last_year_color)
+    current_year = plot_runoff_line(
+        data, _('day_of_year column name'), _('Current year column name'),
+        _('Current year legend entry'), runoff_current_year_color)
 
     # Overlay the plots
-    daily_hydrograph = full_range_area * lower_bound * upper_bound * \
-        area_05_95 * line_05 * line_95 * \
-        area_25_75 * line_25 * line_75 * \
-        last_year * hvspan_predictor * hvspan_forecast * \
-        mean * current_year
+    daily_hydrograph = mean  #full_range_area * lower_bound * upper_bound * \
+        #area_05_95 * line_05 * line_95 * \
+        #area_25_75 * line_25 * line_75 * \
+        #last_year * hvspan_predictor * hvspan_forecast * \
+        #mean * current_year
 
     daily_hydrograph.opts(
         title=title_text,
@@ -286,6 +341,7 @@ def plot_daily_hydrograph_data(_, hydrograph_day_all, linreg_predictor, station,
         show_legend=True,
         hooks=[remove_bokeh_logo,
                lambda p, e: add_custom_xticklabels_daily(_, linreg_predictor['leap_year'].iloc[0], p, e)],
+        xformatter=DatetimeTickFormatter(days="%b %d", months="%b %d", years="%b"),
         tools=['hover'],
         toolbar='above')
 
@@ -294,7 +350,7 @@ def plot_daily_hydrograph_data(_, hydrograph_day_all, linreg_predictor, station,
 # endregion
 
 # region forecast_tab
-def plot_pentad_forecast_hydrograph_data(_, hydrograph_day_all, linreg_predictor, station, title_date):
+def plot_pentad_forecast_hydrograph_data(_, hydrograph_day_all, forecasts, station, title_date):
 
     # Date handling
     # Set the title date to the date of the last available data if the forecast date is in the future
@@ -304,11 +360,16 @@ def plot_pentad_forecast_hydrograph_data(_, hydrograph_day_all, linreg_predictor
     # filter hydrograph_day_all & linreg_predictor by station
     #linreg_predictor = processing.add_predictor_dates(linreg_predictor, station, title_date)
 
+    # Filter forecasts for the current year and station
+    forecasts = forecasts[(forecasts['station_labels'] == station) &
+                            (forecasts['year'] == title_date.year)]
+    #print("forecasts:\n", forecasts)
+
     data = hydrograph_day_all[hydrograph_day_all['station_labels'] == station]
     current_year = data['date'].dt.year.max()
     last_year = current_year - 1
 
-    print("data:\n", data)
+    print("DEBUG data.pentad 1:\n", data.head(1))
 
     # Define strings
     title_text = _("Hydropost ") + station + _(" on ") + title_date.strftime("%Y-%m-%d")
@@ -333,112 +394,47 @@ def plot_pentad_forecast_hydrograph_data(_, hydrograph_day_all, linreg_predictor
     #    'predictor': _('Predictor column name')
     #    })
 
+
     # Create a holoviews bokeh plots of the daily hydrograph
-    full_range_area = hv.Area(
-        data,
-        kdims=[_('pentad_of_year column name')],
-        vdims=[_('min column name'), _('max column name')],
-        label=_("Full range legend entry")) \
-        .opts(color="#eaf0f4",
-              alpha=0.5, muted_alpha=0.1,
-              line_width=0)
+    full_range_area = plot_runoff_range_area(
+        data, _('pentad_of_year column name'), _('min column name'), _('max column name'),
+        _("Full range legend entry"), runoff_full_range_color)
+    lower_bound = plot_runoff_range_bound(
+        data, _('pentad_of_year column name'), _('min column name'),
+        runoff_full_range_color, hover_tool=False)
+    upper_bound = plot_runoff_range_bound(
+        data, _('pentad_of_year column name'), _('max column name'),
+        runoff_full_range_color, hover_tool=False)
 
-    lower_bound = hv.Curve(
-        data,
-        kdims=[_('pentad_of_year column name')],
-        vdims=[_('min column name')],
-        label=_("Full range legend entry")) \
-        .opts(color="#eaf0f4",
-          line_width=0,
-          tools=['hover'],
-              show_legend=False)
+    area_05_95 = plot_runoff_range_area(
+        data, _('pentad_of_year column name'), _('5% column name'), _('95% column name'),
+        _("90-percentile range legend entry"), runoff_90percentile_range_color)
+    line_05 = plot_runoff_range_bound(
+        data, _('pentad_of_year column name'), _('5% column name'),
+        runoff_90percentile_range_color, hover_tool=False)
+    line_95 = plot_runoff_range_bound(
+        data, _('pentad_of_year column name'), _('95% column name'),
+        runoff_90percentile_range_color, hover_tool=False)
 
-    upper_bound = hv.Curve(
-        data,
-        kdims=[_('pentad_of_year column name')],
-        vdims=[_('max column name')],
-        label=_("Full range legend entry")) \
-        .opts(color="#eaf0f4",
-          line_width=0,
-          tools=['hover'],
-              show_legend=False)
+    area_25_75 = plot_runoff_range_area(
+        data, _('pentad_of_year column name'), _('25% column name'), _('75% column name'),
+        _("50-percentile range legend entry"), runoff_50percentile_range_color)
+    line_25 = plot_runoff_range_bound(
+        data, _('pentad_of_year column name'), _('25% column name'),
+        runoff_50percentile_range_color, hover_tool=False)
+    line_75 = plot_runoff_range_bound(
+        data, _('pentad_of_year column name'), _('75% column name'),
+        runoff_50percentile_range_color, hover_tool=False)
 
-    line_05 = hv.Curve(
-        data,
-        kdims=[_('pentad_of_year column name')],
-        vdims=[_('5% column name')],
-        label=_("5-percentile legend entry")) \
-        .opts(color="#d5e2ea",
-              line_width=0,
-              tools=['hover'],
-              show_legend=False)
-    line_95 = hv.Curve(
-        data,
-        kdims=[_('pentad_of_year column name')],
-        vdims=[_('95% column name')],
-        label=_("95-percentile legend entry")) \
-        .opts(color="#d5e2ea",
-              line_width=0,
-              tools=['hover'],
-              show_legend=False)
-    area_05_95 = hv.Area(
-        data,
-        kdims=[_('pentad_of_year column name')],
-        vdims=[_('5% column name'), _('95% column name')],
-        label=_("90-percentile range legend entry")) \
-        .opts(color="#d5e2ea",
-              alpha=0.5, muted_alpha=0.1,
-              line_width=0)
-
-    line_25 = hv.Curve(
-        data,
-        kdims=[_('pentad_of_year column name')],
-        vdims=[_('25% column name')],
-        label=_("25-percentile legend entry")) \
-        .opts(color="#c0d4df",
-              line_width=0,
-              tools=['hover'],
-              show_legend=False)
-    line_75 = hv.Curve(
-        data,
-        kdims=[_('pentad_of_year column name')],
-        vdims=[_('75% column name')],
-        label=_("75-percentile legend entry")) \
-        .opts(color="#c0d4df",
-              line_width=0,
-              tools=['hover'],
-              show_legend=False)
-    area_25_75 = hv.Area(
-        data,
-        kdims=[_('pentad_of_year column name')],
-        vdims=[_('25% column name'), _('75% column name')],
-        label=_("50-percentile range legend entry")) \
-        .opts(color="#c0d4df",
-              alpha=0.5, muted_alpha=0.1,
-              line_width=0)
-    mean = hv.Curve(
-        data,
-        kdims=[_('pentad_of_year column name')],
-        vdims=[_('mean column name')],
-        label=_('Mean legend entry')) \
-        .opts(color="#307096",
-              line_width=2,
-              tools=['hover'])
-    last_year = hv.Curve(
-        data,
-        kdims=[_('pentad_of_year column name')],
-        vdims=[ _('Last year column name')],
-        label=_('Last year legend entry')) \
-        .opts(color="#ca97b7",
-              line_width=2)
-    current_year = hv.Curve(
-        data,
-        kdims=[_('pentad_of_year column name')],
-        vdims=[_('Current year column name')],
-        label=_('Current year legend entry')) \
-        .opts(color="#963070",
-              line_width=2,
-              tools=['hover'])
+    mean = plot_runoff_line(
+        data, _('pentad_of_year column name'), _('mean column name'),
+        _('Mean legend entry'), runoff_mean_color)
+    last_year = plot_runoff_line(
+        data, _('pentad_of_year column name'), _('Last year column name'),
+        _('Last year legend entry'), runoff_last_year_color)
+    current_year = plot_runoff_line(
+        data, _('pentad_of_year column name'), _('Current year column name'),
+        _('Current year legend entry'), runoff_current_year_color)
 
     # Overlay the plots
     daily_hydrograph = full_range_area * lower_bound * upper_bound * \
@@ -454,8 +450,8 @@ def plot_pentad_forecast_hydrograph_data(_, hydrograph_day_all, linreg_predictor
         height=400,
         show_grid=True,
         show_legend=True,
-        hooks=[remove_bokeh_logo],
-        #       lambda p, e: add_custom_xticklabels_daily(_, linreg_predictor['leap_year'].iloc[0], p, e)],
+        hooks=[remove_bokeh_logo,
+               lambda p, e: add_custom_xticklabels_pentad(_, p, e)],
         tools=['hover'],
         toolbar='above')
 
