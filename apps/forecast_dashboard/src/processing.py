@@ -202,13 +202,15 @@ def read_forecast_results_file():
     # last one
     # Print all values where column code is 15102. Sort the values by Date in ascending order.
     # Print the last 20 values.
-    forecast_pentad = forecast_pentad.drop_duplicates(subset=['Date', 'code'], keep='last').sort_values('Date')
+    forecast_pentad = forecast_pentad.drop_duplicates(subset=['Date', 'code', 'model_short'], keep='last').sort_values('Date')
     # Get the pentad of the year.
     forecast_pentad = tl.add_pentad_in_year_column(forecast_pentad)
     # Cast pentad column no number
     forecast_pentad['pentad'] = forecast_pentad['pentad'].astype(int)
     # Add a year column
     forecast_pentad['year'] = forecast_pentad['Date'].dt.year
+    # Drop duplicates in Date, code and model_short columns
+    forecast_pentad = forecast_pentad.drop_duplicates(subset=['Date', 'code', 'model_short'], keep='last')
 
     return forecast_pentad
 
@@ -276,6 +278,12 @@ def add_predictor_dates(linreg_predictor, station, date):
     if (predictor['forecast_start_date'].dt.day == 26).any():
         predictor['forecast_end_date'] = predictor['forecast_start_date'] + pd.offsets.MonthEnd(0)
 
+    # Add 23 hours and 58 minutes to the forecast_end_date
+    predictor['forecast_end_date'] = predictor['forecast_end_date'] + pd.Timedelta(hours=23, minutes=58)
+
+    # Define predictor end date to be 23 hours plus 58 minutes after for 'date'
+    predictor['predictor_end_date'] = predictor['date'] + pd.Timedelta(hours=23, minutes=58)
+
     # Add a day_of_year column to the predictor DataFrame
     predictor['day_of_year'] = predictor['date'].dt.dayofyear
     predictor['predictor_start_day_of_year'] = float(predictor['predictor_start_date'].dt.dayofyear.iloc[0]) - 0.2
@@ -284,7 +292,7 @@ def add_predictor_dates(linreg_predictor, station, date):
     predictor['forecast_end_day_of_year'] = predictor['forecast_end_date'].dt.dayofyear + 0.8
 
     # Test if 'date' is a leap year
-    if (predictor['date'].dt.year % 4 != 0).any():
+    if (predictor['date'].dt.year % 4 != 0).any() or (predictor['date'].dt.year % 100 == 0).any() and (predictor['date'].dt.year % 400 != 0).any():
         predictor['leap_year'] = False
     else:
         predictor['leap_year'] = True
@@ -314,7 +322,25 @@ def get_month_name_for_number(_, month_number):
     }
     return month_names[month_number]
 
+def internationalize_forecast_model_names(_, forecasts_all, model_long_col='model_long', model_short_col='model_short'):
+    """
+    Replaces the strings in model_long and model_short columns with the
+    corresponding translations.
 
+    Args:
+        forecasts_all (pd.DataFrame): The forecast results DataFrame.
+        model_long_col (str): The column name for the long model names.
+        model_short_col (str): The column name for the short model names.
+
+    Returns:
+        pd.DataFrame: The forecast results DataFrame with translated model names.
+    """
+    forecasts_all[model_long_col] = forecasts_all[model_long_col].apply(lambda x: _('Forecast models ' + x))
+    forecasts_all[model_short_col] = forecasts_all[model_short_col].apply(lambda x: _('Forecast models ' + x))
+    #print("Inernationalized forecast model names:\n", forecasts_all[model_long_col].unique())
+    #print(forecasts_all[model_short_col].unique())
+
+    return forecasts_all
 
 
 

@@ -101,6 +101,7 @@ def main():
         logger.info(f"Tail of data decad: {data_decad.tail()}")
 
     # Save pentadal data
+    print("DEBUG data_pentad\n", data_pentad.tail(10))
     fl.write_pentad_hydrograph_data(data_pentad)
     fl.write_pentad_time_series_data(data_pentad)
 

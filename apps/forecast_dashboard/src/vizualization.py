@@ -1,11 +1,13 @@
 # vizualization.py
 import os
+import random
 import sys
 import math
 import pandas as pd
 import datetime as dt
+import time
 import holoviews as hv
-from bokeh.models import FixedTicker, CustomJSTickFormatter, LinearAxis, DatetimeTickFormatter
+from bokeh.models import HoverTool, FixedTicker, FuncTickFormatter, CustomJSTickFormatter, LinearAxis, DatetimeTickFormatter
 from . import processing
 
 # Import local library
@@ -35,6 +37,16 @@ runoff_50percentile_range_color = "#c0d4df"
 runoff_mean_color = "#307096"
 runoff_last_year_color = "#ca97b7"
 runoff_current_year_color = "#963070"
+runoff_forecast_color_list = ["#455c1d", "#536f24", "#62832a", "#709630", "#7ea936", "#8dbd3c", "#99c64d"]
+
+# Update visibility of sidepane widgets
+def update_sidepane_card_visibility(tabs, card, event):
+    if tabs.active == 1:
+        card.visible = True
+        card.visible = True
+    else:
+        card.visible = False
+        card.visible = False
 
 # Customization of the Bokeh plots
 def remove_bokeh_logo(plot, element):
@@ -109,6 +121,93 @@ def add_custom_xticklabels_daily(_, leap_year, plot, element):
     # Add the second x-axis to the plot
     plot.state.add_layout(second_x_axis, 'below')
 
+def add_custom_xticklabels_daily_dates(_, leap_year, plot, element):
+    # Specify the positions and labels of the ticks. Here we use the first day
+    # of each month & pentad per month as a tick.
+
+    # Create date ticks for the current year. Ticks are on the first day of the
+    # year, then on the 5th, 10th, 15th, 20th, 25th and on the last day of each
+    # month. The last tick is on the last day of the year.
+    # Check if the dashboard is opened in a leap year
+    year = dt.datetime.now().year
+
+    if leap_year:
+        month_day_tuples = [(1, 1), (1, 6), (1, 11), (1, 16), (1, 21), (1, 26),  # Jan
+                (2, 5), (2, 10), (2, 15), (2, 20), (2, 25), (2, 29),
+                (3, 5), (3, 10), (3, 15), (3, 20), (3, 25), (3, 31),  # Mar
+                (4, 5), (4, 10), (4, 15), (4, 20), (4, 25), (4, 30),
+                (5, 5), (5, 10), (5, 15), (5, 20), (5, 25), (5, 31),  # May
+                (6, 5), (6, 10), (6, 15), (6, 20), (6, 25), (6, 30),
+                (7, 5), (7, 10), (7, 15), (7, 20), (7, 25), (7, 31),  # Jul
+                (8, 5), (8, 10), (8, 15), (8, 20), (8, 25), (8, 31),
+                (9, 5), (9, 10), (9, 15), (9, 20), (9, 25), (9, 30),  # Sep
+                (10, 5), (10, 10), (10, 15), (10, 20), (10, 25), (10, 31),
+                (11, 5), (11, 10), (11, 15), (11, 20), (11, 25), (11, 30),  # Nov
+                (12, 5), (12, 10), (12, 15), (12, 20), (12, 25), (12, 31)]
+    else:
+        month_day_tuples = [(1, 1), (1, 6), (1, 11), (1, 16), (1, 21), (1, 26),  # Jan
+                (2, 5), (2, 10), (2, 15), (2, 20), (2, 25), (2, 28),
+                (3, 5), (3, 10), (3, 15), (3, 20), (3, 25), (3, 31),  # Mar
+                (4, 5), (4, 10), (4, 15), (4, 20), (4, 25), (4, 30),
+                (5, 5), (5, 10), (5, 15), (5, 20), (5, 25), (5, 31),  # May
+                (6, 5), (6, 10), (6, 15), (6, 20), (6, 25), (6, 30),
+                (7, 5), (7, 10), (7, 15), (7, 20), (7, 25), (7, 31),  # Jul
+                (8, 5), (8, 10), (8, 15), (8, 20), (8, 25), (8, 31),
+                (9, 5), (9, 10), (9, 15), (9, 20), (9, 25), (9, 30),  # Sep
+                (10, 5), (10, 10), (10, 15), (10, 20), (10, 25), (10, 31),
+                (11, 5), (11, 10), (11, 15), (11, 20), (11, 25), (11, 30),  # Nov
+                (12, 5), (12, 10), (12, 15), (12, 20), (12, 25), (12, 31)]
+
+    # Create a date for each tick, based on days, months (1-12), and the year
+    datetimes = [dt.datetime(year, month, day) for month, day in month_day_tuples]
+    print("datetimes\n", datetimes[0])
+    # Convert datetimes to timestamps
+    timestamps = [int(time.mktime(dt.timetuple())) for dt in datetimes]
+    print("ticks\n", timestamps[0])
+
+    labels = {timestamps[0]:_('Jan')+', 1', timestamps[1]:'2', timestamps[2]:'3',
+              timestamps[3]:'4', timestamps[4]:'5', timestamps[5]:'6',
+              timestamps[6]:_('Feb')+', 1', timestamps[7]:'2', timestamps[8]:'3',
+              timestamps[9]:'4', timestamps[10]:'5', timestamps[11]:'6',
+              timestamps[12]:_('Mar')+', 1', timestamps[13]:'2', timestamps[14]:'3',
+              timestamps[15]:'4', timestamps[16]:'5', timestamps[17]:'6',
+              timestamps[18]:_('Apr')+', 1', timestamps[19]:'2', timestamps[20]:'3',
+              timestamps[21]:'4', timestamps[22]:'5', timestamps[23]:'6',
+              timestamps[24]:_('May')+', 1', timestamps[25]:'2', timestamps[26]:'3',
+              timestamps[27]:'4', timestamps[28]:'5', timestamps[29]:'6',
+              timestamps[30]:_('Jun')+', 1', timestamps[31]:'2', timestamps[32]:'3',
+              timestamps[33]:'4', timestamps[34]:'5', timestamps[35]:'6',
+              timestamps[36]:_('Jul')+', 1', timestamps[37]:'2', timestamps[38]:'3',
+              timestamps[39]:'4', timestamps[40]:'5', timestamps[41]:'6',
+              timestamps[42]:_('Aug')+', 1', timestamps[43]:'2', timestamps[44]:'3',
+              timestamps[45]:'4', timestamps[46]:'5', timestamps[47]:'6',
+              timestamps[48]:_('Sep')+', 1', timestamps[49]:'2', timestamps[50]:'3',
+              timestamps[51]:'4', timestamps[52]:'5', timestamps[53]:'6',
+              timestamps[54]:_('Oct')+', 1', timestamps[55]:'2', timestamps[56]:'3',
+              timestamps[57]:'4', timestamps[58]:'5', timestamps[59]:'6',
+              timestamps[60]:_('Nov')+', 1', timestamps[61]:'2', timestamps[62]:'3',
+              timestamps[63]:'4', timestamps[64]:'5', timestamps[65]:'6',
+              timestamps[66]:_('Dec')+', 1', timestamps[67]:'2', timestamps[68]:'3',
+              timestamps[69]:'4', timestamps[70]:'5', timestamps[71]:'6'}
+
+    print("labels\n", labels[0])
+
+    # Create a FixedTicker and a CustomJSTickFormatter with the specified ticks and labels
+    ticker = FixedTicker(ticks=list(labels.keys()))
+
+    # Create a CustomJSTickFormatter with the specified ticks and labels
+    formatter = CustomJSTickFormatter(code="""
+                                  return labels[tick] || tick;
+                                  """, args={'labels': labels})
+
+    # Create a second x-axis and set its range to match the original x-axis
+    second_x_axis = LinearAxis(
+        ticker=ticker, formatter=formatter, axis_label=_('Month, pentad in month'),
+        major_label_orientation=math.pi/2)
+
+    # Add the second x-axis to the plot
+    plot.state.add_layout(second_x_axis, 'below')
+
 def add_custom_xticklabels_pentad(_, plot, element):
     # Specify the positions and labels of the ticks. Here we use the first day
     # of each month & pentad per month as a tick.
@@ -155,6 +254,8 @@ def plot_runoff_line(data, date_col, line_data_col, label_text, color):
     Returns:
     hv.Curve plot of the runoff values
     """
+
+    # Create the curve
     line = hv.Curve(
         data,
         kdims=[date_col],
@@ -162,9 +263,59 @@ def plot_runoff_line(data, date_col, line_data_col, label_text, color):
         label=label_text) \
         .opts(color=color,
               line_width=2,
-              tools=['hover'])
+              tools=['hover'],
+              show_legend=True)
 
     return line
+
+def plot_runoff_forecasts(data, date_col, forecast_data_col,
+        forecast_name_col, runoff_forecast_color_list):
+
+    overlay = None
+
+    # Decide which colors to display
+    # list of unique models in data
+    models = data[forecast_name_col].unique()
+    if len(models) > len(runoff_forecast_color_list):
+        # Add some random colors if there are more models than colors
+        runoff_forecast_color = runoff_forecast_color_list + ['#%06X' % random.randint(0, 0xFFFFFF) for i in range(len(models) - len(runoff_forecast_color_list))]
+    elif len(models) == 1:
+        # Use the middle color in the list
+        runoff_forecast_color = [runoff_forecast_color_list[3]]
+    elif len(models) == 2:
+        # Use the second and second from last colors in the list
+        runoff_forecast_color = [runoff_forecast_color_list[1], runoff_forecast_color_list[-2]]
+    elif len(models) == 3:
+        runoff_forecast_color = [runoff_forecast_color_list[1], runoff_forecast_color_list[3], runoff_forecast_color_list[-2]]
+    elif len(models) == 4:
+        runoff_forecast_color = [runoff_forecast_color_list[0], runoff_forecast_color_list[2], runoff_forecast_color_list[4], runoff_forecast_color_list[-1]]
+    elif len(models) == 5:
+        runoff_forecast_color = [runoff_forecast_color_list[0], runoff_forecast_color_list[1], runoff_forecast_color_list[3], runoff_forecast_color_list[4], runoff_forecast_color_list[-1]]
+    elif len(models) == 6:
+        runoff_forecast_color = [runoff_forecast_color_list[0], runoff_forecast_color_list[1], runoff_forecast_color_list[2], runoff_forecast_color_list[3], runoff_forecast_color_list[4], runoff_forecast_color_list[-1]]
+    elif len(models) == 7:
+        runoff_forecast_color = runoff_forecast_color_list
+
+    # Create the overlay
+    for i, model in enumerate(models):
+        model_data = data[data[forecast_name_col] == model]
+        line = hv.Curve(
+            data,
+            kdims=[date_col],
+            vdims=[forecast_data_col],
+            label=model) \
+                .opts(color=runoff_forecast_color[i],
+                        line_width=2,
+                        tools=['hover'],
+                        show_legend=True)
+
+        if overlay is None:
+            overlay = line
+        else:
+            overlay *= line
+
+    return overlay
+
 
 def plot_runoff_range_area(
           data, date_col, min_col, max_col, range_legend_entry, range_color):
@@ -189,7 +340,8 @@ def plot_runoff_range_area(
         label=range_legend_entry) \
             .opts(color=range_color,
                   alpha=0.5, muted_alpha=0.1,
-                  line_width=0)
+                  line_width=0,
+                  show_legend=True,)
 
     return range_area
 
@@ -223,10 +375,63 @@ def plot_runoff_range_bound(data, date_col, range_bound_col, range_color, hover_
 
     return boundary_line
 
+def plot_pentadal_vlines(data, date_col):
+    # Based on the date_col, identify the year we are in
+    year = data[date_col].dt.year.max()
+    # Create a list of the dates for each pentad of the year
+    pentads = [dt.datetime(year, month, day) for month, day in [
+            (1, 1), (1, 6), (1, 11), (1, 16), (1, 21), (1, 26),  # Jan
+            (2, 1), (2, 6), (2, 11), (2, 16), (2, 21), (2, 26),
+            (3, 1), (3, 6), (3, 11), (3, 16), (3, 21), (3, 26),  # Mar
+            (4, 1), (4, 6), (4, 11), (4, 16), (4, 21), (4, 26),
+            (5, 1), (5, 6), (5, 11), (5, 16), (5, 21), (5, 26),  # May
+            (6, 1), (6, 6), (6, 11), (6, 16), (6, 21), (6, 26),
+            (7, 1), (7, 6), (7, 11), (7, 16), (7, 21), (7, 26),  # Jul
+            (8, 1), (8, 6), (8, 11), (8, 16), (8, 21), (8, 26),
+            (9, 1), (9, 6), (9, 11), (9, 16), (9, 21), (9, 26),  # Sep
+            (10, 1), (10, 6), (10, 11), (10, 16), (10, 21), (10, 26),
+            (11, 1), (11, 6), (11, 11), (11, 16), (11, 21), (11, 26),  # Nov
+            (12, 1), (12, 6), (12, 11), (12, 16), (12, 21), (12, 26)]]
+
+    # Make sure the pentads dates are in the same format as date_col in data
+    pentads = pd.to_datetime(pentads)
+
+    vlines = hv.Overlay(
+        [hv.VLine(date).opts(color='gray', line_width=1, line_dash='dotted', line_alpha=0.5,
+                             show_legend=False) for date in pentads])
+
+    # Add text halfway between two VLines
+    mid_date_text = ['1', '2', '3', '4', '5', '6', '1', '2', '3', '4', '5', '6',
+                     '1', '2', '3', '4', '5', '6', '1', '2', '3', '4', '5', '6',
+                     '1', '2', '3', '4', '5', '6', '1', '2', '3', '4', '5', '6',
+                     '1', '2', '3', '4', '5', '6', '1', '2', '3', '4', '5', '6',
+                     '1', '2', '3', '4', '5', '6', '1', '2', '3', '4', '5', '6',
+                     '1', '2', '3', '4', '5', '6', '1', '2', '3', '4', '5', '6']
+    for i in range(0, len(pentads)):
+        mid_date = pentads[i] + dt.timedelta(days=2.2)
+        vlines *= hv.Text(mid_date, 1, mid_date_text[i]) \
+            .opts(text_baseline='bottom', text_align='center', text_font_size='9pt',
+                  text_color='gray', text_alpha=0.5, text_font_style='italic',
+                  show_legend=False)
+
+    return vlines
+
 # endregion
 
 # region predictor_tab
 def plot_daily_hydrograph_data(_, hydrograph_day_all, linreg_predictor, station, title_date):
+
+    # Custom hover tool tip for the daily hydrograph
+    date_col = _('date column name')
+    mean_col = _('mean column name')
+    last_year_col = _('Last year column name')
+    current_year_col = _('Current year column name')
+    min_col = _('min column name')
+    max_col = _('max column name')
+    q05_col = _('5% column name')
+    q95_col = _('95% column name')
+    q25_col = _('25% column name')
+    q75_col = _('75% column name')
 
     # Date handling
     # Set the title date to the date of the last available data if the forecast date is in the future
@@ -235,7 +440,6 @@ def plot_daily_hydrograph_data(_, hydrograph_day_all, linreg_predictor, station,
 
     # filter hydrograph_day_all & linreg_predictor by station
     linreg_predictor = processing.add_predictor_dates(linreg_predictor, station, title_date)
-    print(linreg_predictor)
 
     data = hydrograph_day_all[hydrograph_day_all['station_labels'] == station]
     current_year = data['date'].dt.year.max()
@@ -248,100 +452,94 @@ def plot_daily_hydrograph_data(_, hydrograph_day_all, linreg_predictor, station,
 
     # Rename columns to be used in the plot to allow internationalization
     data = data.rename(columns={
-        'date': _('date column name'),
+        'date': date_col,
         'day_of_year': _('day_of_year column name'),
-        'min': _('min column name'),
-        'max': _('max column name'),
-        '5%': _('5% column name'),
-        '95%': _('95% column name'),
-        '25%': _('25% column name'),
-        '75%': _('75% column name'),
-        'mean': _('mean column name'),
-        str(last_year): _('Last year column name'),
-        str(current_year): _('Current year column name')
+        'min': min_col,
+        'max': max_col,
+        '5%': q05_col,
+        '95%': q95_col,
+        '25%': q25_col,
+        '75%': q75_col,
+        'mean': mean_col,
+        str(last_year): last_year_col,
+        str(current_year): current_year_col
         })
     linreg_predictor = linreg_predictor.rename({
-        'date': _('date column name'),
+        'date': date_col,
         'day_of_year': _('day_of_year column name'),
         'predictor': _('Predictor column name')
         })
 
+    print(linreg_predictor.columns)
     # Create a holoviews bokeh plots of the daily hydrograph
-    hvspan_predictor = hv.Area(
-        pd.DataFrame(
-            {"x":[linreg_predictor['predictor_start_day_of_year'].values[0],
-                  linreg_predictor['predictor_start_day_of_year'].values[0],
-                  linreg_predictor['predictor_end_day_of_year'].values[0],
-                  linreg_predictor['predictor_end_day_of_year'].values[0]],
-             "y":[0.0, max(data[_('max column name')])*1.1,
-                  max(data[_('max column name')])*1.1, 0.0]}),
-            kdims=["x"], vdims=["y"], label=predictor_string) \
-        .opts(alpha=0.2, color="#963070", line_width=0,
-              muted_alpha=0.05)
+    hvspan_predictor = hv.VSpan(
+        linreg_predictor['predictor_start_date'].values[0],
+        linreg_predictor['predictor_end_date'].values[0],
+        label=predictor_string) \
+            .opts(color=runoff_current_year_color, alpha=0.2, line_width=0,
+                  muted_alpha=0.05, show_legend=False)
 
-    hvspan_forecast = hv.Area(
-        pd.DataFrame(
-            {"x":[linreg_predictor['forecast_start_day_of_year'].values[0],
-                  linreg_predictor['forecast_start_day_of_year'].values[0],
-                  linreg_predictor['forecast_end_day_of_year'].values[0],
-                  linreg_predictor['forecast_end_day_of_year'].values[0]],
-             "y":[0.0, max(data[_('max column name')])*1.1,
-                  max(data[_('max column name')])*1.1, 0.0]}),
-            kdims=["x"], vdims=["y"], label=forecast_string) \
-        .opts(alpha=0.2, color="#709630", line_width=0,
-              muted_alpha=0.05)
+    hvspan_forecast = hv.VSpan(
+        linreg_predictor['forecast_start_date'].values[0],
+        linreg_predictor['forecast_end_date'].values[0],
+        label=forecast_string) \
+            .opts(color=runoff_forecast_color_list[3], alpha=0.2, line_width=0,
+                  muted_alpha=0.05, show_legend=False)
+
+    vlines = plot_pentadal_vlines(data, _('date column name'))
 
     full_range_area = plot_runoff_range_area(
-        data, _('day_of_year column name'), _('min column name'), _('max column name'),
-        _("Full range legend entry"), runoff_full_range_color)
+        data, date_col, min_col, max_col, _("Full range legend entry"),
+        runoff_full_range_color)
     lower_bound = plot_runoff_range_bound(
-        data, _('day_of_year column name'), _('min column name'), runoff_full_range_color)
+        data, date_col, min_col, runoff_full_range_color)
     upper_bound = plot_runoff_range_bound(
-        data, _('day_of_year column name'), _('max column name'), runoff_full_range_color)
+        data, date_col, max_col, runoff_full_range_color)
 
     area_05_95 = plot_runoff_range_area(
-        data, _('day_of_year column name'), _('5% column name'), _('95% column name'),
+        data, date_col, q05_col, q95_col,
         _("90-percentile range legend entry"), runoff_90percentile_range_color)
     line_05 = plot_runoff_range_bound(
-        data, _('day_of_year column name'), _('5% column name'), runoff_90percentile_range_color)
+        data, date_col, q05_col, runoff_90percentile_range_color)
     line_95 = plot_runoff_range_bound(
-        data, _('day_of_year column name'), _('95% column name'), runoff_90percentile_range_color)
+        data, date_col, q95_col, runoff_90percentile_range_color)
 
     area_25_75 = plot_runoff_range_area(
-        data, _('day_of_year column name'), _('25% column name'), _('75% column name'),
+        data, date_col, q25_col, q75_col,
         _("50-percentile range legend entry"), runoff_50percentile_range_color)
     line_25 = plot_runoff_range_bound(
-        data, _('day_of_year column name'), _('25% column name'), runoff_50percentile_range_color)
+        data, date_col, q25_col, runoff_50percentile_range_color)
     line_75 = plot_runoff_range_bound(
-        data, _('day_of_year column name'), _('75% column name'), runoff_50percentile_range_color)
+        data, date_col, q75_col, runoff_50percentile_range_color)
 
     mean = plot_runoff_line(
-        data, _('date column name'), _('mean column name'),
-        _('Mean legend entry'), runoff_mean_color)
+        data, date_col, mean_col, _('Mean legend entry'), runoff_mean_color)
     last_year = plot_runoff_line(
-        data, _('day_of_year column name'), _('Last year column name'),
+        data, date_col, last_year_col,
         _('Last year legend entry'), runoff_last_year_color)
     current_year = plot_runoff_line(
-        data, _('day_of_year column name'), _('Current year column name'),
+        data, date_col, current_year_col,
         _('Current year legend entry'), runoff_current_year_color)
 
     # Overlay the plots
-    daily_hydrograph = mean  #full_range_area * lower_bound * upper_bound * \
-        #area_05_95 * line_05 * line_95 * \
-        #area_25_75 * line_25 * line_75 * \
-        #last_year * hvspan_predictor * hvspan_forecast * \
-        #mean * current_year
+    daily_hydrograph = full_range_area * lower_bound * upper_bound * \
+        area_05_95 * line_05 * line_95 * \
+        area_25_75 * line_25 * line_75 * \
+        vlines * \
+        last_year * hvspan_predictor * hvspan_forecast * \
+        mean * current_year
 
     daily_hydrograph.opts(
         title=title_text,
-        xlabel=_('Day of the year (starting from January 1st)'),
+        xlabel="",
         ylabel=_('Discharge (m³/s)'),
         height=400,
         show_grid=True,
         show_legend=True,
-        hooks=[remove_bokeh_logo,
-               lambda p, e: add_custom_xticklabels_daily(_, linreg_predictor['leap_year'].iloc[0], p, e)],
-        xformatter=DatetimeTickFormatter(days="%b %d", months="%b %d", years="%b"),
+        hooks=[remove_bokeh_logo],
+        #       lambda p, e: add_custom_xticklabels_daily_dates(_, linreg_predictor['leap_year'].iloc[0], p, e)],
+        xformatter=DatetimeTickFormatter(days="%b %d", months="%b %d"),
+        ylim=(0, data[max_col].max() * 1.1),
         tools=['hover'],
         toolbar='above')
 
@@ -350,7 +548,8 @@ def plot_daily_hydrograph_data(_, hydrograph_day_all, linreg_predictor, station,
 # endregion
 
 # region forecast_tab
-def plot_pentad_forecast_hydrograph_data(_, hydrograph_day_all, forecasts, station, title_date):
+def plot_pentad_forecast_hydrograph_data(_, hydrograph_pentad_all, forecasts_all,
+                                         station, title_date, model_selection):
 
     # Date handling
     # Set the title date to the date of the last available data if the forecast date is in the future
@@ -361,11 +560,11 @@ def plot_pentad_forecast_hydrograph_data(_, hydrograph_day_all, forecasts, stati
     #linreg_predictor = processing.add_predictor_dates(linreg_predictor, station, title_date)
 
     # Filter forecasts for the current year and station
-    forecasts = forecasts[(forecasts['station_labels'] == station) &
-                            (forecasts['year'] == title_date.year)]
-    #print("forecasts:\n", forecasts)
+    forecasts = forecasts_all[(forecasts_all['station_labels'] == station) &
+                            (forecasts_all['year'] == title_date.year) &
+                            (forecasts_all['model_short'].isin(model_selection))]
 
-    data = hydrograph_day_all[hydrograph_day_all['station_labels'] == station]
+    data = hydrograph_pentad_all[hydrograph_pentad_all['station_labels'] == station]
     current_year = data['date'].dt.year.max()
     last_year = current_year - 1
 
@@ -389,6 +588,15 @@ def plot_pentad_forecast_hydrograph_data(_, hydrograph_day_all, forecasts, stati
         str(last_year): _('Last year column name'),
         str(current_year): _('Current year column name')
         })
+    forecasts = forecasts.rename(columns={
+        'pentad': _('pentad_of_year column name'),
+        'forecasted_discharge': _('forecasted_discharge column name'),
+        'model_short': _('forecast model short column name'),
+        'model_long': _('forecast model long column name')
+    })
+    print("forecasts.columns\n", forecasts.columns)
+    print("forecasts.head(10)\n", forecasts.head(10))
+    print("forecasts.tail(10)\n", forecasts.tail(10))
     #linreg_predictor = linreg_predictor.rename({
     #    'day_of_year': _('day_of_year column name'),
     #    'predictor': _('Predictor column name')
@@ -429,21 +637,23 @@ def plot_pentad_forecast_hydrograph_data(_, hydrograph_day_all, forecasts, stati
     mean = plot_runoff_line(
         data, _('pentad_of_year column name'), _('mean column name'),
         _('Mean legend entry'), runoff_mean_color)
-    last_year = plot_runoff_line(
+    """last_year = plot_runoff_line(
         data, _('pentad_of_year column name'), _('Last year column name'),
-        _('Last year legend entry'), runoff_last_year_color)
+        _('Last year legend entry'), runoff_last_year_color)"""
+    forecast_lines = plot_runoff_forecasts(
+        forecasts, _('pentad_of_year column name'), _('forecasted_discharge column name'),
+        _('forecast model short column name'), runoff_forecast_color_list)
     current_year = plot_runoff_line(
         data, _('pentad_of_year column name'), _('Current year column name'),
         _('Current year legend entry'), runoff_current_year_color)
 
     # Overlay the plots
-    daily_hydrograph = full_range_area * lower_bound * upper_bound * \
+    pentad_hydrograph = full_range_area * lower_bound * upper_bound * \
         area_05_95 * line_05 * line_95 * \
         area_25_75 * line_25 * line_75 * \
-        last_year *  \
-        mean * current_year
+        mean * current_year * forecast_lines
 
-    daily_hydrograph.opts(
+    pentad_hydrograph.opts(
         title=title_text,
         xlabel=_('Pentad of the year'),
         ylabel=_('Discharge (m³/s)'),
@@ -455,7 +665,7 @@ def plot_pentad_forecast_hydrograph_data(_, hydrograph_day_all, forecasts, stati
         tools=['hover'],
         toolbar='above')
 
-    return daily_hydrograph
+    return pentad_hydrograph
 
 
 # endregion

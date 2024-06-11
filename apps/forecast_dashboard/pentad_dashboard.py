@@ -109,23 +109,58 @@ hydrograph_day_all = processing.add_labels_to_hydrograph(hydrograph_day_all, all
 hydrograph_pentad_all = processing.add_labels_to_hydrograph(hydrograph_pentad_all, all_stations)
 linreg_predictor = processing.add_labels_to_forecast_pentad_df(linreg_predictor, all_stations)
 forecasts_all = processing.add_labels_to_forecast_pentad_df(forecasts_all, all_stations)
-print("forecasts_all:\n", forecasts_all.head())
 
+# Replace model names with translation strings
+forecasts_all = processing.internationalize_forecast_model_names(_, forecasts_all)
+
+# Create a dictionary of the model names and the corresponding model labels
+model_dict = forecasts_all[['model_short', 'model_long']] \
+    .set_index('model_long')['model_short'].to_dict()
+print(model_dict)
 # endregion
 
 
 # region widgets
-forecast_date = linreg_predictor['date'].max().date()
 
+# Widget for date selection, always visible
+forecast_date = linreg_predictor['date'].max().date()
 date_picker = pn.widgets.DatePicker(name=_("Select date:"),
                                     start=dt.datetime((forecast_date.year-1), 1, 5).date(),
                                     end=forecast_date,
                                     value=forecast_date)
 
+# Widget for station selection, always visible
 station = pn.widgets.Select(
     name=_("Select discharge station:"),
     options=station_list,
     value=station_list[0])
+
+# Widget for forecast model selection, only visible in forecast tab
+model_checkbox = pn.widgets.CheckBoxGroup(
+    name=_("Select forecast model:"),
+    options=model_dict,
+    value=[model_dict['Forecast models Linear regression (LR)']],
+    width=280
+)
+
+# endregion
+
+# region forecast_card
+
+# Forecast card
+forecast_model_title = pn.pane.Markdown(
+    _("Select forecast model:"), margin=(0, 0, -10, 0))
+forecast_card = pn.Card(
+    pn.Column(
+        forecast_model_title,
+        model_checkbox,
+    ),
+    title=_('Configure forecasts:'),
+    width_policy='fit', width=station.width,
+    collapsed=False
+)
+# Initially hide the card
+forecast_card.visible = False
 
 # endregion
 
@@ -149,7 +184,7 @@ daily_hydrograph_plot = pn.panel(
 pentad_forecast_plot = pn.panel(
     pn.bind(
         viz.plot_pentad_forecast_hydrograph_data,
-        _, hydrograph_pentad_all, forecasts_all, station, date_picker
+        _, hydrograph_pentad_all, forecasts_all, station, date_picker, model_checkbox
         ),
     min_height=300, sizing_mode='stretch_both'
     )
@@ -252,6 +287,8 @@ else: # If no_date_overlap_flag == True
         sizing_mode='stretch_both'
     )
 
+# Sidebar
+
 sidebar = pn.Column(
     pn.Row(pn.Card(station,
                    title=_('Hydropost:'),)),
@@ -259,6 +296,7 @@ sidebar = pn.Column(
                    title=_('Date:'),
                    width_policy='fit', width=station.width,
                    collapsed=False)),
+    pn.Row(forecast_card),
     #pn.Row(range_selection),
     #pn.Row(manual_range),
     #pn.Row(print_button),
@@ -266,6 +304,11 @@ sidebar = pn.Column(
     #            width_policy='fit', width=station.width)),
 )
 
+# Update the layout
+# Update the widgets conditional on the active tab
+tabs.param.watch(lambda event: viz.update_sidepane_card_visibility(tabs, forecast_card, event), 'active')
+
+# Define the layout
 dashboard = pn.template.BootstrapTemplate(
     title=_('SAPPHIRE Central Asia - Pentadal forecast dashboard'),
     logo=icon_path,

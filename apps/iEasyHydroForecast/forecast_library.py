@@ -866,14 +866,6 @@ def get_pentadal_and_decadal_data(forecast_flags=None,
     # Read discharge data and filter for sites required to produce forecasts
     discharge_all = read_daily_discharge_data_from_csv()
 
-    # Print discharge all for site code 15102, filter for the first 5 days of the years 2023 and 2024
-    print("DEBUG: forecasting:get_pentadal_and_decadal_data: discharge_all: \n",
-          discharge_all[(discharge_all['code'] == "15102") & (discharge_all['date'] < dt.datetime.strptime('2023-01-06', '%Y-%m-%d'))].tail(5))
-    print(discharge_all[(discharge_all['code'] == "15102") & (discharge_all['date'] < dt.datetime.strptime('2023-01-06', '%Y-%m-%d'))].tail(5).mean())
-    print("DEBUG: forecasting:get_pentadal_and_decadal_data: discharge_all: \n",
-            discharge_all[(discharge_all['code'] == "15102") & (discharge_all['date'] < dt.datetime.strptime('2024-01-06', '%Y-%m-%d'))].tail(5))
-    print(discharge_all[(discharge_all['code'] == "15102") & (discharge_all['date'] < dt.datetime.strptime('2024-01-06', '%Y-%m-%d'))].tail(5).mean())
-
     # Aggregate predictors and forecast variables
     data_pentad, data_decad = generate_issue_and_forecast_dates(
         pd.DataFrame(discharge_all),
@@ -1705,6 +1697,16 @@ def write_pentad_hydrograph_data(data: pd.DataFrame):
     if 'discharge_sum' in data.columns:
         data = data.rename(columns={'discharge_sum': 'predictor'})
 
+    # These runoff statistics are now written to the date of the forecast
+    # production. For the hydrograph output, we want the date to reflect the
+    # pentad, the data is collected for. Therefore, we add 1 day to the 'date'
+    # column and recalculate pentad and pentad_in_year.
+    # Add 1 day to the date column
+    data.loc[:, 'date'] = data.loc[:, 'date'] + pd.DateOffset(days=1)
+    # Calculate pentad and pentad_in_year
+    data.loc[:, 'pentad'] = data['date'].apply(tl.get_pentad)
+    data.loc[:, 'pentad_in_year'] = data['date'].apply(tl.get_pentad_in_year)
+
     # Calculate runoff statistics
     runoff_stats = data. \
         reset_index(drop=True). \
@@ -1740,6 +1742,11 @@ def write_pentad_hydrograph_data(data: pd.DataFrame):
 
     # Round all values to 3 decimal places
     runoff_stats = runoff_stats.round(3)
+
+    # Sort the DataFrame by 'code' and 'pentad_in_year', using 'pentad_in_year'
+    # as numerical values
+    runoff_stats['pentad_in_year'] = runoff_stats['pentad_in_year'].astype(int)
+    runoff_stats = runoff_stats.sort_values(by=['code', 'pentad_in_year'])
 
     # Get the path to the intermediate data folder from the environmental
     # variables and the name of the ieasyforecast_hydrograph_pentad_file.
@@ -1791,6 +1798,16 @@ def write_decad_hydrograph_data(data: pd.DataFrame):
     if 'discharge_sum' in data.columns:
         data = data.rename(columns={'discharge_sum': 'predictor'})
 
+    # These runoff statistics are now written to the date of the forecast
+    # production. For the hydrograph output, we want the date to reflect the
+    # decad, the data is collected for. Therefore, we add 1 day to the 'date'
+    # column and recalculate decad and decad_in_year.
+    # Add 1 day to the date column
+    data.loc[:, 'date'] = data.loc[:, 'date'] + pd.DateOffset(days=1)
+    # Calculate decad and decad_in_year
+    data.loc[:, 'decad'] = data['date'].apply(tl.get_decad_in_month)
+    data.loc[:, 'decad_in_year'] = data['date'].apply(tl.get_decad_in_year)
+
     # Calculate runoff statistics
     runoff_stats = data. \
         reset_index(drop=True). \
@@ -1826,6 +1843,11 @@ def write_decad_hydrograph_data(data: pd.DataFrame):
 
     # Round all values to 3 decimal places
     runoff_stats = runoff_stats.round(3)
+
+    # Sort the DataFrame by 'code' and 'decad_in_year', using 'decad_in_year'
+    # as numerical values
+    runoff_stats['decad_in_year'] = runoff_stats['decad_in_year'].astype(int)
+    runoff_stats = runoff_stats.sort_values(by=['code', 'decad_in_year'])
 
     # Get the path to the intermediate data folder from the environmental
     # variables and the name of the ieasyforecast_hydrograph_decad_file.
@@ -1880,6 +1902,16 @@ def write_pentad_time_series_data(data: pd.DataFrame):
     data['discharge_avg'] = data['discharge_avg'].round(3)
     data['predictor'] = data['predictor'].round(3)
 
+    # These runoff statistics are now written to the date of the forecast
+    # production. For the hydrograph output, we want the date to reflect the
+    # pentad, the data is collected for. Therefore, we add 1 day to the 'date'
+    # column and recalculate pentad and pentad_in_year.
+    # Add 1 day to the date column
+    data.loc[:, 'date'] = data.loc[:, 'date'] + pd.DateOffset(days=1)
+    # Calculate pentad and pentad_in_year
+    data.loc[:, 'pentad'] = data['date'].apply(tl.get_pentad)
+    data.loc[:, 'pentad_in_year'] = data['date'].apply(tl.get_pentad_in_year)
+
     # Get the path to the intermediate data folder from the environmental
     # variables and the name of the ieasyforecast_hydrograph_pentad_file.
     # Concatenate them to the output file path.
@@ -1932,6 +1964,16 @@ def write_decad_time_series_data(data: pd.DataFrame):
     # Round data in the discharge_avg and predictor columns to 3 decimal places
     data['discharge_avg'] = data['discharge_avg'].round(3)
     data['predictor'] = data['predictor'].round(3)
+
+    # These runoff statistics are now written to the date of the forecast
+    # production. For the hydrograph output, we want the date to reflect the
+    # decad, the data is collected for. Therefore, we add 1 day to the 'date'
+    # column and recalculate decad and decad_in_year.
+    # Add 1 day to the date column
+    data.loc[:, 'date'] = data.loc[:, 'date'] + pd.DateOffset(days=1)
+    # Calculate decad and decad_in_year
+    data.loc[:, 'decad_in_month'] = data['date'].apply(tl.get_decad_in_month)
+    data.loc[:, 'decad_in_year'] = data['date'].apply(tl.get_decad_in_year)
 
     # Get the path to the intermediate data folder from the environmental
     # variables and the name of the ieasyforecast_hydrograph_pentad_file.
