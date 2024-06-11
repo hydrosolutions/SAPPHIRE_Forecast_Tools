@@ -624,6 +624,14 @@ def read_linreg_forecasts_pentad():
     stats = data[["date", "code", "q_mean", "q_std_sigma", "delta"]]
     forecasts = data.drop(columns=["q_mean", "q_std_sigma", "delta", "discharge_avg"])
 
+    # Add one day to date
+    forecasts.loc[:, "date"] = forecasts.loc[:, "date"] + pd.DateOffset(days=1)
+    stats.loc[:, "date"] = stats.loc[:, "date"] + pd.DateOffset(days=1)
+
+    # Recalculate pentad in month and pentad in year
+    forecasts["pentad_in_month"] = forecasts["date"].apply(tl.get_pentad)
+    forecasts["pentad_in_year"] = forecasts["date"].apply(tl.get_pentad_in_year)
+
     return forecasts, stats
 
 def read_observed_and_modelled_data_pentade():

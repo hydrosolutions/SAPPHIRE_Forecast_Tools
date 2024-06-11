@@ -1187,8 +1187,9 @@ def forecast_accuracy_hydromet(data: pd.DataFrame, observed_col: str, simulated_
 
     # Calculate the forecast accuracy
     accuracy = (abs(data[observed_col] - data[simulated_col]) <= data[delta_col]).mean()
+    delta = data[delta_col].iloc[-1]
 
-    return pd.Series([accuracy], index=['accuracy'])
+    return pd.Series([delta, accuracy], index=['delta', 'accuracy'])
 
 def mae(data: pd.DataFrame, observed_col: str, simulated_col: str):
     """
@@ -1336,7 +1337,9 @@ def calculate_skill_metrics_pentade(observed: pd.DataFrame, simulated: pd.DataFr
         pd.DataFrame: The DataFrame containing the skill metrics for each model
             and hydropost.
     """
-    print("observed: \n", observed.tail(10))
+    #print("observed: \n", observed.tail(10))
+    #print("simulated: \n", simulated.tail(10))
+
     # Test the input. Make sure that the DataFrames contain the required columns
     if not all(column in observed.columns for column in ['code', 'date', 'discharge_avg', 'model_long', 'model_short', 'delta']):
         raise ValueError(f'Observed DataFrame is missing one or more required columns: {["code", "date", "discharge_avg", "model_long", "model_short", "delta"]}')
@@ -2018,6 +2021,12 @@ def save_pentadal_skill_metrics(data: pd.DataFrame):
 
     # Round all values to 4 decimal places
     data = data.round(4)
+
+    # convert pentad_in_year to int
+    data['pentad_in_year'] = data['pentad_in_year'].astype(int)
+
+    # Sort in ascending order by 'pentad_in_year', 'code', and 'model_short'
+    data = data.sort_values(by=['pentad_in_year', 'code', 'model_short'])
 
     filepath = os.path.join(
         os.getenv("ieasyforecast_intermediate_data_path"),
