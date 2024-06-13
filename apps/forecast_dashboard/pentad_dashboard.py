@@ -99,6 +99,8 @@ hydrograph_pentad_all = processing.read_hydrograph_pentad_data_for_pentad_foreca
 linreg_predictor = processing.read_linreg_forecast_data()
 # - forecast results from all models
 forecasts_all = processing.read_forecast_results_file()
+# Forecast statistics
+forecast_stats = processing.read_forecast_stats_file()
 
 # Hydroposts metadata
 station_list, all_stations, station_df = processing.read_all_stations_metadata_from_file(
@@ -112,11 +114,22 @@ forecasts_all = processing.add_labels_to_forecast_pentad_df(forecasts_all, all_s
 
 # Replace model names with translation strings
 forecasts_all = processing.internationalize_forecast_model_names(_, forecasts_all)
+forecast_stats = processing.internationalize_forecast_model_names(_, forecast_stats)
+
+print(forecasts_all.columns)
+print(forecasts_all['model_short'].unique())
+print(forecasts_all[(forecasts_all['code']=='16936') & (forecasts_all['model_short']=='Forecast models MB')].tail(20))
+
+# Merge forecast stats with forecasts by code and pentad_in_year and model_short
+forecasts_all = forecasts_all.merge(
+    forecast_stats,
+    on=['code', 'pentad_in_year', 'model_short', 'model_long'],
+    how='left')
 
 # Create a dictionary of the model names and the corresponding model labels
 model_dict = forecasts_all[['model_short', 'model_long']] \
     .set_index('model_long')['model_short'].to_dict()
-print(model_dict)
+
 # endregion
 
 
@@ -140,20 +153,38 @@ model_checkbox = pn.widgets.CheckBoxGroup(
     name=_("Select forecast model:"),
     options=model_dict,
     value=[model_dict['Forecast models Linear regression (LR)']],
-    width=280
+    width=280,
+    margin=(0, 0, 0, 0)
 )
+allowable_range_selection = pn.widgets.Select(
+    name=_("Select forecast range for display:"),
+    options=[_("delta"), _("Manual range, select value below"), _("max[delta, %]")],
+    value=_("delta"),
+    margin=(0, 0, 0, 0)
+)
+manual_range = pn.widgets.IntSlider(
+    name=_("Manual range (%)"),
+    start=0,
+    end=100,
+    value=20,
+    step=1,
+    margin=(20, 0, 0, 0)  # martin=(top, right, bottom, left)
+)
+manual_range.visible = False
 
 # endregion
 
 # region forecast_card
 
-# Forecast card
+# Forecast card for sidepanel
 forecast_model_title = pn.pane.Markdown(
-    _("Select forecast model:"), margin=(0, 0, -10, 0))
+    _("Select forecast model:"), margin=(0, 0, -15, 0))  # martin=(top, right, bottom, left)
 forecast_card = pn.Card(
     pn.Column(
         forecast_model_title,
         model_checkbox,
+        allowable_range_selection,
+        manual_range
     ),
     title=_('Configure forecasts:'),
     width_policy='fit', width=station.width,
@@ -179,14 +210,23 @@ daily_hydrograph_plot = pn.panel(
         viz.plot_daily_hydrograph_data,
         _, hydrograph_day_all, linreg_predictor, station, date_picker
         ),
-    min_height=300, sizing_mode='stretch_both'
+    sizing_mode='stretch_both'
     )
 pentad_forecast_plot = pn.panel(
     pn.bind(
         viz.plot_pentad_forecast_hydrograph_data,
-        _, hydrograph_pentad_all, forecasts_all, station, date_picker, model_checkbox
+        _, hydrograph_pentad_all, forecasts_all, station, date_picker,
+        model_checkbox, allowable_range_selection, manual_range
         ),
-    min_height=300, sizing_mode='stretch_both'
+    sizing_mode='stretch_both'
+    )
+forecast_summary_table = pn.panel(
+    pn.bind(
+        viz.create_forecast_summary_table,
+        _, forecasts_all, station, date_picker, model_checkbox,
+        allowable_range_selection, manual_range
+        ),
+    sizing_mode='stretch_width'
     )
 
 # Dynamically update sidepanel
@@ -238,7 +278,7 @@ if no_date_overlap_flag == False:
          ),
         ),
         (_('Forecast'),
-         pn.Column(
+         #pn.Column(
         #     pn.Row(
         #        pn.Card(data_table, title=_('Data table'), collapsed=True),
         #        pn.Card(linear_regression, title=_("Linear regression"), collapsed=True)
@@ -247,14 +287,23 @@ if no_date_overlap_flag == False:
         #         pn.Card(norm_table, title=_('Norm statistics'), sizing_mode='stretch_width'),),
         #     pn.Row(
         #         pn.Card(forecast_table, title=_('Forecast table'), sizing_mode='stretch_width')),
-             pn.Row(
-                 pn.Card(pentad_forecast_plot, title=_('Forecast'))
-        ),
+                 pn.Card(
+                     pentad_forecast_plot,
+                     title=_('Hydrograph'),
+                 ),
+                 pn.Card(
+                     forecast_summary_table,
+                     title=_('Summary table'),
+                     sizing_mode='stretch_width'
+                 ),
+                 pn.Card(
+                     daily_hydrograph_plot,
+                     title=_('Analysis of the forecast'))
         #     pn.Row(
         #         pn.Card(pentad_effectiveness, title=_("Effectiveness of the methods"))),
         #     pn.Row(
         #         pn.Card(pentad_skill, title=_("Forecast accuracy")))
-        )
+        #)
         ),
         (_('Disclaimer'), footer),
         dynamic=True,
@@ -272,13 +321,21 @@ else: # If no_date_overlap_flag == True
         ),
         (_('Forecast'),
          pn.Column(
-             pn.Row(
-                 pn.Card(pentad_forecast_plot, title=_('Forecast')),
-            ),
-        #    pn.Row(
+                 pn.Card(
+                     pentad_forecast_plot,
+                     title=_('Hydrograph'),
+                     height=500,
+                     collapsible=True,
+                     collapsed=False),
+                 pn.Card(
+                     forecast_summary_table,
+                     title=_('Summary table'),
+                     sizing_mode='stretch_width',
+                 ),
+                 #pn.Card(
+                 #    pentad_forecast_plot,
+                 #    title=_('Analysis'))
         #         #pn.Card(pentad_effectiveness, title=_("Effectiveness of the methods")),
-        #    ),
-        #    pn.Row(
         #         #pn.Card(pentad_skill, title=_("Forecast accuracy")),
             )
         ),
@@ -306,7 +363,10 @@ sidebar = pn.Column(
 
 # Update the layout
 # Update the widgets conditional on the active tab
-tabs.param.watch(lambda event: viz.update_sidepane_card_visibility(tabs, forecast_card, event), 'active')
+tabs.param.watch(lambda event: viz.update_sidepane_card_visibility(
+    tabs, forecast_card, event), 'active')
+allowable_range_selection.param.watch(lambda event: viz.update_range_slider_visibility(
+    _, manual_range, event), 'value')
 
 # Define the layout
 dashboard = pn.template.BootstrapTemplate(

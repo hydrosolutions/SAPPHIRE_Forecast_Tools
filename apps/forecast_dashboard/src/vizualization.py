@@ -4,9 +4,11 @@ import random
 import sys
 import math
 import pandas as pd
+import numpy as np
 import datetime as dt
 import time
 import holoviews as hv
+import panel as pn
 from bokeh.models import HoverTool, FixedTicker, FuncTickFormatter, CustomJSTickFormatter, LinearAxis, DatetimeTickFormatter
 from . import processing
 
@@ -28,9 +30,11 @@ if not os.path.isdir(forecast_dir):
 sys.path.append(forecast_dir)
 # Import the modules from the forecast library
 import tag_library as tl
+import forecast_library as fl
 
 
 # Defining colors (as global variables)
+# https://www.color-hex.com/color/307096
 runoff_full_range_color = "#eaf0f4"
 runoff_90percentile_range_color = "#d5e2ea"
 runoff_50percentile_range_color = "#c0d4df"
@@ -47,6 +51,14 @@ def update_sidepane_card_visibility(tabs, card, event):
     else:
         card.visible = False
         card.visible = False
+
+def update_range_slider_visibility(_, range_slider, event):
+    range_type = event.new
+    if range_type == _("delta"):
+        range_slider.visible = False
+    else:
+        range_slider.visible = True
+
 
 # Customization of the Bokeh plots
 def remove_bokeh_logo(plot, element):
@@ -269,41 +281,51 @@ def plot_runoff_line(data, date_col, line_data_col, label_text, color):
     return line
 
 def plot_runoff_forecasts(data, date_col, forecast_data_col,
-        forecast_name_col, runoff_forecast_color_list):
+        forecast_name_col, runoff_forecast_colors, unit_string):
+
+    # Return an empty plot if the data DataFrame is empty
+    if data.empty:
+        return hv.Curve([])
 
     overlay = None
 
     # Decide which colors to display
     # list of unique models in data
     models = data[forecast_name_col].unique()
-    if len(models) > len(runoff_forecast_color_list):
+    if len(models) > len(runoff_forecast_colors):
         # Add some random colors if there are more models than colors
-        runoff_forecast_color = runoff_forecast_color_list + ['#%06X' % random.randint(0, 0xFFFFFF) for i in range(len(models) - len(runoff_forecast_color_list))]
+        runoff_forecast_color = runoff_forecast_colors + ['#%06X' % random.randint(0, 0xFFFFFF) for i in range(len(models) - len(runoff_forecast_colors))]
     elif len(models) == 1:
         # Use the middle color in the list
-        runoff_forecast_color = [runoff_forecast_color_list[3]]
+        runoff_forecast_color = [runoff_forecast_colors[3]]
     elif len(models) == 2:
         # Use the second and second from last colors in the list
-        runoff_forecast_color = [runoff_forecast_color_list[1], runoff_forecast_color_list[-2]]
+        runoff_forecast_color = [runoff_forecast_colors[1], runoff_forecast_colors[-2]]
     elif len(models) == 3:
-        runoff_forecast_color = [runoff_forecast_color_list[1], runoff_forecast_color_list[3], runoff_forecast_color_list[-2]]
+        runoff_forecast_color = [runoff_forecast_colors[1], runoff_forecast_colors[3], runoff_forecast_colors[-2]]
     elif len(models) == 4:
-        runoff_forecast_color = [runoff_forecast_color_list[0], runoff_forecast_color_list[2], runoff_forecast_color_list[4], runoff_forecast_color_list[-1]]
+        runoff_forecast_color = [runoff_forecast_colors[0], runoff_forecast_colors[2], runoff_forecast_colors[4], runoff_forecast_colors[-1]]
     elif len(models) == 5:
-        runoff_forecast_color = [runoff_forecast_color_list[0], runoff_forecast_color_list[1], runoff_forecast_color_list[3], runoff_forecast_color_list[4], runoff_forecast_color_list[-1]]
+        runoff_forecast_color = [runoff_forecast_colors[0], runoff_forecast_colors[1], runoff_forecast_colors[3], runoff_forecast_colors[4], runoff_forecast_colors[-1]]
     elif len(models) == 6:
-        runoff_forecast_color = [runoff_forecast_color_list[0], runoff_forecast_color_list[1], runoff_forecast_color_list[2], runoff_forecast_color_list[3], runoff_forecast_color_list[4], runoff_forecast_color_list[-1]]
+        runoff_forecast_color = [runoff_forecast_colors[0], runoff_forecast_colors[1], runoff_forecast_colors[2], runoff_forecast_colors[3], runoff_forecast_colors[4], runoff_forecast_colors[-1]]
     elif len(models) == 7:
-        runoff_forecast_color = runoff_forecast_color_list
+        runoff_forecast_color = runoff_forecast_colors
 
     # Create the overlay
     for i, model in enumerate(models):
         model_data = data[data[forecast_name_col] == model]
+        print("MODEL: ", model)
+        print("COLOR: ", runoff_forecast_color[i])
+        # Get the latest forecast for the model
+        latest_forecast = fl.round_discharge(model_data[forecast_data_col].iloc[-1])
+        legend_entry = model + ": " + latest_forecast + " " + unit_string
+        # Create the curve
         line = hv.Curve(
-            data,
+            model_data,
             kdims=[date_col],
             vdims=[forecast_data_col],
-            label=model) \
+            label=legend_entry) \
                 .opts(color=runoff_forecast_color[i],
                         line_width=2,
                         tools=['hover'],
@@ -315,7 +337,6 @@ def plot_runoff_forecasts(data, date_col, forecast_data_col,
             overlay *= line
 
     return overlay
-
 
 def plot_runoff_range_area(
           data, date_col, min_col, max_col, range_legend_entry, range_color):
@@ -344,6 +365,76 @@ def plot_runoff_range_area(
                   show_legend=True,)
 
     return range_area
+
+def plot_runoff_forecast_range_area(
+          data, date_col, forecast_name_col, min_col, max_col, runoff_forecast_colors, unit_string):
+    """
+    Creates an area plot for the range of runoff values. can be used for daily or pentadal data.
+
+    Args:
+    data DataFrame containing the data to be plotted
+    date_col String name of the column containing the dates
+    min_col String name of the column containing the minimum runoff values
+    max_col String name of the column containing the maximum runoff values
+    range_legend_entry String legend entry for the range area
+    range_color String color of the range area
+
+    Returns:
+    hv.Area plot of the range of runoff values
+    """
+    # Return an empty plot if the data DataFrame is empty
+    if data.empty:
+        return hv.Curve([])
+
+    overlay = None
+
+    # Decide which colors to display
+    # list of unique models in data
+    models = data[forecast_name_col].unique()
+    if len(models) > len(runoff_forecast_colors):
+        # Add some random colors if there are more models than colors
+        runoff_forecast_color = runoff_forecast_colors + ['#%06X' % random.randint(0, 0xFFFFFF) for i in range(len(models) - len(runoff_forecast_colors))]
+    elif len(models) == 1:
+        # Use the middle color in the list
+        runoff_forecast_color = [runoff_forecast_colors[3]]
+    elif len(models) == 2:
+        # Use the second and second from last colors in the list
+        runoff_forecast_color = [runoff_forecast_colors[1], runoff_forecast_colors[-2]]
+    elif len(models) == 3:
+        runoff_forecast_color = [runoff_forecast_colors[1], runoff_forecast_colors[3], runoff_forecast_colors[-2]]
+    elif len(models) == 4:
+        runoff_forecast_color = [runoff_forecast_colors[0], runoff_forecast_colors[2], runoff_forecast_colors[4], runoff_forecast_colors[-1]]
+    elif len(models) == 5:
+        runoff_forecast_color = [runoff_forecast_colors[0], runoff_forecast_colors[1], runoff_forecast_colors[3], runoff_forecast_colors[4], runoff_forecast_colors[-1]]
+    elif len(models) == 6:
+        runoff_forecast_color = [runoff_forecast_colors[0], runoff_forecast_colors[1], runoff_forecast_colors[2], runoff_forecast_colors[3], runoff_forecast_colors[4], runoff_forecast_colors[-1]]
+    elif len(models) == 7:
+        runoff_forecast_color = runoff_forecast_colors
+
+    # Create the overlay
+    for i, model in enumerate(models):
+        model_data = data[data[forecast_name_col] == model]
+
+        lower_bound = fl.round_discharge(model_data[min_col].iloc[-1])
+        upper_bound = fl.round_discharge(model_data[max_col].iloc[-1])
+        legend_entry = model + ": " + lower_bound + "-" + upper_bound + " " + unit_string
+
+        range_area = hv.Area(
+            model_data,
+            kdims=[date_col],
+            vdims=[min_col, max_col],
+            label=legend_entry) \
+                .opts(color=runoff_forecast_color[i],
+                      alpha=0.2, muted_alpha=0.05,
+                      line_width=0,
+                      show_legend=True,)
+
+        if overlay is None:
+            overlay = range_area
+        else:
+            overlay *= range_area
+
+    return overlay
 
 def plot_runoff_range_bound(data, date_col, range_bound_col, range_color, hover_tool=True):
     """
@@ -447,7 +538,7 @@ def plot_daily_hydrograph_data(_, hydrograph_day_all, linreg_predictor, station,
 
     # Define strings
     title_text = _("Hydropost ") + station + _(" on ") + title_date.strftime("%Y-%m-%d")
-    predictor_string=_("Sum of runoff over the past 3 days: ") + f"{linreg_predictor['predictor'].values[0]}" + _(" m3/s")
+    predictor_string=_("Current year, 3 day sum: ") + f"{linreg_predictor['predictor'].values[0]}" + " " + _("m3/s")
     forecast_string=_("Forecast horizon for ") + title_pentad + _(" pentad of ") + title_month
 
     # Rename columns to be used in the plot to allow internationalization
@@ -470,19 +561,16 @@ def plot_daily_hydrograph_data(_, hydrograph_day_all, linreg_predictor, station,
         'predictor': _('Predictor column name')
         })
 
-    print(linreg_predictor.columns)
     # Create a holoviews bokeh plots of the daily hydrograph
     hvspan_predictor = hv.VSpan(
         linreg_predictor['predictor_start_date'].values[0],
-        linreg_predictor['predictor_end_date'].values[0],
-        label=predictor_string) \
+        linreg_predictor['predictor_end_date'].values[0]) \
             .opts(color=runoff_current_year_color, alpha=0.2, line_width=0,
-                  muted_alpha=0.05, show_legend=False)
+                  muted_alpha=0.05, show_legend=True)
 
     hvspan_forecast = hv.VSpan(
         linreg_predictor['forecast_start_date'].values[0],
-        linreg_predictor['forecast_end_date'].values[0],
-        label=forecast_string) \
+        linreg_predictor['forecast_end_date'].values[0]) \
             .opts(color=runoff_forecast_color_list[3], alpha=0.2, line_width=0,
                   muted_alpha=0.05, show_legend=False)
 
@@ -519,14 +607,16 @@ def plot_daily_hydrograph_data(_, hydrograph_day_all, linreg_predictor, station,
         _('Last year legend entry'), runoff_last_year_color)
     current_year = plot_runoff_line(
         data, date_col, current_year_col,
-        _('Current year legend entry'), runoff_current_year_color)
+        predictor_string,
+        #_('Current year legend entry'),
+        runoff_current_year_color)
 
     # Overlay the plots
     daily_hydrograph = full_range_area * lower_bound * upper_bound * \
         area_05_95 * line_05 * line_95 * \
         area_25_75 * line_25 * line_75 * \
         vlines * \
-        last_year * hvspan_predictor * hvspan_forecast * \
+        last_year * hvspan_forecast * hvspan_predictor * \
         mean * current_year
 
     daily_hydrograph.opts(
@@ -549,12 +639,16 @@ def plot_daily_hydrograph_data(_, hydrograph_day_all, linreg_predictor, station,
 
 # region forecast_tab
 def plot_pentad_forecast_hydrograph_data(_, hydrograph_pentad_all, forecasts_all,
-                                         station, title_date, model_selection):
+                                         station, title_date, model_selection,
+                                         range_type, range_slider):
 
     # Date handling
     # Set the title date to the date of the last available data if the forecast date is in the future
-    title_pentad = tl.get_pentad(title_date + dt.timedelta(days=1))
-    title_month = tl.get_month_str_case2_viz(_, title_date)
+    forecast_date = title_date + dt.timedelta(days=1)
+    title_pentad = tl.get_pentad(forecast_date)
+    title_month = tl.get_month_str_case2_viz(_, forecast_date)
+    title_day_start = tl.get_pentad_first_day(forecast_date.strftime("%Y-%m-%d"))
+    title_day_end = tl.get_pentad_last_day(forecast_date.strftime("%Y-%m-%d"))
 
     # filter hydrograph_day_all & linreg_predictor by station
     #linreg_predictor = processing.add_predictor_dates(linreg_predictor, station, title_date)
@@ -562,18 +656,43 @@ def plot_pentad_forecast_hydrograph_data(_, hydrograph_pentad_all, forecasts_all
     # Filter forecasts for the current year and station
     forecasts = forecasts_all[(forecasts_all['station_labels'] == station) &
                             (forecasts_all['year'] == title_date.year) &
-                            (forecasts_all['model_short'].isin(model_selection))]
+                            (forecasts_all['model_short'].isin(model_selection))].copy()
 
-    data = hydrograph_pentad_all[hydrograph_pentad_all['station_labels'] == station]
+    # Cast date to datetime
+    forecasts['date'] = pd.to_datetime(forecasts['date'])
+
+    # Filter forecasts dataframe for dates smaller than the title date
+    forecasts = forecasts[forecasts['date'] <= pd.Timestamp(title_date)+dt.timedelta(days=1)]
+
+    # Calculate the forecast ranges depending on the values of range_type and range_slider
+    if range_type == _('delta'):
+        forecasts.loc[:, 'fc_lower'] = forecasts.loc[:, 'forecasted_discharge'] - forecasts.loc[:, 'delta']
+        forecasts.loc[:, 'fc_upper'] = forecasts.loc[:, 'forecasted_discharge'] + forecasts.loc[:, 'delta']
+    elif range_type == _("Manual range, select value below"):
+        forecasts['fc_lower'] = (1 - range_slider/100.0) * forecasts['forecasted_discharge']
+        forecasts['fc_upper'] = (1 + range_slider/100.0) * forecasts['forecasted_discharge']
+    elif range_type == _("max[delta, %]"):
+        forecasts.loc[:, 'fc_lower'] = np.minimum(forecasts.loc[:, 'forecasted_discharge'] - forecasts.loc[:, 'delta'],
+                                                  (1 - range_slider/100.0) * forecasts.loc[:, 'forecasted_discharge'])
+        forecasts.loc[:, 'fc_upper'] = np.maximum(forecasts.loc[:, 'forecasted_discharge'] + forecasts.loc[:, 'delta'],
+                                                    (1 + range_slider/100.0) * forecasts.loc[:, 'forecasted_discharge'])
+
+    # Filter hydrograph data for the current station
+    data = hydrograph_pentad_all[hydrograph_pentad_all['station_labels'] == station].copy()
+
     current_year = data['date'].dt.year.max()
     last_year = current_year - 1
 
-    print("DEBUG data.pentad 1:\n", data.head(1))
+    # Convert date column of data dataframe to datetime
+    data['date'] = pd.to_datetime(data['date'])
+
+    # Set values after the title date to NaN
+    data.loc[data['date'] > pd.Timestamp(title_date), str(current_year)] = np.nan
 
     # Define strings
-    title_text = _("Hydropost ") + station + _(" on ") + title_date.strftime("%Y-%m-%d")
-    predictor_string=_("Sum of runoff over the past 3 days: ") #+ f"{linreg_predictor['predictor'].values[0]}" + _(" m3/s")
-    forecast_string=_("Forecast horizon for ") + title_pentad + _(" pentad of ") + title_month
+    title_text = (f"{_('Hydropost')} {station}: {_('Forecast')} {_('for')} "
+                  f"{title_pentad} {_('pentad')} {_('of')} {title_month} "
+                  f"({_('days')} {title_day_start}-{title_day_end})")
 
     # Rename columns to be used in the plot to allow internationalization
     data = data.rename(columns={
@@ -591,17 +710,18 @@ def plot_pentad_forecast_hydrograph_data(_, hydrograph_pentad_all, forecasts_all
     forecasts = forecasts.rename(columns={
         'pentad': _('pentad_of_year column name'),
         'forecasted_discharge': _('forecasted_discharge column name'),
+        'fc_lower': _('forecast lower bound column name'),
+        'fc_upper': _('forecast upper bound column name'),
         'model_short': _('forecast model short column name'),
         'model_long': _('forecast model long column name')
     })
-    print("forecasts.columns\n", forecasts.columns)
-    print("forecasts.head(10)\n", forecasts.head(10))
-    print("forecasts.tail(10)\n", forecasts.tail(10))
+    #print("forecasts.columns\n", forecasts.columns)
+    #print("forecasts.head(10)\n", forecasts.head(10))
+    #print("forecasts.tail(10)\n", forecasts.tail(10))
     #linreg_predictor = linreg_predictor.rename({
     #    'day_of_year': _('day_of_year column name'),
     #    'predictor': _('Predictor column name')
     #    })
-
 
     # Create a holoviews bokeh plots of the daily hydrograph
     full_range_area = plot_runoff_range_area(
@@ -640,24 +760,40 @@ def plot_pentad_forecast_hydrograph_data(_, hydrograph_pentad_all, forecasts_all
     """last_year = plot_runoff_line(
         data, _('pentad_of_year column name'), _('Last year column name'),
         _('Last year legend entry'), runoff_last_year_color)"""
-    forecast_lines = plot_runoff_forecasts(
-        forecasts, _('pentad_of_year column name'), _('forecasted_discharge column name'),
-        _('forecast model short column name'), runoff_forecast_color_list)
     current_year = plot_runoff_line(
         data, _('pentad_of_year column name'), _('Current year column name'),
         _('Current year legend entry'), runoff_current_year_color)
+
+    forecast_area = plot_runoff_forecast_range_area(
+        data=forecasts,
+        date_col=_('pentad_of_year column name'),
+        forecast_name_col=_('forecast model short column name'),
+        min_col=_('forecast lower bound column name'),
+        max_col= _('forecast upper bound column name'),
+        runoff_forecast_colors=runoff_forecast_color_list,
+        unit_string=_("m³/s"))
+    forecast_lower_bound = plot_runoff_range_bound(
+        forecasts, _('pentad_of_year column name'), _('forecast lower bound column name'),
+        runoff_forecast_color_list[3], hover_tool=True)
+    forecast_upper_bound = plot_runoff_range_bound(
+        forecasts, _('pentad_of_year column name'), _('forecast upper bound column name'),
+        runoff_forecast_color_list[3], hover_tool=True)
+    forecast_line = plot_runoff_forecasts(
+        forecasts, _('pentad_of_year column name'), _('forecasted_discharge column name'),
+        _('forecast model short column name'), runoff_forecast_color_list, _('m³/s'))
 
     # Overlay the plots
     pentad_hydrograph = full_range_area * lower_bound * upper_bound * \
         area_05_95 * line_05 * line_95 * \
         area_25_75 * line_25 * line_75 * \
-        mean * current_year * forecast_lines
+        forecast_area * forecast_lower_bound * forecast_upper_bound * \
+        mean * current_year * forecast_line
 
     pentad_hydrograph.opts(
         title=title_text,
         xlabel=_('Pentad of the year'),
         ylabel=_('Discharge (m³/s)'),
-        height=400,
+        #height=300,
         show_grid=True,
         show_legend=True,
         hooks=[remove_bokeh_logo,
@@ -667,7 +803,68 @@ def plot_pentad_forecast_hydrograph_data(_, hydrograph_pentad_all, forecasts_all
 
     return pentad_hydrograph
 
+def create_forecast_summary_table(_, forecasts_all, station, date_picker,
+                                  model_selection, range_type, range_slider):
 
+    # Filter forecasts_all for selected station, date and models
+    forecast_table = forecasts_all[(forecasts_all['station_labels'] == station)].copy()
+
+    # Cast date column to datetime
+    forecast_table['date'] = pd.to_datetime(forecast_table['date'])
+
+    # Filter further for the selected date and models
+    forecast_table = forecast_table[(forecast_table['date'] <= (pd.Timestamp(date_picker) + pd.Timedelta(days=1))) &
+                            (forecast_table['model_short'].isin(model_selection))].copy().reset_index(drop=True)
+
+    # Select the row with the maximum date
+    forecast_table = forecast_table.loc[forecast_table['date']==max(forecast_table['date'])]
+    print("forecast_table\n", forecast_table)
+
+    # Drop a couple of columns
+    forecast_table.drop(
+        columns=['code', 'date', 'Date', 'year', 'pentad_in_year',
+                 'pentad', 'pentad_in_month', 'model_long', 'station_labels'],
+        inplace=True)
+
+    # Calculate the forecast range depending on the values of range_type and range_slider
+    forecast_table = processing.calculate_forecast_range(_, forecast_table, range_type, range_slider)
+
+    # Get columns in the desired sequence
+    forecast_table = forecast_table[['model_short', 'forecasted_discharge', 'fc_lower', 'fc_upper', 'delta', 'sdivsigma', 'mae', 'accuracy']]
+
+    # Round delta, sdivsigma and mae to 2 decimals each
+    forecast_table['delta'] = forecast_table['delta'].round(2)
+    forecast_table['sdivsigma'] = forecast_table['sdivsigma'].round(2)
+    forecast_table['mae'] = forecast_table['mae'].round(2)
+
+    # Round lower and  upper bound to 3 decimals each
+    forecast_table['fc_lower'] = forecast_table['fc_lower'].round(3)
+    forecast_table['fc_upper'] = forecast_table['fc_upper'].round(3)
+
+    # Rename columns to be used in the plot to allow internationalization
+    forecast_table = forecast_table.rename(columns={
+        'forecasted_discharge': _('Forecasted discharge'),
+        'delta': _('δ'),
+        'month': _('Month'),
+        'station_labels': _('Hydropost'),
+        'sdivsigma': _('s/σ'),
+        'mae': _('MAE'),
+        'nse': _('NSE'),
+        'accuracy': _('Accuracy'),
+        'fc_lower': _('Forecast lower bound'),
+        'fc_upper': _('Forecast upper bound'),
+        'model_short': _('Model')
+        })
+
+    norm_stats_table = pn.widgets.Tabulator(
+        value=forecast_table.head(),
+        #formatters={'Pentad': "{:,}"},
+        editors={_('δ'): None},
+        theme='bootstrap',
+        show_index=False,
+        selectable='checkbox')
+
+    return norm_stats_table
 # endregion
 
 

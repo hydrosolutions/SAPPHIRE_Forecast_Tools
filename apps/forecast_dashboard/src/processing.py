@@ -1,6 +1,7 @@
 import os
 import sys
 import pandas as pd
+import numpy as np
 
 # Get the absolute path of the directory containing the current script
 cwd = os.getcwd()
@@ -214,6 +215,27 @@ def read_forecast_results_file():
 
     return forecast_pentad
 
+def read_forecast_stats_file():
+    forecast_stats_file = os.path.join(
+        os.getenv("ieasyforecast_intermediate_data_path"),
+        os.getenv("ieasyforecast_pentadal_skill_metrics_file")
+    )
+    # Test if file exists and thorw an error if not
+    if not os.path.isfile(forecast_stats_file):
+        raise Exception("File not found: " + forecast_stats_file)
+
+    # Read forecast results
+    forecast_stats = pd.read_csv(forecast_stats_file)
+
+    # Test if forecast_stats is empty
+    if forecast_stats.empty:
+        raise Exception("File is empty: " + forecast_stats_file)
+
+    # Make sure code column is a string
+    forecast_stats['code'] = forecast_stats['code'].astype(str)
+
+    return forecast_stats
+
 def read_analysis_file():
     file = os.path.join(
         os.getenv("ieasyforecast_intermediate_data_path"),
@@ -263,8 +285,6 @@ def add_predictor_dates(linreg_predictor, station, date):
     predictor = predictor[predictor['date'] <= pd.Timestamp(date)]
     # Get the latest date in the predictor data
     predictor = predictor.sort_values('date').iloc[-1:]
-
-    print("DEBUG: predictor\n", predictor)
 
     # Add start and end days for predictor period and forecast period
     predictor['predictor_start_date'] = predictor['date'] - pd.DateOffset(days=2)
@@ -322,7 +342,9 @@ def get_month_name_for_number(_, month_number):
     }
     return month_names[month_number]
 
-def internationalize_forecast_model_names(_, forecasts_all, model_long_col='model_long', model_short_col='model_short'):
+def internationalize_forecast_model_names(_, forecasts_all,
+                                          model_long_col='model_long',
+                                          model_short_col='model_short'):
     """
     Replaces the strings in model_long and model_short columns with the
     corresponding translations.
@@ -498,6 +520,42 @@ def add_labels_to_forecast_pentad_df(forecast_pentad, all_stations):
     forecast_pentad = forecast_pentad.drop(columns=['river_ru', 'punkt_ru'])
 
     return forecast_pentad
+
+# --- Data processing --------------------------------------------------------
+def calculate_forecast_range(_, forecast_table, range_type, range_slider):
+    """
+    Calculate the forecast range based on the selected range type and the
+    range slider value.
+
+    Args:
+        _ (gettext.gettext): The gettext function.
+        forecast_table (pd.DataFrame): The forecast table.
+        range_type (str): The selected range type.
+        range_slider (float): The selected range slider value.
+
+    Returns:
+        pd.DataFrame: The forecast table with the calculated forecast range.
+    """
+    if range_type == _('delta'):
+        forecast_table['fc_lower'] = forecast_table['forecasted_discharge'] - forecast_table['delta']
+        forecast_table['fc_upper'] = forecast_table['forecasted_discharge'] + forecast_table['delta']
+    elif range_type == _("Manual range, select value below"):
+        forecast_table['fc_lower'] = (1 - range_slider/100.0) * forecast_table['forecasted_discharge']
+        forecast_table['fc_upper'] = (1 + range_slider/100.0) * forecast_table['forecasted_discharge']
+    elif range_type == _("max[delta, %]"):
+        forecast_table['fc_lower'] = np.minimum(forecast_table['forecasted_discharge'] - forecast_table['delta'],
+                                                (1 - range_slider/100.0) * forecast_table['forecasted_discharge'])
+        forecast_table['fc_upper'] = np.maximum(forecast_table['forecasted_discharge'] + forecast_table['delta'],
+                                                (1 + range_slider/100.0) * forecast_table['forecasted_discharge'])
+    else:
+        forecast_table['fc_lower'] = forecast_table['forecasted_discharge'] - forecast_table['delta']
+        forecast_table['fc_upper'] = forecast_table['forecasted_discharge'] + forecast_table['delta']
+
+    return forecast_table
+
+
+
+
 
 
 
