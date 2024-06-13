@@ -1139,8 +1139,8 @@ def sdivsigma_nse(data: pd.DataFrame, observed_col: str, simulated_col: str):
     if not all(column in data.columns for column in [observed_col, simulated_col]):
         raise ValueError(f'DataFrame is missing one or more required columns: {observed_col, simulated_col}')
 
-    # Drop NaN values
-    data = data.dropna()
+    # Drop NaN values in columns with observed and simulated data
+    data = data.dropna(subset=[observed_col, simulated_col])
 
     # Calculate the numerator and denominator of the NSE formula
     numerator = ((data[observed_col] - data[simulated_col])**2).sum()
@@ -1183,7 +1183,7 @@ def forecast_accuracy_hydromet(data: pd.DataFrame, observed_col: str, simulated_
         raise ValueError(f'DataFrame is missing one or more required columns: {observed_col, simulated_col, delta_col}')
 
     # Drop NaN values
-    data = data.dropna()
+    data = data.dropna(subset=[observed_col, simulated_col])
 
     # Calculate the forecast accuracy
     accuracy = (abs(data[observed_col] - data[simulated_col]) <= data[delta_col]).mean()
@@ -1212,7 +1212,7 @@ def mae(data: pd.DataFrame, observed_col: str, simulated_col: str):
         raise ValueError(f'DataFrame is missing one or more required columns: {observed_col, simulated_col}')
 
     # Drop NaN values
-    data = data.dropna()
+    data = data.dropna(subset=[observed_col, simulated_col])
 
     # Calculate the mean average error between the observed and simulated data
     mae = abs(data[observed_col] - data[simulated_col]).mean()

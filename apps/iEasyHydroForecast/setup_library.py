@@ -634,6 +634,69 @@ def read_linreg_forecasts_pentad():
 
     return forecasts, stats
 
+def read_linreg_forecasts_pentad_dummy(model):
+    """
+    Dummy function
+    """
+    if model == "A":
+        filename = os.getenv("ieasyforecast_modelA_pentad_file")
+        model_long = "Model A (MA)"
+        model_short = "MA"
+    elif model == "B":
+        filename = os.getenv("ieasyforecast_modelB_pentad_file")
+        model_long = "Model B (MB)"
+        model_short = "MB"
+    else:
+        raise ValueError("Invalid model")
+
+    # Read the linear regression forecasts for the pentadal forecast horizon
+    filepath = os.path.join(
+        os.getenv("ieasyforecast_intermediate_data_path"),
+        filename
+    )
+    data = pd.read_csv(filepath, parse_dates=["date"])
+
+    # Drop duplicate rows in date and code if they exist, keeping the last row
+    data.drop_duplicates(subset=["date", "code"], keep="last", inplace=True)
+
+    # Add a column model to the dataframe
+    data["model_long"] = model_long
+    data["model_short"] = model_short
+
+    # Split the data into forecasts and statistics
+    # The statistics are general runoff statistics and are later merged to the
+    # observed DataFrame
+    stats = data[["date", "code", "q_mean", "q_std_sigma", "delta"]]
+    forecasts = data.drop(columns=["q_mean", "q_std_sigma", "delta", "discharge_avg"])
+
+    # Add one day to date
+    forecasts.loc[:, "date"] = forecasts.loc[:, "date"] + pd.DateOffset(days=1)
+    stats.loc[:, "date"] = stats.loc[:, "date"] + pd.DateOffset(days=1)
+
+    # Recalculate pentad in month and pentad in year
+    forecasts["pentad_in_month"] = forecasts["date"].apply(tl.get_pentad)
+    forecasts["pentad_in_year"] = forecasts["date"].apply(tl.get_pentad_in_year)
+
+    return forecasts, stats
+
+def calculate_ensemble_forecast(forecasts):
+    # Create a dataframe with unique date and codes from forecasts
+    ensemble_mean = forecasts[["date", "code", "pentad_in_month", "pentad_in_year"]].drop_duplicates()
+
+    # Add model_long and model_short columns to the ensemble_mean dataframe
+    ensemble_mean['model_long'] = "Ensemble mean (EM)"
+    ensemble_mean['model_short'] = "EM"
+
+    # Calculate the ensemble mean over all models
+    ensemble_mean_q = forecasts.groupby(["date", "code"]).agg({"forecasted_discharge": "mean"}).reset_index()
+
+    # Merge ensemble_mean_q into ensemble_mean
+    ensemble_mean = pd.merge(ensemble_mean, ensemble_mean_q, on=["date", "code"], how="left")
+
+    # Add ensemble_mean to forecasts
+    forecasts = pd.concat([forecasts, ensemble_mean])
+    return forecasts
+
 def read_observed_and_modelled_data_pentade():
     """
     Reads results from all forecast methods into a dataframe.
@@ -645,13 +708,19 @@ def read_observed_and_modelled_data_pentade():
     observed = read_observed_pentadal_data()
 
     # Read the linear regression forecasts for the pentadal forecast horizon
-    linreg, stats = read_linreg_forecasts_pentad()
+    linreg, stats_linreg = read_linreg_forecasts_pentad()
 
     # Read the forecasts from the other methods
     # TODO
+    # For now, we read dummy data
+    modelA, statsA = read_linreg_forecasts_pentad_dummy(model='A')
+    modelB, statsB = read_linreg_forecasts_pentad_dummy(model='B')
 
     # Concatenate the dataframes
-    forecasts = pd.concat([linreg])
+    forecasts = pd.concat([linreg, modelA, modelB])
+    stats = pd.concat([stats_linreg, statsA, statsB])
+
+    forecasts = calculate_ensemble_forecast(forecasts)
 
     # Merge the general runoff statistics to the observed DataFrame
     observed = pd.merge(observed, stats, on=["date", "code"], how="left")
