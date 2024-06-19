@@ -90,17 +90,24 @@ _ = configure_gettext(current_locale, localedir)
 
 # region load_data
 
-# Daily runoff data
+# Daily, pentadal runoff data
 hydrograph_day_all = processing.read_hydrograph_day_data_for_pentad_forecasting()
 hydrograph_pentad_all = processing.read_hydrograph_pentad_data_for_pentad_forecasting()
+print("hydrograph_pentad_all.columns:\n", hydrograph_pentad_all.columns)
+print("hydrograph_pentad_all.head():\n", hydrograph_pentad_all.head())
 
 # Pentadal forecast data
 # - linreg_predictor: for displaying predictor in predictor tab
 linreg_predictor = processing.read_linreg_forecast_data()
+print("linreg_predictor:\n", linreg_predictor.head())
 # - forecast results from all models
 forecasts_all = processing.read_forecast_results_file()
+print("forecasts_all.columns:\n", forecasts_all.columns)
+print("forecasts_all.head():\n", forecasts_all.head())
 # Forecast statistics
 forecast_stats = processing.read_forecast_stats_file()
+print("forecast_stats.columns:\n", forecast_stats.columns)
+print("forecast_stats.head():\n", forecast_stats.head())
 
 # Hydroposts metadata
 station_list, all_stations, station_df = processing.read_all_stations_metadata_from_file(
@@ -122,6 +129,23 @@ forecasts_all = forecasts_all.merge(
     forecast_stats,
     on=['code', 'pentad_in_year', 'model_short', 'model_long'],
     how='left')
+
+# test: Merge all dataframes into one
+test_data = forecasts_all.merge(
+    linreg_predictor,
+    on=['code', 'pentad_in_year', 'date', 'station_labels'],
+    how='left')
+linreg_predictor['model_short'] = "LR"
+test_data = test_data.merge(
+    linreg_predictor,
+    on=['code', 'pentad_in_year', 'date', 'station_labels', 'model_short',
+        'predictor', 'discharge_avg'],
+    how='left')
+# Drop duplicates in code, pentad_in_year, date, station_labels, model_short
+test_data = test_data.drop_duplicates(
+    subset=['code', 'pentad_in_year', 'date', 'station_labels', 'model_short'])
+print("data.columns:\n", test_data.columns)
+print("data.head():\n", test_data.head())
 
 # Create a dictionary of the model names and the corresponding model labels
 model_dict = forecasts_all[['model_short', 'model_long']] \
@@ -209,18 +233,36 @@ daily_hydrograph_plot = pn.panel(
         ),
     sizing_mode='stretch_both'
     )
+
+# Forecast linear regression
+selected_data = viz.select_data_for_linreg(_, test_data, station, date_picker)
 forecast_data_table = pn.panel(
     pn.bind(
-        viz.draw_forecast_raw_data,
-        _, linreg_datatable, station, date_picker
+        viz.test_draw_forecast_raw_data,
+        _, selected_data,
         ),
 )
-linear_regressino_plot = pn.panel(
+linear_regression_plot = pn.panel(
     pn.bind(
-        viz.plot_linear_regression,
-        _, linreg_datatable
+        viz.test_plot_linear_regression,
+        _, selected_data
     )
 )
+# Link the forecast_data_table to the linear_regression_plot to update the plot
+# when the table is changed and vice versa
+def update_linear_regression_plot(selection):
+    # Update the plot based on the selected rows in the table
+    selected_data = forecast_data_table.value.iloc[selection]
+    linear_regression_plot.object = viz.test_plot_linear_regression(selected_data)
+def update_linear_regression_table(selection):
+    # Update the table based on the selected points in the plot
+    selected_data = linear_regression_plot.value.iloc[selection]
+    forecast_data_table.object = viz.test_draw_forecast_raw_data(selected_data)
+#forecast_data_table.link(update_linear_regression_plot, 'selection')
+#linear_regression_plot.link(update_linear_regression_table, 'selection')
+
+
+# Forecast hydrograph
 pentad_forecast_plot = pn.panel(
     pn.bind(
         viz.plot_pentad_forecast_hydrograph_data,
@@ -333,7 +375,7 @@ else: # If no_date_overlap_flag == True
             pn.Card(
                 pn.Row(
                     forecast_data_table,
-                    linear_regressino_plot
+                    linear_regression_plot
                 ),
                 title=_('Linear regression'),
                 sizing_mode='stretch_width'
@@ -386,6 +428,15 @@ tabs.param.watch(lambda event: viz.update_sidepane_card_visibility(
     tabs, forecast_card, event), 'active')
 allowable_range_selection.param.watch(lambda event: viz.update_range_slider_visibility(
     _, manual_range, event), 'value')
+# Update the forecast data table based on the selected station and date
+station.param.watch(lambda event: viz.select_data_for_linreg(
+    _, test_data, event), 'value')
+# Update the linear regression table and scatter plot based on the selected rows in the table
+# and vice versa
+# Print parameters of forecast_data_table
+print("forecast_data_table.param:\n", forecast_data_table.param.objects())
+forecast_data_table.param.watch(update_linear_regression_plot, 'selection')
+linear_regression_plot.param.watch(update_linear_regression_table, 'selection')
 
 # Update plot if table is changed
 

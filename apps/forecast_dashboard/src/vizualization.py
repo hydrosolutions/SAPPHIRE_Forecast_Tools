@@ -10,6 +10,9 @@ import time
 import holoviews as hv
 import panel as pn
 from bokeh.models import HoverTool, FixedTicker, FuncTickFormatter, CustomJSTickFormatter, LinearAxis, DatetimeTickFormatter
+from scipy import stats
+from sklearn.linear_model import LinearRegression
+
 from . import processing
 
 # Import local library
@@ -793,7 +796,6 @@ def plot_pentad_forecast_hydrograph_data(_, hydrograph_pentad_all, forecasts_all
         title=title_text,
         xlabel=_('Pentad of the year'),
         ylabel=_('Discharge (m³/s)'),
-        #height=300,
         show_grid=True,
         show_legend=True,
         hooks=[remove_bokeh_logo,
@@ -857,14 +859,163 @@ def create_forecast_summary_table(_, forecasts_all, station, date_picker,
         })
 
     norm_stats_table = pn.widgets.Tabulator(
-        value=forecast_table.head(),
+        value=forecast_table,
         #formatters={'Pentad': "{:,}"},
-        editors={_('δ'): None},
+        #editors={_('δ'): None},  # Disable editing of the δ column
         theme='bootstrap',
         show_index=False,
         selectable='checkbox')
 
     return norm_stats_table
+
+def draw_forecast_raw_data(_, forecasts_linreg, station_widget, date_picker):
+
+    print("forecasts_linreg.head():\n", forecasts_linreg.head())
+
+    # From date_picker, get the pentad and month of the latest forecast
+    forecast_date = date_picker + dt.timedelta(days=1)
+    forecast_pentad = int(tl.get_pentad_in_year(forecast_date))
+
+    # Filter forecasts_all for selected station, date and models
+    forecast_table = forecasts_linreg[(forecasts_linreg['station_labels'] == station_widget)].copy()
+
+    # Filter further for the selected date (pentad)
+    forecast_table = forecast_table[
+        (forecast_table['pentad_in_year'] == forecast_pentad)].copy().reset_index(drop=True)
+
+    forecast_data_table = pn.widgets.Tabulator(
+        value=forecast_table[['predictor', 'discharge_avg']],
+        #formatters={'Pentad': "{:,}"},
+        #editors={_('δ'): None},  # Disable editing of the δ column
+        theme='bootstrap',
+        show_index=False,
+        selectable='checkbox')
+
+    return forecast_data_table
+
+def select_data_for_linreg(_, data, station_widget, date_picker):
+
+    # From date_picker, get the pentad and month of the latest forecast
+    forecast_date = date_picker.value + dt.timedelta(days=1)
+    forecast_pentad = int(tl.get_pentad_in_year(forecast_date))
+
+    # Filter forecasts_all for selected station, date and models
+    forecast_table = data[(data['station_labels'] == station_widget.value)]
+
+    # Filter further for the selected date (pentad)
+    forecast_table = forecast_table[
+        (forecast_table['pentad_in_year'] == forecast_pentad)]
+
+    return forecast_table
+
+def test_draw_forecast_raw_data(_, selected_data):
+
+    # Only show data for model_short == 'LR'
+    selected_data = selected_data[selected_data['model_short'] == _('Forecast models LR')]
+
+    # Only show rows with data in predictor and discharge_avg columns
+    #selected_data = selected_data.dropna(subset=['predictor', 'discharge_avg'])
+
+    # Create a Tabulator widget for the selected data
+    forecast_data_table = pn.widgets.Tabulator(
+        value=selected_data[['year', 'predictor', 'discharge_avg',
+                              'forecasted_discharge']],
+        formatters={'Pentad': "{:,}",
+                    'year': "{:,}"},
+        #editors={_('δ'): None},  # Disable editing of the δ column
+        theme='bootstrap',
+        show_index=False,
+        selectable='checkbox')
+
+    return forecast_data_table
+
+def test_plot_linear_regression(_, selected_data):
+
+    # Only show data for model_short == 'LR'
+    selected_data = selected_data[selected_data['model_short'] == _('Forecast models LR')]
+
+    scatter = hv.Scatter(selected_data, kdims="predictor",
+                         vdims="discharge_avg", label="Measured",
+                         #selected=[table_selection]
+                         ) \
+        .opts(color="#307096", size=5, tools=['hover', 'lasso_select'],
+              legend_position='bottom_right',)
+    return scatter
+
+def test_perform_regression(selected_data):
+    # Perform linear regression on the selected data
+    model = LinearRegression()
+    model.fit(selected_data[['predictor']], selected_data['target'])
+
+    # Calculate the forecast and difference
+    selected_data['forecasted_discharge'] = model.predict(selected_data[['predictor']])
+    selected_data['difference'] = selected_data['target'] - selected_data['forecast']
+
+    return selected_data
+
+
+'''def plot_linear_regression(_, forecast_data_table):
+
+    # Create a scatter plot of the selected data
+    scatter = hv.Scatter(forecast_data_table, kdims="Predictor",
+                         vdims="Q [m3/s]", label="Measured",
+                         selected=[table_selection]) \
+        .opts(color="#307096", size=5, tools=['hover', 'tap'], legend_position='bottom_right',)
+
+    # Add a linear regression line to the scatter plot
+    slope, intercept, r_value, p_value, std_err = stats.linregress(
+        analysis_pentad["Predictor"], analysis_pentad["Q [m3/s]"])
+    x = np.linspace(analysis_pentad["Predictor"].min(),
+                    analysis_pentad["Predictor"].max(), 100)
+    y = slope * x + intercept
+    line = hv.Curve((x, y), label="Linear regression") \
+        .opts(color="#72D1FA", line_width=2)
+    # Print the linear regression equation
+    equation = f"y = {slope:.3f}x + {intercept:.3f}"
+    r2 = f"R^2 = {r_value**2:.3f}"
+    #pval = f"p = {p_value:.3f}"
+    #stderr = f"stderr = {std_err:.3f}"
+    text = hv.Text(x = analysis_pentad["Predictor"].min(),
+                   y = analysis_pentad["Q [m3/s]"].max(),
+                   text = f"{equation}\n{r2}") \
+        .opts(color="black", text_font_size="10pt", text_align="left",)
+              #xlim=(0, analysis_pentad["Predictor"].max()*1.1),
+              #ylim=(0, analysis_pentad["Q [m3/s]"].max()*1.1))
+    # Add the text to the plot
+    scatter = scatter * line * text
+
+    # Add the line to the scatter plot
+    scatter = scatter * line
+    scatter.opts(hooks=[remove_bokeh_logo]),
+        # Create a scatter plot of the predictor vs. the discharge
+        scatter = hv.Scatter(
+            forecast_data_table,
+            kdims=['predictor'],
+            vdims=['discharge_avg']) \
+                .opts(color='blue', size=5, tools=['hover'])
+
+        # Create a linear regression line
+        slope, intercept, r_value, p_value, std_err = stats.linregress(
+            forecast_data_table['predictor'], forecast_data_table['discharge_avg'])
+        x = np.linspace(forecast_data_table['predictor'].min(), forecast_data_table['predictor'].max(), 100)
+        y = slope * x + intercept
+        line = hv.Curve((x, y)) \
+            .opts(color='red', line_width=2, tools=['hover'])
+
+        # Overlay the scatter plot and the linear regression line
+        overlay = scatter * line
+
+        overlay.opts(
+            title=_('Linear regression'),
+            xlabel=_('Predictor'),
+            ylabel=_('Discharge (m³/s)'),
+            show_grid=True,
+            show_legend=False,
+            tools=['hover'],
+            toolbar='above',
+            hooks=[remove_bokeh_logo])
+
+        return overlay'''
 # endregion
 
 

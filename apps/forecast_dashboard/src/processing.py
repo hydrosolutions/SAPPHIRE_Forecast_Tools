@@ -171,10 +171,39 @@ def read_linreg_forecast_data():
     # Convert code column to str
     linreg_forecast['code'] = linreg_forecast['code'].astype(str)
 
-    # We are only interested in the predictor here. We drop the other columns.
-    linreg_forecast = linreg_forecast[['date', 'code', 'predictor']]
+    # We are only interested in the predictor & average discharge here. We drop the other columns.
+    linreg_forecast = linreg_forecast[['date', 'pentad_in_year', 'code', 'predictor', 'discharge_avg']]
 
     return linreg_forecast
+
+def shift_date_by_n_days(linreg_predictor, n=1):
+    """
+    Shift the date column of the linreg_predictor DataFrame by n days.
+
+    Args:
+        linreg_predictor (pd.DataFrame): The linreg_predictor DataFrame.
+        n (int): The number of days to shift the date column.
+
+    Returns:
+        pd.DataFrame: The linreg_predictor DataFrame with the shifted date column.
+    """
+    linreg_predictor['date'] = linreg_predictor['date'] + pd.Timedelta(days=n)
+
+    # If there is a column pentad_in_yer in the DataFrame, we need to update it as well
+    if 'pentad_in_year' in linreg_predictor.columns:
+        linreg_predictor['pentad_in_year'] = linreg_predictor['date'].apply(tl.get_pentad_in_year)
+        # Cast the pentad_in_year column to int
+        linreg_predictor['pentad_in_year'] = linreg_predictor['pentad_in_year'].astype(int)
+
+    # If there are columns date, and possibly others, drop these
+    if 'date' in linreg_predictor.columns:
+        linreg_predictor = linreg_predictor.drop(columns=['date'])
+
+    # Drop rows with NaN values in predictor or discharge_avg columns
+    linreg_predictor = linreg_predictor.dropna(subset=['predictor', 'discharge_avg'])
+
+    return linreg_predictor
+
 
 def read_forecast_results_file():
     forecast_results_file = os.path.join(
@@ -190,13 +219,13 @@ def read_forecast_results_file():
     if forecast_pentad.empty:
         raise Exception("File is empty: " + forecast_results_file)
     # Convert the date column to datetime. The format of the date string is %Y-%m-%d.
-    forecast_pentad['Date'] = pd.to_datetime(forecast_pentad['date'], format='%Y-%m-%d')
+    forecast_pentad['date'] = pd.to_datetime(forecast_pentad['date'], format='%Y-%m-%d')
     # Make sure the date column is in datetime64 format
-    forecast_pentad['Date'] = forecast_pentad['Date'].astype('datetime64[ns]')
+    forecast_pentad['date'] = forecast_pentad['date'].astype('datetime64[ns]')
     # The forecast date is the date on which the forecast was produced. For
     # visualization we need to have the date for which the forecast is valid.
     # We add 1 day to the forecast Date to get the valid date.
-    forecast_pentad['Date'] = forecast_pentad['Date'] + pd.Timedelta(days=1)
+    forecast_pentad['Date'] = forecast_pentad['date'] + pd.Timedelta(days=1)
     # Convert the code column to string
     forecast_pentad['code'] = forecast_pentad['code'].astype(str)
     # Check if there are duplicates for Date and code columns. If yes, only keep the

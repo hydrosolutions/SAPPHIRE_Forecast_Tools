@@ -1709,9 +1709,11 @@ def write_pentad_hydrograph_data(data: pd.DataFrame):
     # Calculate pentad and pentad_in_year
     data.loc[:, 'pentad'] = data['date'].apply(tl.get_pentad)
     data.loc[:, 'pentad_in_year'] = data['date'].apply(tl.get_pentad_in_year)
+    # Get year of the latest date in data
+    current_year = data['date'].dt.year.max()
 
     # Calculate runoff statistics
-    runoff_stats = data. \
+    runoff_stats = data[data['date'].dt.year != current_year]. \
         reset_index(drop=True). \
         groupby(['code', 'pentad_in_year']). \
         agg(mean=pd.NamedAgg(column='discharge_avg', aggfunc='mean'),
