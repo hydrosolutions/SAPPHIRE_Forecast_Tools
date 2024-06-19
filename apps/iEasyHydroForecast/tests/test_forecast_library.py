@@ -376,8 +376,10 @@ class TestPerformLinearRegression(unittest.TestCase):
             assert np.isclose(intercept, expected_intercepts_p4[station], atol=1e-3)
 
 
-class TestCalculateForecastSkill(unittest.TestCase):
-    def test_calculate_forecast_skill(self):
+"""
+deprecating this version of the function
+class TestCalculateForecastSkill_DEPRECATING(unittest.TestCase):
+    def test_calculate_forecast_skill_deprecating(self):
         # Test case 1: Normal input
         data_df1 = pd.DataFrame({
             'station': ['A', 'A', 'A', 'A', 'B', 'B', 'B', 'B'],
@@ -385,7 +387,7 @@ class TestCalculateForecastSkill(unittest.TestCase):
             'observation': [10.0, 12.0, 10.0, 12.0, 8.0, 9.0, 8.0, 9.0],
             'simulation': [9.0, 11.0, 9.0, 11.0, 7.0, 8.0, 7.0, 8.0]
         })
-        result_df1 = fl.calculate_forecast_skill(data_df1, 'station', 'pentad', 'observation', 'simulation')
+        result_df1 = fl.calculate_forecast_skill_deprecating(data_df1, 'station', 'pentad', 'observation', 'simulation')
         assert result_df1['absolute_error'].tolist() == [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
         assert result_df1['observation_std0674'].tolist() == [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
         assert result_df1['flag'].tolist() == [False, False, False, False, False, False, False, False]
@@ -396,13 +398,15 @@ class TestCalculateForecastSkill(unittest.TestCase):
             'observation': [9.0, 10.0, 11.0, 12.0],
             'simulation': [9.0, 11.0, 9.0, 11.0]
         })
-        result_df2 = fl.calculate_forecast_skill(data_df2, 'station', 'pentad', 'observation', 'simulation')
+        result_df2 = fl.calculate_forecast_skill_deprecating(data_df2, 'station', 'pentad', 'observation', 'simulation')
         # print(result_df2['observation_std0674'].tolist())
         assert result_df2['absolute_error'].tolist() == [0.0, 1.0, 2.0, 1.0]
         assert result_df2['observation_std0674'].tolist() == [
             0.870130258447933, 0.870130258447933, 0.870130258447933,
             0.870130258447933]
         assert result_df2['flag'].tolist() == [True, False, False, False]
+"""
+
 
 """
 deprecating this version of the function
@@ -578,7 +582,7 @@ class TestSite(unittest.TestCase):
             'discharge_sum': [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0, 100.0],
             'discharge_avg': [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0, 100.0],
         })
-        # For testing calculate_forecast_skill
+        # For testing calculate_forecast_skill (deprecating)
         self.input_data = pd.DataFrame({
             'group_col': ['A', 'A', 'B', 'B'],
             'observation_col': [1.0, 2.0, 3.0, 4.0],

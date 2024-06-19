@@ -215,12 +215,12 @@ forecast_data_table = pn.panel(
         _, linreg_datatable, station, date_picker
         ),
 )
-linear_regressino_plot = pn.panel(
-    pn.bind(
-        viz.plot_linear_regression,
-        _, linreg_datatable
-    )
-)
+#linear_regressino_plot = pn.panel(
+#    pn.bind(
+#        viz.plot_linear_regression,
+#        _, linreg_datatable
+#    )
+#)
 pentad_forecast_plot = pn.panel(
     pn.bind(
         viz.plot_pentad_forecast_hydrograph_data,
@@ -333,22 +333,25 @@ else: # If no_date_overlap_flag == True
             pn.Card(
                 pn.Row(
                     forecast_data_table,
-                    linear_regressino_plot
+                    #linear_regression_plot
                 ),
                 title=_('Linear regression'),
-                sizing_mode='stretch_width'
+                sizing_mode='stretch_width',
+                collapsible=True,
+                collapsed=True
             ),
-                 pn.Card(
-                     pentad_forecast_plot,
-                     title=_('Hydrograph'),
-                     height=500,
-                     collapsible=True,
-                     collapsed=False),
-                 pn.Card(
-                     forecast_summary_table,
-                     title=_('Summary table'),
-                     sizing_mode='stretch_width',
-                 ),
+            pn.Card(
+                forecast_summary_table,
+                title=_('Summary table'),
+                sizing_mode='stretch_width',
+            ),
+            pn.Card(
+                pentad_forecast_plot,
+                title=_('Hydrograph'),
+                height=500,
+                collapsible=True,
+                collapsed=False
+            ),
                  #pn.Card(
                  #    pentad_forecast_plot,
                  #    title=_('Analysis'))

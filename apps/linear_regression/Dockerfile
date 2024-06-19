@@ -1,7 +1,13 @@
 # syntax=docker/dockerfile:1
 
-ARG PYTHON_VERSION=3.12
-FROM python:${PYTHON_VERSION}-slim-bookworm as base
+# Comments are provided throughout this file to help you get started.
+# If you need more help, visit the Dockerfile reference guide at
+# https://docs.docker.com/engine/reference/builder/
+
+#FROM ubuntu:latest as build
+
+ARG PYTHON_VERSION=3.10.7
+FROM python:${PYTHON_VERSION}-slim-buster as base
 
 # Prevents Python from writing pyc files.
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -23,7 +29,7 @@ WORKDIR /app
 COPY apps/iEasyHydroForecast/ /app/apps/iEasyHydroForecast
 # All files in the current directory are copied into the container into
 # directory app.
-COPY apps/preprocessing_runoff /app/apps/preprocessing_runoff
+COPY apps/linear_regression /app/apps/linear_regression
 
 # Download dependencies as a separate step to take advantage of Docker's caching.
 # Leverage a cache mount to /root/.cache/pip to speed up subsequent builds.
@@ -33,7 +39,7 @@ COPY apps/preprocessing_runoff /app/apps/preprocessing_runoff
 # for vulnerabilities in dockerhub. The -y flag automatically anwwers yes to all
 # prompts.
 RUN --mount=type=cache,target=/root/.cache/pip \
-    --mount=type=bind,source=apps/preprocessing_runoff/requirements.txt,target=/app/apps/preprocessing_runoff/requirements.txt \
+    --mount=type=bind,source=apps/linear_regression/requirements.txt,target=/app/apps/linear_regression/requirements.txt \
     # Update the packages to the latest OS version
     apt-get update && \
     apt-get install -y gcc git libkrb5-dev && \
@@ -45,9 +51,13 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     apt-get clean && \
     # update python packages \
     pip install --upgrade pip setuptools wheel tornado && \
-    pip install --trusted-host pypi.python.org -r /app/apps/preprocessing_runoff/requirements.txt && \
+    pip install --trusted-host pypi.python.org -r /app/apps/linear_regression/requirements.txt && \
+    pip install git+https://github.com/hydrosolutions/ieasyreports.git@main && \
     pip install git+https://github.com/hydrosolutions/ieasyhydro-python-sdk && \
     pip install --no-cache-dir /app/apps/iEasyHydroForecast
 
-# Run the application.
-CMD ["sh", "-c", "PYTHONPATH=/app/apps/iEasyHydroForecast python apps/preprocessing_runoff/preprocessing_runoff.py"]
+# Expose the port that the application listens on.
+EXPOSE 8801
+
+# Run the application.  && sleep 86400
+CMD ["sh", "-c", "PYTHONPATH=/app/apps/iEasyHydroForecast python apps/linear_regression/linear_regression.py"]
