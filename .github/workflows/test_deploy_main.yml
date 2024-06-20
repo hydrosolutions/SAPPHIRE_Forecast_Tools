@@ -286,7 +286,7 @@ jobs:
       # Push the image to Dockerhub
       - name: Push the image to Dockerhub
         run: |
-          docker push "$DASHBOARD_IMAGE_NAME:$IMAGE_TAG"
+          #docker push "$DASHBOARD_IMAGE_NAME:$IMAGE_TAG"
 
 
   push_postprocessing_runoff_to_Dckerhub:
@@ -331,7 +331,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11"]
+        python-version: ["3.10", "3.11"]
 
     steps:
       - name: Check out the current branch

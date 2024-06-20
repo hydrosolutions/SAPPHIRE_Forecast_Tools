@@ -7,7 +7,7 @@
 #FROM ubuntu:latest as build
 
 ARG PYTHON_VERSION=3.11.9
-FROM python:${PYTHON_VERSION}-slim-buster as base
+FROM python:${PYTHON_VERSION}-slim-bookworm as base
 
 # Prevents Python from writing pyc files.
 ENV PYTHONDONTWRITEBYTECODE=1

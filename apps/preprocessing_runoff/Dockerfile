@@ -50,5 +50,8 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     pip install git+https://github.com/hydrosolutions/ieasyhydro-python-sdk && \
     pip install --no-cache-dir /app/apps/iEasyHydroForecast
 
+# Expose the port that the application listens on.
+EXPOSE 8801
+
 # Run the application.
 CMD ["sh", "-c", "PYTHONPATH=/app/apps/iEasyHydroForecast python apps/preprocessing_runoff/preprocessing_runoff.py"]
