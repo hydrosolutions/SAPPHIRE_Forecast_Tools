@@ -2319,7 +2319,7 @@ class Site:
                 raise ValueError(f'DataFrame is missing one or more required columns: {"Code", "decad_in_year", "slope", "intercept"}')
 
             # Convert pentad to float
-            pentad = float(pentad)
+            pentad = float(decad)
 
             # Get the slope and intercept for the site
             slope = df[(df['Code'] == site.code) & (df['decad_in_year'] == pentad)]['slope'].values[0]
