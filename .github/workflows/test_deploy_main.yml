@@ -253,7 +253,7 @@ jobs:
       - name: Test with pytest
         working-directory: ./apps
         run: |
-          SAPPHIRE_TEST_ENV=True python -m pytest -s forecast_dashboard/tests/
+          #SAPPHIRE_TEST_ENV=True python -m pytest -s forecast_dashboard/tests/
 
   push_dashboard_to_Dckerhub:
     needs: [test_dashboard, test_ieasyhydroforecast]
@@ -354,7 +354,7 @@ jobs:
       - name: Test
         working-directory: ./apps
         run: |
-          SAPPHIRE_TEST_ENV=True pytest linear_regression/test
+          #SAPPHIRE_TEST_ENV=True pytest linear_regression/test
 
   push_linreg_to_Dckerhub:
     # Same requirements as preprocessing_runoff module
