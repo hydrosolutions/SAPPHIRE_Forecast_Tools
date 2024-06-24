@@ -1,10 +1,18 @@
 import os
 import time
 import subprocess
+import paramiko  # for ssh connection
+import socket
+import threading
 from dotenv import load_dotenv
 
 from tempfile import mkdtemp
 import logging
+
+from ieasyhydro_sdk.sdk import IEasyHydroSDK
+from ieasyhydro_sdk.filters import BasicDataValueFilters
+import datetime as dt
+import pandas as pd
 
 import luigi
 
@@ -20,7 +28,7 @@ except ImportError:
     logger.warning('docker is not installed. DockerTask requires docker.')
     docker = None
 
-
+"""
 class DockerTask(luigi.Task):
 
     @property
@@ -239,24 +247,45 @@ class DockerTask(luigi.Task):
         filesys = LocalFileSystem()
         if self.mount_tmp and filesys.exists(self._host_tmp_dir):
             filesys.remove(self._host_tmp_dir, recursive=True)
+"""
+
+class Environment:
+    def __init__(self, dotenv_path):
+        load_dotenv(dotenv_path=dotenv_path)
+
+    def get(self, key):
+        return os.getenv(key)
+
+# Initialize the Environment class with the path to your .env file
+env = Environment('../../../sensitive_data_forecast_tools/config/.env_develop_kghm')
+
+# We have a second environment file with the credentials to the iEH server
+env_ieh = Environment('../../../sensitive_data_forecast_tools/config/.env_ieh')
 
 
 class RunPreprocessingRunoff(luigi.Task):
+    ssh_host = env.get('IEH_SSH_HOST')
+    ssh_port = int(env.get('IEH_SSH_PORT'))
+    ssh_user = env.get('IEH_SSH_USER')
+    ssh_password = env.get('IEH_SSH_PASSWORD')
+    local_port = int(env.get('IEH_SSH_LOCAL_PORT'))
+    remote_host = env.get('IEH_SSH_DESTINATION_HOST')
+    remote_port = int(env.get('IEH_SSH_DESTINATION_PORT'))
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
 
     def output(self):
-        # Load the configuration file for development mode
-        env_file_path = "../../../sensitive_data_forecast_tools/config/.env_develop_kghm"
-        load_dotenv(dotenv_path=env_file_path)
 
         # Get the path to the output file
         output_file_path = os.path.join(
-            os.getenv("ieasyforecast_intermediate_data_path"),
-            os.getenv("ieasyforecast_daily_discharge_file")
+            env.get("ieasyforecast_intermediate_data_path"),
+            env.get("ieasyforecast_daily_discharge_file")
             )
 
         return luigi.LocalTarget(output_file_path)
 
-    def run(self):
+    def run_preprocessing_runoff(self):
         print("\n\n{task} says: Running preprocessing runoff!\n\n".format(task=self.__class__.__name__))
 
         script_path = "../preprocessing_runoff/preprocessing_runoff.py"
@@ -268,6 +297,61 @@ class RunPreprocessingRunoff(luigi.Task):
             raise Exception(f"Script {script_path} failed with error: {result.stderr}")
         else:
             print(f"Script {script_path} output: {result.stdout}")
+
+    def test_ssh_connection(self):
+        print("\n\n{task} says: Testing SSH connection!\n\n".format(task=self.__class__.__name__))
+
+        print("DEBUG: IEASYHYDRO_HOST: ", os.getenv("IEASYHYDRO_HOST"))
+
+        # Load sdk configuration from .env
+        ieh_sdk = IEasyHydroSDK()
+
+        predictor_dates = [dt.datetime(2024, 6, 3, 0, 0, 0), dt.datetime.today()]
+
+        # Define date filter
+        filters = BasicDataValueFilters(
+            local_date_time__gte=predictor_dates[0],
+            local_date_time__lt=predictor_dates[1]
+        )
+
+        site = '15102'
+
+        # Get data
+        qdata = ieh_sdk.get_data_values_for_site(
+            [site],
+            'discharge_daily_average',
+            filters=filters
+        )
+        qdata = pd.DataFrame(qdata['data_values'])
+        print("get_data_values_for_site:\n", qdata)
+
+    def run(self):
+        # Connect to the remote server
+        print(f"ssh_host: {self.ssh_host}")
+        print(f"ssh_port: {self.ssh_port}")
+        print(f"ssh_user: {self.ssh_user}")
+        print(f"local_port: {self.local_port}")
+        print(f"remote_port: {self.remote_port}")
+        try:
+            # Open an SSH tunnel
+            command = f"ssh -N -L {self.local_port}:{self.remote_host}:{self.remote_port} {self.ssh_user}@{self.ssh_host} -p {self.ssh_port}"
+            ssh_tunnel = subprocess.Popen(command, shell=True)
+
+            print(f"SSH tunnel opened: localhost:{self.local_port} -> {self.ssh_host}:{self.remote_port}")
+            print(f"Connected to {self.ssh_host}!")
+
+            # Test if ssh connection is working
+            self.test_ssh_connection()
+
+            # Run the preprocessing runoff script
+            #self.run_preprocessing_runoff()
+
+        except Exception as e:
+            print(f"Error opening SSH tunnel: {e}")
+
+        finally:
+            # Close the SSH tunnel
+            ssh_tunnel.terminate()
 
     def complete(self):
         if not self.output().exists():
@@ -282,7 +366,7 @@ class RunPreprocessingRunoff(luigi.Task):
         # Check if the output file was modified within the last number of seconds
         return current_time - output_file_mtime < 10  # 24 * 60 * 60
 
-
+"""
 class RunLinearRegression(luigi.Task):
     def requires(self):
         return RunPreprocessingRunoff()
@@ -325,15 +409,9 @@ class RunLinearRegression(luigi.Task):
 
         # Check if the output file was modified within the last number of seconds
         return current_time - output_file_mtime < 10  # 24 * 60 * 60
-
+"""
 if __name__ == "__main__":
-    luigi.run(['RunLinearRegression', '--local-scheduler'])
+    luigi.run(['RunPreprocessingRunoff', '--local-scheduler'])
 
-    # Run scripts during development:
-    # python pipeline.py RunScript --image-name my-image --local-scheduler
-
-    # Run docker images during development:
-    # python pipeline.py RunDockerContainer --image-name my-image --local-scheduler
-
-    # Run in production:
-    # SAPPHIRE_PRODUCTION_MODE=True python pipeline.py RunDockerContainer --image-name my-image
+    # Run in development:
+    # python pipeline_develop.py RunPreprocessingRunoff --local-scheduler

@@ -1,0 +1,45 @@
+# docker compose file for running the sapphire forecast tools
+# build: docker-compose -f /path/to/docker-compose.yml build
+# run: docker-compose -f /path/to/docker-compose.yml up
+# stop: docker-compose -f /path/to/docker-compose.yml down
+
+services:
+
+  watchtower:
+    # Watchtower is a service that automatically updates the running docker containers
+    image: containrrr/watchtower
+    container_name: watchtower
+    restart: always
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: --label-enable --interval 30 --cleanup
+
+  docker_base_image:
+    # First attempts to pull image. If not found, it builds it
+    image: mabesa/sapphire_py_base_image:latest
+    build:
+      context: .
+      dockerfile: ./apps/docker_base_image/Dockerfile
+
+  preprocessing_runoff:
+    depends_on:
+      - docker_base_image
+      - watchtower
+    # During development, re-build image every time. In production, remove this line
+    pull_policy: build
+    image: mabesa/sapphire_preprunoff:latest
+    build:
+      context: .
+      dockerfile: ./apps/preprocessing_runoff/Dockerfile
+    ports:
+      - "8881:8881"
+    volumes:
+      - ../sensitive_data_forecast_tools/config:/sensitive_data_forecast_tools/config
+      - ../sensitive_data_forecast_tools/daily_runoff:/sensitive_data_forecast_tools/daily_runoff
+      - ../sensitive_data_forecast_tools/intermediate_data:/sensitive_data_forecast_tools/intermediate_data
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+    environment:
+      - SAPPHIRE_OPDEV_ENV=True
+
+
