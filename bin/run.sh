@@ -24,7 +24,7 @@ ieasyhydroforecast_data_root_dir=$1
 bash ../sensitive_data_forecast_tools/bin/.ssh/open_ssh_tunnel.sh
 
 # Run the forecast tools
-ieasyhydroforecast_data_root_dir=$ieasyhydroforecast_data_root_dir docker-compose -f bin/docker-compose.yml up
+ieasyhydroforecast_data_root_dir=$ieasyhydroforecast_data_root_dir docker compose -f bin/docker-compose.yml up
 
 # Close SSH tunnel (if required)
 bash ../sensitive_data_forecast_tools/bin/.ssh/close_ssh_tunnel.sh
