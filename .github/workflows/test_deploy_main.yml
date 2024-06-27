@@ -33,7 +33,7 @@ jobs:
       # Run the dockerization & deployment script
       - name: Build Docker image
         run: |
-          docker build --no-cache -t "$PIPELINE_IMAGE_NAME:$IMAGE_TAG" -f ./apps/pipeline/dockerfile .
+          docker build --no-cache -t "$PIPELINE_IMAGE_NAME:$IMAGE_TAG" -f ./apps/pipeline/Dockerfile .
 
       # Log in to the Docker registry
       - name: Log in to the Docker registry
@@ -121,7 +121,7 @@ jobs:
 
 
   test_preprocessing_runoff:
-
+    needs: [build_and_push_python_311_base_image]
     runs-on: ubuntu-latest
     name: Test pre-processing of runoff
     strategy:
@@ -355,7 +355,7 @@ jobs:
 
 
   test_linear_regression:
-
+    needs: [build_and_push_python_311_base_image]
     runs-on: ubuntu-latest
     name: Test linear regression module
     strategy:
