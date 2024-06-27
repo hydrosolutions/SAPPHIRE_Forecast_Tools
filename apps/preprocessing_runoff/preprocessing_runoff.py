@@ -19,8 +19,8 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 
 # Construct the path to the iEasyHydroForecast directory
 forecast_dir = os.path.join(script_dir, '..', 'iEasyHydroForecast')
-print(script_dir)
-print(forecast_dir)
+#print(script_dir)
+#print(forecast_dir)
 
 # Add the forecast directory to the Python path
 sys.path.append(forecast_dir)

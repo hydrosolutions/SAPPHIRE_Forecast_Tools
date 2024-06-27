@@ -12,4 +12,15 @@ WORKDIR /app
 # directory app.
 COPY apps/pipeline /app/apps/pipeline
 
-# No additional requirements to install for this application.
+RUN --mount=type=cache,target=/root/.cache/pip \
+    --mount=type=bind,source=apps/pipeline/requirements.txt,target=/app/apps/pipeline/requirements.txt \
+    pip install -r /app/apps/pipeline/requirements.txt && \
+    which luigi && \
+    echo $PATH
+
+# Set PYTHONPATH to include /app
+ENV PYTHONPATH="${PYTHONPATH}:/app"
+
+# The command to run when the container starts up
+CMD ["luigi", "--module", "apps.pipeline.pipeline_docker", "PreprocessingRunoff", "--local-scheduler"]
+

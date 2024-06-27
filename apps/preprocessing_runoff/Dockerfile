@@ -20,4 +20,4 @@ COPY apps/preprocessing_runoff /app/apps/preprocessing_runoff
 EXPOSE 8881
 
 # Run the application.
-#CMD ["sh", "-c", "PYTHONPATH=/app/apps/iEasyHydroForecast python apps/preprocessing_runoff/preprocessing_runoff.py"]
+CMD ["sh", "-c", "PYTHONPATH=/app/apps/iEasyHydroForecast python apps/preprocessing_runoff/preprocessing_runoff.py"]

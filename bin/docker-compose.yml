@@ -1,0 +1,25 @@
+# docker compose file for running the sapphire forecast tools
+# build: docker-compose -f /path/to/docker-compose.yml build
+# run: docker-compose -f /path/to/docker-compose.yml up
+# stop: docker-compose -f /path/to/docker-compose.yml down
+
+name: sapphire-forecast-orchestrator
+services:
+
+  pipeline:
+    image: mabesa/sapphire-pipeline:latest
+    build:
+      context: ../
+      dockerfile: ./apps/pipeline/Dockerfile
+    working_dir: /app
+    environment:
+      - PYTHONPATH=/app
+      - ieasyhydroforecast_data_root_dir=${ieasyhydroforecast_data_root_dir}
+    command: ['luigi', '--module', 'apps.pipeline.pipeline_docker', 'PreprocessingRunoff', '--local-scheduler']
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock # Mount docker socket
+      - ../../sensitive_data_forecast_tools/config:/sensitive_data_forecast_tools/config
+      - ../../sensitive_data_forecast_tools/daily_runoff:/sensitive_data_forecast_tools/daily_runoff
+      - ../../sensitive_data_forecast_tools/intermediate_data:/sensitive_data_forecast_tools/intermediate_data
+
+

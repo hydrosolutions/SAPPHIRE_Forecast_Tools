@@ -1,22 +1,31 @@
+# Description: This file contains the luigi tasks to run the docker containers
+#   for the forecast tools pipeline.
+#
+# Run: PYTHONPATH='.' luigi --module SAPPHIRE_Forecast_Tools.apps.pipeline.pipeline_docker PreprocessingRunoff --local-scheduler
+#
+
 import luigi
 import os
 import subprocess
 import time
+import docker
+import re
+#import platform
 from dotenv import load_dotenv
 
-from . import docker_utils as dok
+# Import docker client for luigi, may not be required
+#from . import docker_utils as dok
+from . import docker_runner as dokr
 
-# To test the connection to the iEasyHydro server
-from ieasyhydro_sdk.sdk import IEasyHydroSDK
-from ieasyhydro_sdk.filters import BasicDataValueFilters
-import datetime as dt
-import pandas as pd
 
 
 TAG = os.getenv('SAPPHIRE_FORECAST_TOOLS_DOCKER_TAG', 'latest')
 
+
 class Environment:
     def __init__(self, dotenv_path):
+        print(f"Current working directory: {os.getcwd()}")
+        print(f"Loading environment variables from {dotenv_path}")
         load_dotenv(dotenv_path=dotenv_path)
 
     def get(self, key):
@@ -25,19 +34,37 @@ class Environment:
 # Initialize the Environment class with the path to your .env file
 env = Environment('../sensitive_data_forecast_tools/config/.env_develop_kghm')
 
-# We have a second environment file with the credentials to the iEH server
-env_ieh = Environment('../sensitive_data_forecast_tools/config/.env_ieh')
+# Function to convert a relative path to an absolute path
+def get_absolute_path(relative_path):
+    #print("In get_absolute_path: ")
+    #print(" - Relative path: ", relative_path)
 
+    # Test if there environment variable "ieasyforecast_data_root_dir" is set
+    data_root_dir = os.getenv('ieasyhydroforecast_data_root_dir')
+    if data_root_dir:
+        # If it is set, use it as the root directory
+        #print(" - Using ieasyforecast_data_root_dir: ", data_root_dir)
+        # Strip the relative path from 2 "../" strings
+        relative_path = re.sub(r'\.\./\.\./\.\.', '', relative_path)
+        #print(" - Relative path: ", relative_path)
+        #print(" - Absolute path: ", os.path.join(data_root_dir, relative_path))
+        #print(" - Absolute path method 2: ", data_root_dir + relative_path)
+        return data_root_dir + relative_path
+    else:
+        # Current working directory. Should be one above the root of the project
+        cwd = os.getcwd()
+        #print(" - Current working directory: ", cwd)
+        # Strip the relative path from 2 "../" strings
+        relative_path = re.sub(r'\.\./\.\./\.\.', '', relative_path)
+        #print(" - Relative path: ", relative_path)
+        return os.path.join(cwd, relative_path)
+
+def get_bind_path(relative_path):
+    # Strip the relative path from ../../.. to get the path to bind to the container
+    relative_path = re.sub(r'\.\./\.\./\.\.', '', relative_path)
+    return relative_path
 
 class PreprocessingRunoff(luigi.Task):
-
-    ssh_host = env.get('IEH_SSH_HOST')
-    ssh_port = int(env.get('IEH_SSH_PORT'))
-    ssh_user = env.get('IEH_SSH_USER')
-    ssh_password = env.get('IEH_SSH_PASSWORD')
-    local_port = int(env.get('IEH_SSH_LOCAL_PORT'))
-    remote_host = env.get('IEH_SSH_DESTINATION_HOST')
-    remote_port = int(env.get('IEH_SSH_DESTINATION_PORT'))
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -45,58 +72,81 @@ class PreprocessingRunoff(luigi.Task):
     def output(self):
 
         # Get the path to the output file
+        print(f"cwd: {os.getcwd()}")
+        print(f"ieasyforecast_intermediate_data_path: {env.get('ieasyforecast_intermediate_data_path')}")
+        print(f"ieasyforecast_daily_discharge_file: {env.get('ieasyforecast_daily_discharge_file')}")
         output_file_path = os.path.join(
             env.get("ieasyforecast_intermediate_data_path"),
             env.get("ieasyforecast_daily_discharge_file")
             )
+        print(f"Output file path: {output_file_path}")
 
         return luigi.LocalTarget(output_file_path)
 
     def run(self):
-        # Connect to the remote server
-        print(f"ssh_host: {self.ssh_host}")
-        print(f"ssh_port: {self.ssh_port}")
-        print(f"ssh_user: {self.ssh_user}")
-        print(f"local_port: {self.local_port}")
-        print(f"remote_port: {self.remote_port}")
-        try:
-            # Open an SSH tunnel
-            command = f"ssh -N -L {self.local_port}:{self.remote_host}:{self.remote_port} {self.ssh_user}@{self.ssh_host} -p {self.ssh_port}"
-            ssh_tunnel = subprocess.Popen(command, shell=True)
 
-            print(f"SSH tunnel opened: localhost:{self.local_port} -> {self.ssh_host}:{self.remote_port}")
-            print(f"Connected to {self.ssh_host}!")
+        # Construct the absolute volume paths to bind to the containers
+        absolute_volume_path_config = get_absolute_path(
+            env.get('ieasyforecast_configuration_path'))
+        absolute_volume_path_internal_data = get_absolute_path(
+            env.get('ieasyforecast_intermediate_data_path'))
+        absolute_volume_path_discharge = get_absolute_path(
+            env.get('ieasyforecast_daily_discharge_path'))
+        bind_volume_path_config = get_bind_path(
+            env.get('ieasyforecast_configuration_path'))
+        bind_volume_path_internal_data = get_bind_path(
+            env.get('ieasyforecast_intermediate_data_path'))
+        bind_volume_path_discharge = get_bind_path(
+            env.get('ieasyforecast_daily_discharge_path'))
 
-            # Run the preprocessing runoff script
-            #self.run_preprocessing_runoff()
-            docker_client = dok.DockerClient()
-            container = docker_client.run_container(
-                'mabesa/sapphire-preprunoff:{TAG}',
-                'sapphire-preprunoff',
-                ['python', 'apps/preprocessing_runoff/preprocessing_runoff.py'],
-                ({
-                    'ports': {'8881/tcp': 8881},
-                #    'volumes': [f"{env.get('ieasyforecast_configuration_path')}:/sensitive_data_forecast_tools/config",
-                #                f"{env.get('ieasyforecast_daily_discharge_path')}:/sensitive_data_forecast_tools/daily_runoff",
-                #                f"{env.get('ieasyforecast_intermediate_data_path')}:/sensitive_data_forecast_tools/intermediate_data"],
-                #    'labels': {'com.centurylinklabs.watchtower.enable=true'},
-                #    'environment': ['SAPPHIRE_OPDEV_ENV=True',
-                #                    'PYTHONPATH=/app/apps/iEasyHydroForecast']
-                })
-                )
+        #print(f"env.get('ieasyforecast_configuration_path'): {env.get('ieasyforecast_configuration_path')}")
+        #print(f"absolute_volume_path_config: {absolute_volume_path_config}")
+        #print(f"absolute_volume_path_internal_data: {absolute_volume_path_internal_data}")
+        #print(f"absolute_volume_path_discharge: {absolute_volume_path_discharge}")
+        #print(f"bind_volume_path_config: {bind_volume_path_config}")
+        #print(f"bind_volume_path_internal_data: {bind_volume_path_internal_data}")
+        #print(f"bind_volume_path_discharge: {bind_volume_path_discharge}")
 
-            for log in container.logs(stream=True):
-                print(log.decode().strip())
+        # Run the docker container to pre-process runoff data
+        client = docker.from_env()
 
-            # Wait for the container to finish and then remove it
-            container.wait()
+        # Pull the new image
+        client.images.pull('mabesa/sapphire-preprunoff', tag=TAG)
 
-        except Exception as e:
-            print(f"Error opening SSH tunnel or running docker image: {e}")
+        # Define environment variables
+        environment = [
+            'SAPPHIRE_OPDEV_ENV=True',
+        ]
 
-        finally:
-            # Close the SSH tunnel
-            ssh_tunnel.terminate()
+        # Define volumes
+        volumes = {
+            absolute_volume_path_config: {'bind': bind_volume_path_config, 'mode': 'rw'},
+            absolute_volume_path_internal_data: {'bind': bind_volume_path_internal_data, 'mode': 'rw'},
+            absolute_volume_path_discharge: {'bind': bind_volume_path_discharge, 'mode': 'rw'}
+        }
+
+        # Define labels
+        labels = {
+            "com.centurylinklabs.watchtower.enable": "true"
+        }
+
+        # Run the container
+        container = client.containers.run(
+            f"mabesa/sapphire-preprunoff:{TAG}",
+            detach=True,
+            environment=environment,
+            volumes=volumes,
+            ports={'8881/tcp': 8881},
+            name="preprunoff",
+            labels=labels
+        )
+
+        print(f"Container {container.id} is running.")
+
+        # Wait for the container to finish running
+        container.wait()
+
+        print(f"Container {container.id} has stopped.")
 
     def complete(self):
         if not self.output().exists():
