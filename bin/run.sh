@@ -21,9 +21,9 @@ fi
 ieasyhydroforecast_data_root_dir=$1
 
 # Pull (deployment mode) or build (development mode) & push images
-bash ./bin/build_docker_images.sh latest
+# bash ./bin/build_docker_images.sh latest
 # bash ./bin/push_docker_images.sh latest  # ONLY allowed from amd64 architecture, i.e. not from M1/2/3 Macs
-# bash ./bin/pull_docker_images.sh latest
+bash ./bin/pull_docker_images.sh latest
 
 # Establish SSH tunnel (if required)
 bash ../sensitive_data_forecast_tools/bin/.ssh/open_ssh_tunnel.sh
