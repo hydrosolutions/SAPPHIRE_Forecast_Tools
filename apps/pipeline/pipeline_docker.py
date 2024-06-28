@@ -138,7 +138,6 @@ class PreprocessingRunoff(luigi.Task):
             volumes=volumes,
             ports={'8881/tcp': 8881},
             name="preprunoff",
-            network_mode="host",
             labels=labels
         )
 

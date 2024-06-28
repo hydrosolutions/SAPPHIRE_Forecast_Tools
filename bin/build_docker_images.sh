@@ -9,7 +9,7 @@ fi
 
 TAG=$1
 echo "Building with TAG=$TAG"
-docker build -t mabesa/sapphire-pythonbaseimage:$TAG -f ./apps/docker_base_image/Dockerfile .
-docker build -t mabeas/sapphire-pipeline:$TAG -f ./apps/pipeline/Dockerfile .
-docker build -t mabesa/sapphire-preprunoff:$TAG -f ./apps/preprocessing_runoff/Dockerfile .
-docker build -t mabesa/sapphire-linreg:$TAG -f ./apps/linear_regression/Dockerfile .
+docker build --no-cache -t mabesa/sapphire-pythonbaseimage:$TAG -f ./apps/docker_base_image/Dockerfile .
+docker compose -f bin/docker-compose.yml build --no-cache
+docker build --no-cache -t mabesa/sapphire-preprunoff:$TAG -f ./apps/preprocessing_runoff/Dockerfile .
+docker build --no-cache -t mabesa/sapphire-linreg:$TAG -f ./apps/linear_regression/Dockerfile .

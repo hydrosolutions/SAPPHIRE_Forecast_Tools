@@ -7,6 +7,13 @@ then
       exit 1
 fi
 
+ARCH=$(uname -m)
+if [ "$ARCH" = "arm64" ]; then
+    echo "Running on an Apple Silicon Mac (M1/M2/M3)."
+    echo "Currently no pushing to Docker Hub allowed."
+    exit 1
+fi
+
 TAG=$1
 echo "Pushing with TAG=$TAG"
 docker push mabesa/sapphire-pythonbaseimage:$TAG

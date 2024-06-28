@@ -8,7 +8,12 @@
 if test -z "$1"
 then
       echo "Usage bash ./bin/run.sh ieasyhydroforecast_data_root_dir"
-      echo "No tag was passed! Please pass the absolute path to your ieasyforecast data root directory to the script e.g. /Users/username/Documents/sapphire_data"
+      echo "No tag was passed!"
+      echo "Please pass the absolute path to your ieasyforecast data root directory to the script"
+      echo "e.g. /Users/username/Documents/sapphire_data"
+      echo "Typically you get the directory with pwd (print working directory) command"
+      echo "from the terminal when you are in the ieasyforecast data root directory"
+      echo "then go one directory up and copy the path"
       exit 1
 fi
 
@@ -16,7 +21,7 @@ fi
 ieasyhydroforecast_data_root_dir=$1
 
 # Pull (deployment mode) or build (development mode) & push images
-# bash ./bin/build_docker_images.sh latest
+bash ./bin/build_docker_images.sh latest
 # bash ./bin/push_docker_images.sh latest  # ONLY allowed from amd64 architecture, i.e. not from M1/2/3 Macs
 # bash ./bin/pull_docker_images.sh latest
 
@@ -30,4 +35,4 @@ ieasyhydroforecast_data_root_dir=$ieasyhydroforecast_data_root_dir docker compos
 bash ../sensitive_data_forecast_tools/bin/.ssh/close_ssh_tunnel.sh
 
 # Clean up
-bash ./bin/clean_docker.sh
+#bash ./bin/clean_docker.sh

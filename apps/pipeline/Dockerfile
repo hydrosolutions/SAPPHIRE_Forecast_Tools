@@ -11,6 +11,7 @@ WORKDIR /app
 # All files in the current directory are copied into the container into
 # directory app.
 COPY apps/pipeline /app/apps/pipeline
+COPY apps/pipeline/luigi.cfg /app/luigi.cfg
 
 RUN --mount=type=cache,target=/root/.cache/pip \
     --mount=type=bind,source=apps/pipeline/requirements.txt,target=/app/apps/pipeline/requirements.txt \
