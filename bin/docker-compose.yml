@@ -23,6 +23,8 @@ services:
       context: ../
       dockerfile: ./apps/pipeline/Dockerfile
     working_dir: /app
+    ports:
+      - "8881:8881"
     environment:
       - PYTHONPATH=/app
       - ieasyhydroforecast_data_root_dir=${ieasyhydroforecast_data_root_dir}

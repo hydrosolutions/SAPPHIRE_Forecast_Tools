@@ -136,8 +136,8 @@ class PreprocessingRunoff(luigi.Task):
             detach=True,
             environment=environment,
             volumes=volumes,
-            #ports={'8881/tcp': 8881},
-            network_mode='host',
+            #ports={'8881/tcp': ('127.0.0.1', 8881)},
+            network_mode="sapphire-orchestrator_default",
             name="preprunoff",
             labels=labels
         )
