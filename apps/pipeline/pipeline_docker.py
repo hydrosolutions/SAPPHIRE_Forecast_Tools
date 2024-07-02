@@ -136,7 +136,7 @@ class PreprocessingRunoff(luigi.Task):
             detach=True,
             environment=environment,
             volumes=volumes,
-            ports={'8881/tcp': 8881},
+            #ports={'8881/tcp': 8881},
             name="preprunoff",
             labels=labels
         )
