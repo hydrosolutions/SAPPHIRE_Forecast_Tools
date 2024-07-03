@@ -140,6 +140,8 @@ class PreprocessingRunoff(luigi.Task):
             #extra_hosts={'host.docker.internal': 'host-gateway'},  # To test
             name="preprunoff",
             labels=labels,
+            stdin_open=True,
+            tty=True,
             #network='bridge'  # To test
         )
 
