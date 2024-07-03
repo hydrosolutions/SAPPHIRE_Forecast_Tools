@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 
 # Import docker client for luigi, may not be required
 #from . import docker_utils as dok
-from . import docker_runner as dokr
+#from . import docker_runner as dokr
 
 
 
@@ -111,7 +111,7 @@ class PreprocessingRunoff(luigi.Task):
         client = docker.from_env()
 
         # Pull the new image
-        client.images.pull('mabesa/sapphire-preprunoff', tag=TAG)
+        #client.images.pull('mabesa/sapphire-preprunoff', tag=TAG)
 
         # Define environment variables
         environment = [
@@ -136,9 +136,11 @@ class PreprocessingRunoff(luigi.Task):
             detach=True,
             environment=environment,
             volumes=volumes,
-            ports={'8881/tcp': 8881},
+            #ports={'8881/tcp': 8881},  # Container:Host
+            extra_hosts={'host.docker.internal': 'host-gateway'},
             name="preprunoff",
-            labels=labels
+            labels=labels,
+            network='bridge'
         )
 
         print(f"Container {container.id} is running.")
