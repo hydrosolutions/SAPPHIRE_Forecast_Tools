@@ -136,12 +136,11 @@ class PreprocessingRunoff(luigi.Task):
             detach=True,
             environment=environment,
             volumes=volumes,
-            ports={'8881/tcp': 8881},  # Container:Host  # uncomment to test lines below
+            #ports={'8881/tcp': 8881},  # Container:Host  # uncomment to test lines below
             #extra_hosts={'host.docker.internal': 'host-gateway'},  # To test
             name="preprunoff",
             labels=labels,
-            stdin_open=True,
-            tty=True,
+            network='host'  # To test
             #network='bridge'  # To test
         )
 
