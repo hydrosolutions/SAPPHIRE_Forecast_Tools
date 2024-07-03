@@ -136,11 +136,11 @@ class PreprocessingRunoff(luigi.Task):
             detach=True,
             environment=environment,
             volumes=volumes,
-            #ports={'8881/tcp': 8881},  # Container:Host
-            extra_hosts={'host.docker.internal': 'host-gateway'},
+            ports={'8881/tcp': 8881},  # Container:Host
+            #extra_hosts={'host.docker.internal': 'host-gateway'},
             name="preprunoff",
             labels=labels,
-            network='bridge'
+            #network='bridge'
         )
 
         print(f"Container {container.id} is running.")
