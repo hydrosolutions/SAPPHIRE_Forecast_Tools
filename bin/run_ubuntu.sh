@@ -20,6 +20,9 @@ fi
 # Parse argument
 ieasyhydroforecast_data_root_dir=$1
 
+# Clean up the docker workspace
+bash ./bin/clean_docker.sh
+
 # Pull (deployment mode) or build (development mode) & push images
 # bash ./bin/build_docker_images.sh latest
 # bash ./bin/push_docker_images.sh latest  # ONLY allowed from amd64 architecture, i.e. not from M1/2/3 Macs
