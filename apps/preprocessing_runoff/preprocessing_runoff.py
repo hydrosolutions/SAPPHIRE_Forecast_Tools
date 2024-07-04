@@ -44,7 +44,7 @@ import setup_library as sl
 
 
 # Configure the logging level and formatter
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 
 # Create the logs directory if it doesn't exist
