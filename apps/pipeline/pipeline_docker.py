@@ -1,7 +1,7 @@
 # Description: This file contains the luigi tasks to run the docker containers
 #   for the forecast tools pipeline.
 #
-# Run: PYTHONPATH='.' luigi --module SAPPHIRE_Forecast_Tools.apps.pipeline.pipeline_docker PreprocessingRunoff --local-scheduler
+# Run: PYTHONPATH='.' luigi --module apps.pipeline.pipeline_docker PreprocessingRunoff --local-scheduler
 #
 
 import luigi
@@ -10,8 +10,11 @@ import subprocess
 import time
 import docker
 import re
-#import platform
+import platform
 from dotenv import load_dotenv
+
+# Import local utils
+from apps.pipeline.src import pipeline_utils as pu
 
 # Import docker client for luigi, may not be required
 #from . import docker_utils as dok
@@ -110,8 +113,11 @@ class PreprocessingRunoff(luigi.Task):
         # Run the docker container to pre-process runoff data
         client = docker.from_env()
 
-        # Pull the new image
-        #client.images.pull('mabesa/sapphire-preprunoff', tag=TAG)
+        # Pull the latest image
+        if pu.there_is_a_newer_image_on_docker_hub(
+            client, repository='mabesa', image_name='sapphire-preprunoff', tag=TAG):
+            print("Pulling the latest image from Docker Hub.")
+            client.images.pull('mabesa/sapphire-preprunoff', tag=TAG)
 
         # Define environment variables
         environment = [
@@ -126,23 +132,33 @@ class PreprocessingRunoff(luigi.Task):
         }
 
         # Define labels
-        labels = {
-            "com.centurylinklabs.watchtower.enable": "true"
-        }
+        #labels = {
+        #    "com.centurylinklabs.watchtower.enable": "true"
+        #}
 
         # Run the container
-        container = client.containers.run(
-            f"mabesa/sapphire-preprunoff:{TAG}",
-            detach=True,
-            environment=environment,
-            volumes=volumes,
-            #ports={'8881/tcp': 8881},  # Container:Host  # uncomment to test lines below
-            #extra_hosts={'host.docker.internal': 'host-gateway'},  # To test
-            name="preprunoff",
-            labels=labels,
-            network='host'  # To test
-            #network='bridge'  # To test
-        )
+        # Note: different networking behaviour on Linux (tested Ubuntu) and Mac OS
+        if platform.system() == "Linux":
+            print("Running on Linux")
+            container = client.containers.run(
+                f"mabesa/sapphire-preprunoff:{TAG}",
+                detach=True,
+                environment=environment,
+                volumes=volumes,
+                name="preprunoff",
+                #labels=labels,
+                network='host'  # To test
+            )
+        else:
+            container = client.containers.run(
+                f"mabesa/sapphire-preprunoff:{TAG}",
+                detach=True,
+                ports={'8881/tcp': '8881'},
+                environment=environment,
+                volumes=volumes,
+                name="preprunoff",
+                #labels=labels
+            )
 
         print(f"Container {container.id} is running.")
 

@@ -1,4 +1,4 @@
 #!/usr/bin/env bash
-docker compose down
+docker compose -f bin/docker-compose.yml down
 docker container prune
-docker image prune -f
+docker rmi $(docker images -q) -f

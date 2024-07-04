@@ -1,6 +1,6 @@
 # docker compose file for running the sapphire forecast tools
-# build: docker-compose -f /path/to/docker-compose.yml build
-# run: docker-compose -f /path/to/docker-compose.yml up
+# build: ieasyhydroforecast_data_root_dir=<path> docker-compose -f /path/to/docker-compose.yml build --no-cache
+# run: ieasyhydroforecast_data_root_dir=<path> docker-compose -f /path/to/docker-compose.yml up -d
 # stop: docker-compose -f /path/to/docker-compose.yml down
 
 name: sapphire-orchestrator

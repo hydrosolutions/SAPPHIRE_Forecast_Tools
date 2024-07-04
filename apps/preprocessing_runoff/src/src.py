@@ -709,12 +709,12 @@ def get_runoff_data(ieh_sdk=None, date_col='date', discharge_col='discharge', na
         # Cast the 'code' column to string
         read_data[code_col] = read_data[code_col].astype(str)
 
-        print(read_data[read_data['code'] == "16936"].tail(10))
-        print(read_data[read_data['code'] == "16059"].tail(10))
+        #print(read_data[read_data['code'] == "16936"].tail(10))
+        #print(read_data[read_data['code'] == "16059"].tail(10))
         # Calculate virtual hydropost data where necessary
         read_data = calculate_virtual_stations_data(read_data)
-        print(read_data[read_data['code'] == "16936"].tail(10))
-        print(read_data[read_data['code'] == "16059"].tail(10))
+        #print(read_data[read_data['code'] == "16936"].tail(10))
+        #print(read_data[read_data['code'] == "16059"].tail(10))
 
         # For sanity sake, we round the data to a mac of 3 decimal places
         read_data[discharge_col] = read_data[discharge_col].round(3)

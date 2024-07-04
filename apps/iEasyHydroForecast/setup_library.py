@@ -180,7 +180,7 @@ def load_environment():
     if not os.path.exists(env_file_path):
         raise FileNotFoundError(f"Environment file {env_file_path} not found")
     # Load the environment variables
-    logger.info(f"Loading _ environment variables from {env_file_path}")
+    logger.info(f"Loading environment variables from {env_file_path}")
     res = load_dotenv(env_file_path)
     logger.debug(f"IEASYHYDRO_HOST: {os.getenv('IEASYHYDRO_HOST')}")
     # Test if the environment variables were loaded

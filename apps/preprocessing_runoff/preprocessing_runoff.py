@@ -1,5 +1,19 @@
 # Python 3.11
 
+# This script is part of the SAPPHIRE forecast tools.
+# It reads daily average discharge data from excel sheets and, if access to the iEasyHydro database is available,
+# completes the discharge time series with operational daily average discharge from the database.
+# From the current day, the morning discharge is also read from the database and appended to the time series.
+# The script performs the following steps:
+# - Read daily data plus todays morning discharge into a dataframe
+# - Calculate runoff for virtual stations
+# - Filter for outliers by setting values exceeding the thresholds below to NaN, whereby
+#      lower threshold: 25%ile – 2.5 * (75%ile – 25%ile) and upper threshold: 75%ile + (75%ile – 25%ile)
+# - Linearly interpolate NaNs, maximum gap size is 2
+# - Calculate runoff statistics
+# The script then saves the discharge data and runoff statistics (hydrograph data) to csv files for further use in the forecast tools.
+
+
 # I/O
 import os
 import sys
