@@ -43,7 +43,7 @@ services:
     environment:
       - PYTHONPATH=/app
       - ieasyhydroforecast_data_root_dir=${ieasyhydroforecast_data_root_dir}
-    command: ['luigi', '--module', 'apps.pipeline.pipeline_docker', 'LinearRegression']  # If run without luigid, '--local-scheduler']
+    command: ['luigi', '--module', 'apps.pipeline.pipeline_docker', 'PostProcessingForecasts']  # If run without luigid, '--local-scheduler']
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock # Mount docker socket
       - ../../sensitive_data_forecast_tools/config:/sensitive_data_forecast_tools/config
