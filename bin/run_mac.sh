@@ -18,8 +18,7 @@ then
 fi
 
 # Parse argument
-#export ieasyhydroforecast_data_root_dir=$1
-export ieasyhydroforecast_data_root_dir=/Users/bea/Documents/GitHub
+export ieasyhydroforecast_data_root_dir=$1
 echo $ieasyhydroforecast_data_root_dir
 
 # Clean up docker space
@@ -38,7 +37,7 @@ source ../sensitive_data_forecast_tools/bin/.ssh/open_ssh_tunnel.sh
 # Function to start the Docker Compose service
 start_docker_compose() {
   echo "Starting Docker Compose service..."
-  docker compose -f bin/docker-compose.yml up &
+  docker compose -f bin/docker-compose.yml up -d &
   DOCKER_COMPOSE_PID=$!
   echo "Docker Compose service started with PID $DOCKER_COMPOSE_PID"
 }

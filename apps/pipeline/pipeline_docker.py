@@ -153,10 +153,11 @@ class PreprocessingRunoff(luigi.Task):
             container = client.containers.run(
                 f"mabesa/sapphire-preprunoff:{TAG}",
                 detach=True,
-                ports={'8881/tcp': '8881'},
+                #ports={'8881/tcp': '8881'},
                 environment=environment,
                 volumes=volumes,
                 name="preprunoff",
+                network='host'
                 #labels=labels
             )
 
