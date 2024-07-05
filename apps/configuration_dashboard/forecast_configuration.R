@@ -28,7 +28,7 @@ if (Sys.getenv("IN_DOCKER_CONTAINER")=="") {
   setwd(here())
   setwd("apps/configuration_dashboard")
   print(getwd())
-  if (Sys.getenv("SAPPHIRE_OPDEV_ENV"=="True")) {
+  if (Sys.getenv("SAPPHIRE_OPDEV_ENV")=="True") {
     if (!file.exists("../../../sensitive_data_forecast_tools/config/.env_develop_kghm")) {
       stop("File ../../../sensitive_data_forecast_tools/config/.env_develop_kghm not found. ")
     }
@@ -45,7 +45,7 @@ if (Sys.getenv("IN_DOCKER_CONTAINER")=="") {
   # Environment variable IN_DOCKER_CONTAINER is set. Run from docker container
   setwd("/app")
   print(getwd())
-  if (Sys.getenv("SAPPHIRE_OPDEV_ENV"=="True")) {
+  if (Sys.getenv("SAPPHIRE_OPDEV_ENV")=="True") {
     if (!file.exists("../sensitive_data_forecast_tools/config/.env_develop_kghm")) {
       stop("File ../sensitive_data_forecast_tools/config/.env_develop_kghm not found. ")
     }
