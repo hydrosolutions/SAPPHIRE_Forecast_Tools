@@ -24,6 +24,7 @@ services:
     environment:
       - PYTHONPATH=/app
       - ieasyhydroforecast_data_root_dir=${ieasyhydroforecast_data_root_dir}
+      - SAPPHIRE_OPDEV_ENV=True
     command: ["R", "-e", "setwd('/app'); shiny::runApp('apps/configuration_dashboard/forecast_configuration.R', port = 3647, host = '0.0.0.0', launch.browser=FALSE)"]
     ports:
       - "80:3647"
