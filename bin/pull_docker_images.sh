@@ -11,3 +11,4 @@ echo "Pulling with TAG=$TAG"
 #docker pull mabesa/sapphire-pythonbaseimage:$TAG
 docker pull mabesa/sapphire-preprunoff:$TAG
 docker pull mabesa/sapphire-linreg:$TAG
+docker pull mabesa/sapphire-postprocessing:$TAG

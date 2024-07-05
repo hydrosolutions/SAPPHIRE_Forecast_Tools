@@ -160,6 +160,8 @@ bash bin/clean_docler.sh
 ieasyhydroforecast_data_root_dir=<ieasyhydroforecast_data_root_dir> bash bin/build_docker_images.sh latest
 ```
 
+To test-run the pipeline on an Ubuntu server, follow the instructions in [doc/deployment.md](deployment.md).
+
 #### Configuration dashboard
 The forecast configuration dashboard is written in R and uses the Shiny framework.
 
