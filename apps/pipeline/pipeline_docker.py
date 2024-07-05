@@ -137,29 +137,15 @@ class PreprocessingRunoff(luigi.Task):
         #}
 
         # Run the container
-        # Note: different networking behaviour on Linux (tested Ubuntu) and Mac OS
-        if platform.system() == "Linux":
-            print("Running on Linux")
-            container = client.containers.run(
-                f"mabesa/sapphire-preprunoff:{TAG}",
-                detach=True,
-                environment=environment,
-                volumes=volumes,
-                name="preprunoff",
-                #labels=labels,
-                network='host'  # To test
-            )
-        else:
-            container = client.containers.run(
-                f"mabesa/sapphire-preprunoff:{TAG}",
-                detach=True,
-                #ports={'8881/tcp': '8881'},
-                environment=environment,
-                volumes=volumes,
-                name="preprunoff",
-                network='host'
-                #labels=labels
-            )
+        container = client.containers.run(
+            f"mabesa/sapphire-preprunoff:{TAG}",
+            detach=True,
+            environment=environment,
+            volumes=volumes,
+            name="preprunoff",
+            #labels=labels,
+            network='host'  # To test
+        )
 
         print(f"Container {container.id} is running.")
 
