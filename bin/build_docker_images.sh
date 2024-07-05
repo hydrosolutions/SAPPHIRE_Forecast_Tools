@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # Run from the root of the project
 if test -z "$1"
 then
@@ -12,4 +12,4 @@ echo "Building with TAG=$TAG"
 docker build --no-cache -t mabesa/sapphire-pythonbaseimage:$TAG -f ./apps/docker_base_image/Dockerfile .
 docker compose -f bin/docker-compose.yml build --no-cache
 docker build --no-cache -t mabesa/sapphire-preprunoff:$TAG -f ./apps/preprocessing_runoff/Dockerfile .
-docker build --no-cache -t mabesa/sapphire-linreg:$TAG -f ./apps/linear_regression/Dockerfile .
+#docker build --no-cache -t mabesa/sapphire-linreg:$TAG -f ./apps/linear_regression/Dockerfile .

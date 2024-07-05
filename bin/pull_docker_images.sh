@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 if test -z "$1"
 then
       echo "Usage bash ./bin/pull_docker_images.sh TAG"
@@ -8,6 +8,6 @@ fi
 
 TAG=$1
 echo "Pulling with TAG=$TAG"
-docker pull mabesa/sapphire-pythonbaseimage:$TAG
+#docker pull mabesa/sapphire-pythonbaseimage:$TAG
 docker pull mabesa/sapphire-preprunoff:$TAG
 docker pull mabesa/sapphire-linreg:$TAG

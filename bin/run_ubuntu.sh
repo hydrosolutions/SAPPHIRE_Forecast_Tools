@@ -31,6 +31,9 @@ source ./bin/pull_docker_images.sh latest
 # Establish SSH tunnel (if required)
 source ../sensitive_data_forecast_tools/bin/.ssh/open_ssh_tunnel.sh
 
+# Wait for 5 seconds
+sleep 5
+
 # Run the forecast tools
 ieasyhydroforecast_data_root_dir=$ieasyhydroforecast_data_root_dir docker compose -f bin/docker-compose.yml up -d
 

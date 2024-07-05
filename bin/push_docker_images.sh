@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # Run from the root of the project
 if test -z "$1"
 then
