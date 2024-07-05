@@ -3,9 +3,10 @@
 # This script runs the SAPPHIRE forecast tools in local deployment mode
 # Working directory if the root of the repository, i.e. SAPPHIRE_forecast_tools
 #
-# Useage: source bin/run_mac.sh <ieasyhydroforecast_data_root_dir>
+# Useage: bash bin/run_mac.sh <ieasyhydroforecast_data_root_dir>
 #
-# Details: The script performs the following tasks and takes 15 minutes on a reasonably fast machine:
+# Details: The script performs the following tasks and takes 4 minutes on a
+# reasonably fast machine with a good internet connection:
 # 1. Parse the argument <ieasyhydroforecast_data_root_dir> which is the absolute path to the ieasyforecast data root directory
 # 2. Clean up docker space (remove all containers and images)
 # 3. Build the Docker images with the tag "latest"

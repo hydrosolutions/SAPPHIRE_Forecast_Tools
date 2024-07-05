@@ -166,7 +166,7 @@ def load_environment():
     Raises:
         FileNotFoundError: If the .env file does not exist.
     """
-    logger.info("Current working directory: " + os.getcwd())
+    logger.debug("Current working directory: " + os.getcwd())
 
     # Read the environment variable IN_DOCKER_CONTAINER to determine which .env file to use
     if os.getenv("IN_DOCKER_CONTAINER") == "True":
