@@ -4,6 +4,24 @@
 # Working directory if the root of the repository, i.e. SAPPHIRE_forecast_tools
 #
 # Useage: source bin/run_mac.sh <ieasyhydroforecast_data_root_dir>
+#
+# Details: The script performs the following tasks and takes 15 minutes on a reasonably fast machine:
+# 1. Parse the argument <ieasyhydroforecast_data_root_dir> which is the absolute path to the ieasyforecast data root directory
+# 2. Clean up docker space (remove all containers and images)
+# 3. Build the Docker images with the tag "latest"
+# 4. Establish an SSH tunnel to the SAPPHIRE server
+# 5. Start the Docker Compose service (start luigi daemon and the SAPPHIRE forecast tools)
+# 6. Wait for the Docker Compose service to finish
+# 7. Close the SSH tunnel
+# 8. Down the Docker Compose service
+#
+# Note: The script uses the following helper scripts:
+# 1. bin/clean_docker.sh
+# 4. bin/pull_docker_images.sh
+# 5. bin/docker-compose.yml
+# 6. bin/.ssh/open_ssh_tunnel.sh
+# 7. bin/.ssh/close_ssh_tunnel.sh
+
 
 if test -z "$1"
 then
@@ -26,10 +44,10 @@ echo "Removing all containers and images"
 ieasyhydroforecast_data_root_dir=$ieasyhydroforecast_data_root_dir source ./bin/clean_docker.sh
 
 # Pull (deployment mode) or build (development mode) & push images
-echo "Building with TAG=latest"
-source ./bin/build_docker_images.sh latest
+echo "Pulling with TAG=latest"
+# source ./bin/build_docker_images.sh latest  # Only for development mode
 # bash ./bin/push_docker_images.sh latest  # ONLY allowed from amd64 architecture, i.e. not from M1/2/3 Macs
-# bash ./bin/pull_docker_images.sh latest
+bash ./bin/pull_docker_images.sh latest
 
 # Establish SSH tunnel (if required)
 source ../sensitive_data_forecast_tools/bin/.ssh/open_ssh_tunnel.sh
@@ -70,6 +88,10 @@ start_docker_compose
 
 # Wait for Docker Compose service to finish
 wait $DOCKER_COMPOSE_PID
+
+# Wait another 30 minutes
+echo "Waiting for 30 minutes before cleaning up..."
+sleep 1800
 
 # Additional actions to be taken after Docker Compose service stops
 echo "Docker Compose service has finished running"
