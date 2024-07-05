@@ -27,5 +27,5 @@ COPY apps/linear_regression /app/apps/linear_regression
 RUN --mount=type=cache,target=/root/.cache/pip \
     --mount=type=bind,source=apps/linear_regression/requirements.txt,target=/app/apps/linear_regression/requirements.txt
 
-# Run the application.  && sleep 86400
-#CMD ["sh", "-c", "PYTHONPATH=/app/apps/iEasyHydroForecast python apps/linear_regression/linear_regression.py"]
+# Run the application.
+CMD ["sh", "-c", "PYTHONPATH=/app/apps/iEasyHydroForecast python apps/linear_regression/linear_regression.py"]

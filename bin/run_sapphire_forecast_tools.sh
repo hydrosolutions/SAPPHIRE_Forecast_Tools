@@ -48,7 +48,7 @@ ieasyhydroforecast_data_root_dir=$ieasyhydroforecast_data_root_dir source ./bin/
 echo "Pulling with TAG=latest"
 # source ./bin/build_docker_images.sh latest  # Only for development mode
 # bash ./bin/push_docker_images.sh latest  # ONLY allowed from amd64 architecture, i.e. not from M1/2/3 Macs
-bash ./bin/pull_docker_images.sh latest
+source ./bin/pull_docker_images.sh latest
 
 # Establish SSH tunnel (if required)
 source ../sensitive_data_forecast_tools/bin/.ssh/open_ssh_tunnel.sh

@@ -28,21 +28,35 @@ if (Sys.getenv("IN_DOCKER_CONTAINER")=="") {
   setwd(here())
   setwd("apps/configuration_dashboard")
   print(getwd())
-  # Test if the file .env_develop exists.
-  if (!file.exists("../config/.env_develop")) {
-    stop("File ../config/.env_develop not found. ")
+  if (Sys.getenv("SAPPHIRE_OPDEV_ENV"=="True")) {
+    if (!file.exists("../../../sensitive_data_forecast_tools/config/.env_develop_kghm")) {
+      stop("File ../../../sensitive_data_forecast_tools/config/.env_develop_kghm not found. ")
+    }
+    readRenviron("../../../sensitive_data_forecast_tools/config/.env_develop_kghm")
+  } else {
+    # Test if the file .env_develop exists.
+    if (!file.exists("../config/.env_develop")) {
+      stop("File ../config/.env_develop not found. ")
+    }
+    readRenviron("../config/.env_develop")
   }
-  readRenviron("../config/.env_develop")
 } else {
   print("Running from docker container")
   # Environment variable IN_DOCKER_CONTAINER is set. Run from docker container
   setwd("/app")
   print(getwd())
-  # Test if the file .env exists.
-  if (!file.exists("apps/config/.env")) {
-    stop("File apps/config/.env not found. ")
+  if (Sys.getenv("SAPPHIRE_OPDEV_ENV"=="True")) {
+    if (!file.exists("../sensitive_data_forecast_tools/config/.env_develop_kghm")) {
+      stop("File ../sensitive_data_forecast_tools/config/.env_develop_kghm not found. ")
+    }
+    readRenviron("../sensitive_data_forecast_tools/config/.env_develop_kghm")
+  } else {
+    # Test if the file .env exists.
+    if (!file.exists("apps/config/.env")) {
+      stop("File apps/config/.env not found. ")
+    }
+    readRenviron("apps/config/.env")
   }
-  readRenviron("apps/config/.env")
 }
 
 # Test if directory exists

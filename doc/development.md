@@ -149,7 +149,16 @@ To run the Docker containers locally, run the following command in the root dire
 docker compose -f /bin/docker-compose.yml up
 ```
 
-
+To build and run the pipeline locally on a Mac to the following steps:
+1. Open a terminal and navigate to the root directory of the repository.
+2. Clean up the docker work space:
+```bash
+bash bin/clean_docler.sh
+```
+3. Build the docker image:
+```bash
+ieasyhydroforecast_data_root_dir=<ieasyhydroforecast_data_root_dir> bash bin/build_docker_images.sh latest
+```
 
 #### Configuration dashboard
 The forecast configuration dashboard is written in R and uses the Shiny framework.

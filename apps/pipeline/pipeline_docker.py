@@ -69,20 +69,17 @@ def get_bind_path(relative_path):
 
 class PreprocessingRunoff(luigi.Task):
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
     def output(self):
 
         # Get the path to the output file
-        print(f"cwd: {os.getcwd()}")
-        print(f"ieasyforecast_intermediate_data_path: {env.get('ieasyforecast_intermediate_data_path')}")
-        print(f"ieasyforecast_daily_discharge_file: {env.get('ieasyforecast_daily_discharge_file')}")
+        #print(f"cwd: {os.getcwd()}")
+        #print(f"ieasyforecast_intermediate_data_path: {env.get('ieasyforecast_intermediate_data_path')}")
+        #print(f"ieasyforecast_daily_discharge_file: {env.get('ieasyforecast_daily_discharge_file')}")
         output_file_path = os.path.join(
             env.get("ieasyforecast_intermediate_data_path"),
             env.get("ieasyforecast_daily_discharge_file")
             )
-        print(f"Output file path: {output_file_path}")
+        #print(f"Output file path: {output_file_path}")
 
         return luigi.LocalTarget(output_file_path)
 
@@ -131,11 +128,6 @@ class PreprocessingRunoff(luigi.Task):
             absolute_volume_path_discharge: {'bind': bind_volume_path_discharge, 'mode': 'rw'}
         }
 
-        # Define labels
-        #labels = {
-        #    "com.centurylinklabs.watchtower.enable": "true"
-        #}
-
         # Run the container
         container = client.containers.run(
             f"mabesa/sapphire-preprunoff:{TAG}",
@@ -167,6 +159,97 @@ class PreprocessingRunoff(luigi.Task):
         # Check if the output file was modified within the last number of seconds
         return current_time - output_file_mtime < 10  # 24 * 60 * 60
 
+class LinearRegression(luigi.Task):
 
+    def requires(self):
+        return PreprocessingRunoff()
 
+    def output(self):
+
+        # Get the path to the output file
+        #print(f"cwd: {os.getcwd()}")
+        #print(f"ieasyforecast_intermediate_data_path: {env.get('ieasyforecast_intermediate_data_path')}")
+        #print(f"ieasyforecast_analysis_pentad_file: {env.get('ieasyforecast_analysis_pentad_file')}")
+        output_file_path = os.path.join(
+            env.get("ieasyforecast_intermediate_data_path"),
+            env.get("ieasyforecast_analysis_pentad_file")
+            )
+        #print(f"Output file path: {output_file_path}")
+
+        return luigi.LocalTarget(output_file_path)
+
+    def run(self):
+        # Construct the absolute volume paths to bind to the containers
+        absolute_volume_path_config = get_absolute_path(
+            env.get('ieasyforecast_configuration_path'))
+        absolute_volume_path_internal_data = get_absolute_path(
+            env.get('ieasyforecast_intermediate_data_path'))
+        absolute_volume_path_discharge = get_absolute_path(
+            env.get('ieasyforecast_daily_discharge_path'))
+        bind_volume_path_config = get_bind_path(
+            env.get('ieasyforecast_configuration_path'))
+        bind_volume_path_internal_data = get_bind_path(
+            env.get('ieasyforecast_intermediate_data_path'))
+        bind_volume_path_discharge = get_bind_path(
+            env.get('ieasyforecast_daily_discharge_path'))
+
+        #print(f"env.get('ieasyforecast_configuration_path'): {env.get('ieasyforecast_configuration_path')}")
+        #print(f"absolute_volume_path_config: {absolute_volume_path_config}")
+        #print(f"absolute_volume_path_internal_data: {absolute_volume_path_internal_data}")
+        #print(f"absolute_volume_path_discharge: {absolute_volume_path_discharge}")
+        #print(f"bind_volume_path_config: {bind_volume_path_config}")
+        #print(f"bind_volume_path_internal_data: {bind_volume_path_internal_data}")
+        #print(f"bind_volume_path_discharge: {bind_volume_path_discharge}")
+
+        # Run the docker container to pre-process runoff data
+        client = docker.from_env()
+
+        # Pull the latest image
+        if pu.there_is_a_newer_image_on_docker_hub(
+            client, repository='mabesa', image_name='sapphire-linreg', tag=TAG):
+            print("Pulling the latest image from Docker Hub.")
+            client.images.pull('mabesa/sapphire-linreg', tag=TAG)
+
+        # Define environment variables
+        environment = [
+            'SAPPHIRE_OPDEV_ENV=True',
+        ]
+
+        # Define volumes
+        volumes = {
+            absolute_volume_path_config: {'bind': bind_volume_path_config, 'mode': 'rw'},
+            absolute_volume_path_internal_data: {'bind': bind_volume_path_internal_data, 'mode': 'rw'},
+            absolute_volume_path_discharge: {'bind': bind_volume_path_discharge, 'mode': 'rw'}
+        }
+
+        # Run the container
+        container = client.containers.run(
+            f"mabesa/sapphire-linreg:{TAG}",
+            detach=True,
+            environment=environment,
+            volumes=volumes,
+            name="linreg",
+            #labels=labels,
+            network='host'  # To test
+        )
+
+        print(f"Container {container.id} is running.")
+
+        # Wait for the container to finish running
+        container.wait()
+
+        print(f"Container {container.id} has stopped.")
+
+    def complete(self):
+        if not self.output().exists():
+            return False
+
+        # Get the modified time of the output file
+        output_file_mtime = os.path.getmtime(self.output().path)
+
+        # Get the current time
+        current_time = time.time()
+
+        # Check if the output file was modified within the last number of seconds
+        return current_time - output_file_mtime < 10  # 24 * 60 * 60
 
