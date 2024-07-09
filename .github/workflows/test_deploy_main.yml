@@ -309,10 +309,11 @@ jobs:
           # Adding the iEasyHydroForecast folder to the PYTHONPATH
           echo "PYTHONPATH=${GITHUB_WORKSPACE}/apps/iEasyHydroForecast" >> $GITHUB_ENV
       - name: Install dependencies
+        working-directory: ./app
         run: |
           python -m pip install --upgrade pip
           python -m pip install flake8
-          python -m pip install -r ./python_requirements.txt
+          python -m pip install -r ./apps/forecast_dashboard/requirements.txt
           python -m pip install git+https://github.com/hydrosolutions/ieasyhydro-python-sdk
           python -m pip install git+https://github.com/hydrosolutions/ieasyreports.git@main
           python -m pip install -e ./apps/iEasyHydroForecast
