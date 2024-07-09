@@ -3,7 +3,7 @@
 # This script runs the SAPPHIRE forecast tools in local deployment mode
 # Working directory if the root of the repository, i.e. SAPPHIRE_forecast_tools
 #
-# Useage: bash bin/run_mac.sh <ieasyhydroforecast_data_root_dir>
+# Useage: bash bin/run_sapphire_forecast_tools.sh <ieasyhydroforecast_data_root_dir>
 #
 # Details: The script performs the following tasks and takes 4 minutes on a
 # reasonably fast machine with a good internet connection:
