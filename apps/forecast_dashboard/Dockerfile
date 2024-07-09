@@ -37,4 +37,4 @@ EXPOSE 5006
 
 # Run the application.
 #CMD ["panel", "serve", "apps/forecast_dashboard/pentad_dashboard.py", "--show", "--autoreload", "--port", "5006", "--allow-websocket-origin", "*"]
-CMD ["panel", "serve", "--allow-websocket-origin=34.202.229.208:5006", "apps/forecast_dashboard/pentad_dashboard.py", "--show", "--autoreload"]
+CMD ["panel", "serve", "--allow-websocket-origin=34.202.229.208:5006", "apps/forecast_dashboard/pentad_dashboard.py", "--port=5006", "--address=0.0.0.0", "--show", "--autoreload"]
