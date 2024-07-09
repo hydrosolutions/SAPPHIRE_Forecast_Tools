@@ -313,13 +313,12 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install flake8
           python -m pip install -r ./python_requirements.txt
-          python -m pip install git+https://github.com/hydrosolutions/ieasyhydro-python-sdk
-          python -m pip install git+https://github.com/hydrosolutions/ieasyhydro-python-sdk
+          pip install git+https://github.com/hydrosolutions/ieasyreports.git@main
           python -m pip install -e ./apps/iEasyHydroForecast
       - name: Test with pytest
         working-directory: ./apps
         run: |
-          #SAPPHIRE_TEST_ENV=True python -m pytest -s forecast_dashboard/tests/
+          SAPPHIRE_TEST_ENV=True python -m pytest -s forecast_dashboard/tests/
 
   push_dashboard_to_Dckerhub:
     needs: [test_dashboard, test_ieasyhydroforecast]
