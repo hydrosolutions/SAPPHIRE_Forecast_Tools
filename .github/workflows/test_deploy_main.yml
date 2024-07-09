@@ -309,7 +309,7 @@ jobs:
           # Adding the iEasyHydroForecast folder to the PYTHONPATH
           echo "PYTHONPATH=${GITHUB_WORKSPACE}/apps/iEasyHydroForecast" >> $GITHUB_ENV
       - name: Install dependencies
-        working-directory: ./app
+        # Default working directory is the repository root folder
         run: |
           python -m pip install --upgrade pip
           python -m pip install flake8
