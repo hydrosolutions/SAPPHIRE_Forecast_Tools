@@ -9,6 +9,7 @@ FROM mabesa/sapphire-pythonbaseimage:latest AS base
 
 # Copy the contents of the apps/forecast_dashboard directory into the container
 COPY apps/forecast_dashboard app/apps/forecast_dashboard
+COPY apps/forecast_dashboard/requirements.txt /app/apps/forecast_dashboard/requirements.txt
 
 # Specify the working directory inside the container
 WORKDIR /app
