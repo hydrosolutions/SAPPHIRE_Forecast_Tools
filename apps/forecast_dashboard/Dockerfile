@@ -25,7 +25,7 @@ ENV DISPLAY :0
 # Update libraries of the operating system. Especially the ones which are flaged
 # for vulnerabilities in dockerhub. The -y flag automatically anwwers yes to all
 # prompts.
-RUN pip install --trusted-host pypi.python.org -r python_requirements.txt && \
+RUN pip install --trusted-host pypi.python.org -r forecast_dashboard/requirements.txt && \
     pip install git+https://github.com/hydrosolutions/ieasyreports.git@main
 
 # Expose the port that the application listens on.
