@@ -313,7 +313,8 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install flake8
           python -m pip install -r ./python_requirements.txt
-          pip install git+https://github.com/hydrosolutions/ieasyreports.git@main
+          python -m pip install git+https://github.com/hydrosolutions/ieasyhydro-python-sdk
+          python -m pip install git+https://github.com/hydrosolutions/ieasyreports.git@main
           python -m pip install -e ./apps/iEasyHydroForecast
       - name: Test with pytest
         working-directory: ./apps
