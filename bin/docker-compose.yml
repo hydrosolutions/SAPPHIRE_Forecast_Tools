@@ -37,12 +37,12 @@ services:
     build:
       context: ../
       dockerfile: ./apps/forecast_dashboard/Dockerfile
-    working_dir: /app
+    working_dir: /app/apps/forecast_dashboard
     environment:
       - PYTHONPATH=/app
       - ieasyhydroforecast_data_root_dir=${ieasyhydroforecast_data_root_dir}
       - SAPPHIRE_OPDEV_ENV=True
-    command: ["panel", "serve", "--allow-websocket-origin=34.202.229.208:5006", "apps/forecast_dashboard/pentad_dashboard.py", "--port=5006", "--address=0.0.0.0", "--show", "--autoreload"]
+    command: ["panel", "serve", "--allow-websocket-origin=34.202.229.208:5006", "pentad_dashboard.py", "--port=5006", "--address=0.0.0.0", "--show", "--autoreload"]
     ports:
       - "5006:5006"
     volumes:

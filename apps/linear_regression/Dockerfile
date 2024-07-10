@@ -25,7 +25,8 @@ COPY apps/linear_regression /app/apps/linear_regression
 # Leverage a bind mount to requirements.txt to avoid having to copy them into
 # into this layer.
 RUN --mount=type=cache,target=/root/.cache/pip \
-    --mount=type=bind,source=apps/linear_regression/requirements.txt,target=/app/apps/linear_regression/requirements.txt
+    --mount=type=bind,source=apps/linear_regression/requirements.txt,target=/app/apps/linear_regression/requirements.txt \
+    pip install --trusted-host pypi.python.org -r apps/linear_regression/requirements.txt
 
 # Run the application.
 CMD ["sh", "-c", "PYTHONPATH=/app/apps/iEasyHydroForecast python apps/linear_regression/linear_regression.py"]

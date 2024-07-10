@@ -20,25 +20,36 @@ def load_configuration():
         str: The value of the IN_DOCKER_CONTAINER environment variable or 'None'
            if it's not set.
     """
+    # Print the environment variables
+    print("IN_DOCKER_CONTAINER: ", os.getenv("IN_DOCKER_CONTAINER"))
+    print("SAPPHIRE_TEST_ENV: ", os.getenv("SAPPHIRE_TEST_ENV"))
+    print("SAPPHIRE_OPDEV_ENV: ", os.getenv("SAPPHIRE_OPDEV_ENV"))
+
     in_docker_flag = str(os.getenv("IN_DOCKER_CONTAINER"))
+    print("Current working directory: ", os.getcwd())
     if in_docker_flag == "True":
-        path_to_env_file = "apps/config/.env"
-        # Test if the .env file exists
-        if not os.path.isfile(path_to_env_file):
-            raise Exception("File not found: " + path_to_env_file)
-        print("Running in Docker container")
-    elif os.getenv("SAPPHIRE_TEST_ENV") == "True":
-        path_to_env_file = "backend/tests/test_files/.env_develop_test"
-    elif os.getenv("SAPPHIRE_OPDEV_ENV") == "True":
-        path_to_env_file = "../../../sensitive_data_forecast_tools/config/.env_develop_kghm"
+        if os.getenv("SAPPHIRE_OPDEV_ENV") == "True":
+            print("Running in Docker container with SAPPHIRE_OPDEV_ENV")
+            path_to_env_file = "../../../sensitive_data_forecast_tools/config/.env_develop_kghm"
+            print("Path to .env file: ", path_to_env_file)
+        else:
+            print("Running in Docker container with default environment")
+            path_to_env_file = "apps/config/.env"
     else:
-        # Test if the .env file exists
-        path_to_env_file = "../config/.env_develop"
-        if not os.path.isfile(path_to_env_file):
-            raise Exception("File not found: " + path_to_env_file)
-        print("Running locally")
-        # The override flag in read_dotenv is set to allow switching between .env
-        # files. Useful when testing different configurations.
+        if os.getenv("SAPPHIRE_TEST_ENV") == "True":
+            print("Running locally in test environment")
+            path_to_env_file = "backend/tests/test_files/.env_develop_test"
+        elif os.getenv("SAPPHIRE_OPDEV_ENV") == "True":
+            print("Running locally in opdev environment")
+            path_to_env_file = "../../../sensitive_data_forecast_tools/config/.env_develop_kghm"
+        else:
+            # Test if the default .env file exists
+            path_to_env_file = "../config/.env_develop"
+            if not os.path.isfile(path_to_env_file):
+                raise Exception("File not found: " + path_to_env_file)
+            print("Running locally with public repository data")
+    # The override flag in read_dotenv is set to allow switching between .env
+    # files. Useful when testing different configurations.
     res = load_dotenv(path_to_env_file, override=True)
     if res is None:
         raise Exception("Could not read .env file: ", path_to_env_file)
