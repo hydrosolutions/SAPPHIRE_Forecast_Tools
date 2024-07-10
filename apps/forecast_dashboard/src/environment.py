@@ -30,7 +30,7 @@ def load_configuration():
     if in_docker_flag == "True":
         if os.getenv("SAPPHIRE_OPDEV_ENV") == "True":
             print("Running in Docker container with SAPPHIRE_OPDEV_ENV")
-            path_to_env_file = "../../../sensitive_data_forecast_tools/config/.env_develop_kghm"
+            path_to_env_file = "/sensitive_data_forecast_tools/config/.env_develop_kghm"
             print("Path to .env file: ", path_to_env_file)
         else:
             print("Running in Docker container with default environment")
