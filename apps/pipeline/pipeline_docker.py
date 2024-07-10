@@ -275,8 +275,12 @@ class PostProcessingForecasts(luigi.Task):
 
     def run(self):
         # Construct the absolute volume paths to bind to the containers
+        absolute_volume_path_config = get_absolute_path(
+            env.get('ieasyforecast_configuration_path'))
         absolute_volume_path_internal_data = get_absolute_path(
             env.get('ieasyforecast_intermediate_data_path'))
+        bind_volume_path_config = get_bind_path(
+            env.get('ieasyforecast_configuration_path'))
         bind_volume_path_internal_data = get_bind_path(
             env.get('ieasyforecast_intermediate_data_path'))
 
@@ -299,6 +303,7 @@ class PostProcessingForecasts(luigi.Task):
 
         # Define volumes
         volumes = {
+            absolute_volume_path_config: {'bind': bind_volume_path_config, 'mode': 'rw'},
             absolute_volume_path_internal_data: {'bind': bind_volume_path_internal_data, 'mode': 'rw'},
         }
 

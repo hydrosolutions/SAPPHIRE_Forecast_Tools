@@ -67,9 +67,10 @@ cleanup() {
   if [ -n "$ieasyhydroforecast_ssh_tunnel_pid" ]; then
     kill $ieasyhydroforecast_ssh_tunnel_pid
   fi
-  if [ -n "$DOCKER_COMPOSE_PID" ]; then
-    docker compose -f bin/docker-compose.yml down
-  fi
+  #if [ -n "$DOCKER_COMPOSE_PID" ]; then
+    # Keep dashboards up and running: comment out the following line
+    #docker compose -f bin/docker-compose.yml down
+  #fi
 }
 
 # Set the trap to clean up processes on exit
