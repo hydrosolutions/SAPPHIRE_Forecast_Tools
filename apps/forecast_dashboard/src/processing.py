@@ -26,10 +26,10 @@ import forecast_library as fl
 # --- Configuration -----------------------------------------------------------
 def get_icon_path(in_docker_flag):
     # Icon
-    if in_docker_flag == "True":
-        icon_path = os.path.join("apps", "forecast_dashboard", "www", "Pentad.png")
-    else:
-        icon_path = os.path.join("www", "Pentad.png")
+    #if in_docker_flag == "True":
+    #    icon_path = os.path.join("apps", "forecast_dashboard", "www", "Pentad.png")
+    #else:
+    icon_path = os.path.join("www", "Pentad.png")
 
     # Test if file exists and thorw an error if not
     if not os.path.isfile(icon_path):
