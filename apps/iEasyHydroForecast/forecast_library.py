@@ -811,11 +811,12 @@ def get_predictors(data_df, start_date, fc_sites,
     for site in fc_sites:
         # Get the data for the site
         site_data = data_df[data_df[code_col] == site.code]
-        #print("DEBUG: forecasting:get_predictor: site_data1: \n",
-        #          site_data[[date_col, code_col, 'issue_date', predictor_col]].tail(10))
-        #print("DEBUG: forecasting:get_predictor: [start_date]: ", [start_date])
-        #print("DEBUG: forecasting:get_predictor: predictor_dates: ", predictor_dates)
-            # Get the predictor from the data for today
+        if int(site.code) == 15292:
+            logger.debug("DEBUG: forecasting:get_predictor: site_data1: \n%s",
+                          site_data[[date_col, code_col, 'issue_date', predictor_col]].tail(10))
+            logger.debug("DEBUG: forecasting:get_predictor: [start_date]: %s", [start_date])
+
+        # Get the predictor from the data for today
         Site.from_df_get_predictor(site, site_data, [start_date],
                                    date_col=date_col, code_col=code_col,
                                      predictor_col=predictor_col)
@@ -1019,8 +1020,6 @@ def perform_linear_regression(
     if not all(data_df[pentad_col].between(1, 72)):
         raise ValueError(f'Values in column {pentad_col} are not between 1 and 72')
 
-    #print("\n\nDEBUG perform_linear_regression: data_df: \n", data_df.tail(10))
-
     # Filter for the forecast pentad
     data_dfp = data_df[data_df[pentad_col] == float(forecast_pentad)]
 
@@ -1035,8 +1034,6 @@ def perform_linear_regression(
     data_dfp = data_dfp.assign(q_mean=0.0)
     data_dfp = data_dfp.assign(q_std_sigma=0.0)
     data_dfp = data_dfp.assign(delta=0.0)
-
-    #print("\n\nDEBUG perform_linear_regression: data_dfp: \n", data_dfp.tail(10))
 
     # Loop over each station we have data for
     for station in data_dfp[station_col].unique():
@@ -1064,6 +1061,10 @@ def perform_linear_regression(
 
         # Perform the linear regression
         model = LinearRegression().fit(discharge_sum, discharge_avg)
+        if int(station) == 15292:
+            logger.debug("model output: %s", model)
+            logger.debug("model.coef_: %s", model.coef_)
+            logger.debug("model.intercept_: %s", model.intercept_)
 
         # Calculate discharge statistics
         q_mean = np.mean(discharge_avg)
@@ -1089,9 +1090,20 @@ def perform_linear_regression(
         data_dfp.loc[(data_dfp[station_col] == station), 'q_std_sigma'] = q_std_sigma
         data_dfp.loc[(data_dfp[station_col] == station), 'delta'] = delta
 
+        # Test if station is of same type as data_dfp[station_col][0]
+        if type(station) != type(data_dfp.loc[data_dfp.index[0], station_col]):
+            raise ValueError(f"Station type {type(station)} does not match the type of data_dfp[station_col][0] {type(data_dfp[station_col][0])}")
+
+
         # Calculate the forecasted discharge for the current station and forecast_pentad
         data_dfp.loc[(data_dfp[station_col] == station), 'forecasted_discharge'] = \
             slope * data_dfp.loc[(data_dfp[station_col] == station), predictor_col] + intercept
+
+        # print rows where code == 15292
+        if int(station) == 15292:
+            #logger.debug("column names of data_dfp:\n%s", station_data.columns)
+            logger.debug("DEBUG: forecasting:perform_linear_regression: data_dfp after linear regression: \n%s",
+              data_dfp.loc[data_dfp[station_col] == station, ['date', station_col, pentad_col, predictor_col, discharge_avg_col, 'slope', 'intercept', 'forecasted_discharge']].tail(10))
 
     return data_dfp
 
@@ -1345,20 +1357,20 @@ def calculate_skill_metrics_pentade(observed: pd.DataFrame, simulated: pd.DataFr
     if not all(column in simulated.columns for column in ['code', 'date', 'pentad_in_year', 'forecasted_discharge', 'model_long', 'model_short']):
         raise ValueError(f'Simulated DataFrame is missing one or more required columns: {["code", "date", "pentad_in_year", "forecasted_discharge", "model_long", "model_short"]}')
 
-    logger.info("DEBUG: simulated.columns\n%s", simulated.columns)
-    print("DEBUG: simulated.head()\n", simulated.head(5))
-    print("DEBUG: simulated.tail()\n", simulated.tail(5))
+    logger.debug("DEBUG: simulated.columns\n%s", simulated.columns)
+    logger.debug("DEBUG: simulated.head()\n", simulated.head(5))
+    logger.debug("DEBUG: simulated.tail()\n", simulated.tail(5))
     logger.info("DEBUG: observed.columns%s\n", observed.columns)
-    print("DEBUG: observed.head()\n", observed.head(5))
-    print("DEBUG: observed.tail()\n", observed.tail(5))
+    logger.debug("DEBUG: observed.head()\n", observed.head(5))
+    logger.debug("DEBUG: observed.tail()\n", observed.tail(5))
     # Merge the observed and simulated DataFrames
     skill_metrics_df = pd.merge(
         simulated,
         observed[['code', 'date', 'discharge_avg', 'delta']],
         on=['code', 'date'])
-    logger.info("DEBUG: skill_metrics_df.columns\n%s", skill_metrics_df.columns)
-    print("DEBUG: skill_metrics_df.head()\n", skill_metrics_df.head(5))
-    print("DEBUG: skill_metrics_df.tail()\n", skill_metrics_df.tail(5))
+    logger.debug("DEBUG: skill_metrics_df.columns\n%s", skill_metrics_df.columns)
+    logger.debug("DEBUG: skill_metrics_df.head()\n", skill_metrics_df.head(5))
+    logger.debug("DEBUG: skill_metrics_df.tail()\n", skill_metrics_df.tail(5))
 
     # Identify tuples in each cell
     is_tuple = skill_metrics_df.applymap(lambda x: isinstance(x, tuple))
@@ -1367,15 +1379,15 @@ def calculate_skill_metrics_pentade(observed: pd.DataFrame, simulated: pd.DataFr
     contains_tuples = is_tuple.any(axis=1).any()
     # Test if there are any tuples in the DataFrame
     if contains_tuples:
-        logger.info("There are tuples after the merge.")
+        logger.debug("There are tuples after the merge.")
 
         # Step 2: Filter rows that contain any tuples
         rows_with_tuples = skill_metrics_df[is_tuple.any(axis=1)]
 
         # Print rows with tuples
-        logger.info(rows_with_tuples)
+        logger.debug(rows_with_tuples)
     else:
-        logger.info("No tuples found after the merge.")
+        logger.debug("No tuples found after the merge.")
 
     # Calculate the skill metrics for each group based on the 'pentad_in_year', 'code' and 'model' columns
     skill_stats = skill_metrics_df. \
@@ -1391,15 +1403,15 @@ def calculate_skill_metrics_pentade(observed: pd.DataFrame, simulated: pd.DataFr
     contains_tuples = is_tuple.any(axis=1).any()
     # Test if there are any tuples in the DataFrame
     if contains_tuples:
-        logger.info("There are tuples in skill_stats.")
+        logger.debug("There are tuples in skill_stats.")
 
         # Step 2: Filter rows that contain any tuples
         rows_with_tuples = skill_stats[is_tuple.any(axis=1)]
 
         # logger.info rows with tuples
-        logger.info(rows_with_tuples)
+        logger.debug(rows_with_tuples)
     else:
-        logger.info("No tuples found in skill_stats.")
+        logger.debug("No tuples found in skill_stats.")
 
     mae_stats = skill_metrics_df. \
         groupby(['pentad_in_year', 'code', 'model_long', 'model_short']). \
@@ -1414,15 +1426,15 @@ def calculate_skill_metrics_pentade(observed: pd.DataFrame, simulated: pd.DataFr
     contains_tuples = is_tuple.any(axis=1).any()
     # Test if there are any tuples in the DataFrame
     if contains_tuples:
-        logger.info("There are tuples in mae_stats.")
+        logger.debug("There are tuples in mae_stats.")
 
         # Step 2: Filter rows that contain any tuples
         rows_with_tuples = mae_stats[is_tuple.any(axis=1)]
 
         # Print rows with tuples
-        logger.info(rows_with_tuples)
+        logger.debug(rows_with_tuples)
     else:
-        logger.info("No tuples found in mae_stats.")
+        logger.debug("No tuples found in mae_stats.")
 
     accuracy_stats = skill_metrics_df. \
         groupby(['pentad_in_year', 'code', 'model_long', 'model_short']). \
@@ -1438,15 +1450,15 @@ def calculate_skill_metrics_pentade(observed: pd.DataFrame, simulated: pd.DataFr
     contains_tuples = is_tuple.any(axis=1).any()
     # Test if there are any tuples in the DataFrame
     if contains_tuples:
-        logger.info("There are tuples in accuracy_stats.")
+        logger.debug("There are tuples in accuracy_stats.")
 
         # Step 2: Filter rows that contain any tuples
         rows_with_tuples = accuracy_stats[is_tuple.any(axis=1)]
 
         # Print rows with tuples
-        logger.info(rows_with_tuples)
+        logger.debug(rows_with_tuples)
     else:
-        logger.info("No tuples found in accuracy_stats.")
+        logger.debug("No tuples found in accuracy_stats.")
 
     # Merge the skill metrics with the accuracy stats
     #print("DEBUG: skill_stats.columns\n", skill_stats.columns)
@@ -1459,15 +1471,15 @@ def calculate_skill_metrics_pentade(observed: pd.DataFrame, simulated: pd.DataFr
     contains_tuples = is_tuple.any(axis=1).any()
     # Test if there are any tuples in the DataFrame
     if contains_tuples:
-        logger.info("There are tuples after the merge.")
+        logger.debug("There are tuples after the merge.")
 
         # Step 2: Filter rows that contain any tuples
         rows_with_tuples = skill_stats[is_tuple.any(axis=1)]
 
         # Print rows with tuples
-        logger.info(rows_with_tuples)
+        logger.debug(rows_with_tuples)
     else:
-        logger.info("No tuples found after the merge.")
+        logger.debug("No tuples found after the merge.")
 
     #print("DEBUG: skill_stats.columns\n", skill_stats.columns)
     #print("DEBUG: mae_stats.columns\n", mae_stats.columns)
@@ -1480,15 +1492,15 @@ def calculate_skill_metrics_pentade(observed: pd.DataFrame, simulated: pd.DataFr
     contains_tuples = is_tuple.any(axis=1).any()
     # Test if there are any tuples in the DataFrame
     if contains_tuples:
-        logger.info("There are tuples after the merge.")
+        logger.debug("There are tuples after the merge.")
 
         # Step 2: Filter rows that contain any tuples
         rows_with_tuples = skill_stats[is_tuple.any(axis=1)]
 
         # Print rows with tuples
-        logger.info(rows_with_tuples)
+        logger.debug(rows_with_tuples)
     else:
-        logger.info("No tuples found after the merge.")
+        logger.debug("No tuples found after the merge.")
 
 
     return skill_stats
@@ -1698,6 +1710,23 @@ def write_linreg_pentad_forecast_data(data: pd.DataFrame):
     # For each code, extract the last row
     last_line = data.groupby('code').tail(1)
 
+    logger.debug(f'last_line before edits: \n{last_line}')
+
+    # Get the year of the majority of the last_line dates
+    year = last_line['date'].dt.year.mode()[0]
+    logger.debug(f'mode of year: {year}')
+
+    # If the year of one date of last_year is not equal to the majority year,
+    # set the year of the date to the majority year, set predictor to NaN,
+    # set discharge_avg to NaN, set forecasted_discharge to _nan.
+    last_line.loc[last_line['date'].dt.year != year, 'predictor'] = np.nan
+    last_line.loc[last_line['date'].dt.year != year, 'discharge_avg'] = np.nan
+    last_line.loc[last_line['date'].dt.year != year, 'forecasted_discharge'] = np.nan
+    last_line.loc[last_line['date'].dt.year != year, 'date'] = pd.to_datetime(
+        last_line.loc[last_line['date'].dt.year != year, 'date'].dt.strftime(f'{year}-%m-%d'))
+
+    logger.debug(f'last_line after edits: \n{last_line}')
+
     # Test if the output file already exists
     if os.path.exists(output_file_path):
         # Append to the existing file
@@ -1762,6 +1791,19 @@ def write_linreg_decad_forecast_data(data: pd.DataFrame):
 
     # Extract the last line of the DataFrame
     last_line = data.groupby('code').tail(1)
+
+    # Get the year of the majority of the last_line dates
+    year = last_line['date'].dt.year.mode()[0]
+    logger.debug(f'mode of year: {year}')
+
+    # If the year of one date of last_year is not equal to the majority year,
+    # set the year of the date to the majority year, set predictor to NaN,
+    # set discharge_avg to NaN, set forecasted_discharge to _nan.
+    last_line.loc[last_line['date'].dt.year != year, 'predictor'] = np.nan
+    last_line.loc[last_line['date'].dt.year != year, 'discharge_avg'] = np.nan
+    last_line.loc[last_line['date'].dt.year != year, 'forecasted_discharge'] = np.nan
+    last_line.loc[last_line['date'].dt.year != year, 'date'] = pd.to_datetime(
+        last_line.loc[last_line['date'].dt.year != year, 'date'].dt.strftime(f'{year}-%m-%d'))
 
     # Test if the output file already exists
     if os.path.exists(output_file_path):
