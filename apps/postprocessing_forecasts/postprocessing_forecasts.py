@@ -26,7 +26,7 @@ import tag_library as tl
 
 # region Logging
 # Configure the logging level and formatter
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
 formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 
 # Create the logs directory if it doesn't exist
@@ -59,21 +59,30 @@ def postprocessing_forecasts():
     # Configuration
     sl.load_environment()
 
+    logger.info(f"\n\n------ Reading observed and modelled data -------")
     # Data processing
     observed, modelled = sl.read_observed_and_modelled_data_pentade()
 
     # Save the observed and modelled data to CSV files
-    fl.save_forecast_data_pentad(modelled)
+    ret = fl.save_forecast_data_pentad(modelled)
+    if ret is None:
+        logger.info(f"Pentadal forecast results for all models saved successfully.")
+    else:
+        logger.error(f"Error saving the pentadal forecast results.")
 
+    logger.info(f"\n\n------ Calculating skill metrics -----------------")
     # Calculate forecast skill metrics
     skill_metrics = fl.calculate_skill_metrics_pentade(observed, modelled)
 
+    logger.info(f"\n\n------ Saving results ----------------------")
     # Save the skill metrics to a CSV file
     ret = fl.save_pentadal_skill_metrics(skill_metrics)
 
     if ret is None:
+        logger.info(f"Script finished at {dt.datetime.now()}.")
         sys.exit(0) # Success
     else:
+        logger.error(f"Error saving the skill metrics.")
         sys.exit(1)
 
 

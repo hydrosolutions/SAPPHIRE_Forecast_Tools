@@ -33,6 +33,8 @@ COPY apps/iEasyHydroForecast/ /app/apps/iEasyHydroForecast
 RUN --mount=type=cache,target=/root/.cache/pip \
     --mount=type=bind,source=apps/docker_base_image/requirements.txt,target=/app/apps/docker_base_image/requirements.txt \
     # Update the packages to the latest OS version
+    apt-get clean && \
+    apt-get install debian-archive-keyring && \
     apt-get update && \
     apt-get install -y gcc git libkrb5-dev && \
     apt-get install -y libtasn1-6 libpcre2-dev openssl libssl-dev && \

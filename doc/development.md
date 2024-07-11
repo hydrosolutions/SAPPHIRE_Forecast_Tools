@@ -153,7 +153,7 @@ To build and run the pipeline locally on a Mac to the following steps:
 1. Open a terminal and navigate to the root directory of the repository.
 2. Clean up the docker work space:
 ```bash
-bash bin/clean_docler.sh
+bash bin/clean_docker.sh
 ```
 3. Build the docker image:
 ```bash

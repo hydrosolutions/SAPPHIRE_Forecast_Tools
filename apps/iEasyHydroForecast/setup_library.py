@@ -218,14 +218,14 @@ def check_database_access(ieh_sdk):
 
     # Test if the backand has access to an iEasyHydro database and set a flag accordingly.
     try:
-        ieh_sdk.get_discharge_sites()
+        test = ieh_sdk.get_discharge_sites()
         logger.info(f"Access to iEasyHydro database.")
         return True
     except Exception as e:
         # Test if there are any files in the data/daily_runoff directory
         if os.listdir(os.getenv("ieasyforecast_daily_discharge_path")):
-            logger.info(f"No access to iEasyHydro database "
-                        f"will use data from the ieasyforecast_daily_discharge_path for forecasting only.")
+            logger.info(f"No access to iEasyHydro database. "
+                        f"Will use data from the ieasyforecast_daily_discharge_path for forecasting only.")
             return False
         else:
             logger.error(f"SAPPHIRE tools do not find any data in the ieasyforecast_daily_discharge_path directory "
@@ -563,6 +563,7 @@ def read_observed_pentadal_data():
     # If there is a column name 'pentad', rename it to 'pentad_in_month'
     if 'pentad' in data.columns:
         data.rename(columns={'pentad': 'pentad_in_month'}, inplace=True)
+    logger.info(f"Read {len(data)} rows of observed data for the pentadal forecast horizon.")
 
     return data
 
@@ -634,6 +635,9 @@ def read_linreg_forecasts_pentad():
     forecasts["pentad_in_month"] = forecasts["date"].apply(tl.get_pentad)
     forecasts["pentad_in_year"] = forecasts["date"].apply(tl.get_pentad_in_year)
 
+    logger.info(f"Read {len(forecasts)} rows of linear regression forecasts for the pentadal forecast horizon.")
+    logger.info(f"Read {len(stats)} rows of general runoff statistics for the pentadal forecast horizon.")
+
     return forecasts, stats
 
 def read_linreg_forecasts_pentad_dummy(model):
@@ -697,6 +701,8 @@ def calculate_ensemble_forecast(forecasts):
 
     # Add ensemble_mean to forecasts
     forecasts = pd.concat([forecasts, ensemble_mean])
+    logger.info(f"Calculated ensemble forecast for the pentadal forecast horizon.")
+
     return forecasts
 
 def read_observed_and_modelled_data_pentade():
@@ -717,10 +723,13 @@ def read_observed_and_modelled_data_pentade():
     # For now, we read dummy data
     modelA, statsA = read_linreg_forecasts_pentad_dummy(model='A')
     modelB, statsB = read_linreg_forecasts_pentad_dummy(model='B')
+    logger.info(f"Read {len(modelA)} rows of model A forecasts for the pentadal forecast horizon.")
+    logger.info(f"Read {len(modelB)} rows of model B forecasts for the pentadal forecast horizon.")
 
     # Concatenate the dataframes
     forecasts = pd.concat([linreg, modelA, modelB])
     stats = pd.concat([stats_linreg, statsA, statsB])
+    logger.info(f"Concatenated forecast results from all methods for the pentadal forecast horizon.")
 
     forecasts = calculate_ensemble_forecast(forecasts)
 

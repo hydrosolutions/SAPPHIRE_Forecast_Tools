@@ -1149,9 +1149,11 @@ def sdivsigma_nse(data: pd.DataFrame, observed_col: str, simulated_col: str):
     # Catch cases where the denomitar is 0
     if denominator == 0:
         print("Denominator is 0")
-        print("data\n", data)
-        print("numerator\n", numerator)
-        print("denominator\n", denominator)
+        print("data['date']", data['date'])
+        print('data[observed_col]', data[observed_col])
+        print('data[observed_col].mean()', data[observed_col].mean())
+        print("numerator", numerator)
+        print("denominator", denominator)
         return np.nan, np.nan
 
     # Calculate the efficacy of the model
@@ -1343,10 +1345,10 @@ def calculate_skill_metrics_pentade(observed: pd.DataFrame, simulated: pd.DataFr
     if not all(column in simulated.columns for column in ['code', 'date', 'pentad_in_year', 'forecasted_discharge', 'model_long', 'model_short']):
         raise ValueError(f'Simulated DataFrame is missing one or more required columns: {["code", "date", "pentad_in_year", "forecasted_discharge", "model_long", "model_short"]}')
 
-    print("DEBUG: simulated.columns\n", simulated.columns)
+    logger.info("DEBUG: simulated.columns\n%s", simulated.columns)
     print("DEBUG: simulated.head()\n", simulated.head(5))
     print("DEBUG: simulated.tail()\n", simulated.tail(5))
-    print("DEBUG: observed.columns\n", observed.columns)
+    logger.info("DEBUG: observed.columns%s\n", observed.columns)
     print("DEBUG: observed.head()\n", observed.head(5))
     print("DEBUG: observed.tail()\n", observed.tail(5))
     # Merge the observed and simulated DataFrames
@@ -1354,25 +1356,26 @@ def calculate_skill_metrics_pentade(observed: pd.DataFrame, simulated: pd.DataFr
         simulated,
         observed[['code', 'date', 'discharge_avg', 'delta']],
         on=['code', 'date'])
-    print("DEBUG: skill_metrics_df.columns\n", skill_metrics_df.columns)
+    logger.info("DEBUG: skill_metrics_df.columns\n%s", skill_metrics_df.columns)
     print("DEBUG: skill_metrics_df.head()\n", skill_metrics_df.head(5))
     print("DEBUG: skill_metrics_df.tail()\n", skill_metrics_df.tail(5))
 
     # Identify tuples in each cell
     is_tuple = skill_metrics_df.applymap(lambda x: isinstance(x, tuple))
+    #logger.info("DEBUG: is_tuple\n", is_tuple)
     # Check if there are any True values in is_tuple
     contains_tuples = is_tuple.any(axis=1).any()
     # Test if there are any tuples in the DataFrame
     if contains_tuples:
-        print("There are tuples after the merge.")
+        logger.info("There are tuples after the merge.")
 
         # Step 2: Filter rows that contain any tuples
         rows_with_tuples = skill_metrics_df[is_tuple.any(axis=1)]
 
         # Print rows with tuples
-        print(rows_with_tuples)
+        logger.info(rows_with_tuples)
     else:
-        print("No tuples found after the merge.")
+        logger.info("No tuples found after the merge.")
 
     # Calculate the skill metrics for each group based on the 'pentad_in_year', 'code' and 'model' columns
     skill_stats = skill_metrics_df. \
@@ -1388,15 +1391,15 @@ def calculate_skill_metrics_pentade(observed: pd.DataFrame, simulated: pd.DataFr
     contains_tuples = is_tuple.any(axis=1).any()
     # Test if there are any tuples in the DataFrame
     if contains_tuples:
-        print("There are tuples in skill_stats.")
+        logger.info("There are tuples in skill_stats.")
 
         # Step 2: Filter rows that contain any tuples
         rows_with_tuples = skill_stats[is_tuple.any(axis=1)]
 
-        # Print rows with tuples
-        print(rows_with_tuples)
+        # logger.info rows with tuples
+        logger.info(rows_with_tuples)
     else:
-        print("No tuples found in skill_stats.")
+        logger.info("No tuples found in skill_stats.")
 
     mae_stats = skill_metrics_df. \
         groupby(['pentad_in_year', 'code', 'model_long', 'model_short']). \
@@ -1411,15 +1414,15 @@ def calculate_skill_metrics_pentade(observed: pd.DataFrame, simulated: pd.DataFr
     contains_tuples = is_tuple.any(axis=1).any()
     # Test if there are any tuples in the DataFrame
     if contains_tuples:
-        print("There are tuples in mae_stats.")
+        logger.info("There are tuples in mae_stats.")
 
         # Step 2: Filter rows that contain any tuples
         rows_with_tuples = mae_stats[is_tuple.any(axis=1)]
 
         # Print rows with tuples
-        print(rows_with_tuples)
+        logger.info(rows_with_tuples)
     else:
-        print("No tuples found in mae_stats.")
+        logger.info("No tuples found in mae_stats.")
 
     accuracy_stats = skill_metrics_df. \
         groupby(['pentad_in_year', 'code', 'model_long', 'model_short']). \
@@ -1435,15 +1438,15 @@ def calculate_skill_metrics_pentade(observed: pd.DataFrame, simulated: pd.DataFr
     contains_tuples = is_tuple.any(axis=1).any()
     # Test if there are any tuples in the DataFrame
     if contains_tuples:
-        print("There are tuples in accuracy_stats.")
+        logger.info("There are tuples in accuracy_stats.")
 
         # Step 2: Filter rows that contain any tuples
         rows_with_tuples = accuracy_stats[is_tuple.any(axis=1)]
 
         # Print rows with tuples
-        print(rows_with_tuples)
+        logger.info(rows_with_tuples)
     else:
-        print("No tuples found in accuracy_stats.")
+        logger.info("No tuples found in accuracy_stats.")
 
     # Merge the skill metrics with the accuracy stats
     #print("DEBUG: skill_stats.columns\n", skill_stats.columns)
@@ -1456,15 +1459,15 @@ def calculate_skill_metrics_pentade(observed: pd.DataFrame, simulated: pd.DataFr
     contains_tuples = is_tuple.any(axis=1).any()
     # Test if there are any tuples in the DataFrame
     if contains_tuples:
-        print("There are tuples after the merge.")
+        logger.info("There are tuples after the merge.")
 
         # Step 2: Filter rows that contain any tuples
         rows_with_tuples = skill_stats[is_tuple.any(axis=1)]
 
         # Print rows with tuples
-        print(rows_with_tuples)
+        logger.info(rows_with_tuples)
     else:
-        print("No tuples found after the merge.")
+        logger.info("No tuples found after the merge.")
 
     #print("DEBUG: skill_stats.columns\n", skill_stats.columns)
     #print("DEBUG: mae_stats.columns\n", mae_stats.columns)
@@ -1477,15 +1480,15 @@ def calculate_skill_metrics_pentade(observed: pd.DataFrame, simulated: pd.DataFr
     contains_tuples = is_tuple.any(axis=1).any()
     # Test if there are any tuples in the DataFrame
     if contains_tuples:
-        print("There are tuples after the merge.")
+        logger.info("There are tuples after the merge.")
 
         # Step 2: Filter rows that contain any tuples
         rows_with_tuples = skill_stats[is_tuple.any(axis=1)]
 
         # Print rows with tuples
-        print(rows_with_tuples)
+        logger.info(rows_with_tuples)
     else:
-        print("No tuples found after the merge.")
+        logger.info("No tuples found after the merge.")
 
 
     return skill_stats
