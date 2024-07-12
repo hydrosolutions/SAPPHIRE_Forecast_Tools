@@ -65,6 +65,7 @@ def main():
     sl.load_environment()
 
     # Set up the iEasyHydro SDK
+    # Currently required to read dangerous discharge from the database.
     ieh_sdk = IEasyHydroSDK()
     has_access_to_db = sl.check_database_access(ieh_sdk)
     if not has_access_to_db:
