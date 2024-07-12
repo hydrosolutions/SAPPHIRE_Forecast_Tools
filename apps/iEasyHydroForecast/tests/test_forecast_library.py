@@ -137,7 +137,7 @@ class TestRoundDischargeToFloat(unittest.TestCase):
 class TestPerformLinearRegression(unittest.TestCase):
     def test_perform_linear_regression_with_wrong_input_type(self):
         # Create a test DataFrame
-        data = {'station': ['A', 'A', 'B', 'B', 'C', 'C'],
+        data = {'station': ['123', '123', '456', '456', '789', '789'],
                 'pentad': [1, 2, 1, 2, 1, 2],
                 'discharge_sum': [100, 200, 150, 250, 120, 180],
                 'discharge_avg': [10, 20, 15, 25, 12, 18]}
@@ -161,7 +161,7 @@ class TestPerformLinearRegression(unittest.TestCase):
 
     def test_perform_linear_regression_with_simple_data(self):
         # Create a test DataFrame
-        data = {'station': ['A', 'A', 'B', 'B', 'C', 'C'],
+        data = {'station': ['123', '123', '456', '456', '789', '789'],
                 'pentad': [1, 2, 1, 2, 1, 2],
                 'discharge_sum': [100, 200, 150, 250, 120, 180],
                 'discharge_avg': [10, 20, 15, 25, 12, 18]}
@@ -180,8 +180,8 @@ class TestPerformLinearRegression(unittest.TestCase):
         assert all(col in result.columns for col in expected_columns)
 
         # Check that the slope and intercept are correct for each station
-        expected_slopes = {'A': 0.0, 'B': 0.0, 'C': 0.0}
-        expected_intercepts_p2 = {'A': 20.0, 'B': 25.0, 'C': 18.0}
+        expected_slopes = {'123': 0.0, '456': 0.0, '789': 0.0}
+        expected_intercepts_p2 = {'123': 20.0, '456': 25.0, '789': 18.0}
         for station in expected_slopes.keys():
             slope = result.loc[(result['station'] == station) & (result['pentad'] == 2), 'slope'].values[0]
             intercept = result.loc[(result['station'] == station) & (result['pentad'] == 2), 'intercept'].values[0]
@@ -195,11 +195,16 @@ class TestPerformLinearRegression(unittest.TestCase):
 
     def test_perform_linear_regression_with_complex_data(self):
         # Create a test DataFrame
-        data = {'station': ['A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A',
-                            'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A',
-                            'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A',
-                            'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A',
-                            'B', 'B', 'B', 'B', 'B', 'B', 'B', 'B', 'B', 'B', 'B', 'B'],
+        data = {'station': ['123', '123', '123', '123', '123', '123',
+                            '123', '123', '123', '123', '123', '123',
+                            '123', '123', '123', '123', '123', '123',
+                            '123', '123', '123', '123', '123', '123',
+                            '123', '123', '123', '123', '123', '123',
+                            '123', '123', '123', '123', '123', '123',
+                            '123', '123', '123', '123', '123', '123',
+                            '123', '123', '123', '123', '123', '123',
+                            '456', '456', '456', '456', '456', '456',
+                            '456', '456', '456', '456', '456', '456'],
                 'pentad': [1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2,
                            3, 3, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4,
                            5, 5, 5, 5, 5, 5, 6, 6, 6, 6, 6, 6,
@@ -282,14 +287,14 @@ class TestPerformLinearRegression(unittest.TestCase):
 
         # Check that the slope and intercept are correct for each station, allowing
         # for rounding errors
-        expected_slopes_p1 = {'A': 0.0891, 'B': 0.1}
-        expected_intercepts_p1 = {'A': 1.2727, 'B': 0.0}
-        expected_slopes_p2 = {'A': 0.0923, 'B': 0.1}
-        expected_intercepts_p2 = {'A': 2.0385, 'B': 0.0}
-        expected_slopes_p3 = {'A': 0.0891}
-        expected_intercepts_p3 = {'A': 1.2727}
-        expected_slopes_p4 = {'A': 0.0923}
-        expected_intercepts_p4 = {'A': 2.0385}
+        expected_slopes_p1 = {'123': 0.0891, '456': 0.1}
+        expected_intercepts_p1 = {'123': 1.2727, '456': 0.0}
+        expected_slopes_p2 = {'123': 0.0923, '456': 0.1}
+        expected_intercepts_p2 = {'123': 2.0385, '456': 0.0}
+        expected_slopes_p3 = {'123': 0.0891}
+        expected_intercepts_p3 = {'123': 1.2727}
+        expected_slopes_p4 = {'123': 0.0923}
+        expected_intercepts_p4 = {'123': 2.0385}
 
         for station in expected_slopes_p1.keys():
             slope = result_p1.loc[(result_p1['station'] == station) & (result_p1['pentad'] == 1), 'slope'].values[0]
