@@ -1,5 +1,4 @@
-![deploy forecast config action](https://github.com/hydrosolutions/SAPPHIRE_Forecast_Tools/actions/workflows/deploy_forecast_configuration.yml/badge.svg) ![deploy forecast backend](https://github.com/hydrosolutions/SAPPHIRE_Forecast_Tools/actions/workflows/deploy_backend.yml/badge.svg) ![deploy forecast dashboard](https://github.com/hydrosolutions/SAPPHIRE_Forecast_Tools/actions/workflows/deploy_forecast_dashboard.yml/badge.svg)
-![test deploy forecast config action](https://github.com/hydrosolutions/SAPPHIRE_Forecast_Tools/actions/workflows/test_deploy_forecast_configuration.yml/badge.svg) ![test deploy forecast backend](https://github.com/hydrosolutions/SAPPHIRE_Forecast_Tools/actions/workflows/test_deploy_backend.yml/badge.svg) ![test deploy forecast dashboard](https://github.com/hydrosolutions/SAPPHIRE_Forecast_Tools/actions/workflows/test_deploy_forecast_dashboard.yml/badge.svg)
+![test and deploy](https://github.com/hydrosolutions/SAPPHIRE_Forecast_Tools/actions/workflows/test_deploy_main.yml/badge.svg)
 
 # SAPPHIRE_forecast_tools
 Tools for operational hydrological forecasting for Central Asian hydromets. The tools are co-designed with the Kyrgyz Hydrometeorological Services as part of the ongoing [SAPPHIRE project](https://www.hydrosolutions.ch/projects/sapphire-central-asia) and funded by the [Swiss Agency for Development and Cooperation](https://www.eda.admin.ch/eda/en/home/fdfa/organisation-fdfa/directorates-divisions/sdc.html).
@@ -16,10 +15,11 @@ Note that this repository is **WORK IN PROGRESS**.
   - A dashboard to visualize and download the forecasts
 
 ## Folder structure
-All software components are in the apps directory. Files that need to be reviewed and potentially edited or replaced for local deployment are highlighted with a #. They are discussed in more detail in the file doc/deployment.md.
+All software components are in the apps directory. They are discussed in more detail in the file doc/deployment.md.
 Potentially sensitive data that needs to be provided by a hydromet (for example daily discharge data used for the development of the forecast models) is stored in the data folder. Here we provide publicly available data examples from Switzerland for demonstration.
 <details>
 <summary>Click to expand the folder structure</summary>
+Files that need to be reviewed and potentially edited or replaced for local deployment are highlighted with a #.
 
 ```
   SAPPHIRE_FORECAST_TOOLS
@@ -148,7 +148,7 @@ The SAPPHIRE Forecast Tools interact with each other through a number of files. 
 The SAPPHIRE Forecast Tools are deployed using the Docker system. The deployment of the forecast tools is described in detail in the file [doc/deployment.md](doc/deployment.md).
 
 # Development
-If you wish to run the forecast tools individually and locally for development purposes, you can do so by following the instructions in the file [doc/development.md](doc/deployment.md).
+If you wish to run the forecast tools individually and locally for development purposes, you can do so by following the instructions in the file [doc/development.md](doc/development.md).
 
 # User guide
 Once the forecast tools are deployed with the appropriate **input data**, the user can configure the forecast tools and visualize and download the forecasts using the forecast configuration dashboard and the forecast dashboard. The user guide is available in English language in the file [doc/user_guide.md](doc/user_guide.md).
@@ -156,5 +156,8 @@ Once the forecast tools are deployed with the appropriate **input data**, the us
 # Data requirements
 The forecast tools rely on the availability of daily average discharge data. The data can be read from the iEasyHydro database or from local excel files. We include plublicly available daily discharge data from the Swiss Federal Office for the Environment (FOEN) in this repository. You find the original data [here](https://www.hydrodaten.admin.ch/en/seen-und-fluesse).
 
-## Collaboration
+# Collaboration
 Input from users is welcome. Please use the GitHub issue tracker to report bugs or suggest improvements. If you would like to contribute to the code, please fork the repository and submit a pull request. We will review the pull request and merge it if it fits the scope of the project. Please note that this is an open source project released under the MIT license, under which all contrubutions fall. Contributors are expected to adhere to the [Contributor Covenant code of conduct](https://www.contributor-covenant.org/).
+
+# Funding and contributions
+The [SAPPHIRE Central Asia project](https://www.hydrosolutions.ch/projects/sapphire-central-asia) is funded by the [Swiss Agency for Development and Cooperation (SDC)](https://www.sdc-cde.ch/en) and implemented by [hydrosolutions GmbH](https://www.hydrosolutions.ch/) in close collaboration with the Department of Operational Hydrology of Kyrgyz Hydromet. The SAPPHIRE Forecast Tools are developed by [hydrosolutions GmbH](https://www.hydrosolutions.ch/) with support from [encode](http://encode.global).

@@ -1,0 +1,10 @@
+numpy>=1.24.3
+pandas>=2.0.3
+typing
+panel==1.4.2
+holoviews==1.18.3
+bokeh==3.4.1
+pytest>=7.5.0
+python-dotenv==1.0.0
+watchfiles>=0.22.0
+scipy==1.13.0

@@ -13,7 +13,7 @@ def test_get_predictor_with_df_from_public_demo_data():
     os.environ["ieasyforecast_daily_discharge_path"] = "../data/daily_runoff"
 
     # Set the forecast flags
-    forecast_flags = config.ForecastFlags(pentad=True)
+    forecast_flags = config.ForecastFlags(pentad=True, decad=True)
 
     # Define a start date
     start_date = dt.datetime(2022, 5, 5)
@@ -26,7 +26,8 @@ def test_get_predictor_with_df_from_public_demo_data():
     backend_has_access_to_db = False
 
     # Read data from files
-    modified_data = data_processing.get_station_data(ieh_sdk, backend_has_access_to_db, start_date, site_list)
+    modified_data, modified_data_decad = data_processing.get_station_data(
+        ieh_sdk, backend_has_access_to_db, start_date, site_list, forecast_flags)
     #print("\n\nDEBUG: test_get_predictor_with_df_from_public_demo_data: modified_data: \n", modified_data.head())
     #print(modified_data.tail())
 
@@ -35,7 +36,7 @@ def test_get_predictor_with_df_from_public_demo_data():
     #print("\n\nDEBUG: test_get_predictor_with_df_from_public_demo_data: predictor_dates: \n", predictor_dates)
 
     # Get predictor
-    forecasting.get_predictor(modified_data, start_date, site_list, ieh_sdk, False, predictor_dates.pentad)
+    forecasting.get_predictor_pentad(modified_data, start_date, site_list, ieh_sdk, False, predictor_dates.pentad)
     print("\n\nDEBUG: test_get_predictor_with_df_from_public_demo_data: site.predictors: \n", site_list[0].predictor, site_list[1].predictor)
 
     # Predictor of site 12176 should be nan
@@ -52,7 +53,7 @@ def test_get_predictor_with_df_from_test_file():
     os.environ["ieasyforecast_daily_discharge_path"] = "backend/tests/test_files"
 
     # Set the forecast flags
-    forecast_flags = config.ForecastFlags(pentad=True)
+    forecast_flags = config.ForecastFlags(pentad=True, decad=True)
 
     # Define a start date
     start_date = dt.datetime(2018, 5, 5)
@@ -65,13 +66,14 @@ def test_get_predictor_with_df_from_test_file():
     backend_has_access_to_db = False
 
     # Read data from files
-    modified_data = data_processing.get_station_data(ieh_sdk, backend_has_access_to_db, start_date, site_list)
+    modified_data, modified_data_decad = data_processing.get_station_data(
+        ieh_sdk, backend_has_access_to_db, start_date, site_list, forecast_flags)
 
     # Get predictor dates
     predictor_dates = data_processing.get_predictor_dates(start_date, forecast_flags)
 
     # Get predictor
-    forecasting.get_predictor(modified_data, start_date, site_list, ieh_sdk, False, predictor_dates.pentad)
+    forecasting.get_predictor_pentad(modified_data, start_date, site_list, ieh_sdk, False, predictor_dates.pentad)
 
     # The predictor should have value 4.0
     assert round(site_list[0].predictor, 1) == 4.0
@@ -122,7 +124,7 @@ def test_get_predictor_with_predefined_df():
     # Define a list of predictor dates
     predictor_dates = [dt.date(2018, 5, 1), dt.date(2018, 5, 2), dt.date(2018, 5, 3)]
 
-    forecasting.get_predictor(df, start_date, site_list, ieh_sdk, False, predictor_dates)
+    forecasting.get_predictor_pentad(df, start_date, site_list, ieh_sdk, False, predictor_dates)
 
     # The predictor should have value 4.0
     assert round(site_list[0].predictor, 1) == 4.0

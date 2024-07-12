@@ -1,126 +1,93 @@
-# Deployment
+# Installation
+This document describes the steps for the installation of the SAPPHIRE Forecast Tools. The forecast tools have been developed for installation on an Ubuntu server, OS version 24.4 LTS.
 
-This repository uses GitHub Actions to automatize the deployment of the forecast tools. Every time a release is published or edited, the updated image will be deployed automatically on the host machine where the Docker repositories are watched for updates. The following section describes the steps that are required on the host machine to initially deploy the forecast tools.
+- [Installation](#installation)
+  - [Prerequisites](#prerequisites)
+  - [Download this repository](#download-this-repository)
+  - [Copy your data to the repository \& adapt the configuration files](#copy-your-data-to-the-repository--adapt-the-configuration-files)
+  - [Run the forecast tools](#run-the-forecast-tools)
+  - [Set up cron job](#set-up-cron-job)
+  - [Deployment (under construction)](#deployment-under-construction)
+    - [.env](#env)
+    - [Configuration dashboard](#configuration-dashboard)
+    - [Backend](#backend)
+    - [Triggering re-run of the forecast](#triggering-re-run-of-the-forecast)
+    - [Forecast dashboard](#forecast-dashboard)
+  - [Testing the deployment](#testing-the-deployment)
+
 
 ## Prerequisites
+The following software is required to deploy the forecast tools:
+- Docker Engine and Docker Compose
+- Git (optional)
+
+Whereby Docker Engine and Docker Compose are required for the installation of the forecast tools. Git is used to clone the GitHub repository with the folder structure and example files.
+
+Installation instructions for Docker Engine and Docker Compose can be found in the [Docker documentation](https://docs.docker.com/). Git can be installed as follows:
+```bash
+sudo apt-get update
+sudo apt-get install git
+```
+
 Perform the following steps the computer where the forecast tools are deployed.
 
-### Download this repository
+## Download this repository
 Download the [repository](https://github.com/hydrosolutions/SAPPHIRE_Forecast_Tools) to the host machine. This will give you the folder structure with which you can quickly deploy the forecast tools. You can, however, also build your own folder structure. If you choose to do so, you will have to adapt the paths in the .env file and the run commands accordingly.
 <details>
-<summary>Instructions for Windows</summary>
+<summary>Manual download</summary>
 The repository can be downloaded as a zip file from the GitHub website. Unzip the file and move the folder to the desired location on the host machine. This allows you to only perform minimal edits to the configuration files within the designed folder structure.
 </details>
 
 <details>
-<summary>Instructions for Linux</summary>
-Alternatively you can clone the repository using git. On the Linux server (example Amazon EC2 Linux instance) open a terminal and type the following commands:
-
-Install git:
-```bash
-sudo yum install git
-```
-
-Clone the repository:
+<summary>Instructions using Git</summary>
+Alternatively you can clone the repository using git. On the server open a terminal and type the following commands:
 
 ```bash
 git clone https://github.com/hydrosolutions/SAPPHIRE_Forecast_Tools.git
 ```
 </details>
 
-### Install Docker
-<details>
-<summary>Instructions for Windows</summary>
-Install the software [Docker](https://docs.docker.com/install/). Note that you will need administrator rights to install Docker successfully. To allow that Docker services are started when the computer is turned on, you will have to change the settings in the Docker Desktop application. Open the application and go to Settings > General. Select the option to start Docker Desktop when you log in. In addition, you can tell windows to automatically start the docker services by following these steps:
-1. Open the Run dialog by pressing the Windows key + R.
-2. Type services.msc and press Enter.
-3. In the Services window, scroll down to Docker Desktop Service.
-4. Right-click on Docker Desktop Service and select Properties.
-5. In the Properties window, change the Startup type to Automatic.
-6. Click OK to save the changes.
-The above steps are for Windows 10. If you are using a different version of Windows, the steps may differ. They are necessary to ensure that the containers are restarted automatically when the computer was turned off.
+## Copy your data to the repository & adapt the configuration files
+To be described.
 
-Start a Watchtower instance to automatically update the application when a new version is available by typing the following command in a Unix terminal. If you are using Windows, you should have Linux for Window (WSL) installed and use the Linux terminal. To check if your wsl is ready for use, open a PwerShell window and type:
+## Run the forecast tools
+We provide you with a shell script that pulls the latest images from Docker Hub and runs the containers. The script is located in the bin folder and run as follows from the SAPPHIRE_Forecast_Tools folder:
 ```bash
-wsl
+bash .bin/run_sapphire_forecast_tools.sh <path_to_data_root_folder>
 ```
-If you get an error message, you may have to trubble shoot your wsl installation. See [this link](https://docs.microsoft.com/en-us/windows/wsl/install-win10) for more information.
-
-</details>
-
-<details>
-<summary>Instructions for Linux</summary>
-As an example for the deployment on a linux server we choose an Amazon EC2 Linux instance. To install docker on Amazon Linux 2, open a terminal and type the following commands:
-
-Update yum:
-
+The path to the data root folder is the parent directory of your data folder where you store your discharge, bulletin templates and other data. By default this is the data folder in the SAPPHIRE_Forecast_Tools folder (in which case the path to the dat aroot folder would be the path to the SAPPHIRE_Forecast_Tools):
 ```bash
-sudo yum update
+bash .bin/run_sapphire_forecast_tools.sh /absolute/path/to/SAPPHIRE_Forecast_Tools
+```
+For convenience sake, we have our data in a separate data folder which is located at the same hierarchical level as the SAPPHIRE_Forecast_Tools folder. In this case the path to the data root folder would be:
+```bash
+bash .bin/run_sapphire_forecast_tools.sh /absolute/path/to/SAPPHIRE_Forecast_Tools_parent_direcotry
 ```
 
-Look for docker:
+## Set up cron job
+We recommend setting up a cron job to restart the backend every day after you have checked the operational river discharge data and before you have to send out the forecast bulletin.
+```bash
+crontab -e
+```
+Add the following line to the crontab file:
+```bash
+3 10 * * * cd /data/SAPPHIRE_Forecast_Tools && /bin/bash -c 'bash bin/run_sapphire_forecast_tools.sh /data' >> /data/logs/sapphire_forecast_tools.log 2>&1
+```
+To run the forecast tools every day at 10:03 a.m (server time, check by typing `date` to the console). The path to the data root folder is the parent directory of your data folder where you store your discharge, bulletin templates and other data. By default this is the data folder in the SAPPHIRE_Forecast_Tools folder (in which case the path to the data root folder would be the path to the SAPPHIRE_Forecast_Tools). The log file will be stored in the logs folder in the data folder.
+
+To check if the docker containers are running correctly, you can check the logs of the containers with:
+```bash
+docker ps -a
+```
+To list the container names and then check the logs of the container with:
 
 ```bash
-sudo yum search docker
+docker logs <container_name>
 ```
 
-Install docker:
 
-```bash
-sudo yum install docker
-```
 
-Allow user ec2-user to run docker:
-
-```bash
-sudo usermod -aG docker ec2-user
-```
-
-Enable docker services:
-
-```bash
-sudo systemctl enable docker.service
-```
-
-Start docker services:
-
-```bash
-sudo systemctl start docker.service
-```
-
-Check if docker services are running:
-
-```bash
-sudo systemctl status docker.service
-```
-
-Check if docker installation was successful:
-
-```bash
-docker run hello-world
-```
-
-</details>
-
-### Run watchtower
-
-To run watchtower, type the following command in the terminal (for windows, we recommend using the Linux terminal in WSL but you can also use the PowerShell):
-
-```bash
-docker run -d \
-  --name watchtower \
-  --restart always \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  containrrr/watchtower --label-enable --interval 30 --cleanup
-```
-The label-enable option tells watchtower to only update containers that have the label com.centurylinklabs.watchtower.enable=true in their run command (see below). The interval option tells watchtower to check for new versions every 30 seconds. After testing, this intervall can be increased. The cleanup option tells watchtower to remove old images after updating the container. We further tell watchtower to restart the container always, for example after the computer was turned off.
-
-Note that you should not stop the running containers for the watchtower to be able to automatically deploy software updates.
-
-### Install Chrome Browser (optional)
-Chrome browser was used to visualized the dashboards in this project. If you prefer to use a different browser, you will have to edit the bat files bat/configuration.bat and bat/dashboard.bat in the bat folder.
-
-## Deployment
+## Deployment (under construction)
 The sections below describe the steps that are required to deploy the forecast tools on the host machine. If you want to test the tools with the demo data, you don't need to adapt the files in the apps/config folder and skip the .env chapter below.
 
 ### .env

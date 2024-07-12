@@ -10,26 +10,16 @@ import os
 
 # Get the absolute path of the directory containing the current script
 cwd = os.getcwd()
+print(cwd)
 
-# Construct the path to the iEasyHydroForecast directory
-forecast_dir = os.path.join(
-    cwd, '..', 'iEasyHydroForecast')
-
-# Add the forecast directory to the Python path
-sys.path.append(forecast_dir)
-
-# Import the modules from the forecast library
-import tag_library as tl
-import forecast_library as fl
-
-env_file_path = "../config/.env_develop_kghm"
+env_file_path = "../../../../sensitive_data_forecast_tools/config/.env_develop_kghm"
 load_dotenv(env_file_path)
 print("DEBUG: IEASYHYDRO_HOST: ", os.getenv("IEASYHYDRO_HOST"))
 
 # Load sdk configuration from .env
 ieh_sdk = IEasyHydroSDK()
 
-predictor_dates = [dt.datetime(2024, 4, 3, 0, 0, 0), dt.datetime(2024, 4, 5, 12, 0, 0)]
+predictor_dates = [dt.datetime(2024, 6, 3, 0, 0, 0), dt.datetime.today()]
 
 # Define date filter
 filters = BasicDataValueFilters(
@@ -37,7 +27,7 @@ filters = BasicDataValueFilters(
     local_date_time__lt=predictor_dates[1]
 )
 
-site = '15194'
+site = '15102'
 
 # Get data
 qdata = ieh_sdk.get_data_values_for_site(
@@ -47,7 +37,6 @@ qdata = ieh_sdk.get_data_values_for_site(
 )
 qdata = pd.DataFrame(qdata['data_values'])
 print("get_data_values_for_site:\n", qdata)
-#print(type(qdata))
 
 tdata = ieh_sdk.get_data_values_for_site(
     [site],
@@ -55,23 +44,15 @@ tdata = ieh_sdk.get_data_values_for_site(
     filters=filters,
 )
 tdata = pd.DataFrame(tdata['data_values'])
-print(tdata)
+#print(tdata)
 
 # Get the first row from tdata in the wide format
 row = pd.DataFrame(tdata.iloc[-1]).transpose()
-print(row)
+#print(row)
 
 # add the row to qdata
 qdata = pd.concat([qdata, row])
-print(qdata)
+print("Discharge data read from qdata:\n", qdata)
 
-sites = fl.Site(code=site)
-print(sites)
-fl.Site.from_DB_get_predictor(sdk=ieh_sdk, site=sites, dates=predictor_dates, lagdays=20)
-print(sites.predictor)
-print(sum(qdata['data_value']))
-
-#sdata = ieh_sdk.get_discharge_sites()
-#print("get_discharge_sites:\n", sdata)
 
 
