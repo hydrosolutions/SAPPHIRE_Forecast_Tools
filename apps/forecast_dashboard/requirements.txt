@@ -1,6 +1,5 @@
 numpy>=1.24.3
 pandas>=2.0.3
-scikit-learn>=1.3.0
 typing
 panel==1.4.2
 holoviews==1.18.3
