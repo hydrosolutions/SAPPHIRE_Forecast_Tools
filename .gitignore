@@ -166,6 +166,8 @@ Z/
 apps/linear_regression/logs/*
 apps/pipeline/logs/*
 apps/preprocessing_runoff/logs/*
+apps/preprocessing_gateway/logs/*
+apps/postprocessing_forecasts/logs/*
 
 # Ignore environment files used for development and testing
 apps/config/.env_develop_kghm
