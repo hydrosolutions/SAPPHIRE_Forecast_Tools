@@ -3,16 +3,16 @@ name: Test & deploy main branch
 env:
   BASE_IMAGE_NAME: mabesa/sapphire-pythonbaseimage
   PIPELINE_IMAGE_NAME: mabesa/sapphire-pipeline
-  RERUN_IMAGE_NAME: mabesa/sapphire-rerun
   DASHBOARD_IMAGE_NAME: mabesa/sapphire-dashboard
   CONFIG_IMAGE_NAME: mabesa/sapphire-configuration
   PREPQ_IMAGE_NAME: mabesa/sapphire-preprunoff
   LINREG_IMAGE_NAME: mabesa/sapphire-linreg
   POSTPQ_IMAGE_NAME: mabesa/sapphire-postprocessing
+  RERUN_IMAGE_NAME: mabesa/sapphire-rerun
 
 on:
   push:
-    branches: [ "integrate_to_main"]
+    branches: [ "develop_bea"]
   pull_request:
     branches: [ "main" ]
 
@@ -457,3 +457,5 @@ jobs:
       - name: Push the image to Dockerhub
         run: |
           docker push "$LINREG_IMAGE_NAME:$IMAGE_TAG"
+
+
