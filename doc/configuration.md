@@ -133,3 +133,25 @@ During development or deployment, you may want to focus only on selected station
 ieasyforecast_restrict_stations_file=../config/config_development_restrict_station_selection.json
 ```
 For the deployment of the software or to not filter for a subset of the stations, you can set the value to null. The backend will check if the station selection is restricted and prints a warning to the console if this is the case so that it is not forgotten during deployment.
+
+
+### Configuration of the preprocessing of weather data from the data gateway
+
+```
+# Configuration of the preprocessing of weather data from the data gateway
+
+# API KEY FOR THE DATA-GATEAWAY
+ieasyhydroforecast_API_KEY_GATEAWAY=<your private API key to the SAPPHIRE data gateway>
+
+# PATH FOR INTERMEDIATE RESULTS
+# Subfolders located in ieasyforecast_intermediate_data_path
+# Subfolders are created if they do not already exist
+ieasyhydroforecast_OUTPUT_PATH_DG=data_gateway
+ieasyhydroforecast_OUTPUT_PATH_CM=control_member_forcing
+ieasyhydroforecast_OUTPUT_PATH_ENS=ensemble_forcing
+
+#PATH QUANTILE MAPPING
+ieasyhydroforecast_models_and_scalers_path=../../data/config/models_and_scalers
+ieasyhydroforecast_Q_MAP_PARAM_PATH=params_quantile_mapping
+ieasyhydroforecast_PATH_TO_QMAPPED_ERA5=control_member_forcing
+```

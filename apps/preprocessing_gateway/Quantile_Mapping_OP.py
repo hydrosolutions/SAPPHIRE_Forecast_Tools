@@ -355,21 +355,37 @@ def main():
     OUTPUT_PATH_CM = os.path.join(
         os.getenv('ieasyforecast_intermediate_data_path'),
         os.getenv('ieasyhydroforecast_OUTPUT_PATH_CM'))
+    # Test if the output path exists and create it if it doesn't
+    if not os.path.exists(OUTPUT_PATH_CM):
+        os.makedirs(OUTPUT_PATH_CM, exist_ok=True)
+
     OUTPUT_PATH_ENS = os.path.join(
         os.getenv('ieasyforecast_intermediate_data_path'),
         os.getenv('ieasyhydroforecast_OUTPUT_PATH_ENS'))
+    # Test if the output path exists and create it if it doesn't
+    if not os.path.exists(OUTPUT_PATH_ENS):
+        os.makedirs(OUTPUT_PATH_ENS, exist_ok=True)
+
     #output_path for the data from the data gateaway
     OUTPUT_PATH_DG = os.path.join(
         os.getenv('ieasyforecast_intermediate_data_path'),
         os.getenv('ieasyhydroforecast_OUTPUT_PATH_DG'))
+    # Test if the output path exists and create it if it doesn't
+    if not os.path.exists(OUTPUT_PATH_DG):
+        os.makedirs(OUTPUT_PATH_DG, exist_ok=True)
 
     logger.debug(f"OUTPUT_PATH_CM: {OUTPUT_PATH_CM}")
     logger.debug(f"OUTPUT_PATH_ENS: {OUTPUT_PATH_ENS}")
     logger.debug(f"OUTPUT_PATH_DG: {OUTPUT_PATH_DG}")
+    logger.debug(f"Path OUTPUT_PATH_DG is valid: {os.path.exists(OUTPUT_PATH_DG)}")
 
     Q_MAP_PARAM_PATH = os.path.join(
         os.getenv('ieasyhydroforecast_models_and_scalers_path'),
         os.getenv('ieasyhydroforecast_Q_MAP_PARAM_PATH'))
+    # Test if the output path exists. Raise an error if it doesn't
+    if not os.path.exists(Q_MAP_PARAM_PATH):
+        raise FileNotFoundError(f"Path {Q_MAP_PARAM_PATH} does not exist")
+
     CONTROL_MEMBER_HRUS = os.getenv('ieasyhydroforecast_HRU_CONTROL_MEMBER')
     ENSEMBLE_HRUS = os.getenv('ieasyhydroforecast_HRU_ENSEMBLE')
 
@@ -481,6 +497,7 @@ def main():
                 raise
 
         # Special case if HRU_ENS is 151940, this was previously 15194, so we need to change the code
+        # TODO: Read code_ens from config file
         if code_ens == '151940':
             code_ens = '15194'
 
@@ -494,6 +511,7 @@ def main():
         #merge the ensemble forecast
         combined_ensemble_forecast = merge_ensemble_forecast(files_downloaded)
         #if code is 151940, we need to change the code to 15194 in the data
+        # TODO
         if code_ens == '15194':
             combined_ensemble_forecast['code'] = '15194'
         combined_ensemble_forecast['code'] = combined_ensemble_forecast['code'].astype(str)
