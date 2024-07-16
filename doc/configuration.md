@@ -136,22 +136,52 @@ For the deployment of the software or to not filter for a subset of the stations
 
 
 ### Configuration of the preprocessing of weather data from the data gateway
+The SAPPHIRE forecast tools can use weather data from ECMWF IFS and from the TopoPyScale-FSM snow model which is processed in the SAPPHIRE Data Gateway. See [TODO Chapter to be linked] for more information on the data gateway.
 
+The preprocessing of weather data from the data gateway can only be done with a valid API key. If ieasyhydroforecast_API_KEY_GATEAWAY is not set or if it is not valid, the forecast tools will not be able to access the weather data from the data gateway and no forecasts with the machine learning models or with conceptual models will be produced. Forecasts using the linear regression method will still be produced.
 ```
 # Configuration of the preprocessing of weather data from the data gateway
 
 # API KEY FOR THE DATA-GATEAWAY
 ieasyhydroforecast_API_KEY_GATEAWAY=<your private API key to the SAPPHIRE data gateway>
+```
+For installation instructions of the data gateway or possibilities of how to get access to an API key see [TODO Chapter to be linked].
 
+It may happen that the names of the stations in the SAPPHIRE data gateway differ from the names of the stations in the iEasyHydro database. In this case, you can configure name twins in the file config_gateway_name_twins.json. The file is a dictionary where the key is the name of the station in the SAPPHIRE data gateway and the value is the name of the station in the iEasyHydro database. The file is optional and only needed if the names of the stations differ.
+```
+# Configuration of name twins if required. This file is optional.
+ieasyhydroforecast_config_file_data_gateway_name_twins=config_gateway_name_twins.json
+```
+
+The preprocessing of data gateway will write output to the following paths.
+TODO @Sandro: Please add a sentence to what is stored in these different folders.
+```
 # PATH FOR INTERMEDIATE RESULTS
 # Subfolders located in ieasyforecast_intermediate_data_path
 # Subfolders are created if they do not already exist
 ieasyhydroforecast_OUTPUT_PATH_DG=data_gateway
 ieasyhydroforecast_OUTPUT_PATH_CM=control_member_forcing
 ieasyhydroforecast_OUTPUT_PATH_ENS=ensemble_forcing
+```
 
+We read parameters for downscaling of the ERA5-Land and ECMWF IFS forecasts, using the quantile mapping method, from the path defined in ieasyhydroforecast_models_and_scalers_path. Note that if there are no parameters for downscaling defined, the preprocessing of the data gateway module will write the raw ERA5-Land and ECMWF IFS forecasts to the path defined in ieasyhydroforecast_PATH_TO_QMAPPED_ERA5.
+```
 #PATH QUANTILE MAPPING
 ieasyhydroforecast_models_and_scalers_path=../../data/config/models_and_scalers
 ieasyhydroforecast_Q_MAP_PARAM_PATH=params_quantile_mapping
+```
+
+The outputs of the downscaling step are stored in the following paths:
+
+```
 ieasyhydroforecast_PATH_TO_QMAPPED_ERA5=control_member_forcing
+```
+
+In the following environment variables we configer which HRU file (uploaded to the SAPPHIRE Data Gateway) we download data for (variable ieasyhydroforecast_HRU_CONTROL_MEMBER). The control member is processed for each gauge defined in the HRU file. We further define which HRUs need an ensemble forecast (variable ieasyhydroforecast_HRU_ENSEMBLE). The ensemble forecast is processed for each gauge code defined in the HRU file.
+```
+# HRU FOR QUANTILE MAPPING AND FORECASTING
+# Shapefile identifier to download data from the data gateway from
+ieasyhydroforecast_HRU_CONTROL_MEMBER=00003
+#Which HRUs (within ieasyhydroforecast_HRU_CONTROL_MEMBER) need an ensemble forecast
+ieasyhydroforecast_HRU_ENSEMBLE=151940,16936
 ```

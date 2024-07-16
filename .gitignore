@@ -168,6 +168,7 @@ apps/pipeline/logs/*
 apps/preprocessing_runoff/logs/*
 apps/preprocessing_gateway/logs/*
 apps/postprocessing_forecasts/logs/*
+apps/reset_forecast_run_date/logs/*
 
 # Ignore environment files used for development and testing
 apps/config/.env_develop_kghm

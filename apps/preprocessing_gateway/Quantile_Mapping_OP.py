@@ -10,13 +10,20 @@
 #         \  \
 # --------------------------------------------------------------------
 # DESCRIPTION:
-# This script reads in the ERA5 data from the Data-Gateaway and Performs
-# Qunatile Mapping for P and T Variable with pre-defined Parameters
+# This script reads in the ERA5-Land data and ECMWF IFS weather forecast data
+# from the Data-Gateaway and, if parameters for quantile mapping are available,
+# performs qunatile mapping for the daily precipitation sum P and the daily
+# average air temperature T with pre-defined parameters.
 # The Formula for the Mapping is: y_fit = a * y_era_5^b
+#
+# If access to the data gateway is not available, the script will return an
+# exit value of 1 and print a warning message. The subsequent modelling steps
+# based on the machine learning and conceptual models will not be run. The
+# linear regression models will still be run.
 # --------------------------------------------------------------------
 # --------------------------------------------------------------------
 # INPUT:
-# ERA5 Data from the Data-Gateaway
+# ERA5-Land and ECMWF IFS weather forecast data from the SAPPHIRE data gateaway
 # --------------------------------------------------------------------
 # Pre-defined Parameters for the Quantile Mapping
 # COLUMNS for the Parameters: 'code', 'a', 'b', 'wet_day'
@@ -35,6 +42,7 @@
 # TODO:
 # - Include the Real Parameters for the Quantile Mapping
 # - Include Nan Cases -> what happens when the data-gateaway raises an error etc?
+# - Test if all codes in ieasyhydroforecast_HRU_ENSEMBLE are in ieasyhydroforecast_HRU_CONTROL_MEMBER and print a waring if not.
 
 # Required Libraries
 # Install libraries from iEasyHydroForecast/requirements.txt
@@ -43,9 +51,6 @@
 # cd to the directory where the script is located (apps/preprocessing_gateway)
 # python Quantile_Mapping_OP.py
 
-# Credits for script to:
-# Sandro Hunziker, Adrian Kreiner, and Tobias Siegfried, 2024
-
 
 
 # --------------------------------------------------------------------
@@ -53,6 +58,7 @@
 # --------------------------------------------------------------------
 import os
 import sys
+import json
 import pandas as pd
 import numpy as np
 from dotenv import load_dotenv
@@ -349,8 +355,12 @@ def main():
     # Loads the environment variables from the .env file
     sl.load_environment()
 
-    # Access the environment variables
-    API_KEY = os.getenv('ieasyhydroforecast_API_KEY_GATEAWAY')
+    # Test if an API key is available and exit the program if it isn't
+    if not os.getenv('ieasyhydroforecast_API_KEY_GATEAWAY'):
+        logger.warning("No API key for the data gateway found. Exiting program.\nMachine learning or conceptual models will not be run.")
+        sys.exit(1)
+    else:
+        API_KEY = os.getenv('ieasyhydroforecast_API_KEY_GATEAWAY')
     #output_path for control member and ensemble
     OUTPUT_PATH_CM = os.path.join(
         os.getenv('ieasyforecast_intermediate_data_path'),
@@ -384,7 +394,10 @@ def main():
         os.getenv('ieasyhydroforecast_Q_MAP_PARAM_PATH'))
     # Test if the output path exists. Raise an error if it doesn't
     if not os.path.exists(Q_MAP_PARAM_PATH):
-        raise FileNotFoundError(f"Path {Q_MAP_PARAM_PATH} does not exist")
+        logger.warning(f"Path {Q_MAP_PARAM_PATH} does not exist.\nParameters for quantile mapping of ERA5 and ECMWF ensemble forecast are not available.\nProducing weather data files that are not downscaled.")
+        perform_qmapping=False
+    else:
+        perform_qmapping=True
 
     CONTROL_MEMBER_HRUS = os.getenv('ieasyhydroforecast_HRU_CONTROL_MEMBER')
     ENSEMBLE_HRUS = os.getenv('ieasyhydroforecast_HRU_ENSEMBLE')
@@ -413,6 +426,26 @@ def main():
 
     logger.debug(f"Today: {today}, start_date: {start_date}, yesterday: {yesterday}")
 
+
+    # Read configuration for mapping gateway station codes to hydromet station
+    # codes, if file is available:
+    # Path to the configuration file
+    config_file = os.path.join(
+        os.getenv('ieasyforecast_configuration_path'),
+        os.getenv('ieasyhydroforecast_config_file_data_gateway_name_twins'))
+    logger.debug(f"Data gateway name mapping configuration file: {config_file}")
+    # If the file is present, read the configuration
+    if os.path.exists(config_file):
+        # Read the configuration file
+        with open(config_file) as f:
+            config = json.load(f)
+            # Get the mapping from the configuration
+            mapping = config['gateway_name_twins']
+            logger.debug(f"Mapping from configuration: {mapping}")
+    else:
+        logger.debug("No configuration for mapping station codes found.")
+        mapping = {}
+
     #--------------------------------------------------------------------
     # CONTROL MEMBER MAPPING
     #--------------------------------------------------------------------
@@ -433,16 +466,21 @@ def main():
         #transform the data file
         transformed_data_file = transform_data_file_control_member(df_c_m)
         transformed_data_file['code'] = transformed_data_file['code'].astype(str)
-        #get the parameters
-        P_params_hru = pd.read_csv(os.path.join(Q_MAP_PARAM_PATH, f'HRU{c_m_hru}_P_params.csv'))
-        T_params_hru = pd.read_csv(os.path.join(Q_MAP_PARAM_PATH, f'HRU{c_m_hru}_T_params.csv'))
 
-        #transform to string, as the other code is a string
-        P_params_hru['code'] = P_params_hru['code'].astype(str)
-        T_params_hru['code'] = T_params_hru['code'].astype(str)
+        #get the parameters if available
+        if perform_qmapping:
+            P_params_hru = pd.read_csv(os.path.join(Q_MAP_PARAM_PATH, f'HRU{c_m_hru}_P_params.csv'))
+            T_params_hru = pd.read_csv(os.path.join(Q_MAP_PARAM_PATH, f'HRU{c_m_hru}_T_params.csv'))
 
-        #perform the quantile mapping for the control member for the HRU's without Eleavtion bands
-        P_data, T_data = do_quantile_mapping(transformed_data_file, P_params_hru, T_params_hru, ensemble=False)
+            #transform to string, as the other code is a string
+            P_params_hru['code'] = P_params_hru['code'].astype(str)
+            T_params_hru['code'] = T_params_hru['code'].astype(str)
+
+            #perform the quantile mapping for the control member for the HRU's without Eleavtion bands
+            P_data, T_data = do_quantile_mapping(transformed_data_file, P_params_hru, T_params_hru, ensemble=False)
+        else:
+            P_data = transformed_data_file[['date', 'P', 'code']].copy()
+            T_data = transformed_data_file[['date', 'T', 'code']].copy()
 
         #check if there are nan values
         if P_data.isnull().values.any():
@@ -466,7 +504,7 @@ def main():
     #--------------------------------------------------------------------
     for code_ens in hru_ensemble_forecast:
 
-        print(f"Processing HRU Ensemble: {code_ens}")
+        print(f"Processing HRU Ensemble: {code_ens} (gateway code)")
         if ENSEMBLE_HRUS == 'None':
             break
         #download the ensemble forecast
@@ -493,31 +531,45 @@ def main():
                     # Handle the second error or re-raise it
                     raise
             else:
-                # If it's a different error, re-raise it
+                # If it's a different error, re-raise it.
+                # The exit value will be 1 (failure) in this case.
                 raise
 
-        # Special case if HRU_ENS is 151940, this was previously 15194, so we need to change the code
-        # TODO: Read code_ens from config file
-        if code_ens == '151940':
-            code_ens = '15194'
-
-        #load the parameters
-        P_params_hru = pd.read_csv(os.path.join(Q_MAP_PARAM_PATH, f'HRU{c_m_hru}_P_params.csv'))
-        T_params_hru = pd.read_csv(os.path.join(Q_MAP_PARAM_PATH, f'HRU{c_m_hru}_T_params.csv'))
-
-        P_params_hru['code'] = P_params_hru['code'].astype(str)
-        T_params_hru['code'] = T_params_hru['code'].astype(str)
+        # A renaming of shapefiles sometimes is required in the data gateway.
+        # The user can define name twins for the shapefiles in the data gateway
+        # and in the hydromet in the configuration file:
+        # ieasyhydroforecast_config_file_data_gateway_name_twins that is read at
+        # before the loops.
+        # Test if code_ens is in left column of the mapping
+        code_ens_data_gateway = code_ens
+        if code_ens in mapping.keys():
+            logger.debug(f"Mapping found for {code_ens}")
+            # If it is, get the name from the right column
+            code_ens_data_gateway = code_ens
+            code_ens = mapping[code_ens]
+            logger.debug(f"Old code: {code_ens_data_gateway}, new code: {code_ens}")
 
         #merge the ensemble forecast
         combined_ensemble_forecast = merge_ensemble_forecast(files_downloaded)
-        #if code is 151940, we need to change the code to 15194 in the data
-        # TODO
-        if code_ens == '15194':
-            combined_ensemble_forecast['code'] = '15194'
+        # Replace code with the actual code from the mapping (if applicable)
+        if code_ens_data_gateway in mapping.keys():
+            combined_ensemble_forecast['code'] = code_ens
+
         combined_ensemble_forecast['code'] = combined_ensemble_forecast['code'].astype(str)
 
-        #Perform the quantile mapping for the ensemble members
-        P_ensemble, T_ensemble = do_quantile_mapping(combined_ensemble_forecast, P_params_hru, T_params_hru, ensemble=True)
+        #load the parameters
+        if perform_qmapping:
+            P_params_hru = pd.read_csv(os.path.join(Q_MAP_PARAM_PATH, f'HRU{c_m_hru}_P_params.csv'))
+            T_params_hru = pd.read_csv(os.path.join(Q_MAP_PARAM_PATH, f'HRU{c_m_hru}_T_params.csv'))
+
+            P_params_hru['code'] = P_params_hru['code'].astype(str)
+            T_params_hru['code'] = T_params_hru['code'].astype(str)
+
+            #Perform the quantile mapping for the ensemble members
+            P_ensemble, T_ensemble = do_quantile_mapping(combined_ensemble_forecast, P_params_hru, T_params_hru, ensemble=True)
+        else:
+            P_ensemble = combined_ensemble_forecast[['date', 'P', 'code', 'ensemble_member']].copy()
+            T_ensemble = combined_ensemble_forecast[['date', 'T', 'code', 'ensemble_member']].copy()
 
         #check if there are nan values
         if P_ensemble.isnull().values.any():
@@ -534,8 +586,12 @@ def main():
         P_ensemble.to_csv(os.path.join(OUTPUT_PATH_ENS, f"{code_ens}_P_ensemble_forecast.csv"), index=False)
         T_ensemble.to_csv(os.path.join(OUTPUT_PATH_ENS,   f"{code_ens}_T_ensemble_forecast.csv"), index=False)
 
+    if perform_qmapping:
+        logger.info("PREPROCESSING OF WEATHER DATA FROM DATA GATWAY DONE. DOWNSCALING WITH QUANTILE MAPPING DONE.")
+    else:
+        logger.info("PREPROCESSING OF WEATHER DATA FROM DATA GATWAY DONE BUT NO DOWNSCALING DONE.\nERA5-LAND and ECMWF IFS FORECASTS WRITTEN WITHOUT DOWNSCALING.")
 
-    print("QUANTILE MAPPING DONE")
+    sys.exit(0)
 
 if __name__ == '__main__':
     main()

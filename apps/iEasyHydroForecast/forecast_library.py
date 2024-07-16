@@ -1047,6 +1047,10 @@ def perform_linear_regression(
         except ValueError as e:
             print(f'Error in perform_linear_regression when filtering for station data: {e}')
 
+        if int(station) == 15194:
+            logger.debug("DEBUG: forecasting:perform_linear_regression: station_data: \n%s",
+                          station_data[['date', pentad_col, station_col, predictor_col, discharge_avg_col]].tail(10))
+
         # Drop NaN values, i.e. keep only the time steps where both
         # discharge_sum and discharge_avg are not NaN. These correspond to the
         # time steps where we produce a forecast.
@@ -1055,13 +1059,22 @@ def perform_linear_regression(
             logger.info("No data for station {station} in pentad {forecast_pentad}")
             continue
 
+        if int(station) == 15194:
+            logger.debug("DEBUG: forecasting:perform_linear_regression: station_data: \n%s",
+                          station_data[['date', pentad_col, station_col, predictor_col, discharge_avg_col]].tail(10))
+
+
         # Get the discharge_sum and discharge_avg columns
         discharge_sum = station_data[predictor_col].values.reshape(-1, 1)
         discharge_avg = station_data[discharge_avg_col].values.reshape(-1, 1)
 
+        if int(station) == 15194:
+            logger.debug("DEBUG: forecasting:perform_linear_regression: discharge_sum: \n%s", discharge_sum)
+            logger.debug("DEBUG: forecasting:perform_linear_regression: discharge_avg: \n%s", discharge_avg)
+
         # Perform the linear regression
         model = LinearRegression().fit(discharge_sum, discharge_avg)
-        if int(station) == 15292:
+        if int(station) == 15194:
             logger.debug("model output: %s", model)
             logger.debug("model.coef_: %s", model.coef_)
             logger.debug("model.intercept_: %s", model.intercept_)
@@ -1070,6 +1083,9 @@ def perform_linear_regression(
         q_mean = np.mean(discharge_avg)
         q_std_sigma = np.std(discharge_avg)
         delta = 0.674 * q_std_sigma
+
+        if int(station) == 15194:
+            logger.debug(f'Station: {station}, pentad: {forecast_pentad}, q_mean: {q_mean}, q_std_sigma: {q_std_sigma}, delta: {delta}')
 
         # Get the slope and intercept
         slope = model.coef_[0][0]

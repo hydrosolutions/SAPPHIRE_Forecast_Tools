@@ -10,6 +10,8 @@ WORKDIR /app
 # directory app.
 COPY apps/reset_forecast_run_date /app/apps/reset_forecast_run_date
 
+ENV SAPPHIRE_OPDEV_ENV=true
+
 RUN --mount=type=cache,target=/root/.cache/pip \
     --mount=type=bind,source=apps/reset_forecast_run_date/requirements.txt,target=/app/apps/reset_forecast_run_date/requirements.txt \
     pip install --upgrade pip setuptools wheel tornado && \

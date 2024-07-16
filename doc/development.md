@@ -113,7 +113,7 @@ pwd
 ```
 An example command for the test run would be:
 ```bash
-source bin/run_sapphire_forecast_tools.sh /Users/username/SAPPHIRE_Forecast_Tools
+bash bin/run_sapphire_forecast_tools.sh /Users/username/forecasting/
 ```
 
 #### Activate the conda environment
