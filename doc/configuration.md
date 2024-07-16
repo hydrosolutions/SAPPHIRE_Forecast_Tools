@@ -9,7 +9,7 @@ TODO: UPDATE FIGURE
 ## Configuration of the forecast tools
 We recommend not changing the path ieasyforecast_configuration_path nor the names of the configuration files. You will need to edit the contents of the ieasyforecast_config_file_all_stations and make sure that the station codes given in ieasyforecast_config_file_station_selection are present also in ieasyforecast_config_file_all_stations. Please have a look at the example files in the config folder for guidance.
 ```
-# Snipped of .env. We recommend NOT editing the following lines.
+# Path to the configuration files and names of the configuration files
 ieasyforecast_configuration_path=../config
 ieasyforecast_config_file_all_stations=config_all_stations_library.json
 ieasyforecast_config_file_station_selection=config_station_selection.json
@@ -140,7 +140,9 @@ The SAPPHIRE forecast tools can use weather data from ECMWF IFS and from the Top
 
 The preprocessing of weather data from the data gateway can only be done with a valid API key. If ieasyhydroforecast_API_KEY_GATEAWAY is not set or if it is not valid, the forecast tools will not be able to access the weather data from the data gateway and no forecasts with the machine learning models or with conceptual models will be produced. Forecasts using the linear regression method will still be produced.
 ```
+#----------------
 # Configuration of the preprocessing of weather data from the data gateway
+#----------------
 
 # API KEY FOR THE DATA-GATEAWAY
 ieasyhydroforecast_API_KEY_GATEAWAY=<your private API key to the SAPPHIRE data gateway>
