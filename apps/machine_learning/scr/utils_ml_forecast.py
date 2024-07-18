@@ -2,7 +2,7 @@
 # UTILS FOR ML FORECAST
 # --------------------------------------------------------------------
 #        _
-#      _( )_       
+#      _( )_
 #    _(     )_      /\
 #   (_________)    /  \/\            /\
 #     \  \  \     /      \_____/\   /  \
@@ -113,10 +113,10 @@ def get_codes_to_use(past_discharge: pd.DataFrame, era5: pd.DataFrame, static_fe
     codes_rivers = set(past_discharge['code'].unique())
     codes_era5 = set(era5['code'].unique())
     codes_static = set(static_features['CODE'].unique())
-    
+
     # Find intersection of all three sets
     common_codes = codes_rivers & codes_era5 & codes_static
-    
+
     # Convert the set back to a list
     return list(common_codes)
 
@@ -189,7 +189,7 @@ def check_for_nans(df: pd.DataFrame, threshhold: int) -> tuple[dict[str:bool], i
                 threshold is set to 30% of the length of the input chunk length (but atleast set to 3)
 
     Returns:
-    dict: 
+    dict:
         'exceeds_threshold':    bool, True if the number of missing values exceed the threshold -> no forecast is produced
         'nans_in_between':      bool, True if there are missing values in between the dataframe -> linear interpolation is used
         'nans_at_end':          bool, True if there are missing values at the end of the dataframe -> recursive imputation is used
@@ -211,7 +211,7 @@ def check_for_nans(df: pd.DataFrame, threshhold: int) -> tuple[dict[str:bool], i
 
     has_nan_at_the_end = nans_at_at_end > 0
 
-    missing_values_in_between = sum_of_nans - nans_at_at_end 
+    missing_values_in_between = sum_of_nans - nans_at_at_end
 
     has_nan_in_between = missing_values_in_between > 0
 
@@ -222,10 +222,15 @@ def check_for_nans(df: pd.DataFrame, threshhold: int) -> tuple[dict[str:bool], i
 # WRITE OUTPUT TXT FILE
 # --------------------------------------------------------------------
 def write_output_txt(output_path: str, pentad_no_success: list[int], decadal_no_success:list[int], missing_values: dict, exceeds_threshhold:dict, nans_at_end: dict):
-    """ 
+    """
     Write a summary of possible errors in the forecast to a txt file
     """
-    
+
+    # Test if output path exists, create it if not
+    if not os.path.exists(output_path):
+        os.makedirs(output_path)
+
+
     output_path = os.path.join(output_path, 'response_ml_forecast.txt')
 
     with open(output_path, 'w') as f:
@@ -248,7 +253,7 @@ def save_pentad_forecast()-> bool:
     This function returns a boolean value, showing if the 5 day forecast should be saved or not
     """
     days_to_save = [5, 10, 15, 20, 25]
-    
+
     today = datetime.datetime.now()
     today = today.date()
 
