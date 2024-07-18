@@ -105,6 +105,7 @@ forecast_stats = processing.read_forecast_stats_file()
 # Hydroposts metadata
 station_list, all_stations, station_df = processing.read_all_stations_metadata_from_file(
     hydrograph_day_all['code'].unique().tolist())
+print("DEBUG: pentad_dashboard.py: All stations: \n", all_stations)
 
 # Add the station_labels column to the hydrograph_day_all DataFrame
 hydrograph_day_all = processing.add_labels_to_hydrograph(hydrograph_day_all, all_stations)

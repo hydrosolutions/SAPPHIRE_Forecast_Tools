@@ -6,11 +6,10 @@
 
 import luigi
 import os
-import subprocess
 import time
 import docker
+import datetime
 import re
-import platform
 from dotenv import load_dotenv
 
 # Import local utils
@@ -338,3 +337,40 @@ class PostProcessingForecasts(luigi.Task):
         # Check if the output file was modified within the last number of seconds
         return current_time - output_file_mtime < 10  # 24 * 60 * 60
 
+
+class DeleteOldGateywayFiles(luigi.Task):
+
+    # Define the folder path where the files are stored
+    folder_path = os.path.join(
+        env.get("ieasyforecast_intermediate_data_path"),
+        env.get("ieasyhydroforecast_OUTPUT_PATH_DG")
+    )
+
+    # Define the number of days old the files should be before they are deleted
+    days_old = luigi.IntParameter(default=2)
+
+    def run(self):
+        # Delete files older than `days_old`
+        age_limit = datetime.datetime.now() - datetime.timedelta(days=self.days_old)
+        for filename in os.listdir(self.folder_path):
+            file_path = os.path.join(self.folder_path, filename)
+            file_time = datetime.datetime.fromtimestamp(os.path.getmtime(file_path))
+            if file_time < age_limit:
+                os.remove(file_path)
+                print(f"Deleted {file_path} as it was older than {self.days_old} days.")
+
+    def output(self):
+        # No output files are created by this task. Simply return none.
+        return None
+
+class RunWorkflow(luigi.Task):
+
+    def requires(self):
+        return [PostProcessingForecasts(), DeleteOldGateywayFiles()]
+
+    def run(self):
+        print("Workflow completed.")
+
+
+if __name__ == '__main__':
+    luigi.build([])
