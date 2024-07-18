@@ -167,6 +167,7 @@ apps/linear_regression/logs/*
 apps/pipeline/logs/*
 apps/preprocessing_runoff/logs/*
 apps/preprocessing_gateway/logs/*
+apps/machine_learning/logs/*
 apps/postprocessing_forecasts/logs/*
 apps/reset_forecast_run_date/logs/*
 
@@ -194,3 +195,4 @@ apps/backend/tests/testspecial_visualize_weatherStationStats.ipynb
 apps/postprocessing_forecasts/logs/log
 apps/backend/tests/testspecial_wetbulbtemp.ipynb
 apps/logs/log
+

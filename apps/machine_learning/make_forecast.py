@@ -43,6 +43,10 @@
 # - Set up real environment variables
 # --------------------------------------------------------------------
 
+# Useage:
+# SAPPHIRE_MODEL_TO_USE=TFT python make_forecast.py
+# Possible values for MODEL_TO_USE: TFT, TIDE, TSMIXER
+
 
 # --------------------------------------------------------------------
 # Load Libraries
@@ -77,14 +81,20 @@ file_handler = TimedRotatingFileHandler('logs/log', when='midnight',
 file_handler.setFormatter(formatter)
 console_handler = logging.StreamHandler()
 console_handler.setFormatter(formatter)
-logger = logging.getLogger().setLevel(logging.DEBUG)
+logger = logging.getLogger('make_ml_forecast')
+logger.setLevel(logging.DEBUG)
 logger.handlers = []
 logger.addHandler(file_handler)
-logger.addHandler(console_handler)
+#logger.addHandler(console_handler)
 
 import warnings
 warnings.filterwarnings("ignore")
-logging.basicConfig(level=logging.DEBUG)
+#logging.basicConfig(level=logging.DEBUG)
+
+# Print logging level of the logger
+logger.info('Logging level: %s', logger.getEffectiveLevel())
+# Level 10: DEBUG, Level 20: INFO, Level 30: WARNING, Level 40: ERROR, Level 50: CRITICAL
+logger.debug('Debug message for logger level 10')
 
 #Custom Libraries
 from scr import utils_ml_forecast
@@ -122,24 +132,27 @@ class LossLogger(Callback):
 # --------------------------------------------------------------------
 # MAIN FUNCTION
 # --------------------------------------------------------------------
-def main():
+def make_ml_forecast():
 
     # --------------------------------------------------------------------
     # DEFINE WHICH MODEL TO USE
     # --------------------------------------------------------------------
-    MODEL_TO_USE = os.getenv('MODEL_TO_USE')
-    logger.debug('Model to use: ' + MODEL_TO_USE)
+    MODEL_TO_USE = os.getenv('SAPPHIRE_MODEL_TO_USE')
+    logger.debug('Model to use: %s', MODEL_TO_USE)
 
-    if MODEL_TO_USE not in ['TFT', 'TIDE', 'TSMIXER']:
-        raise ValueError('Model not supported')
+    if MODEL_TO_USE not in ['TFT', 'TIDE', 'TSMIXER', 'ARIMA']:
+        raise ValueError('Model %s is not supported.\nPlease choose one of the following models: TFT, TIDE, TSMIXER, ARIMA')
     else:
-        print('Model to use: ', MODEL_TO_USE)
+        logger.debug('Model to use: %s', MODEL_TO_USE)
+        #print('Model to use: ', MODEL_TO_USE)
         if MODEL_TO_USE == 'TFT':
             from scr import predictor_TFT as predictor_class
         elif MODEL_TO_USE == 'TIDE':
             from scr import predictor_TIDE as predictor_class
         elif MODEL_TO_USE == 'TSMIXER':
             from scr import predictor_TSMIXER as predictor_class
+        elif MODEL_TO_USE == 'ARIMA':
+            from scr import predictor_ARIMA as predictor_class
 
 
     # --------------------------------------------------------------------
@@ -151,24 +164,34 @@ def main():
     # Load the environment variables
     sl.load_environment()
 
-    exit()
-
     # Access the environment variables
-    PATH_TO_STATIC_FEATURES = os.getenv('PATH_TO_STATIC_FEATURES')
-    OUTPUT_PATH_DISCHARGE = os.getenv('OUTPUT_PATH_DISCHARGE')
+    MODELS_AND_SCALERS_PATH = os.getenv('ieasyhydroforecast_models_and_scalers_path')
+    PATH_TO_STATIC_FEATURES = os.getenv('ieasyhydroforecast_PATH_TO_STATIC_FEATURES')
+    OUTPUT_PATH_DISCHARGE = os.getenv('ieasyhydroforecast_OUTPUT_PATH_DISCHARGE')
     RIVERS_TO_PREDICT = os.getenv('RIVERS_TO_PREDICT')
-    PATH_TO_QMAPPED_ERA5 = os.getenv('PATH_TO_QMAPPED_ERA5')
+    PATH_TO_QMAPPED_ERA5 = os.getenv('ieasyhydroforecast_PATH_TO_QMAPPED_ERA5')
     HRU_ML_MODELS = os.getenv('HRU_ML_MODELS')
 
-    PATH_TO_SCALER = os.getenv('PATH_TO_SCALER_' + MODEL_TO_USE)
-    PATH_TO_MODEL= os.getenv('PATH_TO_' + MODEL_TO_USE)
+    logger.debug('Current working directory: %s', os.getcwd())
+    logger.debug('MODELS_AND_SCALERS_PATH: %s' , MODELS_AND_SCALERS_PATH)
+    logger.debug('PATH_TO_STATIC_FEATURES: %s' , PATH_TO_STATIC_FEATURES)
+    logger.debug('OUTPUT_PATH_DISCHARGE: %s' , OUTPUT_PATH_DISCHARGE)
+    logger.debug('RIVERS_TO_PREDICT: %s' , RIVERS_TO_PREDICT)
+    logger.debug('PATH_TO_QMAPPED_ERA5: %s' , PATH_TO_QMAPPED_ERA5)
+    logger.debug('HRU_ML_MODELS: %s' , HRU_ML_MODELS)
 
-    PATH_TO_STATIC_FEATURES = os.path.join(script_dir, PATH_TO_STATIC_FEATURES)
+    PATH_TO_SCALER = os.getenv('PATH_TO_SCALER_' , MODEL_TO_USE)
+    PATH_TO_MODEL= os.getenv('PATH_TO_' , MODEL_TO_USE)
+
+    PATH_TO_STATIC_FEATURES = os.path.join(MODELS_AND_SCALERS_PATH, PATH_TO_STATIC_FEATURES)
     OUTPUT_PATH_DISCHARGE = os.path.join(script_dir, OUTPUT_PATH_DISCHARGE)
     PATH_TO_QMAPPED_ERA5 = os.path.join(script_dir, PATH_TO_QMAPPED_ERA5)
 
+    logger.debug('joined path_to_static_features: %s' , PATH_TO_STATIC_FEATURES)
+
     rivers_to_predict = [int(x) for x in RIVERS_TO_PREDICT.split(',')]
 
+    exit()
 
     # --------------------------------------------------------------------
     # LOAD DATA
@@ -356,4 +379,4 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    make_ml_forecast()
