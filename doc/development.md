@@ -22,8 +22,9 @@ This document describes how to develop the application.
       - [Configuration dashboard](#configuration-dashboard)
     - [The backend](#the-backend)
       - [Prerequisites](#prerequisites-1)
-      - [How to run the backend tools locally](#how-to-run-the-backend-tools-locally)
+      - [How to run the backend modules locally](#how-to-run-the-backend-modules-locally)
         - [Pre-processing of river runoff data](#pre-processing-of-river-runoff-data)
+        - [Pre-processing of forcing data from the data gateway](#pre-processing-of-forcing-data-from-the-data-gateway)
         - [Running the linear regression tool](#running-the-linear-regression-tool)
     - [Forecast dashboard](#forecast-dashboard)
       - [Prerequisites](#prerequisites-2)
@@ -32,6 +33,7 @@ This document describes how to develop the application.
     - [Configuration dashboard](#configuration-dashboard-1)
     - [Backend](#backend)
     - [Forecast dashboard](#forecast-dashboard-1)
+  - [How to use private data](#how-to-use-private-data)
   - [Development workflow](#development-workflow)
   - [Testing](#testing)
 - [Deployment](#deployment)
@@ -133,7 +135,7 @@ cd apps/module_name
 pip install -r requirements.txt
 ```
 
-Now you are ready to start developing the forecast tools.
+You now have a working installation of the SAPPHIRE Forecast Tools with a public demo data set.
 
 ### Instructions specific to the tools
 
@@ -228,7 +230,7 @@ pip install -e ../iEasyHydroForecast
 ```
 If you wish to use data from your organizations iEasyHydro database, you will need to configure the apps/config/.env_develop file (see [doc/configuration.md](configuration.md) for more detailed instructions). We recommend testing your configuration by running a few example queries from the [documentation of the SDK library](https://github.com/hydrosolutions/ieasyhydro-python-sdk) in a jupyter notebook.
 
-#### How to run the backend tools locally
+#### How to run the backend modules locally
 ##### Pre-processing of river runoff data
 Establish a connection to the iEasyHydro database by configuring the apps/config/.env_develop file (see [doc/configuration.md](configuration.md) for more detailed instructions). You might require an ssh connection to your local iEasyHydro installation, consult your IT admin for this. You can then run the pre-processing of river runoff data tool with the default .env_develop file by running the following command in the preprocessing_runoff folder in the terminal:
 ```bash
@@ -238,6 +240,9 @@ Note, we use different .env files for testing and development. We use an environ
 ```bash
 SAPPHIRE_OPDEV_ENV=True python preprocessing_runoff.py
 ```
+
+##### Pre-processing of forcing data from the data gateway
+
 
 ##### Running the linear regression tool
 Edit the file apps/internal_data/last_successful_run.txt to one day before the first day you wish to run the forecast tools for. For example, if you wish to start running the forecast tools from January 1, 2024, write the date 2023-12-31 as last successful run date. You can then run the forecast backend in the offline mode to simulate opearational forecasting in the past by running the following command in the terminal:
@@ -306,6 +311,16 @@ docker run -e "IN_DOCKER_CONTAINER=True" -v <full_path_to>/data:/app/data -v <fu
 Make sure that the port 5006 is not occupied on your computer. You can change the port number in the command above if necessary but you'll have to edit the port exposed in the docker file and edit the panel serve command in the dockerfile to make sure panel renders the dashboards to your desired port.
 
 You can now access the dashboard in your browser at http://localhost:5006/pentad_dashboard and review it's functionality.
+
+## How to use private data
+If you want to use private data for the development of the forecast tools, you can do so by following the instructions below. We recommend tht you use a differenet .env file for development with private data. We use an environment variable to specify a .env file we use for testing purposes (SAPPHIRE_TEST_ENV, see chapter on testing below) and we use one for development with private data (SAPPHIRE_OPDEV_ENV). To make use of the SAPPHIRE_OPDEV_ENV environment variable, you store your environment in a file named .env_develop_kghm in the folder ../sensitive_data_forecast_tools/config (relative to this projects root folder). The folder ../sensitive_data_forecast_tools should contain the following sub-folders:
+- bin
+- config
+- daily_runoff
+- GIS
+- intermediate_data
+- reports
+- templates
 
 ## Development workflow
 Development takes place in a git branch created from the main branch. Once the development is finished, the branch is merged into the main branch. This merging requires the approval of a pull requrest by a main developer. The main branch is tested in deployment mode and then merged to the deploy branch. 3rd party users of the forecast tools are requested to pull the tested deploy branch. The deployment is done automatically using GitHub Actions. The workflow instructions can be found in .github/workflows/deploy_*.yml.

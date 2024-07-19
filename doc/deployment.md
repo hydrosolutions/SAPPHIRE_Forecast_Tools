@@ -4,8 +4,10 @@ This document describes the steps for the installation of the SAPPHIRE Forecast 
 - [Installation](#installation)
   - [Prerequisites](#prerequisites)
   - [Download this repository](#download-this-repository)
-  - [Copy your data to the repository \& adapt the configuration files](#copy-your-data-to-the-repository--adapt-the-configuration-files)
-  - [Run the forecast tools](#run-the-forecast-tools)
+  - [Deployment of demo version](#deployment-of-demo-version)
+  - [Deployment with private data](#deployment-with-private-data)
+    - [Copy your data to the repository \& adapt the configuration files](#copy-your-data-to-the-repository--adapt-the-configuration-files)
+    - [Run the forecast tools](#run-the-forecast-tools)
   - [Set up cron job](#set-up-cron-job)
   - [Deployment (under construction)](#deployment-under-construction)
     - [.env](#env)
@@ -47,15 +49,23 @@ git clone https://github.com/hydrosolutions/SAPPHIRE_Forecast_Tools.git
 ```
 </details>
 
-## Copy your data to the repository & adapt the configuration files
+## Deployment of demo version
+The demo version comes with public example data as well as with the configuration files that are set up to work with the example data. The demo version can be deployed by pulling and running each docker container separately.
+
+TODO: Detailed instructions
+
+## Deployment with private data
+The full power of the forecast tools can of course only be unleashed by deploying the tools with your own operational data. The following steps are required to deploy the forecast tools with your own data:
+
+### Copy your data to the repository & adapt the configuration files
 To be described.
 
-## Run the forecast tools
+### Run the forecast tools
 We provide you with a shell script that pulls the latest images from Docker Hub and runs the containers. The script is located in the bin folder and run as follows from the SAPPHIRE_Forecast_Tools folder:
 ```bash
 bash .bin/run_sapphire_forecast_tools.sh <path_to_data_root_folder>
 ```
-The path to the data root folder is the parent directory of your data folder where you store your discharge, bulletin templates and other data. By default this is the data folder in the SAPPHIRE_Forecast_Tools folder (in which case the path to the dat aroot folder would be the path to the SAPPHIRE_Forecast_Tools):
+The path to the data root folder is the parent directory of your data folder where you store your discharge, bulletin templates and other data. By default this is the data folder in the SAPPHIRE_Forecast_Tools folder (in which case the path to the data root folder would be the path to the SAPPHIRE_Forecast_Tools):
 ```bash
 bash .bin/run_sapphire_forecast_tools.sh /absolute/path/to/SAPPHIRE_Forecast_Tools
 ```

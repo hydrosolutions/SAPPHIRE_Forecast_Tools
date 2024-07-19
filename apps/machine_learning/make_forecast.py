@@ -77,6 +77,10 @@ from logging.handlers import TimedRotatingFileHandler
 logging.getLogger("pytorch_lightning.utilities.rank_zero").setLevel(logging.WARNING)
 logging.getLogger("pytorch_lightning.accelerators.cuda").setLevel(logging.WARNING)
 formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+# Ensure the logs directory exists
+logs_dir = 'logs'
+if not os.path.exists(logs_dir):
+    os.makedirs(logs_dir)
 file_handler = TimedRotatingFileHandler('logs/log', when='midnight',
                                         interval=1, backupCount=30)
 file_handler.setFormatter(formatter)
