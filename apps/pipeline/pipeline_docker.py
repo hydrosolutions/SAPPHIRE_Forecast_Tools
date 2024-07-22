@@ -158,6 +158,32 @@ class PreprocessingRunoff(luigi.Task):
         # Check if the output file was modified within the last number of seconds
         return current_time - output_file_mtime < 10  # 24 * 60 * 60
 
+
+class PreprocessingGatewayQuantileMapping(luigi.Task):
+
+    def output(self):
+        output_file_path = os.path.join(
+            os.getenv('ieasyforecast_intermediate_data_path'),
+            os.getenv('ieasyhydroforecast_OUTPUT_PATH_CM'))
+        return luigi.LocalTarget(output_file_path)
+
+    def run(self):
+        print("Hello world!")
+
+    def complete(self):
+        if not self.output().exists():
+            return False
+
+        # Get the modified time of the output file
+        output_file_mtime = os.path.getmtime(self.output().path)
+
+        # Get the current time
+        current_time = time.time()
+
+        # Check if the output file was modified within the last number of seconds
+        return current_time - output_file_mtime < 10  # 24 * 60 * 60
+
+
 class LinearRegression(luigi.Task):
 
     def requires(self):

@@ -50,7 +50,9 @@ git clone https://github.com/hydrosolutions/SAPPHIRE_Forecast_Tools.git
 </details>
 
 ## Deployment of demo version
-The demo version comes with public example data as well as with the configuration files that are set up to work with the example data. The demo version can be deployed by pulling and running each docker container separately.
+The demo version comes with public example data as well as with the configuration files that are set up to work with the example data. The demo version is a good starting point to get to know the forecast tools and to test the basic functionality of the tools. Mind you that only linear regression models are  available
+
+The sections below describe the steps that are required to deploy the forecast tools on a host machine (tested on ubuntu server). If you want to test the tools with the demo data, you don't need to adapt the files in the apps/config folder and skip the .env chapter below.
 
 TODO: Detailed instructions
 
@@ -98,7 +100,7 @@ docker logs <container_name>
 
 
 ## Deployment (under construction)
-The sections below describe the steps that are required to deploy the forecast tools on the host machine. If you want to test the tools with the demo data, you don't need to adapt the files in the apps/config folder and skip the .env chapter below.
+The sections below describe the steps that are required to deploy the forecast tools on a host machine (tested on ubuntu server). If you want to test the tools with the demo data, you don't need to adapt the files in the apps/config folder and skip the .env chapter below.
 
 ### .env
 Edit the apps/config/.env file where required. If, for example, the locations for the bulletin templates on the host machine differs from the location of the bulletin templates in this repository you need to adapt the path in the .env file. Please carefully follow the instructions about the configuration of the .env file in the file [doc/configuration.md](configuration.md).

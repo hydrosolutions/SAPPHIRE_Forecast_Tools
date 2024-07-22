@@ -94,7 +94,6 @@ logger.addHandler(file_handler)
 
 import warnings
 warnings.filterwarnings("ignore")
-#logging.basicConfig(level=logging.DEBUG)
 
 # Print logging level of the logger
 logger.info('Logging level: %s', logger.getEffectiveLevel())
@@ -133,76 +132,6 @@ class LossLogger(Callback):
     def on_validation_epoch_end(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule") -> None:
         self.val_loss.append(float(trainer.callback_metrics["val_loss"]))
 
-# --------------------------------------------------------------------
-# FUNCTIONS
-# --------------------------------------------------------------------
-def get_hydroposts_for_pentadal_and_decadal_forecasts():
-    """
-    Creates station lists for pentadal and decadal forecasts based on the
-    hydroposts selected for forecasts by the user and the hydroposts available
-    for ML predictions.
-
-    Returns:
-    rivers_to_predict_pentad: list of hydroposts selected for pentadal forecasts
-    rivers_to_predict_decad: list of hydroposts selected for decadal forecasts
-    hydroposts_available_for_ml_forecasting: DataFrame with hydroposts available for ML predictions with attributes from ieasyhydroforecast_config_hydroposts_available_for_ml_forecasts
-    """
-    # Create path to rivers available for ML predictions json file from environment variables
-    rivers_to_predict_file = os.path.join(
-        os.getenv('ieasyforecast_configuration_path'),
-        os.getenv('ieasyhydroforecast_config_hydroposts_available_for_ml_forecasts')
-    )
-    # Test if file exists
-    if not os.path.exists(rivers_to_predict_file):
-        raise FileNotFoundError(f"File {rivers_to_predict_file} not found.")
-
-    # Read hydroposts_available_for_ml_forecasting from json file and store them in a list
-    with open(rivers_to_predict_file, "r") as json_file:
-        config = json.load(json_file)
-        # Normalize the nested JSON data
-        stations_data = []
-        for station_id, attributes in config['stationsID'].items():
-            attributes['code'] = station_id
-            stations_data.append(attributes)
-        # Convert the list of dictionaries to a pandas DataFrame
-        hydroposts_available_for_ml_forecasting = pd.DataFrame(stations_data)
-        # Move the 'code' column to the first position
-        hydroposts_available_for_ml_forecasting = hydroposts_available_for_ml_forecasting[
-            ['code'] + [col for col in hydroposts_available_for_ml_forecasting.columns if col != 'code']
-        ]
-        logger.debug('hydroposts_available_for_ml_forecasting[code]: %s', hydroposts_available_for_ml_forecasting['code'])
-
-    # Get gauges selected for pentadal forecasts
-    rivers_selected_for_pentadal_forecasts_file = os.path.join(
-        os.getenv('ieasyforecast_configuration_path'),
-        os.getenv('ieasyforecast_config_file_station_selection')
-    )
-    # Read rivers_selected_for_pentadal_forecasts from json file and store them in a list
-    with open(rivers_selected_for_pentadal_forecasts_file, "r") as json_file:
-        config = json.load(json_file)
-        rivers_selected_for_pentadal_forecasts = config["stationsID"]
-        logger.debug('rivers_selected_for_pentadal_forecasts: %s', rivers_selected_for_pentadal_forecasts)
-
-    # Now filter the rivers availabale for forecasting for the ones that are selected for forecasting and write them to a list
-    rivers_to_predict_pentad = list(set(hydroposts_available_for_ml_forecasting['code']) & set(rivers_selected_for_pentadal_forecasts))
-    logger.debug('rivers_to_predict_pentad: %s', rivers_to_predict_pentad)
-
-    # Get gauges selected for decadal forecasts
-    rivers_selected_for_decadal_forecasts_file = os.path.join(
-        os.getenv('ieasyforecast_configuration_path'),
-        os.getenv('ieasyforecast_config_file_station_selection_decad')
-    )
-    # Read rivers_selected_for_decadal_forecasts from json file and store them in a list
-    with open(rivers_selected_for_decadal_forecasts_file, "r") as json_file:
-        config = json.load(json_file)
-        rivers_selected_for_decadal_forecasts = config["stationsID"]
-        logger.debug('rivers_selected_for_decadal_forecasts: %s', rivers_selected_for_decadal_forecasts)
-
-    # Now filter the rivers availabale for forecasting for the ones that are selected for forecasting and write them to a list
-    rivers_to_predict_decad = list(set(hydroposts_available_for_ml_forecasting['code']) & set(rivers_selected_for_decadal_forecasts))
-    logger.debug('rivers_to_predict_decad: %s', rivers_to_predict_decad)
-
-    return rivers_to_predict_pentad, rivers_to_predict_decad, hydroposts_available_for_ml_forecasting
 
 # --------------------------------------------------------------------
 # MAIN FUNCTION
@@ -233,8 +162,6 @@ def make_ml_forecast():
     # --------------------------------------------------------------------
     # INITIALIZE THE ENVIRONMENT
     # --------------------------------------------------------------------
-    # Get the directory of the current script
-    script_dir = os.path.dirname(os.path.abspath(__file__))
 
     # Load the environment variables
     sl.load_environment()
@@ -278,7 +205,7 @@ def make_ml_forecast():
     logger.debug('joined output_path_discharge: %s' , OUTPUT_PATH_DISCHARGE)
     logger.debug('joined path_to_qmapped_era5: %s' , PATH_TO_QMAPPED_ERA5)
 
-    rivers_to_predict_pentad, rivers_to_predict_decad, hydroposts_available_for_ml_forecasting = get_hydroposts_for_pentadal_and_decadal_forecasts()
+    rivers_to_predict_pentad, rivers_to_predict_decad, hydroposts_available_for_ml_forecasting = utils_ml_forecast.get_hydroposts_for_pentadal_and_decadal_forecasts()
     # Combine rivers_to_predict_pentad and rivers_to_predict_decad to get all rivers to predict, only keep unique values
     rivers_to_predict = list(set(rivers_to_predict_pentad + rivers_to_predict_decad))
     logger.debug('Rivers to predict pentad: %s', rivers_to_predict_pentad)

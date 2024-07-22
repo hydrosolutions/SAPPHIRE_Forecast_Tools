@@ -348,9 +348,6 @@ def main():
     # SETUP ENVIRONMENT
     #--------------------------------------------------------------------
 
-    # Get the directory of the current script
-    #script_dir = os.path.dirname(os.path.abspath(__file__))
-
     # Specify the path to the .env file
     # Loads the environment variables from the .env file
     sl.load_environment()

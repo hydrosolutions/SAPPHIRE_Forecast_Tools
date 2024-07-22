@@ -39,8 +39,9 @@
 # Load Libraries
 # --------------------------------------------------------------------
 import os
+import sys
 import glob
-from dotenv import load_dotenv
+import json
 import pandas as pd
 import numpy as np
 import darts
@@ -49,6 +50,8 @@ from darts.utils.timeseries_generation import datetime_attribute_timeseries
 import matplotlib.pyplot as plt
 from pe_oudin.PE_Oudin import PE_Oudin
 from suntime import Sun, SunTimeException
+
+#pip install git+https://github.com/hydrosolutions/sapphire-dg-client.git
 import sapphire_dg_client
 
 
@@ -59,17 +62,45 @@ from pytorch_lightning import Trainer
 import pytorch_lightning as pl
 import torch
 import datetime
+
 import logging
+from logging.handlers import TimedRotatingFileHandler
 logging.getLogger("pytorch_lightning.utilities.rank_zero").setLevel(logging.WARNING)
 logging.getLogger("pytorch_lightning.accelerators.cuda").setLevel(logging.WARNING)
-logging.getLogger().setLevel(logging.WARNING)
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+# Ensure the logs directory exists
+logs_dir = 'logs'
+if not os.path.exists(logs_dir):
+    os.makedirs(logs_dir)
+file_handler = TimedRotatingFileHandler('logs/log', when='midnight',
+                                        interval=1, backupCount=30)
+file_handler.setFormatter(formatter)
+console_handler = logging.StreamHandler()
+console_handler.setFormatter(formatter)
+logger = logging.getLogger('make_ml_hindcast')
+logger.setLevel(logging.DEBUG)
+logger.handlers = []
+logger.addHandler(file_handler)
+
 import warnings
 warnings.filterwarnings("ignore")
-logging.basicConfig(level=logging.WARNING)
 
 #Custom Libraries
 from scr import utils_ml_forecast
 from scr import predictor_TFT
+
+# Local libraries, installed with pip install -e ./iEasyHydroForecast
+# Get the absolute path of the directory containing the current script
+script_dir = os.path.dirname(os.path.abspath(__file__))
+
+# Construct the path to the iEasyHydroForecast directory
+forecast_dir = os.path.join(script_dir, '..', 'iEasyHydroForecast')
+
+# Add the forecast directory to the Python path
+sys.path.append(forecast_dir)
+
+# Import the setup_library module from the iEasyHydroForecast package
+import setup_library as sl
 
 # --------------------------------------------------------------------
 # Quantile Mapping
@@ -355,7 +386,8 @@ def main():
         # --------------------------------------------------------------------
     # DEFINE WHICH MODEL TO USE
     # --------------------------------------------------------------------
-    MODEL_TO_USE = input('Enter the model to use (TFT, TIDE, TSMIXER or ARIMA): ')
+    MODEL_TO_USE = os.getenv('SAPPHIRE_MODEL_TO_USE')
+    logger.info('Model to use: %s', MODEL_TO_USE)
 
     if MODEL_TO_USE not in ['TFT', 'TIDE', 'TSMIXER', 'ARIMA']:
         raise ValueError('Model not supported')
@@ -376,41 +408,89 @@ def main():
     script_dir = os.path.dirname(os.path.abspath(__file__))
 
     # Specify the path to the .env file
-    dotenv_path = os.path.join(script_dir,"..", ".env.txt")
-    load_dotenv(dotenv_path)
+    sl.load_environment()
 
     # --------------------------------------------------------------------
     # LOAD IN ENVIROMENT VARIABLES
     # --------------------------------------------------------------------
-    OUTPUT_PATH_DISCHARGE = os.getenv('OUTPUT_PATH_DISCHARGE')
-    #output_path for the data from the data gateaway
-    OUTPUT_PATH_DG = os.getenv('OUTPUT_PATH_DG')
-    API_KEY = os.getenv('API_KEY_GATEAWAY')
-    PATH_TO_SCALER = os.getenv('PATH_TO_SCALER_' + MODEL_TO_USE)
-    PATH_TO_STATIC_FEATURES = os.getenv('PATH_TO_STATIC_FEATURES')
-    PATH_TO_MODEL = os.getenv('PATH_TO_' + MODEL_TO_USE)
-    CODES_HINDECAST = os.getenv('CODES_HINDECAST')
-    HRU_ML_MODELS = os.getenv('HRU_ML_MODELS')
-    Q_MAP_PARAM_PATH = os.getenv('Q_MAP_PARAM_PATH')
+    # Test if an API key is available and exit the program if it isn't
+    if not os.getenv('ieasyhydroforecast_API_KEY_GATEAWAY'):
+        logger.warning("No API key for the data gateway found. Exiting program.\nMachine learning or conceptual models will not be run.")
+        sys.exit(1)
+    else:
+        API_KEY = os.getenv('ieasyhydroforecast_API_KEY_GATEAWAY')
 
-    OUTPUT_PATH_DISCHARGE = os.path.join(script_dir, OUTPUT_PATH_DISCHARGE)
-    OUTPUT_PATH_DG = os.path.join(script_dir, OUTPUT_PATH_DG)
-    PATH_TO_SCALER = os.path.join(script_dir, PATH_TO_SCALER)
-    PATH_TO_STATIC_FEATURES = os.path.join(script_dir, PATH_TO_STATIC_FEATURES)
-    PATH_TO_MODEL = os.path.join(script_dir, PATH_TO_MODEL)
-    Q_MAP_PARAM_PATH = os.path.join(script_dir, Q_MAP_PARAM_PATH)
+    intermediate_data_path = os.getenv('ieasyforecast_intermediate_data_path')
+    PATH_TO_PAST_DISCHARGE = os.getenv('ieasyforecast_daily_discharge_file')
+    PATH_TO_PAST_DISCHARGE = os.path.join(intermediate_data_path, PATH_TO_PAST_DISCHARGE)
+    logger.debug("PATH_TO_PAST_DISCHARGE: %s", PATH_TO_PAST_DISCHARGE)
+    # Test if file exists
+    if not os.path.exists(PATH_TO_PAST_DISCHARGE):
+        raise FileNotFoundError(f"File {PATH_TO_PAST_DISCHARGE} not found.")
+    #output_path for the data from the data gateaway
+    OUTPUT_PATH_DG = os.getenv('ieasyhydroforecast_OUTPUT_PATH_DG')
+    PATH_TO_SCALER = os.getenv('ieasyhydroforecast_PATH_TO_SCALER_' + MODEL_TO_USE)
+    MODELS_AND_SCALERS_PATH = os.getenv('ieasyhydroforecast_models_and_scalers_path')
+    PATH_TO_STATIC_FEATURES = os.getenv('ieasyhydroforecast_PATH_TO_STATIC_FEATURES')
+    logger.debug("MODELS_AND_SCALERS_PATH: %s", MODELS_AND_SCALERS_PATH)
+    logger.debug("PATH_TO_STATIC_FEATURES: %s", PATH_TO_STATIC_FEATURES)
+    PATH_TO_STATIC_FEATURES = os.path.join(MODELS_AND_SCALERS_PATH, PATH_TO_STATIC_FEATURES)
+    # Test if path exists
+    if not os.path.exists(PATH_TO_STATIC_FEATURES):
+        raise FileExistsError(f"Directory {PATH_TO_STATIC_FEATURES} not found.")
+
+    PATH_TO_SCALER = os.path.join(MODELS_AND_SCALERS_PATH, PATH_TO_SCALER)
+    # Test if the path exists
+    if not os.path.exists(PATH_TO_SCALER):
+        raise FileNotFoundError(f"Directory {PATH_TO_SCALER} not found.")
+    logger.debug('PATH_TO_SCALER: %s' , PATH_TO_SCALER)
+
+    PATH_TO_MODEL= os.getenv('ieasyhydroforecast_PATH_TO_' + MODEL_TO_USE)
+    PATH_TO_MODEL = os.path.join(PATH_TO_SCALER, PATH_TO_MODEL)
+    # Test if the directory exists
+    if not os.path.exists(PATH_TO_MODEL):
+        raise FileNotFoundError(f"Directory {PATH_TO_MODEL} not found.")
+    logger.debug('PATH_TO_MODEL: %s' , PATH_TO_MODEL)
+
+    CODES_HINDECAST = os.getenv('ieasyhydroforecast_CODES_HINDECAST')
+    HRU_ML_MODELS = os.getenv('ieasyhydroforecast_HRU_CONTROL_MEMBER')
+    Q_MAP_PARAM_PATH = os.getenv('ieasyhydroforecast_Q_MAP_PARAM_PATH')
+
+    OUTPUT_PATH_DG = os.path.join(
+        os.getenv('ieasyforecast_intermediate_data_path'),
+        os.getenv('ieasyhydroforecast_OUTPUT_PATH_DG'))
+    # Test if path exists and raise an error if it does not
+    if not os.path.exists(OUTPUT_PATH_DG):
+        raise FileNotFoundError(f"The path {OUTPUT_PATH_DG} does not exist.")
+    # Test if the folder OUTPUT_PATH_DG is empty
+    if not os.listdir(OUTPUT_PATH_DG):
+        raise FileNotFoundError(f"The directory {OUTPUT_PATH_DG} is unexpectedly empty.")
+
+    Q_MAP_PARAM_PATH = os.path.join(
+        os.getenv('ieasyhydroforecast_models_and_scalers_path'),
+        os.getenv('ieasyhydroforecast_Q_MAP_PARAM_PATH'))
+
+    logger.debug("OUTPUT_PATH_DG: %s", OUTPUT_PATH_DG)
+
+    rivers_to_predict_pentad, rivers_to_predict_decad, hydroposts_available_for_ml_forecasting = utils_ml_forecast.get_hydroposts_for_pentadal_and_decadal_forecasts()
+    # Combine rivers_to_predict_pentad and rivers_to_predict_decad to get all rivers to predict, only keep unique values
+    rivers_to_predict = list(set(rivers_to_predict_pentad + rivers_to_predict_decad))
+    logger.debug('Rivers to predict pentad: %s', rivers_to_predict_pentad)
+    logger.debug('Rivers to predict decad: %s', rivers_to_predict_decad)
+    logger.debug('Rivers to predict: %s', rivers_to_predict)
+    logger.debug('Hydroposts available for ML forecasting: \n%s', hydroposts_available_for_ml_forecasting)
 
     # --------------------------------------------------------------------
     # GET ERA5 DATA FROM THE API
     # --------------------------------------------------------------------
 
     #start date is the date where the first forecast is made
-    start_date = input('Enter the start date (yyyy-mm-dd): ')
+    start_date = os.getenv('ieasyhydroforecast_START_DATE')
     #end date is the date where the last forecast is made
-    end_date = input('Enter the end date (yyyy-mm-dd): ')
+    end_date = os.getenv('ieasyhydroforecast_END_DATE')
 
     #check if the hindcast should be done on a daily basis or on a pentad basis
-    HINDCAST_DAILY = input('Do you want to do a hindcast for each day? (True/False): ')
+    HINDCAST_DAILY = os.getenv('ieasyhydroforecasts_produce_daily_ml_hindcast')
     if HINDCAST_DAILY == 'True':
         HINDCAST_DAILY = True
     else:
@@ -451,8 +531,6 @@ def main():
     # Preprocessing
     # --------------------------------------------------------------------
     # STATIC FEATURES
-    PATH_TO_STATIC_FEATURES = os.getenv('PATH_TO_STATIC_FEATURES')
-    PATH_TO_STATIC_FEATURES = os.path.join(script_dir, PATH_TO_STATIC_FEATURES)
 
     static_features = pd.read_csv(PATH_TO_STATIC_FEATURES)
     static_features = static_features.drop(columns=['cluster', 'log_q'])
@@ -470,8 +548,6 @@ def main():
 
 
     #PATH TO OBSERVED DISCHARGE
-    PATH_TO_PAST_DISCHARGE = os.getenv('PATH_TO_PAST_DISCHARGE')
-    PATH_TO_PAST_DISCHARGE = os.path.join(script_dir, PATH_TO_PAST_DISCHARGE)
     observed_discharge = pd.read_csv(PATH_TO_PAST_DISCHARGE)
 
     observed_discharge['code'] = observed_discharge['code'].astype(int)
@@ -520,10 +596,20 @@ def main():
     # --------------------------------------------------------------------
     # HINDECAST
     # --------------------------------------------------------------------
-    THRESHOLD_MISSING_DAYS = os.getenv('THRESHOLD_MISSING_DAYS_' + MODEL_TO_USE)
-    CODES_RECURSIVE_IMPUTATION = os.getenv('CODES_RECURSIVE_IMPUTATION_' + MODEL_TO_USE)
-    RECURSIVE_RIVERS = [int(x) for x in CODES_RECURSIVE_IMPUTATION.split(',')]
-    THRESHOLD_MISSING_DAYS_END = os.getenv('THRESHOLD_MISSING_DAYS_END')
+    THRESHOLD_MISSING_DAYS = os.getenv('ieasyhydroforecast_THRESHOLD_MISSING_DAYS_' + MODEL_TO_USE)
+    THRESHOLD_MISSING_DAYS_END = os.getenv('ieasyhydroforecast_THRESHOLD_MISSING_DAYS_END')
+
+    # Get a list of codes for recursie imputation, depending on the MODEL_TO_USE
+    if MODEL_TO_USE == 'TFT':
+        RECURSIVE_RIVERS = hydroposts_available_for_ml_forecasting.loc[hydroposts_available_for_ml_forecasting['recursive_imputation_tft'], 'code'].dropna().astype(int).tolist()
+    elif MODEL_TO_USE == 'TIDE':
+        RECURSIVE_RIVERS = hydroposts_available_for_ml_forecasting.loc[hydroposts_available_for_ml_forecasting['recursive_imputation_tide'], 'code'].dropna().astype(int).tolist()
+    elif MODEL_TO_USE == 'TSMIXER':
+        RECURSIVE_RIVERS = hydroposts_available_for_ml_forecasting.loc[hydroposts_available_for_ml_forecasting['recursive_imputation_tsmixer'], 'code'].dropna().astype(int).tolist()
+    elif MODEL_TO_USE == 'ARIMA':
+        RECURSIVE_RIVERS = hydroposts_available_for_ml_forecasting.loc[hydroposts_available_for_ml_forecasting['recursive_imputation_arima'], 'code'].dropna().astype(int).tolist()
+
+    logger.debug('Recursive rivers: %s', RECURSIVE_RIVERS)
 
     #thresholds to ints
     THRESHOLD_MISSING_DAYS= int(THRESHOLD_MISSING_DAYS)
@@ -612,12 +698,18 @@ def main():
     # --------------------------------------------------------------------
     # SAVE HINDECAST
     # --------------------------------------------------------------------
+    # Path to the output directory
+    OUTPUT_PATH_DISCHARGE = os.getenv('ieasyhydroforecast_OUTPUT_PATH_DISCHARGE')
+    OUTPUT_PATH_DISCHARGE = os.path.join(intermediate_data_path, OUTPUT_PATH_DISCHARGE)
     OUTPUT_PATH_DISCHARGE = os.path.join(OUTPUT_PATH_DISCHARGE, 'hindcast', MODEL_TO_USE)
+    # Test if path exists and create it if it doesn't
+    if not os.path.exists(OUTPUT_PATH_DISCHARGE):
+        os.makedirs(OUTPUT_PATH_DISCHARGE, exist_ok=True)
     hindecast_df.to_csv(os.path.join(OUTPUT_PATH_DISCHARGE, f'{MODEL_TO_USE}_hindcast_{start_date}_{end_date}.csv'), index=False)
     hindecast_daily_df.to_csv(os.path.join(OUTPUT_PATH_DISCHARGE, f'{MODEL_TO_USE}_hindcast_daily_{start_date}_{end_date}.csv'), index=False)
 
 
-    print('Hindcast Done!')
+    logger.info('Hindcast Done!')
 
 
 if __name__ == '__main__':
