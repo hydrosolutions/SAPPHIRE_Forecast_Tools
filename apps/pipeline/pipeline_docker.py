@@ -66,6 +66,13 @@ def get_bind_path(relative_path):
     relative_path = re.sub(r'\.\./\.\./\.\.', '', relative_path)
     return relative_path
 
+def get_local_path(relative_path):
+    # Strip 2 ../ of the relative path
+    relative_path = re.sub(f'\.\./\.\./', '', relative_path)
+    return relative_path
+
+
+
 class PreprocessingRunoff(luigi.Task):
 
     def output(self):
@@ -168,9 +175,9 @@ class PreprocessingGatewayQuantileMapping(luigi.Task):
         return luigi.LocalTarget(output_file_path)
 
     def run(self):
-        print("Hello world!")
+        print("\n\n---\n\nHello world!\n\n--\n\n")
 
-    def complete(self):
+'''    def complete(self):
         if not self.output().exists():
             return False
 
@@ -182,7 +189,7 @@ class PreprocessingGatewayQuantileMapping(luigi.Task):
 
         # Check if the output file was modified within the last number of seconds
         return current_time - output_file_mtime < 10  # 24 * 60 * 60
-
+'''
 
 class LinearRegression(luigi.Task):
 
@@ -367,15 +374,20 @@ class PostProcessingForecasts(luigi.Task):
 class DeleteOldGateywayFiles(luigi.Task):
 
     # Define the folder path where the files are stored
-    folder_path = os.path.join(
+    folder_path = get_local_path(os.path.join(
         env.get("ieasyforecast_intermediate_data_path"),
         env.get("ieasyhydroforecast_OUTPUT_PATH_DG")
-    )
-
+    ))
     # Define the number of days old the files should be before they are deleted
     days_old = luigi.IntParameter(default=2)
 
     def run(self):
+        print("Running DeleteOldGatewayFiles")
+        print(self.folder_path)
+        # Test if the path exists
+        if not os.path.exists(self.folder_path):
+            print(f"The path {self.folder_path} does not exist.")
+
         # Delete files older than `days_old`
         age_limit = datetime.datetime.now() - datetime.timedelta(days=self.days_old)
         for filename in os.listdir(self.folder_path):
@@ -385,18 +397,18 @@ class DeleteOldGateywayFiles(luigi.Task):
                 os.remove(file_path)
                 print(f"Deleted {file_path} as it was older than {self.days_old} days.")
 
-    def output(self):
-        # No output files are created by this task. Simply return none.
-        return None
 
 class RunWorkflow(luigi.Task):
 
     def requires(self):
-        return [PostProcessingForecasts(), DeleteOldGateywayFiles()]
+        #return [PostProcessingForecasts(), DeleteOldGateywayFiles()]
+        return [DeleteOldGateywayFiles()]
 
     def run(self):
         print("Workflow completed.")
+        return None
+
 
 
 if __name__ == '__main__':
-    luigi.build([])
+    luigi.build([RunWorkflow()])

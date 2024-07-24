@@ -4,6 +4,9 @@ import numpy as np
 import datetime as dt
 import json
 
+# To avoid printing of warning
+pd.set_option('future.no_silent_downcasting', True)
+
 from ieasyhydro_sdk.filters import BasicDataValueFilters
 
 import logging
@@ -70,6 +73,9 @@ def filter_roughly_for_outliers(combined_data, group_by='Code',
         # Also interpolate the code column
         group[group_col] = group[group_col].ffill()
 
+        # Infer object types to address the FutureWarning
+        group = group.infer_objects(copy=False)
+
         # Reset the index
         group.reset_index(inplace=True)
 
@@ -90,12 +96,22 @@ def filter_roughly_for_outliers(combined_data, group_by='Code',
     # Replace empty places in the filter_col column with NaN
     combined_data.loc[:, filter_col] = combined_data.loc[:, filter_col].replace('', np.nan)
 
+    # Temporarily duplicate the groupy_by column for the apply function
+    combined_data['temp_group_by'] = combined_data[group_by]
+
     # Apply the function to each group
     combined_data = combined_data.groupby(group_by).apply(
-        filter_group, filter_col, date_col, group_col=group_by) #, include_groups=True)
+        filter_group, filter_col, date_col, group_col='temp_group_by',
+        include_groups=False)
+    #logger.debug(f"combined_data after apply:\n %s", combined_data)
 
     # Ungroup the DataFrame
     combined_data = combined_data.reset_index(drop=True)
+    #logger.debug(f"combined_data after reset_index:\n %s", combined_data)
+
+    # Rename the temp_group_by column with group_by
+    combined_data.rename(columns={'temp_group_by': group_by}, inplace=True)
+    #logger.debug(f"combined_data after renaming:\n %s", combined_data)
 
     # Drop rows with duplicate code and dates, keeping the last one
     combined_data = combined_data.drop_duplicates(subset=[group_by, date_col], keep='last')
@@ -111,6 +127,11 @@ def read_runoff_data_from_multiple_rivers_xlsx(filename, date_col='date', discha
     first row of the sheet. The function reads data from all sheets in the excel
     file and combines them into a single DataFrame. The function replaces
     missing data with NaN.
+
+    Note
+    ----------
+    This function assumes that the station code is an integer of 5 digits.
+
 
     Parameters
     ----------
@@ -142,6 +163,8 @@ def read_runoff_data_from_multiple_rivers_xlsx(filename, date_col='date', discha
         raise FileNotFoundError(f"File '{filename}' not found.")
 
     # Extract all sheet names
+    # Sheet names can be anything, they are only used to iterate through the
+    # document.
     xls.sheet_names
 
     # load data from all sheets into a single dataframe
@@ -152,11 +175,12 @@ def read_runoff_data_from_multiple_rivers_xlsx(filename, date_col='date', discha
     # We want to have all data in a single dataframe df with the following columns: date, river runoff, river.
     for sheet_name in xls.sheet_names:
         df_sheet = pd.read_excel(xls, sheet_name, header=1, usecols=[0, 1], names=[date_col, discharge_col])
-        #print(f"Reading sheet '{sheet_name}' \n '{df_sheet.head()}'")
+        logger.debug(f"Reading sheet {sheet_name} \n {df_sheet.head()}")
         # read cell A1 and extract the river name
         # Read the river name from cell A1
-        river_name_df = pd.read_excel(xls, sheet_name, nrows=1, usecols="A",header=None)
+        river_name_df = pd.read_excel(xls, sheet_name, nrows=1, usecols="A", header=None)
         full_river_name = river_name_df.iloc[0, 0]
+        logger.debug(f"full_river_name: %s", full_river_name)
         # Check if the first 5 characters are digits
         try:
             int(full_river_name[:5])
@@ -169,7 +193,27 @@ def read_runoff_data_from_multiple_rivers_xlsx(filename, date_col='date', discha
             river_name = full_river_name[5:].lstrip()
         else:
             code = 'NA'
+            # Test if the river name is equal to 'date', 'Date' or 'Дата' in any of
+            # the typical languages used in Central Asia or Switzerland. Print a
+            # warning if it is.
             river_name = full_river_name
+            if river_name.lower() in ['date', 'дата', 'datum', 'sana', 'сана',
+                                  'senesi', 'sene', 'күні', 'күн']:
+                logger.error(
+                    f'The river name in file {filename}, sheet {sheet_name} was '
+                    f'found to be {river_name}.\nPlease verify that a 5-digit code '
+                    f'is present in cell A1 and rerun the preprocessing runoff module.')
+                raise ValueError(
+                    f'The river name in file {filename}, sheet {sheet_name} was '
+                    f'found to be {river_name}.\nPlease verify that a 5-digit code '
+                    f'is present in cell A1 and rerun the preprocessing runoff module.')
+
+            logger.warning(f"No code could be read from file {filename} sheet {sheet_name}.\n"
+                           f"Skipping data for river {full_river_name}.")
+            continue
+
+        logger.debug("Code read from header cell: %s", code)
+        logger.debug("River name read from header cell: %s", river_name)
 
         df_sheet[name_col] = river_name
         df_sheet[code_col] = code
@@ -237,8 +281,7 @@ def read_runoff_data_from_single_river_xlsx(filename, date_col='date', discharge
 
     # load data from all sheets into a single dataframe
     df = pd.DataFrame()
-    # the river name is in cell A1 of each sheet
-    # the data starts in row 3 of each sheet where column A contains the time stamp and column B contains the river runoff data.
+    # the data starts in row 2 of each sheet where column A contains the time stamp and column B contains the river runoff data.
     # some of the daily time series data are missing and the corresponding cells contain '-'. There might be a type mismatch.
     # We want to have all data in a single dataframe df with the following columns: date, river runoff, river.
     for sheet_name in xls.sheet_names:
@@ -257,6 +300,9 @@ def read_runoff_data_from_single_river_xlsx(filename, date_col='date', discharge
 
     # replace data in rows with missing values with NaN
     df[discharge_col] = df[discharge_col].replace('-', float('nan'))
+
+    # make sure code_col is integer
+    df[code_col] = df[code_col].astype(int)
 
     return df
 
@@ -291,6 +337,8 @@ def read_all_runoff_data_from_excel(date_col='date', discharge_col='discharge', 
         raise FileNotFoundError(f"Directory '{daily_discharge_dir}' not found.")
 
     # Get the list of files in the directory
+    # The names of excel files with daily runoff data from multiple rivers do
+    # not start with a digit.
     files_multiple_rivers = [
         f for f in os.listdir(daily_discharge_dir)
         if os.path.isfile(os.path.join(daily_discharge_dir, f))
@@ -323,6 +371,8 @@ def read_all_runoff_data_from_excel(date_col='date', discharge_col='discharge', 
                         axis=0)
 
     # Do the same for files with single rivers
+    # Names of files with daily river runoff of individual rivers start with a
+    # digit, indicating a unique code.
     df_single = None
 
     files_single_rivers = [
@@ -671,15 +721,34 @@ def get_runoff_data(ieh_sdk=None, date_col='date', discharge_col='discharge', na
     # Read data from excel files
     read_data = read_all_runoff_data_from_excel(date_col=date_col, discharge_col=discharge_col, name_col=name_col, code_col=code_col)
 
-    # Get virtual station codes from json
-    with open(os.path.join(os.getenv('ieasyforecast_configuration_path'),
-                           os.getenv('ieasyforecast_virtual_stations')), 'r') as f:
-        virtual_stations = json.load(f)['virtualStations'].keys()
+    # Get virtual station codes from json (if file exists) print a warning if file
+    # does not exist.
+    if os.getenv('ieasyforecast_virtual_stations') is None:
+        logger.info(f"No calculation rules for virtual stations found.\n"
+                    f"Environment variable ieasyforecast_virtual_stations is not set.")
+    else:
+        virtual_stations_config_file_path = os.path.join(
+            os.getenv('ieasyforecast_configuration_path'),
+            os.getenv('ieasyforecast_virtual_stations'))
+        if not os.path.exists(virtual_stations_config_file_path):
+            raise FileNotFoundError(
+                f"File {virtual_stations_config_file_path} not found.\n",
+                f"Filename for calculateion rules for virtual stations in environment\n"
+                f"but file not found.\n"
+                f"Please provide a configuraion file ieasyforecast_virtual_stations\n"
+                f"or, if you don't have any virtual stations to predict, remove the\n"
+                f"variable ieasyforecast_virtual_stations from your configuration file."
+            )
+        else:
+            with open(virtual_stations_config_file_path, 'r') as f:
+                virtual_stations = json.load(f)['virtualStations'].keys()
 
-    read_data = add_hydroposts(read_data, virtual_stations)
+            read_data = add_hydroposts(read_data, virtual_stations)
 
     if ieh_sdk is None:
         # We do not have access to an iEasyHydro database
+        logger.info("No data read from iEasyHydro Database.")
+
         return read_data
 
     else:
