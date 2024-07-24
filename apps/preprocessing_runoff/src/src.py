@@ -353,6 +353,7 @@ def read_all_runoff_data_from_excel(date_col='date', discharge_col='discharge', 
         # Read the data from all files
         for file in files_multiple_rivers:
             file_path = os.path.join(daily_discharge_dir, file)
+            logger.info(f"Reading daily runoff from file {file}")
             if df is None:
                 df = read_runoff_data_from_multiple_rivers_xlsx(
                             filename=file_path,
@@ -386,6 +387,7 @@ def read_all_runoff_data_from_excel(date_col='date', discharge_col='discharge', 
         # Read the data from all files
         for file in files_single_rivers:
             file_path = os.path.join(daily_discharge_dir, file)
+            logger.info(f"Reading daily runoff from file {file}")
             if df_single is None:
                 df_single = read_runoff_data_from_single_river_xlsx(
                             filename=file_path,
@@ -721,6 +723,8 @@ def get_runoff_data(ieh_sdk=None, date_col='date', discharge_col='discharge', na
     # Read data from excel files
     read_data = read_all_runoff_data_from_excel(date_col=date_col, discharge_col=discharge_col, name_col=name_col, code_col=code_col)
 
+    # Initialize a flag for virtual stations
+    virtual_stations_present = False
     # Get virtual station codes from json (if file exists) print a warning if file
     # does not exist.
     if os.getenv('ieasyforecast_virtual_stations') is None:
@@ -742,6 +746,7 @@ def get_runoff_data(ieh_sdk=None, date_col='date', discharge_col='discharge', na
         else:
             with open(virtual_stations_config_file_path, 'r') as f:
                 virtual_stations = json.load(f)['virtualStations'].keys()
+            virtual_stations_present = True
 
             read_data = add_hydroposts(read_data, virtual_stations)
 
@@ -781,7 +786,8 @@ def get_runoff_data(ieh_sdk=None, date_col='date', discharge_col='discharge', na
         #print(read_data[read_data['code'] == "16936"].tail(10))
         #print(read_data[read_data['code'] == "16059"].tail(10))
         # Calculate virtual hydropost data where necessary
-        read_data = calculate_virtual_stations_data(read_data)
+        if virtual_stations_present:
+            read_data = calculate_virtual_stations_data(read_data)
         #print(read_data[read_data['code'] == "16936"].tail(10))
         #print(read_data[read_data['code'] == "16059"].tail(10))
 
