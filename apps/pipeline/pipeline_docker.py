@@ -1,7 +1,7 @@
 # Description: This file contains the luigi tasks to run the docker containers
 #   for the forecast tools pipeline.
 #
-# Run: PYTHONPATH='.' luigi --module apps.pipeline.pipeline_docker PreprocessingRunoff --local-scheduler
+# Run: PYTHONPATH='.' luigi --module apps.pipeline.pipeline_docker RunWorkflow --local-scheduler
 #
 
 import luigi
@@ -45,30 +45,29 @@ def get_absolute_path(relative_path):
     data_root_dir = os.getenv('ieasyhydroforecast_data_root_dir')
     if data_root_dir:
         # If it is set, use it as the root directory
-        #print(" - Using ieasyforecast_data_root_dir: ", data_root_dir)
         # Strip the relative path from 2 "../" strings
         relative_path = re.sub(r'\.\./\.\./\.\.', '', relative_path)
-        #print(" - Relative path: ", relative_path)
-        #print(" - Absolute path: ", os.path.join(data_root_dir, relative_path))
-        #print(" - Absolute path method 2: ", data_root_dir + relative_path)
+
         return data_root_dir + relative_path
+
     else:
         # Current working directory. Should be one above the root of the project
         cwd = os.getcwd()
-        #print(" - Current working directory: ", cwd)
         # Strip the relative path from 2 "../" strings
         relative_path = re.sub(r'\.\./\.\./\.\.', '', relative_path)
-        #print(" - Relative path: ", relative_path)
+
         return os.path.join(cwd, relative_path)
 
 def get_bind_path(relative_path):
     # Strip the relative path from ../../.. to get the path to bind to the container
     relative_path = re.sub(r'\.\./\.\./\.\.', '', relative_path)
+
     return relative_path
 
 def get_local_path(relative_path):
     # Strip 2 ../ of the relative path
     relative_path = re.sub(f'\.\./\.\./', '', relative_path)
+
     return relative_path
 
 
@@ -401,8 +400,7 @@ class DeleteOldGateywayFiles(luigi.Task):
 class RunWorkflow(luigi.Task):
 
     def requires(self):
-        #return [PostProcessingForecasts(), DeleteOldGateywayFiles()]
-        return [DeleteOldGateywayFiles()]
+        return [PostProcessingForecasts(), DeleteOldGateywayFiles()]
 
     def run(self):
         print("Workflow completed.")

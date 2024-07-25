@@ -140,29 +140,48 @@ You now have a working installation of the SAPPHIRE Forecast Tools with a public
 ### Instructions specific to the tools
 
 #### Pipeline
-We use the python package Luigi to manage the workflow of the forecast tools. You will find instructions about how to use Luigi [here](https://luigi.readthedocs.io/en/stable/index.html#)
+We use the python package Luigi to manage the workflow of the forecast tools. Luigi takes care of running each backend module in sequence or in parallel. You will find detailed information about Luigi [in the Luigi docs](https://luigi.readthedocs.io/en/stable/index.html#).
 
-The pipeline is run inside a python container using Docker. The Dockerfile is located in the apps/pipeline folder. To build the Docker image locally, run the following command in the root directory of the repository:
-```bash
-docker compose -f /bin/docker-compose.yml build
-```
-To run the Docker containers locally, run the following command in the root directory of the repository:
-```bash
-docker compose -f /bin/docker-compose.yml up
-```
+All modules of the SAPPHIRE Forecast Tools are run in individual docker containers. To run them on your system, please follow the instructions below.
 
-To build and run the pipeline locally on a Mac to the following steps:
+<details>
+<summary>Mac OS</summary>
+To build and run the pipeline locally on a Mac to the following steps before you run the docker compose up command above:
+
 1. Open a terminal and navigate to the root directory of the repository.
-2. Clean up the docker work space:
+
+2. Clean up the docker work space (note that this will remove all containers and images in your Docker workspace):
+
 ```bash
 bash bin/clean_docker.sh
 ```
-3. Build the docker image:
+
+3. Build the docker images:
+
 ```bash
 ieasyhydroforecast_data_root_dir=<ieasyhydroforecast_data_root_dir> bash bin/build_docker_images.sh latest
 ```
 
+</details>
+
+<details>
+<summary>Ubuntu</summary>
 To test-run the pipeline on an Ubuntu server, follow the instructions in [doc/deployment.md](deployment.md).
+</details>
+
+
+The pipeline is run inside a Docker container. The Dockerfile is located in the apps/pipeline folder. To build the Docker image for the pipeline locally, run the following command in the root directory of the repository:
+```bash
+docker compose -f ./bin/docker-compose.yml build
+```
+To run the Docker containers locally, run the following command in the root directory of the repository:
+```bash
+docker compose -f ./bin/docker-compose.yml up
+```
+
+
+
+
 
 #### Configuration dashboard
 The forecast configuration dashboard is written in R and uses the Shiny framework.
