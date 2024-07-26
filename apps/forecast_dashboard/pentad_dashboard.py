@@ -105,6 +105,9 @@ forecast_stats = processing.read_forecast_stats_file()
 # Hydroposts metadata
 station_list, all_stations, station_df = processing.read_all_stations_metadata_from_file(
     hydrograph_day_all['code'].unique().tolist())
+    
+if not station_list:
+    raise ValueError("The station list is empty. Please check the data source and ensure it contains valid stations.")
 
 # Add the station_labels column to the hydrograph_day_all DataFrame
 hydrograph_day_all = processing.add_labels_to_hydrograph(hydrograph_day_all, all_stations)
@@ -169,6 +172,14 @@ manual_range = pn.widgets.IntSlider(
 )
 manual_range.visible = False
 
+selected_indices = pn.widgets.CheckBoxGroup(
+    name=_("Select Data Points:"),
+    options={str(i): i for i in range(len(linreg_datatable))},
+    value=[],
+    width=280,
+    margin=(0, 0, 0, 0)
+)
+
 # endregion
 
 # region forecast_card
@@ -211,16 +222,17 @@ daily_hydrograph_plot = pn.panel(
     )
 forecast_data_table = pn.panel(
     pn.bind(
-        viz.draw_forecast_raw_data,
+        viz.select_data_for_linreg,
         _, linreg_datatable, station, date_picker
         ),
 )
-#linear_regressino_plot = pn.panel(
-#    pn.bind(
-#        viz.plot_linear_regression,
-#        _, linreg_datatable
-#    )
-#)
+plot_linear_regression = pn.panel(
+    pn.bind(
+        viz.plot_linear_regression,
+        _, linreg_datatable, station, date_picker
+    ),
+    sizing_mode='stretch_width', height=500
+)
 pentad_forecast_plot = pn.panel(
     pn.bind(
         viz.plot_pentad_forecast_hydrograph_data,
@@ -333,12 +345,12 @@ else: # If no_date_overlap_flag == True
             pn.Card(
                 pn.Row(
                     forecast_data_table,
-                    #linear_regression_plot
+                    plot_linear_regression
                 ),
                 title=_('Linear regression'),
                 sizing_mode='stretch_width',
                 collapsible=True,
-                collapsed=True
+                collapsed=False
             ),
             pn.Card(
                 forecast_summary_table,
