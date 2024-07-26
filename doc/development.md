@@ -19,6 +19,7 @@ This document describes how to develop the application.
       - [Install the required packages](#install-the-required-packages)
     - [Instructions specific to the tools](#instructions-specific-to-the-tools)
       - [Pipeline](#pipeline)
+      - [Preprocessing of weather forecasts](#preprocessing-of-weather-forecasts)
       - [Configuration dashboard](#configuration-dashboard)
     - [The backend](#the-backend)
       - [Prerequisites](#prerequisites-1)
@@ -180,6 +181,8 @@ docker compose -f ./bin/docker-compose.yml up
 ```
 
 
+#### Preprocessing of weather forecasts
+[Open ECMWF weather forecasts](https://www.ecmwf.int/en/forecasts/datasets/open-data) and results of the [TopoPyScale Snow model](https://topopyscale.readthedocs.io/en/latest/) are pre-processed for hydrological modelling with the SAPPHIRE Data Gateway (TODO: publish once development completetd). If you wish to use weather and snow forecast data in the SAPPHIRE Forecast Tools, you will have to install the SAPPHIRE Data Gateway and the [SAPPHIRE data gateway client](https://github.com/hydrosolutions/sapphire-dg-client) by following the installation instructions provided in the repositories.
 
 
 
