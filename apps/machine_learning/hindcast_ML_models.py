@@ -464,7 +464,9 @@ def main():
         raise FileNotFoundError(f"The path {OUTPUT_PATH_DG} does not exist.")
     # Test if the folder OUTPUT_PATH_DG is empty
     if not os.listdir(OUTPUT_PATH_DG):
-        raise FileNotFoundError(f"The directory {OUTPUT_PATH_DG} is unexpectedly empty.")
+        # This folder can be empty for this script, or is empty when initialized, so we only log a warning
+        logger.warning(f"The directory {OUTPUT_PATH_DG} is empty.")
+        #raise FileNotFoundError(f"The directory {OUTPUT_PATH_DG} is unexpectedly empty.")
 
     Q_MAP_PARAM_PATH = os.path.join(
         os.getenv('ieasyhydroforecast_models_and_scalers_path'),
@@ -623,7 +625,10 @@ def main():
 
 
     pred_date = pd.to_datetime(start_date) + pd.DateOffset(days=60)
-
+    # in order to write the correct output file name we need to change the start date to the first prediction date
+    start_date = pred_date
+    start_date = start_date.strftime('%Y-%m-%d')
+    
     observed_discharge['date'] = pd.to_datetime(observed_discharge['date'])
     era5_data_transformed['date'] = pd.to_datetime(era5_data_transformed['date'])
 
