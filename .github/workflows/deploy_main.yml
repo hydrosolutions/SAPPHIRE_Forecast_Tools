@@ -59,15 +59,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Rename the image
-      - name: Rename the image
-        run: |
-          echo "IMAGE_TAG=latest" >> $GITHUB_ENV
-
       # Run the dockerization & deployment script
       - name: Build Docker image
         run: |
-          docker build --no-cache -t "$PIPELINE_IMAGE_NAME:$IMAGE_TAG" -f ./apps/pipeline/Dockerfile .
+          docker build --no-cache \
+          -t "${{ env.PIPELINE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
+          -f ./apps/pipeline/Dockerfile .
 
       # Log in to the Docker registry
       - name: Log in to the Docker registry
@@ -79,7 +76,7 @@ jobs:
       # Push the image to Dockerhub
       - name: Push the image to Dockerhub
         run: |
-          docker push "$PIPELINE_IMAGE_NAME:$IMAGE_TAG"
+          docker push "${{ env.PIPELINE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
 
 
 
@@ -93,15 +90,12 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v4
 
-    # Rename the image
-    - name: Rename the image
-      run: |
-        echo "IMAGE_TAG=latest" >> $GITHUB_ENV
-
     # Run the dockerization & deployment script
     - name: Build Docker image
       run: |
-        docker build --no-cache -t "$CONFIG_IMAGE_NAME:$IMAGE_TAG" -f ./apps/configuration_dashboard/dockerfile .
+        docker build --no-cache \
+        -t "${{ env.CONFIG_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
+        -f ./apps/configuration_dashboard/dockerfile .
 
     # Log in to the Docker registry
     - name: Log in to the Docker registry
@@ -113,7 +107,7 @@ jobs:
     # Push the image to Dockerhub
     - name: Push the image to Dockerhub
       run: |
-        docker push "$CONFIG_IMAGE_NAME:$IMAGE_TAG"
+        docker push "${{ env.CONFIG_IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
 
 
   test_ieasyhydroforecast:
@@ -199,15 +193,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Rename the image
-      - name: Rename the image
-        run: |
-          echo "IMAGE_TAG=latest" >> $GITHUB_ENV
-
       # Run the dockerization & deployment script
       - name: Build Docker image
         run: |
-          docker build --no-cache -t "$PREPQ_IMAGE_NAME:$IMAGE_TAG" -f ./apps/preprocessing_runoff/Dockerfile .
+          docker build --no-cache \
+          -t "${{ env.PREPQ_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
+          -f ./apps/preprocessing_runoff/Dockerfile .
 
       # Log in to the Docker registry
       - name: Log in to the Docker registry
@@ -219,7 +210,7 @@ jobs:
       # Push the image to Dockerhub
       - name: Push the image to Dockerhub
         run: |
-          docker push "$PREPQ_IMAGE_NAME:$IMAGE_TAG"
+          docker push "${{ env.PREPQ_IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
 
 
   # TO TEST
@@ -258,17 +249,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Rename the image
-      - name: Rename the image
-        run: |
-          echo "IMAGE_TAG=latest" >> $GITHUB_ENV
-
       # Run the dockerization & deployment script
       - name: Build Docker image
         run: |
           docker build --no-cache \
           --build-arg SAPPHIRE_DG_HOST=${{ secrets.SAPPHIRE_DG_HOST }} \
-          -t "$PREPG_IMAGE_NAME:$IMAGE_TAG" \
+          -t "${{ env.PREPG_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
           -f ./apps/preprocessing_gateway/Dockerfile .
 
       # Log in to the Docker registry
@@ -281,7 +267,7 @@ jobs:
       # Push the image to Dockerhub
       - name: Push the image to Dockerhub
         run: |
-          docker push "$PREPG_IMAGE_NAME:$IMAGE_TAG"
+          docker push "${{ env.PREPG_IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
 
 
   test_reset_forecast_run_date:
@@ -328,15 +314,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Rename the image
-      - name: Rename the image
-        run: |
-          echo "IMAGE_TAG=latest" >> $GITHUB_ENV
-
       # Run the dockerization & deployment script
       - name: Build Docker image
         run: |
-          docker build --no-cache -t "$RERUN_IMAGE_NAME:$IMAGE_TAG" -f ./apps/reset_forecast_run_date/Dockerfile .
+          docker build --no-cache \
+          -t "${{ env.RERUN_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
+          -f ./apps/reset_forecast_run_date/Dockerfile .
 
       # Log in to the Docker registry
       - name: Log in to the Docker registry
@@ -348,7 +331,7 @@ jobs:
       # Push the image to Dockerhub
       - name: Push the image to Dockerhub
         run: |
-          docker push "$RERUN_IMAGE_NAME:$IMAGE_TAG"
+          docker push "${{ env.RERUN_IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
 
 
   test_dashboard:
@@ -396,15 +379,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Rename the image
-      - name: Rename the image
-        run: |
-          echo "IMAGE_TAG=latest" >> $GITHUB_ENV
-
       # Run the dockerization & deployment script
       - name: Build Docker image
         run: |
-          docker build --no-cache -t "$DASHBOARD_IMAGE_NAME:$IMAGE_TAG" -f ./apps/forecast_dashboard/Dockerfile .
+          docker build --no-cache \
+          -t "${{ env.DASHBOARD_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
+          -f ./apps/forecast_dashboard/Dockerfile .
 
       # Log in to the Docker registry
       - name: Log in to the Docker registry
@@ -416,7 +396,7 @@ jobs:
       # Push the image to Dockerhub
       - name: Push the image to Dockerhub
         run: |
-          #docker push "$DASHBOARD_IMAGE_NAME:$IMAGE_TAG"
+          #docker push "${{ env.DASHBOARD_IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
 
 
   push_postprocessing_runoff_to_Dckerhub:
@@ -431,15 +411,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Rename the image
-      - name: Rename the image
-        run: |
-          echo "IMAGE_TAG=latest" >> $GITHUB_ENV
-
       # Run the dockerization & deployment script
       - name: Build Docker image
         run: |
-          docker build --no-cache -t "$POSTPQ_IMAGE_NAME:$IMAGE_TAG" -f ./apps/postprocessing_forecasts/Dockerfile .
+          docker build --no-cache \
+          -t "${{ env.POSTPQ_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
+          -f ./apps/postprocessing_forecasts/Dockerfile .
 
       # Log in to the Docker registry
       - name: Log in to the Docker registry
@@ -451,7 +428,7 @@ jobs:
       # Push the image to Dockerhub
       - name: Push the image to Dockerhub
         run: |
-          docker push "$POSTPQ_IMAGE_NAME:$IMAGE_TAG"
+          docker push "${{ env.POSTPQ_IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
 
 
   test_linear_regression:
@@ -498,15 +475,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Rename the image
-      - name: Rename the image
-        run: |
-          echo "IMAGE_TAG=latest" >> $GITHUB_ENV
-
       # Run the dockerization & deployment script
       - name: Build Docker image
         run: |
-          docker build --no-cache -t "$LINREG_IMAGE_NAME:$IMAGE_TAG" -f ./apps/linear_regression/Dockerfile .
+          docker build --no-cache \
+          -t "${{ env.LINREG_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
+          -f ./apps/linear_regression/Dockerfile .
 
       # Log in to the Docker registry
       - name: Log in to the Docker registry
@@ -518,6 +492,6 @@ jobs:
       # Push the image to Dockerhub
       - name: Push the image to Dockerhub
         run: |
-          docker push "$LINREG_IMAGE_NAME:$IMAGE_TAG"
+          docker push "${{ env.LINREG_IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
 
 
