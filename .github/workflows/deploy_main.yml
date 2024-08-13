@@ -1,6 +1,8 @@
 name: Test & deploy main branch
 
 env:
+  IMAGE_TAG: latest
+
   BASE_IMAGE_NAME: mabesa/sapphire-pythonbaseimage
   PIPELINE_IMAGE_NAME: mabesa/sapphire-pipeline
   DASHBOARD_IMAGE_NAME: mabesa/sapphire-dashboard
@@ -27,15 +29,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Rename the image
-      - name: Rename the image
-        run: |
-          echo "IMAGE_TAG=latest" >> $GITHUB_ENV
-
       # Run the dockerization & deployment script
       - name: Build Docker image
         run: |
-          docker build --no-cache -t "$BASE_IMAGE_NAME:$IMAGE_TAG" -f ./apps/docker_base_image/Dockerfile .
+          docker build --no-cache \
+          -t "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
+          -f ./apps/docker_base_image/Dockerfile .
 
       # Log in to the Docker registry
       - name: Log in to the Docker registry
@@ -47,7 +46,7 @@ jobs:
       # Push the image to Dockerhub
       - name: Push the image to Dockerhub
         run: |
-          docker push "$BASE_IMAGE_NAME:$IMAGE_TAG"
+          docker push "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
 
 
 
