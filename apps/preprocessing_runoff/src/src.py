@@ -16,19 +16,20 @@ logger = logging.getLogger(__name__)
 def filter_roughly_for_outliers(combined_data, group_by='Code',
                                 filter_col='Q_m3s', date_col='date'):
     """
-    Filters outliers in the cilter_col column of the input DataFrame.
+    Filters outliers in the filter_col column of the input DataFrame.
 
-    This function groups the input DataFrame by the group_by column and applies
-    a rolling window outlier detection method to the filter_col column of each
-    group. Outliers are defined as values that are more than 3 standard
-    deviations away from the rolling mean. These outliers are replaced with NaN.
+    This function groups the input DataFrame by the group_by column and the month derived from the date_col column,
+    and applies a rolling window outlier detection method to the filter_col column of each group.
+    Outliers are defined as values that are more than 1.5 times the IQR away from the Q1 and Q3.
+    These outliers are replaced with NaN.
 
-    The function further drops all rows with Nan in the group_by column.
+    The function further drops all rows with NaN in the group_by column.
 
     Parameters:
     combined_data (pd.DataFrame): The input DataFrame. Must contain 'Code' and 'Q_m3s' columns.
     group_by (str, optional): The column to group the data by. Default is 'Code'.
     filter_col (str, optional): The column to filter for outliers. Default is 'Q_m3s'.
+    date_col (str, optional): The column representing dates. Default is 'date'.
 
     Returns:
     pd.DataFrame: The input DataFrame with outliers in the 'Q_m3s' column replaced with NaN.
@@ -36,22 +37,17 @@ def filter_roughly_for_outliers(combined_data, group_by='Code',
     Raises:
     ValueError: If the group_by column is not found in the input DataFrame.
     """
-    # Preliminary filter for outliers
-    def filter_group(group, filter_col, date_col, group_col):
+    def filter_group(group, filter_col, date_col):
         # Calculate Q1, Q3, and IQR
         Q1 = group[filter_col].quantile(0.25)
         Q3 = group[filter_col].quantile(0.75)
         IQR = Q3 - Q1
 
         # Calculate the upper and lower bounds for outliers
-        upper_bound = Q3 + 2.5 * IQR
-        lower_bound = Q1 - 2.5 * IQR
+        upper_bound = Q3 + 6.5 * IQR
+        lower_bound = Q1 - 1.5 * IQR
 
-        #print("DEBUG: upper_bound: ", upper_bound)
-        #print("DEBUG: lower_bound: ", lower_bound)
-        #print("DEBUG: "filter_col": ", group[filter_col])
-
-        # Set Q_m3s which exceeds lower and upper bounds to nan
+        # Set Q_m3s which exceeds lower and upper bounds to NaN
         group.loc[group[filter_col] > upper_bound, filter_col] = np.nan
         group.loc[group[filter_col] < lower_bound, filter_col] = np.nan
 
@@ -65,22 +61,27 @@ def filter_roughly_for_outliers(combined_data, group_by='Code',
         # Reindex the data frame to include all dates in the range
         all_dates = pd.date_range(start=group.index.min(), end=group.index.max(), freq='D')
         group = group.reindex(all_dates)
-        # Make sure the index is called date_col
         group.index.name = date_col
 
         # Interpolate gaps of length of max 2 days linearly
         group[filter_col] = group[filter_col].interpolate(method='time', limit=2)
-        # Also interpolate the code column
-        group[group_col] = group[group_col].ffill()
 
         # Infer object types to address the FutureWarning
         group = group.infer_objects(copy=False)
+
+        # Filter out suspicious data characterized by changes of more than 200% from one time step to the next
+        group['prev_value'] = group[filter_col].shift(1)
+        group['change'] = (group[filter_col] - group['prev_value']).abs() / group['prev_value'].abs()
+        group.loc[group['change'] > 2, filter_col] = np.nan
+        group.drop(columns=['prev_value', 'change'], inplace=True)
+
+        # Interpolate gaps of length of max 2 days linearly
+        group[filter_col] = group[filter_col].interpolate(method='time', limit=2)
 
         # Reset the index
         group.reset_index(inplace=True)
 
         return group
-
 
     # Test if the group_by column is available
     if group_by not in combined_data.columns:
@@ -94,27 +95,40 @@ def filter_roughly_for_outliers(combined_data, group_by='Code',
     combined_data = combined_data.dropna(subset=[group_by])
 
     # Replace empty places in the filter_col column with NaN
-    combined_data.loc[:, filter_col] = combined_data.loc[:, filter_col].replace('', np.nan)
+    combined_data[filter_col] = combined_data[filter_col].replace('', np.nan)
 
-    # Temporarily duplicate the groupy_by column for the apply function
-    combined_data['temp_group_by'] = combined_data[group_by]
+    # Extract month from the date_col
+    combined_data[date_col] = pd.to_datetime(combined_data[date_col])
+    combined_data['month'] = combined_data[date_col].dt.month
+
+    # To use individual months for filtering is too narrow a criteria. Combine
+    # spring months (March, April, May) and autumn months (September, October,
+    # November) to get a better estimate of the Q1, Q3, and similarly for the
+    # other seasons.
+    combined_data['month'] = combined_data['month'].replace({1: 'winter', 2: 'winter',
+                                                             3: 'spring', 4: 'spring', 5: 'spring',
+                                                             6: 'summer', 7: 'summer', 8: 'summer',
+                                                             9: 'autumn', 10: 'autumn', 11: 'autumn',
+                                                             12: 'winter'})
+
+    # Ensure the DataFrame is properly structured
+    combined_data = combined_data.reset_index(drop=True)
 
     # Apply the function to each group
-    combined_data = combined_data.groupby(group_by).apply(
-        filter_group, filter_col, date_col, group_col='temp_group_by',
-        include_groups=False)
-    #logger.debug(f"combined_data after apply:\n %s", combined_data)
+    combined_data = combined_data.groupby([group_by, 'month'], as_index=False).apply(
+        filter_group, filter_col, date_col)
 
     # Ungroup the DataFrame
     combined_data = combined_data.reset_index(drop=True)
-    #logger.debug(f"combined_data after reset_index:\n %s", combined_data)
 
-    # Rename the temp_group_by column with group_by
-    combined_data.rename(columns={'temp_group_by': group_by}, inplace=True)
-    #logger.debug(f"combined_data after renaming:\n %s", combined_data)
+    # Drop the temporary month column
+    combined_data.drop(columns=['month'], inplace=True)
 
     # Drop rows with duplicate code and dates, keeping the last one
     combined_data = combined_data.drop_duplicates(subset=[group_by, date_col], keep='last')
+
+    # Sort by code and date
+    combined_data = combined_data.sort_values(by=[group_by, date_col])
 
     return combined_data
 
@@ -813,6 +827,15 @@ def from_daily_time_series_to_hydrograph(data_df: pd.DataFrame,
     Returns:
     pd.DataFrame: The hydrograph data.
     """
+    # Ensure the date column is in datetime format
+    data_df[date_col] = pd.to_datetime(data_df[date_col])
+
+    # Ensure the code column is of string type
+    data_df[code_col] = data_df[code_col].astype(str)
+
+    # Ensure the discharge column is numeric
+    data_df[discharge_col] = pd.to_numeric(data_df[discharge_col], errors='coerce')
+
     # Based on the date column, write the day of the year to a new column
     data_df['day_of_year'] = data_df[date_col].dt.dayofyear
 
