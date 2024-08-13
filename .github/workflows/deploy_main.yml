@@ -192,7 +192,7 @@ jobs:
   push_preprocessing_runoff_to_Dckerhub:
     needs: [test_preprocessing_runoff, test_ieasyhydroforecast]
     runs-on: ubuntu-latest
-    name: Dockerize and push preprocessing module to Dockerhub
+    name: Dockerize and push preprocessing runoff module to Dockerhub
 
     steps:
       # To use this repository's private action, you must check out the
@@ -227,7 +227,7 @@ jobs:
   set_up_preprocessing_gateway:
     needs: [build_and_push_python_311_base_image]
     runs-on: ubuntu-latest
-    name: Test pre-processing of runoff
+    name: Setting up of preprocessing gateway
     strategy:
       fail-fast: false
       matrix:
