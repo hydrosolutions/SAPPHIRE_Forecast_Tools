@@ -458,7 +458,8 @@ class RunWorkflow(luigi.Task):
         return [#PostProcessingForecasts(),
                 PreprocessingRunoff(),
                 PreprocessingGatewayQuantileMapping(),
-                DeleteOldGateywayFiles()]
+                #DeleteOldGateywayFiles()
+                ]
 
     def run(self):
         print("Workflow completed.")
