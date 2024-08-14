@@ -447,13 +447,22 @@ def main():
     # CONTROL MEMBER MAPPING
     #--------------------------------------------------------------------
     logger.debug("Current working directory: %s", os.getcwd())
+    logger.debug(f"Iterating over the control member HRUs: {control_member_hrus}")
     for c_m_hru in control_member_hrus:
         #download the control member data
-        control_member_era5 = client.operational.get_control_spinup_and_forecast(
-            hru_code=c_m_hru,
-            date=start_date,
-            directory=OUTPUT_PATH_DG
-            )
+        logger.info(f"Processing control member for HRU: {c_m_hru}")
+        try:
+            control_member_era5 = client.operational.get_control_spinup_and_forecast(
+                hru_code=c_m_hru,
+                date=start_date,
+                directory=OUTPUT_PATH_DG
+                )
+            raise ValueError(f"Operational data for HRU {c_m_hru} not available")
+        except Exception as e:
+            if "Operational data for HRU" in str(e):
+                logger.error(f"Exiting the program due to error: {e}")
+                sys.exit(1)
+
         logger.debug(f"Control Member Data for HRU {c_m_hru} downloaded")
         logger.debug(f"for start_date: {start_date}")
         logger.debug(f"saved to directory: {OUTPUT_PATH_DG}")
@@ -493,8 +502,8 @@ def main():
         P_data.to_csv(os.path.join( OUTPUT_PATH_CM, f"{c_m_hru}_P_control_member.csv"), index=False)
         T_data.to_csv(os.path.join( OUTPUT_PATH_CM, f"{c_m_hru}_T_control_member.csv"), index=False)
 
-    #clear memory
-    del transformed_data_file
+        #clear memory
+        del transformed_data_file
 
     #--------------------------------------------------------------------
     # ENSEMBLE  MAPPING
@@ -526,11 +535,11 @@ def main():
                 except ValueError as e2:
                     print(f"Error on {yesterday}: {e2}")
                     # Handle the second error or re-raise it
-                    raise
+                    sys.exit(1)
             else:
                 # If it's a different error, re-raise it.
                 # The exit value will be 1 (failure) in this case.
-                raise
+                sys.exit(1)
 
         # A renaming of shapefiles sometimes is required in the data gateway.
         # The user can define name twins for the shapefiles in the data gateway
