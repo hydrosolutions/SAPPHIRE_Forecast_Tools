@@ -451,6 +451,8 @@ def main():
     for c_m_hru in control_member_hrus:
         #download the control member data
         logger.info(f"Processing control member for HRU: {c_m_hru}")
+        # Initialize control_member_era5 to None
+        control_member_era5 = None
         try:
             control_member_era5 = client.operational.get_control_spinup_and_forecast(
                 hru_code=c_m_hru,
