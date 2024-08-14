@@ -463,6 +463,11 @@ def main():
                 logger.error(f"Exiting the program due to error: {e}")
                 sys.exit(1)
 
+        # If control_member_era5 is empty, raise an error
+        if not control_member_era5:
+            logger.error(f"Control Member Data for HRU {c_m_hru} not available.")
+            sys.exit(1)
+
         logger.debug(f"Control Member Data for HRU {c_m_hru} downloaded")
         logger.debug(f"for start_date: {start_date}")
         logger.debug(f"saved to directory: {OUTPUT_PATH_DG}")

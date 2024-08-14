@@ -20,8 +20,9 @@ from apps.pipeline.src import pipeline_utils as pu
 #from . import docker_runner as dokr
 
 
-
+# Define the tag of the docker image to use
 TAG = os.getenv('SAPPHIRE_FORECAST_TOOLS_DOCKER_TAG', 'latest')
+# URL of the sapphire data gateway
 SAPPHIRE_DG_HOST = os.getenv('SAPPHIRE_DG_HOST', 'localhost')
 
 
