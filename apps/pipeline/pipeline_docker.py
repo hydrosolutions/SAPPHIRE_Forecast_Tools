@@ -174,9 +174,64 @@ class PreprocessingGatewayQuantileMapping(luigi.Task):
         return luigi.LocalTarget(output_file_path)
 
     def run(self):
-        print("\n\n---\n\nHello world!\n\n--\n\n")
 
-'''    def complete(self):
+        # Construct the absolute volume paths to bind to the containers
+        absolute_volume_path_config = get_absolute_path(
+            env.get('ieasyforecast_configuration_path'))
+        absolute_volume_path_internal_data = get_absolute_path(
+            env.get('ieasyforecast_intermediate_data_path'))
+        bind_volume_path_config = get_bind_path(
+            env.get('ieasyforecast_configuration_path'))
+        bind_volume_path_internal_data = get_bind_path(
+            env.get('ieasyforecast_intermediate_data_path'))
+
+        # Run the docker container to pre-process runoff data
+        client = docker.from_env()
+
+        # Pull the latest image
+        if pu.there_is_a_newer_image_on_docker_hub(
+            client, repository='mabesa', image_name='sapphire-prepgateway', tag=TAG):
+            print("Pulling the latest image from Docker Hub.")
+            client.images.pull('mabesa/sapphire-prepgateway', tag=TAG)
+
+        # Define environment variables
+        environment = [
+            'SAPPHIRE_OPDEV_ENV=True',
+        ]
+
+        # Define volumes
+        volumes = {
+            absolute_volume_path_config: {'bind': bind_volume_path_config, 'mode': 'rw'},
+            absolute_volume_path_internal_data: {'bind': bind_volume_path_internal_data, 'mode': 'rw'}
+        }
+
+        # Run the container
+        container = client.containers.run(
+            f"mabesa/sapphire-prepgateway:{TAG}",
+            detach=True,
+            environment=environment,
+            volumes=volumes,
+            name="prepgateway",
+            #labels=labels,
+            network='host'  # To test
+        )
+
+        print(f"Container {container.id} is running.")
+
+        # Wait for the container to finish running
+        result = container.wait()
+
+        # Get the exit status code
+        exit_status = result['StatusCode']
+        print(f"Container {container.id} exited with status code {exit_status}.")
+
+        # Get the logs from the container
+        logs = container.logs().decode('utf-8')
+        print(f"Logs from container {container.id}:\n{logs}")
+
+        print(f"Container {container.id} has stopped.")
+
+    def complete(self):
         if not self.output().exists():
             return False
 
@@ -187,8 +242,8 @@ class PreprocessingGatewayQuantileMapping(luigi.Task):
         current_time = time.time()
 
         # Check if the output file was modified within the last number of seconds
-        return current_time - output_file_mtime < 10  # 24 * 60 * 60
-'''
+        return current_time - output_file_mtime < 10
+
 
 class LinearRegression(luigi.Task):
 
@@ -400,7 +455,9 @@ class DeleteOldGateywayFiles(luigi.Task):
 class RunWorkflow(luigi.Task):
 
     def requires(self):
-        return [PostProcessingForecasts(), DeleteOldGateywayFiles()]
+        return [#PostProcessingForecasts(),
+                PreprocessingGatewayQuantileMapping(),
+                DeleteOldGateywayFiles()]
 
     def run(self):
         print("Workflow completed.")
