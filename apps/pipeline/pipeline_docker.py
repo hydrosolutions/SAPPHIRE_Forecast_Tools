@@ -424,7 +424,7 @@ class PostProcessingForecasts(luigi.Task):
         # Check if the output file was modified within the last number of seconds
         return current_time - output_file_mtime < 10  # 24 * 60 * 60
 
-
+"""
 class DeleteOldGateywayFiles(luigi.Task):
 
     # Define the folder path where the files are stored
@@ -450,7 +450,7 @@ class DeleteOldGateywayFiles(luigi.Task):
             if file_time < age_limit:
                 os.remove(file_path)
                 print(f"Deleted {file_path} as it was older than {self.days_old} days.")
-
+"""
 
 class RunWorkflow(luigi.Task):
 
