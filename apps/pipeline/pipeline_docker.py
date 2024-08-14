@@ -22,6 +22,7 @@ from apps.pipeline.src import pipeline_utils as pu
 
 
 TAG = os.getenv('SAPPHIRE_FORECAST_TOOLS_DOCKER_TAG', 'latest')
+SAPPHIRE_DG_HOST = os.getenv('SAPPHIRE_DG_HOST', 'localhost')
 
 
 class Environment:
@@ -171,6 +172,7 @@ class PreprocessingGatewayQuantileMapping(luigi.Task):
         output_file_path = os.path.join(
             os.getenv('ieasyforecast_intermediate_data_path'),
             os.getenv('ieasyhydroforecast_OUTPUT_PATH_CM'))
+        print("DEGUB: output_file_path: ", output_file_path)
         return luigi.LocalTarget(output_file_path)
 
     def run(self):
@@ -197,6 +199,7 @@ class PreprocessingGatewayQuantileMapping(luigi.Task):
         # Define environment variables
         environment = [
             'SAPPHIRE_OPDEV_ENV=True',
+            'SAPPHIRE_DG_HOST=' + SAPPHIRE_DG_HOST
         ]
 
         # Define volumes
