@@ -456,6 +456,7 @@ class RunWorkflow(luigi.Task):
 
     def requires(self):
         return [#PostProcessingForecasts(),
+                PreprocessingRunoff(),
                 PreprocessingGatewayQuantileMapping(),
                 DeleteOldGateywayFiles()]
 
