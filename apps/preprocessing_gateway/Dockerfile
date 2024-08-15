@@ -1,5 +1,11 @@
 # syntax=docker/dockerfile:1
 
+# Creates a docker image for running the preprocessing gateway module.
+#
+# We first download the operational data and perform quantile mapping on it and
+# then extend the ERA5 reanalysis data so we have reanalysis data over the entire
+# time period available.
+
 FROM mabesa/sapphire-pythonbaseimage:latest AS base
 
 # Setting the working directory to /app
@@ -17,4 +23,4 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     pip install git+https://github.com/hydrosolutions/sapphire-dg-client.git
 
 # Run the application.
-CMD ["python", "apps/preprocessing_gateway/Quantile_Mapping_OP.py"]
+CMD ["python", "apps/preprocessing_gateway/Quantile_Mapping_OP.py & extend_era5_reanalysis.py"]

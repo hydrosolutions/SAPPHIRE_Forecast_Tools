@@ -51,6 +51,8 @@
 # cd to the directory where the script is located (apps/preprocessing_gateway)
 # python Quantile_Mapping_OP.py
 
+# Author: Sandro Hunziker
+
 
 
 # --------------------------------------------------------------------
