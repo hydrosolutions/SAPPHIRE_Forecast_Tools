@@ -158,7 +158,7 @@ ieasyhydroforecast_config_file_data_gateway_name_twins=config_gateway_name_twins
 ```
 
 The preprocessing of data gateway will write output to the following paths.
-TODO @Sandro: Please add a sentence to what is stored in these different folders.
+TODO: Sandro: Please add a sentence to what is stored in these different folders.
 ```
 # PATH FOR INTERMEDIATE RESULTS
 # Subfolders located in ieasyforecast_intermediate_data_path
@@ -195,4 +195,4 @@ ieasyhydroforecast_HRU_ENSEMBLE=151940,16936
 TODO: Sandro, please add if you have time
 
 ### Configuration of the conceptual rainfall-runoff module
-
+TODO: Adrian, please add if you have time once we have the module integrated
