@@ -23,4 +23,4 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     pip install git+https://github.com/hydrosolutions/sapphire-dg-client.git
 
 # Run the application.
-CMD ["python", "apps/preprocessing_gateway/Quantile_Mapping_OP.py & extend_era5_reanalysis.py"]
+CMD ["sh", "-c", "python apps/preprocessing_gateway/Quantile_Mapping_OP.py && python apps/preprocessing_gateway/extend_era5_reanalysis.py"]
