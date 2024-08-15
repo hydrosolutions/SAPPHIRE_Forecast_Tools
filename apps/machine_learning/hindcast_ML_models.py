@@ -611,7 +611,7 @@ def main():
 
     client = sapphire_dg_client.client.SapphireDGClient(api_key= API_KEY)
 
-    #substract 60 days from the start date
+    #substract 180 days from the start date
     start_date = pd.to_datetime(start_date) - pd.DateOffset(days=180)
     start_date = start_date.strftime('%Y-%m-%d')
 
