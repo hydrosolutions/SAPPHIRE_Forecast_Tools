@@ -325,7 +325,52 @@ def predict_pentad(date)-> bool:
 
     return make_forecast, days_until_next_forecast
 
+# --------------------------------------------------------------------
+# PREDICT DECAD
+# --------------------------------------------------------------------
+def predict_decad(date: pd.Timestamp) -> bool:
+    """
+    This function returns a boolean value, and the number of days until the next forecast.
+    """
+    days_to_save = [10, 20]
 
+    #check if today is the last day of the month
+    tomorrow = date + datetime.timedelta(days=1)
+    is_last_day_of_month = tomorrow.month != date.month
+
+    #check if today is in the list of days to save
+    is_day_to_save = date.day in days_to_save
+
+    make_forecast = is_last_day_of_month or is_day_to_save
+
+    #days until next forecast
+    if is_last_day_of_month:
+        days_until_next_forecast = 10
+
+    elif date.day in [10]:
+        days_until_next_forecast = 10
+
+    else:
+        # if the month has 30 days -> 10 days
+        # if the month has 31 days -> 11 days
+        # if the month has 28 days -> 8 days
+        # if the month has 29 days -> 9 days
+
+        if date.month in [1, 3, 5, 7, 8, 10, 12]:
+            days_until_next_forecast = 11
+        elif date.month in [2]:
+            #check if the year is a leap year
+            if date.year % 4 == 0:
+                days_until_next_forecast = 8
+            else:
+                days_until_next_forecast = 9
+        else:
+            days_until_next_forecast = 10
+
+    if not make_forecast:
+        days_until_next_forecast = 0
+
+    return make_forecast, days_until_next_forecast
 # --------------------------------------------------------------------
 # HINDECAST
 # --------------------------------------------------------------------
@@ -378,6 +423,46 @@ def make_hindecast_pentad(
 
         return predictions_pentad, pentad_no_success, decadal_no_success, exceeds_threshhold_dict, missing_values_dict, nans_at_end_dict
 
+
+
+def make_hindecast_decad(
+        past_discharge: pd.DataFrame,
+        era5: pd.DataFrame,
+        predictor : predictor_TFT.PREDICTOR,
+        threshold_missing_days : int,
+        threshold_missing_days_end: int,
+        pentad_no_success: list,
+        decadal_no_success: list,
+        exceeds_threshhold_dict: dict,
+        code: int,
+        missing_values_dict: dict,
+        nans_at_end_dict: dict,
+        recursive_rivers: list,
+        days_until_next_forecast: int,
+    )-> tuple[pd.DataFrame, list, list, dict]:
+        
+        #get the input chunck length -> this can than be used to determine the relevant allowed missing values
+        input_chunk_length = predictor.get_input_chunk_length()
+        #check for missing values, n = number of missing values at the end
+        missing_values, nans_at_end = utils_ml_forecast.check_for_nans(past_discharge.iloc[-input_chunk_length:], threshold_missing_days)
+
+        if missing_values['exceeds_threshold'] or nans_at_end >= threshold_missing_days_end:
+            pentad_no_success.append(code)
+            decadal_no_success.append(code)
+            exceeds_threshhold_dict[code] = True
+            #we predict and get nan values
+            predictions = predictor.predict(past_discharge, era5, None , code, n=days_until_next_forecast, make_plot=False)
+            return predictions, pentad_no_success, decadal_no_success, exceeds_threshhold_dict, missing_values_dict, nans_at_end_dict
+
+        elif missing_values['nans_in_between']:
+            past_discharge = utils_ml_forecast.gaps_imputation(past_discharge)
+
+
+        # no recursive imputation for the decadal forecast
+        predictions = predictor.predict(past_discharge, era5, None , code, n=days_until_next_forecast, make_plot=False)
+
+        return predictions, pentad_no_success, decadal_no_success, exceeds_threshhold_dict, missing_values_dict, nans_at_end_dict
+
 # --------------------------------------------------------------------
 # MAIN FUNCTION
 # --------------------------------------------------------------------
@@ -401,6 +486,20 @@ def main():
             from scr import predictor_TSMIXER as predictor_class
         elif MODEL_TO_USE == 'ARIMA':
             from scr import predictor_ARIMA as predictor_class
+
+        # --------------------------------------------------------------------
+    # DEFINE THE HINDCAST MODE
+    # --------------------------------------------------------------------
+    HINDCAST_MODE = os.getenv('SAPPHIRE_HINDCAST_MODE')
+    logger.debug('Prediction mode: %s', HINDCAST_MODE)
+    if HINDCAST_MODE not in ['PENTAD', 'DECAD']:
+        raise ValueError('Prediction mode %s is not supported.\nPlease choose one of the following prediction modes: PENTAD, DECAD')
+    else:
+        logger.debug('Prediction mode: %s', HINDCAST_MODE)
+        if HINDCAST_MODE == 'PENTAD':
+            forecast_horizon = 5
+        else:
+            forecast_horizon = 10
     # --------------------------------------------------------------------
     # INITIALIZE THE ENVIRONMENT
     # --------------------------------------------------------------------
@@ -429,7 +528,7 @@ def main():
         raise FileNotFoundError(f"File {PATH_TO_PAST_DISCHARGE} not found.")
     #output_path for the data from the data gateaway
     OUTPUT_PATH_DG = os.getenv('ieasyhydroforecast_OUTPUT_PATH_DG')
-    PATH_TO_SCALER = os.getenv('ieasyhydroforecast_PATH_TO_SCALER_' + MODEL_TO_USE)
+
     MODELS_AND_SCALERS_PATH = os.getenv('ieasyhydroforecast_models_and_scalers_path')
     PATH_TO_STATIC_FEATURES = os.getenv('ieasyhydroforecast_PATH_TO_STATIC_FEATURES')
     logger.debug("MODELS_AND_SCALERS_PATH: %s", MODELS_AND_SCALERS_PATH)
@@ -438,15 +537,27 @@ def main():
     # Test if path exists
     if not os.path.exists(PATH_TO_STATIC_FEATURES):
         raise FileExistsError(f"Directory {PATH_TO_STATIC_FEATURES} not found.")
-
+    
+    PATH_TO_SCALER = os.getenv('ieasyhydroforecast_PATH_TO_SCALER_' + MODEL_TO_USE)
+    # Append Decad to the scaler path if the prediction mode is DECAD
+    if HINDCAST_MODE == 'DECAD' and MODEL_TO_USE != 'ARIMA':
+        PATH_TO_SCALER = PATH_TO_SCALER + '_Decad'
     PATH_TO_SCALER = os.path.join(MODELS_AND_SCALERS_PATH, PATH_TO_SCALER)
     # Test if the path exists
     if not os.path.exists(PATH_TO_SCALER):
         raise FileNotFoundError(f"Directory {PATH_TO_SCALER} not found.")
     logger.debug('PATH_TO_SCALER: %s' , PATH_TO_SCALER)
 
-    PATH_TO_MODEL= os.getenv('ieasyhydroforecast_PATH_TO_' + MODEL_TO_USE)
-    PATH_TO_MODEL = os.path.join(PATH_TO_SCALER, PATH_TO_MODEL)
+
+    if MODEL_TO_USE != 'ARIMA':
+        # select the file which ends on .pt
+        PATH_TO_MODEL = glob.glob(os.path.join(PATH_TO_SCALER, '*.pt'))[0]
+    else:
+        PATH_TO_MODEL= os.getenv('ieasyhydroforecast_PATH_TO_' + MODEL_TO_USE)
+        PATH_TO_MODEL = os.path.join(PATH_TO_SCALER, PATH_TO_MODEL)
+
+    #PATH_TO_MODEL= os.getenv('ieasyhydroforecast_PATH_TO_' + MODEL_TO_USE)
+    #PATH_TO_MODEL = os.path.join(PATH_TO_SCALER, PATH_TO_MODEL)
     # Test if the directory exists
     if not os.path.exists(PATH_TO_MODEL):
         raise FileNotFoundError(f"Directory {PATH_TO_MODEL} not found.")
@@ -501,13 +612,32 @@ def main():
     client = sapphire_dg_client.client.SapphireDGClient(api_key= API_KEY)
 
     #substract 60 days from the start date
-    start_date = pd.to_datetime(start_date) - pd.DateOffset(days=60)
+    start_date = pd.to_datetime(start_date) - pd.DateOffset(days=180)
     start_date = start_date.strftime('%Y-%m-%d')
 
-    #loads in the data from start_date -60 up to the current date + forecast
-    era5_data_path = client.operational.get_control_spinup_and_forecast(HRU_ML_MODELS,
-                                                                    date=start_date,
-                                                                    directory=OUTPUT_PATH_DG)
+    today = datetime.datetime.now().date()
+    today = pd.to_datetime(today)
+    end_date = pd.to_datetime(end_date) + pd.DateOffset(days = forecast_horizon+1)
+
+    # calculate the time difference between today and the end date
+    # if there is a difference, we can download less data
+    time_diff = today - end_date
+    time_diff = time_diff.days
+
+    if time_diff < 2*forecast_horizon:
+        # if the time diff is smaller than 2*forecast_horizon, 
+        # we need to get the data from the data gateaway with the current forecast
+        #loads in the data from start_date -60 up to the current date + forecast
+        era5_data_path = client.operational.get_control_spinup_and_forecast(HRU_ML_MODELS,
+                                                                        date=start_date,
+                                                                       directory=OUTPUT_PATH_DG)
+    else:
+        end_date = end_date.strftime('%Y-%m-%d')
+        era5_data_path = client.era5_land.get_era5_land(HRU_ML_MODELS, 
+                                                        date=start_date, 
+                                                        end_date=end_date,
+                                                        directory=OUTPUT_PATH_DG)
+
 
     era5_data = pd.read_csv(era5_data_path)
 
@@ -576,23 +706,19 @@ def main():
     # --------------------------------------------------------------------
     # MODEL PREDICTOR
     if MODEL_TO_USE == 'TFT':
-        model_pentad = TFTModel.load(os.path.join(PATH_TO_MODEL), map_location=torch.device('cpu'))
-        model_decad = TFTModel.load(os.path.join(PATH_TO_MODEL), map_location=torch.device('cpu'))
+        model = TFTModel.load(os.path.join(PATH_TO_MODEL), map_location=torch.device('cpu'))
     elif MODEL_TO_USE == 'TIDE':
-        model_pentad = TiDEModel.load(os.path.join(PATH_TO_MODEL), map_location=torch.device('cpu'))
-        model_decad = TiDEModel.load(os.path.join(PATH_TO_MODEL), map_location=torch.device('cpu'))
+        model = TiDEModel.load(os.path.join(PATH_TO_MODEL), map_location=torch.device('cpu'))
     elif MODEL_TO_USE == 'TSMIXER':
-        model_pentad = TSMixerModel.load(os.path.join(PATH_TO_MODEL), map_location=torch.device('cpu'))
-        model_decad = TSMixerModel.load(os.path.join(PATH_TO_MODEL), map_location=torch.device('cpu'))
+        model = TSMixerModel.load(os.path.join(PATH_TO_MODEL), map_location=torch.device('cpu'))
     elif MODEL_TO_USE == 'ARIMA':
-        model_pentad = None
-        model_decad = None
+        model = None
 
 
     if MODEL_TO_USE == 'ARIMA':
-        predictor_pentad = predictor_class.PREDICTOR(PATH_TO_MODEL, scaler)
+        predictor = predictor_class.PREDICTOR(PATH_TO_MODEL, scaler)
     else:
-        predictor_pentad = predictor_class.PREDICTOR(model_pentad, scaler_discharge, scaler_era5, scaler_static, static_features)
+        predictor = predictor_class.PREDICTOR(model, scaler_discharge, scaler_era5, scaler_static, static_features)
 
 
     # --------------------------------------------------------------------
@@ -638,12 +764,15 @@ def main():
     current_year = pred_date.year
     print(f'Starting Hindcast for the dates: {start_date} to {end_date}')
     while pred_date <= pd.to_datetime(end_date):
-
-        make_forecast, days_until_next_forecast = predict_pentad(pred_date)
+        
+        if HINDCAST_MODE == 'PENTAD':
+            make_forecast, days_until_next_forecast = predict_pentad(pred_date)
+        else:
+            make_forecast, days_until_next_forecast = predict_decad(pred_date)
 
         if HINDCAST_DAILY:
             make_forecast = True
-            days_until_next_forecast = 5
+            days_until_next_forecast = forecast_horizon # either 5 or 10
 
         if pred_date.year != current_year:
             current_year = pred_date.year
@@ -660,26 +789,45 @@ def main():
                 date_end_forecast = pred_date + pd.DateOffset(days=15)
                 era5 = era5[era5['date'] <= date_end_forecast]
 
-                # make prediction with predictor
-                predictions_pentad = make_hindecast_pentad(
-                    past_discharge=past_discharge,
-                    era5=era5,
-                    predictor=predictor_pentad,
-                    threshold_missing_days=THRESHOLD_MISSING_DAYS,
-                    threshold_missing_days_end=THRESHOLD_MISSING_DAYS_END,
-                    pentad_no_success=[],
-                    decadal_no_success=[],
-                    exceeds_threshhold_dict={},
-                    code=code,
-                    missing_values_dict={},
-                    nans_at_end_dict={},
-                    recursive_rivers=RECURSIVE_RIVERS,
-                    days_until_next_forecast=days_until_next_forecast
+                if HINDCAST_MODE == 'PENTAD':
+                    # make prediction with predictor
+                    predictions = make_hindecast_pentad(
+                        past_discharge=past_discharge,
+                        era5=era5,
+                        predictor=predictor,
+                        threshold_missing_days=THRESHOLD_MISSING_DAYS,
+                        threshold_missing_days_end=THRESHOLD_MISSING_DAYS_END,
+                        pentad_no_success=[],
+                        decadal_no_success=[],
+                        exceeds_threshhold_dict={},
+                        code=code,
+                        missing_values_dict={},
+                        nans_at_end_dict={},
+                        recursive_rivers=RECURSIVE_RIVERS,
+                        days_until_next_forecast=days_until_next_forecast
 
-                )[0]
+                    )[0]
+
+                else:
+                    predictions = make_hindecast_decad(
+                        past_discharge=past_discharge,
+                        era5=era5,
+                        predictor=predictor,
+                        threshold_missing_days=THRESHOLD_MISSING_DAYS,
+                        threshold_missing_days_end=THRESHOLD_MISSING_DAYS_END,
+                        pentad_no_success=[],
+                        decadal_no_success=[],
+                        exceeds_threshhold_dict={},
+                        code=code,
+                        missing_values_dict={},
+                        nans_at_end_dict={},
+                        recursive_rivers=RECURSIVE_RIVERS,
+                        days_until_next_forecast=days_until_next_forecast
+                    )[0]
+
 
                 # Calculate the mean for each quantile column
-                mean_values = predictions_pentad.drop(columns=['date']).mean(skipna=True)
+                mean_values = predictions.drop(columns=['date']).mean(skipna=True)
 
                 # Create a DataFrame with the mean values, the prediction date and the code
                 hindecast = pd.DataFrame(mean_values).T
@@ -688,7 +836,7 @@ def main():
                 hindecast['code'] = code
 
                 # Append to the daily DataFrame
-                hindecast_daily_df_temp = predictions_pentad.copy()
+                hindecast_daily_df_temp = predictions.copy()
                 # the date is already in the predictions
                 hindecast_daily_df_temp['code'] = code
                 hindecast_daily_df_temp['forecast_date'] = pred_date
@@ -710,8 +858,8 @@ def main():
     # Test if path exists and create it if it doesn't
     if not os.path.exists(OUTPUT_PATH_DISCHARGE):
         os.makedirs(OUTPUT_PATH_DISCHARGE, exist_ok=True)
-    hindecast_df.to_csv(os.path.join(OUTPUT_PATH_DISCHARGE, f'{MODEL_TO_USE}_hindcast_{start_date}_{end_date}.csv'), index=False)
-    hindecast_daily_df.to_csv(os.path.join(OUTPUT_PATH_DISCHARGE, f'{MODEL_TO_USE}_hindcast_daily_{start_date}_{end_date}.csv'), index=False)
+    hindecast_df.to_csv(os.path.join(OUTPUT_PATH_DISCHARGE, f'{MODEL_TO_USE}_{HINDCAST_MODE}_hindcast_{start_date}_{end_date}.csv'), index=False)
+    hindecast_daily_df.to_csv(os.path.join(OUTPUT_PATH_DISCHARGE, f'{MODEL_TO_USE}_{HINDCAST_MODE}_hindcast_daily_{start_date}_{end_date}.csv'), index=False)
 
 
     logger.info('Hindcast Done!')
