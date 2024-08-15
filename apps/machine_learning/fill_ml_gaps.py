@@ -59,7 +59,8 @@ import setup_library as sl
 def call_hindcast_script(min_missing_date: str,
                          max_missing_date: str, 
                          MODEL_TO_USE: str, 
-                         intermediate_data_path: str) -> pd.DataFrame:
+                         intermediate_data_path: str,
+                         PREDICTION_MODE: str) -> pd.DataFrame:
 
     # --------------------------------------------------------------------
     # CALL THE HINDCAST SCRIPT
@@ -70,6 +71,7 @@ def call_hindcast_script(min_missing_date: str,
     env['SAPPHIRE_MODEL_TO_USE'] = MODEL_TO_USE
     env['ieasyhydroforecast_START_DATE'] = min_missing_date
     env['ieasyhydroforecast_END_DATE'] = max_missing_date
+    env['HINDCAST_MODE'] = PREDICTION_MODE
 
     # Prepare the command
     command = ['python', 'hindcast_ML_models.py']
@@ -96,7 +98,9 @@ def call_hindcast_script(min_missing_date: str,
     PATH_FORECAST = os.path.join(intermediate_data_path, OUTPUT_PATH_DISCHARGE)
     PATH_HINDCAST = os.path.join(PATH_FORECAST, 'hindcast', MODEL_TO_USE)
 
-    file_name = f'{MODEL_TO_USE}_hindcast_daily_{min_missing_date}_{max_missing_date}.csv' 
+    
+    file_name = f'{MODEL_TO_USE}_{PREDICTION_MODE}_hindcast_daily_{min_missing_date}_{max_missing_date}.csv' 
+
     hindcast = pd.read_csv(os.path.join(PATH_HINDCAST, file_name))
 
     return hindcast
@@ -113,6 +117,15 @@ def fill_ml_gaps():
 
     if MODEL_TO_USE not in ['TFT', 'TIDE', 'TSMIXER', 'ARIMA']:
         raise ValueError('Model not supported')
+    
+    # --------------------------------------------------------------------
+    # Define whch prediction mode to use
+    # --------------------------------------------------------------------
+    PREDICTION_MODE = os.getenv('SAPPHIRE_PREDICTION_MODE')
+    logger.debug('Prediction mode: %s', PREDICTION_MODE)
+    if PREDICTION_MODE not in ['PENTAD', 'DECAD']:
+        raise ValueError('Prediction mode %s is not supported.\nPlease choose one of the following prediction modes: PENTAD, DECAD')
+
 
 
     # --------------------------------------------------------------------
@@ -144,13 +157,22 @@ def fill_ml_gaps():
     current_date = datetime.datetime.now().date()
     current_date = current_date.strftime('%Y-%m-%d')
 
+    if PREDICTION_MODE == 'PENTAD':
+        prefix = 'pentad'
+    else:
+        prefix = 'decad'
+
     # Read the latest forecast
     if ieasyhydroforecasts_produce_daily_ml_hindcast == 'True':
-        forecast_path = os.path.join(PATH_FORECAST,'pentad_' +  MODEL_TO_USE + '_forecast.csv')
+        forecast_path = os.path.join(PATH_FORECAST, prefix + '_' +  MODEL_TO_USE + '_forecast.csv')
         limit_day_gap = 1
     else:
-        forecast_path = os.path.join(PATH_FORECAST,'pentad_' +  MODEL_TO_USE + '_forecast_pentad_intervall.csv')
-        limit_day_gap = 6 # if one pentadal forecast is not made, the gap is always bigger than 6 days
+        forecast_path = os.path.join(PATH_FORECAST,prefix + '_' +  MODEL_TO_USE + '_forecast_' + prefix + '_intervall.csv')
+        if PREDICTION_MODE == 'PENTAD':
+            limit_day_gap = 6
+        else:
+            limit_day_gap = 11
+        
 
     try:
         forecast = pd.read_csv(forecast_path)
@@ -190,7 +212,7 @@ def fill_ml_gaps():
             print('Missing forecasts from', start_date, 'to', end_date)
             
             # Call the hindcast script
-            hindcast = call_hindcast_script(start_date, end_date, MODEL_TO_USE, intermediate_data_path)
+            hindcast = call_hindcast_script(start_date, end_date, MODEL_TO_USE, intermediate_data_path, PREDICTION_MODE)
 
             # Append the hindcast to the forecast
             forecast = pd.concat([forecast, hindcast], ignore_index=True)
@@ -200,9 +222,9 @@ def fill_ml_gaps():
 
             # save the forecast
             if ieasyhydroforecasts_produce_daily_ml_hindcast == 'True':
-                forecast.to_csv(os.path.join(PATH_FORECAST,'pentad_' +  MODEL_TO_USE + '_forecast_test.csv'), index=False)
+                forecast.to_csv(os.path.join(PATH_FORECAST, prefix + '_' +  MODEL_TO_USE + '_forecast_test.csv'), index=False)
             else:
-                forecast.to_csv(os.path.join(PATH_FORECAST,'pentad_' +  MODEL_TO_USE + '_forecast_pentad_test.csv'), index=False)
+                forecast.to_csv(os.path.join(PATH_FORECAST,prefix + '_' +  MODEL_TO_USE + '_forecast_' + prefix + '_intervall_test.csv'), index=False)
 
 
         print("Missing forecasts filled in")

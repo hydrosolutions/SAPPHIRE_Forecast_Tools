@@ -196,7 +196,10 @@ class PREDICTOR():
 
         #future covariates with month
         covariates_future = TimeSeries.from_dataframe(df_era5, time_col='date', value_cols = ['P', 'T', 'PET', 'daylight_hours'], freq='1D')
-        covariates_future = self.add_month(covariates_future)
+
+        # check if the model has encoder, if not: add the month manually
+        if self.model.add_encoders is None:
+            covariates_future = self.add_month(covariates_future)
 
         #to np.float32
         discharge = discharge.astype(np.float32)
