@@ -25,26 +25,10 @@ Files that need to be reviewed and potentially edited or replaced for local depl
   SAPPHIRE_FORECAST_TOOLS
    |__ apps
        The software components of the SAPPHIRE Forecast Tools.
-        |__ backend
+        |__ backend (being deprecated)
             The backend of the forecast tools. This is the component that produces the forecasts.
-             |__ src
-                 Functions used by the forecast backend.
-             |__ tests
-                 Tests for the forecast backend. To be extended as the backend is developed.
-             |__ .dockerignore
-                 Lists files and folders that are not copied to the docker image.
-             |__ Dockerfile
-                 Dockerfile to build the docker image for the forecast backend.
-             |__ forecast_script.py
-                 The python script that runs the forecast backend.
-             |__ requirements.txt
-                 List of python packages that need to be installed in the docker image.
-             |__ run_offline_mode.py
-                 The python script that runs the forecast backend in offline mode. Used for testing and development and to produce hindcasts.
-             |__ setup.py
-                 Setup file for the forecast backend. Makes sure the backend finds the iEasyHydroForecast library.
         |__ config
-            Configuration of the forecast tools. The content of the files needs to be adapted to deployment conditions.
+            A demo-configuration of the forecast tools. 
              |__ locale
                  Translations for the forecast dashboard. Currently only available in English and Russian language.
 #            |__ .env
@@ -95,25 +79,8 @@ Files that need to be reviewed and potentially edited or replaced for local depl
                  The python script that runs the reset forecast run date tool.
              |__ requirements.txt
                  List of python packages that need to be installed in the docker image.
-   |__ bat
-       Batch files for Windows that are used to open a browser window to the dashboards
-        |__ backend
-#           |__ backend.bat
-                 Stops and re-starts the backend.
-            |__ rerun_backend.bat
-                Stops and re-starts the backend after resetting the latest run date.
-            |__ Rerun-Pentadal-Forecast.ico
-                Icon for the shortcut to the reset forecast run date bat file.
-        |__ configuration_dashboard
-#            |__ configuration.bat
-                 Opens the forecast configuration dashboard in a Google Chrome browser. The content of the bat file may need to be adapted to deployment conditions.
-             |__ Station.ico
-                 Icon for the shortcut to the forecast configuration dashboard.
-        |__ forecast_dashboard
-#            |__ dashboard.bat
-                 Opens the forecast dashboard in a Google Chrome browser. The content of the bat file may need to be adapted to deployment conditions.
-             |__ Pentad.ico
-                 Icon for the shortcut to the forecast dashboard.
+   |__ bat (being deprecated)
+       Batch files that are used for deployment on Windows.
 #  |__ data
        Example data to demonstrate how the forecast tools work. The Needs to be replaced with data by the hydromet organization for deployment. The data and file formats are described in more detail in the file doc/user_guide.md.
         |__ daily_runoff
@@ -128,16 +95,6 @@ Files that need to be reviewed and potentially edited or replaced for local depl
                  Template for the pentad forecast bulletin. Edit accoring to your reporting requirements.
    |__ doc
        Documentation of the forecast tools.
-        |__ www
-            Static files (images) used by the documentation.
-        |__ configuration.md
-            Configuration instructions
-        |__ deployment.md
-            Deployment instructions
-        |__ development.md
-            Instructions for local development
-        |__ user_guide.md
-            User guide with instructions of how to use the forecast tools once they are deployed.
 ```
 </details>
 
