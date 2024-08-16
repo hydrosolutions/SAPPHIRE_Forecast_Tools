@@ -9,3 +9,6 @@ docker compose -f bin/docker-compose-luigi.yml down
 # Remove all containers
 docker container prune -f
 docker rmi $(docker images -q) -f
+
+# Prune the build cache to free up disk space
+docker builder prune -f
