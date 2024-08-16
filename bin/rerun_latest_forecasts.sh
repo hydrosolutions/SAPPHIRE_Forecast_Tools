@@ -22,9 +22,7 @@
 # 8. Down the Docker Compose service
 #
 # Note: The script uses the following helper scripts:
-# 1. bin/clean_docker.sh
-# 4. bin/pull_docker_images.sh
-# 5. bin/docker-compose.yml
+# 5. bin/docker-compose-luigi.yml
 # 6. bin/.ssh/open_ssh_tunnel.sh
 # 7. bin/.ssh/close_ssh_tunnel.sh
 #
@@ -74,6 +72,19 @@ start_docker_compose_luigi() {
   docker compose -f bin/docker-compose-luigi.yml up -d &
   DOCKER_COMPOSE_LUIGI_PID=$!
   echo "Docker Compose service started with PID $DOCKER_COMPOSE_LUIGI_PID"
+}
+
+# Function to start the Docker container to re-set the run date
+start_docker_container_reset_run_date() {
+  echo "Starting Docker container to re-set the run date ..."
+  docker run -d \
+    -e SAPPHIRE_OPDEV_ENV=True \
+    --name resetrundate \
+    --network host \
+    -v $ieasyhydroforecast_data_root_dir/sensitive_data_forecast_tools/config:/sensitive_data_forecast_tools/config \
+    -v $ieasyhydroforecast_data_root_dir/sensitive_data_forecast_tools/intermediate_data:/sensitive_data_forecast_tools/intermediate_data \
+    mabesa/sapphire-rerun:latest
+  echo "Docker container started with name resetrundate"
 }
 
 

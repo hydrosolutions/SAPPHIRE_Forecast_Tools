@@ -26,7 +26,7 @@
 # Note: The script uses the following helper scripts:
 # 1. bin/clean_docker.sh
 # 4. bin/pull_docker_images.sh
-# 5. bin/docker-compose.yml
+# 5. bin/docker-compose-luigi.yml and bin/docker-compose-dashboards.yml
 # 6. bin/.ssh/open_ssh_tunnel.sh
 # 7. bin/.ssh/close_ssh_tunnel.sh
 #
