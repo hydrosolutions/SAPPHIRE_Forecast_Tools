@@ -361,6 +361,11 @@ Run the image to reset:
 docker run -d -e SAPPHIRE_OPDEV_ENV=True -v <full_path_to>/apps/config:/app/apps/config -v <full_path_to>/apps/internal_data:/app/apps/internal_data --name fcrerun mabesa/sapphire-rerun:latest
 ```
 
+Then we can re-run the forecast pipeline with:
+```bash
+docker compose -f bin/docker-compose-luigi.yml up -d --force-recreate
+```
+
 
 ### Forecast dashboard
 TODO: Bea

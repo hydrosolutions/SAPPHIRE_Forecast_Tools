@@ -1,21 +1,19 @@
 #!/bin/bash
 
-# This script runs the SAPPHIRE forecast tools in local deployment mode
-# Working directory is the root of the repository, i.e. SAPPHIRE_forecast_tools
+# This script re-runs the latest forecast produced by the SAPPHIRE forecast tools.
 #
 # Useage:
 # Run the script in your terminal:
-# bash bin/run_sapphire_forecast_tools.sh <ieasyhydroforecast_data_root_dir>
+# bash bin/rerun_latest_forecasts.sh <ieasyhydroforecast_data_root_dir>
 # Run the script in the background:
-# nohup bash bin/run_sapphire_forecast_tools.sh <ieasyhydroforecast_data_root_dir > output.log 2>&1 &
+# nohup bash bin/rerun_latest_forecasts.sh <ieasyhydroforecast_data_root_dir > output_rerun.log 2>&1 &
 # note: nohup: no hangup, i.e. the process will not be terminated when the terminal is closed
-# note: > output.log 2>&1: redirect stdout and stderr to a file called output.log
+# note: > output_rerun.log 2>&1: redirect stdout and stderr to a file called output_rerun.log
 # note: &: run the process in the background
 #
-# Details: The script performs the following tasks and takes 4 minutes on a
-# reasonably fast machine with a good internet connection:
+# Details: The script performs the following tasks:
 # 1. Parse the argument <ieasyhydroforecast_data_root_dir> which is the absolute path to the ieasyforecast data root directory
-# 2. Clean up docker space (remove all containers and images)
+# 2. Clean up docker space (remove all superfluous containers and images)
 # 3. Build the Docker images with the tag "latest"
 # 4. Establish an SSH tunnel to the SAPPHIRE server
 # 5. Start the Docker Compose service (start luigi daemon and the SAPPHIRE forecast tools)
@@ -37,7 +35,7 @@
 
 if test -z "$1"
 then
-      echo "Usage bash ./bin/run.sh ieasyhydroforecast_data_root_dir"
+      echo "Usage bash ./bin/rerun_latest_forecasts.sh ieasyhydroforecast_data_root_dir"
       echo "No tag was passed!"
       echo "Please pass the absolute path to your ieasyforecast data root directory to the script"
       echo "e.g. /Users/username/Documents/sapphire_data"
@@ -52,14 +50,20 @@ export ieasyhydroforecast_data_root_dir=$1
 echo $ieasyhydroforecast_data_root_dir
 
 # Clean up docker space
-echo "Removing all containers and images"
-ieasyhydroforecast_data_root_dir=$ieasyhydroforecast_data_root_dir source ./bin/clean_docker.sh
-
-# Pull (deployment mode) or build (development mode) & push images
-echo "Pulling with TAG=latest"
-# source ./bin/build_docker_images.sh latest  # Only for development mode
-# bash ./bin/push_docker_images.sh latest  # ONLY allowed from amd64 architecture, i.e. not from M1/2/3 Macs
-source ./bin/pull_docker_images.sh latest
+echo "Removing all superfluous containers and images"
+docker compose -f bin/docker-compose-luigi.yml down
+# Module pre-processing runoff
+docker stop preprunoff
+docker rm preprunoff
+# Module pre-processing meteorological data from data gateway
+docker stop prepgateway
+docker rm prepgateway
+# Module Linear regression
+docker stop linreg
+docker rm linreg
+# Module post-processing of forecasts
+docker stop postprocessing
+docker rm postprocessing
 
 # Establish SSH tunnel (if required)
 source ../sensitive_data_forecast_tools/bin/.ssh/open_ssh_tunnel.sh
@@ -72,13 +76,6 @@ start_docker_compose_luigi() {
   echo "Docker Compose service started with PID $DOCKER_COMPOSE_LUIGI_PID"
 }
 
-# Function to start the Docker Compose service for the dashboards
-start_docker_compose_dashboards() {
-  echo "Starting Docker Compose service for the dashboards..."
-  docker compose -f bin/docker-compose-dashboards.yml up -d &
-  DOCKER_COMPOSE_DASHBOARD_PID=$!
-  echo "Docker Compose service started with PID $DOCKER_COMPOSE_DASHBOARD_PID"
-}
 
 # Trap to clean up processes on script exit
 cleanup() {
@@ -107,15 +104,12 @@ echo "PID of ssh tunnel is $ieasyhydroforecast_ssh_tunnel_pid"
 # Start the Docker Compose service for the forecasting pipeline
 start_docker_compose_luigi
 
-# Start the Docker Compose service for the dashboards
-start_docker_compose_dashboards
-
 # Wait for forecasting pipeline to finish
 wait $DOCKER_COMPOSE_LUIGI_PID
 
 # Wait another 30 minutes
-echo "Waiting for 30 minutes before cleaning up..."
-sleep 1800
+#echo "Waiting for 30 minutes before cleaning up..."
+#sleep 1800
 
 # Additional actions to be taken after Docker Compose service stops
 echo "Docker Compose service has finished running"
