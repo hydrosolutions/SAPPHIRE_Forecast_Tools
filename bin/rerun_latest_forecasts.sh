@@ -112,6 +112,9 @@ done
 echo "SSH tunnel is available."
 echo "PID of ssh tunnel is $ieasyhydroforecast_ssh_tunnel_pid"
 
+# Reset the run date
+start_docker_container_reset_run_date
+
 # Start the Docker Compose service for the forecasting pipeline
 start_docker_compose_luigi
 

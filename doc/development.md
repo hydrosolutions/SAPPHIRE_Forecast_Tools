@@ -356,15 +356,11 @@ Pull the latest image from Docker Hub (if not yet available on your server):
 docker pull mabesa/sapphire-rerun:latest
 ```
 
-Run the image to reset:
+Then we run the reset_forecast_run_date module:
 ```bash
-docker run -d -e SAPPHIRE_OPDEV_ENV=True -v <full_path_to>/apps/config:/app/apps/config -v <full_path_to>/apps/internal_data:/app/apps/internal_data --name fcrerun mabesa/sapphire-rerun:latest
+nohup bash bin/rerun_latest_forecasts.sh <ieasyhydroforecast_data_root_dir > rerun.log 2>&1 &
 ```
-
-Then we can re-run the forecast pipeline with:
-```bash
-docker compose -f bin/docker-compose-luigi.yml up -d --force-recreate
-```
+Which will reset the last successful run date of the linear regression module to the day before the last forecast date, remove the necessary containers from the last forecast and run the forecast pipeline again.
 
 
 ### Forecast dashboard
