@@ -358,9 +358,27 @@ docker pull mabesa/sapphire-rerun:latest
 
 Then we run the reset_forecast_run_date module:
 ```bash
-nohup bash bin/rerun_latest_forecasts.sh <ieasyhydroforecast_data_root_dir > rerun.log 2>&1 &
+nohup bash bin/rerun_latest_forecasts.sh <ieasyhydroforecast_data_root_dir> > rerun.log 2>&1 &
 ```
 Which will reset the last successful run date of the linear regression module to the day before the last forecast date, remove the necessary containers from the last forecast and run the forecast pipeline again.
+
+nohup is used to run the command in the background and rerun.log is used to store the output of the command. The output of the command is stored in the rerun.log file. The 2>&1 redirects the standard error output to the standard output. This way, all output is stored in the rerun.log file. & runs the command in the background so you can continue to use the terminal after starting the process.
+
+You can check up on the progress of your forecast by running the following command in the terminal:
+```bash
+tail -f rerun.log
+```
+to read the output of the command in the terminal and
+```bash
+docker ps -a
+```
+to check the status of the docker containers.
+
+To inspect individual docker container logs you type:
+```bash
+docker logs <container_id>
+```
+where <container_id> is the id of the container you want to inspect. You can find the container id by running the docker ps -a command.
 
 
 ### Forecast dashboard
