@@ -3,7 +3,14 @@
 # This script runs the SAPPHIRE forecast tools in local deployment mode
 # Working directory if the root of the repository, i.e. SAPPHIRE_forecast_tools
 #
-# Useage: bash bin/run_sapphire_forecast_tools.sh <ieasyhydroforecast_data_root_dir>
+# Useage:
+# Run the script in your terminal:
+# bash bin/run_sapphire_forecast_tools.sh <ieasyhydroforecast_data_root_dir>
+# Run the script in the background:
+# nohup bash bin/run_sapphire_forecast_tools.sh <ieasyhydroforecast_data_root_dir > output.log 2>&1 &
+# note: nohup: no hangup, i.e. the process will not be terminated when the terminal is closed
+# note: > output.log 2>&1: redirect stdout and stderr to a file called output.log
+# note: &: run the process in the background
 #
 # Details: The script performs the following tasks and takes 4 minutes on a
 # reasonably fast machine with a good internet connection:
@@ -22,6 +29,10 @@
 # 5. bin/docker-compose.yml
 # 6. bin/.ssh/open_ssh_tunnel.sh
 # 7. bin/.ssh/close_ssh_tunnel.sh
+#
+#
+# Author: Beatrice Marti
+
 
 
 if test -z "$1"
@@ -58,7 +69,7 @@ start_docker_compose_luigi() {
   echo "Starting Docker Compose service for backend ..."
   docker compose -f bin/docker-compose-luigi.yml up -d &
   DOCKER_COMPOSE_LUIGI_PID=$!
-  echo "Docker Compose service started with PID $DOCKER_COMPOSE_PID"
+  echo "Docker Compose service started with PID $DOCKER_COMPOSE_LUIGI_PID"
 }
 
 # Function to start the Docker Compose service for the dashboards
@@ -66,7 +77,7 @@ start_docker_compose_dashboards() {
   echo "Starting Docker Compose service for the dashboards..."
   docker compose -f bin/docker-compose-dashboards.yml up -d &
   DOCKER_COMPOSE_DASHBOARD_PID=$!
-  echo "Docker Compose service started with PID $DOCKER_COMPOSE_PID"
+  echo "Docker Compose service started with PID $DOCKER_COMPOSE_DASHBOARD_PID"
 }
 
 # Trap to clean up processes on script exit
