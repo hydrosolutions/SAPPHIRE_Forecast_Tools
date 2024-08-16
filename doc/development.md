@@ -268,6 +268,10 @@ TODO: Bea Add flow chart with detailed I/O
 
 ### Preprocessing of gridded weather data (preprocessing_gateway)
 #### Description of module
+The proprocessing_gateway module gets weather forecasts and re-analysis weather data from ECMWF IFS as well as TopoPyScale snow model results that have been pre-processed in the SAPPHIRE Data Gateway. The module reads the data and prepares it for the hydrological models. The module is composed of two components that are run in a docker container:
+- Downolading of operational weather forecasts and downscaling of weather forecasts (Quantile_Mapping_OP.py)
+- Updating of re-analysis weather data and downscaling of re-analysis weather data (extend_era5_reanalysis.py)
+
 TODO: Sandro, please provide a detailed description of the module so that laypeople understand what happens. Similarly as if you'd give instructions to Copilot to write a script for you.
 
 Please feel free to add any other information that you think is relevant.
@@ -281,6 +285,13 @@ TODO: Sandro, please edit above as you see fit
 TODO: Sandro, please also list the required input files and the output files of the module, including a documentation of the requried formats. You can put that here or in a separate file and I will then figure out how to best integrate it into the documentation.
 
 #### How to run the tool
+First you might want to download hindcast data from the SAPPHIRE Data Gateway so that you can produce hindcasts with your models to calculate forecast skill statistics over an extended time period. You can do this by running the following command in the terminal:
+```bash
+SAPPHIRE_OPDEV_ENV=True ieasyhydroforecast_reanalysis_START_DATE=2009-01-01 ieasyhydroforecast_reanalysis_END_DATE=2023-12-31 python get_era5_reanalysis_data.py
+```
+
+
+
 TODO: Sandro, please provide instructions of how you run the module or scripts when you develop it.
 
 ### Linear regression (linear_regression)

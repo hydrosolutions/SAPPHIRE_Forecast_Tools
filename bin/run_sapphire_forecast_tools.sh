@@ -53,11 +53,19 @@ source ./bin/pull_docker_images.sh latest
 # Establish SSH tunnel (if required)
 source ../sensitive_data_forecast_tools/bin/.ssh/open_ssh_tunnel.sh
 
-# Function to start the Docker Compose service
-start_docker_compose() {
-  echo "Starting Docker Compose service..."
-  docker compose -f bin/docker-compose.yml up -d &
-  DOCKER_COMPOSE_PID=$!
+# Function to start the Docker Compose service for the backend pipeline
+start_docker_compose_luigi() {
+  echo "Starting Docker Compose service for backend ..."
+  docker compose -f bin/docker-compose-luigi.yml up -d &
+  DOCKER_COMPOSE_LUIGI_PID=$!
+  echo "Docker Compose service started with PID $DOCKER_COMPOSE_PID"
+}
+
+# Function to start the Docker Compose service for the dashboards
+start_docker_compose_dashboards() {
+  echo "Starting Docker Compose service for the dashboards..."
+  docker compose -f bin/docker-compose-dashboards.yml up -d &
+  DOCKER_COMPOSE_DASHBOARD_PID=$!
   echo "Docker Compose service started with PID $DOCKER_COMPOSE_PID"
 }
 
@@ -85,11 +93,14 @@ done
 echo "SSH tunnel is available."
 echo "PID of ssh tunnel is $ieasyhydroforecast_ssh_tunnel_pid"
 
-# Start the Docker Compose service
-start_docker_compose
+# Start the Docker Compose service for the forecasting pipeline
+start_docker_compose_luigi
 
-# Wait for Docker Compose service to finish
-wait $DOCKER_COMPOSE_PID
+# Start the Docker Compose service for the dashboards
+start_docker_compose_dashboards
+
+# Wait for forecasting pipeline to finish
+wait $DOCKER_COMPOSE_LUIGI_PID
 
 # Wait another 30 minutes
 echo "Waiting for 30 minutes before cleaning up..."
