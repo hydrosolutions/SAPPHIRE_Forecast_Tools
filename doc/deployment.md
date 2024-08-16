@@ -217,7 +217,11 @@ To test if the task scheduler works, you can run the task manually. You can also
 If you deploy for the first time, it is recommended to run hindcasts. This will produce the statistics on model efficiency and forecast errors displayed in the forecast dashboard. To run hindcasts, you will have to set the date in the file apps/internal_data/last_successful_run.txt to one calendar day before the date you want to start the hindcasts. The date must be in the format YYYY-MM-DD. We recommend starting the hindcasts with the date 2004-12-30. The hindcasts will take several hours to days to run. To speed up the process you can set write_excel in config/config_output.yaml to false. You can check the progress of the hindcasts by looking at the logs of the backend container in the Docker Desktop application.
 
 ### Triggering re-run of the forecast
+This will be integrated into the forecast dashboard or a button on the desktop. To be determined.
+
 TODO: Add information about how to deploy the trigger a re-run of the forecast.
+
+
 
 ### Forecast dashboard
 Pull the docker image from Docker Hub. Open a terminal and run the following command:

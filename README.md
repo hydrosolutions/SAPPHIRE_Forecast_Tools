@@ -28,7 +28,7 @@ Files that need to be reviewed and potentially edited or replaced for local depl
         |__ backend (being deprecated)
             The backend of the forecast tools. This is the component that produces the forecasts.
         |__ config
-            A demo-configuration of the forecast tools. 
+            A demo-configuration of the forecast tools.
              |__ locale
                  Translations for the forecast dashboard. Currently only available in English and Russian language.
 #            |__ .env
@@ -119,10 +119,12 @@ Input from users is welcome. Please use the GitHub issue tracker to report bugs 
 # Funding and contributions
 The [SAPPHIRE Central Asia project](https://www.hydrosolutions.ch/projects/sapphire-central-asia) is funded by the [Swiss Agency for Development and Cooperation (SDC)](https://www.sdc-cde.ch/en) and implemented by [hydrosolutions GmbH](https://www.hydrosolutions.ch/) in close collaboration with the Department of Operational Hydrology of Kyrgyz Hydromet. The SAPPHIRE Forecast Tools are developed by [hydrosolutions GmbH](https://www.hydrosolutions.ch/) with support from [encode](http://encode.global).
 
-This is a collaboraion  project where each contributor profited from input of all other contributors. However, we'd like to accknowledge the major contributions here more specifically:
+This is a collaboraion  project where each contributor profited from input of all other contributors. However, we'd like to accknowledge the major code contributions here more specifically:
 
-Aidar Zhumabaev [@LagmanEater](https://github.com/LagmanEater): Implementation of the forecast configuration dashboard (module forecast_configuration).  
-Adrian Kreiner [@adriankreiner](https://github.com/adriankreiner): Development of the packages [airGR_GM]() and [airgrdatassim](). Implementation of the operational hydrological forecasting with conceptual rainfall-runoff models (module ...).  
-Sandro Hunziker [@sandrohuni](https://github.com/sandrohuni): Implementation of the pre-processing of gridded meteorological data (module preprocessing_gateway) and implementation of the operational hydrological forecasting using machine learning models (module machine_learning).  
-Vjeko: Implementation of custom functions for the forecast dashboard (module forecast_dashboard).  
-Beatrice Marti [@mabesa](https://github.com/mabesa): Implementation of all the rest and coordination of the project.  
+- Aidar Zhumabaev [@LagmanEater](https://github.com/LagmanEater): Implementation of the forecast configuration dashboard (module forecast_configuration).
+- Maxat Pernebaev [@maxatp](https://github.com/maxatp): Code review and refactoring of the first version of the forecast tools.
+- Adrian Kreiner [@adriankreiner](https://github.com/adriankreiner): Development of the packages [airGR_GM]() and [airgrdatassim](). Implementation of the operational hydrological forecasting with conceptual rainfall-runoff models (module ...).
+- Sandro Hunziker [@sandrohuni](https://github.com/sandrohuni): Implementation of the pre-processing of gridded meteorological data (module preprocessing_gateway) and implementation of the operational hydrological forecasting using machine learning models (module machine_learning).
+- Vjeko: Implementation of custom functions for the forecast dashboard (module forecast_dashboard).
+- Davor: Support with the integration of the ieasyreports library.
+- Beatrice Marti [@mabesa](https://github.com/mabesa): Design & implementation of all the rest and coordination of the project.

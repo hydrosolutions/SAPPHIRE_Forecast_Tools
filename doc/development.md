@@ -48,6 +48,8 @@ This document describes how to develop the application and how to add hydrologic
       - [I/O](#io-3)
       - [How to run the tool](#how-to-run-the-tool-4)
     - [Post-processing of forecasts (postprocessing\_forecasts)](#post-processing-of-forecasts-postprocessing_forecasts)
+    - [Manual triggering of the forecast pipeline](#manual-triggering-of-the-forecast-pipeline)
+      - [How to re-run the forecast pipeline manually](#how-to-re-run-the-forecast-pipeline-manually)
     - [Forecast dashboard](#forecast-dashboard)
       - [Prerequisites](#prerequisites-6)
       - [How to run the forecast dashboard locally](#how-to-run-the-forecast-dashboard-locally)
@@ -342,6 +344,23 @@ TODO: Sandro, please provide instructions of how you run the module when you dev
 
 ### Post-processing of forecasts (postprocessing_forecasts)
 TODO: Bea
+
+### Manual triggering of the forecast pipeline
+To re-run a forecast (for example to include river runoff data that was not available at the time of the forecast), you can manually trigger the forecast pipeline. This process includes the re-setting of the last successful run date of the linear regression module to the day before the last forecast date. This is done with the module reset_forecast_run_date.
+
+#### How to re-run the forecast pipeline manually
+To do so, you can run the following sequence of commands in the terminal:
+
+Pull the latest image from Docker Hub (if not yet available on your server):
+```bash
+docker pull mabesa/sapphire-rerun:latest
+```
+
+Run the image to reset:
+```bash
+docker run -d -e SAPPHIRE_OPDEV_ENV=True -v <full_path_to>/apps/config:/app/apps/config -v <full_path_to>/apps/internal_data:/app/apps/internal_data --name fcrerun mabesa/sapphire-rerun:latest
+```
+
 
 ### Forecast dashboard
 TODO: Bea
