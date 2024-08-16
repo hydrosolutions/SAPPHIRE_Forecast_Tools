@@ -13,6 +13,11 @@ COPY apps/forecast_dashboard /app/apps/forecast_dashboard
 # Specify the working directory inside the container
 WORKDIR /app/apps/forecast_dashboard
 
+# List all files in the /app directory
+RUN ls -la /app
+RUN ls -la /app/apps
+RUN ls -la /app/apps/forecast_dashboard
+
 # Env
 ENV SAPPHIRE_OPDEV_ENV=True
 
