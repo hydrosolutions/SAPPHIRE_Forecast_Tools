@@ -396,7 +396,7 @@ jobs:
       # Push the image to Dockerhub
       - name: Push the image to Dockerhub
         run: |
-          #docker push "${{ env.DASHBOARD_IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
+          docker push "${{ env.DASHBOARD_IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
 
 
   push_postprocessing_runoff_to_Dckerhub:
