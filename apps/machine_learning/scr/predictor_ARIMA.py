@@ -82,6 +82,12 @@ class PREDICTOR():
         prediction = predictions * (max_discharge - min_discharge) + min_discharge
         #reshape from 6, 1 to 6
         prediction = prediction.reshape(-1)
+
+        # round predictions to 2 decimal places
+        prediction = np.round(prediction, 2)
+        # clip negative values to 0
+        prediction = np.clip(prediction, 0, None)
+        
         return prediction
     
     def create_prediction_df(self, predictions: darts.TimeSeries, code: int) -> pd.DataFrame:
@@ -92,7 +98,7 @@ class PREDICTOR():
 
         preds_df['date'] = dates
 
-        preds_df['discharge'] = self.rescale_predictions(preds_df['discharge'].values, code)
+        preds_df['Q'] = self.rescale_predictions(preds_df['discharge'].values, code)
 
         preds_df['code'] = code
 
@@ -104,7 +110,7 @@ class PREDICTOR():
         #plot df rivers to date of forecast
         plt.plot(df_rivers['date'].iloc[-input_length:], df_rivers['discharge'].iloc[-input_length:], label='Past Discharge', color='black')
         #plot the predictions
-        plt.plot(df_predictions['date'], df_predictions['discharge'], label='Prediction', color='blue')
+        plt.plot(df_predictions['date'], df_predictions['Q'], label='Prediction', color='blue')
         plt.legend()
         plt.xlabel('Date')
         plt.ylabel('Discharge [m3/s]')

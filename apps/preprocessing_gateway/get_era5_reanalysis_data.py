@@ -3,6 +3,10 @@
 # Description: This script downloads ERA5 reanalysis data from the data gateway and performs quantile mapping on it. 
 # Afterwards the script is save as a csv file.
 
+# NOTE: This script is used to get the initial data for the reanalysis. 
+# Afterwards the data is always extended with the operational reanalysis data
+# This extension is done with the script: extend_era5_reanalysis.py
+
 # --------------------------------------------------------------------
 # USAGE
 # SAPPHIRE_OPDEV_ENV=True ieasyhydroforecast_reanalysis_START_DATE=2009-01-01 ieasyhydroforecast_reanalysis_END_DATE=2023-12-31 python get_era5_reanalysis_data.py
