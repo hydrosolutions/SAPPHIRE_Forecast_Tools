@@ -12,7 +12,7 @@ if (Sys.getenv("IN_DOCKER_CONTAINER")=="") {
   # This code assumes that forecast_configuration has been opened in
   # apps/configuration_dashboard for development
   setwd(here())
-  setwd("apps/conceptual_model")
+  # setwd("apps/conceptual_model")
   print(getwd())
   if (Sys.getenv("SAPPHIRE_OPDEV_ENV")=="True") {
     if (!file.exists("../../../sensitive_data_forecast_tools/config/.env_develop_kghm")) {
@@ -45,12 +45,13 @@ if (Sys.getenv("IN_DOCKER_CONTAINER")=="") {
   }
 }
 
-# print(Sys.getenv("ieasyhydroforecast_PATH_TO_BASININFO"))
+print(Sys.getenv("ieasyhydroforecast_PATH_TO_BASININFO"))
  
 ##################################################################
 # Have to be in folder: cd /Users/adrian/Documents/GitHub/SAPPHIRE_Forecast_Tools/apps/conceptual_model
 # run with: SAPPHIRE_OPDEV_ENV=True Rscript run_operation_forecasting_CM.R
-
+# env file is in: /data/sensitive_data_forecast_tools/config/.env_develop_kghm
+# .json file is in: 
 ##################################################################
 # 0 Library and Function ####
 library(devtools, quietly = TRUE)
@@ -86,8 +87,8 @@ fun_mod_mapping <- list(
 
 
 FUN_MOD <- fun_mod_mapping[[as.character(Code)]]
- 
-# # basin specific path 
+
+# # basin specific path
 dir_basin <- file.path(Sys.getenv("ieasyhydroforecast_PATH_TO_BASININFO"), Code)
 dir_Output <- file.path(Sys.getenv("ieasyhydroforecast_PATH_TO_INITCOND"), Code)
 dir_Results <- file.path(Sys.getenv("ieasyhydroforecast_PATH_TO_RESULT"), Code)
@@ -105,12 +106,12 @@ load(file.path(dir_basin,"Basin_Info.RData"))
 
 
 Nb_ens <- c(1:50)
-NbMbr <- 200L
+NbMbr <- 2L
 DaMethod <- "PF"
 StatePert <- c("Rout", "Prod", "UH1", "UH2")
 eps <- 0.65
 
-lag_days <- 180
+lag_days <- 10
 forecast_mode <- "daily"
 ################### RUNNING ###################
 
@@ -209,9 +210,6 @@ plot <- plot_forecast(forecast_date = forecast_date,
 plot
 ggsave(plot,file = paste0(dir_Results,"/plot/Overviewplot_",Basin_Info$BasinCode,"_",forecast_date_format,".pdf"), width = 10, height = 6, dpi = 300)
 
-
-
-
 # Step 7: Hindcast and save  ####
 forecast_statistics <- forecast_statistics %>%
   mutate(forecast_date = forecast_date) %>%
@@ -230,7 +228,7 @@ if (inherits(existing_forecasts, "try-error") || all(is.na(existing_forecasts)))
            date = as.Date(date, format = "%d.%m.%Y"))
   last_forecast_date <- as.Date(max(existing_forecasts$forecast_date))
 }
-
+#
 
 # MULTIPLE run a day
 if ((forecast_mode == "daily") & (forecast_date - last_forecast_date == 0)){
