@@ -4,6 +4,7 @@
 # stop: docker-compose -f /path/to/docker-compose.yml down
 
 services:
+  name: sapphire-backend
 
   luigid:
     #image: mabesa/sapphire-pipeline:latest

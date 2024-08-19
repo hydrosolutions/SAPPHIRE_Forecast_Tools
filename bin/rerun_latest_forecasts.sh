@@ -50,18 +50,22 @@ echo $ieasyhydroforecast_data_root_dir
 # Clean up docker space
 echo "Removing all superfluous containers and images"
 docker compose -f bin/docker-compose-luigi.yml down
-# Module pre-processing runoff
-docker stop preprunoff
-docker rm preprunoff
-# Module pre-processing meteorological data from data gateway
-docker stop prepgateway
-docker rm prepgateway
-# Module Linear regression
-docker stop linreg
-docker rm linreg
-# Module post-processing of forecasts
-docker stop postprocessing
-docker rm postprocessing
+
+# Function to stop and remove a container if it exists
+stop_and_remove_container() {
+    container_name=$1
+    if [ "$(docker ps -q -f name=$container_name)" ]; then
+        docker stop $container_name
+    fi
+    if [ "$(docker ps -a -q -f name=$container_name)" ]; then
+        docker rm $container_name
+    fi
+}
+# List all containers that may be called in the pipeline
+stop_and_remove_container preprunoff
+stop_and_remove_container prepgateway
+stop_and_remove_container linreg
+stop_and_remove_container postprocessing
 
 # Establish SSH tunnel (if required)
 source ../sensitive_data_forecast_tools/bin/.ssh/open_ssh_tunnel.sh
