@@ -52,7 +52,6 @@ runModel_withoutDA <- function(forecast_date,
     )
     
     if (any(sapply(c(FUN_MODGlacierList), function(x) identical(FUN_MOD, match.fun(x))))) {
-      print("Glacier model")
       runOptions <- airGR::CreateRunOptions(
         FUN_MOD = FUN_MOD,
         InputsModel = inputsModel,
@@ -72,7 +71,6 @@ runModel_withoutDA <- function(forecast_date,
       )
       
     } else {
-      print("Non-glacier model")
       runOptions <- airGR::CreateRunOptions(
         FUN_MOD = FUN_MOD,
         InputsModel = inputsModel,
@@ -330,7 +328,6 @@ calculate_stats_forecast <- function(forecast) {
   forecast_statistics <- forecast %>%
     group_by(date) %>%
     summarize(
-      median_Qsim = median(Qsim, na.rm = TRUE),
       sd_Qsim = sd(Qsim, na.rm = TRUE),
       Q5 = quantile(Qsim, probs = 0.05, na.rm = TRUE),
       Q10 = quantile(Qsim, probs = 0.10, na.rm = TRUE),

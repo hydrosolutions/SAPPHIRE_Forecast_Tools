@@ -52,10 +52,10 @@ plot_forecast <- function(forecast_date,
     
     # Observations 
     geom_point(data = basinObs_plot, aes(x = date, y = Qmm, color = "Observations"), size = 2) +
-    geom_line(data = basinObs_plot, aes(x = date, y = Qmm, color = "Observations"), size = 1) +
+    geom_line(data = basinObs_plot, aes(x = date, y = Qmm, color = "Observations"), linewidth = 1) +
     # Model 
-    geom_line(data = ResPF_initModel_plot, aes(x = date, y = Q_mean, color = 'Model'), size = 1) +
-    geom_line(data = forecast_statistics, aes(x = date, y = median_Qsim, color = 'Median Forecast'), size = 1) +
+    geom_line(data = ResPF_initModel_plot, aes(x = date, y = Q_mean, color = 'Model'), linewidth = 1) +
+    geom_line(data = forecast_statistics, aes(x = date, y = Q50, color = 'Median Forecast'), linewidth = 1) +
     geom_ribbon(data = forecast_statistics, aes(x = date, ymin = Q5, ymax = Q95, fill = '90% Quantile'), alpha = 0.5) +
     geom_ribbon(data = forecast_statistics, aes(x = date, ymin = Q25, ymax = Q75, fill = '50% Quantile'), alpha = 0.5) +
     

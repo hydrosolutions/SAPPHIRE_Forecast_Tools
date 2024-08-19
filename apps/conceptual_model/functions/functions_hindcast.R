@@ -185,7 +185,6 @@ Qsim_data <- as_tibble(Result_DA$QsimEns) %>%
 forecast_statistics <- Qsim_data %>%
   group_by(date) %>%
   summarize(
-    median_Qsim = median(Qsim, na.rm = TRUE),
     sd_Qsim = sd(Qsim, na.rm = TRUE),
     Q5 = quantile(Qsim, probs = 0.05, na.rm = TRUE),
     Q10 = quantile(Qsim, probs = 0.10, na.rm = TRUE),
