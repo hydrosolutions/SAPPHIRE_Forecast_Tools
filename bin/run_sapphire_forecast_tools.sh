@@ -5,16 +5,19 @@
 #
 # Useage:
 # Run the script in your terminal:
-# bash bin/run_sapphire_forecast_tools.sh <ieasyhydroforecast_data_root_dir>
+# bash bin/run_sapphire_forecast_tools.sh <env_file_path>
 # Run the script in the background:
-# nohup bash bin/run_sapphire_forecast_tools.sh <ieasyhydroforecast_data_root_dir > output.log 2>&1 &
+# nohup bash bin/run_sapphire_forecast_tools.sh <env_file_path> > output.log 2>&1 &
 # note: nohup: no hangup, i.e. the process will not be terminated when the terminal is closed
 # note: > output.log 2>&1: redirect stdout and stderr to a file called output.log
 # note: &: run the process in the background
 #
 # Details: The script performs the following tasks and takes 4 minutes on a
 # reasonably fast machine with a good internet connection:
-# 1. Parse the argument <ieasyhydroforecast_data_root_dir> which is the absolute path to the ieasyforecast data root directory
+# 1. Parse the argument <env_file_path> which is the absolute path to the .env
+#    file containing your environment variables for the SAPPHIRE forecast tools
+#    and derive the ieasyhydroforecast_data_root_dir and ieasyhydroforecast_data_ref_dir
+#    from the env_file_path.
 # 2. Clean up docker space (remove all containers and images)
 # 3. Build the Docker images with the tag "latest"
 # 4. Establish an SSH tunnel to the SAPPHIRE server
@@ -30,6 +33,26 @@
 # 6. bin/.ssh/open_ssh_tunnel.sh
 # 7. bin/.ssh/close_ssh_tunnel.sh
 #
+# Note: The script assumes the location of the .env file  and the .ssh directory
+# in the ieasyforecast data reference directory. The ieasyhydroforecast data
+# root directory is assumed to be one level above the ieasyforecast data reference
+# directory.
+# Assumed data directory sturcture:
+# ieasyhydroforecast_data_root_dir
+#   |- SAPPHIRE_forecast_tools
+#       |- apps
+#       |- bin
+#       |- ...
+#   |- ieasyhydroforecast_data_ref_dir
+#       |- config
+#           |- .env  # <- env_file_path
+#           |- ...
+#       |- bin
+#           |- .ssh
+#               |- open_ssh_tunnel.sh
+#               |- close_ssh_tunnel.sh
+#           |- ...
+#       |- ...
 #
 # Author: Beatrice Marti
 
@@ -37,19 +60,34 @@
 
 if test -z "$1"
 then
-      echo "Usage bash ./bin/run.sh ieasyhydroforecast_data_root_dir"
-      echo "No tag was passed!"
-      echo "Please pass the absolute path to your ieasyforecast data root directory to the script"
-      echo "e.g. /Users/username/Documents/sapphire_data"
-      echo "Typically you get the directory with pwd (print working directory) command"
-      echo "from the terminal when you are in the ieasyforecast data root directory"
-      echo "then go one directory up and copy the path"
+      echo "Usage bash ./bin/run_sapphire_forecast_tools.sh path_to_env_file"
+      echo "No path to .env file was passed!"
+      echo "Please pass the absolute path to your .env file to the script"
+      echo "e.g. /Users/DemoUser/Documents/sapphire_data/config/.env"
       exit 1
 fi
 
 # Parse argument
-export ieasyhydroforecast_data_root_dir=$1
-echo $ieasyhydroforecast_data_root_dir
+env_file_path=$1
+
+# Derive ieasyhydroforecast_data_root_dir by removing the filename and 3 folder hierarchies
+ieasyhydroforecast_data_root_dir=$(dirname "$env_file_path")
+ieasyhydroforecast_data_root_dir=$(dirname "$ieasyhydroforecast_data_root_dir")
+ieasyhydroforecast_data_ref_dir=$(dirname "$ieasyhydroforecast_data_root_dir")
+ieasyhydroforecast_data_root_dir=$(dirname "$ieasyhydroforecast_data_root_dir")
+
+echo "ieasyhydroforecast_data_ref_dir: $ieasyhydroforecast_data_ref_dir"
+echo "ieasyhydroforecast_data_root_dir: $ieasyhydroforecast_data_root_dir"
+export ieasyhydroforecast_data_ref_dir
+export ieasyhydroforecast_data_root_dir
+
+# Load environment variables from the specified .env file
+if [ -f "$env_file_path" ]; then
+    source "$env_file_path"
+else
+    echo ".env file not found at $env_file_path!"
+    exit 1
+fi
 
 # Clean up docker space
 echo "Removing all containers and images"
@@ -62,7 +100,7 @@ echo "Pulling with TAG=latest"
 source ./bin/pull_docker_images.sh latest
 
 # Establish SSH tunnel (if required)
-source ../sensitive_data_forecast_tools/bin/.ssh/open_ssh_tunnel.sh
+source $ieasyhydroforecast_data_ref_dir/bin/.ssh/open_ssh_tunnel.sh
 
 # Function to start the Docker Compose service for the backend pipeline
 start_docker_compose_luigi() {
@@ -122,7 +160,7 @@ echo "Docker Compose service has finished running"
 
 # Close SSH tunnel (if required)
 #echo "Closing the SSH tunnel"
-#source ../sensitive_data_forecast_tools/bin/.ssh/close_ssh_tunnel.sh
+#source $ieasyhydroforecast_data_ref_dir/bin/.ssh/close_ssh_tunnel.sh
 
 # Clean up
 #bash ./bin/clean_docker.sh
