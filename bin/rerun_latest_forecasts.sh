@@ -4,15 +4,15 @@
 #
 # Useage:
 # Run the script in your terminal:
-# bash bin/rerun_latest_forecasts.sh <ieasyhydroforecast_data_root_dir>
+# bash bin/rerun_latest_forecasts.sh <env_file_path>
 # Run the script in the background:
-# nohup bash bin/rerun_latest_forecasts.sh <ieasyhydroforecast_data_root_dir > output_rerun.log 2>&1 &
+# nohup bash bin/rerun_latest_forecasts.sh <env_file_path > output_rerun.log 2>&1 &
 # note: nohup: no hangup, i.e. the process will not be terminated when the terminal is closed
 # note: > output_rerun.log 2>&1: redirect stdout and stderr to a file called output_rerun.log
 # note: &: run the process in the background
 #
 # Details: The script performs the following tasks:
-# 1. Parse the argument <ieasyhydroforecast_data_root_dir> which is the absolute path to the ieasyforecast data root directory
+# 1. Parse the argument <env_file_path> which is the absolute path to the ieasyforecast environment file
 # 2. Clean up docker space (remove all superfluous containers and images)
 # 3. Build the Docker images with the tag "latest"
 # 4. Establish an SSH tunnel to the SAPPHIRE server
@@ -33,13 +33,10 @@
 
 if test -z "$1"
 then
-      echo "Usage bash ./bin/rerun_latest_forecasts.sh ieasyhydroforecast_data_root_dir"
+      echo "Usage bash ./bin/rerun_latest_forecasts.sh env_file_path"
       echo "No tag was passed!"
-      echo "Please pass the absolute path to your ieasyforecast data root directory to the script"
-      echo "e.g. /Users/username/Documents/sapphire_data"
-      echo "Typically you get the directory with pwd (print working directory) command"
-      echo "from the terminal when you are in the ieasyforecast data root directory"
-      echo "then go one directory up and copy the path"
+      echo "Please pass the absolute path to your .env file to the script"
+      echo "e.g. /Users/DemoUser/Documents/sapphire_data/config/.env"
       exit 1
 fi
 

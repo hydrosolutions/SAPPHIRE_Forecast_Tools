@@ -69,10 +69,10 @@ fi
 
 # Parse argument
 env_file_path=$1
+echo "env_file_path: $env_file_path"
 
-# Derive ieasyhydroforecast_data_root_dir by removing the filename and 3 folder hierarchies
+# Derive ieasyhydroforecast_data_root_dir by removing the filename and 2 folder hierarchies
 ieasyhydroforecast_data_root_dir=$(dirname "$env_file_path")
-ieasyhydroforecast_data_root_dir=$(dirname "$ieasyhydroforecast_data_root_dir")
 ieasyhydroforecast_data_ref_dir=$(dirname "$ieasyhydroforecast_data_root_dir")
 ieasyhydroforecast_data_root_dir=$(dirname "$ieasyhydroforecast_data_root_dir")
 
