@@ -174,9 +174,12 @@ sleep 1800
 # Additional actions to be taken after Docker Compose service stops
 echo "Docker Compose service has finished running"
 
-# Close SSH tunnel (if required)
-#echo "Closing the SSH tunnel"
-#source $ieasyhydroforecast_data_ref_dir/bin/.ssh/close_ssh_tunnel.sh
-
-# Clean up
-#bash ./bin/clean_docker.sh
+echo "      "
+echo "------"
+echo "      "
+echo "You have now run the SAPPHIRE forecast tools for the first time!"
+echo "      "
+echo "Next steps (follow the docs for more detailed instructions):"
+echo "1. Check the logs of the Docker Compose service for any errors."
+echo "2. Check if the dashboards are running and displaying as expected."
+echo "3. Set up cron jobs for the dashboard services and for the daily run of the forecasting pipeline."

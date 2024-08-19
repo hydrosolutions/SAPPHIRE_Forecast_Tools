@@ -65,14 +65,13 @@ git clone https://github.com/hydrosolutions/SAPPHIRE_Forecast_Tools.git
 </details>
 
 ## General information for deployment
-We provide a script the should take care of most deployment steps for you.
+We provide a script the should take care of most deployment steps for you and run the forecast tools for the first time.
 The script is located in the bin folder and run as follows from the SAPPHIRE_Forecast_Tools folder:
 ```bash
-bash .bin/deploy_sapphire_forecast_tools.sh <env_file_path>
+nohup bash .bin/deploy_sapphire_forecast_tools.sh <env_file_path> > deployment.log 2>&1 &
 ```
-where the env_file_path is the absolute path to your .env file.
+where the env_file_path is the absolute path to your .env file. This command will log all output of the command to a file deployment.log in your folder SAPPHIRE_Forecast_Tools. You can view the progress of the deployment script by looking at the log file, for example with `less deployment.log`, and by checking the progress of the individual containers with `docker ps -a` and `docker logs <container_name>`.
 
-During operational runtime, you will set-up cron jobs to run the forecast tools on a daily basis automatically and to keep the dashboards running.
 
 ## Deployment of demo version on a local machine
 The demo version comes with public example data as well as with the configuration files that are set up to work with the example data. The demo version is a good starting point to get to know the forecast tools and to test the basic functionality of the tools. Please note that only linear regression models are  currently available in the demo version.
