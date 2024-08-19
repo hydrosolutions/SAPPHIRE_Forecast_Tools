@@ -1,12 +1,31 @@
 
 # convert daily forecast to pentadal and decadal 
-convert_daily_to_pentad_decad <- function(forecast_data, time_steps) {
-  forecast_data %>%
-    dplyr::filter(forecast_date %in% time_steps) %>%
-    group_by(forecast_date) %>%
-    summarise(Qsim = mean(median_Qsim))
+# convert_daily_to_pentad_decad <- function(forecast_data, time_steps) {
+#   forecast_data %>%
+#     dplyr::filter(forecast_date %in% time_steps) %>%
+#     group_by(forecast_date) %>%
+#     summarise(Qsim = mean(Q50))
+# }
+convert_daily_to_pentad_decad <- function(forecast_data, time_steps, period) {
+  if (period == "pentad") {
+    forecast_data <- forecast_data %>%
+      dplyr::filter(forecast_date %in% time_steps) %>%
+      dplyr::mutate(period_value = get_pentad(date)) %>%
+      dplyr::group_by(forecast_date) %>%
+      dplyr::filter(period_value == min(period_value)) %>%
+      dplyr::summarise(Qsim = mean(Q50))
+    
+    
+  } else if (period == "decad") {
+    forecast_data <- forecast_data %>%
+      dplyr::filter(forecast_date %in% time_steps) %>%
+      dplyr::mutate(period_value = get_decad(date)) %>%
+      dplyr::group_by(forecast_date)  %>%
+      dplyr::filter(period_value == min(period_value)) %>%
+      dplyr::summarise(Qsim = mean(Q50))
+  }
+  return(forecast_data)
 }
-
 
 get_hindcast_period <- function(start_date, 
                                 end_date, 
@@ -24,7 +43,7 @@ get_hindcast_period <- function(start_date,
   start_date <- as.Date(start_date)
   end_date <- as.Date(end_date)
   
-  if (forecast_mode == "pentadal") {
+  if (forecast_mode == "pentad") {
     time_steps <- pentadal_days(start_date, end_date)
   } else if (forecast_mode == "daily") {
     time_steps <- seq(from = start_date, to = end_date, by = "days")
@@ -74,7 +93,7 @@ get_hindcast_period <- function(start_date,
                              StatePert = StatePert)
     
     # if the forecast_mode is pentadal
-    if (forecast_mode == "pentadal") {
+    if (forecast_mode == "pentad") {
       hindcast <- hindcast %>% 
         summarise(Qsim = mean(median_Qsim)) %>%
         mutate(forecast_date = forecast_date, 
@@ -108,18 +127,18 @@ get_hindcast <- function(forecast_date,
                          NbMbr, 
                          StatePert) {
   
-  modes <- c("daily", "pentadal")
+  modes <- c("daily", "pentad")
   
   # check that the forecast_mode is either daily or pendadal 
   if (!forecast_mode %in% modes) {
-    stop("Error: forecast_mode must be either 'daily' or 'pentadal'.")
+    stop("Error: forecast_mode must be either 'daily' or 'pentad'.")
   }
   # if the forecast_mode is daily, then the forecast_end is 14 days after the forecast_date
   if (forecast_mode == "daily") {
     forecast_end <- forecast_date + 14
   }
   
-  if (forecast_mode == "pentadal") {
+  if (forecast_mode == "pentad") {
     forecast_end <- get_forecast_end(forecast_date)
   }
   

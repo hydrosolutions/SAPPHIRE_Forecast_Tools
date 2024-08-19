@@ -119,7 +119,7 @@ for (Code in config$codes) {
   load(file.path(dir_basin,"Basin_Info.RData"))
 
   ## 1.2 Discharge observations ####
-  Q_obs <- process_discharge_data(file.path(dir_Q, "runoff_day.csv"), Basin_Info$BasinCode, Basin_Info$BasinArea_m2)
+  Q_obs <- process_discharge_data(file.path(dir_Q, Sys.getenv("ieasyhydroforecast_FILE_Q")), Basin_Info$BasinCode, Basin_Info$BasinArea_m2)
 
   ## 1.3 Operational forcing data  ####
   basinObs_cf <- process_forecast_forcing(member_id = "cf",

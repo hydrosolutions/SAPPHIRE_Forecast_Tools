@@ -66,6 +66,7 @@ source("functions/functions_operational.R")
 source("functions/functions_plot.R")
 source("functions/functions_hindcast.R")
 
+
 ################### CHANGE ###################
 forecast_date <- as.Date("2024-07-31") # change this when DG is running again to today()
 
@@ -102,6 +103,7 @@ eps <- config$eps
 lag_days <- config$lag_days
 forecast_mode <- "daily"
 
+
 forecast_date_format <- forecast_date %>%
   format(format = "%Y%m%d")
 
@@ -122,13 +124,14 @@ for (Code in config$codes) {
   load(file.path(dir_basin,"param.RData"))
   load(file.path(dir_basin,"Basin_Info.RData"))
   load(file.path(dir_Output, "runResults_op.RData"))
+  Enddate_operational <- as.Date(max(runResults_op$DatesR))
   
   # pf: one file per basin
   pfP_forecast_filename <- paste0(Code,Sys.getenv("ieasyhydroforecast_FILE_PF_P"))
   pfT_forecast_filename <- paste0(Code,Sys.getenv("ieasyhydroforecast_FILE_PF_T"))
 
   ## 1.2 Discharge observations ####
-  Q_obs <- process_discharge_data(file.path(dir_Q, "runoff_day.csv"), Basin_Info$BasinCode, Basin_Info$BasinArea_m2)
+  Q_obs <- process_discharge_data(file.path(dir_Q, Sys.getenv("ieasyhydroforecast_FILE_Q")), Basin_Info$BasinCode, Basin_Info$BasinArea_m2)
   
   ## 1.3 Operational forcing data  ####
   basinObs_cf <- process_forecast_forcing(member_id = "cf",
@@ -137,6 +140,23 @@ for (Code in config$codes) {
                                           file_path_Temp = file.path(dir_Control, cfT_forecast_filename),
                                           Lat = Basin_Info$BasinLat_rad,
                                           Q_obs = Q_obs)
+  
+  min_basinObs_cf <- as.Date(min(basinObs_cf$date))
+  
+  # If the last run is a long time ago (more than 185d, for example after triggering run_initial.R)
+  if (min_basinObs_cf >  max(runResults_op$DatesR)) {
+    basinObs_hind <- process_forecast_forcing(member_id = "cf",
+                                              Basin_code = Basin_Info$BasinCode,
+                                              file_path_Ptot = file.path(dir_hindcast, P_hindcast_filename),
+                                              file_path_Temp = file.path(dir_hindcast, T_hindcast_filename),
+                                              Lat = Basin_Info$BasinLat_rad,
+                                              Q_obs = Q_obs)
+    
+    # combine
+    basinObs_cf <- rbind(basinObs_hind, basinObs_cf)
+    basinObs_cf <- basinObs_cf %>%
+      distinct(date, .keep_all = TRUE)
+  }
   
   
   basinObs_pf <- process_forecast_forcing(member_id = Nb_ens,
@@ -165,6 +185,9 @@ for (Code in config$codes) {
   # plotting
   # plot_ensemble_forecast( start_date = as.Date(forecast_date-15) , Parameter = "Ptot", basinObs_cf, basinObs_pf)
   # plot_ensemble_forecast( start_date = as.Date(forecast_date-15) , Parameter = "Temp", basinObs_cf, basinObs_pf)
+  
+
+  
   
   
   # Step 2 Model run without DA ####
@@ -201,6 +224,9 @@ for (Code in config$codes) {
   
   # Step 5: Calculate statistics ####
   forecast_statistics <- calculate_stats_forecast(forecast)
+  forecast_statistics <- forecast_statistics %>%
+    mutate(forecast_date = forecast_date) %>%
+    select(forecast_date, everything())
   
   # Step 6: Plotting  ####
   plot <- plot_forecast(forecast_date = forecast_date,
@@ -214,10 +240,7 @@ for (Code in config$codes) {
   ggsave(plot,file = paste0(dir_Results,"/plot/Overviewplot_",Basin_Info$BasinCode,"_",forecast_date_format,".pdf"), width = 10, height = 6, dpi = 300)
   
   # Step 7: Hindcast and save  ####
-  forecast_statistics <- forecast_statistics %>%
-    mutate(forecast_date = forecast_date) %>%
-    select(forecast_date, everything())
-  
+  ## 7.1 Daily   ####
   existing_forecasts <- try(read_csv(paste0(dir_Results, "/data/daily_", Basin_Info$BasinCode, ".csv"), show_col_types = FALSE), silent = TRUE)
   
   # CASE 1: file does not exist or is empty 
@@ -236,8 +259,10 @@ for (Code in config$codes) {
     # CASE 2.1: ;ULTIPLE RUN A DAY 
     if (forecast_date == last_forecast_date){
       print("Multiple run: overwrite the forecast from today")
+      
       filtered_forecasts <- existing_forecasts %>%
-        filter(forecast_date != date)
+        filter(forecast_date != !!forecast_date) # !! needed because of the same name of column and variable
+      
       total_forecast <- rbind(filtered_forecasts, forecast_statistics)
       write.csv(total_forecast, paste0(dir_Results, "/data/daily_", Basin_Info$BasinCode, ".csv"), row.names = FALSE)
       
@@ -280,117 +305,41 @@ for (Code in config$codes) {
                                       StatePert = StatePert,
                                       eps = eps)
       
-      new_forecast <- rbind(hindcast, forecast_statistics)
-      total_forecast <- rbind(existing_forecasts, new_forecast)
+      forecast_statistics <- rbind(hindcast, forecast_statistics)
+      total_forecast <- rbind(existing_forecasts, forecast_statistics)
       write.csv(total_forecast, paste0(dir_Results, "/data/daily_", Basin_Info$BasinCode, ".csv"), row.names = FALSE)
     }
   }
+
+
+  
+  ## 7.2 pentadal  ####
+  if ((length(pentadal_days(forecast_date, forecast_date)) == 0) && !(exists("start_date_hindcast"))) {
+    print("not pentadal timestep no hindcasting")
+  } else if (!(length(pentadal_days(forecast_date, forecast_date)) == 0) && !(exists("start_date_hindcast"))) {
+    print("Pentadal forecast day, no hindcasting")
+    pentadal_steps <- pentadal_days(forecast_date, forecast_date)
+    process_save_time_steps(pentadal_steps, "pentad", start_date_hindcast, forecast_date, dir_Results, Basin_Info, forecast_statistics)
+    
+  } else if (exists("start_date_hindcast")) {
+    print("Pentadal day, hindcasting")
+    pentadal_steps <- pentadal_days(start_date_hindcast, forecast_date)
+    process_save_time_steps(pentadal_steps, "pentad", start_date_hindcast, forecast_date, dir_Results, Basin_Info, forecast_statistics)
+  }
+  
+  ## 7.3 decadal  ####
+  if ((length(decadal_days(forecast_date, forecast_date)) == 0) && !(exists("start_date_hindcast"))) {
+    print("not pentadal timestep no hindcasting")
+  } else if (!(length(decadal_days(forecast_date, forecast_date)) == 0) && !(exists("start_date_hindcast"))) {
+    print("Decadal forecast day, no hindcasting")
+    decadal_steps <- decadal_days(forecast_date, forecast_date)
+    process_save_time_steps(decadal_steps, "decad", start_date_hindcast, forecast_date, dir_Results, Basin_Info, forecast_statistics)
+    
+  } else if (exists("start_date_hindcast")) {
+    print("Decadal day, hindcasting")
+    decadal_steps <- decadal_days(start_date_hindcast, forecast_date)
+    process_save_time_steps(decadal_steps, "decad", start_date_hindcast, forecast_date, dir_Results, Basin_Info, forecast_statistics)
+  }
 }
   
-  
-  
-  # forecast_statistics <- forecast_statistics %>%
-  #   mutate(forecast_date = forecast_date) %>%
-  #   select(forecast_date, everything())
-  # 
-  # existing_forecasts <- try(read_csv(paste0(dir_Results, "/data/daily_", Basin_Info$BasinCode, ".csv"), show_col_types = FALSE), silent = TRUE)
-  # 
-  # if (inherits(existing_forecasts, "try-error") || all(is.na(existing_forecasts)))  {
-  #   print("Empty file or file does not exist")
-  #   # Save the new forecast statistics
-  #   write.csv(forecast_statistics, paste0(dir_Results, "/data/daily_", Basin_Info$BasinCode, ".csv"), row.names = FALSE)
-  #   last_forecast_date <- forecast_date
-  # } else {
-  #   existing_forecasts <- existing_forecasts %>%
-  #     mutate(forecast_date = as.Date(forecast_date, format = "%d.%m.%Y"),
-  #            date = as.Date(date, format = "%d.%m.%Y"))
-  #   last_forecast_date <- as.Date(max(existing_forecasts$forecast_date))
-  # }
-  
-  # MULTIPLE run a day
-  # if ((forecast_mode == "daily") & (forecast_date - last_forecast_date == 0)){
-  #   print("")
-  #   # stop the script
-  # } else {
-  
-   
-    # MULTIPLE RUN A DAY
-#     if ((forecast_mode == "daily") & (forecast_date - last_forecast_date == 0)){
-#       print("Multiple run: overwrite the forecast from today")
-#       
-#       
-#       write.csv(total_forecast, paste0(dir_Results, "/data/daily_", Basin_Info$BasinCode, ".csv"), row.names = FALSE)
-#       
-#     }
-#     # HINDCASTING IF THERE ARE MISSING FORECAST (daily)
-#     else if ((forecast_mode == "daily") & (forecast_date - last_forecast_date > 1)) {
-#       start_date_hindcast <- last_forecast_date + 1
-#       end_date_hindcast <- forecast_date - 1
-#       print(paste("There are missing forecasts from", start_date_hindcast, "to", end_date_hindcast, "-> hindcasting"))
-#   
-#       # get all the hindcasting data as well
-#       basinObs_hind <- process_forecast_forcing(member_id = "cf",
-#                                                 Basin_code = Basin_Info$BasinCode,
-#                                                 file_path_Ptot = file.path(dir_hindcast, P_hindcast_filename),
-#                                                 file_path_Temp = file.path(dir_hindcast, T_hindcast_filename),
-#                                                 Lat = Basin_Info$BasinLat_rad,
-#                                                 Q_obs = Q_obs)
-#   
-#       # combine
-#       basinObsTS_long <- rbind(basinObs_hind, basinObs_cf)
-#       basinObsTS_long <- basinObsTS_long %>%
-#         distinct(date, .keep_all = TRUE)
-#   
-#   
-#       hindcast <- get_hindcast_period(start_date =  start_date_hindcast,
-#                                       end_date = end_date_hindcast,
-#                                       forecast_mode = forecast_mode,
-#                                       lag_days = lag_days,
-#                                       Basin_Info = Basin_Info,
-#                                       basinObsTS = basinObsTS_long,
-#                                       FUN_MOD = FUN_MOD,
-#                                       param = param,
-#                                       NbMbr = NbMbr,
-#                                       DaMethod = DaMethod,
-#                                       StatePert = StatePert,
-#                                       eps = eps)
-#   
-#       new_forecast <- rbind(hindcast, forecast_statistics)
-#       total_forecast <- rbind(existing_forecasts, new_forecast)
-#       write.csv(total_forecast, paste0(dir_Results, "/data/daily_", Basin_Info$BasinCode, ".csv"), row.names = FALSE)
-#   
-#     } else {
-#       print("no hindcasting necessary")
-#       new_forecast <- forecast_statistics
-#     }
-#   
-#   
-#     # Step 8: Pentadal   ####
-#     # read the pentadal data
-#     existing_pentad <- try(read_csv(paste0(dir_Results, "/data/pentad_", Basin_Info$BasinCode, ".csv"), show_col_types = FALSE), silent = TRUE)
-#     existing_pentad <- existing_pentad %>%
-#       mutate(forecast_date = as.Date(forecast_date, format = "%d.%m.%Y"))
-#   
-#     pentadal_steps <- pentadal_days(start_date_hindcast, forecast_date)
-#   
-#     new_pentad <- convert_daily_to_pentad_decad(new_forecast, pentadal_steps)
-#   
-#     total_pentad <- rbind(existing_pentad, new_pentad)
-#     write.csv(total_pentad, paste0(dir_Results, "/data/pentad_", Basin_Info$BasinCode, ".csv"), row.names = FALSE)
-#   
-#     # Step 9: Decadal    ####
-#     existing_decad <- try(read_csv(paste0(dir_Results, "/data/decad_", Basin_Info$BasinCode, ".csv"), show_col_types = FALSE), silent = TRUE)
-#     existing_decad <- existing_decad %>%
-#       mutate(forecast_date = as.Date(forecast_date, format = "%d.%m.%Y"))
-#   
-#     decadal_steps <- decadal_days(start_date_hindcast, forecast_date)
-#     new_decad <- convert_daily_to_pentad_decad(new_forecast, decadal_steps)
-#   
-#   
-#     total_decad <- rbind(existing_decad, new_decad)
-#     write.csv(total_decad, paste0(dir_Results, "/data/decad_", Basin_Info$BasinCode, ".csv"), row.names = FALSE)
-#   }
-# }
-
-
 

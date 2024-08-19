@@ -1,3 +1,23 @@
+
+
+
+process_save_time_steps <- function(time_steps, time_type, start_date, forecast_date, dir_Results, Basin_Info, new_forecast) {
+  file_path <- paste0(dir_Results, "/data/", time_type, "_", Basin_Info$BasinCode, ".csv")
+  existing_data <- try(read_csv(file_path, show_col_types = FALSE), silent = TRUE)
+  
+  if (inherits(existing_data, "try-error") || all(is.na(existing_data))) {
+    new_data <- convert_daily_to_pentad_decad(new_forecast, time_steps,time_type)
+    write.csv(new_data, file_path, row.names = FALSE)
+  } else {
+    existing_data <- existing_data %>%
+      mutate(forecast_date = as.Date(forecast_date, format = "%d.%m.%Y"))
+    total_data <- rbind(existing_data, convert_daily_to_pentad_decad(new_forecast, time_steps, time_type))
+    write.csv(total_data, file_path, row.names = FALSE)
+  }
+}
+
+
+
 # Summary: The run_model_without_DA function executes a hydrological model run, either with or without glacier modeling, depending on the specified model function (FUN_MOD). 
 # This model runs until the forecast day minus 180 days (default, cab be defined by lag_days), then saves the output.
 # This output is needed for the next forecast run and is used as the starting point.
@@ -40,17 +60,15 @@ runModel_withoutDA <- function(forecast_date,
     print("Multiple runs on the same day")
   } else {
     print("This is the first run of today")
-    
-    
-    
     start_op <- format((Enddate_op+1), format = "%Y%m%d")
     end_op <- format(Date_6_months_ago, format = "%Y%m%d")
+
     
     indRun <- seq(
       from = which(format(as.Date(inputsModel$DatesR), format = "%Y%m%d") == start_op), 
       to   = which(format(as.Date(inputsModel$DatesR), format = "%Y%m%d") == end_op)
     )
-    
+
     if (any(sapply(c(FUN_MODGlacierList), function(x) identical(FUN_MOD, match.fun(x))))) {
       runOptions <- airGR::CreateRunOptions(
         FUN_MOD = FUN_MOD,
