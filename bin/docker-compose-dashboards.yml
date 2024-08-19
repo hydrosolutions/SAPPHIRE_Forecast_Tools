@@ -3,10 +3,11 @@
 # run: ieasyhydroforecast_data_root_dir=<path> docker-compose -f /path/to/docker-compose.yml up -d
 # stop: docker-compose -f /path/to/docker-compose.yml down
 
+
 services:
 
   config:
-    image: mabesa/sapphire-configuration:latest
+    image: mabesa/sapphire-configuration:${ieasyhydroforecast_frontend_docker_image_tag:-latest}
     build:
       context: ../
       dockerfile: ./apps/configuration_dashboard/dockerfile
@@ -22,9 +23,11 @@ services:
       - ../../sensitive_data_forecast_tools/config:/sensitive_data_forecast_tools/config
       - ../../sensitive_data_forecast_tools/GIS:/sensitive_data_forecast_tools/GIS
     container_name: sapphire-frontend-config
+    labels:
+      - com.centurylinklabs.watchtower.enable=true
 
   pentaddashboard:
-    image: mabesa/sapphire-dashboard:latest
+    image: mabesa/sapphire-dashboard:${ieasyhydroforecast_frontend_docker_image_tag:-latest}
     build:
       context: ../
       dockerfile: ./apps/forecast_dashboard/Dockerfile
@@ -43,6 +46,19 @@ services:
       - ../../sensitive_data_forecast_tools/templates:/sensitive_data_forecast_tools/templates
       - ../../sensitive_data_forecast_tools/reports:/sensitive_data_forecast_tools/reports
     container_name: sapphire-frontend-forecast
+    labels:
+      - com.centurylinklabs.watchtower.enable=true
+
+  watchtower:
+    image: containrrr/watchtower
+    container_name: watchtower
+    restart: always
+    command: --interval 30 --label-enable --cleanup
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
+
+
 
 
 

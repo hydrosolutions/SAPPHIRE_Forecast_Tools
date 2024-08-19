@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# This script runs the SAPPHIRE forecast tools in local deployment mode
+# This script runs the SAPPHIRE forecast tools in local daily deployment mode
 # Working directory is the root of the repository, i.e. SAPPHIRE_forecast_tools
 #
 # Useage:
@@ -56,20 +56,35 @@
 #
 # Author: Beatrice Marti
 
+echo "  ____    _    ____  ____  _   _ ___ ____  _____                "
+echo " / ___|  / \  |  _ \|  _ \| | | |_ _|  _ \| ____|               "
+echo " \___ \ / _ \ | |_) | |_) | |_| || || |_) |  _|                 "
+echo "  ___) / ___ \|  __/|  __/|  _  || ||  _ <| |___                "
+echo " |____/_/   \_\_|   |_|   |_| |_|___|_| \_\_____|        _      "
+echo " |  ___|__  _ __ ___  ___ __ _ ___| |_  |_   _|__   ___ | |___  "
+echo " | |_ / _ \| '__/ _ \/ __/ _\` / __| __|   | |/ _ \ / _ \| / __| "
+echo " |  _| (_) | | |  __/ (_| (_| \__ \ |_    | | (_) | (_) | \__ \ "
+echo " |_|  \___/|_|  \___|\___\__,_|___/\__|   |_|\___/ \___/|_|___/ "
+echo "                                                                "
+echo "Producing forecasts with the SAPPHIRE forecast tools ..."
+echo "Date: $(date '+%Y-%m-%d %H:%M:%S %Z')"
 
-
-if test -z "$1"
+# If the argument is provided, write it to the environment variable
+# ieasyhydroforecast_env_file_path. If not, check if the environment variable
+# is set. If not, throw an error.
+if [ -n "$1" ];
 then
-      echo "Usage bash ./bin/run_sapphire_forecast_tools.sh path_to_env_file"
-      echo "No path to .env file was passed!"
-      echo "Please pass the absolute path to your .env file to the script"
-      echo "e.g. /Users/DemoUser/Documents/sapphire_data/config/.env"
+      env_file_path=$1
+      export ieasyhydroforecast_env_file_path=env_file_path
+      echo "env_file_path read from argument: $env_file_path"
+elif [ -n "$ieasyhydroforecast_env_file_path" ];
+then
+      env_file_path=$ieasyhydroforecast_env_file_path
+      echo "env_file_path read from environment variable: $ieasyhydroforecast_env_file_path"
+else
+      echo "Error: No path to .env file was passed or was found in the environment!"
       exit 1
 fi
-
-# Parse argument
-env_file_path=$1
-echo "env_file_path: $env_file_path"
 
 # Derive ieasyhydroforecast_data_root_dir by removing the filename and 2 folder hierarchies
 ieasyhydroforecast_data_root_dir=$(dirname "$env_file_path")
@@ -91,13 +106,11 @@ fi
 
 # Clean up docker space
 echo "Removing all containers and images"
-ieasyhydroforecast_data_root_dir=$ieasyhydroforecast_data_root_dir source ./bin/clean_docker.sh
+ieasyhydroforecast_data_root_dir=$ieasyhydroforecast_data_root_dir source ./bin/utils/clean_docker.sh
 
 # Pull (deployment mode) or build (development mode) & push images
-echo "Pulling with TAG=latest"
-# source ./bin/build_docker_images.sh latest  # Only for development mode
-# bash ./bin/push_docker_images.sh latest  # ONLY allowed from amd64 architecture, i.e. not from M1/2/3 Macs
-source ./bin/pull_docker_images.sh latest
+echo "Pulling with TAG=$ieasyhydroforecast_backend_docker_image_tag"
+source ./bin/utils/pull_docker_images.sh $ieasyhydroforecast_backend_docker_image_tag
 
 # Establish SSH tunnel (if required)
 source $ieasyhydroforecast_data_ref_dir/bin/.ssh/open_ssh_tunnel.sh
@@ -108,14 +121,6 @@ start_docker_compose_luigi() {
   docker compose -f bin/docker-compose-luigi.yml up -d &
   DOCKER_COMPOSE_LUIGI_PID=$!
   echo "Docker Compose service started with PID $DOCKER_COMPOSE_LUIGI_PID"
-}
-
-# Function to start the Docker Compose service for the dashboards
-start_docker_compose_dashboards() {
-  echo "Starting Docker Compose service for the dashboards..."
-  docker compose -f bin/docker-compose-dashboards.yml up -d &
-  DOCKER_COMPOSE_DASHBOARD_PID=$!
-  echo "Docker Compose service started with PID $DOCKER_COMPOSE_DASHBOARD_PID"
 }
 
 # Trap to clean up processes on script exit
@@ -145,9 +150,6 @@ echo "PID of ssh tunnel is $ieasyhydroforecast_ssh_tunnel_pid"
 # Start the Docker Compose service for the forecasting pipeline
 start_docker_compose_luigi
 
-# Start the Docker Compose service for the dashboards
-start_docker_compose_dashboards
-
 # Wait for forecasting pipeline to finish
 wait $DOCKER_COMPOSE_LUIGI_PID
 
@@ -158,9 +160,4 @@ sleep 1800
 # Additional actions to be taken after Docker Compose service stops
 echo "Docker Compose service has finished running"
 
-# Close SSH tunnel (if required)
-#echo "Closing the SSH tunnel"
-#source $ieasyhydroforecast_data_ref_dir/bin/.ssh/close_ssh_tunnel.sh
 
-# Clean up
-#bash ./bin/clean_docker.sh

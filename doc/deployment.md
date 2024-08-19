@@ -7,12 +7,13 @@ This document describes the steps for the installation of the SAPPHIRE Forecast 
   - [Software requirements](#software-requirements)
 - [Step-by-step instructions](#step-by-step-instructions)
   - [Download this repository](#download-this-repository)
+  - [General information for deployment](#general-information-for-deployment)
   - [Deployment of demo version on a local machine](#deployment-of-demo-version-on-a-local-machine)
   - [Deployment with private data on a server](#deployment-with-private-data-on-a-server)
     - [Configuring your server](#configuring-your-server)
     - [Copy your data to the repository](#copy-your-data-to-the-repository)
     - [Adapt the configuration files](#adapt-the-configuration-files)
-    - [Run the forecast tools](#run-the-forecast-tools)
+    - [Deploy the forecast tools](#deploy-the-forecast-tools)
     - [Accessing the outputs](#accessing-the-outputs)
     - [Monitoring the forecast tools](#monitoring-the-forecast-tools)
   - [Set up cron job](#set-up-cron-job)
@@ -63,6 +64,16 @@ git clone https://github.com/hydrosolutions/SAPPHIRE_Forecast_Tools.git
 ```
 </details>
 
+## General information for deployment
+We provide a script the should take care of most deployment steps for you.
+The script is located in the bin folder and run as follows from the SAPPHIRE_Forecast_Tools folder:
+```bash
+bash .bin/deploy_sapphire_forecast_tools.sh <env_file_path>
+```
+where the env_file_path is the absolute path to your .env file.
+
+During operational runtime, you will set-up cron jobs to run the forecast tools on a daily basis automatically and to keep the dashboards running.
+
 ## Deployment of demo version on a local machine
 The demo version comes with public example data as well as with the configuration files that are set up to work with the example data. The demo version is a good starting point to get to know the forecast tools and to test the basic functionality of the tools. Please note that only linear regression models are  currently available in the demo version.
 
@@ -101,7 +112,7 @@ Note that you might have to authenticate yourself with a password. You can also 
 ### Adapt the configuration files
 To be described.
 
-### Run the forecast tools
+### Deploy the forecast tools
 We provide you with a shell script that pulls the latest images from Docker Hub and runs the containers. The script is located in the bin folder and run as follows from the SAPPHIRE_Forecast_Tools folder:
 ```bash
 bash .bin/run_sapphire_forecast_tools.sh <path_to_data_root_folder>
@@ -157,6 +168,11 @@ Add the following line to the crontab file:
 3 10 * * * cd /data/SAPPHIRE_Forecast_Tools && /bin/bash -c 'bash bin/run_sapphire_forecast_tools.sh /data' >> /data/logs/sapphire_forecast_tools.log 2>&1
 ```
 To run the forecast tools every day at 10:03 a.m (server time, check by typing `date` to the console). The path to the data root folder is the parent directory of your data folder where you store your discharge, bulletin templates and other data. By default this is the data folder in the SAPPHIRE_Forecast_Tools folder (in which case the path to the data root folder would be the path to the SAPPHIRE_Forecast_Tools). The log file will be stored in the logs folder in the data folder.
+
+To check if the cron job has been set up correctly, you can list the cron jobs with the following command:
+```bash
+crontab -l
+```
 
 
 ## Testing the deployment

@@ -6,7 +6,6 @@
 services:
 
   luigid:
-    #image: mabesa/sapphire-pipeline:latest
     build:
       context: ../
       dockerfile: ./apps/pipeline/Dockerfile
@@ -18,10 +17,11 @@ services:
   pipeline:
     depends_on:
       - luigid
-    #image: mabesa/sapphire-pipeline:latest
     build:
       context: ../
       dockerfile: ./apps/pipeline/Dockerfile
+      args:
+        TAG: ${ieasyhydroforecast_backend_docker_image_tag:-latest}
     working_dir: /app
     environment:
       - PYTHONPATH=/app

@@ -21,7 +21,7 @@ from apps.pipeline.src import pipeline_utils as pu
 
 
 # Define the tag of the docker image to use
-TAG = os.getenv('SAPPHIRE_FORECAST_TOOLS_DOCKER_TAG', 'latest')
+TAG = os.getenv('ieasyhydroforecast_backend_docker_image_tag', 'latest')
 # URL of the sapphire data gateway
 SAPPHIRE_DG_HOST = os.getenv('SAPPHIRE_DG_HOST', 'localhost')
 
