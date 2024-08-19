@@ -74,7 +74,7 @@ echo "env_file_path: $env_file_path"
 # Derive ieasyhydroforecast_data_root_dir by removing the filename and 2 folder hierarchies
 ieasyhydroforecast_data_root_dir=$(dirname "$env_file_path")
 ieasyhydroforecast_data_ref_dir=$(dirname "$ieasyhydroforecast_data_root_dir")
-ieasyhydroforecast_data_root_dir=$(dirname "$ieasyhydroforecast_data_root_dir")
+ieasyhydroforecast_data_root_dir=$(dirname "$ieasyhydroforecast_data_ref_dir")
 
 echo "ieasyhydroforecast_data_ref_dir: $ieasyhydroforecast_data_ref_dir"
 echo "ieasyhydroforecast_data_root_dir: $ieasyhydroforecast_data_root_dir"
