@@ -465,22 +465,19 @@ class DeleteOldGateywayFiles(luigi.Task):
                 print(f"Deleted {file_path} as it was older than {self.days_old} days.")
 """
 
-class RunWorkflow_KGHM(luigi.Task):
+class RunWorkflow(luigi.Task):
 
     def requires(self):
-        return [PostProcessingForecasts(),
-                PreprocessingGatewayQuantileMapping(),
-                #DeleteOldGateywayFiles()
-                ]
+        if ORGANIZATION=='demo':
 
-    def run(self):
-        print("Workflow completed.")
-        return None
+            return [PostProcessingForecasts()]
 
-class RunWorkflow_DEMO(luigi.Task):
+        elif ORGANIZATION=='kghm':
 
-    def requires(self):
-        return [PostProcessingForecasts()]
+            return [PostProcessingForecasts(),
+                    PreprocessingGatewayQuantileMapping(),
+                    #DeleteOldGateywayFiles()
+                    ]
 
     def run(self):
         print("Workflow completed.")
@@ -488,7 +485,4 @@ class RunWorkflow_DEMO(luigi.Task):
 
 
 if __name__ == '__main__':
-    if ORGANIZATION=='demo':
-        luigi.build([RunWorkflow_DEMO()], local_scheduler=True)
-    elif ORGANIZATION=='kghm':
-        luigi.build([RunWorkflow_KGHM()])
+    luigi.build([RunWorkflow()])
