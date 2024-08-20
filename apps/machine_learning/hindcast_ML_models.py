@@ -524,7 +524,7 @@ def main():
     static_features.index = static_features['CODE']
 
     if MODEL_TO_USE == 'ARIMA':
-        scaler = pd.read_csv(os.path.join(PATH_TO_SCALER, 'scalers_arima.csv'))
+        scaler = None
     else:
         scaler_discharge = pd.read_csv(os.path.join(PATH_TO_SCALER, 'scaler_stats_discharge.csv'))
         scaler_discharge.index = scaler_discharge['Unnamed: 0'].astype(int)
@@ -571,7 +571,8 @@ def main():
 
 
     if MODEL_TO_USE == 'ARIMA':
-        predictor = predictor_class.PREDICTOR(PATH_TO_MODEL, scaler)
+        predictor = predictor_class.PREDICTOR(PATH_TO_MODEL)
+ 
     else:
         predictor = predictor_class.PREDICTOR(model, scaler_discharge, scaler_era5, scaler_static, static_features)
 

@@ -174,6 +174,7 @@ class PREDICTOR():
         #moving average discharge
         df_covariates_past['moving_avr_dis_10'] = self.calc_rolling_mean(df_rivers, df_era5, window=10)
         df_covariates_past['moving_avr_dis_5'] = self.calc_rolling_mean(df_rivers, df_era5, window=5)
+        df_covariates_past['moving_avr_dis_3'] = self.calc_rolling_mean(df_rivers, df_era5, window=3)
 
         #swe 
         #reindex swe with df_covariates_past dates
@@ -195,7 +196,7 @@ class PREDICTOR():
         if df_swe is not None:
             covariates_past = TimeSeries.from_dataframe(df_covariates_past, time_col='date', value_cols = [ 'SWE','moving_avr_dis_5','moving_avr_dis_10'], freq='1D')
         else:
-            covariates_past = TimeSeries.from_dataframe(df_covariates_past, time_col='date', value_cols = ['moving_avr_dis_5','moving_avr_dis_10'], freq='1D')
+            covariates_past = TimeSeries.from_dataframe(df_covariates_past, time_col='date', value_cols = ['moving_avr_dis_3','moving_avr_dis_5','moving_avr_dis_10'], freq='1D')
 
         #future covariates with month
         covariates_future = TimeSeries.from_dataframe(df_era5, time_col='date', value_cols = ['P', 'T', 'PET', 'daylight_hours'], freq='1D')

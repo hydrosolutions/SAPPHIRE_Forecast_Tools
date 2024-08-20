@@ -144,6 +144,7 @@ def main():
     # --------------------------------------------------------------------
     # read the start and end date from the users input
     # --------------------------------------------------------------------
+    print(f"Initialize Machine Learning Model {MODEL_TO_USE}: Produce Hindcast for the following time period")
     start_date = input("Enter the start date in the format YYYY-MM-DD: ")
     end_date = input("Enter the end date in the format YYYY-MM-DD: ")
 
@@ -153,6 +154,8 @@ def main():
     logger.info('Start date: %s', start_date)
     logger.info('End date: %s', end_date)
     logger.info('Model to use: %s', MODEL_TO_USE)
+
+    print("Starting Hindcast Pentad in pentad intervall")
     pentad_hindcast = call_hindcast_script(start_date, 
                                            end_date, 
                                            MODEL_TO_USE, 
@@ -166,6 +169,7 @@ def main():
     pentad_hindcast.to_csv(path_pentad_out, index=False)
     del pentad_hindcast
 
+    print("Starting Hindcast Pentad in daily intervall")
     pentad_hindcast_daily = call_hindcast_script(start_date,
                                                     end_date,
                                                     MODEL_TO_USE,
@@ -178,6 +182,7 @@ def main():
     pentad_hindcast_daily.to_csv(path_pentad_out_daily, index=False)
     del pentad_hindcast_daily
 
+    print("Starting Hindcast Decad in decad intervall")
     decad_hindcast = call_hindcast_script(start_date,
                                             end_date,
                                             MODEL_TO_USE,
@@ -189,7 +194,7 @@ def main():
     path_decad_out = os.path.join(OUTPUT_PATH_DISCHARGE, f'decad_{MODEL_TO_USE}_forecast_decad_intervall.csv')
     decad_hindcast.to_csv(path_decad_out, index=False)
     del decad_hindcast
-
+    print("Starting Hindcast Decad in daily intervall")
     decad_hindcast_daily = call_hindcast_script(start_date,
                                                 end_date,
                                                 MODEL_TO_USE,
