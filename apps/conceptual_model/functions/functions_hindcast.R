@@ -1,11 +1,5 @@
 
 # convert daily forecast to pentadal and decadal 
-# convert_daily_to_pentad_decad <- function(forecast_data, time_steps) {
-#   forecast_data %>%
-#     dplyr::filter(forecast_date %in% time_steps) %>%
-#     group_by(forecast_date) %>%
-#     summarise(Qsim = mean(Q50))
-# }
 convert_daily_to_pentad_decad <- function(forecast_data, time_steps, period) {
   if (period == "pentad") {
     forecast_data <- forecast_data %>%
@@ -79,6 +73,7 @@ get_hindcast_period <- function(start_date,
   for (i in 1:length(time_steps)) {
     # get the hindcast
     forecast_date <- time_steps[i]
+    print(forecast_date)
     hindcast <- get_hindcast(forecast_date = forecast_date,
                              forecast_mode = forecast_mode,
                              lag_days = lag_days,
@@ -95,15 +90,20 @@ get_hindcast_period <- function(start_date,
     # if the forecast_mode is pentadal
     if (forecast_mode == "pentad") {
       hindcast <- hindcast %>% 
-        summarise(Qsim = mean(median_Qsim)) %>%
-        mutate(forecast_date = forecast_date, 
-               pentad = get_pentad(forecast_date+1)) %>%
-        dplyr::select(forecast_date, Qsim, pentad)
+        summarise(Qsim = mean(Q50)) %>%
+        mutate(forecast_date = forecast_date) %>%
+        dplyr::select(forecast_date, Qsim)
       
     } else if (forecast_mode == "daily") {
       hindcast <- hindcast %>%
         mutate(forecast_date = forecast_date) %>% 
         dplyr::select(forecast_date, everything())
+    
+      } else if (forecast_mode == "decad") {
+      hindcast <- hindcast %>% 
+        summarise(Qsim = mean(Q50)) %>%
+        mutate(forecast_date = forecast_date) %>%
+        dplyr::select(forecast_date, Qsim)
     }
     hindcast_all[[i]] <- hindcast
   }
@@ -127,11 +127,11 @@ get_hindcast <- function(forecast_date,
                          NbMbr, 
                          StatePert) {
   
-  modes <- c("daily", "pentad")
+  modes <- c("daily", "pentad", "decad")
   
   # check that the forecast_mode is either daily or pendadal 
   if (!forecast_mode %in% modes) {
-    stop("Error: forecast_mode must be either 'daily' or 'pentad'.")
+    stop("Error: forecast_mode must be either 'daily' or 'pentad' or 'decad'.")
   }
   # if the forecast_mode is daily, then the forecast_end is 14 days after the forecast_date
   if (forecast_mode == "daily") {
@@ -139,7 +139,11 @@ get_hindcast <- function(forecast_date,
   }
   
   if (forecast_mode == "pentad") {
-    forecast_end <- get_forecast_end(forecast_date)
+    forecast_end <- get_forecast_end_pentad(forecast_date)
+  }
+  
+  if (forecast_mode == "decad") {
+    forecast_end <- get_forecast_end_decad(forecast_date)
   }
   
   Date_6_months_ago <- forecast_date - lag_days
@@ -313,8 +317,7 @@ last_day_of_month <- function(year, month) {
 }
 
 # input: forecast date = pentad start - 1d
-get_forecast_end <- function(forecast_date){
-  pentad_start <- forecast_date + 1
+get_forecast_end_pentad <- function(forecast_date){
   # need end_forecast
   # if forecastdate day is 31 then it is 05 
   if (day(forecast_date) == 25){
@@ -325,6 +328,17 @@ get_forecast_end <- function(forecast_date){
   return(pentad_end)
 }
 
+# input: forecast date = pentad start - 1d
+get_forecast_end_decad <- function(forecast_date){
+  # need end_forecast
+  # if forecastdate day is 31 then it is 05 
+  if (day(forecast_date) == 20){
+    pentad_end <- last_day_of_month_date(forecast_date)
+  } else {
+    pentad_end <- forecast_date + 10
+  }
+  return(pentad_end)
+}
 
 
 
