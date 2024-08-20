@@ -11,7 +11,10 @@
 # ----------------------------------------------------------------
 # USAGE:
 # ----------------------------------------------------------------
-# SAPPHIRE_MODEL_TO_USE=TFT python fill_ml_gaps.py
+# SAPPHIRE_OPDEV_ENV=True SAPPHIRE_MODEL_TO_USE=TFT SAPPHIRE_PREDICTION_MODE=PENTAD 
+# ieasyhydroforecasts_produce_daily_ml_hindcast=False python fill_ml_gaps.py
+# TODO: So far this code only checks if there are missing forecast dates. It doesn't check if there are nan values due to insufficent input data.
+# TODO: Think about how to handle nan values, in what frequency should this be checked?
 
 
 import os
@@ -199,6 +202,7 @@ def fill_ml_gaps():
         
     if len(missing_forecasts) == 0:
         logger.info('No missing forecasts')
+        print('No missing forecasts')
         
     else:
 
@@ -224,6 +228,8 @@ def fill_ml_gaps():
             forecast = forecast.sort_values(by='forecast_date')
 
             # save the forecast
+
+            # TODO: Remove the test part in the name, after the modul is tested.
             if ieasyhydroforecasts_produce_daily_ml_hindcast == 'True':
                 forecast.to_csv(os.path.join(PATH_FORECAST, prefix + '_' +  MODEL_TO_USE + '_forecast_test.csv'), index=False)
             else:
