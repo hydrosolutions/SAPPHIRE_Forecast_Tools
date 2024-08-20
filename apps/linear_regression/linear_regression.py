@@ -1,4 +1,8 @@
 # Python 3.11
+# Script to produce hydrological forecasts using linear regression.
+# The script is run daily and produces forecasts for the next 5 or 10 days.
+# The script is run with the following command:
+# python linear_regression.py
 
 # I/O
 import os
@@ -141,8 +145,8 @@ def main():
                 code_col='code',
                 date_col='date')
             # Print the tail of discharge_pentad for code 16936
-            #logger.debug(f"discharge_pentad.head(): \n{discharge_pentad.head()}")
-            #logger.debug(f"discharge_pentad.tail(): \n{discharge_pentad.tail()}")
+            logger.debug(f"discharge_pentad.head(): \n{discharge_pentad.head()}")
+            logger.debug(f"discharge_pentad.tail(): \n{discharge_pentad.tail()}")
 
             # Print discharge_data for code == '15194' for april and may 2024
             #logger.info(f"discharge_pentad[discharge_pentad['code'] == '15194'].tail(50): \n{discharge_pentad[discharge_pentad['code'] == '15194'].tail(50)}")

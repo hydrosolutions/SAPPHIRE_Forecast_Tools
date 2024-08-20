@@ -1,7 +1,10 @@
 # Title: extend_era5_reanalysis
 # Author: sandro hunziker
-# Description: Reads The Operational Data and the ERA5 Reanalysis Data and appends the last 6 month of operational data to the ERA5 Reanalysis Data
-
+# Description: Reads The Operational Data and the ERA5 Reanalysis Data and
+#   appends the last 6 month of operational data to the ERA5 Reanalysis Data
+#
+# In operational mode, this file runs after Quantile_Mapping_OP.py
+#
 # --------------------------------------------------------------------
 # USAGE
 # SAPPHIRE_OPDEV_ENV=True  python extend_era5_reanalysis.py
@@ -72,7 +75,7 @@ def main():
     # Loads the environment variables from the .env file
     sl.load_environment()
 
-    #output_path for reanalysis 
+    #output_path for reanalysis
     OUTPUT_PATH_REANALYSIS = os.path.join(
         os.getenv('ieasyforecast_intermediate_data_path'),
         os.getenv('ieasyhydroforecast_OUTPUT_PATH_REANALYSIS'))

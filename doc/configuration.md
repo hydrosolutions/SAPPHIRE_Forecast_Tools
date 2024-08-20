@@ -2,7 +2,7 @@
 
 The different software components of the SAPPHIRE Forecast Tools interact with each other through input and output files (see following figure for an overview)
 
-TODO: UPDATE FIGURE
+TODO: UPDATE FIGURE ...
 
 <img src="www/io.png" alt="IO" width="700"/>
 
@@ -135,7 +135,9 @@ ieasyforecast_restrict_stations_file=../config/config_development_restrict_stati
 For the deployment of the software or to not filter for a subset of the stations, you can set the value to null. The backend will check if the station selection is restricted and prints a warning to the console if this is the case so that it is not forgotten during deployment.
 
 
+
 ### Configuration of the preprocessing of weather data from the data gateway
+TODO: Sandro, please review below and edit where necessary.
 The SAPPHIRE forecast tools can use weather data from ECMWF IFS and from the TopoPyScale-FSM snow model which is processed in the SAPPHIRE Data Gateway. See [TODO Chapter to be linked] for more information on the data gateway.
 
 The preprocessing of weather data from the data gateway can only be done with a valid API key. If ieasyhydroforecast_API_KEY_GATEAWAY is not set or if it is not valid, the forecast tools will not be able to access the weather data from the data gateway and no forecasts with the machine learning models or with conceptual models will be produced. Forecasts using the linear regression method will still be produced.
@@ -156,7 +158,7 @@ ieasyhydroforecast_config_file_data_gateway_name_twins=config_gateway_name_twins
 ```
 
 The preprocessing of data gateway will write output to the following paths.
-TODO @Sandro: Please add a sentence to what is stored in these different folders.
+TODO: Sandro: Please add a sentence to what is stored in these different folders.
 ```
 # PATH FOR INTERMEDIATE RESULTS
 # Subfolders located in ieasyforecast_intermediate_data_path
@@ -187,3 +189,10 @@ ieasyhydroforecast_HRU_CONTROL_MEMBER=00003
 #Which HRUs (within ieasyhydroforecast_HRU_CONTROL_MEMBER) need an ensemble forecast
 ieasyhydroforecast_HRU_ENSEMBLE=151940,16936
 ```
+
+
+### Configuration of the machine learning module
+TODO: Sandro, please add if you have time
+
+### Configuration of the conceptual rainfall-runoff module
+TODO: Adrian, please add if you have time once we have the module integrated

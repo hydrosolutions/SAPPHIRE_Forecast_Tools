@@ -1,12 +1,13 @@
 # Title: get_era5_reanalysis_data
 # Author: sandro hunziker
-# Description: This script downloads ERA5 reanalysis data from the data gateway and performs quantile mapping on it. 
+# Description: This script downloads ERA5 reanalysis data from the data gateway
+# and performs quantile mapping on it.
 # Afterwards the script is save as a csv file.
-
+#
 # NOTE: This script is used to get the initial data for the reanalysis. 
 # Afterwards the data is always extended with the operational reanalysis data
 # This extension is done with the script: extend_era5_reanalysis.py
-
+#
 # --------------------------------------------------------------------
 # USAGE
 # SAPPHIRE_OPDEV_ENV=True ieasyhydroforecast_reanalysis_START_DATE=2009-01-01 ieasyhydroforecast_reanalysis_END_DATE=2023-12-31 python get_era5_reanalysis_data.py
@@ -235,7 +236,7 @@ def main():
         os.makedirs(OUTPUT_PATH_DG, exist_ok=True)
 
 
-    #output_path for reanalysis 
+    #output_path for reanalysis
     OUTPUT_PATH_REANALYSIS = os.path.join(
         os.getenv('ieasyforecast_intermediate_data_path'),
         os.getenv('ieasyhydroforecast_OUTPUT_PATH_REANALYSIS'))
@@ -272,12 +273,12 @@ def main():
     logger.debug("Current working directory: %s", os.getcwd())
     logger.debug(f"Iterating over the control member HRUs: {control_member_hrus}")
     for c_m_hru in control_member_hrus:
-        print(f"Processing  HRU: {c_m_hru}")  
+        print(f"Processing  HRU: {c_m_hru}")
         #download the control member data
         logger.info(f"Processing  HRU: {c_m_hru}")
         # Initialize control_member_era5 to None
         control_member_era5 = None
-        
+
         control_member_era5 = client.era5_land.get_era5_land(c_m_hru,
                 date=start_date,
                 end_date=end_date,

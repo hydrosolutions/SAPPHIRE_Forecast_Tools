@@ -130,6 +130,9 @@ def filter_roughly_for_outliers(combined_data, group_by='Code',
     # Sort by code and date
     combined_data = combined_data.sort_values(by=[group_by, date_col])
 
+    # Remove rows with NaN in the group_by column
+    combined_data = combined_data.dropna(subset=[group_by])
+
     return combined_data
 
 def read_runoff_data_from_multiple_rivers_xlsx(filename, date_col='date', discharge_col='discharge', name_col='name', code_col='code'):

@@ -435,7 +435,7 @@ def get_pentadal_forecast_sites(ieh_sdk, backend_has_access_to_db):
     logger.debug("-Formatting db_sites to a list of Sites objects ...")
 
     # Make sure the entries are not lists
-    db_sites = db_sites.applymap(lambda x: x[0] if isinstance(x, list) else x)
+    db_sites = db_sites.apply(lambda col: col.map(lambda x: x[0] if isinstance(x, list) else x))
 
     # Get the unique site codes
     site_codes = db_sites["site_code"].unique()
