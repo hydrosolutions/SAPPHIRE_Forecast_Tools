@@ -45,6 +45,8 @@ ORGANIZATION = env.get('ieasyforecast_organization', 'demo')
 #SAPPHIRE_DG_HOST = os.getenv('SAPPHIRE_DG_HOST', 'localhost')
 
 
+
+
 # Function to convert a relative path to an absolute path
 def get_absolute_path(relative_path):
     #print("In get_absolute_path: ")
@@ -463,11 +465,10 @@ class DeleteOldGateywayFiles(luigi.Task):
                 print(f"Deleted {file_path} as it was older than {self.days_old} days.")
 """
 
-class RunWorkflow(luigi.Task):
+class RunWorkflow_KGHM(luigi.Task):
 
     def requires(self):
         return [PostProcessingForecasts(),
-                #PreprocessingRunoff(),
                 PreprocessingGatewayQuantileMapping(),
                 #DeleteOldGateywayFiles()
                 ]
@@ -476,7 +477,18 @@ class RunWorkflow(luigi.Task):
         print("Workflow completed.")
         return None
 
+class RunWorkflow_DEMO(luigi.Task):
+
+    def requires(self):
+        return [PostProcessingForecasts()]
+
+    def run(self):
+        print("Workflow completed.")
+        return None
 
 
 if __name__ == '__main__':
-    luigi.build([RunWorkflow()])
+    if ORGANIZATION=='demo':
+        luigi.build([RunWorkflow_DEMO()], local_scheduler=True)
+    elif ORGANIZATION=='kghm':
+        luigi.build([RunWorkflow_KGHM()])
