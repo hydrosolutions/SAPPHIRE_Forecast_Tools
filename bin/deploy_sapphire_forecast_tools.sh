@@ -174,39 +174,10 @@ cleanup() {
   if [ -n "$ieasyhydroforecast_ssh_tunnel_pid" ]; then
     kill $ieasyhydroforecast_ssh_tunnel_pid
   fi
-  #if [ -n "$DOCKER_COMPOSE_PID" ]; then
-    # Keep dashboards up and running: comment out the following line
-    #docker compose -f bin/docker-compose.yml down
-  #fi
 }
 
 # Set the trap to clean up processes on exit
 trap cleanup EXIT
-
-# Check for SSH tunnel availability
-if $ieasyhydroforecast_ssh_to_iEH; then
-
-  echo "Checking for SSH tunnel availability"
-  timeout=5
-  elapsed=0
-  interval=1
-
-  while ! nc -z localhost 8881; do
-    if [ $elapsed -ge $timeout ]; then
-      echo "SSH tunnel is not available after $timeout seconds. Proceeding with the script."
-      break
-    fi
-    echo "SSH tunnel is not available yet. Waiting..."
-    sleep $interval
-    elapsed=$((elapsed + interval))
-  done
-
-  if [ $elapsed -lt $timeout ]; then
-    echo "SSH tunnel is available."
-  fi
-
-  echo "PID of ssh tunnel is $ieasyhydroforecast_ssh_tunnel_pid"
-fi
 
 # Start the Docker Compose service for the forecasting pipeline
 start_docker_compose_luigi
