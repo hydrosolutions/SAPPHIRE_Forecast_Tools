@@ -114,8 +114,8 @@ for (Code in config$codes) {
   dir_Results <- file.path(Sys.getenv("ieasyhydroforecast_PATH_TO_RESULT"), Code)
   
   ## 1.1 Initial ####
-  load(file.path(dir_basin,"param.RData"))
-  load(file.path(dir_basin,"Basin_Info.RData"))
+  load(file.path(dir_basin,Sys.getenv("ieasyhydroforecast_FILE_PARAM")))
+  load(file.path(dir_basin,Sys.getenv("ieasyhydroforecast_FILE_BASININFO")))
   load(file.path(dir_Output, "runResults_op.RData"))
   Enddate_operational <- as.Date(max(runResults_op$DatesR))
   
@@ -163,33 +163,4 @@ for (Code in config$codes) {
   write.csv(hindcast, paste0(dir_Results, "/data/hindcast_",hindcast_mode,"_", Basin_Info$BasinCode, ".csv"), row.names = FALSE)
   }
   
-  
-  
-#   ## 7.2 pentadal  ####
-#   if ((length(pentadal_days(forecast_date, forecast_date)) == 0) && !(exists("start_date_hindcast"))) {
-#     print("not pentadal timestep no hindcasting")
-#   } else if (!(length(pentadal_days(forecast_date, forecast_date)) == 0) && !(exists("start_date_hindcast"))) {
-#     print("Pentadal forecast day, no hindcasting")
-#     pentadal_steps <- pentadal_days(forecast_date, forecast_date)
-#     process_save_time_steps(pentadal_steps, "pentad", start_date_hindcast, forecast_date, dir_Results, Basin_Info, forecast_statistics)
-#     
-#   } else if (exists("start_date_hindcast")) {
-#     print("Pentadal day, hindcasting")
-#     pentadal_steps <- pentadal_days(start_date_hindcast, forecast_date)
-#     process_save_time_steps(pentadal_steps, "pentad", start_date_hindcast, forecast_date, dir_Results, Basin_Info, forecast_statistics)
-#   }
-#   
-#   ## 7.3 decadal  ####
-#   if ((length(decadal_days(forecast_date, forecast_date)) == 0) && !(exists("start_date_hindcast"))) {
-#     print("not pentadal timestep no hindcasting")
-#   } else if (!(length(decadal_days(forecast_date, forecast_date)) == 0) && !(exists("start_date_hindcast"))) {
-#     print("Decadal forecast day, no hindcasting")
-#     decadal_steps <- decadal_days(forecast_date, forecast_date)
-#     process_save_time_steps(decadal_steps, "decad", start_date_hindcast, forecast_date, dir_Results, Basin_Info, forecast_statistics)
-#     
-#   } else if (exists("start_date_hindcast")) {
-#     print("Decadal day, hindcasting")
-#     decadal_steps <- decadal_days(start_date_hindcast, forecast_date)
-#     process_save_time_steps(decadal_steps, "decad", start_date_hindcast, forecast_date, dir_Results, Basin_Info, forecast_statistics)
-#   }
-# }
+

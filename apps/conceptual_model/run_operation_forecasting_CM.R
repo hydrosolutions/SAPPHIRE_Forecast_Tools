@@ -121,8 +121,8 @@ for (Code in config$codes) {
   dir_Results <- file.path(Sys.getenv("ieasyhydroforecast_PATH_TO_RESULT"), Code)
 
   ## 1.1 Initial ####
-  load(file.path(dir_basin,"param.RData"))
-  load(file.path(dir_basin,"Basin_Info.RData"))
+  load(file.path(dir_basin,Sys.getenv("ieasyhydroforecast_FILE_PARAM")))
+  load(file.path(dir_basin,Sys.getenv("ieasyhydroforecast_FILE_BASININFO")))
   load(file.path(dir_Output, "runResults_op.RData"))
   Enddate_operational <- as.Date(max(runResults_op$DatesR))
   

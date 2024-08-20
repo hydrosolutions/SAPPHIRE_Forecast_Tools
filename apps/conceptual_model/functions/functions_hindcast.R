@@ -1,5 +1,11 @@
 
-# convert daily forecast to pentadal and decadal 
+# Used in operational forecasting in the function process_save_time_steps. 
+# Converts daily forecasts to pentadal and decadal.
+# Input: forecast_statistics from the function calculate_stats_forecast.
+# Output: forecast_statistics are always 15 days ahead. 
+# For pentadal or decadal, only about 5 or 10 days ahead are needed. 
+# The data takes only the necessary time length and calculates the mean over this period from the median of the ensemble forecast. 
+# Output is a data frame with the forecast_date and the Qsim
 convert_daily_to_pentad_decad <- function(forecast_data, time_steps, period) {
   if (period == "pentad") {
     forecast_data <- forecast_data %>%
@@ -21,6 +27,35 @@ convert_daily_to_pentad_decad <- function(forecast_data, time_steps, period) {
   return(forecast_data)
 }
 
+
+
+#' @title Generate Hindcast for a Specific Period
+#'
+#' @description
+#' The `get_hindcast_period` function generates a hindcast over a specified time period for a given basin. 
+#' It calls the `get_hindcast` function iteratively for each time step within the period defined by `start_date` and `end_date`. 
+#' The `forecast_mode` parameter defines the frequency of the forecasts, which can be `daily`, `pentad`, or `decad`.
+#'
+#' @param start_date [Date] The start date of the hindcast period.
+#' @param end_date [Date] The end date of the hindcast period.
+#' @param forecast_mode [Character] The forecast mode: can be either `daily`, `pentad`, or `decad`.
+#' @param lag_days [Numeric] Number of days after the initial two-year run to provide initial conditions without data assimilation, 
+#' followed by the hydrological model running with data assimilation (default is 180 days).
+#' @param Basin_Info [List] Information needed for the relative ice area and other basin-specific data.
+#' @param basinObsTS [Data Frame] Observed time series data with the following columns: 
+#' `date` [Date], `Temp` [Numeric] in Celsius, `Ptot` [Numeric] in mm/day, `Qmm` [Numeric] in mm/day, `PET` [Numeric] in mm/day.
+#' @param FUN_MOD [Function] The function of the hydrological model, e.g., `RunModel_CemaNeigeGR4J_Glacier`, `RunModel_CemaNeigeGR6J`, etc.
+#' @param parameter [Numeric] Parameter for the hydrological model.
+#' @param NbMbr [Numeric] Number of ensemble members.
+#' @param DaMethod [Character] Data assimilation method, e.g., `PF` for Particle Filter.
+#' @param StatePert [Character] A vector of state variable names to be perturbed via Particle Filter: 
+#' `"Prod"` - level of the production store [mm], 
+#' `"Rout"` - level of the routing store [mm], 
+#' `"UH1"` - unit hydrograph 1 levels [mm] (not defined for the GR5J model), 
+#' `"UH2"` - unit hydrograph 2 levels [mm].
+#' @param eps [Numeric] Perturbation factor for precipitation and potential evapotranspiration.
+#'
+#' @return [Data Frame] A data frame with hindcast results over the specified period. For daily there will be a column forecast_date and date (which start forecast date + 1 until 15 ahead). For pentad and decad there wil be 
 get_hindcast_period <- function(start_date, 
                                 end_date, 
                                 forecast_mode, 
@@ -37,13 +72,19 @@ get_hindcast_period <- function(start_date,
   start_date <- as.Date(start_date)
   end_date <- as.Date(end_date)
   
+  # check that start_date has to be smaller than end_date
+  if (start_date > end_date) {
+    stop("start_date has to be before the end_date")
+  }
+  
+  
   if (forecast_mode == "pentad") {
     time_steps <- pentadal_days(start_date, end_date)
   } else if (forecast_mode == "daily") {
     time_steps <- seq(from = start_date, to = end_date, by = "days")
-  }
+  } 
   
-  inputsModel <- airGR::CreateInputsModel(FUN_MOD   = FUN_MOD,
+  inputsModel <- CreateInputsModel(FUN_MOD   = FUN_MOD,
                                           DatesR    = basinObsTS$date,
                                           Precip    = basinObsTS$Ptot, 
                                           PotEvap   = basinObsTS$PET,
@@ -113,7 +154,42 @@ get_hindcast_period <- function(start_date,
 }
 
 
-
+#' @description
+#' The `get_hindcast` function generates a hindcast for a specific date and basin. 
+#' It operates similarly to the operational workflow but exclusively uses ERA5-Land data 
+#' as future data. The `lag_days` parameter determines how many days the hydrological model 
+#' will run with data assimilation. To ensure optimal initial conditions before data 
+#' assimilation begins, the model always runs for two years without data assimilation.
+#' 
+#' The `forecast_mode` can be one of the following: `daily`, `pentad`, or `decad`. 
+#' In daily mode, the output forecasts extend 15 days ahead, meaning forecasts from the 
+#' day after the forecast day up to 14 days into the future. For `pentad` and `decad`, 
+#' forecasts align with the period length defined by the Kyrgyz hydromet.
+#' 
+#' This function can be combined with `get_hindcast_period` to generate a hindcast over 
+#' a longer time period.
+#'
+#' @param forecast_date [Date] Date of the forecast; for `pentad` or `decad`, must be a date when a forecast is produced.
+#' @param forecast_mode [Character] The forecast mode: can be either `daily`, `pentad`, or `decad`.
+#' @param lag_days [Numeric] Number of days after the initial two-year run to provide initial conditions 
+#' without data assimilation, followed by hydrological model running with data assimilation (default is 180 days).
+#' @param Basin_Info [List] Information needed for the relative ice area.
+#' @param FUN_MOD [Function] The function of the hydrological model, e.g., `RunModel_CemaNeigeGR4J_Glacier`, `RunModel_CemaNeigeGR6J`, etc.
+#' @param parameter [Numeric] Parameter for the hydrological model.
+#' @param inputsModel [List] Input data according to `CreateInputsModel`. The data has to start minimum 2 year + lag_days before the forecast date 
+#' @param inputsPert [List] Perturbed forcing data according to `CreateInputsPert`.
+#' @param basinObsTS [Data Frame] Observed time series data which has to start minimum 2 year + lag_days before the forecast date with the following columns: 
+#' `date` [Date], `Temp` [Numeric] in Celsius, `Ptot` [Numeric] in mm/day, `Qmm` [Numeric] in mm/day, `PET` [Numeric] in mm/day.
+#' @param DaMethod [Character] Data assimilation method, e.g., `PF` for Particle Filter.
+#' @param NbMbr [Numeric] Number of ensemble members.
+#' @param StatePert [Character] A vector of state variable names to be perturbed via Particle Filter: 
+#' `"Prod"` - level of the production store [mm], 
+#' `"Rout"` - level of the routing store [mm], 
+#' `"UH1"` - unit hydrograph 1 levels [mm] (not defined for the GR5J model), 
+#' `"UH2"` - unit hydrograph 2 levels [mm].
+#'
+#' @return [Data Frame] The output includes the date (starting one day after the `forecast_date` until the defined forecast horizon), 
+#' `sd_Qsim` [Numeric] (the standard deviation of the simulated discharge), and quantiles ranging from `Q5` [Numeric] (5% quantile) to `Q95` [Numeric] in 5% steps.
 get_hindcast <- function(forecast_date,
                          forecast_mode,
                          lag_days = 180,
@@ -147,6 +223,15 @@ get_hindcast <- function(forecast_date,
   }
   
   Date_6_months_ago <- forecast_date - lag_days
+  # Check if the inputdata is long enough: 
+  startDateInputModel <- min(as.Date(inputsModel$DatesR))
+  min_date <- Date_6_months_ago - 2*365 
+  if (min_date <= startDateInputModel) {
+    stop("Error: The input data is too short. The minimum date hast to be 2 year + defined lag days before the forecast date.")
+  }
+  
+  
+
   start_op <- format((Date_6_months_ago), format = "%Y%m%d")
   indRun_OL <- seq(from = which(format(as.Date(basinObsTS$date), format = "%Y%m%d") == start_op), 
                    to   = which(format(as.Date(basinObsTS$date), format = "%Y%m%d") == start_op))
@@ -235,29 +320,6 @@ return(forecast_statistics)
 
 
 
-
-# gets the pentade in a year for a given date
-
-# get_pentad <- function(date){
-#   day <- day(date)
-#   month <- month(date)
-#   year <- year(date)
-#   month_last <- last_day_of_month(year,month) |> day()
-#   
-#   pentad_start <- c(1,6,11,16,21,26)
-#   pentad_end <- c(5,10,15,20,25,month_last)
-#   pentad <- seq(1,6, by =1)
-#   
-#   pentad_value <- NA
-#   for(i in pentad){
-#     if(day >= pentad_start[i] & day <= pentad_end[i]){
-#       pentad_value <- i+((month-1)*6)
-#       break
-#     }
-#   }
-#   return(pentad_value)
-# } 
-
 # gets the pentade in a year for a given date
 # Attention: when giving the forecast date it gives the pentad of this date (so not the pentad of the forecasted period)
 get_pentad <- function(date) {
@@ -341,7 +403,8 @@ get_forecast_end_decad <- function(forecast_date){
 }
 
 
-
+# Input: date, 
+# Output the last day of the month of the input date
 last_day_of_month_date <- function(Date) {
   last_day <- ceiling_date(Date, "month") - days(1)
   return(last_day)

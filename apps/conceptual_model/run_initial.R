@@ -115,8 +115,8 @@ for (Code in config$codes) {
   dir_Results <- file.path(Sys.getenv("ieasyhydroforecast_PATH_TO_RESULT"), Code)
   
   ## 1.1 Initial ####
-  load(file.path(dir_basin,"param.RData"))
-  load(file.path(dir_basin,"Basin_Info.RData"))
+  load(file.path(dir_basin,Sys.getenv("ieasyhydroforecast_FILE_PARAM")))
+  load(file.path(dir_basin,Sys.getenv("ieasyhydroforecast_FILE_BASININFO")))
 
   ## 1.2 Discharge observations ####
   Q_obs <- process_discharge_data(file.path(dir_Q, Sys.getenv("ieasyhydroforecast_FILE_Q")), Basin_Info$BasinCode, Basin_Info$BasinArea_m2)
