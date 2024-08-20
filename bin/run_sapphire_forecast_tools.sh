@@ -89,15 +89,21 @@ keep_last_three_elements() {
 if [ -n "$1" ];
 then
       env_file_path=$1
+      container_env_file_path=/$(keep_last_three_elements "$env_file_path")
+      # Test if there is a ieasyhydroforecast_env_file_path variable set
+      if [ -z "$ieasyhydroforecast_env_file_path" ];
+      then
+            # Test if the new env_file_path is different from the old one
+            if [ "$ieasyhydroforecast_env_file_path" != "$env_file_path" ];
+            then
+                  echo "WARNING: Updating ieasyhydroforecast_env_file_path\n   from $ieasyhydroforecast_env_file_path\n   to $container_env_file_path"
+            fi
+      fi
       # For use by the forecast tools (inside docker containers) we need to know
       # the env file path inside the docker containers as well.
-      export ieasyhydroforecast_env_file_path=/$(keep_last_three_elements "$env_file_path")
-      echo "env_file_path read from argument: $env_file_path"
-#elif [ -n "$ieasyhydroforecast_env_file_path" ];
-#then
-#      # THIS IS NOT TESTED AND MIGHT NOT WORK AS EXPECTED
-#      env_file_path=$ieasyhydroforecast_env_file_path
-#      echo "env_file_path read from environment variable: $ieasyhydroforecast_env_file_path"
+      export ieasyhydroforecast_env_file_path=$container_env_file_path
+      echo "Local path to .env read from argument: $env_file_path"
+      echo "Container path to .env derived: $ieasyhydroforecast_env_file_path"
 else
       echo "Error: No path to .env file was passed or was found in the environment!"
       exit 1
