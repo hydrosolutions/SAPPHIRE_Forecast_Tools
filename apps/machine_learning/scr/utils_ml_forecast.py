@@ -231,8 +231,8 @@ def recursive_imputation(df_discharge_org: pd.DataFrame, df_swe: pd.DataFrame, d
     #now we can predict the missing values
     predictions = model_predictor.predict(df_discharge, df_era5, df_swe, code=code, n=n, make_plot=make_plot)
 
-    #replace the missing discharge data with the predictions['discharge_0.5'] data
-    df_discharge_nan.loc[df_discharge_nan.index[-n:], 'discharge'] = predictions['discharge_0.5'].values
+    #replace the missing discharge data with the predictions['Q50'] data
+    df_discharge_nan.loc[df_discharge_nan.index[-n:], 'discharge'] = predictions['Q50'].values
 
 
     return df_discharge_nan

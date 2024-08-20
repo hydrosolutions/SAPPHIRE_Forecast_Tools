@@ -109,11 +109,15 @@ class PREDICTOR():
         prediction = predictions * std + mean
         #reshape from 6, 1 to 6
         prediction = prediction.reshape(-1)
+        # round predictions to 2 decimal places
+        prediction = np.round(prediction, 2)
+        # clip negative values to 0
+        prediction = np.clip(prediction, 0, None)
         return prediction
     
     def create_prediction_df(self, predictions: darts.TimeSeries, code: int) -> pd.DataFrame:
 
-        quantiles = [0.025,0.05,0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9,  0.95, 0.975]
+        quantiles = [0.05,0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9,  0.95]
 
         dates = predictions.time_index
 
@@ -122,7 +126,8 @@ class PREDICTOR():
         for q in quantiles:
             quantile_pred = predictions.quantile_timeseries(q)
             quantile_pred = self.rescale_predictions(quantile_pred.values(), code)
-            df_predictions['discharge_' + str(q)] = quantile_pred
+            Q = int(q * 100)
+            df_predictions['Q' + str(Q)] = quantile_pred
 
         df_predictions['date'] = dates
 
@@ -134,10 +139,10 @@ class PREDICTOR():
         #plot df rivers to date of forecast
         plt.plot(df_rivers['date'].iloc[-input_length:], df_rivers['discharge'].iloc[-input_length:], label='Past Discharge', color='black')
         #plot the predictions
-        plt.plot(df_predictions['date'], df_predictions['discharge_0.5'], label='Prediction Median', color='blue')
-        plt.fill_between(df_predictions['date'], df_predictions['discharge_0.25'], df_predictions['discharge_0.75'], color='blue', alpha=0.25, label='50% CI', linewidth=1)
-        plt.fill_between(df_predictions['date'], df_predictions['discharge_0.1'], df_predictions['discharge_0.9'], color='blue', alpha=0.2, label='80% CI', linewidth=1)
-        plt.fill_between(df_predictions['date'], df_predictions['discharge_0.05'], df_predictions['discharge_0.95'], color='blue', alpha=0.15, label='90% CI', linewidth=1)
+        plt.plot(df_predictions['date'], df_predictions['Q50'], label='Prediction Median', color='blue')
+        plt.fill_between(df_predictions['date'], df_predictions['Q25'], df_predictions['Q75'], color='blue', alpha=0.25, label='50% CI', linewidth=1)
+        plt.fill_between(df_predictions['date'], df_predictions['Q1'], df_predictions['Q9'], color='blue', alpha=0.2, label='80% CI', linewidth=1)
+        plt.fill_between(df_predictions['date'], df_predictions['Q05'], df_predictions['Q95'], color='blue', alpha=0.15, label='90% CI', linewidth=1)
         plt.legend()
         plt.xlabel('Date')
         plt.ylabel('Discharge [m3/s]')

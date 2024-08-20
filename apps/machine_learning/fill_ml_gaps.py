@@ -71,7 +71,7 @@ def call_hindcast_script(min_missing_date: str,
     env['SAPPHIRE_MODEL_TO_USE'] = MODEL_TO_USE
     env['ieasyhydroforecast_START_DATE'] = min_missing_date
     env['ieasyhydroforecast_END_DATE'] = max_missing_date
-    env['HINDCAST_MODE'] = PREDICTION_MODE
+    env['SAPPHIRE_HINDCAST_MODE'] = PREDICTION_MODE
 
     # Prepare the command
     command = ['python', 'hindcast_ML_models.py']
@@ -96,6 +96,7 @@ def call_hindcast_script(min_missing_date: str,
     OUTPUT_PATH_DISCHARGE = os.getenv('ieasyhydroforecast_OUTPUT_PATH_DISCHARGE')
 
     PATH_FORECAST = os.path.join(intermediate_data_path, OUTPUT_PATH_DISCHARGE)
+
     PATH_HINDCAST = os.path.join(PATH_FORECAST, 'hindcast', MODEL_TO_USE)
 
     
@@ -147,6 +148,8 @@ def fill_ml_gaps():
 
 
     PATH_FORECAST = os.path.join(intermediate_data_path, OUTPUT_PATH_DISCHARGE)
+    PATH_FORECAST = os.path.join(PATH_FORECAST, MODEL_TO_USE)
+    
     PATH_HINDCAST = os.path.join(PATH_FORECAST, 'hindcast', MODEL_TO_USE)
 
 

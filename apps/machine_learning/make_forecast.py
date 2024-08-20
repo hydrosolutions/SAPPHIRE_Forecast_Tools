@@ -175,7 +175,7 @@ def write_pentad_forecast(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, forecast_pentad):
 
     # Append the new forecast to the old forecast and remove duplicates
     forecast_pentad = pd.concat([forecast_pentad_old, forecast_pentad], axis=0)
-    forecast_pentad = forecast_pentad.drop_duplicates(subset=['date', 'code'], keep='last')
+    forecast_pentad = forecast_pentad.drop_duplicates(subset=['forecast_date','date', 'code'], keep='last')
 
     # Save the updated forecast
     forecast_pentad.to_csv(forecast_file_path, index=False)
@@ -215,7 +215,7 @@ def write_decad_forecast(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, forecast_decad):
         forecast_decad_intervall = forecast_decad_intervall.drop_duplicates(subset=['date', 'code'], keep='last')
         forecast_decad_intervall.to_csv(interval_file_path, index=False)
 
-    forecast_decad = forecast_decad.drop_duplicates(subset=['date', 'code'], keep='last')
+    forecast_decad = forecast_decad.drop_duplicates(subset=['forecast_date','date', 'code'], keep='last')
     forecast_decad.to_csv(os.path.join(OUTPUT_PATH_DISCHARGE, f'decad_{MODEL_TO_USE}_forecast.csv'), index=False)
 
 
@@ -309,6 +309,9 @@ def make_ml_forecast():
 
     PATH_TO_STATIC_FEATURES = os.path.join(MODELS_AND_SCALERS_PATH, PATH_TO_STATIC_FEATURES)
     OUTPUT_PATH_DISCHARGE = os.path.join(intermediate_data_path, OUTPUT_PATH_DISCHARGE)
+    #Extend the OUTPUT_PATH_DISCHARGE with the model name
+    OUTPUT_PATH_DISCHARGE = os.path.join(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE)
+    
     PATH_TO_QMAPPED_ERA5 = os.path.join(intermediate_data_path, PATH_TO_QMAPPED_ERA5)
 
     logger.debug('joined path_to_static_features: %s' , PATH_TO_STATIC_FEATURES)
@@ -326,7 +329,6 @@ def make_ml_forecast():
     # --------------------------------------------------------------------
     # LOAD DATA
     # --------------------------------------------------------------------
-    #FAKE DATA SHOULD BE REPLACED WITH REAL DATA
     PATH_TO_PAST_DISCHARGE = os.getenv('ieasyforecast_daily_discharge_file')
     PATH_TO_PAST_DISCHARGE = os.path.join(intermediate_data_path, PATH_TO_PAST_DISCHARGE)
 
@@ -365,7 +367,7 @@ def make_ml_forecast():
     # LOAD SCALER
     # --------------------------------------------------------------------
     if MODEL_TO_USE == 'ARIMA':
-        scaler = pd.read_csv(os.path.join(PATH_TO_SCALER, 'scalers_arima.csv'))
+        scaler = None
     else:
         scaler_discharge = pd.read_csv(os.path.join(PATH_TO_SCALER, 'scaler_stats_discharge.csv'))
         scaler_discharge.index = scaler_discharge['Unnamed: 0'].astype(int)
@@ -392,7 +394,7 @@ def make_ml_forecast():
 
 
     if MODEL_TO_USE == 'ARIMA':
-        predictor = predictor_class.PREDICTOR(PATH_TO_MODEL, scaler)
+        predictor = predictor_class.PREDICTOR(PATH_TO_MODEL)
     else:
         predictor = predictor_class.PREDICTOR(model, scaler_discharge, scaler_era5, scaler_static, static_features)
         
@@ -520,36 +522,6 @@ def make_ml_forecast():
         write_pentad_forecast(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, forecast)
     else:
         write_decad_forecast(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, forecast)
-    """    #read the latest forecast and append the new forecast
-    try:
-        forecast_pentad_old = pd.read_csv(os.path.join(OUTPUT_PATH_DISCHARGE, f'pentad_{MODEL_TO_USE}_forecast.csv'))
-
-    except:
-        forecast_pentad_old = pd.DataFrame()
-
-
-    #check if we need to save the forecast for all 5 days -> no overwrite
-    if utils_ml_forecast.save_pentad_forecast():
-        try:
-            forecast_pentad_old_intervall = pd.read_csv(os.path.join(OUTPUT_PATH_DISCHARGE, f'pentad_{MODEL_TO_USE}_forecast_pentad_intervall.csv'))
-        except:
-            forecast_pentad_old_intervall = pd.DataFrame()
-
-        forecast_pentad_pentad_intervall = forecast_pentad
-        forecast_pentad_pentad_intervall['prediction_date'] = datetime.datetime.now().date()
-
-        forecast_pentad_pentad_intervall = pd.concat([forecast_pentad_old_intervall, forecast_pentad_pentad_intervall], axis=0)
-        forecast_pentad_pentad_intervall = forecast_pentad_pentad_intervall.drop_duplicates(subset=['date', 'code'], keep='last')
-        forecast_pentad_pentad_intervall.to_csv(os.path.join(OUTPUT_PATH_DISCHARGE, f'pentad_{MODEL_TO_USE}_forecast_pentad_intervall.csv'), index=False)
-
-
-
-    forecast_pentad = pd.concat([forecast_pentad_old, forecast_pentad], axis=0)
-    forecast_pentad = forecast_pentad.drop_duplicates(subset=['date', 'code'], keep='last')
-
-    forecast_pentad.to_csv(os.path.join(OUTPUT_PATH_DISCHARGE, f'pentad_{MODEL_TO_USE}_forecast.csv'), index=False)"""
-    #forecast_decad.to_csv(os.path.join(OUTPUT_PATH_DISCHARGE, f'decadal_{MODEL_TO_USE}_forecast.csv'), index=False)
-
 
 
 if __name__ == '__main__':

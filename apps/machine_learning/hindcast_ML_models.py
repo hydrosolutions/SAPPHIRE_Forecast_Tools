@@ -102,87 +102,6 @@ sys.path.append(forecast_dir)
 # Import the setup_library module from the iEasyHydroForecast package
 import setup_library as sl
 
-# --------------------------------------------------------------------
-# Quantile Mapping
-# --------------------------------------------------------------------
-def ptf(x: np.array,  a: float, b:float ) -> np.array:
-    return a * np.power(x, b)
-
-def quantile_mapping_ptf(sce_data:np.array, a: float, b: float, wet_days: bool = True, wet_day_threshold: float = 0) -> np.array:
-    """
-    Perform quantile mapping for precipitation or temperature data.
-    FORMULA: y_fit = a * y_era^b
-    Inputs:
-        sce_data: numpy array of shape (n,) with the data to be transformed.
-        a: float
-        b: float
-        wet_days: boolean, if True, the transformation is performed only for wet days.
-        wet_day_threshold: float, the threshold to define wet days.
-    Outputs:
-        transformed_sce: numpy array of shape (n,) with the transformed data.
-    """
-    if wet_days:
-        dry_days = sce_data <= wet_day_threshold
-        # dry days to zero
-        sce_data[dry_days] = 0
-        transformed_sce = ptf(sce_data, a, b)
-
-    else:
-        transformed_sce = ptf(sce_data, a, b)
-
-    return transformed_sce
-
-def do_quantile_mapping(era5_data: pd.DataFrame, P_param: pd.DataFrame, T_param: pd.DataFrame, ensemble: bool) -> pd.DataFrame:
-    """
-    Loop over all the stations and perform the quantile mapping for each station for the control member.
-    Inputs:
-        era5_data: pandas DataFrame with the ERA5 data.
-        P_param: pandas DataFrame with the precipitation parameters.
-        T_param: pandas DataFrame with the temperature parameters.
-    Outputs:
-        P_data: pandas DataFrame with the transformed precipitation data.
-        T_data: pandas DataFrame with the transformed temperature data.
-    """
-    era5_data = era5_data.copy()
-    #get the unique codes
-    codes = era5_data['code'].unique()
-    #iterate over the codes
-    for code in codes:
-        #get the data for the code
-        code_data = era5_data[era5_data['code'] == code]
-
-        #get the parameters for the code
-        P_param_code = P_param[P_param['code'] == code]
-        T_param_code = T_param[T_param['code'] == code]
-
-        #get the parameters
-        a_P = P_param_code['a'].values
-        b_P = P_param_code['b'].values
-        threshold_P = P_param_code['wet_day'].values
-
-        a_T = T_param_code['a'].values
-        b_T = T_param_code['b'].values
-
-        #transform the data
-        code_data.loc[:,'P'] = quantile_mapping_ptf(code_data['P'].values, a_P, b_P, wet_days=True, wet_day_threshold=threshold_P)
-
-        #for temperature we need to tranform it to Kelvin
-        T_data = code_data['T'].values + 273.15
-        T_fitted = quantile_mapping_ptf(T_data, a_T, b_T, wet_days=False, wet_day_threshold=0)
-        code_data.loc[:,'T'] = T_fitted - 273.15
-
-        era5_data.loc[era5_data['code'] == code, 'P'] = code_data['P']
-        era5_data.loc[era5_data['code'] == code, 'T'] = code_data['T']
-
-    if ensemble:
-        P_data = era5_data[['date', 'P', 'code', 'ensemble_member']].copy()
-        T_data = era5_data[['date', 'T', 'code', 'ensemble_member']].copy()
-    else:
-        P_data = era5_data[['date', 'P', 'code']].copy()
-        T_data = era5_data[['date', 'T', 'code']].copy()
-
-    return P_data, T_data
-
 
 # --------------------------------------------------------------------
 # CALLBACKS
@@ -199,55 +118,6 @@ class LossLogger(Callback):
 
     def on_validation_epoch_end(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule") -> None:
         self.val_loss.append(float(trainer.callback_metrics["val_loss"]))
-
-# --------------------------------------------------------------------
-# TRANSFORM DATA FILE
-# --------------------------------------------------------------------
-def transform_data_file_control_member(data_file:pd.DataFrame) -> pd.DataFrame:
-    """
-    Transforms the data file from the data gateaway in a more handy format.
-    Inputs:
-        data_file: pd.DataFrame with the data from the data gateaway. columns Code XXXXX is T and columns Code XXXXX.1 is P
-    Outputs:
-        transformed_data: pd.DataFrame with the transformed data. Columns are 'date', 'P', 'T', 'code'
-    """
-    data_file = data_file.copy()
-    # rename the Station column to 'date'
-    data_file.rename(columns={'Station': 'date'}, inplace=True)
-
-    #than we need to drop the first 7 rows of the era5 data
-    data_file = data_file.iloc[7:]
-
-    # now we need to convert the date column to a datetime object
-    data_file['date'] = pd.to_datetime(data_file['date'], dayfirst=True)
-
-    #sort by the date
-    data_file = data_file.sort_values('date')
-
-
-    transformed_data_file = pd.DataFrame()
-
-    #unique codes
-    codes = data_file.columns[1:]
-
-    # if the ".1" is not in code
-    codes = [code for code in codes if (code[-2:] != '.1' and code != 'Source')]
-
-    #iterate over the codes
-    for code in codes:
-        # get the data for the code
-        code_data = data_file[['date', code, code + '.1']].copy()
-        # rename the columns
-        code_data.rename(columns={code: 'T', code + '.1': 'P'}, inplace=True)
-        # Add the 'code' column
-        code_data['code'] = code
-        # Convert 'T' and 'P' columns to numeric, coercing errors
-        code_data['T'] = pd.to_numeric(code_data['T'], errors='coerce').astype(float)
-        code_data['P'] = pd.to_numeric(code_data['P'], errors='coerce').astype(float)
-        transformed_data_file = pd.concat([transformed_data_file, code_data], axis = 0)
-
-
-    return transformed_data_file
 
 
 # --------------------------------------------------------------------
@@ -468,7 +338,7 @@ def make_hindecast_decad(
 # --------------------------------------------------------------------
 
 def main():
-        # --------------------------------------------------------------------
+    # --------------------------------------------------------------------
     # DEFINE WHICH MODEL TO USE
     # --------------------------------------------------------------------
     MODEL_TO_USE = os.getenv('SAPPHIRE_MODEL_TO_USE')
@@ -512,12 +382,6 @@ def main():
     # --------------------------------------------------------------------
     # LOAD IN ENVIROMENT VARIABLES
     # --------------------------------------------------------------------
-    # Test if an API key is available and exit the program if it isn't
-    if not os.getenv('ieasyhydroforecast_API_KEY_GATEAWAY'):
-        logger.warning("No API key for the data gateway found. Exiting program.\nMachine learning or conceptual models will not be run.")
-        sys.exit(1)
-    else:
-        API_KEY = os.getenv('ieasyhydroforecast_API_KEY_GATEAWAY')
 
     intermediate_data_path = os.getenv('ieasyforecast_intermediate_data_path')
     PATH_TO_PAST_DISCHARGE = os.getenv('ieasyforecast_daily_discharge_file')
@@ -526,8 +390,6 @@ def main():
     # Test if file exists
     if not os.path.exists(PATH_TO_PAST_DISCHARGE):
         raise FileNotFoundError(f"File {PATH_TO_PAST_DISCHARGE} not found.")
-    #output_path for the data from the data gateaway
-    OUTPUT_PATH_DG = os.getenv('ieasyhydroforecast_OUTPUT_PATH_DG')
 
     MODELS_AND_SCALERS_PATH = os.getenv('ieasyhydroforecast_models_and_scalers_path')
     PATH_TO_STATIC_FEATURES = os.getenv('ieasyhydroforecast_PATH_TO_STATIC_FEATURES')
@@ -567,24 +429,6 @@ def main():
     HRU_ML_MODELS = os.getenv('ieasyhydroforecast_HRU_CONTROL_MEMBER')
     Q_MAP_PARAM_PATH = os.getenv('ieasyhydroforecast_Q_MAP_PARAM_PATH')
 
-    OUTPUT_PATH_DG = os.path.join(
-        os.getenv('ieasyforecast_intermediate_data_path'),
-        os.getenv('ieasyhydroforecast_OUTPUT_PATH_DG'))
-    # Test if path exists and raise an error if it does not
-    if not os.path.exists(OUTPUT_PATH_DG):
-        raise FileNotFoundError(f"The path {OUTPUT_PATH_DG} does not exist.")
-    # Test if the folder OUTPUT_PATH_DG is empty
-    if not os.listdir(OUTPUT_PATH_DG):
-        # This folder can be empty for this script, or is empty when initialized, so we only log a warning
-        logger.warning(f"The directory {OUTPUT_PATH_DG} is empty.")
-        #raise FileNotFoundError(f"The directory {OUTPUT_PATH_DG} is unexpectedly empty.")
-
-    Q_MAP_PARAM_PATH = os.path.join(
-        os.getenv('ieasyhydroforecast_models_and_scalers_path'),
-        os.getenv('ieasyhydroforecast_Q_MAP_PARAM_PATH'))
-
-    logger.debug("OUTPUT_PATH_DG: %s", OUTPUT_PATH_DG)
-
     rivers_to_predict_pentad, rivers_to_predict_decad, hydroposts_available_for_ml_forecasting = utils_ml_forecast.get_hydroposts_for_pentadal_and_decadal_forecasts()
     # Combine rivers_to_predict_pentad and rivers_to_predict_decad to get all rivers to predict, only keep unique values
     rivers_to_predict = list(set(rivers_to_predict_pentad + rivers_to_predict_decad))
@@ -594,12 +438,14 @@ def main():
     logger.debug('Hydroposts available for ML forecasting: \n%s', hydroposts_available_for_ml_forecasting)
 
     # --------------------------------------------------------------------
-    # GET ERA5 DATA FROM THE API
+    # READ IN FORCING DATA
     # --------------------------------------------------------------------
-
     #start date is the date where the first forecast is made
+    # NOTE: The start date should be +lookback days before the first date in the era5 data 
+    # Here we hardcode the lookback days to 60
     start_date = os.getenv('ieasyhydroforecast_START_DATE')
     #end date is the date where the last forecast is made
+    # NOTE: The end date should be at maximum the last date in the era5 data - forecast horizon
     end_date = os.getenv('ieasyhydroforecast_END_DATE')
 
     #check if the hindcast should be done on a daily basis or on a pentad basis
@@ -609,55 +455,64 @@ def main():
     else:
         HINDCAST_DAILY = False
 
-    client = sapphire_dg_client.client.SapphireDGClient(api_key= API_KEY)
+    PATH_ERA5_REANALYSIS = os.getenv('ieasyhydroforecast_OUTPUT_PATH_REANALYSIS')
+    PATH_ERA5_REANALYSIS = os.path.join(intermediate_data_path, PATH_ERA5_REANALYSIS)
 
-    #substract 180 days from the start date
-    start_date = pd.to_datetime(start_date) - pd.DateOffset(days=180)
-    start_date = start_date.strftime('%Y-%m-%d')
+    P_era5_renalysis_file = f'{HRU_ML_MODELS}_P_reanalysis.csv'
+    T_era5_renalysis_file = f'{HRU_ML_MODELS}_T_reanalysis.csv'
 
-    today = datetime.datetime.now().date()
-    today = pd.to_datetime(today)
-    end_date = pd.to_datetime(end_date) + pd.DateOffset(days = forecast_horizon+1)
+    P_era5_renalysis_file = os.path.join(PATH_ERA5_REANALYSIS, P_era5_renalysis_file)
+    T_era5_renalysis_file = os.path.join(PATH_ERA5_REANALYSIS, T_era5_renalysis_file)
 
-    # calculate the time difference between today and the end date
-    # if there is a difference, we can download less data
-    time_diff = today - end_date
-    time_diff = time_diff.days
+    # Test if the file exists
+    if not os.path.exists(P_era5_renalysis_file):
+        raise FileNotFoundError(f"File {P_era5_renalysis_file} not found.")
+    if not os.path.exists(T_era5_renalysis_file):
+        raise FileNotFoundError(f"File {T_era5_renalysis_file} not found.")
+    
+    P_reanalysis = pd.read_csv(P_era5_renalysis_file)
+    T_reanalysis = pd.read_csv(T_era5_renalysis_file)
 
-    if time_diff < 2*forecast_horizon:
-        # if the time diff is smaller than 2*forecast_horizon, 
-        # we need to get the data from the data gateaway with the current forecast
-        #loads in the data from start_date -60 up to the current date + forecast
-        era5_data_path = client.operational.get_control_spinup_and_forecast(HRU_ML_MODELS,
-                                                                        date=start_date,
-                                                                       directory=OUTPUT_PATH_DG)
-    else:
-        end_date = end_date.strftime('%Y-%m-%d')
-        era5_data_path = client.era5_land.get_era5_land(HRU_ML_MODELS, 
-                                                        date=start_date, 
-                                                        end_date=end_date,
-                                                        directory=OUTPUT_PATH_DG)
+    era5_data_transformed_renalysis = pd.merge(P_reanalysis, T_reanalysis, on=['code', 'date'])
 
+    # Read in The Operational Forcing Data
+    PATH_OPERATIONAL_CONTROL_MEMBER = os.getenv('ieasyhydroforecast_OUTPUT_PATH_CM')
+    PATH_OPERATIONAL_CONTROL_MEMBER = os.path.join(intermediate_data_path, PATH_OPERATIONAL_CONTROL_MEMBER)
 
-    era5_data = pd.read_csv(era5_data_path)
+    P_operational_file = f'{HRU_ML_MODELS}_P_control_member.csv'
+    T_operational_file = f'{HRU_ML_MODELS}_T_control_member.csv'
 
-    # Transform the data
-    era5_data_transformed = transform_data_file_control_member(era5_data)
+    P_operational_file = os.path.join(PATH_OPERATIONAL_CONTROL_MEMBER, P_operational_file)
+    T_operational_file = os.path.join(PATH_OPERATIONAL_CONTROL_MEMBER, T_operational_file)
 
-    era5_data_transformed['code'] = era5_data_transformed['code'].astype(str)
-    #get the parameters
-    P_params_hru = pd.read_csv(os.path.join(Q_MAP_PARAM_PATH, 'HRU'+HRU_ML_MODELS+ '_P_params.csv'))
-    T_params_hru = pd.read_csv(os.path.join(Q_MAP_PARAM_PATH, 'HRU'+HRU_ML_MODELS + '_T_params.csv'))
+    # Test if the file exists
+    if not os.path.exists(P_operational_file):
+        raise FileNotFoundError(f"File {P_operational_file} not found.")
+    if not os.path.exists(T_operational_file):
+        raise FileNotFoundError(f"File {T_operational_file} not found.")
+    
+    P_control_member = pd.read_csv(P_operational_file)
+    T_control_member = pd.read_csv(T_operational_file)
 
-    #transform to string, as the other code is a string
-    P_params_hru['code'] = P_params_hru['code'].astype(str)
-    T_params_hru['code'] = T_params_hru['code'].astype(str)
+    era5_data_transformed_cm = pd.merge(P_control_member, T_control_member, on=['code', 'date'])
 
-    #perform the quantile mapping for the control member for the HRU's without Eleavtion bands
-    P_data, T_data = do_quantile_mapping(era5_data_transformed, P_params_hru, T_params_hru, ensemble=False)
+    # Concat the reanalysis and control member data
+    era5_data_transformed_renalysis['date'] = pd.to_datetime(era5_data_transformed_renalysis['date'])
+    era5_data_transformed_cm['date'] = pd.to_datetime(era5_data_transformed_cm['date'])
 
-    era5_data_transformed = pd.merge(P_data, T_data, on=['code', 'date'])
+    era5_data_transformed = pd.concat([era5_data_transformed_renalysis, era5_data_transformed_cm], axis=0)
 
+    # sort by date
+    era5_data_transformed = era5_data_transformed.sort_values(by=['code', 'date'])
+
+    #remove dublicates on date and code , keep last
+    era5_data_transformed = era5_data_transformed.drop_duplicates(subset=['date', 'code'], keep='last')
+
+    # check if the start and end date is in the era5 data
+    if pd.to_datetime(start_date) < era5_data_transformed['date'].min() + pd.DateOffset(days=60):
+        raise ValueError(f'The start date {start_date} is before the first date in the era5 data {era5_data_transformed["date"].min()} + 60 days')
+    if pd.to_datetime(end_date) > era5_data_transformed['date'].max() - pd.DateOffset(days=forecast_horizon):
+        raise ValueError(f'The end date {end_date} is after the last date in the era5 data {era5_data_transformed["date"].max()} - forecast horizon {forecast_horizon}')
 
     # --------------------------------------------------------------------
     # Preprocessing
@@ -669,7 +524,7 @@ def main():
     static_features.index = static_features['CODE']
 
     if MODEL_TO_USE == 'ARIMA':
-        scaler = pd.read_csv(os.path.join(PATH_TO_SCALER, 'scalers_arima.csv'))
+        scaler = None
     else:
         scaler_discharge = pd.read_csv(os.path.join(PATH_TO_SCALER, 'scaler_stats_discharge.csv'))
         scaler_discharge.index = scaler_discharge['Unnamed: 0'].astype(int)
@@ -716,7 +571,8 @@ def main():
 
 
     if MODEL_TO_USE == 'ARIMA':
-        predictor = predictor_class.PREDICTOR(PATH_TO_MODEL, scaler)
+        predictor = predictor_class.PREDICTOR(PATH_TO_MODEL)
+ 
     else:
         predictor = predictor_class.PREDICTOR(model, scaler_discharge, scaler_era5, scaler_static, static_features)
 
@@ -750,10 +606,7 @@ def main():
         codes_hindecast = codes_to_use
 
 
-    pred_date = pd.to_datetime(start_date) + pd.DateOffset(days=60)
-    # in order to write the correct output file name we need to change the start date to the first prediction date
-    start_date = pred_date
-    start_date = start_date.strftime('%Y-%m-%d')
+    pred_date = pd.to_datetime(start_date)
     
     observed_discharge['date'] = pd.to_datetime(observed_discharge['date'])
     era5_data_transformed['date'] = pd.to_datetime(era5_data_transformed['date'])
@@ -858,6 +711,8 @@ def main():
     # Test if path exists and create it if it doesn't
     if not os.path.exists(OUTPUT_PATH_DISCHARGE):
         os.makedirs(OUTPUT_PATH_DISCHARGE, exist_ok=True)
+    
+    
     hindecast_df.to_csv(os.path.join(OUTPUT_PATH_DISCHARGE, f'{MODEL_TO_USE}_{HINDCAST_MODE}_hindcast_{start_date}_{end_date}.csv'), index=False)
     hindecast_daily_df.to_csv(os.path.join(OUTPUT_PATH_DISCHARGE, f'{MODEL_TO_USE}_{HINDCAST_MODE}_hindcast_daily_{start_date}_{end_date}.csv'), index=False)
 
