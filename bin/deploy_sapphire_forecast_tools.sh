@@ -1,13 +1,13 @@
 #!/bin/bash
 
-# This script runs the SAPPHIRE forecast tools in local daily deployment mode
+# This script deploys the SAPPHIRE forecast tools
 # Working directory is the root of the repository, i.e. SAPPHIRE_forecast_tools
 #
 # Useage:
 # Run the script in your terminal:
-# bash bin/run_sapphire_forecast_tools.sh <env_file_path>
+# bash bin/deploy_sapphire_forecast_tools.sh <env_file_path>
 # Run the script in the background:
-# nohup bash bin/run_sapphire_forecast_tools.sh <env_file_path> > output.log 2>&1 &
+# nohup bash bin/deploy_sapphire_forecast_tools.sh <env_file_path> > output.log 2>&1 &
 # note: nohup: no hangup, i.e. the process will not be terminated when the terminal is closed
 # note: > output.log 2>&1: redirect stdout and stderr to a file called output.log
 # note: &: run the process in the background
@@ -66,22 +66,8 @@ echo " | |_ / _ \| '__/ _ \/ __/ _\` / __| __|   | |/ _ \ / _ \| / __| "
 echo " |  _| (_) | | |  __/ (_| (_| \__ \ |_    | | (_) | (_) | \__ \ "
 echo " |_|  \___/|_|  \___|\___\__,_|___/\__|   |_|\___/ \___/|_|___/ "
 echo "                                                                "
-echo "Producing forecasts with the SAPPHIRE forecast tools ..."
+echo "Deploying the SAPPHIRE forecast tools ..."
 echo "Date: $(date '+%Y-%m-%d %H:%M:%S %Z')"
-
-keep_last_three_elements() {
-    local path=$1
-    local result=""
-
-    for i in {1..3}; do
-        result=$(basename "$path")/$result
-        path=$(dirname "$path")
-    done
-
-    # Remove the trailing slash
-    result=${result%/}
-    echo "$result"
-}
 
 # If the argument is provided, write it to the environment variable
 # ieasyhydroforecast_env_file_path. If not, check if the environment variable
@@ -127,11 +113,21 @@ else
     exit 1
 fi
 
+# If the env. varialbe ieasyhydroforecast_organization is not set, assume "demo"
+if [ -z "$ieasyhydroforecast_organization" ]; then
+  echo "WARNING: ieasyhydroforecast_organization is not set. Assuming 'demo'"
+  ieasyhydroforecast_organization="demo"
+fi
+echo "Deploying the SAPPHIRE forecast tools for organization:\n   $ieasyhydroforecast_organization"
+
 # Clean up docker space
 echo "Removing all containers and images"
+# Take down the frontend if it is running
+docker compose -f bin/docker-compose-dashboards.yml down
 ieasyhydroforecast_data_root_dir=$ieasyhydroforecast_data_root_dir source ./bin/utils/clean_docker.sh
 
-# Pull (deployment mode) or build (development mode) & push images
+
+# Pull (deployment mode)
 echo "Pulling with TAG=$ieasyhydroforecast_backend_docker_image_tag"
 source ./bin/utils/pull_docker_images.sh $ieasyhydroforecast_backend_docker_image_tag
 
@@ -144,6 +140,14 @@ start_docker_compose_luigi() {
   docker compose -f bin/docker-compose-luigi.yml up -d &
   DOCKER_COMPOSE_LUIGI_PID=$!
   echo "Docker Compose service started with PID $DOCKER_COMPOSE_LUIGI_PID"
+}
+
+# Function to start the Docker Compose service for the dashboards
+start_docker_compose_dashboards() {
+  echo "Starting Docker Compose service for the dashboards..."
+  docker compose -f bin/docker-compose-dashboards.yml up -d &
+  DOCKER_COMPOSE_DASHBOARD_PID=$!
+  echo "Docker Compose service started with PID $DOCKER_COMPOSE_DASHBOARD_PID"
 }
 
 # Trap to clean up processes on script exit
@@ -173,6 +177,9 @@ echo "PID of ssh tunnel is $ieasyhydroforecast_ssh_tunnel_pid"
 # Start the Docker Compose service for the forecasting pipeline
 start_docker_compose_luigi
 
+# Start the Docker Compose service for the dashboards
+start_docker_compose_dashboards
+
 # Wait for forecasting pipeline to finish
 wait $DOCKER_COMPOSE_LUIGI_PID
 
@@ -183,4 +190,12 @@ sleep 1800
 # Additional actions to be taken after Docker Compose service stops
 echo "Docker Compose service has finished running"
 
-
+echo "      "
+echo "------"
+echo "      "
+echo "You have now run the SAPPHIRE forecast tools for the first time!"
+echo "      "
+echo "Next steps (follow the docs for more detailed instructions):"
+echo "1. Check the logs of the Docker Compose service for any errors."
+echo "2. Check if the dashboards are running and displaying as expected."
+echo "3. Set up cron jobs for the dashboard services and for the daily run of the forecasting pipeline."

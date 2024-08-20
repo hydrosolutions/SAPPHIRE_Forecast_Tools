@@ -199,3 +199,7 @@ apps/logs/log
 apps/preprocessing_runoff/runoff_comparison.html
 apps/preprocessing_runoff/runoff_comparison_0.html
 apps/preprocessing_runoff/runoff_comparison_1.html
+apps/backend/tests/lindas_rosegbach_station_data.csv
+apps/backend/tests/lindas_river_meta_data.csv
+apps/backend/tests/lindas_meta_data.csv
+apps/backend/tests/lindas_data.csv

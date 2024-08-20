@@ -2,6 +2,9 @@
 
 import os
 from dotenv import load_dotenv
+import logging
+
+logger = logging.getLogger(__name__)
 
 def load_configuration():
     """
@@ -21,33 +24,43 @@ def load_configuration():
            if it's not set.
     """
     # Print the environment variables
-    print("IN_DOCKER_CONTAINER: ", os.getenv("IN_DOCKER_CONTAINER"))
-    print("SAPPHIRE_TEST_ENV: ", os.getenv("SAPPHIRE_TEST_ENV"))
-    print("SAPPHIRE_OPDEV_ENV: ", os.getenv("SAPPHIRE_OPDEV_ENV"))
+    logger.debug("IN_DOCKER_CONTAINER: %s", os.getenv("IN_DOCKER_CONTAINER"))
+    logger.debug("SAPPHIRE_TEST_ENV: %s", os.getenv("SAPPHIRE_TEST_ENV"))
+    logger.debug("SAPPHIRE_OPDEV_ENV: %s", os.getenv("SAPPHIRE_OPDEV_ENV"))
+    print("IN_DOCKER_CONTAINER: ", os.getenv("IN_DOCKER_CONTAINER"), flush=True)
+    print("SAPPHIRE_TEST_ENV: ", os.getenv("SAPPHIRE_TEST_ENV"), flush=True)
+    print("SAPPHIRE_OPDEV_ENV: ", os.getenv("SAPPHIRE_OPDEV_ENV"), flush=True)
 
     in_docker_flag = str(os.getenv("IN_DOCKER_CONTAINER"))
-    print("Current working directory: ", os.getcwd())
+    logger.debug("Current working directory: %s", os.getcwd())
+    print("Current working directory: ", os.getcwd(), flush=True)
     if in_docker_flag == "True":
         if os.getenv("SAPPHIRE_OPDEV_ENV") == "True":
-            print("Running in Docker container with SAPPHIRE_OPDEV_ENV")
+            logger.debug("Running in Docker container with SAPPHIRE_OPDEV_ENV")
+            print("Running in Docker container with SAPPHIRE_OPDEV_ENV", flush=True)
             path_to_env_file = "/sensitive_data_forecast_tools/config/.env_develop_kghm"
-            print("Path to .env file: ", path_to_env_file)
+            logger.debug("Path to .env file: %s", path_to_env_file)
+            print("Path to .env file: ", path_to_env_file, flush=True)
         else:
-            print("Running in Docker container with default environment")
+            logger.debug("Running in Docker container with default environment")
+            print("Running in Docker container with default environment", flush=True)
             path_to_env_file = "apps/config/.env"
     else:
         if os.getenv("SAPPHIRE_TEST_ENV") == "True":
-            print("Running locally in test environment")
+            logger.debug("Running locally in test environment")
+            print("Running locally in test environment", flush=True)
             path_to_env_file = "backend/tests/test_files/.env_develop_test"
         elif os.getenv("SAPPHIRE_OPDEV_ENV") == "True":
-            print("Running locally in opdev environment")
+            logger.debug("Running locally in opdev environment")
+            print("Running locally in opdev environment", flush=True)
             path_to_env_file = "../../../sensitive_data_forecast_tools/config/.env_develop_kghm"
         else:
             # Test if the default .env file exists
             path_to_env_file = "../config/.env_develop"
             if not os.path.isfile(path_to_env_file):
                 raise Exception("File not found: " + path_to_env_file)
-            print("Running locally with public repository data")
+            logger.debug("Running locally with public repository data")
+            print("Running locally with public repository data", flush=True)
     # The override flag in read_dotenv is set to allow switching between .env
     # files. Useful when testing different configurations.
     res = load_dotenv(path_to_env_file, override=True)
@@ -55,6 +68,7 @@ def load_configuration():
         raise Exception("Could not read .env file: ", path_to_env_file)
         # Print ieasyreports_templates_directory_path from the environment
         # variables
+    logger.debug("Configuration read from : %s", os.getenv("ieasyforecast_configuration_path"))
     print("Configuration read from : ", os.getenv("ieasyforecast_configuration_path"))
 
     # Test if the environment was loaded successfully

@@ -20,9 +20,8 @@ from apps.pipeline.src import pipeline_utils as pu
 #from . import docker_runner as dokr
 
 
-# Define the tag of the docker image to use
-TAG = os.getenv('SAPPHIRE_FORECAST_TOOLS_DOCKER_TAG', 'latest')
 # URL of the sapphire data gateway
+# TODO: Move to .env file
 SAPPHIRE_DG_HOST = os.getenv('SAPPHIRE_DG_HOST', 'localhost')
 
 
@@ -32,11 +31,21 @@ class Environment:
         print(f"Loading environment variables from {dotenv_path}")
         load_dotenv(dotenv_path=dotenv_path)
 
-    def get(self, key):
-        return os.getenv(key)
+    def get(self, key, default=None):
+        return os.getenv(key, default)
 
 # Initialize the Environment class with the path to your .env file
-env = Environment('../sensitive_data_forecast_tools/config/.env_develop_kghm')
+env_file_path = os.getenv('ieasyhydroforecast_env_file_path')
+env = Environment(env_file_path)
+# Get the tag of the docker image to use
+TAG = env.get('ieasyhydroforecast_backend_docker_image_tag', 'latest')
+# Get the organization for which to run the forecast tools
+ORGANIZATION = env.get('ieasyforecast_organization', 'demo')
+# URL of the sapphire data gateway
+#SAPPHIRE_DG_HOST = os.getenv('SAPPHIRE_DG_HOST', 'localhost')
+
+
+
 
 # Function to convert a relative path to an absolute path
 def get_absolute_path(relative_path):
@@ -353,13 +362,13 @@ class PostProcessingForecasts(luigi.Task):
 
         # Get the path to the output file
         #print(f"cwd: {os.getcwd()}")
-        #print(f"ieasyforecast_intermediate_data_path: {env.get('ieasyforecast_intermediate_data_path')}")
-        #print(f"ieasyforecast_pentadal_skill_metrics_file: {env.get('ieasyforecast_pentadal_skill_metrics_file')}")
+        print(f"ieasyforecast_intermediate_data_path: {env.get('ieasyforecast_intermediate_data_path')}")
+        print(f"ieasyforecast_pentadal_skill_metrics_file: {env.get('ieasyforecast_pentadal_skill_metrics_file')}")
         output_file_path = os.path.join(
             env.get("ieasyforecast_intermediate_data_path"),
             env.get("ieasyforecast_pentadal_skill_metrics_file")
             )
-        #print(f"Output file path: {output_file_path}")
+        print(f"Output file path for post-processing: {output_file_path}")
 
         return luigi.LocalTarget(output_file_path)
 
@@ -459,16 +468,20 @@ class DeleteOldGateywayFiles(luigi.Task):
 class RunWorkflow(luigi.Task):
 
     def requires(self):
-        return [#PostProcessingForecasts(),
-                PreprocessingRunoff(),
-                PreprocessingGatewayQuantileMapping(),
-                #DeleteOldGateywayFiles()
-                ]
+        if ORGANIZATION=='demo':
+
+            return [PostProcessingForecasts()]
+
+        elif ORGANIZATION=='kghm':
+
+            return [PostProcessingForecasts(),
+                    PreprocessingGatewayQuantileMapping(),
+                    #DeleteOldGateywayFiles()
+                    ]
 
     def run(self):
         print("Workflow completed.")
         return None
-
 
 
 if __name__ == '__main__':
