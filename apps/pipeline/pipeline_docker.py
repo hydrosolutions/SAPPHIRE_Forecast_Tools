@@ -31,8 +31,8 @@ class Environment:
         print(f"Loading environment variables from {dotenv_path}")
         load_dotenv(dotenv_path=dotenv_path)
 
-    def get(self, key):
-        return os.getenv(key)
+    def get(self, key, default=None):
+        return os.getenv(key, default)
 
 # Initialize the Environment class with the path to your .env file
 env_file_path = os.getenv('ieasyhydroforecast_env_file_path')
