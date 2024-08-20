@@ -69,6 +69,20 @@ echo "                                                                "
 echo "Deploying the SAPPHIRE forecast tools ..."
 echo "Date: $(date '+%Y-%m-%d %H:%M:%S %Z')"
 
+keep_last_three_elements() {
+    local path=$1
+    local result=""
+
+    for i in {1..3}; do
+        result=$(basename "$path")/$result
+        path=$(dirname "$path")
+    done
+
+    # Remove the trailing slash
+    result=${result%/}
+    echo "$result"
+}
+
 # If the argument is provided, write it to the environment variable
 # ieasyhydroforecast_env_file_path. If not, check if the environment variable
 # is set. If not, throw an error.
@@ -120,6 +134,7 @@ if [ -z "$ieasyhydroforecast_organization" ]; then
 fi
 echo "Deploying the SAPPHIRE forecast tools for organization:\n   $ieasyhydroforecast_organization"
 
+
 # Clean up docker space
 echo "Removing all containers and images"
 # Take down the frontend if it is running
@@ -132,7 +147,10 @@ echo "Pulling with TAG=$ieasyhydroforecast_backend_docker_image_tag"
 source ./bin/utils/pull_docker_images.sh $ieasyhydroforecast_backend_docker_image_tag
 
 # Establish SSH tunnel (if required)
-source $ieasyhydroforecast_data_ref_dir/bin/.ssh/open_ssh_tunnel.sh
+if $ieasyhydroforecast_ssh_to_iEH; then
+  echo "Establishing SSH tunnel to SAPPHIRE server..."
+  source $ieasyhydroforecast_data_ref_dir/bin/.ssh/open_ssh_tunnel.sh
+fi
 
 # Function to start the Docker Compose service for the backend pipeline
 start_docker_compose_luigi() {
@@ -156,23 +174,10 @@ cleanup() {
   if [ -n "$ieasyhydroforecast_ssh_tunnel_pid" ]; then
     kill $ieasyhydroforecast_ssh_tunnel_pid
   fi
-  #if [ -n "$DOCKER_COMPOSE_PID" ]; then
-    # Keep dashboards up and running: comment out the following line
-    #docker compose -f bin/docker-compose.yml down
-  #fi
 }
 
 # Set the trap to clean up processes on exit
 trap cleanup EXIT
-
-# Check for SSH tunnel availability
-echo "Checking for SSH tunnel availability"
-until nc -z localhost 8881; do
-  echo "SSH tunnel is not available yet. Waiting..."
-  sleep 1
-done
-echo "SSH tunnel is available."
-echo "PID of ssh tunnel is $ieasyhydroforecast_ssh_tunnel_pid"
 
 # Start the Docker Compose service for the forecasting pipeline
 start_docker_compose_luigi
@@ -184,8 +189,8 @@ start_docker_compose_dashboards
 wait $DOCKER_COMPOSE_LUIGI_PID
 
 # Wait another 30 minutes
-echo "Waiting for 30 minutes before cleaning up..."
-sleep 1800
+#echo "Waiting for 30 minutes before cleaning up..."
+#sleep 1800
 
 # Additional actions to be taken after Docker Compose service stops
 echo "Docker Compose service has finished running"
