@@ -1,6 +1,7 @@
 
 
 
+
 process_save_time_steps <- function(time_steps, time_type, start_date, forecast_date, dir_Results, Basin_Info, new_forecast) {
   file_path <- paste0(dir_Results, "/data/", time_type, "_", Basin_Info$BasinCode, ".csv")
   existing_data <- try(read_csv(file_path, show_col_types = FALSE), silent = TRUE)
@@ -15,8 +16,6 @@ process_save_time_steps <- function(time_steps, time_type, start_date, forecast_
     write.csv(total_data, file_path, row.names = FALSE)
   }
 }
-
-
 
 # Summary: The run_model_without_DA function executes a hydrological model run, either with or without glacier modeling, depending on the specified model function (FUN_MOD). 
 # This model runs until the forecast day minus 180 days (default, cab be defined by lag_days), then saves the output.

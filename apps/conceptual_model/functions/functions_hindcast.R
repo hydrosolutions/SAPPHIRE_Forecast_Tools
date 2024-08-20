@@ -1,4 +1,5 @@
 
+# Summary: The function convert_daily_to_pentad_decad converts daily time steps to pentad or decad time steps by taking the mean of the median of the ensemble forecast over the needed time period form the daily forecast.
 # Used in operational forecasting in the function process_save_time_steps. 
 # Converts daily forecasts to pentadal and decadal.
 # Input: forecast_statistics from the function calculate_stats_forecast.
