@@ -362,13 +362,13 @@ class PostProcessingForecasts(luigi.Task):
 
         # Get the path to the output file
         #print(f"cwd: {os.getcwd()}")
-        #print(f"ieasyforecast_intermediate_data_path: {env.get('ieasyforecast_intermediate_data_path')}")
-        #print(f"ieasyforecast_pentadal_skill_metrics_file: {env.get('ieasyforecast_pentadal_skill_metrics_file')}")
+        print(f"ieasyforecast_intermediate_data_path: {env.get('ieasyforecast_intermediate_data_path')}")
+        print(f"ieasyforecast_pentadal_skill_metrics_file: {env.get('ieasyforecast_pentadal_skill_metrics_file')}")
         output_file_path = os.path.join(
             env.get("ieasyforecast_intermediate_data_path"),
             env.get("ieasyforecast_pentadal_skill_metrics_file")
             )
-        #print(f"Output file path: {output_file_path}")
+        print(f"Output file path for post-processing: {output_file_path}")
 
         return luigi.LocalTarget(output_file_path)
 
