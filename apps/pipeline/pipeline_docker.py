@@ -36,7 +36,7 @@ class Environment:
 
 # Initialize the Environment class with the path to your .env file
 env_file_path = os.getenv('ieasyhydroforecast_env_file_path')
-env = Environment('env_file_path')
+env = Environment(env_file_path)
 # Get the tag of the docker image to use
 TAG = env.get('ieasyhydroforecast_backend_docker_image_tag', 'latest')
 # Get the organization for which to run the forecast tools
