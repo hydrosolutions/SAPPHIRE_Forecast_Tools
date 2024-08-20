@@ -69,18 +69,35 @@ echo "                                                                "
 echo "Producing forecasts with the SAPPHIRE forecast tools ..."
 echo "Date: $(date '+%Y-%m-%d %H:%M:%S %Z')"
 
+keep_last_three_elements() {
+    local path=$1
+    local result=""
+
+    for i in {1..3}; do
+        result=$(basename "$path")/$result
+        path=$(dirname "$path")
+    done
+
+    # Remove the trailing slash
+    result=${result%/}
+    echo "$result"
+}
+
 # If the argument is provided, write it to the environment variable
 # ieasyhydroforecast_env_file_path. If not, check if the environment variable
 # is set. If not, throw an error.
 if [ -n "$1" ];
 then
       env_file_path=$1
-      export ieasyhydroforecast_env_file_path=$env_file_path
+      # For use by the forecast tools (inside docker containers) we need to know
+      # the env file path inside the docker containers as well.
+      export ieasyhydroforecast_env_file_path=/$(keep_last_three_elements "$env_file_path")
       echo "env_file_path read from argument: $env_file_path"
-elif [ -n "$ieasyhydroforecast_env_file_path" ];
-then
-      env_file_path=$ieasyhydroforecast_env_file_path
-      echo "env_file_path read from environment variable: $ieasyhydroforecast_env_file_path"
+#elif [ -n "$ieasyhydroforecast_env_file_path" ];
+#then
+#      # THIS IS NOT TESTED AND MIGHT NOT WORK AS EXPECTED
+#      env_file_path=$ieasyhydroforecast_env_file_path
+#      echo "env_file_path read from environment variable: $ieasyhydroforecast_env_file_path"
 else
       echo "Error: No path to .env file was passed or was found in the environment!"
       exit 1
