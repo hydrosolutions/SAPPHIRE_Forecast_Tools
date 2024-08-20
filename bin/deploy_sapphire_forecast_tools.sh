@@ -69,6 +69,20 @@ echo "                                                                "
 echo "Deploying the SAPPHIRE forecast tools ..."
 echo "Date: $(date '+%Y-%m-%d %H:%M:%S %Z')"
 
+keep_last_three_elements() {
+    local path=$1
+    local result=""
+
+    for i in {1..3}; do
+        result=$(basename "$path")/$result
+        path=$(dirname "$path")
+    done
+
+    # Remove the trailing slash
+    result=${result%/}
+    echo "$result"
+}
+
 # If the argument is provided, write it to the environment variable
 # ieasyhydroforecast_env_file_path. If not, check if the environment variable
 # is set. If not, throw an error.
