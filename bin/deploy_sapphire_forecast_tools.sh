@@ -198,8 +198,8 @@ start_docker_compose_dashboards
 wait $DOCKER_COMPOSE_LUIGI_PID
 
 # Wait another 30 minutes
-echo "Waiting for 30 minutes before cleaning up..."
-sleep 1800
+#echo "Waiting for 30 minutes before cleaning up..."
+#sleep 1800
 
 # Additional actions to be taken after Docker Compose service stops
 echo "Docker Compose service has finished running"
