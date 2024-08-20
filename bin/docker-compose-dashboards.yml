@@ -16,6 +16,7 @@ services:
       - PYTHONPATH=/app
       - ieasyhydroforecast_data_root_dir=${ieasyhydroforecast_data_root_dir}
       - SAPPHIRE_OPDEV_ENV=True
+      - ieasyhydroforecast_env_file_path=${ieasyhydroforecast_env_file_path}
     command: ["R", "-e", "setwd('/app'); shiny::runApp('apps/configuration_dashboard/forecast_configuration.R', port = 3647, host = '0.0.0.0', launch.browser=FALSE)"]
     ports:
       - "80:3647"
@@ -37,6 +38,7 @@ services:
       - ieasyhydroforecast_data_root_dir=${ieasyhydroforecast_data_root_dir}
       - SAPPHIRE_OPDEV_ENV=True
       - IN_DOCKER_CONTAINER=True
+      - ieasyhydroforecast_env_file_path=${ieasyhydroforecast_env_file_path}
     command: ["panel", "serve", "--allow-websocket-origin=34.202.229.208:5006", "pentad_dashboard.py", "--port=5006", "--address=0.0.0.0", "--show", "--autoreload"]
     ports:
       - "5006:5006"

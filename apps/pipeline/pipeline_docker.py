@@ -20,9 +20,8 @@ from apps.pipeline.src import pipeline_utils as pu
 #from . import docker_runner as dokr
 
 
-# Define the tag of the docker image to use
-TAG = os.getenv('ieasyhydroforecast_backend_docker_image_tag', 'latest')
 # URL of the sapphire data gateway
+# TODO: Move to .env file
 SAPPHIRE_DG_HOST = os.getenv('SAPPHIRE_DG_HOST', 'localhost')
 
 
@@ -36,7 +35,15 @@ class Environment:
         return os.getenv(key)
 
 # Initialize the Environment class with the path to your .env file
-env = Environment('../sensitive_data_forecast_tools/config/.env_develop_kghm')
+env_file_path = os.get_env('ieasyhydroforecast_env_file_path')
+env = Environment('env_file_path')
+# Get the tag of the docker image to use
+TAG = env.get('ieasyhydroforecast_backend_docker_image_tag', 'latest')
+# Get the organization for which to run the forecast tools
+ORGANIZATION = env.get('ieasyforecast_organization', 'demo')
+# URL of the sapphire data gateway
+#SAPPHIRE_DG_HOST = os.getenv('SAPPHIRE_DG_HOST', 'localhost')
+
 
 # Function to convert a relative path to an absolute path
 def get_absolute_path(relative_path):

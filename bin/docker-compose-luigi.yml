@@ -26,6 +26,7 @@ services:
     environment:
       - PYTHONPATH=/app
       - ieasyhydroforecast_data_root_dir=${ieasyhydroforecast_data_root_dir}
+      - ieasyhydroforecast_env_file_path=${ieasyhydroforecast_env_file_path}
     command: ['luigi', '--module', 'apps.pipeline.pipeline_docker', 'RunWorkflow']  # If run without luigid, '--local-scheduler']
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock # Mount docker socket

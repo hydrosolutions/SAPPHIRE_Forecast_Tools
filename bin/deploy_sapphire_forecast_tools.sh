@@ -104,6 +104,13 @@ else
     exit 1
 fi
 
+# If the env. varialbe ieasyhydroforecast_organization is not set, assume "demo"
+if [ -z "$ieasyhydroforecast_organization" ]; then
+  echo "WARNING: ieasyhydroforecast_organization is not set. Assuming 'demo'"
+  ieasyhydroforecast_organization="demo"
+fi
+echo "Deploying the SAPPHIRE forecast tools for organization:\n   $ieasyhydroforecast_organization"
+
 # Clean up docker space
 echo "Removing all containers and images"
 # Take down the frontend if it is running
@@ -111,7 +118,7 @@ docker compose -f bin/docker-compose-dashboards.yml down
 ieasyhydroforecast_data_root_dir=$ieasyhydroforecast_data_root_dir source ./bin/utils/clean_docker.sh
 
 
-# Pull (deployment mode) or build (development mode) & push images
+# Pull (deployment mode)
 echo "Pulling with TAG=$ieasyhydroforecast_backend_docker_image_tag"
 source ./bin/utils/pull_docker_images.sh $ieasyhydroforecast_backend_docker_image_tag
 
