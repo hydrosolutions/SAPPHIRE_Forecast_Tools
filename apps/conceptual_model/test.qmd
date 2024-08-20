@@ -370,6 +370,41 @@ decadal_days(forecast_date, forecast_date)
 
 ```
 
+```{r}
 
+dir <- "/Users/adrian/Documents/GitHub/SAPPHIRE_Forecast_Tools/apps/conceptual_model"
+library(usethis)
+library(devtools)
+create_package(dir)
+
+install(dir)
+library(OF_CM)
+
+```
+
+
+
+```{r}
+# install.packages("roxygen2")
+# install.packages("devtools")
+library(roxygen2)
+library(devtools)
+
+dir_package <- "/Users/adrian/Desktop/OF_CM"
+
+# Set your working directory to the package directory
+setwd(dir_package)
+
+# Generate documentation and the NAMESPACE file
+document()
+
+use_description()
+```
+```{r}
+setwd("/Users/adrian/Desktop/OFCM")
+create_package("/Users/adrian/Desktop/OFCM")
+document()
+
+```
 
 

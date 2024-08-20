@@ -154,7 +154,8 @@ get_hindcast_period <- function(start_date,
   return(hindcast_all_df)
 }
 
-
+#' @title Generate Hindcast for a Specific Date
+#'
 #' @description
 #' The `get_hindcast` function generates a hindcast for a specific date and basin. 
 #' It operates similarly to the operational workflow but exclusively uses ERA5-Land data 
