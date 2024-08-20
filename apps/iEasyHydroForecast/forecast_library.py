@@ -1680,6 +1680,7 @@ def read_daily_discharge_data_from_csv():
 
     # Sort the DataFrame by 'code' and 'date'
     discharge_data = discharge_data.sort_values(by=['code', 'date'])
+    logger.debug("Daily discharge data read from %s", file_path)
 
     return discharge_data
 
