@@ -136,7 +136,10 @@ echo "Pulling with TAG=$ieasyhydroforecast_backend_docker_image_tag"
 source ./bin/utils/pull_docker_images.sh $ieasyhydroforecast_backend_docker_image_tag
 
 # Establish SSH tunnel (if required)
-source $ieasyhydroforecast_data_ref_dir/bin/.ssh/open_ssh_tunnel.sh
+if $ieasyhydroforecast_ssh_to_iEH; then
+  echo "Establishing SSH tunnel to SAPPHIRE server..."
+  source $ieasyhydroforecast_data_ref_dir/bin/.ssh/open_ssh_tunnel.sh
+fi
 
 # Function to start the Docker Compose service for the backend pipeline
 start_docker_compose_luigi() {
@@ -162,13 +165,29 @@ cleanup() {
 trap cleanup EXIT
 
 # Check for SSH tunnel availability
-echo "Checking for SSH tunnel availability"
-until nc -z localhost 8881; do
-  echo "SSH tunnel is not available yet. Waiting..."
-  sleep 1
-done
-echo "SSH tunnel is available."
-echo "PID of ssh tunnel is $ieasyhydroforecast_ssh_tunnel_pid"
+if $ieasyhydroforecast_ssh_to_iEH; then
+
+  echo "Checking for SSH tunnel availability"
+  timeout=5
+  elapsed=0
+  interval=1
+
+  while ! nc -z localhost 8881; do
+    if [ $elapsed -ge $timeout ]; then
+      echo "SSH tunnel is not available after $timeout seconds. Proceeding with the script."
+      break
+    fi
+    echo "SSH tunnel is not available yet. Waiting..."
+    sleep $interval
+    elapsed=$((elapsed + interval))
+  done
+
+  if [ $elapsed -lt $timeout ]; then
+    echo "SSH tunnel is available."
+  fi
+
+  echo "PID of ssh tunnel is $ieasyhydroforecast_ssh_tunnel_pid"
+fi
 
 # Start the Docker Compose service for the forecasting pipeline
 start_docker_compose_luigi
