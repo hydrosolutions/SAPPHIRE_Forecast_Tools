@@ -178,7 +178,7 @@ def main():
                                                     'PENTAD')
     logger.info('Pentad hindcast daily is generated')
     # save the pentad hindcast to a csv file at the right location. So the operational script can access it.
-    path_pentad_out_daily = os.path.join(OUTPUT_PATH_DISCHARGE, f'pentad_{MODEL_TO_USE}_forecast_pentad.csv')
+    path_pentad_out_daily = os.path.join(OUTPUT_PATH_DISCHARGE, f'pentad_{MODEL_TO_USE}_forecast.csv')
     pentad_hindcast_daily.to_csv(path_pentad_out_daily, index=False)
     del pentad_hindcast_daily
 
@@ -203,7 +203,7 @@ def main():
                                                 'DECAD')
     logger.info('Decad hindcast daily is generated')
     # save the decad hindcast to a csv file at the right location. So the operational script can access it.
-    path_decad_out_daily = os.path.join(OUTPUT_PATH_DISCHARGE, f'decad_{MODEL_TO_USE}_forecast_decad.csv')
+    path_decad_out_daily = os.path.join(OUTPUT_PATH_DISCHARGE, f'decad_{MODEL_TO_USE}_forecast.csv')
     decad_hindcast_daily.to_csv(path_decad_out_daily, index=False)
     del decad_hindcast_daily
 

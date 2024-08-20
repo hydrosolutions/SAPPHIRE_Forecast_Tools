@@ -498,6 +498,8 @@ def main():
             T_data = transformed_data_file[['date', 'T', 'code']].copy()
 
         #check if there are nan values
+
+        #TODO: check with Nikola what to do with Nan values, or what the expected amount of Nan values is
         if P_data.isnull().values.any():
             print(f"Nan values in P data for HRU {c_m_hru}")
             print("Take Last Observation")
