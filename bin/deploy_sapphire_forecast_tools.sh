@@ -75,7 +75,7 @@ echo "Date: $(date '+%Y-%m-%d %H:%M:%S %Z')"
 if [ -n "$1" ];
 then
       env_file_path=$1
-      export ieasyhydroforecast_env_file_path=env_file_path
+      export ieasyhydroforecast_env_file_path=$env_file_path
       echo "env_file_path read from argument: $env_file_path"
 elif [ -n "$ieasyhydroforecast_env_file_path" ];
 then
