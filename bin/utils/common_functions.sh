@@ -47,7 +47,6 @@ read_configuration(){
         # Derive the path to the data reference directory within the container
         container_data_ref_dir=$(dirname "$container_env_file_path")
         container_data_ref_dir=$(dirname "$container_data_ref_dir")
-        echo "| Container path to data reference directory: $container_data_ref_dir"
         export ieasyhydroforecast_container_data_ref_dir=$container_data_ref_dir
         # Test if there is a ieasyhydroforecast_env_file_path variable set
         if [ -z "$ieasyhydroforecast_env_file_path" ];
@@ -65,6 +64,7 @@ read_configuration(){
         export ieasyhydroforecast_env_file_path=$container_env_file_path
         echo "| Local path to .env read from argument: $env_file_path"
         echo "| Container path to .env derived: $ieasyhydroforecast_env_file_path"
+
     else
         echo "| Error: No path to .env file was passed or was found in the environment!"
         exit 1
@@ -75,7 +75,8 @@ read_configuration(){
     ieasyhydroforecast_data_ref_dir=$(dirname "$ieasyhydroforecast_data_root_dir")
     ieasyhydroforecast_data_root_dir=$(dirname "$ieasyhydroforecast_data_ref_dir")
 
-    echo "| ieasyhydroforecast_data_ref_dir: $ieasyhydroforecast_data_ref_dir"
+    echo "| Local path to data reference directory: $ieasyhydroforecast_data_ref_dir"
+    echo "| Container path to data reference directory: $container_data_ref_dir"
     echo "| ieasyhydroforecast_data_root_dir: $ieasyhydroforecast_data_root_dir"
     export ieasyhydroforecast_data_ref_dir
     export ieasyhydroforecast_data_root_dir

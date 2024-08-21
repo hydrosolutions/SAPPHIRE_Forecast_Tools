@@ -121,13 +121,13 @@ class PreprocessingRunoff(luigi.Task):
         bind_volume_path_discharge = get_bind_path(
             env.get('ieasyforecast_daily_discharge_path'))
 
-        #print(f"env.get('ieasyforecast_configuration_path'): {env.get('ieasyforecast_configuration_path')}")
-        #print(f"absolute_volume_path_config: {absolute_volume_path_config}")
-        #print(f"absolute_volume_path_internal_data: {absolute_volume_path_internal_data}")
-        #print(f"absolute_volume_path_discharge: {absolute_volume_path_discharge}")
-        #print(f"bind_volume_path_config: {bind_volume_path_config}")
-        #print(f"bind_volume_path_internal_data: {bind_volume_path_internal_data}")
-        #print(f"bind_volume_path_discharge: {bind_volume_path_discharge}")
+        print(f"env.get('ieasyforecast_configuration_path'): {env.get('ieasyforecast_configuration_path')}")
+        print(f"absolute_volume_path_config: {absolute_volume_path_config}")
+        print(f"absolute_volume_path_internal_data: {absolute_volume_path_internal_data}")
+        print(f"absolute_volume_path_discharge: {absolute_volume_path_discharge}")
+        print(f"bind_volume_path_config: {bind_volume_path_config}")
+        print(f"bind_volume_path_internal_data: {bind_volume_path_internal_data}")
+        print(f"bind_volume_path_discharge: {bind_volume_path_discharge}")
 
         # Run the docker container to pre-process runoff data
         client = docker.from_env()
