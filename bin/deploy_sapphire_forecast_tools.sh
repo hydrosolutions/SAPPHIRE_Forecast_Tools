@@ -75,7 +75,7 @@ pull_docker_images
 establish_ssh_tunnel
 
 # Set the trap to the clean up processes on exit
-trap cleanup EXIT
+trap cleanup_deployment EXIT
 
 # Start the Docker Compose service for the forecasting pipeline
 start_docker_compose_luigi

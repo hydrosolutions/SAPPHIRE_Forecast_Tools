@@ -103,6 +103,33 @@ clean_out_docker_space() {
     ieasyhydroforecast_data_root_dir=$ieasyhydroforecast_data_root_dir source ./bin/utils/clean_docker.sh
 }
 
+# Function to stop and remove a container if it exists
+stop_and_remove_container() {
+    container_name=$1
+    if [ "$(docker ps -q -f name=$container_name)" ]; then
+        docker stop $container_name
+    fi
+    if [ "$(docker ps -a -q -f name=$container_name)" ]; then
+        docker rm $container_name
+    fi
+}
+
+# Function to clean out the backend for res-running of the forecasts
+clean_out_backend() {
+    echo "|      "
+    echo "| ------"
+    echo "| Removing backend containers"
+    echo "| ------"
+    echo "| Removing all superfluous containers from the backend..."
+    docker compose -f bin/docker-compose-luigi.yml down
+
+    # List all containers that may be called in the pipeline
+    stop_and_remove_container preprunoff
+    stop_and_remove_container prepgateway
+    stop_and_remove_container linreg
+    stop_and_remove_container postprocessing
+}
+
 # Function to pull Docker images for the forecast tools
 pull_docker_images() {
     echo "|      "
@@ -130,6 +157,19 @@ establish_ssh_tunnel() {
     fi
 }
 
+# Function to start the Docker container to re-set the run date
+start_docker_container_reset_run_date() {
+  echo "| Starting Docker container to re-set the run date ..."
+  docker run -d \
+    -e SAPPHIRE_OPDEV_ENV=True \
+    --name resetrundate \
+    --network host \
+    -v $ieasyhydroforecast_data_ref_dir/config:/sensitive_data_forecast_tools/config \
+    -v $ieasyhydroforecast_data_ref_dir/intermediate_data:/sensitive_data_forecast_tools/intermediate_data \
+    mabesa/sapphire-rerun:latest
+  echo "| Docker container started with name resetrundate"
+}
+
 
 # Function to start the Docker Compose service for the backend pipeline
 start_docker_compose_luigi() {
@@ -155,9 +195,19 @@ start_docker_compose_dashboards() {
     echo "| Docker Compose service started with PID $DOCKER_COMPOSE_DASHBOARD_PID"
 }
 
-
 # Clean up processes on script exit (used with trap)
 cleanup() {
+  echo "|      "
+  echo "| ------"
+  echo "| Cleaning up"
+  echo "| ------"
+  if [ -n "$ieasyhydroforecast_ssh_tunnel_pid" ]; then
+    kill $ieasyhydroforecast_ssh_tunnel_pid
+  fi
+}
+
+# Clean up processes on script exit (used with trap)
+cleanup_deployment() {
   echo "|      "
   echo "| ------"
   echo "| Cleaning up"
