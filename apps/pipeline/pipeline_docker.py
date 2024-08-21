@@ -38,7 +38,7 @@ env = Environment(env_file_path)
 # Get the tag of the docker image to use
 TAG = env.get('ieasyhydroforecast_backend_docker_image_tag')
 # Get the organization for which to run the forecast tools
-ORGANIZATION = env.get('ieasyforecast_organization')
+ORGANIZATION = env.get('ieasyhydroforecast_organization')
 print(f"ORGANIZATION: {ORGANIZATION}")
 # URL of the sapphire data gateway
 SAPPHIRE_DG_HOST = env.get('SAPPHIRE_DG_HOST')
