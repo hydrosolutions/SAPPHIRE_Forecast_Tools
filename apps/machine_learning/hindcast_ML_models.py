@@ -485,22 +485,31 @@ def main():
     P_operational_file = os.path.join(PATH_OPERATIONAL_CONTROL_MEMBER, P_operational_file)
     T_operational_file = os.path.join(PATH_OPERATIONAL_CONTROL_MEMBER, T_operational_file)
 
+    # if there is a control member, then use it, otherwise only use the reanalysis data
+    use_operational_control_member = True
     # Test if the file exists
     if not os.path.exists(P_operational_file):
-        raise FileNotFoundError(f"File {P_operational_file} not found.")
+        print(f"File {P_operational_file} not found.")
+        logger.warning(f"File {P_operational_file} not found.")
+        use_operational_control_member = False
     if not os.path.exists(T_operational_file):
-        raise FileNotFoundError(f"File {T_operational_file} not found.")
+        print(f"File {T_operational_file} not found.")
+        logger.warning(f"File {T_operational_file} not found.")
+        use_operational_control_member = False
     
-    P_control_member = pd.read_csv(P_operational_file)
-    T_control_member = pd.read_csv(T_operational_file)
+    if use_operational_control_member:
+        P_control_member = pd.read_csv(P_operational_file)
+        T_control_member = pd.read_csv(T_operational_file)
 
-    era5_data_transformed_cm = pd.merge(P_control_member, T_control_member, on=['code', 'date'])
+        era5_data_transformed_cm = pd.merge(P_control_member, T_control_member, on=['code', 'date'])
 
-    # Concat the reanalysis and control member data
-    era5_data_transformed_renalysis['date'] = pd.to_datetime(era5_data_transformed_renalysis['date'])
-    era5_data_transformed_cm['date'] = pd.to_datetime(era5_data_transformed_cm['date'])
+        # Concat the reanalysis and control member data
+        era5_data_transformed_renalysis['date'] = pd.to_datetime(era5_data_transformed_renalysis['date'])
+        era5_data_transformed_cm['date'] = pd.to_datetime(era5_data_transformed_cm['date'])
 
-    era5_data_transformed = pd.concat([era5_data_transformed_renalysis, era5_data_transformed_cm], axis=0)
+        era5_data_transformed = pd.concat([era5_data_transformed_renalysis, era5_data_transformed_cm], axis=0)
+    else:
+        era5_data_transformed = era5_data_transformed_renalysis.copy()
 
     # sort by date
     era5_data_transformed = era5_data_transformed.sort_values(by=['code', 'date'])
