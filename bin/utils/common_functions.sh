@@ -42,7 +42,13 @@ read_configuration(){
     if [ -n "$1" ];
     then
         env_file_path=$1
+        # Derive the path to the .env file inside the container
         container_env_file_path=/$(keep_last_three_elements "$env_file_path")
+        # Derive the path to the data reference directory within the container
+        container_data_ref_dir=$(dirname "$container_env_file_path")
+        container_data_ref_dir=$(dirname "$container_data_ref_dir")
+        echo "| Container path to data reference directory: $container_data_ref_dir"
+        export container_data_ref_dir
         # Test if there is a ieasyhydroforecast_env_file_path variable set
         if [ -z "$ieasyhydroforecast_env_file_path" ];
         then

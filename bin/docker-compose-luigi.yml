@@ -30,9 +30,9 @@ services:
     command: ['luigi', '--module', 'apps.pipeline.pipeline_docker', 'RunWorkflow']  # If run without luigid, '--local-scheduler']
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock # Mount docker socket
-      - ../../sensitive_data_forecast_tools/config:/sensitive_data_forecast_tools/config
-      - ../../sensitive_data_forecast_tools/daily_runoff:/sensitive_data_forecast_tools/daily_runoff
-      - ../../sensitive_data_forecast_tools/intermediate_data:/sensitive_data_forecast_tools/intermediate_data
+      - ${ieasyhydroforecast_data_ref_dir}/config:/sensitive_data_forecast_tools/config
+      - ${ieasyhydroforecast_data_ref_dir}/daily_runoff:/sensitive_data_forecast_tools/daily_runoff
+      - ${ieasyhydroforecast_data_ref_dir}/intermediate_data:/sensitive_data_forecast_tools/intermediate_data
     container_name: sapphire-backend-pipeline
 
 
