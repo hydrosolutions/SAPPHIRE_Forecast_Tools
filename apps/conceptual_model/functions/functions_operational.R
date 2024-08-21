@@ -206,34 +206,34 @@ runModel_withDA <- function(forecast_date,
   return(Result_DA)
 }
 
-# This function generates a hydrological forecast over the forecast period from  using
-# both control and ensemble forecasts. It processes the forecast for each ensemble member
-# and combines the results into a single output.
-#
-# Parameters:
-# - forecast_date: [Date] The starting date for the forecast.
-# - Basin_Info: [List]  A list containing information about the basin, such as hypsometric data,
-#                     gradients (GradT, k-value), and ice-related parameters (rel_ice).
-# - inputsModel_cf: [List]  Inputs for the control forecast model.
-# - BasinObs_cf: [Data Frame] Forcing data for the control forecast period, including date, Ptot,
-#                             PET, Temp.
-# - BasinObs_pf: [List of Data Frames]  A list of forcing data for the ensemble forecast period,
-#                                      with each list element corresponding to a different ensemble member.
-# - FUN_MOD: [Function]  The hydrological model function to be used for the simulation (example: RunModel_CemaNeigeGR4J_Glacier or RunModel_CemaNeigeGR6J).
-# - Result_DA: [List] The results from the data assimilation, including initial states for each ensemble member.
-# - parameter: [Numeric Vector] The parameter set to be used for the model run.
-#
-# Function Workflow:
-# 1. Set up the forecast period: Defines the start and end dates for the forecast period based on the 
-#    provided forecast date and forcing data.
-# 2. Create indices for the control and ensemble forecast periods: Indexes the relevant periods within 
-#    the provided observation data. They <re different indexes because the control forcing datatable contains also past forcing data 
-# 3. Run Control Forecast: Iteratively runs the control forecast for each ensemble member, initializing 
-#    the model with the states from the data assimilation results.
-# 4. Combine Control Forecast Results: Combines the individual control forecasts into a single dataframe.
-# 5. Run Ensemble Forecast: Iteratively runs the ensemble forecast, processing each ensemble member separately.
-# 6. Combine Ensemble Forecast Results: Combines the individual ensemble forecasts into a single dataframe.
-# 7. Return Forecast: Merges the control and ensemble forecast results into a single output dataframe.
+
+#' Generate Hydrological Forecasts Using Control and Ensemble Forecasts
+#'
+#' This function generates hydrological forecasts over a specified forecast period using both control and ensemble forecasts. 
+#' It processes the forecast for each ensemble member, running the hydrological model, and combines the results into a single output data frame.
+#'
+#' @param forecast_date [Date] The starting date for the forecast.
+#' @param Basin_Info [List] A list containing information about the basin, such as hypsometric data, gradients (GradT, k-value), and ice-related parameters (rel_ice).
+#' @param inputsModel_cf [List] Inputs for the control forecast model.
+#' @param BasinObs_cf [Data Frame] Forcing data for the control forecast period, including date, Ptot, PET, and Temp.
+#' @param BasinObs_pf [List of Data Frames] A list of forcing data for the ensemble forecast period, with each list element corresponding to a different ensemble member.
+#' @param FUN_MOD [Function] The hydrological model function to be used for the simulation (e.g., RunModel_CemaNeigeGR4J_Glacier or RunModel_CemaNeigeGR6J).
+#' @param Result_DA [List] The results from data assimilation, including initial states for each ensemble member.
+#' @param parameter [Numeric Vector] The parameter set to be used for the model run.
+#'
+#' @return Data Frame. A data frame containing the combined forecast results from both the control and ensemble forecasts, with columns:
+#'   - `date`: The date of the forecast.
+#'   - `Ensemble`: The ensemble member identifier, including control forecasts. Example: Mbr_1_ForecastEns_cf, where MBR stands for the ensmeble member in the data assimilation and ForecastEns stands for the control member (cf) for the forecast or a number for the perturbed ensmeble 
+#'   - `Qsim`: The simulated discharge for each date and ensemble member.
+#'
+#' @details 
+#'   - The function first sets up the forecast period and creates indices for the control and ensemble forecast periods. These indeces have the same length, but the control member forcing starts earlier resulting in other indixes. 
+#'   - It then runs the control forecast by initializing the model with states from the data assimilation results for each ensemble member.
+#'   - The control forecast results are combined into a single data frame.
+#'   - Next, the function runs the ensemble forecast for each ensemble member, processes the results, and combines them into a data frame.
+#'   - Finally, the control and ensemble forecast results are merged into a single output data frame.
+#'
+#' @export
 runModel_ForecastPeriod <- function(forecast_date, 
                                     Basin_Info,
                                     inputsModel_cf,
@@ -250,7 +250,6 @@ runModel_ForecastPeriod <- function(forecast_date,
   # Create index of run periods: is different because BasinObs_cf has whole timer series including historical data 
   indRun_cf <- which(format(BasinObs_cf$date, format = "%Y%m%d") == start):which(format(BasinObs_cf$date, format = "%Y%m%d") == end)
   indRun_pf <- which(format(BasinObs_pf[[1]]$date, format = "%Y%m%d") == start):which(format(BasinObs_pf[[1]]$date, format = "%Y%m%d") == end)
-  
   
   
   NbMbr <- Result_DA$NbMbr
@@ -336,8 +335,6 @@ runModel_ForecastPeriod <- function(forecast_date,
   return(forecast)
 }
 
-
-
 # Calculate statistics including quantiles
 # Input: 
 # Output: 
@@ -374,30 +371,24 @@ calculate_stats_forecast <- function(forecast) {
   return(forecast_statistics)
 }
 
-
-
-
-process_dataset <- function(ResPF) {
-  QsimEns <- ResPF$QsimEns
-  DatesR <- ResPF$DatesR
-  
-  ResPF_Q <- QsimEns %>%
-    as_tibble() %>%
-    dplyr::mutate(date = as.Date(DatesR))
-  
-  # Compute mean and standard deviation of Q by Date
-  ResPF_Q_summary <- ResPF_Q %>%
-    pivot_longer(cols = -date, names_to = "member", values_to = "Q") %>%
-    group_by(date) %>%
-    summarise(Q_mean = mean(Q, na.rm = TRUE),  
-              Q_median = median(Q, na.rm = TRUE),
-              Q_sd = sd(Q, na.rm = TRUE), 
-              Q05 = quantile(Q, 0.05, na.rm = TRUE),
-              Q95 = quantile(Q, 0.95, na.rm = TRUE))      
-  
-  return(ResPF_Q_summary)
-}
-
+#' Process Discharge Data for a Basin
+#'
+#' This function processes observed discharge data for a specified basin, converting the discharge values
+#' to a standardized unit of millimeters per day (mm/day) based on the basin area.
+#'
+#' @param dir_Q Character. The file path to the CSV file containing the observed discharge data.
+#' @param BasinCode Character. The code identifying the basin for which the data should be processed.
+#' @param BasinArea_m2 Numeric. The area of the basin in square meters.
+#'
+#' @return 
+#' A data frame with the following columns:
+#'   - `date`: The date of the discharge observation (as `Date` class).
+#'   - `Qmm`: The discharge per unit area, converted to millimeters per day (mm/day).
+#'
+#' @details 
+#'   - The function reads discharge data from the specified CSV file.
+#'   - It filters the data for the specified `BasinCode`.
+#'   - The discharge (`discharge`) is converted from m3/s to mm/day using the basin area (`BasinArea_m2`).
 process_discharge_data <- function(dir_Q, BasinCode, BasinArea_m2) {
   Q_obs <- read_csv(dir_Q, show_col_types = FALSE)
   
@@ -412,6 +403,36 @@ process_discharge_data <- function(dir_Q, BasinCode, BasinArea_m2) {
   return(Q_obs)
 }
 
+#' Process Meteorological Forcing Data for a Basin
+#'
+#' This function processes temperature and precipitation data for a specified basin. It can handle
+#' either a control forecast ("cf") or multiple ensemble members given as numeric vector (example c(1:50). The function calculates the potential 
+#' evapotranspiration (PET) using the Oudin method and optionally merges the data with observed streamflow.
+#'
+#' @param member_id Specifies the type of forecast:
+#'   - `"cf"`: [string] Control forecast.
+#'   - Ensemble member IDs: [numeric] vector of numeric numbers for the ensmeble member. 
+#' @param Basin_code [Numeric] The code identifying the basin.
+#' @param file_path_Temp [Character] The file path to the temperature data CSV.
+#' @param file_path_Ptot [Character] The file path to the precipitation data CSV.
+#' @param Lat [Numeric] The latitude of the basin in radians.
+#' @param Q_obs [Data frame] (optional). Contains observed streamflow with columns `date` and `Qmm`. If provided, it is merged with the processed data.
+#'
+#' @return 
+#'   - If `member_id` is `"cf"`: A data frame with the following columns:
+#'     - `date`: The date of the observation.
+#'     - `Ptot`: The total precipitation.
+#'     - `Temp`: The temperature.
+#'     - `PET`: The potential evapotranspiration calculated using the Oudin method.
+#'     - `Qmm`: The observed streamflow (if `Q_obs` is provided).
+#'   - If `member_id` contains ensemble IDs: A list of data frames, each corresponding to an ensemble member, with columns `date`, `Ptot`, `Temp`, and `PET`.
+#'
+#' @details 
+#'   - The function reads temperature and precipitation data from the specified CSV files.
+#'   - If processing the control forecast (`"cf"`), the data is filtered by `Basin_code`.
+#'   - For ensemble forecasts, data is processed separately for each ensemble member.
+#'   - PET is calculated using the Oudin method, which requires the day of the year (`JD`), temperature, and latitude.
+#'   - If observed streamflow data (`Q_obs`) is provided, it is merged with the processed data based on the date.
 process_forecast_forcing <- function(member_id,
                                      Basin_code = Basin_code,
                                      file_path_Temp,
@@ -448,76 +469,11 @@ process_forecast_forcing <- function(member_id,
       basinObs[[i]] <- data.frame(date = P_member$date, Ptot = P_member$P, Temp = T_member$T) %>%
         dplyr::mutate(date = ymd(date, tz = "UTC"),
                       JD = yday(date) + 1,
-                      PET = PE_Oudin(JD = JD, Temp = Temp, Lat = Lat, LatUnit = "rad"))
+                      PET = PE_Oudin(JD = JD, Temp = Temp, Lat = Lat, LatUnit = "rad")) %>%
+        dplyr::select(-JD)
     }
     
   }
   return(basinObs)
 }
 
-################################### INITIAL SETUP ###################################
-
-
-
-# Summary: This code formats the ERA5-Land quantile-mapped data for the airGR hydrological model and calculates PET (Oudin). 
-# Input: 
-# data_dir: [string] Direction to saved excel: The input Excel file saved for, for example, Kyrgyzstan, includes one date column (day.month.year, example: 01.01.2000) and then columns for the station code, for example, 15194 and 15194.1. The .1 stands for precipitation in mm/day, and without it is the temperature in degrees Celsius. This data is ERA5-Land data, quantile mapped with CEHLSA data from 1979 to 2016. 
-# 
-# Basin_code: [numeric]The code filters for the Basin Code and then uses Oudin to calculate PET from the temperature. It then formats the data for the airGR hydrological model.
-# Basin_lat: [numeric] Latitude in radians of the centroid of the basin
-# Q_obs: [data frame] with the columns 
-# date (Date): The date of the observation in YYYY-MM-DD format. 
-# Qmm (numeric): The discharge in millimeters, which is merged with the ERA5 data.
-
-# Output: 
-# basinObsTS: [data frame] with the columns
-# date (Date): The date of the observation in YYYY-MM-DD format.
-# Temp (numeric): The temperature in degrees Celsius.
-# Ptot (numeric): The precipitation in millimeters per day.
-# Qmm (numeric): The discharge in millimeters per day.
-# PET (numeric): The potential evapotranspiration in millimeters per day.
-
-process_ERA5QM <- function(data_dir, Basin_code, Basin_lat, Q_obs) {
-  # Load the CSV file
-  ERA5QM <- read_csv(data_dir, show_col_types = FALSE)
-  
-  # Remove the first column
-  ERA5QM <- ERA5QM[,-1]
-  
-  # Convert to long format
-  ERA5QM_long <- ERA5QM %>%
-    pivot_longer(
-      cols = -date, 
-      names_to = "code", 
-      values_to = "value") %>%
-    dplyr::filter(code %in% c(as.character(Basin_code), paste0(as.character(Basin_code), ".1")))
-  
-  
-  ERA5QM_wide <- ERA5QM_long %>%
-    pivot_wider(
-      names_from = code, 
-      values_from = value
-    ) %>%
-    rename(
-      Temp = as.character(Basin_code),
-      Ptot = paste0(as.character(Basin_code), ".1")
-    ) %>%
-    left_join(Q_obs[, c("date", "Qmm")], by = "date") %>%
-    dplyr::filter(date >= as.Date("2000-01-01")) %>%
-    arrange(date)
-  
-  # Calculate PET using the PE_Oudin function
-  PET_ERA5QM <- PE_Oudin(
-    JD = as.POSIXlt(ERA5QM_wide$date)$yday + 1,
-    Temp = ERA5QM_wide$Temp,
-    Lat = Basin_lat, 
-    LatUnit = "rad"
-  )
-  
-  # Prepare the final time series data frame
-  basinObsTS <- ERA5QM_wide
-  basinObsTS$date <- as.POSIXct(ERA5QM_wide$date, format = "%Y%m%d", tz = "UTC")
-  basinObsTS$PET <- PET_ERA5QM
-  
-  return(basinObsTS)
-}

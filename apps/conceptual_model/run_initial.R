@@ -141,16 +141,16 @@ for (Code in config$codes) {
   basinObsTS <- basinObsTS %>%
     distinct(date, .keep_all = TRUE)
 
-  inputsModel <- airGR::CreateInputsModel(FUN_MOD   = FUN_MOD,
-                                          DatesR    = basinObsTS$date,
-                                          Precip    = basinObsTS$Ptot,
-                                          PotEvap   = basinObsTS$PET,
-                                          TempMean  = basinObsTS$Temp,
-                                          HypsoData = Basin_Info$HypsoData,
-                                          ZInputs   = median(Basin_Info$HypsoData),
-                                          verbose = FALSE,
-                                          GradT = Basin_Info$GradT,
-                                          GradP = Basin_Info$k_value)
+  inputsModel <- CreateInputsModel(FUN_MOD   = FUN_MOD,
+                                   DatesR    = basinObsTS$date,
+                                   Precip    = basinObsTS$Ptot,
+                                   PotEvap   = basinObsTS$PET,
+                                   TempMean  = basinObsTS$Temp,
+                                   HypsoData = Basin_Info$HypsoData,
+                                   ZInputs   = median(Basin_Info$HypsoData),
+                                   verbose   = FALSE,
+                                   GradT     = Basin_Info$GradT,
+                                   GradP     = Basin_Info$k_value)
 
 
 
@@ -161,21 +161,20 @@ for (Code in config$codes) {
 
 
 
-  runOptions <- airGR::CreateRunOptions(FUN_MOD = FUN_MOD,
-                                        InputsModel = inputsModel,
-                                        IndPeriod_Run = indRun,
-                                        IniStates        = NULL,
-                                        IniResLevels     = NULL,
-                                        IndPeriod_WarmUp = warmup,
-                                        MeanAnSolidPrecip = Basin_Info$MeanAnSolidPrecip,
-                                        IsHyst = FALSE,
-                                        RelIce = Basin_Info$rel_ice)
+  runOptions <- CreateRunOptions(FUN_MOD           = FUN_MOD,InputsModel = inputsModel,
+                                 IndPeriod_Run     = indRun,
+                                 IniStates         = NULL,
+                                 IniResLevels      = NULL,
+                                 IndPeriod_WarmUp  = warmup,
+                                 MeanAnSolidPrecip = Basin_Info$MeanAnSolidPrecip,
+                                 IsHyst            = FALSE,
+                                 RelIce            = Basin_Info$rel_ice)
 
 
 
   runResults_op <- FUN_MOD(InputsModel = inputsModel,
-                                   RunOptions  = runOptions,
-                                   Param       = param)
+                           RunOptions  = runOptions,
+                           Param       = param)
   
   plot(runResults_op, Qobs = basinObsTS$Qmm[indRun])
 

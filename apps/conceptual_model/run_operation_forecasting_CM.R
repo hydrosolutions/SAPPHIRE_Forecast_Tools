@@ -165,7 +165,7 @@ for (Code in config$codes) {
                                           file_path_Temp = file.path(dir_Ensemble, pfT_forecast_filename),
                                           Lat = Basin_Info$BasinLat_rad)
   
-  inputsModel_cf <- airGR::CreateInputsModel(FUN_MOD   = FUN_MOD,
+  inputsModel_cf <- CreateInputsModel(FUN_MOD   = FUN_MOD,
                                              DatesR    = basinObs_cf$date,
                                              Precip    = basinObs_cf$Ptot,
                                              PotEvap   = basinObs_cf$PET,

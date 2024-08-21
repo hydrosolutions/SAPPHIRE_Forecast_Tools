@@ -71,7 +71,7 @@ if (!dir.exists(Sys.getenv("ieasyhydroforecast_PATH_TO_JSON"))) {
   stop("Directory ", Sys.getenv("ieasyhydroforecast_PATH_TO_JSON"), " not found. ")
 }
 config_dir = Sys.getenv("ieasyhydroforecast_PATH_TO_JSON")
-config_setup = Sys.getenv("ieasyhydroforecast_FILE_SETUP_HINDCAST")
+config_setup = Sys.getenv("ieasyhydroforecast_FILE_SETUP")
 config <- fromJSON(paste0(config_dir,"/",config_setup))
 
 
