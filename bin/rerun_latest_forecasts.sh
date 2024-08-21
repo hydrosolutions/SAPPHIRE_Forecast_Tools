@@ -56,16 +56,6 @@ start_docker_compose_luigi
 # Wait for forecasting pipeline to finish
 wait $DOCKER_COMPOSE_LUIGI_PID
 
-# Wait another 30 minutes
-#echo "Waiting for 30 minutes before cleaning up..."
-#sleep 1800
-
 # Additional actions to be taken after Docker Compose service stops
 echo "Docker Compose service has finished running"
 
-# Close SSH tunnel (if required)
-#echo "Closing the SSH tunnel"
-#source ../sensitive_data_forecast_tools/bin/.ssh/close_ssh_tunnel.sh
-
-# Clean up
-#bash ./bin/clean_docker.sh
