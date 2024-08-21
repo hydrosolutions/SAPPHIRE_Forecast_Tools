@@ -1,4 +1,5 @@
 # common_functions.sh
+# Functions herin are intended to be used in scripts in the bin directory.
 
 print_banner() {
     echo "|   ____    _    ____  ____  _   _ ___ ____  _____                "
@@ -89,6 +90,44 @@ read_configuration(){
     echo "| Deploying the SAPPHIRE forecast tools for organization:"
     echo "|    $ieasyhydroforecast_organization"
 
+}
+
+# Function to remove all Docker containers and images
+clean_out_docker_space() {
+    echo "|      "
+    echo "| ------"
+    echo "| Removing all containers and images"
+    echo "| ------"
+    # Take down the frontend if it is running
+    docker compose -f bin/docker-compose-dashboards.yml down
+    ieasyhydroforecast_data_root_dir=$ieasyhydroforecast_data_root_dir source ./bin/utils/clean_docker.sh
+}
+
+# Function to pull Docker images for the forecast tools
+pull_docker_images() {
+    echo "|      "
+    echo "| ------"
+    echo "| Pulling images"
+    echo "| ------"
+
+    # Pull (deployment mode)
+    echo "| Pulling with TAG=$ieasyhydroforecast_backend_docker_image_tag"
+    source ./bin/utils/pull_docker_images.sh $ieasyhydroforecast_backend_docker_image_tag
+}
+
+# Function to establish an SSH tunnel to the iEasyHydro (HF) server
+establish_ssh_tunnel() {
+    echo "| ieasyhydroforecast_ssh_to_iEH: $ieasyhydroforecast_ssh_to_iEH"
+    if [ "${ieasyhydroforecast_ssh_to_iEH,,}" = "true" ]; then
+        echo "|      "
+        echo "| ------"
+        echo "| Establishing SSH tunnel to iEasyHydro server"
+        echo "| ------"
+
+        echo "| Establishing SSH tunnel to SAPPHIRE server..."
+        source $ieasyhydroforecast_data_ref_dir/bin/.ssh/open_ssh_tunnel.sh
+        wait  # Wait for the tunnel to be established
+    fi
 }
 
 

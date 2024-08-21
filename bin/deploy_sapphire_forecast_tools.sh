@@ -59,43 +59,22 @@
 # Source the common functions
 source "$(dirname "$0")/utils/common_functions.sh"
 
+# Print the banner
 print_banner
 
+# Read the configuration from the .env file
 read_configuration $1
 
-# Clean up docker space
-echo "|      "
-echo "| ------"
-echo "| Removing all containers and images"
-echo "| ------"
-# Take down the frontend if it is running
-docker compose -f bin/docker-compose-dashboards.yml down
-ieasyhydroforecast_data_root_dir=$ieasyhydroforecast_data_root_dir source ./bin/utils/clean_docker.sh
+# Clean up the Docker space (note: this will remove all containers and images)
+clean_out_docker_space
 
-echo "|      "
-echo "| ------"
-echo "| Pulling images"
-echo "| ------"
-
-# Pull (deployment mode)
-echo "| Pulling with TAG=$ieasyhydroforecast_backend_docker_image_tag"
-source ./bin/utils/pull_docker_images.sh $ieasyhydroforecast_backend_docker_image_tag
+# Pull docker images
+pull_docker_images
 
 # Establish SSH tunnel (if required)
-echo "| ieasyhydroforecast_ssh_to_iEH: $ieasyhydroforecast_ssh_to_iEH"
-if [ "${ieasyhydroforecast_ssh_to_iEH,,}" = "true" ]; then
-  echo "|      "
-  echo "| ------"
-  echo "| Connecting to iEasyHydro server"
-  echo "| ------"
+establish_ssh_tunnel
 
-  echo "| Establishing SSH tunnel to SAPPHIRE server..."
-  source $ieasyhydroforecast_data_ref_dir/bin/.ssh/open_ssh_tunnel.sh
-  wait  # Wait for the tunnel to be established
-fi
-
-
-# Set the trap to clean up processes on exit
+# Set the trap to the clean up processes on exit
 trap cleanup EXIT
 
 # Start the Docker Compose service for the forecasting pipeline
