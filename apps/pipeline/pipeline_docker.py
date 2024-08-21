@@ -538,9 +538,11 @@ class RunWorkflow(luigi.Task):
         elif ORGANIZATION=='kghm':
 
             return [PostProcessingForecasts(),
-                    PreprocessingGatewayQuantileMapping(),
+                    MachineLearning(),
                     #DeleteOldGateywayFiles()
                     ]
+
+        # You can add workflow definitions for other organizations here.
 
     def run(self):
         print("Workflow completed.")
