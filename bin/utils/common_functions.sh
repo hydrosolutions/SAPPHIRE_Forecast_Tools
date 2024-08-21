@@ -27,7 +27,7 @@ keep_last_three_elements() {
 
     # Remove the trailing slash
     result=${result%/}
-    echo "| $result"
+    echo "$result"
 }
 
 read_configuration(){
