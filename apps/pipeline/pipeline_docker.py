@@ -1,5 +1,11 @@
 # Description: This file contains the luigi tasks to run the docker containers
-#   for the forecast tools pipeline.
+#   for the forecast tools pipeline. For different organizations, we define
+#   different workflows. The workflows are defined in the RunWorkflow class.
+#   Available organizations are:
+#   - demo (default, publicly available data, linear regression only)
+#   - kghm (private data, linear regression, machine learning and conceptual
+#           hydrological model)
+#   The organization is definded in the .env file.
 #
 # Run: PYTHONPATH='.' luigi --module apps.pipeline.pipeline_docker RunWorkflow --local-scheduler
 #
