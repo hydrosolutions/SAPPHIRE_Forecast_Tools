@@ -44,8 +44,9 @@
 # --------------------------------------------------------------------
 
 # Useage:
-# SAPPHIRE_MODEL_TO_USE=TFT python make_forecast.py
+# SAPPHIRE_MODEL_TO_USE=TFT SAPPHIRE_PREDICTION_MODE=PENTAD python make_forecast.py
 # Possible values for MODEL_TO_USE: TFT, TIDE, TSMIXER
+# Possible values for MODEL_TO_USE: PENTAD, DECAD
 
 
 # --------------------------------------------------------------------
@@ -138,9 +139,9 @@ class LossLogger(Callback):
 def write_pentad_forecast(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, forecast_pentad):
     """
     Save the pentad forecast data. If a forecast interval needs to be saved,
-    it appends the new forecast to the existing interval forecast file. 
+    it appends the new forecast to the existing interval forecast file.
     The function avoids overwriting by appending data and removing duplicates.
-    
+
     Parameters:
     OUTPUT_PATH_DISCHARGE (str): Path to the output directory where forecast files are saved.
     MODEL_TO_USE (str): The name of the model used for the forecast.
@@ -150,7 +151,7 @@ def write_pentad_forecast(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, forecast_pentad):
     Returns:
     None
     """
-    
+
     # Read the latest forecast and append the new forecast
     forecast_file_path = os.path.join(OUTPUT_PATH_DISCHARGE, f'pentad_{MODEL_TO_USE}_forecast.csv')
     try:
@@ -185,7 +186,7 @@ def write_decad_forecast(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, forecast_decad):
     """
     Save the decad forecast data. The function saves the forecast data to a new file.
     if there is already a forecast file, the new forecast will be appended to the existing file
-    
+
     Parameters:
     OUTPUT_PATH_DISCHARGE (str): Path to the output directory where forecast files are saved.
     MODEL_TO_USE (str): The name of the model used for the forecast.
@@ -198,7 +199,7 @@ def write_decad_forecast(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, forecast_decad):
         forecast_decad_old = pd.read_csv(os.path.join(OUTPUT_PATH_DISCHARGE, f'decad_{MODEL_TO_USE}_forecast.csv'))
     except FileNotFoundError:
         forecast_decad_old = pd.DataFrame()
-    
+
     forecast_decad = pd.concat([forecast_decad_old, forecast_decad], axis=0)
 
     if utils_ml_forecast.save_decad_forecast():
@@ -207,7 +208,7 @@ def write_decad_forecast(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, forecast_decad):
             forecast_decad_old_intervall = pd.read_csv(interval_file_path)
         except FileNotFoundError:
             forecast_decad_old_intervall = pd.DataFrame()
-        
+
         forecast_decad_intervall = forecast_decad.copy()
         forecast_decad_intervall['forecast_date'] = datetime.datetime.now().date()
 
@@ -311,7 +312,7 @@ def make_ml_forecast():
     OUTPUT_PATH_DISCHARGE = os.path.join(intermediate_data_path, OUTPUT_PATH_DISCHARGE)
     #Extend the OUTPUT_PATH_DISCHARGE with the model name
     OUTPUT_PATH_DISCHARGE = os.path.join(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE)
-    
+
     PATH_TO_QMAPPED_ERA5 = os.path.join(intermediate_data_path, PATH_TO_QMAPPED_ERA5)
 
     logger.debug('joined path_to_static_features: %s' , PATH_TO_STATIC_FEATURES)
@@ -389,7 +390,7 @@ def make_ml_forecast():
         model = TSMixerModel.load(os.path.join(PATH_TO_MODEL), map_location=torch.device('cpu'))
     elif MODEL_TO_USE == 'ARIMA':
         model = None
-       
+
 
 
 
@@ -397,7 +398,7 @@ def make_ml_forecast():
         predictor = predictor_class.PREDICTOR(PATH_TO_MODEL)
     else:
         predictor = predictor_class.PREDICTOR(model, scaler_discharge, scaler_era5, scaler_static, static_features)
-        
+
 
     # --------------------------------------------------------------------
     # FORECAST
@@ -478,7 +479,7 @@ def make_ml_forecast():
                 # maybe an additional method is needed
                 used_decad_model_for_pentad_forecast = True
                 predictions = predictor.predict(past_discharge_code, qmapped_era5_code, None , code, n=forecast_horizon, make_plot=False)
-        
+
         # if there is no issue with missing data
         if not used_decad_model_for_pentad_forecast and code not in pentad_no_success:
             #pentad

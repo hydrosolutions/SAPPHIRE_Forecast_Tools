@@ -28,4 +28,5 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --trusted-host pypi.python.org -r apps/machine_learning/requirements.txt
 
 # Run the application.
-CMD ["sh", "-c", "PYTHONPATH=/app/apps/iEasyHydroForecast python apps/machine_learning/make_forecast.py"]
+# This cmd is moved to the pipeline definition
+#CMD ["sh", "-c", "PYTHONPATH=/app/apps/iEasyHydroForecast python apps/machine_learning/make_forecast.py"]

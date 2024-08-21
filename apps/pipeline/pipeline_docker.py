@@ -353,6 +353,69 @@ class LinearRegression(luigi.Task):
         return current_time - output_file_mtime < 10  # 24 * 60 * 60
 
 
+class MachineLearning(luigi.Task):
+
+    def requires(self):
+        return [PreprocessingRunoff(), PreprocessingGatewayQuantileMapping()]
+
+    def run(self):
+        # Construct the absolute volume paths to bind to the containers
+        absolute_volume_path_config = get_absolute_path(
+            env.get('ieasyforecast_configuration_path'))
+        absolute_volume_path_internal_data = get_absolute_path(
+            env.get('ieasyforecast_intermediate_data_path'))
+        bind_volume_path_config = get_bind_path(
+            env.get('ieasyforecast_configuration_path'))
+        bind_volume_path_internal_data = get_bind_path(
+            env.get('ieasyforecast_intermediate_data_path'))
+
+        #print(f"env.get('ieasyforecast_configuration_path'): {env.get('ieasyforecast_configuration_path')}")
+        #print(f"absolute_volume_path_config: {absolute_volume_path_config}")
+        #print(f"absolute_volume_path_internal_data: {absolute_volume_path_internal_data}")
+        #print(f"bind_volume_path_config: {bind_volume_path_config}")
+        #print(f"bind_volume_path_internal_data: {bind_volume_path_internal_data}")
+
+        # Run the docker container to forecast using machine learning
+        client = docker.from_env()
+
+        # Pull the latest image
+        if pu.there_is_a_newer_image_on_docker_hub(
+            client, repository='mabesa', image_name='sapphire-ml', tag=TAG):
+            print("Pulling the latest image from Docker Hub.")
+            client.images.pull('mabesa/sapphire-ml', tag=TAG)
+
+        # Define environment variables
+        environment = [
+            'SAPPHIRE_OPDEV_ENV=True',
+        ]
+
+        # Define volumes
+        volumes = {
+            absolute_volume_path_config: {'bind': bind_volume_path_config, 'mode': 'rw'},
+            absolute_volume_path_internal_data: {'bind': bind_volume_path_internal_data, 'mode': 'rw'}
+        }
+
+        custom_command = "echo Hello from the ML module!"
+
+        # Run the container
+        container = client.containers.run(
+            f"mabesa/sapphire-ml:{TAG}",
+            command=custom_command,
+            detach=True,
+            environment=environment,
+            volumes=volumes,
+            name="ml",
+            #labels=labels,
+            network='host'  # To test
+        )
+
+        print(f"Container {container.id} is running.")
+
+        # Wait for the container to finish running
+        container.wait()
+
+        print(f"Container {container.id} has stopped.")
+
 class PostProcessingForecasts(luigi.Task):
 
     def requires(self):
