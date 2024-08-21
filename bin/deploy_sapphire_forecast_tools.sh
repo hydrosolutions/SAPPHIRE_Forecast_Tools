@@ -83,7 +83,7 @@ source ./bin/utils/pull_docker_images.sh $ieasyhydroforecast_backend_docker_imag
 
 # Establish SSH tunnel (if required)
 echo "| ieasyhydroforecast_ssh_to_iEH: $ieasyhydroforecast_ssh_to_iEH"
-if [ "$$ieasyhydroforecast_ssh_to_iEH,,}" = "true" ]; then
+if [ "{$ieasyhydroforecast_ssh_to_iEH,,}" = "true" ]; then
   echo "|      "
   echo "| ------"
   echo "| Connecting to iEasyHydro server"
