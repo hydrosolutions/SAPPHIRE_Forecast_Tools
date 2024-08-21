@@ -21,14 +21,6 @@ from dotenv import load_dotenv
 # Import local utils
 from apps.pipeline.src import pipeline_utils as pu
 
-# Import docker client for luigi, may not be required
-#from . import docker_utils as dok
-#from . import docker_runner as dokr
-
-
-# URL of the sapphire data gateway
-# TODO: Move to .env file
-SAPPHIRE_DG_HOST = os.getenv('SAPPHIRE_DG_HOST', 'localhost')
 
 
 class Environment:
@@ -44,12 +36,12 @@ class Environment:
 env_file_path = os.getenv('ieasyhydroforecast_env_file_path')
 env = Environment(env_file_path)
 # Get the tag of the docker image to use
-TAG = env.get('ieasyhydroforecast_backend_docker_image_tag', 'latest')
+TAG = env.get('ieasyhydroforecast_backend_docker_image_tag')
 # Get the organization for which to run the forecast tools
-ORGANIZATION = env.get('ieasyforecast_organization', 'demo')
+ORGANIZATION = env.get('ieasyforecast_organization')
 print(f"ORGANIZATION: {ORGANIZATION}")
 # URL of the sapphire data gateway
-#SAPPHIRE_DG_HOST = os.getenv('SAPPHIRE_DG_HOST', 'localhost')
+SAPPHIRE_DG_HOST = env.get('SAPPHIRE_DG_HOST')
 
 
 
