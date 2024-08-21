@@ -48,7 +48,7 @@ read_configuration(){
         container_data_ref_dir=$(dirname "$container_env_file_path")
         container_data_ref_dir=$(dirname "$container_data_ref_dir")
         echo "| Container path to data reference directory: $container_data_ref_dir"
-        export container_data_ref_dir
+        export ieasyhydroforecast_container_data_ref_dir=$container_data_ref_dir
         # Test if there is a ieasyhydroforecast_env_file_path variable set
         if [ -z "$ieasyhydroforecast_env_file_path" ];
         then
