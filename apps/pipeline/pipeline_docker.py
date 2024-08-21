@@ -47,6 +47,7 @@ env = Environment(env_file_path)
 TAG = env.get('ieasyhydroforecast_backend_docker_image_tag', 'latest')
 # Get the organization for which to run the forecast tools
 ORGANIZATION = env.get('ieasyforecast_organization', 'demo')
+print(f"ORGANIZATION: {ORGANIZATION}")
 # URL of the sapphire data gateway
 #SAPPHIRE_DG_HOST = os.getenv('SAPPHIRE_DG_HOST', 'localhost')
 
@@ -108,6 +109,10 @@ class PreprocessingRunoff(luigi.Task):
     def run(self):
 
         # Construct the absolute volume paths to bind to the containers
+        # TODO: Insted of constructing the paths here, we define relative paths
+        # to data ref dir in the .env file and use them here.
+        # Use also ieasyhydroforecast_data_ref_dir (absolute pathe) and
+        # ieasyhydroforecast_container_data_ref_dir (bind path)
         absolute_volume_path_config = get_absolute_path(
             env.get('ieasyforecast_configuration_path'))
         absolute_volume_path_internal_data = get_absolute_path(
@@ -538,11 +543,11 @@ class RunWorkflow(luigi.Task):
 
     def requires(self):
         if ORGANIZATION=='demo':
-
+            print("Running demo workflow.")
             return [PostProcessingForecasts()]
 
         elif ORGANIZATION=='kghm':
-
+            print("Running KGHM workflow.")
             return [PostProcessingForecasts(),
                     MachineLearning(),
                     #DeleteOldGateywayFiles()
