@@ -39,7 +39,6 @@ env = Environment(env_file_path)
 TAG = env.get('ieasyhydroforecast_backend_docker_image_tag')
 # Get the organization for which to run the forecast tools
 ORGANIZATION = env.get('ieasyhydroforecast_organization')
-print(f"ORGANIZATION: {ORGANIZATION}")
 # URL of the sapphire data gateway
 SAPPHIRE_DG_HOST = env.get('SAPPHIRE_DG_HOST')
 
@@ -227,7 +226,7 @@ class PreprocessingGatewayQuantileMapping(luigi.Task):
             detach=True,
             environment=environment,
             volumes=volumes,
-            name="prepgateway",
+            name="prepgateway1",
             #labels=labels,
             network='host'  # To test
         )
