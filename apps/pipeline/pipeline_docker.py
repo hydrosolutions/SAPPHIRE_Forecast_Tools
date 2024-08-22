@@ -380,9 +380,9 @@ class RunMLModel(luigi.Task):
         # Define environment variables
         environment = [
             'SAPPHIRE_OPDEV_ENV=True',
-            'SAPPHIRE_MODEL_TO_USE=TFT',  # TFT, TIDE, TSMIXER, ARIMA
-            'SAPPHIRE_PREDICTION_MODE=PENTAD',
-            'ieasyhydroforecasts_produce_daily_ml_hindcast=True'
+            f'SAPPHIRE_MODEL_TO_USE={self.model_type}',  # TFT, TIDE, TSMIXER, ARIMA
+            f'SAPPHIRE_PREDICTION_MODE={self.prediction_mode}',  # PENTAD, DECAD
+            f'ieasyhydroforecasts_produce_daily_ml_hindcast={self.produce_daily_ml_hindcast}'
         ]
         print(f"Environment variables:\n{environment}")
 
@@ -423,7 +423,7 @@ class RunAllMLModels(luigi.WrapperTask):
         yield PreprocessingGatewayQuantileMapping()
 
         models = ['TFT', 'TIDE', 'TSMIXER', 'ARIMA']
-        prediction_modes = ['PENTAD', 'OTHER_MODE']
+        prediction_modes = ['PENTAD', 'DECAD']
         produce_daily_ml_hindcast_options = [True]
 
         for model in models:

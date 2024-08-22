@@ -11,7 +11,7 @@
 # ----------------------------------------------------------------
 # USAGE:
 # ----------------------------------------------------------------
-# SAPPHIRE_OPDEV_ENV=True SAPPHIRE_MODEL_TO_USE=TFT SAPPHIRE_PREDICTION_MODE=PENTAD 
+# SAPPHIRE_OPDEV_ENV=True SAPPHIRE_MODEL_TO_USE=TFT SAPPHIRE_PREDICTION_MODE=PENTAD
 # ieasyhydroforecasts_produce_daily_ml_hindcast=False python fill_ml_gaps.py
 # TODO: So far this code only checks if there are missing forecast dates. It doesn't check if there are nan values due to insufficent input data.
 # TODO: Think about how to handle nan values, in what frequency should this be checked?
