@@ -342,7 +342,6 @@ class LinearRegression(luigi.Task):
 class RunMLModel(luigi.Task):
     model_type = luigi.Parameter()
     prediction_mode = luigi.Parameter()
-    produce_daily_ml_hindcast = luigi.BoolParameter()
 
     def requires(self):
         return [PreprocessingRunoff(), PreprocessingGatewayQuantileMapping()]
@@ -381,8 +380,7 @@ class RunMLModel(luigi.Task):
         environment = [
             'SAPPHIRE_OPDEV_ENV=True',
             f'SAPPHIRE_MODEL_TO_USE={self.model_type}',  # TFT, TIDE, TSMIXER, ARIMA
-            f'SAPPHIRE_PREDICTION_MODE={self.prediction_mode}',  # PENTAD, DECAD
-            f'ieasyhydroforecasts_produce_daily_ml_hindcast={self.produce_daily_ml_hindcast}'
+            f'SAPPHIRE_PREDICTION_MODE={self.prediction_mode}'  # PENTAD, DECAD
         ]
         print(f"Environment variables:\n{environment}")
 
@@ -424,12 +422,10 @@ class RunAllMLModels(luigi.WrapperTask):
 
         models = ['TFT', 'TIDE', 'TSMIXER', 'ARIMA']
         prediction_modes = ['PENTAD', 'DECAD']
-        produce_daily_ml_hindcast_options = [True]
 
         for model in models:
             for mode in prediction_modes:
-                for produce_daily_ml_hindcast in produce_daily_ml_hindcast_options:
-                    yield RunMLModel(model_type=model, prediction_mode=mode, produce_daily_ml_hindcast=produce_daily_ml_hindcast)
+                yield RunMLModel(model_type=model, prediction_mode=mode)
 
 class PostProcessingForecasts(luigi.Task):
 
