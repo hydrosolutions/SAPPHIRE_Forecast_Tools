@@ -38,7 +38,7 @@ class PREDICTOR():
         return 20
     
     def get_max_forecast_horizon(self):
-        return 10
+        return 11
     
     def create_prediction_df(self, predictions: darts.TimeSeries, code: int) -> pd.DataFrame:
 
