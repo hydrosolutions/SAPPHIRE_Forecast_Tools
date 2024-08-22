@@ -247,6 +247,7 @@ class PreprocessingGatewayQuantileMapping(luigi.Task):
         print(f"Container {container.id} has stopped.")
 
     '''
+    # This gives an error when running the ML task, hence it is commented out
     def complete(self):
         if not self.output().exists():
             return False
@@ -390,6 +391,9 @@ class MachineLearning(luigi.Task):
         # Define environment variables
         environment = [
             'SAPPHIRE_OPDEV_ENV=True',
+            'SAPPHIRE_MODEL_TO_USE=TFT',  # TFT, TIDE, TSMIXER, ARIMA
+            'SAPPHIRE_PREDICTION_MODE=PENTAD',
+            'ieasyhydroforecasts_produce_daily_ml_hindcast=True'
         ]
 
         # Define volumes
@@ -398,7 +402,7 @@ class MachineLearning(luigi.Task):
             absolute_volume_path_internal_data: {'bind': bind_volume_path_internal_data, 'mode': 'rw'}
         }
 
-        custom_command = "echo Hello from the ML module!"
+        custom_command = "sh -c PYTHONPATH=/app/apps/iEasyHydroForecast python apps/machine_learning/make_forecast && python apps/machine_learning/fill_ml_gaps.py"
 
         # Run the container
         container = client.containers.run(
