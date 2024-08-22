@@ -226,7 +226,7 @@ class PreprocessingGatewayQuantileMapping(luigi.Task):
             detach=True,
             environment=environment,
             volumes=volumes,
-            name="prepgateway1",
+            name="prepgateway",
             #labels=labels,
             network='host'  # To test
         )
@@ -257,7 +257,7 @@ class PreprocessingGatewayQuantileMapping(luigi.Task):
         current_time = time.time()
 
         # Check if the output file was modified within the last number of seconds
-        return current_time - output_file_mtime < 10
+        return current_time - output_file_mtime < 60 * 5  # 5 minutes
 
 
 class LinearRegression(luigi.Task):
