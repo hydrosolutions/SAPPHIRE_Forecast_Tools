@@ -84,21 +84,12 @@ def get_local_path(relative_path):
 class PreprocessingRunoff(luigi.Task):
 
     def output(self):
-
-        # Get the path to the output file
-        #print(f"cwd: {os.getcwd()}")
-        #print(f"ieasyforecast_intermediate_data_path: {env.get('ieasyforecast_intermediate_data_path')}")
-        #print(f"ieasyforecast_daily_discharge_file: {env.get('ieasyforecast_daily_discharge_file')}")
-        output_file_path = os.path.join(
-            env.get("ieasyforecast_intermediate_data_path"),
-            env.get("ieasyforecast_daily_discharge_file")
-            )
-        #print(f"Output file path: {output_file_path}")
-
-        return luigi.LocalTarget(output_file_path)
+        return luigi.LocalTarget(f'/app/log_preprunoff.txt')
 
     def run(self):
-
+        print("------------------------------------")
+        print(" Running PreprocessingRunoff task.")
+        print("------------------------------------")
         # Construct the absolute volume paths to bind to the containers
         # TODO: Insted of constructing the paths here, we define relative paths
         # to data ref dir in the .env file and use them here.
@@ -164,6 +155,11 @@ class PreprocessingRunoff(luigi.Task):
 
         print(f"Container {container.id} has stopped.")
 
+        # Create the output marker file
+        with self.output().open('w') as f:
+            f.write('Task completed')
+
+    '''
     def complete(self):
         if not self.output().exists():
             return False
@@ -176,18 +172,18 @@ class PreprocessingRunoff(luigi.Task):
 
         # Check if the output file was modified within the last number of seconds
         return current_time - output_file_mtime < 10  # 24 * 60 * 60
-
+    '''
 
 class PreprocessingGatewayQuantileMapping(luigi.Task):
 
     def output(self):
-        output_file_path = os.path.join(
-            os.getenv('ieasyforecast_intermediate_data_path'),
-            os.getenv('ieasyhydroforecast_OUTPUT_PATH_CM'))
-        print("DEGUB: output_file_path: ", output_file_path)
-        return luigi.LocalTarget(output_file_path)
+         # Define a unique output file for this task
+        return luigi.LocalTarget(f'/app/log_prepgateway.txt')
 
     def run(self):
+        print("------------------------------------")
+        print(" Running PreprocessingGateway task.")
+        print("------------------------------------")
 
         # Construct the absolute volume paths to bind to the containers
         absolute_volume_path_config = get_absolute_path(
@@ -246,21 +242,9 @@ class PreprocessingGatewayQuantileMapping(luigi.Task):
 
         print(f"Container {container.id} has stopped.")
 
-    '''
-    # This gives an error when running the ML task, hence it is commented out
-    def complete(self):
-        if not self.output().exists():
-            return False
-
-        # Get the modified time of the output file
-        output_file_mtime = os.path.getmtime(self.output().path)
-
-        # Get the current time
-        current_time = time.time()
-
-        # Check if the output file was modified within the last number of seconds
-        return current_time - output_file_mtime < 60 * 30  # 30 minutes
-    '''
+        # Create the output marker file
+        with self.output().open('w') as f:
+            f.write('Task completed')
 
 class LinearRegression(luigi.Task):
 
@@ -282,6 +266,10 @@ class LinearRegression(luigi.Task):
         return luigi.LocalTarget(output_file_path)
 
     def run(self):
+        print("------------------------------------")
+        print(" Running LinearRegression task.")
+        print("------------------------------------")
+
         # Construct the absolute volume paths to bind to the containers
         absolute_volume_path_config = get_absolute_path(
             env.get('ieasyforecast_configuration_path'))
@@ -363,6 +351,10 @@ class MachineLearning(luigi.Task):
         return [PreprocessingRunoff(), PreprocessingGatewayQuantileMapping()]
 
     def run(self):
+        print("------------------------------------")
+        print(" Running MachineLearning task.")
+        print("------------------------------------")
+
         # Construct the absolute volume paths to bind to the containers
         absolute_volume_path_config = get_absolute_path(
             env.get('ieasyforecast_configuration_path'))
@@ -443,6 +435,10 @@ class PostProcessingForecasts(luigi.Task):
         return luigi.LocalTarget(output_file_path)
 
     def run(self):
+        print("------------------------------------")
+        print(" Running PostprocessingForecasts task.")
+        print("------------------------------------")
+
         # Construct the absolute volume paths to bind to the containers
         absolute_volume_path_config = get_absolute_path(
             env.get('ieasyforecast_configuration_path'))
