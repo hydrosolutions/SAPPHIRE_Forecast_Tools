@@ -253,17 +253,7 @@ class LinearRegression(luigi.Task):
 
     def output(self):
 
-        # Get the path to the output file
-        #print(f"cwd: {os.getcwd()}")
-        #print(f"ieasyforecast_intermediate_data_path: {env.get('ieasyforecast_intermediate_data_path')}")
-        #print(f"ieasyforecast_analysis_pentad_file: {env.get('ieasyforecast_analysis_pentad_file')}")
-        output_file_path = os.path.join(
-            env.get("ieasyforecast_intermediate_data_path"),
-            env.get("ieasyforecast_analysis_pentad_file")
-            )
-        #print(f"Output file path: {output_file_path}")
-
-        return luigi.LocalTarget(output_file_path)
+        return luigi.LocalTarget(f'/app/log_linreg.txt')
 
     def run(self):
         print("------------------------------------")
@@ -394,7 +384,7 @@ class MachineLearning(luigi.Task):
             absolute_volume_path_internal_data: {'bind': bind_volume_path_internal_data, 'mode': 'rw'}
         }
 
-        custom_command = "sh -c PYTHONPATH=/app/apps/iEasyHydroForecast python apps/machine_learning/make_forecast && python apps/machine_learning/fill_ml_gaps.py"
+        custom_command = "sh -c PYTHONPATH=/app/apps/iEasyHydroForecast python apps/machine_learning/make_forecast.py && python apps/machine_learning/fill_ml_gaps.py"
 
         # Run the container
         container = client.containers.run(
@@ -425,18 +415,7 @@ class PostProcessingForecasts(luigi.Task):
         return LinearRegression()
 
     def output(self):
-
-        # Get the path to the output file
-        #print(f"cwd: {os.getcwd()}")
-        print(f"ieasyforecast_intermediate_data_path: {env.get('ieasyforecast_intermediate_data_path')}")
-        print(f"ieasyforecast_pentadal_skill_metrics_file: {env.get('ieasyforecast_pentadal_skill_metrics_file')}")
-        output_file_path = os.path.join(
-            env.get("ieasyforecast_intermediate_data_path"),
-            env.get("ieasyforecast_pentadal_skill_metrics_file")
-            )
-        print(f"Output file path for post-processing: {output_file_path}")
-
-        return luigi.LocalTarget(output_file_path)
+        return luigi.LocalTarget(f'/app/log_postproc.txt')
 
     def run(self):
         print("------------------------------------")
@@ -494,6 +473,11 @@ class PostProcessingForecasts(luigi.Task):
 
         print(f"Container {container.id} has stopped.")
 
+        # Write the output marker file
+        with self.output().open('w') as f:
+            f.write('Task completed')
+
+    '''
     def complete(self):
         if not self.output().exists():
             return False
@@ -506,6 +490,7 @@ class PostProcessingForecasts(luigi.Task):
 
         # Check if the output file was modified within the last number of seconds
         return current_time - output_file_mtime < 10  # 24 * 60 * 60
+    '''
 
 """
 class DeleteOldGateywayFiles(luigi.Task):
