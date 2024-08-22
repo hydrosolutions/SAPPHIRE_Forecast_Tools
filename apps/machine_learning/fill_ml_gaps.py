@@ -79,7 +79,7 @@ def call_hindcast_script(min_missing_date: str,
 
     # Prepare the command
 
-    if (os.getenv('IN_DOCKER_CONTAINER') == 'True'):
+    if (os.getenv('IN_DOCKER') == 'True'):
         command = ['python', 'apps/machine_learning/hindcast_ML_models.py']
     else:
         command = ['python', 'hindcast_ML_models.py']
