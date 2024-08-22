@@ -335,7 +335,10 @@ class LinearRegression(luigi.Task):
         return current_time - output_file_mtime < 10  # 24 * 60 * 60
     '''
 
-class MachineLearning(luigi.Task):
+class RunMLModel(luigi.Task):
+    model_type = luigi.Parameter()
+    prediction_mode = luigi.Parameter()
+    produce_daily_ml_hindcast = luigi.BoolParameter()
 
     def requires(self):
         return [PreprocessingRunoff(), PreprocessingGatewayQuantileMapping()]
@@ -393,7 +396,7 @@ class MachineLearning(luigi.Task):
             detach=True,
             environment=environment,
             volumes=volumes,
-            name="ml",
+            name="ml_{self.model_type}_{self.prediction_mode}",
             #labels=labels,
             network='host'  # To test
         )
@@ -408,6 +411,21 @@ class MachineLearning(luigi.Task):
         print(f"Logs from container {container.id}:\n{logs}")
 
         print(f"Container {container.id} has stopped.")
+
+class RunAllMLModels(luigi.WrapperTask):
+    def requires(self):
+        # Ensure preprocessing tasks are completed first
+        yield PreprocessingRunoff()
+        yield PreprocessingGatewayQuantileMapping()
+
+        models = ['TFT', 'TIDE', 'TSMIXER', 'ARIMA']
+        prediction_modes = ['PENTAD', 'OTHER_MODE']
+        produce_daily_ml_hindcast_options = [True]
+
+        for model in models:
+            for mode in prediction_modes:
+                for produce_daily_ml_hindcast in produce_daily_ml_hindcast_options:
+                    yield RunMLModel(model_type=model, prediction_mode=mode, produce_daily_ml_hindcast=produce_daily_ml_hindcast)
 
 class PostProcessingForecasts(luigi.Task):
 
@@ -530,7 +548,7 @@ class RunWorkflow(luigi.Task):
         elif ORGANIZATION=='kghm':
             print("Running KGHM workflow.")
             return [PostProcessingForecasts(),
-                    MachineLearning(),
+                    RunAllMLModels(),
                     #DeleteOldGateywayFiles()
                     ]
 
