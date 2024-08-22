@@ -379,6 +379,7 @@ class RunMLModel(luigi.Task):
         # Define environment variables
         environment = [
             'SAPPHIRE_OPDEV_ENV=True',
+            'IN_DOCKER_CONTAINER=True',
             f'SAPPHIRE_MODEL_TO_USE={self.model_type}',  # TFT, TIDE, TSMIXER, ARIMA
             f'SAPPHIRE_PREDICTION_MODE={self.prediction_mode}'  # PENTAD, DECAD
         ]

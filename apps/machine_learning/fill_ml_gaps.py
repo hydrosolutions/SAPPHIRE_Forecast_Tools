@@ -78,7 +78,12 @@ def call_hindcast_script(min_missing_date: str,
     env['SAPPHIRE_HINDCAST_MODE'] = PREDICTION_MODE
 
     # Prepare the command
-    command = ['python', 'hindcast_ML_models.py']
+
+    if (os.getenv('IN_DOCKER_CONTAINER') == 'True'):
+        command = ['python', 'apps/machine_learning/hindcast_ML_models.py']
+    else:
+        command = ['python', 'hindcast_ML_models.py']
+
 
     # Call the script
     result = subprocess.run(command, capture_output=True, text=True, env=env)
@@ -166,7 +171,7 @@ def fill_ml_gaps():
     else:
         prefix = 'decad'
 
-    
+
     forecast_path = os.path.join(PATH_FORECAST, prefix + '_' +  MODEL_TO_USE + '_forecast.csv')
     limit_day_gap = 1
 

@@ -5,6 +5,7 @@ FROM mabesa/sapphire-pythonbaseimage:latest AS base
 # Set an environment variable that can be read by the application to know if it
 # is running in a container.
 ENV SAPPHRIE_OPDEV_ENV=true
+ENV IN_DOCKER_CONTAINER=true
 
 # Setting the working directory to /app
 WORKDIR /app
