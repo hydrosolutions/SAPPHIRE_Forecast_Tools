@@ -246,6 +246,7 @@ class PreprocessingGatewayQuantileMapping(luigi.Task):
 
         print(f"Container {container.id} has stopped.")
 
+    '''
     def complete(self):
         if not self.output().exists():
             return False
@@ -257,8 +258,8 @@ class PreprocessingGatewayQuantileMapping(luigi.Task):
         current_time = time.time()
 
         # Check if the output file was modified within the last number of seconds
-        return current_time - output_file_mtime < 60 * 5  # 5 minutes
-
+        return current_time - output_file_mtime < 60 * 30  # 30 minutes
+    '''
 
 class LinearRegression(luigi.Task):
 
