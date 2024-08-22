@@ -21,8 +21,8 @@ services:
     ports:
       - "80:3647"
     volumes:
-      - ../../sensitive_data_forecast_tools/config:/sensitive_data_forecast_tools/config
-      - ../../sensitive_data_forecast_tools/GIS:/sensitive_data_forecast_tools/GIS
+      - ${ieasyhydroforecast_data_ref_dir}/config:${ieasyhydroforecast_container_data_ref_dir}/config
+      - ${ieasyhydroforecast_data_ref_dir}/GIS:${ieasyhydroforecast_container_data_ref_dir}/GIS
     container_name: sapphire-frontend-config
     labels:
       - com.centurylinklabs.watchtower.enable=true
@@ -43,10 +43,10 @@ services:
     ports:
       - "5006:5006"
     volumes:
-      - ../../sensitive_data_forecast_tools/config:/sensitive_data_forecast_tools/config
-      - ../../sensitive_data_forecast_tools/intermediate_data:/sensitive_data_forecast_tools/intermediate_data
-      - ../../sensitive_data_forecast_tools/templates:/sensitive_data_forecast_tools/templates
-      - ../../sensitive_data_forecast_tools/reports:/sensitive_data_forecast_tools/reports
+      - ${ieasyhydroforecast_data_ref_dir}/config:${ieasyhydroforecast_container_data_ref_dir}/config
+      - ${ieasyhydroforecast_data_ref_dir}/intermediate_data:${ieasyhydroforecast_container_data_ref_dir}/intermediate_data
+      - ${ieasyhydroforecast_data_ref_dir}/templates:${ieasyhydroforecast_container_data_ref_dir}/templates
+      - ${ieasyhydroforecast_data_ref_dir}/reports:${ieasyhydroforecast_container_data_ref_dir}/reports
     container_name: sapphire-frontend-forecast
     labels:
       - com.centurylinklabs.watchtower.enable=true

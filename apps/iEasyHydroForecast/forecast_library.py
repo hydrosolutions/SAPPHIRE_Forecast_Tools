@@ -704,6 +704,9 @@ def generate_issue_and_forecast_dates(data_df_0: pd.DataFrame, datetime_col: str
 
         return(data_df_decad)
 
+    logger.info("input: generate_issue_and_forecast_dates")
+    logger.info("data_df_0.head(): \n{}".format(data_df_0.head()))
+
     # Test if the input data contains the required columns
     if not all(column in data_df_0.columns for column in [datetime_col, station_col, discharge_col]):
         raise ValueError(f'DataFrame is missing one or more required columns: {datetime_col, station_col, discharge_col}')
@@ -1680,6 +1683,10 @@ def read_daily_discharge_data_from_csv():
 
     # Sort the DataFrame by 'code' and 'date'
     discharge_data = discharge_data.sort_values(by=['code', 'date'])
+    logger.info("Daily discharge data read from %s", file_path)
+    logger.info("Columns: %s", discharge_data.columns)
+    logger.info("Head: %s", discharge_data.head())
+    logger.info("Tail: %s", discharge_data.tail())
 
     return discharge_data
 

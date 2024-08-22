@@ -159,14 +159,18 @@ You can also check the progress of the luigi tasks by opening a browser window a
 
 ## Set up cron job
 We recommend setting up a cron job to restart the backend every day after you have checked the operational river discharge data and before you have to send out the forecast bulletin.
+
+To edit the cron jobs, type the following command to the console:
 ```bash
 crontab -e
 ```
-Add the following line to the crontab file:
+Add the following line to the crontab file (skip the comment line, this is just for your information):
 ```bash
-3 10 * * * cd /data/SAPPHIRE_Forecast_Tools && /bin/bash -c 'bash bin/run_sapphire_forecast_tools.sh /data' >> /data/logs/sapphire_forecast_tools.log 2>&1
+# m h  dom mon dow   command
+3 5 * * * cd /data/SAPPHIRE_Forecast_Tools && /bin/bash -c 'bash bin/run_sapphire_forecast_tools.sh /path/to/.env' >> /data/logs/daily_run_of_sapphire_forecast_tools.log 2>&1
+2 20 * * * cd /data/SAPPHIRE_Forecast_Tools && /bin/bash -c 'bash bin/daily_update_sapphire_frontend.sh /path/to/.env' >> /data/logs/restart_dashboards.log 2>&1
 ```
-To run the forecast tools every day at 10:03 a.m (server time, check by typing `date` to the console). The path to the data root folder is the parent directory of your data folder where you store your discharge, bulletin templates and other data. By default this is the data folder in the SAPPHIRE_Forecast_Tools folder (in which case the path to the data root folder would be the path to the SAPPHIRE_Forecast_Tools). The log file will be stored in the logs folder in the data folder.
+To run the forecast tools every day at 5:03 a.m (server time, check by typing `date` to the console). The log file will be stored in the logs folder in the data folder.
 
 To check if the cron job has been set up correctly, you can list the cron jobs with the following command:
 ```bash
