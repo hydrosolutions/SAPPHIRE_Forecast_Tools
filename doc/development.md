@@ -2,85 +2,85 @@
 
 This document describes how to develop the application and how to add hydrological forecasting models to your installation of the forecast tools. If you wish to install the demo version of the application, please refer to the [installation instructions in the deployment guide](deployment.md). The document is structured as follows:
 
--   [Prerequisites](#prerequisites)
-    -   [Installation of 3rd party software](#installation-of-3rd-party-software)
-        -   [Python](#python)
-        -   [Conda](#conda)
-        -   [Visual Studio Code](#visual-studio-code)
-        -   [R](#r)
-        -   [RStudio](#rstudio)
-        -   [Git Desktop](#git-desktop)
-        -   [Docker](#docker)
-    -   [Test run the demo version](#test-run-the-demo-version)
-        -   [Clone the github repository](#clone-the-github-repository)
-        -   [Test-run the Sapphire forecast tools](#test-run-the-sapphire-forecast-tools)
-    -   [Set up your work environment](#set-up-your-work-environment)
-        -   [Activate the conda environment](#activate-the-conda-environment)
-        -   [Install the required packages](#install-the-required-packages)
--   [Development instructions specific to the tools](#development-instructions-specific-to-the-tools)
-    -   [Configuration dashboard configuration_dashboard)](#configuration-dashboard-configuration_dashboard)
-    -   [Backend modules](#backend-modules)
-        -   [Pipeline (pipeline)](#pipeline-pipeline)
-            -   [Module description](#module-description)
-            -   [How to manually run the pipeline](#how-to-manually-run-the-pipeline)
-        -   [Preprocessing runoff data (preprocessing_runoff)](#preprocessing-runoff-data-preprocessing_runoff)
-            -   [Description of moudle](#description-of-moudle)
-            -   [I/O](#io)
-            -   [Prerequisites](#prerequisites-1)
-            -   [How to run the tool](#how-to-run-the-tool)
-        -   [Preprocessing of gridded weather data (preprocessing_gateway)](#preprocessing-of-gridded-weather-data-preprocessing_gateway)
-            -   [Description of module](#description-of-module)
-            -   [Prerequisites](#prerequisites-2)
-            -   [I/O](#io-1)
-            -   [How to run the tool](#how-to-run-the-tool-1)
-        -   [Linear regression (linear_regression)](#linear-regression-linear_regression)
-            -   [Description of module](#description-of-module-1)
-            -   [Prerequisites](#prerequisites-3)
-            -   [How to run the tool](#how-to-run-the-tool-2)
-        -   [Conceptual rainfall-runoff (conceptual...)](#conceptual-rainfall-runoff-conceptual)
-            -   [Description of module](#description-of-module-2)
-            -   [Prerequisites](#prerequisites-4)
-            -   [I/O](#io-2)
-            -   [How to run the tool](#how-to-run-the-tool-3)
-        -   [Machine learning (machine_learning)](#machine-learning-machine_learning)
-            -   [Description of module](#description-of-module-3)
-            -   [Prerequisites](#prerequisites-5)
-            -   [I/O](#io-3)
-            -   [How to run the tool](#how-to-run-the-tool-4)
-        -   [Post-processing of forecasts (postprocessing_forecasts)](#post-processing-of-forecasts-postprocessing_forecasts)
-        -   [Manual triggering of the forecast pipeline](#manual-triggering-of-the-forecast-pipeline)
-            -   [How to re-run the forecast pipeline manually](#how-to-re-run-the-forecast-pipeline-manually)
-        -   [Forecast dashboard](#forecast-dashboard)
-            -   [Prerequisites](#prerequisites-6)
-            -   [How to run the forecast dashboard locally](#how-to-run-the-forecast-dashboard-locally)
-    -   [The backend (note: this module is deprecated)](#the-backend-note-this-module-is-deprecated)
-        -   [Prerequisites](#prerequisites-7)
-        -   [How to run the backend modules locally](#how-to-run-the-backend-modules-locally)
-            -   [Pre-processing of river runoff data](#pre-processing-of-river-runoff-data)
-            -   [Pre-processing of forcing data from the data gateway](#pre-processing-of-forcing-data-from-the-data-gateway)
-            -   [Running the linear regression tool](#running-the-linear-regression-tool)
-    -   [Dockerization](#dockerization)
-        -   [Configuration dashboard](#configuration-dashboard)
-        -   [Backend](#backend)
-        -   [Forecast dashboard](#forecast-dashboard-1)
-    -   [How to use private data](#how-to-use-private-data)
-    -   [Development workflow](#development-workflow)
-    -   [Testing](#testing)
--   [Deployment](#deployment)
+- [Prerequisites](#prerequisites)
+  - [Installation of 3rd party software](#installation-of-3rd-party-software)
+    - [Python](#python)
+    - [Conda](#conda)
+    - [Visual Studio Code](#visual-studio-code)
+    - [R](#r)
+    - [RStudio](#rstudio)
+    - [Git Desktop](#git-desktop)
+    - [Docker](#docker)
+  - [Test run the demo version](#test-run-the-demo-version)
+    - [Clone the github repository](#clone-the-github-repository)
+    - [Test-run the Sapphire forecast tools](#test-run-the-sapphire-forecast-tools)
+  - [Set up your work environment](#set-up-your-work-environment)
+    - [Activate the conda environment](#activate-the-conda-environment)
+    - [Install the required packages](#install-the-required-packages)
+- [Development instructions specific to the tools](#development-instructions-specific-to-the-tools)
+  - [Configuration dashboard configuration\_dashboard](#configuration-dashboard-configuration_dashboard)
+  - [Backend modules](#backend-modules)
+    - [Pipeline (pipeline)](#pipeline-pipeline)
+      - [Module description](#module-description)
+      - [How to manually run the pipeline](#how-to-manually-run-the-pipeline)
+    - [Preprocessing runoff data (preprocessing\_runoff)](#preprocessing-runoff-data-preprocessing_runoff)
+      - [Description of moudle](#description-of-moudle)
+      - [I/O](#io)
+      - [Prerequisites](#prerequisites-1)
+      - [How to run the tool](#how-to-run-the-tool)
+    - [Preprocessing of gridded weather data (preprocessing\_gateway)](#preprocessing-of-gridded-weather-data-preprocessing_gateway)
+      - [Description of module](#description-of-module)
+      - [Prerequisites](#prerequisites-2)
+      - [I/O](#io-1)
+      - [How to run the tool](#how-to-run-the-tool-1)
+    - [Linear regression (linear\_regression)](#linear-regression-linear_regression)
+      - [Description of module](#description-of-module-1)
+      - [Prerequisites](#prerequisites-3)
+      - [How to run the tool](#how-to-run-the-tool-2)
+    - [Conceptual rainfall-runoff (conceptual...)](#conceptual-rainfall-runoff-conceptual)
+      - [Description of module](#description-of-module-2)
+      - [Prerequisites](#prerequisites-4)
+      - [I/O](#io-2)
+      - [How to run the tool](#how-to-run-the-tool-3)
+    - [Machine learning (machine\_learning)](#machine-learning-machine_learning)
+      - [Description of module](#description-of-module-3)
+      - [Prerequisites](#prerequisites-5)
+      - [I/O](#io-3)
+        - [Output Files](#output-files)
+      - [How to run the tool](#how-to-run-the-tool-4)
+    - [Post-processing of forecasts (postprocessing\_forecasts)](#post-processing-of-forecasts-postprocessing_forecasts)
+    - [Manual triggering of the forecast pipeline](#manual-triggering-of-the-forecast-pipeline)
+      - [How to re-run the forecast pipeline manually](#how-to-re-run-the-forecast-pipeline-manually)
+    - [Forecast dashboard](#forecast-dashboard)
+      - [How to run the forecast dashboard locally](#how-to-run-the-forecast-dashboard-locally)
+  - [The backend (note: this module is deprecated)](#the-backend-note-this-module-is-deprecated)
+      - [Prerequisites](#prerequisites-6)
+      - [How to run the backend modules locally {#how-to-run-the-backend-modules-locally}](#how-to-run-the-backend-modules-locally-how-to-run-the-backend-modules-locally)
+        - [Pre-processing of river runoff data {#pre-processing-of-river-runoff-data}](#pre-processing-of-river-runoff-data-pre-processing-of-river-runoff-data)
+        - [Pre-processing of forcing data from the data gateway {#pre-processing-of-forcing-data-from-the-data-gateway}](#pre-processing-of-forcing-data-from-the-data-gateway-pre-processing-of-forcing-data-from-the-data-gateway)
+        - [Running the linear regression tool {#running-the-linear-regression-tool}](#running-the-linear-regression-tool-running-the-linear-regression-tool)
+  - [Dockerization](#dockerization)
+    - [Configuration dashboard](#configuration-dashboard)
+    - [Backend](#backend)
+    - [Forecast dashboard](#forecast-dashboard-1)
+  - [How to use private data](#how-to-use-private-data)
+  - [Development workflow](#development-workflow)
+  - [Testing](#testing)
+- [Deployment](#deployment)
 
-# Prerequisites {#prerequisites}
+# Prerequisites
 
 Note: The software has been developed on a Mac computer and packaged with Ubuntu base images using Docker using GitHub Actions (with workflow instructions in .github/workflows/main.yml). It has been tested extensibly on an Ubuntu server. The software has not been tested on Windows.
 
-The following open-source technologies are used in the development of the forecast tools: - For scripting and development: - Scripting language [Python](#python) and user interface [Visual Studio Code (#visual-studio-code) - Python package manager [Conda](#conda) - Scripting language [R](#R) and user interface RStudio - Code version control: GitHub Desktop - Containerization: Docker
+The following open-source technologies are used in the development of the forecast tools: - For scripting and development: - Scripting language [Python](#python) and user interface [Visual Studio Code](#visual-studio-code) - Python package manager [Conda](#conda) - Scripting language [R](#R) and user interface RStudio - Code version control: GitHub Desktop - Containerization: Docker
 
 If you have all of these technologies installed on your computer, you can skip the installation instructions below and proceed to the instructions on the general development workflow (TODO: add link to section).
 
-## Installation of 3rd party software {#installation-of-3rd-party-software}
+## Installation of 3rd party software 
 
 You will find instructions on how to install the technologies used in the development of the forecast tools below. We recommend that you install the technologies in the order they are listed. If you are new to any of these tools it is recommended to run through a quick tutorial to get familiar with the technology befor starting out to work on the SAPPHIRE forecast tools.
 
-### Python {#python}
+### Python 
 
 Install Python on your computer. The installation instructions can be found in many places on the internet, for example [here](https://realpython.com/installing-python/). We recommend the installation of Python 3.11. You can check the version of Python installed on your computer by running the following command in the terminal:
 
@@ -88,7 +88,7 @@ Install Python on your computer. The installation instructions can be found in m
 python --version
 ```
 
-### Conda {#conda}
+### Conda 
 
 We use conda for managing the Python environment. The installation instructions can be found [here](https://docs.conda.io/projects/conda/en/latest/user-guide/install/). Once conda is installed, you can create a new conda environment by running the following command in the terminal:
 
@@ -98,11 +98,11 @@ conda create --name my_environment python=3.11
 
 Through the name tag you can specify a recognizable name for the environment (you can replace my_environment with a name of your choosing). We use a different environment for each module of the backend. For development, python 3.11 was used. We therefore recommend you continue development with python 3.11 as well.
 
-### Visual Studio Code {#visual-studio-code}
+### Visual Studio Code 
 
 Install Visual Studio Code on your computer. The installation instructions can be found [here](https://code.visualstudio.com/download). We recommend the installation of the Python extension for Visual Studio Code. The installation instructions can be found [here](https://code.visualstudio.com/docs/languages/python). Note that you can use any other Python IDE for development. We recommend Visual Studio Code as it is free and open-source.
 
-### R {#r}
+### R 
 
 Install R on your computer. The installation instructions can be found [here](https://cran.r-project.org/). We recommend the installation of R 4.4.1. You can check the version of R installed on your computer by running the following command in the terminal:
 
@@ -110,23 +110,23 @@ Install R on your computer. The installation instructions can be found [here](ht
 R --version
 ```
 
-### RStudio {#rstudio}
+### RStudio 
 
 Install RStudio on your computer. The installation instructions can be found [here](https://rstudio.com/products/rstudio/download/). We recommend the installation of RStudio Desktop.
 
-### Git Desktop {#git-desktop}
+### Git Desktop 
 
 We recomment the installation of GitHub Desktop to manage the repository. The installation instructions can be found [here](https://desktop.github.com/).
 
-### Docker {#docker}
+### Docker 
 
 Install Docker Desktop on your computer so you can test dockerization of sofware components locally. The Docker installation instructions can be found [here](https://docs.docker.com/install/).
 
-## Test run the demo version {#test-run-the-demo-version}
+## Test run the demo version 
 
 Before starting the development of the Forecast Tools, it is recommended to first try to run the tools with the public demo data set. This will help you to understand the workflow of the tools and to identify the modules you want to work on. The following sections provide instructions on how to test-run the demo version of the forecase tools.
 
-### Clone the github repository {#clone-the-github-repository}
+### Clone the github repository 
 
 Once you have installed the technologies, you can set up your working environment. We recommend that you create a folder for the repository on your computer. You can then clone the repository to your computer. Open a terminal and navigate to the folder where you want to clone the repository. Run the following command in the terminal:
 
@@ -134,7 +134,7 @@ Once you have installed the technologies, you can set up your working environmen
 git clone https://github.com/hydrosolutions/SAPPHIRE_Forecast_Tools.git
 ```
 
-### Test-run the Sapphire forecast tools {#test-run-the-sapphire-forecast-tools}
+### Test-run the Sapphire forecast tools
 
 Navigate to the root directory of the repository in the terminal:
 
@@ -160,11 +160,11 @@ An example command for the test run installed under /Users/username/forecasting/
 bash bin/run_sapphire_forecast_tools.sh /Users/username/forecasting/
 ```
 
-## Set up your work environment {#set-up-your-work-environment}
+## Set up your work environment 
 
 If the demo version runs on your system, you can be confident, that you have all the necessary software installed and that the SAPPHIRE Forecast Tools are working on your system. You can now set up your work environment to start developing the forecast tools. Each module comes with a requirements.txt file that lists the required packages. You can install the required packages in your conda environment by following the instructions below. We recommend individual conda environments for each module of the forecast tools.
 
-### Activate the conda environment {#activate-the-conda-environment}
+### Activate the conda environment
 
 You can list the available conda environments with:
 
@@ -178,7 +178,7 @@ You can activate an environment by running the following command in the terminal
 conda activate my_environment
 ```
 
-### Install the required packages {#install-the-required-packages}
+### Install the required packages 
 
 Each module has a requirements.txt file that lists the required packages. You can install the required packages in your conda environment by running the following command in the terminal:
 
@@ -189,13 +189,13 @@ pip install -r requirements.txt
 
 You now have a working installation of the SAPPHIRE Forecast Tools with a public demo data set.
 
-# Development instructions specific to the tools {#development-instructions-specific-to-the-tools}
+# Development instructions specific to the tools 
 
 The following sections provide instructions on how to develop the individual modules of the forecast tools. The names of the modules in the apps folder are given in brackets.
 
 TODO: Add a flow chart of the workflow of the forecast tools.
 
-## Configuration dashboard configuration_dashboard) {#configuration-dashboard-configuration_dashboard}
+## Configuration dashboard configuration_dashboard 
 
 The forecast configuration dashboard is written in R and uses the Shiny framework.
 
@@ -222,15 +222,15 @@ You can verify your confirmed edits in the dashboard in your local copies of the
 
 TODO: Aidar, please validate if the above is correct.
 
-## Backend modules {#backend-modules}
+## Backend modules 
 
-### Pipeline (pipeline) {#pipeline-pipeline}
+### Pipeline (pipeline) 
 
-#### Module description {#module-description}
+#### Module description 
 
 We use the python package Luigi to manage the workflow of the forecast tools. Luigi takes care of running each backend module in sequence or in parallel. You will find detailed information about Luigi [in the Luigi docs](https://luigi.readthedocs.io/en/stable/index.html#).
 
-#### How to manually run the pipeline {#how-to-manually-run-the-pipeline}
+#### How to manually run the pipeline 
 
 All modules of the SAPPHIRE Forecast Tools are run in individual docker containers. To run them on your system, please follow the instructions below.
 
@@ -276,30 +276,30 @@ To run the Docker containers locally, run the following command in the root dire
 docker compose -f ./bin/docker-compose.yml up
 ```
 
-### Preprocessing runoff data (preprocessing_runoff) {#preprocessing-runoff-data-preprocessing_runoff}
+### Preprocessing runoff data (preprocessing_runoff) 
 
 TODO: formulate the text
 
-#### Description of moudle {#description-of-moudle}
+#### Description of moudle 
 
 -   Reads data from excel files and, if access is available, from the iEasyHydro database. TODO: Describe what happens in this tool step by step.
 
-#### I/O {#io}
+#### I/O 
 
 -   Link to description of required input files (daily runoff data in excel format)
 -   Describe what output files are produced
 
 TODO: Bea Add flow chart with detailed I/O
 
-#### Prerequisites {#prerequisites-1}
+#### Prerequisites 
 
 -   How to download & install iEasyHydro (HF) (-\> link to iEasyHydro documentation)
 
-#### How to run the tool {#how-to-run-the-tool}
+#### How to run the tool 
 
-### Preprocessing of gridded weather data (preprocessing_gateway) {#preprocessing-of-gridded-weather-data-preprocessing_gateway}
+### Preprocessing of gridded weather data (preprocessing_gateway) 
 
-#### Description of module {#description-of-module}
+#### Description of module
 
 The proprocessing_gateway module gets weather forecasts and re-analysis weather data from ECMWF IFS as well as TopoPyScale snow model results that have been pre-processed in the SAPPHIRE Data Gateway. The module reads the data and prepares it for the hydrological models. The module is composed of two components that are run in a docker container: - Downolading of operational weather forecasts and downscaling of weather forecasts (Quantile_Mapping_OP.py) - Updating of re-analysis weather data and downscaling of re-analysis weather data (extend_era5_reanalysis.py)
 
@@ -323,13 +323,13 @@ Folder Structure:
 
     -   Dockerfile
 
-The Quantile_Mapping_OP.py script accesses the the SAPPHIRE Data Gateway and downloads the ERA5 ECMWF IFS control member and ensemble forecast. Afterwards it can perform a downscaling from a set of previously fitted parameters, these downscaling is performed with a parametric transformations where the new transformed value is obtained by the formula $y = a*x^b$ (<https://search.r-project.org/CRAN/refmans/qmap/html/fitqmapptf.html>). In case there are nan values in the forcing data, we fill them by taking the last available observation. Alltough it is not expected to have any missing values in the forcing.
+The Quantile_Mapping_OP.py script accesses the the SAPPHIRE Data Gateway and downloads the ERA5 ECMWF IFS control member and ensemble forecast. Afterwards it can perform a downscaling from a set of previously fitted parameters, these downscaling is performed with a parametric transformations where the new transformed value is obtained by the formula $y = a*x^b$ in the [fitQmap](#https://search.r-project.org/CRAN/refmans/qmap/html/fitqmapptf.html) package in R. In case there are nan values in the forcing data, we fill them by taking the last available observation. Alltough it is not expected to have any missing values in the forcing.
 
 The get_era5_reanalysis_data.py is an initialization file. It also accesses the data-gateway and pulls the ERA5 Land Reanalysis data for a provided time window and a given HRU. It also performs the downscaling on this data. The reason behind this script is, to obtain a file where we have past forcing data saved to perform for example hindcasts.
 
 The extend_era5_reanalysis.py file is used operationally to append the latest ERA5 Land Reanalysis data to the hindcast forcing file. It reads in the hindcast file and the operational forcing data, combines them and removes dublicates.
 
-#### Prerequisites {#prerequisites-2}
+#### Prerequisites 
 
 [Open ECMWF weather forecasts](https://www.ecmwf.int/en/forecasts/datasets/open-data) and results of the [TopoPyScale Snow model](https://topopyscale.readthedocs.io/en/latest/) are pre-processed for hydrological modelling with the SAPPHIRE Data Gateway (TODO: publish once development completed). If you wish to use weather and snow forecast data in the SAPPHIRE Forecast Tools, you will have to install the SAPPHIRE Data Gateway and the [SAPPHIRE data gateway client](https://github.com/hydrosolutions/sapphire-dg-client) by following the installation instructions provided in the repositories.
 
@@ -345,7 +345,7 @@ conda install --file requirements.txt
 #pip install -r requirements.txt
 ```
 
-#### I/O {#io-1}
+#### I/O 
 
 Here is the folder structure represented which interacts with the module preprocess_gateway:
 
@@ -434,7 +434,7 @@ These files are than transformed and eventually downscaled. The transformed (and
 
 The files in the hindcast folder (YOUR_HRU_P_reanalysis.csv) have the exact same format as the control member file.
 
-#### How to run the tool {#how-to-run-the-tool-1}
+#### How to run the tool 
 
 The first thing you need to ensure is that your HRU is on the SAPPHIRE data-gateway (TODO: add link to the documentation). Here you need to upload your HRU with its shapefiles and trigger the ERA5 Land Reanalysis and subscribe to daily calculations and the forecasts. The shapefile you upload should have the following columns:
 
@@ -460,49 +460,49 @@ You can specifiy the HRU for which you need the control member forecast and the 
 
 In order to keep the hindcast data updated, you can run the extend_era5_reanalysis.py script. This only works if you have operational data and you should ensure that you don't have any gaps longer than 6 months between the end of the hindcast file, and the start of the operational forcing data, or else you will have some forcing gaps.
 
-### Linear regression (linear_regression) {#linear-regression-linear_regression}
+### Linear regression (linear_regression)
 
-#### Description of module {#description-of-module-1}
+#### Description of module 
 
 TODO: Bea
 
-#### Prerequisites {#prerequisites-3}
+#### Prerequisites 
 
 No prerequisites No external input files required (depends entirely on pre-processing of runoff data) Need to describe which files are read and which files are produced
 
-#### How to run the tool {#how-to-run-the-tool-2}
+#### How to run the tool 
 
 TODO: Bea
 
 ### Conceptual rainfall-runoff (conceptual...)
 
-#### Description of module {#description-of-module-2}
+#### Description of module 
 
 TODO: Adrian, please provide a detailed description of the module so that laypeople understand what happens. Similarly as if you'd give instructions to Copilot to write a script for you.
 
 Please feel free to add any other information that you think is relevant.
 
-#### Prerequisites {#prerequisites-4}
+#### Prerequisites 
 
 TODO: Adrian, please describe how to install the packages from GitHub. If you have a requirements.txt file, please describe how to install the required packages.
 
-#### I/O {#io-2}
+#### I/O 
 
 TODO: Adrian, please describe what input files the module requires (the format of the files) and what output files are produced. This includes a description of the required formats and all files that describe the conceptual model (e.g. the parameters or initial conditions of the model).
 
-#### How to run the tool {#how-to-run-the-tool-3}
+#### How to run the tool 
 
 TODO: Adrian, please provide instructions of how you run the module when you develop it.
 
-### Machine learning (machine_learning) {#machine-learning-machine_learning}
+### Machine learning (machine_learning)
 
-#### Description of module {#description-of-module-3}
+#### Description of module
 
 TODO: Sandro, please provide a detailed description of the module so that laypeople understand what happens. Similarly as if you'd give instructions to Copilot to write a script for you.
 
 Please feel free to add any other information that you think is relevant.
 
-The module machine_learning module integrates machine learning models for operational discharge forecasting. Machine Learning models can derive complex relationship between input variables and the target variable (in this case discharge). These data driven models have been in the focus of recent studies and show very powerful performance accross many domains. In our implementation we used deep learning models, such as Temporal-Fusion Transformer (TFT), Time-Series Dense Encoder (TiDE) and Time-Series Mixer (TSMixer). These models have been trained on multiple rivers and there is one model able to make forecast for all rivers trained on (Global Model). We also implemented ARIMA models which are river specific. All models are implemented with the darts library (<https://unit8co.github.io/darts/index.html>) and are auto-regressive. Hence they use the past observed discharge as an input. They can take other dynamic and static features as inputs. As additional dynamic features the models use the forcing data obtained by the preprocessing_gateway module. As static features the models can use basin features, such as mean elevation, slope and so on. The static features are only used on Global Models.
+The module machine_learning module integrates machine learning models for operational discharge forecasting. Machine Learning models can derive complex relationship between input variables and the target variable (in this case discharge). These data driven models have been in the focus of recent studies and show very powerful performance accross many domains. In our implementation we used deep learning models, such as Temporal-Fusion Transformer (TFT), Time-Series Dense Encoder (TiDE) and Time-Series Mixer (TSMixer). These models have been trained on multiple rivers and there is one model able to make forecast for all rivers trained on (Global Model). We also implemented ARIMA models which are river specific. All models are implemented with the [darts](#https://unit8co.github.io/darts/index.html) library  and are auto-regressive. Hence they use the past observed discharge as an input. They can take other dynamic and static features as inputs. As additional dynamic features the models use the forcing data obtained by the preprocessing_gateway module. As static features the models can use basin features, such as mean elevation, slope and so on. The static features are only used on Global Models.
 
 Folder Structure:
 
@@ -517,9 +517,9 @@ Folder Structure:
         -   utils_ml_forecast.py
     -   requirements.txt
 
-The core part of this module are the predictor_classes. These classes are wrapped around a darts forecasting model (check out the available models here (<https://unit8co.github.io/darts/generated_api/darts.models.forecasting.html>)). In these classes, the whole feature calculation is done and the input variables are scaled with the same scalers the model was trained on. Note that it is extremely important, that the processing of the inputs is done exactly the same as during the training process. Otherwise the model will produce unexpected outputs. Also make sure that the order of the features in the darts.Timeseries creation is the same as during the training, as this can lead to unexpected behaviour aswell. The predictor class should include the following functions to work: get_input_chunk_length, get_max_forecast_horizon, predict. As these functions are called from the other scripts.
+The core part of this module are the predictor_classes. These classes are wrapped around a darts forecasting model (check out the available models [here](#https://unit8co.github.io/darts/generated_api/darts.models.forecasting.html)). In these classes, the whole feature calculation is done and the input variables are scaled with the same scalers the model was trained on. Note that it is extremely important, that the processing of the inputs is done exactly the same as during the training process. Otherwise the model will produce unexpected outputs. Also make sure that the order of the features in the darts.Timeseries creation is the same as during the training, as this can lead to unexpected behaviour aswell. The predictor class should include the following functions to work: get_input_chunk_length, get_max_forecast_horizon, predict. As these functions are called from the other scripts.
 
-The make_forecast.py script is used to perform the operational forecasting. It takes the forcing forecast from the previously run process_gateway module and the past discharge from the preprocess_runoff module. It calls the predictor_class to make the predictions and appends the newest forecast to the prediction file ../intermediate_data/predictions/MODELXY. The forecast starts from the last observed discharge date plus one day. The past discharge data can contain a certain amount of nan values in the input chunck. Missing values will be interpolated if there is a observed discharge before and after the gap. If there are nan values at the end of the input, the model can fill the gaps with recursive imputation. Here the model predicts the gap and uses these predictions again for the forecast. In the config file it should be specified for which rivers the model performs such a recursive imputation. Also the total threshold of nan values in the input is defined and the threshold for missing values at the end. If it exceeds the threshold the predictions will be nan values.
+The make_forecast.py script is used to perform the operational forecasting. It takes the forcing forecast from the previously run [process_gateway](#preprocessing-of-gridded-weather-data-preprocessing_gateway) module and the past discharge from the [preprocess_runoff](#preprocessing_runoff) module. It calls the predictor_class to make the predictions and appends the newest forecast to the prediction file ../intermediate_data/predictions/MODELXY. The forecast starts from the last observed discharge date plus one day. The past discharge data can contain a certain amount of nan values in the input chunck. Missing values will be interpolated if there is a observed discharge before and after the gap. If there are nan values at the end of the input, the model can fill the gaps with recursive imputation. Here the model predicts the gap and uses these predictions again for the forecast. In the config file it should be specified for which rivers the model performs such a recursive imputation. Also the total threshold of nan values in the input is defined and the threshold for missing values at the end. If it exceeds the threshold the predictions will be nan values.
 
 The hindcast_ML_models.py script is used to perform a hindcast. It reads in the forcing file ../intermediate_data/hindcast_forcing and the ..intermediate_data/control_member_forcing if it is available and produces hindcast for a given model, hindcast mode (Pentad / Decad) and time period. It calls the predictor_class aswell to make the predictions.
 
@@ -527,7 +527,7 @@ When first initalizing the module, we need to provide a csv file, where the fore
 
 The fill_ml_gaps.py is used to fill any gaps in the forecast files. This step is important to guarantee continious predictions from the models to properly monitor their performance. This script checks for gaps in the column "forecast_date" and than calls the hindcast_ML_models.py script to fill in the gaps. In the utils_ml_forecast.py file are various helper functions.
 
-#### Prerequisites {#prerequisites-5}
+#### Prerequisites 
 
 To run this script you need to install the requirements:
 
@@ -541,7 +541,7 @@ conda install --file requirements.txt
 #pip install -r requirements.txt
 ```
 
-#### I/O {#io-3}
+#### I/O 
 
 **Data Structure and Input Files**
 
@@ -637,7 +637,7 @@ For a deterministic forecast the format looks almost the same, expect the there 
 
 The name convention for the prediction file is pentad_MODEL_forecast.csv and for the decad forecast decad_MODEL_forecast.csv. The most recent forecast is always added to the past forecasts and hindcast file. 
 
-#### How to run the tool {#how-to-run-the-tool-4}
+#### How to run the tool
 
 If you have a running predictor class for a model, the other script should work with that class. The model and the prediction mode ca be specified in the config file (SAPPHIRE_MODEL_TO_USE, SAPPHIRE_PREDICTION_MODE). The config file also handles for which stations the machine_learning module should produce forecasts (ieasyhydroforecast_config_hydroposts_available_for_ml_forecasts) and where the model, scalers and static features are saved (ieasyhydroforecast_PATH_TO_SCALER_YOURMODEL). Also the number of allowed nan values in the input and at the end of the input is defined (ieasyhydroforecast_THRESHOLD_MISSING_DAYS_END, ieasyhydroforecast_THRESHOLD_MISSING_DAYS_YOURMODEL).
 
@@ -664,15 +664,15 @@ Afterwards the fill_ml_gaps.py will be called, this script will produce a hindca
 SAPPHIRE_OPDEV_ENV=True SAPPHIRE_MODEL_TO_USE=TFT SAPPHIRE_PREDICTION_MODE=PENTAD python fill_ml_gaps.py
 ```
 
-### Post-processing of forecasts (postprocessing_forecasts) {#post-processing-of-forecasts-postprocessing_forecasts}
+### Post-processing of forecasts (postprocessing_forecasts) 
 
 TODO: Bea
 
-### Manual triggering of the forecast pipeline {#manual-triggering-of-the-forecast-pipeline}
+### Manual triggering of the forecast pipeline 
 
 To re-run a forecast (for example to include river runoff data that was not available at the time of the forecast), you can manually trigger the forecast pipeline. This process includes the re-setting of the last successful run date of the linear regression module to the day before the last forecast date. This is done with the module reset_forecast_run_date.
 
-#### How to re-run the forecast pipeline manually {#how-to-re-run-the-forecast-pipeline-manually}
+#### How to re-run the forecast pipeline manually 
 
 To do so, you can run the following sequence of commands in the terminal:
 
@@ -714,7 +714,7 @@ docker logs <container_id>
 
 where <container_id> is the id of the container you want to inspect. You can find the container id by running the docker ps -a command.
 
-### Forecast dashboard {#forecast-dashboard}
+### Forecast dashboard 
 
 TODO: Bea \#### Prerequisites The forecast dashboard is implemented in python using the panel framework. As for the backend development, we recommend the use of a Python IDE and conda for managing the Python environment. Please refer to the instructions above should you require more information on how to install these tools.
 
@@ -724,7 +724,7 @@ If you have already set up a python environment for the backend, you can activat
 conda activate my_environment
 ```
 
-#### How to run the forecast dashboard locally {#how-to-run-the-forecast-dashboard-locally}
+#### How to run the forecast dashboard locally 
 
 To run the forecast dashboard locally, navigate to the apps/forecast_dashboard folder and run the following command in the terminal:
 
@@ -734,7 +734,7 @@ panel serve pentad_dashboard.py --show --autoreload --port 5009
 
 The options --show, --autoreload, and --port 5009 are optional. The show and autoreload options open your devault browser window (we used chrome) at <http://localhost:5009/pentad_dashboard> and automatically reload the dashboard if you save changes in the file pentad_dashboard.py. The port option tells you on which port the dashboard is being displayed. Should port 5009 be already occupied on your computer, you can change the number. You can then select the station and view predictors and forecasts in the respective tabs.
 
-## The backend (note: this module is deprecated) {#the-backend-note-this-module-is-deprecated}
+## The backend (note: this module is deprecated) 
 
 The backend consists of a set of tools that are used to produce forecasts. They are structured into:
 
@@ -749,7 +749,7 @@ The backend consists of a set of tools that are used to produce forecasts. They 
     -   post-processing of forecasts: Under development.
 -   iEasyHydroForecast: A helper library that contains functions used by the forecast tools. The library is used to read data from the iEasyHydro database and to write bulletins in a similar fashion as the software iEasyHydro.
 
-#### Prerequisites {#prerequisites-6}
+#### Prerequisites 
 
 You will need a Python IDE for development. If you do not alreay have one installed, we recommend the use of Visual Studio Code for developping the backend. The installation instructions can be found [here](https://code.visualstudio.com/download). You will need to install the Python extension for Visual Studio Code. The installation instructions can be found [here](https://code.visualstudio.com/docs/languages/python).
 
@@ -816,11 +816,11 @@ This will run the linear regression tool for the period of January first 2024 to
 
 For development, it may be useful to use a different .env file. We use an environment variable to specify a .env file we use for testing purposes (SAPPHIRE_TEST_ENV, see chapter on testing below) and we use one for development with private data (SAPPHIRE_OPDEV_ENV).
 
-## Dockerization {#dockerization}
+## Dockerization 
 
 You can dockerize each module on your local machine or on a server using Github Actions. The Dockerfiles to package each module are located in the apps/module_name folder. The docker-compose.yml file runs the entire containerized workflow and is located in the bin folder.
 
-### Configuration dashboard {#configuration-dashboard}
+### Configuration dashboard 
 
 Note that at the time of writing, a Docker base image with R and RShiny is not available for the ARM architecture (the latest Mac processors). The configuration dashboard has, with the current setup, been dockerized in Ubuntu.
 
@@ -840,7 +840,7 @@ docker run -e "IN_DOCKER_CONTAINER=True" \
     --name station_dashboard_container station_dashboard
 ```
 
-### Backend {#backend}
+### Backend 
 
 The backend is dockerized using the Dockerfile in the apps/backend folder. Dockerization has been tested under both Ubuntu running on Windows or Mac OS operating systems. To build the docker image locally, run the following command in the root directory of the repository:
 
@@ -854,7 +854,7 @@ Run the image locally for testing (not for deployment). Replace <full_path_to> w
 docker run -e "IN_DOCKER_CONTAINER=True" -v <full_path_to>/apps/config:/app/apps/config -v <full_path_to>/data:/app/data -v <full_path_to>/apps/internal_data:/app/apps/internal_data -p 9000:8801 --name preprocessing_runoff preprocessing_runoff
 ```
 
-### Forecast dashboard {#forecast-dashboard-1}
+### Forecast dashboard 
 
 The forecast dashboard is dockerized using the Dockerfile in the apps/forecast_dashboard folder. To build the docker image locally, run the following command in the root directory of the repository:
 
@@ -872,15 +872,15 @@ Make sure that the port 5006 is not occupied on your computer. You can change th
 
 You can now access the dashboard in your browser at <http://localhost:5006/pentad_dashboard> and review it's functionality.
 
-## How to use private data {#how-to-use-private-data}
+## How to use private data 
 
 If you want to use private data for the development of the forecast tools, you can do so by following the instructions below. We recommend tht you use a differenet .env file for development with private data. We use an environment variable to specify a .env file we use for testing purposes (SAPPHIRE_TEST_ENV, see chapter on testing below) and we use one for development with private data (SAPPHIRE_OPDEV_ENV). To make use of the SAPPHIRE_OPDEV_ENV environment variable, you store your environment in a file named .env_develop_kghm in the folder ../sensitive_data_forecast_tools/config (relative to this projects root folder). The folder ../sensitive_data_forecast_tools should contain the following sub-folders: - bin - config - daily_runoff - GIS - intermediate_data - reports - templates
 
-## Development workflow {#development-workflow}
+## Development workflow 
 
 Development takes place in a git branch created from the main branch. Once the development is finished, the branch is merged into the main branch. This merging requires the approval of a pull requrest by a main developer. The main branch is tested in deployment mode and then merged to the deploy branch. 3rd party users of the forecast tools are requested to pull the tested deploy branch. The deployment is done automatically using GitHub Actions. The workflow instructions can be found in .github/workflows/deploy\_\*.yml.
 
-## Testing {#testing}
+## Testing 
 
 Testing tools are being developed for each tool. This is work in progress.
 
@@ -906,6 +906,6 @@ SAPPHIRE_TEST_ENV=True python -m pytest -s tests/test_file.py::test_function
 
 Replace test_function with the name of the function you want to test.
 
-# Deployment {#deployment}
+# Deployment 
 
 GitHub Actions are used to automatically test the Sapphire Forecast Tools and to build and pull the Docker images to Docker Hub. From there, the images can be pulled to a server and run. To install or update the forecast tools on a server, please follow the instructions in [doc/deployment.md](deployment.md).
