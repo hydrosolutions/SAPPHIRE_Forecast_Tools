@@ -658,13 +658,11 @@ SAPPHIRE_OPDEV_ENV=True SAPPHIRE_MODEL_TO_USE=TFT SAPPHIRE_PREDICTION_MODE=PENTA
 ```
 NOTE: The operational forecast uses always the last available discharge date to predict the days afterwards. So if the last date in the runoff_day.csv is for example the 17.03.2024, the prediction will be made for the 18.03.2024 onwards, regardless of what date today is. So there might be entries in the file where the forecast_date is greater than the date itself. This cases should be handled seperatly in the post-processing. (TODO: Check if this approach is valid or we just delete all rows in the file where date < forecast_date)
 
-Afterwards the fill_ml_gaps.py will be called:
+Afterwards the fill_ml_gaps.py will be called, this script will produce a hindcast if there is a day without a forecast (Gap in forecast_date > 1)
 
 ``` bash
-SAPPHIRE_OPDEV_ENV=True SAPPHIRE_MODEL_TO_USE=TFT SAPPHIRE_PREDICTION_MODE=PENTAD ieasyhydroforecasts_produce_daily_ml_hindcast=False python fill_ml_gaps.py
+SAPPHIRE_OPDEV_ENV=True SAPPHIRE_MODEL_TO_USE=TFT SAPPHIRE_PREDICTION_MODE=PENTAD python fill_ml_gaps.py
 ```
-
-Where the ieasyhydroforecast_produce_daily_ml_hindcast specifiy if every day a hindcast should be produced or just in the pentad/decad intervall.
 
 ### Post-processing of forecasts (postprocessing_forecasts) {#post-processing-of-forecasts-postprocessing_forecasts}
 
