@@ -320,6 +320,10 @@ class LinearRegression(luigi.Task):
 
         print(f"Container {container.id} has stopped.")
 
+        # Write the output marker file
+        with self.output().open('w') as f:
+            f.write('Task completed')
+
     '''
     def complete(self):
         if not self.output().exists():
@@ -396,7 +400,7 @@ class RunMLModel(luigi.Task):
             detach=True,
             environment=environment,
             volumes=volumes,
-            name="ml_{self.model_type}_{self.prediction_mode}",
+            name=f"ml_{self.model_type}_{self.prediction_mode}",
             #labels=labels,
             network='host'  # To test
         )
