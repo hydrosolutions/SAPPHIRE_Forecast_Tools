@@ -33,9 +33,7 @@
 # --------------------------------------------------------------------
 
 # Usage
-# SAPPHIRE_MODEL_TO_USE=TFT SAPPHIRE_HINDCAST_MODE=PENTAD python hindcast_ML_models.py
-# posttible values for SAPPHIRE_MODEL_TO_USE: TFT, TIDE, TSMIXER, ARIMA
-# possible values for SAPPHIRE_HINDCAST_MODE: PENTAD, DECAD
+# python hindcast_ML_models.py
 
 # --------------------------------------------------------------------
 # Load Libraries
@@ -312,7 +310,7 @@ def make_hindecast_decad(
         recursive_rivers: list,
         days_until_next_forecast: int,
     )-> tuple[pd.DataFrame, list, list, dict]:
-
+        
         #get the input chunck length -> this can than be used to determine the relevant allowed missing values
         input_chunk_length = predictor.get_input_chunk_length()
         #check for missing values, n = number of missing values at the end
@@ -401,7 +399,7 @@ def main():
     # Test if path exists
     if not os.path.exists(PATH_TO_STATIC_FEATURES):
         raise FileExistsError(f"Directory {PATH_TO_STATIC_FEATURES} not found.")
-
+    
     PATH_TO_SCALER = os.getenv('ieasyhydroforecast_PATH_TO_SCALER_' + MODEL_TO_USE)
     # Append Decad to the scaler path if the prediction mode is DECAD
     if HINDCAST_MODE == 'DECAD' and MODEL_TO_USE != 'ARIMA':
@@ -443,7 +441,7 @@ def main():
     # READ IN FORCING DATA
     # --------------------------------------------------------------------
     #start date is the date where the first forecast is made
-    # NOTE: The start date should be +lookback days before the first date in the era5 data
+    # NOTE: The start date should be +lookback days before the first date in the era5 data 
     # Here we hardcode the lookback days to 60
     start_date = os.getenv('ieasyhydroforecast_START_DATE')
     #end date is the date where the last forecast is made
@@ -471,7 +469,7 @@ def main():
         raise FileNotFoundError(f"File {P_era5_renalysis_file} not found.")
     if not os.path.exists(T_era5_renalysis_file):
         raise FileNotFoundError(f"File {T_era5_renalysis_file} not found.")
-
+    
     P_reanalysis = pd.read_csv(P_era5_renalysis_file)
     T_reanalysis = pd.read_csv(T_era5_renalysis_file)
 
@@ -487,22 +485,31 @@ def main():
     P_operational_file = os.path.join(PATH_OPERATIONAL_CONTROL_MEMBER, P_operational_file)
     T_operational_file = os.path.join(PATH_OPERATIONAL_CONTROL_MEMBER, T_operational_file)
 
+    # if there is a control member, then use it, otherwise only use the reanalysis data
+    use_operational_control_member = True
     # Test if the file exists
     if not os.path.exists(P_operational_file):
-        raise FileNotFoundError(f"File {P_operational_file} not found.")
+        print(f"File {P_operational_file} not found.")
+        logger.warning(f"File {P_operational_file} not found.")
+        use_operational_control_member = False
     if not os.path.exists(T_operational_file):
-        raise FileNotFoundError(f"File {T_operational_file} not found.")
+        print(f"File {T_operational_file} not found.")
+        logger.warning(f"File {T_operational_file} not found.")
+        use_operational_control_member = False
+    
+    if use_operational_control_member:
+        P_control_member = pd.read_csv(P_operational_file)
+        T_control_member = pd.read_csv(T_operational_file)
 
-    P_control_member = pd.read_csv(P_operational_file)
-    T_control_member = pd.read_csv(T_operational_file)
+        era5_data_transformed_cm = pd.merge(P_control_member, T_control_member, on=['code', 'date'])
 
-    era5_data_transformed_cm = pd.merge(P_control_member, T_control_member, on=['code', 'date'])
+        # Concat the reanalysis and control member data
+        era5_data_transformed_renalysis['date'] = pd.to_datetime(era5_data_transformed_renalysis['date'])
+        era5_data_transformed_cm['date'] = pd.to_datetime(era5_data_transformed_cm['date'])
 
-    # Concat the reanalysis and control member data
-    era5_data_transformed_renalysis['date'] = pd.to_datetime(era5_data_transformed_renalysis['date'])
-    era5_data_transformed_cm['date'] = pd.to_datetime(era5_data_transformed_cm['date'])
-
-    era5_data_transformed = pd.concat([era5_data_transformed_renalysis, era5_data_transformed_cm], axis=0)
+        era5_data_transformed = pd.concat([era5_data_transformed_renalysis, era5_data_transformed_cm], axis=0)
+    else:
+        era5_data_transformed = era5_data_transformed_renalysis.copy()
 
     # sort by date
     era5_data_transformed = era5_data_transformed.sort_values(by=['code', 'date'])
@@ -574,7 +581,7 @@ def main():
 
     if MODEL_TO_USE == 'ARIMA':
         predictor = predictor_class.PREDICTOR(PATH_TO_MODEL)
-
+ 
     else:
         predictor = predictor_class.PREDICTOR(model, scaler_discharge, scaler_era5, scaler_static, static_features)
 
@@ -609,7 +616,7 @@ def main():
 
 
     pred_date = pd.to_datetime(start_date)
-
+    
     observed_discharge['date'] = pd.to_datetime(observed_discharge['date'])
     era5_data_transformed['date'] = pd.to_datetime(era5_data_transformed['date'])
 
@@ -619,7 +626,7 @@ def main():
     current_year = pred_date.year
     print(f'Starting Hindcast for the dates: {start_date} to {end_date}')
     while pred_date <= pd.to_datetime(end_date):
-
+        
         if HINDCAST_MODE == 'PENTAD':
             make_forecast, days_until_next_forecast = predict_pentad(pred_date)
         else:
@@ -713,8 +720,8 @@ def main():
     # Test if path exists and create it if it doesn't
     if not os.path.exists(OUTPUT_PATH_DISCHARGE):
         os.makedirs(OUTPUT_PATH_DISCHARGE, exist_ok=True)
-
-
+    
+    
     hindecast_df.to_csv(os.path.join(OUTPUT_PATH_DISCHARGE, f'{MODEL_TO_USE}_{HINDCAST_MODE}_hindcast_{start_date}_{end_date}.csv'), index=False)
     hindecast_daily_df.to_csv(os.path.join(OUTPUT_PATH_DISCHARGE, f'{MODEL_TO_USE}_{HINDCAST_MODE}_hindcast_daily_{start_date}_{end_date}.csv'), index=False)
 

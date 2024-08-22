@@ -202,7 +202,7 @@ def write_decad_forecast(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, forecast_decad):
 
     forecast_decad = pd.concat([forecast_decad_old, forecast_decad], axis=0)
 
-    if utils_ml_forecast.save_decad_forecast():
+    if utils_ml_forecast.save_decadal_forecast():
         interval_file_path = os.path.join(OUTPUT_PATH_DISCHARGE, f'decad_{MODEL_TO_USE}_forecast_decad_intervall.csv')
         try:
             forecast_decad_old_intervall = pd.read_csv(interval_file_path)

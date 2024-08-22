@@ -461,11 +461,12 @@ def main():
                 date=start_date,
                 directory=OUTPUT_PATH_DG
                 )
-            raise ValueError(f"Operational data for HRU {c_m_hru} not available")
+            
         except Exception as e:
             if "Operational data for HRU" in str(e):
                 logger.error(f"Exiting the program due to error: {e}")
                 sys.exit(1)
+   
 
         # If control_member_era5 is empty, raise an error
         if not control_member_era5:
