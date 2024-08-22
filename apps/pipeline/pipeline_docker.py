@@ -413,6 +413,10 @@ class MachineLearning(luigi.Task):
         # Wait for the container to finish running
         container.wait()
 
+        # Get the logs from the container
+        logs = container.logs().decode('utf-8')
+        print(f"Logs from container {container.id}:\n{logs}")
+
         print(f"Container {container.id} has stopped.")
 
 class PostProcessingForecasts(luigi.Task):
