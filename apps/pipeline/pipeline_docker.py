@@ -252,7 +252,6 @@ class LinearRegression(luigi.Task):
         return PreprocessingRunoff()
 
     def output(self):
-
         return luigi.LocalTarget(f'/app/log_linreg.txt')
 
     def run(self):
@@ -321,6 +320,7 @@ class LinearRegression(luigi.Task):
 
         print(f"Container {container.id} has stopped.")
 
+    '''
     def complete(self):
         if not self.output().exists():
             return False
@@ -333,7 +333,7 @@ class LinearRegression(luigi.Task):
 
         # Check if the output file was modified within the last number of seconds
         return current_time - output_file_mtime < 10  # 24 * 60 * 60
-
+    '''
 
 class MachineLearning(luigi.Task):
 
@@ -377,19 +377,19 @@ class MachineLearning(luigi.Task):
             'SAPPHIRE_PREDICTION_MODE=PENTAD',
             'ieasyhydroforecasts_produce_daily_ml_hindcast=True'
         ]
+        print(f"Environment variables:\n{environment}")
 
         # Define volumes
         volumes = {
             absolute_volume_path_config: {'bind': bind_volume_path_config, 'mode': 'rw'},
             absolute_volume_path_internal_data: {'bind': bind_volume_path_internal_data, 'mode': 'rw'}
         }
+        print(f"Volumes:\n{volumes}")
 
-        custom_command = "sh -c PYTHONPATH=/app/apps/iEasyHydroForecast python apps/machine_learning/make_forecast.py && python apps/machine_learning/fill_ml_gaps.py"
 
         # Run the container
         container = client.containers.run(
             f"mabesa/sapphire-ml:{TAG}",
-            command=custom_command,
             detach=True,
             environment=environment,
             volumes=volumes,

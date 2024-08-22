@@ -1,11 +1,5 @@
 # syntax=docker/dockerfile:1
 
-# Comments are provided throughout this file to help you get started.
-# If you need more help, visit the Dockerfile reference guide at
-# https://docs.docker.com/engine/reference/builder/
-
-#FROM ubuntu:latest as build
-
 FROM mabesa/sapphire-pythonbaseimage:latest AS base
 
 # Set an environment variable that can be read by the application to know if it
@@ -27,6 +21,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     --mount=type=bind,source=apps/machine_learning/requirements.txt,target=/app/apps/machine_learning/requirements.txt \
     pip install --trusted-host pypi.python.org -r apps/machine_learning/requirements.txt
 
+
 # Run the application.
 # This cmd is moved to the pipeline definition
-#CMD ["sh", "-c", "PYTHONPATH=/app/apps/iEasyHydroForecast python apps/machine_learning/make_forecast.py"]
+CMD ["sh", "-c", "PYTHONPATH=/app/apps/iEasyHydroForecast python apps/machine_learning/make_forecast.py && python apps/machine_learning/fill_ml_gaps.py"]
