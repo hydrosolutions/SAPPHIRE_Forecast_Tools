@@ -448,13 +448,6 @@ def main():
     # NOTE: The end date should be at maximum the last date in the era5 data - forecast horizon
     end_date = os.getenv('ieasyhydroforecast_END_DATE')
 
-    #check if the hindcast should be done on a daily basis or on a pentad basis
-    HINDCAST_DAILY = os.getenv('ieasyhydroforecasts_produce_daily_ml_hindcast')
-    if HINDCAST_DAILY == 'True':
-        HINDCAST_DAILY = True
-    else:
-        HINDCAST_DAILY = False
-
     PATH_ERA5_REANALYSIS = os.getenv('ieasyhydroforecast_OUTPUT_PATH_REANALYSIS')
     PATH_ERA5_REANALYSIS = os.path.join(intermediate_data_path, PATH_ERA5_REANALYSIS)
 
@@ -626,34 +619,28 @@ def main():
     current_year = pred_date.year
     print(f'Starting Hindcast for the dates: {start_date} to {end_date}')
     while pred_date <= pd.to_datetime(end_date):
-        
-        if HINDCAST_MODE == 'PENTAD':
-            make_forecast, days_until_next_forecast = predict_pentad(pred_date)
-        else:
-            make_forecast, days_until_next_forecast = predict_decad(pred_date)
 
-        if HINDCAST_DAILY:
-            make_forecast = True
-            days_until_next_forecast = forecast_horizon # either 5 or 10
+            
+        days_until_next_forecast = forecast_horizon # either 5 or 10
 
         if pred_date.year != current_year:
             current_year = pred_date.year
             print(f'Year: {current_year}')
-        if make_forecast:
-            for code in codes_hindecast:
+       
+        for code in codes_hindecast:
 
-                # get the discharge data
-                past_discharge = observed_discharge[observed_discharge['code'] == code]
-                past_discharge = past_discharge[past_discharge['date'] <= pred_date]
+            # get the discharge data
+            past_discharge = observed_discharge[observed_discharge['code'] == code]
+            past_discharge = past_discharge[past_discharge['date'] <= pred_date]
 
-                # get the era5 data
-                era5 = era5_data_transformed[era5_data_transformed['code'] == code]
-                date_end_forecast = pred_date + pd.DateOffset(days=15)
-                era5 = era5[era5['date'] <= date_end_forecast]
+            # get the era5 data
+            era5 = era5_data_transformed[era5_data_transformed['code'] == code]
+            date_end_forecast = pred_date + pd.DateOffset(days=15)
+            era5 = era5[era5['date'] <= date_end_forecast]
 
-                if HINDCAST_MODE == 'PENTAD':
-                    # make prediction with predictor
-                    predictions = make_hindecast_pentad(
+            if HINDCAST_MODE == 'PENTAD':
+                # make prediction with predictor
+                predictions = make_hindecast_pentad(
                         past_discharge=past_discharge,
                         era5=era5,
                         predictor=predictor,
@@ -670,8 +657,8 @@ def main():
 
                     )[0]
 
-                else:
-                    predictions = make_hindecast_decad(
+            else:
+                predictions = make_hindecast_decad(
                         past_discharge=past_discharge,
                         era5=era5,
                         predictor=predictor,
@@ -688,23 +675,23 @@ def main():
                     )[0]
 
 
-                # Calculate the mean for each quantile column
-                mean_values = predictions.drop(columns=['date']).mean(skipna=True)
+            # Calculate the mean for each quantile column
+            mean_values = predictions.drop(columns=['date']).mean(skipna=True)
 
-                # Create a DataFrame with the mean values, the prediction date and the code
-                hindecast = pd.DataFrame(mean_values).T
-                hindecast['date'] = pred_date
-                hindecast['forecast_date'] = pred_date  # the forecast date is the same as the prediction date
-                hindecast['code'] = code
+            # Create a DataFrame with the mean values, the prediction date and the code
+            hindecast = pd.DataFrame(mean_values).T
+            hindecast['date'] = pred_date
+            hindecast['forecast_date'] = pred_date  # the forecast date is the same as the prediction date
+            hindecast['code'] = code
 
-                # Append to the daily DataFrame
-                hindecast_daily_df_temp = predictions.copy()
-                # the date is already in the predictions
-                hindecast_daily_df_temp['code'] = code
-                hindecast_daily_df_temp['forecast_date'] = pred_date
+            # Append to the daily DataFrame
+            hindecast_daily_df_temp = predictions.copy()
+            # the date is already in the predictions
+            hindecast_daily_df_temp['code'] = code
+            hindecast_daily_df_temp['forecast_date'] = pred_date
 
-                hindecast_daily_df = pd.concat([hindecast_daily_df, hindecast_daily_df_temp], axis=0)
-                hindecast_df = pd.concat([hindecast_df, hindecast], axis=0)
+            hindecast_daily_df = pd.concat([hindecast_daily_df, hindecast_daily_df_temp], axis=0)
+            hindecast_df = pd.concat([hindecast_df, hindecast], axis=0)
 
 
 

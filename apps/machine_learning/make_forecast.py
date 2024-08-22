@@ -159,25 +159,12 @@ def write_pentad_forecast(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, forecast_pentad):
     except FileNotFoundError:
         forecast_pentad_old = pd.DataFrame()
 
-    # Check if we need to save the forecast for all 5 days -> no overwrite
-    if utils_ml_forecast.save_pentad_forecast():
-        interval_file_path = os.path.join(OUTPUT_PATH_DISCHARGE, f'pentad_{MODEL_TO_USE}_forecast_pentad_intervall.csv')
-        try:
-            forecast_pentad_old_intervall = pd.read_csv(interval_file_path)
-        except FileNotFoundError:
-            forecast_pentad_old_intervall = pd.DataFrame()
-
-        forecast_pentad_pentad_intervall = forecast_pentad.copy()
-        forecast_pentad_pentad_intervall['forecast_date'] = datetime.datetime.now().date()
-
-        forecast_pentad_pentad_intervall = pd.concat([forecast_pentad_old_intervall, forecast_pentad_pentad_intervall], axis=0)
-        forecast_pentad_pentad_intervall = forecast_pentad_pentad_intervall.drop_duplicates(subset=['date', 'code'], keep='last')
-        forecast_pentad_pentad_intervall.to_csv(interval_file_path, index=False)
-
     # Append the new forecast to the old forecast and remove duplicates
     forecast_pentad = pd.concat([forecast_pentad_old, forecast_pentad], axis=0)
+    # date to datetime
+    forecast_pentad['date'] = pd.to_datetime(forecast_pentad['date'])
+    forecast_pentad['forecast_date'] = pd.to_datetime(forecast_pentad['forecast_date'])
     forecast_pentad = forecast_pentad.drop_duplicates(subset=['forecast_date','date', 'code'], keep='last')
-
     # Save the updated forecast
     forecast_pentad.to_csv(forecast_file_path, index=False)
 
@@ -202,19 +189,9 @@ def write_decad_forecast(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, forecast_decad):
 
     forecast_decad = pd.concat([forecast_decad_old, forecast_decad], axis=0)
 
-    if utils_ml_forecast.save_decadal_forecast():
-        interval_file_path = os.path.join(OUTPUT_PATH_DISCHARGE, f'decad_{MODEL_TO_USE}_forecast_decad_intervall.csv')
-        try:
-            forecast_decad_old_intervall = pd.read_csv(interval_file_path)
-        except FileNotFoundError:
-            forecast_decad_old_intervall = pd.DataFrame()
-
-        forecast_decad_intervall = forecast_decad.copy()
-        forecast_decad_intervall['forecast_date'] = datetime.datetime.now().date()
-
-        forecast_decad_intervall = pd.concat([forecast_decad_old_intervall, forecast_decad_intervall], axis=0)
-        forecast_decad_intervall = forecast_decad_intervall.drop_duplicates(subset=['date', 'code'], keep='last')
-        forecast_decad_intervall.to_csv(interval_file_path, index=False)
+    #date to datetime
+    forecast_decad['date'] = pd.to_datetime(forecast_decad['date'])
+    forecast_decad['forecast_date'] = pd.to_datetime(forecast_decad['forecast_date'])
 
     forecast_decad = forecast_decad.drop_duplicates(subset=['forecast_date','date', 'code'], keep='last')
     forecast_decad.to_csv(os.path.join(OUTPUT_PATH_DISCHARGE, f'decad_{MODEL_TO_USE}_forecast.csv'), index=False)
@@ -433,6 +410,7 @@ def make_ml_forecast():
     exceeds_threshhold_dict = {}
     nans_at_end_dict = {}
 
+
     for code in rivers_to_predict:
         # Cast code to int.
         code = int(code)
@@ -441,6 +419,9 @@ def make_ml_forecast():
         #get the data
         past_discharge_code = past_discharge[past_discharge['code'] == code]
         qmapped_era5_code = qmapped_era5[qmapped_era5['code'] == code]
+
+        #reformat the past discharge data 
+        past_discharge_code['date'] = pd.to_datetime(past_discharge_code['date'])
 
         #sort by date
         past_discharge_code = past_discharge_code.sort_values(by='date')
@@ -489,7 +470,8 @@ def make_ml_forecast():
         #add the code to the predictions
         predictions['code'] = code
 
-        predictions['forecast_date'] = datetime.datetime.now().date()
+        predictions['forecast_date'] = pd.to_datetime(datetime.datetime.now().date())
+        predictions['date'] = pd.to_datetime(predictions['date'])
 
         forecast = pd.concat([forecast, predictions], axis=0)
 

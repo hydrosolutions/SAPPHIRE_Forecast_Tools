@@ -56,7 +56,6 @@ def call_hindcast_script(start_date: str,
                          end_date: str, 
                          MODEL_TO_USE: str, 
                          intermediate_data_path: str,
-                         daily_predictions: str,
                          PREDICTION_MODE: str) -> pd.DataFrame:
 
     # --------------------------------------------------------------------
@@ -69,7 +68,7 @@ def call_hindcast_script(start_date: str,
     env['ieasyhydroforecast_START_DATE'] = start_date
     env['ieasyhydroforecast_END_DATE'] = end_date
     env['SAPPHIRE_HINDCAST_MODE'] = PREDICTION_MODE
-    env['ieasyhydroforecasts_produce_daily_ml_hindcast'] = daily_predictions
+
 
     # Prepare the command
     command = ['python', 'hindcast_ML_models.py']
@@ -155,26 +154,12 @@ def main():
     logger.info('End date: %s', end_date)
     logger.info('Model to use: %s', MODEL_TO_USE)
 
-    print("Starting Hindcast Pentad in pentad intervall")
-    pentad_hindcast = call_hindcast_script(start_date, 
-                                           end_date, 
-                                           MODEL_TO_USE, 
-                                           intermediate_data_path, 
-                                           'False', 
-                                           'PENTAD')
-    logger.info('Pentad hindcast is generated')
-    
-    # save the pentad hindcast to a csv file at the right location. So the operational script can access it.
-    path_pentad_out = os.path.join(OUTPUT_PATH_DISCHARGE, f'pentad_{MODEL_TO_USE}_forecast_pentad_intervall.csv')
-    pentad_hindcast.to_csv(path_pentad_out, index=False)
-    del pentad_hindcast
 
     print("Starting Hindcast Pentad in daily intervall")
     pentad_hindcast_daily = call_hindcast_script(start_date,
                                                     end_date,
                                                     MODEL_TO_USE,
                                                     intermediate_data_path,
-                                                    'True',
                                                     'PENTAD')
     logger.info('Pentad hindcast daily is generated')
     # save the pentad hindcast to a csv file at the right location. So the operational script can access it.
@@ -182,25 +167,13 @@ def main():
     pentad_hindcast_daily.to_csv(path_pentad_out_daily, index=False)
     del pentad_hindcast_daily
 
-    print("Starting Hindcast Decad in decad intervall")
-    decad_hindcast = call_hindcast_script(start_date,
-                                            end_date,
-                                            MODEL_TO_USE,
-                                            intermediate_data_path,
-                                            'False',
-                                            'DECAD')
-    logger.info('Decad hindcast is generated')
-    # save the decad hindcast to a csv file at the right location. So the operational script can access it.
-    path_decad_out = os.path.join(OUTPUT_PATH_DISCHARGE, f'decad_{MODEL_TO_USE}_forecast_decad_intervall.csv')
-    decad_hindcast.to_csv(path_decad_out, index=False)
-    del decad_hindcast
     print("Starting Hindcast Decad in daily intervall")
     decad_hindcast_daily = call_hindcast_script(start_date,
                                                 end_date,
                                                 MODEL_TO_USE,
                                                 intermediate_data_path,
-                                                'True',
                                                 'DECAD')
+    
     logger.info('Decad hindcast daily is generated')
     # save the decad hindcast to a csv file at the right location. So the operational script can access it.
     path_decad_out_daily = os.path.join(OUTPUT_PATH_DISCHARGE, f'decad_{MODEL_TO_USE}_forecast.csv')

@@ -11,8 +11,9 @@
 # ----------------------------------------------------------------
 # USAGE:
 # ----------------------------------------------------------------
-# SAPPHIRE_OPDEV_ENV=True SAPPHIRE_MODEL_TO_USE=TFT SAPPHIRE_PREDICTION_MODE=PENTAD
-# ieasyhydroforecasts_produce_daily_ml_hindcast=False python fill_ml_gaps.py
+
+# SAPPHIRE_OPDEV_ENV=True SAPPHIRE_MODEL_TO_USE=TFT SAPPHIRE_PREDICTION_MODE=PENTAD python fill_ml_gaps.py
+
 # TODO: So far this code only checks if there are missing forecast dates. It doesn't check if there are nan values due to insufficent input data.
 # TODO: Think about how to handle nan values, in what frequency should this be checked?
 
@@ -156,10 +157,6 @@ def fill_ml_gaps():
 
     PATH_HINDCAST = os.path.join(PATH_FORECAST, 'hindcast', MODEL_TO_USE)
 
-
-    # check if daily or pentadal hindcast should be produced
-    ieasyhydroforecasts_produce_daily_ml_hindcast = os.getenv('ieasyhydroforecasts_produce_daily_ml_hindcast')
-
     # Get the current date
     current_date = datetime.datetime.now().date()
     current_date = current_date.strftime('%Y-%m-%d')
@@ -169,16 +166,9 @@ def fill_ml_gaps():
     else:
         prefix = 'decad'
 
-    # Read the latest forecast
-    if ieasyhydroforecasts_produce_daily_ml_hindcast == 'True':
-        forecast_path = os.path.join(PATH_FORECAST, prefix + '_' +  MODEL_TO_USE + '_forecast.csv')
-        limit_day_gap = 1
-    else:
-        forecast_path = os.path.join(PATH_FORECAST,prefix + '_' +  MODEL_TO_USE + '_forecast_' + prefix + '_intervall.csv')
-        if PREDICTION_MODE == 'PENTAD':
-            limit_day_gap = 6
-        else:
-            limit_day_gap = 11
+    
+    forecast_path = os.path.join(PATH_FORECAST, prefix + '_' +  MODEL_TO_USE + '_forecast.csv')
+    limit_day_gap = 1
 
 
     try:
@@ -229,11 +219,7 @@ def fill_ml_gaps():
             # save the forecast
 
             # TODO: Remove the test part in the name, after the modul is tested.
-            if ieasyhydroforecasts_produce_daily_ml_hindcast == 'True':
-                forecast.to_csv(os.path.join(PATH_FORECAST, prefix + '_' +  MODEL_TO_USE + '_forecast_test.csv'), index=False)
-            else:
-                forecast.to_csv(os.path.join(PATH_FORECAST,prefix + '_' +  MODEL_TO_USE + '_forecast_' + prefix + '_intervall_test.csv'), index=False)
-
+            forecast.to_csv(os.path.join(PATH_FORECAST, prefix + '_' +  MODEL_TO_USE + '_forecast_test.csv'), index=False)
 
         print("Missing forecasts filled in")
 
