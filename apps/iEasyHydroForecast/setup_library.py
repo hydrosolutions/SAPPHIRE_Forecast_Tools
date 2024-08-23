@@ -637,6 +637,8 @@ def read_linreg_forecasts_pentad():
 
     logger.info(f"Read {len(forecasts)} rows of linear regression forecasts for the pentadal forecast horizon.")
     logger.info(f"Read {len(stats)} rows of general runoff statistics for the pentadal forecast horizon.")
+    logger.debug(f"Colums in the linear regression forecast data: {forecasts.columns}")
+    logger.debug(f"Linear regression forecast data: \n{forecasts.head()}")
 
     return forecasts, stats
 
@@ -714,6 +716,8 @@ def read_machine_learning_forecasts_pentad(model):
     forecast["pentad_in_month"] = forecast["date"].apply(tl.get_pentad)
     forecast["pentad_in_year"] = forecast["date"].apply(tl.get_pentad_in_year)
 
+    logger.info(f"Read {len(forecast)} rows of {model} forecasts for the pentadal forecast horizon.")
+    logger.debug(f"Colums in the {model} forecast data: {forecast.columns}")
     logger.debug(f"Read forecast data: \n{forecast.head()}")
 
     return forecast
@@ -808,6 +812,7 @@ def read_observed_and_modelled_data_pentade():
     logger.info(f"Read {len(modelA)} rows of model A forecasts for the pentadal forecast horizon.")
     logger.info(f"Read {len(modelB)} rows of model B forecasts for the pentadal forecast horizon.")
 
+    exit()
     # Concatenate the dataframes
     forecasts = pd.concat([linreg, modelA, modelB])
     stats = pd.concat([stats_linreg, statsA, statsB])
