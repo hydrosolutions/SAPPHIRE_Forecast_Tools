@@ -20,7 +20,8 @@ COPY apps/machine_learning /app/apps/machine_learning
 # into this layer.
 RUN --mount=type=cache,target=/root/.cache/pip \
     --mount=type=bind,source=apps/machine_learning/requirements.txt,target=/app/apps/machine_learning/requirements.txt \
-    pip install --trusted-host pypi.python.org -r apps/machine_learning/requirements.txt
+    pip install --trusted-host pypi.python.org -r apps/machine_learning/requirements.txt \
+    pip install git+https://github.com/hydrosolutions/sapphire-dg-client.git
 
 
 # Run the application.

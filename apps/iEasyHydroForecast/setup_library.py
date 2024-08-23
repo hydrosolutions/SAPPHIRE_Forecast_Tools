@@ -640,6 +640,84 @@ def read_linreg_forecasts_pentad():
 
     return forecasts, stats
 
+def read_machine_learning_forecasts_pentad(model):
+    '''
+    Reads forecast results from the machine learning model for the pentadal
+    forecast horizon.
+
+    Args:
+    model (str): The machine learning model to read the forecast results from.
+        Allowed values are 'TFT', 'TIDE', 'TSMIXER', and 'ARIMA'.
+    '''
+
+    if model == 'TFT':
+        filename = f"pentad_{model}_forecast.csv".format(model=model)
+        model_long = "Temporal-Fusion Transformer (TFT)"
+        model_short = "TFT"
+    elif model == 'TIDE':
+        filename = f"pentad_{model}_forecast.csv".format(model=model)
+        model_long = "Time-Series Dense Encoder (TiDE)"
+        model_short = "TiDE"
+    elif model == 'TSMIXER':
+        filename = f"pentad_{model}_forecast.csv".format(model=model)
+        model_long = "Time-Series Mixer (TSMIXER)"
+        model_short = "TSMixer"
+    elif model == 'ARIMA':
+        filename = f"pentad_{model}_forecast.csv".format(model=model)
+        model_long = "AutoRegressive Integrated Moving Average (ARIMA)"
+        model_short = "ARIMA"
+    else:
+        raise ValueError("Invalid model. Valid models are: 'TFT', 'TIDE', 'TSMIXER', 'ARIMA'")
+
+    # Read environment variables to construct the file path with forecast
+    # results for the machine learning and ARIMA models
+    intermediate_data_path = os.getenv("ieasyforecast_intermediate_data_path")
+    subfolder = os.getenv("ieasyhydroforecast_OUTPUT_PATH_DISCHARGE")
+    filepath = os.path.join(intermediate_data_path, subfolder, model, filename)
+
+    # Test if the fielpath exists
+    if not os.path.exists(filepath):
+        raise FileNotFoundError(f"File {filepath} not found")
+
+    logger.info(f"Reading forecast results from {filename}")
+    logger.debug(f"{filepath}")
+
+    # Read the forecast results
+    daily_data = pd.read_csv(filepath, parse_dates=["date", "forecast_date"])
+
+    # Only keep the forecast the rows of daily forecast data for pentadal
+    # forecasts, i.e. the forecast produced on the 5th, 10th, 15th, 20th, 25th
+    # and on the last day of a month.
+    # Add a column last_day_of_month to daily_data
+    daily_data["last_day_of_month"] = daily_data["forecast_date"].apply(fl.get_last_day_of_month)
+    daily_data["day_of_month"] = daily_data["forecast_date"].dt.day
+    # Keep rows that have forecast_date equal to either 5, 10, 15, 20, 25 or
+    # last_day_of_month
+    data = daily_data[(daily_data["day_of_month"].isin([5, 10, 15, 20, 25])) | \
+                      (daily_data["forecast_date"] == daily_data["last_day_of_month"])]
+
+    # Group by code and forecast_date and calculate the mean of all columns
+    forecast = data \
+        .drop(columns=["date", "day_of_month", "last_day_of_month"]) \
+        .groupby(["code", "forecast_date"]) \
+        .mean() \
+        .reset_index()
+
+    # Rename the column forecast_date to date
+    forecast.rename(columns={"forecast_date": "date"}, inplace=True)
+
+    # Add a column model to the dataframe
+    forecast["model_long"] = model_long
+    forecast["model_short"] = model_short
+
+    # Recalculate pentad in month and pentad in year
+    forecast["pentad_in_month"] = forecast["date"].apply(tl.get_pentad)
+    forecast["pentad_in_year"] = forecast["date"].apply(tl.get_pentad_in_year)
+
+    logger.debug(f"Read forecast data: \n{forecast.head()}")
+
+    return forecast
+
 def read_linreg_forecasts_pentad_dummy(model):
     """
     Dummy function
@@ -719,7 +797,11 @@ def read_observed_and_modelled_data_pentade():
     linreg, stats_linreg = read_linreg_forecasts_pentad()
 
     # Read the forecasts from the other methods
-    # TODO
+    tide = read_machine_learning_forecasts_pentad(model='TIDE')
+    tft = read_machine_learning_forecasts_pentad(model='TFT')
+    tsmixer = read_machine_learning_forecasts_pentad(model='TSMIXER')
+    arima = read_machine_learning_forecasts_pentad(model='ARIMA')
+
     # For now, we read dummy data
     modelA, statsA = read_linreg_forecasts_pentad_dummy(model='A')
     modelB, statsB = read_linreg_forecasts_pentad_dummy(model='B')
