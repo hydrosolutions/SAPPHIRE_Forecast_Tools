@@ -180,6 +180,8 @@ def do_quantile_mapping(era5_data: pd.DataFrame, P_param: pd.DataFrame, T_param:
         a_P = P_param_code['a'].values
         b_P = P_param_code['b'].values
         threshold_P = P_param_code['wet_day'].values
+        logger.debug(f"Code: {code[0]}, a_P: {a_P[0]}, b_P: {b_P[0]}, threshold_P: {threshold_P[0]}")
+        logger.debug(f"Types of a_P: {type(a_P[0])}, b_P: {type(b_P[0])}, threshold_P: {type(threshold_P[0])}")
 
         a_T = T_param_code['a'].values
         b_T = T_param_code['b'].values
@@ -461,11 +463,12 @@ def main():
                 date=start_date,
                 directory=OUTPUT_PATH_DG
                 )
-            raise ValueError(f"Operational data for HRU {c_m_hru} not available")
+
         except Exception as e:
             if "Operational data for HRU" in str(e):
                 logger.error(f"Exiting the program due to error: {e}")
                 sys.exit(1)
+
 
         # If control_member_era5 is empty, raise an error
         if not control_member_era5:
@@ -498,6 +501,8 @@ def main():
             T_data = transformed_data_file[['date', 'T', 'code']].copy()
 
         #check if there are nan values
+
+        #TODO: check with Nikola what to do with Nan values, or what the expected amount of Nan values is
         if P_data.isnull().values.any():
             print(f"Nan values in P data for HRU {c_m_hru}")
             print("Take Last Observation")

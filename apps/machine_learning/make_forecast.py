@@ -44,8 +44,9 @@
 # --------------------------------------------------------------------
 
 # Useage:
-# SAPPHIRE_MODEL_TO_USE=TFT python make_forecast.py
+# SAPPHIRE_MODEL_TO_USE=TFT SAPPHIRE_PREDICTION_MODE=PENTAD python make_forecast.py
 # Possible values for MODEL_TO_USE: TFT, TIDE, TSMIXER
+# Possible values for MODEL_TO_USE: PENTAD, DECAD
 
 
 # --------------------------------------------------------------------
@@ -138,9 +139,9 @@ class LossLogger(Callback):
 def write_pentad_forecast(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, forecast_pentad):
     """
     Save the pentad forecast data. If a forecast interval needs to be saved,
-    it appends the new forecast to the existing interval forecast file. 
+    it appends the new forecast to the existing interval forecast file.
     The function avoids overwriting by appending data and removing duplicates.
-    
+
     Parameters:
     OUTPUT_PATH_DISCHARGE (str): Path to the output directory where forecast files are saved.
     MODEL_TO_USE (str): The name of the model used for the forecast.
@@ -150,7 +151,7 @@ def write_pentad_forecast(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, forecast_pentad):
     Returns:
     None
     """
-    
+
     # Read the latest forecast and append the new forecast
     forecast_file_path = os.path.join(OUTPUT_PATH_DISCHARGE, f'pentad_{MODEL_TO_USE}_forecast.csv')
     try:
@@ -158,25 +159,12 @@ def write_pentad_forecast(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, forecast_pentad):
     except FileNotFoundError:
         forecast_pentad_old = pd.DataFrame()
 
-    # Check if we need to save the forecast for all 5 days -> no overwrite
-    if utils_ml_forecast.save_pentad_forecast():
-        interval_file_path = os.path.join(OUTPUT_PATH_DISCHARGE, f'pentad_{MODEL_TO_USE}_forecast_pentad_intervall.csv')
-        try:
-            forecast_pentad_old_intervall = pd.read_csv(interval_file_path)
-        except FileNotFoundError:
-            forecast_pentad_old_intervall = pd.DataFrame()
-
-        forecast_pentad_pentad_intervall = forecast_pentad.copy()
-        forecast_pentad_pentad_intervall['forecast_date'] = datetime.datetime.now().date()
-
-        forecast_pentad_pentad_intervall = pd.concat([forecast_pentad_old_intervall, forecast_pentad_pentad_intervall], axis=0)
-        forecast_pentad_pentad_intervall = forecast_pentad_pentad_intervall.drop_duplicates(subset=['date', 'code'], keep='last')
-        forecast_pentad_pentad_intervall.to_csv(interval_file_path, index=False)
-
     # Append the new forecast to the old forecast and remove duplicates
     forecast_pentad = pd.concat([forecast_pentad_old, forecast_pentad], axis=0)
-    forecast_pentad = forecast_pentad.drop_duplicates(subset=['date', 'code'], keep='last')
-
+    # date to datetime
+    forecast_pentad['date'] = pd.to_datetime(forecast_pentad['date'])
+    forecast_pentad['forecast_date'] = pd.to_datetime(forecast_pentad['forecast_date'])
+    forecast_pentad = forecast_pentad.drop_duplicates(subset=['forecast_date','date', 'code'], keep='last')
     # Save the updated forecast
     forecast_pentad.to_csv(forecast_file_path, index=False)
 
@@ -185,7 +173,7 @@ def write_decad_forecast(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, forecast_decad):
     """
     Save the decad forecast data. The function saves the forecast data to a new file.
     if there is already a forecast file, the new forecast will be appended to the existing file
-    
+
     Parameters:
     OUTPUT_PATH_DISCHARGE (str): Path to the output directory where forecast files are saved.
     MODEL_TO_USE (str): The name of the model used for the forecast.
@@ -198,24 +186,14 @@ def write_decad_forecast(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, forecast_decad):
         forecast_decad_old = pd.read_csv(os.path.join(OUTPUT_PATH_DISCHARGE, f'decad_{MODEL_TO_USE}_forecast.csv'))
     except FileNotFoundError:
         forecast_decad_old = pd.DataFrame()
-    
+
     forecast_decad = pd.concat([forecast_decad_old, forecast_decad], axis=0)
 
-    if utils_ml_forecast.save_decad_forecast():
-        interval_file_path = os.path.join(OUTPUT_PATH_DISCHARGE, f'decad_{MODEL_TO_USE}_forecast_decad_intervall.csv')
-        try:
-            forecast_decad_old_intervall = pd.read_csv(interval_file_path)
-        except FileNotFoundError:
-            forecast_decad_old_intervall = pd.DataFrame()
-        
-        forecast_decad_intervall = forecast_decad.copy()
-        forecast_decad_intervall['forecast_date'] = datetime.datetime.now().date()
+    #date to datetime
+    forecast_decad['date'] = pd.to_datetime(forecast_decad['date'])
+    forecast_decad['forecast_date'] = pd.to_datetime(forecast_decad['forecast_date'])
 
-        forecast_decad_intervall = pd.concat([forecast_decad_old_intervall, forecast_decad_intervall], axis=0)
-        forecast_decad_intervall = forecast_decad_intervall.drop_duplicates(subset=['date', 'code'], keep='last')
-        forecast_decad_intervall.to_csv(interval_file_path, index=False)
-
-    forecast_decad = forecast_decad.drop_duplicates(subset=['date', 'code'], keep='last')
+    forecast_decad = forecast_decad.drop_duplicates(subset=['forecast_date','date', 'code'], keep='last')
     forecast_decad.to_csv(os.path.join(OUTPUT_PATH_DISCHARGE, f'decad_{MODEL_TO_USE}_forecast.csv'), index=False)
 
 
@@ -309,6 +287,9 @@ def make_ml_forecast():
 
     PATH_TO_STATIC_FEATURES = os.path.join(MODELS_AND_SCALERS_PATH, PATH_TO_STATIC_FEATURES)
     OUTPUT_PATH_DISCHARGE = os.path.join(intermediate_data_path, OUTPUT_PATH_DISCHARGE)
+    #Extend the OUTPUT_PATH_DISCHARGE with the model name
+    OUTPUT_PATH_DISCHARGE = os.path.join(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE)
+
     PATH_TO_QMAPPED_ERA5 = os.path.join(intermediate_data_path, PATH_TO_QMAPPED_ERA5)
 
     logger.debug('joined path_to_static_features: %s' , PATH_TO_STATIC_FEATURES)
@@ -326,7 +307,6 @@ def make_ml_forecast():
     # --------------------------------------------------------------------
     # LOAD DATA
     # --------------------------------------------------------------------
-    #FAKE DATA SHOULD BE REPLACED WITH REAL DATA
     PATH_TO_PAST_DISCHARGE = os.getenv('ieasyforecast_daily_discharge_file')
     PATH_TO_PAST_DISCHARGE = os.path.join(intermediate_data_path, PATH_TO_PAST_DISCHARGE)
 
@@ -365,7 +345,7 @@ def make_ml_forecast():
     # LOAD SCALER
     # --------------------------------------------------------------------
     if MODEL_TO_USE == 'ARIMA':
-        scaler = pd.read_csv(os.path.join(PATH_TO_SCALER, 'scalers_arima.csv'))
+        scaler = None
     else:
         scaler_discharge = pd.read_csv(os.path.join(PATH_TO_SCALER, 'scaler_stats_discharge.csv'))
         scaler_discharge.index = scaler_discharge['Unnamed: 0'].astype(int)
@@ -387,15 +367,15 @@ def make_ml_forecast():
         model = TSMixerModel.load(os.path.join(PATH_TO_MODEL), map_location=torch.device('cpu'))
     elif MODEL_TO_USE == 'ARIMA':
         model = None
-       
+
 
 
 
     if MODEL_TO_USE == 'ARIMA':
-        predictor = predictor_class.PREDICTOR(PATH_TO_MODEL, scaler)
+        predictor = predictor_class.PREDICTOR(PATH_TO_MODEL)
     else:
         predictor = predictor_class.PREDICTOR(model, scaler_discharge, scaler_era5, scaler_static, static_features)
-        
+
 
     # --------------------------------------------------------------------
     # FORECAST
@@ -430,6 +410,7 @@ def make_ml_forecast():
     exceeds_threshhold_dict = {}
     nans_at_end_dict = {}
 
+
     for code in rivers_to_predict:
         # Cast code to int.
         code = int(code)
@@ -438,6 +419,9 @@ def make_ml_forecast():
         #get the data
         past_discharge_code = past_discharge[past_discharge['code'] == code]
         qmapped_era5_code = qmapped_era5[qmapped_era5['code'] == code]
+
+        #reformat the past discharge data
+        past_discharge_code['date'] = pd.to_datetime(past_discharge_code['date'])
 
         #sort by date
         past_discharge_code = past_discharge_code.sort_values(by='date')
@@ -476,7 +460,7 @@ def make_ml_forecast():
                 # maybe an additional method is needed
                 used_decad_model_for_pentad_forecast = True
                 predictions = predictor.predict(past_discharge_code, qmapped_era5_code, None , code, n=forecast_horizon, make_plot=False)
-        
+
         # if there is no issue with missing data
         if not used_decad_model_for_pentad_forecast and code not in pentad_no_success:
             #pentad
@@ -486,7 +470,8 @@ def make_ml_forecast():
         #add the code to the predictions
         predictions['code'] = code
 
-        predictions['forecast_date'] = datetime.datetime.now().date()
+        predictions['forecast_date'] = pd.to_datetime(datetime.datetime.now().date())
+        predictions['date'] = pd.to_datetime(predictions['date'])
 
         forecast = pd.concat([forecast, predictions], axis=0)
 
@@ -520,36 +505,8 @@ def make_ml_forecast():
         write_pentad_forecast(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, forecast)
     else:
         write_decad_forecast(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, forecast)
-    """    #read the latest forecast and append the new forecast
-    try:
-        forecast_pentad_old = pd.read_csv(os.path.join(OUTPUT_PATH_DISCHARGE, f'pentad_{MODEL_TO_USE}_forecast.csv'))
 
-    except:
-        forecast_pentad_old = pd.DataFrame()
-
-
-    #check if we need to save the forecast for all 5 days -> no overwrite
-    if utils_ml_forecast.save_pentad_forecast():
-        try:
-            forecast_pentad_old_intervall = pd.read_csv(os.path.join(OUTPUT_PATH_DISCHARGE, f'pentad_{MODEL_TO_USE}_forecast_pentad_intervall.csv'))
-        except:
-            forecast_pentad_old_intervall = pd.DataFrame()
-
-        forecast_pentad_pentad_intervall = forecast_pentad
-        forecast_pentad_pentad_intervall['prediction_date'] = datetime.datetime.now().date()
-
-        forecast_pentad_pentad_intervall = pd.concat([forecast_pentad_old_intervall, forecast_pentad_pentad_intervall], axis=0)
-        forecast_pentad_pentad_intervall = forecast_pentad_pentad_intervall.drop_duplicates(subset=['date', 'code'], keep='last')
-        forecast_pentad_pentad_intervall.to_csv(os.path.join(OUTPUT_PATH_DISCHARGE, f'pentad_{MODEL_TO_USE}_forecast_pentad_intervall.csv'), index=False)
-
-
-
-    forecast_pentad = pd.concat([forecast_pentad_old, forecast_pentad], axis=0)
-    forecast_pentad = forecast_pentad.drop_duplicates(subset=['date', 'code'], keep='last')
-
-    forecast_pentad.to_csv(os.path.join(OUTPUT_PATH_DISCHARGE, f'pentad_{MODEL_TO_USE}_forecast.csv'), index=False)"""
-    #forecast_decad.to_csv(os.path.join(OUTPUT_PATH_DISCHARGE, f'decadal_{MODEL_TO_USE}_forecast.csv'), index=False)
-
+    logger.info('Forecast saved successfully. Exiting make_forecast.py\n')
 
 
 if __name__ == '__main__':

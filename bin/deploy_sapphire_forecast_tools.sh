@@ -1,13 +1,13 @@
 #!/bin/bash
 
-# This script runs the SAPPHIRE forecast tools in local daily deployment mode
+# This script deploys the SAPPHIRE forecast tools
 # Working directory is the root of the repository, i.e. SAPPHIRE_forecast_tools
 #
 # Useage:
 # Run the script in your terminal:
-# bash bin/run_sapphire_forecast_tools.sh <env_file_path>
+# bash bin/deploy_sapphire_forecast_tools.sh <env_file_path>
 # Run the script in the background:
-# nohup bash bin/run_sapphire_forecast_tools.sh <env_file_path> > output.log 2>&1 &
+# nohup bash bin/deploy_sapphire_forecast_tools.sh <env_file_path> > output.log 2>&1 &
 # note: nohup: no hangup, i.e. the process will not be terminated when the terminal is closed
 # note: > output.log 2>&1: redirect stdout and stderr to a file called output.log
 # note: &: run the process in the background
@@ -65,8 +65,8 @@ print_banner
 # Read the configuration from the .env file
 read_configuration $1
 
-# Clean up backend containers
-clean_out_backend
+# Clean up the Docker space (note: this will remove all containers and images)
+clean_out_docker_space
 
 # Pull docker images
 pull_docker_images
@@ -74,16 +74,26 @@ pull_docker_images
 # Establish SSH tunnel (if required)
 establish_ssh_tunnel
 
-# Set the trap to clean up processes on exit
-trap cleanup EXIT
+# Set the trap to the clean up processes on exit
+trap cleanup_deployment EXIT
 
 # Start the Docker Compose service for the forecasting pipeline
 start_docker_compose_luigi
 
+# Start the Docker Compose service for the dashboards
+start_docker_compose_dashboards
+
 # Wait for forecasting pipeline to finish
 wait $DOCKER_COMPOSE_LUIGI_PID
 
+# Wait for dashboards to finish
+wait $DOCKER_COMPOSE_DASHBOARD_PID
+
+# Wait another 30 minutes
+#echo "Waiting for 30 minutes before cleaning up..."
+#sleep 1800
+
 # Additional actions to be taken after Docker Compose service stops
-echo "Docker Compose service for backend has finished running"
+echo "| Docker Compose services have finished running"
 
 

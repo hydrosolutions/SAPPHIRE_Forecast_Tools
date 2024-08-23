@@ -3,10 +3,11 @@
 # run: ieasyhydroforecast_data_root_dir=<path> docker-compose -f /path/to/docker-compose.yml up -d
 # stop: docker-compose -f /path/to/docker-compose.yml down
 
+
 services:
 
   config:
-    image: mabesa/sapphire-configuration:latest
+    image: mabesa/sapphire-configuration:${ieasyhydroforecast_frontend_docker_image_tag:-latest}
     build:
       context: ../
       dockerfile: ./apps/configuration_dashboard/dockerfile
@@ -15,15 +16,19 @@ services:
       - PYTHONPATH=/app
       - ieasyhydroforecast_data_root_dir=${ieasyhydroforecast_data_root_dir}
       - SAPPHIRE_OPDEV_ENV=True
+      - ieasyhydroforecast_env_file_path=${ieasyhydroforecast_env_file_path}
     command: ["R", "-e", "setwd('/app'); shiny::runApp('apps/configuration_dashboard/forecast_configuration.R', port = 3647, host = '0.0.0.0', launch.browser=FALSE)"]
     ports:
       - "80:3647"
     volumes:
-      - ../../sensitive_data_forecast_tools/config:/sensitive_data_forecast_tools/config
-      - ../../sensitive_data_forecast_tools/GIS:/sensitive_data_forecast_tools/GIS
+      - ${ieasyhydroforecast_data_ref_dir}/config:${ieasyhydroforecast_container_data_ref_dir}/config
+      - ${ieasyhydroforecast_data_ref_dir}/GIS:${ieasyhydroforecast_container_data_ref_dir}/GIS
+    container_name: sapphire-frontend-config
+    labels:
+      - com.centurylinklabs.watchtower.enable=true
 
   pentaddashboard:
-    image: mabesa/sapphire-dashboard:latest
+    image: mabesa/sapphire-dashboard:${ieasyhydroforecast_frontend_docker_image_tag:-latest}
     build:
       context: ../
       dockerfile: ./apps/forecast_dashboard/Dockerfile
@@ -33,14 +38,29 @@ services:
       - ieasyhydroforecast_data_root_dir=${ieasyhydroforecast_data_root_dir}
       - SAPPHIRE_OPDEV_ENV=True
       - IN_DOCKER_CONTAINER=True
+      - ieasyhydroforecast_env_file_path=${ieasyhydroforecast_env_file_path}
     command: ["panel", "serve", "--allow-websocket-origin=34.202.229.208:5006", "pentad_dashboard.py", "--port=5006", "--address=0.0.0.0", "--show", "--autoreload"]
     ports:
       - "5006:5006"
     volumes:
-      - ../../sensitive_data_forecast_tools/config:/sensitive_data_forecast_tools/config
-      - ../../sensitive_data_forecast_tools/intermediate_data:/sensitive_data_forecast_tools/intermediate_data
-      - ../../sensitive_data_forecast_tools/templates:/sensitive_data_forecast_tools/templates
-      - ../../sensitive_data_forecast_tools/reports:/sensitive_data_forecast_tools/reports
+      - ${ieasyhydroforecast_data_ref_dir}/config:${ieasyhydroforecast_container_data_ref_dir}/config
+      - ${ieasyhydroforecast_data_ref_dir}/intermediate_data:${ieasyhydroforecast_container_data_ref_dir}/intermediate_data
+      - ${ieasyhydroforecast_data_ref_dir}/templates:${ieasyhydroforecast_container_data_ref_dir}/templates
+      - ${ieasyhydroforecast_data_ref_dir}/reports:${ieasyhydroforecast_container_data_ref_dir}/reports
+    container_name: sapphire-frontend-forecast
+    labels:
+      - com.centurylinklabs.watchtower.enable=true
+
+  watchtower:
+    image: containrrr/watchtower
+    container_name: watchtower
+    restart: always
+    command: --interval 30 --label-enable --cleanup
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
+
+
 
 
 

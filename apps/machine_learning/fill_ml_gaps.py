@@ -4,14 +4,18 @@
 # FILE: fill_ml_gaps.py
 # ----------------------------------------------------------------
 #
-# Description: This script checks if there are any missing forecasts from the ML models. 
-# If there are, it calls the hindcast script to fill in the missing forecasts 
+# Description: This script checks if there are any missing forecasts from the ML models.
+# If there are, it calls the hindcast script to fill in the missing forecasts
 # in order to make the ML model forecasts continuous for evaluation.
-# 
+#
 # ----------------------------------------------------------------
 # USAGE:
 # ----------------------------------------------------------------
-# SAPPHIRE_MODEL_TO_USE=TFT python fill_ml_gaps.py
+
+# SAPPHIRE_OPDEV_ENV=True SAPPHIRE_MODEL_TO_USE=TFT SAPPHIRE_PREDICTION_MODE=PENTAD python fill_ml_gaps.py
+
+# TODO: So far this code only checks if there are missing forecast dates. It doesn't check if there are nan values due to insufficent input data.
+# TODO: Think about how to handle nan values, in what frequency should this be checked?
 
 
 import os
@@ -57,8 +61,8 @@ sys.path.append(forecast_dir)
 import setup_library as sl
 
 def call_hindcast_script(min_missing_date: str,
-                         max_missing_date: str, 
-                         MODEL_TO_USE: str, 
+                         max_missing_date: str,
+                         MODEL_TO_USE: str,
                          intermediate_data_path: str,
                          PREDICTION_MODE: str) -> pd.DataFrame:
 
@@ -71,10 +75,19 @@ def call_hindcast_script(min_missing_date: str,
     env['SAPPHIRE_MODEL_TO_USE'] = MODEL_TO_USE
     env['ieasyhydroforecast_START_DATE'] = min_missing_date
     env['ieasyhydroforecast_END_DATE'] = max_missing_date
-    env['HINDCAST_MODE'] = PREDICTION_MODE
+    env['SAPPHIRE_HINDCAST_MODE'] = PREDICTION_MODE
 
     # Prepare the command
-    command = ['python', 'hindcast_ML_models.py']
+
+    if (os.getenv('IN_DOCKER') == 'True'):
+        command = ['python', 'apps/machine_learning/hindcast_ML_models.py']
+        print('Running in Docker, calling command:', command)
+        logger.info('Running in Docker, calling command: %s', command)
+    else:
+        command = ['python', 'hindcast_ML_models.py']
+        print('Running locally, calling command:', command)
+        logger.info('Running locally, calling command: %s', command)
+
 
     # Call the script
     result = subprocess.run(command, capture_output=True, text=True, env=env)
@@ -96,10 +109,11 @@ def call_hindcast_script(min_missing_date: str,
     OUTPUT_PATH_DISCHARGE = os.getenv('ieasyhydroforecast_OUTPUT_PATH_DISCHARGE')
 
     PATH_FORECAST = os.path.join(intermediate_data_path, OUTPUT_PATH_DISCHARGE)
+
     PATH_HINDCAST = os.path.join(PATH_FORECAST, 'hindcast', MODEL_TO_USE)
 
-    
-    file_name = f'{MODEL_TO_USE}_{PREDICTION_MODE}_hindcast_daily_{min_missing_date}_{max_missing_date}.csv' 
+
+    file_name = f'{MODEL_TO_USE}_{PREDICTION_MODE}_hindcast_daily_{min_missing_date}_{max_missing_date}.csv'
 
     hindcast = pd.read_csv(os.path.join(PATH_HINDCAST, file_name))
 
@@ -114,10 +128,11 @@ def fill_ml_gaps():
     # --------------------------------------------------------------------
     MODEL_TO_USE = os.getenv('SAPPHIRE_MODEL_TO_USE')
     logger.info('Model to use: %s', MODEL_TO_USE)
+    print('Model to use:', MODEL_TO_USE)
 
     if MODEL_TO_USE not in ['TFT', 'TIDE', 'TSMIXER', 'ARIMA']:
         raise ValueError('Model not supported')
-    
+
     # --------------------------------------------------------------------
     # Define whch prediction mode to use
     # --------------------------------------------------------------------
@@ -147,11 +162,9 @@ def fill_ml_gaps():
 
 
     PATH_FORECAST = os.path.join(intermediate_data_path, OUTPUT_PATH_DISCHARGE)
+    PATH_FORECAST = os.path.join(PATH_FORECAST, MODEL_TO_USE)
+
     PATH_HINDCAST = os.path.join(PATH_FORECAST, 'hindcast', MODEL_TO_USE)
-
-
-    # check if daily or pentadal hindcast should be produced
-    ieasyhydroforecasts_produce_daily_ml_hindcast = os.getenv('ieasyhydroforecasts_produce_daily_ml_hindcast')
 
     # Get the current date
     current_date = datetime.datetime.now().date()
@@ -162,24 +175,17 @@ def fill_ml_gaps():
     else:
         prefix = 'decad'
 
-    # Read the latest forecast
-    if ieasyhydroforecasts_produce_daily_ml_hindcast == 'True':
-        forecast_path = os.path.join(PATH_FORECAST, prefix + '_' +  MODEL_TO_USE + '_forecast.csv')
-        limit_day_gap = 1
-    else:
-        forecast_path = os.path.join(PATH_FORECAST,prefix + '_' +  MODEL_TO_USE + '_forecast_' + prefix + '_intervall.csv')
-        if PREDICTION_MODE == 'PENTAD':
-            limit_day_gap = 6
-        else:
-            limit_day_gap = 11
-        
+
+    forecast_path = os.path.join(PATH_FORECAST, prefix + '_' +  MODEL_TO_USE + '_forecast.csv')
+    limit_day_gap = 1
+
 
     try:
         forecast = pd.read_csv(forecast_path)
     except FileNotFoundError:
         logger.error('No forecast file found')
         return
-    
+
 
     forecast_dates = forecast['forecast_date'].unique()
     forecast_dates = pd.to_datetime(forecast_dates)
@@ -193,10 +199,10 @@ def fill_ml_gaps():
             # append the previous date with a forecast
             # append the next date which has a forecast
             missing_forecasts.append(missing_tuple)
-        
+
     if len(missing_forecasts) == 0:
         logger.info('No missing forecasts')
-        
+        print('No missing forecasts')
     else:
 
         for missing_days in missing_forecasts:
@@ -210,7 +216,8 @@ def fill_ml_gaps():
             end_date = end_date.strftime('%Y-%m-%d')
 
             print('Missing forecasts from', start_date, 'to', end_date)
-            
+            logger.info('Missing forecasts from %s to %s', start_date, end_date)
+
             # Call the hindcast script
             hindcast = call_hindcast_script(start_date, end_date, MODEL_TO_USE, intermediate_data_path, PREDICTION_MODE)
 
@@ -221,15 +228,13 @@ def fill_ml_gaps():
             forecast = forecast.sort_values(by='forecast_date')
 
             # save the forecast
-            if ieasyhydroforecasts_produce_daily_ml_hindcast == 'True':
-                forecast.to_csv(os.path.join(PATH_FORECAST, prefix + '_' +  MODEL_TO_USE + '_forecast_test.csv'), index=False)
-            else:
-                forecast.to_csv(os.path.join(PATH_FORECAST,prefix + '_' +  MODEL_TO_USE + '_forecast_' + prefix + '_intervall_test.csv'), index=False)
-
+            forecast.to_csv(os.path.join(PATH_FORECAST, prefix + '_' +  MODEL_TO_USE + '_forecast.csv'), index=False)
 
         print("Missing forecasts filled in")
+        logger.info('Missing forecasts filled in')
 
-
+    logger.info('Script fill_ml_gaps.py finished at %s. Exiting.', datetime.datetime.now())
+    print('Script fill_ml_gaps.py finished at', datetime.datetime.now(), '. Exiting.')
 
 if __name__ == '__main__':
     fill_ml_gaps()

@@ -4,9 +4,9 @@
 # and performs quantile mapping on it.
 # Afterwards the script is save as a csv file.
 #
-# This script is used to download a long time series of ERA5-Land reanalysis data
-# when the forecast tools are first installed. This script is not used in the
-# operational mode of the forecast tools.
+# NOTE: This script is used to get the initial data for the reanalysis. 
+# Afterwards the data is always extended with the operational reanalysis data
+# This extension is done with the script: extend_era5_reanalysis.py
 #
 # --------------------------------------------------------------------
 # USAGE

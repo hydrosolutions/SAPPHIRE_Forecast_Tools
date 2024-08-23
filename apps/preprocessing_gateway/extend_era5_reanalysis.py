@@ -71,6 +71,10 @@ def main():
     # SETUP ENVIRONMENT
     #--------------------------------------------------------------------
 
+    logger.info(f'||||||||||||||||||||||||||||||||||||||||')
+    logger.info(f'----------------------------------------')
+    logger.info(f'extend_era5_reanalysis.py started       ')
+    logger.info(f'----------------------------------------')
     # Specify the path to the .env file
     # Loads the environment variables from the .env file
     sl.load_environment()
