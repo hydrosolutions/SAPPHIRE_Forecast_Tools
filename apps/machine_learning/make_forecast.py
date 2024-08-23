@@ -420,7 +420,7 @@ def make_ml_forecast():
         past_discharge_code = past_discharge[past_discharge['code'] == code]
         qmapped_era5_code = qmapped_era5[qmapped_era5['code'] == code]
 
-        #reformat the past discharge data 
+        #reformat the past discharge data
         past_discharge_code['date'] = pd.to_datetime(past_discharge_code['date'])
 
         #sort by date
@@ -505,6 +505,8 @@ def make_ml_forecast():
         write_pentad_forecast(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, forecast)
     else:
         write_decad_forecast(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, forecast)
+
+    logger.info('Forecast saved successfully. Exiting make_forecast.py\n')
 
 
 if __name__ == '__main__':

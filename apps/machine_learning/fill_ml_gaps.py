@@ -81,8 +81,12 @@ def call_hindcast_script(min_missing_date: str,
 
     if (os.getenv('IN_DOCKER') == 'True'):
         command = ['python', 'apps/machine_learning/hindcast_ML_models.py']
+        print('Running in Docker, calling command:', command)
+        logger.info('Running in Docker, calling command: %s', command)
     else:
         command = ['python', 'hindcast_ML_models.py']
+        print('Running locally, calling command:', command)
+        logger.info('Running locally, calling command: %s', command)
 
 
     # Call the script
@@ -198,6 +202,7 @@ def fill_ml_gaps():
 
     if len(missing_forecasts) == 0:
         logger.info('No missing forecasts')
+        print('No missing forecasts')
     else:
 
         for missing_days in missing_forecasts:
@@ -211,6 +216,7 @@ def fill_ml_gaps():
             end_date = end_date.strftime('%Y-%m-%d')
 
             print('Missing forecasts from', start_date, 'to', end_date)
+            logger.info('Missing forecasts from %s to %s', start_date, end_date)
 
             # Call the hindcast script
             hindcast = call_hindcast_script(start_date, end_date, MODEL_TO_USE, intermediate_data_path, PREDICTION_MODE)
@@ -227,8 +233,10 @@ def fill_ml_gaps():
             forecast.to_csv(os.path.join(PATH_FORECAST, prefix + '_' +  MODEL_TO_USE + '_forecast_test.csv'), index=False)
 
         print("Missing forecasts filled in")
+        logger.info('Missing forecasts filled in')
 
-
+    logger.info('Script fill_ml_gaps.py finished at %s. Exiting.', datetime.datetime.now())
+    print('Script fill_ml_gaps.py finished at', datetime.datetime.now(), '. Exiting.')
 
 if __name__ == '__main__':
     fill_ml_gaps()
