@@ -37,6 +37,8 @@ from src.gettext_config import configure_gettext
 import src.processing as processing
 import src.vizualization as viz
 
+import calendar
+
 # Get the absolute path of the directory containing the current script
 cwd = os.getcwd()
 
@@ -137,7 +139,7 @@ model_dict = forecasts_all[['model_short', 'model_long']] \
 
 # Widget for date selection, always visible
 forecast_date = linreg_predictor['date'].max().date()
-date_picker = pn.widgets.DatePicker(name=_("Select date:"),
+date_picker = pn.widgets.DatePicker(name=_("Selected date:"),
                                     start=dt.datetime((forecast_date.year-1), 1, 5).date(),
                                     end=forecast_date,
                                     value=forecast_date)
@@ -220,18 +222,12 @@ daily_hydrograph_plot = pn.panel(
         ),
     sizing_mode='stretch_both'
     )
-forecast_data_table = pn.panel(
+forecast_data_and_plot = pn.panel(
     pn.bind(
-        viz.select_data_for_linreg,
-        _, linreg_datatable, station, date_picker
-        ),
-)
-plot_linear_regression = pn.panel(
-    pn.bind(
-        viz.plot_linear_regression,
+        viz.select_and_plot_data,
         _, linreg_datatable, station, date_picker
     ),
-    sizing_mode='stretch_width', height=500
+    sizing_mode='stretch_both'
 )
 pentad_forecast_plot = pn.panel(
     pn.bind(
@@ -344,8 +340,7 @@ else: # If no_date_overlap_flag == True
          pn.Column(
             pn.Card(
                 pn.Row(
-                    forecast_data_table,
-                    plot_linear_regression
+                    forecast_data_and_plot
                 ),
                 title=_('Linear regression'),
                 sizing_mode='stretch_width',

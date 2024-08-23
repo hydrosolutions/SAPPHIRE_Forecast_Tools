@@ -9,11 +9,13 @@ import numpy as np
 import datetime as dt
 import time
 import holoviews as hv
+from holoviews import streams
 from holoviews.streams import PointDraw, Selection1D
 import panel as pn
 from bokeh.models import HoverTool, FixedTicker, FuncTickFormatter, CustomJSTickFormatter, LinearAxis, DatetimeTickFormatter
 from scipy import stats
 from sklearn.linear_model import LinearRegression
+from bokeh.models.widgets.tables import CheckboxEditor, BooleanFormatter
 
 from . import processing
 
@@ -899,99 +901,157 @@ def draw_forecast_raw_data(_, forecasts_linreg, station_widget, date_picker):
     return forecast_data_table
 
 
-class ForecastAnalysis(param.Parameterized):
-    data = param.DataFrame()
-    station = param.String()
-    date_picker = param.Date()
-    visible_data = param.DataFrame()
+def get_pentad_for_date(date):
+    day_of_month = date.day
+    pentad = (day_of_month - 1) // 5 + 1
+    return pentad
 
-    def __init__(self, data, station, date_picker, **params):
-        super().__init__(**params)
-        self.data = data
-        self.station = station
-        self.date_picker = date_picker
-        self.visible_data = self.filter_data()
 
-def select_data_for_linreg(_, data, station_widget, date_picker):
-    # From date_picker, get the pentad and month of the latest forecast
+SAVE_DIRECTORY = 'saved_data'
+
+def get_pentad_csv_filename(station, pentad):
+    """Generate the CSV filename for the station and pentad."""
+    return os.path.join(SAVE_DIRECTORY, f"{station}_pentad_{pentad}.csv")
+
+def select_and_plot_data(_, data, station_widget, date_picker):
+    # Get the pentad for the selected date
     forecast_date = date_picker + dt.timedelta(days=1)
-    forecast_pentad = int(tl.get_pentad_in_year(forecast_date))
+    pentad = get_pentad_for_date(forecast_date)
+    
+    # Ensure the save directory exists
+    os.makedirs(SAVE_DIRECTORY, exist_ok=True)
+    
+    # Get the filename for the pentad data
+    save_file = get_pentad_csv_filename(station_widget, pentad)
 
-    # Filter data for the selected station and pentad
-    forecast_table = data[
-        (data['station_labels'] == station_widget) & 
-        (data['pentad_in_year'] == forecast_pentad)
-    ].copy().reset_index(drop=True)
+    # Check if the saved CSV file exists for this pentad
+    if os.path.exists(save_file):
+        # Load the saved state
+        forecast_table = pd.read_csv(save_file, index_col=0)
+        print(f"Loaded saved state from {save_file}")
+    else:
+        # Filter data for the selected station and pentad
+        forecast_table = data[
+            (data['station_labels'] == station_widget) & 
+            (data['pentad_in_year'] == pentad)
+        ].copy().reset_index(drop=True)
 
-    # Add a column to indicate visibility of points in the plot
-    if 'visible' not in forecast_table.columns:
-        forecast_table['visible'] = True
+        # Add a column to indicate visibility of points in the plot
+        if 'visible' not in forecast_table.columns:
+            forecast_table['visible'] = True
+
+    # Define a variable to hold the visible data across functions
+    global visible_data
 
     # Create Tabulator for displaying forecast data
     forecast_data_table = pn.widgets.Tabulator(
-        value=forecast_table[['predictor', 'discharge_avg', 'visible']],
+        value=forecast_table[['predictor', 'discharge_avg', 'visible']], 
         theme='bootstrap',
-        show_index=True,
-        selectable='checkbox',  # Enable row selection with checkboxes
+        show_index=True,  # Show the index in the table
+        editors={'visible': CheckboxEditor()},  # Checkbox editor for the 'visible' column
+        formatters={'visible': BooleanFormatter()},  # Format as checkbox in the table
         height=450,
-        editors={'visible': {'type': 'checkbox'}}
     )
 
-    def update_plot(event=None):
-        visible_data = forecast_table[forecast_table['visible']]
-        plot_linear_regression.object = plot_linear_regression(_, visible_data, station_widget, date_picker)
+    # Define the plot
+    plot_pane = pn.pane.HoloViews()
 
-    # Watch for changes in the table selection and visibility changes
-    forecast_data_table.param.watch(update_plot, 'selection')
+    # Create the selection1d stream to capture point selections on the plot
+    selection_stream = streams.Selection1D(source=None)
+
+    # Update plot based on visibility
+    def update_plot(event=None):
+        global visible_data  # Use global variable to ensure it's accessible in other functions
+        
+        forecast_table.update(forecast_data_table.value)
+
+        # Filter the data based on visibility
+        visible_data = forecast_table[forecast_table['visible'] == True]
+        
+        # If no data is visible, show an empty plot
+        if visible_data.empty:
+            plot = hv.Curve([])  # Empty plot if no visible data
+        else:
+            hover = HoverTool(
+                tooltips=[
+                    ('Index', '@index'),
+                    ('Predictor', '@predictor'),
+                    ('Discharge', '@discharge_avg')
+                ]
+            )
+            scatter = hv.Scatter(visible_data, kdims='predictor', vdims=['discharge_avg']) \
+                .opts(color='blue', size=5, tools=['hover', 'tap'], xlabel=_('Predictor'), ylabel=_('Discharge (m³/s)'), title='Linear Regression')
+
+            if len(visible_data) > 1:
+                # Add a linear regression line to the scatter plot
+                slope, intercept, r_value, p_value, std_err = stats.linregress(visible_data['predictor'], visible_data['discharge_avg'])
+                x = np.linspace(visible_data['predictor'].min(), visible_data['predictor'].max(), 100)
+                y = slope * x + intercept
+                line = hv.Curve((x, y)).opts(color='red', line_width=2, tools=['hover'])
+
+                # Overlay the scatter plot and the linear regression line
+                plot = scatter * line
+                plot.opts(
+                    title=_('Linear regression'),
+                    show_grid=True,
+                    show_legend=True,
+                    width=1000, 
+                    height=450  
+                )
+            else:
+                plot = scatter.opts(
+                    width=1000, 
+                    height=450  
+                )
+        
+        # Attach the plot to the selection stream
+        selection_stream.source = scatter
+        plot_pane.object = plot
+
+    # Function to handle plot selections and update the table
+    def handle_selection(event):
+        global visible_data  # Use the visible data in the selection handler
+
+        if not selection_stream.index:
+            return
+
+        # Get the selected index from the scatter plot (relative to visible_data)
+        selected_indices = selection_stream.index
+
+        # Select the corresponding rows in the Tabulator
+        forecast_data_table.selection = selected_indices
+
+    # Watch for selection events on the plot
+    selection_stream.param.watch(handle_selection, 'index')
+
+    # Watch for changes in the table's value (which includes visibility toggling) and update the plot
     forecast_data_table.param.watch(update_plot, 'value')
 
     # Initial plot update
     update_plot()
 
-    # Create the layout
+    # Function to save table data to CSV
+    def save_to_csv(event):
+        # Convert the table value back to a DataFrame
+        updated_forecast_table = pd.DataFrame(forecast_data_table.value)
+
+        # Save DataFrame to CSV, retaining the index
+        updated_forecast_table.to_csv(save_file, index=True)
+        print(f"Data saved to {save_file}")
+
+    # Create a save button
+    save_button = pn.widgets.Button(name="Save to CSV", button_type="success")
+
+    # Attach the save_to_csv function to the button's click event
+    save_button.on_click(save_to_csv)
+
+    # Create the layout with the table, plot, and save button
     layout = pn.Column(
-        forecast_data_table
+        pn.Row(forecast_data_table, plot_pane),
+        pn.Row(save_button)  # Add the save button below the table and plot
     )
 
     return layout
-
-
-def plot_linear_regression(_, data, station_widget, date_picker):
-    # From date_picker, get the pentad and month of the latest forecast
-    forecast_date = date_picker + dt.timedelta(days=1)
-    forecast_pentad = int(tl.get_pentad_in_year(forecast_date))
-
-    # Filter data for the selected station and pentad
-    linreg_datatable = data[
-        (data['station_labels'] == station_widget) & 
-        (data['pentad_in_year'] == forecast_pentad)
-    ].copy().reset_index(drop=True)
-
-    if linreg_datatable.empty:
-        return hv.Curve([])
-
-    scatter = hv.Scatter(linreg_datatable, kdims='predictor', vdims='discharge_avg') \
-        .opts(color='blue', size=5, tools=['hover'], xlabel=_('Predictor'), ylabel=_('Discharge (m³/s)'), title='Linear Regression')
-
-    if len(linreg_datatable) > 1:
-        # Add a linear regression line to the scatter plot
-        slope, intercept, r_value, p_value, std_err = stats.linregress(linreg_datatable['predictor'], linreg_datatable['discharge_avg'])
-        x = np.linspace(linreg_datatable['predictor'].min(), linreg_datatable['predictor'].max(), 100)
-        y = slope * x + intercept
-        line = hv.Curve((x, y)).opts(color='red', line_width=2, tools=['hover'])
-
-        # Overlay the scatter plot and the linear regression line
-        overlay = scatter * line
-
-        overlay.opts(
-            title=_('Linear regression'),
-            show_grid=True,
-            show_legend=True,
-        )
-
-        return overlay
-    else:
-        return scatter
 
 def test_draw_forecast_raw_data(_, selected_data):
 
