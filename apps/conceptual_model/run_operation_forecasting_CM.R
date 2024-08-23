@@ -230,15 +230,15 @@ for (Code in config$codes) {
     select(forecast_date, everything())
   
   # Step 6: Plotting  ####
-  # plot <- plot_forecast(forecast_date = forecast_date,
-  #                       ResPF = ResPF,
-  #                       basinObs = basinObs_cf,
-  #                       forecast_statistics,
-  #                       basin_name = Basin_Info$BasinName,
-  #                       window = 30)
+  plot <- plot_forecast(forecast_date = forecast_date,
+                        ResPF = ResPF,
+                        basinObs = basinObs_cf,
+                        forecast_statistics,
+                        basin_name = Basin_Info$BasinName,
+                        window = 30)
   
 
-  # ggsave(plot,file = paste0(dir_Results,"/plot/Overviewplot_",Basin_Info$BasinCode,"_",forecast_date_format,".pdf"), width = 10, height = 6, dpi = 300)
+  ggsave(plot,file = paste0(dir_Results,"/plot/Overviewplot_",Basin_Info$BasinCode,"_",forecast_date_format,".pdf"), width = 10, height = 6, dpi = 300)
   
   # Step 7: Hindcast and save  ####
   ## 7.1 Daily   ####
