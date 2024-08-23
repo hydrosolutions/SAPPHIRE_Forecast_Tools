@@ -68,7 +68,7 @@ source("functions/functions_hindcast.R")
 
 
 ################### CHANGE ###################
-forecast_date <- as.Date("2024-07-31") # change this when DG is running again to today()
+forecast_date <- today()
 
 ################### INITIALIZE ###################
 # JSON file
@@ -181,10 +181,11 @@ for (Code in config$codes) {
   print(paste0("Last Q measurement: ", max(Q_obs$date)))
   print(paste0("The meterological forecast is from the ",min(basinObs_pf[[1]]$date), " until ", max(basinObs_pf[[1]]$date)))
   print(paste0("Forecast horizon control member(should be the same): ",max(basinObs_cf$date)))
-  print(paste0("The last run was at: ", max(runResults_op$DatesR)))
+  # print(paste0("The last run was at: ", max(runResults_op$DatesR)))
   # plotting
-  # plot_ensemble_forecast( start_date = as.Date(forecast_date-15) , Parameter = "Ptot", basinObs_cf, basinObs_pf)
-  # plot_ensemble_forecast( start_date = as.Date(forecast_date-15) , Parameter = "Temp", basinObs_cf, basinObs_pf)
+  # plot_f <- plot_ensemble_forecast( start_date = as.Date(forecast_date-15) , Parameter = "Ptot", basinObs_cf, basinObs_pf)
+  # ggsave(plot_f,file = paste0(dir_Results,"/plot/Forcing_",Basin_Info$BasinCode,"_",forecast_date_format,".pdf"), width = 10, height = 6, dpi = 300)
+  # plot1 <- plot_ensemble_forecast( start_date = as.Date(forecast_date-15) , Parameter = "Temp", basinObs_cf, basinObs_pf)
   
 
   
@@ -229,15 +230,15 @@ for (Code in config$codes) {
     select(forecast_date, everything())
   
   # Step 6: Plotting  ####
-  plot <- plot_forecast(forecast_date = forecast_date,
-                        ResPF = ResPF,
-                        basinObs = basinObs_cf,
-                        forecast_statistics,
-                        basin_name = Basin_Info$BasinName,
-                        window = 30)
+  # plot <- plot_forecast(forecast_date = forecast_date,
+  #                       ResPF = ResPF,
+  #                       basinObs = basinObs_cf,
+  #                       forecast_statistics,
+  #                       basin_name = Basin_Info$BasinName,
+  #                       window = 30)
   
 
-  ggsave(plot,file = paste0(dir_Results,"/plot/Overviewplot_",Basin_Info$BasinCode,"_",forecast_date_format,".pdf"), width = 10, height = 6, dpi = 300)
+  # ggsave(plot,file = paste0(dir_Results,"/plot/Overviewplot_",Basin_Info$BasinCode,"_",forecast_date_format,".pdf"), width = 10, height = 6, dpi = 300)
   
   # Step 7: Hindcast and save  ####
   ## 7.1 Daily   ####
@@ -329,7 +330,7 @@ for (Code in config$codes) {
   
   ## 7.3 decadal  ####
   if ((length(decadal_days(forecast_date, forecast_date)) == 0) && !(exists("start_date_hindcast"))) {
-    print("not pentadal timestep no hindcasting")
+    print("not decadal timestep no hindcasting")
   } else if (!(length(decadal_days(forecast_date, forecast_date)) == 0) && !(exists("start_date_hindcast"))) {
     print("Decadal forecast day, no hindcasting")
     decadal_steps <- decadal_days(forecast_date, forecast_date)

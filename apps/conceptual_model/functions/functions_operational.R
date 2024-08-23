@@ -55,7 +55,7 @@ runModel_withoutDA <- function(forecast_date,
                           "RunModel_CemaNeigeGR6J_Glacier")
   
   
-  if ((Date_6_months_ago <= Enddate_op)) {
+  if ((Date_6_months_ago == Enddate_op)) {
     print("Multiple runs on the same day")
   } else {
     print("This is the first run of today")

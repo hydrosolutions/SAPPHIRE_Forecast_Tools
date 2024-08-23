@@ -79,6 +79,8 @@ if (Sys.getenv("IN_DOCKER_CONTAINER")=="") {
 
 
 
+
+
 ```{r}
 ##################################################################
 # 0 Function ####
@@ -129,7 +131,7 @@ forecast_date_format <- forecast_date %>%
 
 
 ################### RUNNING ###################
-for (Code in config$codes) {
+# for (Code in config$codes) {
   print(Code)
   
   # Step 1: Prepare Input data ####
@@ -257,9 +259,13 @@ for (Code in config$codes) {
                         window = 30)
   
 
-  ggsave(plot,file = paste0(dir_Results,"/plot/Overviewplot_",Basin_Info$BasinCode,"_",forecast_date_format,".pdf"), width = 10, height = 6, dpi = 300)
-  
-  # Step 7: Hindcast and save  ####
+  # ggsave(plot,file = paste0(dir_Results,"/plot/Overviewplot_",Basin_Info$BasinCode,"_",forecast_date_format,".pdf"), width = 10, height = 6, dpi = 300)
+# }
+```
+
+
+```{r}
+# Step 7: Hindcast and save  ####
   ## 7.1 Daily   ####
   existing_forecasts <- try(read_csv(paste0(dir_Results, "/data/daily_", Basin_Info$BasinCode, ".csv"), show_col_types = FALSE), silent = TRUE)
   
