@@ -309,27 +309,56 @@ The proprocessing_gateway module gets weather forecasts and re-analysis weather 
 - Production of hindcasts:
   - Downloading of re-analysis weather data and downscaling of re-analysis weather data (get_era5_reanalysis_data.py)
 
-The Quantile_Mapping_OP.py script accesses the the SAPPHIRE Data Gateway and downloads the ERA5 ECMWF IFS control member and ensemble forecast. Afterwards it can perform a downscaling from a set of previously fitted parameters, these downscaling is performed with a parametric transformations where the new transformed value is obtained by the formula $y = a*x^b$ in the [fitQmap](#https://search.r-project.org/CRAN/refmans/qmap/html/fitqmapptf.html) package in R. In case there are nan values in the forcing data, we fill them by taking the last available observation. Alltough it is not expected to have any missing values in the forcing.
+The Quantile_Mapping_OP.py script accesses the the SAPPHIRE Data Gateway and downloads the ERA5 ECMWF IFS control member and ensemble forecast. Afterwards, it can perform a downscaling using the quantile mapping  method using a set of previously fitted parameters. The fitting of the parameters for downscaling is performed with a parametric transformations where the new transformed value is obtained by the formula $y = a*x^b$ in the [fitQmap](#https://search.r-project.org/CRAN/refmans/qmap/html/fitqmapptf.html) package in R. As we use operational weather forecasts from ECMWF served through the SAPPHIRE Data Gateway, we do not expect to have any gaps in the weather forecast time series. However, in case there should be nan values in the forcing data, the preprocessing_gateway module fills them by taking the last available observation.
+
+TODO: Sandro: the downscaling is optional as I understand. How can a user turn the downscaling on or off?
+
+The extend_era5_reanalysis.py file is used to maintain a set of past and current weather forcing data for each river basin. It is updated operationally by appending the latest ERA5 Land Reanalysis data to the hindcast forcing file. It reads in the hindcast file and the operational forcing data, combines them and removes dublicates.
 
 The get_era5_reanalysis_data.py is an initialization file. It also accesses the data-gateway and pulls the ERA5 Land Reanalysis data for a provided time window and a given HRU. It also performs the downscaling on this data. The reason behind this script is, to obtain a file where we have past forcing data saved to perform for example hindcasts.
 
-The extend_era5_reanalysis.py file is used operationally to append the latest ERA5 Land Reanalysis data to the hindcast forcing file. It reads in the hindcast file and the operational forcing data, combines them and removes dublicates.
-
 #### Prerequisites
 
-[Open ECMWF weather forecasts](https://www.ecmwf.int/en/forecasts/datasets/open-data) and results of the [TopoPyScale Snow model](https://topopyscale.readthedocs.io/en/latest/) are pre-processed for hydrological modelling with the SAPPHIRE Data Gateway (TODO: publish once development completed). If you wish to use weather and snow forecast data in the SAPPHIRE Forecast Tools, you will have to install the SAPPHIRE Data Gateway and the [SAPPHIRE data gateway client](https://github.com/hydrosolutions/sapphire-dg-client) by following the installation instructions provided in the repositories.
+[Open ECMWF weather forecasts](https://www.ecmwf.int/en/forecasts/datasets/open-data) and results of the [TopoPyScale Snow model](https://topopyscale.readthedocs.io/en/latest/) are pre-processed for hydrological modelling with the SAPPHIRE Data Gateway (TODO: publish once development completed). If you wish to use weather and snow forecast data in the SAPPHIRE Forecast Tools, you will have to install at least the SAPPHIRE Data Gateway and the [SAPPHIRE data gateway client](https://github.com/hydrosolutions/sapphire-dg-client) and optionally also [TopoPyScale](https://topopyscale.readthedocs.io/en/latest/) by following the installation instructions provided in the repositories.
 
-For the requiered libraries run the following command:
+<div style="border: 1px solid #ccc; padding: 10px; margin-top: 10px;">
+  <strong>Side note on the interaction with the SAPPHIRE Data Gateway
+:</strong> The SAPPHIRE Data Gateway aggregates operational gridded weather and snow data to polygons (e.g. basin outlines or hydrological response units) and makes it available as time series through the SAPPHIRE data gateway client. Prior to the operationalization, The user uploads a shapefile with polygons to the SAPPHIRE Data Gateway which, optimally, contains the attribute code corresponding to the hydropost identifier to produce hydrological forecasts for, and subscribes the shapefile to operational data downloads.
 
+The shapefile uploaded to the SAPPHIRE Data Gateway should have the attributes `name`, `Z` and `geometry`. The `name` attribute should contain the code corresponding to the gauge station (also called hydropost) identifier, the `Z` attribute should contain the elevation of the hydropost (or a dummy number) and the `geometry` attribute should contain the geometry of the hydropost. The shape file can have one or multiple features (polygons) and the code attribute should be unique for each feature. Below you see an example of how the shapefile should look like:
+
+| name      | Z   | geometry |
+|-----------|-----|----------|
+| <code_basin_A> | 1   | ...      |
+| <code_basin_B> | 1   | ...      |
+|
+
+Should the code attributes in the data gateway not correspond to the code attributes in the forecast tools, you can apply a code mapping by editing the config file ieasyhydroforecast_config_file_data_gateway_name_twins (see below). For more detailed information, please refer to the SAPPHIRE Data Gateway documentation (TODO: add link).
+
+TODO: Add step-by-step instructions of how to upload shapefile and subscribe to operational data on the data gateway (assuming the data gateway is up and running).
+</div>
+<br></br>
+To run the preprocessing_gateway module locally, you will can install the required packages as follows:
+
+Open a terminal and navigate to the preprocessing_gateway folder in the repository:
 ``` bash
-cd SAPPHIRE_Forecast_Tools/apps/preprocessing_gateway
-
-#conda
-conda install --file requirements.txt
-
-#or with pip
-#pip install -r requirements.txt
+cd /path/to/SAPPHIRE_Forecast_Tools/apps/preprocessing_gateway
 ```
+Then install the required packages by running the following command in the terminal with either conda or pip:
+
+<details>
+<summary>Conda</summary>
+```
+conda install --file requirements.txt
+```
+</details>
+
+<details>
+<summary>Pip</summary>
+```
+pip install -r requirements.txt
+```
+</details>
 
 #### I/O
 
@@ -371,7 +400,7 @@ Here is the folder structure represented which interacts with the module preproc
 
             -   YOUR_HRU_T_reanalysis.csv
 
-The only input file you need to provide, if you would like to make the downscaling are the files in the params_quantile_mapping folder. This files should have the following structure:
+The only input file you need to provide, if you would like to make the downscaling, are the files in the params_quantile_mapping folder. This files should have the following structure:
 
 | code  | a                | b                | wet_day             |
 |-------|------------------|------------------|---------------------|
@@ -379,8 +408,21 @@ The only input file you need to provide, if you would like to make the downscali
 | xxxx2 | 1.32689320186785 | 1.23330279398003 | 0.00384698459002093 |
 | xxxx3 | 1.22439440281778 | 1.15911354977616 | 0.0031125073391893  |
 | xxxx4 | 1.29536038899781 | 1.18507749883279 | 0.00358122349959776 |
+| ...   | ...              | ...              | ...                 |
+|
 
-When accessing the SAPPHIRE data-gateway, the client downloads a csv file and saves it in the data_gateway folder. When you integrate a HRU on the data-gateway, you can name the different shapefiles in the HRU. These names correspond to the codes. The ensemble forecast files have this format:
+When accessing the SAPPHIRE data gateway, the client downloads a csv file and saves it in the data gateway folder. When you integrate a HRU on the data gateway, you can name the different shapefiles in the HRU. These names correspond to the codes. Should the codes in the data gateway not correspond to the codes in the forecast tools, you can apply a code mapping by editing the config json file ieasyhydroforecast_config_file_data_gateway_name_twins. The file should have the following structure:
+
+``` json
+{
+  "gateway_name_twins": {
+    "<basin_A_gateway_code>": "<basin_A_forecast_tools_code>",
+    "<basin_B_gateway_code>": "<basin_B_forecast_tools_code>"
+  }
+}
+```
+
+The ensemble forecast files downloaded through the data gateway client have the following format (corresponding to the forcing data file format of the free hydrologic-hydraulic model [RS Minerve](https://crealp.ch/rs-minerve/) developed and maintained by the [CREALP](https://crealp.ch/) foundation):
 
 |                   | YOUR_NAME          |
 |-------------------|--------------------|
@@ -392,6 +434,10 @@ When accessing the SAPPHIRE data-gateway, the client downloads a csv file and sa
 | **22.08.2024**    | 10.874600198227881 |
 | **23.08.2024**    | 10.76900162280549  |
 | **24.08.2024**    | 10.889982012342898 |
+| **...**           | ...                |
+|
+
+TODO: Sandro: What is YOUR_NAME above? Is this defined in the shapefile that you upload to the data gateway?
 
 And for the control member it looks like this:
 
@@ -407,21 +453,27 @@ And for the control member it looks like this:
 | **04.09.2024**    | 2.36               | 1.38               | 0.92               | 2.94               |
 | **03.09.2024**    | 3.67               | 2.88               | 2.391              | 4.46               |
 | **02.09.2024**    | 8.27               | 6.83               | 5.71               | 8.05               |
+| **...**           | ...                | ...                | ...                | ...                |
+|
 
-These files are than transformed and eventually downscaled. The transformed (and downscaled) files have the following format. For the temperature, the column P is replaced with T. If the file is the control member, the column "ensemble_member" is non existent.
+TODO: Sandro: In the files we have on Dropbox, the columns are not named like this (xxx1 and xxx1.1 but 2 times xxx1).
+
+These files are than transformed and, optionally, downscaled. The transformed (and downscaled) files have the format shown below with the example of precipitation. For the temperature, the column P (for precipitation) is replaced with T (for temperature). If the file is the control member, the column "ensemble_member" is non existent.
 
 | date       | P    | code  | ensemble_member |
 |------------|------|-------|-----------------|
 | 2024-08-21 | 7.26 | xxxx1 | 1               |
 | 2024-08-22 | 0.62 | xxxx1 | 1               |
 | 2024-08-23 | 8.95 | xxxx1 | 1               |
+| ...       | ...  | ...   | ...             |
+|
 
 **TODO:** if snow data like SWE and melt is added. Update the documentation.
 
 The files in the hindcast folder (YOUR_HRU_P_reanalysis.csv) have the exact same format as the control member file.
 
 #### How to run the tool
-
+As mentioned above, the preprocessing_gateway module requires access to operational data provided by the SAPPHIRE Data Gateway.
 The first thing you need to ensure is that your HRU is on the SAPPHIRE data-gateway (TODO: add link to the documentation). Here you need to upload your HRU with its shapefiles and trigger the ERA5 Land Reanalysis and subscribe to daily calculations and the forecasts. The shapefile you upload should have the following columns:
 
 | name      | Z   | geometry |
