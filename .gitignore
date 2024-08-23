@@ -203,3 +203,4 @@ apps/backend/tests/lindas_rosegbach_station_data.csv
 apps/backend/tests/lindas_river_meta_data.csv
 apps/backend/tests/lindas_meta_data.csv
 apps/backend/tests/lindas_data.csv
+apps/forecast_dashboard/logs/log

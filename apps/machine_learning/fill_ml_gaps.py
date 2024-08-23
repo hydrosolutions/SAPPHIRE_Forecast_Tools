@@ -228,9 +228,7 @@ def fill_ml_gaps():
             forecast = forecast.sort_values(by='forecast_date')
 
             # save the forecast
-
-            # TODO: Remove the test part in the name, after the modul is tested.
-            forecast.to_csv(os.path.join(PATH_FORECAST, prefix + '_' +  MODEL_TO_USE + '_forecast_test.csv'), index=False)
+            forecast.to_csv(os.path.join(PATH_FORECAST, prefix + '_' +  MODEL_TO_USE + '_forecast.csv'), index=False)
 
         print("Missing forecasts filled in")
         logger.info('Missing forecasts filled in')

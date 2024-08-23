@@ -637,8 +637,10 @@ def read_linreg_forecasts_pentad():
 
     logger.info(f"Read {len(forecasts)} rows of linear regression forecasts for the pentadal forecast horizon.")
     logger.info(f"Read {len(stats)} rows of general runoff statistics for the pentadal forecast horizon.")
-    logger.debug(f"Colums in the linear regression forecast data: {forecasts.columns}")
+    logger.debug(f"Colums in the linear regression forecast data:\n{forecasts.columns}")
     logger.debug(f"Linear regression forecast data: \n{forecasts.head()}")
+    logger.debug(f"Colums in the general runoff statistics data:\n{stats.columns}")
+    logger.debug(f"General runoff statistics data: \n{stats.head()}")
 
     return forecasts, stats
 
@@ -705,8 +707,14 @@ def read_machine_learning_forecasts_pentad(model):
         .mean() \
         .reset_index()
 
-    # Rename the column forecast_date to date
-    forecast.rename(columns={"forecast_date": "date"}, inplace=True)
+    # Rename the column forecast_date to date and Q50 to forecasted_discharge.
+    # In the case of the ARIMA model, we don't have quantiles but rename the
+    # column Q to forecasted_discharge.
+    forecast.rename(
+        columns={"forecast_date": "date",
+                 "Q50": "forecasted_discharge",
+                 "Q": "forecasted_discharge"},
+        inplace=True)
 
     # Add a column model to the dataframe
     forecast["model_long"] = model_long
@@ -717,7 +725,7 @@ def read_machine_learning_forecasts_pentad(model):
     forecast["pentad_in_year"] = forecast["date"].apply(tl.get_pentad_in_year)
 
     logger.info(f"Read {len(forecast)} rows of {model} forecasts for the pentadal forecast horizon.")
-    logger.debug(f"Colums in the {model} forecast data: {forecast.columns}")
+    logger.debug(f"Colums in the {model} forecast data:\n{forecast.columns}")
     logger.debug(f"Read forecast data: \n{forecast.head()}")
 
     return forecast
@@ -806,16 +814,21 @@ def read_observed_and_modelled_data_pentade():
     tsmixer = read_machine_learning_forecasts_pentad(model='TSMIXER')
     arima = read_machine_learning_forecasts_pentad(model='ARIMA')
 
-    # For now, we read dummy data
-    modelA, statsA = read_linreg_forecasts_pentad_dummy(model='A')
-    modelB, statsB = read_linreg_forecasts_pentad_dummy(model='B')
-    logger.info(f"Read {len(modelA)} rows of model A forecasts for the pentadal forecast horizon.")
-    logger.info(f"Read {len(modelB)} rows of model B forecasts for the pentadal forecast horizon.")
+    # TEMP: For now, we read dummy data
+    #modelA, statsA = read_linreg_forecasts_pentad_dummy(model='A')
+    #modelB, statsB = read_linreg_forecasts_pentad_dummy(model='B')
+    #logger.info(f"Read {len(modelA)} rows of model A forecasts for the pentadal forecast horizon.")
+    #logger.info(f"Read {len(modelB)} rows of model B forecasts for the pentadal forecast horizon.")
 
-    exit()
-    # Concatenate the dataframes
-    forecasts = pd.concat([linreg, modelA, modelB])
-    stats = pd.concat([stats_linreg, statsA, statsB])
+    # Merge tide, tft, tsmixer and arima into linreg.
+    # same columns are: date, code, pentad_in_month, pentad_in_year,
+    # forecasted_discharge, model_long and model_short
+    forecasts = pd.concat([linreg, tide, tft, tsmixer, arima])
+    logger.debug(f"forecasts concatenated:\n{forecasts.head()}\n{forecasts.tail()}")
+
+    #forecasts = pd.concat([linreg, modelA, modelB])
+    #stats = pd.concat([stats_linreg, statsA, statsB])
+    stats = stats_linreg
     logger.info(f"Concatenated forecast results from all methods for the pentadal forecast horizon.")
 
     forecasts = calculate_ensemble_forecast(forecasts)
