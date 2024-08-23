@@ -196,7 +196,13 @@ apps/postprocessing_forecasts/logs/log
 apps/backend/tests/testspecial_wetbulbtemp.ipynb
 apps/logs/log
 
+.Rproj.user
+
 apps/preprocessing_runoff/runoff_comparison.html
 apps/preprocessing_runoff/runoff_comparison_0.html
 apps/preprocessing_runoff/runoff_comparison_1.html
-.Rproj.user
+apps/backend/tests/lindas_rosegbach_station_data.csv
+apps/backend/tests/lindas_river_meta_data.csv
+apps/backend/tests/lindas_meta_data.csv
+apps/backend/tests/lindas_data.csv
+apps/forecast_dashboard/logs/log

@@ -704,6 +704,9 @@ def generate_issue_and_forecast_dates(data_df_0: pd.DataFrame, datetime_col: str
 
         return(data_df_decad)
 
+    logger.info("input: generate_issue_and_forecast_dates")
+    logger.info("data_df_0.head(): \n{}".format(data_df_0.head()))
+
     # Test if the input data contains the required columns
     if not all(column in data_df_0.columns for column in [datetime_col, station_col, discharge_col]):
         raise ValueError(f'DataFrame is missing one or more required columns: {datetime_col, station_col, discharge_col}')
@@ -1373,23 +1376,23 @@ def calculate_skill_metrics_pentade(observed: pd.DataFrame, simulated: pd.DataFr
     if not all(column in simulated.columns for column in ['code', 'date', 'pentad_in_year', 'forecasted_discharge', 'model_long', 'model_short']):
         raise ValueError(f'Simulated DataFrame is missing one or more required columns: {["code", "date", "pentad_in_year", "forecasted_discharge", "model_long", "model_short"]}')
 
-    logger.debug("DEBUG: simulated.columns\n%s", simulated.columns)
-    logger.debug("DEBUG: simulated.head()\n", simulated.head(5))
-    logger.debug("DEBUG: simulated.tail()\n", simulated.tail(5))
-    logger.info("DEBUG: observed.columns%s\n", observed.columns)
-    logger.debug("DEBUG: observed.head()\n", observed.head(5))
-    logger.debug("DEBUG: observed.tail()\n", observed.tail(5))
+    logger.debug(f"DEBUG: simulated.columns\n{simulated.columns}")
+    logger.debug(f"DEBUG: simulated.head()\n{simulated.head(5)}")
+    logger.debug(f"DEBUG: simulated.tail()\n{simulated.tail(5)}")
+    logger.info(f"DEBUG: observed.columns\n{observed.columns}")
+    logger.debug(f"DEBUG: observed.head()\n{observed.head(5)}")
+    logger.debug(f"DEBUG: observed.tail()\n{observed.tail(5)}")
     # Merge the observed and simulated DataFrames
     skill_metrics_df = pd.merge(
         simulated,
         observed[['code', 'date', 'discharge_avg', 'delta']],
         on=['code', 'date'])
-    logger.debug("DEBUG: skill_metrics_df.columns\n%s", skill_metrics_df.columns)
-    logger.debug("DEBUG: skill_metrics_df.head()\n", skill_metrics_df.head(5))
-    logger.debug("DEBUG: skill_metrics_df.tail()\n", skill_metrics_df.tail(5))
+    logger.debug(f"DEBUG: skill_metrics_df.columns\n{skill_metrics_df.columns}")
+    logger.debug(f"DEBUG: skill_metrics_df.head()\n{skill_metrics_df.head(5)}")
+    logger.debug(f"DEBUG: skill_metrics_df.tail()\n{skill_metrics_df.tail(5)}")
 
     # Identify tuples in each cell
-    is_tuple = skill_metrics_df.applymap(lambda x: isinstance(x, tuple))
+    is_tuple = skill_metrics_df.apply(lambda col: col.map(lambda x: isinstance(x, tuple)))
     #logger.info("DEBUG: is_tuple\n", is_tuple)
     # Check if there are any True values in is_tuple
     contains_tuples = is_tuple.any(axis=1).any()
@@ -1414,7 +1417,7 @@ def calculate_skill_metrics_pentade(observed: pd.DataFrame, simulated: pd.DataFr
             simulated_col='forecasted_discharge'). \
         reset_index()
     # Identify tuples in each cell
-    is_tuple = skill_stats.applymap(lambda x: isinstance(x, tuple))
+    is_tuple = skill_stats.apply(lambda col: col.map(lambda x: isinstance(x, tuple)))
     # Check if there are any True values in is_tuple
     contains_tuples = is_tuple.any(axis=1).any()
     # Test if there are any tuples in the DataFrame
@@ -1437,7 +1440,7 @@ def calculate_skill_metrics_pentade(observed: pd.DataFrame, simulated: pd.DataFr
             simulated_col='forecasted_discharge').\
         reset_index()
     # Identify tuples in each cell
-    is_tuple = mae_stats.applymap(lambda x: isinstance(x, tuple))
+    is_tuple = mae_stats.apply(lambda col: col.map(lambda x: isinstance(x, tuple)))
     # Check if there are any True values in is_tuple
     contains_tuples = is_tuple.any(axis=1).any()
     # Test if there are any tuples in the DataFrame
@@ -1461,7 +1464,7 @@ def calculate_skill_metrics_pentade(observed: pd.DataFrame, simulated: pd.DataFr
             delta_col='delta').\
         reset_index()
     # Identify tuples in each cell
-    is_tuple = accuracy_stats.applymap(lambda x: isinstance(x, tuple))
+    is_tuple = accuracy_stats.apply(lambda col: col.map(lambda x: isinstance(x, tuple)))
     # Check if there are any True values in is_tuple
     contains_tuples = is_tuple.any(axis=1).any()
     # Test if there are any tuples in the DataFrame
@@ -1482,7 +1485,7 @@ def calculate_skill_metrics_pentade(observed: pd.DataFrame, simulated: pd.DataFr
     skill_stats = pd.merge(skill_stats, accuracy_stats, on=['pentad_in_year', 'code', 'model_long', 'model_short'])
 
     # Identify tuples in each cell
-    is_tuple = skill_stats.applymap(lambda x: isinstance(x, tuple))
+    is_tuple = skill_stats.apply(lambda col: col.map(lambda x: isinstance(x, tuple)))
     # Check if there are any True values in is_tuple
     contains_tuples = is_tuple.any(axis=1).any()
     # Test if there are any tuples in the DataFrame
@@ -1503,7 +1506,7 @@ def calculate_skill_metrics_pentade(observed: pd.DataFrame, simulated: pd.DataFr
     #print("DEBUG: skill_stats.columns\n", skill_stats.columns)
 
     # Identify tuples in each cell
-    is_tuple = skill_stats.applymap(lambda x: isinstance(x, tuple))
+    is_tuple = skill_stats.apply(lambda col: col.map(lambda x: isinstance(x, tuple)))
     # Check if there are any True values in is_tuple
     contains_tuples = is_tuple.any(axis=1).any()
     # Test if there are any tuples in the DataFrame
@@ -1680,6 +1683,10 @@ def read_daily_discharge_data_from_csv():
 
     # Sort the DataFrame by 'code' and 'date'
     discharge_data = discharge_data.sort_values(by=['code', 'date'])
+    logger.info("Daily discharge data read from %s", file_path)
+    logger.info("Columns: %s", discharge_data.columns)
+    logger.info("Head: %s", discharge_data.head())
+    logger.info("Tail: %s", discharge_data.tail())
 
     return discharge_data
 

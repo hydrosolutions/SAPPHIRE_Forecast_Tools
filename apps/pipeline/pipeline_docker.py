@@ -1,5 +1,11 @@
 # Description: This file contains the luigi tasks to run the docker containers
-#   for the forecast tools pipeline.
+#   for the forecast tools pipeline. For different organizations, we define
+#   different workflows. The workflows are defined in the RunWorkflow class.
+#   Available organizations are:
+#   - demo (default, publicly available data, linear regression only)
+#   - kghm (private data, linear regression, machine learning and conceptual
+#           hydrological model)
+#   The organization is definded in the .env file.
 #
 # Run: PYTHONPATH='.' luigi --module apps.pipeline.pipeline_docker RunWorkflow --local-scheduler
 #
@@ -15,15 +21,6 @@ from dotenv import load_dotenv
 # Import local utils
 from apps.pipeline.src import pipeline_utils as pu
 
-# Import docker client for luigi, may not be required
-#from . import docker_utils as dok
-#from . import docker_runner as dokr
-
-
-# Define the tag of the docker image to use
-TAG = os.getenv('SAPPHIRE_FORECAST_TOOLS_DOCKER_TAG', 'latest')
-# URL of the sapphire data gateway
-SAPPHIRE_DG_HOST = os.getenv('SAPPHIRE_DG_HOST', 'localhost')
 
 
 class Environment:
@@ -32,11 +29,21 @@ class Environment:
         print(f"Loading environment variables from {dotenv_path}")
         load_dotenv(dotenv_path=dotenv_path)
 
-    def get(self, key):
-        return os.getenv(key)
+    def get(self, key, default=None):
+        return os.getenv(key, default)
 
 # Initialize the Environment class with the path to your .env file
-env = Environment('../sensitive_data_forecast_tools/config/.env_develop_kghm')
+env_file_path = os.getenv('ieasyhydroforecast_env_file_path')
+env = Environment(env_file_path)
+# Get the tag of the docker image to use
+TAG = env.get('ieasyhydroforecast_backend_docker_image_tag')
+# Get the organization for which to run the forecast tools
+ORGANIZATION = env.get('ieasyhydroforecast_organization')
+# URL of the sapphire data gateway
+SAPPHIRE_DG_HOST = env.get('SAPPHIRE_DG_HOST')
+
+
+
 
 # Function to convert a relative path to an absolute path
 def get_absolute_path(relative_path):
@@ -77,22 +84,17 @@ def get_local_path(relative_path):
 class PreprocessingRunoff(luigi.Task):
 
     def output(self):
-
-        # Get the path to the output file
-        #print(f"cwd: {os.getcwd()}")
-        #print(f"ieasyforecast_intermediate_data_path: {env.get('ieasyforecast_intermediate_data_path')}")
-        #print(f"ieasyforecast_daily_discharge_file: {env.get('ieasyforecast_daily_discharge_file')}")
-        output_file_path = os.path.join(
-            env.get("ieasyforecast_intermediate_data_path"),
-            env.get("ieasyforecast_daily_discharge_file")
-            )
-        #print(f"Output file path: {output_file_path}")
-
-        return luigi.LocalTarget(output_file_path)
+        return luigi.LocalTarget(f'/app/log_preprunoff.txt')
 
     def run(self):
-
+        print("------------------------------------")
+        print(" Running PreprocessingRunoff task.")
+        print("------------------------------------")
         # Construct the absolute volume paths to bind to the containers
+        # TODO: Insted of constructing the paths here, we define relative paths
+        # to data ref dir in the .env file and use them here.
+        # Use also ieasyhydroforecast_data_ref_dir (absolute pathe) and
+        # ieasyhydroforecast_container_data_ref_dir (bind path)
         absolute_volume_path_config = get_absolute_path(
             env.get('ieasyforecast_configuration_path'))
         absolute_volume_path_internal_data = get_absolute_path(
@@ -106,13 +108,13 @@ class PreprocessingRunoff(luigi.Task):
         bind_volume_path_discharge = get_bind_path(
             env.get('ieasyforecast_daily_discharge_path'))
 
-        #print(f"env.get('ieasyforecast_configuration_path'): {env.get('ieasyforecast_configuration_path')}")
-        #print(f"absolute_volume_path_config: {absolute_volume_path_config}")
-        #print(f"absolute_volume_path_internal_data: {absolute_volume_path_internal_data}")
-        #print(f"absolute_volume_path_discharge: {absolute_volume_path_discharge}")
-        #print(f"bind_volume_path_config: {bind_volume_path_config}")
-        #print(f"bind_volume_path_internal_data: {bind_volume_path_internal_data}")
-        #print(f"bind_volume_path_discharge: {bind_volume_path_discharge}")
+        print(f"env.get('ieasyforecast_configuration_path'): {env.get('ieasyforecast_configuration_path')}")
+        print(f"absolute_volume_path_config: {absolute_volume_path_config}")
+        print(f"absolute_volume_path_internal_data: {absolute_volume_path_internal_data}")
+        print(f"absolute_volume_path_discharge: {absolute_volume_path_discharge}")
+        print(f"bind_volume_path_config: {bind_volume_path_config}")
+        print(f"bind_volume_path_internal_data: {bind_volume_path_internal_data}")
+        print(f"bind_volume_path_discharge: {bind_volume_path_discharge}")
 
         # Run the docker container to pre-process runoff data
         client = docker.from_env()
@@ -153,6 +155,11 @@ class PreprocessingRunoff(luigi.Task):
 
         print(f"Container {container.id} has stopped.")
 
+        # Create the output marker file
+        with self.output().open('w') as f:
+            f.write('Task completed')
+
+    '''
     def complete(self):
         if not self.output().exists():
             return False
@@ -165,18 +172,18 @@ class PreprocessingRunoff(luigi.Task):
 
         # Check if the output file was modified within the last number of seconds
         return current_time - output_file_mtime < 10  # 24 * 60 * 60
-
+    '''
 
 class PreprocessingGatewayQuantileMapping(luigi.Task):
 
     def output(self):
-        output_file_path = os.path.join(
-            os.getenv('ieasyforecast_intermediate_data_path'),
-            os.getenv('ieasyhydroforecast_OUTPUT_PATH_CM'))
-        print("DEGUB: output_file_path: ", output_file_path)
-        return luigi.LocalTarget(output_file_path)
+         # Define a unique output file for this task
+        return luigi.LocalTarget(f'/app/log_prepgateway.txt')
 
     def run(self):
+        print("------------------------------------")
+        print(" Running PreprocessingGateway task.")
+        print("------------------------------------")
 
         # Construct the absolute volume paths to bind to the containers
         absolute_volume_path_config = get_absolute_path(
@@ -235,19 +242,9 @@ class PreprocessingGatewayQuantileMapping(luigi.Task):
 
         print(f"Container {container.id} has stopped.")
 
-    def complete(self):
-        if not self.output().exists():
-            return False
-
-        # Get the modified time of the output file
-        output_file_mtime = os.path.getmtime(self.output().path)
-
-        # Get the current time
-        current_time = time.time()
-
-        # Check if the output file was modified within the last number of seconds
-        return current_time - output_file_mtime < 10
-
+        # Create the output marker file
+        with self.output().open('w') as f:
+            f.write('Task completed')
 
 class LinearRegression(luigi.Task):
 
@@ -255,20 +252,13 @@ class LinearRegression(luigi.Task):
         return PreprocessingRunoff()
 
     def output(self):
-
-        # Get the path to the output file
-        #print(f"cwd: {os.getcwd()}")
-        #print(f"ieasyforecast_intermediate_data_path: {env.get('ieasyforecast_intermediate_data_path')}")
-        #print(f"ieasyforecast_analysis_pentad_file: {env.get('ieasyforecast_analysis_pentad_file')}")
-        output_file_path = os.path.join(
-            env.get("ieasyforecast_intermediate_data_path"),
-            env.get("ieasyforecast_analysis_pentad_file")
-            )
-        #print(f"Output file path: {output_file_path}")
-
-        return luigi.LocalTarget(output_file_path)
+        return luigi.LocalTarget(f'/app/log_linreg.txt')
 
     def run(self):
+        print("------------------------------------")
+        print(" Running LinearRegression task.")
+        print("------------------------------------")
+
         # Construct the absolute volume paths to bind to the containers
         absolute_volume_path_config = get_absolute_path(
             env.get('ieasyforecast_configuration_path'))
@@ -330,6 +320,11 @@ class LinearRegression(luigi.Task):
 
         print(f"Container {container.id} has stopped.")
 
+        # Write the output marker file
+        with self.output().open('w') as f:
+            f.write('Task completed')
+
+    '''
     def complete(self):
         if not self.output().exists():
             return False
@@ -342,7 +337,96 @@ class LinearRegression(luigi.Task):
 
         # Check if the output file was modified within the last number of seconds
         return current_time - output_file_mtime < 10  # 24 * 60 * 60
+    '''
 
+class RunMLModel(luigi.Task):
+    model_type = luigi.Parameter()
+    prediction_mode = luigi.Parameter()
+
+    def requires(self):
+        return [PreprocessingRunoff(), PreprocessingGatewayQuantileMapping()]
+
+    def run(self):
+        print("------------------------------------")
+        print(" Running MachineLearning task.")
+        print("------------------------------------")
+
+        # Construct the absolute volume paths to bind to the containers
+        absolute_volume_path_config = get_absolute_path(
+            env.get('ieasyforecast_configuration_path'))
+        absolute_volume_path_internal_data = get_absolute_path(
+            env.get('ieasyforecast_intermediate_data_path'))
+        bind_volume_path_config = get_bind_path(
+            env.get('ieasyforecast_configuration_path'))
+        bind_volume_path_internal_data = get_bind_path(
+            env.get('ieasyforecast_intermediate_data_path'))
+
+        #print(f"env.get('ieasyforecast_configuration_path'): {env.get('ieasyforecast_configuration_path')}")
+        #print(f"absolute_volume_path_config: {absolute_volume_path_config}")
+        #print(f"absolute_volume_path_internal_data: {absolute_volume_path_internal_data}")
+        #print(f"bind_volume_path_config: {bind_volume_path_config}")
+        #print(f"bind_volume_path_internal_data: {bind_volume_path_internal_data}")
+
+        # Run the docker container to forecast using machine learning
+        client = docker.from_env()
+
+        # Pull the latest image
+        if pu.there_is_a_newer_image_on_docker_hub(
+            client, repository='mabesa', image_name='sapphire-ml', tag=TAG):
+            print("Pulling the latest image from Docker Hub.")
+            client.images.pull('mabesa/sapphire-ml', tag=TAG)
+
+        # Define environment variables
+        environment = [
+            'SAPPHIRE_OPDEV_ENV=True',
+            'IN_DOCKER=True',
+            f'SAPPHIRE_MODEL_TO_USE={self.model_type}',  # TFT, TIDE, TSMIXER, ARIMA
+            f'SAPPHIRE_PREDICTION_MODE={self.prediction_mode}'  # PENTAD, DECAD
+        ]
+        print(f"Environment variables:\n{environment}")
+
+        # Define volumes
+        volumes = {
+            absolute_volume_path_config: {'bind': bind_volume_path_config, 'mode': 'rw'},
+            absolute_volume_path_internal_data: {'bind': bind_volume_path_internal_data, 'mode': 'rw'}
+        }
+        print(f"Volumes:\n{volumes}")
+
+
+        # Run the container
+        container = client.containers.run(
+            f"mabesa/sapphire-ml:{TAG}",
+            detach=True,
+            environment=environment,
+            volumes=volumes,
+            name=f"ml_{self.model_type}_{self.prediction_mode}",
+            #labels=labels,
+            network='host'  # To test
+        )
+
+        print(f"Container {container.id} is running.")
+
+        # Wait for the container to finish running
+        container.wait()
+
+        # Get the logs from the container
+        logs = container.logs().decode('utf-8')
+        print(f"Logs from container {container.id}:\n{logs}")
+
+        print(f"Container {container.id} has stopped.")
+
+class RunAllMLModels(luigi.WrapperTask):
+    def requires(self):
+        # Ensure preprocessing tasks are completed first
+        yield PreprocessingRunoff()
+        yield PreprocessingGatewayQuantileMapping()
+
+        models = ['TFT', 'TIDE', 'TSMIXER', 'ARIMA']
+        prediction_modes = ['PENTAD', 'DECAD']
+
+        for model in models:
+            for mode in prediction_modes:
+                yield RunMLModel(model_type=model, prediction_mode=mode)
 
 class PostProcessingForecasts(luigi.Task):
 
@@ -350,20 +434,13 @@ class PostProcessingForecasts(luigi.Task):
         return LinearRegression()
 
     def output(self):
-
-        # Get the path to the output file
-        #print(f"cwd: {os.getcwd()}")
-        #print(f"ieasyforecast_intermediate_data_path: {env.get('ieasyforecast_intermediate_data_path')}")
-        #print(f"ieasyforecast_pentadal_skill_metrics_file: {env.get('ieasyforecast_pentadal_skill_metrics_file')}")
-        output_file_path = os.path.join(
-            env.get("ieasyforecast_intermediate_data_path"),
-            env.get("ieasyforecast_pentadal_skill_metrics_file")
-            )
-        #print(f"Output file path: {output_file_path}")
-
-        return luigi.LocalTarget(output_file_path)
+        return luigi.LocalTarget(f'/app/log_postproc.txt')
 
     def run(self):
+        print("------------------------------------")
+        print(" Running PostprocessingForecasts task.")
+        print("------------------------------------")
+
         # Construct the absolute volume paths to bind to the containers
         absolute_volume_path_config = get_absolute_path(
             env.get('ieasyforecast_configuration_path'))
@@ -415,6 +492,11 @@ class PostProcessingForecasts(luigi.Task):
 
         print(f"Container {container.id} has stopped.")
 
+        # Write the output marker file
+        with self.output().open('w') as f:
+            f.write('Task completed')
+
+    '''
     def complete(self):
         if not self.output().exists():
             return False
@@ -427,6 +509,7 @@ class PostProcessingForecasts(luigi.Task):
 
         # Check if the output file was modified within the last number of seconds
         return current_time - output_file_mtime < 10  # 24 * 60 * 60
+    '''
 
 """
 class DeleteOldGateywayFiles(luigi.Task):
@@ -459,16 +542,22 @@ class DeleteOldGateywayFiles(luigi.Task):
 class RunWorkflow(luigi.Task):
 
     def requires(self):
-        return [PostProcessingForecasts(),
-                #PreprocessingRunoff(),
-                PreprocessingGatewayQuantileMapping(),
-                #DeleteOldGateywayFiles()
-                ]
+        if ORGANIZATION=='demo':
+            print("Running demo workflow.")
+            return [PostProcessingForecasts()]
+
+        elif ORGANIZATION=='kghm':
+            print("Running KGHM workflow.")
+            return [PostProcessingForecasts(),
+                    RunAllMLModels(),
+                    #DeleteOldGateywayFiles()
+                    ]
+
+        # You can add workflow definitions for other organizations here.
 
     def run(self):
         print("Workflow completed.")
         return None
-
 
 
 if __name__ == '__main__':
