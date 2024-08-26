@@ -615,6 +615,7 @@ class RunWorkflow(luigi.Task):
             print("Running KGHM workflow.")
             return [PostProcessingForecasts(),
                     RunAllMLModels(),
+                    ConceptualModel()
                     #DeleteOldGateywayFiles()
                     ]
 
