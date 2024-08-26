@@ -186,7 +186,7 @@ runModel_withDA <- function(forecast_date,
                                  GradP = Basin_Info$k_value, 
                                  GradT = Basin_Info$GradT)
   
-  RunOptionsIni <- airGR::CreateRunOptions(FUN_MOD = FUN_MOD,
+  RunOptionsIni <- CreateRunOptions(FUN_MOD = FUN_MOD,
                                            InputsModel = inputsModel,
                                            IndPeriod_Run = 1L,
                                            warning = FALSE, verbose = FALSE,
