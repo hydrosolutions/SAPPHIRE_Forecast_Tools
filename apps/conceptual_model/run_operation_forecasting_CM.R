@@ -65,8 +65,13 @@ if (Sys.getenv("IN_DOCKER_CONTAINER")=="") {
 
 ##################################################################
 # 0 Function ####
-source("functions/functions_operational.R")
-source("functions/functions_hindcast.R")
+if (Sys.getenv("IN_DOCKER_CONTAINER")=="") {
+  source("functions/functions_operational.R")
+  source("functions/functions_hindcast.R")
+} else {
+  source("/app/apps/conceptual_model/functions/functions_operational.R")
+  source("/app/apps/conceptual_model/functions/functions_hindcast.R")
+}
 
 
 ################### CHANGE ###################
