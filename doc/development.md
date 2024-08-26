@@ -333,7 +333,7 @@ The shapefile uploaded to the SAPPHIRE Data Gateway should have the attributes `
 | <code_basin_B> | 1   | ...      |
 |
 
-Should the code attributes in the data gateway not correspond to the code attributes in the forecast tools, you can apply a code mapping by editing the config file ieasyhydroforecast_config_file_data_gateway_name_twins (see below). For more detailed information, please refer to the SAPPHIRE Data Gateway documentation (TODO: add link).
+Should the code attributes in the data gateway not correspond to the code attributes in the forecast tools, you can apply a code mapping in the forecast tools by editing the config file ieasyhydroforecast_config_file_data_gateway_name_twins (see below). For more detailed information, please refer to the SAPPHIRE Data Gateway documentation (TODO: add link).
 
 TODO: Add step-by-step instructions of how to upload shapefile and subscribe to operational data on the data gateway (assuming the data gateway is up and running).
 </div>
@@ -411,7 +411,7 @@ The only input file you need to provide, if you would like to make the downscali
 | ...   | ...              | ...              | ...                 |
 |
 
-When accessing the SAPPHIRE data gateway, the client downloads a csv file and saves it in the data gateway folder. When you integrate a HRU on the data gateway, you can name the different shapefiles in the HRU. These names correspond to the codes. Should the codes in the data gateway not correspond to the codes in the forecast tools, you can apply a code mapping by editing the config json file ieasyhydroforecast_config_file_data_gateway_name_twins. The file should have the following structure:
+When accessing the SAPPHIRE data gateway, the client downloads a csv file and saves it in the data gateway folder. When you integrate a HRU on the data gateway, you can name the different shapefiles in the HRU. These names correspond to the codes. Should the codes in the data gateway not correspond to the codes in the forecast tools, you can apply a code mapping by editing the config json file ieasyhydroforecast_config_file_data_gateway_name_twins. The file should have the following structure to map codes in the data gateway to codes in the forecast tools:
 
 ``` json
 {
