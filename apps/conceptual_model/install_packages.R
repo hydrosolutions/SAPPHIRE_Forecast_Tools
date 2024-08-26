@@ -1,7 +1,7 @@
 
 
 # Intendent to be run from the ~app/ direction in the Docker container
-requirements <- readLines("/conceptual_model/requirements.txt")
+requirements <- readLines("apps/conceptual_model/requirements.txt")
 
 # Always needs for install below
 if (!requireNamespace("devtools", quietly = TRUE)) {
@@ -16,7 +16,7 @@ for (pkg in requirements) {
   
   if (!requireNamespace(package, quietly = TRUE) || packageVersion(package) != version) {
     print(paste("Installing package", package, "version", version))
-    devtools::install_version(package, version = version, repos = "http://cran.us.r-project.org")
+    devtools::install_version(package, version = version, repos = "http://cran.rstudio.com/")
   }
 }
 
