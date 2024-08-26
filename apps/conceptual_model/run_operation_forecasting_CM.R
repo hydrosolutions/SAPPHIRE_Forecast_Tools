@@ -5,11 +5,11 @@
 # .json file is in: /data/sensitive_data_forecast_tools/config/config_conceptual_model.json
 ##################################################################
 
-library(here)
+#library(here)
 library(jsonlite)
-library(devtools, quietly = TRUE)
-# devtools::install_github("hydrosolutions/airGR_GM")
-# devtools::install_github("hydrosolutions/airgrdatassim")
+#library(remotes, quietly = TRUE)
+# remotes::install_github("hydrosolutions/airGR_GM")
+# remotes::install_github("hydrosolutions/airgrdatassim")
 library(airGR, quietly = TRUE)
 library(airGRdatassim, quietly = TRUE)
 library(tidyverse, quietly = TRUE)
@@ -73,7 +73,7 @@ source("functions/functions_hindcast.R")
 forecast_date <- today()
 
 ################### INITIALIZE ###################
-# JSON file
+# JSON file - with configuration of conceptual models to run
 if (!dir.exists(Sys.getenv("ieasyhydroforecast_PATH_TO_JSON"))) {
   stop("Directory ", Sys.getenv("ieasyhydroforecast_PATH_TO_JSON"), " not found. ")
 }
@@ -87,7 +87,7 @@ dir_Control <- file.path(Sys.getenv("ieasyhydroforecast_PATH_TO_CF"))
 dir_Ensemble <- file.path(Sys.getenv("ieasyhydroforecast_PATH_TO_PF"))
 dir_hindcast <- file.path(Sys.getenv("ieasyhydroforecast_PATH_TO_HIND"))
 
-# file names for control memnber (cf) and ensemble member (pf) forecast and for the hindcasting forcing data (starts from 2009-01-01)
+# file names for control member (cf) and ensemble member (pf) forecast and for the hindcasting forcing data (starts from 2009-01-01)
 # cf: all basins in one file
 cfP_forecast_filename <- Sys.getenv("ieasyhydroforecast_FILE_CF_P")
 cfT_forecast_filename <- Sys.getenv("ieasyhydroforecast_FILE_CF_T")
