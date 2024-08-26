@@ -72,7 +72,9 @@ get_hindcast_period <- function(start_date,
   
   start_date <- as.Date(start_date)
   end_date <- as.Date(end_date)
-  
+  # print(start_date)
+  # print(end_date)
+  # print(forecast_mode)
   # check that start_date has to be smaller than end_date
   if (start_date > end_date) {
     stop("start_date has to be before the end_date")
@@ -213,8 +215,18 @@ get_hindcast <- function(forecast_date,
   }
   # if the forecast_mode is daily, then the forecast_end is 14 days after the forecast_date
   if (forecast_mode == "daily") {
-    forecast_end <- forecast_date + 14
+    # Calculate forecast_end based on the maximum date in basinObsTS
+    forecast_end <- as.Date(max(basinObsTS$date))
+    
+    # Calculate the expected forecast end date
+    expected_forecast_end <- forecast_date + 14
+    
+    # Check if forecast_end is earlier than the expected forecast end date
+    if (forecast_end < expected_forecast_end) {
+      warning("Please download the recent forecast.")
+    }
   }
+  
   
   if (forecast_mode == "pentad") {
     forecast_end <- get_forecast_end_pentad(forecast_date)
@@ -233,14 +245,16 @@ get_hindcast <- function(forecast_date,
   }
   
   
-
+  
   start_op <- format((Date_6_months_ago), format = "%Y%m%d")
   indRun_OL <- seq(from = which(format(as.Date(basinObsTS$date), format = "%Y%m%d") == start_op), 
                    to   = which(format(as.Date(basinObsTS$date), format = "%Y%m%d") == start_op))
-  
+
   indRun_DA <- seq(from = which(format(basinObsTS$date, format = "%Y-%m-%d") == format(Date_6_months_ago, format = "%Y-%m-%d")),
                    to   = which(format(basinObsTS$date, format = "%Y-%m-%d") == format(forecast_end, format = "%Y-%m-%d")))
   
+  
+ 
   warmup <- c((indRun_OL[1]-2*365):(indRun_OL[1]-1))
   runOptions_OL <- airGR::CreateRunOptions(FUN_MOD = FUN_MOD,
                                            InputsModel = inputsModel,
