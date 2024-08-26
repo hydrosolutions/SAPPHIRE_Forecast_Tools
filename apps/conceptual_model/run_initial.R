@@ -26,8 +26,6 @@ if (Sys.getenv("IN_DOCKER_CONTAINER")=="") {
   # This code assumes that forecast_configuration has been opened in
   # apps/configuration_dashboard for development
   # setwd(here())
-
-
   print(getwd())
   if (Sys.getenv("SAPPHIRE_OPDEV_ENV")=="True") {
     if (!file.exists("../../../sensitive_data_forecast_tools/config/.env_develop_kghm")) {
