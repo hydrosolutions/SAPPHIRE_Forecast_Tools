@@ -346,6 +346,9 @@ class RunMLModel(luigi.Task):
     def requires(self):
         return [PreprocessingRunoff(), PreprocessingGatewayQuantileMapping()]
 
+    def output(self):
+        return luigi.LocalTarget(f'/app/log_ml_{self.model_type}_{self.prediction_mode}.txt')
+
     def run(self):
         print("------------------------------------")
         print(" Running MachineLearning task.")
@@ -414,6 +417,10 @@ class RunMLModel(luigi.Task):
         print(f"Logs from container {container.id}:\n{logs}")
 
         print(f"Container {container.id} has stopped.")
+
+        # Write the output marker file
+        with self.output().open('w') as f:
+            f.write('Task completed')
 
 class RunAllMLModels(luigi.WrapperTask):
     def requires(self):
