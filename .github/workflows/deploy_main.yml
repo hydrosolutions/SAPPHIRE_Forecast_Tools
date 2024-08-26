@@ -127,7 +127,7 @@ jobs:
       run: |
         docker build --no-cache \
         -t "${{ env.CONCMOD_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
-        -f ./apps/configuration_dashboard/dockerfile .
+        -f ./apps/conceptual_model/Dockerfile .
 
     # Log in to the Docker registry
     - name: Log in to the Docker registry
