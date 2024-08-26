@@ -21,11 +21,13 @@ library(usethis, quietly = TRUE)
 # present or not.
 if (Sys.getenv("IN_DOCKER_CONTAINER")=="") {
   print("Running from local machine")
+
   # Environment variable IN_DOCKER_CONTAINER is not set. Run from local machine
   # This code assumes that forecast_configuration has been opened in
   # apps/configuration_dashboard for development
-  setwd(here())
-  # setwd("apps/conceptual_model")
+  # setwd(here())
+
+
   print(getwd())
   if (Sys.getenv("SAPPHIRE_OPDEV_ENV")=="True") {
     if (!file.exists("../../../sensitive_data_forecast_tools/config/.env_develop_kghm")) {
@@ -63,7 +65,6 @@ if (Sys.getenv("IN_DOCKER_CONTAINER")=="") {
 ##################################################################
 # 0 Function ####
 source("functions/functions_operational.R")
-source("functions/functions_plot.R")
 source("functions/functions_hindcast.R")
 
 ################### INITIALIZE ###################

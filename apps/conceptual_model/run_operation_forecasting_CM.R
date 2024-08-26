@@ -24,7 +24,7 @@ if (Sys.getenv("IN_DOCKER_CONTAINER")=="") {
   # Environment variable IN_DOCKER_CONTAINER is not set. Run from local machine
   # This code assumes that forecast_configuration has been opened in
   # apps/configuration_dashboard for development
-  setwd(here())
+  # setwd(here())
   # setwd("apps/conceptual_model")
   print(getwd())
   if (Sys.getenv("SAPPHIRE_OPDEV_ENV")=="True") {
@@ -58,12 +58,14 @@ if (Sys.getenv("IN_DOCKER_CONTAINER")=="") {
   }
 }
 
-# print(Sys.getenv("ieasyhydroforecast_JSON_FILE"))
- 
+# # print(Sys.getenv("ieasyhydroforecast_JSON_FILE"))
+# file.exists("/Users/adrian/Documents/GitHub/SAPPHIRE_Forecast_Tools/apps/conceptual_model/functions/functions_operational.R")
+# print(file.path(here())
+
+
 ##################################################################
 # 0 Function ####
 source("functions/functions_operational.R")
-source("functions/functions_plot.R")
 source("functions/functions_hindcast.R")
 
 
@@ -313,7 +315,7 @@ for (Code in config$codes) {
   }
 
 
-  
+
   ## 7.2 pentadal  ####
   if ((length(pentadal_days(forecast_date, forecast_date)) == 0) && !(exists("start_date_hindcast"))) {
     print("not pentadal timestep no hindcasting")
@@ -321,13 +323,13 @@ for (Code in config$codes) {
     print("Pentadal forecast day, no hindcasting")
     pentadal_steps <- pentadal_days(forecast_date, forecast_date)
     process_save_time_steps(pentadal_steps, "pentad", start_date_hindcast, forecast_date, dir_Results, Basin_Info, forecast_statistics)
-    
+
   } else if (exists("start_date_hindcast")) {
     print("Pentadal day, hindcasting")
     pentadal_steps <- pentadal_days(start_date_hindcast, forecast_date)
     process_save_time_steps(pentadal_steps, "pentad", start_date_hindcast, forecast_date, dir_Results, Basin_Info, forecast_statistics)
   }
-  
+
   ## 7.3 decadal  ####
   if ((length(decadal_days(forecast_date, forecast_date)) == 0) && !(exists("start_date_hindcast"))) {
     print("not decadal timestep no hindcasting")
@@ -335,12 +337,12 @@ for (Code in config$codes) {
     print("Decadal forecast day, no hindcasting")
     decadal_steps <- decadal_days(forecast_date, forecast_date)
     process_save_time_steps(decadal_steps, "decad", start_date_hindcast, forecast_date, dir_Results, Basin_Info, forecast_statistics)
-    
+
   } else if (exists("start_date_hindcast")) {
     print("Decadal day, hindcasting")
     decadal_steps <- decadal_days(start_date_hindcast, forecast_date)
     process_save_time_steps(decadal_steps, "decad", start_date_hindcast, forecast_date, dir_Results, Basin_Info, forecast_statistics)
   }
 }
-  
+
 
