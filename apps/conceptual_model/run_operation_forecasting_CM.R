@@ -66,9 +66,11 @@ if (Sys.getenv("IN_DOCKER_CONTAINER")=="") {
 ##################################################################
 # 0 Function ####
 if (Sys.getenv("IN_DOCKER_CONTAINER")=="") {
+  print("Loading functions from ./functions/")
   source("functions/functions_operational.R")
   source("functions/functions_hindcast.R")
 } else {
+  print("loading Functions from /app/apps/conceptual_model/functions/")
   source("/app/apps/conceptual_model/functions/functions_operational.R")
   source("/app/apps/conceptual_model/functions/functions_hindcast.R")
 }
