@@ -55,6 +55,11 @@ runModel_withoutDA <- function(forecast_date,
                           "RunModel_CemaNeigeGR6J_Glacier")
   
   
+  if (Enddate_op > Date_6_months_ago) {
+    stop("Please rerun the script : run_initial.R")
+  }
+  
+  
   print(paste0("Enddate_op: ", Enddate_op))
   
   
@@ -186,7 +191,7 @@ runModel_withDA <- function(forecast_date,
                                  GradP = Basin_Info$k_value, 
                                  GradT = Basin_Info$GradT)
   
-  RunOptionsIni <- airGR::CreateRunOptions(FUN_MOD = FUN_MOD,
+  RunOptionsIni <- CreateRunOptions(FUN_MOD = FUN_MOD,
                                            InputsModel = inputsModel,
                                            IndPeriod_Run = 1L,
                                            warning = FALSE, verbose = FALSE,
