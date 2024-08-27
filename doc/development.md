@@ -516,9 +516,30 @@ TODO: Bea
 
 #### Description of module
 
-TODO: Adrian, please provide a detailed description of the module so that laypeople understand what happens. Similarly as if you'd give instructions to Copilot to write a script for you.
+**Description of the conceptual model:**
+The "conceptual_model" module integrates a rainfall-runoff model specifically designed for operational discharge forecasting in high mountain areas and here implemented for the Ala Archa and Inflow Toktogul basin. The selected models, GR4J-CemaNeige-Glacier and GR6J-CemaNeige, are daily, empirical, and lumped reservoir-based models. The GR4J model utilizes four parameters: X1, X2, X3, and X4. X1 represents the production store capacity, which corresponds to the soil's root zone where atmospheric exchanges such as evapotranspiration occur. X2 is the groundwater exchange coefficient, regulating water transfer to groundwater, thereby allowing the model to simulate both leaky and gaining catchments. X3 represents the routing store capacity, influencing slower flow processes like interflow, which are closely linked to the catchment's geology and soil cover. X4 determines the lag time between rainfall and peak flow, shaping the hydrograph. The GR6J model extends this framework by adding two additional parameters, X5 and X6. X5, the inter-catchment exchange threshold, improves the simulation of groundwater exchange processes, while X6, the exponential store depletion coefficient, is designed to enhance the simulation of low-flow conditions. The CemaNeige module simulates snow accumulation and melt processes. It introduces two additional calibration factors, CN1 and CN2, and uses elevation bands to simulate snow processes across different altitudes, with each band representing an equal area. Precipitation and temperature are distributed across these elevation bands based on basin-specific lapse rates. The model framework has been expanded to include a glacier module, which adds three more parameters. This module simulates glacier melt using a temperature index approach and the same spatial descretization than the CemaNeige. Glacier melt begins when the Snow Water Equivalent (SWE) simulated by the CemaNeige module falls below a certain threshold, and the air temperature threshold in the elevation band is exceeded. The glacier melt rate is then proportional to the temperature and an ice melt factor. The model was calibrated with daily discharge data from 2001-01-01 to 2015-31-12 and validated with the period form 2016-01-01 to 2023-12-31. For the Ala Archa model also modelled SWE data was used in the calibration obtained from a [Factorial Snow Model](https://github.com/ArcticSnow/TopoPyScale). We implemented the conceptual model using a modified version of the [airGR](https://github.com/hydrosolutions/airGR_GM) package in R.
 
-Please feel free to add any other information that you think is relevant.
+**Data assimilation:**
+Data assimilation in the Ala Archa and Toktogul Inflow models enhances discharge predictions by incorporating real-time data. This involves perturbing meteorological forcings and internal model states, followed by running the model 200 times as part of an ensemble. The model is run multiple times (200) with perturbed forcing input and internal model states.  The Particle Filter (PF) is then applied to update model predictions based on these ensemble runs. The PF works by assigning weights to each model run based on how well they match the observations, then resampling to keep the most accurate runs and discard the less accurate ones. This resampling ensures that the model focuses on the best predictions, leading to improved accuracy as new data is assimilated. We used a modified version of the [airGRdatassim](https://github.com/hydrosolutions/airgrdatassim) package in R to implement data assimilation in operational runs of the conceptual models. 
+
+**Forcing data:**
+The operational model uses temperature and precipitation inputs from the [preprocessing_gateway](#preprocessing-of-gridded-weather-data-preprocessing_gateway) module, with quantile-mapped ERA5-Land data for past data and all 51 ensemble members from the ECMWF IFS ensemble forecast for future weather predictions.
+
+**Operational Setup:**
+For each run, the model saves the initial condition from 180 days before the current run, making it available for the next forecast. When a new forecast is triggered, the model uses the saved initial condition from the previous run, which stored the initial condition at the current forecast date minus the lag days (180 days) and the time since the last forecast. The model first runs without data assimilation up to today minus lag days, then incorporates data assimilation to the forecast date. Finally, it uses the ensemble weather predictions to run the model for each data assimilation ensemble and ensemble weather forecast, creating a 15-day ahead ensemble daily discharge forecast. From these results, pentadal and decadal discharge forecasts are calculated.
+
+Folder Structure:
+
+-   conceptual_model
+    -   run_operation_forecasting_CM.R
+    -   run_manual_hindcast.R
+    -   run_initial.R
+    -   requirements.txt
+    -   install_packages.R
+    -   functions
+        -   functions_hindcast.R
+        -   functions_operational.R
+
 
 #### Prerequisites
 
@@ -528,7 +549,10 @@ TODO: Adrian, please describe how to install the packages from GitHub. If you ha
 
 TODO: Adrian, please describe what input files the module requires (the format of the files) and what output files are produced. This includes a description of the required formats and all files that describe the conceptual model (e.g. the parameters or initial conditions of the model).
 
-#### How to run the tool
+**Data Structure and Input files:**
+
+
+#### How to run the tool 
 
 TODO: Adrian, please provide instructions of how you run the module when you develop it.
 

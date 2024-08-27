@@ -265,11 +265,10 @@ for (Code in config$codes) {
     existing_forecasts <- existing_forecasts %>%
       mutate(forecast_date = as.Date(forecast_date, format = "%d.%m.%Y"),
              date = as.Date(date, format = "%d.%m.%Y"))
-    last_forecast_date <- as.Date(max(existing_forecasts$forecast_date))
-    # CASE 2.1: ;ULTIPLE RUN A DAY 
+    last_forecast_date <- as.Date(max(existing_forecasts$forecast_date, na.rm = TRUE))
+    # CASE 2.1: MULTIPLE RUN A DAY 
     if (forecast_date == last_forecast_date){
       print("Multiple run: overwrite the forecast from today")
-      
       filtered_forecasts <- existing_forecasts %>%
         filter(forecast_date != !!forecast_date) # !! needed because of the same name of column and variable
       
@@ -321,33 +320,43 @@ for (Code in config$codes) {
     }
   }
 
-
-
   ## 7.2 pentadal  ####
+
+  # CASE: no pentadal timesteps and no hindasting
   if ((length(pentadal_days(forecast_date, forecast_date)) == 0) && !(exists("start_date_hindcast"))) {
     print("not pentadal timestep no hindcasting")
+    # CASE: no pentadal timesteps in the hindcasting but hindcasting
+  } else if ((length(pentadal_days(forecast_date, forecast_date)) == 0) && (exists("start_date_hindcast"))) {
+    print("no pentadal timesteps in hindcasting")
+    # CASE: forecast date is a pentadal timestep and no hindcasting
   } else if (!(length(pentadal_days(forecast_date, forecast_date)) == 0) && !(exists("start_date_hindcast"))) {
     print("Pentadal forecast day, no hindcasting")
     pentadal_steps <- pentadal_days(forecast_date, forecast_date)
     process_save_time_steps(pentadal_steps, "pentad", start_date_hindcast, forecast_date, dir_Results, Basin_Info, forecast_statistics)
-
+    # CASE: forecast date is a pentadal timestep and hindcasting
   } else if (exists("start_date_hindcast")) {
     print("Pentadal day, hindcasting")
     pentadal_steps <- pentadal_days(start_date_hindcast, forecast_date)
     process_save_time_steps(pentadal_steps, "pentad", start_date_hindcast, forecast_date, dir_Results, Basin_Info, forecast_statistics)
+    print(pentadal_steps)
   }
 
   ## 7.3 decadal  ####
+  # CASE: There was no hindcasting, and the forecast date is not a decadal step
   if ((length(decadal_days(forecast_date, forecast_date)) == 0) && !(exists("start_date_hindcast"))) {
     print("not decadal timestep no hindcasting")
-  } else if (!(length(decadal_days(forecast_date, forecast_date)) == 0) && !(exists("start_date_hindcast"))) {
+  # CASE: There was done hindcasting, but there is no decadasl step in the hindcasting
+    } else if ((length(decadal_days(forecast_date, forecast_date)) == 0) && (exists("start_date_hindcast"))) {
+    print("no decadal timesteps in hindcasting")
+  # CASE: There was no hindcasting, but forecast date it is a decadal step
+    } else if (!(length(decadal_days(forecast_date, forecast_date)) == 0) && !(exists("start_date_hindcast"))) {
     print("Decadal forecast day, no hindcasting")
     decadal_steps <- decadal_days(forecast_date, forecast_date)
-    process_save_time_steps(decadal_steps, "decad", start_date_hindcast, forecast_date, dir_Results, Basin_Info, forecast_statistics)
-
-  } else if (exists("start_date_hindcast")) {
+  # CASE: There was  hindcasting, and the forecast date is a decadal step
+    } else if (exists("start_date_hindcast")) {
     print("Decadal day, hindcasting")
     decadal_steps <- decadal_days(start_date_hindcast, forecast_date)
+    print(decadal_steps)
     process_save_time_steps(decadal_steps, "decad", start_date_hindcast, forecast_date, dir_Results, Basin_Info, forecast_statistics)
   }
 }
