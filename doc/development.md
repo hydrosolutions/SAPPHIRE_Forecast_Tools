@@ -503,11 +503,127 @@ Folder Structure:
         -   functions_operational.R
 
 
+The primary function to run the model is `run_operation_forecasting_CM.R`.
+As mentioned earlier, the `run_operation_forecasting_CM.R` file reads the initial conditions from the last forecast run. When the model is triggered for the first time, the `run_initial.R` function must be executed to generate the initial conditions for the operational run.
+
+The `run_initial.R` function works as follows:
+It creates the initial conditions for the specified basins, running from `start_ini` to `end_ini` for the basin `codes`  with the specified hydrological model in `fun_mod_mapping` defined in the `config_conceptual_model.json` file. The script reads the specific basin information and parameters (as detailed in the I/O documentation). It then retrieves the forcing data, including precipitation and temperature, from the [preprocessing_gateway](#preprocessing-of-gridded-weather-data-preprocessing_gateway). Within the `process_forecast_forcing` function (located in the `functions_operational.R` file), the Potential Evapotranspiration (PET) is calculated using the Oudin method, and the forcing data is structured to meet the model's requirements (also detailed in the I/O documentation). The specified conceptual model is then run from `start_ini` to `end_ini`. Finally, the output of this model run is saved as the initial condition.
+
+
 #### Prerequisites 
 
 TODO: Adrian, please describe how to install the packages from GitHub. If you have a requirements.txt file, please describe how to install the required packages.
 
 #### I/O 
+
+**Input File**
+
+1. Forcing data: 
+
+    Control member forcing: Total precipitation in mm/d and temperature in °C. The files must be separate for precipitation and temperature, with filenames and file paths specified in the .env file.
+
+    | date       | P     | code  |
+    |------------|-------|-------|
+    | 27.08.2023 | 15.37 | 15194 |
+    | 28.08.2023 | 21.26 | 15194 |
+    | ...        | ...   | ...   |
+    | 09.09.2024 | 0.04  | 15194 |
+        
+
+    | date       | T     | code  |
+    |------------|-------|-------|
+    | 27.08.2023 | 8.39  | 15194 |
+    | 28.08.2023 | 4.39  | 15194 |
+    | ...        | ...   | ...   |
+    | 09.09.2024 | 7.00  | 15194 |
+
+    Ensemble member forcing: The ensemble member forcing must have columns for date, T (temperature in degree Celcius) or P (precipitation in mm/d), and ensemble_member. The basin code is specified in the filename as code_T_ensemble_forecast.csv code_P_ensemble_forecast.csv. The ensemble_member must be a number from 1 to 50. The file path has to be specified in the .env file.
+
+    | date       | T         | ensemble_member |
+    |------------|-----------|-----------------|
+    | 26.08.2024 | 12.03     | 1               |
+    | 27.08.2024 | 13.60     | 1               |
+    | ...        | ...       | ...             |
+    | 28.08.2024 | 11.69     | 50              |
+
+    Hindcast forcing: This forcing data has the same structure as the control member forcing but includes more historical data. There should be no gaps between the hindcast forcing and the control member forcing data.
+
+
+2. Discharge data: Discharge is in m3/s
+   
+    | code  | date       | discharge |
+    |-------|------------|-----------|
+    | 15194 | 01.01.2000 | 1.9       |
+    | 15194 | 02.01.2000 | 1.9       |
+    | ...   | ...        | ...       |
+    | 15013 | 04.01.2000 | 1.9       |
+
+3. Basin Info and Parameter
+   For each basin, a folder is required, similar to the one for Ala Archa with the code 15194: /sensitive_data_forecast_tools/conceptual_model/BasinInfo/15194
+
+    This folder contains the data files `param.RData` and `Basin_Info.RData`.
+
+    - **param.RData**: This file contains the variable `param`, which holds the calibrated parameter values (numeric) required for the specific hydrological model.
+
+    The `Basin_Info.RData` file contains a list with the name Basin_Info with data for the specific basin. The structure of this file is as follows:
+
+    - **BasinCode**: An integer representing the unique code for the basin.
+      
+      - Example: `15194`
+
+    - **BasinName**: A string representing the name of the basin.
+      
+      - Example: `"AlaArcha"`
+
+    - **BasinArea_m2**: A numeric value representing the area of the basin in square meters.
+      
+      - Example: `272532878`
+
+    - **BasinLat_rad**: A numeric value representing the latitude of the basin's centroid in radians.
+      
+      - Example: `0.744`
+
+    - **HypsoData**: A numeric vector of hypsometric data (elevation distribution) for the basin in meters above sea level, with each value representing elevation at 1% intervals of the basin area.
+
+      - Example: `c(1531.00, 1684.00, 1751.16, ..., 4753.00)`
+
+    - **MeanAnSolidPrecip**: Vector giving the annual mean of average solid precipitation for each layer [mm/year]
+
+      - Example: `c(361, 361, 361, 361, 361)`
+
+    - **rel_ice**: A numeric vector representing the relative ice coverage in the basin across different elevation bands.
+
+      - Example: `c(0.000000000, 0.000000000, 0.003908274, 0.043461312, 0.078811896)`
+
+    - **GradT**: A data frame containing temperature gradient data, which includes daily and monthly temperature gradients in degrees Celsius per 100 meters (`grad_Tmean`). Each row corresponds to a specific day of the year, with columns for day, month, and the respective temperature gradients. 
+
+      - Structure:
+
+        | day | month | grad_Tmean | 
+        |-----|-------|------------|
+        | 1   | 1     | 0.631      |
+        | 2   | 1     | 0.632      |
+        | ... | ...   | ...        |
+        | 366 | 12    | 0.633      |
+
+    - **k_value**: A numeric representing the altitudinal correction factor (`k`) for the precipitation lapse rate in [m-1] 
+
+      - Example: `0.00043`
+
+   
+4. Output folder
+5. 
+   For each basin, a folder is required, similar to the one for Ala Archa with the code 15194: /sensitive_data_forecast_tools/conceptual_model/Output/15194
+   This folder can be empty
+
+**Output Files**
+| forecast_date | date       | sd_Qsim   | Q5        | Q10       | ...       | Q50       | ...       | Q90       | Q95       |
+|---------------|------------|-----------|-----------|-----------|-----------|-----------|-----------|-----------|-----------|
+| 31.07.2024    | 01.08.2024 | 0.2135    | 4.3921    | 4.4378    | ...       | 4.6603    | ...       | 5.0256    | 5.0439    |
+| 31.07.2024    | 02.08.2024 | 0.2860    | 4.3972    | 4.4756    | ...       | 4.7365    | ...       | 5.1828    | 5.3473    |
+| ...           | ...        | ...       | ...       | ...       | ...       | ...       | ...       | ...       | ...       |
+| 31.07.2024    | 14.08.2024 | 1.3577    | 3.8849    | 4.1469    | ...       | 5.1747    | ...       | 7.8351    | 8.0748    |
+
 
 TODO: Adrian, please describe what input files the module requires (the format of the files) and what output files are produced. This includes a description of the required formats and all files that describe the conceptual model (e.g. the parameters or initial conditions of the model).
 
@@ -517,6 +633,34 @@ TODO: Adrian, please describe what input files the module requires (the format o
 #### How to run the tool 
 
 TODO: Adrian, please provide instructions of how you run the module when you develop it.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 ### Machine learning (machine_learning)
 
