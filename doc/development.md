@@ -509,6 +509,35 @@ As mentioned earlier, the `run_operation_forecasting_CM.R` file reads the initia
 The `run_initial.R` function works as follows:
 It creates the initial conditions for the specified basins, running from `start_ini` to `end_ini` for the basin `codes`  with the specified hydrological model in `fun_mod_mapping` defined in the `config_conceptual_model.json` file. The script reads the specific basin information and parameters (as detailed in the I/O documentation). It then retrieves the forcing data, including precipitation and temperature, from the [preprocessing_gateway](#preprocessing-of-gridded-weather-data-preprocessing_gateway). Within the `process_forecast_forcing` function (located in the `functions_operational.R` file), the Potential Evapotranspiration (PET) is calculated using the Oudin method, and the forcing data is structured to meet the model's requirements (also detailed in the I/O documentation). The specified conceptual model is then run from `start_ini` to `end_ini`. Finally, the output of this model run is saved as the initial condition.
 
+Once the initial conditions are obtained from the `run_initial.R` script, a forecast can be triggered using the `run_operation_forecasting_CM.R` file.
+
+The `run_operation_forecasting_CM.R` script operates as follows:
+
+1. **Forecast Trigger**: The forecast is always triggered for the current day.
+
+2. **Load Basin Information**: It loads basin-specific information, calibration parameters, and the output from the previous forecast (as detailed in the I/O documentation).
+
+3. **Process Forcing Data**: The `process_forecast_forcing` function loads the perturbed forcing data and the control member forcing, then calculates the Potential Evapotranspiration (PET) based on temperature and latitude (Oudin).
+
+4. **Distribute Forcing Data**: The forcing data is distributed into elevation bands using temperature and precipitation lapse rates specified in `Basin_Info` (see I/O documentation).
+
+5. **Run Model Without Data Assimilation**: The model is run from the previous forecast date up to today minus `lag_days` using the `runModel_withoutDA.R` function. The output is saved for the next forecast run.
+
+6. **Run Model With Data Assimilation**: Over the `lag_days`, the model is run with data assimilation using the `runModel_withDA.R` function until today's date.
+
+7. **Run Future Weather Prediction**: The model is then run over the future weather prediction period using the `runModel_ForecastPeriod.R` function. All ensembles from the data assimilation are run with all 51 ensembles of the weather prediction.
+
+8. **Calculate Statistics**: The forecast statistics are calculated using the `calculate_stats_forecast.R` function, including standard deviation, Q5, Q95, and other relevant metrics.
+
+9. **Forecast Period**: The forecast runs up to the date provided by the weather forecast, which is up to 15 days ahead for the ECMWF IFS ensemble open data forecast.
+
+10. **Check Previous Forecasts**: The operational model checks the stored forecasts from previous runs (e.g., for Ala Archa 15194) in the directory `/sensitive_data_forecast_tools/intermediate_data/conceptual_model_results/15194/data/daily_15194.csv`.
+
+11. **Handle Missing Forecast Days**: If there are missing days since the last forecast, the model starts for those days using the `get_hindcast_period.R` function from the `functions_hindcast.R` file. The script also loads the hindcast forcing data (as detailed in the I/O documentation). Hindcasts are run similarly to the `run_manual_hindcast.R` script, with daily timesteps. 
+
+12. **Pentadal Decadal**:For pentadal and decadal timesteps, the data is averaged over the corresponding periods and saved as `pentad_15194.csv` and `decad_15194.csv`. 
+
+
 
 #### Prerequisites 
 
@@ -559,6 +588,7 @@ TODO: Adrian, please describe how to install the packages from GitHub. If you ha
     | 15013 | 04.01.2000 | 1.9       |
 
 3. Basin Info and Parameter
+   
    For each basin, a folder is required, similar to the one for Ala Archa with the code 15194: /sensitive_data_forecast_tools/conceptual_model/BasinInfo/15194
 
     This folder contains the data files `param.RData` and `Basin_Info.RData`.
@@ -612,11 +642,18 @@ TODO: Adrian, please describe how to install the packages from GitHub. If you ha
 
    
 4. Output folder
-5. 
+  
    For each basin, a folder is required, similar to the one for Ala Archa with the code 15194: /sensitive_data_forecast_tools/conceptual_model/Output/15194
-   This folder can be empty
+   This folder can be empty. In this folder the initial condition for the next forecast are stored. 
 
 **Output Files**
+Three output files are generated and stored in this path: /sensitive_data_forecast_tools/intermediate_data/conceptual_model_results/BASINCODE/data
+(For each basin the above folder structure is needed.)
+- daily_BASINCODE.csv
+- pentad_BASINCODE.csv
+- decadal_BASINCODE.csv
+
+**daily forecast**: daily_BASINCODE.csv
 | forecast_date | date       | sd_Qsim   | Q5        | Q10       | ...       | Q50       | ...       | Q90       | Q95       |
 |---------------|------------|-----------|-----------|-----------|-----------|-----------|-----------|-----------|-----------|
 | 31.07.2024    | 01.08.2024 | 0.2135    | 4.3921    | 4.4378    | ...       | 4.6603    | ...       | 5.0256    | 5.0439    |
@@ -624,10 +661,20 @@ TODO: Adrian, please describe how to install the packages from GitHub. If you ha
 | ...           | ...        | ...       | ...       | ...       | ...       | ...       | ...       | ...       | ...       |
 | 31.07.2024    | 14.08.2024 | 1.3577    | 3.8849    | 4.1469    | ...       | 5.1747    | ...       | 7.8351    | 8.0748    |
 
+**pentadal forecast**: pentad_BASINCODE.csv
+| forecast_date | Qsim      |
+|---------------|-----------|
+| 31.07.2024    | 5.0859    |
+| ...           | ...       |
+| 15.08.2024    | 6.3975    |
 
-TODO: Adrian, please describe what input files the module requires (the format of the files) and what output files are produced. This includes a description of the required formats and all files that describe the conceptual model (e.g. the parameters or initial conditions of the model).
+**decadal forecast**: decadal_BASINCODE.csv
+| forecast_date | Qsim      |
+|---------------|-----------|
+| 31.07.2024    | 5.0859    |
+| ...           | ...       |
+| 20.08.2024    | 6.3975    |
 
-**Data Structure and Input files:**
 
 
 #### How to run the tool 
