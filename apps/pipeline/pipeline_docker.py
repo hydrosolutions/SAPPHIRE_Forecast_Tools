@@ -324,20 +324,78 @@ class LinearRegression(luigi.Task):
         with self.output().open('w') as f:
             f.write('Task completed')
 
-    '''
-    def complete(self):
-        if not self.output().exists():
-            return False
 
-        # Get the modified time of the output file
-        output_file_mtime = os.path.getmtime(self.output().path)
+class ConceptualModel(luigi.Task):
 
-        # Get the current time
-        current_time = time.time()
+    def requires(self):
+        return [PreprocessingRunoff(), PreprocessingGatewayQuantileMapping()]
 
-        # Check if the output file was modified within the last number of seconds
-        return current_time - output_file_mtime < 10  # 24 * 60 * 60
-    '''
+    def output(self):
+        return luigi.LocalTarget(f'/app/log_conceptmod.txt')
+
+    def run(self):
+        print("------------------------------------")
+        print(" Running ConceptualModel task.")
+        print("------------------------------------")
+
+        # Construct the absolute volume paths to bind to the containers
+        absolute_volume_path_config = get_absolute_path(
+            env.get('ieasyforecast_configuration_path'))
+        absolute_volume_path_internal_data = get_absolute_path(
+            env.get('ieasyforecast_intermediate_data_path'))
+        absolute_volume_path_conceptmod = get_absolute_path(
+            env.get('ieasyhydroforecast_conceptual_model_path'))
+        bind_volume_path_config = get_bind_path(
+            env.get('ieasyforecast_configuration_path'))
+        bind_volume_path_internal_data = get_bind_path(
+            env.get('ieasyforecast_intermediate_data_path'))
+        bind_volume_path_conceptmod = get_bind_path(
+            env.get('ieasyhydroforecast_conceptual_model_path'))
+
+        # Run the docker container to pre-process runoff data
+        client = docker.from_env()
+
+        # Pull the latest image
+        if pu.there_is_a_newer_image_on_docker_hub(
+            client, repository='mabesa', image_name='sapphire-conceptmod', tag=TAG):
+            print("Pulling the latest image from Docker Hub.")
+            client.images.pull('mabesa/sapphire-conceptmod', tag=TAG)
+
+        # Define environment variables
+        environment = [
+            'SAPPHIRE_OPDEV_ENV=True',
+            'IN_DOCKER_CONTAINER=True'
+        ]
+
+        # Define volumes
+        volumes = {
+            absolute_volume_path_config: {'bind': bind_volume_path_config, 'mode': 'rw'},
+            absolute_volume_path_internal_data: {'bind': bind_volume_path_internal_data, 'mode': 'rw'},
+            absolute_volume_path_conceptmod: {'bind': bind_volume_path_conceptmod, 'mode': 'rw'}
+        }
+
+        # Run the container
+        container = client.containers.run(
+            f"mabesa/sapphire-conceptmod:{TAG}",
+            detach=True,
+            environment=environment,
+            volumes=volumes,
+            name="conceptmod",
+            #labels=labels,
+            network='host'  # To test
+        )
+
+        print(f"Container {container.id} is running.")
+
+        # Wait for the container to finish running
+        container.wait()
+
+        print(f"Container {container.id} has stopped.")
+
+        # Write the output marker file
+        with self.output().open('w') as f:
+            f.write('Task completed')
+
 
 class RunMLModel(luigi.Task):
     model_type = luigi.Parameter()
@@ -345,6 +403,9 @@ class RunMLModel(luigi.Task):
 
     def requires(self):
         return [PreprocessingRunoff(), PreprocessingGatewayQuantileMapping()]
+
+    def output(self):
+        return luigi.LocalTarget(f'/app/log_ml_{self.model_type}_{self.prediction_mode}.txt')
 
     def run(self):
         print("------------------------------------")
@@ -414,6 +475,10 @@ class RunMLModel(luigi.Task):
         print(f"Logs from container {container.id}:\n{logs}")
 
         print(f"Container {container.id} has stopped.")
+
+        # Write the output marker file
+        with self.output().open('w') as f:
+            f.write('Task completed')
 
 class RunAllMLModels(luigi.WrapperTask):
     def requires(self):
@@ -550,6 +615,7 @@ class RunWorkflow(luigi.Task):
             print("Running KGHM workflow.")
             return [PostProcessingForecasts(),
                     RunAllMLModels(),
+                    ConceptualModel()
                     #DeleteOldGateywayFiles()
                     ]
 

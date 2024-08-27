@@ -1,11 +1,11 @@
 
 
 # Intendent to be run from the ~app/ direction in the Docker container
-requirements <- readLines("/conceptual_model/requirements.txt")
+requirements <- readLines("apps/conceptual_model/requirements.txt")
 
 # Always needs for install below
-if (!requireNamespace("devtools", quietly = TRUE)) {
-  install.packages("devtools")
+if (!requireNamespace("remotes", quietly = TRUE)) {
+  install.packages("remotes", dependencies = TRUE)
 }
 
 # Install CRAN packages
@@ -16,12 +16,21 @@ for (pkg in requirements) {
   
   if (!requireNamespace(package, quietly = TRUE) || packageVersion(package) != version) {
     print(paste("Installing package", package, "version", version))
-    devtools::install_version(package, version = version, repos = "http://cran.us.r-project.org")
+    remotes::install_version(
+      package, 
+      version = version, 
+      repos = "http://cran.us.r-project.org", 
+      dependencies = TRUE)
+  }
+  
+  # Test if the package has been installed suscessfully
+  if (!requireNamespace(package, quietly = TRUE)) {
+    stop(paste("Package", package, "not installed."))
   }
 }
 
 # Install GitHub packages
-devtools::install_github("hydrosolutions/airGR_GM")
-devtools::install_github("hydrosolutions/airgrdatassim")
+remotes::install_github("hydrosolutions/airGR_GM")
+remotes::install_github("hydrosolutions/airgrdatassim")
 
 cat("All packages installed successfully.\n")

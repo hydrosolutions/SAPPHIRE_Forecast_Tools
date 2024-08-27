@@ -19,6 +19,8 @@ docker pull mabesa/sapphire-rerun:$TAG
 # Pull images used in the KGHM version
 if ["$ieasyhydroforecast_organization" = "kghm"]; then
       docker pull mabesa/sapphire-prepgateway:$TAG
+      docker pull mabesa/sapphire-ml:$TAG
+      docker pull mabesa/sapphire-conceptmod:$TAG
 fi
 
 # Build forecast pipeline locally

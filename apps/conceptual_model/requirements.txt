@@ -1,5 +1,4 @@
 here==1.0.1
 jsonlite==1.8.8
-devtools==2.4.5
 tidyverse==2.0.0
 usethis==2.2.3

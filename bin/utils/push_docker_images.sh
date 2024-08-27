@@ -46,6 +46,10 @@ docker push $REPO/sapphire-pythonbaseimage:$TAG
 docker push $REPO/sapphire-pipeline:$TAG
 docker push $REPO/sapphire-preprunoff:$TAG
 docker push $REPO/sapphire-linreg:$TAG
+docker push $REPO/sapphire-postprocessing:$TAG
+docker push $REPO/sapphire-rerun:$TAG
+docker push $REPO/sapphire-ml:$TAG
+docker push $REPO/sapphire-conceptmod:$TAG
 
 # Pull images used in the KGHM version
 if ["$ieasyhydroforecast_organization" = "kghm"]; then
