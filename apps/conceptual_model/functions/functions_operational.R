@@ -55,6 +55,11 @@ runModel_withoutDA <- function(forecast_date,
                           "RunModel_CemaNeigeGR6J_Glacier")
   
   
+  if (Enddate_op > Date_6_months_ago) {
+    stop("Please rerun the script : run_initial.R")
+  }
+  
+  
   print(paste0("Enddate_op: ", Enddate_op))
   
   
