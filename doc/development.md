@@ -586,8 +586,37 @@ To set up the environment for running the forecast using the conceptual model yo
      ```bash
      Rscript install_packages.R
      ```
-3. **Initial setup** 
-    -  
+3. **Prepare Configuration Files**:
+   - Ensure you have the configuration file with the necessary parameters, as described in configuration.md.
+   - Also, set up the `.env` file according to the details provided in configuration.md, including all required paths and filenames.
+
+4. **Initial Setup**:
+   - Run the `run_initial.R` script to generate the initial conditions required for the model to run in operational mode:
+     ```bash
+     cd /Users/adrian/Documents/GitHub/SAPPHIRE_Forecast_Tools/apps/conceptual_model
+     
+     SAPPHIRE_OPDEV_ENV=True Rscript run_initial.R
+     ```
+
+5. **Run Operational Forecasting**:
+   - After completing the initial setup, run the operational forecasting script:
+     ```bash
+     cd /Users/adrian/Documents/GitHub/SAPPHIRE_Forecast_Tools/apps/conceptual_model
+     
+     SAPPHIRE_OPDEV_ENV=True Rscript run_operation_forecasting_CM.R
+     ```
+   - **Note**: Hindcasts are automatically created in the `run_operation_forecasting_CM.R` script. When setting up for the first time, hindcasts will not be produced because no previous forecasts are saved. In operational mode, the script will subsequently check for gaps between the last run and the current run, filling in any missing forecasts.
+
+6. **Running Multiple Times a Day**:
+   - The script can be run multiple times a day, for example, if new discharge data becomes available. Each run will overwrite the forecast output of the previous run on that day.
+
+7. **Triggering Hindcasts for Specific Days**:
+   - To trigger hindcasts for specific days, run the `run_manual_hindcast.R` script and define the `start_hindcast`, `end_hindcast`, and `hindcast_mode` parameters:
+     ```bash
+     cd /Users/adrian/Documents/GitHub/SAPPHIRE_Forecast_Tools/apps/conceptual_model
+     
+     SAPPHIRE_OPDEV_ENV=True Rscript run_manual_hindcast.R
+     ```
 
 
 
