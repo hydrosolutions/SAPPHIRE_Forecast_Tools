@@ -793,37 +793,10 @@ Three output files are generated and stored in this path: /sensitive_data_foreca
 5. **Triggering Hindcasts for Specific Days**:
    - To trigger hindcasts for specific days, run the `run_manual_hindcast.R` script and define the `start_hindcast`, `end_hindcast`, and `hindcast_mode` parameters:
      ```bash
-/path/to/your/SAPPHIRE_Forecast_Tools/apps/conceptual_model
-     
+     cd /path/to/your/SAPPHIRE_Forecast_Tools/apps/conceptual_model
+  
      SAPPHIRE_OPDEV_ENV=True Rscript run_manual_hindcast.R
      ```
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 ### Machine learning (machine_learning)
 
