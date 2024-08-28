@@ -586,38 +586,6 @@ To set up the environment for running the forecast using the conceptual model yo
      ```bash
      Rscript install_packages.R
      ```
-3. **Prepare Configuration Files**:
-   - Ensure you have the configuration file with the necessary parameters, as described in configuration.md.
-   - Also, set up the `.env` file according to the details provided in configuration.md, including all required paths and filenames.
-
-4. **Initial Setup**:
-   - Run the `run_initial.R` script to generate the initial conditions required for the model to run in operational mode:
-     ```bash
-     cd /Users/adrian/Documents/GitHub/SAPPHIRE_Forecast_Tools/apps/conceptual_model
-     
-     SAPPHIRE_OPDEV_ENV=True Rscript run_initial.R
-     ```
-
-5. **Run Operational Forecasting**:
-   - After completing the initial setup, run the operational forecasting script:
-     ```bash
-     cd /Users/adrian/Documents/GitHub/SAPPHIRE_Forecast_Tools/apps/conceptual_model
-     
-     SAPPHIRE_OPDEV_ENV=True Rscript run_operation_forecasting_CM.R
-     ```
-   - **Note**: Hindcasts are automatically created in the `run_operation_forecasting_CM.R` script. When setting up for the first time, hindcasts will not be produced because no previous forecasts are saved. In operational mode, the script will subsequently check for gaps between the last run and the current run, filling in any missing forecasts.
-
-6. **Running Multiple Times a Day**:
-   - The script can be run multiple times a day, for example, if new discharge data becomes available. Each run will overwrite the forecast output of the previous run on that day.
-
-7. **Triggering Hindcasts for Specific Days**:
-   - To trigger hindcasts for specific days, run the `run_manual_hindcast.R` script and define the `start_hindcast`, `end_hindcast`, and `hindcast_mode` parameters:
-     ```bash
-     cd /Users/adrian/Documents/GitHub/SAPPHIRE_Forecast_Tools/apps/conceptual_model
-     
-     SAPPHIRE_OPDEV_ENV=True Rscript run_manual_hindcast.R
-     ```
-
 
 
 #### I/O 
@@ -666,7 +634,7 @@ To set up the environment for running the forecast using the conceptual model yo
 
 3. Basin Info and Parameter
    
-   For each basin, a folder is required, similar to the one for Ala Archa with the code 15194: /sensitive_data_forecast_tools/conceptual_model/BasinInfo/15194
+   For each basin (each `code`), a folder is required with the BasinInfo: ieasyhydroforecast_PATH_TO_BASININFO/BASINCODE
 
     This folder contains the data files `param.RData` and `Basin_Info.RData`.
 
@@ -756,8 +724,41 @@ Three output files are generated and stored in this path: /sensitive_data_foreca
 
 #### How to run the tool 
 
-TODO: Adrian, please provide instructions of how you run the module when you develop it.
+1. **Prepare Configuration Files**:
+   - Ensure you have the configuration file with the necessary parameters, as described in configuration.md.
+   - Also, set up the `.env` file according to the details provided in configuration.md, including all required paths and filenames.
+   - For each `code`in the config file it needs the folder:
+     -  ieasyhydroforecast_PATH_TO_BASININFO/BASINCODE with `Basin_Info.RData`and `param.RData` (see I/O)
+     -  ieasyhydroforecast_PATH_TO_INITCOND/BASINCODE  
+     -  ieasyhydroforecast_PATH_TO_RESULT/BASINCODE/data
 
+2. **Initial Setup**:
+   - Run the `run_initial.R` script to generate the initial conditions required for the model to run in operational mode:
+     ```bash
+     cd /path/to/your/SAPPHIRE_Forecast_Tools/apps/conceptual_model
+     
+     SAPPHIRE_OPDEV_ENV=True Rscript run_initial.R
+     ```
+
+3. **Run Operational Forecasting**:
+   - After completing the initial setup, run the operational forecasting script:
+     ```bash
+     cd /path/to/your/SAPPHIRE_Forecast_Tools/apps/conceptual_model
+     
+     SAPPHIRE_OPDEV_ENV=True Rscript run_operation_forecasting_CM.R
+     ```
+   - **Note**: Hindcasts are automatically created in the `run_operation_forecasting_CM.R` script. When setting up for the first time, hindcasts will not be produced because no previous forecasts are saved. In operational mode, the script will subsequently check for gaps between the last run and the current run, filling in any missing forecasts.
+
+4. **Running Multiple Times a Day**:
+   - The script can be run multiple times a day, for example, if new discharge data becomes available. Each run will overwrite the forecast output of the previous run on that day.
+
+5. **Triggering Hindcasts for Specific Days**:
+   - To trigger hindcasts for specific days, run the `run_manual_hindcast.R` script and define the `start_hindcast`, `end_hindcast`, and `hindcast_mode` parameters:
+     ```bash
+/path/to/your/SAPPHIRE_Forecast_Tools/apps/conceptual_model
+     
+     SAPPHIRE_OPDEV_ENV=True Rscript run_manual_hindcast.R
+     ```
 
 
 
