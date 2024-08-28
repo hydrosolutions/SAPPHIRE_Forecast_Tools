@@ -531,17 +531,44 @@ The `run_operation_forecasting_CM.R` script operates as follows:
 
 9. **Forecast Period**: The forecast runs up to the date provided by the weather forecast, which is up to 15 days ahead for the ECMWF IFS ensemble open data forecast.
 
-10. **Check Previous Forecasts**: The operational model checks the stored forecasts from previous runs (e.g., for Ala Archa 15194) in the directory `/sensitive_data_forecast_tools/intermediate_data/conceptual_model_results/15194/data/daily_15194.csv`.
+10. **Check Previous Forecasts**: The operational model checks the stored forecasts from previous runs (e.g., for Ala Archa 15194) in the directory `ieasyhydroforecast_PATH_TO_RESULT/data/daily_BASINCODE.csv`.
 
 11. **Handle Missing Forecast Days**: If there are missing days since the last forecast, the model starts for those days using the `get_hindcast_period.R` function from the `functions_hindcast.R` file. The script also loads the hindcast forcing data (as detailed in the I/O documentation). Hindcasts are run similarly to the `run_manual_hindcast.R` script, with daily timesteps. 
 
 12. **Pentadal Decadal**:For pentadal and decadal timesteps, the data is averaged over the corresponding periods and saved as `pentad_15194.csv` and `decad_15194.csv`. 
 
+To manually trigger a hindcast for a specific period, the `run_manual_hindcast.R` script can be run. In the configuration file (see configuration.md), you need to define `start_hindcast`, `end_hindcast`, and `hindcast_mode`, which can be `daily`, `pentad`, or `decad`. The hindcast is executed for all the specified `codes` using the hydrological model defined in `fun_mod_mapping`.
+
+- In `daily` mode, the script provides a forecast for each day, 15 days ahead.
+- In `pentad` mode, it provides forecasts in approximately 5-day intervals (pentads), calculating the mean Q50 value for each pentad.
+- In `decad` mode, it provides forecasts in approximately 10-day intervals (decads), calculating the mean Q50 value for each decadal period.
+
+The `run_manual_hindcast.R` script operates as follows:
+
+1. **Initialization**: The script loads the configuration file and required functions, and sets up the necessary paths.
+
+2. **Input Preparation**: It prepares the forcing input from the hindcast forcing file and the control member forcing file for more recent hindcasts, following the same process as in `run_operation_forecasting_CM.R`.
+
+3. **Hindcast Execution**: The script generates the hindcast for the defined period using the `get_hindcast_period` function. This function iteratively runs the hydrological model for each time step, incorporating the specified `lag_days` and configuration parameters such as `NbMbr`, `DaMethod`, `StatePert`, and `eps` for the data assimilation method. It is important to note that the hindcast method uses ERA5-Land data rather than previously forecasted data.
+
+4. **Function Details**:
+    - The `get_hindcast_period` function prepares the input data for the hindcast, including forcing perturbation, distribution over elevation bands, and the defines the time steps for the hindcast based on the selected mode (`daily`, `pentad`, or `decad`).
+    - It then calls the `get_hindcast` function, which operates similarly to the operational run in `run_operation_forecasting_CM.R`. The model is first run for one year without data assimilation (as a warm-up phase) to establish initial conditions. Following this, data assimilation is applied for the specified `lag_days` period and the data assimilation is run using the configured `NbMbr`, `DaMethod`, `StatePert`, and `eps` parameters.
+
+5. **Result Saving**: Finally, the hindcast results are saved to the output directory (`ieasyhydroforecast_PATH_TO_RESULT`). The filenames are structured as follows:
+   - **Daily**: `hindcast_daily_BASINCODE_START_HINDCAST_END_HINDCAST` (dates in `%Y%m%d` format).
+   - **Pentad**: `hindcast_pentad_BASINCODE_START_HINDCAST_END_HINDCAST` (dates in `%Y%m%d` format).
+   - **Decad**: `hindcast_decad_BASINCODE_START_HINDCAST_END_HINDCAST` (dates in `%Y%m%d` format).
+
+The output format is described in the I/O documentation.
+
 
 
 #### Prerequisites 
 
-TODO: Adrian, please describe how to install the packages from GitHub. If you have a requirements.txt file, please describe how to install the required packages.
+TODO: please describe how to install the packages from GitHub. If you have a requirements.txt file, please describe how to install the required packages.
+Here 
+
 
 #### I/O 
 
