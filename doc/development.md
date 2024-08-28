@@ -594,12 +594,11 @@ The `run_manual_hindcast.R` script operates as follows:
     - It then calls the `get_hindcast` function, which operates similarly to the operational run in `run_operation_forecasting_CM.R`. The model is first run for one year without data assimilation (as a warm-up phase) to establish initial conditions. Following this, data assimilation is applied for the specified `lag_days` period and the data assimilation is run using the configured `NbMbr`, `DaMethod`, `StatePert`, and `eps` parameters.
 
 5. **Result Saving**: Finally, the hindcast results are saved to the output directory (`ieasyhydroforecast_PATH_TO_RESULT`). The filenames are structured as follows:
-   - **Daily**: `hindcast_daily_BASINCODE_START_HINDCAST_END_HINDCAST` (dates in `%Y%m%d` format).
-   - **Pentad**: `hindcast_pentad_BASINCODE_START_HINDCAST_END_HINDCAST` (dates in `%Y%m%d` format).
-   - **Decad**: `hindcast_decad_BASINCODE_START_HINDCAST_END_HINDCAST` (dates in `%Y%m%d` format).
+    - **Daily**: `hindcast_daily_START_HINDCAST_END_HINDCAST_BASINCODE.csv` (dates in `%Y%m%d` format).
+    - **Pentad**: `hindcast_pentad_START_HINDCAST_END_HINDCAST_BASINCODE.csv` (dates in `%Y%m%d` format).
+    - **Decad**: `hindcast_decad_START_HINDCAST_END_HINDCAST_BASINCODE.csv` (dates in `%Y%m%d` format).
 
 The output format is described in the I/O documentation.
-
 
 
 
@@ -726,15 +725,21 @@ To set up the environment for running the forecast using the conceptual model yo
    
 4. Output folder
   
-   For each basin, a folder is required, similar to the one for Ala Archa with the code 15194: /sensitive_data_forecast_tools/conceptual_model/Output/15194
+   For each basin, a folder is required: ieasyhydroforecast_PATH_TO_INITCOND/BASINCODE
    This folder can be empty. In this folder the initial condition for the next forecast are stored. 
 
 **Output Files**
-Three output files are generated and stored in this path: /sensitive_data_forecast_tools/intermediate_data/conceptual_model_results/BASINCODE/data
+Three output files are generated in the operational run and stored in this path: ieasyhydroforecast_PATH_TO_RESULT/BASINCODE/data
 (For each basin the above folder structure is needed.)
-- daily_BASINCODE.csv
-- pentad_BASINCODE.csv
-- decadal_BASINCODE.csv
+- **Daily**: `daily_BASINCODE.csv`
+- **Pentad**: `pentad_BASINCODE.csv`
+- **Decad**: `decadal_BASINCODE.csv`
+When triggering manually a hindcast files are stored in the same directory with the following names: 
+ - **Daily**: `hindcast_daily_START_HINDCAST_END_HINDCAST_BASINCODE.csv` (dates in `%Y%m%d` format).
+ - **Pentad**: `hindcast_pentad_START_HINDCAST_END_HINDCAST_BASINCODE.csv` (dates in `%Y%m%d` format).
+ - **Decad**: `hindcast_decad_START_HINDCAST_END_HINDCAST_BASINCODE.csv` (dates in `%Y%m%d` format).
+
+
 
 **daily forecast**: daily_BASINCODE.csv
 | forecast_date | date       | sd_Qsim   | Q5        | Q10       | ...       | Q50       | ...       | Q90       | Q95       |

@@ -166,7 +166,7 @@ for (Code in config$codes) {
   end_date_hindcast_format <- end_date_hindcast %>%
     format(format = "%Y%m%d")
   
-  write.csv(hindcast, paste0(dir_Results, "/data/hindcast_",hindcast_mode,"_", Basin_Info$BasinCode,"_",start_date_hindcast_format,"_",end_date_hindcast_format, ".csv"), row.names = FALSE)
+  write.csv(hindcast, paste0(dir_Results, "/data/hindcast_",hindcast_mode,"_",start_date_hindcast_format,"_",end_date_hindcast_format,"_",Basin_Info$BasinCode, ".csv"), row.names = FALSE)
   }
   
 
