@@ -195,6 +195,9 @@ ieasyhydroforecast_HRU_ENSEMBLE=151940,16936
 TODO: Sandro, please add if you have time
 
 ### Configuration of the conceptual rainfall-runoff module
+This section covers paths and filenames used in the conceptual rainfall runoff module. The paths and filenames are used to store the data and results of the conceptual model. Below is a description of each variable:
+
+<!--
 This configuration file defines the settings and parameters required to run hydrological model simulations for the conceptual model with ensemble data assimilation (). Below is a detailed explanation of each key in the configuration file.
 
 #### 1. `fun_mod_mapping`
@@ -217,7 +220,7 @@ This configuration file defines the settings and parameters required to run hydr
 #### 4. `DaMethod`
    - **Type:** String
    - **Description:** Indicates the data assimilation method used in the simulation.
-   - **Example:** `"PF"` specifies that the Particle Filter (`PF`) method will be employed for data assimilation. 
+   - **Example:** `"PF"` specifies that the Particle Filter (`PF`) method will be employed for data assimilation.
 
 #### 5. `StatePert`
    - **Type:** List of strings
@@ -227,11 +230,11 @@ This configuration file defines the settings and parameters required to run hydr
 #### 6. `eps`
    - **Type:** Float
    - **Description:** Fractional error parameter for precipitation and PET of the first-order autoregressive model. Defines the perturbation of the forcing data. It controls the magnitude of perturbation noise.
-   - **Example:** `0.65` 
+   - **Example:** `0.65`
 
 #### 7. `lag_days`
    - **Type:** Integer
-   - **Description:** Specifies the number of days the model is running with data assimilation process. This parameter is used to define the temporal window of the data assimilation. The model is started before the data assimilation with the initial conditions fomr the previous run. 
+   - **Description:** Specifies the number of days the model is running with data assimilation process. This parameter is used to define the temporal window of the data assimilation. The model is started before the data assimilation with the initial conditions fomr the previous run.
    - **Example:** `180` indicates a lag of 180 days.
 
 #### 8. `codes`
@@ -265,70 +268,68 @@ This configuration file defines the settings and parameters required to run hydr
    - **Example:** `"pentad"` indicates that the hindcast simulation will be conducted in about five-day intervals.
 
 
-#### .env File Configuration conceptual model 
+#### .env File Configuration conceptual model
+-->
 
-The `.env_develop_kghm` file contains environment variables that define the paths and filenames for the data and models used in the hydrological simulation. Below is a description of each variable:
-
-**Path to data and filenames:**
+#### Path to data and filenames:
 
 - `ieasyhydroforecast_PATH_TO_CF`: Path to the directory containing the control member forcing data.
-  - **Example:** `../../../sensitive_data_forecast_tools/intermediate_data/control_member_forcing`
+  - Example: `../../../sensitive_data_forecast_tools/intermediate_data/control_member_forcing`
 
 - `ieasyhydroforecast_FILE_CF_P`: Filename for the control member precipitation data.
-  - **Example:** `00003_P_control_member.csv`
+  - Example: `00003_P_control_member.csv`
 
 - `ieasyhydroforecast_FILE_CF_T`: Filename for the control member temperature data.
-  - **Example:** `00003_T_control_member.csv`
+  - Example: `00003_T_control_member.csv`
 
 - `ieasyhydroforecast_PATH_TO_PF`: Path to the directory containing the ensemble forcing data.
-  - **Example:** `../../../sensitive_data_forecast_tools/intermediate_data/ensemble_forcing`
+  - Example: `../../../sensitive_data_forecast_tools/intermediate_data/ensemble_forcing`
 
 - `ieasyhydroforecast_FILE_PF_P`: Filename suffix for the ensemble precipitation forecast data.
-  - **Example:** `_P_ensemble_forecast.csv`
+  - Example: `_P_ensemble_forecast.csv`
 
 - `ieasyhydroforecast_FILE_PF_T`: Filename suffix for the ensemble temperature forecast data.
-  - **Example:** `_T_ensemble_forecast.csv`
+  - Example: `_T_ensemble_forecast.csv`
 
 - `ieasyhydroforecast_PATH_TO_HIND`: Path to the directory containing the hindcast forcing data (longer time serie than the control member forcing).
-  - **Example:** `../../../sensitive_data_forecast_tools/intermediate_data/hindcast_forcing`
+  - Example: `../../../sensitive_data_forecast_tools/intermediate_data/hindcast_forcing`
 
 - `ieasyhydroforecast_FILE_CF_HIND_P`: Filename for the precipitation data used in hindcast.
-  - **Example:** `00003_P_reanalysis.csv`
+  - Example: `00003_P_reanalysis.csv`
 
 - `ieasyhydroforecast_FILE_CF_HIND_T`: Filename for the temperature data used in hindcast.
-  - **Example:** `00003_T_reanalysis.csv`
+  - Example: `00003_T_reanalysis.csv`
 
 - `ieasyhydroforecast_PATH_TO_Q`: Path to the directory containing the runoff data.
-  - **Example:** `../../../sensitive_data_forecast_tools/intermediate_data`
+  - Example: `../../../sensitive_data_forecast_tools/intermediate_data`
 
 - `ieasyhydroforecast_FILE_Q`: Filename for the runoff data.
-  - **Example:** `runoff_day.csv`
+  - Example: `runoff_day.csv`
 
-**Model and Basin Information**
+#### Model and Basin Information
 
 - `ieasyhydroforecast_conceptual_model_path`: Path to the directory containing the conceptual model.
-  - **Example:** `../../../sensitive_data_forecast_tools/conceptual_model`
+  - Example: `../../../sensitive_data_forecast_tools/conceptual_model`
 
 - `ieasyhydroforecast_PATH_TO_BASININFO`: Path to the directory containing basin information data.
-  - **Example:** `../../../sensitive_data_forecast_tools/conceptual_model/BasinInfo`
+  - Example: `../../../sensitive_data_forecast_tools/conceptual_model/BasinInfo`
 
 - `ieasyhydroforecast_PATH_TO_INITCOND`: Path to the directory containing initial condition data.
-  - **Example:** `../../../sensitive_data_forecast_tools/conceptual_model/Output`
+  - Example: `../../../sensitive_data_forecast_tools/conceptual_model/Output`
 
 - `ieasyhydroforecast_PATH_TO_RESULT`: Path to the directory for storing the results of the conceptual model.
-  - **Example:** `../../../sensitive_data_forecast_tools/intermediate_data/conceptual_model_results`
+  - Example: `../../../sensitive_data_forecast_tools/intermediate_data/conceptual_model_results`
 
 - `ieasyhydroforecast_FILE_PARAM`: Filename for the model parameters.
-  - **Example:** `param.RData`
+  - Example: `param.RData`
 
 - `ieasyhydroforecast_FILE_BASININFO`: Filename for the basin information data.
-  - **Example:** `Basin_Info.RData`
+  - Example: `Basin_Info.RData`
 
-**JSON Configuration**
+#### JSON Configuration
 
 - `ieasyhydroforecast_PATH_TO_JSON`: Path to the directory containing the JSON configuration file for the conceptual model.
-  - **Example:** `../../../sensitive_data_forecast_tools/config`
+  - Example: `../../../sensitive_data_forecast_tools/config`
 
 - `ieasyhydroforecast_FILE_SETUP`: Filename for the JSON configuration file.
-  - **Example:** `config_conceptual_model.json`
-  - 
+  - Example: `config_conceptual_model.json`
