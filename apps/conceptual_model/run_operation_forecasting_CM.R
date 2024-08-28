@@ -320,8 +320,9 @@ for (Code in config$codes) {
     }
   }
 
+  # --- CAN BE DELETED IF POSTPROCESSING OF DAILY OUTPUT IS NOT NEEDED ---
+  
   ## 7.2 pentadal  ####
-
   # CASE: no pentadal timesteps and no hindasting
   if ((length(pentadal_days(forecast_date, forecast_date)) == 0) && !(exists("start_date_hindcast"))) {
     print("not pentadal timestep no hindcasting")
@@ -358,7 +359,8 @@ for (Code in config$codes) {
     decadal_steps <- decadal_days(start_date_hindcast, forecast_date)
     print(decadal_steps)
     process_save_time_steps(decadal_steps, "decad", start_date_hindcast, forecast_date, dir_Results, Basin_Info, forecast_statistics)
-  }
+    }
+  # --- CAN BE DELETED UNTIL HERE ---
 }
 
 

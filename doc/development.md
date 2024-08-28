@@ -541,20 +541,262 @@ Folder Structure:
         -   functions_operational.R
 
 
+The primary function to run the model is `run_operation_forecasting_CM.R`.
+As mentioned earlier, the `run_operation_forecasting_CM.R` file reads the initial conditions from the last forecast run. When the model is triggered for the first time, the `run_initial.R` function must be executed to generate the initial conditions for the operational run.
+
+The `run_initial.R` function works as follows:
+It creates the initial conditions for the specified basins, running from `start_ini` to `end_ini` for the basin `codes`  with the specified hydrological model in `fun_mod_mapping` defined in the `config_conceptual_model.json` file. The script reads the specific basin information and parameters (as detailed in the I/O documentation). It then retrieves the forcing data, including precipitation and temperature, from the [preprocessing_gateway](#preprocessing-of-gridded-weather-data-preprocessing_gateway). Within the `process_forecast_forcing` function (located in the `functions_operational.R` file), the Potential Evapotranspiration (PET) is calculated using the Oudin method, and the forcing data is structured to meet the model's requirements (also detailed in the I/O documentation). The specified conceptual model is then run from `start_ini` to `end_ini`. Finally, the output of this model run is saved as the initial condition.
+
+Once the initial conditions are obtained from the `run_initial.R` script, a forecast can be triggered using the `run_operation_forecasting_CM.R` file.
+
+The `run_operation_forecasting_CM.R` script operates as follows:
+
+1. **Forecast Trigger**: The forecast is always triggered for the current day.
+
+2. **Load Basin Information**: It loads basin-specific information, calibration parameters, and the output from the previous forecast (as detailed in the I/O documentation).
+
+3. **Process Forcing Data**: The `process_forecast_forcing` function loads the perturbed forcing data and the control member forcing, then calculates the Potential Evapotranspiration (PET) based on temperature and latitude (Oudin).
+
+4. **Distribute Forcing Data**: The forcing data is distributed into elevation bands using temperature and precipitation lapse rates specified in `Basin_Info` (see I/O documentation).
+
+5. **Run Model Without Data Assimilation**: The model is run from the previous forecast date up to today minus `lag_days` using the `runModel_withoutDA.R` function. The output is saved for the next forecast run.
+
+6. **Run Model With Data Assimilation**: Over the `lag_days`, the model is run with data assimilation using the `runModel_withDA.R` function until today's date.
+
+7. **Run Future Weather Prediction**: The model is then run over the future weather prediction period using the `runModel_ForecastPeriod.R` function. All ensembles from the data assimilation are run with all 51 ensembles of the weather prediction.
+
+8. **Calculate Statistics**: The forecast statistics are calculated using the `calculate_stats_forecast.R` function, including standard deviation, Q5, Q95, and other relevant metrics.
+
+9. **Forecast Period**: The forecast runs up to the date provided by the weather forecast, which is up to 15 days ahead for the ECMWF IFS ensemble open data forecast.
+
+10. **Check Previous Forecasts**: The operational model checks the stored forecasts from previous runs (e.g., for Ala Archa 15194) in the directory `ieasyhydroforecast_PATH_TO_RESULT/data/daily_BASINCODE.csv`.
+
+11. **Handle Missing Forecast Days**: If there are missing days since the last forecast, the model starts for those days using the `get_hindcast_period.R` function from the `functions_hindcast.R` file. The script also loads the hindcast forcing data (as detailed in the I/O documentation). Hindcasts are run similarly to the `run_manual_hindcast.R` script, with daily timesteps. 
+
+12. **Pentadal Decadal**:For pentadal and decadal timesteps, the data is averaged over the corresponding periods and saved as `pentad_15194.csv` and `decad_15194.csv`. 
+
+To manually trigger a hindcast for a specific period, the `run_manual_hindcast.R` script can be run. In the configuration file (see configuration.md), you need to define `start_hindcast`, `end_hindcast`, and `hindcast_mode`, which can be `daily`, `pentad`, or `decad`. The hindcast is executed for all the specified `codes` using the hydrological model defined in `fun_mod_mapping`.
+
+- In `daily` mode, the script provides a forecast for each day, 15 days ahead.
+- In `pentad` mode, it provides forecasts in approximately 5-day intervals (pentads), calculating the mean Q50 value for each pentad.
+- In `decad` mode, it provides forecasts in approximately 10-day intervals (decads), calculating the mean Q50 value for each decadal period.
+
+The `run_manual_hindcast.R` script operates as follows:
+
+1. **Initialization**: The script loads the configuration file and required functions, and sets up the necessary paths.
+
+2. **Input Preparation**: It prepares the forcing input from the hindcast forcing file and the control member forcing file for more recent hindcasts, following the same process as in `run_operation_forecasting_CM.R`.
+
+3. **Hindcast Execution**: The script generates the hindcast for the defined period using the `get_hindcast_period` function. This function iteratively runs the hydrological model for each time step, incorporating the specified `lag_days` and configuration parameters such as `NbMbr`, `DaMethod`, `StatePert`, and `eps` for the data assimilation method. It is important to note that the hindcast method uses ERA5-Land data rather than previously forecasted data.
+
+4. **Function Details**:
+    - The `get_hindcast_period` function prepares the input data for the hindcast, including forcing perturbation, distribution over elevation bands, and the defines the time steps for the hindcast based on the selected mode (`daily`, `pentad`, or `decad`).
+    - It then calls the `get_hindcast` function, which operates similarly to the operational run in `run_operation_forecasting_CM.R`. The model is first run for one year without data assimilation (as a warm-up phase) to establish initial conditions. Following this, data assimilation is applied for the specified `lag_days` period and the data assimilation is run using the configured `NbMbr`, `DaMethod`, `StatePert`, and `eps` parameters.
+
+5. **Result Saving**: Finally, the hindcast results are saved to the output directory (`ieasyhydroforecast_PATH_TO_RESULT`). The filenames are structured as follows:
+   - **Daily**: `hindcast_daily_BASINCODE_START_HINDCAST_END_HINDCAST` (dates in `%Y%m%d` format).
+   - **Pentad**: `hindcast_pentad_BASINCODE_START_HINDCAST_END_HINDCAST` (dates in `%Y%m%d` format).
+   - **Decad**: `hindcast_decad_BASINCODE_START_HINDCAST_END_HINDCAST` (dates in `%Y%m%d` format).
+
+The output format is described in the I/O documentation.
+
+
+
+
+
 #### Prerequisites
 
-TODO: Adrian, please describe how to install the packages from GitHub. If you have a requirements.txt file, please describe how to install the required packages.
+To set up the environment for running the forecast using the conceptual model you have to do following. 
+
+1. **Install Required Packages from GitHub**:
+   - You need to install two key R packages from GitHub: `airGR_GM` and `airGRdatassim`.
+   - First, install `airGR_GM` by following the instructions provided in its GitHub repository: [airGR_GM](https://github.com/hydrosolutions/airGR_GM).
+   - Next, install `airGRdatassim` by following the instructions in its GitHub repository: [airGRdatassim](https://github.com/hydrosolutions/airgrdatassim).
+   - Ensure that you install `airGR_GM` before `airGRdatassim`.
+
+2. **Install Additional Required Libraries**:
+   - The additional R libraries needed are listed in the `requirements.txt` file.
+   - To install these libraries, navigate to the `SAPPHIRE_Forecast_Tools/apps` directory:
+     ```bash
+     cd /SAPPHIRE_Forecast_Tools/apps
+     ```
+   - Run the following script to install the required packages:
+     ```bash
+     Rscript install_packages.R
+     ```
+
 
 #### I/O
 
-TODO: Adrian, please describe what input files the module requires (the format of the files) and what output files are produced. This includes a description of the required formats and all files that describe the conceptual model (e.g. the parameters or initial conditions of the model).
+**Input File**
 
-**Data Structure and Input files:**
+1. Forcing data: 
+
+    Control member forcing: Total precipitation in mm/d and temperature in °C. The files must be separate for precipitation and temperature, with filenames and file paths specified in the .env file.
+
+    | date       | P     | code  |
+    |------------|-------|-------|
+    | 27.08.2023 | 15.37 | 15194 |
+    | 28.08.2023 | 21.26 | 15194 |
+    | ...        | ...   | ...   |
+    | 09.09.2024 | 0.04  | 15194 |
+        
+
+    | date       | T     | code  |
+    |------------|-------|-------|
+    | 27.08.2023 | 8.39  | 15194 |
+    | 28.08.2023 | 4.39  | 15194 |
+    | ...        | ...   | ...   |
+    | 09.09.2024 | 7.00  | 15194 |
+
+    Ensemble member forcing: The ensemble member forcing must have columns for date, T (temperature in degree Celcius) or P (precipitation in mm/d), and ensemble_member. The basin code is specified in the filename as code_T_ensemble_forecast.csv code_P_ensemble_forecast.csv. The ensemble_member must be a number from 1 to 50. The file path has to be specified in the .env file.
+
+    | date       | T         | ensemble_member |
+    |------------|-----------|-----------------|
+    | 26.08.2024 | 12.03     | 1               |
+    | 27.08.2024 | 13.60     | 1               |
+    | ...        | ...       | ...             |
+    | 28.08.2024 | 11.69     | 50              |
+
+    Hindcast forcing: This forcing data has the same structure as the control member forcing but includes more historical data. There should be no gaps between the hindcast forcing and the control member forcing data.
+
+
+2. Discharge data: Discharge is in m3/s
+   
+    | code  | date       | discharge |
+    |-------|------------|-----------|
+    | 15194 | 01.01.2000 | 1.9       |
+    | 15194 | 02.01.2000 | 1.9       |
+    | ...   | ...        | ...       |
+    | 15013 | 04.01.2000 | 1.9       |
+
+3. Basin Info and Parameter
+   
+   For each basin (each `code`), a folder is required with the BasinInfo: ieasyhydroforecast_PATH_TO_BASININFO/BASINCODE
+
+    This folder contains the data files `param.RData` and `Basin_Info.RData`.
+
+    - **param.RData**: This file contains the variable `param`, which holds the calibrated parameter values (numeric) required for the specific hydrological model.
+
+    The `Basin_Info.RData` file contains a list with the name Basin_Info with data for the specific basin. The structure of this file is as follows:
+
+    - **BasinCode**: An integer representing the unique code for the basin.
+      
+      - Example: `15194`
+
+    - **BasinName**: A string representing the name of the basin.
+      
+      - Example: `"AlaArcha"`
+
+    - **BasinArea_m2**: A numeric value representing the area of the basin in square meters.
+      
+      - Example: `272532878`
+
+    - **BasinLat_rad**: A numeric value representing the latitude of the basin's centroid in radians.
+      
+      - Example: `0.744`
+
+    - **HypsoData**: A numeric vector of hypsometric data (elevation distribution) for the basin in meters above sea level, with each value representing elevation at 1% intervals of the basin area.
+
+      - Example: `c(1531.00, 1684.00, 1751.16, ..., 4753.00)`
+
+    - **MeanAnSolidPrecip**: Vector giving the annual mean of average solid precipitation for each layer [mm/year]
+
+      - Example: `c(361, 361, 361, 361, 361)`
+
+    - **rel_ice**: A numeric vector representing the relative ice coverage in the basin across different elevation bands.
+
+      - Example: `c(0.000000000, 0.000000000, 0.003908274, 0.043461312, 0.078811896)`
+
+    - **GradT**: A data frame containing temperature gradient data, which includes daily and monthly temperature gradients in degrees Celsius per 100 meters (`grad_Tmean`). Each row corresponds to a specific day of the year, with columns for day, month, and the respective temperature gradients. 
+
+      - Structure:
+
+        | day | month | grad_Tmean | 
+        |-----|-------|------------|
+        | 1   | 1     | 0.631      |
+        | 2   | 1     | 0.632      |
+        | ... | ...   | ...        |
+        | 366 | 12    | 0.633      |
+
+    - **k_value**: A numeric representing the altitudinal correction factor (`k`) for the precipitation lapse rate in [m-1] 
+
+      - Example: `0.00043`
+
+   
+4. Output folder
+  
+   For each basin, a folder is required, similar to the one for Ala Archa with the code 15194: /sensitive_data_forecast_tools/conceptual_model/Output/15194
+   This folder can be empty. In this folder the initial condition for the next forecast are stored. 
+
+**Output Files**
+Three output files are generated and stored in this path: /sensitive_data_forecast_tools/intermediate_data/conceptual_model_results/BASINCODE/data
+(For each basin the above folder structure is needed.)
+- daily_BASINCODE.csv
+- pentad_BASINCODE.csv
+- decadal_BASINCODE.csv
+
+**daily forecast**: daily_BASINCODE.csv
+| forecast_date | date       | sd_Qsim   | Q5        | Q10       | ...       | Q50       | ...       | Q90       | Q95       |
+|---------------|------------|-----------|-----------|-----------|-----------|-----------|-----------|-----------|-----------|
+| 31.07.2024    | 01.08.2024 | 0.2135    | 4.3921    | 4.4378    | ...       | 4.6603    | ...       | 5.0256    | 5.0439    |
+| 31.07.2024    | 02.08.2024 | 0.2860    | 4.3972    | 4.4756    | ...       | 4.7365    | ...       | 5.1828    | 5.3473    |
+| ...           | ...        | ...       | ...       | ...       | ...       | ...       | ...       | ...       | ...       |
+| 31.07.2024    | 14.08.2024 | 1.3577    | 3.8849    | 4.1469    | ...       | 5.1747    | ...       | 7.8351    | 8.0748    |
+
+**pentadal forecast**: pentad_BASINCODE.csv
+| forecast_date | Qsim      |
+|---------------|-----------|
+| 31.07.2024    | 5.0859    |
+| ...           | ...       |
+| 15.08.2024    | 6.3975    |
+
+**decadal forecast**: decadal_BASINCODE.csv
+| forecast_date | Qsim      |
+|---------------|-----------|
+| 31.07.2024    | 5.0859    |
+| ...           | ...       |
+| 20.08.2024    | 6.3975    |
+
 
 
 #### How to run the tool 
 
-TODO: Adrian, please provide instructions of how you run the module when you develop it.
+1. **Prepare Configuration Files**:
+   - Ensure you have the configuration file with the necessary parameters, as described in configuration.md.
+   - Also, set up the `.env` file according to the details provided in configuration.md, including all required paths and filenames.
+   - For each `code`in the config file it needs the folder:
+     -  ieasyhydroforecast_PATH_TO_BASININFO/BASINCODE with `Basin_Info.RData`and `param.RData` (see I/O)
+     -  ieasyhydroforecast_PATH_TO_INITCOND/BASINCODE  
+     -  ieasyhydroforecast_PATH_TO_RESULT/BASINCODE/data
+
+2. **Initial Setup**:
+   - Run the `run_initial.R` script to generate the initial conditions required for the model to run in operational mode:
+     ```bash
+     cd /path/to/your/SAPPHIRE_Forecast_Tools/apps/conceptual_model
+     
+     SAPPHIRE_OPDEV_ENV=True Rscript run_initial.R
+     ```
+
+3. **Run Operational Forecasting**:
+   - After completing the initial setup, run the operational forecasting script:
+     ```bash
+     cd /path/to/your/SAPPHIRE_Forecast_Tools/apps/conceptual_model
+     
+     SAPPHIRE_OPDEV_ENV=True Rscript run_operation_forecasting_CM.R
+     ```
+   - **Note**: Hindcasts are automatically created in the `run_operation_forecasting_CM.R` script. When setting up for the first time, hindcasts will not be produced because no previous forecasts are saved. In operational mode, the script will subsequently check for gaps between the last run and the current run, filling in any missing forecasts.
+
+4. **Running Multiple Times a Day**:
+   - The script can be run multiple times a day, for example, if new discharge data becomes available. Each run will overwrite the forecast output of the previous run on that day.
+
+5. **Triggering Hindcasts for Specific Days**:
+   - To trigger hindcasts for specific days, run the `run_manual_hindcast.R` script and define the `start_hindcast`, `end_hindcast`, and `hindcast_mode` parameters:
+     ```bash
+     cd /path/to/your/SAPPHIRE_Forecast_Tools/apps/conceptual_model
+  
+     SAPPHIRE_OPDEV_ENV=True Rscript run_manual_hindcast.R
+     ```
 
 ### Machine learning (machine_learning)
 
