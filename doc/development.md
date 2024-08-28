@@ -564,10 +564,31 @@ The output format is described in the I/O documentation.
 
 
 
-#### Prerequisites 
 
-TODO: please describe how to install the packages from GitHub. If you have a requirements.txt file, please describe how to install the required packages.
-Here 
+
+#### Prerequisites
+
+To set up the environment for running the forecast using the conceptual model you have to do following. 
+
+1. **Install Required Packages from GitHub**:
+   - You need to install two key R packages from GitHub: `airGR_GM` and `airGRdatassim`.
+   - First, install `airGR_GM` by following the instructions provided in its GitHub repository: [airGR_GM](https://github.com/hydrosolutions/airGR_GM).
+   - Next, install `airGRdatassim` by following the instructions in its GitHub repository: [airGRdatassim](https://github.com/hydrosolutions/airgrdatassim).
+   - Ensure that you install `airGR_GM` before `airGRdatassim`.
+
+2. **Install Additional Required Libraries**:
+   - The additional R libraries needed are listed in the `requirements.txt` file.
+   - To install these libraries, navigate to the `SAPPHIRE_Forecast_Tools/apps` directory:
+     ```bash
+     cd /SAPPHIRE_Forecast_Tools/apps
+     ```
+   - Run the following script to install the required packages:
+     ```bash
+     Rscript install_packages.R
+     ```
+3. **Initial setup** 
+    -  
+
 
 
 #### I/O 
