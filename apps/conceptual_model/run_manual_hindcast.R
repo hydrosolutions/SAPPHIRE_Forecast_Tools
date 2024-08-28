@@ -24,7 +24,7 @@ if (Sys.getenv("IN_DOCKER_CONTAINER")=="") {
   # Environment variable IN_DOCKER_CONTAINER is not set. Run from local machine
   # This code assumes that forecast_configuration has been opened in
   # apps/configuration_dashboard for development
-  setwd(here())
+  # setwd(here())
   # setwd("apps/conceptual_model")
   print(getwd())
   if (Sys.getenv("SAPPHIRE_OPDEV_ENV")=="True") {
@@ -160,7 +160,13 @@ for (Code in config$codes) {
                                   StatePert = StatePert,
                                   eps = eps)
   
-  write.csv(hindcast, paste0(dir_Results, "/data/hindcast_",hindcast_mode,"_", Basin_Info$BasinCode, ".csv"), row.names = FALSE)
+  
+  start_date_hindcast_format <- start_date_hindcast %>%
+    format(format = "%Y%m%d")
+  end_date_hindcast_format <- end_date_hindcast %>%
+    format(format = "%Y%m%d")
+  
+  write.csv(hindcast, paste0(dir_Results, "/data/hindcast_",hindcast_mode,"_",start_date_hindcast_format,"_",end_date_hindcast_format,"_",Basin_Info$BasinCode, ".csv"), row.names = FALSE)
   }
   
 
