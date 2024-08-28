@@ -76,11 +76,11 @@ The following open-source technologies are used in the development of the foreca
 
 If you have all of these technologies installed on your computer, you can skip the installation instructions below and proceed to the instructions on the general development workflow (TODO: add link to section).
 
-## Installation of 3rd party software 
+## Installation of 3rd party software
 
 You will find instructions on how to install the technologies used in the development of the forecast tools below. We recommend that you install the technologies in the order they are listed. If you are new to any of these tools it is recommended to run through a quick tutorial to get familiar with the technology befor starting out to work on the SAPPHIRE forecast tools.
 
-### Python 
+### Python
 
 Install Python on your computer. The installation instructions can be found in many places on the internet, for example [here](https://realpython.com/installing-python/). We recommend the installation of Python 3.11. You can check the version of Python installed on your computer by running the following command in the terminal:
 
@@ -88,7 +88,7 @@ Install Python on your computer. The installation instructions can be found in m
 python --version
 ```
 
-### Conda 
+### Conda
 
 We use conda for managing the Python environment. The installation instructions can be found [here](https://docs.conda.io/projects/conda/en/latest/user-guide/install/). Once conda is installed, you can create a new conda environment by running the following command in the terminal:
 
@@ -98,11 +98,11 @@ conda create --name my_environment python=3.11
 
 Through the name tag you can specify a recognizable name for the environment (you can replace my_environment with a name of your choosing). We use a different environment for each module of the backend. For development, python 3.11 was used. We therefore recommend you continue development with python 3.11 as well.
 
-### Visual Studio Code 
+### Visual Studio Code
 
 Install Visual Studio Code on your computer. The installation instructions can be found [here](https://code.visualstudio.com/download). We recommend the installation of the Python extension for Visual Studio Code. The installation instructions can be found [here](https://code.visualstudio.com/docs/languages/python). Note that you can use any other Python IDE for development. We recommend Visual Studio Code as it is free and open-source.
 
-### R 
+### R
 
 Install R on your computer. The installation instructions can be found [here](https://cran.r-project.org/). We recommend the installation of R 4.4.1. You can check the version of R installed on your computer by running the following command in the terminal:
 
@@ -110,23 +110,23 @@ Install R on your computer. The installation instructions can be found [here](ht
 R --version
 ```
 
-### RStudio 
+### RStudio
 
 Install RStudio on your computer. The installation instructions can be found [here](https://rstudio.com/products/rstudio/download/). We recommend the installation of RStudio Desktop.
 
-### Git Desktop 
+### Git Desktop
 
 We recomment the installation of GitHub Desktop to manage the repository. The installation instructions can be found [here](https://desktop.github.com/).
 
-### Docker 
+### Docker
 
 Install Docker Desktop on your computer so you can test dockerization of sofware components locally. The Docker installation instructions can be found [here](https://docs.docker.com/install/).
 
-## Test run the demo version 
+## Test run the demo version
 
 Before starting the development of the Forecast Tools, it is recommended to first try to run the tools with the public demo data set. This will help you to understand the workflow of the tools and to identify the modules you want to work on. The following sections provide instructions on how to test-run the demo version of the forecase tools.
 
-### Clone the github repository 
+### Clone the github repository
 
 Once you have installed the technologies, you can set up your working environment. We recommend that you create a folder for the repository on your computer. You can then clone the repository to your computer. Open a terminal and navigate to the folder where you want to clone the repository. Run the following command in the terminal:
 
@@ -160,7 +160,7 @@ An example command for the test run installed under /Users/username/forecasting/
 bash bin/run_sapphire_forecast_tools.sh /Users/username/forecasting/
 ```
 
-## Set up your work environment 
+## Set up your work environment
 
 If the demo version runs on your system, you can be confident, that you have all the necessary software installed and that the SAPPHIRE Forecast Tools are working on your system. You can now set up your work environment to start developing the forecast tools. Each module comes with a requirements.txt file that lists the required packages. You can install the required packages in your conda environment by following the instructions below. We recommend individual conda environments for each module of the forecast tools.
 
@@ -178,7 +178,7 @@ You can activate an environment by running the following command in the terminal
 conda activate my_environment
 ```
 
-### Install the required packages 
+### Install the required packages
 
 Each module has a requirements.txt file that lists the required packages. You can install the required packages in your conda environment by running the following command in the terminal:
 
@@ -189,13 +189,13 @@ pip install -r requirements.txt
 
 You now have a working installation of the SAPPHIRE Forecast Tools with a public demo data set.
 
-# Development instructions specific to the tools 
+# Development instructions specific to the tools
 
 The following sections provide instructions on how to develop the individual modules of the forecast tools. The names of the modules in the apps folder are given in brackets.
 
 TODO: Add a flow chart of the workflow of the forecast tools.
 
-## Configuration dashboard configuration_dashboard 
+## Configuration dashboard configuration_dashboard
 
 The forecast configuration dashboard is written in R and uses the Shiny framework.
 
@@ -222,15 +222,15 @@ You can verify your confirmed edits in the dashboard in your local copies of the
 
 TODO: Aidar, please validate if the above is correct.
 
-## Backend modules 
+## Backend modules
 
-### Pipeline (pipeline) 
+### Pipeline (pipeline)
 
-#### Module description 
+#### Module description
 
 We use the python package Luigi to manage the workflow of the forecast tools. Luigi takes care of running each backend module in sequence or in parallel. You will find detailed information about Luigi [in the Luigi docs](https://luigi.readthedocs.io/en/stable/index.html#).
 
-#### How to manually run the pipeline 
+#### How to manually run the pipeline
 
 All modules of the SAPPHIRE Forecast Tools are run in individual docker containers. To run them on your system, please follow the instructions below.
 
@@ -276,76 +276,91 @@ To run the Docker containers locally, run the following command in the root dire
 docker compose -f ./bin/docker-compose.yml up
 ```
 
-### Preprocessing runoff data (preprocessing_runoff) 
+### Preprocessing runoff data (preprocessing_runoff)
 
 TODO: formulate the text
 
-#### Description of moudle 
+#### Description of moudle
 
 -   Reads data from excel files and, if access is available, from the iEasyHydro database. TODO: Describe what happens in this tool step by step.
 
-#### I/O 
+#### I/O
 
 -   Link to description of required input files (daily runoff data in excel format)
 -   Describe what output files are produced
 
 TODO: Bea Add flow chart with detailed I/O
 
-#### Prerequisites 
+#### Prerequisites
 
 -   How to download & install iEasyHydro (HF) (-\> link to iEasyHydro documentation)
 
-#### How to run the tool 
+#### How to run the tool
 
-### Preprocessing of gridded weather data (preprocessing_gateway) 
+### Preprocessing of gridded weather data (preprocessing_gateway)
 
 #### Description of module
 
-The proprocessing_gateway module gets weather forecasts and re-analysis weather data from ECMWF IFS as well as TopoPyScale snow model results that have been pre-processed in the SAPPHIRE Data Gateway. The module reads the data and prepares it for the hydrological models. The module is composed of two components that are run in a docker container: - Downolading of operational weather forecasts and downscaling of weather forecasts (Quantile_Mapping_OP.py) - Updating of re-analysis weather data and downscaling of re-analysis weather data (extend_era5_reanalysis.py)
+The proprocessing_gateway module gets weather forecasts and re-analysis weather data from ECMWF IFS as well as TopoPyScale snow model results that are provided through the SAPPHIRE Data Gateway. The module reads the data and prepares it for the hydrological models. The module is composed of two components that are operationally run in a docker container and one script that can be run to produce hindcasts (which are used to calculate model forecast skill metrics).:
 
-Folder Structure:
+- Operational workflow:
+  - Downolading of operational weather forecasts and downscaling of weather forecasts (Quantile_Mapping_OP.py)
+  - Updating of re-analysis weather data and downscaling of re-analysis weather data (extend_era5_reanalysis.py)
+- Production of hindcasts:
+  - Downloading of re-analysis weather data and downscaling of re-analysis weather data (get_era5_reanalysis_data.py)
 
--   processing_gateway
+The Quantile_Mapping_OP.py script accesses the the SAPPHIRE Data Gateway and downloads the ERA5 ECMWF IFS control member and ensemble forecast. Afterwards, it can perform a downscaling using the quantile mapping  method using a set of previously fitted parameters. The fitting of the parameters for downscaling is performed with a parametric transformations where the new transformed value is obtained by the formula $y = a*x^b$ in the [fitQmap](#https://search.r-project.org/CRAN/refmans/qmap/html/fitqmapptf.html) package in R. As we use operational weather forecasts from ECMWF served through the SAPPHIRE Data Gateway, we do not expect to have any gaps in the weather forecast time series. However, in case there should be nan values in the forcing data, the preprocessing_gateway module fills them by taking the last available observation.
 
-    -   Quantile_Mapping_OP.py
+TODO: Sandro: the downscaling is optional as I understand. How can a user turn the downscaling on or off?
 
-    -   get_era5_reanalysis_data-py
-
-    -   extend_era5_reanalysis.py
-
-    -   requierements.txt
-
-    -   logs
-
-        -   log.YYYY-MM-DD
-
-        -   log
-
-    -   Dockerfile
-
-The Quantile_Mapping_OP.py script accesses the the SAPPHIRE Data Gateway and downloads the ERA5 ECMWF IFS control member and ensemble forecast. Afterwards it can perform a downscaling from a set of previously fitted parameters, these downscaling is performed with a parametric transformations where the new transformed value is obtained by the formula $y = a*x^b$ in the [fitQmap](#https://search.r-project.org/CRAN/refmans/qmap/html/fitqmapptf.html) package in R. In case there are nan values in the forcing data, we fill them by taking the last available observation. Alltough it is not expected to have any missing values in the forcing.
+The extend_era5_reanalysis.py file is used to maintain a set of past and current weather forcing data for each river basin. It is updated operationally by appending the latest ERA5 Land Reanalysis data to the hindcast forcing file. It reads in the hindcast file and the operational forcing data, combines them and removes dublicates.
 
 The get_era5_reanalysis_data.py is an initialization file. It also accesses the data-gateway and pulls the ERA5 Land Reanalysis data for a provided time window and a given HRU. It also performs the downscaling on this data. The reason behind this script is, to obtain a file where we have past forcing data saved to perform for example hindcasts.
 
-The extend_era5_reanalysis.py file is used operationally to append the latest ERA5 Land Reanalysis data to the hindcast forcing file. It reads in the hindcast file and the operational forcing data, combines them and removes dublicates.
+#### Prerequisites
 
-#### Prerequisites 
+[Open ECMWF weather forecasts](https://www.ecmwf.int/en/forecasts/datasets/open-data) and results of the [TopoPyScale Snow model](https://topopyscale.readthedocs.io/en/latest/) are pre-processed for hydrological modelling with the SAPPHIRE Data Gateway (TODO: publish once development completed). If you wish to use weather and snow forecast data in the SAPPHIRE Forecast Tools, you will have to install at least the SAPPHIRE Data Gateway and the [SAPPHIRE data gateway client](https://github.com/hydrosolutions/sapphire-dg-client) and optionally also [TopoPyScale](https://topopyscale.readthedocs.io/en/latest/) by following the installation instructions provided in the repositories.
 
-[Open ECMWF weather forecasts](https://www.ecmwf.int/en/forecasts/datasets/open-data) and results of the [TopoPyScale Snow model](https://topopyscale.readthedocs.io/en/latest/) are pre-processed for hydrological modelling with the SAPPHIRE Data Gateway (TODO: publish once development completed). If you wish to use weather and snow forecast data in the SAPPHIRE Forecast Tools, you will have to install the SAPPHIRE Data Gateway and the [SAPPHIRE data gateway client](https://github.com/hydrosolutions/sapphire-dg-client) by following the installation instructions provided in the repositories.
+<div style="border: 1px solid #ccc; padding: 10px; margin-top: 10px;">
+  <strong>Side note on the interaction with the SAPPHIRE Data Gateway
+:</strong> The SAPPHIRE Data Gateway aggregates operational gridded weather and snow data to polygons (e.g. basin outlines or hydrological response units) and makes it available as time series through the SAPPHIRE data gateway client. Prior to the operationalization, The user uploads a shapefile with polygons to the SAPPHIRE Data Gateway which, optimally, contains the attribute code corresponding to the hydropost identifier to produce hydrological forecasts for, and subscribes the shapefile to operational data downloads.
 
-For the requiered libraries run the following command:
+The shapefile uploaded to the SAPPHIRE Data Gateway should have the attributes `name`, `Z` and `geometry`. The `name` attribute should contain the code corresponding to the gauge station (also called hydropost) identifier, the `Z` attribute should contain the elevation of the hydropost (or a dummy number) and the `geometry` attribute should contain the geometry of the hydropost. The shape file can have one or multiple features (polygons) and the code attribute should be unique for each feature. Below you see an example of how the shapefile should look like:
 
+| name      | Z   | geometry |
+|-----------|-----|----------|
+| <code_basin_A> | 1   | ...      |
+| <code_basin_B> | 1   | ...      |
+|
+
+Should the code attributes in the data gateway not correspond to the code attributes in the forecast tools, you can apply a code mapping in the forecast tools by editing the config file ieasyhydroforecast_config_file_data_gateway_name_twins (see below). For more detailed information, please refer to the SAPPHIRE Data Gateway documentation (TODO: add link).
+
+TODO: Add step-by-step instructions of how to upload shapefile and subscribe to operational data on the data gateway (assuming the data gateway is up and running).
+</div>
+<br></br>
+To run the preprocessing_gateway module locally, you will can install the required packages as follows:
+
+Open a terminal and navigate to the preprocessing_gateway folder in the repository:
 ``` bash
-cd SAPPHIRE_Forecast_Tools/apps/preprocessing_gateway
-
-#conda
-conda install --file requirements.txt
-
-#or with pip
-#pip install -r requirements.txt
+cd /path/to/SAPPHIRE_Forecast_Tools/apps/preprocessing_gateway
 ```
+Then install the required packages by running the following command in the terminal with either conda or pip:
 
-#### I/O 
+<details>
+<summary>Conda</summary>
+```
+conda install --file requirements.txt
+```
+</details>
+
+<details>
+<summary>Pip</summary>
+```
+pip install -r requirements.txt
+```
+</details>
+
+#### I/O
 
 Here is the folder structure represented which interacts with the module preprocess_gateway:
 
@@ -385,7 +400,7 @@ Here is the folder structure represented which interacts with the module preproc
 
             -   YOUR_HRU_T_reanalysis.csv
 
-The only input file you need to provide, if you would like to make the downscaling are the files in the params_quantile_mapping folder. This files should have the following structure:
+The only input file you need to provide, if you would like to make the downscaling, are the files in the params_quantile_mapping folder. This files should have the following structure:
 
 | code  | a                | b                | wet_day             |
 |-------|------------------|------------------|---------------------|
@@ -393,8 +408,21 @@ The only input file you need to provide, if you would like to make the downscali
 | xxxx2 | 1.32689320186785 | 1.23330279398003 | 0.00384698459002093 |
 | xxxx3 | 1.22439440281778 | 1.15911354977616 | 0.0031125073391893  |
 | xxxx4 | 1.29536038899781 | 1.18507749883279 | 0.00358122349959776 |
+| ...   | ...              | ...              | ...                 |
+|
 
-When accessing the SAPPHIRE data-gateway, the client downloads a csv file and saves it in the data_gateway folder. When you integrate a HRU on the data-gateway, you can name the different shapefiles in the HRU. These names correspond to the codes. The ensemble forecast files have this format:
+When accessing the SAPPHIRE data gateway, the client downloads a csv file and saves it in the data gateway folder. When you integrate a HRU on the data gateway, you can name the different shapefiles in the HRU. These names correspond to the codes. Should the codes in the data gateway not correspond to the codes in the forecast tools, you can apply a code mapping by editing the config json file ieasyhydroforecast_config_file_data_gateway_name_twins. The file should have the following structure to map codes in the data gateway to codes in the forecast tools:
+
+``` json
+{
+  "gateway_name_twins": {
+    "<basin_A_gateway_code>": "<basin_A_forecast_tools_code>",
+    "<basin_B_gateway_code>": "<basin_B_forecast_tools_code>"
+  }
+}
+```
+
+The ensemble forecast files downloaded through the data gateway client have the following format (corresponding to the forcing data file format of the free hydrologic-hydraulic model [RS Minerve](https://crealp.ch/rs-minerve/) developed and maintained by the [CREALP](https://crealp.ch/) foundation):
 
 |                   | YOUR_NAME          |
 |-------------------|--------------------|
@@ -406,6 +434,10 @@ When accessing the SAPPHIRE data-gateway, the client downloads a csv file and sa
 | **22.08.2024**    | 10.874600198227881 |
 | **23.08.2024**    | 10.76900162280549  |
 | **24.08.2024**    | 10.889982012342898 |
+| **...**           | ...                |
+|
+
+TODO: Sandro: What is YOUR_NAME above? Is this defined in the shapefile that you upload to the data gateway?
 
 And for the control member it looks like this:
 
@@ -421,21 +453,27 @@ And for the control member it looks like this:
 | **04.09.2024**    | 2.36               | 1.38               | 0.92               | 2.94               |
 | **03.09.2024**    | 3.67               | 2.88               | 2.391              | 4.46               |
 | **02.09.2024**    | 8.27               | 6.83               | 5.71               | 8.05               |
+| **...**           | ...                | ...                | ...                | ...                |
+|
 
-These files are than transformed and eventually downscaled. The transformed (and downscaled) files have the following format. For the temperature, the column P is replaced with T. If the file is the control member, the column "ensemble_member" is non existent.
+TODO: Sandro: In the files we have on Dropbox, the columns are not named like this (xxx1 and xxx1.1 but 2 times xxx1).
+
+These files are than transformed and, optionally, downscaled. The transformed (and downscaled) files have the format shown below with the example of precipitation. For the temperature, the column P (for precipitation) is replaced with T (for temperature). If the file is the control member, the column "ensemble_member" is non existent.
 
 | date       | P    | code  | ensemble_member |
 |------------|------|-------|-----------------|
 | 2024-08-21 | 7.26 | xxxx1 | 1               |
 | 2024-08-22 | 0.62 | xxxx1 | 1               |
 | 2024-08-23 | 8.95 | xxxx1 | 1               |
+| ...       | ...  | ...   | ...             |
+|
 
 **TODO:** if snow data like SWE and melt is added. Update the documentation.
 
 The files in the hindcast folder (YOUR_HRU_P_reanalysis.csv) have the exact same format as the control member file.
 
-#### How to run the tool 
-
+#### How to run the tool
+As mentioned above, the preprocessing_gateway module requires access to operational data provided by the SAPPHIRE Data Gateway.
 The first thing you need to ensure is that your HRU is on the SAPPHIRE data-gateway (TODO: add link to the documentation). Here you need to upload your HRU with its shapefiles and trigger the ERA5 Land Reanalysis and subscribe to daily calculations and the forecasts. The shapefile you upload should have the following columns:
 
 | name      | Z   | geometry |
@@ -462,21 +500,21 @@ In order to keep the hindcast data updated, you can run the extend_era5_reanalys
 
 ### Linear regression (linear_regression)
 
-#### Description of module 
+#### Description of module
 
 TODO: Bea
 
-#### Prerequisites 
+#### Prerequisites
 
 No prerequisites No external input files required (depends entirely on pre-processing of runoff data) Need to describe which files are read and which files are produced
 
-#### How to run the tool 
+#### How to run the tool
 
 TODO: Bea
 
 ### Conceptual rainfall-runoff (conceptual...)
 
-#### Description of module 
+#### Description of module
 
 **Description of the conceptual model:**
 The "conceptual_model" module integrates a rainfall-runoff model specifically designed for operational discharge forecasting in high mountain areas and here implemented for the Ala Archa and Inflow Toktogul basin. The selected models, GR4J-CemaNeige-Glacier and GR6J-CemaNeige, are daily, empirical, and lumped reservoir-based models. The GR4J model utilizes four parameters: X1, X2, X3, and X4. X1 represents the production store capacity, which corresponds to the soil's root zone where atmospheric exchanges such as evapotranspiration occur. X2 is the groundwater exchange coefficient, regulating water transfer to groundwater, thereby allowing the model to simulate both leaky and gaining catchments. X3 represents the routing store capacity, influencing slower flow processes like interflow, which are closely linked to the catchment's geology and soil cover. X4 determines the lag time between rainfall and peak flow, shaping the hydrograph. The GR6J model extends this framework by adding two additional parameters, X5 and X6. X5, the inter-catchment exchange threshold, improves the simulation of groundwater exchange processes, while X6, the exponential store depletion coefficient, is designed to enhance the simulation of low-flow conditions. The CemaNeige module simulates snow accumulation and melt processes. It introduces two additional calibration factors, CN1 and CN2, and uses elevation bands to simulate snow processes across different altitudes, with each band representing an equal area. Precipitation and temperature are distributed across these elevation bands based on basin-specific lapse rates. The model framework has been expanded to include a glacier module, which adds three more parameters. This module simulates glacier melt using a temperature index approach and the same spatial descretization than the CemaNeige. Glacier melt begins when the Snow Water Equivalent (SWE) simulated by the CemaNeige module falls below a certain threshold, and the air temperature threshold in the elevation band is exceeded. The glacier melt rate is then proportional to the temperature and an ice melt factor. The model was calibrated with daily discharge data from 2001-01-01 to 2015-31-12 and validated with the period form 2016-01-01 to 2023-12-31. For the Ala Archa model also modelled SWE data was used in the calibration obtained from a [Factorial Snow Model](https://github.com/ArcticSnow/TopoPyScale). We implemented the conceptual model using a modified version of the [airGR](https://github.com/hydrosolutions/airGR_GM) package in R.
@@ -588,7 +626,7 @@ To set up the environment for running the forecast using the conceptual model yo
      ```
 
 
-#### I/O 
+#### I/O
 
 **Input File**
 
@@ -820,7 +858,7 @@ When first initalizing the module, we need to provide a csv file, where the fore
 
 The fill_ml_gaps.py is used to fill any gaps in the forecast files. This step is important to guarantee continious predictions from the models to properly monitor their performance. This script checks for gaps in the column "forecast_date" and than calls the hindcast_ML_models.py script to fill in the gaps. In the utils_ml_forecast.py file are various helper functions.
 
-#### Prerequisites 
+#### Prerequisites
 
 To run this script you need to install the requirements:
 
@@ -834,7 +872,7 @@ conda install --file requirements.txt
 #pip install -r requirements.txt
 ```
 
-#### I/O 
+#### I/O
 
 **Data Structure and Input Files**
 
@@ -928,7 +966,7 @@ Where Q5 represents the 5% - quantile and the quantiles are saved every 5 steps.
 
 For a deterministic forecast the format looks almost the same, expect the there is only one predicted discharge with the column name = "Q".
 
-The name convention for the prediction file is pentad_MODEL_forecast.csv and for the decad forecast decad_MODEL_forecast.csv. The most recent forecast is always added to the past forecasts and hindcast file. 
+The name convention for the prediction file is pentad_MODEL_forecast.csv and for the decad forecast decad_MODEL_forecast.csv. The most recent forecast is always added to the past forecasts and hindcast file.
 
 #### How to run the tool
 
@@ -957,15 +995,15 @@ Afterwards the fill_ml_gaps.py will be called, this script will produce a hindca
 SAPPHIRE_OPDEV_ENV=True SAPPHIRE_MODEL_TO_USE=TFT SAPPHIRE_PREDICTION_MODE=PENTAD python fill_ml_gaps.py
 ```
 
-### Post-processing of forecasts (postprocessing_forecasts) 
+### Post-processing of forecasts (postprocessing_forecasts)
 
 TODO: Bea
 
-### Manual triggering of the forecast pipeline 
+### Manual triggering of the forecast pipeline
 
 To re-run a forecast (for example to include river runoff data that was not available at the time of the forecast), you can manually trigger the forecast pipeline. This process includes the re-setting of the last successful run date of the linear regression module to the day before the last forecast date. This is done with the module reset_forecast_run_date.
 
-#### How to re-run the forecast pipeline manually 
+#### How to re-run the forecast pipeline manually
 
 To do so, you can run the following sequence of commands in the terminal:
 
@@ -1007,7 +1045,7 @@ docker logs <container_id>
 
 where <container_id> is the id of the container you want to inspect. You can find the container id by running the docker ps -a command.
 
-### Forecast dashboard 
+### Forecast dashboard
 
 TODO: Bea \#### Prerequisites The forecast dashboard is implemented in python using the panel framework. As for the backend development, we recommend the use of a Python IDE and conda for managing the Python environment. Please refer to the instructions above should you require more information on how to install these tools.
 
@@ -1017,7 +1055,7 @@ If you have already set up a python environment for the backend, you can activat
 conda activate my_environment
 ```
 
-#### How to run the forecast dashboard locally 
+#### How to run the forecast dashboard locally
 
 To run the forecast dashboard locally, navigate to the apps/forecast_dashboard folder and run the following command in the terminal:
 
@@ -1027,7 +1065,7 @@ panel serve pentad_dashboard.py --show --autoreload --port 5009
 
 The options --show, --autoreload, and --port 5009 are optional. The show and autoreload options open your devault browser window (we used chrome) at <http://localhost:5009/pentad_dashboard> and automatically reload the dashboard if you save changes in the file pentad_dashboard.py. The port option tells you on which port the dashboard is being displayed. Should port 5009 be already occupied on your computer, you can change the number. You can then select the station and view predictors and forecasts in the respective tabs.
 
-## The backend (note: this module is deprecated) 
+## The backend (note: this module is deprecated)
 
 The backend consists of a set of tools that are used to produce forecasts. They are structured into:
 
@@ -1042,7 +1080,7 @@ The backend consists of a set of tools that are used to produce forecasts. They 
     -   post-processing of forecasts: Under development.
 -   iEasyHydroForecast: A helper library that contains functions used by the forecast tools. The library is used to read data from the iEasyHydro database and to write bulletins in a similar fashion as the software iEasyHydro.
 
-#### Prerequisites 
+#### Prerequisites
 
 You will need a Python IDE for development. If you do not alreay have one installed, we recommend the use of Visual Studio Code for developping the backend. The installation instructions can be found [here](https://code.visualstudio.com/download). You will need to install the Python extension for Visual Studio Code. The installation instructions can be found [here](https://code.visualstudio.com/docs/languages/python).
 
@@ -1109,11 +1147,11 @@ This will run the linear regression tool for the period of January first 2024 to
 
 For development, it may be useful to use a different .env file. We use an environment variable to specify a .env file we use for testing purposes (SAPPHIRE_TEST_ENV, see chapter on testing below) and we use one for development with private data (SAPPHIRE_OPDEV_ENV).
 
-## Dockerization 
+## Dockerization
 
 You can dockerize each module on your local machine or on a server using Github Actions. The Dockerfiles to package each module are located in the apps/module_name folder. The docker-compose.yml file runs the entire containerized workflow and is located in the bin folder.
 
-### Configuration dashboard 
+### Configuration dashboard
 
 Note that at the time of writing, a Docker base image with R and RShiny is not available for the ARM architecture (the latest Mac processors). The configuration dashboard has, with the current setup, been dockerized in Ubuntu.
 
@@ -1133,7 +1171,7 @@ docker run -e "IN_DOCKER_CONTAINER=True" \
     --name station_dashboard_container station_dashboard
 ```
 
-### Backend 
+### Backend
 
 The backend is dockerized using the Dockerfile in the apps/backend folder. Dockerization has been tested under both Ubuntu running on Windows or Mac OS operating systems. To build the docker image locally, run the following command in the root directory of the repository:
 
@@ -1147,7 +1185,7 @@ Run the image locally for testing (not for deployment). Replace <full_path_to> w
 docker run -e "IN_DOCKER_CONTAINER=True" -v <full_path_to>/apps/config:/app/apps/config -v <full_path_to>/data:/app/data -v <full_path_to>/apps/internal_data:/app/apps/internal_data -p 9000:8801 --name preprocessing_runoff preprocessing_runoff
 ```
 
-### Forecast dashboard 
+### Forecast dashboard
 
 The forecast dashboard is dockerized using the Dockerfile in the apps/forecast_dashboard folder. To build the docker image locally, run the following command in the root directory of the repository:
 
@@ -1165,15 +1203,15 @@ Make sure that the port 5006 is not occupied on your computer. You can change th
 
 You can now access the dashboard in your browser at <http://localhost:5006/pentad_dashboard> and review it's functionality.
 
-## How to use private data 
+## How to use private data
 
 If you want to use private data for the development of the forecast tools, you can do so by following the instructions below. We recommend tht you use a differenet .env file for development with private data. We use an environment variable to specify a .env file we use for testing purposes (SAPPHIRE_TEST_ENV, see chapter on testing below) and we use one for development with private data (SAPPHIRE_OPDEV_ENV). To make use of the SAPPHIRE_OPDEV_ENV environment variable, you store your environment in a file named .env_develop_kghm in the folder ../sensitive_data_forecast_tools/config (relative to this projects root folder). The folder ../sensitive_data_forecast_tools should contain the following sub-folders: - bin - config - daily_runoff - GIS - intermediate_data - reports - templates
 
-## Development workflow 
+## Development workflow
 
 Development takes place in a git branch created from the main branch. Once the development is finished, the branch is merged into the main branch. This merging requires the approval of a pull requrest by a main developer. The main branch is tested in deployment mode and then merged to the deploy branch. 3rd party users of the forecast tools are requested to pull the tested deploy branch. The deployment is done automatically using GitHub Actions. The workflow instructions can be found in .github/workflows/deploy\_\*.yml.
 
-## Testing 
+## Testing
 
 Testing tools are being developed for each tool. This is work in progress.
 
@@ -1199,6 +1237,6 @@ SAPPHIRE_TEST_ENV=True python -m pytest -s tests/test_file.py::test_function
 
 Replace test_function with the name of the function you want to test.
 
-# Deployment 
+# Deployment
 
 GitHub Actions are used to automatically test the Sapphire Forecast Tools and to build and pull the Docker images to Docker Hub. From there, the images can be pulled to a server and run. To install or update the forecast tools on a server, please follow the instructions in [doc/deployment.md](deployment.md).

@@ -135,6 +135,15 @@ clean_out_backend() {
     stop_and_remove_container prepgateway
     stop_and_remove_container linreg
     stop_and_remove_container postprocessing
+    stop_and_remove_container ml_TIDE_PENTAD
+    stop_and_remove_container ml_TIDE_DECAD
+    stop_and_remove_container ml_TFT_PENTAD
+    stop_and_remove_container ml_TFT_DECAD
+    stop_and_remove_container ml_TSMIXER_PENTAD
+    stop_and_remove_container ml_TSMIXER_DECAD
+    stop_and_remove_container ml_ARIMA_PENTAD
+    stop_and_remove_container ml_ARIMA_DECAD
+    stop_and_remove_container conceptmod
 }
 
 # Function to pull Docker images for the forecast tools
