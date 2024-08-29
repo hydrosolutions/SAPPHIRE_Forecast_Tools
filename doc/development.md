@@ -552,7 +552,18 @@ The modified version of the airGRdatassim package extends its capabilities in se
 The operational model uses temperature and precipitation inputs from the [preprocessing_gateway module](#223-preprocessing-of-gridded-weather-data-preprocessing_gateway), with quantile-mapped ERA5-Land data for past data and all 51 ensemble members from the ECMWF IFS ensemble forecast for future weather predictions.
 
 **Operational Setup:**
-For each run, the model saves the initial condition from `lag_days` days before the current run, making it available for the next forecast. When a new forecast is triggered, the model uses the saved initial condition from the previous run, which stored the initial condition at the current forecast date minus the  `lag_days` (i.e. 180 days) and the time since the last forecast. The model first runs without data assimilation up to today minus `lag_days`, then incorporates data assimilation to the forecast date. Finally, it uses the ensemble weather predictions to run the model for each data assimilation ensemble and ensemble weather forecast, creating a 15-day ahead ensemble daily discharge forecast. From these results, pentadal and decadal discharge forecasts are calculated.
+For each forecast run, the model saves the initial conditions from `lag_days` (e.g., 180 days) before the current run. These saved conditions are then used for the next forecast. When a new forecast is initiated, the model retrieves the saved initial conditions from the previous run, corresponding to the forecast date minus `lag_days` and the time elapsed since the last forecast.
+
+The forecasting process works as follows:
+
+1. The model first runs without data assimilation from the saved initial conditions up to today minus `lag_days`.
+
+2. Next, the model incorporates data assimilation from today minus `lag_days` to the current forecast date.
+
+3. Using the ensemble weather predictions, the model generates a 15-day ahead ensemble forecast for daily discharge. This involves running the model for each data assimilation ensemble and each ensemble weather forecast.
+
+Finally, the model uses these results to calculate pentadal (about 5-day) and decadal (about 10-day) discharge forecasts.
+
 
 Folder Structure:
 
