@@ -739,8 +739,8 @@ def read_daily_probabilistic_conceptmod_forecasts_pentad(
     data = daily_data[(daily_data["day_of_month"].isin([5, 10, 15, 20, 25])) | \
                       (daily_data["forecast_date"] == daily_data["last_day_of_month"])].copy()
 
-    # Add code to the data
-    data.loc[:, "code"] = code
+    # Add code to the data, cast code to int
+    data.loc[:, "code"] = int(code)
 
     # Add pentad of the forecasts to the data
     data.loc[:, "pentad_in_year"] = data["date"].apply(tl.get_pentad_in_year)
@@ -1037,10 +1037,10 @@ def read_observed_and_modelled_data_pentade():
     tsmixer = read_machine_learning_forecasts_pentad(model='TSMIXER')
     arima = read_machine_learning_forecasts_pentad(model='ARIMA')
     cm = read_all_conceptual_model_forecasts_pentad()
-    logger.debug(f"read_observed_and_modelled_data_pentade: Conceptual model forecast data: \n{cm.head()}")
-    logger.debug(f"{cm.tail()}")
 
-    exit()
+    logger.debug(f"type of code in linreg: {linreg['code'].dtype}")
+    logger.debug(f"type of code in tide: {tide['code'].dtype}")
+    logger.debug(f"type of code in cm: {cm['code'].dtype}")
 
     # TEMP: For now, we read dummy data
     #modelA, statsA = read_linreg_forecasts_pentad_dummy(model='A')
