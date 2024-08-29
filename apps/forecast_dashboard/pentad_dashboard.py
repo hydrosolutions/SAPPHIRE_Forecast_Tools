@@ -39,6 +39,7 @@ from src.environment import load_configuration
 from src.gettext_config import configure_gettext
 import src.processing as processing
 import src.vizualization as viz
+import src.reports as rep
 
 # Get the absolute path of the directory containing the current script
 cwd = os.getcwd()
@@ -200,6 +201,10 @@ manual_range = pn.widgets.IntSlider(
 )
 manual_range.visible = False
 
+# Write bulletin button
+write_bulletin_button = pn.widgets.Button(name=_("Write bulletin"), button_type='primary')
+status = pn.pane.Markdown('Status: Ready')
+
 # endregion
 
 # region forecast_card
@@ -269,7 +274,18 @@ forecast_summary_table = pn.panel(
     sizing_mode='stretch_width'
     )
 
+bulletin_table = pn.panel(
+    pn.bind(
+        viz.create_forecast_summary_table,
+        _, forecasts_all, station, date_picker, model_checkbox,
+        allowable_range_selection, manual_range
+        ),
+    sizing_mode='stretch_width'
+)
 # Dynamically update sidepanel
+
+# Attach the function to the button click event
+write_bulletin_button.on_click(lambda event: rep.run_in_background(bulletin_table, status))
 
 
 ## Footer
@@ -389,6 +405,19 @@ else: # If no_date_overlap_flag == True
         #         #pn.Card(pentad_effectiveness, title=_("Effectiveness of the methods")),
         #         #pn.Card(pentad_skill, title=_("Forecast accuracy")),
             )
+        ),
+        (_('Bulletin'),
+         pn.Column(
+             pn.Card(
+                 pn.Row(
+                     pn.pane.Markdown("Placeholder for the forecast bulletin"),
+                     pn.Column(
+                         write_bulletin_button,
+                         status),
+                 ),
+                 title='Forecast bulletin',
+            ),
+         )
         ),
         (_('Disclaimer'), footer),
         dynamic=True,
