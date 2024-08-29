@@ -1177,21 +1177,31 @@ def sdivsigma_nse(data: pd.DataFrame, observed_col: str, simulated_col: str):
         raise ValueError(f'DataFrame is missing one or more required columns: {observed_col, simulated_col}')
 
     # Drop NaN values in columns with observed and simulated data
-    data = data.dropna(subset=[observed_col, simulated_col])
+    dataN = data.dropna(subset=[observed_col, simulated_col]).copy()
+
+    # Test if we still have data after dropping NaN values
+    if dataN.empty:
+        logger.debug("sdivsigma_nse: data is empty after dropping NaN values")
+        return pd.Series([np.nan, np.nan], index=['sdivsigma', 'nse'])
 
     # Calculate the numerator and denominator of the NSE formula
-    numerator = ((data[observed_col] - data[simulated_col])**2).sum()
-    denominator = ((data[observed_col] - data[observed_col].mean())**2).sum()
+    numerator = ((dataN[observed_col] - dataN[simulated_col])**2).sum()
+    denominator = ((dataN[observed_col] - dataN[observed_col].mean())**2).sum()
 
     # Catch cases where the denomitar is 0
     if denominator == 0:
-        print("Denominator is 0")
-        print("data['date']", data['date'])
-        print('data[observed_col]', data[observed_col])
-        print('data[observed_col].mean()', data[observed_col].mean())
-        print("numerator", numerator)
-        print("denominator", denominator)
-        return np.nan, np.nan
+        logger.debug("-----------")
+        logger.debug("Problem in sdivsigma_nse")
+        logger.debug(f"sdivsigma_nse: Model: {dataN['model_long'].iloc[0]}")
+        logger.debug(f"code: {dataN['code'].iloc[0]}")
+        logger.debug(f"pentad: {dataN['pentad_in_year'].iloc[0]}")
+        logger.debug("sdivsigma_nse: Denominator is 0")
+        logger.debug(f"sdivsigma: data['date']: {dataN['date']}")
+        logger.debug(f"data[observed_col]: {dataN[observed_col]}")
+        logger.debug(f"data[observed_col].mean(): {dataN[observed_col].mean()}")
+        logger.debug(f"numerator: {numerator}")
+        logger.debug(f"denominator: {denominator}")
+        return pd.Series([np.nan, np.nan], index=['sdivsigma', 'nse'])
 
     # Calculate the efficacy of the model
     sdivsigma = numerator / denominator
@@ -1222,11 +1232,21 @@ def forecast_accuracy_hydromet(data: pd.DataFrame, observed_col: str, simulated_
         raise ValueError(f'DataFrame is missing one or more required columns: {observed_col, simulated_col, delta_col}')
 
     # Drop NaN values
-    data = data.dropna(subset=[observed_col, simulated_col])
+    dataN = data.dropna(subset=[observed_col, simulated_col]).copy()
+
+    # Check if the DataFrame is empty
+    if dataN.empty:
+        logger.debug("forecast_accuracy_hydromet: data is empty after dropping NaN values")
+        return pd.Series([np.nan, np.nan], index=['delta', 'accuracy'])
+
+    # Test if we still have data after dropping NaN values
+    if dataN.empty:
+        logger.debug("forecast_accuracy_hydromet: data is empty after dropping NaN values")
+        return pd.Series([np.nan, np.nan], index=['delta', 'accuracy'])
 
     # Calculate the forecast accuracy
-    accuracy = (abs(data[observed_col] - data[simulated_col]) <= data[delta_col]).mean()
-    delta = data[delta_col].iloc[-1]
+    accuracy = (abs(dataN[observed_col] - dataN[simulated_col]) <= dataN[delta_col]).mean()
+    delta = dataN[delta_col].iloc[-1]
 
     return pd.Series([delta, accuracy], index=['delta', 'accuracy'])
 
@@ -1251,10 +1271,15 @@ def mae(data: pd.DataFrame, observed_col: str, simulated_col: str):
         raise ValueError(f'DataFrame is missing one or more required columns: {observed_col, simulated_col}')
 
     # Drop NaN values
-    data = data.dropna(subset=[observed_col, simulated_col])
+    dataN = data.dropna(subset=[observed_col, simulated_col]).copy()
+
+    # Check if the DataFrame is empty
+    if dataN.empty:
+        logger.debug("mae: data is empty after dropping NaN values")
+        return pd.Series([np.nan], index=['mae'])
 
     # Calculate the mean average error between the observed and simulated data
-    mae = abs(data[observed_col] - data[simulated_col]).mean()
+    mae = abs(dataN[observed_col] - dataN[simulated_col]).mean()
 
     return pd.Series([mae], index=['mae'])
 
@@ -1363,7 +1388,7 @@ def calculate_forecast_skill_deprecating(data_df: pd.DataFrame, station_col: str
 
     return data_df
 
-def calculate_skill_metrics_pentade(observed: pd.DataFrame, simulated: pd.DataFrame):
+def calculate_skill_metrics_pentad(observed: pd.DataFrame, simulated: pd.DataFrame):
     """
     For each model and hydropost in the simulated DataFrame, calculates a number
     of skill metrics based on the observed DataFrame.
@@ -1890,6 +1915,8 @@ def write_pentad_hydrograph_data(data: pd.DataFrame):
     # Get year of the latest date in data
     current_year = data['date'].dt.year.max()
 
+    logger.debug(f"Calculating pentadal runoff statistics with data from {data['date'].min()} to {data['date'].max()}")
+
     # Calculate runoff statistics
     runoff_stats = data[data['date'].dt.year != current_year]. \
         reset_index(drop=True). \
@@ -2089,11 +2116,9 @@ def write_pentad_time_series_data(data: pd.DataFrame):
     # production. For the hydrograph output, we want the date to reflect the
     # pentad, the data is collected for. Therefore, we add 1 day to the 'date'
     # column and recalculate pentad and pentad_in_year.
-    # Add 1 day to the date column
-    data.loc[:, 'date'] = data.loc[:, 'date'] + pd.DateOffset(days=1)
     # Calculate pentad and pentad_in_year
-    data.loc[:, 'pentad'] = data['date'].apply(tl.get_pentad)
-    data.loc[:, 'pentad_in_year'] = data['date'].apply(tl.get_pentad_in_year)
+    data.loc[:, 'pentad'] = (data['date'] + pd.Timedelta(days=1)).apply(tl.get_pentad)
+    data.loc[:, 'pentad_in_year'] = (data['date'] + pd.Timedelta(days=1)).apply(tl.get_pentad_in_year)
 
     # Get the path to the intermediate data folder from the environmental
     # variables and the name of the ieasyforecast_hydrograph_pentad_file.
@@ -2153,10 +2178,9 @@ def write_decad_time_series_data(data: pd.DataFrame):
     # decad, the data is collected for. Therefore, we add 1 day to the 'date'
     # column and recalculate decad and decad_in_year.
     # Add 1 day to the date column
-    data.loc[:, 'date'] = data.loc[:, 'date'] + pd.DateOffset(days=1)
     # Calculate decad and decad_in_year
-    data.loc[:, 'decad_in_month'] = data['date'].apply(tl.get_decad_in_month)
-    data.loc[:, 'decad_in_year'] = data['date'].apply(tl.get_decad_in_year)
+    data.loc[:, 'decad_in_month'] = (data['date'] + pd.Timedelta(days=1)).apply(tl.get_decad_in_month)
+    data.loc[:, 'decad_in_year'] = (data['date'] + pd.Timedelta(days=1)).apply(tl.get_decad_in_year)
 
     # Get the path to the intermediate data folder from the environmental
     # variables and the name of the ieasyforecast_hydrograph_pentad_file.

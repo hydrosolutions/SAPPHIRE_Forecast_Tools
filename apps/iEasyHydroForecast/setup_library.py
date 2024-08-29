@@ -1000,21 +1000,31 @@ def read_linreg_forecasts_pentad_dummy(model):
 
 def calculate_ensemble_forecast(forecasts):
     # Create a dataframe with unique date and codes from forecasts
-    ensemble_mean = forecasts[["date", "code", "pentad_in_month", "pentad_in_year"]].drop_duplicates()
+    ensemble_mean = forecasts[["date", "code", "pentad_in_month", "pentad_in_year"]]\
+        .drop_duplicates(keep='last').copy()
 
     # Add model_long and model_short columns to the ensemble_mean dataframe
     ensemble_mean['model_long'] = "Ensemble mean (EM)"
     ensemble_mean['model_short'] = "EM"
 
     # Calculate the ensemble mean over all models
-    ensemble_mean_q = forecasts.groupby(["date", "code"]).agg({"forecasted_discharge": "mean"}).reset_index()
+    ensemble_mean_q = forecasts \
+        .groupby(["date", "code", "pentad_in_month", "pentad_in_year"]) \
+            .agg({"forecasted_discharge": "mean"}).reset_index()
 
     # Merge ensemble_mean_q into ensemble_mean
-    ensemble_mean = pd.merge(ensemble_mean, ensemble_mean_q, on=["date", "code"], how="left")
+    ensemble_mean = pd.merge(
+        ensemble_mean,
+        ensemble_mean_q,
+        on=["date", "code", "pentad_in_month", "pentad_in_year"],
+        how="left")
 
-    # Add ensemble_mean to forecasts
+    # Append ensemble_mean to forecasts
     forecasts = pd.concat([forecasts, ensemble_mean])
     logger.info(f"Calculated ensemble forecast for the pentadal forecast horizon.")
+    logger.debug(f"Columns of forecasts:\n{forecasts.columns}")
+    logger.debug(f"Forecasts:\n{forecasts.loc[:,['date', 'code', 'model_long']].head()}")
+    logger.debug(f"Forecasts:\n{forecasts.loc[:,['date', 'code', 'model_long']].tail()}")
 
     return forecasts
 
@@ -1042,17 +1052,12 @@ def read_observed_and_modelled_data_pentade():
     logger.debug(f"type of code in tide: {tide['code'].dtype}")
     logger.debug(f"type of code in cm: {cm['code'].dtype}")
 
-    # TEMP: For now, we read dummy data
-    #modelA, statsA = read_linreg_forecasts_pentad_dummy(model='A')
-    #modelB, statsB = read_linreg_forecasts_pentad_dummy(model='B')
-    #logger.info(f"Read {len(modelA)} rows of model A forecasts for the pentadal forecast horizon.")
-    #logger.info(f"Read {len(modelB)} rows of model B forecasts for the pentadal forecast horizon.")
-
     # Merge tide, tft, tsmixer and arima into linreg.
     # same columns are: date, code, pentad_in_month, pentad_in_year,
     # forecasted_discharge, model_long and model_short
     forecasts = pd.concat([linreg, tide, tft, tsmixer, arima, cm])
-    logger.debug(f"forecasts concatenated:\n{forecasts.head()}\n{forecasts.tail()}")
+    logger.debug(f"columns of forecasts concatenated:\n{forecasts.columns}")
+    logger.debug(f"forecasts concatenated:\n{forecasts.loc[:, ['date', 'code', 'model_long']].head()}\n{forecasts.loc[:, ['date', 'code', 'model_long']].tail()}")
 
     #forecasts = pd.concat([linreg, modelA, modelB])
     #stats = pd.concat([stats_linreg, statsA, statsB])
@@ -1060,6 +1065,8 @@ def read_observed_and_modelled_data_pentade():
     logger.info(f"Concatenated forecast results from all methods for the pentadal forecast horizon.")
 
     forecasts = calculate_ensemble_forecast(forecasts)
+
+    exit()
 
     # Merge the general runoff statistics to the observed DataFrame
     observed = pd.merge(observed, stats, on=["date", "code"], how="left")
