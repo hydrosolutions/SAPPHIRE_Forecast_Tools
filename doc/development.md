@@ -2,8 +2,8 @@
 
 This document describes how to develop the application and how to add hydrological forecasting models to your installation of the forecast tools. If you wish to install the demo version of the application, please refer to the [installation instructions in the deployment guide](deployment.md). The document is structured as follows:
 
-- [Prerequisites](#prerequisites)
-  - [Installation of 3rd party software](#installation-of-3rd-party-software)
+- [1. Prerequisites](#1-prerequisites)
+  - [1.1 Installation of 3rd party software](#11-installation-of-3rd-party-software)
     - [Python](#python)
     - [Conda](#conda)
     - [Visual Studio Code](#visual-studio-code)
@@ -11,31 +11,31 @@ This document describes how to develop the application and how to add hydrologic
     - [RStudio](#rstudio)
     - [Git Desktop](#git-desktop)
     - [Docker](#docker)
-  - [Test run the demo version](#test-run-the-demo-version)
+  - [1.2 Test run the demo version](#12-test-run-the-demo-version)
     - [Clone the github repository](#clone-the-github-repository)
     - [Test-run the Sapphire forecast tools](#test-run-the-sapphire-forecast-tools)
-  - [Set up your work environment](#set-up-your-work-environment)
+  - [1.3 Set up your work environment](#13-set-up-your-work-environment)
     - [Activate the conda environment](#activate-the-conda-environment)
     - [Install the required packages](#install-the-required-packages)
-- [Development instructions specific to the tools](#development-instructions-specific-to-the-tools)
-  - [Configuration dashboard configuration\_dashboard](#configuration-dashboard-configuration_dashboard)
-  - [Backend modules](#backend-modules)
-    - [Pipeline (pipeline)](#pipeline-pipeline)
-      - [Module description](#module-description)
+- [2. Development instructions specific to the tools](#2-development-instructions-specific-to-the-tools)
+  - [2.1 Configuration dashboard configuration\_dashboard](#21-configuration-dashboard-configuration_dashboard)
+  - [2.2 Backend modules](#22-backend-modules)
+    - [2.2.1 Pipeline (pipeline)](#221-pipeline-pipeline)
+      - [Description](#description)
       - [How to manually run the pipeline](#how-to-manually-run-the-pipeline)
-    - [Preprocessing runoff data (preprocessing\_runoff)](#preprocessing-runoff-data-preprocessing_runoff)
-      - [Description of moudle](#description-of-moudle)
-      - [I/O](#io)
-      - [Prerequisites](#prerequisites-1)
-      - [How to run the tool](#how-to-run-the-tool)
-    - [Preprocessing of gridded weather data (preprocessing\_gateway)](#preprocessing-of-gridded-weather-data-preprocessing_gateway)
+    - [2.2.2 Preprocessing runoff data (preprocessing\_runoff)](#222-preprocessing-runoff-data-preprocessing_runoff)
       - [Description of module](#description-of-module)
-      - [Prerequisites](#prerequisites-2)
+      - [I/O](#io)
+      - [Prerequisites](#prerequisites)
+      - [How to run the tool](#how-to-run-the-tool)
+    - [2.2.3 Preprocessing of gridded weather data (preprocessing\_gateway)](#223-preprocessing-of-gridded-weather-data-preprocessing_gateway)
+      - [Description](#description-1)
+      - [Prerequisites](#prerequisites-1)
       - [I/O](#io-1)
       - [How to run the tool](#how-to-run-the-tool-1)
-    - [Linear regression (linear\_regression)](#linear-regression-linear_regression)
+    - [2.2.4 Linear regression (linear\_regression)](#224-linear-regression-linear_regression)
       - [Description of module](#description-of-module-1)
-      - [Prerequisites](#prerequisites-3)
+      - [Prerequisites](#prerequisites-2)
       - [How to run the tool](#how-to-run-the-tool-2)
     - [Conceptual rainfall-runoff (conceptual...)](#conceptual-rainfall-runoff-conceptual)
       - [Description of the Conceptual Model Module](#description-of-the-conceptual-model-module)
@@ -48,13 +48,13 @@ This document describes how to develop the application and how to add hydrologic
       - [I/O](#io-3)
         - [Output Files](#output-files)
       - [How to run the tool](#how-to-run-the-tool-4)
-    - [Post-processing of forecasts (postprocessing\_forecasts)](#post-processing-of-forecasts-postprocessing_forecasts)
-    - [Manual triggering of the forecast pipeline](#manual-triggering-of-the-forecast-pipeline)
+    - [2.2.7 Post-processing of forecasts (postprocessing\_forecasts)](#227-post-processing-of-forecasts-postprocessing_forecasts)
+    - [2.2.8 Manual triggering of the forecast pipeline](#228-manual-triggering-of-the-forecast-pipeline)
       - [How to re-run the forecast pipeline manually](#how-to-re-run-the-forecast-pipeline-manually)
-    - [Forecast dashboard](#forecast-dashboard)
+    - [2.2.9 Forecast dashboard](#229-forecast-dashboard)
       - [How to run the forecast dashboard locally](#how-to-run-the-forecast-dashboard-locally)
-  - [The backend (note: this module is deprecated)](#the-backend-note-this-module-is-deprecated)
-      - [Prerequisites](#prerequisites-6)
+  - [2.3 The backend (note: this module is deprecated)](#23-the-backend-note-this-module-is-deprecated)
+      - [Prerequisites](#prerequisites-5)
       - [How to run the backend modules locally {#how-to-run-the-backend-modules-locally}](#how-to-run-the-backend-modules-locally-how-to-run-the-backend-modules-locally)
         - [Pre-processing of river runoff data {#pre-processing-of-river-runoff-data}](#pre-processing-of-river-runoff-data-pre-processing-of-river-runoff-data)
         - [Pre-processing of forcing data from the data gateway {#pre-processing-of-forcing-data-from-the-data-gateway}](#pre-processing-of-forcing-data-from-the-data-gateway-pre-processing-of-forcing-data-from-the-data-gateway)
@@ -62,13 +62,13 @@ This document describes how to develop the application and how to add hydrologic
   - [Dockerization](#dockerization)
     - [Configuration dashboard](#configuration-dashboard)
     - [Backend](#backend)
-    - [Forecast dashboard](#forecast-dashboard-1)
+    - [Forecast dashboard](#forecast-dashboard)
   - [How to use private data](#how-to-use-private-data)
   - [Development workflow](#development-workflow)
   - [Testing](#testing)
 - [Deployment](#deployment)
 
-# Prerequisites
+# 1. Prerequisites
 
 Note: The software has been developed on a Mac computer and packaged with Ubuntu base images using Docker using GitHub Actions (with workflow instructions in .github/workflows/main.yml). It has been tested extensibly on an Ubuntu server. The software has not been tested on Windows.
 
@@ -76,7 +76,7 @@ The following open-source technologies are used in the development of the foreca
 
 If you have all of these technologies installed on your computer, you can skip the installation instructions below and proceed to the instructions on the general development workflow (TODO: add link to section).
 
-## Installation of 3rd party software
+## 1.1 Installation of 3rd party software
 
 You will find instructions on how to install the technologies used in the development of the forecast tools below. We recommend that you install the technologies in the order they are listed. If you are new to any of these tools it is recommended to run through a quick tutorial to get familiar with the technology befor starting out to work on the SAPPHIRE forecast tools.
 
@@ -122,7 +122,7 @@ We recomment the installation of GitHub Desktop to manage the repository. The in
 
 Install Docker Desktop on your computer so you can test dockerization of sofware components locally. The Docker installation instructions can be found [here](https://docs.docker.com/install/).
 
-## Test run the demo version
+## 1.2 Test run the demo version
 
 Before starting the development of the Forecast Tools, it is recommended to first try to run the tools with the public demo data set. This will help you to understand the workflow of the tools and to identify the modules you want to work on. The following sections provide instructions on how to test-run the demo version of the forecase tools.
 
@@ -160,7 +160,7 @@ An example command for the test run installed under /Users/username/forecasting/
 bash bin/run_sapphire_forecast_tools.sh /Users/username/forecasting/
 ```
 
-## Set up your work environment
+## 1.3 Set up your work environment
 
 If the demo version runs on your system, you can be confident, that you have all the necessary software installed and that the SAPPHIRE Forecast Tools are working on your system. You can now set up your work environment to start developing the forecast tools. Each module comes with a requirements.txt file that lists the required packages. You can install the required packages in your conda environment by following the instructions below. We recommend individual conda environments for each module of the forecast tools.
 
@@ -189,13 +189,13 @@ pip install -r requirements.txt
 
 You now have a working installation of the SAPPHIRE Forecast Tools with a public demo data set.
 
-# Development instructions specific to the tools
+# 2. Development instructions specific to the tools
 
 The following sections provide instructions on how to develop the individual modules of the forecast tools. The names of the modules in the apps folder are given in brackets.
 
 TODO: Add a flow chart of the workflow of the forecast tools.
 
-## Configuration dashboard configuration_dashboard
+## 2.1 Configuration dashboard configuration_dashboard
 
 The forecast configuration dashboard is written in R and uses the Shiny framework.
 
@@ -222,11 +222,11 @@ You can verify your confirmed edits in the dashboard in your local copies of the
 
 TODO: Aidar, please validate if the above is correct.
 
-## Backend modules
+## 2.2 Backend modules
 
-### Pipeline (pipeline)
+### 2.2.1 Pipeline (pipeline)
 
-#### Module description
+#### Description
 
 We use the python package Luigi to manage the workflow of the forecast tools. Luigi takes care of running each backend module in sequence or in parallel. You will find detailed information about Luigi [in the Luigi docs](https://luigi.readthedocs.io/en/stable/index.html#).
 
@@ -276,11 +276,11 @@ To run the Docker containers locally, run the following command in the root dire
 docker compose -f ./bin/docker-compose.yml up
 ```
 
-### Preprocessing runoff data (preprocessing_runoff)
+### 2.2.2 Preprocessing runoff data (preprocessing_runoff)
 
 TODO: formulate the text
 
-#### Description of moudle
+#### Description of module
 
 -   Reads data from excel files and, if access is available, from the iEasyHydro database. TODO: Describe what happens in this tool step by step.
 
@@ -297,9 +297,9 @@ TODO: Bea Add flow chart with detailed I/O
 
 #### How to run the tool
 
-### Preprocessing of gridded weather data (preprocessing_gateway)
+### 2.2.3 Preprocessing of gridded weather data (preprocessing_gateway)
 
-#### Description of module
+#### Description
 
 The proprocessing_gateway module gets weather forecasts and re-analysis weather data from ECMWF IFS as well as TopoPyScale snow model results that are provided through the SAPPHIRE Data Gateway. The module reads the data and prepares it for the hydrological models. The module is composed of two components that are operationally run in a docker container and one script that can be run to produce hindcasts (which are used to calculate model forecast skill metrics).:
 
@@ -498,7 +498,7 @@ You can specifiy the HRU for which you need the control member forecast and the 
 
 In order to keep the hindcast data updated, you can run the extend_era5_reanalysis.py script. This only works if you have operational data and you should ensure that you don't have any gaps longer than 6 months between the end of the hindcast file, and the start of the operational forcing data, or else you will have some forcing gaps.
 
-### Linear regression (linear_regression)
+### 2.2.4 Linear regression (linear_regression)
 
 #### Description of module
 
@@ -512,7 +512,7 @@ No prerequisites No external input files required (depends entirely on pre-proce
 
 TODO: Bea
 
-### Conceptual rainfall-runoff (conceptual...)
+### 2.2.5 Conceptual rainfall-runoff assimilation model (conceptual_model)
 
 
 
@@ -553,6 +553,7 @@ In this module, data assimilation is implemented using an ensemble approach. Met
 The modified version of the airGRdatassim package extends its capabilities in several key areas:
 - **Glacier Module Integration**: The modification includes the ability to incorporate glacier processes into the data assimilation framework.
 - **Operational Mode Functionality**: Supportin operational data assimilation, allowing the model to initialize with real-time conditions and to use basin-specific lapse rates for temperature and precipitation distribution
+
 
 
 **Forcing data:**
@@ -604,9 +605,9 @@ The `run_operation_forecasting_CM.R` script operates as follows:
 
 10. **Check Previous Forecasts**: The operational model checks the stored forecasts from previous runs in the directory `ieasyhydroforecast_PATH_TO_RESULT/data/daily_BASINCODE.csv`.
 
-11. **Handle Missing Forecast Days**: If there are missing days since the last forecast, the model starts for those days using the `get_hindcast_period.R` function from the `functions_hindcast.R` file. The script also loads the hindcast forcing data (as detailed in the I/O documentation). Hindcasts are run similarly to the `run_manual_hindcast.R` script, with daily timesteps. 
+11. **Handle Missing Forecast Days**: If there are missing days since the last forecast, the model starts for those days using the `get_hindcast_period.R` function from the `functions_hindcast.R` file. The script also loads the hindcast forcing data (as detailed in the I/O documentation). Hindcasts are run similarly to the `run_manual_hindcast.R` script, with daily timesteps.
 
-12. **Pentadal Decadal**:For pentadal and decadal timesteps, the data is averaged over the corresponding periods and saved as `pentad_15194.csv` and `decad_15194.csv`. 
+12. **Pentadal Decadal**:For pentadal and decadal timesteps, the data is averaged over the corresponding periods and saved as `pentad_15194.csv` and `decad_15194.csv`.
 
 To manually trigger a hindcast for a specific period, the `run_manual_hindcast.R` script can be run. In the configuration file (see configuration.md), you need to define `start_hindcast`, `end_hindcast`, and `hindcast_mode`, which can be `daily`, `pentad`, or `decad`. The hindcast is executed for all the specified `codes` using the hydrological model defined in `fun_mod_mapping`.
 
@@ -638,7 +639,7 @@ The output format is described in the I/O documentation.
 
 #### Prerequisites
 
-To set up the environment for running the forecast using the conceptual model you have to do following. 
+To set up the environment for running the forecast using the conceptual model you have to do following.
 
 1. **Install Required Packages from GitHub**:
    - You need to install two key R packages from GitHub: `airGR_GM` and `airGRdatassim`.
@@ -656,13 +657,14 @@ To set up the environment for running the forecast using the conceptual model yo
      ```bash
      Rscript install_packages.R
      ```
+3. **Check the configuration of the module**
 
 
 #### I/O
 
 **Input File**
 
-1. Forcing data: 
+1. Forcing data:
 
     Control member forcing: Total precipitation in mm/d and temperature in °C. The files must be separate for precipitation and temperature, with filenames and file paths specified in the .env file.
 
@@ -672,7 +674,7 @@ To set up the environment for running the forecast using the conceptual model yo
     | 28.08.2023 | 21.26 | 15194 |
     | ...        | ...   | ...   |
     | 09.09.2024 | 0.04  | 15194 |
-        
+
 
     | date       | T     | code  |
     |------------|-------|-------|
@@ -694,7 +696,7 @@ To set up the environment for running the forecast using the conceptual model yo
 
 
 2. Discharge data: Discharge is in m3/s
-   
+
     | code  | date       | discharge |
     |-------|------------|-----------|
     | 15194 | 01.01.2000 | 1.9       |
@@ -703,7 +705,7 @@ To set up the environment for running the forecast using the conceptual model yo
     | 15013 | 04.01.2000 | 1.9       |
 
 3. Basin Info and Parameter
-   
+
    For each basin (each `code`), a folder is required with the BasinInfo: ieasyhydroforecast_PATH_TO_BASININFO/BASINCODE
 
     This folder contains the data files `param.RData` and `Basin_Info.RData`.
@@ -713,19 +715,19 @@ To set up the environment for running the forecast using the conceptual model yo
     The `Basin_Info.RData` file contains a list with the name Basin_Info with data for the specific basin. The structure of this file is as follows:
 
     - **BasinCode**: An integer representing the unique code for the basin.
-      
+
       - Example: `15194`
 
     - **BasinName**: A string representing the name of the basin.
-      
+
       - Example: `"AlaArcha"`
 
     - **BasinArea_m2**: A numeric value representing the area of the basin in square meters.
-      
+
       - Example: `272532878`
 
     - **BasinLat_rad**: A numeric value representing the latitude of the basin's centroid in radians.
-      
+
       - Example: `0.744`
 
     - **HypsoData**: A numeric vector of hypsometric data (elevation distribution) for the basin in meters above sea level, with each value representing elevation at 1% intervals of the basin area.
@@ -740,26 +742,113 @@ To set up the environment for running the forecast using the conceptual model yo
 
       - Example: `c(0.000000000, 0.000000000, 0.003908274, 0.043461312, 0.078811896)`
 
-    - **GradT**: A data frame containing temperature gradient data, which includes daily and monthly temperature gradients in degrees Celsius per 100 meters (`grad_Tmean`). Each row corresponds to a specific day of the year, with columns for day, month, and the respective temperature gradients. 
+    - **GradT**: A data frame containing temperature gradient data, which includes daily and monthly temperature gradients in degrees Celsius per 100 meters (`grad_Tmean`). Each row corresponds to a specific day of the year, with columns for day, month, and the respective temperature gradients.
 
       - Structure:
 
-        | day | month | grad_Tmean | 
+        | day | month | grad_Tmean |
         |-----|-------|------------|
         | 1   | 1     | 0.631      |
         | 2   | 1     | 0.632      |
         | ... | ...   | ...        |
         | 366 | 12    | 0.633      |
 
-    - **k_value**: A numeric representing the altitudinal correction factor (`k`) for the precipitation lapse rate in [m-1] 
+    - **k_value**: A numeric representing the altitudinal correction factor (`k`) for the precipitation lapse rate in [m-1]
 
       - Example: `0.00043`
 
-   
+
 4. Output folder
-  
+
    For each basin, a folder is required: ieasyhydroforecast_PATH_TO_INITCOND/BASINCODE
-   This folder can be empty. In this folder the initial condition for the next forecast are stored. 
+   This folder can be empty. In this folder the initial condition for the next forecast are stored.
+
+5. The configuration file defines the settings and parameters required to run hydrological model simulations for the conceptual model with ensemble data assimilation. The configuration file is is stored in the config folder. Filename and path are configured in the .env file (see documentation [here](configuration.md#json-configuration)).
+
+<div style="margin-left: 40px">
+
+```json
+#Example for a configuration file for the conceptual model with ensemble data assimilation:
+{
+  "fun_mod_mapping": {
+    "12345": "RunModel_CemaNeigeGR4J_Glacier",
+    "13456": "RunModel_CemaNeigeGR6J"
+  },
+  "Nb_ens": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50],
+  "NbMbr": 2,
+  "DaMethod": "PF",
+  "StatePert": ["Rout", "Prod", "UH1", "UH2"],
+  "eps": 0.65,
+  "lag_days": 180,
+  "codes": [15194,16936],
+  "start_ini": "2010-01-01",
+  "end_ini": "2024-01-01",
+  "start_hindcast": "2015-12-31",
+  "end_hindcast": "2016-01-10",
+  "hindcast_mode": "daily"
+}
+```
+
+</div>
+
+<div style="margin-left: 40px">
+
+Below is a detailed explanation of each key in the configuration file.
+   - `fun_mod_mapping`
+      - **Type:** Dictionary
+      - **Description:** Maps numerical basin codes to specific model functions that will be used in the simulation. Each code corresponds to a different hydrological model.
+      - **Example:**
+        - `"15194": "RunModel_CemaNeigeGR4J_Glacier"`: This maps the code `15194` to the `RunModel_CemaNeigeGR4J_Glacier` function.
+        - `"16936": "RunModel_CemaNeigeGR6J"`: This maps the code `16936` to the `RunModel_CemaNeigeGR6J` function.
+   - `Nb_ens`
+      - **Type:** List of integers
+      - **Description:** Defines the number of ensemble members used from the ECMWF IFS ensemble forecast. The list includes the range of ensemble member numbers from `1` to `50`.
+      - **Example:** `[1, 2, 3, ..., 49, 50]` represents ensemble member numbers from `1` to `50`.
+   - `NbMbr`
+     - **Type:** Integer
+     - **Description:** Specifies the total number of ensemble members (`NbMbr`) to be used in the simulation.
+     - **Example:** `200` indicates that 200 ensemble members will be utilized.
+   - `DaMethod`
+     - **Type:** String
+     - **Description:** Indicates the data assimilation method used in the simulation.
+     - **Example:** `"PF"` specifies that the Particle Filter (`PF`) method will be employed for data assimilation.
+   - `StatePert`
+     - **Type:** List of strings
+     - **Description:** Lists the state variables that will be perturbed during the data assimilation process.
+     - **Example:** `["Rout", "Prod", "UH1", "UH2"]` indicates that the state variables `Rout`, `Prod`, `UH1`, and `UH2` will be perturbed.
+   - `eps`
+     - **Type:** Float
+     - **Description:** Fractional error parameter for precipitation and PET of the first-order autoregressive model. Defines the perturbation of the forcing data. It controls the magnitude of perturbation noise.
+     - **Example:** `0.65`
+   - `lag_days`
+     - **Type:** Integer
+     - **Description:** Specifies the number of days the model is running with data assimilation process. This parameter is used to define the temporal window of the data assimilation. The model is started before the data assimilation with the initial conditions fomr the previous run.
+     - **Example:** `180` indicates a lag of 180 days.
+   - `codes`
+     - **Type:** List of integers
+     - **Description:** Lists the numerical codes corresponding to the basin code for which a forecast is produced. These codes must match those provided in the `fun_mod_mapping`.
+     - **Example:** `[15194, 16936]` corresponds to the codes used to map the models `RunModel_CemaNeigeGR4J_Glacier` and `RunModel_CemaNeigeGR6J`.
+   - `start_ini`
+     - **Type:** String (Date in `YYYY-MM-DD` format)
+     - **Description:** Defines the start date of the initialization period for the simulation. Needed for the very first time the model is run for the speicifc basin to get the first initial condition for the operational run. Used only in the script `run_initial.R`
+     - **Example:** `"2010-01-01"` indicates the initialization period starts on January 1, 2010.
+   - `end_ini`
+     - **Type:** String (Date in `YYYY-MM-DD` format)
+     - **Description:** Defines the end date of the initialization period for the simulation. Needed for the very first time the model is run for the speicifc basin to get the first initial condition for the operational run. Used only in the script `run_initial.R`
+     - **Example:** `"2024-01-01"` indicates the initialization period ends on January 1, 2024.
+   - `start_hindcast`
+     - **Type:** String (Date in `YYYY-MM-DD` format)
+     - **Description:** Specifies the start date of the hindcast period when triggered manually in the script `run_manual_hindcast.R`
+     - **Example:** `"2015-12-31"` indicates that the hindcast period begins on December 31, 2015.
+   - `end_hindcast`
+     - **Type:** String (Date in `YYYY-MM-DD` format)
+     - **Description:** Specifies the end date of the hindcast period when triggered manually in the script `run_manual_hindcast.R`
+     - **Example:** `"2023-12-31"` indicates that the hindcast period ends on December 31, 2023.
+   - `hindcast_mode`
+     - **Type:** String
+     - **Description:** Defines the mode of the hindcast simulation, such as daily, pentad or decad. Only used when triggered manually in the script `run_manual_hindcast.R`
+     - **Example:** `"pentad"` indicates that the hindcast simulation will be conducted in about five-day intervals.
+  </div>
 
 **Output Files**
 Three output files are generated in the operational run and stored in this path: ieasyhydroforecast_PATH_TO_RESULT/BASINCODE/data
@@ -767,7 +856,7 @@ Three output files are generated in the operational run and stored in this path:
 - **Daily**: `daily_BASINCODE.csv`
 - **Pentad**: `pentad_BASINCODE.csv`
 - **Decad**: `decadal_BASINCODE.csv`
-When triggering manually a hindcast files are stored in the same directory with the following names: 
+When triggering manually a hindcast files are stored in the same directory with the following names:
  - **Daily**: `hindcast_daily_START_HINDCAST_END_HINDCAST_BASINCODE.csv` (dates in `%Y%m%d` format).
  - **Pentad**: `hindcast_pentad_START_HINDCAST_END_HINDCAST_BASINCODE.csv` (dates in `%Y%m%d` format).
  - **Decad**: `hindcast_decad_START_HINDCAST_END_HINDCAST_BASINCODE.csv` (dates in `%Y%m%d` format).
@@ -798,21 +887,21 @@ When triggering manually a hindcast files are stored in the same directory with 
 
 
 
-#### How to run the tool 
+#### How to run the tool
 
 1. **Prepare Configuration Files**:
    - Ensure you have the configuration file with the necessary parameters, as described in configuration.md.
    - Also, set up the `.env` file according to the details provided in configuration.md, including all required paths and filenames.
    - For each `code`in the config file it needs the folder:
      -  ieasyhydroforecast_PATH_TO_BASININFO/BASINCODE with `Basin_Info.RData`and `param.RData` (see I/O)
-     -  ieasyhydroforecast_PATH_TO_INITCOND/BASINCODE  
+     -  ieasyhydroforecast_PATH_TO_INITCOND/BASINCODE
      -  ieasyhydroforecast_PATH_TO_RESULT/BASINCODE/data
 
 2. **Initial Setup**:
    - Run the `run_initial.R` script to generate the initial conditions required for the model to run in operational mode:
      ```bash
      cd /path/to/your/SAPPHIRE_Forecast_Tools/apps/conceptual_model
-     
+
      SAPPHIRE_OPDEV_ENV=True Rscript run_initial.R
      ```
 
@@ -820,7 +909,7 @@ When triggering manually a hindcast files are stored in the same directory with 
    - After completing the initial setup, run the operational forecasting script:
      ```bash
      cd /path/to/your/SAPPHIRE_Forecast_Tools/apps/conceptual_model
-     
+
      SAPPHIRE_OPDEV_ENV=True Rscript run_operation_forecasting_CM.R
      ```
    - **Note**: Hindcasts are automatically created in the `run_operation_forecasting_CM.R` script. When setting up for the first time, hindcasts will not be produced because no previous forecasts are saved. In operational mode, the script will subsequently check for gaps between the last run and the current run, filling in any missing forecasts.
@@ -832,11 +921,11 @@ When triggering manually a hindcast files are stored in the same directory with 
    - To trigger hindcasts for specific days, run the `run_manual_hindcast.R` script and define the `start_hindcast`, `end_hindcast`, and `hindcast_mode` parameters:
      ```bash
      cd /path/to/your/SAPPHIRE_Forecast_Tools/apps/conceptual_model
-  
+
      SAPPHIRE_OPDEV_ENV=True Rscript run_manual_hindcast.R
      ```
 
-### Machine learning (machine_learning)
+### 2.2.6 Machine learning (machine_learning)
 
 #### Description of module
 
@@ -1006,11 +1095,11 @@ Afterwards the fill_ml_gaps.py will be called, this script will produce a hindca
 SAPPHIRE_OPDEV_ENV=True SAPPHIRE_MODEL_TO_USE=TFT SAPPHIRE_PREDICTION_MODE=PENTAD python fill_ml_gaps.py
 ```
 
-### Post-processing of forecasts (postprocessing_forecasts)
+### 2.2.7 Post-processing of forecasts (postprocessing_forecasts)
 
 TODO: Bea
 
-### Manual triggering of the forecast pipeline
+### 2.2.8 Manual triggering of the forecast pipeline
 
 To re-run a forecast (for example to include river runoff data that was not available at the time of the forecast), you can manually trigger the forecast pipeline. This process includes the re-setting of the last successful run date of the linear regression module to the day before the last forecast date. This is done with the module reset_forecast_run_date.
 
@@ -1056,7 +1145,7 @@ docker logs <container_id>
 
 where <container_id> is the id of the container you want to inspect. You can find the container id by running the docker ps -a command.
 
-### Forecast dashboard
+### 2.2.9 Forecast dashboard
 
 TODO: Bea \#### Prerequisites The forecast dashboard is implemented in python using the panel framework. As for the backend development, we recommend the use of a Python IDE and conda for managing the Python environment. Please refer to the instructions above should you require more information on how to install these tools.
 
@@ -1076,7 +1165,7 @@ panel serve pentad_dashboard.py --show --autoreload --port 5009
 
 The options --show, --autoreload, and --port 5009 are optional. The show and autoreload options open your devault browser window (we used chrome) at <http://localhost:5009/pentad_dashboard> and automatically reload the dashboard if you save changes in the file pentad_dashboard.py. The port option tells you on which port the dashboard is being displayed. Should port 5009 be already occupied on your computer, you can change the number. You can then select the station and view predictors and forecasts in the respective tabs.
 
-## The backend (note: this module is deprecated)
+## 2.3 The backend (note: this module is deprecated)
 
 The backend consists of a set of tools that are used to produce forecasts. They are structured into:
 

@@ -72,7 +72,7 @@ def postprocessing_forecasts():
 
     logger.info(f"\n\n------ Calculating skill metrics -----------------")
     # Calculate forecast skill metrics
-    skill_metrics = fl.calculate_skill_metrics_pentade(observed, modelled)
+    skill_metrics = fl.calculate_skill_metrics_pentad(observed, modelled)
 
     logger.info(f"\n\n------ Saving results ----------------------")
     # Save the skill metrics to a CSV file

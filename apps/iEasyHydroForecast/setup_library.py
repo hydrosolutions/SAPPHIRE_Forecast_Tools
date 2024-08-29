@@ -4,6 +4,8 @@ import pandas as pd
 import numpy as np
 import json
 import datetime as dt
+import fnmatch
+import re
 
 from dotenv import load_dotenv
 
@@ -628,12 +630,12 @@ def read_linreg_forecasts_pentad():
     forecasts = data.drop(columns=["q_mean", "q_std_sigma", "delta", "discharge_avg"])
 
     # Add one day to date
-    forecasts.loc[:, "date"] = forecasts.loc[:, "date"] + pd.DateOffset(days=1)
-    stats.loc[:, "date"] = stats.loc[:, "date"] + pd.DateOffset(days=1)
+    #forecasts.loc[:, "date"] = forecasts.loc[:, "date"] + pd.DateOffset(days=1)
+    #stats.loc[:, "date"] = stats.loc[:, "date"] + pd.DateOffset(days=1)
 
     # Recalculate pentad in month and pentad in year
-    forecasts["pentad_in_month"] = forecasts["date"].apply(tl.get_pentad)
-    forecasts["pentad_in_year"] = forecasts["date"].apply(tl.get_pentad_in_year)
+    forecasts["pentad_in_month"] = (forecasts["date"] + pd.Timedelta(days=1)).apply(tl.get_pentad)
+    forecasts["pentad_in_year"] = (forecasts["date"] + pd.Timedelta(days=1)).apply(tl.get_pentad_in_year)
 
     logger.info(f"Read {len(forecasts)} rows of linear regression forecasts for the pentadal forecast horizon.")
     logger.info(f"Read {len(stats)} rows of general runoff statistics for the pentadal forecast horizon.")
@@ -643,6 +645,264 @@ def read_linreg_forecasts_pentad():
     logger.debug(f"General runoff statistics data: \n{stats.head()}")
 
     return forecasts, stats
+
+def read_daily_probabilistic_ml_forecasts_pentad(
+        filepath,
+        model,
+        model_long,
+        model_short):
+    """
+    Reads in forecast results from probabilistic machine learning models for the pentadal forecast
+
+    Args:
+    filepath (str): The path to the file with the forecast results.
+    model (str): The model to read the forecast results from. Allowed values are
+        'TFT', 'TIDE', 'TSMIXER', and 'ARIMA'.
+    model_long (str): The long name of the model.
+    model_short (str): The short name of the model.
+
+    Returns:
+    forecast (pandas.DataFrame): The forecast results for the pentadal forecast horizon.
+    """
+    # Read the forecast results
+    daily_data = pd.read_csv(filepath, parse_dates=["date", "forecast_date"])
+
+    # Only keep the forecast the rows of daily forecast data for pentadal
+    # forecasts, i.e. the forecast produced on the 5th, 10th, 15th, 20th, 25th
+    # and on the last day of a month.
+    # Add a column last_day_of_month to daily_data
+    daily_data["last_day_of_month"] = daily_data["forecast_date"].apply(fl.get_last_day_of_month)
+    daily_data["day_of_month"] = daily_data["forecast_date"].dt.day
+    # Keep rows that have forecast_date equal to either 5, 10, 15, 20, 25 or
+    # last_day_of_month
+    data = daily_data[(daily_data["day_of_month"].isin([5, 10, 15, 20, 25])) | \
+                      (daily_data["forecast_date"] == daily_data["last_day_of_month"])]
+
+    # Group by code and forecast_date and calculate the mean of all columns
+    forecast = data \
+        .drop(columns=["date", "day_of_month", "last_day_of_month"]) \
+        .groupby(["code", "forecast_date"]) \
+        .mean() \
+        .reset_index()
+
+    # Rename the column forecast_date to date and Q50 to forecasted_discharge.
+    # In the case of the ARIMA model, we don't have quantiles but rename the
+    # column Q to forecasted_discharge.
+    forecast.rename(
+        columns={"forecast_date": "date",
+                 "Q50": "forecasted_discharge",  # For ml models
+                 "Q": "forecasted_discharge"},  # For the ARIMA model
+        inplace=True)
+
+    # Add a column model to the dataframe
+    forecast["model_long"] = model_long
+    forecast["model_short"] = model_short
+
+    # Recalculate pentad in month and pentad in year
+    forecast["pentad_in_month"] = (forecast["date"] + pd.Timedelta(days=1)).apply(tl.get_pentad)
+    forecast["pentad_in_year"] = (forecast["date"] + pd.Timedelta(days=1)).apply(tl.get_pentad_in_year)
+
+    logger.info(f"Read {len(forecast)} rows of {model} forecasts for the pentadal forecast horizon.")
+    logger.debug(f"Colums in the {model} forecast data:\n{forecast.columns}")
+    logger.debug(f"Read forecast data: \n{forecast.head()}")
+
+    return forecast
+
+def read_daily_probabilistic_conceptmod_forecasts_pentad(
+        filepath,
+        code,
+        model_long,
+        model_short):
+    """
+    Reads in forecast results from probabilistic conceptual models for the pentadal forecast
+
+    Args:
+    filepath (str): The path to the file with the forecast results.
+    code (str): The code of the hydropost for which to read the forecast results.
+    model_long (str): The long name of the model.
+    model_short (str): The short name of the model.
+
+    Returns:
+    forecast (pandas.DataFrame): The forecast results for the pentadal forecast horizon.
+    """
+    # Read the forecast results
+    daily_data = pd.read_csv(filepath, parse_dates=["date", "forecast_date"])
+
+    # Only keep the forecast the rows of daily forecast data for pentadal
+    # forecasts, i.e. the forecast produced on the 5th, 10th, 15th, 20th, 25th
+    # and on the last day of a month.
+    # Add a column last_day_of_month to daily_data
+    daily_data["last_day_of_month"] = daily_data["forecast_date"].apply(fl.get_last_day_of_month)
+    daily_data["day_of_month"] = daily_data["forecast_date"].dt.day
+    # Keep rows that have forecast_date equal to either 5, 10, 15, 20, 25 or
+    # last_day_of_month
+    data = daily_data[(daily_data["day_of_month"].isin([5, 10, 15, 20, 25])) | \
+                      (daily_data["forecast_date"] == daily_data["last_day_of_month"])].copy()
+
+    # Add code to the data, cast code to int
+    data.loc[:, "code"] = int(code)
+
+    # Add pentad of the forecasts to the data
+    data.loc[:, "pentad_in_year"] = data["date"].apply(tl.get_pentad_in_year)
+
+    # Group by code and forecast_date and calculate the mean of all columns,
+    # Daily values are stored by the  model for each forecasts. We therefore
+    # have to aggregate only data for the first pentad for each forecast date.
+    forecast = data \
+        .drop(columns=["date", "day_of_month", "last_day_of_month"]) \
+        .groupby(["code", "forecast_date", "pentad_in_year"]) \
+        .mean() \
+        .reset_index()
+
+    # Keep only the first pentad that appears for each forecast_date and discard
+    # the rest.
+    forecast = forecast.groupby(["code", "forecast_date"]).first().reset_index()
+
+    # Rename the column forecast_date to date and Q50 to forecasted_discharge.
+    # In the case of the ARIMA model, we don't have quantiles but rename the
+    # column Q to forecasted_discharge.
+    forecast.rename(
+        columns={"forecast_date": "date",
+                 "Q50": "forecasted_discharge",
+                 "Q": "forecasted_discharge"},
+        inplace=True)
+
+    # Add a column model to the dataframe
+    forecast.loc[:, "model_long"] = model_long
+    forecast.loc[:, "model_short"] = model_short
+
+    # Recalculate pentad in month and pentad in year
+    forecast.loc[:, "pentad_in_month"] = (forecast["date"] + pd.Timedelta(days=1)).apply(tl.get_pentad)
+    forecast.loc[:, "pentad_in_year"] = (forecast["date"] + pd.Timedelta(days=1)).apply(tl.get_pentad_in_year)
+
+    logger.info(f"Read {len(forecast)} rows of {model_short} forecasts for the pentadal forecast horizon.")
+    logger.debug(f"Colums in the {model_short} forecast data:\n{forecast.columns}")
+    logger.debug(f"Read forecast data: \n{forecast.head()}")
+
+    return forecast
+
+def extract_code_from_conceptmod_results_filename(filename):
+    """
+    Extract the code from the filename.
+
+    Args:
+    filename (str): The filename to extract the code from.
+
+    Returns:
+    str: The extracted code.
+    """
+    match = re.search(r'_(\d+)\.csv$', filename)
+    if match:
+        return match.group(1)
+    return None
+
+def read_conceptual_model_forecast_pentad(filepath):
+    """
+    Reads the forecast results from the conceptual model for the pentadal
+    forecast horizon.
+
+    Args:
+    filepath (str): The code of the hydropost for which to read the forecast results.
+
+    Returns:
+    forecast (pandas.DataFrame): The forecast results for the pentadal forecast horizon.
+    """
+    # Test if the fielpath exists
+    if not os.path.exists(filepath):
+        raise FileNotFoundError(f"File {filepath} not found")
+
+    # Get the filename from the filepath
+    filename = os.path.basename(filepath)
+
+    # Get the code from the filename
+    code = extract_code_from_conceptmod_results_filename(filename)
+
+    logger.info(f"Reading forecast results from {filename}")
+    logger.debug(f"{filepath}")
+
+    forecast = read_daily_probabilistic_conceptmod_forecasts_pentad(
+        filepath,
+        code=code,
+        model_long="Rainfall runoff assimilation model",
+        model_short="RRM"
+    )
+
+    logger.debug(f"Type of forecast: {type(forecast)}")
+    logger.debug(f"Columns in forecast: {forecast.columns}")
+    logger.debug(f"Head of forecast: {forecast.head()}")
+
+    return forecast
+
+def get_files_in_subdirectories(directory, pattern):
+    """
+    Get a list of all files in subdirectories of a directory that match a pattern.
+
+    Args:
+    directory (str): The directory to search in.
+    pattern (str): The pattern to match.
+
+    Returns:
+    files (list): A list of files that match the pattern.
+    """
+    files = []
+    for root, _, filenames in os.walk(directory):
+        #logger.debug(f"Searching in {root}")
+        for filename in fnmatch.filter(filenames, pattern):
+            full_path = os.path.abspath(os.path.join(root, filename))
+            #logger.debug(f"Found file: {full_path}")
+            files.append(full_path)
+    #logger.debug(f"Found {len(files)} files in subdirectories of")
+    #logger.debug(f"    {directory}")
+    #logger.debug(f"    that match the pattern {pattern}")
+    return files
+
+def read_all_conceptual_model_forecasts_pentad():
+    """
+    From the folder, ieasyhydroforecast_PATH_TO_RESULT, reads all available
+    forecast files.
+
+    Returns:
+    forecasts (pandas.DataFrame): The forecast results from all conceptual models.
+    """
+
+    # Get the path to the results directory
+    path_to_results_dir = os.getenv("ieasyhydroforecast_PATH_TO_RESULT")
+
+    # Test if this path exists
+    if not os.path.exists(path_to_results_dir):
+        raise FileNotFoundError(f"Directory {path_to_results_dir} not found")
+
+    # Get a list of operational daily forecast files in subdirectories of
+    # path_to_results_dir
+    files = get_files_in_subdirectories(path_to_results_dir, "daily_*.csv")
+
+    # Read the forecast results from all files
+    for file in files:
+        logger.debug(f"Reading forecast results from {file}")
+        forecast = read_conceptual_model_forecast_pentad(file)
+        if file == files[0]:
+            forecasts = forecast
+        else:
+            forecasts = pd.concat([forecasts, forecast])
+
+    # Also read the hindcast files
+    hindcast_files = get_files_in_subdirectories(path_to_results_dir, "hindcast_daily_*.csv")
+
+    # Read the hindcast results from all files
+    for hindcast_file in hindcast_files:
+        logger.debug(f"Reading hindcast results from {hindcast_file}")
+        hindcast = read_conceptual_model_forecast_pentad(hindcast_file)
+        if hindcast_file == hindcast_files[0]:
+            hindcasts = hindcast
+        else:
+            hindcasts = pd.concat([hindcasts, hindcast])
+
+    # Append hindcasts to forecasts, if there are duplicates, keep the forecast
+    # and discard the hindcast
+    forecasts = pd.concat([forecasts, hindcasts]).drop_duplicates(subset=["code", "date"], keep="first")
+
+    return forecasts
+
 
 def read_machine_learning_forecasts_pentad(model):
     '''
@@ -656,6 +916,7 @@ def read_machine_learning_forecasts_pentad(model):
 
     if model == 'TFT':
         filename = f"pentad_{model}_forecast.csv".format(model=model)
+        hindcast_filename = f"{model}_PENTAD_hindcast_daily.csv".format(model=model)
         model_long = "Temporal-Fusion Transformer (TFT)"
         model_short = "TFT"
     elif model == 'TIDE':
@@ -686,47 +947,9 @@ def read_machine_learning_forecasts_pentad(model):
     logger.info(f"Reading forecast results from {filename}")
     logger.debug(f"{filepath}")
 
-    # Read the forecast results
-    daily_data = pd.read_csv(filepath, parse_dates=["date", "forecast_date"])
+    forecast = read_daily_probabilistic_ml_forecasts_pentad(filepath, model, model_long, model_short)
 
-    # Only keep the forecast the rows of daily forecast data for pentadal
-    # forecasts, i.e. the forecast produced on the 5th, 10th, 15th, 20th, 25th
-    # and on the last day of a month.
-    # Add a column last_day_of_month to daily_data
-    daily_data["last_day_of_month"] = daily_data["forecast_date"].apply(fl.get_last_day_of_month)
-    daily_data["day_of_month"] = daily_data["forecast_date"].dt.day
-    # Keep rows that have forecast_date equal to either 5, 10, 15, 20, 25 or
-    # last_day_of_month
-    data = daily_data[(daily_data["day_of_month"].isin([5, 10, 15, 20, 25])) | \
-                      (daily_data["forecast_date"] == daily_data["last_day_of_month"])]
-
-    # Group by code and forecast_date and calculate the mean of all columns
-    forecast = data \
-        .drop(columns=["date", "day_of_month", "last_day_of_month"]) \
-        .groupby(["code", "forecast_date"]) \
-        .mean() \
-        .reset_index()
-
-    # Rename the column forecast_date to date and Q50 to forecasted_discharge.
-    # In the case of the ARIMA model, we don't have quantiles but rename the
-    # column Q to forecasted_discharge.
-    forecast.rename(
-        columns={"forecast_date": "date",
-                 "Q50": "forecasted_discharge",
-                 "Q": "forecasted_discharge"},
-        inplace=True)
-
-    # Add a column model to the dataframe
-    forecast["model_long"] = model_long
-    forecast["model_short"] = model_short
-
-    # Recalculate pentad in month and pentad in year
-    forecast["pentad_in_month"] = forecast["date"].apply(tl.get_pentad)
-    forecast["pentad_in_year"] = forecast["date"].apply(tl.get_pentad_in_year)
-
-    logger.info(f"Read {len(forecast)} rows of {model} forecasts for the pentadal forecast horizon.")
-    logger.debug(f"Colums in the {model} forecast data:\n{forecast.columns}")
-    logger.debug(f"Read forecast data: \n{forecast.head()}")
+    # TODO: also read the hindcast files
 
     return forecast
 
@@ -777,21 +1000,31 @@ def read_linreg_forecasts_pentad_dummy(model):
 
 def calculate_ensemble_forecast(forecasts):
     # Create a dataframe with unique date and codes from forecasts
-    ensemble_mean = forecasts[["date", "code", "pentad_in_month", "pentad_in_year"]].drop_duplicates()
+    ensemble_mean = forecasts[["date", "code", "pentad_in_month", "pentad_in_year"]]\
+        .drop_duplicates(keep='last').copy()
 
     # Add model_long and model_short columns to the ensemble_mean dataframe
     ensemble_mean['model_long'] = "Ensemble mean (EM)"
     ensemble_mean['model_short'] = "EM"
 
     # Calculate the ensemble mean over all models
-    ensemble_mean_q = forecasts.groupby(["date", "code"]).agg({"forecasted_discharge": "mean"}).reset_index()
+    ensemble_mean_q = forecasts \
+        .groupby(["date", "code", "pentad_in_month", "pentad_in_year"]) \
+            .agg({"forecasted_discharge": "mean"}).reset_index()
 
     # Merge ensemble_mean_q into ensemble_mean
-    ensemble_mean = pd.merge(ensemble_mean, ensemble_mean_q, on=["date", "code"], how="left")
+    ensemble_mean = pd.merge(
+        ensemble_mean,
+        ensemble_mean_q,
+        on=["date", "code", "pentad_in_month", "pentad_in_year"],
+        how="left")
 
-    # Add ensemble_mean to forecasts
+    # Append ensemble_mean to forecasts
     forecasts = pd.concat([forecasts, ensemble_mean])
     logger.info(f"Calculated ensemble forecast for the pentadal forecast horizon.")
+    logger.debug(f"Columns of forecasts:\n{forecasts.columns}")
+    logger.debug(f"Forecasts:\n{forecasts.loc[:,['date', 'code', 'model_long']].head()}")
+    logger.debug(f"Forecasts:\n{forecasts.loc[:,['date', 'code', 'model_long']].tail()}")
 
     return forecasts
 
@@ -813,18 +1046,18 @@ def read_observed_and_modelled_data_pentade():
     tft = read_machine_learning_forecasts_pentad(model='TFT')
     tsmixer = read_machine_learning_forecasts_pentad(model='TSMIXER')
     arima = read_machine_learning_forecasts_pentad(model='ARIMA')
+    cm = read_all_conceptual_model_forecasts_pentad()
 
-    # TEMP: For now, we read dummy data
-    #modelA, statsA = read_linreg_forecasts_pentad_dummy(model='A')
-    #modelB, statsB = read_linreg_forecasts_pentad_dummy(model='B')
-    #logger.info(f"Read {len(modelA)} rows of model A forecasts for the pentadal forecast horizon.")
-    #logger.info(f"Read {len(modelB)} rows of model B forecasts for the pentadal forecast horizon.")
+    logger.debug(f"type of code in linreg: {linreg['code'].dtype}")
+    logger.debug(f"type of code in tide: {tide['code'].dtype}")
+    logger.debug(f"type of code in cm: {cm['code'].dtype}")
 
     # Merge tide, tft, tsmixer and arima into linreg.
     # same columns are: date, code, pentad_in_month, pentad_in_year,
     # forecasted_discharge, model_long and model_short
-    forecasts = pd.concat([linreg, tide, tft, tsmixer, arima])
-    logger.debug(f"forecasts concatenated:\n{forecasts.head()}\n{forecasts.tail()}")
+    forecasts = pd.concat([linreg, tide, tft, tsmixer, arima, cm])
+    logger.debug(f"columns of forecasts concatenated:\n{forecasts.columns}")
+    logger.debug(f"forecasts concatenated:\n{forecasts.loc[:, ['date', 'code', 'model_long']].head()}\n{forecasts.loc[:, ['date', 'code', 'model_long']].tail()}")
 
     #forecasts = pd.concat([linreg, modelA, modelB])
     #stats = pd.concat([stats_linreg, statsA, statsB])
@@ -832,6 +1065,8 @@ def read_observed_and_modelled_data_pentade():
     logger.info(f"Concatenated forecast results from all methods for the pentadal forecast horizon.")
 
     forecasts = calculate_ensemble_forecast(forecasts)
+
+    exit()
 
     # Merge the general runoff statistics to the observed DataFrame
     observed = pd.merge(observed, stats, on=["date", "code"], how="left")
