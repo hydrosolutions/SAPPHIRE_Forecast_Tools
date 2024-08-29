@@ -37,14 +37,14 @@ This document describes how to develop the application and how to add hydrologic
       - [Description of module](#description-of-module-1)
       - [Prerequisites](#prerequisites-2)
       - [How to run the tool](#how-to-run-the-tool-2)
-    - [Conceptual rainfall-runoff (conceptual...)](#conceptual-rainfall-runoff-conceptual)
-      - [Description of the Conceptual Model Module](#description-of-the-conceptual-model-module)
-      - [Prerequisites](#prerequisites-4)
+    - [2.2.5 Conceptual rainfall-runoff assimilation model (conceptual\_model)](#225-conceptual-rainfall-runoff-assimilation-model-conceptual_model)
+      - [Description](#description-2)
+      - [Prerequisites](#prerequisites-3)
       - [I/O](#io-2)
       - [How to run the tool](#how-to-run-the-tool-3)
-    - [Machine learning (machine\_learning)](#machine-learning-machine_learning)
+    - [2.2.6 Machine learning (machine\_learning)](#226-machine-learning-machine_learning)
       - [Description of module](#description-of-module-2)
-      - [Prerequisites](#prerequisites-5)
+      - [Prerequisites](#prerequisites-4)
       - [I/O](#io-3)
         - [Output Files](#output-files)
       - [How to run the tool](#how-to-run-the-tool-4)
@@ -519,10 +519,11 @@ TODO: Bea
 
 
 
-#### Description of the Conceptual Model Module
+#### Description
+The conceptual rainfall-runoff modelling module is designed to integrate data assimilation into the operationsl hydrological forecasting: By integrating the latest observed runoff into the hydrological model, the model forecasts are improved. The following sections describe what the module does in more detail.
 
-**Conceptual Model Overview:**
-The "conceptual_model" module is designed to facilitate operational discharge forecasting, particularly in high-altitude or complex catchment areas. This module integrates rainfall-runoff models with several combinable components such as the GR4J or GR6J model, the CemaNiege component for snow melt. This is provided in the original [airGR](https://cran.r-project.org/web/packages/airGR/index.html) R package. The modified R package [airGR_GM](https://github.com/hydrosolutions/airGR_GM) package also includes a additional glacier module and the possibility to add basin specif temperature and precipitaiton lapse rates (see for more details [here](https://github.com/hydrosolutions/airGR_GM) ).
+**Conceptual rainfall-runoff modelling:**
+The "conceptual_model" module is designed to facilitate operational discharge forecasting, particularly in high-altitude or complex catchment areas. This module integrates rainfall-runoff models with several combinable components such as the GR4J or GR6J model, the CemaNiege component for snow melt (for detailed information about the rainfall-runoff model please visit the [airGR](https://cran.r-project.org/web/packages/airGR/index.html) R package documentation). Here, we integrate a modification of airGR: the R package [airGR_GM](https://github.com/hydrosolutions/airGR_GM) which includes a additional glacier module and the possibility to add basin specif temperature and precipitaiton lapse rates (for more details on the modifications please visit the [airGR_GM repository](https://github.com/hydrosolutions/airGR_GM) ). The following list shows the components of airGR and airGR_GM which have been integrated into the conceptual modelling module:
 
 - **GR4J Model**: This model employs four key parameters to simulate hydrological processes:
   - **X1 (Production Store Capacity)**: Represents the soil's root zone capacity where atmospheric exchanges, including evapotranspiration, occur.
@@ -541,23 +542,14 @@ The "conceptual_model" module is designed to facilitate operational discharge fo
 The conceptual model framework is flexible and can be calibrated with discharge data or other relevant hydrological data over a specified period. It is possible to calibrate the model also with snow water equivalent data for example from a [Factorial Snow Model](https://github.com/ArcticSnow/TopoPyScale). It can be adapted for various catchments and is implemented using a modified version of the [airGR_GM](https://github.com/hydrosolutions/airGR_GM) package in R.
 
 **Data Assimilation:**
-To enhance discharge predictions, the module supports data assimilation techniques that incorporate real-time data into the model. I
- This involves perturbing meteorological forcings and internal model states to generate an ensemble of simulations. The model is typically run multiple times (e.g., 200 iterations) with these perturbations. A Particle Filter (PF) is then applied to update model predictions based on the ensemble runs. The PF assigns weights to each run based on its agreement with observed data and resamples the ensemble to prioritize the most accurate simulations. This process enhances the accuracy of predictions as new data becomes available. Data assimilation within the module is implemented using a modified version of the [airGRdatassim](https://github.com/hydrosolutions/airgrdatassim) package in R.
-
-This module can be applied to various hydrological settings, making it a versatile tool for operational discharge forecasting in diverse environmental conditions.
-
-
-**Data Assimilation:**
 The "conceptual_model" module enhances discharge predictions by incorporating real-time data through an advanced data assimilation process. This process is based on the [airGRdatassim](https://cran.r-project.org/web/packages/airGRdatassim/index.html) package available on CRAN. The module presented here utilizes a modified version of the airGRdatassim package, which can be found [here](https://github.com/hydrosolutions/airgrdatassim). This customized version is specifically tailored to address the unique demands of operational discharge forecasting in diverse hydrological environments.
-In this module, data assimilation is implemented using an ensemble approach. Meteorological forcings and internal model states are perturbed to generate multiple simulations. These simulations are then processed using a Particle Filter (PF), a method that assigns weights to each simulation based on its alignment with observed data. The PF subsequently resamples the ensemble, prioritizing the most accurate simulations while discarding less accurate ones. This iterative process allows the model to continually refine its predictions as new data is assimilated.
+In this module, data assimilation is implemented using an ensemble approach. Meteorological forcings and internal model states are perturbed to generate multiple simulations. These simulations are then processed using a Particle Filter (PF), a method that assigns weights to each simulation based on its alignment with observed data. The PF subsequently resamples the ensemble, prioritizing the most accurate simulations while discarding less accurate ones. This iterative process allows the model to continually refine its predictions as new data is assimilated. For more information about how the data assimilation process works, please visit the [associated publication](https://agupubs.onlinelibrary.wiley.com/doi/10.1029/2020WR028390) by Piazzi and colleagues.
 The modified version of the airGRdatassim package extends its capabilities in several key areas:
 - **Glacier Module Integration**: The modification includes the ability to incorporate glacier processes into the data assimilation framework.
-- **Operational Mode Functionality**: Supportin operational data assimilation, allowing the model to initialize with real-time conditions and to use basin-specific lapse rates for temperature and precipitation distribution
-
-
+- **Operational Mode Functionality**: Support in operational data assimilation, allowing the model to initialize with real-time conditions and to use basin-specific lapse rates for temperature and precipitation distribution
 
 **Forcing data:**
-The operational model uses temperature and precipitation inputs from the [preprocessing_gateway](#preprocessing-of-gridded-weather-data-preprocessing_gateway) module, with quantile-mapped ERA5-Land data for past data and all 51 ensemble members from the ECMWF IFS ensemble forecast for future weather predictions.
+The operational model uses temperature and precipitation inputs from the [preprocessing_gateway module](#223-preprocessing-of-gridded-weather-data-preprocessing_gateway), with quantile-mapped ERA5-Land data for past data and all 51 ensemble members from the ECMWF IFS ensemble forecast for future weather predictions.
 
 **Operational Setup:**
 For each run, the model saves the initial condition from `lag_days` days before the current run, making it available for the next forecast. When a new forecast is triggered, the model uses the saved initial condition from the previous run, which stored the initial condition at the current forecast date minus the  `lag_days` (i.e. 180 days) and the time since the last forecast. The model first runs without data assimilation up to today minus `lag_days`, then incorporates data assimilation to the forecast date. Finally, it uses the ensemble weather predictions to run the model for each data assimilation ensemble and ensemble weather forecast, creating a 15-day ahead ensemble daily discharge forecast. From these results, pentadal and decadal discharge forecasts are calculated.
