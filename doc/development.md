@@ -38,12 +38,12 @@ This document describes how to develop the application and how to add hydrologic
       - [Prerequisites](#prerequisites-3)
       - [How to run the tool](#how-to-run-the-tool-2)
     - [Conceptual rainfall-runoff (conceptual...)](#conceptual-rainfall-runoff-conceptual)
-      - [Description of module](#description-of-module-2)
+      - [Description of the Conceptual Model Module](#description-of-the-conceptual-model-module)
       - [Prerequisites](#prerequisites-4)
       - [I/O](#io-2)
       - [How to run the tool](#how-to-run-the-tool-3)
     - [Machine learning (machine\_learning)](#machine-learning-machine_learning)
-      - [Description of module](#description-of-module-3)
+      - [Description of module](#description-of-module-2)
       - [Prerequisites](#prerequisites-5)
       - [I/O](#io-3)
         - [Output Files](#output-files)
@@ -514,19 +514,52 @@ TODO: Bea
 
 ### Conceptual rainfall-runoff (conceptual...)
 
-#### Description of module
 
-**Description of the conceptual model:**
-The "conceptual_model" module integrates a rainfall-runoff model specifically designed for operational discharge forecasting in high mountain areas and here implemented for the Ala Archa and Inflow Toktogul basin. The selected models, GR4J-CemaNeige-Glacier and GR6J-CemaNeige, are daily, empirical, and lumped reservoir-based models. The GR4J model utilizes four parameters: X1, X2, X3, and X4. X1 represents the production store capacity, which corresponds to the soil's root zone where atmospheric exchanges such as evapotranspiration occur. X2 is the groundwater exchange coefficient, regulating water transfer to groundwater, thereby allowing the model to simulate both leaky and gaining catchments. X3 represents the routing store capacity, influencing slower flow processes like interflow, which are closely linked to the catchment's geology and soil cover. X4 determines the lag time between rainfall and peak flow, shaping the hydrograph. The GR6J model extends this framework by adding two additional parameters, X5 and X6. X5, the inter-catchment exchange threshold, improves the simulation of groundwater exchange processes, while X6, the exponential store depletion coefficient, is designed to enhance the simulation of low-flow conditions. The CemaNeige module simulates snow accumulation and melt processes. It introduces two additional calibration factors, CN1 and CN2, and uses elevation bands to simulate snow processes across different altitudes, with each band representing an equal area. Precipitation and temperature are distributed across these elevation bands based on basin-specific lapse rates. The model framework has been expanded to include a glacier module, which adds three more parameters. This module simulates glacier melt using a temperature index approach and the same spatial descretization than the CemaNeige. Glacier melt begins when the Snow Water Equivalent (SWE) simulated by the CemaNeige module falls below a certain threshold, and the air temperature threshold in the elevation band is exceeded. The glacier melt rate is then proportional to the temperature and an ice melt factor. The model was calibrated with daily discharge data from 2001-01-01 to 2015-31-12 and validated with the period form 2016-01-01 to 2023-12-31. For the Ala Archa model also modelled SWE data was used in the calibration obtained from a [Factorial Snow Model](https://github.com/ArcticSnow/TopoPyScale). We implemented the conceptual model using a modified version of the [airGR](https://github.com/hydrosolutions/airGR_GM) package in R.
 
-**Data assimilation:**
-Data assimilation in the Ala Archa and Toktogul Inflow models enhances discharge predictions by incorporating real-time data. This involves perturbing meteorological forcings and internal model states, followed by running the model 200 times as part of an ensemble. The model is run multiple times (200) with perturbed forcing input and internal model states.  The Particle Filter (PF) is then applied to update model predictions based on these ensemble runs. The PF works by assigning weights to each model run based on how well they match the observations, then resampling to keep the most accurate runs and discard the less accurate ones. This resampling ensures that the model focuses on the best predictions, leading to improved accuracy as new data is assimilated. We used a modified version of the [airGRdatassim](https://github.com/hydrosolutions/airgrdatassim) package in R to implement data assimilation in operational runs of the conceptual models. 
+
+
+
+#### Description of the Conceptual Model Module
+
+**Conceptual Model Overview:**
+The "conceptual_model" module is designed to facilitate operational discharge forecasting, particularly in high-altitude or complex catchment areas. This module integrates rainfall-runoff models with several combinable components such as the GR4J or GR6J model, the CemaNiege component for snow melt. This is provided in the original [airGR](https://cran.r-project.org/web/packages/airGR/index.html) R package. The modified R package [airGR_GM](https://github.com/hydrosolutions/airGR_GM) package also includes a additional glacier module and the possibility to add basin specif temperature and precipitaiton lapse rates (see for more details [here](https://github.com/hydrosolutions/airGR_GM) ).
+
+- **GR4J Model**: This model employs four key parameters to simulate hydrological processes:
+  - **X1 (Production Store Capacity)**: Represents the soil's root zone capacity where atmospheric exchanges, including evapotranspiration, occur.
+  - **X2 (Groundwater Exchange Coefficient)**: Regulates the water transfer to groundwater, allowing the simulation of both leaky and gaining catchments.
+  - **X3 (Routing Store Capacity)**: Influences slower flow processes like interflow, which are tied to the catchment's geology and soil cover.
+  - **X4 (Lag Time)**: Determines the lag between rainfall and peak flow, shaping the hydrograph.
+
+- **GR6J Model**: Building on GR4J, this model includes two additional parameters:
+  - **X5 (Inter-Catchment Exchange Threshold)**: Enhances the simulation of groundwater exchange processes.
+  - **X6 (Exponential Store Depletion Coefficient)**: Improves the simulation of low-flow conditions.
+
+- **CemaNeige Module**: This module simulates snow accumulation and melt processes by introducing two calibration factors, CN1 and CN2. It utilizes elevation bands, which represent equal areas, to account for variations in snow processes across different altitudes. Precipitation and temperature are distributed across these bands using basin-specific lapse rates.
+
+- **Glacier Module**: This extension simulates glacier melt using a temperature index approach, employing the same spatial discretization as CemaNeige. Glacier melt is triggered when Snow Water Equivalent (SWE) drops below a specific threshold, and air temperature exceeds a defined limit in the elevation band. The melt rate is proportional to temperature and an ice melt factor.
+
+The conceptual model framework is flexible and can be calibrated with discharge data or other relevant hydrological data over a specified period. It is possible to calibrate the model also with snow water equivalent data for example from a [Factorial Snow Model](https://github.com/ArcticSnow/TopoPyScale). It can be adapted for various catchments and is implemented using a modified version of the [airGR_GM](https://github.com/hydrosolutions/airGR_GM) package in R.
+
+**Data Assimilation:**
+To enhance discharge predictions, the module supports data assimilation techniques that incorporate real-time data into the model. I
+ This involves perturbing meteorological forcings and internal model states to generate an ensemble of simulations. The model is typically run multiple times (e.g., 200 iterations) with these perturbations. A Particle Filter (PF) is then applied to update model predictions based on the ensemble runs. The PF assigns weights to each run based on its agreement with observed data and resamples the ensemble to prioritize the most accurate simulations. This process enhances the accuracy of predictions as new data becomes available. Data assimilation within the module is implemented using a modified version of the [airGRdatassim](https://github.com/hydrosolutions/airgrdatassim) package in R.
+
+This module can be applied to various hydrological settings, making it a versatile tool for operational discharge forecasting in diverse environmental conditions.
+
+
+**Data Assimilation:**
+The "conceptual_model" module enhances discharge predictions by incorporating real-time data through an advanced data assimilation process. This process is based on the [airGRdatassim](https://cran.r-project.org/web/packages/airGRdatassim/index.html) package available on CRAN. The module presented here utilizes a modified version of the airGRdatassim package, which can be found [here](https://github.com/hydrosolutions/airgrdatassim). This customized version is specifically tailored to address the unique demands of operational discharge forecasting in diverse hydrological environments.
+In this module, data assimilation is implemented using an ensemble approach. Meteorological forcings and internal model states are perturbed to generate multiple simulations. These simulations are then processed using a Particle Filter (PF), a method that assigns weights to each simulation based on its alignment with observed data. The PF subsequently resamples the ensemble, prioritizing the most accurate simulations while discarding less accurate ones. This iterative process allows the model to continually refine its predictions as new data is assimilated.
+The modified version of the airGRdatassim package extends its capabilities in several key areas:
+- **Glacier Module Integration**: The modification includes the ability to incorporate glacier processes into the data assimilation framework.
+- **Operational Mode Functionality**: Supportin operational data assimilation, allowing the model to initialize with real-time conditions and to use basin-specific lapse rates for temperature and precipitation distribution
+
 
 **Forcing data:**
 The operational model uses temperature and precipitation inputs from the [preprocessing_gateway](#preprocessing-of-gridded-weather-data-preprocessing_gateway) module, with quantile-mapped ERA5-Land data for past data and all 51 ensemble members from the ECMWF IFS ensemble forecast for future weather predictions.
 
 **Operational Setup:**
-For each run, the model saves the initial condition from 180 days before the current run, making it available for the next forecast. When a new forecast is triggered, the model uses the saved initial condition from the previous run, which stored the initial condition at the current forecast date minus the lag days (180 days) and the time since the last forecast. The model first runs without data assimilation up to today minus lag days, then incorporates data assimilation to the forecast date. Finally, it uses the ensemble weather predictions to run the model for each data assimilation ensemble and ensemble weather forecast, creating a 15-day ahead ensemble daily discharge forecast. From these results, pentadal and decadal discharge forecasts are calculated.
+For each run, the model saves the initial condition from `lag_days` days before the current run, making it available for the next forecast. When a new forecast is triggered, the model uses the saved initial condition from the previous run, which stored the initial condition at the current forecast date minus the  `lag_days` (i.e. 180 days) and the time since the last forecast. The model first runs without data assimilation up to today minus `lag_days`, then incorporates data assimilation to the forecast date. Finally, it uses the ensemble weather predictions to run the model for each data assimilation ensemble and ensemble weather forecast, creating a 15-day ahead ensemble daily discharge forecast. From these results, pentadal and decadal discharge forecasts are calculated.
 
 Folder Structure:
 
@@ -569,7 +602,7 @@ The `run_operation_forecasting_CM.R` script operates as follows:
 
 9. **Forecast Period**: The forecast runs up to the date provided by the weather forecast, which is up to 15 days ahead for the ECMWF IFS ensemble open data forecast.
 
-10. **Check Previous Forecasts**: The operational model checks the stored forecasts from previous runs (e.g., for Ala Archa 15194) in the directory `ieasyhydroforecast_PATH_TO_RESULT/data/daily_BASINCODE.csv`.
+10. **Check Previous Forecasts**: The operational model checks the stored forecasts from previous runs in the directory `ieasyhydroforecast_PATH_TO_RESULT/data/daily_BASINCODE.csv`.
 
 11. **Handle Missing Forecast Days**: If there are missing days since the last forecast, the model starts for those days using the `get_hindcast_period.R` function from the `functions_hindcast.R` file. The script also loads the hindcast forcing data (as detailed in the I/O documentation). Hindcasts are run similarly to the `run_manual_hindcast.R` script, with daily timesteps. 
 
