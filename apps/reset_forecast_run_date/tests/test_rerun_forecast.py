@@ -1,7 +1,7 @@
 import pytest
 import datetime
 import os
-from reset_forecast_run_date.rerun_forecast import load_environment, parse_last_successful_run_date, calculate_new_forecast_date, write_date
+from reset_forecast_run_date.rerun_forecast import parse_last_successful_run_date, calculate_new_forecast_date, write_date
 
 def test_parse_last_successful_run_date():
     last_run_file = "reset_forecast_run_date/tests/test_files/test_last_successful_run.txt"

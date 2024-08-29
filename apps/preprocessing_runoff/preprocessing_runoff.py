@@ -1,21 +1,31 @@
 # Python 3.11
 
 # This script is part of the SAPPHIRE forecast tools.
-# It reads daily average discharge data from excel sheets and, if access to the iEasyHydro database is available,
-# completes the discharge time series with operational daily average discharge from the database.
-# From the current day, the morning discharge is also read from the database and appended to the time series.
+# It reads daily average discharge data from excel sheets and, if access to the
+# iEasyHydro database is available, completes the discharge time series with
+# operational daily average discharge from the database. From the current day,
+# the morning discharge is also read from the database and appended to the time
+# series.
 #
-# How to run: from apps/preprocessing_runoff call
+# How to run:
+# from apps/preprocessing_runoff call
 # SAPPHIRE_OPDEV_ENV=True python preprocessing_runoff.py
 #
-# Details: The script performs the following steps:
+# Details:
+# The script performs the following steps:
 # - Read daily data plus todays morning discharge into a dataframe
 # - Calculate runoff for virtual stations
-# - Filter for outliers by setting values exceeding the thresholds below to NaN, whereby
-#      lower threshold: 25%ile – 2.5 * (75%ile – 25%ile) and upper threshold: 75%ile + (75%ile – 25%ile)
+# - Filter for outliers by setting values exceeding the thresholds below to NaN,
+#      whereby lower threshold: 25%ile – 2.5 * (75%ile – 25%ile)
+#      and upper threshold: 75%ile + (75%ile – 25%ile)
 # - Linearly interpolate NaNs, maximum gap size is 2
 # - Calculate runoff statistics
-# The script then saves the discharge data and runoff statistics (hydrograph data) to csv files for further use in the forecast tools.
+# The script then saves the discharge data and runoff statistics (hydrograph
+# data) to csv files for further use in the forecast tools.
+#
+# Important assumption:
+# This module assumes that station codes can be converted to integers with 5
+# digits.
 #
 # Developed within the frame of the SAPPHIRE Central Asia project funded by SDC.
 
@@ -108,11 +118,20 @@ def main():
         name_col='name',
         code_col='code')
 
+    # Test if there is any data
+    if runoff_data is None:
+        logger.error(f"No river runoff data found.\n"
+                     f"No forecasts can be produced.\n"
+                     f"Please check your configuration.\n")
+        sys.exit(1)
+
     # Filtering for outliers
     filtered_data = src.filter_roughly_for_outliers(
         runoff_data, 'code', 'discharge')
 
     # Reformat to hydrograph data
+    # In the future, daily norm discharge may be read from the iEH database. But
+    # so far this is not possible.
     hydrograph = src.from_daily_time_series_to_hydrograph(
         data_df=filtered_data,
         date_col='date',
