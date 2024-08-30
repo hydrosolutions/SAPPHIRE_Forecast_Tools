@@ -979,7 +979,6 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector):
     selected_pentad_text = [k for k, v in pentad_options.items() if v == selected_pentad][0]
     title_pentad = selected_pentad_text.split(' ')[0]
     title_month = selected_pentad_text.split('of ')[-1]
-    title_year = 'All Years'  # Since we're now showing all years for the selected pentad
 
     # Generate dynamic filename based on the selected pentad and station
     station_name = station_widget
@@ -1142,8 +1141,8 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector):
     # Create the layout with the table, plot, save button, and popup
     layout = pn.Column(
         pn.Row(forecast_data_table, plot_pane),
-        pn.Row(save_button),  # Add the save button below the table and plot
-        pn.Row(popup)  # Add the pop-up notification below the button
+        pn.Row(save_button), 
+        pn.Row(popup)  
     )
 
     return layout
@@ -1151,7 +1150,6 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector):
 
 def update_forecast_data(_, linreg_predictor, station, pentad_selector):
     def callback(event):
-        # Call the same function used elsewhere for consistency
         return select_and_plot_data(_, linreg_predictor, station, pentad_selector)
 
     return callback

@@ -38,9 +38,9 @@ EXPOSE 5006
 
 # Run the application.
 # On local machine
-CMD ["panel", "serve", "pentad_dashboard.py", "--show", "--autoreload", "--port", "5006"]
+#CMD ["panel", "serve", "pentad_dashboard.py", "--show", "--autoreload", "--port", "5006"]
 # On AWS
-#CMD ["panel", "serve", "--allow-websocket-origin=34.202.229.208:5006", "pentad_dashboard.py", "--port=5006", "--address=0.0.0.0", "--show", "--autoreload"]
+CMD ["panel", "serve", "--allow-websocket-origin=34.202.229.208:5006", "pentad_dashboard.py", "--port=5006", "--address=0.0.0.0", "--show", "--autoreload"]
 
 # CMD to list all files in app/apps/forecast_dashboard and print the results to the console.
 #CMD ["/bin/sh", "-c", "echo 'here!' && ls /app/apps/forecast_dashboard && echo ' ' && pip list"]

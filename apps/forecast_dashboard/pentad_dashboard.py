@@ -160,7 +160,7 @@ date_picker = pn.widgets.DatePicker(name=_("Select date:"),
                                     end=forecast_date,
                                     value=forecast_date)
 
-# Create the dropdown widget
+# Create the dropdown widget for pentad selection
 pentad_selector = pn.widgets.Select(
     name="Select Pentad",
     options=pentad_options,
@@ -245,10 +245,6 @@ pentad_selector.param.watch(update_callback, 'value')
 
 # Initial setup: populate the main area with the initial selection
 update_callback(None)
-print('here')
-print(linreg_predictor)
-print('here again')
-print(linreg_datatable)
 
 daily_hydrograph_plot = pn.panel(
     pn.bind(
