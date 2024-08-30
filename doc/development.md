@@ -714,6 +714,17 @@ To set up the environment for running the forecast using the conceptual model yo
     This folder contains the data files `param.RData` and `Basin_Info.RData`.
 
     - **param.RData**: This file contains the variable `param`, which holds the calibrated parameter values (numeric) required for the specific hydrological model.
+      - Example: `GR4J-CemaNeige-Glacier`: [1230, -10, 238, 1.1, 0.02, 11, 8, 4.7, 20]
+        - [1]: X1: Capacity of production store[mm]
+        - [2]: X2: Water exchange coef-ficient [mm]
+        - [3]: X3: Capacity of routing store [mm]
+        - [4]: X4: UH time base [d]
+        - [5]: CN1: weighting coefficient for snow pack thermal state [-]
+        - [6]: CN2: degree-day melt coefficient [mm/C/d]
+        - [7]: Mi: ice melt factor [mm/C/d]
+        - [8]:Tm: melting threshold temperature [d]
+        - [9]:SWEth ice melting SWE threshold [mm]
+      - For more detail see: [airGR_GM](https://github.com/hydrosolutions/airGR_GM).
 
     The `Basin_Info.RData` file contains a list with the name Basin_Info with data for the specific basin. The structure of this file is as follows:
 
