@@ -1,5 +1,6 @@
 # vizualization.py
 import os
+import param
 import random
 import sys
 import math
@@ -7,11 +8,15 @@ import pandas as pd
 import numpy as np
 import datetime as dt
 import time
+import calendar
 import holoviews as hv
+from holoviews import streams
+from holoviews.streams import PointDraw, Selection1D
 import panel as pn
-from bokeh.models import HoverTool, FixedTicker, FuncTickFormatter, CustomJSTickFormatter, LinearAxis, DatetimeTickFormatter
+from bokeh.models import HoverTool, FixedTicker, FuncTickFormatter, CustomJSTickFormatter, LinearAxis, DatetimeTickFormatter, NumberFormatter, DateFormatter
 from scipy import stats
 from sklearn.linear_model import LinearRegression
+from bokeh.models.widgets.tables import CheckboxEditor, BooleanFormatter
 
 from . import processing
 
@@ -510,6 +515,51 @@ def plot_pentadal_vlines(data, date_col):
 
     return vlines
 
+
+def update_pentad_text(date_picker, _):
+    """
+    Function to calculate and return the dynamic pentad text based on the selected date.
+    """
+    # Calculate the next day's date (to align with the logic used earlier)
+    selected_date = date_picker
+    
+    # Calculate pentad, month, and day range
+    title_pentad = tl.get_pentad(selected_date)
+    title_month = tl.get_month_str_case2_viz(_, selected_date)
+    title_day_start = tl.get_pentad_first_day(selected_date.strftime("%Y-%m-%d"))
+    title_day_end = tl.get_pentad_last_day(selected_date.strftime("%Y-%m-%d"))
+    title_year = selected_date.year
+
+    # Create the formatted text for display
+    pentad_text = (f"**{_('Selected Pentad')}**: {title_pentad} {_('pentad')} {_('of')} "
+                   f"{title_month} {title_year} "
+                   f"({_('days')} {title_day_start}-{title_day_end})")
+
+    return pentad_text
+
+def create_date_picker_with_pentad_text(date_picker, _):
+
+    # Create a Markdown pane to display the dynamic pentad text
+    pentad_text_pane = pn.pane.Markdown("")
+
+    # Define the callback function to update the pentad text when the date changes
+    def update_pentad_widget(event=None):
+        # Get the updated pentad text from the visualization function
+        new_text = update_pentad_text(date_picker.value, _)
+
+        # Update the Markdown pane's object with the new text
+        pentad_text_pane.object = new_text
+
+    # Bind the update function to the DatePicker's value change
+    date_picker.param.watch(update_pentad_widget, 'value')
+
+    # Call the update function once initially to set the text
+    update_pentad_widget()
+
+    # Return the layout with the DatePicker and the dynamic text pane
+    return pentad_text_pane
+
+
 # endregion
 
 # region predictor_tab
@@ -889,24 +939,220 @@ def draw_forecast_raw_data(_, forecasts_linreg, station_widget, date_picker):
         #editors={_('δ'): None},  # Disable editing of the δ column
         theme='bootstrap',
         show_index=False,
-        selectable='checkbox')
+        show_grid=True,
+        show_legend=True,
+        selectable='checkbox',
+        height=450,)
 
     return forecast_data_table
 
-def select_data_for_linreg(_, data, station_widget, date_picker):
 
-    # From date_picker, get the pentad and month of the latest forecast
-    forecast_date = date_picker.value + dt.timedelta(days=1)
-    forecast_pentad = int(tl.get_pentad_in_year(forecast_date))
+pentads = [
+    f"{i+1}st pentad of {calendar.month_name[month]}" if i == 0 else 
+    f"{i+1}nd pentad of {calendar.month_name[month]}" if i == 1 else 
+    f"{i+1}rd pentad of {calendar.month_name[month]}" if i == 2 else 
+    f"{i+1}th pentad of {calendar.month_name[month]}"
+    for month in range(1, 13) for i in range(6)
+]
 
-    # Filter forecasts_all for selected station, date and models
-    forecast_table = data[(data['station_labels'] == station_widget.value)]
+# Create a dictionary mapping each pentad description to its pentad_in_year value
+pentad_options = {f"{i+1}st pentad of {calendar.month_name[month]}" if i == 0 else 
+                  f"{i+1}nd pentad of {calendar.month_name[month]}" if i == 1 else 
+                  f"{i+1}rd pentad of {calendar.month_name[month]}" if i == 2 else 
+                  f"{i+1}th pentad of {calendar.month_name[month]}": i + (month-1)*6 + 1
+                  for month in range(1, 13) for i in range(6)}
 
-    # Filter further for the selected date (pentad)
-    forecast_table = forecast_table[
-        (forecast_table['pentad_in_year'] == forecast_pentad)]
 
-    return forecast_table
+
+# Define the directory to save the data
+SAVE_DIRECTORY = 'saved_data'
+os.makedirs(SAVE_DIRECTORY, exist_ok=True)
+
+def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector):
+    # Check if pentad_selector is a widget or an integer
+    if isinstance(pentad_selector, int):
+        selected_pentad = pentad_selector  # If it's an integer, use it directly
+    else:
+        selected_pentad = pentad_selector.value  # If it's a widget, get the value
+
+    # Find out the month and pentad for display purposes
+    selected_pentad_text = [k for k, v in pentad_options.items() if v == selected_pentad][0]
+    title_pentad = selected_pentad_text.split(' ')[0]
+    title_month = selected_pentad_text.split('of ')[-1]
+
+    # Generate dynamic filename based on the selected pentad and station
+    station_name = station_widget
+    save_file_name = f"{station_name}_{selected_pentad}_pentad_of_{title_month}.csv"
+    save_file_path = os.path.join(SAVE_DIRECTORY, save_file_name)
+
+    # Add the 'date' column if it doesn't exist
+    if 'date' not in linreg_predictor.columns:
+        # Map the 'pentad_in_year' to the corresponding date using get_date_for_pentad
+        linreg_predictor['date'] = linreg_predictor['pentad_in_year'].apply(lambda pentad: tl.get_date_for_pentad(pentad))
+
+    # Check if the saved CSV file for the specific pentad exists
+    if os.path.exists(save_file_path):
+        # Load the saved state
+        forecast_table = pd.read_csv(save_file_path)
+        print(f"Loaded saved state from {save_file_path}")
+    else:
+        # Filter data for the selected station and pentad across all years
+        forecast_table = linreg_predictor[
+            (linreg_predictor['station_labels'] == station_widget) & 
+            (linreg_predictor['pentad_in_year'] == selected_pentad)
+        ].copy().reset_index(drop=True)
+
+        # Add a column to indicate visibility of points in the plot
+        if 'visible' not in forecast_table.columns:
+            forecast_table['visible'] = True
+
+    # Define a variable to hold the visible data across functions
+    global visible_data
+
+    # Create Tabulator for displaying forecast data
+    forecast_data_table = pn.widgets.Tabulator(
+        value=forecast_table[['date', 'predictor', 'discharge_avg', 'visible']], 
+        theme='bootstrap',
+        show_index=False,  # Do not show the index column
+        editors={'visible': CheckboxEditor()},  # Checkbox editor for the 'visible' column
+        formatters={'visible': BooleanFormatter(),
+                    'date': DateFormatter()},  # Format the date column
+        height=450,
+    )
+
+    # Create the title text
+    title_text = (f"{_('Hydropost')} {station_name}: {_('Forecast')} {_('for')} "
+                  f"{title_pentad} {_('pentad')} {_('of')} {title_month} "
+                  f"({_('for all years')})")
+
+    # Define the plot
+    plot_pane = pn.pane.HoloViews()
+
+    # Create the selection1d stream to capture point selections on the plot
+    selection_stream = streams.Selection1D(source=None)
+
+    # Update plot based on visibility
+    def update_plot(event=None):
+        global visible_data  # Use global variable to ensure it's accessible in other functions
+        
+        forecast_table.update(forecast_data_table.value)
+
+        # Filter the data based on visibility
+        visible_data = forecast_table[forecast_table['visible'] == True]
+
+        # Drop rows with NaNs in 'predictor' or 'discharge_avg'
+        visible_data = visible_data.dropna(subset=['predictor', 'discharge_avg'])
+        
+        # If no data is visible, show an empty plot
+        if visible_data.empty:
+            scatter = hv.Curve([])  # Define an empty plot to avoid errors
+        else:
+            hover = HoverTool(
+                tooltips=[
+                    ('Date', '@date{%F}'),
+                    ('Predictor', '@predictor'),
+                    ('Discharge', '@discharge_avg'),
+                ],
+                formatters={'@date': 'datetime'},  # Format the date for hover
+            )
+            scatter = hv.Scatter(visible_data, kdims='predictor', vdims=['discharge_avg', 'date']) \
+                .opts(color='blue', size=5, tools=['hover', 'tap'], xlabel=_('Predictor'), ylabel=_('Discharge (m³/s)'), title=title_text)
+
+            if len(visible_data) > 1:
+                # Add a linear regression line to the scatter plot
+                slope, intercept, r_value, p_value, std_err = stats.linregress(visible_data['predictor'], visible_data['discharge_avg'])
+                x = np.linspace(visible_data['predictor'].min(), visible_data['predictor'].max(), 100)
+                y = slope * x + intercept
+                line = hv.Curve((x, y)).opts(color='red', line_width=2)
+
+                # Overlay the scatter plot and the linear regression line
+                scatter = scatter * line
+                scatter.opts(
+                    title=title_text,
+                    show_grid=True,
+                    show_legend=True,
+                    width=1000, 
+                    height=450  
+                )
+            else:
+                scatter.opts(
+                    width=1000, 
+                    height=450  
+                )
+        
+        # Attach the plot to the selection stream
+        selection_stream.source = scatter
+        plot_pane.object = scatter
+
+    # Function to handle plot selections and update the table
+    def handle_selection(event):
+        global visible_data  # Use the visible data in the selection handler
+
+        if not selection_stream.index:
+            return
+
+        # Get the selected index from the scatter plot (relative to visible_data)
+        selected_indices = selection_stream.index
+
+        # Get the actual index from the forecast_table that corresponds to the visible data
+        selected_rows = visible_data.iloc[selected_indices].index.tolist()
+
+        # Select the corresponding rows in the Tabulator
+        forecast_data_table.selection = selected_rows
+
+    # Watch for selection events on the plot
+    selection_stream.param.watch(handle_selection, 'index')
+
+    # Watch for changes in the table's value (which includes visibility toggling) and update the plot
+    forecast_data_table.param.watch(update_plot, 'value')
+
+    # Initial plot update
+    update_plot()
+
+    # Create the pop-up notification pane (initially hidden)
+    popup = pn.pane.Alert("Changes Saved Successfully", alert_type="success", visible=False)
+
+    # Function to save table data to CSV
+    def save_to_csv(event):
+        # Convert the table value back to a DataFrame
+        updated_forecast_table = pd.DataFrame(forecast_data_table.value)
+
+        # Explicitly reset the index before saving, so it becomes a column
+        updated_forecast_table = updated_forecast_table.reset_index(drop=True)
+
+        updated_forecast_table['pentad'] = selected_pentad
+
+        # Save DataFrame to CSV, ensuring the index is saved
+        updated_forecast_table.to_csv(save_file_path, index=False)
+        print(f"Data saved to {save_file_path}")
+
+        # Show the pop-up notification
+        popup.visible = True
+
+        # Hide the popup after a short delay (optional)
+        pn.state.onload(lambda: pn.state.add_periodic_callback(lambda: setattr(popup, 'visible', False), 2000, count=1))
+
+    # Create a save button
+    save_button = pn.widgets.Button(name="Save Changes", button_type="success")
+
+    # Attach the save_to_csv function to the button's click event
+    save_button.on_click(save_to_csv)
+
+    # Create the layout with the table, plot, save button, and popup
+    layout = pn.Column(
+        pn.Row(forecast_data_table, plot_pane),
+        pn.Row(save_button), 
+        pn.Row(popup)  
+    )
+
+    return layout
+
+
+def update_forecast_data(_, linreg_predictor, station, pentad_selector):
+    def callback(event):
+        return select_and_plot_data(_, linreg_predictor, station, pentad_selector)
+
+    return callback
 
 def test_draw_forecast_raw_data(_, selected_data):
 
