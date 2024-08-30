@@ -612,7 +612,7 @@ The `run_operation_forecasting_CM.R` script operates as follows:
 
 12. **Pentadal Decadal**:For pentadal and decadal timesteps, the data is averaged over the corresponding periods and saved as `pentad_15194.csv` and `decad_15194.csv`.
 
-To manually trigger a hindcast for a specific period, the `run_manual_hindcast.R` script can be run. In the configuration file (see configuration.md), you need to define `start_hindcast`, `end_hindcast`, and `hindcast_mode`, which can be `daily`, `pentad`, or `decad`. The hindcast is executed for all the specified `codes` using the hydrological model defined in `fun_mod_mapping`.
+To manually trigger a hindcast for a specific period, the `run_manual_hindcast.R` script can be run. In the configuration file (see configuration.md), you need to define `start_hindcast`, `end_hindcast`, and `hindcast_mode`, which can be `daily`, `pentad`, or `decad`. The hindcast is executed for all the specified `code_hindcast` using the hydrological model defined in `fun_mod_mapping`.
 
 - In `daily` mode, the script provides a forecast for each day, 15 days ahead.
 - In `pentad` mode, it provides forecasts in approximately 5-day intervals (pentads), calculating the mean Q50 value for each pentad.
@@ -828,7 +828,7 @@ Below is a detailed explanation of each key in the configuration file.
      - **Description:** Specifies the number of days the model is running with data assimilation process. This parameter is used to define the temporal window of the data assimilation. The model is started before the data assimilation with the initial conditions fomr the previous run.
      - **Example:** `180` indicates a lag of 180 days.
    - `codes`
-     - **Type:** List of integers
+     - **Type:** integer or vector of integer
      - **Description:** Lists the numerical codes corresponding to the basin code for which a forecast is produced. These codes must match those provided in the `fun_mod_mapping`.
      - **Example:** `[15194, 16936]` corresponds to the codes used to map the models `RunModel_CemaNeigeGR4J_Glacier` and `RunModel_CemaNeigeGR6J`.
    - `start_ini`
@@ -843,6 +843,10 @@ Below is a detailed explanation of each key in the configuration file.
      - **Type:** String (Date in `YYYY-MM-DD` format)
      - **Description:** Specifies the start date of the hindcast period when triggered manually in the script `run_manual_hindcast.R`
      - **Example:** `"2015-12-31"` indicates that the hindcast period begins on December 31, 2015.
+   - `code_hindcast`
+     - **Type:**  integer or vector of integer
+     - **Description:** Lists the numerical codes corresponding to the basin code for which a forecast is produced. These codes must match those provided in the `fun_mod_mapping`.
+     - **Example:** `15194` corresponds to the codes used to map the models `RunModel_CemaNeigeGR4J_Glacier`.
    - `end_hindcast`
      - **Type:** String (Date in `YYYY-MM-DD` format)
      - **Description:** Specifies the end date of the hindcast period when triggered manually in the script `run_manual_hindcast.R`
