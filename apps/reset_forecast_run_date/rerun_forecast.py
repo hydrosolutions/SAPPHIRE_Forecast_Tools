@@ -3,42 +3,54 @@
 # the user to rerun the forecasts for a specific period of time. The last
 # successful run date is stored in the file ieasyforecast_last_successful_run_file.
 
+# Useage:
+# python rerun_forecast.py
+
 import datetime
 import os
-from dotenv import load_dotenv
+import sys
+import logging
+from logging.handlers import TimedRotatingFileHandler
 
-def load_environment():
-    '''
-    Load environment variables from .env or .env_develop file, depending on
-    whether the script is running in a docker container or locally.
 
-    Parameters:
-    None
+# Local libraries, installed with pip install -e ./iEasyHydroForecast
+# Get the absolute path of the directory containing the current script
+script_dir = os.path.dirname(os.path.abspath(__file__))
 
-    Returns:
-    None
+# Construct the path to the iEasyHydroForecast directory
+forecast_dir = os.path.join(script_dir, '..', 'iEasyHydroForecast')
 
-    Raises:
-    FileNotFoundError: If the .env file does not exist at the specified path.
-    '''
-    # Check if IN_DOCKER_CONTAINER environment variable is set
-    in_docker = os.getenv("IN_DOCKER_CONTAINER")
-    # Determine .env file path
-    if in_docker == "True":
-        print("Running in docker container. Loading environment variables from .env")
-        env_file_path = "/app/apps/config/.env"
-    else:
-        print("Running locally. Loading environment variables from .env_develop")
-        env_file_path = "../config/.env_develop"
+# Add the forecast directory to the Python path
+sys.path.append(forecast_dir)
 
-    # Check if .env file exists
-    if not os.path.isfile(env_file_path):
-        raise FileNotFoundError(f"No .env file found at {env_file_path}")
+# Import the setup_library module from the iEasyHydroForecast package
+import setup_library as sl
 
-    # Load environment variables
-    load_dotenv(env_file_path)
-    # Print if a file exists at the env_file_path location
-    # print(f"File exists at {env_file_path}: {os.path.isfile(env_file_path)}")
+
+# Set up logging
+# Configure the logging level and formatter
+logging.basicConfig(level=logging.INFO)
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+
+# Create the logs directory if it doesn't exist
+if not os.path.exists('logs'):
+    os.makedirs('logs')
+
+# Create a file handler to write logs to a file
+file_handler = TimedRotatingFileHandler('logs/log', when='midnight',
+                                        interval=1, backupCount=30)
+file_handler.setFormatter(formatter)
+
+# Create a stream handler to print logs to the console
+console_handler = logging.StreamHandler()
+console_handler.setFormatter(formatter)
+
+# Get the root logger and add the handlers to it
+logger = logging.getLogger()
+logger.handlers = []
+logger.addHandler(file_handler)
+logger.addHandler(console_handler)
+
 
 def get_last_run_file():
     '''
@@ -168,7 +180,7 @@ def write_date(date, file_path):
 if __name__ == "__main__":
 
     # Load environment variables
-    load_environment()
+    sl.load_environment()
     # Get path to the last run file
     last_run_file = get_last_run_file()
     # Read last successful run date from file

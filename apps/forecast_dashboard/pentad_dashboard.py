@@ -26,6 +26,9 @@ import datetime as dt
 import math
 import param
 
+import logging
+from logging.handlers import TimedRotatingFileHandler
+
 #import hvplot.pandas  # Enable interactive
 import holoviews as hv
 from scipy import stats
@@ -58,6 +61,33 @@ sys.path.append(forecast_dir)
 import setup_library as sl
 import tag_library as tl
 import forecast_library as fl
+
+# endregion
+
+# region set up the logger
+
+# Configure the logging level and formatter
+logging.basicConfig(level=logging.INFO)
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+
+# Create the logs directory if it doesn't exist
+if not os.path.exists('logs'):
+    os.makedirs('logs')
+
+# Create a file handler to write logs to a file
+# A new log file is created every <interval> day at <when>. It is kept for <backupCount> days.
+file_handler = TimedRotatingFileHandler('logs/log', when='midnight', interval=1, backupCount=30)
+file_handler.setFormatter(formatter)
+
+# Create a stream handler to print logs to the console
+console_handler = logging.StreamHandler()
+console_handler.setFormatter(formatter)
+
+# Get the root logger and add the handlers to it
+logger = logging.getLogger()
+logger.handlers = []
+logger.addHandler(file_handler)
+logger.addHandler(console_handler)
 
 # endregion
 
@@ -106,10 +136,10 @@ forecast_stats = processing.read_forecast_stats_file()
 
 # Hydroposts metadata
 station_list, all_stations, station_df = processing.read_all_stations_metadata_from_file(
-    hydrograph_day_all['code'].unique().tolist())
-    
+    hydrograph_day_all['code'].unique().tolist())    
 if not station_list:
     raise ValueError("The station list is empty. Please check the data source and ensure it contains valid stations.")
+print("DEBUG: pentad_dashboard.py: All stations: \n", all_stations)
 
 # Add the station_labels column to the hydrograph_day_all DataFrame
 hydrograph_day_all = processing.add_labels_to_hydrograph(hydrograph_day_all, all_stations)

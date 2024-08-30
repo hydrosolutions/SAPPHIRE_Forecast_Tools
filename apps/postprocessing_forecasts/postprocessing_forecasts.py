@@ -26,7 +26,7 @@ import tag_library as tl
 
 # region Logging
 # Configure the logging level and formatter
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
 formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 
 # Create the logs directory if it doesn't exist
@@ -72,7 +72,7 @@ def postprocessing_forecasts():
 
     logger.info(f"\n\n------ Calculating skill metrics -----------------")
     # Calculate forecast skill metrics
-    skill_metrics = fl.calculate_skill_metrics_pentade(observed, modelled)
+    skill_metrics = fl.calculate_skill_metrics_pentad(observed, modelled)
 
     logger.info(f"\n\n------ Saving results ----------------------")
     # Save the skill metrics to a CSV file

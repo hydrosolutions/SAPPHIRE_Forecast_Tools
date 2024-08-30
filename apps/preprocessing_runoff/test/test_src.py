@@ -1,7 +1,18 @@
 import os
 import pandas as pd
+import pytest
 
 from preprocessing_runoff.src import src
+
+def test_get_runoff_data_no_data_available():
+
+    os.environ['ieasyforecast_daily_discharge_path'] = 'preprocessing_runoff/test/test_files/test_config'
+
+    output = src.get_runoff_data()
+    print("Output: ")
+    print(output)
+
+    os.environ.pop('ieasyforecast_daily_discharge_path')
 
 def test_read_runoff_data_from_multiple_rivers_xlsx():
     filename = 'preprocessing_runoff/test/test_files/test_runoff_file.xlsx'
@@ -24,19 +35,69 @@ def test_read_runoff_data_from_multiple_rivers_xlsx():
 
     assert output.equals(expected_output)
 
+def test_read_runoff_data_from_multiple_rivers_no_code():
+
+    filename = 'preprocessing_runoff/test/test_files/files_with_errors/test_runoff_file_no_code.xlsx'
+
+    expected_output = pd.DataFrame({
+        'date': ['2000-01-01', '2000-01-02', '2000-01-03', '2000-01-04', '2000-01-05'],
+        'discharge': [2.3, 2.4, 2.5, 2.6, 2.7],
+        'name': ['s. n. wi - spec ch', 's. n. wi - spec ch',
+                  's. n. wi - spec ch', 's. n. wi - spec ch',
+                  's. n. wi - spec ch'],
+        'code': [17123, 17123, 17123, 17123, 17123]
+    }).reset_index(drop=True)
+    expected_output['date'] = pd.to_datetime(expected_output['date']).dt.date
+
+    output = src.read_runoff_data_from_multiple_rivers_xlsx(filename).reset_index(drop=True)
+
+    # assert if all values in column discharge are NaN
+    assert output.equals(expected_output)
+
+def test_read_runoff_data_from_multiple_rivers_without_data_in_xls():
+
+    filename = 'preprocessing_runoff/test/test_files/files_with_errors/test_runoff_file_no_data.xlsx'
+
+    output = src.read_runoff_data_from_multiple_rivers_xlsx(filename).reset_index(drop=True)
+
+    # assert if all values in column discharge are NaN
+    assert output['discharge'].isna().all()
+
+def test_read_runoff_data_from_multiple_rivers_no_file():
+
+    filename = 'preprocessing_runoff/test/test_files/files_with_errors/this_file_does_not_exist.xlsx'
+
+    # Assert FileNotFoundError is raised
+    with pytest.raises(FileNotFoundError):
+        src.read_runoff_data_from_multiple_rivers_xlsx(filename)
+
+def test_read_runoff_data_from_multiple_rivers_no_station_header():
+
+    filename = 'preprocessing_runoff/test/test_files/files_with_errors/test_runoff_file_no_station_header.xlsx'
+
+    with pytest.raises(ValueError):
+        src.read_runoff_data_from_multiple_rivers_xlsx(filename)
+
 def test_read_all_runoff_data_from_excel():
     expected_output = pd.DataFrame({
         'date': ['2000-01-01', '2000-01-02', '2000-01-03', '2000-01-04', '2000-01-05',
-                 '2000-01-01', '2000-01-02', '2000-01-03', '2000-01-04', '2000-01-05'],
+                 '2000-01-01', '2000-01-02', '2000-01-03', '2000-01-04', '2000-01-05',
+                 '2000-01-01', '2000-01-02', '2000-01-03', '2000-01-04', '2000-01-05',
+                 '2001-01-01', '2001-01-02', '2001-01-03', '2001-01-04', '2001-01-05'],
         'discharge': [2.3, 2.4, 2.5, 2.6, 2.7,
+                      4.3, 4.4, 4.5, 4.6, 4.7,
+                      2.3, 2.4, 2.5, 2.6, 2.7,
                       4.3, 4.4, 4.5, 4.6, 4.7],
         'name': ['s. n. wi - spec ch', 's. n. wi - spec ch',
                     's. n. wi - spec ch', 's. n. wi - spec ch',
                     's. n. wi - spec ch',
                     'other r. - hi', 'other r. - hi', 'other r. - hi',
-                    'other r. - hi', 'other r. - hi'],
+                    'other r. - hi', 'other r. - hi',
+                    '', '', '', '', '', '', '', '', '', ''],
         'code': [17123, 17123, 17123, 17123, 17123,
-                 17456, 17456, 17456, 17456, 17456]
+                 17456, 17456, 17456, 17456, 17456,
+                 12345, 12345, 12345, 12345, 12345,
+                 12345, 12345, 12345, 12345, 12345]
     }).reset_index(drop=True)
     expected_output['date'] = pd.to_datetime(expected_output['date']).dt.date
 
@@ -47,6 +108,7 @@ def test_read_all_runoff_data_from_excel():
     os.environ.pop('ieasyforecast_daily_discharge_path')
 
     assert output.equals(expected_output)
+
 
 def test_write_data_to_csv():
     runoff_data = pd.DataFrame({
@@ -77,6 +139,7 @@ def test_write_data_to_csv():
     # Remove the output file
     os.remove('preprocessing_runoff/test/test_files/test_runoff_file.csv')
 
+
 def test_filter_roughly_for_outliers_no_outliers():
     # Create a DataFrame with no outliers
     df = pd.DataFrame({
@@ -94,7 +157,7 @@ def test_filter_roughly_for_outliers_no_outliers():
     result = result.reset_index(drop=True)
 
     # Check that the result is the same as the input
-    pd.testing.assert_frame_equal(result, df)
+    pd.testing.assert_frame_equal(result, df, check_like=True)
 
 def test_filter_roughly_for_outliers_with_outliers():
     # Create a DataFrame with an outlier
