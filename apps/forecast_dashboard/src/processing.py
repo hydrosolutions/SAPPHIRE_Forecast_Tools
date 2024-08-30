@@ -513,6 +513,7 @@ def read_all_stations_metadata_from_file(station_list):
 
     # Read stations json
     with open(all_stations_file, "r") as json_file:
+        # TODO: remove the with open statement and use the fl.load_all_station_data_from_JSON function directly
         all_stations = fl.load_all_station_data_from_JSON(all_stations_file)
     # Convert the code column to string
     all_stations['code'] = all_stations['code'].astype(str)

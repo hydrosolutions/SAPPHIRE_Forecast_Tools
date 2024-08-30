@@ -446,6 +446,8 @@ def add_decad_issue_date(data_df, datetime_col):
 def calculate_3daydischargesum(data_df, datetime_col, discharge_col):
     """
     Calculate the 3-day discharge sum for each station in the input DataFrame.
+    The 3-day discharge sum is the sum of the discharge values for the current
+    day and the two previous days.
 
     Args:
     data_df (pandas.DataFrame):
@@ -644,7 +646,8 @@ def generate_issue_and_forecast_dates(data_df_0: pd.DataFrame, datetime_col: str
                                       station_col: str, discharge_col: str,
                                       forecast_flags):
     """
-    Generate issue and forecast dates for each station in the input DataFrame.
+    Generate issue and forecast dates for each station in the input DataFrame
+    and aggregate predictor and target data for pentadal and decadal forecasts.
 
     Arg:
     data_df (pandas.DataFrame):
@@ -703,6 +706,9 @@ def generate_issue_and_forecast_dates(data_df_0: pd.DataFrame, datetime_col: str
         data_df_decad = calculate_decadaldischargeavg(data_df_decad, datetime_col, discharge_col)
 
         return(data_df_decad)
+
+    logger.info("input: generate_issue_and_forecast_dates")
+    logger.info("data_df_0.head(): \n{}".format(data_df_0.head()))
 
     # Test if the input data contains the required columns
     if not all(column in data_df_0.columns for column in [datetime_col, station_col, discharge_col]):
@@ -832,10 +838,11 @@ def get_pentadal_and_decadal_data(forecast_flags=None,
     """"
     Reads and pre-processes the data for the pentadal and decadal forecasts.
 
-    This function was previously called at a later stage in the code. It was
-    moved to a pre-processing step and now requires to be executed for pentadal
-    and decadal forecasts in any case. Therefore, the forecast flags are ste to
-    true for both forecasts.
+    This function was previously called at a later stage in the code.
+
+    Legacy: The method was moved to a pre-processing step and now requires to be
+    executed for pentadal and decadal forecasts in any case. Therefore, the
+    forecast flags are set to true for both forecasts.
 
     Args:
     forecast_flags (config.ForecastFlags):
@@ -867,7 +874,9 @@ def get_pentadal_and_decadal_data(forecast_flags=None,
     # Read discharge data and filter for sites required to produce forecasts
     discharge_all = read_daily_discharge_data_from_csv()
 
-    # Aggregate predictors and forecast variables
+    # Aggregate predictors and forecast variables for each issue date (date
+    # on which a forecast is produced for the next pentad or decad). Note that
+    # pentad of month and pentad of year are added based on the issue date.
     data_pentad, data_decad = generate_issue_and_forecast_dates(
         pd.DataFrame(discharge_all),
         datetime_col='date',
@@ -1047,6 +1056,10 @@ def perform_linear_regression(
         except ValueError as e:
             print(f'Error in perform_linear_regression when filtering for station data: {e}')
 
+        if int(station) == 15194:
+            logger.debug("DEBUG: forecasting:perform_linear_regression: station_data: \n%s",
+                          station_data[['date', pentad_col, station_col, predictor_col, discharge_avg_col]].tail(10))
+
         # Drop NaN values, i.e. keep only the time steps where both
         # discharge_sum and discharge_avg are not NaN. These correspond to the
         # time steps where we produce a forecast.
@@ -1055,13 +1068,22 @@ def perform_linear_regression(
             logger.info("No data for station {station} in pentad {forecast_pentad}")
             continue
 
+        if int(station) == 15194:
+            logger.debug("DEBUG: forecasting:perform_linear_regression: station_data: \n%s",
+                          station_data[['date', pentad_col, station_col, predictor_col, discharge_avg_col]].tail(10))
+
+
         # Get the discharge_sum and discharge_avg columns
         discharge_sum = station_data[predictor_col].values.reshape(-1, 1)
         discharge_avg = station_data[discharge_avg_col].values.reshape(-1, 1)
 
+        if int(station) == 15194:
+            logger.debug("DEBUG: forecasting:perform_linear_regression: discharge_sum: \n%s", discharge_sum)
+            logger.debug("DEBUG: forecasting:perform_linear_regression: discharge_avg: \n%s", discharge_avg)
+
         # Perform the linear regression
         model = LinearRegression().fit(discharge_sum, discharge_avg)
-        if int(station) == 15292:
+        if int(station) == 15194:
             logger.debug("model output: %s", model)
             logger.debug("model.coef_: %s", model.coef_)
             logger.debug("model.intercept_: %s", model.intercept_)
@@ -1070,6 +1092,9 @@ def perform_linear_regression(
         q_mean = np.mean(discharge_avg)
         q_std_sigma = np.std(discharge_avg)
         delta = 0.674 * q_std_sigma
+
+        if int(station) == 15194:
+            logger.debug(f'Station: {station}, pentad: {forecast_pentad}, q_mean: {q_mean}, q_std_sigma: {q_std_sigma}, delta: {delta}')
 
         # Get the slope and intercept
         slope = model.coef_[0][0]
@@ -1152,21 +1177,31 @@ def sdivsigma_nse(data: pd.DataFrame, observed_col: str, simulated_col: str):
         raise ValueError(f'DataFrame is missing one or more required columns: {observed_col, simulated_col}')
 
     # Drop NaN values in columns with observed and simulated data
-    data = data.dropna(subset=[observed_col, simulated_col])
+    dataN = data.dropna(subset=[observed_col, simulated_col]).copy()
+
+    # Test if we still have data after dropping NaN values
+    if dataN.empty:
+        logger.debug("sdivsigma_nse: data is empty after dropping NaN values")
+        return pd.Series([np.nan, np.nan], index=['sdivsigma', 'nse'])
 
     # Calculate the numerator and denominator of the NSE formula
-    numerator = ((data[observed_col] - data[simulated_col])**2).sum()
-    denominator = ((data[observed_col] - data[observed_col].mean())**2).sum()
+    numerator = ((dataN[observed_col] - dataN[simulated_col])**2).sum()
+    denominator = ((dataN[observed_col] - dataN[observed_col].mean())**2).sum()
 
     # Catch cases where the denomitar is 0
     if denominator == 0:
-        print("Denominator is 0")
-        print("data['date']", data['date'])
-        print('data[observed_col]', data[observed_col])
-        print('data[observed_col].mean()', data[observed_col].mean())
-        print("numerator", numerator)
-        print("denominator", denominator)
-        return np.nan, np.nan
+        logger.debug("-----------")
+        logger.debug("Problem in sdivsigma_nse")
+        logger.debug(f"sdivsigma_nse: Model: {dataN['model_long'].iloc[0]}")
+        logger.debug(f"code: {dataN['code'].iloc[0]}")
+        logger.debug(f"pentad: {dataN['pentad_in_year'].iloc[0]}")
+        logger.debug("sdivsigma_nse: Denominator is 0")
+        logger.debug(f"sdivsigma: data['date']: {dataN['date']}")
+        logger.debug(f"data[observed_col]: {dataN[observed_col]}")
+        logger.debug(f"data[observed_col].mean(): {dataN[observed_col].mean()}")
+        logger.debug(f"numerator: {numerator}")
+        logger.debug(f"denominator: {denominator}")
+        return pd.Series([np.nan, np.nan], index=['sdivsigma', 'nse'])
 
     # Calculate the efficacy of the model
     sdivsigma = numerator / denominator
@@ -1197,11 +1232,21 @@ def forecast_accuracy_hydromet(data: pd.DataFrame, observed_col: str, simulated_
         raise ValueError(f'DataFrame is missing one or more required columns: {observed_col, simulated_col, delta_col}')
 
     # Drop NaN values
-    data = data.dropna(subset=[observed_col, simulated_col])
+    dataN = data.dropna(subset=[observed_col, simulated_col]).copy()
+
+    # Check if the DataFrame is empty
+    if dataN.empty:
+        logger.debug("forecast_accuracy_hydromet: data is empty after dropping NaN values")
+        return pd.Series([np.nan, np.nan], index=['delta', 'accuracy'])
+
+    # Test if we still have data after dropping NaN values
+    if dataN.empty:
+        logger.debug("forecast_accuracy_hydromet: data is empty after dropping NaN values")
+        return pd.Series([np.nan, np.nan], index=['delta', 'accuracy'])
 
     # Calculate the forecast accuracy
-    accuracy = (abs(data[observed_col] - data[simulated_col]) <= data[delta_col]).mean()
-    delta = data[delta_col].iloc[-1]
+    accuracy = (abs(dataN[observed_col] - dataN[simulated_col]) <= dataN[delta_col]).mean()
+    delta = dataN[delta_col].iloc[-1]
 
     return pd.Series([delta, accuracy], index=['delta', 'accuracy'])
 
@@ -1226,10 +1271,15 @@ def mae(data: pd.DataFrame, observed_col: str, simulated_col: str):
         raise ValueError(f'DataFrame is missing one or more required columns: {observed_col, simulated_col}')
 
     # Drop NaN values
-    data = data.dropna(subset=[observed_col, simulated_col])
+    dataN = data.dropna(subset=[observed_col, simulated_col]).copy()
+
+    # Check if the DataFrame is empty
+    if dataN.empty:
+        logger.debug("mae: data is empty after dropping NaN values")
+        return pd.Series([np.nan], index=['mae'])
 
     # Calculate the mean average error between the observed and simulated data
-    mae = abs(data[observed_col] - data[simulated_col]).mean()
+    mae = abs(dataN[observed_col] - dataN[simulated_col]).mean()
 
     return pd.Series([mae], index=['mae'])
 
@@ -1338,7 +1388,7 @@ def calculate_forecast_skill_deprecating(data_df: pd.DataFrame, station_col: str
 
     return data_df
 
-def calculate_skill_metrics_pentade(observed: pd.DataFrame, simulated: pd.DataFrame):
+def calculate_skill_metrics_pentad(observed: pd.DataFrame, simulated: pd.DataFrame):
     """
     For each model and hydropost in the simulated DataFrame, calculates a number
     of skill metrics based on the observed DataFrame.
@@ -1357,23 +1407,23 @@ def calculate_skill_metrics_pentade(observed: pd.DataFrame, simulated: pd.DataFr
     if not all(column in simulated.columns for column in ['code', 'date', 'pentad_in_year', 'forecasted_discharge', 'model_long', 'model_short']):
         raise ValueError(f'Simulated DataFrame is missing one or more required columns: {["code", "date", "pentad_in_year", "forecasted_discharge", "model_long", "model_short"]}')
 
-    logger.debug("DEBUG: simulated.columns\n%s", simulated.columns)
-    logger.debug("DEBUG: simulated.head()\n", simulated.head(5))
-    logger.debug("DEBUG: simulated.tail()\n", simulated.tail(5))
-    logger.info("DEBUG: observed.columns%s\n", observed.columns)
-    logger.debug("DEBUG: observed.head()\n", observed.head(5))
-    logger.debug("DEBUG: observed.tail()\n", observed.tail(5))
+    logger.debug(f"DEBUG: simulated.columns\n{simulated.columns}")
+    logger.debug(f"DEBUG: simulated.head()\n{simulated.head(5)}")
+    logger.debug(f"DEBUG: simulated.tail()\n{simulated.tail(5)}")
+    logger.info(f"DEBUG: observed.columns\n{observed.columns}")
+    logger.debug(f"DEBUG: observed.head()\n{observed.head(5)}")
+    logger.debug(f"DEBUG: observed.tail()\n{observed.tail(5)}")
     # Merge the observed and simulated DataFrames
     skill_metrics_df = pd.merge(
         simulated,
         observed[['code', 'date', 'discharge_avg', 'delta']],
         on=['code', 'date'])
-    logger.debug("DEBUG: skill_metrics_df.columns\n%s", skill_metrics_df.columns)
-    logger.debug("DEBUG: skill_metrics_df.head()\n", skill_metrics_df.head(5))
-    logger.debug("DEBUG: skill_metrics_df.tail()\n", skill_metrics_df.tail(5))
+    logger.debug(f"DEBUG: skill_metrics_df.columns\n{skill_metrics_df.columns}")
+    logger.debug(f"DEBUG: skill_metrics_df.head()\n{skill_metrics_df.head(5)}")
+    logger.debug(f"DEBUG: skill_metrics_df.tail()\n{skill_metrics_df.tail(5)}")
 
     # Identify tuples in each cell
-    is_tuple = skill_metrics_df.applymap(lambda x: isinstance(x, tuple))
+    is_tuple = skill_metrics_df.apply(lambda col: col.map(lambda x: isinstance(x, tuple)))
     #logger.info("DEBUG: is_tuple\n", is_tuple)
     # Check if there are any True values in is_tuple
     contains_tuples = is_tuple.any(axis=1).any()
@@ -1398,7 +1448,7 @@ def calculate_skill_metrics_pentade(observed: pd.DataFrame, simulated: pd.DataFr
             simulated_col='forecasted_discharge'). \
         reset_index()
     # Identify tuples in each cell
-    is_tuple = skill_stats.applymap(lambda x: isinstance(x, tuple))
+    is_tuple = skill_stats.apply(lambda col: col.map(lambda x: isinstance(x, tuple)))
     # Check if there are any True values in is_tuple
     contains_tuples = is_tuple.any(axis=1).any()
     # Test if there are any tuples in the DataFrame
@@ -1421,7 +1471,7 @@ def calculate_skill_metrics_pentade(observed: pd.DataFrame, simulated: pd.DataFr
             simulated_col='forecasted_discharge').\
         reset_index()
     # Identify tuples in each cell
-    is_tuple = mae_stats.applymap(lambda x: isinstance(x, tuple))
+    is_tuple = mae_stats.apply(lambda col: col.map(lambda x: isinstance(x, tuple)))
     # Check if there are any True values in is_tuple
     contains_tuples = is_tuple.any(axis=1).any()
     # Test if there are any tuples in the DataFrame
@@ -1445,7 +1495,7 @@ def calculate_skill_metrics_pentade(observed: pd.DataFrame, simulated: pd.DataFr
             delta_col='delta').\
         reset_index()
     # Identify tuples in each cell
-    is_tuple = accuracy_stats.applymap(lambda x: isinstance(x, tuple))
+    is_tuple = accuracy_stats.apply(lambda col: col.map(lambda x: isinstance(x, tuple)))
     # Check if there are any True values in is_tuple
     contains_tuples = is_tuple.any(axis=1).any()
     # Test if there are any tuples in the DataFrame
@@ -1466,7 +1516,7 @@ def calculate_skill_metrics_pentade(observed: pd.DataFrame, simulated: pd.DataFr
     skill_stats = pd.merge(skill_stats, accuracy_stats, on=['pentad_in_year', 'code', 'model_long', 'model_short'])
 
     # Identify tuples in each cell
-    is_tuple = skill_stats.applymap(lambda x: isinstance(x, tuple))
+    is_tuple = skill_stats.apply(lambda col: col.map(lambda x: isinstance(x, tuple)))
     # Check if there are any True values in is_tuple
     contains_tuples = is_tuple.any(axis=1).any()
     # Test if there are any tuples in the DataFrame
@@ -1487,7 +1537,7 @@ def calculate_skill_metrics_pentade(observed: pd.DataFrame, simulated: pd.DataFr
     #print("DEBUG: skill_stats.columns\n", skill_stats.columns)
 
     # Identify tuples in each cell
-    is_tuple = skill_stats.applymap(lambda x: isinstance(x, tuple))
+    is_tuple = skill_stats.apply(lambda col: col.map(lambda x: isinstance(x, tuple)))
     # Check if there are any True values in is_tuple
     contains_tuples = is_tuple.any(axis=1).any()
     # Test if there are any tuples in the DataFrame
@@ -1612,7 +1662,7 @@ def load_selected_stations_from_json(file_path: str) -> list:
     except ValueError as e:
         raise ValueError('Could not read config file. Error message: {}'.format(e))
 
-def read_daily_discharge_data_from_csv():
+def  read_daily_discharge_data_from_csv():
     """
     Read the discharge data from a csv file specified in the environment.
 
@@ -1664,6 +1714,10 @@ def read_daily_discharge_data_from_csv():
 
     # Sort the DataFrame by 'code' and 'date'
     discharge_data = discharge_data.sort_values(by=['code', 'date'])
+    logger.info("Daily discharge data read from %s", file_path)
+    logger.info("Columns: %s", discharge_data.columns)
+    logger.info("Head: %s", discharge_data.head())
+    logger.info("Tail: %s", discharge_data.tail())
 
     return discharge_data
 
@@ -1855,13 +1909,13 @@ def write_pentad_hydrograph_data(data: pd.DataFrame):
     # production. For the hydrograph output, we want the date to reflect the
     # pentad, the data is collected for. Therefore, we add 1 day to the 'date'
     # column and recalculate pentad and pentad_in_year.
-    # Add 1 day to the date column
-    data.loc[:, 'date'] = data.loc[:, 'date'] + pd.DateOffset(days=1)
     # Calculate pentad and pentad_in_year
-    data.loc[:, 'pentad'] = data['date'].apply(tl.get_pentad)
-    data.loc[:, 'pentad_in_year'] = data['date'].apply(tl.get_pentad_in_year)
+    data.loc[:, 'pentad'] = (data['date'] + pd.Timedelta(days=1)).apply(tl.get_pentad)
+    data.loc[:, 'pentad_in_year'] = (data['date'] + pd.Timedelta(days=1)).apply(tl.get_pentad_in_year)
     # Get year of the latest date in data
     current_year = data['date'].dt.year.max()
+
+    logger.debug(f"Calculating pentadal runoff statistics with data from {data['date'].min()} to {data['date'].max()}")
 
     # Calculate runoff statistics
     runoff_stats = data[data['date'].dt.year != current_year]. \
@@ -2062,11 +2116,9 @@ def write_pentad_time_series_data(data: pd.DataFrame):
     # production. For the hydrograph output, we want the date to reflect the
     # pentad, the data is collected for. Therefore, we add 1 day to the 'date'
     # column and recalculate pentad and pentad_in_year.
-    # Add 1 day to the date column
-    data.loc[:, 'date'] = data.loc[:, 'date'] + pd.DateOffset(days=1)
     # Calculate pentad and pentad_in_year
-    data.loc[:, 'pentad'] = data['date'].apply(tl.get_pentad)
-    data.loc[:, 'pentad_in_year'] = data['date'].apply(tl.get_pentad_in_year)
+    data.loc[:, 'pentad'] = (data['date'] + pd.Timedelta(days=1)).apply(tl.get_pentad)
+    data.loc[:, 'pentad_in_year'] = (data['date'] + pd.Timedelta(days=1)).apply(tl.get_pentad_in_year)
 
     # Get the path to the intermediate data folder from the environmental
     # variables and the name of the ieasyforecast_hydrograph_pentad_file.
@@ -2126,10 +2178,9 @@ def write_decad_time_series_data(data: pd.DataFrame):
     # decad, the data is collected for. Therefore, we add 1 day to the 'date'
     # column and recalculate decad and decad_in_year.
     # Add 1 day to the date column
-    data.loc[:, 'date'] = data.loc[:, 'date'] + pd.DateOffset(days=1)
     # Calculate decad and decad_in_year
-    data.loc[:, 'decad_in_month'] = data['date'].apply(tl.get_decad_in_month)
-    data.loc[:, 'decad_in_year'] = data['date'].apply(tl.get_decad_in_year)
+    data.loc[:, 'decad_in_month'] = (data['date'] + pd.Timedelta(days=1)).apply(tl.get_decad_in_month)
+    data.loc[:, 'decad_in_year'] = (data['date'] + pd.Timedelta(days=1)).apply(tl.get_decad_in_year)
 
     # Get the path to the intermediate data folder from the environmental
     # variables and the name of the ieasyforecast_hydrograph_pentad_file.

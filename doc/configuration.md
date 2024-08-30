@@ -2,14 +2,14 @@
 
 The different software components of the SAPPHIRE Forecast Tools interact with each other through input and output files (see following figure for an overview)
 
-TODO: UPDATE FIGURE
+TODO: UPDATE FIGURE ...
 
 <img src="www/io.png" alt="IO" width="700"/>
 
 ## Configuration of the forecast tools
 We recommend not changing the path ieasyforecast_configuration_path nor the names of the configuration files. You will need to edit the contents of the ieasyforecast_config_file_all_stations and make sure that the station codes given in ieasyforecast_config_file_station_selection are present also in ieasyforecast_config_file_all_stations. Please have a look at the example files in the config folder for guidance.
 ```
-# Snipped of .env. We recommend NOT editing the following lines.
+# Path to the configuration files and names of the configuration files
 ieasyforecast_configuration_path=../config
 ieasyforecast_config_file_all_stations=config_all_stations_library.json
 ieasyforecast_config_file_station_selection=config_station_selection.json
@@ -133,3 +133,203 @@ During development or deployment, you may want to focus only on selected station
 ieasyforecast_restrict_stations_file=../config/config_development_restrict_station_selection.json
 ```
 For the deployment of the software or to not filter for a subset of the stations, you can set the value to null. The backend will check if the station selection is restricted and prints a warning to the console if this is the case so that it is not forgotten during deployment.
+
+
+
+### Configuration of the preprocessing of weather data from the data gateway
+TODO: Sandro, please review below and edit where necessary.
+The SAPPHIRE forecast tools can use weather data from ECMWF IFS and from the TopoPyScale-FSM snow model which is processed in the SAPPHIRE Data Gateway. See [TODO Chapter to be linked] for more information on the data gateway.
+
+The preprocessing of weather data from the data gateway can only be done with a valid API key. If ieasyhydroforecast_API_KEY_GATEAWAY is not set or if it is not valid, the forecast tools will not be able to access the weather data from the data gateway and no forecasts with the machine learning models or with conceptual models will be produced. Forecasts using the linear regression method will still be produced.
+```
+#----------------
+# Configuration of the preprocessing of weather data from the data gateway
+#----------------
+
+# API KEY FOR THE DATA-GATEAWAY
+ieasyhydroforecast_API_KEY_GATEAWAY=<your private API key to the SAPPHIRE data gateway>
+```
+For installation instructions of the data gateway or possibilities of how to get access to an API key see [TODO Chapter to be linked].
+
+It may happen that the names of the stations in the SAPPHIRE data gateway differ from the names of the stations in the iEasyHydro database. In this case, you can configure name twins in the file config_gateway_name_twins.json. The file is a dictionary where the key is the name of the station in the SAPPHIRE data gateway and the value is the name of the station in the iEasyHydro database. The file is optional and only needed if the names of the stations differ.
+```
+# Configuration of name twins if required. This file is optional.
+ieasyhydroforecast_config_file_data_gateway_name_twins=config_gateway_name_twins.json
+```
+
+The preprocessing of data gateway will write output to the following paths.
+TODO: Sandro: Please add a sentence to what is stored in these different folders.
+```
+# PATH FOR INTERMEDIATE RESULTS
+# Subfolders located in ieasyforecast_intermediate_data_path
+# Subfolders are created if they do not already exist
+ieasyhydroforecast_OUTPUT_PATH_DG=data_gateway
+ieasyhydroforecast_OUTPUT_PATH_CM=control_member_forcing
+ieasyhydroforecast_OUTPUT_PATH_ENS=ensemble_forcing
+```
+
+We read parameters for downscaling of the ERA5-Land and ECMWF IFS forecasts, using the quantile mapping method, from the path defined in ieasyhydroforecast_models_and_scalers_path. Note that if there are no parameters for downscaling defined, the preprocessing of the data gateway module will write the raw ERA5-Land and ECMWF IFS forecasts to the path defined in ieasyhydroforecast_PATH_TO_QMAPPED_ERA5.
+```
+#PATH QUANTILE MAPPING
+ieasyhydroforecast_models_and_scalers_path=../../data/config/models_and_scalers
+ieasyhydroforecast_Q_MAP_PARAM_PATH=params_quantile_mapping
+```
+
+The outputs of the downscaling step are stored in the following paths:
+
+```
+ieasyhydroforecast_PATH_TO_QMAPPED_ERA5=control_member_forcing
+```
+
+In the following environment variables we configer which HRU file (uploaded to the SAPPHIRE Data Gateway) we download data for (variable ieasyhydroforecast_HRU_CONTROL_MEMBER). The control member is processed for each gauge defined in the HRU file. We further define which HRUs need an ensemble forecast (variable ieasyhydroforecast_HRU_ENSEMBLE). The ensemble forecast is processed for each gauge code defined in the HRU file.
+```
+# HRU FOR QUANTILE MAPPING AND FORECASTING
+# Shapefile identifier to download data from the data gateway from
+ieasyhydroforecast_HRU_CONTROL_MEMBER=00003
+#Which HRUs (within ieasyhydroforecast_HRU_CONTROL_MEMBER) need an ensemble forecast
+ieasyhydroforecast_HRU_ENSEMBLE=151940,16936
+```
+
+
+### Configuration of the machine learning module
+TODO: Sandro, please add if you have time
+
+### Configuration of the conceptual rainfall-runoff module
+This section covers paths and filenames used in the conceptual rainfall runoff module. The paths and filenames are used to store the data and results of the conceptual model. Below is a description of each variable:
+
+<!--
+This configuration file defines the settings and parameters required to run hydrological model simulations for the conceptual model with ensemble data assimilation (). Below is a detailed explanation of each key in the configuration file.
+
+#### 1. `fun_mod_mapping`
+   - **Type:** Dictionary
+   - **Description:** Maps numerical basin codes to specific model functions that will be used in the simulation. Each code corresponds to a different hydrological model.
+   - **Example:**
+     - `"15194": "RunModel_CemaNeigeGR4J_Glacier"`: This maps the code `15194` to the `RunModel_CemaNeigeGR4J_Glacier` function.
+     - `"16936": "RunModel_CemaNeigeGR6J"`: This maps the code `16936` to the `RunModel_CemaNeigeGR6J` function.
+
+#### 2. `Nb_ens`
+   - **Type:** List of integers
+   - **Description:** Defines the number of ensemble members used from the ECMWF IFS ensemble forecast. The list includes the range of ensemble member numbers from `1` to `50`.
+   - **Example:** `[1, 2, 3, ..., 49, 50]` represents ensemble member numbers from `1` to `50`.
+
+#### 3. `NbMbr`
+   - **Type:** Integer
+   - **Description:** Specifies the total number of ensemble members (`NbMbr`) to be used in the simulation.
+   - **Example:** `200` indicates that 200 ensemble members will be utilized.
+
+#### 4. `DaMethod`
+   - **Type:** String
+   - **Description:** Indicates the data assimilation method used in the simulation.
+   - **Example:** `"PF"` specifies that the Particle Filter (`PF`) method will be employed for data assimilation.
+
+#### 5. `StatePert`
+   - **Type:** List of strings
+   - **Description:** Lists the state variables that will be perturbed during the data assimilation process.
+   - **Example:** `["Rout", "Prod", "UH1", "UH2"]` indicates that the state variables `Rout`, `Prod`, `UH1`, and `UH2` will be perturbed.
+
+#### 6. `eps`
+   - **Type:** Float
+   - **Description:** Fractional error parameter for precipitation and PET of the first-order autoregressive model. Defines the perturbation of the forcing data. It controls the magnitude of perturbation noise.
+   - **Example:** `0.65`
+
+#### 7. `lag_days`
+   - **Type:** Integer
+   - **Description:** Specifies the number of days the model is running with data assimilation process. This parameter is used to define the temporal window of the data assimilation. The model is started before the data assimilation with the initial conditions fomr the previous run.
+   - **Example:** `180` indicates a lag of 180 days.
+
+#### 8. `codes`
+   - **Type:** List of integers
+   - **Description:** Lists the numerical codes corresponding to the basin code for which a forecast is produced. These codes must match those provided in the `fun_mod_mapping`.
+   - **Example:** `[15194, 16936]` corresponds to the codes used to map the models `RunModel_CemaNeigeGR4J_Glacier` and `RunModel_CemaNeigeGR6J`.
+
+#### 9. `start_ini`
+   - **Type:** String (Date in `YYYY-MM-DD` format)
+   - **Description:** Defines the start date of the initialization period for the simulation. Needed for the very first time the model is run for the speicifc basin to get the first initial condition for the operational run. Used only in the script `run_initial.R`
+   - **Example:** `"2010-01-01"` indicates the initialization period starts on January 1, 2010.
+
+#### 10. `end_ini`
+   - **Type:** String (Date in `YYYY-MM-DD` format)
+   - **Description:** Defines the end date of the initialization period for the simulation. Needed for the very first time the model is run for the speicifc basin to get the first initial condition for the operational run. Used only in the script `run_initial.R`
+   - **Example:** `"2024-01-01"` indicates the initialization period ends on January 1, 2024.
+
+#### 11. `start_hindcast`
+   - **Type:** String (Date in `YYYY-MM-DD` format)
+   - **Description:** Specifies the start date of the hindcast period when triggered manually in the script `run_manual_hindcast.R`
+   - **Example:** `"2015-12-31"` indicates that the hindcast period begins on December 31, 2015.
+
+#### 12. `end_hindcast`
+   - **Type:** String (Date in `YYYY-MM-DD` format)
+   - **Description:** Specifies the end date of the hindcast period when triggered manually in the script `run_manual_hindcast.R`
+   - **Example:** `"2023-12-31"` indicates that the hindcast period ends on December 31, 2023.
+
+#### 13. `hindcast_mode`
+   - **Type:** String
+   - **Description:** Defines the mode of the hindcast simulation, such as daily, pentad or decad. Only used when triggered manually in the script `run_manual_hindcast.R`
+   - **Example:** `"pentad"` indicates that the hindcast simulation will be conducted in about five-day intervals.
+
+
+#### .env File Configuration conceptual model
+-->
+
+#### Path to data and filenames:
+
+- `ieasyhydroforecast_PATH_TO_CF`: Path to the directory containing the control member forcing data.
+  - Example: `../../../sensitive_data_forecast_tools/intermediate_data/control_member_forcing`
+
+- `ieasyhydroforecast_FILE_CF_P`: Filename for the control member precipitation data.
+  - Example: `00003_P_control_member.csv`
+
+- `ieasyhydroforecast_FILE_CF_T`: Filename for the control member temperature data.
+  - Example: `00003_T_control_member.csv`
+
+- `ieasyhydroforecast_PATH_TO_PF`: Path to the directory containing the ensemble forcing data.
+  - Example: `../../../sensitive_data_forecast_tools/intermediate_data/ensemble_forcing`
+
+- `ieasyhydroforecast_FILE_PF_P`: Filename suffix for the ensemble precipitation forecast data.
+  - Example: `_P_ensemble_forecast.csv`
+
+- `ieasyhydroforecast_FILE_PF_T`: Filename suffix for the ensemble temperature forecast data.
+  - Example: `_T_ensemble_forecast.csv`
+
+- `ieasyhydroforecast_PATH_TO_HIND`: Path to the directory containing the hindcast forcing data (longer time serie than the control member forcing).
+  - Example: `../../../sensitive_data_forecast_tools/intermediate_data/hindcast_forcing`
+
+- `ieasyhydroforecast_FILE_CF_HIND_P`: Filename for the precipitation data used in hindcast.
+  - Example: `00003_P_reanalysis.csv`
+
+- `ieasyhydroforecast_FILE_CF_HIND_T`: Filename for the temperature data used in hindcast.
+  - Example: `00003_T_reanalysis.csv`
+
+- `ieasyhydroforecast_PATH_TO_Q`: Path to the directory containing the runoff data.
+  - Example: `../../../sensitive_data_forecast_tools/intermediate_data`
+
+- `ieasyhydroforecast_FILE_Q`: Filename for the runoff data.
+  - Example: `runoff_day.csv`
+
+#### Model and Basin Information
+
+- `ieasyhydroforecast_conceptual_model_path`: Path to the directory containing the conceptual model.
+  - Example: `../../../sensitive_data_forecast_tools/conceptual_model`
+
+- `ieasyhydroforecast_PATH_TO_BASININFO`: Path to the directory containing basin information data.
+  - Example: `../../../sensitive_data_forecast_tools/conceptual_model/BasinInfo`
+
+- `ieasyhydroforecast_PATH_TO_INITCOND`: Path to the directory containing initial condition data.
+  - Example: `../../../sensitive_data_forecast_tools/conceptual_model/Output`
+
+- `ieasyhydroforecast_PATH_TO_RESULT`: Path to the directory for storing the results of the conceptual model.
+  - Example: `../../../sensitive_data_forecast_tools/intermediate_data/conceptual_model_results`
+
+- `ieasyhydroforecast_FILE_PARAM`: Filename for the model parameters.
+  - Example: `param.RData`
+
+- `ieasyhydroforecast_FILE_BASININFO`: Filename for the basin information data.
+  - Example: `Basin_Info.RData`
+
+#### JSON Configuration
+
+- `ieasyhydroforecast_PATH_TO_JSON`: Path to the directory containing the JSON configuration file for the conceptual model.
+  - Example: `../../../sensitive_data_forecast_tools/config`
+
+- `ieasyhydroforecast_FILE_SETUP`: Filename for the JSON configuration file.
+  - Example: `config_conceptual_model.json`

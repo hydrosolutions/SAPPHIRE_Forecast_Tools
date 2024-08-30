@@ -1,18 +1,23 @@
 name: Test & deploy main branch
 
 env:
+  IMAGE_TAG: latest
+
   BASE_IMAGE_NAME: mabesa/sapphire-pythonbaseimage
   PIPELINE_IMAGE_NAME: mabesa/sapphire-pipeline
-  RERUN_IMAGE_NAME: mabesa/sapphire-rerun
   DASHBOARD_IMAGE_NAME: mabesa/sapphire-dashboard
   CONFIG_IMAGE_NAME: mabesa/sapphire-configuration
   PREPQ_IMAGE_NAME: mabesa/sapphire-preprunoff
+  PREPG_IMAGE_NAME: mabesa/sapphire-prepgateway
   LINREG_IMAGE_NAME: mabesa/sapphire-linreg
+  ML_IMAGE_NAME: mabesa/sapphire-ml
   POSTPQ_IMAGE_NAME: mabesa/sapphire-postprocessing
+  RERUN_IMAGE_NAME: mabesa/sapphire-rerun
+  CONCMOD_IMAGE_NAME: mabesa/sapphire-conceptmod
 
 on:
   push:
-    branches: [ "integrate_to_main"]
+    branches: [ "develop_bea"]
   pull_request:
     branches: [ "main" ]
 
@@ -26,15 +31,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Rename the image
-      - name: Rename the image
-        run: |
-          echo "IMAGE_TAG=latest" >> $GITHUB_ENV
-
       # Run the dockerization & deployment script
       - name: Build Docker image
         run: |
-          docker build --no-cache -t "$BASE_IMAGE_NAME:$IMAGE_TAG" -f ./apps/docker_base_image/Dockerfile .
+          docker build --no-cache \
+          -t "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
+          -f ./apps/docker_base_image/Dockerfile .
 
       # Log in to the Docker registry
       - name: Log in to the Docker registry
@@ -46,7 +48,7 @@ jobs:
       # Push the image to Dockerhub
       - name: Push the image to Dockerhub
         run: |
-          docker push "$BASE_IMAGE_NAME:$IMAGE_TAG"
+          docker push "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
 
 
 
@@ -59,15 +61,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Rename the image
-      - name: Rename the image
-        run: |
-          echo "IMAGE_TAG=latest" >> $GITHUB_ENV
-
       # Run the dockerization & deployment script
       - name: Build Docker image
         run: |
-          docker build --no-cache -t "$PIPELINE_IMAGE_NAME:$IMAGE_TAG" -f ./apps/pipeline/Dockerfile .
+          docker build --no-cache \
+          -t "${{ env.PIPELINE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
+          -f ./apps/pipeline/Dockerfile .
 
       # Log in to the Docker registry
       - name: Log in to the Docker registry
@@ -79,7 +78,7 @@ jobs:
       # Push the image to Dockerhub
       - name: Push the image to Dockerhub
         run: |
-          docker push "$PIPELINE_IMAGE_NAME:$IMAGE_TAG"
+          docker push "${{ env.PIPELINE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
 
 
 
@@ -93,15 +92,12 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v4
 
-    # Rename the image
-    - name: Rename the image
-      run: |
-        echo "IMAGE_TAG=latest" >> $GITHUB_ENV
-
     # Run the dockerization & deployment script
     - name: Build Docker image
       run: |
-        docker build --no-cache -t "$CONFIG_IMAGE_NAME:$IMAGE_TAG" -f ./apps/configuration_dashboard/dockerfile .
+        docker build --no-cache \
+        -t "${{ env.CONFIG_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
+        -f ./apps/configuration_dashboard/dockerfile .
 
     # Log in to the Docker registry
     - name: Log in to the Docker registry
@@ -113,7 +109,37 @@ jobs:
     # Push the image to Dockerhub
     - name: Push the image to Dockerhub
       run: |
-        docker push "$CONFIG_IMAGE_NAME:$IMAGE_TAG"
+        docker push "${{ env.CONFIG_IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
+
+
+  push_conceptual_model_to_Dckerhub:
+    runs-on: ubuntu-latest
+    name: Dockerize and push conceptual model module to Dockerhub
+
+    steps:
+    # To use this repository's private action, you must check out the
+    # repository.
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    # Run the dockerization & deployment script
+    - name: Build Docker image
+      run: |
+        docker build --no-cache \
+        -t "${{ env.CONCMOD_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
+        -f ./apps/conceptual_model/Dockerfile .
+
+    # Log in to the Docker registry
+    - name: Log in to the Docker registry
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+
+    # Push the image to Dockerhub
+    - name: Push the image to Dockerhub
+      run: |
+        docker push "${{ env.CONCMOD_IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
 
 
   test_ieasyhydroforecast:
@@ -191,7 +217,7 @@ jobs:
   push_preprocessing_runoff_to_Dckerhub:
     needs: [test_preprocessing_runoff, test_ieasyhydroforecast]
     runs-on: ubuntu-latest
-    name: Dockerize and push preprocessing module to Dockerhub
+    name: Dockerize and push preprocessing runoff module to Dockerhub
 
     steps:
       # To use this repository's private action, you must check out the
@@ -199,15 +225,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Rename the image
-      - name: Rename the image
-        run: |
-          echo "IMAGE_TAG=latest" >> $GITHUB_ENV
-
       # Run the dockerization & deployment script
       - name: Build Docker image
         run: |
-          docker build --no-cache -t "$PREPQ_IMAGE_NAME:$IMAGE_TAG" -f ./apps/preprocessing_runoff/Dockerfile .
+          docker build --no-cache \
+          -t "${{ env.PREPQ_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
+          -f ./apps/preprocessing_runoff/Dockerfile .
 
       # Log in to the Docker registry
       - name: Log in to the Docker registry
@@ -219,7 +242,118 @@ jobs:
       # Push the image to Dockerhub
       - name: Push the image to Dockerhub
         run: |
-          docker push "$PREPQ_IMAGE_NAME:$IMAGE_TAG"
+          docker push "${{ env.PREPQ_IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
+
+
+  # TO TEST
+  set_up_preprocessing_gateway:
+    needs: [build_and_push_python_311_base_image]
+    runs-on: ubuntu-latest
+    name: Setting up of preprocessing gateway
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11"]
+
+    steps:
+    - name: Check out the current branch
+      uses: actions/checkout@v4
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+    - name: Install dependencies for pre-processing of gateway data
+      working-directory: ./apps
+      run: |
+        python -m pip install --upgrade pip
+        python -m pip install -r preprocessing_gateway/requirements.txt
+        python -m pip install git+https://github.com/hydrosolutions/sapphire-dg-client.git
+
+  # TO TEST
+  push_preprocessing_gateway_to_Dckerhub:
+    needs: [set_up_preprocessing_gateway]
+    runs-on: ubuntu-latest
+    name: Dockerize and push preprocessing gateway module to Dockerhub
+
+    steps:
+      # To use this repository's private action, you must check out the
+      # repository.
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Run the dockerization & deployment script
+      - name: Build Docker image
+        run: |
+          docker build --no-cache \
+          --build-arg SAPPHIRE_DG_HOST=${{ secrets.SAPPHIRE_DG_HOST }} \
+          -t "${{ env.PREPG_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
+          -f ./apps/preprocessing_gateway/Dockerfile .
+
+      # Log in to the Docker registry
+      - name: Log in to the Docker registry
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      # Push the image to Dockerhub
+      - name: Push the image to Dockerhub
+        run: |
+          docker push "${{ env.PREPG_IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
+
+  # TO TEST
+  set_up_machine_learning:
+    needs: [build_and_push_python_311_base_image, test_ieasyhydroforecast]
+    runs-on: ubuntu-latest
+    name: Setting up of machine learning environment
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11"]
+
+    steps:
+    - name: Check out the current branch
+      uses: actions/checkout@v4
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+    - name: Install dependencies for the machine learning module
+      working-directory: ./apps
+      run: |
+        python -m pip install --upgrade pip
+        python -m pip install -r machine_learning/requirements.txt
+
+  # TO TEST
+  push_machine_learning_to_Dckerhub:
+    needs: [set_up_machine_learning]
+    runs-on: ubuntu-latest
+    name: Dockerize and push machine learning module to Dockerhub
+
+    steps:
+      # To use this repository's private action, you must check out the
+      # repository.
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Run the dockerization & deployment script
+      - name: Build Docker image
+        run: |
+          docker build --no-cache \
+          -t "${{ env.ML_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
+          -f ./apps/machine_learning/Dockerfile .
+
+      # Log in to the Docker registry
+      - name: Log in to the Docker registry
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      # Push the image to Dockerhub
+      - name: Push the image to Dockerhub
+        run: |
+          docker push "${{ env.ML_IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
 
 
   test_reset_forecast_run_date:
@@ -266,15 +400,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Rename the image
-      - name: Rename the image
-        run: |
-          echo "IMAGE_TAG=latest" >> $GITHUB_ENV
-
       # Run the dockerization & deployment script
       - name: Build Docker image
         run: |
-          docker build --no-cache -t "$RERUN_IMAGE_NAME:$IMAGE_TAG" -f ./apps/reset_forecast_run_date/Dockerfile .
+          docker build --no-cache \
+          -t "${{ env.RERUN_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
+          -f ./apps/reset_forecast_run_date/Dockerfile .
 
       # Log in to the Docker registry
       - name: Log in to the Docker registry
@@ -286,7 +417,7 @@ jobs:
       # Push the image to Dockerhub
       - name: Push the image to Dockerhub
         run: |
-          docker push "$RERUN_IMAGE_NAME:$IMAGE_TAG"
+          docker push "${{ env.RERUN_IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
 
 
   test_dashboard:
@@ -299,7 +430,8 @@ jobs:
         python-version: ["3.11"]
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checks out current branch
+        uses: actions/checkout@v4
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
@@ -312,7 +444,6 @@ jobs:
         # Default working directory is the repository root folder
         run: |
           python -m pip install --upgrade pip
-          python -m pip install flake8
           python -m pip install -r ./apps/forecast_dashboard/requirements.txt
           python -m pip install git+https://github.com/hydrosolutions/ieasyhydro-python-sdk
           python -m pip install git+https://github.com/hydrosolutions/ieasyreports.git@main
@@ -334,15 +465,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Rename the image
-      - name: Rename the image
-        run: |
-          echo "IMAGE_TAG=latest" >> $GITHUB_ENV
-
       # Run the dockerization & deployment script
       - name: Build Docker image
         run: |
-          docker build --no-cache -t "$DASHBOARD_IMAGE_NAME:$IMAGE_TAG" -f ./apps/forecast_dashboard/Dockerfile .
+          docker build --no-cache \
+          -t "${{ env.DASHBOARD_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
+          -f ./apps/forecast_dashboard/Dockerfile .
 
       # Log in to the Docker registry
       - name: Log in to the Docker registry
@@ -354,7 +482,7 @@ jobs:
       # Push the image to Dockerhub
       - name: Push the image to Dockerhub
         run: |
-          #docker push "$DASHBOARD_IMAGE_NAME:$IMAGE_TAG"
+          docker push "${{ env.DASHBOARD_IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
 
 
   push_postprocessing_runoff_to_Dckerhub:
@@ -369,15 +497,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Rename the image
-      - name: Rename the image
-        run: |
-          echo "IMAGE_TAG=latest" >> $GITHUB_ENV
-
       # Run the dockerization & deployment script
       - name: Build Docker image
         run: |
-          docker build --no-cache -t "$POSTPQ_IMAGE_NAME:$IMAGE_TAG" -f ./apps/postprocessing_forecasts/Dockerfile .
+          docker build --no-cache \
+          -t "${{ env.POSTPQ_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
+          -f ./apps/postprocessing_forecasts/Dockerfile .
 
       # Log in to the Docker registry
       - name: Log in to the Docker registry
@@ -389,7 +514,7 @@ jobs:
       # Push the image to Dockerhub
       - name: Push the image to Dockerhub
         run: |
-          docker push "$POSTPQ_IMAGE_NAME:$IMAGE_TAG"
+          docker push "${{ env.POSTPQ_IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
 
 
   test_linear_regression:
@@ -436,15 +561,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Rename the image
-      - name: Rename the image
-        run: |
-          echo "IMAGE_TAG=latest" >> $GITHUB_ENV
-
       # Run the dockerization & deployment script
       - name: Build Docker image
         run: |
-          docker build --no-cache -t "$LINREG_IMAGE_NAME:$IMAGE_TAG" -f ./apps/linear_regression/Dockerfile .
+          docker build --no-cache \
+          -t "${{ env.LINREG_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
+          -f ./apps/linear_regression/Dockerfile .
 
       # Log in to the Docker registry
       - name: Log in to the Docker registry
@@ -456,4 +578,6 @@ jobs:
       # Push the image to Dockerhub
       - name: Push the image to Dockerhub
         run: |
-          docker push "$LINREG_IMAGE_NAME:$IMAGE_TAG"
+          docker push "${{ env.LINREG_IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
+
+
