@@ -52,13 +52,13 @@ runoff_current_year_color = "#963070"
 runoff_forecast_color_list = ["#455c1d", "#536f24", "#62832a", "#709630", "#7ea936", "#8dbd3c", "#99c64d"]
 
 # Update visibility of sidepane widgets
-def update_sidepane_card_visibility(tabs, card, event):
+def update_sidepane_card_visibility(tabs, card, pentad, event):
     if tabs.active == 1:
         card.visible = True
-        card.visible = True
+        pentad.visible = True
     else:
         card.visible = False
-        card.visible = False
+        pentad.visible = False
 
 def update_range_slider_visibility(_, range_slider, event):
     range_type = event.new
@@ -969,6 +969,12 @@ SAVE_DIRECTORY = 'saved_data'
 os.makedirs(SAVE_DIRECTORY, exist_ok=True)
 
 def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector):
+
+    if isinstance(station_widget, str):
+        station_code = station_widget.split(' - ')[0]
+    else:
+        station_code = station_widget.value.split(' - ')[0]
+        
     # Check if pentad_selector is a widget or an integer
     if isinstance(pentad_selector, int):
         selected_pentad = pentad_selector  # If it's an integer, use it directly
@@ -982,7 +988,14 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector):
 
     # Generate dynamic filename based on the selected pentad and station
     station_name = station_widget
-    save_file_name = f"{station_name}_{selected_pentad}_pentad_of_{title_month}.csv"
+    station_data = linreg_predictor.loc[linreg_predictor['code'] == station_code]
+    if station_data.empty:
+        print(f"Error: No data found for station code '{station_code}'")
+        return None
+
+    pentad_in_month = selected_pentad % 6 if selected_pentad % 6 != 0 else 6
+
+    save_file_name = f"{station_code}_{pentad_in_month}_pentad_of_{title_month}.csv"
     save_file_path = os.path.join(SAVE_DIRECTORY, save_file_name)
 
     # Add the 'date' column if it doesn't exist

@@ -540,6 +540,16 @@ def get_year(date_str):
     # return the year number as a string
     return str(year)
 
+
+def get_pentad_for_date(date):
+    # Calculate day of the month and pentad
+    day_of_month = date.day
+    pentad_in_month = (day_of_month - 1) // 5 + 1
+    pentad_in_year = (date.month - 1) * 6 + pentad_in_month
+    
+    return pentad_in_year
+
+
 def get_date_for_pentad(pentad_in_year, year=dt.datetime.now().year):
     """
     Get the date for a given pentad in the year.
