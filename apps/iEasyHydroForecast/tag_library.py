@@ -540,6 +540,58 @@ def get_year(date_str):
     # return the year number as a string
     return str(year)
 
+
+def get_pentad_for_date(date):
+    # Calculate day of the month and pentad
+    day_of_month = date.day
+    pentad_in_month = (day_of_month - 1) // 5 + 1
+    pentad_in_year = (date.month - 1) * 6 + pentad_in_month
+    
+    return pentad_in_year
+
+
+def get_date_for_pentad(pentad_in_year, year=dt.datetime.now().year):
+    """
+    Get the date for a given pentad in the year.
+
+    Parameters:
+        pentad_in_year (int): The pentad number within the year (1-72).
+        year (int): The year for which the date is needed. Defaults to the current year.
+
+    Returns:
+        str: A string representing the date for the input pentad in the format 'YYYY-MM-DD',
+             or None if the input is not valid.
+             
+    Examples:
+        >>> get_date_for_pentad(1)
+        'YYYY-01-01'
+        >>> get_date_for_pentad(72)
+        'YYYY-12-26'
+    """
+    try:
+        # Calculate the month and the pentad within the month
+        month = (pentad_in_year - 1) // 6 + 1
+        pentad_in_month = (pentad_in_year - 1) % 6 + 1
+
+        # Calculate the first day of the pentad
+        first_day_of_pentad = 5 * (pentad_in_month - 1) + 1
+        
+        # Ensure the calculated day is valid within the month
+        days_in_month = (dt.date(year, month, 1) + dt.timedelta(days=31)).replace(day=1) - dt.timedelta(days=1)
+        if first_day_of_pentad > days_in_month.day:
+            first_day_of_pentad = days_in_month.day
+        
+        # Create the date
+        date = dt.date(year, month, first_day_of_pentad)
+        
+        # Return the date as a string in 'YYYY-MM-DD' format
+        return date.strftime('%Y-%m-%d')
+
+    except Exception as e:
+        # Return None if there's an error (invalid pentad, etc.)
+        print(f"Error: {e}")
+        return None
+
 def get_month_str_latin(date_str):
     """
     Returns the name of the month for a given date string, in Latin number.

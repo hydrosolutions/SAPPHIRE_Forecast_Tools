@@ -46,6 +46,8 @@ import src.reports as rep
 import src.multithreading as thread
 from src.site import SapphireSite as Site
 
+import calendar
+
 # Get the absolute path of the directory containing the current script
 cwd = os.getcwd()
 
@@ -147,7 +149,10 @@ forecast_stats = processing.read_forecast_stats_file()
 
 # Hydroposts metadata
 station_list, all_stations, station_df = processing.read_all_stations_metadata_from_file(
-    hydrograph_day_all['code'].unique().tolist())
+    hydrograph_day_all['code'].unique().tolist())    
+if not station_list:
+    raise ValueError("The station list is empty. Please check the data source and ensure it contains valid stations.")
+print("DEBUG: pentad_dashboard.py: All stations: \n", all_stations)
 #logger.debug(f"DEBUG: pentad_dashboard.py: Station list:\n{station_list}")
 #logger.debug(f"DEBUG: columns of all_stations:\n{all_stations.columns}")
 #logger.debug(f"DEBUG: pentad_dashboard.py: All stations:\n{all_stations}")
@@ -178,6 +183,21 @@ model_dict = forecasts_all[['model_short', 'model_long']] \
     .set_index('model_long')['model_short'].to_dict()
 
 
+pentads = [
+    f"{i+1}st pentad of {calendar.month_name[month]}" if i == 0 else 
+    f"{i+1}nd pentad of {calendar.month_name[month]}" if i == 1 else 
+    f"{i+1}rd pentad of {calendar.month_name[month]}" if i == 2 else 
+    f"{i+1}th pentad of {calendar.month_name[month]}"
+    for month in range(1, 13) for i in range(6)
+]
+
+# Create a dictionary mapping each pentad description to its pentad_in_year value
+pentad_options = {f"{i+1}st pentad of {calendar.month_name[month]}" if i == 0 else 
+                  f"{i+1}nd pentad of {calendar.month_name[month]}" if i == 1 else 
+                  f"{i+1}rd pentad of {calendar.month_name[month]}" if i == 2 else 
+                  f"{i+1}th pentad of {calendar.month_name[month]}": i + (month-1)*6 + 1
+                  for month in range(1, 13) for i in range(6)}
+
 # endregion
 
 
@@ -202,6 +222,22 @@ date_picker = pn.widgets.DatePicker(name=_("Select date:"),
                                     start=dt.datetime((forecast_date.year-1), 1, 5).date(),
                                     end=forecast_date,
                                     value=forecast_date)
+
+
+
+# Get the last available date in the data
+last_date = linreg_predictor['date'].max()
+
+# Determine the corresponding pentad
+current_pentad = tl.get_pentad_for_date(last_date)
+
+# Create the dropdown widget for pentad selection
+pentad_selector = pn.widgets.Select(
+    name="Select Pentad",
+    options=pentad_options,
+    value=current_pentad,  # Default to the last available pentad
+    margin=(0, 0, 0, 0)
+)
 
 # Widget for station selection, always visible
 station = pn.widgets.Select(
@@ -235,6 +271,14 @@ manual_range = pn.widgets.IntSlider(
 )
 manual_range.visible = False
 
+selected_indices = pn.widgets.CheckBoxGroup(
+    name=_("Select Data Points:"),
+    options={str(i): i for i in range(len(linreg_datatable))},
+    value=[],
+    width=280,
+    margin=(0, 0, 0, 0)
+)
+
 # Write bulletin button
 write_bulletin_button = pn.widgets.Button(name=_("Write bulletin"), button_type='primary')
 status = pn.pane.Markdown('Status: Ready')
@@ -260,6 +304,19 @@ forecast_card = pn.Card(
 # Initially hide the card
 forecast_card.visible = False
 
+
+# Pentad card
+pentad_card = pn.Card(
+    pn.Column(
+        pentad_selector
+        ),
+    title=_('Pentad:'),
+    width_policy='fit', width=station.width,
+    collapsed=False
+)
+# Initially hide the card
+pentad_card.visible = False
+
 # endregion
 
 
@@ -272,6 +329,14 @@ forecast_card.visible = False
 
 # region dashboard_layout
 # Dynamically update figures
+date_picker_with_pentad_text = viz.create_date_picker_with_pentad_text(date_picker, _)
+
+update_callback = viz.update_forecast_data(_, linreg_datatable, station, pentad_selector)
+pentad_selector.param.watch(update_callback, 'value')
+
+# Initial setup: populate the main area with the initial selection
+update_callback(None)
+
 daily_hydrograph_plot = pn.panel(
     pn.bind(
         viz.plot_daily_hydrograph_data,
@@ -279,18 +344,13 @@ daily_hydrograph_plot = pn.panel(
         ),
     sizing_mode='stretch_both'
     )
-forecast_data_table = pn.panel(
+forecast_data_and_plot = pn.panel(
     pn.bind(
-        viz.draw_forecast_raw_data,
-        _, linreg_datatable, station, date_picker
-        ),
+        viz.select_and_plot_data,
+        _, linreg_predictor, station, pentad_selector
+    ),
+    sizing_mode='stretch_both'
 )
-#linear_regressino_plot = pn.panel(
-#    pn.bind(
-#        viz.plot_linear_regression,
-#        _, linreg_datatable
-#    )
-#)
 pentad_forecast_plot = pn.panel(
     pn.bind(
         viz.plot_pentad_forecast_hydrograph_data,
@@ -413,13 +473,12 @@ else: # If no_date_overlap_flag == True
          pn.Column(
             pn.Card(
                 pn.Row(
-                    forecast_data_table,
-                    #linear_regression_plot
+                    forecast_data_and_plot
                 ),
                 title=_('Linear regression'),
                 sizing_mode='stretch_width',
                 collapsible=True,
-                collapsed=True
+                collapsed=False
             ),
             pn.Card(
                 forecast_summary_table,
@@ -463,7 +522,9 @@ else: # If no_date_overlap_flag == True
 sidebar = pn.Column(
     pn.Row(pn.Card(station,
                    title=_('Hydropost:'),)),
-    pn.Row(pn.Card(date_picker,
+    pn.Row(pentad_card),
+    #pn.Row(pn.Card(pentad_selector, title=_('Pentad:'))),
+    pn.Row(pn.Card(date_picker, date_picker_with_pentad_text,
                    title=_('Date:'),
                    width_policy='fit', width=station.width,
                    collapsed=False)),
@@ -480,7 +541,7 @@ sidebar = pn.Column(
 
 # Update the widgets conditional on the active tab
 tabs.param.watch(lambda event: viz.update_sidepane_card_visibility(
-    tabs, forecast_card, event), 'active')
+    tabs, forecast_card, pentad_card, event), 'active')
 allowable_range_selection.param.watch(lambda event: viz.update_range_slider_visibility(
     _, manual_range, event), 'value')
 
