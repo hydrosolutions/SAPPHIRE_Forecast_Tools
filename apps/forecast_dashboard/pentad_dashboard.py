@@ -35,10 +35,16 @@ from scipy import stats
 # Set the default extension
 pn.extension('tabulator')
 
+from ieasyreports.settings import ReportGeneratorSettings
+
+# Local sources
 from src.environment import load_configuration
 from src.gettext_config import configure_gettext
 import src.processing as processing
 import src.vizualization as viz
+import src.reports as rep
+import src.multithreading as thread
+from src.site import SapphireSite as Site
 
 import calendar
 
@@ -67,7 +73,7 @@ import forecast_library as fl
 # region set up the logger
 
 # Configure the logging level and formatter
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
 formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 
 # Create the logs directory if it doesn't exist
@@ -85,16 +91,21 @@ console_handler.setFormatter(formatter)
 
 # Get the root logger and add the handlers to it
 logger = logging.getLogger()
-logger.handlers = []
+logger.setLevel(logging.DEBUG)
 logger.addHandler(file_handler)
 logger.addHandler(console_handler)
 
 # endregion
 
+
+
 # region load_configuration
 
 # Set primary color to be consistent with the icon color
 pn.extension(global_css=[':root { --design-primary-color: #307096; }'])
+
+# Get path to .env file from the environment variable
+env_file_path = os.getenv("ieasyhydroforecast_env_file_path")
 
 # Load .env file
 # Read the environment varialbe IN_DOCKER_CONTAINER to determine which .env
@@ -108,6 +119,8 @@ icon_path = processing.get_icon_path(in_docker_flag)
 today = dt.datetime.now()
 
 # endregion
+
+
 
 # region localization
 # Read the locale from the environment file
@@ -140,6 +153,13 @@ station_list, all_stations, station_df = processing.read_all_stations_metadata_f
 if not station_list:
     raise ValueError("The station list is empty. Please check the data source and ensure it contains valid stations.")
 print("DEBUG: pentad_dashboard.py: All stations: \n", all_stations)
+#logger.debug(f"DEBUG: pentad_dashboard.py: Station list:\n{station_list}")
+#logger.debug(f"DEBUG: columns of all_stations:\n{all_stations.columns}")
+#logger.debug(f"DEBUG: pentad_dashboard.py: All stations:\n{all_stations}")
+#logger.debug(f"DEBUG: pentad_dashboard.py: Station dataframe:\n{station_df}")
+
+# Create a list of Site objects from the all_stations DataFrame
+sites_list = Site.get_site_attributes_from_dataframe(all_stations)
 
 # Add the station_labels column to the hydrograph_day_all DataFrame
 hydrograph_day_all = processing.add_labels_to_hydrograph(hydrograph_day_all, all_stations)
@@ -181,6 +201,19 @@ pentad_options = {f"{i+1}st pentad of {calendar.month_name[month]}" if i == 0 el
 # endregion
 
 
+# region ieasyreports
+
+
+# Initialize reports
+test_report = rep.SapphireReport(name="Test report", env_file_path=env_file_path, station_df=station_df)
+print(f"DEBUG: pentad_dashboard.py: Test report tags: {test_report.tags}")
+print(f"DEBUG: test_report.report_settings: {test_report.report_settings}")
+test_report.generate_report()
+
+# endregion
+
+
+
 # region widgets
 
 # Widget for date selection, always visible
@@ -211,6 +244,8 @@ station = pn.widgets.Select(
     name=_("Select discharge station:"),
     options=station_list,
     value=station_list[0])
+
+
 
 # Widget for forecast model selection, only visible in forecast tab
 model_checkbox = pn.widgets.CheckBoxGroup(
@@ -243,6 +278,10 @@ selected_indices = pn.widgets.CheckBoxGroup(
     width=280,
     margin=(0, 0, 0, 0)
 )
+
+# Write bulletin button
+write_bulletin_button = pn.widgets.Button(name=_("Write bulletin"), button_type='primary')
+status = pn.pane.Markdown('Status: Ready')
 
 # endregion
 
@@ -329,7 +368,18 @@ forecast_summary_table = pn.panel(
     sizing_mode='stretch_width'
     )
 
+bulletin_table = pn.panel(
+    pn.bind(
+        viz.create_forecast_summary_table,
+        _, forecasts_all, station, date_picker, model_checkbox,
+        allowable_range_selection, manual_range
+        ),
+    sizing_mode='stretch_width'
+)
 # Dynamically update sidepanel
+
+# Attach the function to the button click event
+write_bulletin_button.on_click(lambda event: thread.run_in_background(bulletin_table, test_report, status))
 
 
 ## Footer
@@ -448,6 +498,19 @@ else: # If no_date_overlap_flag == True
         #         #pn.Card(pentad_effectiveness, title=_("Effectiveness of the methods")),
         #         #pn.Card(pentad_skill, title=_("Forecast accuracy")),
             )
+        ),
+        (_('Bulletin'),
+         pn.Column(
+             pn.Card(
+                 pn.Column(
+                     bulletin_table,
+                     pn.Row(
+                         write_bulletin_button,
+                         status),
+                 ),
+                 title='Forecast bulletin',
+            ),
+         )
         ),
         (_('Disclaimer'), footer),
         dynamic=True,

@@ -211,3 +211,4 @@ apps/forecast_dashboard/logs/log.2024-08-23
 apps/backend/tests/testspecial_remote_db_access.ipynb
 apps/conceptual_model/Rplots.pdf
 apps/forecast_dashboard/logs/*
+apps/backend/tests/testspecial_*.ipynb

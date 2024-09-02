@@ -903,7 +903,6 @@ def read_all_conceptual_model_forecasts_pentad():
 
     return forecasts
 
-
 def read_machine_learning_forecasts_pentad(model):
     '''
     Reads forecast results from the machine learning model for the pentadal
