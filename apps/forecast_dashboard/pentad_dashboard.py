@@ -190,11 +190,20 @@ date_picker = pn.widgets.DatePicker(name=_("Select date:"),
                                     end=forecast_date,
                                     value=forecast_date)
 
+
+
+# Get the last available date in the data
+last_date = linreg_predictor['date'].max()
+
+# Determine the corresponding pentad
+current_pentad = tl.get_pentad_for_date(last_date)
+
 # Create the dropdown widget for pentad selection
 pentad_selector = pn.widgets.Select(
     name="Select Pentad",
     options=pentad_options,
-    value=1  # Default to the 1st pentad of January
+    value=current_pentad,  # Default to the last available pentad
+    margin=(0, 0, 0, 0)
 )
 
 # Widget for station selection, always visible
@@ -255,6 +264,19 @@ forecast_card = pn.Card(
 )
 # Initially hide the card
 forecast_card.visible = False
+
+
+# Pentad card
+pentad_card = pn.Card(
+    pn.Column(
+        pentad_selector
+        ),
+    title=_('Pentad:'),
+    width_policy='fit', width=station.width,
+    collapsed=False
+)
+# Initially hide the card
+pentad_card.visible = False
 
 # endregion
 
@@ -437,7 +459,8 @@ else: # If no_date_overlap_flag == True
 sidebar = pn.Column(
     pn.Row(pn.Card(station,
                    title=_('Hydropost:'),)),
-    pn.Row(pn.Card(pentad_selector, title=_('Pentad:'))),
+    pn.Row(pentad_card),
+    #pn.Row(pn.Card(pentad_selector, title=_('Pentad:'))),
     pn.Row(pn.Card(date_picker, date_picker_with_pentad_text,
                    title=_('Date:'),
                    width_policy='fit', width=station.width,
@@ -455,7 +478,7 @@ sidebar = pn.Column(
 
 # Update the widgets conditional on the active tab
 tabs.param.watch(lambda event: viz.update_sidepane_card_visibility(
-    tabs, forecast_card, event), 'active')
+    tabs, forecast_card, pentad_card, event), 'active')
 allowable_range_selection.param.watch(lambda event: viz.update_range_slider_visibility(
     _, manual_range, event), 'value')
 
