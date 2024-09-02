@@ -2348,28 +2348,28 @@ class Site:
             qmax (float): The maximum discharge for the site.
             qdanger (str): The threshold discharge for a dangerous flood.
         """
-        self.code = str(code)
-        self.name = str(name)
-        self.river_name = str(river_name)
-        self.punkt_name = str(punkt_name)
-        self.lat = float(lat)
-        self.lon = float(lon)
-        self.region = str(region)
-        self.basin = str(basin)
-        self.predictor = predictor
-        self.fc_qmin = fc_qmin
-        self.fc_qmax = fc_qmax
-        self.fc_qexp = fc_qexp
-        self.qmin = qmin
-        self.qmax = qmax
-        self.qnorm = qnorm
-        self.perc_norm = perc_norm
-        self.qdanger = qdanger
-        self.slope = slope
-        self.intercept = intercept
-        self.delta = delta
-        self.sdivsigma = sdivsigma
-        self.accuracy = accuracy
+        self.code = code
+        self.name = name if name is not None else "Name"
+        self.river_name = river_name if river_name is not None else "River"
+        self.punkt_name = punkt_name if punkt_name is not None else "Punkt"
+        self.lat = lat if lat is not None else 0.0
+        self.lon = lon if lon is not None else 0.0
+        self.region = region if region is not None else "Region"
+        self.basin = basin if basin is not None else "Basin"
+        self.predictor = predictor if predictor is not None else -10000.0
+        self.fc_qmin = fc_qmin if fc_qmin is not None else -10000.0
+        self.fc_qmax = fc_qmax if fc_qmax is not None else -10000.0
+        self.fc_qexp = fc_qexp if fc_qexp is not None else -10000.0
+        self.qnorm = qnorm if qnorm is not None else -10000.0
+        self.qmin = qmin if qmin is not None else -10000.0
+        self.qmax = qmax if qmax is not None else -10000.0
+        self.perc_norm = perc_norm if perc_norm is not None else -10000.0
+        self.qdanger = qdanger if qdanger is not None else -10000.0
+        self.slope = slope if slope is not None else -10000.0
+        self.intercept = intercept if intercept is not None else -10000.0
+        self.delta = delta if delta is not None else -10000.0
+        self.sdivsigma = sdivsigma if sdivsigma is not None else -10000.0
+        self.accuracy = accuracy if accuracy is not None else -10000.0
 
     def __repr__(self):
         """
