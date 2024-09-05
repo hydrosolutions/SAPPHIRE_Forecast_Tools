@@ -969,6 +969,8 @@ SAVE_DIRECTORY = 'saved_data'
 os.makedirs(SAVE_DIRECTORY, exist_ok=True)
 
 def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector):
+    # Define a variable to hold the visible data across functions
+    global visible_data
 
     if isinstance(station_widget, str):
         station_code = station_widget.split(' - ')[0]
@@ -1022,12 +1024,12 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector):
         if 'visible' not in forecast_table.columns:
             forecast_table['visible'] = True
 
-    # Define a variable to hold the visible data across functions
-    global visible_data
+    forecast_table = forecast_table.reset_index()
 
+    visible_data = forecast_table[forecast_table['visible'] == True] # Initialize the visible data
     # Create Tabulator for displaying forecast data
     forecast_data_table = pn.widgets.Tabulator(
-        value=forecast_table[['year', 'predictor', 'discharge_avg', 'visible']], 
+        value=forecast_table[['index', 'year', 'predictor', 'discharge_avg', 'visible']], 
         theme='bootstrap',
         show_index=False,  # Do not show the index column
         editors={'visible': CheckboxEditor()},  # Checkbox editor for the 'visible' column
@@ -1038,7 +1040,7 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector):
     )
 
     # Create the title text
-    title_text = (f"{_('Hydropost')} {station_name}: {_('Forecast')} {_('for')} "
+    title_text = (f"{_('Hydropost')} {station_code}: {_('Forecast')} {_('for')} "
                   f"{title_pentad} {_('pentad')} {_('of')} {title_month} "
                   f"({_('for all years')})")
 
@@ -1051,7 +1053,7 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector):
     # Update plot based on visibility
     def update_plot(event=None):
         global visible_data  # Use global variable to ensure it's accessible in other functions
-        
+
         forecast_table.update(forecast_data_table.value)
 
         # Filter the data based on visibility
@@ -1059,13 +1061,14 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector):
 
         # Drop rows with NaNs in 'predictor' or 'discharge_avg'
         visible_data = visible_data.dropna(subset=['predictor', 'discharge_avg'])
-        
+            
         # If no data is visible, show an empty plot
         if visible_data.empty:
             scatter = hv.Curve([])  # Define an empty plot to avoid errors
         else:
             hover = HoverTool(
                 tooltips=[
+                    #('Index', '$index'),
                     ('Year', '@year'),
                     ('Predictor', '@predictor'),
                     ('Discharge', '@discharge_avg'),
@@ -1073,12 +1076,21 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector):
                 formatters={'@year': 'numeral'},  # Show year in the hover tool
             )
 
-            # Set fixed x and y ranges
-            x_range = (0, 200)  # Fixed range for the x-axis
-            y_range = (0, 100)  # Fixed range for the y-axis
+            # Calculate dynamic x and y ranges with a margin
+            x_min, x_max = visible_data['predictor'].min(), visible_data['predictor'].max()
+            y_min, y_max = visible_data['discharge_avg'].min(), visible_data['discharge_avg'].max()
 
+            # Add a 20% margin to the ranges
+            x_margin = (x_max - x_min) * 0.2
+            y_margin = (y_max - y_min) * 0.2
+
+            # Set dynamic x and y ranges
+            x_range = (x_min - x_margin, x_max + x_margin)
+            y_range = (y_min - y_margin, y_max + y_margin)
+
+            # Use the original index (not reset) in the scatter plot
             scatter = hv.Scatter(visible_data, kdims='predictor', vdims=['discharge_avg', 'year']) \
-                .opts(color='blue', size=5, tools=['hover', 'tap'], xlabel=_('Predictor'), ylabel=_('Discharge (m³/s)'), title=title_text, xlim=x_range, ylim=y_range)
+                .opts(color='blue', size=5, tools=[hover, 'tap'], xlabel=_('Predictor'), ylabel=_('Discharge (m³/s)'), title=title_text, xlim=x_range, ylim=y_range)
 
             if len(visible_data) > 1:
                 # Add a linear regression line to the scatter plot
@@ -1088,8 +1100,8 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector):
                 line = hv.Curve((x, y)).opts(color='red', line_width=2)
 
                 # Overlay the scatter plot and the linear regression line
-                scatter = scatter * line
-                scatter.opts(
+                plot = scatter * line
+                plot.opts(
                     title=title_text,
                     show_grid=True,
                     show_legend=True,
@@ -1097,14 +1109,14 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector):
                     height=450  
                 )
             else:
-                scatter.opts(
+                plot = scatter.opts(
                     width=1000, 
                     height=450  
                 )
         
         # Attach the plot to the selection stream
         selection_stream.source = scatter
-        plot_pane.object = scatter
+        plot_pane.object = plot
 
     # Function to handle plot selections and update the table
     def handle_selection(event):
@@ -1118,7 +1130,7 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector):
         # Get the selected index from the scatter plot (relative to visible_data)
         selected_indices = selection_stream.index
 
-        # Get the actual index from the forecast_table that corresponds to the visible data
+        # Use the original index from the visible_data to map to the correct row in the table
         selected_rows = visible_data.iloc[selected_indices].index.tolist()
 
         # Select the corresponding rows in the Tabulator

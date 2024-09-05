@@ -520,7 +520,7 @@ else: # If no_date_overlap_flag == True
 sidebar = pn.Column(
     pn.Row(pn.Card(station,
                    title=_('Hydropost:'),)),
-    pn.Row(pentad_card),
+    #pn.Row(pentad_card),
     #pn.Row(pn.Card(pentad_selector, title=_('Pentad:'))),
     #pn.Row(pn.Card(date_picker, date_picker_with_pentad_text,
                    #title=_('Date:'),
