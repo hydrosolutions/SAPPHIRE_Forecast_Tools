@@ -314,8 +314,6 @@ pentad_card = pn.Card(
     width_policy='fit', width=station.width,
     collapsed=False
 )
-# Initially hide the card
-pentad_card.visible = False
 
 # endregion
 
@@ -524,10 +522,10 @@ sidebar = pn.Column(
                    title=_('Hydropost:'),)),
     pn.Row(pentad_card),
     #pn.Row(pn.Card(pentad_selector, title=_('Pentad:'))),
-    pn.Row(pn.Card(date_picker, date_picker_with_pentad_text,
-                   title=_('Date:'),
-                   width_policy='fit', width=station.width,
-                   collapsed=False)),
+    #pn.Row(pn.Card(date_picker, date_picker_with_pentad_text,
+                   #title=_('Date:'),
+                   #width_policy='fit', width=station.width,
+                   #collapsed=False)),
     pn.Row(forecast_card),
     #pn.Row(range_selection),
     #pn.Row(manual_range),

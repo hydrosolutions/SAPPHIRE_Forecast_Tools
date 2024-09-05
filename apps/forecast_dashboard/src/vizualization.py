@@ -974,7 +974,7 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector):
         station_code = station_widget.split(' - ')[0]
     else:
         station_code = station_widget.value.split(' - ')[0]
-        
+
     # Check if pentad_selector is a widget or an integer
     if isinstance(pentad_selector, int):
         selected_pentad = pentad_selector  # If it's an integer, use it directly
@@ -1003,6 +1003,9 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector):
         # Map the 'pentad_in_year' to the corresponding date using get_date_for_pentad
         linreg_predictor['date'] = linreg_predictor['pentad_in_year'].apply(lambda pentad: tl.get_date_for_pentad(pentad))
 
+    # Extract the year from the date column and create a 'year' column
+    linreg_predictor['year'] = pd.to_datetime(linreg_predictor['date']).dt.year.astype(int)
+
     # Check if the saved CSV file for the specific pentad exists
     if os.path.exists(save_file_path):
         # Load the saved state
@@ -1024,13 +1027,14 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector):
 
     # Create Tabulator for displaying forecast data
     forecast_data_table = pn.widgets.Tabulator(
-        value=forecast_table[['date', 'predictor', 'discharge_avg', 'visible']], 
+        value=forecast_table[['year', 'predictor', 'discharge_avg', 'visible']], 
         theme='bootstrap',
         show_index=False,  # Do not show the index column
         editors={'visible': CheckboxEditor()},  # Checkbox editor for the 'visible' column
         formatters={'visible': BooleanFormatter(),
-                    'date': DateFormatter()},  # Format the date column
+                    'year': NumberFormatter(format='0')},  # Format the date column
         height=450,
+        sizing_mode='stretch_width'  # Stretch the table to fill the available space
     )
 
     # Create the title text
@@ -1039,7 +1043,7 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector):
                   f"({_('for all years')})")
 
     # Define the plot
-    plot_pane = pn.pane.HoloViews()
+    plot_pane = pn.pane.HoloViews(sizing_mode='stretch_width')
 
     # Create the selection1d stream to capture point selections on the plot
     selection_stream = streams.Selection1D(source=None)
@@ -1062,14 +1066,19 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector):
         else:
             hover = HoverTool(
                 tooltips=[
-                    ('Date', '@date{%F}'),
+                    ('Year', '@year'),
                     ('Predictor', '@predictor'),
                     ('Discharge', '@discharge_avg'),
                 ],
-                formatters={'@date': 'datetime'},  # Format the date for hover
+                formatters={'@year': 'numeral'},  # Show year in the hover tool
             )
-            scatter = hv.Scatter(visible_data, kdims='predictor', vdims=['discharge_avg', 'date']) \
-                .opts(color='blue', size=5, tools=['hover', 'tap'], xlabel=_('Predictor'), ylabel=_('Discharge (m³/s)'), title=title_text)
+
+            # Set fixed x and y ranges
+            x_range = (0, 200)  # Fixed range for the x-axis
+            y_range = (0, 100)  # Fixed range for the y-axis
+
+            scatter = hv.Scatter(visible_data, kdims='predictor', vdims=['discharge_avg', 'year']) \
+                .opts(color='blue', size=5, tools=['hover', 'tap'], xlabel=_('Predictor'), ylabel=_('Discharge (m³/s)'), title=title_text, xlim=x_range, ylim=y_range)
 
             if len(visible_data) > 1:
                 # Add a linear regression line to the scatter plot
@@ -1102,6 +1111,8 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector):
         global visible_data  # Use the visible data in the selection handler
 
         if not selection_stream.index:
+            # Clear table selection if no points are selected
+            forecast_data_table.selection = []
             return
 
         # Get the selected index from the scatter plot (relative to visible_data)
@@ -1153,7 +1164,7 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector):
 
     # Create the layout with the table, plot, save button, and popup
     layout = pn.Column(
-        pn.Row(forecast_data_table, plot_pane),
+        pn.Row(forecast_data_table, plot_pane, sizing_mode='stretch_width'),
         pn.Row(save_button), 
         pn.Row(popup)  
     )
