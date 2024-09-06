@@ -21,9 +21,12 @@ class SapphireSite:
                  lat: float = None,
                  lon: float = None,
                  region: str = None,
-                 basin: str = None):
+                 basin: str = None,
+                 linreg_predictor: float = None):
         """
         Constructs a Site object with the given attributes.
+
+        Site attributes should be associated with data tags in ieasyreports.
         """
         self.code = code if code else None
         self.river_name_ru = river_name_ru if river_name_ru else None
@@ -34,12 +37,13 @@ class SapphireSite:
         self.lon = lon if lon else None
         self.region = region if region else None
         self.basin = basin if basin else None
+        self.linreg_predictor = linreg_predictor if linreg_predictor else None
 
     def __str__(self):
         return f"Site {self.code} ({self.river_name_ru} - {self.punkt_name_ru})"
 
     @classmethod
-    def get_site_attributes_from_dataframe(cls, df: pd.DataFrame,
+    def get_site_attributes_from_stations_dataframe(cls, df: pd.DataFrame,
                        site_code_col: str = 'site_code',
                        river_ru_col: str = 'river_ru',
                        punkt_ru_col: str = 'punkt_ru',
@@ -77,3 +81,16 @@ class SapphireSite:
         except Exception as e:
             print(f'Error creating Site objects from DataFrame: {e}')
             return []
+
+    def get_site_attributes_from_selected_forecast(cls,
+            sites: list,
+            df: pd.DataFrame,  # Table that is displayed in the bulletin tab
+            linreg_predictor_col: str = 'predictor') -> list:
+        """
+        Fills the Site object with selected forecast attributes from a DataFrame.
+
+        Returns:
+            list: A list of Site objects.
+        """
+        #
+

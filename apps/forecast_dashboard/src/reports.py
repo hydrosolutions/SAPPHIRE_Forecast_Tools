@@ -6,6 +6,7 @@ import time
 # ieasyreports
 from ieasyreports.core.report_generator import DefaultReportGenerator
 from ieasyreports.settings import TagSettings, ReportGeneratorSettings
+from ieasyreports.core.tags.tag import Tag
 
 # Logging
 import logging
@@ -14,13 +15,12 @@ logger = logging.getLogger(__name__)
 # Tags
 from .tags import SapphireTagManager
 
-
 class SapphireReport():
     """
     A class to represent a report with its tags.
     """
 
-    def __init__(self, name: str, env_file_path: str, station_df, tag_settings = None):
+    def __init__(self, name: str, env_file_path: str, tag_settings = None):
         """
         Constructs a report with the given name, report type, and tags.
 
@@ -30,9 +30,10 @@ class SapphireReport():
         """
         self.name = name
         self.report_settings = self.define_settings(env_file_path)
-        self.tag_settings = tag_settings if tag_settings else TagSettings()
-        self.tag_manager = SapphireTagManager(station_df, self.tag_settings)
-        self.tags = self.tag_manager.get_tags()
+        #self.tag_settings = tag_settings if tag_settings else TagSettings()
+        #self.tag_manager = SapphireTagManager(self.tag_settings)
+        #self.tags = self.tag_manager.get_tags()
+        #print("DEBUG: Report.__init__: tags: ", self.tags)
 
 
     def define_settings(self, env_file_path: str):
@@ -50,27 +51,28 @@ class SapphireReport():
         )
         return self.report_settings
 
-    def generate_report(self):
+    def generate_report(self, sites_list):
         """Generate the report."""
+        print(f"DEBUG: Report.generate_report: Generating report for {self.name} ...")
+        #print(f"DEBUG: Report.generate_report: tags: {self.tags}")
+        #print(f"DEBUG: Report.generate_report: river_ru_tag: {self.tags[2].get_value_fn}")
         try:
-            logger.debug(f"Generating report for {self.name} ...")
-            logger.debug(f"tags: {self.tags}")
-            logger.debug(f"river_ru_tag: {self.tags[2].get_value_fn}")
+            # Configure the report generator
             report_generator = DefaultReportGenerator(
                 tags=self.tags,
                 template='test_template.xlsx',
                 reports_directory_path=self.report_settings.report_output_path,
                 templates_directory_path=self.report_settings.templates_directory_path,
                 tag_settings=self.tag_settings)
+
+            # Validate and write the report
             report_generator.validate()
-            report_generator.generate_report()
+            report_generator.generate_report(list_objects=sites_list)
+
             return 0
+
         except Exception as e:
             print(f"Error generating report: {e}")
             raise e
 
-    @classmethod
-    def get_allowed_report_types(cls):
-        """Return a list of allowed report types."""
-        return list(cls.REPORT_TYPE_TAGS.keys())
 

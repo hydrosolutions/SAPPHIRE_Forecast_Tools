@@ -204,7 +204,6 @@ def shift_date_by_n_days(linreg_predictor, n=1):
 
     return linreg_predictor
 
-
 def read_forecast_results_file():
     forecast_results_file = os.path.join(
         os.getenv("ieasyforecast_intermediate_data_path"),
@@ -393,8 +392,6 @@ def internationalize_forecast_model_names(_, forecasts_all,
 
     return forecasts_all
 
-
-
 def deprecating_read_hydrograph_day_file(today):
 
     hydrograph_day_file = os.path.join(
@@ -498,9 +495,6 @@ def deprecating_read_analysis_file():
 
     return analysis_pentad
 
-
-
-
 def read_all_stations_metadata_from_file(station_list):
 
     all_stations_file = os.path.join(
@@ -530,7 +524,6 @@ def read_all_stations_metadata_from_file(station_list):
     station_list = station_df['station_labels'].tolist()
 
     return station_list, all_stations, station_df
-
 
 def add_labels_to_hydrograph(hydrograph, all_stations):
     hydrograph = hydrograph.merge(
@@ -797,4 +790,18 @@ def calculate_fc_stats(analysis_data):
 
 
 
+
+# --- Bulletin preparation --------------------------------------------------------
+def get_bulletin_header_info(date):
+    """Get information from date relevant for the bulletin header."""
+    df = pd.DataFrame({
+        "pentad": [tl.get_pentad(date)],
+        "month_str_nom_ru": [tl.get_month_str_case1(date)],
+        "month_str_gen_ru": [tl.get_month_str_case2(date)],
+        "year": [tl.get_year(date)],
+        "day_start_pentad": [tl.get_pentad_first_day(date)],
+        "day_end_pentad": [tl.get_pentad_last_day(date)],
+    })
+
+    return df
 

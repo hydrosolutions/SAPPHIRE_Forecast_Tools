@@ -69,7 +69,7 @@ read_configuration $1
 clean_out_docker_space
 
 # Pull docker images
-pull_docker_images
+pull_docker_images $ieasyhydroforecast_backend_docker_image_tag
 
 # Establish SSH tunnel (if required)
 establish_ssh_tunnel
