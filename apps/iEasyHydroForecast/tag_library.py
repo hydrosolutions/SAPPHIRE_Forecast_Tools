@@ -441,6 +441,10 @@ def get_pentad_first_day(date_str):
 
         If the input date string is not a valid date, returns None.
     """
+    # If date is a Timestamp, convert it to a string
+    if isinstance(date_str, pd.Timestamp):
+        date_str = date_str.strftime('%Y-%m-%d')
+
     try:
         # parse the input date string into a datetime object
         date = dt.datetime.strptime(date_str, '%Y-%m-%d').date()
@@ -479,6 +483,10 @@ def get_pentad_last_day(date_str):
 
         If the input date string is not a valid date, returns None.
     """
+    # If date is a Timestamp, convert it to a string
+    if isinstance(date_str, pd.Timestamp):
+        date_str = date_str.strftime('%Y-%m-%d')
+
     try:
         # parse the input date string into a datetime object
         date = dt.datetime.strptime(date_str, '%Y-%m-%d').date()
@@ -522,6 +530,10 @@ def get_year(date_str):
 
         If the input date string is not a valid date, returns None.
     """
+    # If date is a Timestamp, convert it to a string
+    if isinstance(date_str, pd.Timestamp):
+        date_str = date_str.strftime('%Y-%m-%d')
+
     try:
         # parse the input date string into a datetime object
         date = dt.datetime.strptime(date_str, '%Y-%m-%d').date()
@@ -546,7 +558,7 @@ def get_pentad_for_date(date):
     day_of_month = date.day
     pentad_in_month = (day_of_month - 1) // 5 + 1
     pentad_in_year = (date.month - 1) * 6 + pentad_in_month
-    
+
     return pentad_in_year
 
 
@@ -561,7 +573,7 @@ def get_date_for_pentad(pentad_in_year, year=dt.datetime.now().year):
     Returns:
         str: A string representing the date for the input pentad in the format 'YYYY-MM-DD',
              or None if the input is not valid.
-             
+
     Examples:
         >>> get_date_for_pentad(1)
         'YYYY-01-01'
@@ -575,15 +587,15 @@ def get_date_for_pentad(pentad_in_year, year=dt.datetime.now().year):
 
         # Calculate the first day of the pentad
         first_day_of_pentad = 5 * (pentad_in_month - 1) + 1
-        
+
         # Ensure the calculated day is valid within the month
         days_in_month = (dt.date(year, month, 1) + dt.timedelta(days=31)).replace(day=1) - dt.timedelta(days=1)
         if first_day_of_pentad > days_in_month.day:
             first_day_of_pentad = days_in_month.day
-        
+
         # Create the date
         date = dt.date(year, month, first_day_of_pentad)
-        
+
         # Return the date as a string in 'YYYY-MM-DD' format
         return date.strftime('%Y-%m-%d')
 
@@ -700,6 +712,10 @@ def get_month_str_case1(date_str):
         If the input date string is not a valid date, returns None.
     """
 
+    # If date is a Timestamp, convert it to a string
+    if isinstance(date_str, pd.Timestamp):
+        date_str = date_str.strftime('%Y-%m-%d')
+
     try:
         # parse the input date string into a datetime object
         date = dt.datetime.strptime(date_str, '%Y-%m-%d').date()
@@ -760,6 +776,10 @@ def get_month_str_case2(date_str):
 
         If the input date string is not a valid date, returns None.
     """
+    # If date is a Timestamp, convert it to a string
+    if isinstance(date_str, pd.Timestamp):
+        date_str = date_str.strftime('%Y-%m-%d')
+
     try:
         # parse the input date string into a datetime object
         date = dt.datetime.strptime(date_str, '%Y-%m-%d').date()

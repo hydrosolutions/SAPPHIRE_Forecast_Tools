@@ -3,7 +3,7 @@
 # This script creates a dashboard for the pentadal forecast.
 #
 # Run with the following command:
-# panel serve pentad_dashboard.py --show --autoreload --port 5008
+# ieasyhydroforecast_env_file_path=/absolute/path/to/sensitive_data_forecast_tools/config/.env_develop_kghm SAPPHIRE_OPDEV_ENV=True panel serve pentad_dashboard.py --show --autoreload
 #
 
 # region load_libraries
@@ -42,9 +42,9 @@ from src.environment import load_configuration
 from src.gettext_config import configure_gettext
 import src.processing as processing
 import src.vizualization as viz
-import src.reports as rep
-import src.multithreading as thread
+#import src.multithreading as thread
 from src.site import SapphireSite as Site
+from src.bulletins import write_to_excel
 
 import calendar
 
@@ -73,8 +73,13 @@ import forecast_library as fl
 # region set up the logger
 
 # Configure the logging level and formatter
+logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG)
 formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+
+# Remove all handlers associated with the logger
+for handler in logger.handlers[:]:
+    logger.removeHandler(handler)
 
 # Create the logs directory if it doesn't exist
 if not os.path.exists('logs'):
@@ -90,8 +95,6 @@ console_handler = logging.StreamHandler()
 console_handler.setFormatter(formatter)
 
 # Get the root logger and add the handlers to it
-logger = logging.getLogger()
-logger.setLevel(logging.DEBUG)
 logger.addHandler(file_handler)
 logger.addHandler(console_handler)
 
@@ -149,17 +152,14 @@ forecast_stats = processing.read_forecast_stats_file()
 
 # Hydroposts metadata
 station_list, all_stations, station_df = processing.read_all_stations_metadata_from_file(
-    hydrograph_day_all['code'].unique().tolist())    
+    hydrograph_day_all['code'].unique().tolist())
 if not station_list:
     raise ValueError("The station list is empty. Please check the data source and ensure it contains valid stations.")
 print("DEBUG: pentad_dashboard.py: All stations: \n", all_stations)
 #logger.debug(f"DEBUG: pentad_dashboard.py: Station list:\n{station_list}")
-#logger.debug(f"DEBUG: columns of all_stations:\n{all_stations.columns}")
+print(f"DEBUG: columns of all_stations:\n{all_stations.columns}")
 #logger.debug(f"DEBUG: pentad_dashboard.py: All stations:\n{all_stations}")
 #logger.debug(f"DEBUG: pentad_dashboard.py: Station dataframe:\n{station_df}")
-
-# Create a list of Site objects from the all_stations DataFrame
-sites_list = Site.get_site_attributes_from_dataframe(all_stations)
 
 # Add the station_labels column to the hydrograph_day_all DataFrame
 hydrograph_day_all = processing.add_labels_to_hydrograph(hydrograph_day_all, all_stations)
@@ -178,39 +178,32 @@ forecasts_all = forecasts_all.merge(
     on=['code', 'pentad_in_year', 'model_short', 'model_long'],
     how='left')
 
+# Create a list of Site objects from the all_stations DataFrame
+sites_list = Site.get_site_attributes_from_stations_dataframe(all_stations)
+
+
 # Create a dictionary of the model names and the corresponding model labels
 model_dict = forecasts_all[['model_short', 'model_long']] \
     .set_index('model_long')['model_short'].to_dict()
 
 
 pentads = [
-    f"{i+1}st pentad of {calendar.month_name[month]}" if i == 0 else 
-    f"{i+1}nd pentad of {calendar.month_name[month]}" if i == 1 else 
-    f"{i+1}rd pentad of {calendar.month_name[month]}" if i == 2 else 
+    f"{i+1}st pentad of {calendar.month_name[month]}" if i == 0 else
+    f"{i+1}nd pentad of {calendar.month_name[month]}" if i == 1 else
+    f"{i+1}rd pentad of {calendar.month_name[month]}" if i == 2 else
     f"{i+1}th pentad of {calendar.month_name[month]}"
     for month in range(1, 13) for i in range(6)
 ]
 
 # Create a dictionary mapping each pentad description to its pentad_in_year value
-pentad_options = {f"{i+1}st pentad of {calendar.month_name[month]}" if i == 0 else 
-                  f"{i+1}nd pentad of {calendar.month_name[month]}" if i == 1 else 
-                  f"{i+1}rd pentad of {calendar.month_name[month]}" if i == 2 else 
+pentad_options = {f"{i+1}st pentad of {calendar.month_name[month]}" if i == 0 else
+                  f"{i+1}nd pentad of {calendar.month_name[month]}" if i == 1 else
+                  f"{i+1}rd pentad of {calendar.month_name[month]}" if i == 2 else
                   f"{i+1}th pentad of {calendar.month_name[month]}": i + (month-1)*6 + 1
                   for month in range(1, 13) for i in range(6)}
 
 # endregion
 
-
-# region ieasyreports
-
-
-# Initialize reports
-test_report = rep.SapphireReport(name="Test report", env_file_path=env_file_path, station_df=station_df)
-print(f"DEBUG: pentad_dashboard.py: Test report tags: {test_report.tags}")
-print(f"DEBUG: test_report.report_settings: {test_report.report_settings}")
-test_report.generate_report()
-
-# endregion
 
 
 
@@ -230,6 +223,14 @@ last_date = linreg_predictor['date'].max()
 
 # Determine the corresponding pentad
 current_pentad = tl.get_pentad_for_date(last_date)
+
+# Get information for bulletin headers into a dataframe that can be passed to
+# the bulletin writer.
+bulletin_header_info = processing.get_bulletin_header_info(last_date)
+print(f"DEBUG: pentad_dashboard.py: bulletin_header_info:\n{bulletin_header_info}")
+
+print(f"DEBUG: pentad_dashboard.py: first site: {sites_list[0]}")
+
 
 # Create the dropdown widget for pentad selection
 pentad_selector = pn.widgets.Select(
@@ -280,8 +281,11 @@ selected_indices = pn.widgets.CheckBoxGroup(
 )
 
 # Write bulletin button
-write_bulletin_button = pn.widgets.Button(name=_("Write bulletin"), button_type='primary')
-status = pn.pane.Markdown('Status: Ready')
+write_bulletin_button = pn.widgets.Button(
+    name=_("Write bulletin"),
+    button_type='primary',
+    description=_("Write bulletin to Excel"))
+indicator = pn.indicators.LoadingSpinner(value=False, size=25)
 
 # endregion
 
@@ -322,6 +326,11 @@ pentad_card.visible = False
 
 # region update_functions
 
+# Function to update the spinner
+def update_indicator(event):
+    if not event:
+        return
+    indicator.value = not indicator.value
 
 
 # endregion
@@ -378,8 +387,13 @@ bulletin_table = pn.panel(
 )
 # Dynamically update sidepanel
 
+# Bind the update function to the button
+pn.bind(update_indicator, write_bulletin_button, watch=True)
+
 # Attach the function to the button click event
-write_bulletin_button.on_click(lambda event: thread.run_in_background(bulletin_table, test_report, status))
+# Multi-threading does not seem to work
+#write_bulletin_button.on_click(lambda event: thread.write_forecast_bulletin_in_background(bulletin_table, env_file_path, status))
+write_bulletin_button.on_click(lambda event: write_to_excel(sites_list, bulletin_header_info, env_file_path, indicator))
 
 
 ## Footer
@@ -506,7 +520,7 @@ else: # If no_date_overlap_flag == True
                      bulletin_table,
                      pn.Row(
                          write_bulletin_button,
-                         status),
+                         indicator),
                  ),
                  title='Forecast bulletin',
             ),
