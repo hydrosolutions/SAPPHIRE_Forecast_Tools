@@ -522,7 +522,7 @@ def update_pentad_text(date_picker, _):
     """
     # Calculate the next day's date (to align with the logic used earlier)
     selected_date = date_picker
-    
+
     # Calculate pentad, month, and day range
     title_pentad = tl.get_pentad(selected_date)
     title_month = tl.get_month_str_case2_viz(_, selected_date)
@@ -851,7 +851,7 @@ def plot_pentad_forecast_hydrograph_data(_, hydrograph_pentad_all, forecasts_all
         hooks=[remove_bokeh_logo,
                lambda p, e: add_custom_xticklabels_pentad(_, p, e)],
         tools=['hover'],
-        toolbar='above')
+        toolbar='right')
 
     return pentad_hydrograph
 
@@ -948,17 +948,17 @@ def draw_forecast_raw_data(_, forecasts_linreg, station_widget, date_picker):
 
 
 pentads = [
-    f"{i+1}st pentad of {calendar.month_name[month]}" if i == 0 else 
-    f"{i+1}nd pentad of {calendar.month_name[month]}" if i == 1 else 
-    f"{i+1}rd pentad of {calendar.month_name[month]}" if i == 2 else 
+    f"{i+1}st pentad of {calendar.month_name[month]}" if i == 0 else
+    f"{i+1}nd pentad of {calendar.month_name[month]}" if i == 1 else
+    f"{i+1}rd pentad of {calendar.month_name[month]}" if i == 2 else
     f"{i+1}th pentad of {calendar.month_name[month]}"
     for month in range(1, 13) for i in range(6)
 ]
 
 # Create a dictionary mapping each pentad description to its pentad_in_year value
-pentad_options = {f"{i+1}st pentad of {calendar.month_name[month]}" if i == 0 else 
-                  f"{i+1}nd pentad of {calendar.month_name[month]}" if i == 1 else 
-                  f"{i+1}rd pentad of {calendar.month_name[month]}" if i == 2 else 
+pentad_options = {f"{i+1}st pentad of {calendar.month_name[month]}" if i == 0 else
+                  f"{i+1}nd pentad of {calendar.month_name[month]}" if i == 1 else
+                  f"{i+1}rd pentad of {calendar.month_name[month]}" if i == 2 else
                   f"{i+1}th pentad of {calendar.month_name[month]}": i + (month-1)*6 + 1
                   for month in range(1, 13) for i in range(6)}
 
@@ -1016,7 +1016,7 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector):
     else:
         # Filter data for the selected station and pentad across all years
         forecast_table = linreg_predictor[
-            (linreg_predictor['station_labels'] == station_widget) & 
+            (linreg_predictor['station_labels'] == station_widget) &
             (linreg_predictor['pentad_in_year'] == selected_pentad)
         ].copy().reset_index(drop=True)
 
@@ -1029,7 +1029,7 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector):
     visible_data = forecast_table[forecast_table['visible'] == True] # Initialize the visible data
     # Create Tabulator for displaying forecast data
     forecast_data_table = pn.widgets.Tabulator(
-        value=forecast_table[['index', 'year', 'predictor', 'discharge_avg', 'visible']], 
+        value=forecast_table[['index', 'year', 'predictor', 'discharge_avg', 'visible']],
         theme='bootstrap',
         show_index=False,  # Do not show the index column
         editors={'visible': CheckboxEditor()},  # Checkbox editor for the 'visible' column
@@ -1061,7 +1061,7 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector):
 
         # Drop rows with NaNs in 'predictor' or 'discharge_avg'
         visible_data = visible_data.dropna(subset=['predictor', 'discharge_avg'])
-            
+
         # If no data is visible, show an empty plot
         if visible_data.empty:
             scatter = hv.Curve([])  # Define an empty plot to avoid errors
@@ -1105,15 +1105,15 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector):
                     title=title_text,
                     show_grid=True,
                     show_legend=True,
-                    width=1000, 
-                    height=450  
+                    width=1000,
+                    height=450
                 )
             else:
                 plot = scatter.opts(
-                    width=1000, 
-                    height=450  
+                    width=1000,
+                    height=450
                 )
-        
+
         # Attach the plot to the selection stream
         selection_stream.source = scatter
         plot_pane.object = plot
@@ -1177,8 +1177,8 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector):
     # Create the layout with the table, plot, save button, and popup
     layout = pn.Column(
         pn.Row(forecast_data_table, plot_pane, sizing_mode='stretch_width'),
-        pn.Row(save_button), 
-        pn.Row(popup)  
+        pn.Row(save_button),
+        pn.Row(popup)
     )
 
     return layout

@@ -160,15 +160,19 @@ forecasts_all = processing.read_forecast_results_file()
 forecast_stats = processing.read_forecast_stats_file()
 
 # Hydroposts metadata
-station_list, all_stations, station_df = processing.read_all_stations_metadata_from_file(
+station_list, all_stations, station_df, station_dict = processing.read_all_stations_metadata_from_file(
     hydrograph_day_all['code'].unique().tolist())
 if not station_list:
     raise ValueError("The station list is empty. Please check the data source and ensure it contains valid stations.")
-print("DEBUG: pentad_dashboard.py: All stations: \n", all_stations)
+print("DEBUG: pentad_dashboard.py: Station list:\n", station_list)
+#print("DEBUG: pentad_dashboard.py: All stations: \n", all_stations)
 #logger.debug(f"DEBUG: pentad_dashboard.py: Station list:\n{station_list}")
-print(f"DEBUG: columns of all_stations:\n{all_stations.columns}")
+#print(f"DEBUG: columns of all_stations:\n{all_stations.columns}")
 #logger.debug(f"DEBUG: pentad_dashboard.py: All stations:\n{all_stations}")
-#logger.debug(f"DEBUG: pentad_dashboard.py: Station dataframe:\n{station_df}")
+print(f"DEBUG: pentad_dashboard.py: Station dataframe:\n{station_df}")
+print(f"DEBUG: pentad_dashboard.py: Station dictionary:\n{station_dict}")
+print(f"DEBUG: First dictionary entry: {next(iter(station_dict))}")
+print(f"DEBUG: First station: {station_dict[next(iter(station_dict))][0]}")
 
 # Add the station_labels column to the hydrograph_day_all DataFrame
 hydrograph_day_all = processing.add_labels_to_hydrograph(hydrograph_day_all, all_stations)
@@ -247,7 +251,7 @@ current_pentad = tl.get_pentad_for_date(last_date)
 bulletin_header_info = processing.get_bulletin_header_info(last_date)
 print(f"DEBUG: pentad_dashboard.py: bulletin_header_info:\n{bulletin_header_info}")
 
-print(f"DEBUG: pentad_dashboard.py: first site: {sites_list[0]}")
+#print(f"DEBUG: pentad_dashboard.py: first site: {sites_list[0]}")
 
 
 # Create the dropdown widget for pentad selection
@@ -262,8 +266,11 @@ pentad_selector = pn.widgets.Select(
 # TODO group stations by river basins
 station = pn.widgets.Select(
     name=_("Select discharge station:"),
-    options=station_list,
-    value=station_list[0])
+    groups=station_dict,
+    value=station_dict[next(iter(station_dict))][0])
+
+# Print the station widget selection
+print(f"DEBUG: pentad_dashboard.py: Station widget selection: {station.value}")
 
 
 
@@ -274,7 +281,7 @@ model_checkbox = pn.widgets.CheckBoxGroup(
     name=_("Select forecast model:"),
     options=model_dict,
     value=[model_dict['Linear regression (LR)']],
-    width=200,  # 280
+    #width=200,  # 280
     margin=(0, 0, 0, 0),
     sizing_mode='stretch_width',
     css_classes=['checkbox-label']
@@ -365,7 +372,7 @@ update_callback = viz.update_forecast_data(_, linreg_datatable, station, pentad_
 pentad_selector.param.watch(update_callback, 'value')
 
 # Initial setup: populate the main area with the initial selection
-update_callback(None)
+#update_callback(None)  # This does not seem to be needed
 
 daily_hydrograph_plot = pn.panel(
     pn.bind(
@@ -475,7 +482,7 @@ if no_date_overlap_flag == False:
         #     pn.Row(
         #         pn.Card(forecast_table, title=_('Forecast table'), sizing_mode='stretch_width')),
                  pn.Card(
-                     pentad_forecast_plot,
+                     #pentad_forecast_plot,
                      title=_('Hydrograph'),
                  ),
                  pn.Card(

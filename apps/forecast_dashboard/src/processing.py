@@ -513,7 +513,7 @@ def read_all_stations_metadata_from_file(station_list):
     all_stations['code'] = all_stations['code'].astype(str)
     # Left-join all_stations['code', 'river_ru', 'punkt_ru'] by 'Code' = 'code'
     station_df=pd.DataFrame(station_list, columns=['code'])
-    station_df=station_df.merge(all_stations.loc[:,['code','river_ru','punkt_ru']],
+    station_df=station_df.merge(all_stations.loc[:,['code','river_ru','punkt_ru', 'basin']],
                             left_on='code', right_on='code', how='left')
 
     # Paste together the columns Code, river_ru and punkt_ru to a new column
@@ -523,7 +523,12 @@ def read_all_stations_metadata_from_file(station_list):
     # Update the station list with the new station labels
     station_list = station_df['station_labels'].tolist()
 
-    return station_list, all_stations, station_df
+    # From station_df, get the columns basin and station_lables and convert to a
+    # dictionary where we have unique basins in the key and the station_labels
+    # in the values
+    station_dict = station_df.groupby('basin')['station_labels'].apply(list).to_dict()
+
+    return station_list, all_stations, station_df, station_dict
 
 def add_labels_to_hydrograph(hydrograph, all_stations):
     hydrograph = hydrograph.merge(
