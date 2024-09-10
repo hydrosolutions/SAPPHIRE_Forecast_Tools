@@ -823,7 +823,7 @@ def read_conceptual_model_forecast_pentad(filepath):
     forecast = read_daily_probabilistic_conceptmod_forecasts_pentad(
         filepath,
         code=code,
-        model_long="Rainfall runoff assimilation model",
+        model_long="Rainfall runoff assimilation model (RRM)",
         model_short="RRM"
     )
 
@@ -888,6 +888,11 @@ def read_all_conceptual_model_forecasts_pentad():
     # Also read the hindcast files
     hindcast_files = get_files_in_subdirectories(path_to_results_dir, "hindcast_daily_*.csv")
 
+    # Only read hindcast files if they exist
+    if len(hindcast_files) == 0:
+        logger.info("No hindcast files found.")
+        return forecasts
+
     # Read the hindcast results from all files
     for hindcast_file in hindcast_files:
         logger.debug(f"Reading hindcast results from {hindcast_file}")
@@ -915,19 +920,22 @@ def read_machine_learning_forecasts_pentad(model):
 
     if model == 'TFT':
         filename = f"pentad_{model}_forecast.csv".format(model=model)
-        hindcast_filename = f"{model}_PENTAD_hindcast_daily.csv".format(model=model)
+        hindcast_filename = f"{model}_PENTAD_hindcast_daily*.csv".format(model=model)
         model_long = "Temporal-Fusion Transformer (TFT)"
         model_short = "TFT"
     elif model == 'TIDE':
         filename = f"pentad_{model}_forecast.csv".format(model=model)
+        hindcast_filename = f"{model}_PENTAD_hindcast_daily*.csv".format(model=model)
         model_long = "Time-Series Dense Encoder (TiDE)"
         model_short = "TiDE"
     elif model == 'TSMIXER':
         filename = f"pentad_{model}_forecast.csv".format(model=model)
+        hindcast_filename = f"{model}_PENTAD_hindcast_daily*.csv".format(model=model)
         model_long = "Time-Series Mixer (TSMIXER)"
         model_short = "TSMixer"
     elif model == 'ARIMA':
         filename = f"pentad_{model}_forecast.csv".format(model=model)
+        hindcast_filename = f"{model}_PENTAD_hindcast_daily*.csv".format(model=model)
         model_long = "AutoRegressive Integrated Moving Average (ARIMA)"
         model_short = "ARIMA"
     else:
@@ -947,8 +955,6 @@ def read_machine_learning_forecasts_pentad(model):
     logger.debug(f"{filepath}")
 
     forecast = read_daily_probabilistic_ml_forecasts_pentad(filepath, model, model_long, model_short)
-
-    # TODO: also read the hindcast files
 
     return forecast
 
@@ -1022,8 +1028,9 @@ def calculate_ensemble_forecast(forecasts):
     forecasts = pd.concat([forecasts, ensemble_mean])
     logger.info(f"Calculated ensemble forecast for the pentadal forecast horizon.")
     logger.debug(f"Columns of forecasts:\n{forecasts.columns}")
-    logger.debug(f"Forecasts:\n{forecasts.loc[:,['date', 'code', 'model_long']].head()}")
-    logger.debug(f"Forecasts:\n{forecasts.loc[:,['date', 'code', 'model_long']].tail()}")
+    logger.debug(f"Forecasts:\n{forecasts.loc[:,['date', 'code', 'model_long', 'forecasted_discharge']].head()}")
+    logger.debug(f"Forecasts:\n{forecasts.loc[:,['date', 'code', 'model_long', 'forecasted_discharge']].tail()}")
+    logger.debug(f"Unique models in forecasts:\n{forecasts['model_long'].unique()}")
 
     return forecasts
 
@@ -1061,11 +1068,12 @@ def read_observed_and_modelled_data_pentade():
     #forecasts = pd.concat([linreg, modelA, modelB])
     #stats = pd.concat([stats_linreg, statsA, statsB])
     stats = stats_linreg
+    logger.debug(f"columns of stats concatenated:\n{stats.columns}")
+    logger.debug(f"stats concatenated:\n{stats.head()}\n{stats.tail()}")
+
     logger.info(f"Concatenated forecast results from all methods for the pentadal forecast horizon.")
 
     forecasts = calculate_ensemble_forecast(forecasts)
-
-    exit()
 
     # Merge the general runoff statistics to the observed DataFrame
     observed = pd.merge(observed, stats, on=["date", "code"], how="left")

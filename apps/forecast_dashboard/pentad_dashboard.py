@@ -105,7 +105,16 @@ logger.addHandler(console_handler)
 # region load_configuration
 
 # Set primary color to be consistent with the icon color
-pn.extension(global_css=[':root { --design-primary-color: #307096; }'])
+pn.extension(global_css=[
+    ':root { --design-primary-color: #307096; }',
+    """
+    .checkbox-label {
+        white-space: normal !important;
+        word-wrap: break-word !important;
+        width: 100%; /* Adjust as needed */
+    }
+    """
+    ])
 
 # Get path to .env file from the environment variable
 env_file_path = os.getenv("ieasyhydroforecast_env_file_path")
@@ -177,6 +186,15 @@ forecasts_all = forecasts_all.merge(
     forecast_stats,
     on=['code', 'pentad_in_year', 'model_short', 'model_long'],
     how='left')
+print(f"DEBUG: pentad_dashboard.py: forecasts_all: columns of forecasts_all:\n{forecasts_all.columns}")
+print(f"DEBUG: pentad_dashboard.py: forecasts_all: Models in forecasts_all:\n{forecasts_all['model_long'].unique()}")
+print(f"DEBUG: pentad_dashboard.py: forecasts_all: Tail of forecasts_all:\n{forecasts_all[['code', 'date', 'pentad_in_month', 'pentad_in_year']].tail()}")
+
+print(f"DEBUG: pentad_dashboard.py: linreg_predictor: columns of linreg_predictor:\n{linreg_predictor.columns}")
+print(f"DEBUG: pentad_dashboard.py: linreg_predictor: Tail of linreg_predictor:\n{linreg_predictor[['code', 'date', 'pentad_in_year']].tail()}")
+
+print(f"DEBUG: pentad_dashboard.py: linreg_datatable: columns of linreg_datatable:\n{linreg_datatable.columns}")
+print(f"DEBUG: pentad_dashboard.py: linreg_datatable: Tail of linreg_datatable:\n{linreg_datatable[['code', 'pentad_in_year']].tail()}")
 
 # Create a list of Site objects from the all_stations DataFrame
 sites_list = Site.get_site_attributes_from_stations_dataframe(all_stations)
@@ -241,6 +259,7 @@ pentad_selector = pn.widgets.Select(
 )
 
 # Widget for station selection, always visible
+# TODO group stations by river basins
 station = pn.widgets.Select(
     name=_("Select discharge station:"),
     options=station_list,
@@ -249,12 +268,16 @@ station = pn.widgets.Select(
 
 
 # Widget for forecast model selection, only visible in forecast tab
+# TODO update allowable selection in checkbox with actually available models for
+# a given hydropost/station.
 model_checkbox = pn.widgets.CheckBoxGroup(
     name=_("Select forecast model:"),
     options=model_dict,
-    value=[model_dict['Forecast models Linear regression (LR)']],
-    width=280,
-    margin=(0, 0, 0, 0)
+    value=[model_dict['Linear regression (LR)']],
+    width=200,  # 280
+    margin=(0, 0, 0, 0),
+    sizing_mode='stretch_width',
+    css_classes=['checkbox-label']
 )
 allowable_range_selection = pn.widgets.Select(
     name=_("Select forecast range for display:"),
@@ -358,6 +381,8 @@ forecast_data_and_plot = pn.panel(
     ),
     sizing_mode='stretch_both'
 )
+# TODO add slider to show or hide the ranges of the historical values and of the
+# forecasts.
 pentad_forecast_plot = pn.panel(
     pn.bind(
         viz.plot_pentad_forecast_hydrograph_data,

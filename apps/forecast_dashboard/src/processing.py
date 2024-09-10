@@ -232,7 +232,7 @@ def read_forecast_results_file():
     # Print all values where column code is 15102. Sort the values by Date in ascending order.
     # Print the last 20 values.
     forecast_pentad = forecast_pentad.drop_duplicates(subset=['Date', 'code', 'model_short'], keep='last').sort_values('Date')
-    # Get the pentad of the year.
+    # Get the pentad of the year. Refers to the pentad the forecast is produced for.
     forecast_pentad = tl.add_pentad_in_year_column(forecast_pentad)
     # Cast pentad column no number
     forecast_pentad['pentad'] = forecast_pentad['pentad'].astype(int)
@@ -385,8 +385,8 @@ def internationalize_forecast_model_names(_, forecasts_all,
     Returns:
         pd.DataFrame: The forecast results DataFrame with translated model names.
     """
-    forecasts_all[model_long_col] = forecasts_all[model_long_col].apply(lambda x: _('Forecast models ' + x))
-    forecasts_all[model_short_col] = forecasts_all[model_short_col].apply(lambda x: _('Forecast models ' + x))
+    forecasts_all[model_long_col] = forecasts_all[model_long_col].apply(lambda x: _(x))
+    forecasts_all[model_short_col] = forecasts_all[model_short_col].apply(lambda x: _(x))
     #print("Inernationalized forecast model names:\n", forecasts_all[model_long_col].unique())
     #print(forecasts_all[model_short_col].unique())
 
