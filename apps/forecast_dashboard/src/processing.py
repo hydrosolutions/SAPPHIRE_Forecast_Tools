@@ -581,6 +581,16 @@ def calculate_forecast_range(_, forecast_table, range_type, range_slider):
 
     return forecast_table
 
+def update_model_dict(model_dict, forecasts_all, selected_station):
+    """
+    Update the model_dict with the models we have results for for the selected station
+    """
+    test = forecasts_all[forecasts_all['station_labels'] == selected_station]
+    print("DEBUG: update_model_dict: unique models for selected station:\n", test['model_long'].unique())
+
+    model_dict = forecasts_all[forecasts_all['station_labels'] == selected_station] \
+        .set_index('model_long')['model_short'].to_dict()
+    return model_dict
 
 
 

@@ -194,19 +194,20 @@ print(f"DEBUG: pentad_dashboard.py: forecasts_all: columns of forecasts_all:\n{f
 print(f"DEBUG: pentad_dashboard.py: forecasts_all: Models in forecasts_all:\n{forecasts_all['model_long'].unique()}")
 print(f"DEBUG: pentad_dashboard.py: forecasts_all: Tail of forecasts_all:\n{forecasts_all[['code', 'date', 'pentad_in_month', 'pentad_in_year']].tail()}")
 
-print(f"DEBUG: pentad_dashboard.py: linreg_predictor: columns of linreg_predictor:\n{linreg_predictor.columns}")
-print(f"DEBUG: pentad_dashboard.py: linreg_predictor: Tail of linreg_predictor:\n{linreg_predictor[['code', 'date', 'pentad_in_year']].tail()}")
+#print(f"DEBUG: pentad_dashboard.py: linreg_predictor: columns of linreg_predictor:\n{linreg_predictor.columns}")
+#print(f"DEBUG: pentad_dashboard.py: linreg_predictor: Tail of linreg_predictor:\n{linreg_predictor[['code', 'date', 'pentad_in_year']].tail()}")
 
-print(f"DEBUG: pentad_dashboard.py: linreg_datatable: columns of linreg_datatable:\n{linreg_datatable.columns}")
-print(f"DEBUG: pentad_dashboard.py: linreg_datatable: Tail of linreg_datatable:\n{linreg_datatable[['code', 'pentad_in_year']].tail()}")
+#print(f"DEBUG: pentad_dashboard.py: linreg_datatable: columns of linreg_datatable:\n{linreg_datatable.columns}")
+#print(f"DEBUG: pentad_dashboard.py: linreg_datatable: Tail of linreg_datatable:\n{linreg_datatable[['code', 'pentad_in_year']].tail()}")
 
 # Create a list of Site objects from the all_stations DataFrame
 sites_list = Site.get_site_attributes_from_stations_dataframe(all_stations)
 
 
 # Create a dictionary of the model names and the corresponding model labels
-model_dict = forecasts_all[['model_short', 'model_long']] \
+model_dict_all = forecasts_all[['model_short', 'model_long']] \
     .set_index('model_long')['model_short'].to_dict()
+print(f"DEBUG: pentad_dashboard.py: model_dict_all: {model_dict_all}")
 
 
 pentads = [
@@ -263,7 +264,6 @@ pentad_selector = pn.widgets.Select(
 )
 
 # Widget for station selection, always visible
-# TODO group stations by river basins
 station = pn.widgets.Select(
     name=_("Select discharge station:"),
     groups=station_dict,
@@ -272,10 +272,13 @@ station = pn.widgets.Select(
 # Print the station widget selection
 print(f"DEBUG: pentad_dashboard.py: Station widget selection: {station.value}")
 
+# Update the model_dict with the models we have results for for the selected
+# station
+model_dict = processing.update_model_dict(model_dict_all, forecasts_all, station.value)
+print(f"DEBUG: pentad_dashboard.py: model_dict: {model_dict}")
 
 
 # Widget for forecast model selection, only visible in forecast tab
-# TODO update allowable selection in checkbox with actually available models for
 # a given hydropost/station.
 model_checkbox = pn.widgets.CheckBoxGroup(
     name=_("Select forecast model:"),
@@ -359,6 +362,20 @@ def update_indicator(event):
     if not event:
         return
     indicator.value = not indicator.value
+
+# Update the model select widget based on the selected station
+def update_model_select(station_value):
+    # Update the model_dict with the models we have results for for the selected
+    # station
+    print(f"DEBUG: pentad_dashboard.py: update_model_select: station_value: {station_value}")
+    model_dict = processing.update_model_dict(model_dict_all, forecasts_all, station_value)
+    model_checkbox.options = model_dict
+    return model_dict
+
+
+# Bind the update function to the station selector
+pn.bind(update_model_select, station, watch=True)
+
 
 
 # endregion
