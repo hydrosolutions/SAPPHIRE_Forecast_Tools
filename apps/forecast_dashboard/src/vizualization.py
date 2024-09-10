@@ -693,7 +693,7 @@ def plot_daily_hydrograph_data(_, hydrograph_day_all, linreg_predictor, station,
 # region forecast_tab
 def plot_pentad_forecast_hydrograph_data(_, hydrograph_pentad_all, forecasts_all,
                                          station, title_date, model_selection,
-                                         range_type, range_slider):
+                                         range_type, range_slider, range_visibility):
 
     # Date handling
     # Set the title date to the date of the last available data if the forecast date is in the future
@@ -836,11 +836,14 @@ def plot_pentad_forecast_hydrograph_data(_, hydrograph_pentad_all, forecasts_all
         _('forecast model short column name'), runoff_forecast_color_list, _('m³/s'))
 
     # Overlay the plots
-    pentad_hydrograph = full_range_area * lower_bound * upper_bound * \
+    if range_visibility == 'Yes':
+        pentad_hydrograph = full_range_area * lower_bound * upper_bound * \
         area_05_95 * line_05 * line_95 * \
         area_25_75 * line_25 * line_75 * \
         forecast_area * forecast_lower_bound * forecast_upper_bound * \
         mean * current_year * forecast_line
+    else:
+        pentad_hydrograph = mean * current_year * forecast_line
 
     pentad_hydrograph.opts(
         title=title_text,
@@ -915,6 +918,15 @@ def create_forecast_summary_table(_, forecasts_all, station, date_picker,
         theme='bootstrap',
         show_index=False,
         selectable='checkbox')
+
+    # Callback function to enforce single row selection
+    def enforce_single_selection(event):
+        selected_rows = norm_stats_table.selection
+        if len(selected_rows) > 1:
+            norm_stats_table.selection = [selected_rows[-1]]  # Keep only the last selected row
+
+    # Attach the callback to the selection parameter
+    norm_stats_table.param.watch(enforce_single_selection, 'selection')
 
     return norm_stats_table
 

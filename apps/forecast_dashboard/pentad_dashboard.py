@@ -305,6 +305,12 @@ manual_range = pn.widgets.IntSlider(
 )
 manual_range.visible = False
 
+show_range_button = pn.widgets.RadioButtonGroup(
+    name=_("Show ranges in figure:"),
+    options=[_("Yes"), _("No")],
+    value=_("No")
+)
+
 selected_indices = pn.widgets.CheckBoxGroup(
     name=_("Select Data Points:"),
     options={str(i): i for i in range(len(linreg_datatable))},
@@ -327,14 +333,18 @@ indicator = pn.indicators.LoadingSpinner(value=False, size=25)
 # Forecast card for sidepanel
 forecast_model_title = pn.pane.Markdown(
     _("Select forecast model:"), margin=(0, 0, -15, 0))  # martin=(top, right, bottom, left)
+range_selection_title = pn.pane.Markdown(
+    _("Show ranges in figure:"), margin=(0, 0, -15, 0))
 forecast_card = pn.Card(
     pn.Column(
         forecast_model_title,
         model_checkbox,
         allowable_range_selection,
-        manual_range
+        manual_range,
+        range_selection_title,
+        show_range_button
     ),
-    title=_('Configure forecasts:'),
+    title=_('Select forecasts:'),
     width_policy='fit', width=station.width,
     collapsed=False
 )
@@ -405,13 +415,12 @@ forecast_data_and_plot = pn.panel(
     ),
     sizing_mode='stretch_both'
 )
-# TODO add slider to show or hide the ranges of the historical values and of the
-# forecasts.
 pentad_forecast_plot = pn.panel(
     pn.bind(
         viz.plot_pentad_forecast_hydrograph_data,
         _, hydrograph_pentad_all, forecasts_all, station, date_picker,
-        model_checkbox, allowable_range_selection, manual_range
+        model_checkbox, allowable_range_selection, manual_range,
+        show_range_button
         ),
     sizing_mode='stretch_both'
     )

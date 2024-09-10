@@ -823,8 +823,8 @@ def read_conceptual_model_forecast_pentad(filepath):
     forecast = read_daily_probabilistic_conceptmod_forecasts_pentad(
         filepath,
         code=code,
-        model_long="Rainfall runoff assimilation model (RRM)",
-        model_short="RRM"
+        model_long="Rainfall runoff assimilation model (RRAM)",
+        model_short="RRAM"
     )
 
     logger.debug(f"Type of forecast: {type(forecast)}")
