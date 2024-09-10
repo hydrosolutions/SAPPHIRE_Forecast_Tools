@@ -426,12 +426,13 @@ pentad_forecast_plot = pn.panel(
     )
 forecast_summary_table = pn.panel(
     pn.bind(
-        viz.create_forecast_summary_table,
+        viz.create_forecast_summary_tabulator,
         _, forecasts_all, station, date_picker, model_checkbox,
         allowable_range_selection, manual_range
         ),
     sizing_mode='stretch_width'
     )
+string = pn.widgets.StaticText()
 
 bulletin_table = pn.panel(
     pn.bind(
@@ -442,6 +443,9 @@ bulletin_table = pn.panel(
     sizing_mode='stretch_width'
 )
 # Dynamically update sidepanel
+
+# Bind the forecast summary table to the string output for bulletin tab
+pn.bind(bulletin_table, forecast_summary_table, watch=True)
 
 # Bind the update function to the button
 pn.bind(update_indicator, write_bulletin_button, watch=True)
@@ -516,6 +520,7 @@ if no_date_overlap_flag == False:
                      title=_('Summary table'),
                      sizing_mode='stretch_width'
                  ),
+                 pn.Card(string, title=_('Click event')),
                  pn.Card(
                      daily_hydrograph_plot,
                      title=_('Analysis of the forecast'))

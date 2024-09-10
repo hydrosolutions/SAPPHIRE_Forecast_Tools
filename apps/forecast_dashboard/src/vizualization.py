@@ -911,13 +911,35 @@ def create_forecast_summary_table(_, forecasts_all, station, date_picker,
         'model_short': _('Model')
         })
 
+    # Order the rows in alphabetical order (column Model)
+    final_forecast_table = forecast_table.sort_values(by=[_('Model')]) \
+        .copy().reset_index(drop=True)
+
+    return final_forecast_table
+
+def create_forecast_summary_tabulator(_, forecasts_all, station, date_picker,
+                                  model_selection, range_type, range_slider):
+    '''Put table data into a Tabulator widget'''
+
+    final_forecast_table = create_forecast_summary_table(_, forecasts_all, station, date_picker,
+                                    model_selection, range_type, range_slider).reset_index(drop=True)
+
+    # Get the row with the maximum accuracy. If the table has 2 rows, the
+    # index is either 0 or 1. If the table has 1 row, the index is 0.
+    # If two rows have the same accuracy, the first row is selected.
+    max_accuracy_index = final_forecast_table[_('Accuracy')].idxmax()
+    print("max_accuracy_index\n", max_accuracy_index)
+
     norm_stats_table = pn.widgets.Tabulator(
-        value=forecast_table,
+        value=final_forecast_table,
         #formatters={'Pentad': "{:,}"},
         #editors={_('δ'): None},  # Disable editing of the δ column
         theme='bootstrap',
         show_index=False,
-        selectable='checkbox')
+        selection=[max_accuracy_index],
+        selectable='checkbox',
+        #buttons={_('To bulletin'): "<i class='fa fa-check'></i>"},
+        )
 
     # Callback function to enforce single row selection
     def enforce_single_selection(event):
