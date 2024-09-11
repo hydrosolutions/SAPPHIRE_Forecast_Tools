@@ -164,21 +164,25 @@ station_list, all_stations, station_df, station_dict = processing.read_all_stati
     hydrograph_day_all['code'].unique().tolist())
 if not station_list:
     raise ValueError("The station list is empty. Please check the data source and ensure it contains valid stations.")
-print("DEBUG: pentad_dashboard.py: Station list:\n", station_list)
+#print("DEBUG: pentad_dashboard.py: Station list:\n", station_list)
 #print("DEBUG: pentad_dashboard.py: All stations: \n", all_stations)
 #logger.debug(f"DEBUG: pentad_dashboard.py: Station list:\n{station_list}")
 #print(f"DEBUG: columns of all_stations:\n{all_stations.columns}")
 #logger.debug(f"DEBUG: pentad_dashboard.py: All stations:\n{all_stations}")
-print(f"DEBUG: pentad_dashboard.py: Station dataframe:\n{station_df}")
-print(f"DEBUG: pentad_dashboard.py: Station dictionary:\n{station_dict}")
-print(f"DEBUG: First dictionary entry: {next(iter(station_dict))}")
-print(f"DEBUG: First station: {station_dict[next(iter(station_dict))][0]}")
+#print(f"DEBUG: pentad_dashboard.py: Station dataframe:\n{station_df}")
+#print(f"DEBUG: pentad_dashboard.py: Station dictionary:\n{station_dict}")
+#print(f"DEBUG: First dictionary entry: {next(iter(station_dict))}")
+#print(f"DEBUG: First station: {station_dict[next(iter(station_dict))][0]}")
 
 # Add the station_labels column to the hydrograph_day_all DataFrame
 hydrograph_day_all = processing.add_labels_to_hydrograph(hydrograph_day_all, all_stations)
 hydrograph_pentad_all = processing.add_labels_to_hydrograph(hydrograph_pentad_all, all_stations)
+#print(f"DEBUG: linreg_predictor raw: {linreg_predictor.tail()}")
 linreg_predictor = processing.add_labels_to_forecast_pentad_df(linreg_predictor, all_stations)
+#print(f"DEBUG: linreg_predictor with labels: {linreg_predictor.tail()}")
 linreg_datatable = processing.shift_date_by_n_days(linreg_predictor, 1)
+#print(f"DEBUG: linreg_datatable: {linreg_datatable.tail()}")
+#print(f"DEBUG: linreg_predictor: {linreg_predictor.tail()}")
 forecasts_all = processing.add_labels_to_forecast_pentad_df(forecasts_all, all_stations)
 
 # Replace model names with translation strings
@@ -191,8 +195,8 @@ forecasts_all = forecasts_all.merge(
     on=['code', 'pentad_in_year', 'model_short', 'model_long'],
     how='left')
 print(f"DEBUG: pentad_dashboard.py: forecasts_all: columns of forecasts_all:\n{forecasts_all.columns}")
-print(f"DEBUG: pentad_dashboard.py: forecasts_all: Models in forecasts_all:\n{forecasts_all['model_long'].unique()}")
-print(f"DEBUG: pentad_dashboard.py: forecasts_all: Tail of forecasts_all:\n{forecasts_all[['code', 'date', 'pentad_in_month', 'pentad_in_year']].tail()}")
+#print(f"DEBUG: pentad_dashboard.py: forecasts_all: Models in forecasts_all:\n{forecasts_all['model_long'].unique()}")
+print(f"DEBUG: pentad_dashboard.py: forecasts_all: Tail of forecasts_all:\n{forecasts_all[['code', 'date', 'Q25', 'Q75', 'pentad_in_month', 'pentad_in_year']].tail()}")
 
 #print(f"DEBUG: pentad_dashboard.py: linreg_predictor: columns of linreg_predictor:\n{linreg_predictor.columns}")
 #print(f"DEBUG: pentad_dashboard.py: linreg_predictor: Tail of linreg_predictor:\n{linreg_predictor[['code', 'date', 'pentad_in_year']].tail()}")
@@ -233,12 +237,11 @@ pentad_options = {f"{i+1}st pentad of {calendar.month_name[month]}" if i == 0 el
 # region widgets
 
 # Widget for date selection, always visible
-forecast_date = linreg_predictor['date'].max().date()
+forecast_date = linreg_predictor['date'].max().date()  # Dates here refer to the forecast issue day, i.e. 1 day before the first day of the forecast pentad.
 date_picker = pn.widgets.DatePicker(name=_("Select date:"),
                                     start=dt.datetime((forecast_date.year-1), 1, 5).date(),
                                     end=forecast_date,
                                     value=forecast_date)
-
 
 
 # Get the last available date in the data

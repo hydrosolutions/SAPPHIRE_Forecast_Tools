@@ -1463,6 +1463,10 @@ def calculate_skill_metrics_pentad(observed: pd.DataFrame, simulated: pd.DataFra
     else:
         logger.debug("No tuples found in skill_stats.")
 
+    # Print dimensions of skill_metrics_df and skill_stats
+    logger.debug(f"\n\nDEBUG: skill_metrics_df.shape: {skill_metrics_df.shape}")
+    logger.debug(f"DEBUG: skill_stats.shape: {skill_stats.shape}\n\n")
+
     mae_stats = skill_metrics_df. \
         groupby(['pentad_in_year', 'code', 'model_long', 'model_short']). \
         apply(
@@ -1769,6 +1773,7 @@ def write_linreg_pentad_forecast_data(data: pd.DataFrame):
     # Get the year of the majority of the last_line dates
     year = last_line['date'].dt.year.mode()[0]
     logger.debug(f'mode of year: {year}')
+    print(f"\n\nmode of year: {year}\n\n")
 
     # If the year of one date of last_year is not equal to the majority year,
     # set the year of the date to the majority year, set predictor to NaN,
@@ -2268,7 +2273,10 @@ def save_forecast_data_pentad(simulated: pd.DataFrame):
         os.getenv("ieasyforecast_combined_forecast_pentad_file"))
 
     # Only keep relevant columns
-    simulated = simulated[['code', 'date', 'pentad_in_month', 'pentad_in_year', 'forecasted_discharge', 'model_long', 'model_short']]
+    #simulated = simulated[['code', 'date', 'pentad_in_month', 'pentad_in_year', 'forecasted_discharge', 'model_long', 'model_short']]
+
+    # Round all float values to 3 decimal places
+    simulated = simulated.round(3)
 
     # write the data to csv
     ret = simulated.to_csv(filename, index=False)

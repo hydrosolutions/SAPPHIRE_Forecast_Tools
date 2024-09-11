@@ -213,3 +213,4 @@ apps/conceptual_model/Rplots.pdf
 apps/forecast_dashboard/logs/*
 apps/backend/tests/testspecial_*.ipynb
 
+apps/forecast_dashboard/saved_data/16059_2_pentad_of_September.csv

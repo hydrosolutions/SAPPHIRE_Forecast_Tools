@@ -176,7 +176,7 @@ def read_linreg_forecast_data():
 
     return linreg_forecast
 
-def shift_date_by_n_days(linreg_predictor, n=1):
+def shift_date_by_n_days(linreg_predictor_orig, n=1):
     """
     Shift the date column of the linreg_predictor DataFrame by n days.
 
@@ -187,6 +187,8 @@ def shift_date_by_n_days(linreg_predictor, n=1):
     Returns:
         pd.DataFrame: The linreg_predictor DataFrame with the shifted date column.
     """
+    # Make a copy of the input data frame in order not to change linreg_predictor
+    linreg_predictor = linreg_predictor_orig.copy()
     linreg_predictor['date'] = linreg_predictor['date'] + pd.Timedelta(days=n)
 
     # If there is a column pentad_in_yer in the DataFrame, we need to update it as well
@@ -299,6 +301,7 @@ def add_predictor_dates(linreg_predictor, station, date):
     Returns:
         pd.Series: The predictor data for the station.
     """
+    print(f"\n\nDEBUG: add_predictor_dates: station: {station}, date: {date}")
     # Filter the predictor data for the hydropost
     predictor = linreg_predictor[linreg_predictor['station_labels'] == station]
 
@@ -318,6 +321,8 @@ def add_predictor_dates(linreg_predictor, station, date):
     predictor['predictor_start_date'] = predictor['date'] - pd.DateOffset(days=2)
     predictor['forecast_start_date'] = predictor['date'] + pd.DateOffset(days=1)
     predictor['forecast_end_date'] = predictor['date'] + pd.DateOffset(days=5)
+
+    print(f"DEBUG: add_predictor_dates: predictor:\n{predictor}")
 
     # Round the predictor according to common rules
     predictor['predictor'] = fl.round_discharge_to_float(predictor['predictor'].values[0])
@@ -347,6 +352,8 @@ def add_predictor_dates(linreg_predictor, station, date):
 
     #if isinstance(predictor, pd.Series):
     #    predictor = predictor.to_frame()
+
+    print(f"\n\n")
 
     return predictor
 
