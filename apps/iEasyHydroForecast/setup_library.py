@@ -1034,6 +1034,127 @@ def calculate_ensemble_forecast(forecasts):
 
     return forecasts
 
+# region Dealing with virtual stations
+def add_hydroposts(combined_data, check_hydroposts):
+    """
+    Check if the virtual hydroposts are in the combined_data and add them if not.
+
+    This function checks if the virtual hydroposts are in the combined_data and
+    adds them if they are not.
+
+    Args:
+    combined_data (pd.DataFrame): The input DataFrame. Must contain 'code' column.
+    check_hydroposts (list): A list of the virtual hydroposts to check for.
+
+    Returns:
+    pd.DataFrame: The input DataFrame with the virtual hydroposts added.
+
+    """
+    # Get the earliest date for which we have data in the combined_data
+    earliest_date = combined_data['date'].min()
+
+    # Check if the virtual hydroposts are in the combined_data
+    for hydropost in check_hydroposts:
+        if hydropost not in combined_data['code'].values:
+            logger.debug(f"Virtual hydropost {hydropost} is not in the list of stations.")
+            # Add the virtual hydropost to the combined_data
+            new_row = pd.DataFrame({
+                'code': [hydropost],
+                'date': [earliest_date],
+                'discharge': [np.nan],
+                'name': [f'Virtual hydropost {hydropost}']
+            })
+            combined_data = pd.concat([combined_data, new_row], ignore_index=True)
+
+    return combined_data
+
+def calculate_virtual_stations_data(data_df: pd.DataFrame,
+                                    code_col='code', discharge_col='forecasted_discharge',
+                                    date_col='date', model_col='model_short'):
+    """
+
+    """
+    # Get configuration for virtual stations
+    with open(os.path.join(os.getenv('ieasyforecast_configuration_path'),
+                           os.getenv('ieasyforecast_virtual_stations')), 'r') as f:
+        json_data = json.load(f)
+        virtual_stations = json_data['virtualStations'].keys()
+        instructions = json_data['virtualStations']
+
+    # Add the virtual stations to the data if they are not already there
+    data_df = add_hydroposts(data_df, virtual_stations)
+
+    # Iterate over the station IDs
+    for station in virtual_stations:
+        # Get the instructions for the station
+        instruction = instructions[station]
+        #print(instruction)
+        weigth_by_station = instruction['weightByStation']
+        #print(weigth_by_station)
+
+        # Currently, we only implement the combination function 'sum'. Throw an error if the function is not 'sum'
+        if instruction['combinationFunction'] != 'sum':
+            logger.error(f"Combination function for station {station} is not 'sum'.")
+            logger.error(f"Please implement the combination function '{instruction['combinationFunction']}' for station {station}.")
+            exit()
+
+        # Get the data for the stations that contribute to the virtual station and multiply them with the weight
+        for contributing_station, weight in weigth_by_station.items():
+            # Make sure the contributing station is not equal to the virtual station
+            if contributing_station == station:
+                logger.error(f"Virtual station {station} cannot contribute to itself.")
+                exit()
+
+            #print(contributing_station, weight)
+            # Get the data for the contributing station
+            data_contributing_station = data_df[data_df[code_col] == contributing_station].copy()
+
+            # Multiply the discharge data with the weight
+            data_contributing_station[discharge_col] = data_contributing_station[discharge_col] * weight
+
+            # Add the data to the virtual station if data_virtual_station exists
+            if 'data_virtual_station' not in locals():
+                data_virtual_station = data_contributing_station
+                # Change code to the code of the virtual station
+                data_virtual_station[code_col] = station
+                # Change the name to the name of the virtual station
+                data_virtual_station['name'] = f'Virtual hydropost {station}'
+            else:
+                # Merge the data for the contributing station with the data_virtual_station
+                data_virtual_station = pd.merge(data_virtual_station, data_contributing_station, on=date_col, how='outer', suffixes=('', '_y'))
+                # Add discharge_y to discharge and discard all _y columns
+                data_virtual_station[discharge_col] = data_virtual_station[discharge_col] + data_virtual_station[discharge_col + '_y']
+                data_virtual_station.drop(columns=[col for col in data_virtual_station.columns if '_y' in col], inplace=True)
+
+            #print("data_virtual_station.tail(10)\n", data_virtual_station.tail(10))
+
+        # Get the number of models in the data_df
+        models = data_df[model_col].unique()
+
+        # Check if we already have data for the virtual station in the data_df
+        # dataframe and fill gaps with data_virtual_station
+        if station in data_df[code_col].values:
+
+            for model in models:
+                # Get the data for the virtual station
+                data_station = data_df[(data_df[code_col] == station) & (data_df[model_col] == model)].copy()
+
+                # Get the latest date for which we have data in the data_df for the virtual station
+                last_date_station = data_station[date_col].max()
+
+                # Get the data for the date from the other stations
+                data_virtual_station = data_virtual_station[data_virtual_station[date_col] >= last_date_station].copy()
+
+                # Merge the data for the virtual station with the data_df
+                data_df = pd.concat([data_df, data_virtual_station], ignore_index=True)
+
+        # Delete data_virtual_station
+        del data_virtual_station
+
+    return data_df
+
+# endregion
+
 def read_observed_and_modelled_data_pentade():
     """
     Reads results from all forecast methods into a dataframe.
@@ -1065,12 +1186,12 @@ def read_observed_and_modelled_data_pentade():
     logger.debug(f"columns of forecasts concatenated:\n{forecasts.columns}")
     logger.debug(f"forecasts concatenated:\n{forecasts.loc[:, ['date', 'code', 'model_long']].head()}\n{forecasts.loc[:, ['date', 'code', 'model_long']].tail()}")
 
-    #forecasts = pd.concat([linreg, modelA, modelB])
-    #stats = pd.concat([stats_linreg, statsA, statsB])
+    # Calculate virtual stations forecasts if needed
+    forecasts = calculate_virtual_stations_data(forecasts)
+
     stats = stats_linreg
     logger.debug(f"columns of stats concatenated:\n{stats.columns}")
     logger.debug(f"stats concatenated:\n{stats.head()}\n{stats.tail()}")
-
     logger.info(f"Concatenated forecast results from all methods for the pentadal forecast horizon.")
 
     forecasts = calculate_ensemble_forecast(forecasts)
