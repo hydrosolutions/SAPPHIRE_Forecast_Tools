@@ -367,9 +367,9 @@ def main():
     else:
         logger.debug('Prediction mode: %s', HINDCAST_MODE)
         if HINDCAST_MODE == 'PENTAD':
-            forecast_horizon = 5
+            forecast_horizon = 6
         else:
-            forecast_horizon = 10
+            forecast_horizon = 11
     # --------------------------------------------------------------------
     # INITIALIZE THE ENVIRONMENT
     # --------------------------------------------------------------------
