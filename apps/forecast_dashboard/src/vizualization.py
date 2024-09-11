@@ -917,6 +917,7 @@ def create_forecast_summary_table(_, forecasts_all, station, date_picker,
 
     return final_forecast_table
 
+
 def create_forecast_summary_tabulator(_, forecasts_all, station, date_picker,
                                   model_selection, range_type, range_slider):
     '''Put table data into a Tabulator widget'''

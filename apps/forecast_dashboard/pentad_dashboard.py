@@ -426,28 +426,53 @@ pentad_forecast_plot = pn.panel(
         ),
     sizing_mode='stretch_both'
     )
-forecast_summary_table = pn.panel(
+
+# TODO Implement, write to site object and display bulletin in bulletin tab
+forecast_tabulator = viz.create_forecast_summary_tabulator(
+    _, forecasts_all, station.value, date_picker.value, model_checkbox.value,
+    allowable_range_selection.value, manual_range.value
+)
+print(f"DEBUG: pentad_dashboard.py: forecast_tabulator: {forecast_tabulator}")
+print(f"DEBUG: type of forecast_tabulator: {type(forecast_tabulator)}")
+
+bulletin_table = pn.panel(
     pn.bind(
         viz.create_forecast_summary_tabulator,
         _, forecasts_all, station, date_picker, model_checkbox,
         allowable_range_selection, manual_range
         ),
     sizing_mode='stretch_width'
-    )
-string = pn.widgets.StaticText()
-
-bulletin_table = pn.panel(
-    pn.bind(
-        viz.create_forecast_summary_table,
-        _, forecasts_all, station, date_picker, model_checkbox,
-        allowable_range_selection, manual_range
-        ),
-    sizing_mode='stretch_width'
 )
-# Dynamically update sidepanel
 
-# Bind the forecast summary table to the string output for bulletin tab
-pn.bind(bulletin_table, forecast_summary_table, watch=True)
+# Bind the forecast summary table to the bulletin table
+forecast_summary_tabulator = pn.bind(
+    viz.create_forecast_summary_tabulator,
+    _, forecasts_all, station, date_picker, model_checkbox,
+    allowable_range_selection, manual_range
+    )
+forecast_summary_table = pn.panel(
+    forecast_summary_tabulator,
+    #pn.bind(
+    #    viz.create_forecast_summary_tabulator,
+    #    _, forecasts_all, station, date_picker, model_checkbox,
+    #    allowable_range_selection, manual_range
+    #    ),
+    sizing_mode='stretch_width'
+    )
+
+# Update the site object based on site and forecast selection
+print(f"DEBUG: pentad_dashboard.py: forecast_tabulator: {forecast_summary_tabulator}")
+update_site_object = pn.bind(
+    Site.get_site_attributes_from_selected_forecast,
+    _=_,
+    sites=sites_list,
+    site_selection=station,
+    tabulator=forecast_summary_tabulator)
+
+# Watch for changes in the site selector and in the forecast tabulator
+station.param.watch(update_site_object, 'value')
+forecast_tabulator.param.watch(forecast_summary_table, 'selection')
+forecast_tabulator.param.watch(update_site_object, 'selection')
 
 # Bind the update function to the button
 pn.bind(update_indicator, write_bulletin_button, watch=True)
@@ -522,7 +547,6 @@ if no_date_overlap_flag == False:
                      title=_('Summary table'),
                      sizing_mode='stretch_width'
                  ),
-                 pn.Card(string, title=_('Click event')),
                  pn.Card(
                      daily_hydrograph_plot,
                      title=_('Analysis of the forecast'))
