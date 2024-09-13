@@ -6,7 +6,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-def load_configuration():
+def load_configuration(env_file_path: str=None) -> None:
     """
     Loads the application configuration from an .env file.
 
@@ -34,36 +34,41 @@ def load_configuration():
     in_docker_flag = str(os.getenv("IN_DOCKER_CONTAINER"))
     logger.debug("Current working directory: %s", os.getcwd())
     print("Current working directory: ", os.getcwd(), flush=True)
-    if in_docker_flag == "True":
-        if os.getenv("SAPPHIRE_OPDEV_ENV") == "True":
-            logger.debug("Running in Docker container with SAPPHIRE_OPDEV_ENV")
-            print("Running in Docker container with SAPPHIRE_OPDEV_ENV", flush=True)
-            path_to_env_file = "/sensitive_data_forecast_tools/config/.env_develop_kghm"
-            logger.debug("Path to .env file: %s", path_to_env_file)
-            print("Path to .env file: ", path_to_env_file, flush=True)
-        else:
-            logger.debug("Running in Docker container with default environment")
-            print("Running in Docker container with default environment", flush=True)
-            path_to_env_file = "apps/config/.env"
+    # Test if env_file_path is set
+    if env_file_path is not None:
+        path_to_env_file = env_file_path
+        logger.debug("Using custom .env file: %s", path_to_env_file)
+        print("Using custom .env file: ", path_to_env_file, flush=True)
     else:
-        if os.getenv("SAPPHIRE_TEST_ENV") == "True":
-            logger.debug("Running locally in test environment")
-            print("Running locally in test environment", flush=True)
-            path_to_env_file = "backend/tests/test_files/.env_develop_test"
-        elif os.getenv("SAPPHIRE_OPDEV_ENV") == "True":
-            logger.debug("Running locally in opdev environment")
-            print("Running locally in opdev environment", flush=True)
-            path_to_env_file = "../../../sensitive_data_forecast_tools/config/.env_develop_kghm"
+        if in_docker_flag == "True":
+            if os.getenv("SAPPHIRE_OPDEV_ENV") == "True":
+                logger.debug("Running in Docker container with SAPPHIRE_OPDEV_ENV")
+                print("Running in Docker container with SAPPHIRE_OPDEV_ENV", flush=True)
+                path_to_env_file = "/sensitive_data_forecast_tools/config/.env_develop_kghm"
+                logger.debug("Path to .env file: %s", path_to_env_file)
+                print("Path to .env file: ", path_to_env_file, flush=True)
+            else:
+                logger.debug("Running in Docker container with default environment")
+                print("Running in Docker container with default environment", flush=True)
+                path_to_env_file = "apps/config/.env"
         else:
-            # Test if the default .env file exists
-            path_to_env_file = "../config/.env_develop"
-            if not os.path.isfile(path_to_env_file):
-                raise Exception("File not found: " + path_to_env_file)
-            logger.debug("Running locally with public repository data")
-            print("Running locally with public repository data", flush=True)
-    # The override flag in read_dotenv is set to allow switching between .env
-    # files. Useful when testing different configurations.
-    res = load_dotenv(path_to_env_file, override=True)
+            if os.getenv("SAPPHIRE_TEST_ENV") == "True":
+                logger.debug("Running locally in test environment")
+                print("Running locally in test environment", flush=True)
+                path_to_env_file = "backend/tests/test_files/.env_develop_test"
+            elif os.getenv("SAPPHIRE_OPDEV_ENV") == "True":
+                logger.debug("Running locally in opdev environment")
+                print("Running locally in opdev environment", flush=True)
+                path_to_env_file = "../../../sensitive_data_forecast_tools/config/.env_develop_kghm"
+            else:
+                # Test if the default .env file exists
+                path_to_env_file = "../config/.env_develop"
+                if not os.path.isfile(path_to_env_file):
+                    raise Exception("File not found: " + path_to_env_file)
+                logger.debug("Running locally with public repository data")
+                print("Running locally with public repository data", flush=True)
+
+    res = load_dotenv(path_to_env_file)
     if res is None:
         raise Exception("Could not read .env file: ", path_to_env_file)
         # Print ieasyreports_templates_directory_path from the environment

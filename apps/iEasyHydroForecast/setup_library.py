@@ -266,22 +266,28 @@ def get_pentadal_forecast_sites_complicated_method(ieh_sdk, backend_has_access_t
     # Read station metadata from the DB and store it in a list of Site objects
     logger.debug("-Reading station metadata from the DB ...")
 
-    # Read the station details from API
-    # Only do this if we have access to the database
-    if backend_has_access_to_db:
-        try:
-            db_sites = ieh_sdk.get_discharge_sites()
-        except Exception as e:
-            logger.error(f"Error connecting to DB: {e}")
-            raise e
-        db_sites = pd.DataFrame.from_dict(db_sites)
-
-        logger.debug(f"   {len(db_sites)} station(s) in DB, namely:\n{db_sites['site_code'].values}")
+    # See if we have an environment variable ieasyhydroforecast_connect_to_iEH
+    if os.getenv("ieasyhydroforecast_connect_to_iEH") == "True":
+        # During development, iEH HF is available online. No need to connect to
+        # a server.
+        pass
     else:
-        # If we don't have access to the database, create an empty dataframe.
-        db_sites = pd.DataFrame(
-            columns=['site_code', 'site_name', 'river_name', 'punkt_name',
-                     'latitude', 'longitude', 'region', 'basin'])
+        # Read the station details from API
+        # Only do this if we have access to the database
+        if backend_has_access_to_db:
+            try:
+                db_sites = ieh_sdk.get_discharge_sites()
+            except Exception as e:
+                logger.error(f"Error connecting to DB: {e}")
+                raise e
+            db_sites = pd.DataFrame.from_dict(db_sites)
+
+            logger.debug(f"   {len(db_sites)} station(s) in DB, namely:\n{db_sites['site_code'].values}")
+        else:
+            # If we don't have access to the database, create an empty dataframe.
+            db_sites = pd.DataFrame(
+                columns=['site_code', 'site_name', 'river_name', 'punkt_name',
+                         'latitude', 'longitude', 'region', 'basin'])
 
     # Read station information of all available discharge stations
     logger.debug("-Reading information about all stations from JSON...")
@@ -531,11 +537,28 @@ def get_decadal_forecast_sites_from_pentadal_sites(fc_sites_pentad=None, site_li
     logger.debug(f"   {len(stations)} station(s) selected for decadal forecasting, namely: {stations}")
 
     # Filter fc_sites_pentad for stations
-    logger.debug("-Filtering fc_sites_pentad for stations ...")
+    logger.debug("-Filtering fc_sites_pentad for stations for decadal forecasting ...")
     fc_sites_decad = [site for site in fc_sites_pentad if site.code in stations]
-    logger.debug(f"   Producing forecasts for {len(fc_sites_decad)} station(s), namely\n: {[site.code for site in fc_sites_decad]}")
+    stations_decad = [site.code for site in fc_sites_decad]
+    logger.debug(f"   Producing decadal forecasts for {len(fc_sites_decad)} station(s), namely\n: {[site.code for site in fc_sites_decad]}")
 
-    return fc_sites_decad, stations
+    return fc_sites_decad, stations_decad
+
+def get_pentadal_forecast_sites_from_HF_SDK(ieh_sdk):
+    """
+    Gets site attributes from iEH HF and writes them to list of site objects.
+    """
+    # Get the list of discharge sites from the iEH HF SDK
+    discharge_sites = ieh_sdk.get_discharge_sites()
+    print(f" {len(discharge_sites)} discharge site(s) found in iEH HF SDK, namely:\n{[site['site_code'] for site in discharge_sites]}")
+    # Get the list of Site objects for pentadal forecasting
+    fc_sites = fl.Site.from_iEH_HF_SDK(discharge_sites)
+    print(f" {len(fc_sites)} Site object(s) created for pentadal forecasting, namely:\n{[site.code for site in fc_sites]}")
+    # Get the unique site codes
+    site_codes = [site.code for site in fc_sites]
+
+    return fc_sites, site_codes
+
 
 # endregion
 

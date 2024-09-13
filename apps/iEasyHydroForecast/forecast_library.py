@@ -5,6 +5,7 @@ import pandas as pd
 import datetime as dt
 import math
 import logging
+import string
 
 from ieasyhydro_sdk.filters import BasicDataValueFilters
 
@@ -2330,26 +2331,37 @@ class Site:
         - region (str): The region that the site is located in (typically oblast).
         - basin (str): The basin that the site is located in.
     """
-    def __init__(self, code: str, name="Name", river_name="River",
-                 punkt_name="Punkt", lat=0.0, lon=0.0, region="Region",
-                 basin="Basin", predictor=-10000.0, fc_qmin=-10000.0,
+    def __init__(self, code: str, name="Name", name_nat="Name_nat",
+                 river_name="River", river_name_nat="River_nat", punkt_name="Punkt",
+                 punkt_name_nat="Punkt_nat", lat=0.0, lon=0.0,
+                 region="Region", region_nat="Region_nat",
+                 basin="Basin", basin_nat="Basin_nat",
+                 predictor=-10000.0, fc_qmin=-10000.0,
                  fc_qmax=-10000.0, fc_qexp=-10000.0, qnorm=-10000.0,
                  qmin=-10000.0, qmax=-10000.0,
                  perc_norm=-10000.0, qdanger=-10000.0, slope=-10000.0,
-                 intercept=-10000.0, delta=-10000.0, sdivsigma=-10000.0,
-                 accuracy=-10000.0):
+                 intercept=-10000.0, rsquared=-10000.0,
+                 delta=-10000.0, sdivsigma=-10000.0,
+                 accuracy=-10000.0, histqmin=-10000.0, histqmax=-10000.0,
+                 daily_forecast=False, pentadal_forecast=False, decadal_forecast=False,
+                 monthly_forecast=False, seasonal_forecast=False):
         """
         Initializes a new Site object.
 
         Args:
             code (str): The site code.
             name (str): The site name (a combination of river_name and river_punkt).
+            name_nat (str): The site name in national language.
             river_name (str): The name of the river that the site is located on.
+            river_name_nat (str): The name of the river in national language.
             punkt_name (str): The name of the location within the river where the site is located.
+            punkt_name_nat (str): The name of the location in national language.
             lat (float): The latitude of the site in WSG 84.
             lon (float): The longitude of the site in WSG 84.
             region (str): The region that the site is located in (typically oblast).
+            region_nat (str): The region in national language.
             basin (str): The basin that the site is located in.
+            basin_nat (str): The basin in national language.
             precictor (float): The predictor value for the site.
             fc_qmin (float): The lower bound of the discharge forecasted for the next pentad.
             fc_qmax (float): The upper bound of the discharge forecasted for the next pentad.
@@ -2359,14 +2371,29 @@ class Site:
             qmax (float): The maximum discharge for the site.
             qdanger (str): The threshold discharge for a dangerous flood.
         """
+        # Static attributes
         self.code = code
         self.name = name if name is not None else "Name"
+        self.name_nat = name if name is not None else "Name_nat"
         self.river_name = river_name if river_name is not None else "River"
+        self.river_name_nat = river_name_nat if river_name_nat is not None else "River_nat"
         self.punkt_name = punkt_name if punkt_name is not None else "Punkt"
+        self.punkt_name_nat = punkt_name_nat if punkt_name_nat is not None else "Punkt_nat"
         self.lat = lat if lat is not None else 0.0
         self.lon = lon if lon is not None else 0.0
         self.region = region if region is not None else "Region"
+        self.region_nat = region_nat if region_nat is not None else "Region_nat"
         self.basin = basin if basin is not None else "Basin"
+        self.basin_nat = basin_nat if basin_nat is not None else "Basin_nat"
+        self.qdanger = qdanger if qdanger is not None else -10000.0
+        self.histqmin = histqmin if histqmin is not None else -10000.0
+        self.histqmax = histqmax if histqmax is not None else -10000.0
+        self.daily_forecast = daily_forecast if daily_forecast is not False else False
+        self.pentadal_forecast = pentadal_forecast if pentadal_forecast is not False else False
+        self.decadal_forecast = decadal_forecast if decadal_forecast is not False else False
+        self.monthlly_forecast = monthly_forecast if monthly_forecast is not False else False
+        self.seasonal_forecast = seasonal_forecast if seasonal_forecast is not False else False
+        # Dynamic attributes
         self.predictor = predictor if predictor is not None else -10000.0
         self.fc_qmin = fc_qmin if fc_qmin is not None else -10000.0
         self.fc_qmax = fc_qmax if fc_qmax is not None else -10000.0
@@ -2375,9 +2402,9 @@ class Site:
         self.qmin = qmin if qmin is not None else -10000.0
         self.qmax = qmax if qmax is not None else -10000.0
         self.perc_norm = perc_norm if perc_norm is not None else -10000.0
-        self.qdanger = qdanger if qdanger is not None else -10000.0
         self.slope = slope if slope is not None else -10000.0
         self.intercept = intercept if intercept is not None else -10000.0
+        self.rsquared = rsquared if rsquared is not None else -10000.0
         self.delta = delta if delta is not None else -10000.0
         self.sdivsigma = sdivsigma if sdivsigma is not None else -10000.0
         self.accuracy = accuracy if accuracy is not None else -10000.0
@@ -3389,6 +3416,71 @@ class Site:
                     basin=row['basin']
                 )
                 sites.append(site)
+            return sites
+        except Exception as e:
+            print(f'Error creating Site objects from DataFrame: {e}')
+            return []
+
+    @classmethod
+    def from_iEH_HF_SDK(cls, sites: list) -> list:
+        """
+        Creates a list of site objects with attributes read from the sites object.
+
+        Args:
+            sites (list): The object containing the site data.
+
+        Returns:
+            list: A list of Site objects.
+
+        Note: The sites object is retrieved from iEH HF SDK with
+            ieasyhydro_hf_sdk.get_discharge_sites()
+        """
+        try:
+            # Convert the sites object to a DataFrame
+            df = pd.DataFrame(sites)
+            # Create a list of Site objects from the DataFrame
+            sites = []
+            for index, row in df.iterrows():
+                row = pd.DataFrame(row).T
+
+                # Test if the site has pentadal forecasts enabled and skip if not
+                if row['enabled_forecasts'].values[0]['pentad_forecast'] == False:
+                    print(f'Skipping site {row["site_code"].values[0]} as pentadal forecasts are not enabled.')
+                    print(f'enabled_forecasts: {row["enabled_forecasts"].values[0]}')
+                    continue
+                else:
+
+                    name_parts = row['official_name'].values[0].split(' - ')
+                    name_nat_parts = row['national_name'].values[0].split(' - ')
+                    if len(name_parts) == 1:
+                        name_parts = [row['official_name'].values[0], '']
+                    if len(name_nat_parts) == 1:
+                        name_nat_parts = [row['national_name'].values[0], '']
+
+                    site = site = cls(
+                        code=row['site_code'].values[0],
+                        name=row['official_name'].values[0],
+                        name_nat=row['national_name'].values[0],
+                        river_name=name_parts[0],
+                        river_name_nat=name_nat_parts[0],
+                        punkt_name=name_parts[1],
+                        punkt_name_nat=name_nat_parts[1],
+                        lat=row['latitude'].values[0],
+                        lon=row['longitude'].values[0],
+                        region=row['region'].values[0]['official_name'],
+                        region_nat=row['region'].values[0]['national_name'],
+                        basin=row['basin'].values[0]['official_name'],
+                        basin_nat=row['basin'].values[0]['national_name'],
+                        qdanger=row['dangerous_discharge'].values[0],
+                        histqmin=row['historical_discharge_minimum'].values[0],
+                        histqmax=row['historical_discharge_maximum'].values[0],
+                        daily_forecast=row['enabled_forecasts'].values[0]['daily_forecast'],
+                        pentadal_forecast=row['enabled_forecasts'].values[0]['pentad_forecast'],
+                        decadal_forecast=row['enabled_forecasts'].values[0]['decadal_forecast'],
+                        monthly_forecast=row['enabled_forecasts'].values[0]['monthly_forecast'],
+                        seasonal_forecast=row['enabled_forecasts'].values[0]['seasonal_forecast']
+                    )
+                    sites.append(site)
             return sites
         except Exception as e:
             print(f'Error creating Site objects from DataFrame: {e}')

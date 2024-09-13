@@ -122,7 +122,7 @@ env_file_path = os.getenv("ieasyhydroforecast_env_file_path")
 # Load .env file
 # Read the environment varialbe IN_DOCKER_CONTAINER to determine which .env
 # file to use
-in_docker_flag = load_configuration()
+in_docker_flag = load_configuration(env_file_path)
 
 # Get icon path from config
 icon_path = processing.get_icon_path(in_docker_flag)
@@ -181,8 +181,10 @@ hydrograph_pentad_all = processing.add_labels_to_hydrograph(hydrograph_pentad_al
 linreg_predictor = processing.add_labels_to_forecast_pentad_df(linreg_predictor, all_stations)
 #print(f"DEBUG: linreg_predictor with labels: {linreg_predictor.tail()}")
 linreg_datatable = processing.shift_date_by_n_days(linreg_predictor, 1)
-#print(f"DEBUG: linreg_datatable: {linreg_datatable.tail()}")
-#print(f"DEBUG: linreg_predictor: {linreg_predictor.tail()}")
+print(f"DEBUG: linreg_datatable.columns: {linreg_datatable.columns}")
+print(f"DEBUG: linreg_datatable: {linreg_datatable.tail()}")
+print(f"DEBUG: linreg_predictor.columns: {linreg_predictor.columns}")
+print(f"DEBUG: linreg_predictor: {linreg_predictor.tail()}")
 forecasts_all = processing.add_labels_to_forecast_pentad_df(forecasts_all, all_stations)
 
 # Replace model names with translation strings

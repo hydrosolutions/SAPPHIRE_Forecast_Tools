@@ -15,7 +15,7 @@ import datetime as dt
 
 # SDK library for accessing the DB, installed with
 # pip install git+https://github.com/hydrosolutions/ieasyhydro-python-sdk
-from ieasyhydro_sdk.sdk import IEasyHydroSDK
+from ieasyhydro_sdk.sdk import IEasyHydroSDK, IEasyHydroHFSDK
 
 # Local libraries, installed with pip install -e ./iEasyHydroForecast
 # Get the absolute path of the directory containing the current script
@@ -69,11 +69,25 @@ def main():
     sl.load_environment()
 
     # Set up the iEasyHydro SDK
-    # Currently required to read dangerous discharge from the database.
-    ieh_sdk = IEasyHydroSDK()
-    has_access_to_db = sl.check_database_access(ieh_sdk)
-    if not has_access_to_db:
-        ieh_sdk = None
+    # Test if we read from iEasyHydro or iEasyHydro HF
+    if os.getenv('ieasyhydroforecast_connect_to_iEH') == 'True':
+        ieh_sdk = IEasyHydroSDK()
+        has_access_to_db = sl.check_database_access(ieh_sdk)
+        has_access_to_hf_db = False
+        if not has_access_to_db:
+            ieh_sdk = None
+    else:
+        # During development of iEH HF, we get static data from iEH HF and
+        # operational data from iEH.
+        # TODO: Remove this when iEH HF is operational.
+        ieh_sdk = IEasyHydroSDK()
+        ieh_hf_sdk = IEasyHydroHFSDK()
+        has_access_to_db = sl.check_database_access(ieh_sdk)
+        has_access_to_hf_db = sl.check_database_access(ieh_hf_sdk)
+        if not has_access_to_db:
+            ieh_sdk = None
+        if not has_access_to_hf_db:
+            ieh_hf_sdk = None
 
     # Get start and end dates for current call to the script.
     # forecast_date: date for which the forecast is being run (typically today)
@@ -91,8 +105,16 @@ def main():
 
     # Identify sites for which to produce forecasts
     # Gets us a list of site objects with the necessary information to write forecast outputs
-    fc_sites_pentad, site_list_pentad = sl.get_pentadal_forecast_sites(ieh_sdk, has_access_to_db)
-    fc_sites_decad, site_list_decad = sl.get_decadal_forecast_sites_from_pentadal_sites(fc_sites_pentad, site_list_pentad)
+    if has_access_to_hf_db:
+        # Use the iEH HF SDK to get the sites
+        fc_sites_pentad, site_list_pentad = sl.get_pentadal_forecast_sites_from_HF_SDK(ieh_hf_sdk)
+        fc_sites_decad, site_list_decad = sl.get_decadal_forecast_sites_from_pentadal_sites(fc_sites_pentad, site_list_pentad)
+        print("DEBUG site_list_pentad\n", site_list_pentad)
+        print("DEBUG site_list_decad\n", site_list_decad)
+    else:
+        # Use the iEH SDK to get the sites
+        fc_sites_pentad, site_list_pentad = sl.get_pentadal_forecast_sites(ieh_sdk, has_access_to_db)
+        fc_sites_decad, site_list_decad = sl.get_decadal_forecast_sites_from_pentadal_sites(fc_sites_pentad, site_list_pentad)
 
     # Get pentadal and decadal data for forecasting. This is currently done for
     # pentad as well as for decad forecasts, function overwrites forecast_flags.
