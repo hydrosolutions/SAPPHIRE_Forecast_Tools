@@ -418,8 +418,6 @@ forecast_data_and_plot = pn.panel(
     ),
     sizing_mode='stretch_both'
 )
-# TODO Verivy the timing of the forecast data in the plot. Is this all proper and meaningful?
-# TODO Experiment with a zoom in to the current forecast period
 pentad_forecast_plot = pn.panel(
     pn.bind(
         viz.plot_pentad_forecast_hydrograph_data,

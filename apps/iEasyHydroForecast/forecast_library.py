@@ -1043,6 +1043,7 @@ def perform_linear_regression(
     data_dfp = data_dfp.assign(q_mean=0.0)
     data_dfp = data_dfp.assign(q_std_sigma=0.0)
     data_dfp = data_dfp.assign(delta=0.0)
+    data_dfp = data_dfp.assign(rsquared=0.0)
 
     # Loop over each station we have data for
     for station in data_dfp[station_col].unique():
@@ -1092,6 +1093,7 @@ def perform_linear_regression(
         q_mean = np.mean(discharge_avg)
         q_std_sigma = np.std(discharge_avg)
         delta = 0.674 * q_std_sigma
+        rsquared = model.score(discharge_sum, discharge_avg)
 
         if int(station) == 15194:
             logger.debug(f'Station: {station}, pentad: {forecast_pentad}, q_mean: {q_mean}, q_std_sigma: {q_std_sigma}, delta: {delta}')
@@ -1114,6 +1116,7 @@ def perform_linear_regression(
         data_dfp.loc[(data_dfp[station_col] == station), 'q_mean'] = q_mean
         data_dfp.loc[(data_dfp[station_col] == station), 'q_std_sigma'] = q_std_sigma
         data_dfp.loc[(data_dfp[station_col] == station), 'delta'] = delta
+        data_dfp.loc[(data_dfp[station_col] == station), 'rsquared'] = rsquared
 
         # Test if station is of same type as data_dfp[station_col][0]
         if type(station) != type(data_dfp.loc[data_dfp.index[0], station_col]):

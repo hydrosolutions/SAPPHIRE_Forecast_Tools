@@ -260,6 +260,13 @@ def add_custom_xticklabels_pentad(_, plot, element):
     plot.handles['xaxis'].formatter = formatter
     plot.handles['xaxis'].major_label_orientation = math.pi/2
 
+def add_custom_tooltip(_, plot, element):
+    hover = plot.state.select_one(HoverTool)
+    hover.tooltips = [
+        (_('forecast model short column name'), "@name"),
+        (_('pentad_of_year column name'), "@x"),
+        (_('forecasted_discharge column name'), "@y")
+    ]
 # Plots for dashboard
 # region recyclable_plot_components
 def plot_runoff_line(data, date_col, line_data_col, label_text, color):
@@ -1062,7 +1069,8 @@ def plot_pentad_forecast_hydrograph_data(_, hydrograph_pentad_all, forecasts_all
         show_grid=True,
         show_legend=True,
         hooks=[remove_bokeh_logo,
-               lambda p, e: add_custom_xticklabels_pentad(_, p, e)],
+               lambda p, e: add_custom_xticklabels_pentad(_, p, e),
+               lambda p, e: add_custom_tooltip(_, p, e)],
         tools=['hover'],
         toolbar='right')
 

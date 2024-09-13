@@ -169,16 +169,20 @@ def load_environment():
         FileNotFoundError: If the .env file does not exist.
     """
     logger.debug("Current working directory: " + os.getcwd())
-
-    # Read the environment variable IN_DOCKER_CONTAINER to determine which .env file to use
-    if os.getenv("IN_DOCKER_CONTAINER") == "True":
-        env_file_path = "apps/config/.env"
-    elif os.getenv("SAPPHIRE_TEST_ENV") == "True":
-        env_file_path = "iEasyHydroForecast/tests/test_data/.env_develop_test"
-    elif os.getenv("SAPPHIRE_OPDEV_ENV") == "True":
-        env_file_path = "../../../sensitive_data_forecast_tools/config/.env_develop_kghm"
+    # If we find the path to env file from the environment variable, we can use it
+    if os.getenv("ieasyhydroforecast_env_file_path") is not None:
+        # Get path to .env file from the environment variable
+        env_file_path = os.getenv("ieasyhydroforecast_env_file_path")
     else:
-        env_file_path = "../config/.env_develop"
+        # Read the environment variable IN_DOCKER_CONTAINER to determine which .env file to use
+        if os.getenv("IN_DOCKER_CONTAINER") == "True":
+            env_file_path = "apps/config/.env"
+        elif os.getenv("SAPPHIRE_TEST_ENV") == "True":
+            env_file_path = "iEasyHydroForecast/tests/test_data/.env_develop_test"
+        elif os.getenv("SAPPHIRE_OPDEV_ENV") == "True":
+            env_file_path = "../../../sensitive_data_forecast_tools/config/.env_develop_kghm"
+        else:
+            env_file_path = "../config/.env_develop"
 
     # Test if the file exists
     if not os.path.exists(env_file_path):

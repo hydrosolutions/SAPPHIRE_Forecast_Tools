@@ -181,7 +181,7 @@ def main():
                 forecast_pentad=int(forecast_pentad_of_year))
 
             #logger.debug(f"linreg_pentad.head: {linreg_pentad.head()}")
-            #logger.debug(f"linreg_pentad.tail: {linreg_pentad.tail()}")
+            logger.debug(f"linreg_pentad.tail (linreg): {linreg_pentad.tail()}")
 
             # Generate the forecast for the current forecast horizon
             fl.perform_forecast(
@@ -195,6 +195,7 @@ def main():
             linreg_pentad.rename(
                 columns={'discharge_sum': 'predictor',
                          'pentad': 'pentad_in_month'}, inplace=True)
+            logger.debug(f"linreeg_pentad.tail (forecast): {linreg_pentad}")
 
             # Write output files for the current forecast horizon
             fl.write_linreg_pentad_forecast_data(linreg_pentad)
