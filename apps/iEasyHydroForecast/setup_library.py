@@ -267,7 +267,7 @@ def get_pentadal_forecast_sites_complicated_method(ieh_sdk, backend_has_access_t
     logger.debug("-Reading station metadata from the DB ...")
 
     # See if we have an environment variable ieasyhydroforecast_connect_to_iEH
-    if os.getenv("ieasyhydroforecast_connect_to_iEH") == "True":
+    if os.getenv("ieasyhydroforecast_connect_to_iEH") == "False":
         # During development, iEH HF is available online. No need to connect to
         # a server.
         pass
@@ -556,6 +556,9 @@ def get_pentadal_forecast_sites_from_HF_SDK(ieh_sdk):
     print(f" {len(fc_sites)} Site object(s) created for pentadal forecasting, namely:\n{[site.code for site in fc_sites]}")
     # Get the unique site codes
     site_codes = [site.code for site in fc_sites]
+
+    # TODO write stations all json file for dashboard and other modules to read.
+    # Do this when virtual station support for forecasting from iEH HF is available
 
     return fc_sites, site_codes
 

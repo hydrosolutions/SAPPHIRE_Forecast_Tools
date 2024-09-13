@@ -513,9 +513,7 @@ def read_all_stations_metadata_from_file(station_list):
         raise Exception("File not found: " + all_stations_file)
 
     # Read stations json
-    with open(all_stations_file, "r") as json_file:
-        # TODO: remove the with open statement and use the fl.load_all_station_data_from_JSON function directly
-        all_stations = fl.load_all_station_data_from_JSON(all_stations_file)
+    all_stations = fl.load_all_station_data_from_JSON(all_stations_file)
     # Convert the code column to string
     all_stations['code'] = all_stations['code'].astype(str)
     # Left-join all_stations['code', 'river_ru', 'punkt_ru'] by 'Code' = 'code'
