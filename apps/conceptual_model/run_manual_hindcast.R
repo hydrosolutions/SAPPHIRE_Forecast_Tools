@@ -103,7 +103,7 @@ end_date_hindcast <- config$end_hindcast %>% as.Date()
 
 print(paste0("Hincasting: ", hindcast_mode, " from ",start_date_hindcast," to ", end_date_hindcast))
 ################### RUNNING ###################
-for (Code in config$codes) {
+for (Code in config$code_hindcast) {
   print(Code)
   # Step 1: Prepare Input data ####
   FUN_MOD <- get(config$fun_mod_mapping[[as.character(Code)]])

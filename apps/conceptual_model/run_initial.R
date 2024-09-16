@@ -58,7 +58,7 @@ if (Sys.getenv("IN_DOCKER_CONTAINER")=="") {
   }
 }
 
-# print(Sys.getenv("ieasyhydroforecast_JSON_FILE"))
+print(Sys.getenv("ieasyhydroforecast_PATH_TO_JSON"))
 
 ##################################################################
 # 0 Function ####
