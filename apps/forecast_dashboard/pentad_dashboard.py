@@ -39,12 +39,13 @@ from ieasyreports.settings import ReportGeneratorSettings
 
 # Local sources
 from src.environment import load_configuration
-from src.gettext_config import configure_gettext
+from src.gettext_config import configure_gettext, load_translation
 import src.processing as processing
 import src.vizualization as viz
 #import src.multithreading as thread
 from src.site import SapphireSite as Site
 from src.bulletins import write_to_excel
+import src.layout as layout
 
 import calendar
 
@@ -105,6 +106,9 @@ logger.addHandler(console_handler)
 # region load_configuration
 
 # Set primary color to be consistent with the icon color
+# Set the primary color to be consistent with the icon color
+# Trying to fix the issue with the checkbox label not wrapping
+# Loads the font-awesome icons (used for the language icon)
 pn.extension(global_css=[
     ':root { --design-primary-color: #307096; }',
     """
@@ -154,6 +158,8 @@ hydrograph_pentad_all = processing.read_hydrograph_pentad_data_for_pentad_foreca
 # Pentadal forecast data
 # - linreg_predictor: for displaying predictor in predictor tab
 linreg_predictor = processing.read_linreg_forecast_data()
+# For site = 16059, show the last 5 rows of the linreg_predictor DataFrame
+print(f"DEBUG: pentad_dashboard.py: linreg_predictor: {linreg_predictor[linreg_predictor['code'] == '16059'].tail()}")
 # - forecast results from all models
 forecasts_all = processing.read_forecast_results_file()
 # Forecast statistics
@@ -331,6 +337,13 @@ write_bulletin_button = pn.widgets.Button(
     description=_("Write bulletin to Excel"))
 indicator = pn.indicators.LoadingSpinner(value=False, size=25)
 
+# Create a language selection widget
+language_select = pn.widgets.Select(
+    name='',
+    options={'en':'en_CH', 'ru':'ru_KG', 'kg': 'ky_KG'},
+    value='ru_KG',
+    width=50
+)
 # endregion
 
 # region forecast_card
@@ -485,167 +498,41 @@ pn.bind(update_indicator, write_bulletin_button, watch=True)
 #write_bulletin_button.on_click(lambda event: thread.write_forecast_bulletin_in_background(bulletin_table, env_file_path, status))
 write_bulletin_button.on_click(lambda event: write_to_excel(sites_list, bulletin_header_info, env_file_path, indicator))
 
-
-## Footer
-# Define the footer of the dashboard
-if in_docker_flag == "True":
-    logos = pn.Row(
-        pn.pane.Image(os.path.join(
-            "apps", "forecast_dashboard", "www", "sapphire_project_logo.jpg"),
-            width=70),
-        pn.pane.Image(os.path.join(
-            "apps", "forecast_dashboard", "www", "hydrosolutionsLogo.jpg"),
-            width=100),
-        pn.pane.Image(os.path.join(
-            "apps", "forecast_dashboard", "www", "sdc.jpeg"),
-            width=150))
-else:
-    logos = pn.Row(
-        pn.pane.Image(os.path.join(
-            "www", "sapphire_project_logo.jpg"),
-            width=70),
-        pn.pane.Image(os.path.join(
-            "www", "hydrosolutionsLogo.jpg"),
-            width=100),
-        pn.pane.Image(os.path.join(
-            "www", "sdc.jpeg"),
-            width=150))
-
-footer = pn.Column(
-    pn.pane.HTML(_('disclaimer_who')),
-    pn.pane.Markdown(_("disclaimer_waranty")),
-    pn.pane.HTML("<p> </p>"),
-    logos,
-    pn.pane.Markdown(_("Last updated on ") + dt.datetime.now().strftime("%b %d, %Y") + ".")
+# Create an icon using HTML for the select language widget
+language_icon_html = pn.pane.HTML(
+    '<i class="fas fa-language"></i>',
+    width=20
 )
 
-# Organize the panes in tabs
-no_date_overlap_flag = True
-if no_date_overlap_flag == False:
-    tabs = pn.Tabs(
-        # Predictors tab
-        (_('Predictors'),
-         pn.Column(
-             pn.Row(
-                 pn.Card(daily_hydrograph_plot, title=_("Hydrograph"))
-             ),
-         ),
-        ),
-        (_('Forecast'),
-         #pn.Column(
-        #     pn.Row(
-        #        pn.Card(data_table, title=_('Data table'), collapsed=True),
-        #        pn.Card(linear_regression, title=_("Linear regression"), collapsed=True)
-        #        ),
-        #     pn.Row(
-        #         pn.Card(norm_table, title=_('Norm statistics'), sizing_mode='stretch_width'),),
-        #     pn.Row(
-        #         pn.Card(forecast_table, title=_('Forecast table'), sizing_mode='stretch_width')),
-                 pn.Card(
-                     #pentad_forecast_plot,
-                     title=_('Hydrograph'),
-                 ),
-                 pn.Card(
-                     forecast_summary_table,
-                     title=_('Summary table'),
-                     sizing_mode='stretch_width'
-                 ),
-                 pn.Card(
-                     daily_hydrograph_plot,
-                     title=_('Analysis of the forecast'))
-        #     pn.Row(
-        #         pn.Card(pentad_effectiveness, title=_("Effectiveness of the methods"))),
-        #     pn.Row(
-        #         pn.Card(pentad_skill, title=_("Forecast accuracy")))
-        #)
-        ),
-        (_('Disclaimer'), footer),
-        dynamic=True,
-        sizing_mode='stretch_both'
-    )
-else: # If no_date_overlap_flag == True
-    tabs = pn.Tabs(
-        # Predictors tab
-        (_('Predictors'),
-         pn.Column(
-             pn.Row(
-                 pn.Card(daily_hydrograph_plot, title=_("Hydrograph")),
-             ),
-         ),
-        ),
-        (_('Forecast'),
-         pn.Column(
-            pn.Card(
-                pn.Row(
-                    forecast_data_and_plot
-                ),
-                title=_('Linear regression'),
-                sizing_mode='stretch_width',
-                collapsible=True,
-                collapsed=False
-            ),
-            pn.Card(
-                forecast_summary_table,
-                title=_('Summary table'),
-                sizing_mode='stretch_width',
-            ),
-            pn.Card(
-                pentad_forecast_plot,
-                title=_('Hydrograph'),
-                height=500,
-                collapsible=True,
-                collapsed=False
-            ),
-                 #pn.Card(
-                 #    pentad_forecast_plot,
-                 #    title=_('Analysis'))
-        #         #pn.Card(pentad_effectiveness, title=_("Effectiveness of the methods")),
-        #         #pn.Card(pentad_skill, title=_("Forecast accuracy")),
-            )
-        ),
-        (_('Bulletin'),
-         pn.Column(
-             pn.Card(
-                 pn.Column(
-                     bulletin_table,
-                     pn.Row(
-                         write_bulletin_button,
-                         indicator),
-                 ),
-                 title='Forecast bulletin',
-            ),
-         )
-        ),
-        (_('Disclaimer'), footer),
-        dynamic=True,
-        sizing_mode='stretch_both'
-    )
+# Define the disclaimer of the dashboard
+disclaimer = layout.define_disclaimer(_, in_docker_flag)
+
 
 # Sidebar
+sidebar = layout.define_sidebar(_, station, forecast_card)
 
-sidebar = pn.Column(
-    pn.Row(pn.Card(station,
-                   title=_('Hydropost:'),)),
-    #pn.Row(pentad_card),
-    #pn.Row(pn.Card(pentad_selector, title=_('Pentad:'))),
-    #pn.Row(pn.Card(date_picker, date_picker_with_pentad_text,
-                   #title=_('Date:'),
-                   #width_policy='fit', width=station.width,
-                   #collapsed=False)),
-    pn.Row(forecast_card),
-    #pn.Row(range_selection),
-    #pn.Row(manual_range),
-    #pn.Row(print_button),
-    #pn.Row(pn.Card(warning_text_pane, title=_('Notifications'),
-    #            width_policy='fit', width=station.width)),
-)
 
 
 # Update the layout
 
+# Function to update the dashboard based on selected language
+def update_tabs(language, locale_dir):
+    global _
+    _ = load_translation(language, locale_dir)
+    # Print the currently selected language
+    print(f"Selected language: {language}")
+    return layout.define_tabs(
+        _, daily_hydrograph_plot, forecast_data_and_plot,
+        forecast_summary_table, pentad_forecast_plot,
+        bulletin_table, write_bulletin_button, indicator, disclaimer,
+        forecast_card, pentad_card)
+
+# Bind the function to the language selection widget
+tabs = pn.bind(update_tabs, language_select.param.value, localedir)
+
+
 # Update the widgets conditional on the active tab
-tabs.param.watch(lambda event: viz.update_sidepane_card_visibility(
-    tabs, forecast_card, pentad_card, event), 'active')
+
 allowable_range_selection.param.watch(lambda event: viz.update_range_slider_visibility(
     _, manual_range, event), 'value')
 
@@ -655,13 +542,18 @@ allowable_range_selection.param.watch(lambda event: viz.update_range_slider_visi
 dashboard = pn.template.BootstrapTemplate(
     title=_('SAPPHIRE Central Asia - Pentadal forecast dashboard'),
     logo=icon_path,
+    header=[pn.Row(pn.layout.HSpacer(), language_select)],
     sidebar=sidebar,
     collapsed_sidebar=False,
     main=tabs,
     favicon=icon_path
-)
+    )
 
 
+# Make the dashboard servable
 dashboard.servable()
+
+# Serve the dashboard
+pn.serve(dashboard)
 
 # endregion

@@ -3,7 +3,14 @@
 import os
 import gettext
 
-def configure_gettext(locale, locale_dir):
+
+def load_translation(language, locale_dir):
+    gettext.bindtextdomain('pentad_dashboard', locale_dir)
+    gettext.textdomain('pentad_dashboard')
+    return gettext.translation('pentad_dashboard', locale_dir, languages=[language]).gettext
+
+
+def configure_gettext(language, locale_dir):
     """
     Configures the gettext translation object for the application.
 
@@ -32,11 +39,11 @@ def configure_gettext(locale, locale_dir):
         raise Exception("Directory not found: " + locale_dir)
     # Create a translation object
     try:
-        translation = gettext.translation('pentad_dashboard', locale_dir, languages=[locale])
+        my_translation = load_translation(language, locale_dir)
     except FileNotFoundError:
         # Fallback to the default language if the .mo file is not found
-        translation = gettext.translation('pentad_dashboard', locale_dir, languages=['ru_KG'])
-    return translation.gettext
+        my_translation = load_translation('ru_KG', locale_dir)
+    return my_translation
 
 
 # How to update the translation file:

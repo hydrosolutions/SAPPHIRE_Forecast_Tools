@@ -1227,6 +1227,11 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector):
     # Define a variable to hold the visible data across functions
     global visible_data
 
+    print(f"\n\nDEBUG: select_and_plot_data")
+    # Print tail of linreg_predictor for code == '16059'
+    print(f"linreg_predictor[linreg_predictor['code'] == '16059'].tail(10):\n",
+          linreg_predictor[linreg_predictor['code'] == '16059'].tail(10))
+
     if isinstance(station_widget, str):
         station_code = station_widget.split(' - ')[0]
     else:
