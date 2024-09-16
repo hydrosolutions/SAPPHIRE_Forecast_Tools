@@ -429,6 +429,12 @@ def make_ml_forecast():
         logger.debug('past_discharge_code: %s', past_discharge_code.tail())
         logger.debug('qmapped_era5_code: %s', qmapped_era5_code.tail())
 
+        #chec if we can make a forecast: 
+        # if the last observation is not older than today - 2 days, we don't make a forecast
+        if past_discharge_code['date'].iloc[-1] < pd.to_datetime(datetime.datetime.now().date()) - pd.Timedelta(days=2):
+            logger.debug('No forecast due to no recent available discharge for code: %s', code )
+            continue
+
         #get the input chunck length -> this can than be used to determine the relevant allowed missing values
         input_chunk_length = predictor.get_input_chunk_length()
         logger.debug('input_chunk_length: %s', input_chunk_length)
