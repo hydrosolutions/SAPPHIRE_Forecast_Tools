@@ -430,8 +430,8 @@ def make_ml_forecast():
         logger.debug('qmapped_era5_code: %s', qmapped_era5_code.tail())
 
         #chec if we can make a forecast: 
-        # if the last observation is not older than today - 2 days, we don't make a forecast
-        if past_discharge_code['date'].iloc[-1] < pd.to_datetime(datetime.datetime.now().date()) - pd.Timedelta(days=2):
+        # if the last observation is not older than today - 1 days, we don't make a forecast
+        if past_discharge_code['date'].iloc[-1] < pd.to_datetime(datetime.datetime.now().date()) - pd.Timedelta(days=1):
             logger.debug('No forecast due to no recent available discharge for code: %s', code )
             continue
 
