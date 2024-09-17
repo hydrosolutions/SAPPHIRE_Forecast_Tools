@@ -5,6 +5,8 @@ import gettext
 
 
 def load_translation(language, locale_dir):
+    if hasattr(language, 'new'):
+        language = language.new
     gettext.bindtextdomain('pentad_dashboard', locale_dir)
     gettext.textdomain('pentad_dashboard')
     return gettext.translation('pentad_dashboard', locale_dir, languages=[language]).gettext

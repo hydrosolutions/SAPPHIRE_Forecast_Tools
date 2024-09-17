@@ -1,8 +1,14 @@
 # functions to create the layout of the dashboard
 import os
+import param
 import panel as pn
 import datetime as dt
 from .vizualization import update_sidepane_card_visibility
+
+import param
+
+class DashboardTitle(param.Parameterized):
+    value = param.String(default="SAPPHIRE Central Asia - Pentadal forecast dashboard")
 
 
 # Define components of the layout
@@ -92,7 +98,6 @@ def define_tabs(_, daily_hydrograph_plot, forecast_data_and_plot,
                      pn.Card(
                          forecast_summary_table,
                          title=_('Summary table'),
-                         sizing_mode='stretch_width'
                      ),
                      pn.Card(
                          daily_hydrograph_plot,
@@ -115,7 +120,7 @@ def define_tabs(_, daily_hydrograph_plot, forecast_data_and_plot,
                  pn.Row(
                      pn.Card(daily_hydrograph_plot, title=_("Hydrograph")),
                  ),
-             ),
+             height=600),
             ),
             (_('Forecast'),
              pn.Column(
@@ -126,17 +131,22 @@ def define_tabs(_, daily_hydrograph_plot, forecast_data_and_plot,
                     title=_('Linear regression'),
                     sizing_mode='stretch_width',
                     collapsible=True,
-                    collapsed=False
+                    collapsed=False,
+                    min_height=560,
+                    max_height=560,
                 ),
                 pn.Card(
                     forecast_summary_table,
                     title=_('Summary table'),
-                    sizing_mode='stretch_width',
+                    sizing_mode='stretch_both',
+                    min_height=240,
+
                 ),
                 pn.Card(
                     pentad_forecast_plot,
                     title=_('Hydrograph'),
                     height=500,
+                    #height=None,
                     collapsible=True,
                     collapsed=False
                 ),
@@ -145,6 +155,7 @@ def define_tabs(_, daily_hydrograph_plot, forecast_data_and_plot,
                      #    title=_('Analysis'))
             #         #pn.Card(pentad_effectiveness, title=_("Effectiveness of the methods")),
             #         #pn.Card(pentad_skill, title=_("Forecast accuracy")),
+                #sizing_mode='stretch_width'
                 )
             ),
             (_('Bulletin'),
@@ -168,6 +179,4 @@ def define_tabs(_, daily_hydrograph_plot, forecast_data_and_plot,
     tabs, forecast_card, pentad_card, event), 'active')
     return tabs
 
-def create_dashboard():
 
-    pass

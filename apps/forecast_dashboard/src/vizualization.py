@@ -471,6 +471,8 @@ def plot_runoff_forecast_range_area(
 
     # Decide which colors to display
     # list of unique models in data
+    print(f"\nDEBUG: forecast_name_col: {forecast_name_col}")
+    print(f"data.columns: {data.columns}")
     models = data[forecast_name_col].unique()
     if len(models) > len(runoff_forecast_colors):
         # Add some random colors if there are more models than colors
@@ -1159,6 +1161,8 @@ def create_forecast_summary_tabulator(_, forecasts_all, station, date_picker,
         show_index=False,
         selection=[max_accuracy_index],
         selectable='checkbox',
+        sizing_mode='stretch_both',
+        height=None
         #buttons={_('To bulletin'): "<i class='fa fa-check'></i>"},
         )
 

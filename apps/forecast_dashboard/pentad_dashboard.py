@@ -28,6 +28,7 @@ import param
 
 import logging
 from logging.handlers import TimedRotatingFileHandler
+import traceback
 
 #import hvplot.pandas  # Enable interactive
 import holoviews as hv
@@ -119,6 +120,17 @@ pn.extension(global_css=[
     }
     """
     ])
+
+# CSS for language widget text color
+language_button_css = """
+.custom-select-class select {
+    color: #307086 !important;  /* Custom text color for the select dropdown options */
+}
+"""
+
+# Inject the custom CSS
+pn.config.raw_css.append(language_button_css)
+
 
 # Get path to .env file from the environment variable
 env_file_path = os.getenv("ieasyhydroforecast_env_file_path")
@@ -268,7 +280,7 @@ print(f"DEBUG: pentad_dashboard.py: bulletin_header_info:\n{bulletin_header_info
 
 # Create the dropdown widget for pentad selection
 pentad_selector = pn.widgets.Select(
-    name="Select Pentad",
+    name=_("Select Pentad"),
     options=pentad_options,
     value=current_pentad,  # Default to the last available pentad
     margin=(0, 0, 0, 0)
@@ -342,7 +354,8 @@ language_select = pn.widgets.Select(
     name='',
     options={'en':'en_CH', 'ru':'ru_KG', 'kg': 'ky_KG'},
     value='ru_KG',
-    width=50
+    width=50,
+    css_classes=['language_button_css']
 )
 # endregion
 
@@ -516,27 +529,29 @@ sidebar = layout.define_sidebar(_, station, forecast_card)
 # Update the layout
 
 # Function to update the dashboard based on selected language
-def update_tabs(language, locale_dir):
-    global _
-    _ = load_translation(language, locale_dir)
-    # Print the currently selected language
-    print(f"Selected language: {language}")
-    return layout.define_tabs(
-        _, daily_hydrograph_plot, forecast_data_and_plot,
-        forecast_summary_table, pentad_forecast_plot,
-        bulletin_table, write_bulletin_button, indicator, disclaimer,
-        forecast_card, pentad_card)
+def tabs_change_language(language):
+    try:
+        print("\nDEBUG: language: ", language)
+        print("\nDEBUG: locale_dir: ", localedir)
+        global _
+        _ = load_translation(language, localedir)
+        # Print the currently selected language
+        print(f"Selected language: {language}")
+        return layout.define_tabs(
+            _, daily_hydrograph_plot, forecast_data_and_plot,
+            forecast_summary_table, pentad_forecast_plot,
+            bulletin_table, write_bulletin_button, indicator, disclaimer,
+            forecast_card, pentad_card)
+    except Exception as e:
+        print(f"Error in tabs_change_language: {e}")
+        print(traceback.format_exc())
 
 # Bind the function to the language selection widget
-tabs = pn.bind(update_tabs, language_select.param.value, localedir)
-
+tabs = pn.bind(tabs_change_language, language_select.param.value)
 
 # Update the widgets conditional on the active tab
-
 allowable_range_selection.param.watch(lambda event: viz.update_range_slider_visibility(
     _, manual_range, event), 'value')
-
-# Update plot if table is changed
 
 # Define the layout
 dashboard = pn.template.BootstrapTemplate(
@@ -549,11 +564,19 @@ dashboard = pn.template.BootstrapTemplate(
     favicon=icon_path
     )
 
+# Update function to change the language in the dashboard title
+def update_title_language(event):
+    global _
+    selected_language = event.new
+    _ = load_translation(selected_language, localedir)
+    dashboard.title = _('SAPPHIRE Central Asia - Pentadal forecast dashboard')
+
+language_select.param.watch(update_title_language, 'value')
 
 # Make the dashboard servable
 dashboard.servable()
 
 # Serve the dashboard
-pn.serve(dashboard)
+#pn.serve(dashboard)
 
 # endregion
