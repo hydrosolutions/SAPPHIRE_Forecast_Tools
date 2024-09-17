@@ -134,6 +134,7 @@ for (Code in config$codes) {
   load(file.path(dir_basin,Sys.getenv("ieasyhydroforecast_FILE_BASININFO")))
   load(file.path(dir_Output, "runResults_op.RData"))
   Enddate_operational <- as.Date(max(runResults_op$DatesR))
+  convert_mmd_to_m3s <- Basin_Info$BasinArea_m2/(86400*1000)
   
   # pf: one file per basin
   pfP_forecast_filename <- paste0(Code,Sys.getenv("ieasyhydroforecast_FILE_PF_P"))
@@ -238,16 +239,11 @@ for (Code in config$codes) {
     mutate(forecast_date = forecast_date) %>%
     select(forecast_date, everything())
   
-  # Step 6: Plotting  ####
-  # plot <- plot_forecast(forecast_date = forecast_date,
-  #                       ResPF = ResPF,
-  #                       basinObs = basinObs_cf,
-  #                       forecast_statistics,
-  #                       basin_name = Basin_Info$BasinName,
-  #                       window = 30)
-  # 
-  # 
-  # ggsave(plot,file = paste0(dir_Results,"/plot/Overviewplot_",Basin_Info$BasinCode,"_",forecast_date_format,".pdf"), width = 10, height = 6, dpi = 300)
+  # convert to m3/s
+  forecast_statistics <- forecast_statistics %>%
+    mutate(across(3:last_col(), ~ . * convert_mmd_to_m3s)) %>%
+    mutate(across(3:last_col(), ~ round(., 4)))
+  
   
   # Step 7: Hindcast and save  ####
   ## 7.1 Daily   ####
@@ -313,6 +309,11 @@ for (Code in config$codes) {
                                       StatePert = StatePert,
                                       eps = eps)
       
+      # convert hindcast from mm/d to m3/s and round to 4 digits
+      hindcast <- hindcast %>%
+        mutate(across(3:last_col(), ~ . * convert_mmd_to_m3s)) %>%
+        mutate(across(3:last_col(), ~ round(., 4)))
+
       forecast_statistics <- rbind(hindcast, forecast_statistics)
       total_forecast <- rbind(existing_forecasts, forecast_statistics)
       write.csv(total_forecast, paste0(dir_Results, "/data/daily_", Basin_Info$BasinCode, ".csv"), row.names = FALSE)
