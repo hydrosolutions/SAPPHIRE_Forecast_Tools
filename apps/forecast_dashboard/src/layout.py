@@ -31,6 +31,8 @@ def define_sidebar(_, station_widget, forecast_card):
     )
 
 def get_logos(in_docker_flag):
+    # overwrite in_docker_flag
+    in_docker_flag = "False"
     if in_docker_flag == "True":
         return pn.Row(
             pn.pane.Image(os.path.join(
