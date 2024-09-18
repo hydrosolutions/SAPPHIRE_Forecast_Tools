@@ -1233,6 +1233,8 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector):
 
     print(f"\n\nDEBUG: select_and_plot_data")
     # Print tail of linreg_predictor for code == '16059'
+    print(f"linreg_predictor[linreg_predictor['code'] == '16059'].head(10):\n",
+          linreg_predictor[linreg_predictor['code'] == '16059'].head(10))
     print(f"linreg_predictor[linreg_predictor['code'] == '16059'].tail(10):\n",
           linreg_predictor[linreg_predictor['code'] == '16059'].tail(10))
 
@@ -1371,12 +1373,14 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector):
                     show_grid=True,
                     show_legend=True,
                     width=1000,
-                    height=450
+                    height=450,
+                    hooks=[remove_bokeh_logo]
                 )
             else:
                 plot = scatter.opts(
                     width=1000,
-                    height=450
+                    height=450,
+                    hooks=[remove_bokeh_logo]
                 )
 
         # Attach the plot to the selection stream

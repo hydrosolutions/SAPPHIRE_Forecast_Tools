@@ -168,6 +168,12 @@ def read_linreg_forecast_data():
     # we need to add 1 day to the date and re-evaluate the pentad & pentad in year
     linreg_forecast['Date'] = linreg_forecast['date'] + pd.Timedelta(days=1)
 
+    # Sort by code and Date
+    linreg_forecast = linreg_forecast.sort_values(by=['code', 'Date'])
+
+    # Drop duplicate rows for the same code and Date. Keep the last row.
+    linreg_forecast = linreg_forecast.drop_duplicates(subset=['code', 'Date'], keep='last')
+
     # Convert code column to str
     linreg_forecast['code'] = linreg_forecast['code'].astype(str)
 
