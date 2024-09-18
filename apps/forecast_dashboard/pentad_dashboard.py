@@ -123,8 +123,8 @@ pn.extension(global_css=[
 
 # CSS for language widget text color
 language_button_css = """
-.custom-select-class select {
-    color: #307086 !important;  /* Custom text color for the select dropdown options */
+header .bk.pn-widget-select .bk-select {
+    color: #307086 !important;  /* Change text color of select widget */
 }
 """
 

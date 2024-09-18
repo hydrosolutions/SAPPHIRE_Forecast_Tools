@@ -7,8 +7,12 @@ import gettext
 def load_translation(language, locale_dir):
     if hasattr(language, 'new'):
         language = language.new
+    print(f"debug load_translation: language: {language}")
+    print(f"debug load_translation: locale_dir: {locale_dir}")
     gettext.bindtextdomain('pentad_dashboard', locale_dir)
     gettext.textdomain('pentad_dashboard')
+    # Print the path to the .mo file
+    print(f"debug load_translation: path to .mo file: {gettext.find('pentad_dashboard', locale_dir, languages=[language])}")
     return gettext.translation('pentad_dashboard', locale_dir, languages=[language]).gettext
 
 
