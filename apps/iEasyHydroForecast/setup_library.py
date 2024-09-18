@@ -169,16 +169,20 @@ def load_environment():
         FileNotFoundError: If the .env file does not exist.
     """
     logger.debug("Current working directory: " + os.getcwd())
-
-    # Read the environment variable IN_DOCKER_CONTAINER to determine which .env file to use
-    if os.getenv("IN_DOCKER_CONTAINER") == "True":
-        env_file_path = "apps/config/.env"
-    elif os.getenv("SAPPHIRE_TEST_ENV") == "True":
-        env_file_path = "iEasyHydroForecast/tests/test_data/.env_develop_test"
-    elif os.getenv("SAPPHIRE_OPDEV_ENV") == "True":
-        env_file_path = "../../../sensitive_data_forecast_tools/config/.env_develop_kghm"
+    # If we find the path to env file from the environment variable, we can use it
+    if os.getenv("ieasyhydroforecast_env_file_path") is not None:
+        # Get path to .env file from the environment variable
+        env_file_path = os.getenv("ieasyhydroforecast_env_file_path")
     else:
-        env_file_path = "../config/.env_develop"
+        # Read the environment variable IN_DOCKER_CONTAINER to determine which .env file to use
+        if os.getenv("IN_DOCKER_CONTAINER") == "True":
+            env_file_path = "apps/config/.env"
+        elif os.getenv("SAPPHIRE_TEST_ENV") == "True":
+            env_file_path = "iEasyHydroForecast/tests/test_data/.env_develop_test"
+        elif os.getenv("SAPPHIRE_OPDEV_ENV") == "True":
+            env_file_path = "../../../sensitive_data_forecast_tools/config/.env_develop_kghm"
+        else:
+            env_file_path = "../config/.env_develop"
 
     # Test if the file exists
     if not os.path.exists(env_file_path):
@@ -262,22 +266,28 @@ def get_pentadal_forecast_sites_complicated_method(ieh_sdk, backend_has_access_t
     # Read station metadata from the DB and store it in a list of Site objects
     logger.debug("-Reading station metadata from the DB ...")
 
-    # Read the station details from API
-    # Only do this if we have access to the database
-    if backend_has_access_to_db:
-        try:
-            db_sites = ieh_sdk.get_discharge_sites()
-        except Exception as e:
-            logger.error(f"Error connecting to DB: {e}")
-            raise e
-        db_sites = pd.DataFrame.from_dict(db_sites)
-
-        logger.debug(f"   {len(db_sites)} station(s) in DB, namely:\n{db_sites['site_code'].values}")
+    # See if we have an environment variable ieasyhydroforecast_connect_to_iEH
+    if os.getenv("ieasyhydroforecast_connect_to_iEH") == "False":
+        # During development, iEH HF is available online. No need to connect to
+        # a server.
+        pass
     else:
-        # If we don't have access to the database, create an empty dataframe.
-        db_sites = pd.DataFrame(
-            columns=['site_code', 'site_name', 'river_name', 'punkt_name',
-                     'latitude', 'longitude', 'region', 'basin'])
+        # Read the station details from API
+        # Only do this if we have access to the database
+        if backend_has_access_to_db:
+            try:
+                db_sites = ieh_sdk.get_discharge_sites()
+            except Exception as e:
+                logger.error(f"Error connecting to DB: {e}")
+                raise e
+            db_sites = pd.DataFrame.from_dict(db_sites)
+
+            logger.debug(f"   {len(db_sites)} station(s) in DB, namely:\n{db_sites['site_code'].values}")
+        else:
+            # If we don't have access to the database, create an empty dataframe.
+            db_sites = pd.DataFrame(
+                columns=['site_code', 'site_name', 'river_name', 'punkt_name',
+                         'latitude', 'longitude', 'region', 'basin'])
 
     # Read station information of all available discharge stations
     logger.debug("-Reading information about all stations from JSON...")
@@ -527,11 +537,31 @@ def get_decadal_forecast_sites_from_pentadal_sites(fc_sites_pentad=None, site_li
     logger.debug(f"   {len(stations)} station(s) selected for decadal forecasting, namely: {stations}")
 
     # Filter fc_sites_pentad for stations
-    logger.debug("-Filtering fc_sites_pentad for stations ...")
+    logger.debug("-Filtering fc_sites_pentad for stations for decadal forecasting ...")
     fc_sites_decad = [site for site in fc_sites_pentad if site.code in stations]
-    logger.debug(f"   Producing forecasts for {len(fc_sites_decad)} station(s), namely\n: {[site.code for site in fc_sites_decad]}")
+    stations_decad = [site.code for site in fc_sites_decad]
+    logger.debug(f"   Producing decadal forecasts for {len(fc_sites_decad)} station(s), namely\n: {[site.code for site in fc_sites_decad]}")
 
-    return fc_sites_decad, stations
+    return fc_sites_decad, stations_decad
+
+def get_pentadal_forecast_sites_from_HF_SDK(ieh_sdk):
+    """
+    Gets site attributes from iEH HF and writes them to list of site objects.
+    """
+    # Get the list of discharge sites from the iEH HF SDK
+    discharge_sites = ieh_sdk.get_discharge_sites()
+    print(f" {len(discharge_sites)} discharge site(s) found in iEH HF SDK, namely:\n{[site['site_code'] for site in discharge_sites]}")
+    # Get the list of Site objects for pentadal forecasting
+    fc_sites = fl.Site.from_iEH_HF_SDK(discharge_sites)
+    print(f" {len(fc_sites)} Site object(s) created for pentadal forecasting, namely:\n{[site.code for site in fc_sites]}")
+    # Get the unique site codes
+    site_codes = [site.code for site in fc_sites]
+
+    # TODO write stations all json file for dashboard and other modules to read.
+    # Do this when virtual station support for forecasting from iEH HF is available
+
+    return fc_sites, site_codes
+
 
 # endregion
 
@@ -823,8 +853,8 @@ def read_conceptual_model_forecast_pentad(filepath):
     forecast = read_daily_probabilistic_conceptmod_forecasts_pentad(
         filepath,
         code=code,
-        model_long="Rainfall runoff assimilation model",
-        model_short="RRM"
+        model_long="Rainfall runoff assimilation model (RRAM)",
+        model_short="RRAM"
     )
 
     logger.debug(f"Type of forecast: {type(forecast)}")
@@ -888,6 +918,11 @@ def read_all_conceptual_model_forecasts_pentad():
     # Also read the hindcast files
     hindcast_files = get_files_in_subdirectories(path_to_results_dir, "hindcast_daily_*.csv")
 
+    # Only read hindcast files if they exist
+    if len(hindcast_files) == 0:
+        logger.info("No hindcast files found.")
+        return forecasts
+
     # Read the hindcast results from all files
     for hindcast_file in hindcast_files:
         logger.debug(f"Reading hindcast results from {hindcast_file}")
@@ -915,19 +950,22 @@ def read_machine_learning_forecasts_pentad(model):
 
     if model == 'TFT':
         filename = f"pentad_{model}_forecast.csv".format(model=model)
-        hindcast_filename = f"{model}_PENTAD_hindcast_daily.csv".format(model=model)
+        hindcast_filename = f"{model}_PENTAD_hindcast_daily*.csv".format(model=model)
         model_long = "Temporal-Fusion Transformer (TFT)"
         model_short = "TFT"
     elif model == 'TIDE':
         filename = f"pentad_{model}_forecast.csv".format(model=model)
+        hindcast_filename = f"{model}_PENTAD_hindcast_daily*.csv".format(model=model)
         model_long = "Time-Series Dense Encoder (TiDE)"
         model_short = "TiDE"
     elif model == 'TSMIXER':
         filename = f"pentad_{model}_forecast.csv".format(model=model)
+        hindcast_filename = f"{model}_PENTAD_hindcast_daily*.csv".format(model=model)
         model_long = "Time-Series Mixer (TSMIXER)"
         model_short = "TSMixer"
     elif model == 'ARIMA':
         filename = f"pentad_{model}_forecast.csv".format(model=model)
+        hindcast_filename = f"{model}_PENTAD_hindcast_daily*.csv".format(model=model)
         model_long = "AutoRegressive Integrated Moving Average (ARIMA)"
         model_short = "ARIMA"
     else:
@@ -947,8 +985,6 @@ def read_machine_learning_forecasts_pentad(model):
     logger.debug(f"{filepath}")
 
     forecast = read_daily_probabilistic_ml_forecasts_pentad(filepath, model, model_long, model_short)
-
-    # TODO: also read the hindcast files
 
     return forecast
 
@@ -1022,10 +1058,132 @@ def calculate_ensemble_forecast(forecasts):
     forecasts = pd.concat([forecasts, ensemble_mean])
     logger.info(f"Calculated ensemble forecast for the pentadal forecast horizon.")
     logger.debug(f"Columns of forecasts:\n{forecasts.columns}")
-    logger.debug(f"Forecasts:\n{forecasts.loc[:,['date', 'code', 'model_long']].head()}")
-    logger.debug(f"Forecasts:\n{forecasts.loc[:,['date', 'code', 'model_long']].tail()}")
+    logger.debug(f"Forecasts:\n{forecasts.loc[:,['date', 'code', 'model_long', 'forecasted_discharge']].head()}")
+    logger.debug(f"Forecasts:\n{forecasts.loc[:,['date', 'code', 'model_long', 'forecasted_discharge']].tail()}")
+    logger.debug(f"Unique models in forecasts:\n{forecasts['model_long'].unique()}")
 
     return forecasts
+
+# region Dealing with virtual stations
+def add_hydroposts(combined_data, check_hydroposts):
+    """
+    Check if the virtual hydroposts are in the combined_data and add them if not.
+
+    This function checks if the virtual hydroposts are in the combined_data and
+    adds them if they are not.
+
+    Args:
+    combined_data (pd.DataFrame): The input DataFrame. Must contain 'code' column.
+    check_hydroposts (list): A list of the virtual hydroposts to check for.
+
+    Returns:
+    pd.DataFrame: The input DataFrame with the virtual hydroposts added.
+
+    """
+    # Get the earliest date for which we have data in the combined_data
+    earliest_date = combined_data['date'].min()
+
+    # Check if the virtual hydroposts are in the combined_data
+    for hydropost in check_hydroposts:
+        if hydropost not in combined_data['code'].values:
+            logger.debug(f"Virtual hydropost {hydropost} is not in the list of stations.")
+            # Add the virtual hydropost to the combined_data
+            new_row = pd.DataFrame({
+                'code': [hydropost],
+                'date': [earliest_date],
+                'discharge': [np.nan],
+                'name': [f'Virtual hydropost {hydropost}']
+            })
+            combined_data = pd.concat([combined_data, new_row], ignore_index=True)
+
+    return combined_data
+
+def calculate_virtual_stations_data(data_df: pd.DataFrame,
+                                    code_col='code', discharge_col='forecasted_discharge',
+                                    date_col='date', model_col='model_short'):
+    """
+
+    """
+    # Get configuration for virtual stations
+    with open(os.path.join(os.getenv('ieasyforecast_configuration_path'),
+                           os.getenv('ieasyforecast_virtual_stations')), 'r') as f:
+        json_data = json.load(f)
+        virtual_stations = json_data['virtualStations'].keys()
+        instructions = json_data['virtualStations']
+
+    # Add the virtual stations to the data if they are not already there
+    data_df = add_hydroposts(data_df, virtual_stations)
+
+    # Iterate over the station IDs
+    for station in virtual_stations:
+        # Get the instructions for the station
+        instruction = instructions[station]
+        #print(instruction)
+        weigth_by_station = instruction['weightByStation']
+        #print(weigth_by_station)
+
+        # Currently, we only implement the combination function 'sum'. Throw an error if the function is not 'sum'
+        if instruction['combinationFunction'] != 'sum':
+            logger.error(f"Combination function for station {station} is not 'sum'.")
+            logger.error(f"Please implement the combination function '{instruction['combinationFunction']}' for station {station}.")
+            exit()
+
+        # Get the data for the stations that contribute to the virtual station and multiply them with the weight
+        for contributing_station, weight in weigth_by_station.items():
+            # Make sure the contributing station is not equal to the virtual station
+            if contributing_station == station:
+                logger.error(f"Virtual station {station} cannot contribute to itself.")
+                exit()
+
+            #print(contributing_station, weight)
+            # Get the data for the contributing station
+            data_contributing_station = data_df[data_df[code_col] == contributing_station].copy()
+
+            # Multiply the discharge data with the weight
+            data_contributing_station[discharge_col] = data_contributing_station[discharge_col] * weight
+
+            # Add the data to the virtual station if data_virtual_station exists
+            if 'data_virtual_station' not in locals():
+                data_virtual_station = data_contributing_station
+                # Change code to the code of the virtual station
+                data_virtual_station[code_col] = station
+                # Change the name to the name of the virtual station
+                data_virtual_station['name'] = f'Virtual hydropost {station}'
+            else:
+                # Merge the data for the contributing station with the data_virtual_station
+                data_virtual_station = pd.merge(data_virtual_station, data_contributing_station, on=date_col, how='outer', suffixes=('', '_y'))
+                # Add discharge_y to discharge and discard all _y columns
+                data_virtual_station[discharge_col] = data_virtual_station[discharge_col] + data_virtual_station[discharge_col + '_y']
+                data_virtual_station.drop(columns=[col for col in data_virtual_station.columns if '_y' in col], inplace=True)
+
+            #print("data_virtual_station.tail(10)\n", data_virtual_station.tail(10))
+
+        # Get the number of models in the data_df
+        models = data_df[model_col].unique()
+
+        # Check if we already have data for the virtual station in the data_df
+        # dataframe and fill gaps with data_virtual_station
+        if station in data_df[code_col].values:
+
+            for model in models:
+                # Get the data for the virtual station
+                data_station = data_df[(data_df[code_col] == station) & (data_df[model_col] == model)].copy()
+
+                # Get the latest date for which we have data in the data_df for the virtual station
+                last_date_station = data_station[date_col].max()
+
+                # Get the data for the date from the other stations
+                data_virtual_station = data_virtual_station[data_virtual_station[date_col] >= last_date_station].copy()
+
+                # Merge the data for the virtual station with the data_df
+                data_df = pd.concat([data_df, data_virtual_station], ignore_index=True)
+
+        # Delete data_virtual_station
+        del data_virtual_station
+
+    return data_df
+
+# endregion
 
 def read_observed_and_modelled_data_pentade():
     """
@@ -1058,14 +1216,15 @@ def read_observed_and_modelled_data_pentade():
     logger.debug(f"columns of forecasts concatenated:\n{forecasts.columns}")
     logger.debug(f"forecasts concatenated:\n{forecasts.loc[:, ['date', 'code', 'model_long']].head()}\n{forecasts.loc[:, ['date', 'code', 'model_long']].tail()}")
 
-    #forecasts = pd.concat([linreg, modelA, modelB])
-    #stats = pd.concat([stats_linreg, statsA, statsB])
+    # Calculate virtual stations forecasts if needed
+    forecasts = calculate_virtual_stations_data(forecasts)
+
     stats = stats_linreg
+    logger.debug(f"columns of stats concatenated:\n{stats.columns}")
+    logger.debug(f"stats concatenated:\n{stats.head()}\n{stats.tail()}")
     logger.info(f"Concatenated forecast results from all methods for the pentadal forecast horizon.")
 
     forecasts = calculate_ensemble_forecast(forecasts)
-
-    exit()
 
     # Merge the general runoff statistics to the observed DataFrame
     observed = pd.merge(observed, stats, on=["date", "code"], how="left")

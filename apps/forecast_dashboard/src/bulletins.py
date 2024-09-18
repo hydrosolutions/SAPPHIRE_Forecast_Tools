@@ -117,3 +117,4 @@ def write_to_excel(sites_list, header_df, env_file_path, indicator,
     #report = SapphireReport(name="Test report", env_file_path=env_file_path)
     #print('DEBUG: Multithreading write_to_excel: Writing bulletin ...')
     #report.generate_report(sites_list=sites_list)
+

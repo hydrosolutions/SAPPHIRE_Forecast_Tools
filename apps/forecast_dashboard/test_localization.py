@@ -55,7 +55,7 @@ _ = load_translation('ru_KG')
 # Read the locale from the environment file
 current_locale = os.getenv("ieasyforecast_locale")
 
-# Load custom CSS
+# Load custom CSS for the language icon
 pn.extension(
     css_files=['https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css']
 )
@@ -77,6 +77,9 @@ icon_html = pn.pane.HTML(
     '<i class="fas fa-language"></i>',
     width=20
 )
+
+
+
 
 
 # Function to create the dashboard

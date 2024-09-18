@@ -2,8 +2,45 @@
 
 import os
 import gettext
+import param
 
-def configure_gettext(locale, locale_dir):
+class TranslationManager(param.Parameterized):
+    language = param.String(default='en')
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        self._ = lambda x: x  # Default to no translation
+
+    @param.depends('language', watch=True)
+    def load_translation(self):
+        print(f"\n\ndebug Translation manager: load_translation")
+        print(f"self.language: {self.language}")
+        try:
+            trans = gettext.translation('pentad_dashboard', localedir='locale', languages=[self.language])
+            trans.install()
+            self._ = trans.gettext
+        except FileNotFoundError:
+            # Fallback to default language if translation file not found
+            self._ = lambda x: x
+
+# Create and export an instance
+translation_manager = TranslationManager()
+
+
+
+def load_translation(language, locale_dir):
+    if hasattr(language, 'new'):
+        language = language.new
+    print(f"debug load_translation: language: {language}")
+    print(f"debug load_translation: locale_dir: {locale_dir}")
+    gettext.bindtextdomain('pentad_dashboard', locale_dir)
+    gettext.textdomain('pentad_dashboard')
+    # Print the path to the .mo file
+    print(f"debug load_translation: path to .mo file: {gettext.find('pentad_dashboard', locale_dir, languages=[language])}")
+    return gettext.translation('pentad_dashboard', locale_dir, languages=[language]).gettext
+
+
+def configure_gettext(language, locale_dir):
     """
     Configures the gettext translation object for the application.
 
@@ -32,11 +69,13 @@ def configure_gettext(locale, locale_dir):
         raise Exception("Directory not found: " + locale_dir)
     # Create a translation object
     try:
-        translation = gettext.translation('pentad_dashboard', locale_dir, languages=[locale])
+        my_translation = load_translation(language, locale_dir)
+        print(f"debug configure_gettext: my_translation: {my_translation}")
     except FileNotFoundError:
         # Fallback to the default language if the .mo file is not found
-        translation = gettext.translation('pentad_dashboard', locale_dir, languages=['ru_KG'])
-    return translation.gettext
+        my_translation = load_translation('ru_KG', locale_dir)
+        print(f"debug configure_gettext: failed to load_translation. falling back to my_translation: {my_translation}")
+    return my_translation
 
 
 # How to update the translation file:

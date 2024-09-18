@@ -600,7 +600,7 @@ def main():
         if T_ensemble.isnull().values.any():
             print(f"Nan values in T data (ensemle) for HRU {code_ens}")
             print("Take Last Observation")
-            T_ensemble = T_ensemble.fffll()
+            T_ensemble = T_ensemble.ffill()
 
         #save the data
         P_ensemble.to_csv(os.path.join(OUTPUT_PATH_ENS, f"{code_ens}_P_ensemble_forecast.csv"), index=False)

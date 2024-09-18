@@ -168,15 +168,21 @@ def read_linreg_forecast_data():
     # we need to add 1 day to the date and re-evaluate the pentad & pentad in year
     linreg_forecast['Date'] = linreg_forecast['date'] + pd.Timedelta(days=1)
 
+    # Sort by code and Date
+    linreg_forecast = linreg_forecast.sort_values(by=['code', 'Date'])
+
+    # Drop duplicate rows for the same code and Date. Keep the last row.
+    linreg_forecast = linreg_forecast.drop_duplicates(subset=['code', 'Date'], keep='last')
+
     # Convert code column to str
     linreg_forecast['code'] = linreg_forecast['code'].astype(str)
 
     # We are only interested in the predictor & average discharge here. We drop the other columns.
-    linreg_forecast = linreg_forecast[['date', 'pentad_in_year', 'code', 'predictor', 'discharge_avg']]
+    #linreg_forecast = linreg_forecast[['date', 'pentad_in_year', 'code', 'predictor', 'discharge_avg']]
 
     return linreg_forecast
 
-def shift_date_by_n_days(linreg_predictor, n=1):
+def shift_date_by_n_days(linreg_predictor_orig, n=1):
     """
     Shift the date column of the linreg_predictor DataFrame by n days.
 
@@ -187,6 +193,8 @@ def shift_date_by_n_days(linreg_predictor, n=1):
     Returns:
         pd.DataFrame: The linreg_predictor DataFrame with the shifted date column.
     """
+    # Make a copy of the input data frame in order not to change linreg_predictor
+    linreg_predictor = linreg_predictor_orig.copy()
     linreg_predictor['date'] = linreg_predictor['date'] + pd.Timedelta(days=n)
 
     # If there is a column pentad_in_yer in the DataFrame, we need to update it as well
@@ -232,7 +240,7 @@ def read_forecast_results_file():
     # Print all values where column code is 15102. Sort the values by Date in ascending order.
     # Print the last 20 values.
     forecast_pentad = forecast_pentad.drop_duplicates(subset=['Date', 'code', 'model_short'], keep='last').sort_values('Date')
-    # Get the pentad of the year.
+    # Get the pentad of the year. Refers to the pentad the forecast is produced for.
     forecast_pentad = tl.add_pentad_in_year_column(forecast_pentad)
     # Cast pentad column no number
     forecast_pentad['pentad'] = forecast_pentad['pentad'].astype(int)
@@ -299,6 +307,7 @@ def add_predictor_dates(linreg_predictor, station, date):
     Returns:
         pd.Series: The predictor data for the station.
     """
+    #print(f"\n\nDEBUG: add_predictor_dates: station: {station}, date: {date}")
     # Filter the predictor data for the hydropost
     predictor = linreg_predictor[linreg_predictor['station_labels'] == station]
 
@@ -318,6 +327,8 @@ def add_predictor_dates(linreg_predictor, station, date):
     predictor['predictor_start_date'] = predictor['date'] - pd.DateOffset(days=2)
     predictor['forecast_start_date'] = predictor['date'] + pd.DateOffset(days=1)
     predictor['forecast_end_date'] = predictor['date'] + pd.DateOffset(days=5)
+
+    #print(f"DEBUG: add_predictor_dates: predictor:\n{predictor}")
 
     # Round the predictor according to common rules
     predictor['predictor'] = fl.round_discharge_to_float(predictor['predictor'].values[0])
@@ -347,6 +358,8 @@ def add_predictor_dates(linreg_predictor, station, date):
 
     #if isinstance(predictor, pd.Series):
     #    predictor = predictor.to_frame()
+
+    print(f"\n\n")
 
     return predictor
 
@@ -385,8 +398,8 @@ def internationalize_forecast_model_names(_, forecasts_all,
     Returns:
         pd.DataFrame: The forecast results DataFrame with translated model names.
     """
-    forecasts_all[model_long_col] = forecasts_all[model_long_col].apply(lambda x: _('Forecast models ' + x))
-    forecasts_all[model_short_col] = forecasts_all[model_short_col].apply(lambda x: _('Forecast models ' + x))
+    forecasts_all[model_long_col] = forecasts_all[model_long_col].apply(lambda x: _(x))
+    forecasts_all[model_short_col] = forecasts_all[model_short_col].apply(lambda x: _(x))
     #print("Inernationalized forecast model names:\n", forecasts_all[model_long_col].unique())
     #print(forecasts_all[model_short_col].unique())
 
@@ -506,14 +519,12 @@ def read_all_stations_metadata_from_file(station_list):
         raise Exception("File not found: " + all_stations_file)
 
     # Read stations json
-    with open(all_stations_file, "r") as json_file:
-        # TODO: remove the with open statement and use the fl.load_all_station_data_from_JSON function directly
-        all_stations = fl.load_all_station_data_from_JSON(all_stations_file)
+    all_stations = fl.load_all_station_data_from_JSON(all_stations_file)
     # Convert the code column to string
     all_stations['code'] = all_stations['code'].astype(str)
     # Left-join all_stations['code', 'river_ru', 'punkt_ru'] by 'Code' = 'code'
     station_df=pd.DataFrame(station_list, columns=['code'])
-    station_df=station_df.merge(all_stations.loc[:,['code','river_ru','punkt_ru']],
+    station_df=station_df.merge(all_stations.loc[:,['code','river_ru','punkt_ru', 'basin']],
                             left_on='code', right_on='code', how='left')
 
     # Paste together the columns Code, river_ru and punkt_ru to a new column
@@ -523,7 +534,12 @@ def read_all_stations_metadata_from_file(station_list):
     # Update the station list with the new station labels
     station_list = station_df['station_labels'].tolist()
 
-    return station_list, all_stations, station_df
+    # From station_df, get the columns basin and station_lables and convert to a
+    # dictionary where we have unique basins in the key and the station_labels
+    # in the values
+    station_dict = station_df.groupby('basin')['station_labels'].apply(list).to_dict()
+
+    return station_list, all_stations, station_df, station_dict
 
 def add_labels_to_hydrograph(hydrograph, all_stations):
     hydrograph = hydrograph.merge(
@@ -576,6 +592,16 @@ def calculate_forecast_range(_, forecast_table, range_type, range_slider):
 
     return forecast_table
 
+def update_model_dict(model_dict, forecasts_all, selected_station):
+    """
+    Update the model_dict with the models we have results for for the selected station
+    """
+    test = forecasts_all[forecasts_all['station_labels'] == selected_station]
+    #print("DEBUG: update_model_dict: unique models for selected station:\n", test['model_long'].unique())
+
+    model_dict = forecasts_all[forecasts_all['station_labels'] == selected_station] \
+        .set_index('model_long')['model_short'].to_dict()
+    return model_dict
 
 
 

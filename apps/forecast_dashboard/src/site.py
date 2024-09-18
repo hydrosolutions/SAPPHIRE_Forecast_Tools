@@ -18,6 +18,7 @@ class SapphireSite:
                  punkt_name_ru: str = None,
                  river_name_nat: str = None,
                  punkt_name_nat: str = None,
+                 station_label: str = None,
                  lat: float = None,
                  lon: float = None,
                  region: str = None,
@@ -33,6 +34,7 @@ class SapphireSite:
         self.punkt_name_ru = punkt_name_ru if punkt_name_ru else None
         self.river_name_nat = river_name_nat if river_name_nat else None
         self.punkt_name_nat = punkt_name_nat if punkt_name_nat else None
+        self.station_label = f"{self.code} - {self.river_name_ru} {self.punkt_name_ru}" if station_label else None
         self.lat = lat if lat else None
         self.lon = lon if lon else None
         self.region = region if region else None
@@ -71,6 +73,7 @@ class SapphireSite:
                     punkt_name_ru=row[punkt_ru_col] if punkt_ru_col in df.columns else None,
                     river_name_nat=row[river_nat_col] if river_nat_col in df.columns else None,
                     punkt_name_nat=row[punkt_nat_col] if punkt_nat_col in df.columns else None,
+                    station_label=f"{row[site_code_col]} - {row[river_ru_col]} {row[punkt_ru_col]}" if site_code_col in df.columns else None,
                     lat=row[latitude_col] if latitude_col in df.columns else 0.0,
                     lon=row[longitude_col] if longitude_col in df.columns else 0.0,
                     region=row[region_col] if region_col in df.columns else None,
@@ -83,14 +86,31 @@ class SapphireSite:
             return []
 
     def get_site_attributes_from_selected_forecast(cls,
+            _,
             sites: list,
-            df: pd.DataFrame,  # Table that is displayed in the bulletin tab
-            linreg_predictor_col: str = 'predictor') -> list:
+            site_selection, # Selected site from the dropdown menu
+            tabulator  # Tabulator widget that is displayed in the forecast tab
+            ):
         """
         Fills the Site object with selected forecast attributes from a DataFrame.
 
         Returns:
             list: A list of Site objects.
         """
-        #
+        # Selected site
+        selected_site_label = site_selection
+        selected_site = next((site for site in sites if site.station_label == selected_site_label), None)
+
+        if selected_site and tabulator.selection:
+            selected_row = tabulator.value
+            selected_site.forecast_pentad = selected_row[_('Forecasted discharge')]
+            selected_site.forecast_lower_bound = selected_row[_('Forecast lower bound')]
+            selected_site.forecast_upper_bound = selected_row[_('Forecast upper bound')]
+            selected_site.forecast_delta = selected_row[_('δ')]
+            selected_site.forecast_sdivsigma = selected_row[_('s/σ')]
+            selected_site.forecast_mae = selected_row[_('MAE')]
+            selected_site.forecast_accuracy = selected_row[_('Accuracy')]
+            print(f"Updated site {selected_site.station_label} with forecast attributes from row {selected_row}.")
+        else:
+            print(f"No site or row selected.")
 
