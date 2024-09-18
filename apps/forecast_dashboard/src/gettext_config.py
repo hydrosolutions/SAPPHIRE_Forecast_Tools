@@ -2,6 +2,30 @@
 
 import os
 import gettext
+import param
+
+class TranslationManager(param.Parameterized):
+    language = param.String(default='en')
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        self._ = lambda x: x  # Default to no translation
+
+    @param.depends('language', watch=True)
+    def load_translation(self):
+        print(f"\n\ndebug Translation manager: load_translation")
+        print(f"self.language: {self.language}")
+        try:
+            trans = gettext.translation('pentad_dashboard', localedir='locale', languages=[self.language])
+            trans.install()
+            self._ = trans.gettext
+        except FileNotFoundError:
+            # Fallback to default language if translation file not found
+            self._ = lambda x: x
+
+# Create and export an instance
+translation_manager = TranslationManager()
+
 
 
 def load_translation(language, locale_dir):
@@ -46,9 +70,11 @@ def configure_gettext(language, locale_dir):
     # Create a translation object
     try:
         my_translation = load_translation(language, locale_dir)
+        print(f"debug configure_gettext: my_translation: {my_translation}")
     except FileNotFoundError:
         # Fallback to the default language if the .mo file is not found
         my_translation = load_translation('ru_KG', locale_dir)
+        print(f"debug configure_gettext: failed to load_translation. falling back to my_translation: {my_translation}")
     return my_translation
 
 

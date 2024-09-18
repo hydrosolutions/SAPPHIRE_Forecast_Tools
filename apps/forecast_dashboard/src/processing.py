@@ -307,7 +307,7 @@ def add_predictor_dates(linreg_predictor, station, date):
     Returns:
         pd.Series: The predictor data for the station.
     """
-    print(f"\n\nDEBUG: add_predictor_dates: station: {station}, date: {date}")
+    #print(f"\n\nDEBUG: add_predictor_dates: station: {station}, date: {date}")
     # Filter the predictor data for the hydropost
     predictor = linreg_predictor[linreg_predictor['station_labels'] == station]
 
@@ -328,7 +328,7 @@ def add_predictor_dates(linreg_predictor, station, date):
     predictor['forecast_start_date'] = predictor['date'] + pd.DateOffset(days=1)
     predictor['forecast_end_date'] = predictor['date'] + pd.DateOffset(days=5)
 
-    print(f"DEBUG: add_predictor_dates: predictor:\n{predictor}")
+    #print(f"DEBUG: add_predictor_dates: predictor:\n{predictor}")
 
     # Round the predictor according to common rules
     predictor['predictor'] = fl.round_discharge_to_float(predictor['predictor'].values[0])
@@ -597,7 +597,7 @@ def update_model_dict(model_dict, forecasts_all, selected_station):
     Update the model_dict with the models we have results for for the selected station
     """
     test = forecasts_all[forecasts_all['station_labels'] == selected_station]
-    print("DEBUG: update_model_dict: unique models for selected station:\n", test['model_long'].unique())
+    #print("DEBUG: update_model_dict: unique models for selected station:\n", test['model_long'].unique())
 
     model_dict = forecasts_all[forecasts_all['station_labels'] == selected_station] \
         .set_index('model_long')['model_short'].to_dict()

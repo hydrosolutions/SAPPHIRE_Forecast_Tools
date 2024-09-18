@@ -25,6 +25,7 @@ import pandas as pd
 import datetime as dt
 import math
 import param
+from functools import partial
 
 import logging
 from logging.handlers import TimedRotatingFileHandler
@@ -40,7 +41,7 @@ from ieasyreports.settings import ReportGeneratorSettings
 
 # Local sources
 from src.environment import load_configuration
-from src.gettext_config import configure_gettext, load_translation
+import src.gettext_config as localize
 import src.processing as processing
 import src.vizualization as viz
 #import src.multithreading as thread
@@ -153,11 +154,12 @@ today = dt.datetime.now()
 # region localization
 # Read the locale from the environment file
 current_locale = os.getenv("ieasyforecast_locale")
+print(f"INFO: Default locale: {current_locale}")
 
 # Localization, translation to different languages.
 localedir = os.getenv("ieasyforecast_locale_dir")
 
-_ = configure_gettext(current_locale, localedir)
+_ = localize.load_translation(current_locale, localedir)
 
 # endregion
 
@@ -171,7 +173,7 @@ hydrograph_pentad_all = processing.read_hydrograph_pentad_data_for_pentad_foreca
 # - linreg_predictor: for displaying predictor in predictor tab
 linreg_predictor = processing.read_linreg_forecast_data()
 # For site = 16059, show the last 5 rows of the linreg_predictor DataFrame
-print(f"DEBUG: pentad_dashboard.py: linreg_predictor: {linreg_predictor[linreg_predictor['code'] == '16059'].tail()}")
+#print(f"DEBUG: pentad_dashboard.py: linreg_predictor: {linreg_predictor[linreg_predictor['code'] == '16059'].tail()}")
 # - forecast results from all models
 forecasts_all = processing.read_forecast_results_file()
 # Forecast statistics
@@ -199,10 +201,10 @@ hydrograph_pentad_all = processing.add_labels_to_hydrograph(hydrograph_pentad_al
 linreg_predictor = processing.add_labels_to_forecast_pentad_df(linreg_predictor, all_stations)
 #print(f"DEBUG: linreg_predictor with labels: {linreg_predictor.tail()}")
 linreg_datatable = processing.shift_date_by_n_days(linreg_predictor, 1)
-print(f"DEBUG: linreg_datatable.columns: {linreg_datatable.columns}")
-print(f"DEBUG: linreg_datatable: {linreg_datatable.tail()}")
-print(f"DEBUG: linreg_predictor.columns: {linreg_predictor.columns}")
-print(f"DEBUG: linreg_predictor: {linreg_predictor.tail()}")
+#print(f"DEBUG: linreg_datatable.columns: {linreg_datatable.columns}")
+#print(f"DEBUG: linreg_datatable: {linreg_datatable.tail()}")
+#print(f"DEBUG: linreg_predictor.columns: {linreg_predictor.columns}")
+#print(f"DEBUG: linreg_predictor: {linreg_predictor.tail()}")
 forecasts_all = processing.add_labels_to_forecast_pentad_df(forecasts_all, all_stations)
 
 # Replace model names with translation strings
@@ -214,9 +216,9 @@ forecasts_all = forecasts_all.merge(
     forecast_stats,
     on=['code', 'pentad_in_year', 'model_short', 'model_long'],
     how='left')
-print(f"DEBUG: pentad_dashboard.py: forecasts_all: columns of forecasts_all:\n{forecasts_all.columns}")
+#print(f"DEBUG: pentad_dashboard.py: forecasts_all: columns of forecasts_all:\n{forecasts_all.columns}")
 #print(f"DEBUG: pentad_dashboard.py: forecasts_all: Models in forecasts_all:\n{forecasts_all['model_long'].unique()}")
-print(f"DEBUG: pentad_dashboard.py: forecasts_all: Tail of forecasts_all:\n{forecasts_all[['code', 'date', 'Q25', 'Q75', 'pentad_in_month', 'pentad_in_year']].tail()}")
+#print(f"DEBUG: pentad_dashboard.py: forecasts_all: Tail of forecasts_all:\n{forecasts_all[['code', 'date', 'Q25', 'Q75', 'pentad_in_month', 'pentad_in_year']].tail()}")
 
 #print(f"DEBUG: pentad_dashboard.py: linreg_predictor: columns of linreg_predictor:\n{linreg_predictor.columns}")
 #print(f"DEBUG: pentad_dashboard.py: linreg_predictor: Tail of linreg_predictor:\n{linreg_predictor[['code', 'date', 'pentad_in_year']].tail()}")
@@ -231,7 +233,7 @@ sites_list = Site.get_site_attributes_from_stations_dataframe(all_stations)
 # Create a dictionary of the model names and the corresponding model labels
 model_dict_all = forecasts_all[['model_short', 'model_long']] \
     .set_index('model_long')['model_short'].to_dict()
-print(f"DEBUG: pentad_dashboard.py: model_dict_all: {model_dict_all}")
+#print(f"DEBUG: pentad_dashboard.py: model_dict_all: {model_dict_all}")
 
 
 pentads = [
@@ -287,18 +289,20 @@ pentad_selector = pn.widgets.Select(
 )
 
 # Widget for station selection, always visible
-station = pn.widgets.Select(
-    name=_("Select discharge station:"),
-    groups=station_dict,
-    value=station_dict[next(iter(station_dict))][0])
+print(f"\n\nDEBUG: pentad_dashboard.py: station select name string: {_('Select discharge station:')}\n\n")
+station = layout.create_station_selection_widget(station_dict)
+#station = pn.widgets.Select(
+#    name=_("Select discharge station:"),
+#    groups=station_dict,
+#    value=station_dict[next(iter(station_dict))][0])
 
 # Print the station widget selection
-print(f"DEBUG: pentad_dashboard.py: Station widget selection: {station.value}")
+#print(f"DEBUG: pentad_dashboard.py: Station widget selection: {station.value}")
 
 # Update the model_dict with the models we have results for for the selected
 # station
 model_dict = processing.update_model_dict(model_dict_all, forecasts_all, station.value)
-print(f"DEBUG: pentad_dashboard.py: model_dict: {model_dict}")
+#print(f"DEBUG: pentad_dashboard.py: model_dict: {model_dict}")
 
 
 # Widget for forecast model selection, only visible in forecast tab
@@ -328,11 +332,12 @@ manual_range = pn.widgets.IntSlider(
 )
 manual_range.visible = False
 
-show_range_button = pn.widgets.RadioButtonGroup(
-    name=_("Show ranges in figure:"),
-    options=[_("Yes"), _("No")],
-    value=_("No")
-)
+def draw_show_forecast_ranges_widget():
+    return pn.widgets.RadioButtonGroup(
+        name=_("Show ranges in figure:"),
+        options=[_("Yes"), _("No")],
+        value=_("No"))
+show_range_button = draw_show_forecast_ranges_widget()
 
 selected_indices = pn.widgets.CheckBoxGroup(
     name=_("Select Data Points:"),
@@ -353,7 +358,7 @@ indicator = pn.indicators.LoadingSpinner(value=False, size=25)
 language_select = pn.widgets.Select(
     name='',
     options={'en':'en_CH', 'ru':'ru_KG', 'kg': 'ky_KG'},
-    value='ru_KG',
+    value=current_locale,
     width=50,
     css_classes=['language_button_css']
 )
@@ -461,8 +466,8 @@ forecast_tabulator = viz.create_forecast_summary_tabulator(
     _, forecasts_all, station.value, date_picker.value, model_checkbox.value,
     allowable_range_selection.value, manual_range.value
 )
-print(f"DEBUG: pentad_dashboard.py: forecast_tabulator: {forecast_tabulator}")
-print(f"DEBUG: type of forecast_tabulator: {type(forecast_tabulator)}")
+#print(f"DEBUG: pentad_dashboard.py: forecast_tabulator: {forecast_tabulator}")
+#print(f"DEBUG: type of forecast_tabulator: {type(forecast_tabulator)}")
 
 bulletin_table = pn.panel(
     pn.bind(
@@ -490,7 +495,7 @@ forecast_summary_table = pn.panel(
     )
 
 # Update the site object based on site and forecast selection
-print(f"DEBUG: pentad_dashboard.py: forecast_tabulator: {forecast_summary_tabulator}")
+#print(f"DEBUG: pentad_dashboard.py: forecast_tabulator: {forecast_summary_tabulator}")
 update_site_object = pn.bind(
     Site.get_site_attributes_from_selected_forecast,
     _=_,
@@ -521,12 +526,12 @@ language_icon_html = pn.pane.HTML(
 disclaimer = layout.define_disclaimer(_, in_docker_flag)
 
 
-# Sidebar
-sidebar = layout.define_sidebar(_, station, forecast_card)
-
-
-
 # Update the layout
+
+# Update the widgets conditional on the active tab
+allowable_range_selection.param.watch(lambda event: viz.update_range_slider_visibility(
+    _, manual_range, event), 'value')
+
 
 # Function to update the dashboard based on selected language
 def tabs_change_language(language):
@@ -534,7 +539,7 @@ def tabs_change_language(language):
         print("\nDEBUG: language: ", language)
         print("\nDEBUG: locale_dir: ", localedir)
         global _
-        _ = load_translation(language, localedir)
+        _ = localize.load_translation(language, localedir)
         # Print the currently selected language
         print(f"Selected language: {language}")
         return layout.define_tabs(
@@ -546,12 +551,42 @@ def tabs_change_language(language):
         print(f"Error in tabs_change_language: {e}")
         print(traceback.format_exc())
 
+# Partial function to update the station widget based on the selected language
+update_station = partial(layout.update_station_widget, station=station)
+
+# Watch for language changes
+localize.translation_manager.param.watch(update_station, 'language')
+
+# Link the language_select widget to the TranslationManager
+def update_language(event):
+    localize.translation_manager.language = event.new
+
+language_select.param.watch(update_language, 'value')
+
+def sidepane_change_language(language):
+    try:
+        global _
+        _ = localize.load_translation(language, localedir)
+
+        # Update widgets
+        #station.name = _("Select discharge station:")
+        forecast_card.title = _('Select forecasts:')
+        model_checkbox.name = _("Select forecast model:")
+        allowable_range_selection.name = _("Select forecast range for display:")
+        allowable_range_selection.options = [_("delta"), _("Manual range, select value below"), _("max[delta, %)")]
+        manual_range.name = _("Manual range (%)")
+        range_selection_title.object = _("Show ranges in figure:")
+        show_range_button.name = _("Show ranges in figure:")
+        show_range_button.options = [_("Yes"), _("No")]
+
+        return layout.define_sidebar(_, station, forecast_card)
+    except Exception as e:
+        print(f"Error in sidepane_change_language: {e}")
+        print(traceback.format_exc())
+
 # Bind the function to the language selection widget
 tabs = pn.bind(tabs_change_language, language_select.param.value)
-
-# Update the widgets conditional on the active tab
-allowable_range_selection.param.watch(lambda event: viz.update_range_slider_visibility(
-    _, manual_range, event), 'value')
+sidebar = pn.bind(sidepane_change_language, language_select.param.value)
 
 # Define the layout
 dashboard = pn.template.BootstrapTemplate(
@@ -568,7 +603,7 @@ dashboard = pn.template.BootstrapTemplate(
 def update_title_language(event):
     global _
     selected_language = event.new
-    _ = load_translation(selected_language, localedir)
+    _ = localize.load_translation(selected_language, localedir)
     dashboard.title = _('SAPPHIRE Central Asia - Pentadal forecast dashboard')
 
 language_select.param.watch(update_title_language, 'value')

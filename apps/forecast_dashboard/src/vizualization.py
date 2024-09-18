@@ -394,9 +394,9 @@ def plot_current_runoff_forecasts(data, date_col, forecast_data_col,
     # Create the overlay
     for i, model in enumerate(models):
         model_data = data[data[forecast_name_col] == model]
-        print(f"Debug: model_data\n{model_data}")
-        print("MODEL: ", model)
-        print("COLOR: ", runoff_forecast_color[i])
+        #print(f"Debug: model_data\n{model_data}")
+        #print("MODEL: ", model)
+        #print("COLOR: ", runoff_forecast_color[i])
         # Get the latest forecast for the model
         latest_forecast = fl.round_discharge(model_data[forecast_data_col].iloc[-1])
         legend_entry = model + ": " + latest_forecast + " " + unit_string
@@ -471,8 +471,8 @@ def plot_runoff_forecast_range_area(
 
     # Decide which colors to display
     # list of unique models in data
-    print(f"\nDEBUG: forecast_name_col: {forecast_name_col}")
-    print(f"data.columns: {data.columns}")
+    #print(f"\nDEBUG: forecast_name_col: {forecast_name_col}")
+    #print(f"data.columns: {data.columns}")
     models = data[forecast_name_col].unique()
     if len(models) > len(runoff_forecast_colors):
         # Add some random colors if there are more models than colors
@@ -588,12 +588,12 @@ def plot_current_runoff_forecast_range(
         lower_bound = fl.round_discharge(model_data[min_col].iloc[-1])
         upper_bound = fl.round_discharge(model_data[max_col].iloc[-1])
         range_legend_entry = model + "range : " + lower_bound + "-" + upper_bound + " " + unit_string
-        print(f"Debug: model_data\n{model_data}")
-        print("MODEL: ", model)
-        print("COLOR: ", runoff_forecast_color[i])
-        print("LEGEND ENTRY: ", range_legend_entry)
-        print("lower_bound: ", lower_bound)
-        print("upper_bound: ", upper_bound)
+        #print(f"Debug: model_data\n{model_data}")
+        #print("MODEL: ", model)
+        #print("COLOR: ", runoff_forecast_color[i])
+        #print("LEGEND ENTRY: ", range_legend_entry)
+        #print("lower_bound: ", lower_bound)
+        #print("upper_bound: ", upper_bound)
 
         # Get the latest forecast for the model
         latest_forecast = fl.round_discharge(model_data[mean_col].iloc[-1])
@@ -749,8 +749,8 @@ def create_date_picker_with_pentad_text(date_picker, _):
 # region predictor_tab
 def plot_daily_hydrograph_data(_, hydrograph_day_all, linreg_predictor, station, title_date):
 
-    print(f"\n\nDEBUG: plot_daily_hydrograph_data")
-    print(f"title_date: {title_date}")
+    #print(f"\n\nDEBUG: plot_daily_hydrograph_data")
+    #print(f"title_date: {title_date}")
 
     # Custom hover tool tip for the daily hydrograph
     date_col = _('date column name')
@@ -888,8 +888,8 @@ def plot_pentad_forecast_hydrograph_data(_, hydrograph_pentad_all, forecasts_all
 
     # Date handling
     # Set the title date to the date of the last available data if the forecast date is in the future
-    print(f"\n\nDEBUG: plot_pentad_forecast_hydrograph_data")
-    print(f"title_date: {title_date}")
+    #print(f"\n\nDEBUG: plot_pentad_forecast_hydrograph_data")
+    #print(f"title_date: {title_date}")
     forecast_date = title_date + dt.timedelta(days=1)
     title_pentad = tl.get_pentad(forecast_date)
     title_month = tl.get_month_str_case2_viz(_, forecast_date)
@@ -1231,7 +1231,7 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector):
     # Define a variable to hold the visible data across functions
     global visible_data
 
-    print(f"\n\nDEBUG: select_and_plot_data")
+    #print(f"\n\nDEBUG: select_and_plot_data")
     # Print tail of linreg_predictor for code == '16059'
     print(f"linreg_predictor[linreg_predictor['code'] == '16059'].head(10):\n",
           linreg_predictor[linreg_predictor['code'] == '16059'].head(10))

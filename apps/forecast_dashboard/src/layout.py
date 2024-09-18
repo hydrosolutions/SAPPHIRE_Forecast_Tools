@@ -4,9 +4,33 @@ import param
 import panel as pn
 import datetime as dt
 from .vizualization import update_sidepane_card_visibility
+from .gettext_config import translation_manager
 
 import param
 
+# region Define widgets
+def create_station_selection_widget(station_dict):
+    _ = translation_manager._
+    return pn.widgets.Select(
+        name=_("Select discharge station:"),
+        groups=station_dict,
+        value=station_dict[next(iter(station_dict))][0])
+
+
+# endregion
+
+
+# region Widget update functions
+
+def update_station_widget(event, station):
+    _ = translation_manager._
+    station.name = _("Select discharge station:")
+    print("update_station_widget: new name: ", station.name)
+
+# endregion
+
+
+# May be deprecated, could not get it to work
 class DashboardTitle(param.Parameterized):
     value = param.String(default="SAPPHIRE Central Asia - Pentadal forecast dashboard")
 
@@ -60,9 +84,10 @@ def define_disclaimer(_, in_docker_flag):
     logos = get_logos(in_docker_flag)
     return pn.Column(
         pn.pane.HTML(_('disclaimer_who')),
-        pn.pane.Markdown(_("disclaimer_waranty")),
         pn.pane.HTML("<p> </p>"),
         logos,
+        pn.pane.HTML("<p> </p>"),
+        pn.pane.Markdown(_("disclaimer_waranty")),
         pn.pane.Markdown(_("Last updated on ") + dt.datetime.now().strftime("%b %d, %Y") + ".")
     )
 
