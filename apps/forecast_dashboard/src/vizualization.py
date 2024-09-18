@@ -1361,13 +1361,25 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector):
 
             if len(visible_data) > 1:
                 # Add a linear regression line to the scatter plot
-                slope, intercept, r_value, p_value, std_err = stats.linregress(visible_data['predictor'], visible_data['discharge_avg'])
+                #slope, intercept, r_value, p_value, std_err = stats.linregress(visible_data['predictor'], visible_data['discharge_avg'])
+                # Get slope, intercept and rsquared from the data_table (last value)
+                slope = visible_data['slope'].iloc[-1]
+                intercept = visible_data['intercept'].iloc[-1]
+                rsquared = visible_data['rsquared'].iloc[-1]
                 x = np.linspace(visible_data['predictor'].min(), visible_data['predictor'].max(), 100)
                 y = slope * x + intercept
                 line = hv.Curve((x, y)).opts(color='red', line_width=2)
+                equation = f"y = {slope:.2f}x + {intercept:.2f}"
+                r2 = f"R² = {rsquared:.2f}"
+                text = hv.Text(x = visible_data["predictor"].min(),
+                   y = visible_data["discharge_avg"].max(),
+                   text = f"{equation}\n{r2}") \
+                    .opts(color="black", text_font_size="10pt", text_align="left",)
+                    #xlim=(0, analysis_pentad["Predictor"].max()*1.1),
+                    #ylim=(0, analysis_pentad["Q [m3/s]"].max()*1.1))
 
                 # Overlay the scatter plot and the linear regression line
-                plot = scatter * line
+                plot = scatter * line * text
                 plot.opts(
                     title=title_text,
                     show_grid=True,

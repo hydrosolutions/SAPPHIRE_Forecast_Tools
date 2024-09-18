@@ -178,7 +178,7 @@ def read_linreg_forecast_data():
     linreg_forecast['code'] = linreg_forecast['code'].astype(str)
 
     # We are only interested in the predictor & average discharge here. We drop the other columns.
-    linreg_forecast = linreg_forecast[['date', 'pentad_in_year', 'code', 'predictor', 'discharge_avg']]
+    #linreg_forecast = linreg_forecast[['date', 'pentad_in_year', 'code', 'predictor', 'discharge_avg']]
 
     return linreg_forecast
 
