@@ -215,14 +215,13 @@ get_hindcast <- function(forecast_date,
   }
   # if the forecast_mode is daily, then the forecast_end is 14 days after the forecast_date
   if (forecast_mode == "daily") {
+    
     # Calculate forecast_end based on the maximum date in basinObsTS
-    forecast_end <- as.Date(max(basinObsTS$date))
+    forecast_max <- as.Date(max(basinObsTS$date))
+    forecast_end <- forecast_date + 14 
     
-    # Calculate the expected forecast end date
-    expected_forecast_end <- forecast_date + 14
-    
-    # Check if forecast_end is earlier than the expected forecast end date
-    if (forecast_end < expected_forecast_end) {
+    if (forecast_end > forecast_max) {
+      forecast_end <- forecast_max
       warning("Please download the recent forecast.")
     }
   }

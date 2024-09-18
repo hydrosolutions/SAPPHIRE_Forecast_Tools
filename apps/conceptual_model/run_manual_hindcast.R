@@ -103,7 +103,7 @@ end_date_hindcast <- config$end_hindcast %>% as.Date()
 
 print(paste0("Hincasting: ", hindcast_mode, " from ",start_date_hindcast," to ", end_date_hindcast))
 ################### RUNNING ###################
-for (Code in config$codes) {
+for (Code in config$code_hindcast) {
   print(Code)
   # Step 1: Prepare Input data ####
   FUN_MOD <- get(config$fun_mod_mapping[[as.character(Code)]])
@@ -118,6 +118,7 @@ for (Code in config$codes) {
   load(file.path(dir_basin,Sys.getenv("ieasyhydroforecast_FILE_BASININFO")))
   load(file.path(dir_Output, "runResults_op.RData"))
   Enddate_operational <- as.Date(max(runResults_op$DatesR))
+  convert_mmd_to_m3s <- Basin_Info$BasinArea_m2/(86400*1000)
   
   # pf: one file per basin
   pfP_forecast_filename <- paste0(Code,Sys.getenv("ieasyhydroforecast_FILE_PF_P"))
@@ -165,6 +166,11 @@ for (Code in config$codes) {
     format(format = "%Y%m%d")
   end_date_hindcast_format <- end_date_hindcast %>%
     format(format = "%Y%m%d")
+  # convert hindcast from mm/d to m3/s and round to 4 digits
+  
+  hindcast <- hindcast %>%
+    mutate(across(3:last_col(), ~ . * convert_mmd_to_m3s)) %>%
+    mutate(across(3:last_col(), ~ round(., 4)))
   
   write.csv(hindcast, paste0(dir_Results, "/data/hindcast_",hindcast_mode,"_",start_date_hindcast_format,"_",end_date_hindcast_format,"_",Basin_Info$BasinCode, ".csv"), row.names = FALSE)
   }
