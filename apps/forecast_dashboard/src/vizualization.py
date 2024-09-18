@@ -1329,6 +1329,7 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector):
         # If no data is visible, show an empty plot
         if visible_data.empty:
             scatter = hv.Curve([])  # Define an empty plot to avoid errors
+            plot = scatter  # initialize plot
         else:
             hover = HoverTool(
                 tooltips=[
