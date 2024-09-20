@@ -1,7 +1,11 @@
 # vizualization.py
 import os
 import param
+import docker
+import subprocess
 import random
+import re
+from dotenv import load_dotenv
 import sys
 import math
 import pandas as pd
@@ -17,7 +21,6 @@ from bokeh.models import HoverTool, FixedTicker, FuncTickFormatter, CustomJSTick
 from scipy import stats
 from sklearn.linear_model import LinearRegression
 from bokeh.models.widgets.tables import CheckboxEditor, BooleanFormatter
-
 from . import processing
 
 # Import local library
@@ -968,6 +971,64 @@ pentad_options = {f"{i+1}st pentad of {calendar.month_name[month]}" if i == 0 el
 SAVE_DIRECTORY = 'saved_data'
 os.makedirs(SAVE_DIRECTORY, exist_ok=True)
 
+
+
+class Environment:
+    def __init__(self, dotenv_path):
+        print(f"Current working directory: {os.getcwd()}")
+        print(f"Loading environment variables from {dotenv_path}")
+        load_dotenv(dotenv_path=dotenv_path)
+
+    def get(self, key, default=None):
+        return os.getenv(key, default)
+
+# Initialize the Environment class with the path to your .env file
+env_file_path = os.getenv('ieasyhydroforecast_env_file_path')
+env = Environment(env_file_path)
+# Get the tag of the docker image to use
+TAG = env.get('ieasyhydroforecast_backend_docker_image_tag')
+# Get the organization for which to run the forecast tools
+ORGANIZATION = env.get('ieasyhydroforecast_organization')
+# URL of the sapphire data gateway
+SAPPHIRE_DG_HOST = env.get('SAPPHIRE_DG_HOST')
+
+
+
+
+# Function to convert a relative path to an absolute path
+def get_absolute_path(relative_path):
+    #print("In get_absolute_path: ")
+    #print(" - Relative path: ", relative_path)
+
+    # Test if there environment variable "ieasyforecast_data_root_dir" is set
+    data_root_dir = os.getenv('ieasyhydroforecast_data_root_dir')
+    if data_root_dir:
+        # If it is set, use it as the root directory
+        # Strip the relative path from 2 "../" strings
+        relative_path = re.sub(r'\.\./\.\./\.\.', '', relative_path)
+
+        return data_root_dir + relative_path
+
+    else:
+        # Current working directory. Should be one above the root of the project
+        cwd = os.getcwd()
+        # Strip the relative path from 2 "../" strings
+        relative_path = re.sub(r'\.\./\.\./\.\.', '', relative_path)
+
+        return os.path.join(cwd, relative_path)
+
+def get_bind_path(relative_path):
+    # Strip the relative path from ../../.. to get the path to bind to the container
+    relative_path = re.sub(r'\.\./\.\./\.\.', '', relative_path)
+
+    return relative_path
+
+def get_local_path(relative_path):
+    # Strip 2 ../ of the relative path
+    relative_path = re.sub(f'\.\./\.\./', '', relative_path)
+
+    return relative_path
+
 def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector):
     # Define a variable to hold the visible data across functions
     global visible_data
@@ -1148,8 +1209,45 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector):
     # Create the pop-up notification pane (initially hidden)
     popup = pn.pane.Alert("Changes Saved Successfully", alert_type="success", visible=False)
 
+    progress_bar = pn.indicators.Progress(name="Progress", value=0, width=300, visible=False)
+    progress_message = pn.pane.Alert("Processing...", alert_type="info", visible=False)
+
+    def run_docker_container(client, full_image_name, volumes, environment, container_name, progress_bar):
+        """
+        Reusable function to run a Docker container and track its progress.
+        full_image_name should include both the image name and the tag, e.g. "linear_regression:latest"
+        """
+        container = client.containers.run(
+            full_image_name,  # Use full image name directly
+            detach=True,
+            environment=environment,
+            volumes=volumes,
+            name=container_name,
+            network='host'
+        )
+        print(f"Container {container.id} is running.")
+
+        # Monitor the container's progress
+        progress_bar.value = 0
+        while container.status != 'exited':
+            container.reload()  # Refresh the container's status
+            progress_bar.value += 10  # Increment progress
+            if progress_bar.value > 90:
+                progress_bar.value = 90  # Limit progress to 90% until the process finishes
+            time.sleep(1)
+        container.wait()  # Ensure the container has finished
+        progress_bar.value = 100  # Set progress to 100% after the container is done
+        print(f"Container {container.id} has stopped.")
+
     # Function to save table data to CSV
     def save_to_csv(event):
+        # Disable the save button and show the progress bar and message
+        save_button.disabled = True
+        progress_bar.visible = True
+        progress_message.object = "Processing..."
+        progress_message.visible = True
+        progress_bar.value = 0
+
         # Convert the table value back to a DataFrame
         updated_forecast_table = pd.DataFrame(forecast_data_table.value)
 
@@ -1168,6 +1266,63 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector):
         # Hide the popup after a short delay (optional)
         pn.state.onload(lambda: pn.state.add_periodic_callback(lambda: setattr(popup, 'visible', False), 2000, count=1))
 
+        try:
+            absolute_volume_path_config = '/home/vjeko/Desktop/Projects/sapphire_forecast/sensitive_data_forecast_tools/config'
+            absolute_volume_path_internal_data = '/home/vjeko/Desktop/Projects/sapphire_forecast/sensitive_data_forecast_tools/intermediate_data'
+            absolute_volume_path_discharge = '/home/vjeko/Desktop/Projects/sapphire_forecast/sensitive_data_forecast_tools/daily_runoff'
+            bind_volume_path_config = get_bind_path(
+                env.get('ieasyforecast_configuration_path'))
+            bind_volume_path_internal_data = get_bind_path(
+                env.get('ieasyforecast_intermediate_data_path'))
+            bind_volume_path_discharge = get_bind_path(
+                env.get('ieasyforecast_daily_discharge_path'))
+
+            # Initialize Docker client
+            client = docker.from_env()
+
+
+            # Define environment variables
+            environment = [
+                'SAPPHIRE_OPDEV_ENV=True',
+            ]
+
+            # Define volumes
+            volumes = {
+                absolute_volume_path_config: {'bind': bind_volume_path_config, 'mode': 'rw'},
+                absolute_volume_path_internal_data: {'bind': bind_volume_path_internal_data, 'mode': 'rw'},
+                absolute_volume_path_discharge: {'bind': bind_volume_path_discharge, 'mode': 'rw'}
+            }
+
+            # Run the linear_regression container with a hardcoded full image name
+            run_docker_container(client, "linear_regression:latest", volumes, environment, "linreg", progress_bar)
+            
+            # After linear_regression finishes, run the postprocessing container with a hardcoded full image name
+            run_docker_container(client, "postprocessing_forecasts:latest", volumes, environment, "postprocessing", progress_bar)
+
+
+
+            # When the container is finished, set progress to 100 and update message
+            progress_bar.value = 100
+            progress_message.object = "Processing finished"
+
+            # Wait a moment before hiding the progress bar and message
+            time.sleep(2)
+            progress_bar.visible = False
+            progress_message.visible = False
+
+        except docker.errors.DockerException as e:
+            print(f"Error interacting with Docker: {e}")
+        
+
+        finally:
+            # Re-enable the save button after the container finishes
+            save_button.disabled = False
+            progress_bar.value = 100  # Set progress to complete when done
+            print("Docker container completed.")
+
+        pn.state.onload(lambda: pn.state.add_periodic_callback(lambda: setattr(progress_bar, 'visible', False), 2000, count=1))
+        pn.state.onload(lambda: pn.state.add_periodic_callback(lambda: setattr(progress_message, 'visible', False), 4000, count=1))
+
     # Create a save button
     save_button = pn.widgets.Button(name="Save Changes", button_type="success")
 
@@ -1177,7 +1332,9 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector):
     # Create the layout with the table, plot, save button, and popup
     layout = pn.Column(
         pn.Row(forecast_data_table, plot_pane, sizing_mode='stretch_width'),
-        pn.Row(save_button), 
+        pn.Row(save_button),
+        pn.Row(progress_bar),
+        pn.Row(progress_message),
         pn.Row(popup)  
     )
 
