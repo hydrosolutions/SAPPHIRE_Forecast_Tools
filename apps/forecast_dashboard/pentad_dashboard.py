@@ -362,6 +362,16 @@ language_select = pn.widgets.Select(
     width=50,
     css_classes=['language_button_css']
 )
+
+# Create a single Tabulator instance
+forecast_tabulator = pn.widgets.Tabulator(
+    theme='bootstrap',
+    show_index=False,
+    selection=[],
+    selectable='checkbox-single',
+    sizing_mode='stretch_both',
+    height=None
+)
 # endregion
 
 # region forecast_card
@@ -461,15 +471,26 @@ pentad_forecast_plot = pn.panel(
     sizing_mode='stretch_both'
     )
 
+
+def update_forecast_tabulator(event=None):
+    viz.create_forecast_summary_tabulator(
+        _, forecasts_all, station.value, date_picker.value,
+        model_checkbox.value, allowable_range_selection.value, manual_range.value,
+        forecast_tabulator
+    )
+
+# Initial update
+update_forecast_tabulator()
+
 # TODO Implement, write to site object and display bulletin in bulletin tab
 forecast_tabulator = viz.create_forecast_summary_tabulator(
     _, forecasts_all, station.value, date_picker.value, model_checkbox.value,
-    allowable_range_selection.value, manual_range.value
+    allowable_range_selection.value, manual_range.value, forecast_tabulator
 )
 #print(f"DEBUG: pentad_dashboard.py: forecast_tabulator: {forecast_tabulator}")
 #print(f"DEBUG: type of forecast_tabulator: {type(forecast_tabulator)}")
 
-bulletin_table = pn.panel(
+'''bulletin_table = pn.panel(
     pn.bind(
         viz.create_forecast_summary_tabulator,
         _, forecasts_all, station, date_picker, model_checkbox,
@@ -492,7 +513,18 @@ forecast_summary_table = pn.panel(
     #    allowable_range_selection, manual_range
     #    ),
     sizing_mode='stretch_width'
-    )
+    )'''
+
+# Same Tabulator in both tabs
+forecast_summary_table = pn.panel(
+    forecast_tabulator,
+    sizing_mode='stretch_width'
+)
+
+bulletin_table = pn.panel(
+    forecast_tabulator,
+    sizing_mode='stretch_width'
+)
 
 # Update the site object based on site and forecast selection
 #print(f"DEBUG: pentad_dashboard.py: forecast_tabulator: {forecast_summary_tabulator}")
@@ -501,12 +533,14 @@ update_site_object = pn.bind(
     _=_,
     sites=sites_list,
     site_selection=station,
-    tabulator=forecast_summary_tabulator)
+    tabulator=forecast_summary_table)
 
-# Watch for changes in the site selector and in the forecast tabulator
-station.param.watch(update_site_object, 'value')
-forecast_tabulator.param.watch(forecast_summary_table, 'selection')
-forecast_tabulator.param.watch(update_site_object, 'selection')
+# Watch for changes in parameters to update the Tabulator
+station.param.watch(update_forecast_tabulator, 'value')
+date_picker.param.watch(update_forecast_tabulator, 'value')
+model_checkbox.param.watch(update_forecast_tabulator, 'value')
+allowable_range_selection.param.watch(update_forecast_tabulator, 'value')
+manual_range.param.watch(update_forecast_tabulator, 'value')
 
 # Bind the update function to the button
 pn.bind(update_indicator, write_bulletin_button, watch=True)

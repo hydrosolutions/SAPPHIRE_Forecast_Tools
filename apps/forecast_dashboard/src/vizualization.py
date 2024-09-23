@@ -1141,7 +1141,7 @@ def create_forecast_summary_table(_, forecasts_all, station, date_picker,
 
 
 def create_forecast_summary_tabulator(_, forecasts_all, station, date_picker,
-                                  model_selection, range_type, range_slider):
+                                  model_selection, range_type, range_slider, forecast_tabulator):
     '''Put table data into a Tabulator widget'''
 
     final_forecast_table = create_forecast_summary_table(_, forecasts_all, station, date_picker,
@@ -1153,18 +1153,20 @@ def create_forecast_summary_tabulator(_, forecasts_all, station, date_picker,
     max_accuracy_index = final_forecast_table[_('Accuracy')].idxmax()
     print("max_accuracy_index\n", max_accuracy_index)
 
-    norm_stats_table = pn.widgets.Tabulator(
-        value=final_forecast_table,
-        #formatters={'Pentad': "{:,}"},
-        #editors={_('δ'): None},  # Disable editing of the δ column
-        theme='bootstrap',
-        show_index=False,
-        selection=[max_accuracy_index],
-        selectable='checkbox',
-        sizing_mode='stretch_both',
-        height=None
-        #buttons={_('To bulletin'): "<i class='fa fa-check'></i>"},
-        )
+# Update the Tabulator's value
+    forecast_tabulator.value = final_forecast_table
+    # Set the selection to the row with max accuracy
+    forecast_tabulator.selection = [max_accuracy_index]
+
+    # Enforce single selection
+    def enforce_single_selection(event):
+        selected_rows = forecast_tabulator.selection
+        if len(selected_rows) > 1:
+            forecast_tabulator.selection = [selected_rows[-1]]  # Keep only the last selected row
+
+    forecast_tabulator.param.watch(enforce_single_selection, 'selection')
+
+    return forecast_tabulator
 
     # Callback function to enforce single row selection
     def enforce_single_selection(event):
