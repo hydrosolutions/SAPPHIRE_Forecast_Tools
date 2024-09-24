@@ -1126,6 +1126,7 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector):
         # If no data is visible, show an empty plot
         if visible_data.empty:
             scatter = hv.Curve([])  # Define an empty plot to avoid errors
+            plot = scatter
         else:
             hover = HoverTool(
                 tooltips=[
@@ -1215,17 +1216,31 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector):
     def run_docker_container(client, full_image_name, volumes, environment, container_name, progress_bar):
         """
         Reusable function to run a Docker container and track its progress.
-        full_image_name should include both the image name and the tag, e.g. "linear_regression:latest"
+        If a container with the same name exists, it will be removed before running a new one.
         """
+        # Check if a container with the specified name already exists
+        try:
+            existing_container = client.containers.get(container_name)
+            print(f"Removing existing container '{container_name}' (ID: {existing_container.id})...")
+            existing_container.remove(force=True)
+            print(f"Container '{container_name}' removed.")
+        except docker.errors.NotFound:
+            # Container does not exist, so we can proceed
+            pass
+        except docker.errors.APIError as e:
+            print(f"Error removing existing container '{container_name}': {e}")
+            raise
+
+        # Now run the new container
         container = client.containers.run(
-            full_image_name,  # Use full image name directly
+            full_image_name,
             detach=True,
             environment=environment,
             volumes=volumes,
             name=container_name,
             network='host'
         )
-        print(f"Container {container.id} is running.")
+        print(f"Container '{container_name}' (ID: {container.id}) is running.")
 
         # Monitor the container's progress
         progress_bar.value = 0
@@ -1237,7 +1252,7 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector):
             time.sleep(1)
         container.wait()  # Ensure the container has finished
         progress_bar.value = 100  # Set progress to 100% after the container is done
-        print(f"Container {container.id} has stopped.")
+        print(f"Container '{container_name}' has stopped.")
 
     # Function to save table data to CSV
     def save_to_csv(event):
@@ -1267,9 +1282,23 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector):
         pn.state.onload(lambda: pn.state.add_periodic_callback(lambda: setattr(popup, 'visible', False), 2000, count=1))
 
         try:
-            absolute_volume_path_config = '/home/vjeko/Desktop/Projects/sapphire_forecast/sensitive_data_forecast_tools/config'
-            absolute_volume_path_internal_data = '/home/vjeko/Desktop/Projects/sapphire_forecast/sensitive_data_forecast_tools/intermediate_data'
-            absolute_volume_path_discharge = '/home/vjeko/Desktop/Projects/sapphire_forecast/sensitive_data_forecast_tools/daily_runoff'
+            #absolute_volume_path_config = '/home/vjeko/Desktop/Projects/sapphire_forecast/sensitive_data_forecast_tools/config'
+            #absolute_volume_path_internal_data = '/home/vjeko/Desktop/Projects/sapphire_forecast/sensitive_data_forecast_tools/intermediate_data'
+            #absolute_volume_path_discharge = '/home/vjeko/Desktop/Projects/sapphire_forecast/sensitive_data_forecast_tools/daily_runoff'
+
+
+            absolute_volume_path_config = get_absolute_path(
+                env.get('ieasyforecast_configuration_path'))
+            absolute_volume_path_internal_data = get_absolute_path(
+                env.get('ieasyforecast_intermediate_data_path'))
+            absolute_volume_path_discharge = get_absolute_path(
+                env.get('ieasyforecast_daily_discharge_path'))
+            print(env.get('ieasyforecast_configuration_path'))
+            print(env.get('ieasyforecast_intermediate_data_path'))
+            print(env.get('ieasyforecast_daily_discharge_path'))
+            print("absolute_volume_path_config: ", absolute_volume_path_config)
+            print("absolute_volume_path_internal_data: ", absolute_volume_path_internal_data)
+            print("absolute_volume_path_discharge: ", absolute_volume_path_discharge)
             bind_volume_path_config = get_bind_path(
                 env.get('ieasyforecast_configuration_path'))
             bind_volume_path_internal_data = get_bind_path(
@@ -1283,7 +1312,7 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector):
 
             # Define environment variables
             environment = [
-                'SAPPHIRE_OPDEV_ENV=True',
+                'IN_DOCKER_CONTAINER=True',
             ]
 
             # Define volumes
@@ -1292,6 +1321,7 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector):
                 absolute_volume_path_internal_data: {'bind': bind_volume_path_internal_data, 'mode': 'rw'},
                 absolute_volume_path_discharge: {'bind': bind_volume_path_discharge, 'mode': 'rw'}
             }
+            print("volumes: ", volumes)
 
             # Run the linear_regression container with a hardcoded full image name
             run_docker_container(client, "linear_regression:latest", volumes, environment, "linreg", progress_bar)
