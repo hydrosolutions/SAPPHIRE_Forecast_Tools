@@ -9,13 +9,12 @@ from .gettext_config import translation_manager
 import param
 
 # region Define widgets
-def create_station_selection_widget(station_dict):
-    _ = translation_manager._
-    return pn.widgets.Select(
-        name=_("Select discharge station:"),
-        groups=station_dict,
-        value=station_dict[next(iter(station_dict))][0])
-
+#def create_station_selection_widget(station_dict):
+#    _ = translation_manager._
+#    return pn.widgets.Select(
+#        name=_("Select discharge station:"),
+#        groups=station_dict,
+#        value=station_dict[next(iter(station_dict))][0])
 
 # endregion
 
@@ -36,10 +35,9 @@ class DashboardTitle(param.Parameterized):
 
 
 # Define components of the layout
-def define_sidebar(_, station_widget, forecast_card):
+def define_sidebar(_, station_card, forecast_card, basin_card):
     return pn.Column(
-        pn.Row(pn.Card(station_widget,
-                       title=_('Hydropost:'),)),
+        pn.Row(station_card),
         #pn.Row(pentad_card),
         #pn.Row(pn.Card(pentad_selector, title=_('Pentad:'))),
         #pn.Row(pn.Card(date_picker, date_picker_with_pentad_text,
@@ -47,7 +45,8 @@ def define_sidebar(_, station_widget, forecast_card):
                        #width_policy='fit', width=station.width,
                        #collapsed=False)),
         pn.Row(forecast_card),
-        #pn.Row(range_selection),
+        pn.Row(basin_card),
+         #pn.Row(range_selection),
         #pn.Row(manual_range),
         #pn.Row(print_button),
         #pn.Row(pn.Card(warning_text_pane, title=_('Notifications'),
@@ -94,7 +93,7 @@ def define_disclaimer(_, in_docker_flag):
 def define_tabs(_, daily_hydrograph_plot, forecast_data_and_plot,
                 forecast_summary_table, pentad_forecast_plot, bulletin_table,
                 write_bulletin_button, indicator, disclaimer,
-                forecast_card, pentad_card):
+                station_card, forecast_card, add_to_bulletin_button, basin_card, pentad_card):
 
     # Organize the panes in tabs
     no_date_overlap_flag = True
@@ -163,10 +162,13 @@ def define_tabs(_, daily_hydrograph_plot, forecast_data_and_plot,
                     max_height=560,
                 ),
                 pn.Card(
+                    pn.Row(
+                        add_to_bulletin_button 
+                    ),
                     forecast_summary_table,
                     title=_('Summary table'),
                     sizing_mode='stretch_both',
-                    min_height=240,
+                    min_height=400,
 
                 ),
                 pn.Card(
@@ -187,15 +189,13 @@ def define_tabs(_, daily_hydrograph_plot, forecast_data_and_plot,
             ),
             (_('Bulletin'),
              pn.Column(
-                 pn.Card(
-                     pn.Column(
-                         bulletin_table,
+                    pn.Card(
+                        bulletin_table,
                         pn.Row(
-                             write_bulletin_button,
+                            write_bulletin_button,
                             indicator),
-                     ),
-                     title='Forecast bulletin',
-                ),
+                        title='Forecast bulletin',
+                    ),
              )
             ),
             (_('Disclaimer'), disclaimer),
@@ -203,7 +203,7 @@ def define_tabs(_, daily_hydrograph_plot, forecast_data_and_plot,
             sizing_mode='stretch_both'
         )
     tabs.param.watch(lambda event: update_sidepane_card_visibility(
-    tabs, forecast_card, pentad_card, event), 'active')
+    tabs, station_card, forecast_card, basin_card, pentad_card, event), 'active')
     return tabs
 
 
