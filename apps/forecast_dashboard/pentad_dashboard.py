@@ -147,6 +147,18 @@ icon_path = processing.get_icon_path(in_docker_flag)
 # The current date is displayed as the title of each visualization.
 today = dt.datetime.now()
 
+# Get folder to store visible points for linear regression
+# Test if the path to the configuration folder is set
+if not os.getenv('ieasyforecast_configuration_path'):
+    raise ValueError("The path to the configuration folder is not set.")
+
+# Define the directory to save the data
+SAVE_DIRECTORY = os.path.join(
+    os.getenv('ieasyforecast_configuration_path'),
+    os.getenv('ieasyforecast_linreg_point_selection', 'linreg_point_selection')
+)
+os.makedirs(SAVE_DIRECTORY, exist_ok=True)
+
 # endregion
 
 
@@ -447,7 +459,7 @@ daily_hydrograph_plot = pn.panel(
 forecast_data_and_plot = pn.panel(
     pn.bind(
         viz.select_and_plot_data,
-        _, linreg_predictor, station, pentad_selector
+        _, linreg_predictor, station, pentad_selector, SAVE_DIRECTORY
     ),
     sizing_mode='stretch_both'
 )

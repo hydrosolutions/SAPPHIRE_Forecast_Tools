@@ -1,10 +1,5 @@
 # syntax=docker/dockerfile:1
 
-# Comments are provided throughout this file to help you get started.
-# If you need more help, visit the Dockerfile reference guide at
-# https://docs.docker.com/engine/reference/builder/
-
-
 FROM mabesa/sapphire-pythonbaseimage:latest AS base
 
 # Copy the contents of the apps/forecast_dashboard directory into the container
@@ -12,11 +7,6 @@ COPY apps/forecast_dashboard /app/apps/forecast_dashboard
 
 # Specify the working directory inside the container
 WORKDIR /app/apps/forecast_dashboard
-
-# List all files in the /app directory
-RUN ls -la /app
-RUN ls -la /app/apps
-RUN ls -la /app/apps/forecast_dashboard
 
 # Env
 ENV SAPPHIRE_OPDEV_ENV=True
@@ -44,8 +34,8 @@ EXPOSE 5006
 # Run the application.
 # On local machine
 #CMD ["panel", "serve", "pentad_dashboard.py", "--show", "--autoreload", "--port", "5006"]
-# On AWS
-CMD ["panel", "serve", "--allow-websocket-origin=34.202.229.208:5006", "pentad_dashboard.py", "--port=5006", "--address=0.0.0.0", "--show", "--autoreload"]
+# On server
+#CMD panel serve --allow-websocket-origin=$ieasyhydroforecast_url pentad_dashboard.py --show --autoreload --num-threads 4 --address 0.0.0.0
 
 # CMD to list all files in app/apps/forecast_dashboard and print the results to the console.
 #CMD ["/bin/sh", "-c", "echo 'here!' && ls /app/apps/forecast_dashboard && echo ' ' && pip list"]

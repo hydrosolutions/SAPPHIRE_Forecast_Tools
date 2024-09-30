@@ -552,7 +552,6 @@ def get_year(date_str):
     # return the year number as a string
     return str(year)
 
-
 def get_pentad_for_date(date):
     # Calculate day of the month and pentad
     day_of_month = date.day
@@ -560,7 +559,6 @@ def get_pentad_for_date(date):
     pentad_in_year = (date.month - 1) * 6 + pentad_in_month
 
     return pentad_in_year
-
 
 def get_date_for_pentad(pentad_in_year, year=dt.datetime.now().year):
     """
@@ -580,6 +578,19 @@ def get_date_for_pentad(pentad_in_year, year=dt.datetime.now().year):
         >>> get_date_for_pentad(72)
         'YYYY-12-26'
     """
+    # If pentad_in_year is not an integer, try to cast it to an integer. If it fails, return None.
+    if not isinstance(pentad_in_year, int):
+        try:
+            pentad_in_year = int(pentad_in_year)
+        except ValueError:
+            raise ValueError('Invalid pentad') from None
+
+    if not isinstance(year, int):
+        try:
+            year = int(year)
+        except ValueError:
+            raise ValueError('Invalid year') from None
+
     try:
         # Calculate the month and the pentad within the month
         month = (pentad_in_year - 1) // 6 + 1
@@ -595,6 +606,64 @@ def get_date_for_pentad(pentad_in_year, year=dt.datetime.now().year):
 
         # Create the date
         date = dt.date(year, month, first_day_of_pentad)
+
+        # Return the date as a string in 'YYYY-MM-DD' format
+        return date.strftime('%Y-%m-%d')
+
+    except Exception as e:
+        # Return None if there's an error (invalid pentad, etc.)
+        print(f"Error: {e}")
+        return None
+
+def get_date_for_last_day_in_pentad(pentad_in_year, year=dt.datetime.now().year):
+    """
+    Get the date of the last day in a given pentad in the year. I.e. the day on
+    which a forecast is produced for the coming pentad.
+
+    Parameters:
+        pentad_in_year (int): The pentad number within the year (1-72).
+        year (int): The year for which the date is needed. Defaults to the current year.
+
+    Returns:
+        str: A string representing the date for the input pentad in the format 'YYYY-MM-DD',
+             or None if the input is not valid.
+
+    Examples:
+        >>> get_date_for_pentad(1)
+        'YYYY-01-05'
+        >>> get_date_for_pentad(72)
+        'YYYY-12-31'
+    """
+    if not isinstance(pentad_in_year, int):
+        try:
+            pentad_in_year = int(pentad_in_year)
+        except ValueError:
+            raise ValueError('Invalid pentad') from None
+
+    if not isinstance(year, int):
+        try:
+            year = int(year)
+        except ValueError:
+            raise ValueError('Invalid year') from None
+
+    try:
+        # Calculate the month and the pentad within the month
+        month = (pentad_in_year - 1) // 6 + 1
+        pentad_in_month = (pentad_in_year - 1) % 6 + 1
+
+        # Calculate the first day of the pentad
+        first_day_of_pentad = 5 * (pentad_in_month - 1) + 1
+
+        # Calculate the last day of the pentad
+        last_day_of_pentad = 5 * pentad_in_month
+
+        # Ensure the calculated day is valid within the month
+        days_in_month = (dt.date(year, month, 1) + dt.timedelta(days=31)).replace(day=1) - dt.timedelta(days=1)
+        if last_day_of_pentad > 25:
+            last_day_of_pentad = days_in_month.day
+
+        # Create the date
+        date = dt.date(year, month, last_day_of_pentad)
 
         # Return the date as a string in 'YYYY-MM-DD' format
         return date.strftime('%Y-%m-%d')
@@ -756,6 +825,70 @@ def get_month_str_case1(date_str):
         month_str = 'ноябрь'
     elif month == 12:
         month_str = 'декабрь'
+    else:
+        return None
+
+    # return the month name as a string
+    return month_str
+
+def get_month_str_en(date_str):
+    """
+    Returns the name of the month for a given date string, in English
+
+    Args:
+        date_str (str): A string representing a date in the format 'YYYY-MM-DD'.
+
+    Returns:
+        str: A string representing the name of the month for the input date
+            string, in English.
+
+        If the input date string is not a valid date, returns None.
+    """
+
+    # If date is a Timestamp, convert it to a string
+    if isinstance(date_str, pd.Timestamp):
+        date_str = date_str.strftime('%Y-%m-%d')
+
+    try:
+        # parse the input date string into a datetime object
+        date = dt.datetime.strptime(date_str, '%Y-%m-%d').date()
+    except ValueError:
+        # return None if the input is not a valid date
+        return None
+
+    # Test if the date is using the Gregorian calendar
+    if not is_gregorian_date(date_str):
+        # return None if the input is not using the Gregorian calendar
+        return None
+
+    # calculate the month number
+    month = date.month
+
+    month_str = ''
+    if month == 1:
+        month_str = 'January'
+    elif month == 2:
+        month_str = 'February'
+    elif month == 3:
+        month_str = 'March'
+    elif month == 4:
+        month_str = 'April'
+    elif month == 5:
+        month_str = 'May'
+    elif month == 6:
+        month_str = 'June'
+    elif month == 7:
+        month_str = 'July'
+    elif month == 8:
+        month_str = 'August'
+    elif month == 9:
+        month_str = 'September'
+    elif month == 10:
+        month_str = 'October'
+    elif month == 11:
+        month_str = 'November'
+    elif month == 12:
+        month_str = 'December'
     else:
         return None
 
