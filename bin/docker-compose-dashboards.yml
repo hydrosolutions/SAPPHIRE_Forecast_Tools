@@ -6,26 +6,27 @@
 
 services:
 
-  config:
-    image: mabesa/sapphire-configuration:${ieasyhydroforecast_frontend_docker_image_tag:-latest}
-    build:
-      context: ../
-      dockerfile: ./apps/configuration_dashboard/dockerfile
-    working_dir: /app
-    environment:
-      - PYTHONPATH=/app
-      - ieasyhydroforecast_data_root_dir=${ieasyhydroforecast_data_root_dir}
-      - SAPPHIRE_OPDEV_ENV=True
-      - ieasyhydroforecast_env_file_path=${ieasyhydroforecast_env_file_path}
-    command: ["R", "-e", "setwd('/app'); shiny::runApp('apps/configuration_dashboard/forecast_configuration.R', port = 3647, host = '0.0.0.0', launch.browser=FALSE)"]
-    ports:
-      - "80:3647"
-    volumes:
-      - ${ieasyhydroforecast_data_ref_dir}/config:${ieasyhydroforecast_container_data_ref_dir}/config
-      - ${ieasyhydroforecast_data_ref_dir}/GIS:${ieasyhydroforecast_container_data_ref_dir}/GIS
-    container_name: sapphire-frontend-config
-    labels:
-      - com.centurylinklabs.watchtower.enable=true
+  # Deprecating configuration dashboard in favour of direct link to iEH HF
+  #config:
+  #  image: mabesa/sapphire-configuration:${ieasyhydroforecast_frontend_docker_image_tag:-latest}
+  #  build:
+  #    context: ../
+  #    dockerfile: ./apps/configuration_dashboard/dockerfile
+  #  working_dir: /app
+  #  environment:
+  #    - PYTHONPATH=/app
+  #    - ieasyhydroforecast_data_root_dir=${ieasyhydroforecast_data_root_dir}
+  #    - SAPPHIRE_OPDEV_ENV=True
+  #    - ieasyhydroforecast_env_file_path=${ieasyhydroforecast_env_file_path}
+  #  command: ["R", "-e", "setwd('/app'); shiny::runApp('apps/configuration_dashboard/forecast_configuration.R', port = 3647, host = '0.0.0.0', launch.browser=FALSE)"]
+  #  ports:
+  #    - "80:3647"
+  #  volumes:
+  #    - ${ieasyhydroforecast_data_ref_dir}/config:${ieasyhydroforecast_container_data_ref_dir}/config
+  #    - ${ieasyhydroforecast_data_ref_dir}/GIS:${ieasyhydroforecast_container_data_ref_dir}/GIS
+  #  container_name: sapphire-frontend-config
+  #  labels:
+  #    - com.centurylinklabs.watchtower.enable=true
 
   pentaddashboard:
     image: mabesa/sapphire-dashboard:${ieasyhydroforecast_frontend_docker_image_tag:-latest}
@@ -39,7 +40,14 @@ services:
       - SAPPHIRE_OPDEV_ENV=True
       - IN_DOCKER_CONTAINER=True
       - ieasyhydroforecast_env_file_path=${ieasyhydroforecast_env_file_path}
-    command: ["panel", "serve", "--allow-websocket-origin=34.202.229.208:5006", "pentad_dashboard.py", "--port=5006", "--address=0.0.0.0", "--show", "--autoreload"]
+      - ieasyhydroforecast_url=${ieasyhydroforecast_url}
+    command: >
+      panel serve
+      --address=0.0.0.0
+      --allow-websocket-origin=fc.ieasyhydro.org
+      pentad_dashboard.py
+      --autoreload
+      --num-threads=4
     ports:
       - "5006:5006"
     volumes:

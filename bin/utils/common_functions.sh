@@ -64,6 +64,13 @@ read_configuration(){
         export ieasyhydroforecast_env_file_path=$container_env_file_path
         echo "| Local path to .env read from argument: $env_file_path"
         echo "| Container path to .env derived: $ieasyhydroforecast_env_file_path"
+        # Read the .env file
+        if [ -f "$env_file_path" ]; then
+            source "$env_file_path"
+        else
+            echo "| .env file not found at $env_file_path!"
+            exit 1
+        fi
 
     else
         echo "| Error: No path to .env file was passed or was found in the environment!"
@@ -107,7 +114,7 @@ clean_out_docker_space() {
     echo "| ------"
     # Take down the frontend if it is running
     docker compose -f bin/docker-compose-dashboards.yml down
-    ieasyhydroforecast_data_root_dir=$ieasyhydroforecast_data_root_dir source ./bin/utils/clean_docker.sh
+    ieasyhydroforecast_data_root_dir=$ieasyhydroforecast_data_root_dir source ./bin/utils/clean_docker.sh --execute
 }
 
 # Function to stop and remove a container if it exists
@@ -206,7 +213,8 @@ start_docker_compose_dashboards() {
     echo "| Starting frontend services"
     echo "| ------"
     echo "| Starting Docker Compose service for the dashboards..."
-    docker compose -f bin/docker-compose-dashboards.yml up -d &
+    echo "| Deploying dashboard to: ieasyhydroforecast_url: $ieasyhydroforecast_url"
+    ieasyhydroforecast_url=$ieasyhydroforecast_url docker compose -f bin/docker-compose-dashboards.yml up -d &
     DOCKER_COMPOSE_DASHBOARD_PID=$!
     echo "| Docker Compose service started with PID $DOCKER_COMPOSE_DASHBOARD_PID"
 }
