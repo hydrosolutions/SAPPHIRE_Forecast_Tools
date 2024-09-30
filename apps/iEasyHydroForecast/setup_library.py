@@ -738,6 +738,26 @@ def read_daily_probabilistic_ml_forecasts_pentad(
 
     return forecast
 
+def read_csv_with_multiple_date_formats(filepath):
+    # Read the CSV file without parsing dates
+    daily_data = pd.read_csv(filepath)
+
+    # Try to parse the 'date' column with the first format
+    try:
+        daily_data['date'] = pd.to_datetime(daily_data['date'], format='%d.%m.%Y')
+    except ValueError:
+        # If it fails, try the second format
+        daily_data['date'] = pd.to_datetime(daily_data['date'], format='%Y-%m-%d')
+
+    # Try to parse the 'forecast_date' column with the first format
+    try:
+        daily_data['forecast_date'] = pd.to_datetime(daily_data['forecast_date'], format='%d.%m.%Y')
+    except ValueError:
+        # If it fails, try the second format
+        daily_data['forecast_date'] = pd.to_datetime(daily_data['forecast_date'], format='%Y-%m-%d')
+
+    return daily_data
+
 def read_daily_probabilistic_conceptmod_forecasts_pentad(
         filepath,
         code,
@@ -756,7 +776,7 @@ def read_daily_probabilistic_conceptmod_forecasts_pentad(
     forecast (pandas.DataFrame): The forecast results for the pentadal forecast horizon.
     """
     # Read the forecast results
-    daily_data = pd.read_csv(filepath, parse_dates=["date", "forecast_date"])
+    daily_data = read_csv_with_multiple_date_formats(filepath)
 
     # Only keep the forecast the rows of daily forecast data for pentadal
     # forecasts, i.e. the forecast produced on the 5th, 10th, 15th, 20th, 25th

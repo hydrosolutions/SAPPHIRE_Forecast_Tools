@@ -45,13 +45,24 @@ import forecast_library as fl
 
 # Defining colors (as global variables)
 # https://www.color-hex.com/color/307096
+# Blue color palette for the norm runoff
 runoff_full_range_color = "#eaf0f4"
 runoff_90percentile_range_color = "#d5e2ea"
 runoff_50percentile_range_color = "#c0d4df"
 runoff_mean_color = "#307096"
-runoff_last_year_color = "#ca97b7"
-runoff_current_year_color = "#963070"
-runoff_forecast_color_list = ["#455c1d", "#536f24", "#62832a", "#709630", "#7ea936", "#8dbd3c", "#99c64d"]
+observed_runoff_palette = "black"
+if observed_runoff_palette == "purple":
+    # Purple color palette for the runoff last year and current year
+    runoff_last_year_color = "#ca97b7"
+    runoff_current_year_color = "#963070"
+    # Green color palette for the runoff forecast
+    runoff_forecast_color_list = ["#455c1d", "#536f24", "#62832a", "#709630", "#7ea936", "#8dbd3c", "#99c64d"]
+elif observed_runoff_palette == "black":
+    # Black and grey color palette for the runoff last year and current year
+    runoff_last_year_color = "#808080"
+    runoff_current_year_color = "#000000"
+    # Purple color palette for the runoff forecast
+    runoff_forecast_color_list = ["#5c1d45", "#6f2453", "#832a62", "#963070", "#a9367e", "#bd3c8d", "#c64d99"]
 
 # Update visibility of sidepane widgets
 def update_sidepane_card_visibility(tabs, card, pentad, event):
@@ -698,7 +709,6 @@ def plot_pentadal_vlines(data, date_col):
                   show_legend=False)
 
     return vlines
-
 
 def update_pentad_text(date_picker, _):
     """
