@@ -1223,11 +1223,19 @@ pentad_options = {f"{i+1}st pentad of {calendar.month_name[month]}" if i == 0 el
 
 
 
-# Define the directory to save the data
-SAVE_DIRECTORY = 'saved_data'
-os.makedirs(SAVE_DIRECTORY, exist_ok=True)
+# Test if the path to the configuration folder is set
+#if not os.getenv('ieasyforecast_configuration_path'):
+#    raise ValueError("The path to the configuration folder is not set.")
 
-def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector):
+# Define the directory to save the data
+#SAVE_DIRECTORY = os.path.join(
+#    os.getenv('ieasyforecast_configuration_path'),
+#    os.getenv('ieasyforecast_linreg_point_selection', 'linreg_point_selection')
+#)
+#os.makedirs(SAVE_DIRECTORY, exist_ok=True)
+
+def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
+                         SAVE_DIRECTORY):
     # Define a variable to hold the visible data across functions
     global visible_data
 
@@ -1293,6 +1301,9 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector):
     forecast_table = forecast_table.reset_index()
 
     visible_data = forecast_table[forecast_table['visible'] == True] # Initialize the visible data
+    print(f"visible_data.head(10):\n", visible_data.head(10))
+    # TODO: Set visibility of rows with no data to False
+
     # Create Tabulator for displaying forecast data
     forecast_data_table = pn.widgets.Tabulator(
         value=forecast_table[['index', 'year', 'predictor', 'discharge_avg', 'visible']],
@@ -1361,20 +1372,33 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector):
 
             if len(visible_data) > 1:
                 # Add a linear regression line to the scatter plot
-                #slope, intercept, r_value, p_value, std_err = stats.linregress(visible_data['predictor'], visible_data['discharge_avg'])
+                new_slope, new_intercept, new_r_value, new_p_value, new_std_err = stats.linregress(
+                    visible_data['predictor'], visible_data['discharge_avg'])
                 # Get slope, intercept and rsquared from the data_table (last value)
                 slope = visible_data['slope'].iloc[-1]
                 intercept = visible_data['intercept'].iloc[-1]
                 rsquared = visible_data['rsquared'].iloc[-1]
                 x = np.linspace(visible_data['predictor'].min(), visible_data['predictor'].max(), 100)
                 y = slope * x + intercept
+                new_y = new_slope * x + new_intercept
                 line = hv.Curve((x, y)).opts(color='red', line_width=2)
+                new_line = hv.Curve((x, new_y)).opts(color='red', line_width=2,
+                                                     line_dash='dashed', line_alpha=0.7)
                 equation = f"y = {slope:.2f}x + {intercept:.2f}"
+                new_equation = f"new y = {new_slope:.2f}x + {new_intercept:.2f}"
                 r2 = f"R² = {rsquared:.2f}"
-                text = hv.Text(x = visible_data["predictor"].min(),
-                   y = visible_data["discharge_avg"].max(),
-                   text = f"{equation}\n{r2}") \
-                    .opts(color="black", text_font_size="10pt", text_align="left",)
+                r2_new = f"new R² = {new_r_value:.2f}"
+                if math.isclose(slope, new_slope, rel_tol=1e-2) and math.isclose(intercept, new_intercept, rel_tol=1e-2):
+                    text = hv.Text(x=visible_data["predictor"].min(),
+                                   y=visible_data["discharge_avg"].max(),
+                                   text=f"{equation}\n{r2}") \
+                        .opts(color="black", text_font_size="10pt", text_align="left",)
+                else:
+                    text = hv.Text(x = visible_data["predictor"].min(),
+                       y = visible_data["discharge_avg"].max(),
+                       text = f"{equation}\n{r2}\n{new_equation}\n{r2_new}") \
+                        .opts(color="black", text_font_size="10pt", text_align="left",)
+                    line = line * new_line
                     #xlim=(0, analysis_pentad["Predictor"].max()*1.1),
                     #ylim=(0, analysis_pentad["Q [m3/s]"].max()*1.1))
 

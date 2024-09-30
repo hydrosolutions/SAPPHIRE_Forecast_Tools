@@ -1070,6 +1070,46 @@ def perform_linear_regression(
             logger.info("No data for station {station} in pentad {forecast_pentad}")
             continue
 
+        # Check if there is a point selection file for the current pentad and month
+        # in ieasyforecast_linreg_point_selection
+        # Test if a variable ieasyforecast_linreg_point_selection is set. If not,
+        # no need to check for a point selection file.
+        if os.getenv('ieasyforecast_linreg_point_selection') is None:
+            logger.info("No point selection files available. Skipping point selection.")
+        else:
+            # Define the directory to save the data
+            SAVE_DIRECTORY = os.path.join(
+                os.getenv('ieasyforecast_configuration_path'),
+                os.getenv('ieasyforecast_linreg_point_selection', 'linreg_point_selection')
+            )
+            # Define the file name
+            print(f"forecast_pentad: {forecast_pentad}")
+            print(f"columns of station_data: {station_data.columns}")
+            print(f"station_data: {station_data}")
+            forecast_date = tl.get_date_for_last_day_in_pentad(forecast_pentad)
+            print(f"forecast_date: {forecast_date}")
+            pentad_in_month = tl.get_pentad(forecast_date)
+            title_month = tl.get_month_str_en(forecast_date)
+            print(f"pentad_in_month: {pentad_in_month}")
+            print(f"title_month: {title_month}")
+            save_file_name = f"{station}_{pentad_in_month}_pentad_of_{title_month}.csv"
+            save_file_path = os.path.join(SAVE_DIRECTORY, save_file_name)
+
+            # Check if the file exists
+            if os.path.exists(save_file_path):
+                logger.info(f"Point selection file {save_file_path} exists. Reading the file.")
+                # Read the file into a DataFrame
+                point_selection = pd.read_csv(save_file_path)
+                # Temporarily add column year to station_data
+                station_data['year'] = station_data['date'].dt.year
+                # Merge the column 'visible' from point selection into data_dfp
+                station_data = station_data.merge(point_selection[['year', 'visible']], on='year', how='left')
+                # Filter for rows where 'visible' is True
+                station_data = station_data[station_data['visible'] == True]
+                # Drop the 'visible' and 'year' columns
+                station_data.drop(columns=['visible', 'year'], inplace=True)
+                print(f"station_data after point selection: {station_data}")
+
         if int(station) == 15194:
             logger.debug("DEBUG: forecasting:perform_linear_regression: station_data: \n%s",
                           station_data[['date', pentad_col, station_col, predictor_col, discharge_avg_col]].tail(10))

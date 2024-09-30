@@ -204,6 +204,22 @@ class TestGetPentad(unittest.TestCase):
         self.assertIsNone(tl.get_pentad('2100-01-01'))
         self.assertIsNone(tl.get_pentad('not a date'))
 
+class TestGetDateForPentad(unittest.TestCase):
+    def test_get_date_for_pentad(self):
+        pentad = '1'
+        year = '2022'
+        expected_date = '2022-01-01'
+        returned_date = tl.get_date_for_pentad(pentad, year)
+        self.assertEqual(returned_date, expected_date)
+
+class TestGetDateForLastDayInPentad(unittest.TestCase):
+    def test_get_date_for_last_day_in_pentad(self):
+        pentad = '1'
+        year = '2022'
+        expected_date = '2022-01-05'
+        returned_date = tl.get_date_for_last_day_in_pentad(pentad, year)
+        self.assertEqual(returned_date, expected_date)
+        self.assertEqual(tl.get_date_for_last_day_in_pentad('72', '2022'), '2022-12-31')
 
 class TestGetStuffForBulletinWriting(unittest.TestCase):
 
