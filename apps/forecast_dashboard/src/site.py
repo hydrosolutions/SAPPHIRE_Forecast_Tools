@@ -23,7 +23,8 @@ class SapphireSite:
                  lon: float = None,
                  region: str = None,
                  basin: str = None,
-                 linreg_predictor: float = None):
+                 linreg_predictor: float = None,
+                 forecast: str = None,):
         """
         Constructs a Site object with the given attributes.
 
@@ -40,6 +41,7 @@ class SapphireSite:
         self.region = region if region else None
         self.basin = basin if basin else None
         self.linreg_predictor = linreg_predictor if linreg_predictor else None
+        self.forecasts = []  # Initialize an empty list to hold forecasts
 
     def __str__(self):
         return f"Site {self.code} ({self.river_name_ru} - {self.punkt_name_ru})"

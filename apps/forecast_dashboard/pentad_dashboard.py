@@ -241,6 +241,11 @@ forecasts_all = forecasts_all.merge(
 # Create a list of Site objects from the all_stations DataFrame
 sites_list = Site.get_site_attributes_from_stations_dataframe(all_stations)
 
+bulletin_table = pn.Column()
+
+bulletin_sites = []
+
+tabs_container = pn.Column()
 
 # Create a dictionary of the model names and the corresponding model labels
 model_dict_all = forecasts_all[['model_short', 'model_long']] \
@@ -279,7 +284,7 @@ date_picker = pn.widgets.DatePicker(name=_("Select date:"),
 
 
 # Get the last available date in the data
-last_date = linreg_predictor['date'].max()
+last_date = linreg_predictor['date'].max() + dt.timedelta(days=1)
 
 # Determine the corresponding pentad
 current_pentad = tl.get_pentad_for_date(last_date)
@@ -301,12 +306,15 @@ pentad_selector = pn.widgets.Select(
 )
 
 # Widget for station selection, always visible
-print(f"\n\nDEBUG: pentad_dashboard.py: station select name string: {_('Select discharge station:')}\n\n")
-station = layout.create_station_selection_widget(station_dict)
-#station = pn.widgets.Select(
-#    name=_("Select discharge station:"),
-#    groups=station_dict,
-#    value=station_dict[next(iter(station_dict))][0])
+#print(f"\n\nDEBUG: pentad_dashboard.py: station select name string: {_('Select discharge station:')}\n\n")
+#station = layout.create_station_selection_widget(station_dict)
+
+station = pn.widgets.Select(
+    name=_("Select discharge station:"),
+    groups=station_dict,
+    value=station_dict[next(iter(station_dict))][0],
+    margin=(0, 0, 0, 0)
+    )
 
 # Print the station widget selection
 #print(f"DEBUG: pentad_dashboard.py: Station widget selection: {station.value}")
@@ -374,6 +382,28 @@ language_select = pn.widgets.Select(
     width=50,
     css_classes=['language_button_css']
 )
+
+# Create a single Tabulator instance
+forecast_tabulator = pn.widgets.Tabulator(
+    theme='bootstrap',
+    show_index=False,
+    selection=[],
+    selectable='checkbox-single',
+    sizing_mode='stretch_both',
+    height=None
+)
+
+basin_names = list(station_dict.keys())
+basin_names.insert(0, _("All basins"))  # Add 'Select all basins' as the first option
+
+# Create the 'Select Basin' widget
+select_basin_widget = pn.widgets.Select(
+    name=_("Select basin:"),
+    options=basin_names,
+    value=_("All basins"),  # Default value
+    margin=(0, 0, 0, 0)
+)
+
 # endregion
 
 # region forecast_card
@@ -410,6 +440,34 @@ pentad_card = pn.Card(
     collapsed=False
 )
 
+pentad_card.visible = False
+
+
+station_card = pn.Card(
+    pn.Column(
+        station
+    ),
+    title=_('Hydropost:'),
+    width_policy='fit',
+    width=station.width,
+    collapsed=False
+)
+station_card.visible = True
+
+# Basin card
+basin_card = pn.Card(
+    pn.Column(
+        select_basin_widget
+        ),
+    title=_('Select basin:'),
+    width_policy='fit', width=station.width,
+    collapsed=False
+)
+
+basin_card.visible = False
+
+
+add_to_bulletin_button = pn.widgets.Button(name=_("Add to bulletin"), button_type="primary")
 # endregion
 
 
@@ -434,8 +492,105 @@ def update_model_select(station_value):
 # Bind the update function to the station selector
 pn.bind(update_model_select, station, watch=True)
 
+def add_current_selection_to_bulletin(event=None):
+    selected_indices = forecast_tabulator.selection
+    forecast_df = forecast_tabulator.value
+    
+    if forecast_df is None or forecast_df.empty:
+        print("Forecast summary table is empty.")
+        logger.warning("Attempted to add to bulletin, but forecast summary table is empty.")
+        return
+    
+    # If no selection is made, default to the first forecast
+    if not selected_indices and len(forecast_df) > 0:
+        selected_indices = [0]
+        forecast_tabulator.selection = selected_indices  # Update the Tabulator's selection
+        print("No forecast selected. Defaulting to the first forecast.")
+        logger.info("No forecast selected. Defaulting to the first forecast.")
+    
+    # Get the selected rows
+    selected_rows = forecast_df.iloc[selected_indices]
+    
+    if selected_rows.empty:
+        print("Selected rows are empty.")
+        logger.warning("Selected rows are empty despite having indices.")
+        return
+    
+    selected_station = station.value
+    selected_date = date_picker.value
+    
+    print(f"Adding station: {selected_station}, date: {selected_date}")
+    print(f"Selected models:\n{selected_rows['Model']}")
+    
+    # Use the selected rows as the final forecast table
+    final_forecast_table = selected_rows.reset_index(drop=True)
+    
+    # Find the Site object for the selected station
+    selected_site = next((site for site in sites_list if site.station_label == selected_station), None)
+    if selected_site is None:
+        print(f"Site {selected_station} not found in sites_list")
+        logger.error(f"Site {selected_station} not found in sites_list")
+        return
+    
+    # Overwrite the forecast instead of appending
+    selected_site.forecasts = final_forecast_table
+    
+    # Check if the site is already in bulletin_sites
+    existing_site = next((site for site in bulletin_sites if site.code == selected_site.code), None)
+    if existing_site is None:
+        # If the site is not in the bulletin, add it
+        bulletin_sites.append(selected_site)
+        logger.info(f"Added new site to bulletin: {selected_station}")
+    else:
+        # If the site is already in the bulletin, overwrite the existing forecast
+        existing_site.forecasts = selected_site.forecasts
+        print(f"Overwritten forecast for station: {selected_station}")
+        logger.info(f"Overwritten forecast for site in bulletin: {selected_station}")
+    
+    # Update the bulletin_table to reflect changes
+    update_bulletin_table(None)
+
+def create_bulletin_table():
+    bulletin_data = []
+    existing_forecasts = set()
+    selected_basin = select_basin_widget.value
+
+    for site in bulletin_sites:
+        # If a specific basin is selected, skip sites not in that basin
+        if selected_basin != _("All basins") and site.basin != selected_basin:
+            continue
+
+        if hasattr(site, 'forecasts'):
+            # Assuming 'forecasts' is now a single DataFrame per site
+            forecast = site.forecasts.copy()
+            forecast['Hydropost'] = site.station_label
+            bulletin_data.append(forecast)
+        else:
+            print(f"No forecasts for site {site.code}")
+
+    if bulletin_data:
+        bulletin_df = pd.concat(bulletin_data, ignore_index=True)
+        columns_order = ['Hydropost'] + [col for col in bulletin_df.columns if col != 'Hydropost']
+        bulletin_df = bulletin_df[columns_order]
+
+        bulletin_tabulator = pn.widgets.Tabulator(
+            bulletin_df,
+            show_index=False,
+            sizing_mode='stretch_both'
+        )
+    else:
+        bulletin_tabulator = pn.pane.Markdown(_("No forecasts added to the bulletin."))
+
+    return bulletin_tabulator
 
 
+def update_bulletin_table(event=None):
+    bulletin_table.clear()
+    bulletin_table.append(create_bulletin_table())
+
+select_basin_widget.param.watch(update_bulletin_table, 'value')
+
+add_to_bulletin_button.on_click(add_current_selection_to_bulletin)
 # endregion
 
 
@@ -473,15 +628,26 @@ pentad_forecast_plot = pn.panel(
     sizing_mode='stretch_both'
     )
 
+
+def update_forecast_tabulator(event=None):
+    viz.create_forecast_summary_tabulator(
+        _, forecasts_all, station.value, date_picker.value,
+        model_checkbox.value, allowable_range_selection.value, manual_range.value,
+        forecast_tabulator
+    )
+
+# Initial update
+update_forecast_tabulator()
+
 # TODO Implement, write to site object and display bulletin in bulletin tab
 forecast_tabulator = viz.create_forecast_summary_tabulator(
     _, forecasts_all, station.value, date_picker.value, model_checkbox.value,
-    allowable_range_selection.value, manual_range.value
+    allowable_range_selection.value, manual_range.value, forecast_tabulator
 )
 #print(f"DEBUG: pentad_dashboard.py: forecast_tabulator: {forecast_tabulator}")
 #print(f"DEBUG: type of forecast_tabulator: {type(forecast_tabulator)}")
 
-bulletin_table = pn.panel(
+'''bulletin_table = pn.panel(
     pn.bind(
         viz.create_forecast_summary_tabulator,
         _, forecasts_all, station, date_picker, model_checkbox,
@@ -504,7 +670,14 @@ forecast_summary_table = pn.panel(
     #    allowable_range_selection, manual_range
     #    ),
     sizing_mode='stretch_width'
-    )
+    )'''
+
+# Same Tabulator in both tabs
+forecast_summary_table = pn.panel(
+    forecast_tabulator,
+    sizing_mode='stretch_width'
+)
+
 
 # Update the site object based on site and forecast selection
 #print(f"DEBUG: pentad_dashboard.py: forecast_tabulator: {forecast_summary_tabulator}")
@@ -513,12 +686,14 @@ update_site_object = pn.bind(
     _=_,
     sites=sites_list,
     site_selection=station,
-    tabulator=forecast_summary_tabulator)
+    tabulator=forecast_summary_table)
 
-# Watch for changes in the site selector and in the forecast tabulator
-station.param.watch(update_site_object, 'value')
-forecast_tabulator.param.watch(forecast_summary_table, 'selection')
-forecast_tabulator.param.watch(update_site_object, 'selection')
+# Watch for changes in parameters to update the Tabulator
+station.param.watch(update_forecast_tabulator, 'value')
+date_picker.param.watch(update_forecast_tabulator, 'value')
+model_checkbox.param.watch(update_forecast_tabulator, 'value')
+allowable_range_selection.param.watch(update_forecast_tabulator, 'value')
+manual_range.param.watch(update_forecast_tabulator, 'value')
 
 # Bind the update function to the button
 pn.bind(update_indicator, write_bulletin_button, watch=True)
@@ -526,7 +701,7 @@ pn.bind(update_indicator, write_bulletin_button, watch=True)
 # Attach the function to the button click event
 # Multi-threading does not seem to work
 #write_bulletin_button.on_click(lambda event: thread.write_forecast_bulletin_in_background(bulletin_table, env_file_path, status))
-write_bulletin_button.on_click(lambda event: write_to_excel(sites_list, bulletin_header_info, env_file_path, indicator))
+write_bulletin_button.on_click(lambda event: write_to_excel(sites_list, bulletin_sites, bulletin_header_info, env_file_path, indicator))
 
 # Create an icon using HTML for the select language widget
 language_icon_html = pn.pane.HTML(
@@ -558,7 +733,7 @@ def tabs_change_language(language):
             _, daily_hydrograph_plot, forecast_data_and_plot,
             forecast_summary_table, pentad_forecast_plot,
             bulletin_table, write_bulletin_button, indicator, disclaimer,
-            forecast_card, pentad_card)
+            station_card, forecast_card, add_to_bulletin_button, basin_card, pentad_card)
     except Exception as e:
         print(f"Error in tabs_change_language: {e}")
         print(traceback.format_exc())
@@ -591,14 +766,29 @@ def sidepane_change_language(language):
         show_range_button.name = _("Show ranges in figure:")
         show_range_button.options = [_("Yes"), _("No")]
 
-        return layout.define_sidebar(_, station, forecast_card)
+        return layout.define_sidebar(_, station_card, forecast_card, basin_card)
     except Exception as e:
         print(f"Error in sidepane_change_language: {e}")
         print(traceback.format_exc())
 
 # Bind the function to the language selection widget
-tabs = pn.bind(tabs_change_language, language_select.param.value)
+tabs = tabs_change_language(language_select.value)
 sidebar = pn.bind(sidepane_change_language, language_select.param.value)
+
+def update_tabs(event=None):
+    # Get the new tabs
+    new_tabs = tabs_change_language(language_select.value)
+    # Clear the container and add the new tabs
+    tabs_container.clear()
+    tabs_container.append(new_tabs)
+    # Attach the function to the new tabs with all required arguments
+    new_tabs.param.watch(
+        partial(viz.update_sidepane_card_visibility, new_tabs, station_card, forecast_card, basin_card, pentad_card),
+        'active'
+    )
+
+# Call update_tabs to initialize
+update_tabs()
 
 # Define the layout
 dashboard = pn.template.BootstrapTemplate(
@@ -607,9 +797,9 @@ dashboard = pn.template.BootstrapTemplate(
     header=[pn.Row(pn.layout.HSpacer(), language_select)],
     sidebar=sidebar,
     collapsed_sidebar=False,
-    main=tabs,
+    main=tabs_container,
     favicon=icon_path
-    )
+)
 
 # Update function to change the language in the dashboard title
 def update_title_language(event):

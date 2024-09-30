@@ -65,13 +65,29 @@ elif observed_runoff_palette == "black":
     runoff_forecast_color_list = ["#5c1d45", "#6f2453", "#832a62", "#963070", "#a9367e", "#bd3c8d", "#c64d99"]
 
 # Update visibility of sidepane widgets
-def update_sidepane_card_visibility(tabs, card, pentad, event):
-    if tabs.active == 1:
-        card.visible = True
-        pentad.visible = True
-    else:
-        card.visible = False
-        pentad.visible = False
+def update_sidepane_card_visibility(tabs, station_card, forecast_card, basin_card, pentad_card, event):
+    active_tab = tabs.active
+    # Assuming tabs are ordered as ['Predictors', 'Forecast', 'Bulletin', 'Disclaimer']
+    if active_tab == 0:  # 'Predictors' tab
+        station_card.visible = True
+        forecast_card.visible = False
+        pentad_card.visible = False
+        basin_card.visible = False
+    elif active_tab == 1:  # 'Forecast' tab
+        station_card.visible = True
+        forecast_card.visible = True
+        pentad_card.visible = False
+        basin_card.visible = False
+    elif active_tab == 2:  # 'Bulletin' tab
+        station_card.visible = False
+        forecast_card.visible = False
+        pentad_card.visible = False
+        basin_card.visible = True
+    else:  # 'Disclaimer' tab
+        station_card.visible = False
+        forecast_card.visible = False
+        pentad_card.visible = False
+        basin_card.visible = False
 
 def update_range_slider_visibility(_, range_slider, event):
     range_type = event.new
@@ -1151,7 +1167,7 @@ def create_forecast_summary_table(_, forecasts_all, station, date_picker,
 
 
 def create_forecast_summary_tabulator(_, forecasts_all, station, date_picker,
-                                  model_selection, range_type, range_slider):
+                                  model_selection, range_type, range_slider, forecast_tabulator):
     '''Put table data into a Tabulator widget'''
 
     final_forecast_table = create_forecast_summary_table(_, forecasts_all, station, date_picker,
@@ -1163,29 +1179,21 @@ def create_forecast_summary_tabulator(_, forecasts_all, station, date_picker,
     max_accuracy_index = final_forecast_table[_('Accuracy')].idxmax()
     print("max_accuracy_index\n", max_accuracy_index)
 
-    norm_stats_table = pn.widgets.Tabulator(
-        value=final_forecast_table,
-        #formatters={'Pentad': "{:,}"},
-        #editors={_('δ'): None},  # Disable editing of the δ column
-        theme='bootstrap',
-        show_index=False,
-        selection=[max_accuracy_index],
-        selectable='checkbox',
-        sizing_mode='stretch_both',
-        height=None
-        #buttons={_('To bulletin'): "<i class='fa fa-check'></i>"},
-        )
+# Update the Tabulator's value
+    forecast_tabulator.value = final_forecast_table
+    # Set the selection to the row with max accuracy
+    forecast_tabulator.selection = [max_accuracy_index]
 
-    # Callback function to enforce single row selection
+    # Enforce single selection
     def enforce_single_selection(event):
-        selected_rows = norm_stats_table.selection
+        selected_rows = forecast_tabulator.selection
         if len(selected_rows) > 1:
-            norm_stats_table.selection = [selected_rows[-1]]  # Keep only the last selected row
+            forecast_tabulator.selection = [selected_rows[-1]]  # Keep only the last selected row
 
-    # Attach the callback to the selection parameter
-    norm_stats_table.param.watch(enforce_single_selection, 'selection')
+    forecast_tabulator.param.watch(enforce_single_selection, 'selection')
 
-    return norm_stats_table
+    return forecast_tabulator
+
 
 def draw_forecast_raw_data(_, forecasts_linreg, station_widget, date_picker):
 
@@ -1327,9 +1335,8 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
     )
 
     # Create the title text
-    title_text = (f"{_('Hydropost')} {station_code}: {_('Forecast')} {_('for')} "
-                  f"{title_pentad} {_('pentad')} {_('of')} {title_month} "
-                  f"({_('for all years')})")
+    title_text = (f"{_('Hydropost')} {station_code}: {_('Regression')} {_('for')} "
+                  f"{title_pentad} {_('pentad')} {_('of')} {title_month} ")
 
     # Define the plot
     plot_pane = pn.pane.HoloViews(sizing_mode='stretch_width')
