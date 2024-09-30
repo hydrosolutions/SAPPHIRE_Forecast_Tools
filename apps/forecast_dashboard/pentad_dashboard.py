@@ -480,52 +480,62 @@ def update_model_select(station_value):
 # Bind the update function to the station selector
 pn.bind(update_model_select, station, watch=True)
 
-def add_current_selection_to_bulletin(event):
+def add_current_selection_to_bulletin(event=None):
     selected_indices = forecast_tabulator.selection
-    if not selected_indices:
-        print("No forecasts selected to add to the bulletin.")
-        return
-
-    # Get the DataFrame displayed in the forecast_tabulator
     forecast_df = forecast_tabulator.value
+    
     if forecast_df is None or forecast_df.empty:
         print("Forecast summary table is empty.")
+        logger.warning("Attempted to add to bulletin, but forecast summary table is empty.")
         return
-
+    
+    # If no selection is made, default to the first forecast
+    if not selected_indices and len(forecast_df) > 0:
+        selected_indices = [0]
+        forecast_tabulator.selection = selected_indices  # Update the Tabulator's selection
+        print("No forecast selected. Defaulting to the first forecast.")
+        logger.info("No forecast selected. Defaulting to the first forecast.")
+    
     # Get the selected rows
     selected_rows = forecast_df.iloc[selected_indices]
+    
     if selected_rows.empty:
         print("Selected rows are empty.")
+        logger.warning("Selected rows are empty despite having indices.")
         return
-
+    
     selected_station = station.value
     selected_date = date_picker.value
-
+    
     print(f"Adding station: {selected_station}, date: {selected_date}")
     print(f"Selected models:\n{selected_rows['Model']}")
-
+    
     # Use the selected rows as the final forecast table
     final_forecast_table = selected_rows.reset_index(drop=True)
-
+    
     # Find the Site object for the selected station
     selected_site = next((site for site in sites_list if site.station_label == selected_station), None)
     if selected_site is None:
         print(f"Site {selected_station} not found in sites_list")
+        logger.error(f"Site {selected_station} not found in sites_list")
         return
-
-    # Add the forecast data to the Site object
-    if not hasattr(selected_site, 'forecasts'):
-        selected_site.forecasts = []
-    selected_site.forecasts.append(final_forecast_table)
-
+    
+    # Overwrite the forecast instead of appending
+    selected_site.forecasts = final_forecast_table
+    
     # Check if the site is already in bulletin_sites
     existing_site = next((site for site in bulletin_sites if site.code == selected_site.code), None)
     if existing_site is None:
+        # If the site is not in the bulletin, add it
         bulletin_sites.append(selected_site)
+        logger.info(f"Added new site to bulletin: {selected_station}")
     else:
+        # If the site is already in the bulletin, overwrite the existing forecast
         existing_site.forecasts = selected_site.forecasts
-
-    # Update the bulletin_table
+        print(f"Overwritten forecast for station: {selected_station}")
+        logger.info(f"Overwritten forecast for site in bulletin: {selected_station}")
+    
+    # Update the bulletin_table to reflect changes
     update_bulletin_table(None)
 
 def create_bulletin_table():
@@ -539,15 +549,10 @@ def create_bulletin_table():
             continue
 
         if hasattr(site, 'forecasts'):
-            for forecast in site.forecasts:
-                # Create a unique identifier for each forecast entry
-                forecast_id = (site.code, forecast['Model'].iloc[0])
-                if forecast_id in existing_forecasts:
-                    continue  # Skip duplicates
-                existing_forecasts.add(forecast_id)
-                forecast = forecast.copy()
-                forecast['Hydropost'] = site.station_label
-                bulletin_data.append(forecast)
+            # Assuming 'forecasts' is now a single DataFrame per site
+            forecast = site.forecasts.copy()
+            forecast['Hydropost'] = site.station_label
+            bulletin_data.append(forecast)
         else:
             print(f"No forecasts for site {site.code}")
 
@@ -567,7 +572,7 @@ def create_bulletin_table():
     return bulletin_tabulator
 
 
-def update_bulletin_table(event):
+def update_bulletin_table(event=None):
     bulletin_table.clear()
     bulletin_table.append(create_bulletin_table())
 

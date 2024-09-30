@@ -1314,9 +1314,8 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector):
     )
 
     # Create the title text
-    title_text = (f"{_('Hydropost')} {station_code}: {_('Forecast')} {_('for')} "
-                  f"{title_pentad} {_('pentad')} {_('of')} {title_month} "
-                  f"({_('for all years')})")
+    title_text = (f"{_('Hydropost')} {station_code}: {_('Regression')} {_('for')} "
+                  f"{title_pentad} {_('pentad')} {_('of')} {title_month} ")
 
     # Define the plot
     plot_pane = pn.pane.HoloViews(sizing_mode='stretch_width')
