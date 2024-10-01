@@ -1106,13 +1106,13 @@ def add_hydroposts(combined_data, check_hydroposts):
     # Check if the virtual hydroposts are in the combined_data
     for hydropost in check_hydroposts:
         if hydropost not in combined_data['code'].values:
-            logger.debug(f"Virtual hydropost {hydropost} is not in the list of stations.")
+            logger.debug(f"Adding virtual hydropost {hydropost} to the list of stations.")
             # Add the virtual hydropost to the combined_data
             new_row = pd.DataFrame({
                 'code': [hydropost],
                 'date': [earliest_date],
                 'discharge': [np.nan],
-                'name': [f'Virtual hydropost {hydropost}']
+                #'name': [f'Virtual hydropost {hydropost}']
             })
             combined_data = pd.concat([combined_data, new_row], ignore_index=True)
 
@@ -1168,7 +1168,7 @@ def calculate_virtual_stations_data(data_df: pd.DataFrame,
                 # Change code to the code of the virtual station
                 data_virtual_station[code_col] = station
                 # Change the name to the name of the virtual station
-                data_virtual_station['name'] = f'Virtual hydropost {station}'
+                #data_virtual_station['name'] = f'Virtual hydropost {station}'
             else:
                 # Merge the data for the contributing station with the data_virtual_station
                 data_virtual_station = pd.merge(data_virtual_station, data_contributing_station, on=date_col, how='outer', suffixes=('', '_y'))
@@ -1177,6 +1177,10 @@ def calculate_virtual_stations_data(data_df: pd.DataFrame,
                 data_virtual_station.drop(columns=[col for col in data_virtual_station.columns if '_y' in col], inplace=True)
 
             #print("data_virtual_station.tail(10)\n", data_virtual_station.tail(10))
+
+        # Discard the name column
+        if 'name' in data_virtual_station.columns:
+            data_virtual_station.drop(columns=['name'], inplace=True)
 
         # Get the number of models in the data_df
         models = data_df[model_col].unique()
@@ -1200,6 +1204,9 @@ def calculate_virtual_stations_data(data_df: pd.DataFrame,
 
         # Delete data_virtual_station
         del data_virtual_station
+
+        # Remove rows where the model_long column is nan
+        data_df = data_df[data_df['model_long'].notna()]
 
     return data_df
 
@@ -1229,6 +1236,26 @@ def read_observed_and_modelled_data_pentade():
     logger.debug(f"type of code in tide: {tide['code'].dtype}")
     logger.debug(f"type of code in cm: {cm['code'].dtype}")
 
+    # Test if there are any nans in the model long column of either linreg, tide, tft, tsmixer, arima and cm
+    if linreg['model_long'].isnull().values.any():
+        logger.error("There are nans in the model_long column of linreg.")
+        exit()
+    if tide['model_long'].isnull().values.any():
+        logger.error("There are nans in the model_long column of tide.")
+        exit()
+    if tft['model_long'].isnull().values.any():
+        logger.error("There are nans in the model_long column of tft.")
+        exit()
+    if tsmixer['model_long'].isnull().values.any():
+        logger.error("There are nans in the model_long column of tsmixer.")
+        exit()
+    if arima['model_long'].isnull().values.any():
+        logger.error("There are nans in the model_long column of arima.")
+        exit()
+    if cm['model_long'].isnull().values.any():
+        logger.error("There are nans in the model_long column of cm.")
+        exit()
+
     # Merge tide, tft, tsmixer and arima into linreg.
     # same columns are: date, code, pentad_in_month, pentad_in_year,
     # forecasted_discharge, model_long and model_short
@@ -1238,6 +1265,10 @@ def read_observed_and_modelled_data_pentade():
 
     # Calculate virtual stations forecasts if needed
     forecasts = calculate_virtual_stations_data(forecasts)
+    # Test if we have any nans in the model_long column
+    if forecasts['model_long'].isnull().values.any():
+        logger.error("There are nans in the model_long column of forecasts.")
+        exit()
 
     stats = stats_linreg
     logger.debug(f"columns of stats concatenated:\n{stats.columns}")
