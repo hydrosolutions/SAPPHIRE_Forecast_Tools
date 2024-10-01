@@ -492,6 +492,9 @@ def update_model_select(station_value):
 # Bind the update function to the station selector
 pn.bind(update_model_select, station, watch=True)
 
+# Create the pop-up notification pane (initially hidden)
+add_to_bulletin_popup = pn.pane.Alert("Added to bulletin", alert_type="success", visible=False)
+
 def add_current_selection_to_bulletin(event=None):
     selected_indices = forecast_tabulator.selection
     forecast_df = forecast_tabulator.value
@@ -549,6 +552,12 @@ def add_current_selection_to_bulletin(event=None):
     
     # Update the bulletin_table to reflect changes
     update_bulletin_table(None)
+
+     # Show the popup notification
+    add_to_bulletin_popup.visible = True
+
+    # Hide the popup after a short delay (e.g., 2 seconds)
+    pn.state.add_periodic_callback(lambda: setattr(add_to_bulletin_popup, 'visible', False), 2000, count=1)
 
 def create_bulletin_table():
     bulletin_data = []
@@ -733,7 +742,7 @@ def tabs_change_language(language):
             _, daily_hydrograph_plot, forecast_data_and_plot,
             forecast_summary_table, pentad_forecast_plot,
             bulletin_table, write_bulletin_button, indicator, disclaimer,
-            station_card, forecast_card, add_to_bulletin_button, basin_card, pentad_card)
+            station_card, forecast_card, add_to_bulletin_button, basin_card, pentad_card, add_to_bulletin_popup)
     except Exception as e:
         print(f"Error in tabs_change_language: {e}")
         print(traceback.format_exc())

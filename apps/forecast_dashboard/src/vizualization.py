@@ -1305,6 +1305,12 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
         # Load the saved state
         forecast_table = pd.read_csv(save_file_path)
         print(f"Loaded saved state from {save_file_path}")
+
+        # Ensure visibility is False where predictor or discharge_avg is NaN
+        forecast_table.loc[
+            forecast_table['predictor'].isna() | forecast_table['discharge_avg'].isna(),
+            'visible'
+        ] = False
     else:
         # Filter data for the selected station and pentad across all years
         forecast_table = linreg_predictor[
@@ -1314,8 +1320,10 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
 
         # Add a column to indicate visibility of points in the plot
         if 'visible' not in forecast_table.columns:
-            forecast_table['visible'] = True
+            # Set 'visible' to True where predictor and discharge_avg are not NaN, else False
+            forecast_table['visible'] = (~forecast_table['predictor'].isna()) & (~forecast_table['discharge_avg'].isna())
 
+    forecast_table = forecast_table.drop(columns=['index', 'level_0'], errors='ignore')
     forecast_table = forecast_table.reset_index()
 
     visible_data = forecast_table[forecast_table['visible'] == True] # Initialize the visible data
@@ -1348,7 +1356,11 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
     def update_plot(event=None):
         global visible_data  # Use global variable to ensure it's accessible in other functions
 
-        forecast_table.update(forecast_data_table.value)
+        # Ensure 'visible' is of boolean type
+        forecast_table['visible'] = forecast_table['visible'].astype(bool)
+
+        # Update only the 'visible' column based on the table interaction
+        forecast_table.loc[forecast_data_table.value['index'], 'visible'] = forecast_data_table.value['visible'].values
 
         # Filter the data based on visibility
         visible_data = forecast_table[forecast_table['visible'] == True]
@@ -1470,18 +1482,20 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
     # Create the pop-up notification pane (initially hidden)
     popup = pn.pane.Alert("Changes Saved Successfully", alert_type="success", visible=False)
 
+    # Adjust the sizing modes of your components
+    forecast_data_table.sizing_mode = 'stretch_both'
+    plot_pane.sizing_mode = 'stretch_both'
+
+   
+
     # Function to save table data to CSV
     def save_to_csv(event):
-        # Convert the table value back to a DataFrame
-        updated_forecast_table = pd.DataFrame(forecast_data_table.value)
+        # Update the 'visible' column in forecast_table based on the table interaction
+        forecast_table['visible'] = forecast_table['visible'].astype(bool)
+        forecast_table.loc[forecast_data_table.value['index'], 'visible'] = forecast_data_table.value['visible'].values
 
-        # Explicitly reset the index before saving, so it becomes a column
-        updated_forecast_table = updated_forecast_table.reset_index(drop=True)
-
-        updated_forecast_table['pentad'] = selected_pentad
-
-        # Save DataFrame to CSV, ensuring the index is saved
-        updated_forecast_table.to_csv(save_file_path, index=False)
+        # Save the entire forecast_table to CSV
+        forecast_table.to_csv(save_file_path, index=False)
         print(f"Data saved to {save_file_path}")
 
         # Show the pop-up notification
@@ -1496,11 +1510,18 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
     # Attach the save_to_csv function to the button's click event
     save_button.on_click(save_to_csv)
 
-    # Create the layout with the table, plot, save button, and popup
-    layout = pn.Column(
-        pn.Row(forecast_data_table, plot_pane, sizing_mode='stretch_width'),
+     # Create the content container
+    content = pn.Column(
+        pn.Row(forecast_data_table, plot_pane),
         pn.Row(save_button),
-        pn.Row(popup)
+        sizing_mode='stretch_both'
+    )
+
+    # Create the layout
+    layout = pn.Column(
+        content,
+        popup,  # Place the popup here
+        sizing_mode='stretch_both'
     )
 
     return layout

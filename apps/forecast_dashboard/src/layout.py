@@ -93,7 +93,7 @@ def define_disclaimer(_, in_docker_flag):
 def define_tabs(_, daily_hydrograph_plot, forecast_data_and_plot,
                 forecast_summary_table, pentad_forecast_plot, bulletin_table,
                 write_bulletin_button, indicator, disclaimer,
-                station_card, forecast_card, add_to_bulletin_button, basin_card, pentad_card):
+                station_card, forecast_card, add_to_bulletin_button, basin_card, pentad_card, add_to_bulletin_popup):
 
     # Organize the panes in tabs
     no_date_overlap_flag = True
@@ -163,7 +163,7 @@ def define_tabs(_, daily_hydrograph_plot, forecast_data_and_plot,
                 ),
                 pn.Card(
                     pn.Row(
-                        add_to_bulletin_button 
+                        add_to_bulletin_button, add_to_bulletin_popup 
                     ),
                     forecast_summary_table,
                     title=_('Summary table'),
