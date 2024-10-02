@@ -8,15 +8,6 @@ from .gettext_config import translation_manager
 
 import param
 
-# region Define widgets
-#def create_station_selection_widget(station_dict):
-#    _ = translation_manager._
-#    return pn.widgets.Select(
-#        name=_("Select discharge station:"),
-#        groups=station_dict,
-#        value=station_dict[next(iter(station_dict))][0])
-
-# endregion
 
 
 # region Widget update functions
@@ -91,7 +82,8 @@ def define_disclaimer(_, in_docker_flag):
     )
 
 def define_tabs(_, daily_hydrograph_plot, forecast_data_and_plot,
-                forecast_summary_table, pentad_forecast_plot, bulletin_table,
+                forecast_summary_table, pentad_forecast_plot, effectiveness_plot,
+                bulletin_table,
                 write_bulletin_button, indicator, disclaimer,
                 station_card, forecast_card, add_to_bulletin_button, basin_card, pentad_card, add_to_bulletin_popup):
 
@@ -163,7 +155,7 @@ def define_tabs(_, daily_hydrograph_plot, forecast_data_and_plot,
                 ),
                 pn.Card(
                     pn.Row(
-                        add_to_bulletin_button, add_to_bulletin_popup 
+                        add_to_bulletin_button, add_to_bulletin_popup
                     ),
                     forecast_summary_table,
                     title=_('Summary table'),
@@ -174,19 +166,22 @@ def define_tabs(_, daily_hydrograph_plot, forecast_data_and_plot,
                 pn.Card(
                     pentad_forecast_plot,
                     title=_('Hydrograph'),
-                    height=500,
+                    height=600,
                     #height=None,
                     collapsible=True,
                     collapsed=False
                 ),
-                     #pn.Card(
-                     #    pentad_forecast_plot,
-                     #    title=_('Analysis'))
-            #         #pn.Card(pentad_effectiveness, title=_("Effectiveness of the methods")),
+                pn.Card(
+                    pn.Row(
+                     effectiveness_plot,
+                    ),
+                    title=_("Forecast skill metrics"),
+                    height=800,
+                    collapsible=True,
             #         #pn.Card(pentad_skill, title=_("Forecast accuracy")),
-                #sizing_mode='stretch_width'
                 )
             ),
+            ),  # end of Forecast tab
             (_('Bulletin'),
              pn.Column(
                     pn.Card(

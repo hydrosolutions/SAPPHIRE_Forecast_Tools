@@ -498,46 +498,46 @@ add_to_bulletin_popup = pn.pane.Alert("Added to bulletin", alert_type="success",
 def add_current_selection_to_bulletin(event=None):
     selected_indices = forecast_tabulator.selection
     forecast_df = forecast_tabulator.value
-    
+
     if forecast_df is None or forecast_df.empty:
         print("Forecast summary table is empty.")
         logger.warning("Attempted to add to bulletin, but forecast summary table is empty.")
         return
-    
+
     # If no selection is made, default to the first forecast
     if not selected_indices and len(forecast_df) > 0:
         selected_indices = [0]
         forecast_tabulator.selection = selected_indices  # Update the Tabulator's selection
         print("No forecast selected. Defaulting to the first forecast.")
         logger.info("No forecast selected. Defaulting to the first forecast.")
-    
+
     # Get the selected rows
     selected_rows = forecast_df.iloc[selected_indices]
-    
+
     if selected_rows.empty:
         print("Selected rows are empty.")
         logger.warning("Selected rows are empty despite having indices.")
         return
-    
+
     selected_station = station.value
     selected_date = date_picker.value
-    
+
     print(f"Adding station: {selected_station}, date: {selected_date}")
     print(f"Selected models:\n{selected_rows['Model']}")
-    
+
     # Use the selected rows as the final forecast table
     final_forecast_table = selected_rows.reset_index(drop=True)
-    
+
     # Find the Site object for the selected station
     selected_site = next((site for site in sites_list if site.station_label == selected_station), None)
     if selected_site is None:
         print(f"Site {selected_station} not found in sites_list")
         logger.error(f"Site {selected_station} not found in sites_list")
         return
-    
+
     # Overwrite the forecast instead of appending
     selected_site.forecasts = final_forecast_table
-    
+
     # Check if the site is already in bulletin_sites
     existing_site = next((site for site in bulletin_sites if site.code == selected_site.code), None)
     if existing_site is None:
@@ -549,7 +549,7 @@ def add_current_selection_to_bulletin(event=None):
         existing_site.forecasts = selected_site.forecasts
         print(f"Overwritten forecast for station: {selected_station}")
         logger.info(f"Overwritten forecast for site in bulletin: {selected_station}")
-    
+
     # Update the bulletin_table to reflect changes
     update_bulletin_table(None)
 
@@ -635,7 +635,22 @@ pentad_forecast_plot = pn.panel(
         show_range_button
         ),
     sizing_mode='stretch_both'
-    )
+)
+forecast_skill_plot = pn.panel(
+    pn.bind(
+        viz.plot_forecast_skill,
+        _,
+        hydrograph_pentad_all,
+        forecasts_all,
+        station_widget=station,
+        date_picker=date_picker,
+        model_checkbox=model_checkbox,
+        range_selection_widget=allowable_range_selection,
+        manual_range_widget=manual_range,
+        show_range_button=show_range_button
+    ),
+    sizing_mode='stretch_both'
+)
 
 
 def update_forecast_tabulator(event=None):
@@ -740,7 +755,7 @@ def tabs_change_language(language):
         print(f"Selected language: {language}")
         return layout.define_tabs(
             _, daily_hydrograph_plot, forecast_data_and_plot,
-            forecast_summary_table, pentad_forecast_plot,
+            forecast_summary_table, pentad_forecast_plot, forecast_skill_plot,
             bulletin_table, write_bulletin_button, indicator, disclaimer,
             station_card, forecast_card, add_to_bulletin_button, basin_card, pentad_card, add_to_bulletin_popup)
     except Exception as e:
