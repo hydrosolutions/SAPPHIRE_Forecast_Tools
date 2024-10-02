@@ -13,7 +13,8 @@ import holoviews as hv
 from holoviews import streams
 from holoviews.streams import PointDraw, Selection1D
 import panel as pn
-from bokeh.models import HoverTool, FixedTicker, FuncTickFormatter, CustomJSTickFormatter, LinearAxis, DatetimeTickFormatter, NumberFormatter, DateFormatter
+from bokeh.models import HoverTool, FixedTicker, FuncTickFormatter, CustomJSTickFormatter, LinearAxis, NumberFormatter, DateFormatter
+from bokeh.models.formatters import DatetimeTickFormatter
 from bokeh.models.widgets.tables import CheckboxEditor, BooleanFormatter
 from bokeh.transform import jitter
 from scipy import stats
@@ -773,7 +774,7 @@ def plot_runoff_range_bound(data, date_col, range_bound_col, range_color, hover_
 
     return boundary_line
 
-def plot_pentadal_vlines(data, date_col):
+def plot_pentadal_vlines(data, date_col, y_text=1):
     # Based on the date_col, identify the year we are in
     year = data[date_col].dt.year.max()
     # Create a list of the dates for each pentad of the year
@@ -807,7 +808,7 @@ def plot_pentadal_vlines(data, date_col):
                      '1', '2', '3', '4', '5', '6', '1', '2', '3', '4', '5', '6']
     for i in range(0, len(pentads)):
         mid_date = pentads[i] + dt.timedelta(days=2.2)
-        vlines *= hv.Text(mid_date, 1, mid_date_text[i]) \
+        vlines *= hv.Text(mid_date, y_text, mid_date_text[i]) \
             .opts(text_baseline='bottom', text_align='center', text_font_size='9pt',
                   text_color='gray', text_alpha=0.5, text_font_style='italic',
                   show_legend=False)
@@ -980,6 +981,7 @@ def plot_daily_hydrograph_data(_, hydrograph_day_all, linreg_predictor, station,
         xlabel="",
         ylabel=_('Discharge (m³/s)'),
         height=400,
+        responsive=True,
         show_grid=True,
         show_legend=True,
         hooks=[remove_bokeh_logo],
@@ -992,6 +994,116 @@ def plot_daily_hydrograph_data(_, hydrograph_day_all, linreg_predictor, station,
     print("\n\n")
 
     return daily_hydrograph
+
+
+def plot_daily_rainfall_data(_, daily_rainfall, station, date_picker,
+                             linreg_predictor):
+
+    # Extract code from station
+    station_code = station.split(' - ')[0]
+
+    # Convert date column to datetime
+    daily_rainfall['date'] = pd.to_datetime(daily_rainfall['date'])
+
+    # Convert date_picker to datetime[ns]
+    date_picker = pd.to_datetime(date_picker)
+
+    # Filter data for the selected station
+    station_data = daily_rainfall[daily_rainfall['code'] == station_code].copy()
+    print(f"Tail of station_data\n{station_data.tail(10)}")
+
+    # Get the forecasts for the selected date
+    forecasts = station_data[station_data['date'] >= date_picker].copy()
+    print(f"Tail of forecasts\n{forecasts.tail(10)}")
+
+    # Get current year rainfall
+    station_data['year'] = pd.to_datetime(station_data['date']).dt.year
+    current_year = station_data[station_data['year'] == date_picker.year].copy()
+    # Sort by date
+    current_year = current_year.sort_values('date')
+    print(f"Tail of current_year\n{current_year.tail(10)}")
+
+    # Calculate norm rainfall, excluding the current year
+    norm_rainfall = station_data[station_data['year'] != date_picker.year].copy()
+    norm_rainfall['doy'] = pd.to_datetime(norm_rainfall['date']).dt.dayofyear
+    norm_rainfall = norm_rainfall.groupby(['code', 'doy']).mean().reset_index()
+    # Replace year of date with the current year
+    norm_rainfall['date'] = norm_rainfall['date'].apply(lambda x: x.replace(year=date_picker.year))
+    # Drop doy and year columns and sort by date
+    norm_rainfall = norm_rainfall.drop(columns=['doy', 'year']).sort_values('date')
+    # Convert date column to datetime
+    norm_rainfall['date'] = pd.to_datetime(norm_rainfall['date'])
+
+    # Plot the daily rainfall data using holoviews
+    title_text = f"Daily rainfall data for {station} on {date_picker.strftime('%Y-%m-%d')}"
+
+    # filter hydrograph_day_all & linreg_predictor by station
+    linreg_predictor = processing.add_predictor_dates(linreg_predictor, station, date_picker)
+
+    hvspan_predictor = hv.VSpan(
+        linreg_predictor['predictor_start_date'].values[0],
+        linreg_predictor['predictor_end_date'].values[0]) \
+            .opts(color=runoff_current_year_color, alpha=0.2, line_width=0,
+                  muted_alpha=0.05, show_legend=True)
+
+    hvspan_forecast = hv.VSpan(
+        linreg_predictor['forecast_start_date'].values[0],
+        linreg_predictor['forecast_end_date'].values[0]) \
+            .opts(color=runoff_forecast_color_list[3], alpha=0.2, line_width=0,
+                  muted_alpha=0.05, show_legend=False)
+
+    vlines = plot_pentadal_vlines(norm_rainfall, _('date'), y_text=station_data['P'].max() * 1.05)
+
+    # A bar plot for the norm rainfall
+    hv_norm_rainfall = hv.Curve(
+        norm_rainfall,
+        kdims='date',
+        vdims='P',
+        label='Norm')
+    hv_norm_rainfall.opts(
+        interpolation='steps-mid',
+        color=runoff_mean_color)
+    # A bar plot for the current_year rainfall
+    hv_current_year = hv.Curve(
+        current_year,
+        kdims='date',
+        vdims='P',
+        label='Current year')
+    hv_current_year.opts(
+        interpolation='steps-mid',
+        color=runoff_current_year_color)
+    # A bar plot for the forecasted rainfall
+    # if forecasts is not empty
+    if not forecasts.empty:
+        hv_forecast = hv.Curve(
+            forecasts,
+            kdims='date',
+            vdims='P',
+            label='Forecast')
+        hv_forecast.opts(
+            interpolation='steps-mid',
+            color=runoff_forecast_color_list[3])
+        figure = hvspan_predictor * hvspan_forecast * vlines * hv_norm_rainfall * hv_current_year * hv_forecast
+    else:
+        figure = hvspan_predictor * hvspan_forecast * vlines * hv_norm_rainfall * hv_current_year
+
+    figure.opts(
+        title=title_text,
+        xlabel="",
+        ylabel=_('Rainfall (mm/d)'),
+        height=400,
+        responsive=True,
+        show_grid=True,
+        show_legend=True,
+        hooks=[remove_bokeh_logo],
+        xformatter=DatetimeTickFormatter(days="%b %d", months="%b %d"),
+        ylim=(0, station_data['P'].max() * 1.1),
+        xlim=(min(norm_rainfall['date']), max(norm_rainfall['date'])),
+        tools=['hover'],
+        toolbar='above')
+
+    return figure
+
 
 # endregion
 
@@ -1831,6 +1943,9 @@ def plot_forecast_skill(
         fontsize={'legend':8}, fontscale=1.2
     )
 
+    # Plot observed runoff against forecasted runoff
+
+
     # Create a column layout for the output
     all_skill_figures = pn.Column(
         effectiveness_plot,
@@ -1838,7 +1953,6 @@ def plot_forecast_skill(
     )
 
     return all_skill_figures
-
 
 
 

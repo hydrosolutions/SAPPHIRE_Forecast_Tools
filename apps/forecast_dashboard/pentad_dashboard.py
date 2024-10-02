@@ -16,9 +16,10 @@ import locale
 
 import panel as pn
 
-from bokeh.models import FixedTicker, CustomJSTickFormatter, LinearAxis
+from bokeh.models import FixedTicker, CustomJSTickFormatter, LinearAxis, Range1d
 from bokeh.models.widgets.tables import NumberFormatter
 from holoviews import streams
+from holoviews import opts
 
 import numpy as np
 import pandas as pd
@@ -176,6 +177,9 @@ _ = localize.load_translation(current_locale, localedir)
 # endregion
 
 # region load_data
+
+# Rainfall
+rain = processing.read_rainfall_data()
 
 # Daily runoff data
 hydrograph_day_all = processing.read_hydrograph_day_data_for_pentad_forecasting()
@@ -613,6 +617,7 @@ pentad_selector.param.watch(update_callback, 'value')
 # Initial setup: populate the main area with the initial selection
 #update_callback(None)  # This does not seem to be needed
 
+
 daily_hydrograph_plot = pn.panel(
     pn.bind(
         viz.plot_daily_hydrograph_data,
@@ -620,6 +625,13 @@ daily_hydrograph_plot = pn.panel(
         ),
     sizing_mode='stretch_both'
     )
+daily_rainfall_plot = pn.panel(
+    pn.bind(
+        viz.plot_daily_rainfall_data,
+        _, rain, station, date_picker, linreg_predictor
+    ),
+)
+
 forecast_data_and_plot = pn.panel(
     pn.bind(
         viz.select_and_plot_data,
@@ -754,7 +766,9 @@ def tabs_change_language(language):
         # Print the currently selected language
         print(f"Selected language: {language}")
         return layout.define_tabs(
-            _, daily_hydrograph_plot, forecast_data_and_plot,
+            _,
+            daily_hydrograph_plot, daily_rainfall_plot,
+            forecast_data_and_plot,
             forecast_summary_table, pentad_forecast_plot, forecast_skill_plot,
             bulletin_table, write_bulletin_button, indicator, disclaimer,
             station_card, forecast_card, add_to_bulletin_button, basin_card, pentad_card, add_to_bulletin_popup)
