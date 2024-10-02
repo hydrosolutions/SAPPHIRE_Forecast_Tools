@@ -296,6 +296,7 @@ def add_custom_tooltip(_, plot, element):
         (_('pentad_of_year column name'), "@x"),
         (_('forecasted_discharge column name'), "@y")
     ]
+
 # Plots for dashboard
 # region recyclable_plot_components
 def plot_runoff_line(data, date_col, line_data_col, label_text, color):
@@ -367,15 +368,23 @@ def plot_runoff_forecasts(data, date_col, forecast_data_col,
         #latest_forecast = fl.round_discharge(model_data[forecast_data_col].iloc[-1])
         #legend_entry = model + ": " + latest_forecast + " " + unit_string
         legend_entry = model + ": Past forecasts"
+
+        # Create a HoverTool
+        hover = HoverTool(tooltips=[
+            ('Pentad', f'@{date_col}'),
+            ('Value', f'@{forecast_data_col}'),
+            ('Model', f'@{forecast_name_col}')
+        ])
+
         # Create the curve
         line = hv.Curve(
             model_data,
             kdims=[date_col],
-            vdims=[forecast_data_col],
+            vdims=[forecast_data_col, forecast_name_col],
             label=legend_entry) \
                 .opts(color=runoff_forecast_color[i],
                         line_width=2,
-                        tools=['hover'],
+                        tools=[hover],
                         show_legend=True,
                         muted=True)
 
@@ -427,16 +436,24 @@ def plot_runoff_forecasts_steps(data, date_col, forecast_data_col,
         #latest_forecast = fl.round_discharge(model_data[forecast_data_col].iloc[-1])
         #legend_entry = model + ": " + latest_forecast + " " + unit_string
         legend_entry = model + ": Past forecasts"
+
+        # Create a HoverTool
+        hover = HoverTool(tooltips=[
+            ('Pentad', f'@{date_col}'),
+            ('Value', f'@{forecast_data_col}'),
+            ('Model', f'@{forecast_name_col}')
+        ])
+
         # Create the curve
         line = hv.Curve(
             model_data,
             kdims=[date_col],
-            vdims=[forecast_data_col],
+            vdims=[forecast_data_col, forecast_name_col],
             label=legend_entry) \
                 .opts(color=runoff_forecast_color[i],
                         line_width=2,
                         interpolation='steps-mid',
-                        tools=['hover'],
+                        tools=[hover],
                         show_legend=True,
                         muted=True)
 
@@ -491,16 +508,24 @@ def plot_current_runoff_forecasts(data, date_col, forecast_data_col,
         latest_forecast = fl.round_discharge(model_data[forecast_data_col].iloc[-1])
         legend_entry = model + ": " + latest_forecast + " " + unit_string
 
+        # Create a HoverTool
+        hover = HoverTool(tooltips=[
+            ('Pentad', f'@{date_col}'),
+            ('Value', f'@{forecast_data_col}'),
+            ('Model', f'@{forecast_name_col}')
+        ])
+
         # Create a point
         point = hv.Scatter(
             model_data,
             kdims=[date_col],
-            vdims=[forecast_data_col],
+            vdims=[forecast_data_col, forecast_name_col],
             label=legend_entry) \
                 .opts(color=runoff_forecast_color[i],
                         size=7,
-                        tools=['hover'],
-                        show_legend=True)
+                        tools=[hover],
+                        show_legend=True,
+                        )
 
         if overlay is None:
             overlay = point
@@ -1161,8 +1186,8 @@ def plot_pentad_forecast_hydrograph_data(_, hydrograph_pentad_all, forecasts_all
         show_legend=True,
         hooks=[remove_bokeh_logo,
                lambda p, e: add_custom_xticklabels_pentad(_, p, e),
-               lambda p, e: add_custom_tooltip(_, p, e)],
-        tools=['hover'],
+        ],
+        #tools=['hover'],
         toolbar='right')
 
     print("\n\n")
@@ -1773,8 +1798,6 @@ def plot_forecast_skill(
     # Plot the forecast accuracy
     title_accuracy = _("Station ") + str(station_widget) + _(" on ") + title_date_str + \
         ", " + _("data from") + " 2010 - " + str(title_date.year)
-    # print columns of forecast_pentad
-    print(f"forecast_pentad.columns:\n", forecast_pentad.columns)
 
     hv_current_forecast_skill_accuracy = plot_current_runoff_forecasts(
         data=current_forecast_pentad,
@@ -1818,85 +1841,7 @@ def plot_forecast_skill(
 
 
 
-def plot_forecast_accuracy(station_widget, range_selection_widget, manual_range_widget):
 
-    forecast_pentad_stat_accuracy = forecast_pentad[forecast_pentad["station_labels"] == station_widget]
-    hydrograph_pentad_accuracy = hydrograph_pentad_all[hydrograph_pentad_all["station_labels"] == station_widget]
-    hydrograph_pentad_stat_accuracy = calculate_pentad_forecast_accuracy(
-        hydrograph_pentad_accuracy, forecast_pentad_stat_accuracy,
-        range_selection_widget, manual_range_widget)
-    dates_collection = get_current_predictor_and_dates(forecast_pentad, station_widget)
-
-    # We need to print a suitable date for the figure titles. We use the last
-    # date of fcdata_filtered where .
-    title_date = (dates_collection.latest_forecast_date - dt.timedelta(days=1))
-    title_date_str = title_date.strftime('%Y-%m-%d')
-    title_pentad = tl.get_pentad(title_date_str)
-    title_month = tl.get_month_str_case2(title_date_str)
-
-    # Drop the column forecast_skill
-    hydrograph_pentad_stat_accuracy = hydrograph_pentad_stat_accuracy.drop(columns=["std_err"])
-
-    # Get the last pentad in the dataframe forecast_pentad_stat
-    current_pentad_accuracy = forecast_pentad_stat_accuracy["pentad"].tail(1).values[0]
-    # Get the forecast_skill for pentad == current_pentad
-    current_forecast_skill_accuracy = hydrograph_pentad_stat_accuracy[hydrograph_pentad_stat_accuracy["pentad"] == current_pentad_accuracy]
-
-    # Rename the columns
-    hydrograph_pentad_stat_accuracy = hydrograph_pentad_stat_accuracy.rename(columns={"pentad": "Пентада года",
-                                                                    "forecast_skill": "Оправдываемость 0.674 sigma [%]",
-                                                                    "forecast_skill_20": "Оправдываемость x Q [%]"})
-    current_forecast_skill_accuracy = current_forecast_skill_accuracy.rename(columns={"pentad": "Пентада года",
-                                                                    "forecast_skill": "Оправдываемость 0.674 sigma [%]",
-                                                                    "forecast_skill_20": "Оправдываемость x Q [%]"})
-    title_accuracy = _("Station ") + str(station_widget) + _(" on ") + title_date_str + \
-        ", " + _("data from") + " 2005 - " + str(title_date.year)
-    forecast_string_accuracy_sigma=_("Average accuracy")+" ("+_("0.674 sigma")+"): " + f"{hydrograph_pentad_stat_accuracy['Оправдываемость 0.674 sigma [%]'].mean():.1f}" + " [%]"
-    forecast_string_accuracy_percent=_("Average accuracy")+" ("+str(manual_range_widget)+"%): " + f"{hydrograph_pentad_stat_accuracy['Оправдываемость x Q [%]'].mean():.1f}" + " [%]"
-    # Make a column plot with the forecast skill
-    #hv_empty_accuracy = hv.Scatter([], [], label=forecast_string_accuracy) \
-    #    .opts(color="white", size=0.000000001)
-    hv_current_forecast_skill_accuracy_674 = hv.Scatter(
-        current_forecast_skill_accuracy,
-        kdims="Пентада года",
-        vdims="Оправдываемость 0.674 sigma [%]") \
-        .opts(color = "#72D1FA", size=10, tools=['hover'])
-    hv_current_forecast_skill_accuracy_02 = hv.Scatter(
-        current_forecast_skill_accuracy,
-        kdims="Пентада года",
-        vdims="Оправдываемость x Q [%]") \
-        .opts(color = "#1ec31e", size=10, tools=['hover'])
-    #hv_forecast_skill_accuracy_674a = hv.Area(
-    #    hydrograph_pentad_stat_accuracy,
-    #    kdims="Пентада года",
-    #    vdims="Оправдываемость 0.674 sigma [%]") \
-    #    .opts(color = "#307096", line_width=1,
-    #          tools=['hover'], alpha=0.1)
-    hv_forecast_skill_accuracy_674 = hv.Curve(
-        hydrograph_pentad_stat_accuracy,
-        kdims="Пентада года",
-        vdims="Оправдываемость 0.674 sigma [%]",
-        label=forecast_string_accuracy_sigma) \
-        .opts(color = "#307096", interpolation='steps-mid',line_width=1,
-              tools=['hover'])
-    hv_forecast_skill_accuracy_02 = hv.Curve(
-        hydrograph_pentad_stat_accuracy,
-        kdims="Пентада года",
-        vdims="Оправдываемость x Q [%]",
-        label=forecast_string_accuracy_percent) \
-        .opts(color = "#169016", interpolation='steps-mid',line_width=1,
-              line_dash="dashed",tools=['hover'])
-    p = hv_forecast_skill_accuracy_674 *hv_forecast_skill_accuracy_02 * hv_current_forecast_skill_accuracy_674 * hv_current_forecast_skill_accuracy_02
-    p.opts(responsive=True, hooks=[dm.remove_bokeh_logo, add_custom_xticklabels_pentad],
-                                   #add_minor_pentad_ticks, add_custom_xticklabels_pentad],
-            xticks=list(range(1,72,6)),
-            title=title_accuracy, shared_axes=False,
-            legend_position='bottom_left',  # 'right',
-            xlabel=_("Pentad of the month (starting from January 1)"), ylabel=_("Forecast accuracy")+" [%]",
-            show_grid=True, xlim=(0, 72), ylim=(0,100),
-            fontsize={'legend':8}, fontscale=1.2)
-
-    return p
 
 # endregion
 
