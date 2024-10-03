@@ -37,7 +37,60 @@ def get_icon_path(in_docker_flag):
 
     return icon_path
 
+def get_station_codes_selected_for_pentadal_forecasts():
+    """Read the station codes selected for pentadal forecasting from iEasyHydro High Frequency."""
+    from ieasyhydro_sdk.sdk import IEasyHydroHFSDK
+    iehhf = IEasyHydroHFSDK()
+    discharge_sites = iehhf.get_discharge_sites()
+    # Convert the sites object to a DataFrame
+    df = pd.DataFrame(discharge_sites)
+    # Create a list of Site objects from the DataFrame
+    sites = []
+    for index, row in df.iterrows():
+        row = pd.DataFrame(row).T
+
+        # Test if the site has pentadal forecasts enabled and skip if not
+        if row['enabled_forecasts'].values[0]['pentad_forecast'] == False:
+            #print(f'Skipping site {row["site_code"].values[0]} as pentadal forecasts are not enabled.')
+            #print(f'enabled_forecasts: {row["enabled_forecasts"].values[0]}')
+            continue
+        else:
+            code = row['site_code'].values[0]
+            sites.append(code)
+
+    virtual_sites = iehhf.get_virtual_sites()
+    # Convert the virtual_sites object to a DataFrame
+    df = pd.DataFrame(virtual_sites)
+    for index, row in df.iterrows():
+        row = pd.DataFrame(row).T
+
+        # Test if the site has pentadal forecasts enabled and skip if not
+        if row['enabled_forecasts'].values[0]['pentad_forecast'] == False:
+            #print(f'Skipping site {row["site_code"].values[0]} as pentadal forecasts are not enabled.')
+            #print(f'enabled_forecasts: {row["enabled_forecasts"].values[0]}')
+            continue
+        else:
+            code = row['site_code'].values[0]
+            sites.append(code)
+
+    return sites
+
+
 # --- Reading data -----------------------------------------------------------
+def filter_dataframe_for_selected_stations(dataframe, code_col, selected_stations):
+    """
+    Filter the data frame for the selected stations.
+
+    Args:
+        dataframe (pd.DataFrame): The data frame.
+        code_col (str): The column name for the station codes.
+        selected_stations (list): The selected stations.
+
+    Returns:
+        pd.DataFrame: The filtered data frame.
+    """
+    return dataframe[dataframe[code_col].isin(selected_stations)]
+
 def read_hydrograph_day_file():
     """
     Reads the hydrograph_day file from the intermediate data directory.
@@ -70,29 +123,38 @@ def read_hydrograph_day_file():
 
     return hydrograph_day_all
 
-def read_hydrograph_day_data_for_pentad_forecasting():
+def read_hydrograph_day_data_for_pentad_forecasting(iahhf_selected_stations):
 
     # Read hydrograph data with daily values
     hydrograph_day_all = read_hydrograph_day_file()
 
-    # Get station ids of stations selected for forecasting
-    filepath = os.path.join(
-        os.getenv("ieasyforecast_configuration_path"),
-        os.getenv("ieasyforecast_config_file_station_selection"))
-    selected_stations = fl.load_selected_stations_from_json(filepath)
-
-    # Filter data for selected stations
-    hydrograph_day_all = hydrograph_day_all[hydrograph_day_all["code"].isin(selected_stations)]
-
-    # Test if there is an environment variable ieasyforecast_restrict_stations_file
-    if os.getenv("ieasyforecast_restrict_stations_file"):
+    # if we get data from iEasyHydro, we do the following
+    if iahhf_selected_stations is not None:
+        # Filter the data frame for the selected stations
+        hydrograph_day_all = filter_dataframe_for_selected_stations(
+        hydrograph_day_all, "code", iahhf_selected_stations)
+    else:
+        # Get station ids of stations selected for forecasting
         filepath = os.path.join(
             os.getenv("ieasyforecast_configuration_path"),
-            os.getenv("ieasyforecast_restrict_stations_file"))
-        # Read the restricted stations from the environment variable
-        restricted_stations = fl.load_selected_stations_from_json(filepath)
-        # Filter data for restricted stations
-        hydrograph_day_all = hydrograph_day_all[hydrograph_day_all["code"].isin(restricted_stations)]
+            os.getenv("ieasyforecast_config_file_station_selection"))
+        selected_stations = fl.load_selected_stations_from_json(filepath)
+
+        # Filter data for selected stations
+        hydrograph_day_all = hydrograph_day_all[hydrograph_day_all["code"].isin(selected_stations)]
+
+        # Test if there is an environment variable ieasyforecast_restrict_stations_file
+        if os.getenv("ieasyforecast_restrict_stations_file"):
+            filepath = os.path.join(
+                os.getenv("ieasyforecast_configuration_path"),
+                os.getenv("ieasyforecast_restrict_stations_file"))
+            # Read the restricted stations from the environment variable
+            restricted_stations = fl.load_selected_stations_from_json(filepath)
+            # Filter data for restricted stations
+            hydrograph_day_all = hydrograph_day_all[hydrograph_day_all["code"].isin(restricted_stations)]
+
+    #print(f"DEBUG: read_hydrograph_day_data_for_pentad_forecasting: selected_stations: {iahhf_selected_stations}")
+    #print(f"DEBUG: hydrograph_day_all:\n{hydrograph_day_all.head()}")
 
     return hydrograph_day_all
 
@@ -118,33 +180,41 @@ def read_hydrograph_pentad_file():
 
     return hydrograph_pentad_all
 
-def read_hydrograph_pentad_data_for_pentad_forecasting():
+def read_hydrograph_pentad_data_for_pentad_forecasting(iahhf_selected_stations):
 
     # Read hydrograph data with daily values
     hydrograph_pentad_all = read_hydrograph_pentad_file()
 
-    # Get station ids of stations selected for forecasting
-    filepath = os.path.join(
-        os.getenv("ieasyforecast_configuration_path"),
-        os.getenv("ieasyforecast_config_file_station_selection"))
-    selected_stations = fl.load_selected_stations_from_json(filepath)
-
-    # Filter data for selected stations
-    hydrograph_pentad_all = hydrograph_pentad_all[hydrograph_pentad_all["code"].isin(selected_stations)]
-
-    # Test if there is an environment variable ieasyforecast_restrict_stations_file
-    if os.getenv("ieasyforecast_restrict_stations_file"):
+    if iahhf_selected_stations is not None:
+        # Filter the data frame for the selected stations
+        hydrograph_pentad_all = filter_dataframe_for_selected_stations(
+        hydrograph_pentad_all, "code", iahhf_selected_stations)
+    else:
+        # Get station ids of stations selected for forecasting
         filepath = os.path.join(
             os.getenv("ieasyforecast_configuration_path"),
-            os.getenv("ieasyforecast_restrict_stations_file"))
-        # Read the restricted stations from the environment variable
-        restricted_stations = fl.load_selected_stations_from_json(filepath)
-        # Filter data for restricted stations
-        hydrograph_pentad_all = hydrograph_pentad_all[hydrograph_pentad_all["code"].isin(restricted_stations)]
+            os.getenv("ieasyforecast_config_file_station_selection"))
+        selected_stations = fl.load_selected_stations_from_json(filepath)
+
+        # Filter data for selected stations
+        hydrograph_pentad_all = hydrograph_pentad_all[hydrograph_pentad_all["code"].isin(selected_stations)]
+
+        # Test if there is an environment variable ieasyforecast_restrict_stations_file
+        if os.getenv("ieasyforecast_restrict_stations_file"):
+            filepath = os.path.join(
+                os.getenv("ieasyforecast_configuration_path"),
+                os.getenv("ieasyforecast_restrict_stations_file"))
+            # Read the restricted stations from the environment variable
+            restricted_stations = fl.load_selected_stations_from_json(filepath)
+            # Filter data for restricted stations
+            hydrograph_pentad_all = hydrograph_pentad_all[hydrograph_pentad_all["code"].isin(restricted_stations)]
+
+    #print(f"DEBUG: read_hydrograph_pentad_data_for_pentad_forecasting: selected_stations: {iahhf_selected_stations}")
+    #print(f"DEBUG: hydrograph_pentad_all:\n{hydrograph_pentad_all.head()}")
 
     return hydrograph_pentad_all
 
-def read_linreg_forecast_data():
+def read_linreg_forecast_data(iehhf_selected_stations):
     forecast_results_file = os.path.join(
         os.getenv("ieasyforecast_intermediate_data_path"),
         os.getenv("ieasyforecast_analysis_pentad_file")
@@ -176,6 +246,13 @@ def read_linreg_forecast_data():
 
     # Convert code column to str
     linreg_forecast['code'] = linreg_forecast['code'].astype(str)
+
+    if iehhf_selected_stations is not None:
+        # Filter the data frame for the selected stations
+        linreg_forecast = filter_dataframe_for_selected_stations(
+        linreg_forecast, "code", iehhf_selected_stations)
+
+    #print("DEBUG: read_linreg_forecast_data: linreg_forecast:\n", linreg_forecast.head())
 
     # We are only interested in the predictor & average discharge here. We drop the other columns.
     #linreg_forecast = linreg_forecast[['date', 'pentad_in_year', 'code', 'predictor', 'discharge_avg']]
@@ -212,7 +289,7 @@ def shift_date_by_n_days(linreg_predictor_orig, n=1):
 
     return linreg_predictor
 
-def read_forecast_results_file():
+def read_forecast_results_file(iehhf_selected_stations):
     forecast_results_file = os.path.join(
         os.getenv("ieasyforecast_intermediate_data_path"),
         os.getenv("ieasyforecast_combined_forecast_pentad_file")
@@ -249,9 +326,17 @@ def read_forecast_results_file():
     # Drop duplicates in Date, code and model_short columns
     forecast_pentad = forecast_pentad.drop_duplicates(subset=['Date', 'code', 'model_short'], keep='last')
 
+    if iehhf_selected_stations is not None:
+        # Filter the data frame for the selected stations
+        forecast_pentad = filter_dataframe_for_selected_stations(
+        forecast_pentad, "code", iehhf_selected_stations)
+
+    print(f"DEBUG: read_forecast_results_file: forecast_pentad:\n{forecast_pentad.tail()}")
+    print(f"DEBUG: read_forecast_results_file: unique models:\n{forecast_pentad['model_long'].unique()}")
+
     return forecast_pentad
 
-def read_forecast_stats_file():
+def read_forecast_stats_file(stations_iehhf):
     forecast_stats_file = os.path.join(
         os.getenv("ieasyforecast_intermediate_data_path"),
         os.getenv("ieasyforecast_pentadal_skill_metrics_file")
@@ -270,8 +355,16 @@ def read_forecast_stats_file():
     # Make sure code column is a string
     forecast_stats['code'] = forecast_stats['code'].astype(str)
 
+    if stations_iehhf is not None:
+        # Filter the data frame for the selected stations
+        forecast_stats = filter_dataframe_for_selected_stations(
+        forecast_stats, "code", stations_iehhf)
+
+    #print("DEBUG: read_forecast_stats_file: forecast_stats:\n", forecast_stats.head())
+
     return forecast_stats
 
+# deprecated
 def read_analysis_file():
     file = os.path.join(
         os.getenv("ieasyforecast_intermediate_data_path"),
@@ -522,6 +615,7 @@ def read_all_stations_metadata_from_file(station_list):
     all_stations = fl.load_all_station_data_from_JSON(all_stations_file)
     # Convert the code column to string
     all_stations['code'] = all_stations['code'].astype(str)
+
     # Left-join all_stations['code', 'river_ru', 'punkt_ru'] by 'Code' = 'code'
     station_df=pd.DataFrame(station_list, columns=['code'])
     station_df=station_df.merge(all_stations.loc[:,['code','river_ru','punkt_ru', 'basin']],
@@ -538,6 +632,9 @@ def read_all_stations_metadata_from_file(station_list):
     # dictionary where we have unique basins in the key and the station_labels
     # in the values
     station_dict = station_df.groupby('basin')['station_labels'].apply(list).to_dict()
+    # See if we have code 15054 anywhere in the station_df
+    print("DEBUG: read_all_stations_metadata_from_file: station_df:\n", station_df[station_df['code'] == '15054'])
+
 
     return station_list, all_stations, station_df, station_dict
 
@@ -596,11 +693,16 @@ def update_model_dict(model_dict, forecasts_all, selected_station):
     """
     Update the model_dict with the models we have results for for the selected station
     """
+    print("DEBUG: update_model_dict: selected_station:\n", selected_station)
     test = forecasts_all[forecasts_all['station_labels'] == selected_station]
-    #print("DEBUG: update_model_dict: unique models for selected station:\n", test['model_long'].unique())
+    print("tail of forecasts_all:\n", forecasts_all.tail())
+    print("columns of forecasts_all:\n", forecasts_all.columns)
+    print("DEBUG: update_model_dict: unique models for selected station:\n", test['model_long'].unique())
+    print("DEBUG: update_model_dict: test:\n", test)
 
     model_dict = forecasts_all[forecasts_all['station_labels'] == selected_station] \
         .set_index('model_long')['model_short'].to_dict()
+    print("DEBUG: update_model_dict: model_dict:\n", model_dict)
     return model_dict
 
 

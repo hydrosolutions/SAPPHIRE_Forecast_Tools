@@ -177,19 +177,35 @@ _ = localize.load_translation(current_locale, localedir)
 
 # region load_data
 
+# Get stations selected for pentadal forecasts
+if os.getenv('ieasyhydroforecast_connect_to_iEH') == 'False':
+    stations_iehhf = processing.get_station_codes_selected_for_pentadal_forecasts()
+else:
+    stations_iehhf = None
+
 # Daily runoff data
-hydrograph_day_all = processing.read_hydrograph_day_data_for_pentad_forecasting()
-hydrograph_pentad_all = processing.read_hydrograph_pentad_data_for_pentad_forecasting()
+hydrograph_day_all = processing.read_hydrograph_day_data_for_pentad_forecasting(stations_iehhf)
+hydrograph_pentad_all = processing.read_hydrograph_pentad_data_for_pentad_forecasting(stations_iehhf)
 
 # Pentadal forecast data
 # - linreg_predictor: for displaying predictor in predictor tab
-linreg_predictor = processing.read_linreg_forecast_data()
+linreg_predictor = processing.read_linreg_forecast_data(stations_iehhf)
 # For site = 16059, show the last 5 rows of the linreg_predictor DataFrame
 #print(f"DEBUG: pentad_dashboard.py: linreg_predictor: {linreg_predictor[linreg_predictor['code'] == '16059'].tail()}")
 # - forecast results from all models
-forecasts_all = processing.read_forecast_results_file()
+forecasts_all = processing.read_forecast_results_file(stations_iehhf)
+
+# Test if we have sites in stations_iehhf which are not present in forecasts_all
+# Placeholder for a message pane
+message_pane = pn.pane.Markdown("")
+if stations_iehhf is not None:
+    missing_sites = set(stations_iehhf) - set(forecasts_all['code'].unique())
+    if missing_sites:
+        missing_sites_message = f"WARNING: The following sites are missing from the forecast results: {missing_sites}. No forecasts are currently available for these sites. Please make sure your forecast models are configured to produce results for these sites, re-run hindcasts manually and re-run the forecast."
+        message_pane.object = missing_sites_message
+
 # Forecast statistics
-forecast_stats = processing.read_forecast_stats_file()
+forecast_stats = processing.read_forecast_stats_file(stations_iehhf)
 
 # Hydroposts metadata
 station_list, all_stations, station_df, station_dict = processing.read_all_stations_metadata_from_file(
@@ -250,7 +266,7 @@ tabs_container = pn.Column()
 # Create a dictionary of the model names and the corresponding model labels
 model_dict_all = forecasts_all[['model_short', 'model_long']] \
     .set_index('model_long')['model_short'].to_dict()
-#print(f"DEBUG: pentad_dashboard.py: model_dict_all: {model_dict_all}")
+print(f"DEBUG: pentad_dashboard.py: model_dict_all: {model_dict_all}")
 
 
 pentads = [
@@ -321,6 +337,7 @@ station = pn.widgets.Select(
 
 # Update the model_dict with the models we have results for for the selected
 # station
+print("DEBUG: pentad_dashboard.py: station.value: ", station.value)
 model_dict = processing.update_model_dict(model_dict_all, forecasts_all, station.value)
 #print(f"DEBUG: pentad_dashboard.py: model_dict: {model_dict}")
 
@@ -498,46 +515,46 @@ add_to_bulletin_popup = pn.pane.Alert("Added to bulletin", alert_type="success",
 def add_current_selection_to_bulletin(event=None):
     selected_indices = forecast_tabulator.selection
     forecast_df = forecast_tabulator.value
-    
+
     if forecast_df is None or forecast_df.empty:
         print("Forecast summary table is empty.")
         logger.warning("Attempted to add to bulletin, but forecast summary table is empty.")
         return
-    
+
     # If no selection is made, default to the first forecast
     if not selected_indices and len(forecast_df) > 0:
         selected_indices = [0]
         forecast_tabulator.selection = selected_indices  # Update the Tabulator's selection
         print("No forecast selected. Defaulting to the first forecast.")
         logger.info("No forecast selected. Defaulting to the first forecast.")
-    
+
     # Get the selected rows
     selected_rows = forecast_df.iloc[selected_indices]
-    
+
     if selected_rows.empty:
         print("Selected rows are empty.")
         logger.warning("Selected rows are empty despite having indices.")
         return
-    
+
     selected_station = station.value
     selected_date = date_picker.value
-    
+
     print(f"Adding station: {selected_station}, date: {selected_date}")
     print(f"Selected models:\n{selected_rows['Model']}")
-    
+
     # Use the selected rows as the final forecast table
     final_forecast_table = selected_rows.reset_index(drop=True)
-    
+
     # Find the Site object for the selected station
     selected_site = next((site for site in sites_list if site.station_label == selected_station), None)
     if selected_site is None:
         print(f"Site {selected_station} not found in sites_list")
         logger.error(f"Site {selected_station} not found in sites_list")
         return
-    
+
     # Overwrite the forecast instead of appending
     selected_site.forecasts = final_forecast_table
-    
+
     # Check if the site is already in bulletin_sites
     existing_site = next((site for site in bulletin_sites if site.code == selected_site.code), None)
     if existing_site is None:
@@ -549,7 +566,7 @@ def add_current_selection_to_bulletin(event=None):
         existing_site.forecasts = selected_site.forecasts
         print(f"Overwritten forecast for station: {selected_station}")
         logger.info(f"Overwritten forecast for site in bulletin: {selected_station}")
-    
+
     # Update the bulletin_table to reflect changes
     update_bulletin_table(None)
 
@@ -775,7 +792,8 @@ def sidepane_change_language(language):
         show_range_button.name = _("Show ranges in figure:")
         show_range_button.options = [_("Yes"), _("No")]
 
-        return layout.define_sidebar(_, station_card, forecast_card, basin_card)
+        return layout.define_sidebar(_, station_card, forecast_card, basin_card,
+                                     message_pane)
     except Exception as e:
         print(f"Error in sidepane_change_language: {e}")
         print(traceback.format_exc())

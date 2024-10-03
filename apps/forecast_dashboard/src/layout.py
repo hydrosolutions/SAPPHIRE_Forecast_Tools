@@ -35,7 +35,7 @@ class DashboardTitle(param.Parameterized):
 
 
 # Define components of the layout
-def define_sidebar(_, station_card, forecast_card, basin_card):
+def define_sidebar(_, station_card, forecast_card, basin_card, message_pane):
     return pn.Column(
         pn.Row(station_card),
         #pn.Row(pentad_card),
@@ -46,6 +46,7 @@ def define_sidebar(_, station_card, forecast_card, basin_card):
                        #collapsed=False)),
         pn.Row(forecast_card),
         pn.Row(basin_card),
+        pn.Row(message_pane),
          #pn.Row(range_selection),
         #pn.Row(manual_range),
         #pn.Row(print_button),
@@ -163,7 +164,7 @@ def define_tabs(_, daily_hydrograph_plot, forecast_data_and_plot,
                 ),
                 pn.Card(
                     pn.Row(
-                        add_to_bulletin_button, add_to_bulletin_popup 
+                        add_to_bulletin_button, add_to_bulletin_popup
                     ),
                     forecast_summary_table,
                     title=_('Summary table'),
