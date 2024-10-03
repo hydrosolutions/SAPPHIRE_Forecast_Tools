@@ -1229,11 +1229,15 @@ def sdivsigma_nse(data: pd.DataFrame, observed_col: str, simulated_col: str):
         return pd.Series([np.nan, np.nan], index=['sdivsigma', 'nse'])
 
     # Calculate the numerator and denominator of the NSE formula
-    numerator = ((dataN[observed_col] - dataN[simulated_col])**2).sum()
-    denominator = ((dataN[observed_col] - dataN[observed_col].mean())**2).sum()
+    numerator_nse = ((dataN[observed_col] - dataN[simulated_col])**2).sum()
+    denominator_nse = ((dataN[observed_col] - dataN[observed_col].mean())**2).sum()
+
+    # Calculate the numerator and the denominator of the sdivsigma formula
+    numerator_sdivsigma = (abs(dataN[observed_col] - dataN[simulated_col])).std()
+    denominator_sdivsigma = dataN[observed_col].std()
 
     # Catch cases where the denomitar is 0
-    if denominator == 0:
+    if denominator_nse == 0:
         logger.debug("-----------")
         logger.debug("Problem in sdivsigma_nse")
         logger.debug(f"sdivsigma_nse: Model: {dataN['model_long'].iloc[0]}")
@@ -1243,15 +1247,15 @@ def sdivsigma_nse(data: pd.DataFrame, observed_col: str, simulated_col: str):
         logger.debug(f"sdivsigma: data['date']: {dataN['date']}")
         logger.debug(f"data[observed_col]: {dataN[observed_col]}")
         logger.debug(f"data[observed_col].mean(): {dataN[observed_col].mean()}")
-        logger.debug(f"numerator: {numerator}")
-        logger.debug(f"denominator: {denominator}")
+        logger.debug(f"numerator: {numerator_nse}")
+        logger.debug(f"denominator: {denominator_nse}")
         return pd.Series([np.nan, np.nan], index=['sdivsigma', 'nse'])
 
     # Calculate the efficacy of the model
-    sdivsigma = numerator / denominator
+    sdivsigma = numerator_sdivsigma / denominator_sdivsigma
 
     # Calculate the NSE value
-    nse_value = 1 - (numerator / denominator)
+    nse_value = 1 - (numerator_nse / denominator_nse)
 
     return pd.Series([sdivsigma, nse_value], index=['sdivsigma', 'nse'])
 
