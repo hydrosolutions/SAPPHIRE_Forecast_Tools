@@ -19,6 +19,11 @@ from bokeh.transform import jitter
 from scipy import stats
 from sklearn.linear_model import LinearRegression
 from functools import partial
+from dotenv import load_dotenv
+import re
+import docker
+
+
 
 from . import processing
 
@@ -1240,6 +1245,71 @@ pentad_options = {f"{i+1}st pentad of {calendar.month_name[month]}" if i == 0 el
                   for month in range(1, 13) for i in range(6)}
 
 
+class Environment:
+    def __init__(self, dotenv_path):
+        print(f"Current working directory: {os.getcwd()}")
+        print(f"Loading environment variables from {dotenv_path}")
+        load_dotenv(dotenv_path=dotenv_path)
+
+    def get(self, key, default=None):
+        return os.getenv(key, default)
+
+# Initialize the Environment class with the path to your .env file
+env_file_path = os.getenv('ieasyhydroforecast_env_file_path')
+env = Environment(env_file_path)
+# Get the tag of the docker image to use
+TAG = env.get('ieasyhydroforecast_backend_docker_image_tag')
+# Get the organization for which to run the forecast tools
+ORGANIZATION = env.get('ieasyhydroforecast_organization')
+# URL of the sapphire data gateway
+SAPPHIRE_DG_HOST = env.get('SAPPHIRE_DG_HOST')
+
+
+
+
+# Function to convert a relative path to an absolute path
+def get_absolute_path(relative_path):
+    #print("In get_absolute_path: ")
+    #print(" - Relative path: ", relative_path)
+
+    # Test if there environment variable "ieasyforecast_data_root_dir" is set
+    data_root_dir = os.getenv('ieasyhydroforecast_data_root_dir')
+    if data_root_dir:
+        # If it is set, use it as the root directory
+        # Strip the relative path from 2 "../" strings
+        relative_path = re.sub(r'\.\./\.\./\.\.', '', relative_path)
+
+        return data_root_dir + relative_path
+
+    else:
+        # Current working directory. Should be one above the root of the project
+        cwd = os.getcwd()
+        # Strip the relative path from 2 "../" strings
+        relative_path = re.sub(r'\.\./\.\./\.\.', '', relative_path)
+
+        return os.path.join(cwd, relative_path)
+
+
+#TODO: use this function for local development instead of initial get_absolute_path function
+'''def get_absolute_path(relative_path):
+    # function for local development
+    project_root = '/home/vjeko/Desktop/Projects/sapphire_forecast'
+    # Remove leading ../../../ from the relative path
+    relative_path = re.sub(r'^\.\./\.\./\.\./', '', relative_path)
+    return os.path.join(project_root, relative_path)'''
+
+def get_bind_path(relative_path):
+    # Strip the relative path from ../../.. to get the path to bind to the container
+    relative_path = re.sub(r'\.\./\.\./\.\.', '', relative_path)
+
+    return relative_path
+
+def get_local_path(relative_path):
+    # Strip 2 ../ of the relative path
+    relative_path = re.sub(f'\.\./\.\./', '', relative_path)
+
+    return relative_path
+
 
 # Test if the path to the configuration folder is set
 #if not os.getenv('ieasyforecast_configuration_path'):
@@ -1300,35 +1370,37 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
     # Extract the year from the date column and create a 'year' column
     linreg_predictor['year'] = pd.to_datetime(linreg_predictor['date']).dt.year.astype(int)
 
-    # Check if the saved CSV file for the specific pentad exists
+# **Always read from linreg_predictor**
+    # Filter data for the selected station and pentad across all years
+    forecast_table = linreg_predictor[
+        (linreg_predictor['station_labels'] == station_widget) &
+        (linreg_predictor['pentad_in_year'] == selected_pentad)
+    ].copy().reset_index(drop=True)
+
+# Check if the saved CSV file exists
     if os.path.exists(save_file_path):
-        # Load the saved state
-        forecast_table = pd.read_csv(save_file_path)
-        print(f"Loaded saved state from {save_file_path}")
-
-        # Ensure visibility is False where predictor or discharge_avg is NaN
-        forecast_table.loc[
-            forecast_table['predictor'].isna() | forecast_table['discharge_avg'].isna(),
-            'visible'
-        ] = False
+        # Read the saved CSV file
+        saved_forecast_table = pd.read_csv(save_file_path)
+        # Ensure 'visible' is boolean
+        saved_forecast_table['visible'] = saved_forecast_table['visible'].astype(bool)
+        # Merge the 'visible' column into forecast_table based on 'year'
+        forecast_table = forecast_table.merge(
+            saved_forecast_table[['year', 'visible']],
+            on='year',
+            how='left',
+            suffixes=('', '_saved')
+        )
+        # Fill any missing 'visible' values with True
+        forecast_table['visible'] = forecast_table['visible'].fillna(True)
     else:
-        # Filter data for the selected station and pentad across all years
-        forecast_table = linreg_predictor[
-            (linreg_predictor['station_labels'] == station_widget) &
-            (linreg_predictor['pentad_in_year'] == selected_pentad)
-        ].copy().reset_index(drop=True)
-
-        # Add a column to indicate visibility of points in the plot
-        if 'visible' not in forecast_table.columns:
-            # Set 'visible' to True where predictor and discharge_avg are not NaN, else False
-            forecast_table['visible'] = (~forecast_table['predictor'].isna()) & (~forecast_table['discharge_avg'].isna())
+        # Initialize 'visible' column as before
+        forecast_table['visible'] = (~forecast_table['predictor'].isna()) & (~forecast_table['discharge_avg'].isna())
 
     forecast_table = forecast_table.drop(columns=['index', 'level_0'], errors='ignore')
     forecast_table = forecast_table.reset_index()
 
     visible_data = forecast_table[forecast_table['visible'] == True] # Initialize the visible data
     print(f"visible_data.head(10):\n", visible_data.head(10))
-    # TODO: Set visibility of rows with no data to False
 
     # Create Tabulator for displaying forecast data
     forecast_data_table = pn.widgets.Tabulator(
@@ -1352,9 +1424,18 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
     # Create the selection1d stream to capture point selections on the plot
     selection_stream = streams.Selection1D(source=None)
 
+    previous_visible_data = None
+
     # Update plot based on visibility
     def update_plot(event=None):
         global visible_data  # Use global variable to ensure it's accessible in other functions
+        nonlocal previous_visible_data
+
+        # Store the previous visible data before updating
+        if visible_data is not None:
+            previous_visible_data = visible_data.copy()
+        else:
+            previous_visible_data = None
 
         # Ensure 'visible' is of boolean type
         forecast_table['visible'] = forecast_table['visible'].astype(bool)
@@ -1375,7 +1456,6 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
         else:
             hover = HoverTool(
                 tooltips=[
-                    #('Index', '$index'),
                     ('Year', '@year'),
                     ('Predictor', '@predictor'),
                     ('Discharge', '@discharge_avg'),
@@ -1388,50 +1468,71 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
             y_min, y_max = visible_data['discharge_avg'].min(), visible_data['discharge_avg'].max()
 
             # Add a 20% margin to the ranges
-            x_margin = (x_max - x_min) * 0.2
-            y_margin = (y_max - y_min) * 0.2
+            x_margin = (x_max - x_min) * 0.2 if x_max != x_min else 1
+            y_margin = (y_max - y_min) * 0.2 if y_max != y_min else 1
 
             # Set dynamic x and y ranges
             x_range = (x_min - x_margin, x_max + x_margin)
             y_range = (y_min - y_margin, y_max + y_margin)
 
-            # Use the original index (not reset) in the scatter plot
-            scatter = hv.Scatter(visible_data, kdims='predictor', vdims=['discharge_avg', 'year']) \
-                .opts(color='blue', size=5, tools=[hover, 'tap'], xlabel=_('Predictor'), ylabel=_('Discharge (m³/s)'), title=title_text, xlim=x_range, ylim=y_range)
+            # Create the scatter plot
+            scatter = hv.Scatter(
+                visible_data,
+                kdims='predictor',
+                vdims=['discharge_avg', 'year']
+            ).opts(
+                color='blue',
+                size=5,
+                tools=[hover, 'tap'],
+                xlabel='Predictor',
+                ylabel='Discharge (m³/s)',
+                title=title_text,
+                xlim=x_range,
+                ylim=y_range
+            )
 
             if len(visible_data) > 1:
-                # Add a linear regression line to the scatter plot
+                # Compute new regression parameters
                 new_slope, new_intercept, new_r_value, new_p_value, new_std_err = stats.linregress(
                     visible_data['predictor'], visible_data['discharge_avg'])
-                # Get slope, intercept and rsquared from the data_table (last value)
-                slope = visible_data['slope'].iloc[-1]
-                intercept = visible_data['intercept'].iloc[-1]
-                rsquared = visible_data['rsquared'].iloc[-1]
                 x = np.linspace(visible_data['predictor'].min(), visible_data['predictor'].max(), 100)
-                y = slope * x + intercept
                 new_y = new_slope * x + new_intercept
-                line = hv.Curve((x, y)).opts(color='red', line_width=2)
-                new_line = hv.Curve((x, new_y)).opts(color='red', line_width=2,
-                                                     line_dash='dashed', line_alpha=0.7)
-                equation = f"y = {slope:.2f}x + {intercept:.2f}"
-                new_equation = f"new y = {new_slope:.2f}x + {new_intercept:.2f}"
-                r2 = f"R² = {rsquared:.2f}"
-                r2_new = f"new R² = {new_r_value:.2f}"
-                if math.isclose(slope, new_slope, rel_tol=1e-2) and math.isclose(intercept, new_intercept, rel_tol=1e-2):
-                    text = hv.Text(x=visible_data["predictor"].min(),
-                                   y=visible_data["discharge_avg"].max(),
-                                   text=f"{equation}\n{r2}") \
-                        .opts(color="black", text_font_size="10pt", text_align="left",)
-                else:
-                    text = hv.Text(x = visible_data["predictor"].min(),
-                       y = visible_data["discharge_avg"].max(),
-                       text = f"{equation}\n{r2}\n{new_equation}\n{r2_new}") \
-                        .opts(color="black", text_font_size="10pt", text_align="left",)
-                    line = line * new_line
-                    #xlim=(0, analysis_pentad["Predictor"].max()*1.1),
-                    #ylim=(0, analysis_pentad["Q [m3/s]"].max()*1.1))
 
-                # Overlay the scatter plot and the linear regression line
+                # Check if previous_visible_data exists and is different
+                if previous_visible_data is not None and not visible_data.equals(previous_visible_data):
+                    # Compute previous regression parameters
+                    prev_slope, prev_intercept, prev_r_value, _, _ = stats.linregress(
+                        previous_visible_data['predictor'], previous_visible_data['discharge_avg'])
+                    prev_y = prev_slope * x + prev_intercept
+
+                    # Create regression lines
+                    prev_line = hv.Curve((x, prev_y)).opts(color='red', line_width=2, line_dash='dashed', line_alpha=0.7)
+                    new_line = hv.Curve((x, new_y)).opts(color='red', line_width=2)
+
+                    # Annotations
+                    equation_prev = f"y = {prev_slope:.2f}x + {prev_intercept:.2f}"
+                    r2_prev = f"R² = {prev_r_value**2:.2f}"
+                    equation_new = f"new y = {new_slope:.2f}x + {new_intercept:.2f}"
+                    r2_new = f"new R² = {new_r_value**2:.2f}"
+                    text = hv.Text(
+                        x=visible_data["predictor"].min(),
+                        y=visible_data["discharge_avg"].max(),
+                        text=f"{equation_prev}\n{r2_prev}\n{equation_new}\n{r2_new}"
+                    ).opts(color="black", text_font_size="10pt", text_align="left",)
+
+                    line = prev_line * new_line
+                else:
+                    # Only plot the new regression line
+                    line = hv.Curve((x, new_y)).opts(color='red', line_width=2)
+                    equation_new = f"y = {new_slope:.2f}x + {new_intercept:.2f}"
+                    r2_new = f"R² = {new_r_value**2:.2f}"
+                    text = hv.Text(
+                        x=visible_data["predictor"].min(),
+                        y=visible_data["discharge_avg"].max(),
+                        text=f"{equation_new}\n{r2_new}"
+                    ).opts(color="black", text_font_size="10pt", text_align="left",)
+
+                # Overlay the scatter plot and the regression line(s)
                 plot = scatter * line * text
                 plot.opts(
                     title=title_text,
@@ -1447,6 +1548,9 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
                     height=450,
                     hooks=[remove_bokeh_logo]
                 )
+
+        # Update previous_visible_data
+        previous_visible_data = visible_data.copy()
 
         # Attach the plot to the selection stream
         selection_stream.source = scatter
@@ -1486,16 +1590,71 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
     forecast_data_table.sizing_mode = 'stretch_both'
     plot_pane.sizing_mode = 'stretch_both'
 
+    progress_bar = pn.indicators.Progress(name="Progress", value=0, width=300, visible=False)
+    progress_message = pn.pane.Alert("Processing...", alert_type="info", visible=False)
+
+    def run_docker_container(client, full_image_name, volumes, environment, container_name, progress_bar):
+        """
+        Reusable function to run a Docker container and track its progress.
+        If a container with the same name exists, it will be removed before running a new one.
+        """
+        # Check if a container with the specified name already exists
+        try:
+            existing_container = client.containers.get(container_name)
+            print(f"Removing existing container '{container_name}' (ID: {existing_container.id})...")
+            existing_container.remove(force=True)
+            print(f"Container '{container_name}' removed.")
+        except docker.errors.NotFound:
+            # Container does not exist, so we can proceed
+            pass
+        except docker.errors.APIError as e:
+            print(f"Error removing existing container '{container_name}': {e}")
+            raise
+
+        # Now run the new container
+        container = client.containers.run(
+            full_image_name,
+            detach=True,
+            environment=environment,
+            volumes=volumes,
+            name=container_name,
+            network='host'
+        )
+        print(f"Container '{container_name}' (ID: {container.id}) is running.")
+
+        # Monitor the container's progress
+        progress_bar.value = 0
+        while container.status != 'exited':
+            container.reload()  # Refresh the container's status
+            progress_bar.value += 10  # Increment progress
+            if progress_bar.value > 90:
+                progress_bar.value = 90  # Limit progress to 90% until the process finishes
+            time.sleep(1)
+        container.wait()  # Ensure the container has finished
+        progress_bar.value = 100  # Set progress to 100% after the container is done
+        print(f"Container '{container_name}' has stopped.")
+
+
    
-
-    # Function to save table data to CSV
+    # Function to save table data to CSV and run Docker containers
     def save_to_csv(event):
-        # Update the 'visible' column in forecast_table based on the table interaction
-        forecast_table['visible'] = forecast_table['visible'].astype(bool)
-        forecast_table.loc[forecast_data_table.value['index'], 'visible'] = forecast_data_table.value['visible'].values
+        # Disable the save button and show the progress bar and message
+        save_button.disabled = True
+        progress_bar.visible = True
+        progress_message.object = "Processing..."
+        progress_message.visible = True
+        progress_bar.value = 0
 
-        # Save the entire forecast_table to CSV
-        forecast_table.to_csv(save_file_path, index=False)
+        # Convert the table value back to a DataFrame
+        updated_forecast_table = pd.DataFrame(forecast_data_table.value)
+
+        # Explicitly reset the index before saving, so it becomes a column
+        updated_forecast_table = updated_forecast_table.reset_index(drop=True)
+
+        updated_forecast_table['pentad'] = selected_pentad
+
+        # Save DataFrame to CSV, ensuring the index is saved
+        updated_forecast_table[['index', 'year', 'visible']].to_csv(save_file_path, index=False)
         print(f"Data saved to {save_file_path}")
 
         # Show the pop-up notification
@@ -1504,23 +1663,73 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
         # Hide the popup after a short delay (optional)
         pn.state.onload(lambda: pn.state.add_periodic_callback(lambda: setattr(popup, 'visible', False), 2000, count=1))
 
+        try:
+            absolute_volume_path_config = get_absolute_path(env.get('ieasyforecast_configuration_path'))
+            absolute_volume_path_internal_data = get_absolute_path(env.get('ieasyforecast_intermediate_data_path'))
+            absolute_volume_path_discharge = get_absolute_path(env.get('ieasyforecast_daily_discharge_path'))
+
+            bind_volume_path_config = get_bind_path(env.get('ieasyforecast_configuration_path'))
+            bind_volume_path_internal_data = get_bind_path(env.get('ieasyforecast_intermediate_data_path'))
+            bind_volume_path_discharge = get_bind_path(env.get('ieasyforecast_daily_discharge_path'))
+
+            # Initialize Docker client
+            client = docker.from_env()
+
+            # Define environment variables
+            environment = [
+                'IN_DOCKER_CONTAINER=True',
+                f'ieasyhydroforecast_env_file_path={bind_volume_path_config}/.env_develop_kghm'
+            ]
+
+            # Define volumes
+            volumes = {
+                absolute_volume_path_config: {'bind': bind_volume_path_config, 'mode': 'rw'},
+                absolute_volume_path_internal_data: {'bind': bind_volume_path_internal_data, 'mode': 'rw'},
+                absolute_volume_path_discharge: {'bind': bind_volume_path_discharge, 'mode': 'rw'}
+            }
+            print("volumes: ", volumes)
+
+            # Run the linear_regression container with a hardcoded full image name
+            run_docker_container(client, "linear_regression:latest", volumes, environment, "linreg", progress_bar)
+            
+            # After linear_regression finishes, run the postprocessing container with a hardcoded full image name
+            run_docker_container(client, "postprocessing_forecasts:latest", volumes, environment, "postprocessing", progress_bar)
+
+            # When the container is finished, set progress to 100 and update message
+            progress_bar.value = 100
+            progress_message.object = "Processing finished"
+
+            # Wait a moment before hiding the progress bar and message
+            time.sleep(2)
+            progress_bar.visible = False
+            progress_message.visible = False
+
+        except docker.errors.DockerException as e:
+            print(f"Error interacting with Docker: {e}")
+        
+        finally:
+            # Re-enable the save button after the container finishes
+            save_button.disabled = False
+            progress_bar.value = 100  # Set progress to complete when done
+            print("Docker container completed.")
+
+        pn.state.onload(lambda: pn.state.add_periodic_callback(lambda: setattr(progress_bar, 'visible', False), 2000, count=1))
+        pn.state.onload(lambda: pn.state.add_periodic_callback(lambda: setattr(progress_message, 'visible', False), 4000, count=1))
+
     # Create a save button
     save_button = pn.widgets.Button(name="Save Changes", button_type="success")
 
     # Attach the save_to_csv function to the button's click event
     save_button.on_click(save_to_csv)
 
-     # Create the content container
-    content = pn.Column(
-        pn.Row(forecast_data_table, plot_pane),
-        pn.Row(save_button),
-        sizing_mode='stretch_both'
-    )
-
-    # Create the layout
+    # Adjust the layout to include the progress bar and message
     layout = pn.Column(
-        content,
-        popup,  # Place the popup here
+        pn.Row(forecast_data_table, plot_pane, sizing_mode='stretch_width'),
+        pn.Row(save_button),
+        pn.Row(popup),
+        pn.Row(progress_bar),
+        pn.Row(progress_message),
+
         sizing_mode='stretch_both'
     )
 

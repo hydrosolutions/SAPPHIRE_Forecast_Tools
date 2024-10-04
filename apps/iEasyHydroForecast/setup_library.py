@@ -114,30 +114,31 @@ def define_run_dates():
     """
     # The last successful run date is the last time, the forecast tools were
     # run successfully. This is typically yesterday.
-    last_successful_run_date = get_last_run_date()
+    #last_successful_run_date = get_last_run_date()
 
     # The day on which the forecast is produced. In operational mode, this is
     # day 0 or today. However, the tools can also be run in hindcast mode by
     # setting the last successful run date to a date in the past. In this case,
     # the forecast is produced for the day after the last successful run date.
-    date_start = last_successful_run_date + dt.timedelta(days=1)
+    #date_start = last_successful_run_date + dt.timedelta(days=1)
+    date_start = dt.date.today()
 
     # The last day for which a forecast is produced. This is always today.
     date_end = dt.date.today()
 
     # Basic sanity check in case the script is run multiple times.
-    if date_end == last_successful_run_date:
+    '''if date_end == last_successful_run_date:
         logger.info("The forecasts have allready been produced for today. "
                        "No forecast will be produced."
                        "Please use the re-run forecast tool to re-run the forecast for today.")
-        return None, None, None
+        return None, None, None'''
 
     # The bulletin date is one day after the forecast date. It is the first day
     # of the preiod for which the forecast is produced.
     bulletin_date = date_start + dt.timedelta(days=1)
 
     logger.info("Running the forecast script for the following dates:")
-    logger.info(f"Last successful run date: {last_successful_run_date}")
+    #logger.info(f"Last successful run date: {last_successful_run_date}")
     logger.info(f"Current forecast start date for forecast iteration: {date_start}")
     logger.info(f"End date for forecast iteration: {date_end}")
     logger.info(f"Current forecast bulletin date: {bulletin_date}")
