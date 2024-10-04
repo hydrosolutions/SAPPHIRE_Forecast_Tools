@@ -194,6 +194,7 @@ def main():
             # The linear regression is performed on past data. Here, the slope and
             # intercept of the linear regression model are calculated for each site for
             # the current forecast.
+            # We take into account saved points from the pentad forecast dashboard.
             linreg_pentad = fl.perform_linear_regression(
                 data_df=discharge_pentad,
                 station_col='code',
@@ -253,6 +254,8 @@ def main():
                 code_col='code', group_col='decad_in_year', value_col='discharge_avg')
 
             # Perform linear regression for the current forecast horizon
+            # TODO: Once the decad forecast dashboard is finished, filter for
+            # selected points.
             linreg_decad = fl.perform_linear_regression(
                 data_df=discharge_decad,
                 station_col='code',
