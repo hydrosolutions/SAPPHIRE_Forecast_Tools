@@ -480,6 +480,52 @@ def get_pentadal_forecast_sites(ieh_sdk, backend_has_access_to_db):
 
     return fc_sites, site_codes
 
+def get_decadal_forecast_sites_from_HF_SDK(ieh_sdk):
+    """
+    Get a list of Site objects and a list of strings for site IDs for which to produce forecasts.
+
+    Args:
+        fc_sites_pentad (list): A list of Site objects for which to produce pentadal forecasts.
+        site_list_decad (list): A list of strings for site IDs for which to produce pentadal forecasts.
+
+    Returns:
+        fc_sites_decad (list): A list of Site objects for which to produce forecasts.
+        site_codes_decad (list): A list of strings for site IDs for which to produce forecasts.
+
+    """
+    # Get the list of discharge sites from the iEH HF SDK
+    discharge_sites = ieh_sdk.get_discharge_sites()
+    print(f" {len(discharge_sites)} discharge site(s) found in iEH HF SDK, namely:\n{[site['site_code'] for site in discharge_sites]}")
+    # Get the list of Site objects for pentadal or decadal forecasting
+    fc_sites = fl.Site.decad_forecast_sites_from_iEH_HF_SDK(discharge_sites)
+
+    # Read virtual stations to the list
+    virtual_sites = ieh_sdk.get_virtual_sites()
+    print(f"  {len(virtual_sites)} virtual site(s) found in iEH HF SDK, namely:\n{[site['site_code'] for site in virtual_sites]}")
+    # Get list of virtual Site objects for pentadal or decadal forecasting
+    virtual_sites = fl.Site.virtual_decad_forecast_sites_from_iEH_HF_SDK(virtual_sites)
+    fc_sites.extend(virtual_sites)
+
+    print(f" {len(fc_sites)} Site object(s) created for decadal forecasting, namely:\n{[site.code for site in fc_sites]}")
+    # Get the unique site codes
+    site_codes = [site.code for site in fc_sites]
+
+    # Write the updated site selection to the config file
+    json_file = os.path.join(
+        os.getenv("ieasyforecast_configuration_path"),
+        os.getenv("ieasyforecast_config_file_station_selection_decad")
+    )
+    # Create a dictionary with the key "stationsID" and the list of sites as the value
+    data = {
+        "stationsID": site_codes
+    }
+
+    # Write the dictionary to a JSON file
+    with open(json_file, 'w') as json_file:
+        json.dump(data, json_file, indent=2)
+
+    return fc_sites, site_codes
+
 def get_decadal_forecast_sites_from_pentadal_sites(fc_sites_pentad=None, site_list_decad=None):
     """
     Get a list of Site objects and a list of strings for site IDs for which to produce forecasts.
@@ -551,14 +597,33 @@ def get_pentadal_forecast_sites_from_HF_SDK(ieh_sdk):
     # Get the list of discharge sites from the iEH HF SDK
     discharge_sites = ieh_sdk.get_discharge_sites()
     print(f" {len(discharge_sites)} discharge site(s) found in iEH HF SDK, namely:\n{[site['site_code'] for site in discharge_sites]}")
-    # Get the list of Site objects for pentadal forecasting
-    fc_sites = fl.Site.from_iEH_HF_SDK(discharge_sites)
+    # Get the list of Site objects for pentadal or decadal forecasting
+    fc_sites = fl.Site.pentad_forecast_sites_from_iEH_HF_SDK(discharge_sites)
+
+    # Read virtual stations to the list
+    virtual_sites = ieh_sdk.get_virtual_sites()
+    print(f"  {len(virtual_sites)} virtual site(s) found in iEH HF SDK, namely:\n{[site['site_code'] for site in virtual_sites]}")
+    # Get list of virtual Site objects for pentadal or decadal forecasting
+    virtual_sites = fl.Site.virtual_pentad_forecast_sites_from_iEH_HF_SDK(virtual_sites)
+    fc_sites.extend(virtual_sites)
+
     print(f" {len(fc_sites)} Site object(s) created for pentadal forecasting, namely:\n{[site.code for site in fc_sites]}")
     # Get the unique site codes
     site_codes = [site.code for site in fc_sites]
 
-    # TODO write stations all json file for dashboard and other modules to read.
-    # Do this when virtual station support for forecasting from iEH HF is available
+    # Write the updated site selection to the config file
+    json_file = os.path.join(
+        os.getenv("ieasyforecast_configuration_path"),
+        os.getenv("ieasyforecast_config_file_station_selection")
+    )
+    # Create a dictionary with the key "stationsID" and the list of sites as the value
+    data = {
+        "stationsID": site_codes
+    }
+
+    # Write the dictionary to a JSON file
+    with open(json_file, 'w') as json_file:
+        json.dump(data, json_file, indent=2)
 
     return fc_sites, site_codes
 

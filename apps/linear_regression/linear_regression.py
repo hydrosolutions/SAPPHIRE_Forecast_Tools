@@ -108,9 +108,9 @@ def main():
     if has_access_to_hf_db:
         # Use the iEH HF SDK to get the sites
         fc_sites_pentad, site_list_pentad = sl.get_pentadal_forecast_sites_from_HF_SDK(ieh_hf_sdk)
-        fc_sites_decad, site_list_decad = sl.get_decadal_forecast_sites_from_pentadal_sites(fc_sites_pentad, site_list_pentad)
-        print("DEBUG site_list_pentad\n", site_list_pentad)
-        print("DEBUG site_list_decad\n", site_list_decad)
+        fc_sites_decad, site_list_decad = sl.get_decadal_forecast_sites_from_HF_SDK(ieh_hf_sdk)
+        #print("DEBUG site_list_pentad\n", site_list_pentad)
+        #print("DEBUG site_list_decad\n", site_list_decad)
     else:
         # Use the iEH SDK to get the sites
         fc_sites_pentad, site_list_pentad = sl.get_pentadal_forecast_sites(ieh_sdk, has_access_to_db)
@@ -194,6 +194,7 @@ def main():
             # The linear regression is performed on past data. Here, the slope and
             # intercept of the linear regression model are calculated for each site for
             # the current forecast.
+            # We take into account saved points from the pentad forecast dashboard.
             linreg_pentad = fl.perform_linear_regression(
                 data_df=discharge_pentad,
                 station_col='code',
@@ -253,6 +254,8 @@ def main():
                 code_col='code', group_col='decad_in_year', value_col='discharge_avg')
 
             # Perform linear regression for the current forecast horizon
+            # TODO: Once the decad forecast dashboard is finished, filter for
+            # selected points.
             linreg_decad = fl.perform_linear_regression(
                 data_df=discharge_decad,
                 station_col='code',

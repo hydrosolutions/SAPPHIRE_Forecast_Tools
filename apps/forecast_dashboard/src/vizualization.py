@@ -1171,6 +1171,10 @@ def plot_pentad_forecast_hydrograph_data(_, hydrograph_pentad_all, forecasts_all
     data['date'] = pd.to_datetime(data['date'])
 
     # Set values after the title date to NaN
+    print("title_date: ", title_date)
+    print("str(current_year): ", str(current_year))
+    print(pd.Timestamp(title_date))
+    print("data.loc[data['date'] >= pd.Timestamp(title_date), str(current_year)]: ", data.loc[data['date'] >= pd.Timestamp(title_date), str(current_year)])
     data.loc[data['date'] >= pd.Timestamp(title_date), str(current_year)] = np.nan
     print(f"Tail of data\n{data.tail(25).head(10)}")
 

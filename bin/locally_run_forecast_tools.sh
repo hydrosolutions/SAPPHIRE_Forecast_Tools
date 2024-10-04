@@ -1,8 +1,18 @@
 #! /bin/bash
 
-# Run from project root SAPPHIRE_Forecast_Tools
-
+# This script runs the forecast tools locally on the server.
+#
+# Details:
+# The script activates the virtual environments, runs the scripts, and
+# deactivates the virtual environments.
+#
+# How to run
+# CD to project root SAPPHIRE_Forecast_Tools
 # Establish ssh conncetion to server
+# Run the script: bash bin/locally_run_forecast_tools.sh
+
+# Source the Conda initialization script
+source ~/anaconda3/etc/profile.d/conda.sh
 
 # -- Preprocessing runoff data --
 # Activate the virtual environment

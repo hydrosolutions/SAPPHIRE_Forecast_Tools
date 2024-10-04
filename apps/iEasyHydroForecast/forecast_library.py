@@ -1229,11 +1229,15 @@ def sdivsigma_nse(data: pd.DataFrame, observed_col: str, simulated_col: str):
         return pd.Series([np.nan, np.nan], index=['sdivsigma', 'nse'])
 
     # Calculate the numerator and denominator of the NSE formula
-    numerator = ((dataN[observed_col] - dataN[simulated_col])**2).sum()
-    denominator = ((dataN[observed_col] - dataN[observed_col].mean())**2).sum()
+    numerator_nse = ((dataN[observed_col] - dataN[simulated_col])**2).sum()
+    denominator_nse = ((dataN[observed_col] - dataN[observed_col].mean())**2).sum()
+
+    # Calculate the numerator and the denominator of the sdivsigma formula
+    numerator_sdivsigma = (abs(dataN[observed_col] - dataN[simulated_col])).std()
+    denominator_sdivsigma = dataN[observed_col].std()
 
     # Catch cases where the denomitar is 0
-    if denominator == 0:
+    if denominator_nse == 0:
         logger.debug("-----------")
         logger.debug("Problem in sdivsigma_nse")
         logger.debug(f"sdivsigma_nse: Model: {dataN['model_long'].iloc[0]}")
@@ -1243,15 +1247,15 @@ def sdivsigma_nse(data: pd.DataFrame, observed_col: str, simulated_col: str):
         logger.debug(f"sdivsigma: data['date']: {dataN['date']}")
         logger.debug(f"data[observed_col]: {dataN[observed_col]}")
         logger.debug(f"data[observed_col].mean(): {dataN[observed_col].mean()}")
-        logger.debug(f"numerator: {numerator}")
-        logger.debug(f"denominator: {denominator}")
+        logger.debug(f"numerator: {numerator_nse}")
+        logger.debug(f"denominator: {denominator_nse}")
         return pd.Series([np.nan, np.nan], index=['sdivsigma', 'nse'])
 
     # Calculate the efficacy of the model
-    sdivsigma = numerator / denominator
+    sdivsigma = numerator_sdivsigma / denominator_sdivsigma
 
     # Calculate the NSE value
-    nse_value = 1 - (numerator / denominator)
+    nse_value = 1 - (numerator_nse / denominator_nse)
 
     return pd.Series([sdivsigma, nse_value], index=['sdivsigma', 'nse'])
 
@@ -3462,7 +3466,7 @@ class Site:
             return []
 
     @classmethod
-    def from_iEH_HF_SDK(cls, sites: list) -> list:
+    def decad_forecast_sites_from_iEH_HF_SDK(cls, sites: list) -> list:
         """
         Creates a list of site objects with attributes read from the sites object.
 
@@ -3484,12 +3488,14 @@ class Site:
                 row = pd.DataFrame(row).T
 
                 # Test if the site has pentadal forecasts enabled and skip if not
-                if row['enabled_forecasts'].values[0]['pentad_forecast'] == False:
-                    print(f'Skipping site {row["site_code"].values[0]} as pentadal forecasts are not enabled.')
-                    print(f'enabled_forecasts: {row["enabled_forecasts"].values[0]}')
+                if row['enabled_forecasts'].values == None or \
+                    (row['enabled_forecasts'].values[0]['decadal_forecast'] == False):
+                    print(f'Skipping site {row["site_code"].values[0]} as decadal forecasts are not enabled.')
+                    #print(f'enabled_forecasts: {row["enabled_forecasts"].values[0]}')
                     continue
-                else:
-
+                elif (row['enabled_forecasts'].values[0]['decadal_forecast'] == True):
+                    # We need to create a pentadal forecast for the site as this is required to produce decadal forecasts as well.
+                    print(f'Creating a virtual pentadal forecast for site {row["site_code"].values[0]} as decadal forecasts are enabled.')
                     name_parts = row['official_name'].values[0].split(' - ')
                     name_nat_parts = row['national_name'].values[0].split(' - ')
                     if len(name_parts) == 1:
@@ -3497,6 +3503,271 @@ class Site:
                     if len(name_nat_parts) == 1:
                         name_nat_parts = [row['national_name'].values[0], '']
 
+                    site = site = cls(
+                        code=row['site_code'].values[0],
+                        name=row['official_name'].values[0],
+                        name_nat=row['national_name'].values[0],
+                        river_name=name_parts[0],
+                        river_name_nat=name_nat_parts[0],
+                        punkt_name=name_parts[1],
+                        punkt_name_nat=name_nat_parts[1],
+                        lat=row['latitude'].values[0],
+                        lon=row['longitude'].values[0],
+                        region=row['region'].values[0]['official_name'],
+                        region_nat=row['region'].values[0]['national_name'],
+                        basin=row['basin'].values[0]['official_name'],
+                        basin_nat=row['basin'].values[0]['national_name'],
+                        qdanger=row['dangerous_discharge'].values[0],
+                        histqmin=row['historical_discharge_minimum'].values[0],
+                        histqmax=row['historical_discharge_maximum'].values[0],
+                        daily_forecast=row['enabled_forecasts'].values[0]['daily_forecast'],
+                        pentadal_forecast=row['enabled_forecasts'].values[0]['pentad_forecast'],
+                        decadal_forecast=row['enabled_forecasts'].values[0]['decadal_forecast'],
+                        monthly_forecast=row['enabled_forecasts'].values[0]['monthly_forecast'],
+                        seasonal_forecast=row['enabled_forecasts'].values[0]['seasonal_forecast']
+                    )
+                    sites.append(site)
+            return sites
+        except Exception as e:
+            print(f'Error creating Site objects from DataFrame: {e}')
+            return []
+
+    @classmethod
+    def pentad_forecast_sites_from_iEH_HF_SDK(cls, sites: list) -> list:
+        """
+        Creates a list of site objects with attributes read from the sites object.
+
+        Args:
+            sites (list): The object containing the site data.
+
+        Returns:
+            list: A list of Site objects.
+
+        Note: The sites object is retrieved from iEH HF SDK with
+            ieasyhydro_hf_sdk.get_discharge_sites()
+        """
+        try:
+            # Convert the sites object to a DataFrame
+            df = pd.DataFrame(sites)
+            # Create a list of Site objects from the DataFrame
+            sites = []
+            for index, row in df.iterrows():
+                row = pd.DataFrame(row).T
+
+                # Test if the site has pentadal forecasts enabled and skip if not
+                if row['enabled_forecasts'].values == None or \
+                    (row['enabled_forecasts'].values[0]['pentad_forecast'] == False and row['enabled_forecasts'].values[0]['decadal_forecast'] == False):
+                    print(f'Skipping site {row["site_code"].values[0]} as neither pentadal nor decadal forecasts are not enabled.')
+                    #print(f'enabled_forecasts: {row["enabled_forecasts"].values[0]}')
+                    continue
+                elif (row['enabled_forecasts'].values[0]['decadal_forecast'] == True and row['enabled_forecasts'].values[0]['pentad_forecast'] == False):
+                    # We need to create a pentadal forecast for the site as this is required to produce decadal forecasts as well.
+                    print(f'Creating a virtual pentadal forecast for site {row["site_code"].values[0]} as decadal forecasts are enabled.')
+                    name_parts = row['official_name'].values[0].split(' - ')
+                    name_nat_parts = row['national_name'].values[0].split(' - ')
+                    if len(name_parts) == 1:
+                        name_parts = [row['official_name'].values[0], '']
+                    if len(name_nat_parts) == 1:
+                        name_nat_parts = [row['national_name'].values[0], '']
+
+                    site = site = cls(
+                        code=row['site_code'].values[0],
+                        name=row['official_name'].values[0],
+                        name_nat=row['national_name'].values[0],
+                        river_name=name_parts[0],
+                        river_name_nat=name_nat_parts[0],
+                        punkt_name=name_parts[1],
+                        punkt_name_nat=name_nat_parts[1],
+                        lat=row['latitude'].values[0],
+                        lon=row['longitude'].values[0],
+                        region=row['region'].values[0]['official_name'],
+                        region_nat=row['region'].values[0]['national_name'],
+                        basin=row['basin'].values[0]['official_name'],
+                        basin_nat=row['basin'].values[0]['national_name'],
+                        qdanger=row['dangerous_discharge'].values[0],
+                        histqmin=row['historical_discharge_minimum'].values[0],
+                        histqmax=row['historical_discharge_maximum'].values[0],
+                        daily_forecast=row['enabled_forecasts'].values[0]['daily_forecast'],
+                        pentadal_forecast=row['enabled_forecasts'].values[0]['pentad_forecast'],
+                        decadal_forecast=row['enabled_forecasts'].values[0]['decadal_forecast'],
+                        monthly_forecast=row['enabled_forecasts'].values[0]['monthly_forecast'],
+                        seasonal_forecast=row['enabled_forecasts'].values[0]['seasonal_forecast']
+                    )
+                    sites.append(site)
+                elif (row['enabled_forecasts'].values[0]['pentad_forecast'] == True):
+                    print(f'Adding site {row["site_code"].values[0]} to the list of sites.')
+                    name_parts = row['official_name'].values[0].split(' - ')
+                    name_nat_parts = row['national_name'].values[0].split(' - ')
+                    if len(name_parts) == 1:
+                        name_parts = [row['official_name'].values[0], '']
+                    if len(name_nat_parts) == 1:
+                        name_nat_parts = [row['national_name'].values[0], '']
+
+                    site = site = cls(
+                        code=row['site_code'].values[0],
+                        name=row['official_name'].values[0],
+                        name_nat=row['national_name'].values[0],
+                        river_name=name_parts[0],
+                        river_name_nat=name_nat_parts[0],
+                        punkt_name=name_parts[1],
+                        punkt_name_nat=name_nat_parts[1],
+                        lat=row['latitude'].values[0],
+                        lon=row['longitude'].values[0],
+                        region=row['region'].values[0]['official_name'],
+                        region_nat=row['region'].values[0]['national_name'],
+                        basin=row['basin'].values[0]['official_name'],
+                        basin_nat=row['basin'].values[0]['national_name'],
+                        qdanger=row['dangerous_discharge'].values[0],
+                        histqmin=row['historical_discharge_minimum'].values[0],
+                        histqmax=row['historical_discharge_maximum'].values[0],
+                        daily_forecast=row['enabled_forecasts'].values[0]['daily_forecast'],
+                        pentadal_forecast=row['enabled_forecasts'].values[0]['pentad_forecast'],
+                        decadal_forecast=row['enabled_forecasts'].values[0]['decadal_forecast'],
+                        monthly_forecast=row['enabled_forecasts'].values[0]['monthly_forecast'],
+                        seasonal_forecast=row['enabled_forecasts'].values[0]['seasonal_forecast']
+                    )
+                    sites.append(site)
+            return sites
+        except Exception as e:
+            print(f'Error creating Site objects from DataFrame: {e}')
+            return []
+
+    @classmethod
+    def virtual_decad_forecast_sites_from_iEH_HF_SDK(cls, sites: list) -> list:
+        """
+        Creates a list of site objects with attributes read from the sites object.
+
+        Args:
+            sites (list): The object containing the site data.
+
+        Returns:
+            list: A list of Site objects.
+
+        Note: The sites object is retrieved from iEH HF SDK with
+            ieasyhydro_hf_sdk.get_discharge_sites()
+        """
+        print(f'Creating virtual sites from iEH HF SDK.')
+        try:
+            # Convert the sites object to a DataFrame
+            df = pd.DataFrame(sites)
+            # Create a list of Site objects from the DataFrame
+            sites = []
+            for index, row in df.iterrows():
+                row = pd.DataFrame(row).T
+
+                # Test if the site has pentadal forecasts enabled and skip if not
+                if row['enabled_forecasts'].values[0] == None or \
+                    (row['enabled_forecasts'].values[0]['decadal_forecast'] == False):
+                    print(f'Skipping site {row["site_code"].values[0]} as decadal forecasts are not enabled.')
+                    #print(f'enabled_forecasts: {row["enabled_forecasts"].values[0]}')
+                    continue
+                elif (row['enabled_forecasts'].values[0]['decadal_forecast'] == True):
+                    print(f"Creating a virtual pentadal forecast for site {row['site_code'].values[0]} as decadal forecasts are enabled.")
+                    name_parts = row['official_name'].values[0].split(' - ')
+                    name_nat_parts = row['national_name'].values[0].split(' - ')
+                    if len(name_parts) == 1:
+                        name_parts = [row['official_name'].values[0], '']
+                    if len(name_nat_parts) == 1:
+                        name_nat_parts = [row['national_name'].values[0], '']
+                    site = cls(
+                        code=row['site_code'].values[0],
+                        name=row['official_name'].values[0],
+                        name_nat=row['national_name'].values[0],
+                        river_name=name_parts[0],
+                        river_name_nat=name_nat_parts[0],
+                        punkt_name=name_parts[1],
+                        punkt_name_nat=name_nat_parts[1],
+                        lat=row['latitude'].values[0],
+                        lon=row['longitude'].values[0],
+                        region=row['region'].values[0]['official_name'],
+                        region_nat=row['region'].values[0]['national_name'],
+                        basin=row['basin'].values[0]['official_name'],
+                        basin_nat=row['basin'].values[0]['national_name'],
+                        qdanger=row['dangerous_discharge'].values[0],
+                        histqmin=row['historical_discharge_minimum'].values[0],
+                        histqmax=row['historical_discharge_maximum'].values[0],
+                        daily_forecast=row['enabled_forecasts'].values[0]['daily_forecast'],
+                        pentadal_forecast=row['enabled_forecasts'].values[0]['pentad_forecast'],
+                        decadal_forecast=row['enabled_forecasts'].values[0]['decadal_forecast'],
+                        monthly_forecast=row['enabled_forecasts'].values[0]['monthly_forecast'],
+                        seasonal_forecast=row['enabled_forecasts'].values[0]['seasonal_forecast']
+                    )
+                    sites.append(site)
+
+            return sites
+        except Exception as e:
+            print(f'Error creating Site objects from DataFrame: {e}')
+            return []
+
+    @classmethod
+    def virtual_pentad_forecast_sites_from_iEH_HF_SDK(cls, sites: list) -> list:
+        """
+        Creates a list of site objects with attributes read from the sites object.
+
+        Args:
+            sites (list): The object containing the site data.
+
+        Returns:
+            list: A list of Site objects.
+
+        Note: The sites object is retrieved from iEH HF SDK with
+            ieasyhydro_hf_sdk.get_discharge_sites()
+        """
+        print(f'Creating virtual sites from iEH HF SDK.')
+        try:
+            # Convert the sites object to a DataFrame
+            df = pd.DataFrame(sites)
+            # Create a list of Site objects from the DataFrame
+            sites = []
+            for index, row in df.iterrows():
+                row = pd.DataFrame(row).T
+
+                # Test if the site has pentadal forecasts enabled and skip if not
+                if row['enabled_forecasts'].values[0] == None or \
+                    (row['enabled_forecasts'].values[0]['pentad_forecast'] == False and row['enabled_forecasts'].values[0]['decadal_forecast'] == False):
+                    print(f'Skipping site {row["site_code"].values[0]} as neither pentadal nor decadal forecasts are not enabled.')
+                    #print(f'enabled_forecasts: {row["enabled_forecasts"].values[0]}')
+                    continue
+                elif (row['enabled_forecasts'].values[0]['decadal_forecast'] == True and row['enabled_forecasts'].values[0]['pentad_forecast'] == False):
+                    print(f"Creating a virtual pentadal forecast for site {row['site_code'].values[0]} as decadal forecasts are enabled.")
+                    name_parts = row['official_name'].values[0].split(' - ')
+                    name_nat_parts = row['national_name'].values[0].split(' - ')
+                    if len(name_parts) == 1:
+                        name_parts = [row['official_name'].values[0], '']
+                    if len(name_nat_parts) == 1:
+                        name_nat_parts = [row['national_name'].values[0], '']
+                    site = cls(
+                        code=row['site_code'].values[0],
+                        name=row['official_name'].values[0],
+                        name_nat=row['national_name'].values[0],
+                        river_name=name_parts[0],
+                        river_name_nat=name_nat_parts[0],
+                        punkt_name=name_parts[1],
+                        punkt_name_nat=name_nat_parts[1],
+                        lat=row['latitude'].values[0],
+                        lon=row['longitude'].values[0],
+                        region=row['region'].values[0]['official_name'],
+                        region_nat=row['region'].values[0]['national_name'],
+                        basin=row['basin'].values[0]['official_name'],
+                        basin_nat=row['basin'].values[0]['national_name'],
+                        qdanger=row['dangerous_discharge'].values[0],
+                        histqmin=row['historical_discharge_minimum'].values[0],
+                        histqmax=row['historical_discharge_maximum'].values[0],
+                        daily_forecast=row['enabled_forecasts'].values[0]['daily_forecast'],
+                        pentadal_forecast=row['enabled_forecasts'].values[0]['pentad_forecast'],
+                        decadal_forecast=row['enabled_forecasts'].values[0]['decadal_forecast'],
+                        monthly_forecast=row['enabled_forecasts'].values[0]['monthly_forecast'],
+                        seasonal_forecast=row['enabled_forecasts'].values[0]['seasonal_forecast']
+                    )
+                    sites.append(site)
+                elif (row['enabled_forecasts'].values[0]['pentad_forecast'] == True):
+                    print(f'Adding site {row["site_code"].values[0]} to the list of sites.')
+                    name_parts = row['official_name'].values[0].split(' - ')
+                    name_nat_parts = row['national_name'].values[0].split(' - ')
+                    if len(name_parts) == 1:
+                        name_parts = [row['official_name'].values[0], '']
+                    if len(name_nat_parts) == 1:
+                        name_nat_parts = [row['national_name'].values[0], '']
                     site = site = cls(
                         code=row['site_code'].values[0],
                         name=row['official_name'].values[0],
