@@ -178,10 +178,12 @@ _ = localize.load_translation(current_locale, localedir)
 # region load_data
 
 # Get stations selected for pentadal forecasts
-if os.getenv('ieasyhydroforecast_connect_to_iEH') == 'False':
-    stations_iehhf = processing.get_station_codes_selected_for_pentadal_forecasts()
-else:
-    stations_iehhf = None
+# Not necessary as we write new config files in linear regression module.
+#if os.getenv('ieasyhydroforecast_connect_to_iEH') == 'False':
+#    stations_iehhf = processing.get_station_codes_selected_for_pentadal_forecasts()
+#else:
+#    stations_iehhf = None
+stations_iehhf = None
 
 # Daily runoff data
 hydrograph_day_all = processing.read_hydrograph_day_data_for_pentad_forecasting(stations_iehhf)

@@ -93,8 +93,8 @@ This is a collaboraion  project where each contributor profited from input of al
 
 - Aidar Zhumabaev [@LagmanEater](https://github.com/LagmanEater): Implementation of the forecast configuration dashboard (module forecast_configuration).
 - Maxat Pernebaev [@maxatp](https://github.com/maxatp): Code review and refactoring of the first version of the forecast tools.
-- Adrian Kreiner [@adriankreiner](https://github.com/adriankreiner): Development of the packages [airGR_GM]() and [airgrdatassim](). Implementation of the operational hydrological forecasting with conceptual rainfall-runoff models (module ...).
+- Adrian Kreiner [@adriankreiner](https://github.com/adriankreiner): Development of the packages [airGR_GM]() and [airgrdatassim](). Implementation of the operational hydrological forecasting with conceptual rainfall-runoff models (module conceptual_model).
 - Sandro Hunziker [@sandrohuni](https://github.com/sandrohuni): Implementation of the pre-processing of gridded meteorological data (module preprocessing_gateway) and implementation of the operational hydrological forecasting using machine learning models (module machine_learning).
-- Vjeko: Implementation of custom functions for the forecast dashboard (module forecast_dashboard).
-- Davor: Support with the integration of the ieasyreports library.
+- Vjekoslav Večković [@vjekoslavveckovic](https://github.com/vjekoslavveckovic): Implementation of custom functions and complex interactivity for the forecast dashboard (module forecast_dashboard).
+- Davor Škalec [@skalecdavor](https://github.com/skalecdavor) and Vatroslav Čelan [@vatrocelan](https://github.com/vatrocelan): Support with the integration of the ieasyreports and ieasyhydro-python-sdk libraries.
 - Beatrice Marti [@mabesa](https://github.com/mabesa): Design and implementation of the forecast tools and all modules not namedd above and coordination of the project.
