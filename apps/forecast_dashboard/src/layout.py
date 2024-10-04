@@ -8,15 +8,6 @@ from .gettext_config import translation_manager
 
 import param
 
-# region Define widgets
-#def create_station_selection_widget(station_dict):
-#    _ = translation_manager._
-#    return pn.widgets.Select(
-#        name=_("Select discharge station:"),
-#        groups=station_dict,
-#        value=station_dict[next(iter(station_dict))][0])
-
-# endregion
 
 
 # region Widget update functions
@@ -91,8 +82,12 @@ def define_disclaimer(_, in_docker_flag):
         pn.pane.Markdown(_("Last updated on ") + dt.datetime.now().strftime("%b %d, %Y") + ".")
     )
 
-def define_tabs(_, daily_hydrograph_plot, forecast_data_and_plot,
-                forecast_summary_table, pentad_forecast_plot, bulletin_table,
+def define_tabs(_,
+                daily_hydrograph_plot, rainfall_plot,
+                #linked_plots,
+                forecast_data_and_plot,
+                forecast_summary_table, pentad_forecast_plot, effectiveness_plot,
+                bulletin_table,
                 write_bulletin_button, indicator, disclaimer,
                 station_card, forecast_card, add_to_bulletin_button, basin_card, pentad_card, add_to_bulletin_popup):
 
@@ -144,10 +139,16 @@ def define_tabs(_, daily_hydrograph_plot, forecast_data_and_plot,
             # Predictors tab
             (_('Predictors'),
             pn.Column(
-                 pn.Row(
+                pn.Row(
                      pn.Card(daily_hydrograph_plot, title=_("Hydrograph")),
+                     sizing_mode='stretch_width',
+                     min_height=400,
                  ),
-             height=600),
+                 pn.Row(
+                     pn.Card(rainfall_plot, title=_("Rainfall")),
+                     sizing_mode='stretch_width',
+                 ),
+             ),
             ),
             (_('Forecast'),
              pn.Column(
@@ -175,19 +176,22 @@ def define_tabs(_, daily_hydrograph_plot, forecast_data_and_plot,
                 pn.Card(
                     pentad_forecast_plot,
                     title=_('Hydrograph'),
-                    height=500,
+                    height=600,
                     #height=None,
                     collapsible=True,
                     collapsed=False
                 ),
-                     #pn.Card(
-                     #    pentad_forecast_plot,
-                     #    title=_('Analysis'))
-            #         #pn.Card(pentad_effectiveness, title=_("Effectiveness of the methods")),
+                pn.Card(
+                    pn.Row(
+                     effectiveness_plot,
+                    ),
+                    title=_("Forecast skill metrics"),
+                    height=800,
+                    collapsible=True,
             #         #pn.Card(pentad_skill, title=_("Forecast accuracy")),
-                #sizing_mode='stretch_width'
                 )
             ),
+            ),  # end of Forecast tab
             (_('Bulletin'),
              pn.Column(
                     pn.Card(

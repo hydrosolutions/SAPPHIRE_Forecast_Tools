@@ -915,6 +915,48 @@ def calculate_fc_stats(analysis_data):
 
     return fc_stats
 
+def read_rainfall_data():
+    # Get path to forcing files from environment variables
+    # reanalysis forcing
+    filepath = os.path.join(
+        os.getenv('ieasyhydroforecast_PATH_TO_HIND'),
+        os.getenv('ieasyhydroforecast_FILE_CF_HIND_P')
+    )
+    if not os.path.isfile(filepath):
+        raise Exception("File not found: " + filepath)
+    # Read hindcast forcing data
+    hindcast_forcing = pd.read_csv(filepath)
+
+    # control member forcing
+    filepath = os.path.join(
+        os.getenv('ieasyhydroforecast_PATH_TO_CF'),
+        os.getenv('ieasyhydroforecast_FILE_CF_P')
+    )
+    if not os.path.isfile(filepath):
+        raise Exception("File not found: " + filepath)
+    # Read forecast forcing data
+    forecast_forcing = pd.read_csv(filepath)
+
+    # Merge the two dataframes, keeping hindcast where hindcast is available
+    # and filling in with forecast where hindcast is missing
+    forcing = pd.merge(hindcast_forcing, forecast_forcing, how='outer',
+                       on=['date', 'code'])
+    # Fill missing values in P_x with values from P_y
+    forcing['P'] = forcing['P_x'].combine_first(forcing['P_y'])
+    # Drop columns P_x and P_y
+    forcing = forcing.drop(columns=['P_x', 'P_y'])
+
+    # Convert the date column to datetime. The format of the date string is %Y-%m-%d.
+    forcing['date'] = pd.to_datetime(forcing['date'], format='%Y-%m-%d', errors='coerce')
+
+    # Convert the code column to string
+    forcing['code'] = forcing['code'].astype(str)
+
+    # Sort by code and date
+    forcing = forcing.sort_values(by=['code', 'date'])
+
+    return forcing
+
 
 
 
