@@ -188,6 +188,7 @@ stations_iehhf = None
 
 # Rainfall
 rain = processing.read_rainfall_data()
+temp = processing.read_temperature_data()
 
 # Daily runoff data
 hydrograph_day_all = processing.read_hydrograph_day_data_for_pentad_forecasting(stations_iehhf)
@@ -650,6 +651,24 @@ daily_rainfall_plot = pn.panel(
         _, rain, station, date_picker, linreg_predictor
     ),
 )
+daily_temperature_plot = pn.panel(
+    pn.bind(
+        viz.plot_daily_temperature_data,
+        _, temp, station, date_picker, linreg_predictor
+    ),
+)
+daily_rel_to_norm_runoff = pn.panel(
+    pn.bind(
+        viz.plot_rel_to_norm_runoff,
+        _, hydrograph_day_all, linreg_predictor, station, date_picker
+    )
+)
+daily_rel_to_norm_rainfall = pn.panel(
+    pn.bind(
+        viz.plot_daily_rel_to_norm_rainfall,
+        _, rain, station, date_picker, linreg_predictor
+    )
+)
 
 forecast_data_and_plot = pn.panel(
     pn.bind(
@@ -786,7 +805,8 @@ def tabs_change_language(language):
         print(f"Selected language: {language}")
         return layout.define_tabs(
             _,
-            daily_hydrograph_plot, daily_rainfall_plot,
+            daily_hydrograph_plot, daily_rainfall_plot, daily_temperature_plot,
+            daily_rel_to_norm_runoff, daily_rel_to_norm_rainfall,
             forecast_data_and_plot,
             forecast_summary_table, pentad_forecast_plot, forecast_skill_plot,
             bulletin_table, write_bulletin_button, indicator, disclaimer,

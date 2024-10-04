@@ -83,8 +83,8 @@ def define_disclaimer(_, in_docker_flag):
     )
 
 def define_tabs(_,
-                daily_hydrograph_plot, rainfall_plot,
-                #linked_plots,
+                daily_hydrograph_plot, rainfall_plot, temperature_plot,
+                daily_rel_norm_runoff, daily_rel_to_norm_rainfall,
                 forecast_data_and_plot,
                 forecast_summary_table, pentad_forecast_plot, effectiveness_plot,
                 bulletin_table,
@@ -101,10 +101,13 @@ def define_tabs(_,
                  pn.Row(
                      pn.Card(daily_hydrograph_plot, title=_("Hydrograph"))
                 ),
-            ),
+                pn.Row(
+                    pn.Card(rainfall_plot, title=_("Rainfall"))
+                ),
+                )
             ),
             (_('Forecast'),
-             #pn.Column(
+             pn.Column(
             #     pn.Row(
             #        pn.Card(data_table, title=_('Data table'), collapsed=True),
             #        pn.Card(linear_regression, title=_("Linear regression"), collapsed=True)
@@ -114,7 +117,7 @@ def define_tabs(_,
             #     pn.Row(
             #         pn.Card(forecast_table, title=_('Forecast table'), sizing_mode='stretch_width')),
                      pn.Card(
-                         #pentad_forecast_plot,
+                         pentad_forecast_plot,
                          title=_('Hydrograph'),
                      ),
                      pn.Card(
@@ -128,7 +131,7 @@ def define_tabs(_,
             #         pn.Card(pentad_effectiveness, title=_("Effectiveness of the methods"))),
             #     pn.Row(
             #         pn.Card(pentad_skill, title=_("Forecast accuracy")))
-            #)
+            )
             ),
             (_('Disclaimer'), disclaimer),
             dynamic=True,
@@ -141,11 +144,17 @@ def define_tabs(_,
             pn.Column(
                 pn.Row(
                      pn.Card(daily_hydrograph_plot, title=_("Hydrograph")),
+                     #pn.Card(daily_rel_norm_runoff, title=_("Relative to norm runoff")),
                      sizing_mode='stretch_width',
                      min_height=400,
                  ),
                  pn.Row(
                      pn.Card(rainfall_plot, title=_("Rainfall")),
+                     #pn.Card(daily_rel_to_norm_rainfall, title=_("Relative to norm rainfall")),
+                     sizing_mode='stretch_width',
+                 ),
+                 pn.Row(
+                     pn.Card(temperature_plot, title=_("Temperature")),
                      sizing_mode='stretch_width',
                  ),
              ),
