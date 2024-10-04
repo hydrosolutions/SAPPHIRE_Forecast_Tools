@@ -84,7 +84,7 @@ def define_disclaimer(_, in_docker_flag):
 
 def define_tabs(_,
                 daily_hydrograph_plot, rainfall_plot, temperature_plot,
-                daily_rel_norm_runoff, daily_rel_to_norm_rainfall,
+                #daily_rel_norm_runoff, daily_rel_to_norm_rainfall,
                 forecast_data_and_plot,
                 forecast_summary_table, pentad_forecast_plot, effectiveness_plot,
                 bulletin_table,

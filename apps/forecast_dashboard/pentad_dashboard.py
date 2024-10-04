@@ -657,6 +657,7 @@ daily_temperature_plot = pn.panel(
         _, temp, station, date_picker, linreg_predictor
     ),
 )
+'''
 daily_rel_to_norm_runoff = pn.panel(
     pn.bind(
         viz.plot_rel_to_norm_runoff,
@@ -669,6 +670,7 @@ daily_rel_to_norm_rainfall = pn.panel(
         _, rain, station, date_picker, linreg_predictor
     )
 )
+'''
 
 forecast_data_and_plot = pn.panel(
     pn.bind(
@@ -806,7 +808,7 @@ def tabs_change_language(language):
         return layout.define_tabs(
             _,
             daily_hydrograph_plot, daily_rainfall_plot, daily_temperature_plot,
-            daily_rel_to_norm_runoff, daily_rel_to_norm_rainfall,
+            #daily_rel_to_norm_runoff, daily_rel_to_norm_rainfall,
             forecast_data_and_plot,
             forecast_summary_table, pentad_forecast_plot, forecast_skill_plot,
             bulletin_table, write_bulletin_button, indicator, disclaimer,
