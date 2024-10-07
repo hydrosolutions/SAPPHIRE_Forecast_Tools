@@ -972,6 +972,10 @@ def plot_pentad_forecast_hydrograph_data(_, hydrograph_pentad_all, forecasts_all
     current_year = data['date'].dt.year.max()
     last_year = current_year - 1
 
+    if str(current_year) not in data.columns:
+        print(f"DEBUG: '{str(current_year)}' column missing in 'data'. Creating it with NaNs.")
+        data[str(current_year)] = np.nan  # Initialize the column
+
     # Convert date column of data dataframe to datetime
     data['date'] = pd.to_datetime(data['date'])
 
@@ -1184,7 +1188,7 @@ def create_forecast_summary_tabulator(_, forecasts_all, station, date_picker,
     max_accuracy_index = final_forecast_table[_('Accuracy')].idxmax()
     print("max_accuracy_index\n", max_accuracy_index)
 
-# Update the Tabulator's value
+    # Update the Tabulator's value
     forecast_tabulator.value = final_forecast_table
     # Set the selection to the row with max accuracy
     forecast_tabulator.selection = [max_accuracy_index]
@@ -1712,6 +1716,7 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
             save_button.disabled = False
             progress_bar.value = 100  # Set progress to complete when done
             print("Docker container completed.")
+            processing.data_reloader.data_needs_reload = True
 
         pn.state.onload(lambda: pn.state.add_periodic_callback(lambda: setattr(progress_bar, 'visible', False), 2000, count=1))
         pn.state.onload(lambda: pn.state.add_periodic_callback(lambda: setattr(progress_message, 'visible', False), 4000, count=1))

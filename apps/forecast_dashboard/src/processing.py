@@ -2,6 +2,7 @@ import os
 import sys
 import pandas as pd
 import numpy as np
+import param
 
 # Get the absolute path of the directory containing the current script
 cwd = os.getcwd()
@@ -21,6 +22,14 @@ sys.path.append(forecast_dir)
 # Import the modules from the forecast library
 import tag_library as tl
 import forecast_library as fl
+
+
+
+class DataReloader(param.Parameterized):
+    data_needs_reload = param.Boolean(default=False)
+
+data_reloader = DataReloader()
+
 
 
 # --- Configuration -----------------------------------------------------------

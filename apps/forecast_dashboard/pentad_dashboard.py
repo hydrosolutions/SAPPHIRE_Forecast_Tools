@@ -177,57 +177,60 @@ _ = localize.load_translation(current_locale, localedir)
 
 # region load_data
 
-# Daily runoff data
-hydrograph_day_all = processing.read_hydrograph_day_data_for_pentad_forecasting()
-hydrograph_pentad_all = processing.read_hydrograph_pentad_data_for_pentad_forecasting()
+def load_data():
+    global hydrograph_day_all, hydrograph_pentad_all, linreg_predictor, forecasts_all, forecast_stats, all_stations, station_dict, station_df, station_list, linreg_datatable    # Daily runoff data
+    hydrograph_day_all = processing.read_hydrograph_day_data_for_pentad_forecasting()
+    hydrograph_pentad_all = processing.read_hydrograph_pentad_data_for_pentad_forecasting()
 
-# Pentadal forecast data
-# - linreg_predictor: for displaying predictor in predictor tab
-linreg_predictor = processing.read_linreg_forecast_data()
-# For site = 16059, show the last 5 rows of the linreg_predictor DataFrame
-#print(f"DEBUG: pentad_dashboard.py: linreg_predictor: {linreg_predictor[linreg_predictor['code'] == '16059'].tail()}")
-# - forecast results from all models
-forecasts_all = processing.read_forecast_results_file()
-# Forecast statistics
-forecast_stats = processing.read_forecast_stats_file()
+    # Pentadal forecast data
+    # - linreg_predictor: for displaying predictor in predictor tab
+    linreg_predictor = processing.read_linreg_forecast_data()
+    # For site = 16059, show the last 5 rows of the linreg_predictor DataFrame
+    #print(f"DEBUG: pentad_dashboard.py: linreg_predictor: {linreg_predictor[linreg_predictor['code'] == '16059'].tail()}")
+    # - forecast results from all models
+    forecasts_all = processing.read_forecast_results_file()
+    # Forecast statistics
+    forecast_stats = processing.read_forecast_stats_file()
 
-# Hydroposts metadata
-station_list, all_stations, station_df, station_dict = processing.read_all_stations_metadata_from_file(
-    hydrograph_day_all['code'].unique().tolist())
-if not station_list:
-    raise ValueError("The station list is empty. Please check the data source and ensure it contains valid stations.")
-#print("DEBUG: pentad_dashboard.py: Station list:\n", station_list)
-#print("DEBUG: pentad_dashboard.py: All stations: \n", all_stations)
-#logger.debug(f"DEBUG: pentad_dashboard.py: Station list:\n{station_list}")
-#print(f"DEBUG: columns of all_stations:\n{all_stations.columns}")
-#logger.debug(f"DEBUG: pentad_dashboard.py: All stations:\n{all_stations}")
-#print(f"DEBUG: pentad_dashboard.py: Station dataframe:\n{station_df}")
-#print(f"DEBUG: pentad_dashboard.py: Station dictionary:\n{station_dict}")
-#print(f"DEBUG: First dictionary entry: {next(iter(station_dict))}")
-#print(f"DEBUG: First station: {station_dict[next(iter(station_dict))][0]}")
 
-# Add the station_labels column to the hydrograph_day_all DataFrame
-hydrograph_day_all = processing.add_labels_to_hydrograph(hydrograph_day_all, all_stations)
-hydrograph_pentad_all = processing.add_labels_to_hydrograph(hydrograph_pentad_all, all_stations)
-#print(f"DEBUG: linreg_predictor raw: {linreg_predictor.tail()}")
-linreg_predictor = processing.add_labels_to_forecast_pentad_df(linreg_predictor, all_stations)
-#print(f"DEBUG: linreg_predictor with labels: {linreg_predictor.tail()}")
-linreg_datatable = processing.shift_date_by_n_days(linreg_predictor, 1)
-#print(f"DEBUG: linreg_datatable.columns: {linreg_datatable.columns}")
-#print(f"DEBUG: linreg_datatable: {linreg_datatable.tail()}")
-#print(f"DEBUG: linreg_predictor.columns: {linreg_predictor.columns}")
-#print(f"DEBUG: linreg_predictor: {linreg_predictor.tail()}")
-forecasts_all = processing.add_labels_to_forecast_pentad_df(forecasts_all, all_stations)
 
-# Replace model names with translation strings
-forecasts_all = processing.internationalize_forecast_model_names(_, forecasts_all)
-forecast_stats = processing.internationalize_forecast_model_names(_, forecast_stats)
+    # Hydroposts metadata
+    station_list, all_stations, station_df, station_dict = processing.read_all_stations_metadata_from_file(
+        hydrograph_day_all['code'].unique().tolist())
+    if not station_list:
+        raise ValueError("The station list is empty. Please check the data source and ensure it contains valid stations.")
+    #print("DEBUG: pentad_dashboard.py: Station list:\n", station_list)
+    #print("DEBUG: pentad_dashboard.py: All stations: \n", all_stations)
+    #logger.debug(f"DEBUG: pentad_dashboard.py: Station list:\n{station_list}")
+    #print(f"DEBUG: columns of all_stations:\n{all_stations.columns}")
+    #logger.debug(f"DEBUG: pentad_dashboard.py: All stations:\n{all_stations}")
+    #print(f"DEBUG: pentad_dashboard.py: Station dataframe:\n{station_df}")
+    #print(f"DEBUG: pentad_dashboard.py: Station dictionary:\n{station_dict}")
+    #print(f"DEBUG: First dictionary entry: {next(iter(station_dict))}")
+    #print(f"DEBUG: First station: {station_dict[next(iter(station_dict))][0]}")
 
-# Merge forecast stats with forecasts by code and pentad_in_year and model_short
-forecasts_all = forecasts_all.merge(
-    forecast_stats,
-    on=['code', 'pentad_in_year', 'model_short', 'model_long'],
-    how='left')
+    # Add the station_labels column to the hydrograph_day_all DataFrame
+    hydrograph_day_all = processing.add_labels_to_hydrograph(hydrograph_day_all, all_stations)
+    hydrograph_pentad_all = processing.add_labels_to_hydrograph(hydrograph_pentad_all, all_stations)
+    #print(f"DEBUG: linreg_predictor raw: {linreg_predictor.tail()}")
+    linreg_predictor = processing.add_labels_to_forecast_pentad_df(linreg_predictor, all_stations)
+    #print(f"DEBUG: linreg_predictor with labels: {linreg_predictor.tail()}")
+    linreg_datatable = processing.shift_date_by_n_days(linreg_predictor, 1)
+    #print(f"DEBUG: linreg_datatable.columns: {linreg_datatable.columns}")
+    #print(f"DEBUG: linreg_datatable: {linreg_datatable.tail()}")
+    #print(f"DEBUG: linreg_predictor.columns: {linreg_predictor.columns}")
+    #print(f"DEBUG: linreg_predictor: {linreg_predictor.tail()}")
+    forecasts_all = processing.add_labels_to_forecast_pentad_df(forecasts_all, all_stations)
+
+    # Replace model names with translation strings
+    forecasts_all = processing.internationalize_forecast_model_names(_, forecasts_all)
+    forecast_stats = processing.internationalize_forecast_model_names(_, forecast_stats)
+
+    # Merge forecast stats with forecasts by code and pentad_in_year and model_short
+    forecasts_all = forecasts_all.merge(
+        forecast_stats,
+        on=['code', 'pentad_in_year', 'model_short', 'model_long'],
+        how='left')
 #print(f"DEBUG: pentad_dashboard.py: forecasts_all: columns of forecasts_all:\n{forecasts_all.columns}")
 #print(f"DEBUG: pentad_dashboard.py: forecasts_all: Models in forecasts_all:\n{forecasts_all['model_long'].unique()}")
 #print(f"DEBUG: pentad_dashboard.py: forecasts_all: Tail of forecasts_all:\n{forecasts_all[['code', 'date', 'Q25', 'Q75', 'pentad_in_month', 'pentad_in_year']].tail()}")
@@ -239,6 +242,9 @@ forecasts_all = forecasts_all.merge(
 #print(f"DEBUG: pentad_dashboard.py: linreg_datatable: Tail of linreg_datatable:\n{linreg_datatable[['code', 'pentad_in_year']].tail()}")
 
 # Create a list of Site objects from the all_stations DataFrame
+
+load_data()
+
 sites_list = Site.get_site_attributes_from_stations_dataframe(all_stations)
 
 bulletin_table = pn.Column()
@@ -648,11 +654,40 @@ def update_forecast_tabulator(event=None):
 # Initial update
 update_forecast_tabulator()
 
+
+def update_visualizations():
+    # Re-bind the plots to use the updated data
+
+    viz.plot_pentad_forecast_hydrograph_data,
+    _, hydrograph_pentad_all, forecasts_all, station, date_picker,
+    model_checkbox, allowable_range_selection, manual_range,
+    show_range_button
+
+    update_forecast_tabulator()
+
+
+def on_data_needs_reload_changed(event):
+    if event.new:
+        print("Data reload triggered.")
+        try:
+            load_data()
+            update_visualizations()
+            print("Data reloaded and visualizations updated successfully.")
+        except Exception as e:
+            print(f"Error during data reload: {e}")
+        finally:
+            processing.data_reloader.data_needs_reload = False  # Reset the flag
+
+# Attach watcher only once
+if not hasattr(processing.data_reloader, 'watcher_attached'):
+    processing.data_reloader.param.watch(on_data_needs_reload_changed, 'data_needs_reload')
+    processing.data_reloader.watcher_attached = True
+
 # TODO Implement, write to site object and display bulletin in bulletin tab
-forecast_tabulator = viz.create_forecast_summary_tabulator(
+'''forecast_tabulator = viz.create_forecast_summary_tabulator(
     _, forecasts_all, station.value, date_picker.value, model_checkbox.value,
     allowable_range_selection.value, manual_range.value, forecast_tabulator
-)
+)'''
 #print(f"DEBUG: pentad_dashboard.py: forecast_tabulator: {forecast_tabulator}")
 #print(f"DEBUG: type of forecast_tabulator: {type(forecast_tabulator)}")
 
