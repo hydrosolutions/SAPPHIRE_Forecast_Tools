@@ -1278,6 +1278,7 @@ def get_absolute_path(relative_path):
 
     # Test if there environment variable "ieasyforecast_data_root_dir" is set
     data_root_dir = os.getenv('ieasyhydroforecast_data_root_dir')
+    #print(f"\n\n\n\n\nget_absolute_path: data_root_dir: {data_root_dir}")
     if data_root_dir:
         # If it is set, use it as the root directory
         # Strip the relative path from 2 "../" strings
@@ -1333,10 +1334,10 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
 
     #print(f"\n\nDEBUG: select_and_plot_data")
     # Print tail of linreg_predictor for code == '16059'
-    print(f"linreg_predictor[linreg_predictor['code'] == '16059'].head(10):\n",
-          linreg_predictor[linreg_predictor['code'] == '16059'].head(10))
-    print(f"linreg_predictor[linreg_predictor['code'] == '16059'].tail(10):\n",
-          linreg_predictor[linreg_predictor['code'] == '16059'].tail(10))
+    #print(f"linreg_predictor[linreg_predictor['code'] == '16059'].head(10):\n",
+    #      linreg_predictor[linreg_predictor['code'] == '16059'].head(10))
+    #print(f"linreg_predictor[linreg_predictor['code'] == '16059'].tail(10):\n",
+    #      linreg_predictor[linreg_predictor['code'] == '16059'].tail(10))
 
     if isinstance(station_widget, str):
         station_code = station_widget.split(' - ')[0]
@@ -1639,7 +1640,7 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
         print(f"Container '{container_name}' has stopped.")
 
 
-   
+
     # Function to save table data to CSV and run Docker containers
     def save_to_csv(event):
         # Disable the save button and show the progress bar and message
@@ -1693,11 +1694,14 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
             }
             print("volumes: ", volumes)
 
+            # Run the reset rundate module to update the rundate for the linear regression module
+            run_docker_container(client, "mabesa/sapphire-rerun:latest", volumes, environment, "reset_rundate", progress_bar)
+
             # Run the linear_regression container with a hardcoded full image name
-            run_docker_container(client, "linear_regression:latest", volumes, environment, "linreg", progress_bar)
-            
+            run_docker_container(client, "mabesa/sapphire-linreg:latest", volumes, environment, "linreg", progress_bar)
+
             # After linear_regression finishes, run the postprocessing container with a hardcoded full image name
-            run_docker_container(client, "postprocessing_forecasts:latest", volumes, environment, "postprocessing", progress_bar)
+            run_docker_container(client, "mabesa/sapphire-postprocessing:latest", volumes, environment, "postprocessing", progress_bar)
 
             # When the container is finished, set progress to 100 and update message
             progress_bar.value = 100
@@ -1710,7 +1714,7 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
 
         except docker.errors.DockerException as e:
             print(f"Error interacting with Docker: {e}")
-        
+
         finally:
             # Re-enable the save button after the container finishes
             save_button.disabled = False
