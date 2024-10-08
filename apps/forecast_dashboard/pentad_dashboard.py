@@ -16,9 +16,10 @@ import locale
 
 import panel as pn
 
-from bokeh.models import FixedTicker, CustomJSTickFormatter, LinearAxis
+from bokeh.models import FixedTicker, CustomJSTickFormatter, LinearAxis, Range1d
 from bokeh.models.widgets.tables import NumberFormatter
 from holoviews import streams
+from holoviews import opts
 
 import numpy as np
 import pandas as pd
@@ -231,15 +232,19 @@ def load_data():
         forecast_stats,
         on=['code', 'pentad_in_year', 'model_short', 'model_long'],
         how='left')
-#print(f"DEBUG: pentad_dashboard.py: forecasts_all: columns of forecasts_all:\n{forecasts_all.columns}")
-#print(f"DEBUG: pentad_dashboard.py: forecasts_all: Models in forecasts_all:\n{forecasts_all['model_long'].unique()}")
-#print(f"DEBUG: pentad_dashboard.py: forecasts_all: Tail of forecasts_all:\n{forecasts_all[['code', 'date', 'Q25', 'Q75', 'pentad_in_month', 'pentad_in_year']].tail()}")
 
-#print(f"DEBUG: pentad_dashboard.py: linreg_predictor: columns of linreg_predictor:\n{linreg_predictor.columns}")
-#print(f"DEBUG: pentad_dashboard.py: linreg_predictor: Tail of linreg_predictor:\n{linreg_predictor[['code', 'date', 'pentad_in_year']].tail()}")
+# Get stations selected for pentadal forecasts
+# Not necessary as we write new config files in linear regression module.
+#if os.getenv('ieasyhydroforecast_connect_to_iEH') == 'False':
+#    stations_iehhf = processing.get_station_codes_selected_for_pentadal_forecasts()
+#else:
+#    stations_iehhf = None
+stations_iehhf = None
 
-#print(f"DEBUG: pentad_dashboard.py: linreg_datatable: columns of linreg_datatable:\n{linreg_datatable.columns}")
-#print(f"DEBUG: pentad_dashboard.py: linreg_datatable: Tail of linreg_datatable:\n{linreg_datatable[['code', 'pentad_in_year']].tail()}")
+# Rainfall
+rain = processing.read_rainfall_data()
+temp = processing.read_temperature_data()
+
 
 # Create a list of Site objects from the all_stations DataFrame
 
@@ -256,7 +261,7 @@ tabs_container = pn.Column()
 # Create a dictionary of the model names and the corresponding model labels
 model_dict_all = forecasts_all[['model_short', 'model_long']] \
     .set_index('model_long')['model_short'].to_dict()
-#print(f"DEBUG: pentad_dashboard.py: model_dict_all: {model_dict_all}")
+print(f"DEBUG: pentad_dashboard.py: model_dict_all: {model_dict_all}")
 
 
 pentads = [
@@ -327,6 +332,7 @@ station = pn.widgets.Select(
 
 # Update the model_dict with the models we have results for for the selected
 # station
+print("DEBUG: pentad_dashboard.py: station.value: ", station.value)
 model_dict = processing.update_model_dict(model_dict_all, forecasts_all, station.value)
 #print(f"DEBUG: pentad_dashboard.py: model_dict: {model_dict}")
 
@@ -504,46 +510,46 @@ add_to_bulletin_popup = pn.pane.Alert("Added to bulletin", alert_type="success",
 def add_current_selection_to_bulletin(event=None):
     selected_indices = forecast_tabulator.selection
     forecast_df = forecast_tabulator.value
-    
+
     if forecast_df is None or forecast_df.empty:
         print("Forecast summary table is empty.")
         logger.warning("Attempted to add to bulletin, but forecast summary table is empty.")
         return
-    
+
     # If no selection is made, default to the first forecast
     if not selected_indices and len(forecast_df) > 0:
         selected_indices = [0]
         forecast_tabulator.selection = selected_indices  # Update the Tabulator's selection
         print("No forecast selected. Defaulting to the first forecast.")
         logger.info("No forecast selected. Defaulting to the first forecast.")
-    
+
     # Get the selected rows
     selected_rows = forecast_df.iloc[selected_indices]
-    
+
     if selected_rows.empty:
         print("Selected rows are empty.")
         logger.warning("Selected rows are empty despite having indices.")
         return
-    
+
     selected_station = station.value
     selected_date = date_picker.value
-    
+
     print(f"Adding station: {selected_station}, date: {selected_date}")
     print(f"Selected models:\n{selected_rows['Model']}")
-    
+
     # Use the selected rows as the final forecast table
     final_forecast_table = selected_rows.reset_index(drop=True)
-    
+
     # Find the Site object for the selected station
     selected_site = next((site for site in sites_list if site.station_label == selected_station), None)
     if selected_site is None:
         print(f"Site {selected_station} not found in sites_list")
         logger.error(f"Site {selected_station} not found in sites_list")
         return
-    
+
     # Overwrite the forecast instead of appending
     selected_site.forecasts = final_forecast_table
-    
+
     # Check if the site is already in bulletin_sites
     existing_site = next((site for site in bulletin_sites if site.code == selected_site.code), None)
     if existing_site is None:
@@ -555,7 +561,7 @@ def add_current_selection_to_bulletin(event=None):
         existing_site.forecasts = selected_site.forecasts
         print(f"Overwritten forecast for station: {selected_station}")
         logger.info(f"Overwritten forecast for site in bulletin: {selected_station}")
-    
+
     # Update the bulletin_table to reflect changes
     update_bulletin_table(None)
 
@@ -619,6 +625,7 @@ pentad_selector.param.watch(update_callback, 'value')
 # Initial setup: populate the main area with the initial selection
 #update_callback(None)  # This does not seem to be needed
 
+
 daily_hydrograph_plot = pn.panel(
     pn.bind(
         viz.plot_daily_hydrograph_data,
@@ -626,6 +633,33 @@ daily_hydrograph_plot = pn.panel(
         ),
     sizing_mode='stretch_both'
     )
+daily_rainfall_plot = pn.panel(
+    pn.bind(
+        viz.plot_daily_rainfall_data,
+        _, rain, station, date_picker, linreg_predictor
+    ),
+)
+daily_temperature_plot = pn.panel(
+    pn.bind(
+        viz.plot_daily_temperature_data,
+        _, temp, station, date_picker, linreg_predictor
+    ),
+)
+'''
+daily_rel_to_norm_runoff = pn.panel(
+    pn.bind(
+        viz.plot_rel_to_norm_runoff,
+        _, hydrograph_day_all, linreg_predictor, station, date_picker
+    )
+)
+daily_rel_to_norm_rainfall = pn.panel(
+    pn.bind(
+        viz.plot_daily_rel_to_norm_rainfall,
+        _, rain, station, date_picker, linreg_predictor
+    )
+)
+'''
+
 forecast_data_and_plot = pn.panel(
     pn.bind(
         viz.select_and_plot_data,
@@ -641,7 +675,22 @@ pentad_forecast_plot = pn.panel(
         show_range_button
         ),
     sizing_mode='stretch_both'
-    )
+)
+forecast_skill_plot = pn.panel(
+    pn.bind(
+        viz.plot_forecast_skill,
+        _,
+        hydrograph_pentad_all,
+        forecasts_all,
+        station_widget=station,
+        date_picker=date_picker,
+        model_checkbox=model_checkbox,
+        range_selection_widget=allowable_range_selection,
+        manual_range_widget=manual_range,
+        show_range_button=show_range_button
+    ),
+    sizing_mode='stretch_both'
+)
 
 
 def update_forecast_tabulator(event=None):
@@ -774,8 +823,11 @@ def tabs_change_language(language):
         # Print the currently selected language
         print(f"Selected language: {language}")
         return layout.define_tabs(
-            _, daily_hydrograph_plot, forecast_data_and_plot,
-            forecast_summary_table, pentad_forecast_plot,
+            _,
+            daily_hydrograph_plot, daily_rainfall_plot, daily_temperature_plot,
+            #daily_rel_to_norm_runoff, daily_rel_to_norm_rainfall,
+            forecast_data_and_plot,
+            forecast_summary_table, pentad_forecast_plot, forecast_skill_plot,
             bulletin_table, write_bulletin_button, indicator, disclaimer,
             station_card, forecast_card, add_to_bulletin_button, basin_card, pentad_card, add_to_bulletin_popup)
     except Exception as e:
@@ -810,7 +862,8 @@ def sidepane_change_language(language):
         show_range_button.name = _("Show ranges in figure:")
         show_range_button.options = [_("Yes"), _("No")]
 
-        return layout.define_sidebar(_, station_card, forecast_card, basin_card)
+        return layout.define_sidebar(_, station_card, forecast_card, basin_card,
+                                     message_pane)
     except Exception as e:
         print(f"Error in sidepane_change_language: {e}")
         print(traceback.format_exc())
