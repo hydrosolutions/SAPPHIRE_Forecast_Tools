@@ -1835,7 +1835,7 @@ SAPPHIRE_DG_HOST = env.get('SAPPHIRE_DG_HOST')
 
 
 # Function to convert a relative path to an absolute path
-'''def get_absolute_path(relative_path):
+def get_absolute_path(relative_path):
     #print("In get_absolute_path: ")
     #print(" - Relative path: ", relative_path)
 
@@ -1855,16 +1855,16 @@ SAPPHIRE_DG_HOST = env.get('SAPPHIRE_DG_HOST')
         # Strip the relative path from 2 "../" strings
         relative_path = re.sub(r'\.\./\.\./\.\.', '', relative_path)
 
-        return os.path.join(cwd, relative_path)'''
+        return os.path.join(cwd, relative_path)
 
 
 #TODO: use this function for local development instead of initial get_absolute_path function
-def get_absolute_path(relative_path):
+'''def get_absolute_path(relative_path):
     # function for local development
     project_root = '/home/vjeko/Desktop/Projects/sapphire_forecast'
     # Remove leading ../../../ from the relative path
     relative_path = re.sub(r'^\.\./\.\./\.\./', '', relative_path)
-    return os.path.join(project_root, relative_path)
+    return os.path.join(project_root, relative_path)'''
 
 def get_bind_path(relative_path):
     # Strip the relative path from ../../.. to get the path to bind to the container
