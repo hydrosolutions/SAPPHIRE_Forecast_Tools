@@ -37,7 +37,7 @@ from logging.handlers import TimedRotatingFileHandler
 
 # SDK library for accessing the DB, installed with
 # pip install git+https://github.com/hydrosolutions/ieasyhydro-python-sdk
-from ieasyhydro_sdk.sdk import IEasyHydroSDK
+from ieasyhydro_sdk.sdk import IEasyHydroSDK, IEasyHydroHFSDK
 
 # Local methods
 from src import src
@@ -155,6 +155,18 @@ def main():
     ret = src.write_daily_hydrograph_data_to_csv(
         data=hydrograph,
         column_list=hydrograph.columns.tolist())
+
+    # Update configuration files for selected sites (only if iEH HF is used)
+    # Test if we read from iEasyHydro or iEasyHydro HF
+    if os.getenv('ieasyhydroforecast_connect_to_iEH') == 'True':
+        # Get information from iEH (no update of configuration files)
+        # Do nothing and exit the script directly
+        pass
+    else:  # Get information from iEH HF
+        ieh_hf_sdk = IEasyHydroHFSDK()
+        sl.get_pentadal_forecast_sites_from_HF_SDK(ieh_hf_sdk)
+        sl.get_decadal_forecast_sites_from_HF_SDK(ieh_hf_sdk)
+
 
     if ret is None:
         sys.exit(0) # Success

@@ -18,7 +18,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 
     # Set an environment variable that can be read by the application to know if it
 # is running in a container.
-ENV SAPPHRIE_OPDEV_ENV=true
+ENV SAPPHIRE_OPDEV_ENV=true
 
 # Setting the working directory to /app
 WORKDIR /app
@@ -26,6 +26,7 @@ WORKDIR /app
 # All files in the current directory are copied into the container into
 # directory app.
 COPY apps/linear_regression /app/apps/linear_regression
+COPY apps/iEasyHydroForecast /app/apps/iEasyHydroForecast
 
 # Run the application.
 CMD ["sh", "-c", "PYTHONPATH=/app/apps/iEasyHydroForecast python apps/linear_regression/linear_regression.py"]
