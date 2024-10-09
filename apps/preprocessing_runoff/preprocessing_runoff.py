@@ -159,7 +159,7 @@ def main():
     if ret is None:
         sys.exit(0) # Success
     else:
-        sys.exit(1)
+        sys.exit(1) # Failure
 
 if __name__ == "__main__":
     main()
