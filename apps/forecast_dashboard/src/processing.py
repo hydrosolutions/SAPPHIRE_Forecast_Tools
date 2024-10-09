@@ -936,6 +936,10 @@ def read_rainfall_data():
     # Read hindcast forcing data
     hindcast_forcing = pd.read_csv(filepath)
 
+    # Convert the date column to datetime. The format of the date string is %Y-%m-%d.
+    hindcast_forcing['date'] = pd.to_datetime(
+        hindcast_forcing['date'], format='%Y-%m-%d', errors='coerce').dt.date
+
     # control member forcing
     filepath = os.path.join(
         os.getenv('ieasyhydroforecast_PATH_TO_CF'),
@@ -946,6 +950,10 @@ def read_rainfall_data():
     # Read forecast forcing data
     forecast_forcing = pd.read_csv(filepath)
 
+    # Convert the date column to datetime. The format of the date string is %Y-%m-%d.
+    forecast_forcing['date'] = pd.to_datetime(
+        forecast_forcing['date'], format='%Y-%m-%d', errors='coerce').dt.date
+
     # Merge the two dataframes, keeping hindcast where hindcast is available
     # and filling in with forecast where hindcast is missing
     forcing = pd.merge(hindcast_forcing, forecast_forcing, how='outer',
@@ -954,9 +962,6 @@ def read_rainfall_data():
     forcing['P'] = forcing['P_x'].combine_first(forcing['P_y'])
     # Drop columns P_x and P_y
     forcing = forcing.drop(columns=['P_x', 'P_y'])
-
-    # Convert the date column to datetime. The format of the date string is %Y-%m-%d.
-    forcing['date'] = pd.to_datetime(forcing['date'], format='%Y-%m-%d', errors='coerce')
 
     # Convert the code column to string
     forcing['code'] = forcing['code'].astype(str)
@@ -978,6 +983,10 @@ def read_temperature_data():
     # Read hindcast forcing data
     hindcast_forcing = pd.read_csv(filepath)
 
+    # Convert the date column to datetime. The format of the date string is %Y-%m-%d.
+    hindcast_forcing['date'] = pd.to_datetime(
+        hindcast_forcing['date'], format='%Y-%m-%d', errors='coerce').dt.date
+
     # control member forcing
     filepath = os.path.join(
         os.getenv('ieasyhydroforecast_PATH_TO_CF'),
@@ -987,6 +996,10 @@ def read_temperature_data():
         raise Exception("File not found: " + filepath)
     # Read forecast forcing data
     forecast_forcing = pd.read_csv(filepath)
+
+    # Convert the date column to datetime. The format of the date string is %Y-%m-%d.
+    forecast_forcing['date'] = pd.to_datetime(
+        forecast_forcing['date'], format='%Y-%m-%d', errors='coerce').dt.date
 
     # Merge the two dataframes, keeping hindcast where hindcast is available
     # and filling in with forecast where hindcast is missing

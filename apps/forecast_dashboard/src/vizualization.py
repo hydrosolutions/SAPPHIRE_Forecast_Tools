@@ -1136,6 +1136,12 @@ def plot_daily_rainfall_data(_, daily_rainfall, station, date_picker,
     station_data = daily_rainfall[daily_rainfall['code'] == station_code].copy()
     #print(f"Tail of station_data\n{station_data.tail(10)}")
 
+    # Return an empty plot if the data DataFrame is empty
+    if station_data.empty:
+        return hv.Curve([]).\
+            opts(title=_("No data available for this station"),
+                 hooks=[remove_bokeh_logo])
+
     # Get the forecasts for the selected date
     forecasts = station_data[station_data['date'] >= date_picker].copy()
     #print(f"Tail of forecasts\n{forecasts.tail(10)}")
@@ -1158,8 +1164,10 @@ def plot_daily_rainfall_data(_, daily_rainfall, station, date_picker,
     norm_rainfall = station_data[station_data['year'] != date_picker.year].copy()
     norm_rainfall['doy'] = pd.to_datetime(norm_rainfall['date']).dt.dayofyear
     norm_rainfall = norm_rainfall.groupby(['code', 'doy']).mean().reset_index()
+    norm_rainfall['date'] = pd.to_datetime(norm_rainfall['date'], format='%Y-%m-%d', errors='coerce').dt.date
     # Replace year of date with the current year
-    norm_rainfall['date'] = norm_rainfall['date'].apply(lambda x: x.replace(year=date_picker.year))
+    current_year_value = date_picker.year
+    norm_rainfall['date'] = norm_rainfall['doy'].apply(lambda x: (dt.datetime(current_year_value, 1, 1) + pd.Timedelta(days=x-1)).date())
     # Drop doy and year columns and sort by date
     norm_rainfall = norm_rainfall.drop(columns=['doy', 'year']).sort_values('date')
     # Convert date column to datetime
@@ -1252,6 +1260,12 @@ def plot_daily_temperature_data(_, daily_rainfall, station, date_picker,
     station_data = daily_rainfall[daily_rainfall['code'] == station_code].copy()
     #print(f"Tail of station_data\n{station_data.tail(10)}")
 
+    # Return an empty plot if the data DataFrame is empty
+    if station_data.empty:
+        return hv.Curve([]).\
+            opts(title=_("No data available for this station"),
+                 hooks=[remove_bokeh_logo])
+
     # Get the forecasts for the selected date
     forecasts = station_data[station_data['date'] >= date_picker].copy()
     #print(f"Tail of forecasts\n{forecasts.tail(10)}")
@@ -1275,7 +1289,8 @@ def plot_daily_temperature_data(_, daily_rainfall, station, date_picker,
     norm_rainfall['doy'] = pd.to_datetime(norm_rainfall['date']).dt.dayofyear
     norm_rainfall = norm_rainfall.groupby(['code', 'doy']).mean().reset_index()
     # Replace year of date with the current year
-    norm_rainfall['date'] = norm_rainfall['date'].apply(lambda x: x.replace(year=date_picker.year))
+    current_year_value = date_picker.year
+    norm_rainfall['date'] = norm_rainfall['doy'].apply(lambda x: (dt.datetime(current_year_value, 1, 1) + pd.Timedelta(days=x-1)).date())
     # Drop doy and year columns and sort by date
     norm_rainfall = norm_rainfall.drop(columns=['doy', 'year']).sort_values('date')
     # Convert date column to datetime

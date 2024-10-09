@@ -315,7 +315,9 @@ def merge_ensemble_forecast(files_downloaded: list) -> pd.DataFrame:
     T_ensemble = pd.DataFrame()
     for file in files_downloaded:
         elements = file.split("_")
-        HRU_CODE = elements[-2][-5:]
+        # From the second last element, remove the first 3 characters ('HRU')
+        HRU_CODE = elements[-2][3:]
+        #HRU_CODE = elements[-2][-5:]
         variable = elements[-1].split(".")[0]
         ensemble_member = elements[-3][3:]
         #read the data file
@@ -481,6 +483,7 @@ def main():
         logger.debug(f"Control Member Data Path: {control_member_era5}")
 
         df_c_m = pd.read_csv(control_member_era5)
+
         #transform the data file
         transformed_data_file = transform_data_file_control_member(df_c_m)
         transformed_data_file['code'] = transformed_data_file['code'].astype(str)
