@@ -97,10 +97,54 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
         tag_settings=tag_settings,
         data=True)
 
+    forecast_tag = Tag(
+        name='QEXP',
+        get_value_fn=lambda obj, **kwargs: obj.forecast_pentad,
+        tag_settings=tag_settings,
+        data=True
+    )
+
+    delta_tag = Tag(
+        name='DELTA',
+        get_value_fn=lambda obj, **kwargs: obj.forecast_delta,
+        tag_settings=tag_settings,
+        data=True
+    )
+
+    sdivsigma_tag = Tag(
+        name='SDIVSIGMA',
+        get_value_fn=lambda obj, **kwargs: obj.forecast_sdivsigma,
+        tag_settings=tag_settings,
+        data=True
+    )
+
+    forecast_lower_bound_tag = Tag(
+        name='FORECAST_LOWER_BOUND',
+        get_value_fn=lambda obj, **kwargs: obj.forecast_lower_bound,
+        tag_settings=tag_settings,
+        data=True
+    )
+
+    forecast_upper_bound_tag = Tag(
+        name='FORECAST_UPPER_BOUND',
+        get_value_fn=lambda obj, **kwargs: obj.forecast_upper_bound,
+        tag_settings=tag_settings,
+        data=True
+    )
+
+    dash_tag = Tag(
+        name='DASH',
+        get_value_fn='—',
+        tag_settings=tag_settings,
+        data=True
+    )
+
     tag_list = [pentad_tag, forecast_tag, header_tag, river_ru_tag, punkt_ru_tag,
-                model_tag, linreg_predictor_tag,
+                model_tag, forecast_tag, dash_tag,
                 month_string_nom_ru_tag, month_string_gen_ru_tag, year_tag,
-                day_start_pentad_tag, day_end_pentad_tag]
+                day_start_pentad_tag, day_end_pentad_tag,
+                delta_tag, sdivsigma_tag,
+                forecast_lower_bound_tag, forecast_upper_bound_tag]
 
     report_generator = DefaultReportGenerator(
                 tags=tag_list,

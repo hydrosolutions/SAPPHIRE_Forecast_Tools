@@ -92,16 +92,18 @@ class SapphireSite:
         Returns:
             Site: A SapphireSite object.
         """
-        print(f"\n\nget_forecast_attributes_for_site: tabulator: {df}")
-        self.forecast_pentad = df['Forecasted discharge']
-        self.forecast_lower_bound = df['Forecast lower bound']
-        self.forecast_upper_bound = df['Forecast upper bound']
-        self.forecast_delta = df['δ']
-        self.forecast_sdivsigma = df['s/σ']
-        self.forecast_mae = df['MAE']
-        self.forecast_accuracy = df['Accuracy']
+        print(f"\n\nget_forecast_attributes_for_site: dataframe: {df}")
+        print(df['Forecasted discharge'].values[0])
+        #self.linreg_predictor = df['LinReg predictor'].values[0]
+        self.forecast_pentad = df['Forecasted discharge'].values[0]
+        self.forecast_lower_bound = df['Forecast lower bound'].values[0]
+        self.forecast_upper_bound = df['Forecast upper bound'].values[0]
+        self.forecast_delta = df['δ'].values[0]
+        self.forecast_sdivsigma = df['s/σ'].values[0]
+        self.forecast_mae = df['MAE'].values[0]
+        self.forecast_accuracy = df['Accuracy'].values[0]
         #self.forecast_nse = df['NSE']
-        self.forecast_model = df['Model']
+        self.forecast_model = df['Model'].values[0]
 
 
     def get_site_attributes_from_selected_forecast(cls,
