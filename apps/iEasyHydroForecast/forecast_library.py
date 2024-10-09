@@ -1048,6 +1048,7 @@ def perform_linear_regression(
 
     # Loop over each station we have data for
     for station in data_dfp[station_col].unique():
+        logger.info("Performing linear regression for station %s and pentad %s", station, forecast_pentad)
         # filter for station and pentad. If the DataFrame is empty,
         # raise an error.
         try:
@@ -1058,9 +1059,9 @@ def perform_linear_regression(
         except ValueError as e:
             print(f'Error in perform_linear_regression when filtering for station data: {e}')
 
-        if int(station) == 15194:
-            logger.debug("DEBUG: forecasting:perform_linear_regression: station_data: \n%s",
-                          station_data[['date', pentad_col, station_col, predictor_col, discharge_avg_col]].tail(10))
+        #if int(station) == 15194:
+        #    logger.debug("DEBUG: forecasting:perform_linear_regression: station_data: \n%s",
+        #                  station_data[['date', pentad_col, station_col, predictor_col, discharge_avg_col]].tail(10))
 
         # Drop NaN values, i.e. keep only the time steps where both
         # discharge_sum and discharge_avg are not NaN. These correspond to the
@@ -1074,6 +1075,7 @@ def perform_linear_regression(
         # in ieasyforecast_linreg_point_selection
         # Test if a variable ieasyforecast_linreg_point_selection is set. If not,
         # no need to check for a point selection file.
+        logger.info("Checking for point selection file.")
         if os.getenv('ieasyforecast_linreg_point_selection') is None:
             logger.info("No point selection files available. Skipping point selection.")
         else:
@@ -1110,18 +1112,18 @@ def perform_linear_regression(
                 station_data.drop(columns=['visible', 'year'], inplace=True)
                 print(f"station_data after point selection: {station_data}")
 
-        if int(station) == 15194:
-            logger.debug("DEBUG: forecasting:perform_linear_regression: station_data: \n%s",
-                          station_data[['date', pentad_col, station_col, predictor_col, discharge_avg_col]].tail(10))
+        #if int(station) == 15194:
+        #    logger.debug("DEBUG: forecasting:perform_linear_regression: station_data: \n%s",
+        #                  station_data[['date', pentad_col, station_col, predictor_col, discharge_avg_col]].tail(10))
 
 
         # Get the discharge_sum and discharge_avg columns
         discharge_sum = station_data[predictor_col].values.reshape(-1, 1)
         discharge_avg = station_data[discharge_avg_col].values.reshape(-1, 1)
 
-        if int(station) == 15194:
-            logger.debug("DEBUG: forecasting:perform_linear_regression: discharge_sum: \n%s", discharge_sum)
-            logger.debug("DEBUG: forecasting:perform_linear_regression: discharge_avg: \n%s", discharge_avg)
+        #if int(station) == 15194:
+        #    logger.debug("DEBUG: forecasting:perform_linear_regression: discharge_sum: \n%s", discharge_sum)
+        #    logger.debug("DEBUG: forecasting:perform_linear_regression: discharge_avg: \n%s", discharge_avg)
 
         # Perform the linear regression
         model = LinearRegression().fit(discharge_sum, discharge_avg)
@@ -1169,10 +1171,10 @@ def perform_linear_regression(
             slope * data_dfp.loc[(data_dfp[station_col] == station), predictor_col] + intercept
 
         # print rows where code == 15292
-        if int(station) == 15292:
+        #if int(station) == 15292:
             #logger.debug("column names of data_dfp:\n%s", station_data.columns)
-            logger.debug("DEBUG: forecasting:perform_linear_regression: data_dfp after linear regression: \n%s",
-              data_dfp.loc[data_dfp[station_col] == station, ['date', station_col, pentad_col, predictor_col, discharge_avg_col, 'slope', 'intercept', 'forecasted_discharge']].tail(10))
+        #    logger.debug("DEBUG: forecasting:perform_linear_regression: data_dfp after linear regression: \n%s",
+        #      data_dfp.loc[data_dfp[station_col] == station, ['date', station_col, pentad_col, predictor_col, discharge_avg_col, 'slope', 'intercept', 'forecasted_discharge']].tail(10))
 
     return data_dfp
 
@@ -1676,6 +1678,13 @@ def load_all_station_data_from_JSON(file_path: str) -> pd.DataFrame:
 
             # Write a column 'site_code' which is 'code' transformed to str
             df['site_code'] = df['code'].astype(str)
+
+            # Print the unique site_codes
+            #print("DEBUG: fl.load_all_station_data_from_JSON: unique site_codes: %s", df['site_code'].unique())
+
+            # Test if we have any code 15054 in the DataFrame
+            #if df['site_code'].str.contains('15054').any():
+            #    print("DEBUG: fl.load_all_station_data_from_JSON: code 15054 found in the DataFrame")
             return df
 
     except FileNotFoundError as e:

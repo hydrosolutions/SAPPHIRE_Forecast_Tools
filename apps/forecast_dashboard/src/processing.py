@@ -2,6 +2,7 @@ import os
 import sys
 import pandas as pd
 import numpy as np
+import param
 
 # Get the absolute path of the directory containing the current script
 cwd = os.getcwd()
@@ -21,6 +22,14 @@ sys.path.append(forecast_dir)
 # Import the modules from the forecast library
 import tag_library as tl
 import forecast_library as fl
+
+
+
+class DataReloader(param.Parameterized):
+    data_needs_reload = param.Boolean(default=False)
+
+data_reloader = DataReloader()
+
 
 
 # --- Configuration -----------------------------------------------------------
@@ -257,6 +266,9 @@ def read_linreg_forecast_data(iehhf_selected_stations):
     # We are only interested in the predictor & average discharge here. We drop the other columns.
     #linreg_forecast = linreg_forecast[['date', 'pentad_in_year', 'code', 'predictor', 'discharge_avg']]
 
+    # For site 15059, we want to see the latest 10 rows of columns 'date', 'code', 'slope, intercept, forecasted_discharge', 'delta' only (no other columns)
+    print("\n\n\n\n\nread_linreg_forecast_data:\n", linreg_forecast[((linreg_forecast['code'] == '16059') & (linreg_forecast['pentad_in_year'] == 54))][['date', 'code', 'slope', 'intercept', 'forecasted_discharge', 'delta']].tail(10).to_string(index=False))
+
     return linreg_forecast
 
 def shift_date_by_n_days(linreg_predictor_orig, n=1):
@@ -331,8 +343,8 @@ def read_forecast_results_file(iehhf_selected_stations):
         forecast_pentad = filter_dataframe_for_selected_stations(
         forecast_pentad, "code", iehhf_selected_stations)
 
-    print(f"DEBUG: read_forecast_results_file: forecast_pentad:\n{forecast_pentad.tail()}")
-    print(f"DEBUG: read_forecast_results_file: unique models:\n{forecast_pentad['model_long'].unique()}")
+    #print(f"DEBUG: read_forecast_results_file: forecast_pentad:\n{forecast_pentad.tail()}")
+    #print(f"DEBUG: read_forecast_results_file: unique models:\n{forecast_pentad['model_long'].unique()}")
 
     return forecast_pentad
 
@@ -632,9 +644,6 @@ def read_all_stations_metadata_from_file(station_list):
     # dictionary where we have unique basins in the key and the station_labels
     # in the values
     station_dict = station_df.groupby('basin')['station_labels'].apply(list).to_dict()
-    # See if we have code 15054 anywhere in the station_df
-    print("DEBUG: read_all_stations_metadata_from_file: station_df:\n", station_df[station_df['code'] == '15054'])
-
 
     return station_list, all_stations, station_df, station_dict
 
@@ -693,16 +702,16 @@ def update_model_dict(model_dict, forecasts_all, selected_station):
     """
     Update the model_dict with the models we have results for for the selected station
     """
-    print("DEBUG: update_model_dict: selected_station:\n", selected_station)
+    #print("DEBUG: update_model_dict: selected_station:\n", selected_station)
     test = forecasts_all[forecasts_all['station_labels'] == selected_station]
-    print("tail of forecasts_all:\n", forecasts_all.tail())
-    print("columns of forecasts_all:\n", forecasts_all.columns)
-    print("DEBUG: update_model_dict: unique models for selected station:\n", test['model_long'].unique())
-    print("DEBUG: update_model_dict: test:\n", test)
+    #print("tail of forecasts_all:\n", forecasts_all.tail())
+    #print("columns of forecasts_all:\n", forecasts_all.columns)
+    #print("DEBUG: update_model_dict: unique models for selected station:\n", test['model_long'].unique())
+    #print("DEBUG: update_model_dict: test:\n", test)
 
     model_dict = forecasts_all[forecasts_all['station_labels'] == selected_station] \
         .set_index('model_long')['model_short'].to_dict()
-    print("DEBUG: update_model_dict: model_dict:\n", model_dict)
+    #print("DEBUG: update_model_dict: model_dict:\n", model_dict)
     return model_dict
 
 
