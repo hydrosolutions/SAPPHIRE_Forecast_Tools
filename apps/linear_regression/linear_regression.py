@@ -97,6 +97,7 @@ def main():
 
     # Only perform the next steps if we have to produce a forecast.
     if not forecast_date:
+        logger.error("No valid forecast date. Exiting.")
         exit()
 
     # Get forecast flags (identify which forecasts to run based on the forecast date)
@@ -128,7 +129,7 @@ def main():
         logger.info(f"Tail of data decad: {data_decad.tail()}")
 
     # Save pentadal data
-    print("DEBUG data_pentad\n", data_pentad.tail(10))
+    #print("DEBUG data_pentad\n", data_pentad.tail(10))
     fl.write_pentad_hydrograph_data(data_pentad)
     fl.write_pentad_time_series_data(data_pentad)
 
@@ -147,6 +148,7 @@ def main():
         current_date, date_end, bulletin_date = sl.define_run_dates()
         # Make sure we have a valid forecast date
         if not forecast_date:
+            print("No valid forecast date. Exiting.")
             exit()
         # Update the forecast flags
         forecast_flags = sl.ForecastFlags.from_forecast_date_get_flags(current_date)
@@ -167,8 +169,8 @@ def main():
                 code_col='code',
                 date_col='date')
             # Print the tail of discharge_pentad for code 16936
-            logger.debug(f"discharge_pentad.head(): \n{discharge_pentad.head()}")
-            logger.debug(f"discharge_pentad.tail(): \n{discharge_pentad.tail()}")
+            #logger.debug(f"discharge_pentad.head(): \n{discharge_pentad.head()}")
+            #logger.debug(f"discharge_pentad.tail(): \n{discharge_pentad.tail()}")
 
             # Print discharge_data for code == '15194' for april and may 2024
             #logger.info(f"discharge_pentad[discharge_pentad['code'] == '15194'].tail(50): \n{discharge_pentad[discharge_pentad['code'] == '15194'].tail(50)}")
@@ -195,6 +197,9 @@ def main():
             # intercept of the linear regression model are calculated for each site for
             # the current forecast.
             # We take into account saved points from the pentad forecast dashboard.
+            print("\n\n\n\n\n\n\n")
+            logger.debug("Performing linear regression ...")
+            print("Performing linear regression ...")
             linreg_pentad = fl.perform_linear_regression(
                 data_df=discharge_pentad,
                 station_col='code',

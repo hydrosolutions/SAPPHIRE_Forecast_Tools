@@ -1134,18 +1134,18 @@ def plot_daily_rainfall_data(_, daily_rainfall, station, date_picker,
 
     # Filter data for the selected station
     station_data = daily_rainfall[daily_rainfall['code'] == station_code].copy()
-    print(f"Tail of station_data\n{station_data.tail(10)}")
+    #print(f"Tail of station_data\n{station_data.tail(10)}")
 
     # Get the forecasts for the selected date
     forecasts = station_data[station_data['date'] >= date_picker].copy()
-    print(f"Tail of forecasts\n{forecasts.tail(10)}")
+    #print(f"Tail of forecasts\n{forecasts.tail(10)}")
 
     # Get current year rainfall
     station_data['year'] = pd.to_datetime(station_data['date']).dt.year
     current_year = station_data[station_data['year'] == date_picker.year].copy()
     # Sort by date
     current_year = current_year.sort_values('date')
-    print(f"Tail of current_year\n{current_year.tail(10)}")
+    #print(f"Tail of current_year\n{current_year.tail(10)}")
 
     # Accumulate rainfall over the predictor period
     linreg_predictor = processing.add_predictor_dates(linreg_predictor, station, date_picker)
@@ -1250,18 +1250,18 @@ def plot_daily_temperature_data(_, daily_rainfall, station, date_picker,
 
     # Filter data for the selected station
     station_data = daily_rainfall[daily_rainfall['code'] == station_code].copy()
-    print(f"Tail of station_data\n{station_data.tail(10)}")
+    #print(f"Tail of station_data\n{station_data.tail(10)}")
 
     # Get the forecasts for the selected date
     forecasts = station_data[station_data['date'] >= date_picker].copy()
-    print(f"Tail of forecasts\n{forecasts.tail(10)}")
+    #print(f"Tail of forecasts\n{forecasts.tail(10)}")
 
     # Get current year rainfall
     station_data['year'] = pd.to_datetime(station_data['date']).dt.year
     current_year = station_data[station_data['year'] == date_picker.year].copy()
     # Sort by date
     current_year = current_year.sort_values('date')
-    print(f"Tail of current_year\n{current_year.tail(10)}")
+    #print(f"Tail of current_year\n{current_year.tail(10)}")
 
     # Accumulate rainfall over the predictor period
     linreg_predictor = processing.add_predictor_dates(linreg_predictor, station, date_picker)
@@ -1369,18 +1369,18 @@ def plot_daily_rel_to_norm_rainfall(_, daily_rainfall, station, date_picker,
 
     # Filter data for the selected station
     station_data = daily_rainfall[daily_rainfall['code'] == station_code].copy()
-    print(f"Tail of station_data\n{station_data.tail(10)}")
+    #print(f"Tail of station_data\n{station_data.tail(10)}")
 
     # Get the forecasts for the selected date
     forecasts = station_data[station_data['date'] >= date_picker].copy()
-    print(f"Tail of forecasts\n{forecasts.tail(10)}")
+    #print(f"Tail of forecasts\n{forecasts.tail(10)}")
 
     # Get current year rainfall
     station_data['year'] = pd.to_datetime(station_data['date']).dt.year
     current_year = station_data[station_data['year'] == date_picker.year].copy()
     # Sort by date
     current_year = current_year.sort_values('date')
-    print(f"Tail of current_year\n{current_year.tail(10)}")
+    #print(f"Tail of current_year\n{current_year.tail(10)}")
 
     # Calculate norm rainfall, excluding the current year
     norm_rainfall = station_data[station_data['year'] != date_picker.year].copy()
@@ -1403,7 +1403,7 @@ def plot_daily_rel_to_norm_rainfall(_, daily_rainfall, station, date_picker,
     # Calculate relative to norm rainfall
     norm_rainfall['current_rel_to_norm'] = (norm_rainfall['current_year'] - norm_rainfall['P']) / norm_rainfall['P'] * 100
     # Print tail of current_rel_to_norm
-    print(f"Head of current_rel_to_norm\n{norm_rainfall.head(10)}")
+    #print(f"Head of current_rel_to_norm\n{norm_rainfall.head(10)}")
 
     miny = norm_rainfall['current_rel_to_norm'].min() * 0.9
     maxy = norm_rainfall['current_rel_to_norm'].max() * 1.1
@@ -1502,7 +1502,7 @@ def plot_pentad_forecast_hydrograph_data(_, hydrograph_pentad_all, forecasts_all
 
     # Filter forecasts dataframe for dates smaller than the title date
     forecasts = forecasts[forecasts['date'] <= pd.Timestamp(title_date)+dt.timedelta(days=1)]
-    print(f"Tail of forecasts\n{forecasts.tail(10)}")
+    #print(f"Tail of forecasts\n{forecasts.tail(10)}")
 
     # Calculate the forecast ranges depending on the values of range_type and range_slider
     if range_type == _('delta'):
@@ -1539,12 +1539,12 @@ def plot_pentad_forecast_hydrograph_data(_, hydrograph_pentad_all, forecasts_all
     data['date'] = pd.to_datetime(data['date'])
 
     # Set values after the title date to NaN
-    print("title_date: ", title_date)
-    print("str(current_year): ", str(current_year))
-    print(pd.Timestamp(title_date))
-    print("data.loc[data['date'] >= pd.Timestamp(title_date), str(current_year)]: ", data.loc[data['date'] >= pd.Timestamp(title_date), str(current_year)])
+    #print("title_date: ", title_date)
+    #print("str(current_year): ", str(current_year))
+    #print(pd.Timestamp(title_date))
+    #print("data.loc[data['date'] >= pd.Timestamp(title_date), str(current_year)]: ", data.loc[data['date'] >= pd.Timestamp(title_date), str(current_year)])
     data.loc[data['date'] >= pd.Timestamp(title_date), str(current_year)] = np.nan
-    print(f"Tail of data\n{data.tail(25).head(10)}")
+    #print(f"Tail of data\n{data.tail(25).head(10)}")
 
     # Define strings
     title_text = (f"{_('Hydropost')} {station}: {_('Forecast')} {_('for')} "
@@ -1968,7 +1968,7 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
     forecast_table = forecast_table.reset_index()
 
     visible_data = forecast_table[forecast_table['visible'] == True] # Initialize the visible data
-    print(f"visible_data.head(10):\n", visible_data.head(10))
+    #print(f"visible_data.head(10):\n", visible_data.head(10))
 
     # Create Tabulator for displaying forecast data
     forecast_data_table = pn.widgets.Tabulator(

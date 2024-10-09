@@ -179,19 +179,19 @@ _ = localize.load_translation(current_locale, localedir)
 # region load_data
 
 def load_data():
-    global hydrograph_day_all, hydrograph_pentad_all, linreg_predictor, forecasts_all, forecast_stats, all_stations, station_dict, station_df, station_list, linreg_datatable    # Daily runoff data
-    hydrograph_day_all = processing.read_hydrograph_day_data_for_pentad_forecasting()
-    hydrograph_pentad_all = processing.read_hydrograph_pentad_data_for_pentad_forecasting()
+    global hydrograph_day_all, hydrograph_pentad_all, linreg_predictor, forecasts_all, forecast_stats, all_stations, station_dict, station_df, station_list, linreg_datatable, stations_iehhf    # Daily runoff data
+    hydrograph_day_all = processing.read_hydrograph_day_data_for_pentad_forecasting(stations_iehhf)
+    hydrograph_pentad_all = processing.read_hydrograph_pentad_data_for_pentad_forecasting(stations_iehhf)
 
     # Pentadal forecast data
     # - linreg_predictor: for displaying predictor in predictor tab
-    linreg_predictor = processing.read_linreg_forecast_data()
+    linreg_predictor = processing.read_linreg_forecast_data(stations_iehhf)
     # For site = 16059, show the last 5 rows of the linreg_predictor DataFrame
-    #print(f"DEBUG: pentad_dashboard.py: linreg_predictor: {linreg_predictor[linreg_predictor['code'] == '16059'].tail()}")
+    print(f"DEBUG: pentad_dashboard.py: linreg_predictor: {linreg_predictor[linreg_predictor['code'] == '16059'].tail()}")
     # - forecast results from all models
-    forecasts_all = processing.read_forecast_results_file()
+    forecasts_all = processing.read_forecast_results_file(stations_iehhf)
     # Forecast statistics
-    forecast_stats = processing.read_forecast_stats_file()
+    forecast_stats = processing.read_forecast_stats_file(stations_iehhf)
 
 
 
@@ -249,6 +249,15 @@ temp = processing.read_temperature_data()
 # Create a list of Site objects from the all_stations DataFrame
 
 load_data()
+
+# Test if we have sites in stations_iehhf which are not present in forecasts_all
+# Placeholder for a message pane
+message_pane = pn.pane.Markdown("")
+if stations_iehhf is not None:
+    missing_sites = set(stations_iehhf) - set(forecasts_all['code'].unique())
+    if missing_sites:
+        missing_sites_message = f"WARNING: The following sites are missing from the forecast results: {missing_sites}. No forecasts are currently available for these sites. Please make sure your forecast models are configured to produce results for these sites, re-run hindcasts manually and re-run the forecast."
+        message_pane.object = missing_sites_message
 
 sites_list = Site.get_site_attributes_from_stations_dataframe(all_stations)
 
