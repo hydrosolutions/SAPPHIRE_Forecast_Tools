@@ -121,6 +121,7 @@ def define_run_dates():
     # setting the last successful run date to a date in the past. In this case,
     # the forecast is produced for the day after the last successful run date.
     date_start = last_successful_run_date + dt.timedelta(days=1)
+    #date_start = dt.date.today()
 
     # The last day for which a forecast is produced. This is always today.
     date_end = dt.date.today()
@@ -137,7 +138,7 @@ def define_run_dates():
     bulletin_date = date_start + dt.timedelta(days=1)
 
     logger.info("Running the forecast script for the following dates:")
-    logger.info(f"Last successful run date: {last_successful_run_date}")
+    #logger.info(f"Last successful run date: {last_successful_run_date}")
     logger.info(f"Current forecast start date for forecast iteration: {date_start}")
     logger.info(f"End date for forecast iteration: {date_end}")
     logger.info(f"Current forecast bulletin date: {bulletin_date}")
