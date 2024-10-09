@@ -425,18 +425,25 @@ def main():
         raise FileNotFoundError(f"Directory {PATH_TO_MODEL} not found.")
     logger.debug('PATH_TO_MODEL: %s' , PATH_TO_MODEL)
 
-    CODES_HINDECAST = os.getenv('ieasyhydroforecast_CODES_HINDECAST')
+    #CODES_HINDECAST = os.getenv('ieasyhydroforecast_CODES_HINDECAST')
     HRU_ML_MODELS = os.getenv('ieasyhydroforecast_HRU_CONTROL_MEMBER')
     Q_MAP_PARAM_PATH = os.getenv('ieasyhydroforecast_Q_MAP_PARAM_PATH')
 
     rivers_to_predict_pentad, rivers_to_predict_decad, hydroposts_available_for_ml_forecasting = utils_ml_forecast.get_hydroposts_for_pentadal_and_decadal_forecasts()
     # Combine rivers_to_predict_pentad and rivers_to_predict_decad to get all rivers to predict, only keep unique values
     rivers_to_predict = list(set(rivers_to_predict_pentad + rivers_to_predict_decad))
+    #select only codes which the model can predict.
+    mask_predictable = hydroposts_available_for_ml_forecasting[MODEL_TO_USE] == True
+    codes_model_can_predict = hydroposts_available_for_ml_forecasting[mask_predictable]['code'].tolist()
+    rivers_to_predict = list(set(rivers_to_predict) & set(codes_model_can_predict))
+    #convert to int 
+    rivers_to_predict = [int(code) for code in rivers_to_predict]
     logger.debug('Rivers to predict pentad: %s', rivers_to_predict_pentad)
     logger.debug('Rivers to predict decad: %s', rivers_to_predict_decad)
     logger.debug('Rivers to predict: %s', rivers_to_predict)
     logger.debug('Hydroposts available for ML forecasting: \n%s', hydroposts_available_for_ml_forecasting)
 
+    
     # --------------------------------------------------------------------
     # READ IN FORCING DATA
     # --------------------------------------------------------------------
@@ -601,11 +608,11 @@ def main():
     THRESHOLD_MISSING_DAYS= int(THRESHOLD_MISSING_DAYS)
     THRESHOLD_MISSING_DAYS_END = int(THRESHOLD_MISSING_DAYS_END)
 
-
+    """
     if CODES_HINDECAST != 'None':
         codes_hindecast = [int(code) for code in CODES_HINDECAST.split(',')]
     else:
-        codes_hindecast = codes_to_use
+        codes_hindecast = codes_to_use"""
 
 
     pred_date = pd.to_datetime(start_date)
@@ -627,8 +634,8 @@ def main():
             current_year = pred_date.year
             print(f'Year: {current_year}')
        
-        for code in codes_hindecast:
-
+        for code in rivers_to_predict:
+        
             # get the discharge data
             past_discharge = observed_discharge[observed_discharge['code'] == code]
             past_discharge = past_discharge[past_discharge['date'] <= pred_date]
