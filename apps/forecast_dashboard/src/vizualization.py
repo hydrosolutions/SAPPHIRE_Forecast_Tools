@@ -1960,15 +1960,40 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
         )
         # Fill any missing 'visible' values with True
         forecast_table['visible'] = forecast_table['visible'].fillna(True)
+        # Store the initial visible data points
+        initial_visible_data = forecast_table[forecast_table['visible'] == True].copy()
+        initial_visible_data = initial_visible_data.dropna(subset=['predictor', 'discharge_avg'])
+        # Load the initial regression parameters if they exist
+        if 'slope' in saved_forecast_table.columns and 'intercept' in saved_forecast_table.columns and 'rsquared' in saved_forecast_table.columns:
+            initial_slope = saved_forecast_table['slope'].iloc[0]
+            initial_intercept = saved_forecast_table['intercept'].iloc[0]
+            initial_rsquared = saved_forecast_table['rsquared'].iloc[0]
+        else:
+            # Compute initial regression parameters based on saved visible data
+            if len(initial_visible_data) > 1:
+                initial_slope, initial_intercept, r_value, p_value, std_err = stats.linregress(
+                    initial_visible_data['predictor'], initial_visible_data['discharge_avg']
+                )
+                initial_rsquared = r_value ** 2
     else:
         # Initialize 'visible' column as before
         forecast_table['visible'] = (~forecast_table['predictor'].isna()) & (~forecast_table['discharge_avg'].isna())
+        # Store the initial visible data points
+        initial_visible_data = forecast_table[forecast_table['visible'] == True].copy()
+        initial_visible_data = initial_visible_data.dropna(subset=['predictor', 'discharge_avg'])
+        # Compute initial regression parameters based on all data
+        if len(initial_visible_data) > 1:
+            initial_slope, initial_intercept, r_value, p_value, std_err = stats.linregress(
+                initial_visible_data['predictor'], initial_visible_data['discharge_avg']
+            )
+            initial_rsquared = r_value ** 2
 
     forecast_table = forecast_table.drop(columns=['index', 'level_0'], errors='ignore')
     forecast_table = forecast_table.reset_index()
 
     visible_data = forecast_table[forecast_table['visible'] == True] # Initialize the visible data
-    #print(f"visible_data.head(10):\n", visible_data.head(10))
+    print(f"visible_data.head(10):\n", visible_data.head(10))
+    visible_data = visible_data.dropna(subset=['predictor', 'discharge_avg'])
 
     # Create Tabulator for displaying forecast data
     forecast_data_table = pn.widgets.Tabulator(
@@ -1992,18 +2017,10 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
     # Create the selection1d stream to capture point selections on the plot
     selection_stream = streams.Selection1D(source=None)
 
-    previous_visible_data = None
-
     # Update plot based on visibility
     def update_plot(event=None):
-        global visible_data  # Use global variable to ensure it's accessible in other functions
-        nonlocal previous_visible_data
-
-        # Store the previous visible data before updating
-        if visible_data is not None:
-            previous_visible_data = visible_data.copy()
-        else:
-            previous_visible_data = None
+        nonlocal initial_slope, initial_intercept, initial_rsquared, initial_visible_data
+        global visible_data
 
         # Ensure 'visible' is of boolean type
         forecast_table['visible'] = forecast_table['visible'].astype(bool)
@@ -2035,80 +2052,62 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
             x_min, x_max = visible_data['predictor'].min(), visible_data['predictor'].max()
             y_min, y_max = visible_data['discharge_avg'].min(), visible_data['discharge_avg'].max()
 
-            # Add a 20% margin to the ranges
-            x_margin = (x_max - x_min) * 0.2 if x_max != x_min else 1
-            y_margin = (y_max - y_min) * 0.2 if y_max != y_min else 1
+            # Add a 40% margin to the ranges
+            x_margin = (x_max - x_min) * 0.4 
+            y_margin = (y_max - y_min) * 0.4 
 
             # Set dynamic x and y ranges
             x_range = (x_min - x_margin, x_max + x_margin)
             y_range = (y_min - y_margin, y_max + y_margin)
 
-            # Create the scatter plot
-            scatter = hv.Scatter(
-                visible_data,
-                kdims='predictor',
-                vdims=['discharge_avg', 'year']
-            ).opts(
-                color='blue',
-                size=5,
-                tools=[hover, 'tap'],
-                xlabel='Predictor',
-                ylabel='Discharge (m³/s)',
-                title=title_text,
-                xlim=x_range,
-                ylim=y_range
-            )
+            # Create the dynamic scatter plot (updates during interaction)
+            scatter = hv.Scatter(visible_data, kdims='predictor', vdims=['discharge_avg', 'year']) \
+                .opts(color='blue', size=5, tools=[hover, 'tap'], xlim=x_range, ylim=y_range)
 
             if len(visible_data) > 1:
-                # Compute new regression parameters
+                # Compute dynamic regression parameters
                 new_slope, new_intercept, new_r_value, new_p_value, new_std_err = stats.linregress(
                     visible_data['predictor'], visible_data['discharge_avg'])
-                x = np.linspace(visible_data['predictor'].min(), visible_data['predictor'].max(), 100)
-                new_y = new_slope * x + new_intercept
+                new_rsquared = new_r_value ** 2
 
-                # Check if previous_visible_data exists and is different
-                if previous_visible_data is not None and not visible_data.equals(previous_visible_data):
-                    # Compute previous regression parameters
-                    prev_slope, prev_intercept, prev_r_value, _, _ = stats.linregress(
-                        previous_visible_data['predictor'], previous_visible_data['discharge_avg'])
-                    prev_y = prev_slope * x + prev_intercept
+                # Prepare x values for regression lines
+                x = np.linspace(x_min, x_max, 100)
 
-                    # Create regression lines
-                    prev_line = hv.Curve((x, prev_y)).opts(color='red', line_width=2, line_dash='dashed', line_alpha=0.7)
-                    new_line = hv.Curve((x, new_y)).opts(color='red', line_width=2)
-
-                    # Annotations
-                    equation_prev = f"y = {prev_slope:.2f}x + {prev_intercept:.2f}"
-                    r2_prev = f"R² = {prev_r_value**2:.2f}"
-                    equation_new = f"new y = {new_slope:.2f}x + {new_intercept:.2f}"
-                    r2_new = f"new R² = {new_r_value**2:.2f}"
-                    text = hv.Text(
-                        x=visible_data["predictor"].min(),
-                        y=visible_data["discharge_avg"].max(),
-                        text=f"{equation_prev}\n{r2_prev}\n{equation_new}\n{r2_new}"
-                    ).opts(color="black", text_font_size="10pt", text_align="left",)
-
-                    line = prev_line * new_line
+                # Compute y values for regression lines
+                if initial_slope is not None and initial_intercept is not None:
+                    y_initial = initial_slope * x + initial_intercept
+                    line_initial = hv.Curve((x, y_initial)).opts(color='red', line_width=2)
+                    equation_initial = f"y = {initial_slope:.2f}x + {initial_intercept:.2f}"
+                    r2_initial = f"R² = {initial_rsquared:.2f}"
                 else:
-                    # Only plot the new regression line
-                    line = hv.Curve((x, new_y)).opts(color='red', line_width=2)
-                    equation_new = f"y = {new_slope:.2f}x + {new_intercept:.2f}"
-                    r2_new = f"R² = {new_r_value**2:.2f}"
-                    text = hv.Text(
-                        x=visible_data["predictor"].min(),
-                        y=visible_data["discharge_avg"].max(),
-                        text=f"{equation_new}\n{r2_new}"
-                    ).opts(color="black", text_font_size="10pt", text_align="left",)
+                    line_initial = hv.Curve([])  # Empty curve
+                    equation_initial = ""
+                    r2_initial = ""
+
+                y_new = new_slope * x + new_intercept
+                line_new = hv.Curve((x, y_new)).opts(color='red', line_width=2,
+                                                    line_dash='dashed', line_alpha=0.7)
+                equation_new = f"new y = {new_slope:.2f}x + {new_intercept:.2f}"
+                r2_new = f"new R² = {new_rsquared:.2f}"
+
+                # Prepare the text annotation
+                text_content = ""
+                if equation_initial:
+                    text_content += f"{equation_initial}\n{r2_initial}\n"
+                text_content += f"{equation_new}\n{r2_new}"
+
+                # Create the hook function with the text content
+                hook = make_add_label_hook(text_content)
 
                 # Overlay the scatter plot and the regression line(s)
-                plot = scatter * line * text
+                plot = scatter * line_initial * line_new
                 plot.opts(
                     title=title_text,
                     show_grid=True,
                     show_legend=True,
                     width=1000,
                     height=450,
-                    hooks=[remove_bokeh_logo]
+                    hooks=[remove_bokeh_logo, hook]
                 )
             else:
                 plot = scatter.opts(
@@ -2116,9 +2115,6 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
                     height=450,
                     hooks=[remove_bokeh_logo]
                 )
-
-        # Update previous_visible_data
-        previous_visible_data = visible_data.copy()
 
         # Attach the plot to the selection stream
         selection_stream.source = scatter
@@ -2137,7 +2133,7 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
         selected_indices = selection_stream.index
 
         # Use the original index from the visible_data to map to the correct row in the table
-        selected_rows = visible_data.iloc[selected_indices].index.tolist()
+        selected_rows = visible_data.iloc[selected_indices]['index'].tolist()
 
         # Select the corresponding rows in the Tabulator
         forecast_data_table.selection = selected_rows
@@ -2312,6 +2308,18 @@ def update_forecast_data(_, linreg_predictor, station, pentad_selector):
         return select_and_plot_data(_, linreg_predictor, station, pentad_selector)
 
     return callback
+
+def make_add_label_hook(text_content):
+    def add_label(plot, element):
+        from bokeh.models import Label
+        label = Label(
+            x=50, y=300,  # Adjust these values to position the text
+            x_units='screen', y_units='screen',
+            text=text_content,
+            text_font_size="10pt",
+        )
+        plot.state.add_layout(label)
+    return add_label
 
 def test_draw_forecast_raw_data(_, selected_data):
 
