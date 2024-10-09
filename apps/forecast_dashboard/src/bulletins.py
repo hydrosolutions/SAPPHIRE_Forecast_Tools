@@ -18,13 +18,13 @@ from .reports import SapphireReport
 
 
 # Function to write data to Excel
-def write_to_excel(sites_list, header_df, env_file_path, indicator,
+def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
                    tag_settings=None):
 
     # Show the loading spinner
-    indicator.value = True
+    #indicator.value = True
 
-    print('DEBUG: Multithreading write_to_excel: Initializing report generator ...')
+    print('DEBUG: write_to_excel: Initializing report generator ...')
 
     # Define tag & report settings
     tag_settings = TagSettings() if tag_settings is None else tag_settings
@@ -87,7 +87,7 @@ def write_to_excel(sites_list, header_df, env_file_path, indicator,
 
     model_tag = Tag(
         name='MODEL',
-        get_value_fn=lambda obj, **kwargs: obj.model,
+        get_value_fn=lambda obj, **kwargs: obj.forecast_model,
         tag_settings=tag_settings,
         data=True)
 
@@ -97,22 +97,27 @@ def write_to_excel(sites_list, header_df, env_file_path, indicator,
         tag_settings=tag_settings,
         data=True)
 
+    tag_list = [pentad_tag, forecast_tag, header_tag, river_ru_tag, punkt_ru_tag,
+                model_tag, linreg_predictor_tag,
+                month_string_nom_ru_tag, month_string_gen_ru_tag, year_tag,
+                day_start_pentad_tag, day_end_pentad_tag]
+
     report_generator = DefaultReportGenerator(
-                tags=[pentad_tag, forecast_tag, header_tag, river_ru_tag,
-                      month_string_nom_ru_tag, month_string_gen_ru_tag, year_tag,
-                      day_start_pentad_tag, day_end_pentad_tag],
+                tags=tag_list,
                 template='test_template.xlsx',
                 reports_directory_path=report_settings.report_output_path,
                 templates_directory_path=report_settings.templates_directory_path,
                 tag_settings=tag_settings)
 
     report_generator.validate()
-    report_generator.generate_report(list_objects=sites_list)
+    #report_generator.generate_report(list_objects=sites_list)
+    report_generator.generate_report(list_objects=bulletin_sites)
+    print('DEBUG: write_to_excel: Report generated.')
     # Note all objects that are passed to generate_report through list_obsjects
     # should be 'data' tags. 'data' tags are listed below a 'header' tag.
 
     # Hide the loading spinner
-    indicator.value = False
+    #indicator.value = False
 
     #report = SapphireReport(name="Test report", env_file_path=env_file_path)
     #print('DEBUG: Multithreading write_to_excel: Writing bulletin ...')

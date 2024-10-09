@@ -88,7 +88,7 @@ def define_tabs(_,
                 forecast_data_and_plot,
                 forecast_summary_table, pentad_forecast_plot, effectiveness_plot,
                 bulletin_table,
-                write_bulletin_button, indicator, disclaimer,
+                write_bulletin_button, disclaimer,
                 station_card, forecast_card, add_to_bulletin_button, basin_card, pentad_card, add_to_bulletin_popup):
 
     # Organize the panes in tabs
@@ -207,7 +207,7 @@ def define_tabs(_,
                         bulletin_table,
                         pn.Row(
                             write_bulletin_button,
-                            indicator),
+                            ),
                         title='Forecast bulletin',
                     ),
              )

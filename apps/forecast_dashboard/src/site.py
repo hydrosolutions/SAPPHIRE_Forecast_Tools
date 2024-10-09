@@ -85,6 +85,25 @@ class SapphireSite:
             print(f'Error creating Site objects from DataFrame: {e}')
             return []
 
+    def get_forecast_attributes_for_site(self, _, df: pd.DataFrame,):
+        """
+        Fills the Site object with forecast attributes from a DataFrame.
+
+        Returns:
+            Site: A SapphireSite object.
+        """
+        print(f"\n\nget_forecast_attributes_for_site: tabulator: {df}")
+        self.forecast_pentad = df['Forecasted discharge']
+        self.forecast_lower_bound = df['Forecast lower bound']
+        self.forecast_upper_bound = df['Forecast upper bound']
+        self.forecast_delta = df['δ']
+        self.forecast_sdivsigma = df['s/σ']
+        self.forecast_mae = df['MAE']
+        self.forecast_accuracy = df['Accuracy']
+        #self.forecast_nse = df['NSE']
+        self.forecast_model = df['Model']
+
+
     def get_site_attributes_from_selected_forecast(cls,
             _,
             sites: list,

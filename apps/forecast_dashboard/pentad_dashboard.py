@@ -393,7 +393,7 @@ write_bulletin_button = pn.widgets.Button(
     name=_("Write bulletin"),
     button_type='primary',
     description=_("Write bulletin to Excel"))
-indicator = pn.indicators.LoadingSpinner(value=False, size=25)
+#indicator = pn.indicators.LoadingSpinner(value=False, size=25)
 
 # Create a language selection widget
 language_select = pn.widgets.Select(
@@ -495,10 +495,10 @@ add_to_bulletin_button = pn.widgets.Button(name=_("Add to bulletin"), button_typ
 # region update_functions
 
 # Function to update the spinner
-def update_indicator(event):
-    if not event:
-        return
-    indicator.value = not indicator.value
+#def update_indicator(event):
+#    if not event:
+#        return
+#    indicator.value = not indicator.value
 
 # Update the model select widget based on the selected station
 def update_model_select(station_value):
@@ -519,6 +519,7 @@ add_to_bulletin_popup = pn.pane.Alert("Added to bulletin", alert_type="success",
 def add_current_selection_to_bulletin(event=None):
     selected_indices = forecast_tabulator.selection
     forecast_df = forecast_tabulator.value
+    print("\n\n\nDEBUG: pentad_dashboard.py: forecast_df:\n", forecast_df)
 
     if forecast_df is None or forecast_df.empty:
         print("Forecast summary table is empty.")
@@ -557,6 +558,7 @@ def add_current_selection_to_bulletin(event=None):
         return
 
     # Overwrite the forecast instead of appending
+    # Note: This will add the forecast table to each site object.
     selected_site.forecasts = final_forecast_table
 
     # Check if the site is already in bulletin_sites
@@ -570,6 +572,9 @@ def add_current_selection_to_bulletin(event=None):
         existing_site.forecasts = selected_site.forecasts
         print(f"Overwritten forecast for station: {selected_station}")
         logger.info(f"Overwritten forecast for site in bulletin: {selected_station}")
+
+    # Add forecast attributes to the site object
+    selected_site.get_forecast_attributes_for_site(_, forecast_df)
 
     # Update the bulletin_table to reflect changes
     update_bulletin_table(None)
@@ -798,12 +803,12 @@ allowable_range_selection.param.watch(update_forecast_tabulator, 'value')
 manual_range.param.watch(update_forecast_tabulator, 'value')
 
 # Bind the update function to the button
-pn.bind(update_indicator, write_bulletin_button, watch=True)
+#pn.bind(update_indicator, write_bulletin_button, watch=True)
 
 # Attach the function to the button click event
 # Multi-threading does not seem to work
 #write_bulletin_button.on_click(lambda event: thread.write_forecast_bulletin_in_background(bulletin_table, env_file_path, status))
-write_bulletin_button.on_click(lambda event: write_to_excel(sites_list, bulletin_sites, bulletin_header_info, env_file_path, indicator))
+write_bulletin_button.on_click(lambda event: write_to_excel(sites_list, bulletin_sites, bulletin_header_info, env_file_path))
 
 # Create an icon using HTML for the select language widget
 language_icon_html = pn.pane.HTML(
@@ -837,7 +842,7 @@ def tabs_change_language(language):
             #daily_rel_to_norm_runoff, daily_rel_to_norm_rainfall,
             forecast_data_and_plot,
             forecast_summary_table, pentad_forecast_plot, forecast_skill_plot,
-            bulletin_table, write_bulletin_button, indicator, disclaimer,
+            bulletin_table, write_bulletin_button, disclaimer,
             station_card, forecast_card, add_to_bulletin_button, basin_card, pentad_card, add_to_bulletin_popup)
     except Exception as e:
         print(f"Error in tabs_change_language: {e}")
