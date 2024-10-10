@@ -1125,33 +1125,39 @@ def perform_linear_regression(
         #    logger.debug("DEBUG: forecasting:perform_linear_regression: discharge_sum: \n%s", discharge_sum)
         #    logger.debug("DEBUG: forecasting:perform_linear_regression: discharge_avg: \n%s", discharge_avg)
 
-        # Perform the linear regression
-        model = LinearRegression().fit(discharge_sum, discharge_avg)
-        if int(station) == 15194:
-            logger.debug("model output: %s", model)
-            logger.debug("model.coef_: %s", model.coef_)
-            logger.debug("model.intercept_: %s", model.intercept_)
+        # If we have more than 1 data point, perform the linear regression
+        if len(discharge_sum) < 2 or len(discharge_avg) < 2:
+            logger.info(f"Skipping linear regression for station {station} in pentad {forecast_pentad} due to insufficient data points.")
+            slope = np.nan
+            intercept = np.nan
+            q_mean = np.nan
+            q_std_sigma = np.nan
+            delta = np.nan
+            rsquared = np.nan
 
-        # Calculate discharge statistics
-        q_mean = np.mean(discharge_avg)
-        q_std_sigma = np.std(discharge_avg)
-        delta = 0.674 * q_std_sigma
-        rsquared = model.score(discharge_sum, discharge_avg)
+        else:
+            # Perform the linear regression
+            model = LinearRegression().fit(discharge_sum, discharge_avg)
+            if int(station) == 15194:
+                logger.debug("model output: %s", model)
+                logger.debug("model.coef_: %s", model.coef_)
+                logger.debug("model.intercept_: %s", model.intercept_)
 
-        if int(station) == 15194:
-            logger.debug(f'Station: {station}, pentad: {forecast_pentad}, q_mean: {q_mean}, q_std_sigma: {q_std_sigma}, delta: {delta}')
+            # Calculate discharge statistics
+            q_mean = np.mean(discharge_avg)
+            q_std_sigma = np.std(discharge_avg)
+            delta = 0.674 * q_std_sigma
+            rsquared = model.score(discharge_sum, discharge_avg)
 
-        # Get the slope and intercept
-        slope = model.coef_[0][0]
-        intercept = model.intercept_[0]
+            if int(station) == 15194:
+                logger.debug(f'Station: {station}, pentad: {forecast_pentad}, q_mean: {q_mean}, q_std_sigma: {q_std_sigma}, delta: {delta}')
 
-        # Print the slope and intercept
-        logger.debug(f'Station: {station}, pentad: {forecast_pentad}, slope: {slope}, intercept: {intercept}')
+            # Get the slope and intercept
+            slope = model.coef_[0][0]
+            intercept = model.intercept_[0]
 
-        # # Create a scatter plot with the regression line
-        # fig = px.scatter(station_data, x=predictor_col, y=discharge_avg_col, color=station_col)
-        # fig.add_trace(px.line(x=discharge_sum.flatten(), y=model.predict(discharge_sum).flatten()).data[0])
-        # fig.show()
+            # Print the slope and intercept
+            logger.debug(f'Station: {station}, pentad: {forecast_pentad}, slope: {slope}, intercept: {intercept}')
 
         # Store the slope and intercept in the data_df
         data_dfp.loc[(data_dfp[station_col] == station), 'slope'] = slope
