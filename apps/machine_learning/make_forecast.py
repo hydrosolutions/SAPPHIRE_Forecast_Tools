@@ -197,8 +197,6 @@ def write_decad_forecast(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, forecast_decad):
     forecast_decad.to_csv(os.path.join(OUTPUT_PATH_DISCHARGE, f'decad_{MODEL_TO_USE}_forecast.csv'), index=False)
 
 
-
-
 # --------------------------------------------------------------------
 # MAIN FUNCTION
 # --------------------------------------------------------------------
