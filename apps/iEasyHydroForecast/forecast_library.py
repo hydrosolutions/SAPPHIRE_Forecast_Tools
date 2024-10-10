@@ -1827,8 +1827,8 @@ def write_linreg_pentad_forecast_data(data: pd.DataFrame):
 
     logger.debug(f'last_line before edits: \n{last_line}')
 
-    # Get the year of the majority of the last_line dates
-    year = last_line['date'].dt.year.mode()[0]
+    # Get the max year of the last_line dates
+    year = last_line['date'].dt.year.max()
     logger.debug(f'mode of year: {year}')
     print(f"\n\nmode of year: {year}\n\n")
 
@@ -1908,8 +1908,8 @@ def write_linreg_decad_forecast_data(data: pd.DataFrame):
     # Extract the last line of the DataFrame
     last_line = data.groupby('code').tail(1)
 
-    # Get the year of the majority of the last_line dates
-    year = last_line['date'].dt.year.mode()[0]
+    # Get the year of max of the last_line dates
+    year = last_line['date'].dt.year.max()
     logger.debug(f'mode of year: {year}')
 
     # If the year of one date of last_year is not equal to the majority year,
