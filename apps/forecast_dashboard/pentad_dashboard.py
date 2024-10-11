@@ -342,21 +342,27 @@ station = pn.widgets.Select(
 # Update the model_dict with the models we have results for for the selected
 # station
 print("DEBUG: pentad_dashboard.py: station.value: ", station.value)
-model_dict = processing.update_model_dict(model_dict_all, forecasts_all, station.value)
+model_dict = processing.update_model_dict(model_dict_all, forecasts_all, station.value, pentad_selector.value)
 #print(f"DEBUG: pentad_dashboard.py: model_dict: {model_dict}")
 
-
+@pn.depends(station, pentad_selector, watch=True)
+def get_best_models_for_station_and_pentad(station_value, pentad_value):
+    return processing.get_best_models_for_station_and_pentad(forecasts_all, station_value, pentad_value)
+current_model_pre_selection = get_best_models_for_station_and_pentad(station.value, pentad_selector.value)
 # Widget for forecast model selection, only visible in forecast tab
 # a given hydropost/station.
 model_checkbox = pn.widgets.CheckBoxGroup(
     name=_("Select forecast model:"),
     options=model_dict,
-    value=[model_dict['Linear regression (LR)']],
+    #value=[model_dict['Linear regression (LR)']],
+    value=[model_dict[model] for model in current_model_pre_selection],
     #width=200,  # 280
     margin=(0, 0, 0, 0),
     sizing_mode='stretch_width',
     css_classes=['checkbox-label']
 )
+print(f"\n\n\nmodel_checkbox: {model_checkbox.value}\n\n\n")
+
 allowable_range_selection = pn.widgets.Select(
     name=_("Select forecast range for display:"),
     options=[_("delta"), _("Manual range, select value below"), _("max[delta, %]")],
@@ -501,17 +507,19 @@ def update_indicator(event):
     indicator.value = not indicator.value
 
 # Update the model select widget based on the selected station
-def update_model_select(station_value):
+@pn.depends(station, pentad_selector, watch=True)
+def update_model_select(station_value, selected_pentad):
     # Update the model_dict with the models we have results for for the selected
     # station
     print(f"DEBUG: pentad_dashboard.py: update_model_select: station_value: {station_value}")
-    model_dict = processing.update_model_dict(model_dict_all, forecasts_all, station_value)
+    model_dict = processing.update_model_dict(model_dict_all, forecasts_all, station_value, selected_pentad)
     model_checkbox.options = model_dict
     return model_dict
 
 
 # Bind the update function to the station selector
-pn.bind(update_model_select, station, watch=True)
+#pn.bind(update_model_select, station, watch=True)
+#pn.bind(update_model_select, pentad_selector, watch=True)
 
 # Create the pop-up notification pane (initially hidden)
 add_to_bulletin_popup = pn.pane.Alert("Added to bulletin", alert_type="success", visible=False)

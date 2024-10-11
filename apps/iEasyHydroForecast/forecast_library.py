@@ -6,6 +6,7 @@ import datetime as dt
 import math
 import logging
 import string
+import re
 
 from ieasyhydro_sdk.filters import BasicDataValueFilters
 
@@ -1463,37 +1464,97 @@ def calculate_skill_metrics_pentad(observed: pd.DataFrame, simulated: pd.DataFra
     if not all(column in simulated.columns for column in ['code', 'date', 'pentad_in_year', 'forecasted_discharge', 'model_long', 'model_short']):
         raise ValueError(f'Simulated DataFrame is missing one or more required columns: {["code", "date", "pentad_in_year", "forecasted_discharge", "model_long", "model_short"]}')
 
-    logger.debug(f"DEBUG: simulated.columns\n{simulated.columns}")
-    logger.debug(f"DEBUG: simulated.head()\n{simulated.head(5)}")
-    logger.debug(f"DEBUG: simulated.tail()\n{simulated.tail(5)}")
-    logger.info(f"DEBUG: observed.columns\n{observed.columns}")
-    logger.debug(f"DEBUG: observed.head()\n{observed.head(5)}")
-    logger.debug(f"DEBUG: observed.tail()\n{observed.tail(5)}")
+    # Local functions
+    def test_for_tuples(df):
+        # Identify tuples in each cell
+        is_tuple = df.apply(lambda col: col.map(lambda x: isinstance(x, tuple)))
+        # Check if there are any True values in is_tuple
+        contains_tuples = is_tuple.any(axis=1).any()
+        # Test if there are any tuples in the DataFrame
+        if contains_tuples:
+            logger.debug("There are tuples after the merge.")
+
+            # Step 2: Filter rows that contain any tuples
+            rows_with_tuples = df[is_tuple.any(axis=1)]
+
+            # Print rows with tuples
+            logger.debug(rows_with_tuples)
+        else:
+            logger.debug("No tuples found after the merge.")
+
+    def extract_first_parentheses_content(string_list):
+        pattern = r'\((.*?)\)'
+
+        result = []
+        for string in string_list:
+            match = re.search(pattern, string)
+            if match:
+                result.append(match.group(1))
+            else:
+                result.append('')  # or None, or any other placeholder
+
+        return result
+
+    def model_long_agg(x):
+        # Get unique models
+        model_list = x.unique()
+        # Only keep strings within brackets (), discard the rest of the string and the brackets
+        short_model_list = extract_first_parentheses_content(model_list)
+        # Concatenat the model names
+        unique_models = ', '.join(sorted(short_model_list))
+        return f'Ensemble Mean with {unique_models} (EM)'
+
+    def model_short_agg(x):
+        return f'EM'
+
+    def filter_for_highly_skilled_forecasts(skill_stats):
+        # Get thresholds from environment
+        threshold_sdivsigma = os.getenv('ieasyhydroforecast_efficiency_threshold', 0.6)
+        threshold_accuracy = os.getenv('ieasyhydroforecast_accuracy_threshold', 0.8)
+        threshold_nse = os.getenv('ieasyhydroforecast_nse_threshold', 0.8)
+
+        # Test if threshold_sdivsigma is equal to False
+        if threshold_sdivsigma != 'False':
+            # Filter for rows where sdivsigma is smaller than the threshold
+            skill_stats_ensemble = skill_stats[skill_stats['sdivsigma'] < float(threshold_sdivsigma)].copy()
+        else:
+            skill_stats_ensemble = skill_stats.copy()
+
+        if threshold_accuracy != 'False':
+            # Filter for rows where accuracy is larger than the threshold
+            skill_stats_ensemble = skill_stats_ensemble[skill_stats_ensemble['accuracy'] > float(threshold_accuracy)].copy()
+        else:
+            skill_stats_ensemble = skill_stats_ensemble.copy()
+
+        if threshold_nse != 'False':
+            # Filter for rows where nse is larger than the threshold
+            skill_stats_ensemble = skill_stats_ensemble[skill_stats_ensemble['nse'] > float(threshold_nse)].copy()
+        else:
+            skill_stats_ensemble = skill_stats_ensemble.copy()
+        #print("DEBUG: skill_stats_ensemble\n", skill_stats_ensemble.head(20))
+
+        return skill_stats_ensemble
+
+    # We calculate skill metrics only on forecasts after 2010
+    # Filter observed and simulated DataFrames for dates after 2010
+    observed = observed[observed['date'].dt.year >= 2010]
+    simulated = simulated[simulated['date'].dt.year >= 2010]
+
+    #logger.debug(f"DEBUG: simulated.columns\n{simulated.columns}")
+    #logger.debug(f"DEBUG: simulated.head()\n{simulated.head(5)}")
+    #logger.debug(f"DEBUG: simulated.tail()\n{simulated.tail(5)}")
+    #logger.info(f"DEBUG: observed.columns\n{observed.columns}")
+    #logger.debug(f"DEBUG: observed.head()\n{observed.head(5)}")
+    #logger.debug(f"DEBUG: observed.tail()\n{observed.tail(5)}")
     # Merge the observed and simulated DataFrames
     skill_metrics_df = pd.merge(
         simulated,
         observed[['code', 'date', 'discharge_avg', 'delta']],
         on=['code', 'date'])
-    logger.debug(f"DEBUG: skill_metrics_df.columns\n{skill_metrics_df.columns}")
-    logger.debug(f"DEBUG: skill_metrics_df.head()\n{skill_metrics_df.head(5)}")
-    logger.debug(f"DEBUG: skill_metrics_df.tail()\n{skill_metrics_df.tail(5)}")
-
-    # Identify tuples in each cell
-    is_tuple = skill_metrics_df.apply(lambda col: col.map(lambda x: isinstance(x, tuple)))
-    #logger.info("DEBUG: is_tuple\n", is_tuple)
-    # Check if there are any True values in is_tuple
-    contains_tuples = is_tuple.any(axis=1).any()
-    # Test if there are any tuples in the DataFrame
-    if contains_tuples:
-        logger.debug("There are tuples after the merge.")
-
-        # Step 2: Filter rows that contain any tuples
-        rows_with_tuples = skill_metrics_df[is_tuple.any(axis=1)]
-
-        # Print rows with tuples
-        logger.debug(rows_with_tuples)
-    else:
-        logger.debug("No tuples found after the merge.")
+    #logger.debug(f"DEBUG: skill_metrics_df.columns\n{skill_metrics_df.columns}")
+    #logger.debug(f"DEBUG: skill_metrics_df.head()\n{skill_metrics_df.head(5)}")
+    #logger.debug(f"DEBUG: skill_metrics_df.tail()\n{skill_metrics_df.tail(5)}")
+    test_for_tuples(skill_metrics_df)
 
     # Calculate the skill metrics for each group based on the 'pentad_in_year', 'code' and 'model' columns
     skill_stats = skill_metrics_df. \
@@ -1503,25 +1564,10 @@ def calculate_skill_metrics_pentad(observed: pd.DataFrame, simulated: pd.DataFra
             observed_col='discharge_avg',
             simulated_col='forecasted_discharge'). \
         reset_index()
-    # Identify tuples in each cell
-    is_tuple = skill_stats.apply(lambda col: col.map(lambda x: isinstance(x, tuple)))
-    # Check if there are any True values in is_tuple
-    contains_tuples = is_tuple.any(axis=1).any()
-    # Test if there are any tuples in the DataFrame
-    if contains_tuples:
-        logger.debug("There are tuples in skill_stats.")
-
-        # Step 2: Filter rows that contain any tuples
-        rows_with_tuples = skill_stats[is_tuple.any(axis=1)]
-
-        # logger.info rows with tuples
-        logger.debug(rows_with_tuples)
-    else:
-        logger.debug("No tuples found in skill_stats.")
-
+    test_for_tuples(skill_stats)
     # Print dimensions of skill_metrics_df and skill_stats
-    logger.debug(f"\n\nDEBUG: skill_metrics_df.shape: {skill_metrics_df.shape}")
-    logger.debug(f"DEBUG: skill_stats.shape: {skill_stats.shape}\n\n")
+    #logger.debug(f"\n\nDEBUG: skill_metrics_df.shape: {skill_metrics_df.shape}")
+    #logger.debug(f"DEBUG: skill_stats.shape: {skill_stats.shape}\n\n")
 
     mae_stats = skill_metrics_df. \
         groupby(['pentad_in_year', 'code', 'model_long', 'model_short']). \
@@ -1530,21 +1576,7 @@ def calculate_skill_metrics_pentad(observed: pd.DataFrame, simulated: pd.DataFra
             observed_col='discharge_avg',
             simulated_col='forecasted_discharge').\
         reset_index()
-    # Identify tuples in each cell
-    is_tuple = mae_stats.apply(lambda col: col.map(lambda x: isinstance(x, tuple)))
-    # Check if there are any True values in is_tuple
-    contains_tuples = is_tuple.any(axis=1).any()
-    # Test if there are any tuples in the DataFrame
-    if contains_tuples:
-        logger.debug("There are tuples in mae_stats.")
-
-        # Step 2: Filter rows that contain any tuples
-        rows_with_tuples = mae_stats[is_tuple.any(axis=1)]
-
-        # Print rows with tuples
-        logger.debug(rows_with_tuples)
-    else:
-        logger.debug("No tuples found in mae_stats.")
+    test_for_tuples(mae_stats)
 
     accuracy_stats = skill_metrics_df. \
         groupby(['pentad_in_year', 'code', 'model_long', 'model_short']). \
@@ -1554,66 +1586,113 @@ def calculate_skill_metrics_pentad(observed: pd.DataFrame, simulated: pd.DataFra
             simulated_col='forecasted_discharge',
             delta_col='delta').\
         reset_index()
-    # Identify tuples in each cell
-    is_tuple = accuracy_stats.apply(lambda col: col.map(lambda x: isinstance(x, tuple)))
-    # Check if there are any True values in is_tuple
-    contains_tuples = is_tuple.any(axis=1).any()
-    # Test if there are any tuples in the DataFrame
-    if contains_tuples:
-        logger.debug("There are tuples in accuracy_stats.")
-
-        # Step 2: Filter rows that contain any tuples
-        rows_with_tuples = accuracy_stats[is_tuple.any(axis=1)]
-
-        # Print rows with tuples
-        logger.debug(rows_with_tuples)
-    else:
-        logger.debug("No tuples found in accuracy_stats.")
+    test_for_tuples(accuracy_stats)
 
     # Merge the skill metrics with the accuracy stats
     #print("DEBUG: skill_stats.columns\n", skill_stats.columns)
     #print("DEBUG: accuracy_stats.columns\n", accuracy_stats.columns)
     skill_stats = pd.merge(skill_stats, accuracy_stats, on=['pentad_in_year', 'code', 'model_long', 'model_short'])
-
-    # Identify tuples in each cell
-    is_tuple = skill_stats.apply(lambda col: col.map(lambda x: isinstance(x, tuple)))
-    # Check if there are any True values in is_tuple
-    contains_tuples = is_tuple.any(axis=1).any()
-    # Test if there are any tuples in the DataFrame
-    if contains_tuples:
-        logger.debug("There are tuples after the merge.")
-
-        # Step 2: Filter rows that contain any tuples
-        rows_with_tuples = skill_stats[is_tuple.any(axis=1)]
-
-        # Print rows with tuples
-        logger.debug(rows_with_tuples)
-    else:
-        logger.debug("No tuples found after the merge.")
+    test_for_tuples(skill_stats)
 
     #print("DEBUG: skill_stats.columns\n", skill_stats.columns)
     #print("DEBUG: mae_stats.columns\n", mae_stats.columns)
     skill_stats = pd.merge(skill_stats, mae_stats, on=['pentad_in_year', 'code', 'model_long', 'model_short'])
+    test_for_tuples(skill_stats)
     #print("DEBUG: skill_stats.columns\n", skill_stats.columns)
 
-    # Identify tuples in each cell
-    is_tuple = skill_stats.apply(lambda col: col.map(lambda x: isinstance(x, tuple)))
-    # Check if there are any True values in is_tuple
-    contains_tuples = is_tuple.any(axis=1).any()
-    # Test if there are any tuples in the DataFrame
-    if contains_tuples:
-        logger.debug("There are tuples after the merge.")
+    skill_stats_ensemble = filter_for_highly_skilled_forecasts(skill_stats)
 
-        # Step 2: Filter rows that contain any tuples
-        rows_with_tuples = skill_stats[is_tuple.any(axis=1)]
+    # Now we get the rows from the skill_metrics_df where pentad_in_year, code,
+    # model_long and model_short are the same as in skill_stats_ensemble
+    skill_metrics_df_ensemble = skill_metrics_df[
+        skill_metrics_df['pentad_in_year'].isin(skill_stats_ensemble['pentad_in_year']) &
+        skill_metrics_df['code'].isin(skill_stats_ensemble['code']) &
+        skill_metrics_df['model_long'].isin(skill_stats_ensemble['model_long']) &
+        skill_metrics_df['model_short'].isin(skill_stats_ensemble['model_short'])].copy()
 
-        # Print rows with tuples
-        logger.debug(rows_with_tuples)
-    else:
-        logger.debug("No tuples found after the merge.")
+    # Drop columns with model_short == NE (neural ensemble)
+    skill_metrics_df_ensemble = skill_metrics_df_ensemble[skill_metrics_df_ensemble['model_short'] != 'NE'].copy()
+    #print("DEBUG: skill_metrics_df_ensemble\n", skill_metrics_df_ensemble.head(20))
 
+    # Perform the aggregations and keep only the unique combinations
+    skill_metrics_df_ensemble_avg = skill_metrics_df_ensemble.groupby(['date', 'code']).agg({
+        'pentad_in_year': 'first',
+        'forecasted_discharge': 'mean',
+        'model_long': model_long_agg,
+        'model_short': model_short_agg
+    }).reset_index()
 
-    return skill_stats
+    # Dischard rows with model_long equal to 'Ensemble Mean with  (EM)' or equal to Ensemble Mean with LR (EM)
+    skill_metrics_df_ensemble_avg = skill_metrics_df_ensemble_avg[
+        (skill_metrics_df_ensemble_avg['model_long'] != 'Ensemble Mean with  (EM)') &
+        (skill_metrics_df_ensemble_avg['model_long'] != 'Ensemble Mean with LR (EM)')].copy()
+    #print("DEBUG: skill_metrics_df_ensemble_avg\n", skill_metrics_df_ensemble_avg.head(20))
+
+    # Now recalculate the skill metrics for the ensemble
+    ensemble_skill_metrics_df = pd.merge(
+        skill_metrics_df_ensemble_avg,
+        observed[['code', 'date', 'discharge_avg', 'delta']],
+        on=['code', 'date'])
+    #print("DEBUG: ensemble_skill_metrics_df\n", ensemble_skill_metrics_df.columns)
+    #print("DEBUG: ensemble_skill_metrics_df\n", ensemble_skill_metrics_df.head(20))
+
+    ensemble_skill_stats = ensemble_skill_metrics_df. \
+        groupby(['pentad_in_year', 'code', 'model_long', 'model_short']). \
+        apply(
+            sdivsigma_nse,
+            observed_col='discharge_avg',
+            simulated_col='forecasted_discharge'). \
+        reset_index()
+    #print("DEBUG: ensemble_skill_stats\n", ensemble_skill_stats.head(20))
+
+    ensemble_mae_stats = ensemble_skill_metrics_df. \
+        groupby(['pentad_in_year', 'code', 'model_long', 'model_short']). \
+        apply(
+            mae,
+            observed_col='discharge_avg',
+            simulated_col='forecasted_discharge').\
+        reset_index()
+
+    ensemble_accuracy_stats = ensemble_skill_metrics_df. \
+        groupby(['pentad_in_year', 'code', 'model_long', 'model_short']). \
+        apply(
+            forecast_accuracy_hydromet,
+            observed_col='discharge_avg',
+            simulated_col='forecasted_discharge',
+            delta_col='delta').\
+        reset_index()
+
+    ensemble_skill_stats = pd.merge(
+        ensemble_skill_stats, ensemble_mae_stats, on=['pentad_in_year', 'code', 'model_long', 'model_short'])
+    ensemble_skill_stats = pd.merge(
+        ensemble_skill_stats, ensemble_accuracy_stats, on=['pentad_in_year', 'code', 'model_long', 'model_short'])
+
+    # Append the ensemble skill metrics to the skill metrics
+    skill_stats = pd.concat([skill_stats, ensemble_skill_stats], ignore_index=True)
+
+    # TODO: Add ensemble mean forecasts to simulated dataframe
+    logger.debug(f"DEBUG: simulated.columns\n{simulated.columns}")
+    logger.debug(f"DEBUG: simulated.head()\n{simulated.head(5)}")
+    logger.debug(f"DEBUG: unique models in simulated: {simulated['model_long'].unique()}")
+    print(f"DEBUG: simulated.columns\n{ensemble_skill_metrics_df.columns}")
+    print("DEBUG: head of ensemble_skill_metrics_df: \n", ensemble_skill_metrics_df.head(5))
+    print("DEBUG: unique models in ensemble_skill_metrics_df: ", ensemble_skill_metrics_df['model_long'].unique())
+
+    # Calculate pentad in month
+    ensemble_skill_metrics_df['pentad_in_month'] = ensemble_skill_metrics_df['date'].apply(tl.get_pentad)
+
+    # Join the two dataframes
+    joint_forecasts = pd.merge(
+        simulated,
+        ensemble_skill_metrics_df[['code', 'date', 'pentad_in_month', 'pentad_in_year', 'forecasted_discharge', 'model_long', 'model_short']],
+        on=['code', 'date', 'pentad_in_month', 'pentad_in_year', 'model_long', 'model_short', 'forecasted_discharge'],
+        how='outer')
+
+    print(f"DEBUG: joint_forecasts.columns\n{joint_forecasts.columns}")
+    print(f"DEBUG: joint_forecasts.head()\n{joint_forecasts.head(5)}")
+    print(f"DEBUG: unique models in joint_forecasts: {joint_forecasts['model_long'].unique()}")
+
+    return skill_stats, joint_forecasts
 
 
 # endregion
