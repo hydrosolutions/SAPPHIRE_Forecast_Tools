@@ -187,17 +187,17 @@ def load_data():
     # - linreg_predictor: for displaying predictor in predictor tab
     linreg_predictor = processing.read_linreg_forecast_data(stations_iehhf)
     # For site = 16059, show the last 5 rows of the linreg_predictor DataFrame
-    print(f"DEBUG: pentad_dashboard.py: linreg_predictor: {linreg_predictor[linreg_predictor['code'] == '16059'].tail()}")
+    #print(f"DEBUG: pentad_dashboard.py: linreg_predictor: {linreg_predictor[linreg_predictor['code'] == '16059'].tail()}")
     # - forecast results from all models
     forecasts_all = processing.read_forecast_results_file(stations_iehhf)
     # Forecast statistics
     forecast_stats = processing.read_forecast_stats_file(stations_iehhf)
 
-
-
     # Hydroposts metadata
-    station_list, all_stations, station_df, station_dict = processing.read_all_stations_metadata_from_file(
+    station_list, all_stations, station_df, station_dict = processing.read_all_stations_metadata_from_iehhf(
         hydrograph_day_all['code'].unique().tolist())
+    #station_list, all_stations, station_df, station_dict = processing.read_all_stations_metadata_from_file(
+    #    hydrograph_day_all['code'].unique().tolist())
     if not station_list:
         raise ValueError("The station list is empty. Please check the data source and ensure it contains valid stations.")
     #print("DEBUG: pentad_dashboard.py: Station list:\n", station_list)
@@ -259,7 +259,7 @@ if stations_iehhf is not None:
         missing_sites_message = f"WARNING: The following sites are missing from the forecast results: {missing_sites}. No forecasts are currently available for these sites. Please make sure your forecast models are configured to produce results for these sites, re-run hindcasts manually and re-run the forecast."
         message_pane.object = missing_sites_message
 
-sites_list = Site.get_site_attributes_from_stations_dataframe(all_stations)
+sites_list = Site.get_site_attribues_from_iehhf_dataframe(all_stations)
 
 bulletin_table = pn.Column()
 
@@ -270,8 +270,7 @@ tabs_container = pn.Column()
 # Create a dictionary of the model names and the corresponding model labels
 model_dict_all = forecasts_all[['model_short', 'model_long']] \
     .set_index('model_long')['model_short'].to_dict()
-print(f"DEBUG: pentad_dashboard.py: model_dict_all: {model_dict_all}")
-
+#print(f"DEBUG: pentad_dashboard.py: station_dict: {station_dict}")
 
 pentads = [
     f"{i+1}st pentad of {calendar.month_name[month]}" if i == 0 else
@@ -289,8 +288,6 @@ pentad_options = {f"{i+1}st pentad of {calendar.month_name[month]}" if i == 0 el
                   for month in range(1, 13) for i in range(6)}
 
 # endregion
-
-
 
 
 # region widgets
@@ -312,10 +309,7 @@ current_pentad = tl.get_pentad_for_date(last_date)
 # Get information for bulletin headers into a dataframe that can be passed to
 # the bulletin writer.
 bulletin_header_info = processing.get_bulletin_header_info(last_date)
-print(f"DEBUG: pentad_dashboard.py: bulletin_header_info:\n{bulletin_header_info}")
-
-#print(f"DEBUG: pentad_dashboard.py: first site: {sites_list[0]}")
-
+#print(f"DEBUG: pentad_dashboard.py: bulletin_header_info:\n{bulletin_header_info}")
 
 # Create the dropdown widget for pentad selection
 pentad_selector = pn.widgets.Select(
@@ -328,7 +322,6 @@ pentad_selector = pn.widgets.Select(
 # Widget for station selection, always visible
 #print(f"\n\nDEBUG: pentad_dashboard.py: station select name string: {_('Select discharge station:')}\n\n")
 #station = layout.create_station_selection_widget(station_dict)
-
 station = pn.widgets.Select(
     name=_("Select discharge station:"),
     groups=station_dict,
@@ -341,10 +334,9 @@ station = pn.widgets.Select(
 
 # Update the model_dict with the models we have results for for the selected
 # station
-print("DEBUG: pentad_dashboard.py: station.value: ", station.value)
+#print("DEBUG: pentad_dashboard.py: station.value: ", station.value)
 model_dict = processing.update_model_dict(model_dict_all, forecasts_all, station.value)
 #print(f"DEBUG: pentad_dashboard.py: model_dict: {model_dict}")
-
 
 # Widget for forecast model selection, only visible in forecast tab
 # a given hydropost/station.
@@ -493,6 +485,61 @@ add_to_bulletin_button = pn.widgets.Button(name=_("Add to bulletin"), button_typ
 
 
 # region update_functions
+@pn.depends(pentad_selector, watch=True)
+def update_site_attributes_with_hydrograph_statistics_for_selected_pentad(_,
+    sites=sites_list, df=hydrograph_pentad_all, pentad=pentad_selector.value):
+    """Update site attributes with hydrograph statistics for selected pentad"""
+    #print(f"column names: {df.columns}")
+    # Based on column names and date, figure out which column indicates the
+    # last year's Q for the selected pentad
+    current_year = dt.datetime.now().year
+    if str(current_year) in df.columns:
+        last_year_column = str(current_year - 1)
+    #print(f"\n\nupdate site attributes hydrograph stats: dataframe: {df}")
+    # Filter the df for the selected pentad
+    df = df[df['pentad_in_year'] == pentad].copy()
+    # Add a column with the site code
+    df['site_code'] = df['station_labels'].str.split(' - ').str[0]
+    for site in sites:
+        #print(f"site: {site.code}")
+        # Test if site.code is in df['site_code']
+        if site.code not in df['site_code'].values:
+            site.hydrograph_mean = None
+            continue
+        # Get the hydrograph statistics for each site
+        row = df[df['site_code'] == site.code]
+        site.hydrograph_mean = row['mean'].values[0]
+        site.hydrograph_max = row['max'].values[0]
+        site.hydrograph_min = row['min'].values[0]
+        site.last_year_q_pentad_mean = row[last_year_column].values[0]
+        #print(f"site: {site.code}, mean: {site.hydrograph_mean}, max: {site.hydrograph_max}, min: {site.hydrograph_min}, last year mean: {site.last_year_q_pentad_mean}")
+
+    #print(f"Updated sites with hydrograph statistics from DataFrame.")
+    return sites
+
+@pn.depends(pentad_selector, watch=True)
+def update_site_attributes_with_linear_regression_predictor(_, sites=sites_list, df=linreg_predictor, pentad=pentad_selector.value):
+    """Update site attributes with linear regression predictor"""
+    # Get row in def for selected pentad
+    df = df[df['pentad_in_year'] == pentad].copy()
+    # Only keep the last row for each site
+    df = df.drop_duplicates(subset='code', keep='last')
+    for site in sites:
+        #print(f"site: {site.code}")
+        # Test if site.code is in df['code']
+        if site.code not in df['code'].values:
+            site.linreg_predictor = None
+            continue
+        # Get the linear regression predictor for each site
+        row = df[df['code'] == site.code]
+        site.linreg_predictor = row['predictor'].values[0]
+        #print(f"site: {site.code}, linreg predictor: {site.linreg_predictor}")
+
+    #print(f"Updated sites with linear regression predictor from DataFrame.")
+    return sites
+
+sites_list = update_site_attributes_with_hydrograph_statistics_for_selected_pentad(_=_, sites=sites_list, df=hydrograph_pentad_all, pentad=pentad_selector.value)
+sites_list = update_site_attributes_with_linear_regression_predictor(_, sites=sites_list, df=linreg_predictor, pentad=pentad_selector.value)
 
 # Function to update the spinner
 #def update_indicator(event):
@@ -504,7 +551,7 @@ add_to_bulletin_button = pn.widgets.Button(name=_("Add to bulletin"), button_typ
 def update_model_select(station_value):
     # Update the model_dict with the models we have results for for the selected
     # station
-    print(f"DEBUG: pentad_dashboard.py: update_model_select: station_value: {station_value}")
+    #print(f"DEBUG: pentad_dashboard.py: update_model_select: station_value: {station_value}")
     model_dict = processing.update_model_dict(model_dict_all, forecasts_all, station_value)
     model_checkbox.options = model_dict
     return model_dict
@@ -519,7 +566,7 @@ add_to_bulletin_popup = pn.pane.Alert("Added to bulletin", alert_type="success",
 def add_current_selection_to_bulletin(event=None):
     selected_indices = forecast_tabulator.selection
     forecast_df = forecast_tabulator.value
-    print("\n\n\nDEBUG: pentad_dashboard.py: forecast_df:\n", forecast_df)
+    #print("\n\n\nDEBUG: pentad_dashboard.py: forecast_df:\n", forecast_df)
 
     if forecast_df is None or forecast_df.empty:
         print("Forecast summary table is empty.")
@@ -554,12 +601,16 @@ def add_current_selection_to_bulletin(event=None):
     selected_site = next((site for site in sites_list if site.station_label == selected_station), None)
     if selected_site is None:
         print(f"Site {selected_station} not found in sites_list")
+        print(f"sites_list: {sites_list}")
         logger.error(f"Site {selected_station} not found in sites_list")
         return
 
     # Overwrite the forecast instead of appending
     # Note: This will add the forecast table to each site object.
     selected_site.forecasts = final_forecast_table
+
+    # Add forecast attributes to the site object
+    selected_site.get_forecast_attributes_for_site(_, selected_rows)
 
     # Check if the site is already in bulletin_sites
     existing_site = next((site for site in bulletin_sites if site.code == selected_site.code), None)
@@ -572,9 +623,6 @@ def add_current_selection_to_bulletin(event=None):
         existing_site.forecasts = selected_site.forecasts
         print(f"Overwritten forecast for station: {selected_station}")
         logger.info(f"Overwritten forecast for site in bulletin: {selected_station}")
-
-    # Add forecast attributes to the site object
-    selected_site.get_forecast_attributes_for_site(_, forecast_df)
 
     # Update the bulletin_table to reflect changes
     update_bulletin_table(None)
@@ -592,7 +640,7 @@ def create_bulletin_table():
 
     for site in bulletin_sites:
         # If a specific basin is selected, skip sites not in that basin
-        if selected_basin != _("All basins") and site.basin != selected_basin:
+        if selected_basin != _("All basins") and site.basin_ru != selected_basin:
             continue
 
         if hasattr(site, 'forecasts'):
@@ -746,45 +794,11 @@ if not hasattr(processing.data_reloader, 'watcher_attached'):
     processing.data_reloader.param.watch(on_data_needs_reload_changed, 'data_needs_reload')
     processing.data_reloader.watcher_attached = True
 
-# TODO Implement, write to site object and display bulletin in bulletin tab
-'''forecast_tabulator = viz.create_forecast_summary_tabulator(
-    _, forecasts_all, station.value, date_picker.value, model_checkbox.value,
-    allowable_range_selection.value, manual_range.value, forecast_tabulator
-)'''
-#print(f"DEBUG: pentad_dashboard.py: forecast_tabulator: {forecast_tabulator}")
-#print(f"DEBUG: type of forecast_tabulator: {type(forecast_tabulator)}")
-
-'''bulletin_table = pn.panel(
-    pn.bind(
-        viz.create_forecast_summary_tabulator,
-        _, forecasts_all, station, date_picker, model_checkbox,
-        allowable_range_selection, manual_range
-        ),
-    sizing_mode='stretch_width'
-)
-
-# Bind the forecast summary table to the bulletin table
-forecast_summary_tabulator = pn.bind(
-    viz.create_forecast_summary_tabulator,
-    _, forecasts_all, station, date_picker, model_checkbox,
-    allowable_range_selection, manual_range
-    )
-forecast_summary_table = pn.panel(
-    forecast_summary_tabulator,
-    #pn.bind(
-    #    viz.create_forecast_summary_tabulator,
-    #    _, forecasts_all, station, date_picker, model_checkbox,
-    #    allowable_range_selection, manual_range
-    #    ),
-    sizing_mode='stretch_width'
-    )'''
-
 # Same Tabulator in both tabs
 forecast_summary_table = pn.panel(
     forecast_tabulator,
     sizing_mode='stretch_width'
 )
-
 
 # Update the site object based on site and forecast selection
 #print(f"DEBUG: pentad_dashboard.py: forecast_tabulator: {forecast_summary_tabulator}")
