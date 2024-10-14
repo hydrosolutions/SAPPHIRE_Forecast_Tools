@@ -855,6 +855,8 @@ def update_language(event):
 
 language_select.param.watch(update_language, 'value')
 
+reload_card = viz.create_reload_button()
+
 def sidepane_change_language(language):
     try:
         global _
@@ -872,7 +874,7 @@ def sidepane_change_language(language):
         show_range_button.options = [_("Yes"), _("No")]
 
         return layout.define_sidebar(_, station_card, forecast_card, basin_card,
-                                     message_pane)
+                                     message_pane, reload_card)
     except Exception as e:
         print(f"Error in sidepane_change_language: {e}")
         print(traceback.format_exc())

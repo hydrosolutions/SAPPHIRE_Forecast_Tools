@@ -26,7 +26,7 @@ class DashboardTitle(param.Parameterized):
 
 
 # Define components of the layout
-def define_sidebar(_, station_card, forecast_card, basin_card, message_pane):
+def define_sidebar(_, station_card, forecast_card, basin_card, message_pane, reload_card):
     return pn.Column(
         pn.Row(station_card),
         #pn.Row(pentad_card),
@@ -38,6 +38,7 @@ def define_sidebar(_, station_card, forecast_card, basin_card, message_pane):
         pn.Row(forecast_card),
         pn.Row(basin_card),
         pn.Row(message_pane),
+        pn.Row(reload_card),
          #pn.Row(range_selection),
         #pn.Row(manual_range),
         #pn.Row(print_button),

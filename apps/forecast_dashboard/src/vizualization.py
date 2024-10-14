@@ -23,6 +23,7 @@ from functools import partial
 from dotenv import load_dotenv
 import re
 import docker
+import threading
 
 
 
@@ -1835,7 +1836,7 @@ SAPPHIRE_DG_HOST = env.get('SAPPHIRE_DG_HOST')
 
 
 # Function to convert a relative path to an absolute path
-def get_absolute_path(relative_path):
+'''def get_absolute_path(relative_path):
     #print("In get_absolute_path: ")
     #print(" - Relative path: ", relative_path)
 
@@ -1855,16 +1856,16 @@ def get_absolute_path(relative_path):
         # Strip the relative path from 2 "../" strings
         relative_path = re.sub(r'\.\./\.\./\.\.', '', relative_path)
 
-        return os.path.join(cwd, relative_path)
+        return os.path.join(cwd, relative_path)'''
 
 
 #TODO: use this function for local development instead of initial get_absolute_path function
-'''def get_absolute_path(relative_path):
+def get_absolute_path(relative_path):
     # function for local development
     project_root = '/home/vjeko/Desktop/Projects/sapphire_forecast'
     # Remove leading ../../../ from the relative path
     relative_path = re.sub(r'^\.\./\.\./\.\./', '', relative_path)
-    return os.path.join(project_root, relative_path)'''
+    return os.path.join(project_root, relative_path)
 
 def get_bind_path(relative_path):
     # Strip the relative path from ../../.. to get the path to bind to the container
@@ -1889,6 +1890,12 @@ def get_local_path(relative_path):
 #    os.getenv('ieasyforecast_linreg_point_selection', 'linreg_point_selection')
 #)
 #os.makedirs(SAVE_DIRECTORY, exist_ok=True)
+
+class AppState(param.Parameterized):
+    pipeline_running = param.Boolean(default=False)
+
+# Instantiate the shared state
+app_state = AppState()
 
 def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
                          SAVE_DIRECTORY):
@@ -2203,6 +2210,8 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
         print(f"Container '{container_name}' has stopped.")
 
 
+    # Create a save button
+    save_button = pn.widgets.Button(name="Save Changes", button_type="success")
 
     # Function to save table data to CSV and run Docker containers
     def save_to_csv(event):
@@ -2288,11 +2297,18 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
         pn.state.onload(lambda: pn.state.add_periodic_callback(lambda: setattr(progress_bar, 'visible', False), 2000, count=1))
         pn.state.onload(lambda: pn.state.add_periodic_callback(lambda: setattr(progress_message, 'visible', False), 4000, count=1))
 
-    # Create a save button
-    save_button = pn.widgets.Button(name="Save Changes", button_type="success")
-
     # Attach the save_to_csv function to the button's click event
     save_button.on_click(save_to_csv)
+
+    # **Bind the Save Changes button's disabled property to the shared state**
+    def update_save_button(event):
+        save_button.disabled = event.new
+
+    # Watch for changes in pipeline_running and update the save_button accordingly
+    app_state.param.watch(update_save_button, 'pipeline_running')
+
+    # Set the initial state of the save_button
+    save_button.disabled = app_state.pipeline_running
 
     # Adjust the layout to include the progress bar and message
     layout = pn.Column(
@@ -2312,6 +2328,155 @@ def update_forecast_data(_, linreg_predictor, station, pentad_selector):
         return select_and_plot_data(_, linreg_predictor, station, pentad_selector)
 
     return callback
+
+def create_reload_button():
+    reload_button = pn.widgets.Button(name="Reload Data", button_type="danger")
+
+    # Loading spinner and message
+    loading_spinner = pn.indicators.LoadingSpinner(value=True, width=50, height=50, color='success', visible=False)
+    progress_message = pn.pane.Alert("Processing...", alert_type="info", visible=False)
+
+    def run_pipeline(event):
+        # Update shared state to indicate the pipeline is running
+        app_state.pipeline_running = True
+
+        # Disable the reload button and show loading spinner
+        reload_button.disabled = True
+        loading_spinner.visible = True
+        progress_message.object = "Processing..."
+        progress_message.visible = True
+
+        def run_docker_pipeline():
+            try:
+                # Initialize Docker client
+                client = docker.from_env()
+
+                # Define environment variables
+                environment = [
+                    'SAPPHIRE_OPDEV_ENV=True',
+                    f'ieasyhydroforecast_env_file_path={get_bind_path(env.get("ieasyforecast_configuration_path"))}/.env_develop_kghm'
+                ]
+
+                # Define volumes
+                volumes = {
+                    get_absolute_path(env.get("ieasyforecast_configuration_path")): {
+                        'bind': get_bind_path(env.get("ieasyforecast_configuration_path")),
+                        'mode': 'rw'
+                    },
+                    get_absolute_path(env.get("ieasyforecast_intermediate_data_path")): {
+                        'bind': get_bind_path(env.get("ieasyforecast_intermediate_data_path")),
+                        'mode': 'rw'
+                    },
+                    get_absolute_path(env.get("ieasyforecast_daily_discharge_path")): {
+                        'bind': get_bind_path(env.get("ieasyforecast_daily_discharge_path")),
+                        'mode': 'rw'
+                    },
+                    "/var/run/docker.sock": {
+                        'bind': "/var/run/docker.sock",
+                        'mode': 'rw'
+                    } 
+                }
+
+                # Run the pipeline container
+                #run_docker_container(client, "mabesa/sapphire-pipeline:latest", volumes, environment, "pipeline", progress_bar)
+
+                #run_docker_container(client, "mabesa/sapphire-preprunoff:latest", volumes, environment, "preprunoff", loading_spinner)
+
+                # Run the reset rundate module to update the rundate for the linear regression module
+                run_docker_container(client, "mabesa/sapphire-rerun:latest", volumes, environment, "reset_rundate", loading_spinner)
+
+                # Run the linear_regression container with a hardcoded full image name
+                #run_docker_container(client, "mabesa/sapphire-linreg:latest", volumes, environment, "linreg", loading_spinner)
+
+
+                #run_docker_container(client, "mabesa/sapphire-prepgateway:latest", volumes, environment, "prepgateway", loading_spinner)
+
+                # Run all machine learning models (as multiple independent containers)
+                #for model in ["TFT", "TIDE", "TSMIXER", "ARIMA"]:
+                #    for mode in ["PENTAD", "DECAD"]:
+                #        container_name = f"ml_{model}_{mode}"
+                #        run_docker_container(client, f"mabesa/sapphire-ml:{TAG}", volumes, environment + [f"SAPPHIRE_MODEL_TO_USE={model}", f"SAPPHIRE_PREDICTION_MODE={mode}"], container_name, loading_spinner)
+                
+                #run_docker_container(client, "mabesa/sapphire-conceptmod:latest", volumes, environment, "conceptmod", loading_spinner)
+
+                # After linear_regression finishes, run the postprocessing container with a hardcoded full image name
+                #run_docker_container(client, "mabesa/sapphire-postprocessing:latest", volumes, environment, "postprocessing", loading_spinner)
+
+                #run_docker_container(client, "mabesa/sapphire-pipeline:latest", volumes, environment, "pipeline", progress_bar)
+
+                # Update message
+                progress_message.object = "Processing finished"
+                time.sleep(2)
+            except docker.errors.DockerException as e:
+                print(f"Error interacting with Docker: {e}")
+                progress_message.object = f"Error: {e}"
+            finally:
+                # Hide progress indicators and re-enable the reload button
+                loading_spinner.visible = False
+                progress_message.visible = False
+                reload_button.disabled = False
+
+                # Update shared state to indicate the pipeline has finished
+                app_state.pipeline_running = False
+
+        # Run the pipeline in a separate thread
+        threading.Thread(target=run_docker_pipeline).start()
+
+    reload_button.on_click(run_pipeline)
+
+    # Create a card for the reload button
+    reload_card = pn.Card(
+        pn.Column(
+            reload_button,
+            loading_spinner,
+            progress_message,
+        ),
+        title='Reload',
+        width_policy='fit',
+        collapsed=False,
+    )
+
+    return reload_card
+
+def run_docker_container(client, full_image_name, volumes, environment, container_name, loading_spinner):
+    """
+    Reusable function to run a Docker container and track its progress.
+    If a container with the same name exists, it will be removed before running a new one.
+    """
+    # Check if a container with the specified name already exists
+    try:
+        existing_container = client.containers.get(container_name)
+        print(f"Removing existing container '{container_name}' (ID: {existing_container.id})...")
+        existing_container.remove(force=True)
+        print(f"Container '{container_name}' removed.")
+    except docker.errors.NotFound:
+        # Container does not exist, so we can proceed
+        pass
+    except docker.errors.APIError as e:
+        print(f"Error removing existing container '{container_name}': {e}")
+        raise
+
+    # Now run the new container
+    container = client.containers.run(
+        full_image_name,
+        detach=True,
+        environment=environment,
+        volumes=volumes,
+        name=container_name,
+        network='host'
+    )
+    print(f"Container '{container_name}' (ID: {container.id}) is running.")
+
+    # Monitor the container's progress in a separate thread to keep the UI responsive
+    def monitor_container():
+        while container.status != 'exited':
+            container.reload()  # Refresh the container's status
+            time.sleep(1)
+        container.wait()  # Ensure the container has finished
+        print(f"Container '{container_name}' has stopped.")
+
+    threading.Thread(target=monitor_container).start()
+
 
 def test_draw_forecast_raw_data(_, selected_data):
 
