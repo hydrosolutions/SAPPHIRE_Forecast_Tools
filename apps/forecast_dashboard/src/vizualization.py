@@ -1836,7 +1836,7 @@ SAPPHIRE_DG_HOST = env.get('SAPPHIRE_DG_HOST')
 
 
 # Function to convert a relative path to an absolute path
-'''def get_absolute_path(relative_path):
+def get_absolute_path(relative_path):
     #print("In get_absolute_path: ")
     #print(" - Relative path: ", relative_path)
 
@@ -1856,16 +1856,16 @@ SAPPHIRE_DG_HOST = env.get('SAPPHIRE_DG_HOST')
         # Strip the relative path from 2 "../" strings
         relative_path = re.sub(r'\.\./\.\./\.\.', '', relative_path)
 
-        return os.path.join(cwd, relative_path)'''
+        return os.path.join(cwd, relative_path)
 
 
 #TODO: use this function for local development instead of initial get_absolute_path function
-def get_absolute_path(relative_path):
+'''def get_absolute_path(relative_path):
     # function for local development
     project_root = '/home/vjeko/Desktop/Projects/sapphire_forecast'
     # Remove leading ../../../ from the relative path
     relative_path = re.sub(r'^\.\./\.\./\.\./', '', relative_path)
-    return os.path.join(project_root, relative_path)
+    return os.path.join(project_root, relative_path)'''
 
 def get_bind_path(relative_path):
     # Strip the relative path from ../../.. to get the path to bind to the container
@@ -2377,32 +2377,27 @@ def create_reload_button():
                     } 
                 }
 
-                # Run the pipeline container
-                #run_docker_container(client, "mabesa/sapphire-pipeline:latest", volumes, environment, "pipeline", progress_bar)
+                run_docker_container(client, "mabesa/sapphire-preprunoff:latest", volumes, environment, "preprunoff", loading_spinner)
 
-                #run_docker_container(client, "mabesa/sapphire-preprunoff:latest", volumes, environment, "preprunoff", loading_spinner)
-
-                # Run the reset rundate module to update the rundate for the linear regression module
+                # Run the reset rundate module 
                 run_docker_container(client, "mabesa/sapphire-rerun:latest", volumes, environment, "reset_rundate", loading_spinner)
 
-                # Run the linear_regression container with a hardcoded full image name
-                #run_docker_container(client, "mabesa/sapphire-linreg:latest", volumes, environment, "linreg", loading_spinner)
+                # Run the linear_regression container 
+                run_docker_container(client, "mabesa/sapphire-linreg:latest", volumes, environment, "linreg", loading_spinner)
 
 
-                #run_docker_container(client, "mabesa/sapphire-prepgateway:latest", volumes, environment, "prepgateway", loading_spinner)
+                run_docker_container(client, "mabesa/sapphire-prepgateway:latest", volumes, environment, "prepgateway", loading_spinner)
 
                 # Run all machine learning models (as multiple independent containers)
-                #for model in ["TFT", "TIDE", "TSMIXER", "ARIMA"]:
-                #    for mode in ["PENTAD", "DECAD"]:
-                #        container_name = f"ml_{model}_{mode}"
-                #        run_docker_container(client, f"mabesa/sapphire-ml:{TAG}", volumes, environment + [f"SAPPHIRE_MODEL_TO_USE={model}", f"SAPPHIRE_PREDICTION_MODE={mode}"], container_name, loading_spinner)
+                for model in ["TFT", "TIDE", "TSMIXER", "ARIMA"]:
+                    for mode in ["PENTAD", "DECAD"]:
+                        container_name = f"ml_{model}_{mode}"
+                        run_docker_container(client, f"mabesa/sapphire-ml:{TAG}", volumes, environment + [f"SAPPHIRE_MODEL_TO_USE={model}", f"SAPPHIRE_PREDICTION_MODE={mode}"], container_name, loading_spinner)
                 
-                #run_docker_container(client, "mabesa/sapphire-conceptmod:latest", volumes, environment, "conceptmod", loading_spinner)
+                run_docker_container(client, "mabesa/sapphire-conceptmod:latest", volumes, environment, "conceptmod", loading_spinner)
 
-                # After linear_regression finishes, run the postprocessing container with a hardcoded full image name
-                #run_docker_container(client, "mabesa/sapphire-postprocessing:latest", volumes, environment, "postprocessing", loading_spinner)
-
-                #run_docker_container(client, "mabesa/sapphire-pipeline:latest", volumes, environment, "pipeline", progress_bar)
+                # Run postprocessing container
+                run_docker_container(client, "mabesa/sapphire-postprocessing:latest", volumes, environment, "postprocessing", loading_spinner)
 
                 # Update message
                 progress_message.object = "Processing finished"
