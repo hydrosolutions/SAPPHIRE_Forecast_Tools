@@ -606,7 +606,8 @@ def create_bulletin_table():
         bulletin_tabulator = pn.widgets.Tabulator(
             bulletin_df,
             show_index=False,
-            sizing_mode='stretch_both'
+            height=300,
+            sizing_mode='stretch_width'
         )
     else:
         bulletin_tabulator = pn.pane.Markdown(_("No forecasts added to the bulletin."))

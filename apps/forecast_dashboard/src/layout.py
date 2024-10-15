@@ -206,11 +206,12 @@ def define_tabs(_,
              pn.Column(
                     pn.Card(
                         bulletin_table,
-                        pn.Row(
+                        title='Forecast bulletin',
+                        sizing_mode='stretch_width',
+                    ),
+                    pn.Row(
                             write_bulletin_button,
                             indicator),
-                        title='Forecast bulletin',
-                    ),
              )
             ),
             (_('Disclaimer'), disclaimer),
