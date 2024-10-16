@@ -1067,6 +1067,7 @@ def get_bulletin_header_info(date):
     """Get information from date relevant for the bulletin header."""
     df = pd.DataFrame({
         "pentad": [tl.get_pentad(date)],
+        "month_number": [tl.get_month_num(date)],
         "month_str_nom_ru": [tl.get_month_str_case1(date)],
         "month_str_gen_ru": [tl.get_month_str_case2(date)],
         "year": [tl.get_year(date)],

@@ -766,6 +766,17 @@ def get_predcitor_month_latin(date_str):
 
     return predictor_month
 
+def get_month_num(date_str):
+    """For a given date, return the number of the month in the year."""
+    # If intput is timestamp instead of string, directly get month from timestamp
+    if isinstance(date_str, pd.Timestamp):
+        return date_str.month
+
+    # if input is string, convert to timestamp
+    if isinstance(date_str, str):
+        date = pd.Timestamp(date_str)
+        return date.month
+
 def get_month_str_case1(date_str):
     """
     Returns the name of the month for a given date string, in Russian case 1

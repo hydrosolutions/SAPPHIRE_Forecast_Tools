@@ -634,6 +634,7 @@ def add_current_selection_to_bulletin(event=None):
     pn.state.add_periodic_callback(lambda: setattr(add_to_bulletin_popup, 'visible', False), 2000, count=1)
 
 def create_bulletin_table():
+    print("Creating bulletin table...")
     bulletin_data = []
     existing_forecasts = set()
     selected_basin = select_basin_widget.value
@@ -664,6 +665,8 @@ def create_bulletin_table():
     else:
         bulletin_tabulator = pn.pane.Markdown(_("No forecasts added to the bulletin."))
 
+    print("Bulletin table: ", bulletin_tabulator)
+    print("Bulletin table created.")
     return bulletin_tabulator
 
 

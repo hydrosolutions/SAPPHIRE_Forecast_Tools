@@ -1,6 +1,6 @@
 import os
-import time
 import math
+import openpyxl
 
 # ieassyreport
 from ieasyreports.settings import TagSettings, ReportGeneratorSettings
@@ -8,7 +8,6 @@ from ieasyreports.core.tags.tag import Tag
 from ieasyreports.core.report_generator import DefaultReportGenerator
 
 # Logging
-import traceback
 import logging
 
 # Configure logging
@@ -16,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 # Local imports
 from .reports import SapphireReport
+
 
 def round_percentage_to_comma_separated_string(value: float) -> str:
     '''
@@ -280,16 +280,52 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
         str(header_df['year'].values[0]))#,
         #start_date_month_num + "_" + start_date_month)
 
+    # Modify the bulletin file name to include the basin (or all basins)
+    bulletin_file_name = f"{str(header_df['year'].values[0])}_{header_df['month_number'].values[0]:02}_{header_df['month_str_nom_ru'].values[0]}_пентада_{header_df['pentad'].values[0]}_all_basins_short_term_forecast_bulletin.xlsx"
+
+    # If we are not in the first pentad of the month, we want to use the
+    # existing bulletin as template to append the new data to it.
+    # Test if we are in the first pentad of the month.
+    if int(header_df['day_start_pentad'].values[0]) == 1:
+        # We can use the default template for the first pentad of the month
+        bulletin_template_file = os.getenv("ieasyforecast_template_pentad_bulletin_file")
+        report_settings.templates_directory_path = os.getenv("ieasyreports_templates_directory_path")
+    else:
+        # Test if the file exists and revert to the default template if it does not exist
+        if os.path.exists(os.path.join(report_settings.report_output_path, bulletin_file_name)):
+            # Overwrite the settings for the templates directory path.
+            pass
+            #bulletin_template_file = bulletin_file_name
+            #report_settings.templates_directory_path = report_settings.report_output_path
+        else:
+            bulletin_template_file = os.getenv("ieasyforecast_template_pentad_bulletin_file")
+            report_settings.templates_directory_path = os.getenv("ieasyreports_templates_directory_path")
+
+    print("DEBUG: write_to_excel: bulletin_template_file: ", bulletin_template_file)
+    print("DEBUG: write_to_excel: report_settings.templates_directory_path: ", report_settings.templates_directory_path)
+    # Create the report generator
     report_generator = DefaultReportGenerator(
-                tags=tag_list,
-                template='test_template.xlsx',
-                reports_directory_path=report_settings.report_output_path,
-                templates_directory_path=report_settings.templates_directory_path,
-                tag_settings=tag_settings)
+        tags=tag_list,
+        template=bulletin_template_file,
+        templates_directory_path=report_settings.templates_directory_path,
+        reports_directory_path=report_settings.report_output_path,
+        tag_settings=tag_settings
+        )
+
+    # Set the sheet number in the report generator
+    # TODO: This needs to be fixed. Ask Davor for support
+    #workbook = openpyxl.load_workbook(os.path.join(report_settings.templates_directory_path, bulletin_template_file))
+    #sheet_names = workbook.sheetnames
+    #current_sheet = sheet_names[int(int(header_df['pentad'].values[0]) - 1)]
+    #report_generator.sheet = workbook[current_sheet]
+    print("DEBUG: write_to_excel: report_generator.sheet: ", report_generator.sheet)
 
     report_generator.validate()
     #report_generator.generate_report(list_objects=sites_list)
-    report_generator.generate_report(list_objects=bulletin_sites)
+    report_generator.generate_report(
+        list_objects=bulletin_sites,
+        output_filename=bulletin_file_name
+        )
     print('DEBUG: write_to_excel: Report generated.')
     # Note all objects that are passed to generate_report through list_obsjects
     # should be 'data' tags. 'data' tags are listed below a 'header' tag.
