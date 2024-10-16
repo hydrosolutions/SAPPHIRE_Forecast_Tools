@@ -1836,7 +1836,7 @@ SAPPHIRE_DG_HOST = env.get('SAPPHIRE_DG_HOST')
 
 
 # Function to convert a relative path to an absolute path
-def get_absolute_path(relative_path):
+'''def get_absolute_path(relative_path):
     #print("In get_absolute_path: ")
     #print(" - Relative path: ", relative_path)
 
@@ -1856,16 +1856,16 @@ def get_absolute_path(relative_path):
         # Strip the relative path from 2 "../" strings
         relative_path = re.sub(r'\.\./\.\./\.\.', '', relative_path)
 
-        return os.path.join(cwd, relative_path)
+        return os.path.join(cwd, relative_path)'''
 
 
 #TODO: use this function for local development instead of initial get_absolute_path function
-'''def get_absolute_path(relative_path):
+def get_absolute_path(relative_path):
     # function for local development
     project_root = '/home/vjeko/Desktop/Projects/sapphire_forecast'
     # Remove leading ../../../ from the relative path
     relative_path = re.sub(r'^\.\./\.\./\.\./', '', relative_path)
-    return os.path.join(project_root, relative_path)'''
+    return os.path.join(project_root, relative_path)
 
 def get_bind_path(relative_path):
     # Strip the relative path from ../../.. to get the path to bind to the container
@@ -2376,49 +2376,58 @@ def create_reload_button():
                         'mode': 'rw'
                     } 
                 }
-
-                run_docker_container(client, "mabesa/sapphire-preprunoff:latest", volumes, environment, "preprunoff", loading_spinner)
-
-                # Run the reset rundate module 
-                run_docker_container(client, "mabesa/sapphire-rerun:latest", volumes, environment, "reset_rundate", loading_spinner)
-
-                # Run the linear_regression container 
-                run_docker_container(client, "mabesa/sapphire-linreg:latest", volumes, environment, "linreg", loading_spinner)
-
-
-                run_docker_container(client, "mabesa/sapphire-prepgateway:latest", volumes, environment, "prepgateway", loading_spinner)
+    
+                # Run the preprunoff container
+                run_docker_container(client, "mabesa/sapphire-preprunoff:latest", volumes, environment, "preprunoff")
+    
+                # Run the reset_rundate container
+                run_docker_container(client, "mabesa/sapphire-rerun:latest", volumes, environment, "reset_rundate")
+    
+                # Run the linear_regression container
+                run_docker_container(client, "mabesa/sapphire-linreg:latest", volumes, environment, "linreg")
+    
+                # Run the prepgateway container
+                run_docker_container(client, "mabesa/sapphire-prepgateway:latest", volumes, environment, "prepgateway")
 
                 # Run all machine learning models (as multiple independent containers)
                 for model in ["TFT", "TIDE", "TSMIXER", "ARIMA"]:
                     for mode in ["PENTAD", "DECAD"]:
                         container_name = f"ml_{model}_{mode}"
-                        run_docker_container(client, f"mabesa/sapphire-ml:{TAG}", volumes, environment + [f"SAPPHIRE_MODEL_TO_USE={model}", f"SAPPHIRE_PREDICTION_MODE={mode}"], container_name, loading_spinner)
+                        run_docker_container(client, f"mabesa/sapphire-ml:{TAG}", volumes, environment + [f"SAPPHIRE_MODEL_TO_USE={model}", f"SAPPHIRE_PREDICTION_MODE={mode}"], container_name)
                 
-                run_docker_container(client, "mabesa/sapphire-conceptmod:latest", volumes, environment, "conceptmod", loading_spinner)
-
-                # Run postprocessing container
-                run_docker_container(client, "mabesa/sapphire-postprocessing:latest", volumes, environment, "postprocessing", loading_spinner)
-
-                # Update message
+                # Run the conceptmod container
+                run_docker_container(client, "mabesa/sapphire-conceptmod:latest", volumes, environment, "conceptmod")
+    
+                # Run the postprocessing container
+                run_docker_container(client, "mabesa/sapphire-postprocessing:latest", volumes, environment, "postprocessing")
+    
+                # Update message after all containers have run
                 progress_message.object = "Processing finished"
                 time.sleep(2)
-            except docker.errors.DockerException as e:
-                print(f"Error interacting with Docker: {e}")
-                progress_message.object = f"Error: {e}"
+            except docker.errors.ContainerError as ce:
+                progress_message.object = f"Container Error: {ce}"
+                print(f"Container Error: {ce}")
+            except docker.errors.DockerException as de:
+                progress_message.object = f"Docker Error: {de}"
+                print(f"Docker Error: {de}")
+            except ValueError as ve:
+                progress_message.object = f"Configuration Error: {ve}"
+                print(f"Configuration Error: {ve}")
             finally:
                 # Hide progress indicators and re-enable the reload button
                 loading_spinner.visible = False
                 progress_message.visible = False
                 reload_button.disabled = False
-
+    
                 # Update shared state to indicate the pipeline has finished
                 app_state.pipeline_running = False
-
-        # Run the pipeline in a separate thread
+    
+        # Run the pipeline in a separate thread to keep the UI responsive
         threading.Thread(target=run_docker_pipeline).start()
-
+    
+    # Attach the run_pipeline function to the reload button's click event
     reload_button.on_click(run_pipeline)
-
+    
     # Create a card for the reload button
     reload_card = pn.Card(
         pn.Column(
@@ -2433,25 +2442,34 @@ def create_reload_button():
 
     return reload_card
 
-def run_docker_container(client, full_image_name, volumes, environment, container_name, loading_spinner):
+def run_docker_container(client, full_image_name, volumes, environment, container_name):
     """
-    Reusable function to run a Docker container and track its progress.
-    If a container with the same name exists, it will be removed before running a new one.
+    Runs a Docker container and blocks until it completes.
+    
+    Args:
+        client (docker.DockerClient): The Docker client instance.
+        full_image_name (str): The full name of the Docker image to run.
+        volumes (dict): A dictionary of volumes to bind.
+        environment (list): A list of environment variables.
+        container_name (str): The name to assign to the Docker container.
+    
+    Raises:
+        docker.errors.ContainerError: If the container exits with a non-zero status.
     """
-    # Check if a container with the specified name already exists
     try:
+        # Remove existing container with the same name if it exists
         existing_container = client.containers.get(container_name)
         print(f"Removing existing container '{container_name}' (ID: {existing_container.id})...")
         existing_container.remove(force=True)
         print(f"Container '{container_name}' removed.")
     except docker.errors.NotFound:
-        # Container does not exist, so we can proceed
+        # Container does not exist, proceed to run
         pass
     except docker.errors.APIError as e:
         print(f"Error removing existing container '{container_name}': {e}")
         raise
-
-    # Now run the new container
+    
+    # Run the new container
     container = client.containers.run(
         full_image_name,
         detach=True,
@@ -2463,14 +2481,12 @@ def run_docker_container(client, full_image_name, volumes, environment, containe
     print(f"Container '{container_name}' (ID: {container.id}) is running.")
 
     # Monitor the container's progress in a separate thread to keep the UI responsive
-    def monitor_container():
-        while container.status != 'exited':
-            container.reload()  # Refresh the container's status
-            time.sleep(1)
-        container.wait()  # Ensure the container has finished
-        print(f"Container '{container_name}' has stopped.")
 
-    threading.Thread(target=monitor_container).start()
+    while container.status != 'exited':
+        container.reload()  # Refresh the container's status
+        time.sleep(1)
+    container.wait()  # Ensure the container has finished
+    print(f"Container '{container_name}' has stopped.")
 
 
 def test_draw_forecast_raw_data(_, selected_data):
