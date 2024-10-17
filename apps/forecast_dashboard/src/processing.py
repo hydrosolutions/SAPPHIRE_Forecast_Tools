@@ -698,28 +698,35 @@ def calculate_forecast_range(_, forecast_table, range_type, range_slider):
 
     return forecast_table
 
-def update_model_dict(model_dict, forecasts_all, selected_station):
+def update_model_dict(model_dict, forecasts_all, selected_station, selected_pentad):
     """
     Update the model_dict with the models we have results for for the selected station
     """
+    print("\n\n\nDEBUG: selected pentad in update_model_dict: \n", selected_pentad)
     #print("DEBUG: update_model_dict: selected_station:\n", selected_station)
-    test = forecasts_all[forecasts_all['station_labels'] == selected_station]
     #print("tail of forecasts_all:\n", forecasts_all.tail())
-    #print("columns of forecasts_all:\n", forecasts_all.columns)
+    print("columns of forecasts_all:\n", forecasts_all.columns)
     #print("DEBUG: update_model_dict: unique models for selected station:\n", test['model_long'].unique())
     #print("DEBUG: update_model_dict: test:\n", test)
 
-    model_dict = forecasts_all[forecasts_all['station_labels'] == selected_station] \
-        .set_index('model_long')['model_short'].to_dict()
+    model_dict = forecasts_all[forecasts_all['station_labels'] == selected_station]
+    model_dict = model_dict[model_dict['pentad_in_year'] == selected_pentad]
+    # If we have several rows with model_short == 'EM', we only keep the last one
+    model_dict = model_dict.drop_duplicates(subset=['model_short'], keep='last')
+    model_dict = model_dict.set_index('model_long')['model_short'].to_dict()
     #print("DEBUG: update_model_dict: model_dict:\n", model_dict)
     return model_dict
 
-
-
-
-
-
-
+def get_best_models_for_station_and_pentad(forecasts_all, selected_station, selected_pentad):
+    """Returns a list of models with the best performance for the selected station and pentad"""
+    # Filter the forecast results for the selected station and pentad
+    forecasts = forecasts_all[forecasts_all['station_labels'] == selected_station]
+    forecasts = forecasts[forecasts['pentad_in_year'] == selected_pentad]
+    # Get the model_long value of the row in forecasts with the highest value for accuracy
+    best_models = forecasts.loc[forecasts['accuracy'].idxmax(), 'model_long']
+    best_models = [best_models, 'Linear regression (LR)']
+    print("best models: ", best_models)
+    return best_models
 
 def add_labels_to_hydrograph_pentad_all(hydrograph_pentad_all, all_stations):
     hydrograph_pentad_all = hydrograph_pentad_all.merge(
