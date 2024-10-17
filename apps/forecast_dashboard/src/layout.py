@@ -90,7 +90,8 @@ def define_tabs(_,
                 forecast_summary_table, pentad_forecast_plot, effectiveness_plot,
                 bulletin_table,
                 write_bulletin_button, indicator, disclaimer,
-                station_card, forecast_card, add_to_bulletin_button, basin_card, pentad_card, add_to_bulletin_popup):
+                station_card, forecast_card, add_to_bulletin_button, basin_card,
+                pentad_card, reload_card, add_to_bulletin_popup):
 
     # Organize the panes in tabs
     no_date_overlap_flag = True
@@ -219,7 +220,7 @@ def define_tabs(_,
             sizing_mode='stretch_both'
         )
     tabs.param.watch(lambda event: update_sidepane_card_visibility(
-    tabs, station_card, forecast_card, basin_card, pentad_card, event), 'active')
+    tabs, station_card, forecast_card, basin_card, pentad_card, reload_card, event), 'active')
     return tabs
 
 

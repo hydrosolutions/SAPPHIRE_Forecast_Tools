@@ -74,7 +74,7 @@ elif observed_runoff_palette == "black":
     runoff_forecast_color_list = ["#b61212", "#ce1414", "#e51717", "#ea2b2b", "#ec4242", "#ef5959", "#f17171"]
 
 # Update visibility of sidepane widgets
-def update_sidepane_card_visibility(tabs, station_card, forecast_card, basin_card, pentad_card, event):
+def update_sidepane_card_visibility(tabs, station_card, forecast_card, basin_card, pentad_card, reload_card, event):
     active_tab = tabs.active
     # Assuming tabs are ordered as ['Predictors', 'Forecast', 'Bulletin', 'Disclaimer']
     if active_tab == 0:  # 'Predictors' tab
@@ -82,21 +82,25 @@ def update_sidepane_card_visibility(tabs, station_card, forecast_card, basin_car
         forecast_card.visible = False
         pentad_card.visible = False
         basin_card.visible = False
+        reload_card.visible = True
     elif active_tab == 1:  # 'Forecast' tab
         station_card.visible = True
         forecast_card.visible = True
         pentad_card.visible = False
         basin_card.visible = False
+        reload_card.visible = True
     elif active_tab == 2:  # 'Bulletin' tab
         station_card.visible = False
         forecast_card.visible = False
         pentad_card.visible = False
         basin_card.visible = True
+        reload_card.visible = True
     else:  # 'Disclaimer' tab
         station_card.visible = False
         forecast_card.visible = False
         pentad_card.visible = False
         basin_card.visible = False
+        reload_card.visible = False
 
 def update_range_slider_visibility(_, range_slider, event):
     range_type = event.new
@@ -1836,7 +1840,7 @@ SAPPHIRE_DG_HOST = env.get('SAPPHIRE_DG_HOST')
 
 
 # Function to convert a relative path to an absolute path
-'''def get_absolute_path(relative_path):
+def get_absolute_path(relative_path):
     #print("In get_absolute_path: ")
     #print(" - Relative path: ", relative_path)
 
@@ -1856,16 +1860,16 @@ SAPPHIRE_DG_HOST = env.get('SAPPHIRE_DG_HOST')
         # Strip the relative path from 2 "../" strings
         relative_path = re.sub(r'\.\./\.\./\.\.', '', relative_path)
 
-        return os.path.join(cwd, relative_path)'''
+        return os.path.join(cwd, relative_path)
 
 
 #TODO: use this function for local development instead of initial get_absolute_path function
-def get_absolute_path(relative_path):
-    # function for local development
-    project_root = '/home/vjeko/Desktop/Projects/sapphire_forecast'
-    # Remove leading ../../../ from the relative path
-    relative_path = re.sub(r'^\.\./\.\./\.\./', '', relative_path)
-    return os.path.join(project_root, relative_path)
+#def get_absolute_path(relative_path):
+#    # function for local development
+#    project_root = '/home/vjeko/Desktop/Projects/sapphire_forecast'
+#    # Remove leading ../../../ from the relative path
+#    relative_path = re.sub(r'^\.\./\.\./\.\./', '', relative_path)
+#    return os.path.join(project_root, relative_path)
 
 def get_bind_path(relative_path):
     # Strip the relative path from ../../.. to get the path to bind to the container
@@ -2330,7 +2334,7 @@ def update_forecast_data(_, linreg_predictor, station, pentad_selector):
     return callback
 
 def create_reload_button():
-    reload_button = pn.widgets.Button(name="Reload Data", button_type="danger")
+    reload_button = pn.widgets.Button(name="Trigger forecasts", button_type="danger")
 
     # Loading spinner and message
     loading_spinner = pn.indicators.LoadingSpinner(value=True, width=50, height=50, color='success', visible=False)
@@ -2354,8 +2358,10 @@ def create_reload_button():
                 # Define environment variables
                 environment = [
                     'SAPPHIRE_OPDEV_ENV=True',
+                    'IN_DOCKER_CONTAINER=True',
                     f'ieasyhydroforecast_env_file_path={get_bind_path(env.get("ieasyforecast_configuration_path"))}/.env_develop_kghm'
                 ]
+                print("environment: \n", environment)
 
                 # Define volumes
                 volumes = {
@@ -2374,18 +2380,18 @@ def create_reload_button():
                     "/var/run/docker.sock": {
                         'bind': "/var/run/docker.sock",
                         'mode': 'rw'
-                    } 
+                    }
                 }
-    
+
                 # Run the preprunoff container
                 run_docker_container(client, "mabesa/sapphire-preprunoff:latest", volumes, environment, "preprunoff")
-    
+
                 # Run the reset_rundate container
                 run_docker_container(client, "mabesa/sapphire-rerun:latest", volumes, environment, "reset_rundate")
-    
+
                 # Run the linear_regression container
                 run_docker_container(client, "mabesa/sapphire-linreg:latest", volumes, environment, "linreg")
-    
+
                 # Run the prepgateway container
                 run_docker_container(client, "mabesa/sapphire-prepgateway:latest", volumes, environment, "prepgateway")
 
@@ -2394,13 +2400,13 @@ def create_reload_button():
                     for mode in ["PENTAD", "DECAD"]:
                         container_name = f"ml_{model}_{mode}"
                         run_docker_container(client, f"mabesa/sapphire-ml:{TAG}", volumes, environment + [f"SAPPHIRE_MODEL_TO_USE={model}", f"SAPPHIRE_PREDICTION_MODE={mode}"], container_name)
-                
+
                 # Run the conceptmod container
                 run_docker_container(client, "mabesa/sapphire-conceptmod:latest", volumes, environment, "conceptmod")
-    
+
                 # Run the postprocessing container
                 run_docker_container(client, "mabesa/sapphire-postprocessing:latest", volumes, environment, "postprocessing")
-    
+
                 # Update message after all containers have run
                 progress_message.object = "Processing finished"
                 time.sleep(2)
@@ -2418,26 +2424,27 @@ def create_reload_button():
                 loading_spinner.visible = False
                 progress_message.visible = False
                 reload_button.disabled = False
-    
+
                 # Update shared state to indicate the pipeline has finished
                 app_state.pipeline_running = False
-    
+
         # Run the pipeline in a separate thread to keep the UI responsive
         threading.Thread(target=run_docker_pipeline).start()
-    
+
     # Attach the run_pipeline function to the reload button's click event
     reload_button.on_click(run_pipeline)
-    
+
     # Create a card for the reload button
     reload_card = pn.Card(
         pn.Column(
+            pn.pane.Markdown("Click the button below to trigger the forecast pipeline.\nThis will re-run all forecasts for the latest data.\nThis process may take a few minutes to complete.\nNote: Current forecasts will be overwritten."),
             reload_button,
             loading_spinner,
             progress_message,
         ),
-        title='Reload',
+        title='Manual re-run of latest forecasts',
         width_policy='fit',
-        collapsed=False,
+        collapsed=True,
     )
 
     return reload_card
@@ -2445,14 +2452,14 @@ def create_reload_button():
 def run_docker_container(client, full_image_name, volumes, environment, container_name):
     """
     Runs a Docker container and blocks until it completes.
-    
+
     Args:
         client (docker.DockerClient): The Docker client instance.
         full_image_name (str): The full name of the Docker image to run.
         volumes (dict): A dictionary of volumes to bind.
         environment (list): A list of environment variables.
         container_name (str): The name to assign to the Docker container.
-    
+
     Raises:
         docker.errors.ContainerError: If the container exits with a non-zero status.
     """
@@ -2468,7 +2475,7 @@ def run_docker_container(client, full_image_name, volumes, environment, containe
     except docker.errors.APIError as e:
         print(f"Error removing existing container '{container_name}': {e}")
         raise
-    
+
     # Run the new container
     container = client.containers.run(
         full_image_name,

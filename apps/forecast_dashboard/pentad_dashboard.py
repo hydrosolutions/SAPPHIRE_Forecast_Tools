@@ -727,13 +727,13 @@ def update_visualizations():
 
 def on_data_needs_reload_changed(event):
     if event.new:
-        print("Data reload triggered.")
+        print("Triggered rerunning of forecasts.")
         try:
             load_data()
             update_visualizations()
-            print("Data reloaded and visualizations updated successfully.")
+            print("Forecasts produced and visualizations updated successfully.")
         except Exception as e:
-            print(f"Error during data reload: {e}")
+            print(f"Error during forecast rerun: {e}")
         finally:
             processing.data_reloader.data_needs_reload = False  # Reset the flag
 
@@ -839,7 +839,7 @@ def tabs_change_language(language):
             forecast_data_and_plot,
             forecast_summary_table, pentad_forecast_plot, forecast_skill_plot,
             bulletin_table, write_bulletin_button, indicator, disclaimer,
-            station_card, forecast_card, add_to_bulletin_button, basin_card, pentad_card, add_to_bulletin_popup)
+            station_card, forecast_card, add_to_bulletin_button, basin_card, pentad_card, reload_card, add_to_bulletin_popup)
     except Exception as e:
         print(f"Error in tabs_change_language: {e}")
         print(traceback.format_exc())
@@ -892,7 +892,7 @@ def update_tabs(event=None):
     tabs_container.append(new_tabs)
     # Attach the function to the new tabs with all required arguments
     new_tabs.param.watch(
-        partial(viz.update_sidepane_card_visibility, new_tabs, station_card, forecast_card, basin_card, pentad_card),
+        partial(viz.update_sidepane_card_visibility, new_tabs, station_card, forecast_card, basin_card, pentad_card, reload_card),
         'active'
     )
 
