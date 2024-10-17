@@ -82,7 +82,9 @@ def main():
         # TODO: Remove this when iEH HF is operational.
         ieh_sdk = IEasyHydroSDK()
         ieh_hf_sdk = IEasyHydroHFSDK()
+        logger.info("Testing connection to iEH SDK.")
         has_access_to_db = sl.check_database_access(ieh_sdk)
+        logger.info("Testing connection to iEH HF SDK.")
         has_access_to_hf_db = sl.check_database_access(ieh_hf_sdk)
         if not has_access_to_db:
             ieh_sdk = None
