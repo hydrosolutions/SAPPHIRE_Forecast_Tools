@@ -1047,7 +1047,7 @@ def read_machine_learning_forecasts_pentad(model):
     elif model == 'TSMIXER':
         filename = f"pentad_{model}_forecast.csv".format(model=model)
         hindcast_filename = f"{model}_PENTAD_hindcast_daily*.csv".format(model=model)
-        model_long = "Time-Series Mixer (TSMIXER)"
+        model_long = "Time-Series Mixer (TSMixer)"
         model_short = "TSMixer"
     elif model == 'ARIMA':
         filename = f"pentad_{model}_forecast.csv".format(model=model)
@@ -1118,6 +1118,51 @@ def read_linreg_forecasts_pentad_dummy(model):
     forecasts["pentad_in_year"] = forecasts["date"].apply(tl.get_pentad_in_year)
 
     return forecasts, stats
+
+def calculate_neural_ensemble_forecast(forecasts):
+    # Define the models we're interested in
+    target_models = ['TiDE', 'TFT', 'TSMixer', 'TIDE', 'TSMIXER']
+
+    # Filter forecasts to include only the target models if they exist
+    available_target_models = [model for model in target_models if any(forecasts['model_short'].str.contains(model))]
+
+    if not available_target_models:
+        logger.warning("None of the specified models (TiDE, TFT, TSMixer) are present in the forecasts.")
+        return forecasts
+
+    filtered_forecasts = forecasts[forecasts['model_short'].str.contains('|'.join(available_target_models))]
+
+    # Create a dataframe with unique date and codes from filtered forecasts
+    ensemble_mean = filtered_forecasts[["date", "code", "pentad_in_month", "pentad_in_year"]]\
+        .drop_duplicates(keep='last').copy()
+
+    # Add model_long and model_short columns to the ensemble_mean dataframe
+    model_names = ', '.join(available_target_models)
+    ensemble_mean['model_long'] = f"Neural Ensemble with {model_names} (NE)"
+    ensemble_mean['model_short'] = f"NE"
+
+    # Calculate the ensemble mean over the filtered models
+    ensemble_mean_q = filtered_forecasts \
+        .groupby(["date", "code", "pentad_in_month", "pentad_in_year"]) \
+            .agg({"forecasted_discharge": "mean"}).reset_index()
+
+    # Merge ensemble_mean_q into ensemble_mean
+    ensemble_mean = pd.merge(
+        ensemble_mean,
+        ensemble_mean_q,
+        on=["date", "code", "pentad_in_month", "pentad_in_year"],
+        how="left")
+
+    # Append ensemble_mean to original forecasts
+    forecasts = pd.concat([forecasts, ensemble_mean])
+
+    logger.info(f"Calculated ensemble forecast for models: {model_names}")
+    logger.debug(f"Columns of forecasts:\n{forecasts.columns}")
+    logger.debug(f"Forecasts:\n{forecasts.loc[:,['date', 'code', 'model_long', 'forecasted_discharge']].head()}")
+    logger.debug(f"Forecasts:\n{forecasts.loc[:,['date', 'code', 'model_long', 'forecasted_discharge']].tail()}")
+    logger.debug(f"Unique models in forecasts:\n{forecasts['model_long'].unique()}")
+
+    return forecasts
 
 def calculate_ensemble_forecast(forecasts):
     # Create a dataframe with unique date and codes from forecasts
@@ -1341,7 +1386,7 @@ def read_observed_and_modelled_data_pentade():
     logger.debug(f"stats concatenated:\n{stats.head()}\n{stats.tail()}")
     logger.info(f"Concatenated forecast results from all methods for the pentadal forecast horizon.")
 
-    forecasts = calculate_ensemble_forecast(forecasts)
+    forecasts = calculate_neural_ensemble_forecast(forecasts)
 
     # Merge the general runoff statistics to the observed DataFrame
     observed = pd.merge(observed, stats, on=["date", "code"], how="left")
