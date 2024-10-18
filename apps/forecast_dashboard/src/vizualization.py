@@ -2079,8 +2079,8 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
             y_min, y_max = visible_data['discharge_avg'].min(), visible_data['discharge_avg'].max()
 
             # Add a 40% margin to the ranges
-            x_margin = (x_max - x_min) * 0.4 
-            y_margin = (y_max - y_min) * 0.4 
+            x_margin = (x_max - x_min) * 0.4
+            y_margin = (y_max - y_min) * 0.4
 
             # Set dynamic x and y ranges
             x_range = (x_min - x_margin, x_max + x_margin)
@@ -2386,6 +2386,10 @@ def create_reload_button():
                     },
                     get_absolute_path(env.get("ieasyforecast_daily_discharge_path")): {
                         'bind': get_bind_path(env.get("ieasyforecast_daily_discharge_path")),
+                        'mode': 'rw'
+                    },
+                    get_absolute_path(env.get("ieasyhydroforecast_conceptual_model_path")): {
+                        'bind': get_bind_path(env.get("ieasyhydroforecast_conceptual_model_path")),
                         'mode': 'rw'
                     },
                     "/var/run/docker.sock": {
