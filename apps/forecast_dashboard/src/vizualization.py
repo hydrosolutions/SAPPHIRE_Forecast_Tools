@@ -13,7 +13,7 @@ import holoviews as hv
 from holoviews import streams
 from holoviews.streams import PointDraw, Selection1D
 import panel as pn
-from bokeh.models import HoverTool, FixedTicker, FuncTickFormatter, CustomJSTickFormatter, LinearAxis, NumberFormatter, DateFormatter
+from bokeh.models import Label, HoverTool, FixedTicker, FuncTickFormatter, CustomJSTickFormatter, LinearAxis, NumberFormatter, DateFormatter
 from bokeh.models.formatters import DatetimeTickFormatter
 from bokeh.models.widgets.tables import CheckboxEditor, BooleanFormatter
 from bokeh.transform import jitter
@@ -2099,6 +2099,19 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
                 # Prepare x values for regression lines
                 x = np.linspace(x_min, x_max, 100)
 
+                # Unicode characters
+                SOLID_LINE = "––"
+                DASHED_LINE = "- -"
+
+                # Modify the text content creation to use HTML
+                def create_html_content(equation_initial, r2_initial, equation_new, r2_new):
+                    html_content = "<div style='font-family: monospace; font-size: 12px;'>"
+                    if equation_initial:
+                        html_content += f"<span style='color: red;'>{SOLID_LINE}</span> {equation_initial}<br>{r2_initial}<br>"
+                    html_content += f"<span style='color: red;'>{DASHED_LINE}</span> {equation_new}<br>{r2_new}"
+                    html_content += "</div>"
+                    return html_content
+
                 # Compute y values for regression lines
                 if initial_slope is not None and initial_intercept is not None:
                     y_initial = initial_slope * x + initial_intercept
@@ -2122,9 +2135,63 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
                     text_content += f"{equation_initial}\n{r2_initial}\n"
                 text_content += f"{equation_new}\n{r2_new}"
 
-                # Create the hook function with the text content
-                hook = make_add_label_hook(text_content)
+                # Create the HTML content
+                html_content = create_html_content(equation_initial, r2_initial, equation_new, r2_new)
 
+                # Create a Div element with the HTML content
+                text_div = hv.Div(html_content)
+
+                def make_add_label_hook_from_div(div_element):
+                    def hook(plot, element):
+                        fig = plot.state
+
+                        # Remove Bokeh logo
+                        fig.toolbar.logo = None
+
+                        # Calculate positions for labels (adjust these as needed)
+                        x_pos = fig.x_range.start + (fig.x_range.end - fig.x_range.start) * 0.05
+                        y_pos = fig.y_range.end - (fig.y_range.end - fig.y_range.start) * 0.15
+
+                        # Function to add a pair of labels (colored line and equation)
+                        def add_equation_labels(line, equation, r2, y):
+                            line_label = Label(
+                                x=x_pos, y=y, x_units='data', y_units='data',
+                                text=line, text_color='red',
+                                text_font_size='12px', text_font_style='bold'
+                            )
+                            eq_label = Label(
+                                x=x_pos + (fig.x_range.end - fig.x_range.start) * 0.04, y=y,
+                                x_units='data', y_units='data',
+                                text=equation,
+                                text_font_size='12px'
+                            )
+
+                            r2_label = Label(
+                                x=x_pos + (fig.x_range.end - fig.x_range.start) * 0.04,
+                                y=y - (fig.y_range.end - fig.y_range.start) * 0.04,  # Slightly below the equation
+                                x_units='data', y_units='data',
+                                text=r2,
+                                text_font_size='12px'  # Slightly smaller font for R²
+                            )
+
+                            fig.add_layout(line_label)
+                            fig.add_layout(eq_label)
+                            fig.add_layout(r2_label)
+
+                        # Add labels for initial equation if it exists
+                        if equation_initial:
+                            add_equation_labels(SOLID_LINE, equation_initial, r2_initial, y_pos)
+                            y_pos -= (fig.y_range.end - fig.y_range.start) * 0.10  # Move down for next label
+
+                        # Add labels for new equation
+                        if equation_new:
+                            add_equation_labels(DASHED_LINE, equation_new, r2_new, y_pos)
+
+                    return hook
+
+                # Create the hook function with the text content
+                #hook = make_add_label_hook(text_content)
+                hook = make_add_label_hook_from_div(text_div)
                 # Overlay the scatter plot and the regression line(s)
                 plot = scatter * line_initial * line_new
                 plot.opts(
