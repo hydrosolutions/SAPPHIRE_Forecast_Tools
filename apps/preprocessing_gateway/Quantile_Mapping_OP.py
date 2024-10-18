@@ -180,8 +180,8 @@ def do_quantile_mapping(era5_data: pd.DataFrame, P_param: pd.DataFrame, T_param:
         a_P = P_param_code['a'].values
         b_P = P_param_code['b'].values
         threshold_P = P_param_code['wet_day'].values
-        logger.debug(f"Code: {code[0]}, a_P: {a_P[0]}, b_P: {b_P[0]}, threshold_P: {threshold_P[0]}")
-        logger.debug(f"Types of a_P: {type(a_P[0])}, b_P: {type(b_P[0])}, threshold_P: {type(threshold_P[0])}")
+        #logger.debug(f"Code: {code[0]}, a_P: {a_P[0]}, b_P: {b_P[0]}, threshold_P: {threshold_P[0]}")
+        #logger.debug(f"Types of a_P: {type(a_P[0])}, b_P: {type(b_P[0])}, threshold_P: {type(threshold_P[0])}")
 
         a_T = T_param_code['a'].values
         b_T = T_param_code['b'].values
@@ -310,6 +310,11 @@ def merge_ensemble_forecast(files_downloaded: list) -> pd.DataFrame:
     Outputs:
         merged_data: pd.DataFrame with the merged data.
     """
+    # Check if files_downloaded is empty
+    if not files_downloaded:
+        logger.error("No files downloaded. Exiting program.")
+        sys.exit(1)
+
     #combine the data
     P_ensemble = pd.DataFrame()
     T_ensemble = pd.DataFrame()
@@ -331,7 +336,6 @@ def merge_ensemble_forecast(files_downloaded: list) -> pd.DataFrame:
             P_ensemble = pd.concat([P_ensemble, transformed_data_file], axis = 0)
         else:
             T_ensemble = pd.concat([T_ensemble, transformed_data_file], axis = 0)
-
 
     #combine the P and T data, on code, than name, than ensemble_member than date
     P_ensemble = P_ensemble.sort_values(['code', 'name', 'ensemble_member', 'date'])
@@ -528,6 +532,7 @@ def main():
     for code_ens in hru_ensemble_forecast:
 
         print(f"Processing HRU Ensemble: {code_ens} (gateway code)")
+        print(f"Storing fiels downloaded to {OUTPUT_PATH_DG}")
         if ENSEMBLE_HRUS == 'None':
             break
         #download the ensemble forecast
@@ -557,6 +562,8 @@ def main():
                 # If it's a different error, re-raise it.
                 # The exit value will be 1 (failure) in this case.
                 sys.exit(1)
+
+        #print(f"Files downloaded: {files_downloaded}")
 
         # A renaming of shapefiles sometimes is required in the data gateway.
         # The user can define name twins for the shapefiles in the data gateway
