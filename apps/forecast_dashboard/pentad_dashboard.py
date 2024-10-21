@@ -500,6 +500,17 @@ add_to_bulletin_button = pn.widgets.Button(name=_("Add to bulletin"), button_typ
 
 # region update_functions
 
+# Adding the watcher logic for disabling the "Add to Bulletin" button
+def update_add_to_bulletin_button(event):
+    """Update the state of 'Add to Bulletin' button based on pipeline_running status."""
+    add_to_bulletin_button.disabled = event.new
+
+# Watch for changes in pipeline_running and update the add_to_bulletin_button
+viz.app_state.param.watch(update_add_to_bulletin_button, 'pipeline_running')
+
+# Set the initial state of the button based on whether the pipeline is running
+add_to_bulletin_button.disabled = viz.app_state.pipeline_running
+
 # Function to update the spinner
 def update_indicator(event):
     if not event:
@@ -524,7 +535,13 @@ def update_model_select(station_value, selected_pentad):
 # Create the pop-up notification pane (initially hidden)
 add_to_bulletin_popup = pn.pane.Alert("Added to bulletin", alert_type="success", visible=False)
 
+# Function to handle adding the current selection to the bulletin
 def add_current_selection_to_bulletin(event=None):
+    if viz.app_state.pipeline_running:
+        print("Cannot add to bulletin while containers are running.")
+        return  # Prevent the action while containers are running
+    
+    # Your existing logic for adding selections to bulletin...
     selected_indices = forecast_tabulator.selection
     forecast_df = forecast_tabulator.value
 
@@ -533,28 +550,19 @@ def add_current_selection_to_bulletin(event=None):
         logger.warning("Attempted to add to bulletin, but forecast summary table is empty.")
         return
 
-    # If no selection is made, default to the first forecast
     if not selected_indices and len(forecast_df) > 0:
         selected_indices = [0]
-        forecast_tabulator.selection = selected_indices  # Update the Tabulator's selection
+        forecast_tabulator.selection = selected_indices
         print("No forecast selected. Defaulting to the first forecast.")
         logger.info("No forecast selected. Defaulting to the first forecast.")
 
-    # Get the selected rows
     selected_rows = forecast_df.iloc[selected_indices]
-
-    if selected_rows.empty:
-        print("Selected rows are empty.")
-        logger.warning("Selected rows are empty despite having indices.")
-        return
-
     selected_station = station.value
     selected_date = date_picker.value
 
     print(f"Adding station: {selected_station}, date: {selected_date}")
     print(f"Selected models:\n{selected_rows['Model']}")
 
-    # Use the selected rows as the final forecast table
     final_forecast_table = selected_rows.reset_index(drop=True)
 
     # Find the Site object for the selected station
@@ -564,30 +572,25 @@ def add_current_selection_to_bulletin(event=None):
         logger.error(f"Site {selected_station} not found in sites_list")
         return
 
-    # Overwrite the forecast instead of appending
     selected_site.forecasts = final_forecast_table
 
-    # Check if the site is already in bulletin_sites
     existing_site = next((site for site in bulletin_sites if site.code == selected_site.code), None)
     if existing_site is None:
-        # If the site is not in the bulletin, add it
         bulletin_sites.append(selected_site)
         logger.info(f"Added new site to bulletin: {selected_station}")
     else:
-        # If the site is already in the bulletin, overwrite the existing forecast
         existing_site.forecasts = selected_site.forecasts
         print(f"Overwritten forecast for station: {selected_station}")
         logger.info(f"Overwritten forecast for site in bulletin: {selected_station}")
 
-    # Update the bulletin_table to reflect changes
     update_bulletin_table(None)
 
-     # Show the popup notification
+    # Show the popup notification
     add_to_bulletin_popup.visible = True
-
-    # Hide the popup after a short delay (e.g., 2 seconds)
     pn.state.add_periodic_callback(lambda: setattr(add_to_bulletin_popup, 'visible', False), 2000, count=1)
 
+# Ensure the 'Add to Bulletin' button is initially bound
+add_to_bulletin_button.on_click(add_current_selection_to_bulletin)
 def create_bulletin_table():
     bulletin_data = []
     existing_forecasts = set()

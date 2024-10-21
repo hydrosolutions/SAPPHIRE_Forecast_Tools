@@ -2347,11 +2347,64 @@ def update_forecast_data(_, linreg_predictor, station, pentad_selector):
 def create_reload_button():
     reload_button = pn.widgets.Button(name="Trigger forecasts", button_type="danger")
 
-    # Loading spinner and message
+    # Loading spinner and messages
     loading_spinner = pn.indicators.LoadingSpinner(value=True, width=50, height=50, color='success', visible=False)
     progress_message = pn.pane.Alert("Processing...", alert_type="info", visible=False)
+    warning_message = pn.pane.Alert("Please do not reload this page until processing is done!", alert_type='danger', visible=False)
 
+    # Function to check if any containers are running
+    def check_containers_running():
+        try:
+            client = docker.from_env()
+            container_names = [
+                "preprunoff",
+                "reset_rundate",
+                "linreg",
+                "prepgateway",
+                "conceptmod",
+                "postprocessing",
+            ]
+            # Add the ML model containers
+            for model in ["TFT", "TIDE", "TSMIXER", "ARIMA"]:
+                for mode in ["PENTAD", "DECAD"]:
+                    container_names.append(f"ml_{model}_{mode}")
+            running_containers = client.containers.list(filters={"status": "running"})
+            running_container_names = [container.name for container in running_containers]
+            for name in container_names:
+                if name in running_container_names:
+                    return True
+            return False
+        except Exception as e:
+            print(f"Error checking containers: {e}")
+            return False
+
+    # Function to update button status when page is loaded or when triggered
+    @pn.io.with_lock  # Ensure thread safety
+    def update_button_status():
+        if app_state.pipeline_running or check_containers_running():
+            reload_button.disabled = True
+            loading_spinner.visible = True
+            progress_message.object = "Processing..."
+            progress_message.visible = True
+            warning_message.object = "Please do not reload this page until processing is done!"
+            warning_message.visible = True
+        else:
+            reload_button.disabled = False
+            loading_spinner.visible = False
+            progress_message.visible = False
+            warning_message.visible = False
+
+    # Check container status when the page is first loaded
+    pn.state.onload(update_button_status)
+
+    # Function to run the pipeline and update the UI properly
     def run_pipeline(event):
+        # Check containers again when button is clicked
+        if check_containers_running():
+            warning_message.object = "Containers are still running. Please wait."
+            warning_message.visible = True
+            return
+
         # Update shared state to indicate the pipeline is running
         app_state.pipeline_running = True
 
@@ -2360,6 +2413,8 @@ def create_reload_button():
         loading_spinner.visible = True
         progress_message.object = "Processing..."
         progress_message.visible = True
+        warning_message.object = "Please do not reload this page until processing is done!"
+        warning_message.visible = True
 
         def run_docker_pipeline():
             try:
@@ -2406,11 +2461,11 @@ def create_reload_button():
                 # Run the prepgateway container
                 run_docker_container(client, "mabesa/sapphire-prepgateway:latest", volumes, environment, "prepgateway")
 
-                # Run all machine learning models (as multiple independent containers)
+                # Run all ML model containers
                 for model in ["TFT", "TIDE", "TSMIXER", "ARIMA"]:
                     for mode in ["PENTAD", "DECAD"]:
                         container_name = f"ml_{model}_{mode}"
-                        run_docker_container(client, f"mabesa/sapphire-ml:{TAG}", volumes, environment + [f"SAPPHIRE_MODEL_TO_USE={model}", f"SAPPHIRE_PREDICTION_MODE={mode}"], container_name)
+                        run_docker_container(client, f"mabesa/sapphire-ml:latest", volumes, environment + [f"SAPPHIRE_MODEL_TO_USE={model}", f"SAPPHIRE_PREDICTION_MODE={mode}"], container_name)
 
                 # Run the conceptmod container
                 run_docker_container(client, "mabesa/sapphire-conceptmod:latest", volumes, environment, "conceptmod")
@@ -2431,13 +2486,17 @@ def create_reload_button():
                 progress_message.object = f"Configuration Error: {ve}"
                 print(f"Configuration Error: {ve}")
             finally:
-                # Hide progress indicators and re-enable the reload button
-                loading_spinner.visible = False
-                progress_message.visible = False
-                reload_button.disabled = False
+                # Ensure thread-safe update of UI
+                @pn.io.with_lock
+                def reset_ui_after_pipeline():
+                    # Hide progress indicators and re-enable the reload button
+                    loading_spinner.visible = False
+                    progress_message.visible = False
+                    warning_message.visible = False
+                    reload_button.disabled = False
+                    app_state.pipeline_running = False  # Update shared state
 
-                # Update shared state to indicate the pipeline has finished
-                app_state.pipeline_running = False
+                reset_ui_after_pipeline()  # Safely update the UI after the process
 
         # Run the pipeline in a separate thread to keep the UI responsive
         threading.Thread(target=run_docker_pipeline).start()
@@ -2452,6 +2511,7 @@ def create_reload_button():
             reload_button,
             loading_spinner,
             progress_message,
+            warning_message,
         ),
         title='Manual re-run of latest forecasts',
         width_policy='fit',
@@ -2463,7 +2523,7 @@ def create_reload_button():
 def run_docker_container(client, full_image_name, volumes, environment, container_name):
     """
     Runs a Docker container and blocks until it completes.
-
+    
     Args:
         client (docker.DockerClient): The Docker client instance.
         full_image_name (str): The full name of the Docker image to run.
@@ -2476,35 +2536,38 @@ def run_docker_container(client, full_image_name, volumes, environment, containe
     """
     try:
         # Remove existing container with the same name if it exists
-        existing_container = client.containers.get(container_name)
-        print(f"Removing existing container '{container_name}' (ID: {existing_container.id})...")
-        existing_container.remove(force=True)
-        print(f"Container '{container_name}' removed.")
-    except docker.errors.NotFound:
-        # Container does not exist, proceed to run
-        pass
-    except docker.errors.APIError as e:
-        print(f"Error removing existing container '{container_name}': {e}")
-        raise
+        try:
+            existing_container = client.containers.get(container_name)
+            print(f"Removing existing container '{container_name}' (ID: {existing_container.id})...")
+            existing_container.remove(force=True)
+            print(f"Container '{container_name}' removed.")
+        except docker.errors.NotFound:
+            # Container does not exist, proceed to run
+            pass
+        except docker.errors.APIError as e:
+            print(f"Error removing existing container '{container_name}': {e}")
+            # Optionally, you can decide to continue even if the container couldn't be removed
+        
+        # Run the new container
+        container = client.containers.run(
+            full_image_name,
+            detach=True,
+            environment=environment,
+            volumes=volumes,
+            name=container_name,
+            network='host'
+        )
+        print(f"Container '{container_name}' (ID: {container.id}) is running.")
 
-    # Run the new container
-    container = client.containers.run(
-        full_image_name,
-        detach=True,
-        environment=environment,
-        volumes=volumes,
-        name=container_name,
-        network='host'
-    )
-    print(f"Container '{container_name}' (ID: {container.id}) is running.")
-
-    # Monitor the container's progress in a separate thread to keep the UI responsive
-
-    while container.status != 'exited':
-        container.reload()  # Refresh the container's status
-        time.sleep(1)
-    container.wait()  # Ensure the container has finished
-    print(f"Container '{container_name}' has stopped.")
+        # Wait for the container to finish
+        result = container.wait()  # This will block until the container exits
+        if result['StatusCode'] != 0:
+            print(f"Container '{container_name}' exited with status code {result['StatusCode']}.")
+            # Optionally log the error or add to a list of failed containers
+        else:
+            print(f"Container '{container_name}' has stopped successfully.")
+    except Exception as e:
+        print(f"Error running container '{container_name}': {e}")
 
 def make_add_label_hook(text_content):
     def add_label(plot, element):
