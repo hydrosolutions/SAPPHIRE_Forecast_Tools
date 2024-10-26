@@ -20,6 +20,7 @@ if not os.path.isdir(forecast_dir):
 # Add the forecast directory to the Python path
 sys.path.append(forecast_dir)
 # Import the modules from the forecast library
+import setup_library as sl
 import tag_library as tl
 import forecast_library as fl
 
@@ -267,7 +268,7 @@ def read_linreg_forecast_data(iehhf_selected_stations):
     #linreg_forecast = linreg_forecast[['date', 'pentad_in_year', 'code', 'predictor', 'discharge_avg']]
 
     # For site 15059, we want to see the latest 10 rows of columns 'date', 'code', 'slope, intercept, forecasted_discharge', 'delta' only (no other columns)
-    print("\n\n\n\n\nread_linreg_forecast_data:\n", linreg_forecast[((linreg_forecast['code'] == '16059') & (linreg_forecast['pentad_in_year'] == 54))][['date', 'code', 'slope', 'intercept', 'forecasted_discharge', 'delta']].tail(10).to_string(index=False))
+    #print("\n\n\n\n\nread_linreg_forecast_data:\n", linreg_forecast[((linreg_forecast['code'] == '16059') & (linreg_forecast['pentad_in_year'] == 54))][['date', 'code', 'slope', 'intercept', 'forecasted_discharge', 'delta']].tail(10).to_string(index=False))
 
     return linreg_forecast
 
@@ -613,6 +614,58 @@ def deprecating_read_analysis_file():
 
     return analysis_pentad
 
+def sapphire_sites_to_dataframe(sites_list):
+    """
+    Convert a list of SapphireSite objects to a pandas DataFrame.
+
+    Args:
+    sites_list (list): A list of SapphireSite objects.
+
+    Returns:
+    pd.DataFrame: A DataFrame where each row represents a SapphireSite object
+                  and each column represents an attribute of the object.
+    """
+    # Use a list comprehension to create a list of dictionaries
+    # Each dictionary represents one SapphireSite object
+    data = [vars(site) for site in sites_list]
+
+    # Create a DataFrame from the list of dictionaries
+    df = pd.DataFrame(data)
+
+    return df
+
+def read_all_stations_metadata_from_iehhf(station_list):
+    from ieasyhydro_sdk.sdk import IEasyHydroHFSDK
+    iehhf = IEasyHydroHFSDK()
+    all_stations, station_list_we_dont_need = sl.get_pentadal_forecast_sites_from_HF_SDK(iehhf)
+    # Cast all stations to a dataframe
+    all_stations = sapphire_sites_to_dataframe(all_stations)
+    # Cast all_stations['code'] to string
+    all_stations['code'] = all_stations['code'].astype(str)
+    # print column names of all_stations
+    print(f"all_stations columns: {all_stations.columns}")
+    #print(f"head of all_stations: {all_stations[['code', 'name', 'river_name', 'punkt_name']].head(20)}")
+
+    # Rename
+    all_stations.rename(columns={'name': 'station_labels'}, inplace=True)
+    #print(f"all_stations columns: {all_stations.columns}")
+
+    # Left-join
+    station_df=pd.DataFrame(station_list, columns=['code'])
+    station_df=station_df.merge(all_stations.loc[:,['code','station_labels', 'basin']],
+                            left_on='code', right_on='code', how='left')
+    station_df['station_labels'] = station_df['code'] + ' - ' + station_df['station_labels']
+
+    # Update the station list with the new station labels
+    station_list = station_df['station_labels'].tolist()
+
+    # From station_df, get the columns basin and station_lables and convert to a
+    # dictionary where we have unique basins in the key and the station_labels
+    # in the values
+    station_dict = station_df.groupby('basin')['station_labels'].apply(list).to_dict()
+
+    return station_list, all_stations, station_df, station_dict
+
 def read_all_stations_metadata_from_file(station_list):
 
     all_stations_file = os.path.join(
@@ -649,20 +702,17 @@ def read_all_stations_metadata_from_file(station_list):
 
 def add_labels_to_hydrograph(hydrograph, all_stations):
     hydrograph = hydrograph.merge(
-        all_stations.loc[:,['code','river_ru','punkt_ru']],
+        all_stations.loc[:,['code','station_labels']],
                             left_on='code', right_on='code', how='left')
-    hydrograph['station_labels'] = hydrograph['code'] + ' - ' + hydrograph['river_ru'] + ' ' + hydrograph['punkt_ru']
-    # Remove the columns river_ru and punkt_ru
-    hydrograph = hydrograph.drop(columns=['code', 'river_ru', 'punkt_ru'])
+    hydrograph['station_labels'] = hydrograph['code'] + ' - ' + hydrograph['station_labels']
 
     return hydrograph
 
 def add_labels_to_forecast_pentad_df(forecast_pentad, all_stations):
     forecast_pentad = forecast_pentad.merge(
-        all_stations.loc[:,['code','river_ru','punkt_ru']],
+        all_stations.loc[:,['code','station_labels']],
         left_on='code', right_on='code', how='left')
-    forecast_pentad['station_labels'] = forecast_pentad['code'] + ' - ' + forecast_pentad['river_ru'] + ' ' + forecast_pentad['punkt_ru']
-    forecast_pentad = forecast_pentad.drop(columns=['river_ru', 'punkt_ru'])
+    forecast_pentad['station_labels'] = forecast_pentad['code'] + ' - ' + forecast_pentad['station_labels']
 
     return forecast_pentad
 
@@ -1037,6 +1087,7 @@ def get_bulletin_header_info(date):
     """Get information from date relevant for the bulletin header."""
     df = pd.DataFrame({
         "pentad": [tl.get_pentad(date)],
+        "month_number": [tl.get_month_num(date)],
         "month_str_nom_ru": [tl.get_month_str_case1(date)],
         "month_str_gen_ru": [tl.get_month_str_case2(date)],
         "year": [tl.get_year(date)],
