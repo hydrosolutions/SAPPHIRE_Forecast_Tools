@@ -748,28 +748,35 @@ def calculate_forecast_range(_, forecast_table, range_type, range_slider):
 
     return forecast_table
 
-def update_model_dict(model_dict, forecasts_all, selected_station):
+def update_model_dict(model_dict, forecasts_all, selected_station, selected_pentad):
     """
     Update the model_dict with the models we have results for for the selected station
     """
+    print("\n\n\nDEBUG: selected pentad in update_model_dict: \n", selected_pentad)
     #print("DEBUG: update_model_dict: selected_station:\n", selected_station)
-    test = forecasts_all[forecasts_all['station_labels'] == selected_station]
     #print("tail of forecasts_all:\n", forecasts_all.tail())
-    #print("columns of forecasts_all:\n", forecasts_all.columns)
+    print("columns of forecasts_all:\n", forecasts_all.columns)
     #print("DEBUG: update_model_dict: unique models for selected station:\n", test['model_long'].unique())
     #print("DEBUG: update_model_dict: test:\n", test)
 
-    model_dict = forecasts_all[forecasts_all['station_labels'] == selected_station] \
-        .set_index('model_long')['model_short'].to_dict()
+    model_dict = forecasts_all[forecasts_all['station_labels'] == selected_station]
+    model_dict = model_dict[model_dict['pentad_in_year'] == selected_pentad]
+    # If we have several rows with model_short == 'EM', we only keep the last one
+    model_dict = model_dict.drop_duplicates(subset=['model_short'], keep='last')
+    model_dict = model_dict.set_index('model_long')['model_short'].to_dict()
     #print("DEBUG: update_model_dict: model_dict:\n", model_dict)
     return model_dict
 
-
-
-
-
-
-
+def get_best_models_for_station_and_pentad(forecasts_all, selected_station, selected_pentad):
+    """Returns a list of models with the best performance for the selected station and pentad"""
+    # Filter the forecast results for the selected station and pentad
+    forecasts = forecasts_all[forecasts_all['station_labels'] == selected_station]
+    forecasts = forecasts[forecasts['pentad_in_year'] == selected_pentad]
+    # Get the model_long value of the row in forecasts with the highest value for accuracy
+    best_models = forecasts.loc[forecasts['accuracy'].idxmax(), 'model_long']
+    best_models = [best_models, 'Linear regression (LR)']
+    print("best models: ", best_models)
+    return best_models
 
 def add_labels_to_hydrograph_pentad_all(hydrograph_pentad_all, all_stations):
     hydrograph_pentad_all = hydrograph_pentad_all.merge(
@@ -986,6 +993,10 @@ def read_rainfall_data():
     # Read hindcast forcing data
     hindcast_forcing = pd.read_csv(filepath)
 
+    # Convert the date column to datetime. The format of the date string is %Y-%m-%d.
+    hindcast_forcing['date'] = pd.to_datetime(
+        hindcast_forcing['date'], format='%Y-%m-%d', errors='coerce').dt.date
+
     # control member forcing
     filepath = os.path.join(
         os.getenv('ieasyhydroforecast_PATH_TO_CF'),
@@ -996,6 +1007,10 @@ def read_rainfall_data():
     # Read forecast forcing data
     forecast_forcing = pd.read_csv(filepath)
 
+    # Convert the date column to datetime. The format of the date string is %Y-%m-%d.
+    forecast_forcing['date'] = pd.to_datetime(
+        forecast_forcing['date'], format='%Y-%m-%d', errors='coerce').dt.date
+
     # Merge the two dataframes, keeping hindcast where hindcast is available
     # and filling in with forecast where hindcast is missing
     forcing = pd.merge(hindcast_forcing, forecast_forcing, how='outer',
@@ -1004,9 +1019,6 @@ def read_rainfall_data():
     forcing['P'] = forcing['P_x'].combine_first(forcing['P_y'])
     # Drop columns P_x and P_y
     forcing = forcing.drop(columns=['P_x', 'P_y'])
-
-    # Convert the date column to datetime. The format of the date string is %Y-%m-%d.
-    forcing['date'] = pd.to_datetime(forcing['date'], format='%Y-%m-%d', errors='coerce')
 
     # Convert the code column to string
     forcing['code'] = forcing['code'].astype(str)
@@ -1028,6 +1040,10 @@ def read_temperature_data():
     # Read hindcast forcing data
     hindcast_forcing = pd.read_csv(filepath)
 
+    # Convert the date column to datetime. The format of the date string is %Y-%m-%d.
+    hindcast_forcing['date'] = pd.to_datetime(
+        hindcast_forcing['date'], format='%Y-%m-%d', errors='coerce').dt.date
+
     # control member forcing
     filepath = os.path.join(
         os.getenv('ieasyhydroforecast_PATH_TO_CF'),
@@ -1037,6 +1053,10 @@ def read_temperature_data():
         raise Exception("File not found: " + filepath)
     # Read forecast forcing data
     forecast_forcing = pd.read_csv(filepath)
+
+    # Convert the date column to datetime. The format of the date string is %Y-%m-%d.
+    forecast_forcing['date'] = pd.to_datetime(
+        forecast_forcing['date'], format='%Y-%m-%d', errors='coerce').dt.date
 
     # Merge the two dataframes, keeping hindcast where hindcast is available
     # and filling in with forecast where hindcast is missing

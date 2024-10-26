@@ -180,8 +180,8 @@ def do_quantile_mapping(era5_data: pd.DataFrame, P_param: pd.DataFrame, T_param:
         a_P = P_param_code['a'].values
         b_P = P_param_code['b'].values
         threshold_P = P_param_code['wet_day'].values
-        logger.debug(f"Code: {code[0]}, a_P: {a_P[0]}, b_P: {b_P[0]}, threshold_P: {threshold_P[0]}")
-        logger.debug(f"Types of a_P: {type(a_P[0])}, b_P: {type(b_P[0])}, threshold_P: {type(threshold_P[0])}")
+        #logger.debug(f"Code: {code[0]}, a_P: {a_P[0]}, b_P: {b_P[0]}, threshold_P: {threshold_P[0]}")
+        #logger.debug(f"Types of a_P: {type(a_P[0])}, b_P: {type(b_P[0])}, threshold_P: {type(threshold_P[0])}")
 
         a_T = T_param_code['a'].values
         b_T = T_param_code['b'].values
@@ -310,12 +310,19 @@ def merge_ensemble_forecast(files_downloaded: list) -> pd.DataFrame:
     Outputs:
         merged_data: pd.DataFrame with the merged data.
     """
+    # Check if files_downloaded is empty
+    if not files_downloaded:
+        logger.error("No files downloaded. Exiting program.")
+        sys.exit(1)
+
     #combine the data
     P_ensemble = pd.DataFrame()
     T_ensemble = pd.DataFrame()
     for file in files_downloaded:
         elements = file.split("_")
-        HRU_CODE = elements[-2][-5:]
+        # From the second last element, remove the first 3 characters ('HRU')
+        HRU_CODE = elements[-2][3:]
+        #HRU_CODE = elements[-2][-5:]
         variable = elements[-1].split(".")[0]
         ensemble_member = elements[-3][3:]
         #read the data file
@@ -329,7 +336,6 @@ def merge_ensemble_forecast(files_downloaded: list) -> pd.DataFrame:
             P_ensemble = pd.concat([P_ensemble, transformed_data_file], axis = 0)
         else:
             T_ensemble = pd.concat([T_ensemble, transformed_data_file], axis = 0)
-
 
     #combine the P and T data, on code, than name, than ensemble_member than date
     P_ensemble = P_ensemble.sort_values(['code', 'name', 'ensemble_member', 'date'])
@@ -481,6 +487,7 @@ def main():
         logger.debug(f"Control Member Data Path: {control_member_era5}")
 
         df_c_m = pd.read_csv(control_member_era5)
+
         #transform the data file
         transformed_data_file = transform_data_file_control_member(df_c_m)
         transformed_data_file['code'] = transformed_data_file['code'].astype(str)
@@ -525,6 +532,7 @@ def main():
     for code_ens in hru_ensemble_forecast:
 
         print(f"Processing HRU Ensemble: {code_ens} (gateway code)")
+        print(f"Storing fiels downloaded to {OUTPUT_PATH_DG}")
         if ENSEMBLE_HRUS == 'None':
             break
         #download the ensemble forecast
@@ -554,6 +562,8 @@ def main():
                 # If it's a different error, re-raise it.
                 # The exit value will be 1 (failure) in this case.
                 sys.exit(1)
+
+        #print(f"Files downloaded: {files_downloaded}")
 
         # A renaming of shapefiles sometimes is required in the data gateway.
         # The user can define name twins for the shapefiles in the data gateway

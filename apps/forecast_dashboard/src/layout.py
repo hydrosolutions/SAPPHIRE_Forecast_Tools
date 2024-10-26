@@ -26,7 +26,7 @@ class DashboardTitle(param.Parameterized):
 
 
 # Define components of the layout
-def define_sidebar(_, station_card, forecast_card, basin_card, message_pane):
+def define_sidebar(_, station_card, forecast_card, basin_card, message_pane, reload_card):
     return pn.Column(
         pn.Row(station_card),
         #pn.Row(pentad_card),
@@ -38,6 +38,7 @@ def define_sidebar(_, station_card, forecast_card, basin_card, message_pane):
         pn.Row(forecast_card),
         pn.Row(basin_card),
         pn.Row(message_pane),
+        pn.Row(reload_card),
          #pn.Row(range_selection),
         #pn.Row(manual_range),
         #pn.Row(print_button),
@@ -88,8 +89,9 @@ def define_tabs(_,
                 forecast_data_and_plot,
                 forecast_summary_table, pentad_forecast_plot, effectiveness_plot,
                 bulletin_table,
-                write_bulletin_button, disclaimer,
-                station_card, forecast_card, add_to_bulletin_button, basin_card, pentad_card, add_to_bulletin_popup):
+                write_bulletin_button, indicator, disclaimer,
+                station_card, forecast_card, add_to_bulletin_button, basin_card,
+                pentad_card, reload_card, add_to_bulletin_popup):
 
     # Organize the panes in tabs
     no_date_overlap_flag = True
@@ -205,11 +207,12 @@ def define_tabs(_,
              pn.Column(
                     pn.Card(
                         bulletin_table,
-                        pn.Row(
-                            write_bulletin_button,
-                            ),
                         title='Forecast bulletin',
+                        sizing_mode='stretch_width',
                     ),
+                    pn.Row(
+                            write_bulletin_button,
+                            indicator),
              )
             ),
             (_('Disclaimer'), disclaimer),
@@ -217,7 +220,7 @@ def define_tabs(_,
             sizing_mode='stretch_both'
         )
     tabs.param.watch(lambda event: update_sidepane_card_visibility(
-    tabs, station_card, forecast_card, basin_card, pentad_card, event), 'active')
+    tabs, station_card, forecast_card, basin_card, pentad_card, reload_card, event), 'active')
     return tabs
 
 

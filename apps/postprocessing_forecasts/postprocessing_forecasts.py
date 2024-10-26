@@ -63,6 +63,13 @@ def postprocessing_forecasts():
     # Data processing
     observed, modelled = sl.read_observed_and_modelled_data_pentade()
 
+    logger.info(f"\n\n------ Calculating skill metrics -----------------")
+    # Calculate forecast skill metrics, adds ensemble forecast to modelled
+    skill_metrics, modelled = fl.calculate_skill_metrics_pentad(observed, modelled)
+    logger.debug(f"Skill metrics: {skill_metrics.columns}")
+    logger.debug(f"Skill metrics: {skill_metrics.tail()}")
+
+    logger.info(f"\n\n------ Saving results ----------------------")
     # Save the observed and modelled data to CSV files
     ret = fl.save_forecast_data_pentad(modelled)
     if ret is None:
@@ -70,13 +77,6 @@ def postprocessing_forecasts():
     else:
         logger.error(f"Error saving the pentadal forecast results.")
 
-    logger.info(f"\n\n------ Calculating skill metrics -----------------")
-    # Calculate forecast skill metrics
-    skill_metrics = fl.calculate_skill_metrics_pentad(observed, modelled)
-    logger.debug(f"Skill metrics: {skill_metrics.columns}")
-    logger.debug(f"Skill metrics: {skill_metrics.tail()}")
-
-    logger.info(f"\n\n------ Saving results ----------------------")
     # Save the skill metrics to a CSV file
     ret = fl.save_pentadal_skill_metrics(skill_metrics)
 

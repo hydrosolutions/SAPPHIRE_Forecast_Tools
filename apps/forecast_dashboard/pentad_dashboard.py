@@ -334,21 +334,29 @@ station = pn.widgets.Select(
 
 # Update the model_dict with the models we have results for for the selected
 # station
-#print("DEBUG: pentad_dashboard.py: station.value: ", station.value)
-model_dict = processing.update_model_dict(model_dict_all, forecasts_all, station.value)
+print("DEBUG: pentad_dashboard.py: station.value: ", station.value)
+model_dict = processing.update_model_dict(model_dict_all, forecasts_all, station.value, pentad_selector.value)
 #print(f"DEBUG: pentad_dashboard.py: model_dict: {model_dict}")
+
+@pn.depends(station, pentad_selector, watch=True)
+def get_best_models_for_station_and_pentad(station_value, pentad_value):
+    return processing.get_best_models_for_station_and_pentad(forecasts_all, station_value, pentad_value)
+current_model_pre_selection = get_best_models_for_station_and_pentad(station.value, pentad_selector.value)
 
 # Widget for forecast model selection, only visible in forecast tab
 # a given hydropost/station.
 model_checkbox = pn.widgets.CheckBoxGroup(
     name=_("Select forecast model:"),
     options=model_dict,
-    value=[model_dict['Linear regression (LR)']],
+    #value=[model_dict['Linear regression (LR)']],
+    value=[model_dict[model] for model in current_model_pre_selection],
     #width=200,  # 280
     margin=(0, 0, 0, 0),
     sizing_mode='stretch_width',
     css_classes=['checkbox-label']
 )
+print(f"\n\n\nmodel_checkbox: {model_checkbox.value}\n\n\n")
+
 allowable_range_selection = pn.widgets.Select(
     name=_("Select forecast range for display:"),
     options=[_("delta"), _("Manual range, select value below"), _("max[delta, %]")],
@@ -541,6 +549,17 @@ def update_site_attributes_with_linear_regression_predictor(_, sites=sites_list,
 sites_list = update_site_attributes_with_hydrograph_statistics_for_selected_pentad(_=_, sites=sites_list, df=hydrograph_pentad_all, pentad=pentad_selector.value)
 sites_list = update_site_attributes_with_linear_regression_predictor(_, sites=sites_list, df=linreg_predictor, pentad=pentad_selector.value)
 
+# Adding the watcher logic for disabling the "Add to Bulletin" button
+def update_add_to_bulletin_button(event):
+    """Update the state of 'Add to Bulletin' button based on pipeline_running status."""
+    add_to_bulletin_button.disabled = event.new
+
+# Watch for changes in pipeline_running and update the add_to_bulletin_button
+viz.app_state.param.watch(update_add_to_bulletin_button, 'pipeline_running')
+
+# Set the initial state of the button based on whether the pipeline is running
+add_to_bulletin_button.disabled = viz.app_state.pipeline_running
+
 # Function to update the spinner
 #def update_indicator(event):
 #    if not event:
@@ -548,22 +567,30 @@ sites_list = update_site_attributes_with_linear_regression_predictor(_, sites=si
 #    indicator.value = not indicator.value
 
 # Update the model select widget based on the selected station
-def update_model_select(station_value):
+@pn.depends(station, pentad_selector, watch=True)
+def update_model_select(station_value, selected_pentad):
     # Update the model_dict with the models we have results for for the selected
     # station
-    #print(f"DEBUG: pentad_dashboard.py: update_model_select: station_value: {station_value}")
-    model_dict = processing.update_model_dict(model_dict_all, forecasts_all, station_value)
+    print(f"DEBUG: pentad_dashboard.py: update_model_select: station_value: {station_value}")
+    model_dict = processing.update_model_dict(model_dict_all, forecasts_all, station_value, selected_pentad)
     model_checkbox.options = model_dict
     return model_dict
 
 
 # Bind the update function to the station selector
-pn.bind(update_model_select, station, watch=True)
+#pn.bind(update_model_select, station, watch=True)
+#pn.bind(update_model_select, pentad_selector, watch=True)
 
 # Create the pop-up notification pane (initially hidden)
 add_to_bulletin_popup = pn.pane.Alert("Added to bulletin", alert_type="success", visible=False)
 
+# Function to handle adding the current selection to the bulletin
 def add_current_selection_to_bulletin(event=None):
+    if viz.app_state.pipeline_running:
+        print("Cannot add to bulletin while containers are running.")
+        return  # Prevent the action while containers are running
+    
+    # Your existing logic for adding selections to bulletin...
     selected_indices = forecast_tabulator.selection
     forecast_df = forecast_tabulator.value
     #print("\n\n\nDEBUG: pentad_dashboard.py: forecast_df:\n", forecast_df)
@@ -573,28 +600,19 @@ def add_current_selection_to_bulletin(event=None):
         logger.warning("Attempted to add to bulletin, but forecast summary table is empty.")
         return
 
-    # If no selection is made, default to the first forecast
     if not selected_indices and len(forecast_df) > 0:
         selected_indices = [0]
-        forecast_tabulator.selection = selected_indices  # Update the Tabulator's selection
+        forecast_tabulator.selection = selected_indices
         print("No forecast selected. Defaulting to the first forecast.")
         logger.info("No forecast selected. Defaulting to the first forecast.")
 
-    # Get the selected rows
     selected_rows = forecast_df.iloc[selected_indices]
-
-    if selected_rows.empty:
-        print("Selected rows are empty.")
-        logger.warning("Selected rows are empty despite having indices.")
-        return
-
     selected_station = station.value
     selected_date = date_picker.value
 
     print(f"Adding station: {selected_station}, date: {selected_date}")
     print(f"Selected models:\n{selected_rows['Model']}")
 
-    # Use the selected rows as the final forecast table
     final_forecast_table = selected_rows.reset_index(drop=True)
 
     # Find the Site object for the selected station
@@ -605,34 +623,25 @@ def add_current_selection_to_bulletin(event=None):
         logger.error(f"Site {selected_station} not found in sites_list")
         return
 
-    # Overwrite the forecast instead of appending
-    # Note: This will add the forecast table to each site object.
     selected_site.forecasts = final_forecast_table
 
-    # Add forecast attributes to the site object
-    selected_site.get_forecast_attributes_for_site(_, selected_rows)
-
-    # Check if the site is already in bulletin_sites
     existing_site = next((site for site in bulletin_sites if site.code == selected_site.code), None)
     if existing_site is None:
-        # If the site is not in the bulletin, add it
         bulletin_sites.append(selected_site)
         logger.info(f"Added new site to bulletin: {selected_station}")
     else:
-        # If the site is already in the bulletin, overwrite the existing forecast
         existing_site.forecasts = selected_site.forecasts
         print(f"Overwritten forecast for station: {selected_station}")
         logger.info(f"Overwritten forecast for site in bulletin: {selected_station}")
 
-    # Update the bulletin_table to reflect changes
     update_bulletin_table(None)
 
-     # Show the popup notification
+    # Show the popup notification
     add_to_bulletin_popup.visible = True
-
-    # Hide the popup after a short delay (e.g., 2 seconds)
     pn.state.add_periodic_callback(lambda: setattr(add_to_bulletin_popup, 'visible', False), 2000, count=1)
 
+# Ensure the 'Add to Bulletin' button is initially bound
+add_to_bulletin_button.on_click(add_current_selection_to_bulletin)
 def create_bulletin_table():
     print("Creating bulletin table...")
     bulletin_data = []
@@ -660,7 +669,8 @@ def create_bulletin_table():
         bulletin_tabulator = pn.widgets.Tabulator(
             bulletin_df,
             show_index=False,
-            sizing_mode='stretch_both'
+            height=300,
+            sizing_mode='stretch_width'
         )
     else:
         bulletin_tabulator = pn.pane.Markdown(_("No forecasts added to the bulletin."))
@@ -782,13 +792,13 @@ def update_visualizations():
 
 def on_data_needs_reload_changed(event):
     if event.new:
-        print("Data reload triggered.")
+        print("Triggered rerunning of forecasts.")
         try:
             load_data()
             update_visualizations()
-            print("Data reloaded and visualizations updated successfully.")
+            print("Forecasts produced and visualizations updated successfully.")
         except Exception as e:
-            print(f"Error during data reload: {e}")
+            print(f"Error during forecast rerun: {e}")
         finally:
             processing.data_reloader.data_needs_reload = False  # Reset the flag
 
@@ -859,8 +869,8 @@ def tabs_change_language(language):
             #daily_rel_to_norm_runoff, daily_rel_to_norm_rainfall,
             forecast_data_and_plot,
             forecast_summary_table, pentad_forecast_plot, forecast_skill_plot,
-            bulletin_table, write_bulletin_button, disclaimer,
-            station_card, forecast_card, add_to_bulletin_button, basin_card, pentad_card, add_to_bulletin_popup)
+            bulletin_table, write_bulletin_button, indicator, disclaimer,
+            station_card, forecast_card, add_to_bulletin_button, basin_card, pentad_card, reload_card, add_to_bulletin_popup)
     except Exception as e:
         print(f"Error in tabs_change_language: {e}")
         print(traceback.format_exc())
@@ -876,6 +886,8 @@ def update_language(event):
     localize.translation_manager.language = event.new
 
 language_select.param.watch(update_language, 'value')
+
+reload_card = viz.create_reload_button()
 
 def sidepane_change_language(language):
     try:
@@ -894,7 +906,7 @@ def sidepane_change_language(language):
         show_range_button.options = [_("Yes"), _("No")]
 
         return layout.define_sidebar(_, station_card, forecast_card, basin_card,
-                                     message_pane)
+                                     message_pane, reload_card)
     except Exception as e:
         print(f"Error in sidepane_change_language: {e}")
         print(traceback.format_exc())
@@ -911,7 +923,7 @@ def update_tabs(event=None):
     tabs_container.append(new_tabs)
     # Attach the function to the new tabs with all required arguments
     new_tabs.param.watch(
-        partial(viz.update_sidepane_card_visibility, new_tabs, station_card, forecast_card, basin_card, pentad_card),
+        partial(viz.update_sidepane_card_visibility, new_tabs, station_card, forecast_card, basin_card, pentad_card, reload_card),
         'active'
     )
 

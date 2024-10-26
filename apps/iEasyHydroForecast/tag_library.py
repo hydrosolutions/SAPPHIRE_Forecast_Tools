@@ -236,6 +236,8 @@ def get_pentad(date):
         # Convert the input to a datetime object if it's a string
         if isinstance(date, str):
             date = dt.datetime.strptime(date, '%Y-%m-%d').date()
+        elif isinstance(date, pd.Timestamp):
+            date = date.date()
 
         # Test if the date is using the Gregorian calendar
         if not is_gregorian_date(date):

@@ -13,7 +13,7 @@ import holoviews as hv
 from holoviews import streams
 from holoviews.streams import PointDraw, Selection1D
 import panel as pn
-from bokeh.models import HoverTool, FixedTicker, FuncTickFormatter, CustomJSTickFormatter, LinearAxis, NumberFormatter, DateFormatter
+from bokeh.models import Label, HoverTool, FixedTicker, FuncTickFormatter, CustomJSTickFormatter, LinearAxis, NumberFormatter, DateFormatter
 from bokeh.models.formatters import DatetimeTickFormatter
 from bokeh.models.widgets.tables import CheckboxEditor, BooleanFormatter
 from bokeh.transform import jitter
@@ -23,6 +23,7 @@ from functools import partial
 from dotenv import load_dotenv
 import re
 import docker
+import threading
 
 
 
@@ -73,7 +74,7 @@ elif observed_runoff_palette == "black":
     runoff_forecast_color_list = ["#b61212", "#ce1414", "#e51717", "#ea2b2b", "#ec4242", "#ef5959", "#f17171"]
 
 # Update visibility of sidepane widgets
-def update_sidepane_card_visibility(tabs, station_card, forecast_card, basin_card, pentad_card, event):
+def update_sidepane_card_visibility(tabs, station_card, forecast_card, basin_card, pentad_card, reload_card, event):
     active_tab = tabs.active
     # Assuming tabs are ordered as ['Predictors', 'Forecast', 'Bulletin', 'Disclaimer']
     if active_tab == 0:  # 'Predictors' tab
@@ -81,21 +82,25 @@ def update_sidepane_card_visibility(tabs, station_card, forecast_card, basin_car
         forecast_card.visible = False
         pentad_card.visible = False
         basin_card.visible = False
+        reload_card.visible = True
     elif active_tab == 1:  # 'Forecast' tab
         station_card.visible = True
         forecast_card.visible = True
         pentad_card.visible = False
         basin_card.visible = False
+        reload_card.visible = True
     elif active_tab == 2:  # 'Bulletin' tab
         station_card.visible = False
         forecast_card.visible = False
         pentad_card.visible = False
         basin_card.visible = True
+        reload_card.visible = True
     else:  # 'Disclaimer' tab
         station_card.visible = False
         forecast_card.visible = False
         pentad_card.visible = False
         basin_card.visible = False
+        reload_card.visible = False
 
 def update_range_slider_visibility(_, range_slider, event):
     range_type = event.new
@@ -1136,6 +1141,12 @@ def plot_daily_rainfall_data(_, daily_rainfall, station, date_picker,
     station_data = daily_rainfall[daily_rainfall['code'] == station_code].copy()
     #print(f"Tail of station_data\n{station_data.tail(10)}")
 
+    # Return an empty plot if the data DataFrame is empty
+    if station_data.empty:
+        return hv.Curve([]).\
+            opts(title=_("No data available for this station"),
+                 hooks=[remove_bokeh_logo])
+
     # Get the forecasts for the selected date
     forecasts = station_data[station_data['date'] >= date_picker].copy()
     #print(f"Tail of forecasts\n{forecasts.tail(10)}")
@@ -1158,8 +1169,10 @@ def plot_daily_rainfall_data(_, daily_rainfall, station, date_picker,
     norm_rainfall = station_data[station_data['year'] != date_picker.year].copy()
     norm_rainfall['doy'] = pd.to_datetime(norm_rainfall['date']).dt.dayofyear
     norm_rainfall = norm_rainfall.groupby(['code', 'doy']).mean().reset_index()
+    norm_rainfall['date'] = pd.to_datetime(norm_rainfall['date'], format='%Y-%m-%d', errors='coerce').dt.date
     # Replace year of date with the current year
-    norm_rainfall['date'] = norm_rainfall['date'].apply(lambda x: x.replace(year=date_picker.year))
+    current_year_value = date_picker.year
+    norm_rainfall['date'] = norm_rainfall['doy'].apply(lambda x: (dt.datetime(current_year_value, 1, 1) + pd.Timedelta(days=x-1)).date())
     # Drop doy and year columns and sort by date
     norm_rainfall = norm_rainfall.drop(columns=['doy', 'year']).sort_values('date')
     # Convert date column to datetime
@@ -1252,6 +1265,12 @@ def plot_daily_temperature_data(_, daily_rainfall, station, date_picker,
     station_data = daily_rainfall[daily_rainfall['code'] == station_code].copy()
     #print(f"Tail of station_data\n{station_data.tail(10)}")
 
+    # Return an empty plot if the data DataFrame is empty
+    if station_data.empty:
+        return hv.Curve([]).\
+            opts(title=_("No data available for this station"),
+                 hooks=[remove_bokeh_logo])
+
     # Get the forecasts for the selected date
     forecasts = station_data[station_data['date'] >= date_picker].copy()
     #print(f"Tail of forecasts\n{forecasts.tail(10)}")
@@ -1275,7 +1294,8 @@ def plot_daily_temperature_data(_, daily_rainfall, station, date_picker,
     norm_rainfall['doy'] = pd.to_datetime(norm_rainfall['date']).dt.dayofyear
     norm_rainfall = norm_rainfall.groupby(['code', 'doy']).mean().reset_index()
     # Replace year of date with the current year
-    norm_rainfall['date'] = norm_rainfall['date'].apply(lambda x: x.replace(year=date_picker.year))
+    current_year_value = date_picker.year
+    norm_rainfall['date'] = norm_rainfall['doy'].apply(lambda x: (dt.datetime(current_year_value, 1, 1) + pd.Timedelta(days=x-1)).date())
     # Drop doy and year columns and sort by date
     norm_rainfall = norm_rainfall.drop(columns=['doy', 'year']).sort_values('date')
     # Convert date column to datetime
@@ -1859,12 +1879,12 @@ def get_absolute_path(relative_path):
 
 
 #TODO: use this function for local development instead of initial get_absolute_path function
-'''def get_absolute_path(relative_path):
-    # function for local development
-    project_root = '/home/vjeko/Desktop/Projects/sapphire_forecast'
-    # Remove leading ../../../ from the relative path
-    relative_path = re.sub(r'^\.\./\.\./\.\./', '', relative_path)
-    return os.path.join(project_root, relative_path)'''
+#def get_absolute_path(relative_path):
+#    # function for local development
+#    project_root = '/home/vjeko/Desktop/Projects/sapphire_forecast'
+#    # Remove leading ../../../ from the relative path
+#    relative_path = re.sub(r'^\.\./\.\./\.\./', '', relative_path)
+#    return os.path.join(project_root, relative_path)
 
 def get_bind_path(relative_path):
     # Strip the relative path from ../../.. to get the path to bind to the container
@@ -1889,6 +1909,12 @@ def get_local_path(relative_path):
 #    os.getenv('ieasyforecast_linreg_point_selection', 'linreg_point_selection')
 #)
 #os.makedirs(SAVE_DIRECTORY, exist_ok=True)
+
+class AppState(param.Parameterized):
+    pipeline_running = param.Boolean(default=False)
+
+# Instantiate the shared state
+app_state = AppState()
 
 def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
                          SAVE_DIRECTORY):
@@ -1960,15 +1986,40 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
         )
         # Fill any missing 'visible' values with True
         forecast_table['visible'] = forecast_table['visible'].fillna(True)
+        # Store the initial visible data points
+        initial_visible_data = forecast_table[forecast_table['visible'] == True].copy()
+        initial_visible_data = initial_visible_data.dropna(subset=['predictor', 'discharge_avg'])
+        # Load the initial regression parameters if they exist
+        if 'slope' in saved_forecast_table.columns and 'intercept' in saved_forecast_table.columns and 'rsquared' in saved_forecast_table.columns:
+            initial_slope = saved_forecast_table['slope'].iloc[0]
+            initial_intercept = saved_forecast_table['intercept'].iloc[0]
+            initial_rsquared = saved_forecast_table['rsquared'].iloc[0]
+        else:
+            # Compute initial regression parameters based on saved visible data
+            if len(initial_visible_data) > 1:
+                initial_slope, initial_intercept, r_value, p_value, std_err = stats.linregress(
+                    initial_visible_data['predictor'], initial_visible_data['discharge_avg']
+                )
+                initial_rsquared = r_value ** 2
     else:
         # Initialize 'visible' column as before
         forecast_table['visible'] = (~forecast_table['predictor'].isna()) & (~forecast_table['discharge_avg'].isna())
+        # Store the initial visible data points
+        initial_visible_data = forecast_table[forecast_table['visible'] == True].copy()
+        initial_visible_data = initial_visible_data.dropna(subset=['predictor', 'discharge_avg'])
+        # Compute initial regression parameters based on all data
+        if len(initial_visible_data) > 1:
+            initial_slope, initial_intercept, r_value, p_value, std_err = stats.linregress(
+                initial_visible_data['predictor'], initial_visible_data['discharge_avg']
+            )
+            initial_rsquared = r_value ** 2
 
     forecast_table = forecast_table.drop(columns=['index', 'level_0'], errors='ignore')
     forecast_table = forecast_table.reset_index()
 
     visible_data = forecast_table[forecast_table['visible'] == True] # Initialize the visible data
-    #print(f"visible_data.head(10):\n", visible_data.head(10))
+    print(f"visible_data.head(10):\n", visible_data.head(10))
+    visible_data = visible_data.dropna(subset=['predictor', 'discharge_avg'])
 
     # Create Tabulator for displaying forecast data
     forecast_data_table = pn.widgets.Tabulator(
@@ -1992,18 +2043,10 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
     # Create the selection1d stream to capture point selections on the plot
     selection_stream = streams.Selection1D(source=None)
 
-    previous_visible_data = None
-
     # Update plot based on visibility
     def update_plot(event=None):
-        global visible_data  # Use global variable to ensure it's accessible in other functions
-        nonlocal previous_visible_data
-
-        # Store the previous visible data before updating
-        if visible_data is not None:
-            previous_visible_data = visible_data.copy()
-        else:
-            previous_visible_data = None
+        nonlocal initial_slope, initial_intercept, initial_rsquared, initial_visible_data
+        global visible_data
 
         # Ensure 'visible' is of boolean type
         forecast_table['visible'] = forecast_table['visible'].astype(bool)
@@ -2035,80 +2078,129 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
             x_min, x_max = visible_data['predictor'].min(), visible_data['predictor'].max()
             y_min, y_max = visible_data['discharge_avg'].min(), visible_data['discharge_avg'].max()
 
-            # Add a 20% margin to the ranges
-            x_margin = (x_max - x_min) * 0.2 if x_max != x_min else 1
-            y_margin = (y_max - y_min) * 0.2 if y_max != y_min else 1
+            # Add a 40% margin to the ranges
+            x_margin = (x_max - x_min) * 0.4
+            y_margin = (y_max - y_min) * 0.4
 
             # Set dynamic x and y ranges
             x_range = (x_min - x_margin, x_max + x_margin)
             y_range = (y_min - y_margin, y_max + y_margin)
 
-            # Create the scatter plot
-            scatter = hv.Scatter(
-                visible_data,
-                kdims='predictor',
-                vdims=['discharge_avg', 'year']
-            ).opts(
-                color='blue',
-                size=5,
-                tools=[hover, 'tap'],
-                xlabel='Predictor',
-                ylabel='Discharge (m³/s)',
-                title=title_text,
-                xlim=x_range,
-                ylim=y_range
-            )
+            # Create the dynamic scatter plot (updates during interaction)
+            scatter = hv.Scatter(visible_data, kdims='predictor', vdims=['discharge_avg', 'year']) \
+                .opts(color='blue', size=5, tools=[hover, 'tap'], xlim=x_range, ylim=y_range)
 
             if len(visible_data) > 1:
-                # Compute new regression parameters
+                # Compute dynamic regression parameters
                 new_slope, new_intercept, new_r_value, new_p_value, new_std_err = stats.linregress(
                     visible_data['predictor'], visible_data['discharge_avg'])
-                x = np.linspace(visible_data['predictor'].min(), visible_data['predictor'].max(), 100)
-                new_y = new_slope * x + new_intercept
+                new_rsquared = new_r_value ** 2
 
-                # Check if previous_visible_data exists and is different
-                if previous_visible_data is not None and not visible_data.equals(previous_visible_data):
-                    # Compute previous regression parameters
-                    prev_slope, prev_intercept, prev_r_value, _, _ = stats.linregress(
-                        previous_visible_data['predictor'], previous_visible_data['discharge_avg'])
-                    prev_y = prev_slope * x + prev_intercept
+                # Prepare x values for regression lines
+                x = np.linspace(x_min, x_max, 100)
 
-                    # Create regression lines
-                    prev_line = hv.Curve((x, prev_y)).opts(color='red', line_width=2, line_dash='dashed', line_alpha=0.7)
-                    new_line = hv.Curve((x, new_y)).opts(color='red', line_width=2)
+                # Unicode characters
+                SOLID_LINE = "––"
+                DASHED_LINE = "- -"
 
-                    # Annotations
-                    equation_prev = f"y = {prev_slope:.2f}x + {prev_intercept:.2f}"
-                    r2_prev = f"R² = {prev_r_value**2:.2f}"
-                    equation_new = f"new y = {new_slope:.2f}x + {new_intercept:.2f}"
-                    r2_new = f"new R² = {new_r_value**2:.2f}"
-                    text = hv.Text(
-                        x=visible_data["predictor"].min(),
-                        y=visible_data["discharge_avg"].max(),
-                        text=f"{equation_prev}\n{r2_prev}\n{equation_new}\n{r2_new}"
-                    ).opts(color="black", text_font_size="10pt", text_align="left",)
+                # Modify the text content creation to use HTML
+                def create_html_content(equation_initial, r2_initial, equation_new, r2_new):
+                    html_content = "<div style='font-family: monospace; font-size: 12px;'>"
+                    if equation_initial:
+                        html_content += f"<span style='color: red;'>{SOLID_LINE}</span> {equation_initial}<br>{r2_initial}<br>"
+                    html_content += f"<span style='color: red;'>{DASHED_LINE}</span> {equation_new}<br>{r2_new}"
+                    html_content += "</div>"
+                    return html_content
 
-                    line = prev_line * new_line
+                # Compute y values for regression lines
+                if initial_slope is not None and initial_intercept is not None:
+                    y_initial = initial_slope * x + initial_intercept
+                    line_initial = hv.Curve((x, y_initial)).opts(color='red', line_width=2)
+                    equation_initial = f"y = {initial_slope:.2f}x + {initial_intercept:.2f}"
+                    r2_initial = f"R² = {initial_rsquared:.2f}"
                 else:
-                    # Only plot the new regression line
-                    line = hv.Curve((x, new_y)).opts(color='red', line_width=2)
-                    equation_new = f"y = {new_slope:.2f}x + {new_intercept:.2f}"
-                    r2_new = f"R² = {new_r_value**2:.2f}"
-                    text = hv.Text(
-                        x=visible_data["predictor"].min(),
-                        y=visible_data["discharge_avg"].max(),
-                        text=f"{equation_new}\n{r2_new}"
-                    ).opts(color="black", text_font_size="10pt", text_align="left",)
+                    line_initial = hv.Curve([])  # Empty curve
+                    equation_initial = ""
+                    r2_initial = ""
 
+                y_new = new_slope * x + new_intercept
+                line_new = hv.Curve((x, y_new)).opts(color='red', line_width=2,
+                                                    line_dash='dashed', line_alpha=0.7)
+                equation_new = f"new y = {new_slope:.2f}x + {new_intercept:.2f}"
+                r2_new = f"new R² = {new_rsquared:.2f}"
+
+                # Prepare the text annotation
+                text_content = ""
+                if equation_initial:
+                    text_content += f"{equation_initial}\n{r2_initial}\n"
+                text_content += f"{equation_new}\n{r2_new}"
+
+                # Create the HTML content
+                html_content = create_html_content(equation_initial, r2_initial, equation_new, r2_new)
+
+                # Create a Div element with the HTML content
+                text_div = hv.Div(html_content)
+
+                def make_add_label_hook_from_div(div_element):
+                    def hook(plot, element):
+                        fig = plot.state
+
+                        # Remove Bokeh logo
+                        fig.toolbar.logo = None
+
+                        # Calculate positions for labels (adjust these as needed)
+                        x_pos = fig.x_range.start + (fig.x_range.end - fig.x_range.start) * 0.05
+                        y_pos = fig.y_range.end - (fig.y_range.end - fig.y_range.start) * 0.15
+
+                        # Function to add a pair of labels (colored line and equation)
+                        def add_equation_labels(line, equation, r2, y):
+                            line_label = Label(
+                                x=x_pos, y=y, x_units='data', y_units='data',
+                                text=line, text_color='red',
+                                text_font_size='12px', text_font_style='bold'
+                            )
+                            eq_label = Label(
+                                x=x_pos + (fig.x_range.end - fig.x_range.start) * 0.04, y=y,
+                                x_units='data', y_units='data',
+                                text=equation,
+                                text_font_size='12px'
+                            )
+
+                            r2_label = Label(
+                                x=x_pos + (fig.x_range.end - fig.x_range.start) * 0.04,
+                                y=y - (fig.y_range.end - fig.y_range.start) * 0.04,  # Slightly below the equation
+                                x_units='data', y_units='data',
+                                text=r2,
+                                text_font_size='12px'  # Slightly smaller font for R²
+                            )
+
+                            fig.add_layout(line_label)
+                            fig.add_layout(eq_label)
+                            fig.add_layout(r2_label)
+
+                        # Add labels for initial equation if it exists
+                        if equation_initial:
+                            add_equation_labels(SOLID_LINE, equation_initial, r2_initial, y_pos)
+                            y_pos -= (fig.y_range.end - fig.y_range.start) * 0.10  # Move down for next label
+
+                        # Add labels for new equation
+                        if equation_new:
+                            add_equation_labels(DASHED_LINE, equation_new, r2_new, y_pos)
+
+                    return hook
+
+                # Create the hook function with the text content
+                #hook = make_add_label_hook(text_content)
+                hook = make_add_label_hook_from_div(text_div)
                 # Overlay the scatter plot and the regression line(s)
-                plot = scatter * line * text
+                plot = scatter * line_initial * line_new
                 plot.opts(
                     title=title_text,
                     show_grid=True,
                     show_legend=True,
                     width=1000,
                     height=450,
-                    hooks=[remove_bokeh_logo]
+                    hooks=[remove_bokeh_logo, hook]
                 )
             else:
                 plot = scatter.opts(
@@ -2116,9 +2208,6 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
                     height=450,
                     hooks=[remove_bokeh_logo]
                 )
-
-        # Update previous_visible_data
-        previous_visible_data = visible_data.copy()
 
         # Attach the plot to the selection stream
         selection_stream.source = scatter
@@ -2137,7 +2226,7 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
         selected_indices = selection_stream.index
 
         # Use the original index from the visible_data to map to the correct row in the table
-        selected_rows = visible_data.iloc[selected_indices].index.tolist()
+        selected_rows = visible_data.iloc[selected_indices]['index'].tolist()
 
         # Select the corresponding rows in the Tabulator
         forecast_data_table.selection = selected_rows
@@ -2203,6 +2292,8 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
         print(f"Container '{container_name}' has stopped.")
 
 
+    # Create a save button
+    save_button = pn.widgets.Button(name="Save Changes", button_type="success")
 
     # Function to save table data to CSV and run Docker containers
     def save_to_csv(event):
@@ -2288,11 +2379,18 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
         pn.state.onload(lambda: pn.state.add_periodic_callback(lambda: setattr(progress_bar, 'visible', False), 2000, count=1))
         pn.state.onload(lambda: pn.state.add_periodic_callback(lambda: setattr(progress_message, 'visible', False), 4000, count=1))
 
-    # Create a save button
-    save_button = pn.widgets.Button(name="Save Changes", button_type="success")
-
     # Attach the save_to_csv function to the button's click event
     save_button.on_click(save_to_csv)
+
+    # **Bind the Save Changes button's disabled property to the shared state**
+    def update_save_button(event):
+        save_button.disabled = event.new
+
+    # Watch for changes in pipeline_running and update the save_button accordingly
+    app_state.param.watch(update_save_button, 'pipeline_running')
+
+    # Set the initial state of the save_button
+    save_button.disabled = app_state.pipeline_running
 
     # Adjust the layout to include the progress bar and message
     layout = pn.Column(
@@ -2312,6 +2410,247 @@ def update_forecast_data(_, linreg_predictor, station, pentad_selector):
         return select_and_plot_data(_, linreg_predictor, station, pentad_selector)
 
     return callback
+
+def create_reload_button():
+    reload_button = pn.widgets.Button(name="Trigger forecasts", button_type="danger")
+
+    # Loading spinner and messages
+    loading_spinner = pn.indicators.LoadingSpinner(value=True, width=50, height=50, color='success', visible=False)
+    progress_message = pn.pane.Alert("Processing...", alert_type="info", visible=False)
+    warning_message = pn.pane.Alert("Please do not reload this page until processing is done!", alert_type='danger', visible=False)
+
+    # Function to check if any containers are running
+    def check_containers_running():
+        try:
+            client = docker.from_env()
+            container_names = [
+                "preprunoff",
+                "reset_rundate",
+                "linreg",
+                "prepgateway",
+                "conceptmod",
+                "postprocessing",
+            ]
+            # Add the ML model containers
+            for model in ["TFT", "TIDE", "TSMIXER", "ARIMA"]:
+                for mode in ["PENTAD", "DECAD"]:
+                    container_names.append(f"ml_{model}_{mode}")
+            running_containers = client.containers.list(filters={"status": "running"})
+            running_container_names = [container.name for container in running_containers]
+            for name in container_names:
+                if name in running_container_names:
+                    return True
+            return False
+        except Exception as e:
+            print(f"Error checking containers: {e}")
+            return False
+
+    # Function to update button status when page is loaded or when triggered
+    @pn.io.with_lock  # Ensure thread safety
+    def update_button_status():
+        if app_state.pipeline_running or check_containers_running():
+            reload_button.disabled = True
+            loading_spinner.visible = True
+            progress_message.object = "Processing..."
+            progress_message.visible = True
+            warning_message.object = "Please do not reload this page until processing is done!"
+            warning_message.visible = True
+        else:
+            reload_button.disabled = False
+            loading_spinner.visible = False
+            progress_message.visible = False
+            warning_message.visible = False
+
+    # Check container status when the page is first loaded
+    pn.state.onload(update_button_status)
+
+    # Function to run the pipeline and update the UI properly
+    def run_pipeline(event):
+        # Check containers again when button is clicked
+        if check_containers_running():
+            warning_message.object = "Containers are still running. Please wait."
+            warning_message.visible = True
+            return
+
+        # Update shared state to indicate the pipeline is running
+        app_state.pipeline_running = True
+
+        # Disable the reload button and show loading spinner
+        reload_button.disabled = True
+        loading_spinner.visible = True
+        progress_message.object = "Processing..."
+        progress_message.visible = True
+        warning_message.object = "Please do not reload this page until processing is done!"
+        warning_message.visible = True
+
+        def run_docker_pipeline():
+            try:
+                # Initialize Docker client
+                client = docker.from_env()
+
+                # Define environment variables
+                environment = [
+                    'SAPPHIRE_OPDEV_ENV=True',
+                    'IN_DOCKER_CONTAINER=True',
+                    f'ieasyhydroforecast_env_file_path={get_bind_path(env.get("ieasyforecast_configuration_path"))}/.env_develop_kghm'
+                ]
+                print("environment: \n", environment)
+
+                # Define volumes
+                volumes = {
+                    get_absolute_path(env.get("ieasyforecast_configuration_path")): {
+                        'bind': get_bind_path(env.get("ieasyforecast_configuration_path")),
+                        'mode': 'rw'
+                    },
+                    get_absolute_path(env.get("ieasyforecast_intermediate_data_path")): {
+                        'bind': get_bind_path(env.get("ieasyforecast_intermediate_data_path")),
+                        'mode': 'rw'
+                    },
+                    get_absolute_path(env.get("ieasyforecast_daily_discharge_path")): {
+                        'bind': get_bind_path(env.get("ieasyforecast_daily_discharge_path")),
+                        'mode': 'rw'
+                    },
+                    get_absolute_path(env.get("ieasyhydroforecast_conceptual_model_path")): {
+                        'bind': get_bind_path(env.get("ieasyhydroforecast_conceptual_model_path")),
+                        'mode': 'rw'
+                    },
+                    "/var/run/docker.sock": {
+                        'bind': "/var/run/docker.sock",
+                        'mode': 'rw'
+                    }
+                }
+
+                # Run the preprunoff container
+                run_docker_container(client, "mabesa/sapphire-preprunoff:latest", volumes, environment, "preprunoff")
+
+                # Run the reset_rundate container
+                run_docker_container(client, "mabesa/sapphire-rerun:latest", volumes, environment, "reset_rundate")
+
+                # Run the linear_regression container
+                run_docker_container(client, "mabesa/sapphire-linreg:latest", volumes, environment, "linreg")
+
+                # Run the prepgateway container
+                run_docker_container(client, "mabesa/sapphire-prepgateway:latest", volumes, environment, "prepgateway")
+
+                # Run all ML model containers
+                for model in ["TFT", "TIDE", "TSMIXER", "ARIMA"]:
+                    for mode in ["PENTAD", "DECAD"]:
+                        container_name = f"ml_{model}_{mode}"
+                        run_docker_container(client, f"mabesa/sapphire-ml:latest", volumes, environment + [f"SAPPHIRE_MODEL_TO_USE={model}", f"SAPPHIRE_PREDICTION_MODE={mode}"], container_name)
+
+                # Run the conceptmod container
+                run_docker_container(client, "mabesa/sapphire-conceptmod:latest", volumes, environment, "conceptmod")
+
+                # Run the postprocessing container
+                run_docker_container(client, "mabesa/sapphire-postprocessing:latest", volumes, environment, "postprocessing")
+
+                # Update message after all containers have run
+                progress_message.object = "Processing finished"
+                time.sleep(2)
+            except docker.errors.ContainerError as ce:
+                progress_message.object = f"Container Error: {ce}"
+                print(f"Container Error: {ce}")
+            except docker.errors.DockerException as de:
+                progress_message.object = f"Docker Error: {de}"
+                print(f"Docker Error: {de}")
+            except ValueError as ve:
+                progress_message.object = f"Configuration Error: {ve}"
+                print(f"Configuration Error: {ve}")
+            finally:
+                # Ensure thread-safe update of UI
+                @pn.io.with_lock
+                def reset_ui_after_pipeline():
+                    # Hide progress indicators and re-enable the reload button
+                    loading_spinner.visible = False
+                    progress_message.visible = False
+                    warning_message.visible = False
+                    reload_button.disabled = False
+                    app_state.pipeline_running = False  # Update shared state
+
+                reset_ui_after_pipeline()  # Safely update the UI after the process
+
+        # Run the pipeline in a separate thread to keep the UI responsive
+        threading.Thread(target=run_docker_pipeline).start()
+
+    # Attach the run_pipeline function to the reload button's click event
+    reload_button.on_click(run_pipeline)
+
+    # Create a card for the reload button
+    reload_card = pn.Card(
+        pn.Column(
+            pn.pane.Markdown("Click the button below to trigger the forecast pipeline.\nThis will re-run all forecasts for the latest data.\nThis process may take a few minutes to complete.\nNote: Current forecasts will be overwritten."),
+            reload_button,
+            loading_spinner,
+            progress_message,
+            warning_message,
+        ),
+        title='Manual re-run of latest forecasts',
+        width_policy='fit',
+        collapsed=True,
+    )
+
+    return reload_card
+
+def run_docker_container(client, full_image_name, volumes, environment, container_name):
+    """
+    Runs a Docker container and blocks until it completes.
+    
+    Args:
+        client (docker.DockerClient): The Docker client instance.
+        full_image_name (str): The full name of the Docker image to run.
+        volumes (dict): A dictionary of volumes to bind.
+        environment (list): A list of environment variables.
+        container_name (str): The name to assign to the Docker container.
+
+    Raises:
+        docker.errors.ContainerError: If the container exits with a non-zero status.
+    """
+    try:
+        # Remove existing container with the same name if it exists
+        try:
+            existing_container = client.containers.get(container_name)
+            print(f"Removing existing container '{container_name}' (ID: {existing_container.id})...")
+            existing_container.remove(force=True)
+            print(f"Container '{container_name}' removed.")
+        except docker.errors.NotFound:
+            # Container does not exist, proceed to run
+            pass
+        except docker.errors.APIError as e:
+            print(f"Error removing existing container '{container_name}': {e}")
+            # Optionally, you can decide to continue even if the container couldn't be removed
+        
+        # Run the new container
+        container = client.containers.run(
+            full_image_name,
+            detach=True,
+            environment=environment,
+            volumes=volumes,
+            name=container_name,
+            network='host'
+        )
+        print(f"Container '{container_name}' (ID: {container.id}) is running.")
+
+        # Wait for the container to finish
+        result = container.wait()  # This will block until the container exits
+        if result['StatusCode'] != 0:
+            print(f"Container '{container_name}' exited with status code {result['StatusCode']}.")
+            # Optionally log the error or add to a list of failed containers
+        else:
+            print(f"Container '{container_name}' has stopped successfully.")
+    except Exception as e:
+        print(f"Error running container '{container_name}': {e}")
+
+def make_add_label_hook(text_content):
+    def add_label(plot, element):
+        from bokeh.models import Label
+        label = Label(
+            x=50, y=300,  # Adjust these values to position the text
+            x_units='screen', y_units='screen',
+            text=text_content,
+            text_font_size="10pt",
+        )
+        plot.state.add_layout(label)
+    return add_label
 
 def test_draw_forecast_raw_data(_, selected_data):
 

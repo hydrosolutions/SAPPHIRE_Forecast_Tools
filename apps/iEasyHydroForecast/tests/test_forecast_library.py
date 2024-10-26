@@ -161,10 +161,14 @@ class TestPerformLinearRegression(unittest.TestCase):
 
     def test_perform_linear_regression_with_simple_data(self):
         # Create a test DataFrame
-        data = {'station': ['123', '123', '456', '456', '789', '789'],
-                'pentad': [1, 2, 1, 2, 1, 2],
-                'discharge_sum': [100, 200, 150, 250, 120, 180],
-                'discharge_avg': [10, 20, 15, 25, 12, 18]}
+        data = {'station': ['123', '123', '456', '456', '789', '789',
+                            '123', '123', '456', '456', '789', '789'],
+                'pentad': [1, 2, 1, 2, 1, 2,
+                           1, 2, 1, 2, 1, 2],
+                'discharge_sum': [100, 200, 150, 250, 120, 180,
+                                  1000, 2000, 1500, 2500, 1200, 1800],
+                'discharge_avg': [10, 20, 15, 25, 12, 18,
+                                  100, 200, 150, 250, 120, 180]}
         df = pd.DataFrame(data)
 
         # Call the perform_linear_regression method
@@ -180,15 +184,15 @@ class TestPerformLinearRegression(unittest.TestCase):
         assert all(col in result.columns for col in expected_columns)
 
         # Check that the slope and intercept are correct for each station
-        expected_slopes = {'123': 0.0, '456': 0.0, '789': 0.0}
-        expected_intercepts_p2 = {'123': 20.0, '456': 25.0, '789': 18.0}
+        expected_slopes = {'123': 0.1, '456': 0.1, '789': 0.1}
+        expected_intercepts_p2 = {'123': 0.0, '456': 0.0, '789': 0.0}
         for station in expected_slopes.keys():
             slope = result.loc[(result['station'] == station) & (result['pentad'] == 2), 'slope'].values[0]
             intercept = result.loc[(result['station'] == station) & (result['pentad'] == 2), 'intercept'].values[0]
             forecast_exp = df.loc[(df['station'] == station) & (df['pentad'] == 2), 'discharge_avg'].values[0]
             forecast_calc = slope * df.loc[
                 (df['station'] == station) & (df['pentad'] == 2),
-                'discharge_avg'].values[0] + intercept
+                'discharge_sum'].values[0] + intercept
             assert np.isclose(slope, expected_slopes[station], atol=1e-3)
             assert np.isclose(intercept, expected_intercepts_p2[station], atol=1e-3)
             assert np.isclose(forecast_exp, forecast_calc, atol=1e-3)

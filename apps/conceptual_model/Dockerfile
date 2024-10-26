@@ -15,7 +15,6 @@ WORKDIR /app
 # Copy the directory
 COPY apps/conceptual_model /app/apps/conceptual_model
 
-
 # Install packages
 #RUN R -e "install.packages('remotes')"
 RUN Rscript apps/conceptual_model/install_packages.R

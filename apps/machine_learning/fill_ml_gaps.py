@@ -7,15 +7,13 @@
 # Description: This script checks if there are any missing forecasts from the ML models.
 # If there are, it calls the hindcast script to fill in the missing forecasts
 # in order to make the ML model forecasts continuous for evaluation.
-#
+# NOTE: This script only fills in the values which are not represented in the forecast file.
+# If there are nan values in the forecast file, they will not be filled in.
 # ----------------------------------------------------------------
 # USAGE:
 # ----------------------------------------------------------------
 
 # SAPPHIRE_OPDEV_ENV=True SAPPHIRE_MODEL_TO_USE=TFT SAPPHIRE_PREDICTION_MODE=PENTAD python fill_ml_gaps.py
-
-# TODO: So far this code only checks if there are missing forecast dates. It doesn't check if there are nan values due to insufficent input data.
-# TODO: Think about how to handle nan values, in what frequency should this be checked?
 
 
 import os
@@ -186,55 +184,89 @@ def fill_ml_gaps():
         logger.error('No forecast file found')
         return
 
+    missing_forecasts_dict = {}
+    min_missing_date = None
+    max_missing_date = None
+    #iterate over the unique codes
+    for code in forecast.code.unique():
+        #select the forecast for the specific code
+        forecast_code = forecast[forecast.code == code].copy()
+        #get the unique forecast dates
+        forecast_dates = forecast_code['forecast_date'].unique()
+        forecast_dates = pd.to_datetime(forecast_dates)
+        forecast_dates = forecast_dates.sort_values()
+        # check if there are any missing forecasts
+        missing_forecasts = []
 
-    forecast_dates = forecast['forecast_date'].unique()
-    forecast_dates = pd.to_datetime(forecast_dates)
-    forecast_dates = forecast_dates.sort_values()
-    # check if there are any missing forecasts
-    missing_forecasts = []
+        for i in range(1, len(forecast_dates)):
+            if (forecast_dates[i] - forecast_dates[i-1]).days > limit_day_gap:
+                missing_tuple = (forecast_dates[i-1], forecast_dates[i])
+                # append the previous date with a forecast
+                # append the next date which has a forecast
+                missing_forecasts.append(missing_tuple)
 
-    for i in range(1, len(forecast_dates)):
-        if (forecast_dates[i] - forecast_dates[i-1]).days > limit_day_gap:
-            missing_tuple = (forecast_dates[i-1], forecast_dates[i])
-            # append the previous date with a forecast
-            # append the next date which has a forecast
-            missing_forecasts.append(missing_tuple)
+        # update the missing_forecasts_dict and min_missing_date and max_missing_date
+        if len(missing_forecasts) > 0:
+            missing_forecasts_dict[code] = missing_forecasts
+            min_missing_date_current = missing_forecasts[0][0]
+            max_missing_date_current = missing_forecasts[-1][1]
 
-    if len(missing_forecasts) == 0:
+            if min_missing_date is None:
+                min_missing_date = min_missing_date_current
+                max_missing_date = max_missing_date_current
+            else:
+                min_missing_date = min(min_missing_date, min_missing_date_current)
+                max_missing_date = max(max_missing_date, max_missing_date_current)
+
+    # if there are no missing forecasts
+    if len(missing_forecasts_dict) == 0:
         logger.info('No missing forecasts')
         print('No missing forecasts')
+    # if there are missing forecasts
     else:
 
-        for missing_days in missing_forecasts:
-            start_date = missing_days[0]
-            end_date = missing_days[1]
+        # get the minimum and maximum missing dates
+        min_missing_date = min_missing_date.strftime('%Y-%m-%d')
+        max_missing_date = max_missing_date - datetime.timedelta(days=1)
+        max_missing_date = max_missing_date.strftime('%Y-%m-%d')
 
-            # Subtract 1 day from the maximum date, as in the hindcast script, a hindcast is produced for the last day, but we already have a forecast for that day
-            end_date = end_date - datetime.timedelta(days=1)
+        logger.info('Missing forecasts from %s to %s', min_missing_date, max_missing_date)
+        print('Missing forecasts from', min_missing_date, 'to', max_missing_date)
+        print("Missing forecasts for the following code:", list(missing_forecasts_dict.keys()))
 
-            start_date = start_date.strftime('%Y-%m-%d')
-            end_date = end_date.strftime('%Y-%m-%d')
+        # trigger the hindcast script to fill in the missing forecasts
+        hindcast = call_hindcast_script(min_missing_date, max_missing_date,
+            MODEL_TO_USE, intermediate_data_path, PREDICTION_MODE)
 
-            print('Missing forecasts from', start_date, 'to', end_date)
-            logger.info('Missing forecasts from %s to %s', start_date, end_date)
+        hindcast['forecast_date'] = pd.to_datetime(hindcast['forecast_date'])
 
-            # Call the hindcast script
-            hindcast = call_hindcast_script(start_date, end_date, MODEL_TO_USE, intermediate_data_path, PREDICTION_MODE)
+        #now iterate and fill the missing forecasts, 
+        #this complicated way is needed to ensure that the original forecast are not overwrtitten by the hindcast
+        for code, missing_forecasts in missing_forecasts_dict.items():
+            
+            mask_dates = pd.Series(False, index=hindcast.index)
+            for missing_forecast in missing_forecasts:
+                mask_dates = mask_dates | ((hindcast.forecast_date >= missing_forecast[0]) & (hindcast.forecast_date <= missing_forecast[1]))
+            
+            mask_fill = (hindcast.code == code) & mask_dates
 
-            # Append the hindcast to the forecast
-            forecast = pd.concat([forecast, hindcast], ignore_index=True)
+            hindcast_missing = hindcast[mask_fill].copy()
 
-            # sort the forecast by forecast_date
-            forecast = forecast.sort_values(by='forecast_date')
+            # append the missing forecasts to the original forecast
+            forecast = pd.concat([forecast, hindcast_missing], axis=0)
 
-            # save the forecast
-            forecast.to_csv(os.path.join(PATH_FORECAST, prefix + '_' +  MODEL_TO_USE + '_forecast.csv'), index=False)
 
-        print("Missing forecasts filled in")
+        forecast['forecast_date'] = pd.to_datetime(forecast['forecast_date'])
+        # sort the forecast by forecast_date
+        forecast = forecast.sort_values(by='forecast_date')
+        # save the forecast
+        forecast.to_csv(os.path.join(PATH_FORECAST, prefix + '_' +  MODEL_TO_USE + '_forecast.csv'), index=False)
+
+
         logger.info('Missing forecasts filled in')
 
     logger.info('Script fill_ml_gaps.py finished at %s. Exiting.', datetime.datetime.now())
-    print('Script fill_ml_gaps.py finished at', datetime.datetime.now(), '. Exiting.')
+
 
 if __name__ == '__main__':
     fill_ml_gaps()
