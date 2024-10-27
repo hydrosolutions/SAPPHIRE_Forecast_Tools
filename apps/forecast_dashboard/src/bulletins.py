@@ -1,6 +1,7 @@
 import os
 import math
 import openpyxl
+import panel as pn
 
 # ieassyreport
 from ieasyreports.settings import TagSettings, ReportGeneratorSettings
@@ -292,14 +293,14 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
         report_settings.templates_directory_path = os.getenv("ieasyreports_templates_directory_path")
     else:
         # Test if the file exists and revert to the default template if it does not exist
-        if os.path.exists(os.path.join(report_settings.report_output_path, bulletin_file_name)):
+        #if os.path.exists(os.path.join(report_settings.report_output_path, bulletin_file_name)):
             # Overwrite the settings for the templates directory path.
-            pass
-            #bulletin_template_file = bulletin_file_name
-            #report_settings.templates_directory_path = report_settings.report_output_path
-        else:
-            bulletin_template_file = os.getenv("ieasyforecast_template_pentad_bulletin_file")
-            report_settings.templates_directory_path = os.getenv("ieasyreports_templates_directory_path")
+        #    pass
+        #    #bulletin_template_file = bulletin_file_name
+        #    #report_settings.templates_directory_path = report_settings.report_output_path
+        #else:
+        bulletin_template_file = os.getenv("ieasyforecast_template_pentad_bulletin_file")
+        report_settings.templates_directory_path = os.getenv("ieasyreports_templates_directory_path")
 
     print("DEBUG: write_to_excel: bulletin_template_file: ", bulletin_template_file)
     print("DEBUG: write_to_excel: report_settings.templates_directory_path: ", report_settings.templates_directory_path)
@@ -327,6 +328,20 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
         output_filename=bulletin_file_name
         )
     print('DEBUG: write_to_excel: Report generated.')
+
+    # Download bulletin
+    # Add JavaScript to trigger download
+    file_path = os.path.join(report_settings.report_output_path, bulletin_file_name)
+    # Create FileDownload widget
+    if os.path.exists(file_path):
+        print('Download file path:', file_path)
+        download = pn.widgets.FileDownload(
+            file=file_path,
+            filename=os.path.basename(file_path),
+            auto=True
+        )
+        return download
+
     # Note all objects that are passed to generate_report through list_obsjects
     # should be 'data' tags. 'data' tags are listed below a 'header' tag.
 

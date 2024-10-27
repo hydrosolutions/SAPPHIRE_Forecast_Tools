@@ -227,12 +227,16 @@ class SapphireSite:
         Returns:
             list: A list of Site objects.
         """
+
+        print("debug: site_selection: ", site_selection)
         # Selected site
         selected_site_label = site_selection
         selected_site = next((site for site in sites if site.station_label == selected_site_label), None)
 
         if selected_site and tabulator.selection:
             selected_row = tabulator.value
+            print("\n---\n---\nSelected row: ", selected_row, "\n---\n---\n")
+            selected_site.forecast_model = selected_row[_('Model')]
             selected_site.forecast_pentad = selected_row[_('Forecasted discharge')]
             selected_site.forecast_lower_bound = selected_row[_('Forecast lower bound')]
             selected_site.forecast_upper_bound = selected_row[_('Forecast upper bound')]

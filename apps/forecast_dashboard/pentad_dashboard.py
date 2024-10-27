@@ -589,7 +589,7 @@ def add_current_selection_to_bulletin(event=None):
     if viz.app_state.pipeline_running:
         print("Cannot add to bulletin while containers are running.")
         return  # Prevent the action while containers are running
-    
+
     # Your existing logic for adding selections to bulletin...
     selected_indices = forecast_tabulator.selection
     forecast_df = forecast_tabulator.value
@@ -615,6 +615,8 @@ def add_current_selection_to_bulletin(event=None):
 
     final_forecast_table = selected_rows.reset_index(drop=True)
 
+
+
     # Find the Site object for the selected station
     selected_site = next((site for site in sites_list if site.station_label == selected_station), None)
     if selected_site is None:
@@ -624,6 +626,9 @@ def add_current_selection_to_bulletin(event=None):
         return
 
     selected_site.forecasts = final_forecast_table
+
+    # Add forecast attributes to the site object
+    selected_site.get_forecast_attributes_for_site(_, selected_rows)
 
     existing_site = next((site for site in bulletin_sites if site.code == selected_site.code), None)
     if existing_site is None:
@@ -869,7 +874,7 @@ def tabs_change_language(language):
             #daily_rel_to_norm_runoff, daily_rel_to_norm_rainfall,
             forecast_data_and_plot,
             forecast_summary_table, pentad_forecast_plot, forecast_skill_plot,
-            bulletin_table, write_bulletin_button, indicator, disclaimer,
+            bulletin_table, write_bulletin_button, disclaimer,
             station_card, forecast_card, add_to_bulletin_button, basin_card, pentad_card, reload_card, add_to_bulletin_popup)
     except Exception as e:
         print(f"Error in tabs_change_language: {e}")
