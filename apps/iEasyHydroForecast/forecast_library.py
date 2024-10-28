@@ -2481,6 +2481,7 @@ class Site:
                  intercept=-10000.0, rsquared=-10000.0,
                  delta=-10000.0, sdivsigma=-10000.0,
                  accuracy=-10000.0, histqmin=-10000.0, histqmax=-10000.0,
+                 bulletin_order=0,
                  daily_forecast=False, pentadal_forecast=False, decadal_forecast=False,
                  monthly_forecast=False, seasonal_forecast=False):
         """
@@ -2526,6 +2527,7 @@ class Site:
         self.qdanger = qdanger if qdanger is not None else -10000.0
         self.histqmin = histqmin if histqmin is not None else -10000.0
         self.histqmax = histqmax if histqmax is not None else -10000.0
+        self.bulletin_order = bulletin_order if bulletin_order is not None else 0
         self.daily_forecast = daily_forecast if daily_forecast is not False else False
         self.pentadal_forecast = pentadal_forecast if pentadal_forecast is not False else False
         self.decadal_forecast = decadal_forecast if decadal_forecast is not False else False
@@ -3597,7 +3599,7 @@ class Site:
                     if len(name_nat_parts) == 1:
                         name_nat_parts = [row['national_name'].values[0], '']
 
-                    site = site = cls(
+                    site = cls(
                         code=row['site_code'].values[0],
                         name=row['official_name'].values[0],
                         name_nat=row['national_name'].values[0],
@@ -3614,6 +3616,7 @@ class Site:
                         qdanger=row['dangerous_discharge'].values[0],
                         histqmin=row['historical_discharge_minimum'].values[0],
                         histqmax=row['historical_discharge_maximum'].values[0],
+                        bulletin_order=row['bulletin_order'].values[0],
                         daily_forecast=row['enabled_forecasts'].values[0]['daily_forecast'],
                         pentadal_forecast=row['enabled_forecasts'].values[0]['pentad_forecast'],
                         decadal_forecast=row['enabled_forecasts'].values[0]['decadal_forecast'],
@@ -3621,7 +3624,36 @@ class Site:
                         seasonal_forecast=row['enabled_forecasts'].values[0]['seasonal_forecast']
                     )
                     sites.append(site)
-            return sites
+            # Get the basin and bulletin order for each site
+            df = pd.DataFrame({
+                'codes': [site.code for site in sites],
+                'basins': [site.basin for site in sites],
+                'bulletin_order': [site.bulletin_order for site in sites]
+            })
+            # Sort the sites_list according to the basin and bulletin order
+            df = df.sort_values(by=['basins', 'bulletin_order'])
+            print(f"Ordered sites: {df}")
+            # Get the ordered list of codes
+            ordered_codes = df['codes'].tolist()
+            # Get site where site.code == ordered_codes[0]
+            ordered_sites_list = []
+            # Create a new list of sites in the order of the ordered_codes
+            for code in ordered_codes:
+                temp_site = next((site for site in sites if site.code == code), None)
+                #print(f"temp_site: {temp_site}")
+                # Test if temp_site is None
+                if temp_site is None:
+                    print(f"Site with code {code} not found.")
+                    continue
+                # Add the site to the ordered_sites_list
+                # Test if ordered_sits_list is 'NoneType'
+                if ordered_sites_list is None:
+                    print(f"ordered_sites_list is NoneType")
+                    ordered_sites_list = [temp_site]
+                else: # ordered_sites_list is not 'NoneType'
+                    ordered_sites_list.append(temp_site)
+            print(f"Ordered sites: {[site.code for site in ordered_sites_list]}")
+            return ordered_sites_list
         except Exception as e:
             print(f'Error creating Site objects from DataFrame: {e}')
             return []
@@ -3681,6 +3713,7 @@ class Site:
                         qdanger=row['dangerous_discharge'].values[0],
                         histqmin=row['historical_discharge_minimum'].values[0],
                         histqmax=row['historical_discharge_maximum'].values[0],
+                        bulletin_order=row['bulletin_order'].values[0],
                         daily_forecast=row['enabled_forecasts'].values[0]['daily_forecast'],
                         pentadal_forecast=row['enabled_forecasts'].values[0]['pentad_forecast'],
                         decadal_forecast=row['enabled_forecasts'].values[0]['decadal_forecast'],
@@ -3697,7 +3730,7 @@ class Site:
                     if len(name_nat_parts) == 1:
                         name_nat_parts = [row['national_name'].values[0], '']
 
-                    site = site = cls(
+                    site = cls(
                         code=row['site_code'].values[0],
                         name=row['official_name'].values[0],
                         name_nat=row['national_name'].values[0],
@@ -3714,6 +3747,7 @@ class Site:
                         qdanger=row['dangerous_discharge'].values[0],
                         histqmin=row['historical_discharge_minimum'].values[0],
                         histqmax=row['historical_discharge_maximum'].values[0],
+                        bulletin_order=row['bulletin_order'].values[0],
                         daily_forecast=row['enabled_forecasts'].values[0]['daily_forecast'],
                         pentadal_forecast=row['enabled_forecasts'].values[0]['pentad_forecast'],
                         decadal_forecast=row['enabled_forecasts'].values[0]['decadal_forecast'],
@@ -3721,7 +3755,36 @@ class Site:
                         seasonal_forecast=row['enabled_forecasts'].values[0]['seasonal_forecast']
                     )
                     sites.append(site)
-            return sites
+            # Get the basin and bulletin order for each site
+            df = pd.DataFrame({
+                'codes': [site.code for site in sites],
+                'basins': [site.basin for site in sites],
+                'bulletin_order': [site.bulletin_order for site in sites]
+            })
+            # Sort the sites_list according to the basin and bulletin order
+            df = df.sort_values(by=['basins', 'bulletin_order'])
+            print(f"Ordered sites: {df}")
+            # Get the ordered list of codes
+            ordered_codes = df['codes'].tolist()
+            # Get site where site.code == ordered_codes[0]
+            ordered_sites_list = []
+            # Create a new list of sites in the order of the ordered_codes
+            for code in ordered_codes:
+                temp_site = next((site for site in sites if site.code == code), None)
+                #print(f"temp_site: {temp_site}")
+                # Test if temp_site is None
+                if temp_site is None:
+                    print(f"Site with code {code} not found.")
+                    continue
+                # Add the site to the ordered_sites_list
+                # Test if ordered_sits_list is 'NoneType'
+                if ordered_sites_list is None:
+                    print(f"ordered_sites_list is NoneType")
+                    ordered_sites_list = [temp_site]
+                else: # ordered_sites_list is not 'NoneType'
+                    ordered_sites_list.append(temp_site)
+            print(f"Ordered sites: {[site.code for site in ordered_sites_list]}")
+            return ordered_sites_list
         except Exception as e:
             print(f'Error creating Site objects from DataFrame: {e}')
             return []
@@ -3780,6 +3843,7 @@ class Site:
                         qdanger=row['dangerous_discharge'].values[0],
                         histqmin=row['historical_discharge_minimum'].values[0],
                         histqmax=row['historical_discharge_maximum'].values[0],
+                        bulletin_order=row['bulletin_order'].values[0],  # Not yet implemented
                         daily_forecast=row['enabled_forecasts'].values[0]['daily_forecast'],
                         pentadal_forecast=row['enabled_forecasts'].values[0]['pentad_forecast'],
                         decadal_forecast=row['enabled_forecasts'].values[0]['decadal_forecast'],
@@ -3788,7 +3852,36 @@ class Site:
                     )
                     sites.append(site)
 
-            return sites
+            # Get the basin and bulletin order for each site
+            df = pd.DataFrame({
+                'codes': [site.code for site in sites],
+                'basins': [site.basin for site in sites],
+                'bulletin_order': [site.bulletin_order for site in sites]
+            })
+            # Sort the sites_list according to the basin and bulletin order
+            df = df.sort_values(by=['basins', 'bulletin_order'])
+            print(f"Ordered sites: {df}")
+            # Get the ordered list of codes
+            ordered_codes = df['codes'].tolist()
+            # Get site where site.code == ordered_codes[0]
+            ordered_sites_list = []
+            # Create a new list of sites in the order of the ordered_codes
+            for code in ordered_codes:
+                temp_site = next((site for site in sites if site.code == code), None)
+                #print(f"temp_site: {temp_site}")
+                # Test if temp_site is None
+                if temp_site is None:
+                    print(f"Site with code {code} not found.")
+                    continue
+                # Add the site to the ordered_sites_list
+                # Test if ordered_sits_list is 'NoneType'
+                if ordered_sites_list is None:
+                    print(f"ordered_sites_list is NoneType")
+                    ordered_sites_list = [temp_site]
+                else: # ordered_sites_list is not 'NoneType'
+                    ordered_sites_list.append(temp_site)
+            print(f"Ordered sites: {[site.code for site in ordered_sites_list]}")
+            return ordered_sites_list
         except Exception as e:
             print(f'Error creating Site objects from DataFrame: {e}')
             return []
@@ -3847,6 +3940,7 @@ class Site:
                         qdanger=row['dangerous_discharge'].values[0],
                         histqmin=row['historical_discharge_minimum'].values[0],
                         histqmax=row['historical_discharge_maximum'].values[0],
+                        bulletin_order=row['bulletin_order'].values[0],  # Not yet implemented
                         daily_forecast=row['enabled_forecasts'].values[0]['daily_forecast'],
                         pentadal_forecast=row['enabled_forecasts'].values[0]['pentad_forecast'],
                         decadal_forecast=row['enabled_forecasts'].values[0]['decadal_forecast'],
@@ -3862,7 +3956,7 @@ class Site:
                         name_parts = [row['official_name'].values[0], '']
                     if len(name_nat_parts) == 1:
                         name_nat_parts = [row['national_name'].values[0], '']
-                    site = site = cls(
+                    site = cls(
                         code=row['site_code'].values[0],
                         name=row['official_name'].values[0],
                         name_nat=row['national_name'].values[0],
@@ -3879,6 +3973,7 @@ class Site:
                         qdanger=row['dangerous_discharge'].values[0],
                         histqmin=row['historical_discharge_minimum'].values[0],
                         histqmax=row['historical_discharge_maximum'].values[0],
+                        bulletin_order=row['bulletin_order'].values[0],
                         daily_forecast=row['enabled_forecasts'].values[0]['daily_forecast'],
                         pentadal_forecast=row['enabled_forecasts'].values[0]['pentad_forecast'],
                         decadal_forecast=row['enabled_forecasts'].values[0]['decadal_forecast'],
@@ -3886,7 +3981,36 @@ class Site:
                         seasonal_forecast=row['enabled_forecasts'].values[0]['seasonal_forecast']
                     )
                     sites.append(site)
-            return sites
+            # Get the basin and bulletin order for each site
+            df = pd.DataFrame({
+                'codes': [site.code for site in sites],
+                'basins': [site.basin for site in sites],
+                'bulletin_order': [site.bulletin_order for site in sites]
+            })
+            # Sort the sites_list according to the basin and bulletin order
+            df = df.sort_values(by=['basins', 'bulletin_order'])
+            print(f"Ordered sites: {df}")
+            # Get the ordered list of codes
+            ordered_codes = df['codes'].tolist()
+            # Get site where site.code == ordered_codes[0]
+            ordered_sites_list = []
+            # Create a new list of sites in the order of the ordered_codes
+            for code in ordered_codes:
+                temp_site = next((site for site in sites if site.code == code), None)
+                #print(f"temp_site: {temp_site}")
+                # Test if temp_site is None
+                if temp_site is None:
+                    print(f"Site with code {code} not found.")
+                    continue
+                # Add the site to the ordered_sites_list
+                # Test if ordered_sits_list is 'NoneType'
+                if ordered_sites_list is None:
+                    print(f"ordered_sites_list is NoneType")
+                    ordered_sites_list = [temp_site]
+                else: # ordered_sites_list is not 'NoneType'
+                    ordered_sites_list.append(temp_site)
+            print(f"Ordered sites: {[site.code for site in ordered_sites_list]}")
+            return ordered_sites_list
         except Exception as e:
             print(f'Error creating Site objects from DataFrame: {e}')
             return []
