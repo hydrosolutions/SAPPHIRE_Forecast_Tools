@@ -3,6 +3,7 @@ import sys
 import pandas as pd
 import numpy as np
 import param
+import re
 
 # Get the absolute path of the directory containing the current script
 cwd = os.getcwd()
@@ -100,6 +101,34 @@ def filter_dataframe_for_selected_stations(dataframe, code_col, selected_station
         pd.DataFrame: The filtered data frame.
     """
     return dataframe[dataframe[code_col].isin(selected_stations)]
+
+def read_rram_forecast_data():
+    """
+    Reads the forecasts from the RRAM model from the intermediate data directory.
+    """
+    filepath = os.getenv('ieasyhydroforecast_PATH_TO_RESULT')
+    # List all csv files in the directory and in the sub-directories
+    # of the directory and read the forecast data
+    rram_forecast = pd.DataFrame()
+    for root, dirs, files in os.walk(filepath):
+        # Extract the 5-digit number in the root
+        code = re.findall(r'\d{5}', root)
+        for file in files:
+            if file.endswith('.csv'):
+                filename = os.path.join(root, file)
+                temp_data = pd.read_csv(filename)
+                # Add a column code to the data frame
+                temp_data['code'] = code[0]
+                # Add a column model_short to the data frame
+                temp_data['model_short'] = 'RRAM'
+                rram_forecast = pd.concat([rram_forecast, temp_data], ignore_index=True)
+    return rram_forecast
+
+def read_ml_forecast_data():
+    """
+    Reads the forecasts from the ML model from the intermediate data directory.
+    """
+    pass
 
 def read_hydrograph_day_file():
     """
