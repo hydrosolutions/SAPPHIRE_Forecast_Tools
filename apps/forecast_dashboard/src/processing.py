@@ -227,12 +227,19 @@ def read_ml_forecast_data():
     tide = read_machine_learning_forecasts_pentad(model='TIDE')
     tft = read_machine_learning_forecasts_pentad(model='TFT')
     tsmixer = read_machine_learning_forecasts_pentad(model='TSMIXER')
+    # Calculate the Neural Ensemble (NE) forecast as the average of the TFT,
+    # TIDE, and TSMIXER forecasts
+    ne = pd.concat([tide, tft, tsmixer], ignore_index=True)
+    ne = ne.drop(columns=['model_long', 'model_short']).groupby(['code', 'date', 'forecast_date']).mean().reset_index()
+    ne['model_long'] = 'Neural Ensemble (NE)'
+    ne['model_short'] = 'NE'
     arima = read_machine_learning_forecasts_pentad(model='ARIMA')
     # Concatenate the data frames
-    ml_forecast = pd.concat([tide, tft, tsmixer, arima], ignore_index=True)
+    ml_forecast = pd.concat([tide, tft, tsmixer, ne, arima], ignore_index=True)
     print(f"Head of ml_forecast:\n{ml_forecast.head()}")
     # Cast forecast_date and date columns to datetime
     ml_forecast['forecast_date'] = ml_forecast['forecast_date'].apply(parse_dates)
+
     return ml_forecast
 
 def read_hydrograph_day_file():
@@ -907,7 +914,8 @@ def get_best_models_for_station_and_pentad(forecasts_all, selected_station, sele
     forecasts = forecasts_all[forecasts_all['station_labels'] == selected_station]
     forecasts = forecasts[forecasts['pentad_in_year'] == selected_pentad]
     # Get the model_long value of the row in forecasts with the highest value for accuracy
-    best_models = forecasts.loc[forecasts['accuracy'].idxmax(), 'model_long']
+    forecasts_no_LR = forecasts[forecasts['model_long'] != 'Linear regression (LR)']
+    best_models = forecasts_no_LR.loc[forecasts_no_LR['accuracy'].idxmax(), 'model_long']
     best_models = [best_models, 'Linear regression (LR)']
     print("best models: ", best_models)
     return best_models
