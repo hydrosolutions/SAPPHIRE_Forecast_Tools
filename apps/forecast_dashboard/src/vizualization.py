@@ -1106,7 +1106,8 @@ def plot_current_runoff_forecast_range_date_format(
     return overlay
 
 def plot_current_runoff_forecast_range_date_format_v2(
-          data, date_col, title_date_end, forecast_name_col, mean_col, min_col, max_col, runoff_forecast_colors, unit_string):
+          data, date_col, title_date_end, forecast_name_col, mean_col, min_col,
+          max_col, runoff_forecast_colors, unit_string):
     """
     Creates an area plot for the range of runoff values. can be used for daily or pentadal data.
 
@@ -1219,7 +1220,33 @@ def plot_current_runoff_forecast_range_date_format_v2(
             range_segment = range_segment * lower_bound * upper_bound
 
         else:
-            # Create a point
+            # Duplicate the row in model_data and replace the date in the second row with the title_date_end
+            # Append the last row to the DataFrame
+            model_data_temp = pd.concat([model_data, model_data], ignore_index=True)
+            model_data_temp.loc[model_data_temp.index[-1], date_col] = pd.Timestamp(title_date_end + dt.timedelta(hours=24))
+            print('\n\n\n\n\nmodel_data:\n', model_data_temp)
+
+            point = hv.Curve(
+                model_data_temp,
+                kdims=[date_col],
+                vdims=[mean_col],
+                label=point_legend_entry) \
+                    .opts(color=runoff_forecast_color[i],
+                            line_width=2,
+                            line_dash='solid',
+                            interpolation='steps-mid',
+                            show_legend=True,
+                            muted=False)
+            range_segment = plot_runoff_range_area(
+                model_data_temp, date_col, min_col, max_col, range_legend_entry,
+                runoff_forecast_color[i]).opts(alpha=0.2, muted_alpha=0.05)
+            lower_bound = plot_runoff_range_bound(
+                model_data_temp, date_col, min_col, runoff_forecast_color[i])
+            upper_bound = plot_runoff_range_bound(
+                model_data_temp, date_col, max_col, runoff_forecast_color[i])
+            range_segment = range_segment * lower_bound * upper_bound
+
+            '''# Create a point
             point = hv.Scatter(
             model_data,
             kdims=[date_col],
@@ -1238,7 +1265,7 @@ def plot_current_runoff_forecast_range_date_format_v2(
                       line_width=4,
                       show_legend=True,
                       hooks=[partial(cap_color_hook, color=runoff_forecast_color[i])]
-                )
+                )'''
 
         if overlay is None:
             overlay = range_segment
@@ -2134,6 +2161,31 @@ def plot_pentad_forecast_hydrograph_data_v2(_, hydrograph_day_all, linreg_predic
     forecasts_current = forecasts[forecasts['date'] == pd.Timestamp(title_date)+dt.timedelta(days=1)]
     forecasts_past = forecasts[forecasts['date'] <= pd.Timestamp(title_date)+dt.timedelta(days=1)]
 
+    # Filter for the current station (Only few stations have rram forecasts)
+    current_rram_forecasts = rram_forecast[rram_forecast['station_labels'] == station].copy()
+    # Filter for the latest forecast
+    latest_rram_forecast = current_rram_forecasts[current_rram_forecasts['forecast_date'] == current_rram_forecasts['forecast_date'].max()]
+    # Rename columns in latest_rram_forecast to fit forecasts_current
+    latest_rram_forecast = latest_rram_forecast.rename(
+        columns={'Q25': 'Lower bound',
+                 'Q75': 'Upper bound',
+                 'Q50': 'E[Q]',
+                 'model_short': 'Model'})
+    # Add pentad_in_month and pentad_in_year to latest_rram_forecast
+    latest_rram_forecast['pentad_in_month'] = forecasts_current['pentad_in_month'].values[0]
+    latest_rram_forecast['pentad_in_year'] = forecasts_current['pentad_in_year'].values[0]
+    latest_rram_forecast['Model name'] = 'Rainfall runoff assimilation model (RRAM)'
+
+    print(f"Tail of current rram forecasts:\n", latest_rram_forecast[['date','code','Model','E[Q]']].tail(5))
+    print(f"Columns of current rram forecasts:\n", latest_rram_forecast.columns)
+    print(f"Columns of forecasts_current:\n", forecasts_current.columns)
+    print(f"Tail of forecasts_current:\n", forecasts_current[['date','code','Model','E[Q]']].tail(5))
+
+    # If we have RRAM in the Model column of current_forecasts, append
+    # latest_rram_forecasts to forecasts_current
+    if 'RRAM' in forecasts_current['Model'].values:
+        forecasts_current = pd.concat([forecasts_current, latest_rram_forecast], ignore_index=True)
+
     # Create a holoviews bokeh plots of the daily hydrograph
     hvspan_predictor = hv.VSpan(
         linreg_predictor['predictor_start_date'].values[0],
@@ -2212,6 +2264,16 @@ def plot_pentad_forecast_hydrograph_data_v2(_, hydrograph_day_all, linreg_predic
         _('forecast upper bound column name'),
         runoff_forecast_color_list, _('m³/s'))
 
+    if 'RRAM' in forecasts_current['Model'].values:
+        rram_forecast_range_point = plot_current_runoff_forecast_range_date_format(
+            forecasts_current, _('date'), _('forecast model short column name'),
+            _('forecasted_discharge column name'), _('forecast lower bound column name'),
+            _('forecast upper bound column name'),
+            runoff_forecast_color_list, _('m³/s'))
+    else:
+        rram_forecast_range_point = hv.Curve([])
+
+
 
     # Overlay the plots
     if range_visibility == _('Yes'):
@@ -2219,10 +2281,12 @@ def plot_pentad_forecast_hydrograph_data_v2(_, hydrograph_day_all, linreg_predic
             forecast_upper_bound * \
             vlines * \
             last_year * \
-            mean * current_year * forecast_line * current_forecast_range_point
+            mean * current_year * forecast_line * current_forecast_range_point * \
+            rram_forecast_range_point
     else:
         daily_hydrograph = vlines * last_year * \
-            mean * current_year * forecast_line * current_forecast_range_point
+            mean * current_year * forecast_line * current_forecast_range_point * \
+            rram_forecast_range_point
 
     daily_hydrograph.opts(
         title=title_text,

@@ -102,6 +102,14 @@ def filter_dataframe_for_selected_stations(dataframe, code_col, selected_station
     """
     return dataframe[dataframe[code_col].isin(selected_stations)]
 
+def parse_dates(date_str):
+    for fmt in ('%d.%m.%Y', '%Y-%m-%d'):
+        try:
+            return pd.to_datetime(date_str, format=fmt)
+        except ValueError:
+            continue
+    return pd.NaT
+
 def read_rram_forecast_data():
     """
     Reads the forecasts from the RRAM model from the intermediate data directory.
@@ -122,6 +130,9 @@ def read_rram_forecast_data():
                 # Add a column model_short to the data frame
                 temp_data['model_short'] = 'RRAM'
                 rram_forecast = pd.concat([rram_forecast, temp_data], ignore_index=True)
+    # Cast forecast_date and date columns to datetime
+    rram_forecast['forecast_date'] = rram_forecast['forecast_date'].apply(parse_dates)
+    rram_forecast['date'] = rram_forecast['date'].apply(parse_dates)
     return rram_forecast
 
 def read_ml_forecast_data():
