@@ -1172,11 +1172,11 @@ def plot_current_runoff_forecast_range_date_format_v2(
         model_data = model_data[[date_col, mean_col, min_col, max_col]]
         print('original model_data:', model_data)
         # Get errors instead of lower and upper bounds for the range
-        if model == 'LR':
-            pass
-        else:
-            model_data[min_col] = model_data[mean_col] - model_data[min_col]
-            model_data[max_col] = model_data[max_col] - model_data[mean_col]
+        #if model == 'LR':
+        #    pass
+        #else:
+        #    model_data[min_col] = model_data[mean_col] - model_data[min_col]
+        #    model_data[max_col] = model_data[max_col] - model_data[mean_col]
 
         lower_bound = fl.round_discharge(model_data[min_col].iloc[-1])
         upper_bound = fl.round_discharge(model_data[max_col].iloc[-1])
@@ -2183,8 +2183,8 @@ def plot_pentad_forecast_hydrograph_data_v2(_, hydrograph_day_all, linreg_predic
 
     # If we have RRAM in the Model column of current_forecasts, append
     # latest_rram_forecasts to forecasts_current
-    if 'RRAM' in forecasts_current['Model'].values:
-        forecasts_current = pd.concat([forecasts_current, latest_rram_forecast], ignore_index=True)
+    #if 'RRAM' in forecasts_current['Model'].values:
+    #    forecasts_current = pd.concat([forecasts_current, latest_rram_forecast], ignore_index=True)
 
     # Create a holoviews bokeh plots of the daily hydrograph
     hvspan_predictor = hv.VSpan(
@@ -2266,7 +2266,7 @@ def plot_pentad_forecast_hydrograph_data_v2(_, hydrograph_day_all, linreg_predic
 
     if 'RRAM' in forecasts_current['Model'].values:
         rram_forecast_range_point = plot_current_runoff_forecast_range_date_format(
-            forecasts_current, _('date'), _('forecast model short column name'),
+            latest_rram_forecast, _('date'), _('forecast model short column name'),
             _('forecasted_discharge column name'), _('forecast lower bound column name'),
             _('forecast upper bound column name'),
             runoff_forecast_color_list, _('m³/s'))
