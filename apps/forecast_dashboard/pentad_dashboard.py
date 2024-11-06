@@ -387,6 +387,12 @@ def draw_show_forecast_ranges_widget():
         value=_("No"))
 show_range_button = draw_show_forecast_ranges_widget()
 
+show_daily_data_widget = pn.widgets.RadioButtonGroup(
+    name=_("Show daily data:"),
+    options=[_("Yes"), _("No")],
+    value=_("No")
+)
+
 selected_indices = pn.widgets.CheckBoxGroup(
     name=_("Select Data Points:"),
     options={str(i): i for i in range(len(linreg_datatable))},
@@ -753,10 +759,46 @@ forecast_data_and_plot = pn.panel(
     ),
     sizing_mode='stretch_both'
 )
+def update_forecast_hydrograph(selected_option, _, hydrograph_day_all,
+                               hydrograph_pentad_all, linreg_predictor,
+                               forecasts_all, station, title_date,
+                               model_selection, range_type, range_slider,
+                               range_visibility, rram_forecast):
+    if selected_option == 'Yes':
+        # Show forecasts aggregated to pentadal values
+        return viz.plot_pentad_forecast_hydrograph_data(
+            _,
+            hydrograph_pentad_all=hydrograph_pentad_all,
+            forecasts_all=forecasts_all,
+            station=station,
+            title_date=title_date,
+            model_selection=model_selection,
+            range_type=range_type,
+            range_slider=range_slider,
+            range_visibility=range_visibility
+        )
+    else:
+        # Show daily forecasts
+        return viz.plot_pentad_forecast_hydrograph_data_v2(
+            _,
+            hydrograph_day_all=hydrograph_day_all,
+            linreg_predictor=linreg_predictor,
+            forecasts_all=forecasts_all,
+            station=station,
+            title_date=title_date,
+            model_selection=model_selection,
+            range_type=range_type,
+            range_slider=range_slider,
+            range_visibility=range_visibility,
+            rram_forecast=rram_forecast
+        )
 pentad_forecast_plot = pn.panel(
     pn.bind(
-        viz.plot_pentad_forecast_hydrograph_data_v2,
-        _, hydrograph_day_all=hydrograph_day_all,
+        update_forecast_hydrograph,
+        show_daily_data_widget,
+        _,
+        hydrograph_day_all=hydrograph_day_all,
+        hydrograph_pentad_all=hydrograph_pentad_all,
         linreg_predictor=linreg_predictor,
         forecasts_all=forecasts_all,
         station=station,
@@ -888,7 +930,8 @@ def tabs_change_language(language):
             forecast_data_and_plot,
             forecast_summary_table, pentad_forecast_plot, forecast_skill_plot,
             bulletin_table, write_bulletin_button, disclaimer,
-            station_card, forecast_card, add_to_bulletin_button, basin_card, pentad_card, reload_card, add_to_bulletin_popup)
+            station_card, forecast_card, add_to_bulletin_button, basin_card,
+            pentad_card, reload_card, add_to_bulletin_popup, show_daily_data_widget)
     except Exception as e:
         print(f"Error in tabs_change_language: {e}")
         print(traceback.format_exc())
