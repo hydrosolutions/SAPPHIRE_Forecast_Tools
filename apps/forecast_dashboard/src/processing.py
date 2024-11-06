@@ -135,11 +135,105 @@ def read_rram_forecast_data():
     rram_forecast['date'] = rram_forecast['date'].apply(parse_dates)
     return rram_forecast
 
+def read_daily_probabilistic_ml_forecasts_pentad(
+        filepath,
+        model,
+        model_long,
+        model_short):
+    """
+    Reads in forecast results from probabilistic machine learning models for the pentadal forecast
+
+    Args:
+    filepath (str): The path to the file with the forecast results.
+    model (str): The model to read the forecast results from. Allowed values are
+        'TFT', 'TIDE', 'TSMIXER', and 'ARIMA'.
+    model_long (str): The long name of the model.
+    model_short (str): The short name of the model.
+
+    Returns:
+    forecast (pandas.DataFrame): The forecast results for the pentadal forecast horizon.
+    """
+    # Read the forecast results
+    daily_data = pd.read_csv(filepath, parse_dates=["date", "forecast_date"])
+
+    # Rename the column forecast_date to date and Q50 to forecasted_discharge.
+    # In the case of the ARIMA model, we don't have quantiles but rename the
+    # column Q to forecasted_discharge.
+    daily_data.rename(
+        columns={"Q50": "forecasted_discharge",  # For ml models
+                 "Q": "forecasted_discharge"},  # For the ARIMA model
+        inplace=True)
+
+    # Add a column model to the dataframe
+    daily_data["model_long"] = model_long
+    daily_data["model_short"] = model_short
+
+    # Cast code column to string
+    daily_data['code'] = daily_data['code'].astype(str)
+
+    return daily_data
+
+def read_machine_learning_forecasts_pentad(model):
+    '''
+    Reads forecast results from the machine learning model for the pentadal
+    forecast horizon.
+
+    Args:
+    model (str): The machine learning model to read the forecast results from.
+        Allowed values are 'TFT', 'TIDE', 'TSMIXER', and 'ARIMA'.
+    '''
+
+    if model == 'TFT':
+        filename = f"pentad_{model}_forecast.csv".format(model=model)
+        hindcast_filename = f"{model}_PENTAD_hindcast_daily*.csv".format(model=model)
+        model_long = "Temporal-Fusion Transformer (TFT)"
+        model_short = "TFT"
+    elif model == 'TIDE':
+        filename = f"pentad_{model}_forecast.csv".format(model=model)
+        hindcast_filename = f"{model}_PENTAD_hindcast_daily*.csv".format(model=model)
+        model_long = "Time-Series Dense Encoder (TiDE)"
+        model_short = "TiDE"
+    elif model == 'TSMIXER':
+        filename = f"pentad_{model}_forecast.csv".format(model=model)
+        hindcast_filename = f"{model}_PENTAD_hindcast_daily*.csv".format(model=model)
+        model_long = "Time-Series Mixer (TSMixer)"
+        model_short = "TSMixer"
+    elif model == 'ARIMA':
+        filename = f"pentad_{model}_forecast.csv".format(model=model)
+        hindcast_filename = f"{model}_PENTAD_hindcast_daily*.csv".format(model=model)
+        model_long = "AutoRegressive Integrated Moving Average (ARIMA)"
+        model_short = "ARIMA"
+    else:
+        raise ValueError("Invalid model. Valid models are: 'TFT', 'TIDE', 'TSMIXER', 'ARIMA'")
+
+    # Read environment variables to construct the file path with forecast
+    # results for the machine learning and ARIMA models
+    intermediate_data_path = os.getenv("ieasyforecast_intermediate_data_path")
+    subfolder = os.getenv("ieasyhydroforecast_OUTPUT_PATH_DISCHARGE")
+    filepath = os.path.join(intermediate_data_path, subfolder, model, filename)
+
+    # Test if the fielpath exists
+    if not os.path.exists(filepath):
+        raise FileNotFoundError(f"File {filepath} not found")
+
+    forecast = read_daily_probabilistic_ml_forecasts_pentad(filepath, model, model_long, model_short)
+
+    return forecast
+
 def read_ml_forecast_data():
     """
     Reads the forecasts from the ML model from the intermediate data directory.
     """
-    pass
+    tide = read_machine_learning_forecasts_pentad(model='TIDE')
+    tft = read_machine_learning_forecasts_pentad(model='TFT')
+    tsmixer = read_machine_learning_forecasts_pentad(model='TSMIXER')
+    arima = read_machine_learning_forecasts_pentad(model='ARIMA')
+    # Concatenate the data frames
+    ml_forecast = pd.concat([tide, tft, tsmixer, arima], ignore_index=True)
+    print(f"Head of ml_forecast:\n{ml_forecast.head()}")
+    # Cast forecast_date and date columns to datetime
+    ml_forecast['forecast_date'] = ml_forecast['forecast_date'].apply(parse_dates)
+    return ml_forecast
 
 def read_hydrograph_day_file():
     """

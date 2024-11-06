@@ -1134,22 +1134,30 @@ def plot_current_runoff_forecast_range_date_format_v2(
     if len(models) > len(runoff_forecast_colors):
         # Add some random colors if there are more models than colors
         runoff_forecast_color = runoff_forecast_colors + ['#%06X' % random.randint(0, 0xFFFFFF) for i in range(len(models) - len(runoff_forecast_colors))]
+        line_types = ['solid' for i in range(len(models))]
     elif len(models) == 1:
         # Use the middle color in the list
         runoff_forecast_color = [runoff_forecast_colors[3]]
+        line_types = ['solid']
     elif len(models) == 2:
         # Use the second and second from last colors in the list
         runoff_forecast_color = [runoff_forecast_colors[1], runoff_forecast_colors[-2]]
+        line_types = ['solid', 'dashed']
     elif len(models) == 3:
         runoff_forecast_color = [runoff_forecast_colors[1], runoff_forecast_colors[3], runoff_forecast_colors[-2]]
+        line_types = ['solid', 'dashed', 'dotdash']
     elif len(models) == 4:
         runoff_forecast_color = [runoff_forecast_colors[0], runoff_forecast_colors[2], runoff_forecast_colors[4], runoff_forecast_colors[-1]]
+        line_types = ['solid', 'dashed', 'dotdash', 'dotted']
     elif len(models) == 5:
         runoff_forecast_color = [runoff_forecast_colors[0], runoff_forecast_colors[1], runoff_forecast_colors[3], runoff_forecast_colors[4], runoff_forecast_colors[-1]]
+        line_types = ['solid', 'dashed', 'dotdash', 'dotted', 'dashdot']
     elif len(models) == 6:
         runoff_forecast_color = [runoff_forecast_colors[0], runoff_forecast_colors[1], runoff_forecast_colors[2], runoff_forecast_colors[3], runoff_forecast_colors[4], runoff_forecast_colors[-1]]
+        line_types = ['solid', 'dashed', 'dotdash', 'dotted', 'dashdot', 'solid']
     elif len(models) == 7:
         runoff_forecast_color = runoff_forecast_colors
+        line_types = ['solid', 'dashed', 'dotdash', 'dotted', 'dashdot', 'solid', 'dashed']
 
     def cap_color_hook(plot, element, color):
         plot.handles["glyph"].upper_head.line_color = color
@@ -1162,7 +1170,7 @@ def plot_current_runoff_forecast_range_date_format_v2(
     jitter_timedelta = pd.to_timedelta(np.linspace(-jitter_width, jitter_width, len(data)), unit='h')
 
     # Apply jitter to the datetime column
-    data.loc[:, date_col] = data[date_col] + jitter_timedelta
+    data.loc[:, date_col] = data[date_col] #+ jitter_timedelta
 
 
     # Create the overlay
@@ -1206,7 +1214,7 @@ def plot_current_runoff_forecast_range_date_format_v2(
                 label=point_legend_entry) \
                     .opts(color=runoff_forecast_color[i],
                             line_width=2,
-                            line_dash='solid',
+                            line_dash=line_types[i],
                             interpolation='steps-mid',
                             show_legend=True,
                             muted=False)
@@ -1233,7 +1241,7 @@ def plot_current_runoff_forecast_range_date_format_v2(
                 label=point_legend_entry) \
                     .opts(color=runoff_forecast_color[i],
                             line_width=2,
-                            line_dash='solid',
+                            line_dash=line_types[i],
                             interpolation='steps-mid',
                             show_legend=True,
                             muted=False)
@@ -2033,7 +2041,7 @@ def plot_daily_rel_to_norm_rainfall(_, daily_rainfall, station, date_picker,
 def plot_pentad_forecast_hydrograph_data_v2(_, hydrograph_day_all, linreg_predictor, forecasts_all,
                                             station, title_date, model_selection,
                                             range_type, range_slider, range_visibility,
-                                            rram_forecast):
+                                            rram_forecast, ml_forecast):
 
     forecast_date = title_date + dt.timedelta(days=1)
     title_pentad = tl.get_pentad(forecast_date)
@@ -2042,12 +2050,6 @@ def plot_pentad_forecast_hydrograph_data_v2(_, hydrograph_day_all, linreg_predic
     title_day_end = tl.get_pentad_last_day(forecast_date.strftime("%Y-%m-%d"))
     # Take forecast_date and replace the day in that date with the string title_day_end
     title_date_end = forecast_date.replace(day=int(title_day_end))
-
-    print(f"forecast_date: {forecast_date}")
-    print(f"title_pentad: {title_pentad}")
-    print(f"title_month: {title_month}")
-    print(f"title_day_start: {title_day_start}")
-    print(f"title_day_end: {title_day_end}")
 
     # filter hydrograph_day_all & linreg_predictor by station
     #linreg_predictor = processing.add_predictor_dates(linreg_predictor, station, title_date)
@@ -2176,15 +2178,22 @@ def plot_pentad_forecast_hydrograph_data_v2(_, hydrograph_day_all, linreg_predic
     latest_rram_forecast['pentad_in_year'] = forecasts_current['pentad_in_year'].values[0]
     latest_rram_forecast['Model name'] = 'Rainfall runoff assimilation model (RRAM)'
 
-    print(f"Tail of current rram forecasts:\n", latest_rram_forecast[['date','code','Model','E[Q]']].tail(5))
-    print(f"Columns of current rram forecasts:\n", latest_rram_forecast.columns)
-    print(f"Columns of forecasts_current:\n", forecasts_current.columns)
-    print(f"Tail of forecasts_current:\n", forecasts_current[['date','code','Model','E[Q]']].tail(5))
+    # Filter for the current station
+    current_ml_forecasts = ml_forecast[ml_forecast['station_labels'] == station].copy()
+    # Filter for the latest forecast
+    latest_ml_forecast = current_ml_forecasts[current_ml_forecasts['forecast_date'] == current_ml_forecasts['forecast_date'].max()]
+    # Rename columns in latest_ml_forecast to fit forecasts_current
+    latest_ml_forecast = latest_ml_forecast.rename(
+        columns={'Q25': 'Lower bound',
+                    'Q75': 'Upper bound',
+                    'forecasted_discharge': 'E[Q]',
+                    'model_short': 'Model'})
+    # Add pentad_in_month and pentad_in_year to latest_ml_forecast
+    latest_ml_forecast['pentad_in_month'] = forecasts_current['pentad_in_month'].values[0]
+    latest_ml_forecast['pentad_in_year'] = forecasts_current['pentad_in_year'].values[0]
+    # Filter for selected models
+    latest_ml_forecast = latest_ml_forecast[latest_ml_forecast['Model'].isin(model_selection)]
 
-    # If we have RRAM in the Model column of current_forecasts, append
-    # latest_rram_forecasts to forecasts_current
-    #if 'RRAM' in forecasts_current['Model'].values:
-    #    forecasts_current = pd.concat([forecasts_current, latest_rram_forecast], ignore_index=True)
 
     # Create a holoviews bokeh plots of the daily hydrograph
     hvspan_predictor = hv.VSpan(
@@ -2273,6 +2282,15 @@ def plot_pentad_forecast_hydrograph_data_v2(_, hydrograph_day_all, linreg_predic
     else:
         rram_forecast_range_point = hv.Curve([])
 
+    # if either of the following 'TFT', 'TiDE', 'TSMixer', 'NE', 'ARIMA', 'EM'
+    if 'TFT' in forecasts_current['Model'].values or 'TiDE' in forecasts_current['Model'].values or 'TSMixer' in forecasts_current['Model'].values or 'NE' in forecasts_current['Model'].values or 'ARIMA' in forecasts_current['Model'].values or 'EM' in forecasts_current['Model'].values:
+        ml_forecast_range_point = plot_current_runoff_forecast_range_date_format(
+            latest_ml_forecast, _('date'), _('forecast model short column name'),
+            _('forecasted_discharge column name'), _('forecast lower bound column name'),
+            _('forecast upper bound column name'),
+            runoff_forecast_color_list, _('m³/s'))
+    else:
+        ml_forecast_range_point = hv.Curve([])
 
 
     # Overlay the plots
@@ -2282,11 +2300,11 @@ def plot_pentad_forecast_hydrograph_data_v2(_, hydrograph_day_all, linreg_predic
             vlines * \
             last_year * \
             mean * current_year * forecast_line * current_forecast_range_point * \
-            rram_forecast_range_point
+            rram_forecast_range_point * ml_forecast_range_point
     else:
         daily_hydrograph = vlines * last_year * \
             mean * current_year * forecast_line * current_forecast_range_point * \
-            rram_forecast_range_point
+            rram_forecast_range_point * ml_forecast_range_point
 
     daily_hydrograph.opts(
         title=title_text,

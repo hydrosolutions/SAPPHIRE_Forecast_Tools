@@ -182,12 +182,13 @@ def load_data():
     global hydrograph_day_all, hydrograph_pentad_all, linreg_predictor, \
         forecasts_all, forecast_stats, all_stations, station_dict, station_df, \
             station_list, linreg_datatable, stations_iehhf, \
-            rram_forecast
+            rram_forecast, ml_forecast
     hydrograph_day_all = processing.read_hydrograph_day_data_for_pentad_forecasting(stations_iehhf)
     hydrograph_pentad_all = processing.read_hydrograph_pentad_data_for_pentad_forecasting(stations_iehhf)
 
     # Daily forecasts from RRAM & ML models
     rram_forecast = processing.read_rram_forecast_data()
+    ml_forecast = processing.read_ml_forecast_data()
 
     # Pentadal forecast data
     # - linreg_predictor: for displaying predictor in predictor tab
@@ -229,6 +230,7 @@ def load_data():
     #print(f"DEBUG: linreg_predictor: {linreg_predictor.tail()}")
     forecasts_all = processing.add_labels_to_forecast_pentad_df(forecasts_all, all_stations)
     rram_forecast = processing.add_labels_to_forecast_pentad_df(rram_forecast, all_stations)
+    ml_forecast = processing.add_labels_to_forecast_pentad_df(ml_forecast, all_stations)
 
     # Replace model names with translation strings
     forecasts_all = processing.internationalize_forecast_model_names(_, forecasts_all)
@@ -763,7 +765,7 @@ def update_forecast_hydrograph(selected_option, _, hydrograph_day_all,
                                hydrograph_pentad_all, linreg_predictor,
                                forecasts_all, station, title_date,
                                model_selection, range_type, range_slider,
-                               range_visibility, rram_forecast):
+                               range_visibility, rram_forecast, ml_forecast):
     if selected_option == 'Yes':
         # Show forecasts aggregated to pentadal values
         return viz.plot_pentad_forecast_hydrograph_data(
@@ -790,7 +792,8 @@ def update_forecast_hydrograph(selected_option, _, hydrograph_day_all,
             range_type=range_type,
             range_slider=range_slider,
             range_visibility=range_visibility,
-            rram_forecast=rram_forecast
+            rram_forecast=rram_forecast,
+            ml_forecast=ml_forecast
         )
 pentad_forecast_plot = pn.panel(
     pn.bind(
@@ -807,7 +810,8 @@ pentad_forecast_plot = pn.panel(
         range_type=allowable_range_selection,
         range_slider=manual_range,
         range_visibility=show_range_button,
-        rram_forecast=rram_forecast
+        rram_forecast=rram_forecast,
+        ml_forecast=ml_forecast
         ),
     sizing_mode='stretch_both'
 )
