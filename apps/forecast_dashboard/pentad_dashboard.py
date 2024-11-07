@@ -899,7 +899,18 @@ manual_range.param.watch(update_forecast_tabulator, 'value')
 # Attach the function to the button click event
 # Multi-threading does not seem to work
 #write_bulletin_button.on_click(lambda event: thread.write_forecast_bulletin_in_background(bulletin_table, env_file_path, status))
-write_bulletin_button.on_click(lambda event: write_to_excel(sites_list, bulletin_sites, bulletin_header_info, env_file_path))
+# Create a container to hold the invisible download widget
+download_container = pn.pane.HTML()
+
+# Modify your button callback
+# Modify your button callback
+write_bulletin_button.on_click(
+    lambda event: setattr(download_container, 'object',
+        write_to_excel(sites_list, bulletin_sites, bulletin_header_info, env_file_path)
+    )
+)
+
+#write_bulletin_button.on_click(lambda event: write_to_excel(sites_list, bulletin_sites, bulletin_header_info, env_file_path))
 
 # Create an icon using HTML for the select language widget
 language_icon_html = pn.pane.HTML(

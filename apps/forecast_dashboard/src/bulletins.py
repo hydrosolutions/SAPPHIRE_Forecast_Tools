@@ -340,7 +340,6 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
             filename=os.path.basename(file_path),
             auto=True
         )
-        return download
 
     # Note all objects that are passed to generate_report through list_obsjects
     # should be 'data' tags. 'data' tags are listed below a 'header' tag.
