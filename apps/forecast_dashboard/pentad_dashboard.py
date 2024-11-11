@@ -644,6 +644,7 @@ def add_current_selection_to_bulletin(event=None):
 
     # Add forecast attributes to the site object
     selected_site.get_forecast_attributes_for_site(_, selected_rows)
+    print(f"selected site: bulletin order: {selected_site.bulletin_order}")
 
     existing_site = next((site for site in bulletin_sites if site.code == selected_site.code), None)
     if existing_site is None:

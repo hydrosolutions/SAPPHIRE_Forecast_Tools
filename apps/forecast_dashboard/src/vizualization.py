@@ -2318,6 +2318,7 @@ def plot_pentad_forecast_hydrograph_data_v2(_, hydrograph_day_all, linreg_predic
         #       lambda p, e: add_custom_xticklabels_daily_dates(_, linreg_predictor['leap_year'].iloc[0], p, e)],
         xformatter=DatetimeTickFormatter(days="%b %d", months="%b %d"),
         ylim=(0, data[max_col].max() * 1.1),
+        xlim=(min(data[date_col]), max(data[date_col])),
         tools=['hover'],
         toolbar='right')
 

@@ -330,9 +330,7 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
     print('DEBUG: write_to_excel: Report generated.')
 
     # Download bulletin
-    # Add JavaScript to trigger download
     file_path = os.path.join(report_settings.report_output_path, bulletin_file_name)
-    # Create FileDownload widget
     if os.path.exists(file_path):
         print('Download file path:', file_path)
         download = pn.widgets.FileDownload(
@@ -340,6 +338,7 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
             filename=os.path.basename(file_path),
             auto=True
         )
+        return download
 
     # Note all objects that are passed to generate_report through list_obsjects
     # should be 'data' tags. 'data' tags are listed below a 'header' tag.
