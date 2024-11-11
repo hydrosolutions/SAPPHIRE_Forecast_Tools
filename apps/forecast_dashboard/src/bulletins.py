@@ -330,9 +330,7 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
     print('DEBUG: write_to_excel: Report generated.')
 
     # Download bulletin
-    # Add JavaScript to trigger download
     file_path = os.path.join(report_settings.report_output_path, bulletin_file_name)
-    # Create FileDownload widget
     if os.path.exists(file_path):
         print('Download file path:', file_path)
         download = pn.widgets.FileDownload(

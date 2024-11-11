@@ -179,9 +179,16 @@ _ = localize.load_translation(current_locale, localedir)
 # region load_data
 
 def load_data():
-    global hydrograph_day_all, hydrograph_pentad_all, linreg_predictor, forecasts_all, forecast_stats, all_stations, station_dict, station_df, station_list, linreg_datatable, stations_iehhf    # Daily runoff data
+    global hydrograph_day_all, hydrograph_pentad_all, linreg_predictor, \
+        forecasts_all, forecast_stats, all_stations, station_dict, station_df, \
+            station_list, linreg_datatable, stations_iehhf, \
+            rram_forecast, ml_forecast
     hydrograph_day_all = processing.read_hydrograph_day_data_for_pentad_forecasting(stations_iehhf)
     hydrograph_pentad_all = processing.read_hydrograph_pentad_data_for_pentad_forecasting(stations_iehhf)
+
+    # Daily forecasts from RRAM & ML models
+    rram_forecast = processing.read_rram_forecast_data()
+    ml_forecast = processing.read_ml_forecast_data()
 
     # Pentadal forecast data
     # - linreg_predictor: for displaying predictor in predictor tab
@@ -222,6 +229,8 @@ def load_data():
     #print(f"DEBUG: linreg_predictor.columns: {linreg_predictor.columns}")
     #print(f"DEBUG: linreg_predictor: {linreg_predictor.tail()}")
     forecasts_all = processing.add_labels_to_forecast_pentad_df(forecasts_all, all_stations)
+    rram_forecast = processing.add_labels_to_forecast_pentad_df(rram_forecast, all_stations)
+    ml_forecast = processing.add_labels_to_forecast_pentad_df(ml_forecast, all_stations)
 
     # Replace model names with translation strings
     forecasts_all = processing.internationalize_forecast_model_names(_, forecasts_all)
@@ -379,6 +388,12 @@ def draw_show_forecast_ranges_widget():
         options=[_("Yes"), _("No")],
         value=_("No"))
 show_range_button = draw_show_forecast_ranges_widget()
+
+show_daily_data_widget = pn.widgets.RadioButtonGroup(
+    name=_("Show daily data:"),
+    options=[_("Yes"), _("No")],
+    value=_("No")
+)
 
 selected_indices = pn.widgets.CheckBoxGroup(
     name=_("Select Data Points:"),
@@ -629,6 +644,7 @@ def add_current_selection_to_bulletin(event=None):
 
     # Add forecast attributes to the site object
     selected_site.get_forecast_attributes_for_site(_, selected_rows)
+    print(f"selected site: bulletin order: {selected_site.bulletin_order}")
 
     existing_site = next((site for site in bulletin_sites if site.code == selected_site.code), None)
     if existing_site is None:
@@ -705,7 +721,6 @@ pentad_selector.param.watch(update_callback, 'value')
 # Initial setup: populate the main area with the initial selection
 #update_callback(None)  # This does not seem to be needed
 
-
 daily_hydrograph_plot = pn.panel(
     pn.bind(
         viz.plot_daily_hydrograph_data,
@@ -747,12 +762,57 @@ forecast_data_and_plot = pn.panel(
     ),
     sizing_mode='stretch_both'
 )
+def update_forecast_hydrograph(selected_option, _, hydrograph_day_all,
+                               hydrograph_pentad_all, linreg_predictor,
+                               forecasts_all, station, title_date,
+                               model_selection, range_type, range_slider,
+                               range_visibility, rram_forecast, ml_forecast):
+    if selected_option == 'Yes':
+        # Show forecasts aggregated to pentadal values
+        return viz.plot_pentad_forecast_hydrograph_data(
+            _,
+            hydrograph_pentad_all=hydrograph_pentad_all,
+            forecasts_all=forecasts_all,
+            station=station,
+            title_date=title_date,
+            model_selection=model_selection,
+            range_type=range_type,
+            range_slider=range_slider,
+            range_visibility=range_visibility
+        )
+    else:
+        # Show daily forecasts
+        return viz.plot_pentad_forecast_hydrograph_data_v2(
+            _,
+            hydrograph_day_all=hydrograph_day_all,
+            linreg_predictor=linreg_predictor,
+            forecasts_all=forecasts_all,
+            station=station,
+            title_date=title_date,
+            model_selection=model_selection,
+            range_type=range_type,
+            range_slider=range_slider,
+            range_visibility=range_visibility,
+            rram_forecast=rram_forecast,
+            ml_forecast=ml_forecast
+        )
 pentad_forecast_plot = pn.panel(
     pn.bind(
-        viz.plot_pentad_forecast_hydrograph_data,
-        _, hydrograph_pentad_all, forecasts_all, station, date_picker,
-        model_checkbox, allowable_range_selection, manual_range,
-        show_range_button
+        update_forecast_hydrograph,
+        show_daily_data_widget,
+        _,
+        hydrograph_day_all=hydrograph_day_all,
+        hydrograph_pentad_all=hydrograph_pentad_all,
+        linreg_predictor=linreg_predictor,
+        forecasts_all=forecasts_all,
+        station=station,
+        title_date=date_picker,
+        model_selection=model_checkbox,
+        range_type=allowable_range_selection,
+        range_slider=manual_range,
+        range_visibility=show_range_button,
+        rram_forecast=rram_forecast,
+        ml_forecast=ml_forecast
         ),
     sizing_mode='stretch_both'
 )
@@ -840,7 +900,18 @@ manual_range.param.watch(update_forecast_tabulator, 'value')
 # Attach the function to the button click event
 # Multi-threading does not seem to work
 #write_bulletin_button.on_click(lambda event: thread.write_forecast_bulletin_in_background(bulletin_table, env_file_path, status))
-write_bulletin_button.on_click(lambda event: write_to_excel(sites_list, bulletin_sites, bulletin_header_info, env_file_path))
+# Create a container to hold the invisible download widget
+download_container = pn.pane.HTML()
+
+# Modify your button callback
+# Modify your button callback
+write_bulletin_button.on_click(
+    lambda event: setattr(download_container, 'object',
+        write_to_excel(sites_list, bulletin_sites, bulletin_header_info, env_file_path)
+    )
+)
+
+#write_bulletin_button.on_click(lambda event: write_to_excel(sites_list, bulletin_sites, bulletin_header_info, env_file_path))
 
 # Create an icon using HTML for the select language widget
 language_icon_html = pn.pane.HTML(
@@ -875,7 +946,8 @@ def tabs_change_language(language):
             forecast_data_and_plot,
             forecast_summary_table, pentad_forecast_plot, forecast_skill_plot,
             bulletin_table, write_bulletin_button, disclaimer,
-            station_card, forecast_card, add_to_bulletin_button, basin_card, pentad_card, reload_card, add_to_bulletin_popup)
+            station_card, forecast_card, add_to_bulletin_button, basin_card,
+            pentad_card, reload_card, add_to_bulletin_popup, show_daily_data_widget)
     except Exception as e:
         print(f"Error in tabs_change_language: {e}")
         print(traceback.format_exc())
