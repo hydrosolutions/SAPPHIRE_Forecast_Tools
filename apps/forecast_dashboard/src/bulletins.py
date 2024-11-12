@@ -2,6 +2,7 @@ import os
 import math
 import openpyxl
 import panel as pn
+from typing import List
 
 # ieassyreport
 from ieasyreports.settings import TagSettings, ReportGeneratorSettings
@@ -16,6 +17,36 @@ logger = logging.getLogger(__name__)
 
 # Local imports
 from .reports import SapphireReport
+
+
+# Custom class
+# Overwrite the default report generator to add functinality to write to
+# specific sheets
+class MultiSheetReportGenerator(DefaultReportGenerator):
+    def __init__(
+        self,
+        tags: List[Tag],
+        template: str,
+        templates_directory_path: str,
+        reports_directory_path: str,
+        tag_settings: TagSettings,
+        requires_header: bool = False,
+        sheet: int = 0
+    ):
+        self.tags = {tag.name: tag for tag in tags}
+        self.template_filename = template
+        self.templates_directory_path = templates_directory_path
+        self.reports_directory_path = reports_directory_path
+        self.template = self.open_template_file()
+        self.tag_settings = tag_settings
+        self.sheet = self.template.worksheets[sheet]
+
+        self.validated = False
+
+        self.requires_header_tag = requires_header
+        self.header_tag_info = {}
+        self.data_tags_info = []
+        self.general_tags = {}
 
 
 def round_percentage_to_comma_separated_string(value: float) -> str:
@@ -282,7 +313,7 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
         #start_date_month_num + "_" + start_date_month)
 
     # Modify the bulletin file name to include the basin (or all basins)
-    bulletin_file_name = f"{str(header_df['year'].values[0])}_{header_df['month_number'].values[0]:02}_{header_df['month_str_nom_ru'].values[0]}_пентада_{header_df['pentad'].values[0]}_all_basins_short_term_forecast_bulletin.xlsx"
+    bulletin_file_name = f"{str(header_df['year'].values[0])}_{header_df['month_number'].values[0]:02}_{header_df['month_str_nom_ru'].values[0]}_all_basins_short_term_forecast_bulletin.xlsx"
 
     # If we are not in the first pentad of the month, we want to use the
     # existing bulletin as template to append the new data to it.
@@ -307,21 +338,14 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
     print("DEBUG: write_to_excel: bulletin_template_file: ", bulletin_template_file)
     print("DEBUG: write_to_excel: report_settings.templates_directory_path: ", report_settings.templates_directory_path)
     # Create the report generator
-    report_generator = DefaultReportGenerator(
+    report_generator = MultiSheetReportGenerator(
         tags=tag_list,
         template=bulletin_template_file,
         templates_directory_path=report_settings.templates_directory_path,
         reports_directory_path=report_settings.report_output_path,
-        tag_settings=tag_settings
+        tag_settings=tag_settings,
+        sheet=(int(header_df['pentad'].values[0]) - 1)
         )
-
-    # Set the sheet number in the report generator
-    workbook = openpyxl.load_workbook(os.path.join(report_settings.templates_directory_path, bulletin_template_file))
-    sheet_names = workbook.sheetnames
-    current_sheet = sheet_names[int(int(header_df['pentad'].values[0]) - 1)]
-    report_generator.sheet = workbook[current_sheet]
-    #report_generator.sheet = (int(header_df['day_start_pentad'].values[0]) - 1)
-    print("DEBUG: write_to_excel: report_generator.sheet: ", report_generator.sheet)
 
     report_generator.validate()
 
