@@ -594,6 +594,10 @@ def get_decadal_forecast_sites_from_pentadal_sites(fc_sites_pentad=None, site_li
 def get_pentadal_forecast_sites_from_HF_SDK(ieh_sdk):
     """
     Gets site attributes from iEH HF and writes them to list of site objects.
+
+    Returns:
+    fc_sites (list): A list of Site objects for which to produce forecasts.
+    site_codes (list): A list of strings for site IDs for which to produce forecasts.
     """
     # Get the list of discharge sites from the iEH HF SDK
     discharge_sites = ieh_sdk.get_discharge_sites()

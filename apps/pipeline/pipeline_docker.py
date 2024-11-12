@@ -586,8 +586,14 @@ class DeleteOldGateywayFiles(luigi.Task):
     # Define the number of days old the files should be before they are deleted
     days_old = luigi.IntParameter(default=2)
 
+    def output(self):
+        return luigi.LocalTarget(f'/app/log_deleteoldfiles.txt')
+
     def run(self):
-        print("Running DeleteOldGatewayFiles")
+        print("------------------------------------")
+        print(" Running DeleteOldGatewayFiles task.")
+        print("------------------------------------")
+
         print(self.folder_path)
         # Test if the path exists
         if not os.path.exists(self.folder_path):
@@ -602,6 +608,9 @@ class DeleteOldGateywayFiles(luigi.Task):
                 os.remove(file_path)
                 print(f"Deleted {file_path} as it was older than {self.days_old} days.")
 
+        # Create the output marker file
+        with self.output().open('w') as f:
+            f.write('Task completed')
 
 class RunWorkflow(luigi.Task):
 

@@ -516,6 +516,10 @@ def get_pentad_last_day(date_str):
     # Make sure that last_day is not larger than the number of days in the month
     last_day = min(last_day, last_day_in_month.day)
 
+    # Adjust for months with 31 days
+    if last_day == 30 and last_day_in_month.day == 31:
+        last_day = 31
+
     # return the first day of the pentad as a string
     return str(last_day)
 
@@ -767,6 +771,17 @@ def get_predcitor_month_latin(date_str):
         predictor_month = current_month
 
     return predictor_month
+
+def get_month_num(date_str):
+    """For a given date, return the number of the month in the year."""
+    # If intput is timestamp instead of string, directly get month from timestamp
+    if isinstance(date_str, pd.Timestamp):
+        return date_str.month
+
+    # if input is string, convert to timestamp
+    if isinstance(date_str, str):
+        date = pd.Timestamp(date_str)
+        return date.month
 
 def get_month_str_case1(date_str):
     """
