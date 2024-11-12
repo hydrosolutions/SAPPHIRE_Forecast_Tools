@@ -49,6 +49,7 @@ import src.vizualization as viz
 from src.site import SapphireSite as Site
 from src.bulletins import write_to_excel
 import src.layout as layout
+from src.file_downloader import FileDownloader
 
 import calendar
 
@@ -159,6 +160,13 @@ SAVE_DIRECTORY = os.path.join(
     os.getenv('ieasyforecast_linreg_point_selection', 'linreg_point_selection')
 )
 os.makedirs(SAVE_DIRECTORY, exist_ok=True)
+
+# Initialize the downloader with a specific directory
+bulletin_folder = os.path.join(
+    os.getenv('ieasyreports_report_output_path'),
+    'bulletins', 'pentad')
+downloader = FileDownloader(bulletin_folder)
+bulletin_download_panel = downloader.panel()
 
 # endregion
 
@@ -945,7 +953,7 @@ def tabs_change_language(language):
             #daily_rel_to_norm_runoff, daily_rel_to_norm_rainfall,
             forecast_data_and_plot,
             forecast_summary_table, pentad_forecast_plot, forecast_skill_plot,
-            bulletin_table, write_bulletin_button, disclaimer,
+            bulletin_table, write_bulletin_button, bulletin_download_panel, disclaimer,
             station_card, forecast_card, add_to_bulletin_button, basin_card,
             pentad_card, reload_card, add_to_bulletin_popup, show_daily_data_widget)
     except Exception as e:
