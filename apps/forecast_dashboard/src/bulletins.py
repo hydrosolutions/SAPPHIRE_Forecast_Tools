@@ -290,17 +290,19 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
     if int(header_df['day_start_pentad'].values[0]) == 1:
         # We can use the default template for the first pentad of the month
         bulletin_template_file = os.getenv("ieasyforecast_template_pentad_bulletin_file")
+        # Write pentad 1 to the template
         report_settings.templates_directory_path = os.getenv("ieasyreports_templates_directory_path")
     else:
         # Test if the file exists and revert to the default template if it does not exist
-        #if os.path.exists(os.path.join(report_settings.report_output_path, bulletin_file_name)):
+        if os.path.exists(os.path.join(report_settings.report_output_path, bulletin_file_name)):
             # Overwrite the settings for the templates directory path.
-        #    pass
-        #    #bulletin_template_file = bulletin_file_name
-        #    #report_settings.templates_directory_path = report_settings.report_output_path
-        #else:
-        bulletin_template_file = os.getenv("ieasyforecast_template_pentad_bulletin_file")
-        report_settings.templates_directory_path = os.getenv("ieasyreports_templates_directory_path")
+            bulletin_template_file = bulletin_file_name
+            # Write pentad >=2 to the existing bulletin
+            report_settings.templates_directory_path = report_settings.report_output_path
+        else:
+            # Fallback to the default template
+            bulletin_template_file = os.getenv("ieasyforecast_template_pentad_bulletin_file")
+            report_settings.templates_directory_path = os.getenv("ieasyreports_templates_directory_path")
 
     print("DEBUG: write_to_excel: bulletin_template_file: ", bulletin_template_file)
     print("DEBUG: write_to_excel: report_settings.templates_directory_path: ", report_settings.templates_directory_path)
@@ -314,39 +316,23 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
         )
 
     # Set the sheet number in the report generator
-    # TODO: This needs to be fixed. Ask Davor for support
-    #workbook = openpyxl.load_workbook(os.path.join(report_settings.templates_directory_path, bulletin_template_file))
-    #sheet_names = workbook.sheetnames
-    #current_sheet = sheet_names[int(int(header_df['pentad'].values[0]) - 1)]
-    #report_generator.sheet = workbook[current_sheet]
+    workbook = openpyxl.load_workbook(os.path.join(report_settings.templates_directory_path, bulletin_template_file))
+    sheet_names = workbook.sheetnames
+    current_sheet = sheet_names[int(int(header_df['pentad'].values[0]) - 1)]
+    report_generator.sheet = workbook[current_sheet]
+    #report_generator.sheet = (int(header_df['day_start_pentad'].values[0]) - 1)
     print("DEBUG: write_to_excel: report_generator.sheet: ", report_generator.sheet)
 
     report_generator.validate()
-    #report_generator.generate_report(list_objects=sites_list)
+
     report_generator.generate_report(
         list_objects=bulletin_sites,
         output_filename=bulletin_file_name
         )
     print('DEBUG: write_to_excel: Report generated.')
 
-    # Download bulletin
-    file_path = os.path.join(report_settings.report_output_path, bulletin_file_name)
-    if os.path.exists(file_path):
-        print('Download file path:', file_path)
-        download = pn.widgets.FileDownload(
-            file=file_path,
-            filename=os.path.basename(file_path),
-            auto=True
-        )
-        return download
-
     # Note all objects that are passed to generate_report through list_obsjects
     # should be 'data' tags. 'data' tags are listed below a 'header' tag.
 
-    # Hide the loading spinner
-    #indicator.value = False
 
-    #report = SapphireReport(name="Test report", env_file_path=env_file_path)
-    #print('DEBUG: Multithreading write_to_excel: Writing bulletin ...')
-    #report.generate_report(sites_list=sites_list)
 
