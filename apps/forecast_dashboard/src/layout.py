@@ -89,7 +89,7 @@ def define_tabs(_,
                 forecast_data_and_plot,
                 forecast_summary_table, pentad_forecast_plot, effectiveness_plot,
                 bulletin_table,
-                write_bulletin_button, disclaimer,
+                write_bulletin_button, bulletin_download_panel, disclaimer,
                 station_card, forecast_card, add_to_bulletin_button, basin_card,
                 pentad_card, reload_card, add_to_bulletin_popup, show_daily_data_widget):
 
@@ -212,12 +212,21 @@ def define_tabs(_,
             (_('Bulletin'),
              pn.Column(
                     pn.Card(
-                        bulletin_table,
+                        pn.Column(
+                            bulletin_table,
+                            write_bulletin_button,
+                        ),
                         title='Forecast bulletin',
                         sizing_mode='stretch_width',
                     ),
-                    pn.Row(
-                            write_bulletin_button),
+                    pn.Card(
+                        pn.Row(
+                            bulletin_download_panel,
+                        ),
+                        title='Download bulletin',
+                        sizing_mode='stretch_width',
+                        collapsed=True,
+                    ),
              )
             ),
             (_('Disclaimer'), disclaimer),
