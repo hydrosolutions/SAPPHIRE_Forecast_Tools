@@ -1531,7 +1531,7 @@ def calculate_skill_metrics_pentad(observed: pd.DataFrame, simulated: pd.DataFra
         short_model_list = extract_first_parentheses_content(model_list)
         # Concatenat the model names
         unique_models = ', '.join(sorted(short_model_list))
-        return f'Ensemble Mean with {unique_models} (EM)'
+        return f'Ens. Mean with {unique_models} (EM)'
 
     def model_short_agg(x):
         return f'EM'
