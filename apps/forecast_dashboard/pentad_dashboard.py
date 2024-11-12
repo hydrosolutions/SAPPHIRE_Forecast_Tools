@@ -52,6 +52,9 @@ import src.layout as layout
 
 import calendar
 
+import csv
+from pathlib import Path
+
 # Get the absolute path of the directory containing the current script
 cwd = os.getcwd()
 
@@ -160,6 +163,8 @@ SAVE_DIRECTORY = os.path.join(
 )
 os.makedirs(SAVE_DIRECTORY, exist_ok=True)
 
+BULLETIN_CSV_PATH = os.path.join(SAVE_DIRECTORY, 'bulletin.csv')
+
 # endregion
 
 
@@ -250,6 +255,7 @@ temp = processing.read_temperature_data()
 
 load_data()
 
+
 # Test if we have sites in stations_iehhf which are not present in forecasts_all
 # Placeholder for a message pane
 message_pane = pn.pane.Markdown("")
@@ -260,6 +266,8 @@ if stations_iehhf is not None:
         message_pane.object = missing_sites_message
 
 sites_list = Site.get_site_attribues_from_iehhf_dataframe(all_stations)
+
+hydropost_to_basin = {site.code: site.basin_ru for site in sites_list}
 
 bulletin_table = pn.Column()
 
@@ -395,6 +403,13 @@ write_bulletin_button = pn.widgets.Button(
     description=_("Write bulletin to Excel"))
 #indicator = pn.indicators.LoadingSpinner(value=False, size=25)
 
+# Button to remove selected forecasts from the bulletin
+remove_bulletin_button = pn.widgets.Button(
+    name=_("Remove Selected"),
+    button_type='danger',
+    margin=(10, 0, 0, 0)  # top, right, bottom, left
+)
+
 # Create a language selection widget
 language_select = pn.widgets.Select(
     name='',
@@ -489,6 +504,17 @@ basin_card.visible = False
 
 
 add_to_bulletin_button = pn.widgets.Button(name=_("Add to bulletin"), button_type="primary")
+
+# Initialize the bulletin_tabulator as a global Tabulator with predefined columns and grouping
+bulletin_tabulator = pn.widgets.Tabulator(
+    pd.DataFrame(columns=['Hydropost', 'Model', 'Date', 'Basin']),  # Ensure 'Basin' is included
+    show_index=False,
+    height=300,
+    selectable='checkbox',  # Allow multiple selections for removal
+    sizing_mode='stretch_width',
+    groupby=['Basin'],  # Enable grouping by 'Basin'
+    layout='fit_columns'
+)
 # endregion
 
 
@@ -560,29 +586,22 @@ viz.app_state.param.watch(update_add_to_bulletin_button, 'pipeline_running')
 # Set the initial state of the button based on whether the pipeline is running
 add_to_bulletin_button.disabled = viz.app_state.pipeline_running
 
-# Function to update the spinner
-#def update_indicator(event):
-#    if not event:
-#        return
-#    indicator.value = not indicator.value
-
-# Update the model select widget based on the selected station
+# Function to update the model select widget based on the selected station
 @pn.depends(station, pentad_selector, watch=True)
 def update_model_select(station_value, selected_pentad):
     # Update the model_dict with the models we have results for for the selected
     # station
     print(f"DEBUG: pentad_dashboard.py: update_model_select: station_value: {station_value}")
-    model_dict = processing.update_model_dict(model_dict_all, forecasts_all, station_value, selected_pentad)
-    model_checkbox.options = model_dict
-    return model_dict
+    updated_model_dict = processing.update_model_dict(model_dict_all, forecasts_all, station_value, selected_pentad)
+    model_checkbox.options = updated_model_dict
+    # Update the selected models based on the new options
+    current_model_pre_selection = processing.get_best_models_for_station_and_pentad(forecasts_all, station_value, selected_pentad)
+    model_checkbox.value = [updated_model_dict[model] for model in current_model_pre_selection]
+    return updated_model_dict
 
-
-# Bind the update function to the station selector
-#pn.bind(update_model_select, station, watch=True)
-#pn.bind(update_model_select, pentad_selector, watch=True)
 
 # Create the pop-up notification pane (initially hidden)
-add_to_bulletin_popup = pn.pane.Alert("Added to bulletin", alert_type="success", visible=False)
+add_to_bulletin_popup = pn.pane.Alert(_("Added to bulletin"), alert_type="success", visible=False)
 
 # Function to handle adding the current selection to the bulletin
 def add_current_selection_to_bulletin(event=None):
@@ -590,7 +609,6 @@ def add_current_selection_to_bulletin(event=None):
         print("Cannot add to bulletin while containers are running.")
         return  # Prevent the action while containers are running
 
-    # Your existing logic for adding selections to bulletin...
     selected_indices = forecast_tabulator.selection
     forecast_df = forecast_tabulator.value
     #print("\n\n\nDEBUG: pentad_dashboard.py: forecast_df:\n", forecast_df)
@@ -615,83 +633,149 @@ def add_current_selection_to_bulletin(event=None):
 
     final_forecast_table = selected_rows.reset_index(drop=True)
 
+    # Convert the selected forecast data to a DataFrame
+    forecast_data = final_forecast_table.copy()
+    forecast_data['Hydropost'] = selected_station
+    forecast_data['Date'] = selected_date
 
+    # Retrieve Basin information
+    try:
+        selected_hydropost_code = selected_station.split(' - ')[0].strip() 
+        print(f"Extracted hydropost code: '{selected_hydropost_code}'")
+    except Exception as e:
+        print(f"Error extracting hydropost code from station label '{selected_station}': {e}")
+        selected_hydropost_code = None
 
-    # Find the Site object for the selected station
-    selected_site = next((site for site in sites_list if site.station_label == selected_station), None)
-    if selected_site is None:
-        print(f"Site {selected_station} not found in sites_list")
-        print(f"sites_list: {sites_list}")
-        logger.error(f"Site {selected_station} not found in sites_list")
-        return
-
-    selected_site.forecasts = final_forecast_table
-
-    # Add forecast attributes to the site object
-    selected_site.get_forecast_attributes_for_site(_, selected_rows)
-
-    existing_site = next((site for site in bulletin_sites if site.code == selected_site.code), None)
-    if existing_site is None:
-        bulletin_sites.append(selected_site)
-        logger.info(f"Added new site to bulletin: {selected_station}")
+    if selected_hydropost_code:
+        basin = hydropost_to_basin.get(selected_hydropost_code, "Unknown Basin")
+        if basin == "Unknown Basin":
+            print(f"Hydropost code '{selected_hydropost_code}' not found in hydropost_to_basin mapping.")
+            logger.warning(f"Hydropost code '{selected_hydropost_code}' not found in hydropost_to_basin mapping.")
     else:
-        existing_site.forecasts = selected_site.forecasts
-        print(f"Overwritten forecast for station: {selected_station}")
-        logger.info(f"Overwritten forecast for site in bulletin: {selected_station}")
+        basin = "Unknown Basin"
+        print("Selected hydropost code is None. Assigning 'Unknown Basin'.")
+        logger.warning("Selected hydropost code is None. Assigning 'Unknown Basin'.")
 
-    update_bulletin_table(None)
+    forecast_data['Basin'] = basin
+
+    # Read existing bulletin data
+    if Path(BULLETIN_CSV_PATH).is_file():
+        existing_data = pd.read_csv(BULLETIN_CSV_PATH)
+    else:
+        existing_data = pd.DataFrame()
+
+    # Remove any existing forecasts for the selected station
+    if 'Hydropost' in existing_data.columns:
+        existing_data = existing_data[existing_data['Hydropost'] != selected_station]
+
+    # Append the new forecast data
+    combined_data = pd.concat([existing_data, forecast_data], ignore_index=True)
+
+    # Save back to CSV
+    combined_data.to_csv(BULLETIN_CSV_PATH, index=False)
+
+    # Update the bulletin table to reflect the new data
+    update_bulletin_table()
 
     # Show the popup notification
     add_to_bulletin_popup.visible = True
     pn.state.add_periodic_callback(lambda: setattr(add_to_bulletin_popup, 'visible', False), 2000, count=1)
 
-# Ensure the 'Add to Bulletin' button is initially bound
-add_to_bulletin_button.on_click(add_current_selection_to_bulletin)
+
+# Function to create the bulletin table from CSV
 def create_bulletin_table():
-    print("Creating bulletin table...")
-    bulletin_data = []
-    existing_forecasts = set()
-    selected_basin = select_basin_widget.value
+    global bulletin_tabulator  # Declare as global to modify the global variable
+    print("Creating/updating bulletin table...")
 
-    for site in bulletin_sites:
-        # If a specific basin is selected, skip sites not in that basin
-        if selected_basin != _("All basins") and site.basin_ru != selected_basin:
-            continue
-
-        if hasattr(site, 'forecasts'):
-            # Assuming 'forecasts' is now a single DataFrame per site
-            forecast = site.forecasts.copy()
-            forecast['Hydropost'] = site.station_label
-            bulletin_data.append(forecast)
+    if Path(BULLETIN_CSV_PATH).is_file():
+        bulletin_df = pd.read_csv(BULLETIN_CSV_PATH)
+        
+        # Apply 'Select Basin' filter if applicable
+        selected_basin = select_basin_widget.value
+        if selected_basin != _("All basins") and 'Basin' in bulletin_df.columns:
+            bulletin_df = bulletin_df[bulletin_df['Basin'] == selected_basin]
+        
+        if not bulletin_df.empty:
+            bulletin_tabulator.value = bulletin_df  # Update Tabulator with new data
         else:
-            print(f"No forecasts for site {site.code}")
-
-    if bulletin_data:
-        bulletin_df = pd.concat(bulletin_data, ignore_index=True)
-        columns_order = ['Hydropost'] + [col for col in bulletin_df.columns if col != 'Hydropost']
-        bulletin_df = bulletin_df[columns_order]
-
-        bulletin_tabulator = pn.widgets.Tabulator(
-            bulletin_df,
-            show_index=False,
-            height=300,
-            sizing_mode='stretch_width'
-        )
+            # Assign an empty DataFrame with predefined columns
+            empty_df = pd.DataFrame(columns=['Hydropost', 'Model', 'Date', 'Basin'])  # Ensure 'Basin' is included
+            bulletin_tabulator.value = empty_df
     else:
-        bulletin_tabulator = pn.pane.Markdown(_("No forecasts added to the bulletin."))
+        # Assign an empty DataFrame with predefined columns
+        empty_df = pd.DataFrame(columns=['Hydropost', 'Model', 'Date', 'Basin'])  # Ensure 'Basin' is included
+        bulletin_tabulator.value = empty_df
+    
+    print("Bulletin table updated.")
 
-    print("Bulletin table: ", bulletin_tabulator)
-    print("Bulletin table created.")
-    return bulletin_tabulator
 
-
+# Function to update the bulletin table
 def update_bulletin_table(event=None):
-    bulletin_table.clear()
-    bulletin_table.append(create_bulletin_table())
+    create_bulletin_table() 
+
+
+bulletin_table = pn.Column(
+    bulletin_tabulator,  # Add the global Tabulator directly
+    pn.Row(remove_bulletin_button, sizing_mode='stretch_width'),
+    add_to_bulletin_popup  # Include the popup for success messages
+)
+
+update_bulletin_table()
 
 select_basin_widget.param.watch(update_bulletin_table, 'value')
 
 add_to_bulletin_button.on_click(add_current_selection_to_bulletin)
+
+# Function to remove selected forecasts from the bulletin
+def remove_selected_from_bulletin(event=None):
+    global bulletin_tabulator
+    selected = bulletin_tabulator.selection  # List of selected row indices
+
+    if not selected:
+        print("No forecasts selected for removal.")
+        logger.warning("Remove action triggered, but no forecasts were selected.")
+        return
+
+    # Load existing data
+    try:
+        bulletin_df = pd.read_csv(BULLETIN_CSV_PATH)
+    except Exception as e:
+        logger.error(f"Error reading bulletin CSV: {e}")
+        return
+
+    # Remove selected rows
+    try:
+        bulletin_df = bulletin_df.drop(index=selected).reset_index(drop=True)
+    except KeyError as e:
+        logger.error(f"Error removing rows: {e}")
+        return
+
+    # Save the updated DataFrame back to CSV
+    try:
+        bulletin_df.to_csv(BULLETIN_CSV_PATH, index=False)
+        print(f"Removed {len(selected)} forecast(s) from the bulletin.")
+        logger.info(f"Removed {len(selected)} forecast(s) from the bulletin.")
+    except Exception as e:
+        logger.error(f"Error writing to bulletin CSV: {e}")
+        return
+
+    # Update the bulletin table to reflect the changes
+    update_bulletin_table()
+
+    # Show a success message
+    print("Selected forecasts have been removed from the bulletin.")
+    add_to_bulletin_popup.object = _("Selected forecasts have been removed from the bulletin.")
+    add_to_bulletin_popup.alert_type = "success"
+    add_to_bulletin_popup.visible = True
+    pn.state.add_periodic_callback(
+        lambda: setattr(add_to_bulletin_popup, 'visible', False),
+        2000,  # milliseconds
+        count=1
+    )
+
+
+# Attach the remove function to the remove button click event
+remove_bulletin_button.on_click(remove_selected_from_bulletin)
 # endregion
 
 
