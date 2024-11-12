@@ -911,15 +911,22 @@ manual_range.param.watch(update_forecast_tabulator, 'value')
 # Create a container to hold the invisible download widget
 download_container = pn.pane.HTML()
 
-# Modify your button callback
-# Modify your button callback
-write_bulletin_button.on_click(
-    lambda event: setattr(download_container, 'object',
-        write_to_excel(sites_list, bulletin_sites, bulletin_header_info, env_file_path)
-    )
-)
+# Button callback
+#write_bulletin_button.on_click(
+#    lambda event: setattr(download_container, 'object',
+#        write_to_excel(sites_list, bulletin_sites, bulletin_header_info, env_file_path)
+#    )
+#)
+def handle_bulletin_write(event):
+    # First write the bulletin
+    result = write_to_excel(sites_list, bulletin_sites, bulletin_header_info, env_file_path)
+    # Update the download container
+    setattr(download_container, 'object', result)
+    # Refresh the file list
+    downloader.refresh_file_list()
 
-#write_bulletin_button.on_click(lambda event: write_to_excel(sites_list, bulletin_sites, bulletin_header_info, env_file_path))
+# Use the new handler
+write_bulletin_button.on_click(handle_bulletin_write)
 
 # Create an icon using HTML for the select language widget
 language_icon_html = pn.pane.HTML(
