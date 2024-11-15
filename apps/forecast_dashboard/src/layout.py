@@ -89,9 +89,9 @@ def define_tabs(_,
                 forecast_data_and_plot,
                 forecast_summary_table, pentad_forecast_plot, effectiveness_plot,
                 bulletin_table,
-                write_bulletin_button, disclaimer,
+                write_bulletin_button, bulletin_download_panel, disclaimer,
                 station_card, forecast_card, add_to_bulletin_button, basin_card,
-                pentad_card, reload_card, add_to_bulletin_popup):
+                pentad_card, reload_card, add_to_bulletin_popup, show_daily_data_widget):
 
     # Organize the panes in tabs
     no_date_overlap_flag = True
@@ -104,7 +104,7 @@ def define_tabs(_,
                      pn.Card(daily_hydrograph_plot, title=_("Hydrograph"))
                 ),
                 pn.Row(
-                    pn.Card(rainfall_plot, title=_("Rainfall"))
+                    pn.Card(rainfall_plot, title=_("Precipitation"))
                 ),
                 )
             ),
@@ -151,7 +151,7 @@ def define_tabs(_,
                      min_height=400,
                  ),
                  pn.Row(
-                     pn.Card(rainfall_plot, title=_("Rainfall")),
+                     pn.Card(rainfall_plot, title=_("Precipitation")),
                      #pn.Card(daily_rel_to_norm_rainfall, title=_("Relative to norm rainfall")),
                      sizing_mode='stretch_width',
                  ),
@@ -185,7 +185,13 @@ def define_tabs(_,
 
                 ),
                 pn.Card(
-                    pentad_forecast_plot,
+                    pn.Column(
+                        pn.Row(
+                            pn.pane.Markdown(_("Show forecasts aggregated to pentadal values:")),
+                            show_daily_data_widget
+                        ),
+                        pentad_forecast_plot,
+                    ),
                     title=_('Hydrograph'),
                     height=600,
                     #height=None,
@@ -206,12 +212,21 @@ def define_tabs(_,
             (_('Bulletin'),
              pn.Column(
                     pn.Card(
-                        bulletin_table,
+                        pn.Column(
+                            bulletin_table,
+                            write_bulletin_button,
+                        ),
                         title='Forecast bulletin',
                         sizing_mode='stretch_width',
                     ),
-                    pn.Row(
-                            write_bulletin_button),
+                    pn.Card(
+                        pn.Row(
+                            bulletin_download_panel,
+                        ),
+                        title='Download bulletin',
+                        sizing_mode='stretch_width',
+                        collapsed=True,
+                    ),
              )
             ),
             (_('Disclaimer'), disclaimer),

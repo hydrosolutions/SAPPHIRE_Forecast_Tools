@@ -516,6 +516,10 @@ def get_pentad_last_day(date_str):
     # Make sure that last_day is not larger than the number of days in the month
     last_day = min(last_day, last_day_in_month.day)
 
+    # Adjust for months with 31 days
+    if last_day == 30 and last_day_in_month.day == 31:
+        last_day = 31
+
     # return the first day of the pentad as a string
     return str(last_day)
 

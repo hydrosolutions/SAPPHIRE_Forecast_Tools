@@ -238,6 +238,8 @@ class TestGetStuffForBulletinWriting(unittest.TestCase):
         self.assertEqual(tl.get_pentad_last_day('2022-05-16'), '20')
         self.assertEqual(tl.get_pentad_last_day('2022-02-14'), '15')
         self.assertIsNone(tl.get_pentad_last_day('2022-02-30'))
+        self.assertEqual(tl.get_pentad_last_day('2024-10-26'), '31')
+        self.assertEqual(tl.get_pentad_last_day('2024-11-26'), '30')
 
     def test_get_year(self):
         self.assertEqual(tl.get_year('2022-05-15'), '2022')

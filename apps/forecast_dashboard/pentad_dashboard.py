@@ -49,6 +49,7 @@ import src.vizualization as viz
 from src.site import SapphireSite as Site
 from src.bulletins import write_to_excel
 import src.layout as layout
+from src.file_downloader import FileDownloader
 
 import calendar
 
@@ -163,7 +164,14 @@ SAVE_DIRECTORY = os.path.join(
 )
 os.makedirs(SAVE_DIRECTORY, exist_ok=True)
 
-BULLETIN_CSV_PATH = os.path.join(SAVE_DIRECTORY, 'bulletin.csv')
+BULLETIN_CSV_PATH = os.path.join(SAVE_DIRECTORY, 'bulletin.csv')  # Added for CSV storage
+
+# Initialize the downloader with a specific directory
+bulletin_folder = os.path.join(
+    os.getenv('ieasyreports_report_output_path'),
+    'bulletins', 'pentad')
+downloader = FileDownloader(bulletin_folder)
+bulletin_download_panel = downloader.panel()
 
 # endregion
 
@@ -184,9 +192,16 @@ _ = localize.load_translation(current_locale, localedir)
 # region load_data
 
 def load_data():
-    global hydrograph_day_all, hydrograph_pentad_all, linreg_predictor, forecasts_all, forecast_stats, all_stations, station_dict, station_df, station_list, linreg_datatable, stations_iehhf    # Daily runoff data
+    global hydrograph_day_all, hydrograph_pentad_all, linreg_predictor, \
+        forecasts_all, forecast_stats, all_stations, station_dict, station_df, \
+            station_list, linreg_datatable, stations_iehhf, \
+            rram_forecast, ml_forecast
     hydrograph_day_all = processing.read_hydrograph_day_data_for_pentad_forecasting(stations_iehhf)
     hydrograph_pentad_all = processing.read_hydrograph_pentad_data_for_pentad_forecasting(stations_iehhf)
+
+    # Daily forecasts from RRAM & ML models
+    rram_forecast = processing.read_rram_forecast_data()
+    ml_forecast = processing.read_ml_forecast_data()
 
     # Pentadal forecast data
     # - linreg_predictor: for displaying predictor in predictor tab
@@ -227,6 +242,8 @@ def load_data():
     #print(f"DEBUG: linreg_predictor.columns: {linreg_predictor.columns}")
     #print(f"DEBUG: linreg_predictor: {linreg_predictor.tail()}")
     forecasts_all = processing.add_labels_to_forecast_pentad_df(forecasts_all, all_stations)
+    rram_forecast = processing.add_labels_to_forecast_pentad_df(rram_forecast, all_stations)
+    ml_forecast = processing.add_labels_to_forecast_pentad_df(ml_forecast, all_stations)
 
     # Replace model names with translation strings
     forecasts_all = processing.internationalize_forecast_model_names(_, forecasts_all)
@@ -388,6 +405,12 @@ def draw_show_forecast_ranges_widget():
         value=_("No"))
 show_range_button = draw_show_forecast_ranges_widget()
 
+show_daily_data_widget = pn.widgets.RadioButtonGroup(
+    name=_("Show daily data:"),
+    options=[_("Yes"), _("No")],
+    value=_("No")
+)
+
 selected_indices = pn.widgets.CheckBoxGroup(
     name=_("Select Data Points:"),
     options={str(i): i for i in range(len(linreg_datatable))},
@@ -507,7 +530,7 @@ add_to_bulletin_button = pn.widgets.Button(name=_("Add to bulletin"), button_typ
 
 # Initialize the bulletin_tabulator as a global Tabulator with predefined columns and grouping
 bulletin_tabulator = pn.widgets.Tabulator(
-    pd.DataFrame(columns=['Hydropost', 'Model', 'Date', 'Basin']),  # Ensure 'Basin' is included
+    pd.DataFrame(columns=['Hydropost', 'Model', 'Basin']),  # Ensure 'Basin' is included
     show_index=False,
     height=300,
     selectable='checkbox',  # Allow multiple selections for removal
@@ -517,6 +540,7 @@ bulletin_tabulator = pn.widgets.Tabulator(
 )
 # endregion
 
+#endregion
 
 # region update_functions
 @pn.depends(pentad_selector, watch=True)
@@ -603,109 +627,191 @@ def update_model_select(station_value, selected_pentad):
 # Create the pop-up notification pane (initially hidden)
 add_to_bulletin_popup = pn.pane.Alert(_("Added to bulletin"), alert_type="success", visible=False)
 
+# Function to load bulletin data from CSV
+def load_bulletin_from_csv():
+    global bulletin_sites
+    if os.path.exists(BULLETIN_CSV_PATH):
+        try:
+            bulletin_df = pd.read_csv(BULLETIN_CSV_PATH)
+            bulletin_sites = []
+            for code in bulletin_df['code'].unique():
+                site_data = bulletin_df[bulletin_df['code'] == code].copy()
+                site = next((s for s in sites_list if s.code == str(code)), None)
+                if site:
+                    # Assign forecasts to the site
+                    site.forecasts = site_data.drop(columns=['code', 'station_label', 'basin_ru'])
+                    # Update site attributes
+                    site.get_forecast_attributes_for_site(_, site.forecasts)
+                    bulletin_sites.append(site)
+
+            print("DEBUG: Loaded bulletin_sites from CSV:")
+            for site in bulletin_sites:
+                print(f"Site '{site.code}' with forecasts: {site.forecasts}")
+        except Exception as e:
+            logger.error(f"Error loading bulletin CSV: {e}")
+            bulletin_sites = []
+    else:
+        bulletin_sites = []
+
+# Function to save bulletin data to CSV
+def save_bulletin_to_csv():
+    data = []
+    for site in bulletin_sites:
+        # We need to extract the forecast data and site information
+        for idx, forecast_row in site.forecasts.iterrows():
+            row_data = forecast_row.to_dict()
+            row_data['code'] = site.code
+            row_data['station_label'] = site.station_label
+            row_data['basin_ru'] = getattr(site, 'basin_ru', '')
+            data.append(row_data)
+    if data:
+        bulletin_df = pd.DataFrame(data)
+        try:
+            bulletin_df.to_csv(BULLETIN_CSV_PATH, index=False)
+            print("Bulletin saved to CSV.")
+            logger.info("Bulletin saved to CSV.")
+        except Exception as e:
+            logger.error(f"Error writing bulletin CSV: {e}")
+    else:
+        # If data is empty, remove the CSV file
+        if os.path.exists(BULLETIN_CSV_PATH):
+            os.remove(BULLETIN_CSV_PATH)
+            print("Bulletin CSV file removed because bulletin is empty.")
+            logger.info("Bulletin CSV file removed because bulletin is empty.")
+
+# Call the function to load the bulletin data
+load_bulletin_from_csv()
+
 # Function to handle adding the current selection to the bulletin
 def add_current_selection_to_bulletin(event=None):
+    # Ensure pipeline is not running
     if viz.app_state.pipeline_running:
         print("Cannot add to bulletin while containers are running.")
-        return  # Prevent the action while containers are running
+        return
 
     selected_indices = forecast_tabulator.selection
     forecast_df = forecast_tabulator.value
-    #print("\n\n\nDEBUG: pentad_dashboard.py: forecast_df:\n", forecast_df)
 
     if forecast_df is None or forecast_df.empty:
         print("Forecast summary table is empty.")
-        logger.warning("Attempted to add to bulletin, but forecast summary table is empty.")
         return
 
     if not selected_indices and len(forecast_df) > 0:
-        selected_indices = [0]
-        forecast_tabulator.selection = selected_indices
-        print("No forecast selected. Defaulting to the first forecast.")
-        logger.info("No forecast selected. Defaulting to the first forecast.")
+        selected_indices = [0]  # Default to the first row
 
     selected_rows = forecast_df.iloc[selected_indices]
     selected_station = station.value
-    selected_date = date_picker.value
+    selected_site = next(
+        (site for site in sites_list if site.station_label == selected_station),
+        None
+    )
 
-    print(f"Adding station: {selected_station}, date: {selected_date}")
-    print(f"Selected models:\n{selected_rows['Model']}")
+    if selected_site is None:
+        print(f"Site '{selected_station}' not found in sites_list.")
+        return
 
-    final_forecast_table = selected_rows.reset_index(drop=True)
+    # Assign forecasts to selected site object
+    selected_site.forecasts = selected_rows.reset_index(drop=True)
 
-    # Convert the selected forecast data to a DataFrame
-    forecast_data = final_forecast_table.copy()
-    forecast_data['Hydropost'] = selected_station
-    forecast_data['Date'] = selected_date
+    # Add forecast attributes to site object
+    selected_site.get_forecast_attributes_for_site(_, selected_rows)
 
-    # Retrieve Basin information
-    try:
-        selected_hydropost_code = selected_station.split(' - ')[0].strip() 
-        print(f"Extracted hydropost code: '{selected_hydropost_code}'")
-    except Exception as e:
-        print(f"Error extracting hydropost code from station label '{selected_station}': {e}")
-        selected_hydropost_code = None
+    # Debugging: Print site details
+    print(f"DEBUG: Added site '{selected_site.code}' to bulletin with forecasts: {selected_site.forecasts}")
 
-    if selected_hydropost_code:
-        basin = hydropost_to_basin.get(selected_hydropost_code, "Unknown Basin")
-        if basin == "Unknown Basin":
-            print(f"Hydropost code '{selected_hydropost_code}' not found in hydropost_to_basin mapping.")
-            logger.warning(f"Hydropost code '{selected_hydropost_code}' not found in hydropost_to_basin mapping.")
+    # Update or add to bulletin_sites
+    existing_site = next(
+        (site for site in bulletin_sites if site.code == selected_site.code),
+        None
+    )
+    if existing_site is None:
+        bulletin_sites.append(selected_site)
+        print(f"DEBUG: Added new site '{selected_site.station_label}' to bulletin_sites.")
     else:
-        basin = "Unknown Basin"
-        print("Selected hydropost code is None. Assigning 'Unknown Basin'.")
-        logger.warning("Selected hydropost code is None. Assigning 'Unknown Basin'.")
+        index = bulletin_sites.index(existing_site)
+        bulletin_sites[index] = selected_site
+        print(f"DEBUG: Updated existing site '{selected_site.station_label}' in bulletin_sites.")
 
-    forecast_data['Basin'] = basin
+    # Save updated data to CSV for persistence
+    save_bulletin_to_csv()
 
-    # Read existing bulletin data
-    if Path(BULLETIN_CSV_PATH).is_file():
-        existing_data = pd.read_csv(BULLETIN_CSV_PATH)
-    else:
-        existing_data = pd.DataFrame()
-
-    # Remove any existing forecasts for the selected station
-    if 'Hydropost' in existing_data.columns:
-        existing_data = existing_data[existing_data['Hydropost'] != selected_station]
-
-    # Append the new forecast data
-    combined_data = pd.concat([existing_data, forecast_data], ignore_index=True)
-
-    # Save back to CSV
-    combined_data.to_csv(BULLETIN_CSV_PATH, index=False)
-
-    # Update the bulletin table to reflect the new data
+    # Update bulletin table
     update_bulletin_table()
 
-    # Show the popup notification
-    add_to_bulletin_popup.visible = True
-    pn.state.add_periodic_callback(lambda: setattr(add_to_bulletin_popup, 'visible', False), 2000, count=1)
 
+# Function to handle writing bulletin to Excel
+def handle_bulletin_write(event):
+    try:
+        if not bulletin_sites:
+            print("DEBUG: No sites in bulletin to write.")
+            return
 
-# Function to create the bulletin table from CSV
+        selected_basin = select_basin_widget.value
+        if selected_basin == _("All basins"):
+            filtered_bulletin_sites = bulletin_sites.copy()
+        else:
+            filtered_bulletin_sites = [
+                site for site in bulletin_sites if getattr(site, 'basin_ru', '') == selected_basin
+            ]
+
+        if not filtered_bulletin_sites:
+            print("DEBUG: No sites in bulletin for the selected basin.")
+            return
+
+        # Debugging: print the site details being written
+        for site in filtered_bulletin_sites:
+            print(f"DEBUG: Writing site '{site.code}' with forecasts: {site.forecasts}")
+
+        write_to_excel(
+            sites_list, filtered_bulletin_sites, bulletin_header_info, env_file_path
+        )
+        print("DEBUG: Bulletin written to Excel successfully.")
+
+        # Refresh the file downloader panel
+        downloader.refresh_file_list()
+
+    except Exception as e:
+        logger.error(f"Error writing bulletin to Excel: {e}")
+        
+# Function to create the bulletin table
 def create_bulletin_table():
     global bulletin_tabulator  # Declare as global to modify the global variable
     print("Creating/updating bulletin table...")
 
-    if Path(BULLETIN_CSV_PATH).is_file():
-        bulletin_df = pd.read_csv(BULLETIN_CSV_PATH)
-        
+    if bulletin_sites:
+        data = []
+        for site in bulletin_sites:
+            for idx, forecast_row in site.forecasts.iterrows():
+                data.append({
+                    'Hydropost': site.station_label,
+                    'Model': forecast_row.get('Model', ''),
+                    'Basin': getattr(site, 'basin_ru', ''),
+                    'Forecasted discharge': forecast_row.get('Forecasted discharge', ''),
+                    'Forecast lower bound': forecast_row.get('Forecast lower bound', ''),
+                    'Forecast upper bound': forecast_row.get('Forecast upper bound', ''),
+                    'δ': forecast_row.get('δ', ''),
+                    's/σ': forecast_row.get('s/σ', ''),
+                    'MAE': forecast_row.get('MAE', ''),
+                    'Accuracy': forecast_row.get('Accuracy', ''),
+                    # Add other fields as needed
+                })
+        bulletin_df = pd.DataFrame(data)
+
         # Apply 'Select Basin' filter if applicable
         selected_basin = select_basin_widget.value
-        if selected_basin != _("All basins") and 'Basin' in bulletin_df.columns:
+        if selected_basin != _("All basins"):
             bulletin_df = bulletin_df[bulletin_df['Basin'] == selected_basin]
-        
-        if not bulletin_df.empty:
-            bulletin_tabulator.value = bulletin_df  # Update Tabulator with new data
-        else:
-            # Assign an empty DataFrame with predefined columns
-            empty_df = pd.DataFrame(columns=['Hydropost', 'Model', 'Date', 'Basin'])  # Ensure 'Basin' is included
-            bulletin_tabulator.value = empty_df
+
+        bulletin_tabulator.value = bulletin_df
     else:
-        # Assign an empty DataFrame with predefined columns
-        empty_df = pd.DataFrame(columns=['Hydropost', 'Model', 'Date', 'Basin'])  # Ensure 'Basin' is included
+        # Empty DataFrame with predefined columns
+        empty_df = pd.DataFrame(columns=[
+            'Hydropost', 'Model', 'Basin',
+            'Forecasted discharge', 'Forecast lower bound', 'Forecast upper bound',
+            'δ', 's/σ', 'MAE', 'Accuracy'
+        ])
         bulletin_tabulator.value = empty_df
-    
+
     print("Bulletin table updated.")
 
 
@@ -736,28 +842,27 @@ def remove_selected_from_bulletin(event=None):
         logger.warning("Remove action triggered, but no forecasts were selected.")
         return
 
-    # Load existing data
-    try:
-        bulletin_df = pd.read_csv(BULLETIN_CSV_PATH)
-    except Exception as e:
-        logger.error(f"Error reading bulletin CSV: {e}")
-        return
+    # Get the indices of the selected rows
+    selected_indices = selected
 
-    # Remove selected rows
-    try:
-        bulletin_df = bulletin_df.drop(index=selected).reset_index(drop=True)
-    except KeyError as e:
-        logger.error(f"Error removing rows: {e}")
-        return
+    # Get the bulletin DataFrame from the tabulator
+    bulletin_df = bulletin_tabulator.value
 
-    # Save the updated DataFrame back to CSV
-    try:
-        bulletin_df.to_csv(BULLETIN_CSV_PATH, index=False)
-        print(f"Removed {len(selected)} forecast(s) from the bulletin.")
-        logger.info(f"Removed {len(selected)} forecast(s) from the bulletin.")
-    except Exception as e:
-        logger.error(f"Error writing to bulletin CSV: {e}")
-        return
+    # Get the hydroposts of the selected rows
+    selected_rows = bulletin_df.iloc[selected_indices]
+    selected_hydroposts = selected_rows['Hydropost'].unique()
+
+    # Remove the selected sites from bulletin_sites
+    for hydropost in selected_hydroposts:
+        site_to_remove = next(
+            (site for site in bulletin_sites if site.station_label == hydropost),
+            None)
+        if site_to_remove:
+            bulletin_sites.remove(site_to_remove)
+            logger.info(f"Removed site from bulletin: {hydropost}")
+
+    # Save the updated bulletin to CSV
+    save_bulletin_to_csv()
 
     # Update the bulletin table to reflect the changes
     update_bulletin_table()
@@ -769,10 +874,7 @@ def remove_selected_from_bulletin(event=None):
     add_to_bulletin_popup.visible = True
     pn.state.add_periodic_callback(
         lambda: setattr(add_to_bulletin_popup, 'visible', False),
-        2000,  # milliseconds
-        count=1
-    )
-
+        2000, count=1)
 
 # Attach the remove function to the remove button click event
 remove_bulletin_button.on_click(remove_selected_from_bulletin)
@@ -788,7 +890,6 @@ pentad_selector.param.watch(update_callback, 'value')
 
 # Initial setup: populate the main area with the initial selection
 #update_callback(None)  # This does not seem to be needed
-
 
 daily_hydrograph_plot = pn.panel(
     pn.bind(
@@ -831,12 +932,57 @@ forecast_data_and_plot = pn.panel(
     ),
     sizing_mode='stretch_both'
 )
+def update_forecast_hydrograph(selected_option, _, hydrograph_day_all,
+                               hydrograph_pentad_all, linreg_predictor,
+                               forecasts_all, station, title_date,
+                               model_selection, range_type, range_slider,
+                               range_visibility, rram_forecast, ml_forecast):
+    if selected_option == 'Yes':
+        # Show forecasts aggregated to pentadal values
+        return viz.plot_pentad_forecast_hydrograph_data(
+            _,
+            hydrograph_pentad_all=hydrograph_pentad_all,
+            forecasts_all=forecasts_all,
+            station=station,
+            title_date=title_date,
+            model_selection=model_selection,
+            range_type=range_type,
+            range_slider=range_slider,
+            range_visibility=range_visibility
+        )
+    else:
+        # Show daily forecasts
+        return viz.plot_pentad_forecast_hydrograph_data_v2(
+            _,
+            hydrograph_day_all=hydrograph_day_all,
+            linreg_predictor=linreg_predictor,
+            forecasts_all=forecasts_all,
+            station=station,
+            title_date=title_date,
+            model_selection=model_selection,
+            range_type=range_type,
+            range_slider=range_slider,
+            range_visibility=range_visibility,
+            rram_forecast=rram_forecast,
+            ml_forecast=ml_forecast
+        )
 pentad_forecast_plot = pn.panel(
     pn.bind(
-        viz.plot_pentad_forecast_hydrograph_data,
-        _, hydrograph_pentad_all, forecasts_all, station, date_picker,
-        model_checkbox, allowable_range_selection, manual_range,
-        show_range_button
+        update_forecast_hydrograph,
+        show_daily_data_widget,
+        _,
+        hydrograph_day_all=hydrograph_day_all,
+        hydrograph_pentad_all=hydrograph_pentad_all,
+        linreg_predictor=linreg_predictor,
+        forecasts_all=forecasts_all,
+        station=station,
+        title_date=date_picker,
+        model_selection=model_checkbox,
+        range_type=allowable_range_selection,
+        range_slider=manual_range,
+        range_visibility=show_range_button,
+        rram_forecast=rram_forecast,
+        ml_forecast=ml_forecast
         ),
     sizing_mode='stretch_both'
 )
@@ -924,7 +1070,25 @@ manual_range.param.watch(update_forecast_tabulator, 'value')
 # Attach the function to the button click event
 # Multi-threading does not seem to work
 #write_bulletin_button.on_click(lambda event: thread.write_forecast_bulletin_in_background(bulletin_table, env_file_path, status))
-write_bulletin_button.on_click(lambda event: write_to_excel(sites_list, bulletin_sites, bulletin_header_info, env_file_path))
+# Create a container to hold the invisible download widget
+download_container = pn.pane.HTML()
+
+# Button callback
+#write_bulletin_button.on_click(
+#    lambda event: setattr(download_container, 'object',
+#        write_to_excel(sites_list, bulletin_sites, bulletin_header_info, env_file_path)
+#    )
+#)
+'''def handle_bulletin_write(event):
+    # First write the bulletin
+    result = write_to_excel(sites_list, bulletin_sites, bulletin_header_info, env_file_path)
+    # Update the download container
+    setattr(download_container, 'object', result)
+    # Refresh the file list
+    downloader.refresh_file_list()'''
+
+# Use the new handler
+write_bulletin_button.on_click(handle_bulletin_write)
 
 # Create an icon using HTML for the select language widget
 language_icon_html = pn.pane.HTML(
@@ -958,8 +1122,9 @@ def tabs_change_language(language):
             #daily_rel_to_norm_runoff, daily_rel_to_norm_rainfall,
             forecast_data_and_plot,
             forecast_summary_table, pentad_forecast_plot, forecast_skill_plot,
-            bulletin_table, write_bulletin_button, disclaimer,
-            station_card, forecast_card, add_to_bulletin_button, basin_card, pentad_card, reload_card, add_to_bulletin_popup)
+            bulletin_table, write_bulletin_button, bulletin_download_panel, disclaimer,
+            station_card, forecast_card, add_to_bulletin_button, basin_card,
+            pentad_card, reload_card, add_to_bulletin_popup, show_daily_data_widget)
     except Exception as e:
         print(f"Error in tabs_change_language: {e}")
         print(traceback.format_exc())
