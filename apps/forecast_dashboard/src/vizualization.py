@@ -50,6 +50,34 @@ import tag_library as tl
 import forecast_library as fl
 
 
+# Class to store cached plots
+# Used for plot components that are expensive to generate and can be reused
+_PLOT_CACHE = {}
+
+class PlotCache:
+    """Class to manage plot caching"""
+
+    @staticmethod
+    def get(key):
+        """Get a cached plot"""
+        return _PLOT_CACHE.get(key)
+
+    @staticmethod
+    def set(key, value):
+        """Set a cached plot"""
+        _PLOT_CACHE[key] = value
+
+    @staticmethod
+    def clear():
+        """Clear all cached plots"""
+        _PLOT_CACHE.clear()
+
+    @staticmethod
+    def contains(key):
+        """Check if key exists in cache"""
+        return key in _PLOT_CACHE
+
+
 # Defining colors (as global variables)
 # https://www.color-hex.com/color/307096
 # Blue color palette for the norm runoff
@@ -1387,6 +1415,80 @@ def plot_pentadal_vlines(data, date_col, y_text=1):
 
     return vlines
 
+def create_cached_vlines(_, for_dates=True):
+    """Create and cache vertical lines for pentad markers"""
+    # Check if already in cache
+    cache_key = 'vlines_dates' if for_dates else 'vlines_pentad'
+
+    if PlotCache.contains(cache_key):
+        return PlotCache.get(cache_key)
+
+    if for_dates:
+        # Create lines for date-based plots
+        year = dt.datetime.now().year
+        pentads = [dt.datetime(year, month, day) for month, day in [
+            (1, 1), (1, 6), (1, 11), (1, 16), (1, 21), (1, 26),  # Jan
+            (2, 1), (2, 6), (2, 11), (2, 16), (2, 21), (2, 26),
+            (3, 1), (3, 6), (3, 11), (3, 16), (3, 21), (3, 26),  # Mar
+            (4, 1), (4, 6), (4, 11), (4, 16), (4, 21), (4, 26),
+            (5, 1), (5, 6), (5, 11), (5, 16), (5, 21), (5, 26),  # May
+            (6, 1), (6, 6), (6, 11), (6, 16), (6, 21), (6, 26),
+            (7, 1), (7, 6), (7, 11), (7, 16), (7, 21), (7, 26),  # Jul
+            (8, 1), (8, 6), (8, 11), (8, 16), (8, 21), (8, 26),
+            (9, 1), (9, 6), (9, 11), (9, 16), (9, 21), (9, 26),  # Sep
+            (10, 1), (10, 6), (10, 11), (10, 16), (10, 21), (10, 26),
+            (11, 1), (11, 6), (11, 11), (11, 16), (11, 21), (11, 26),  # Nov
+            (12, 1), (12, 6), (12, 11), (12, 16), (12, 21), (12, 26)]]
+
+        # Create vertical lines
+        vlines = hv.Overlay([
+            hv.VLine(date).opts(color='gray', line_width=1,
+                              line_dash='dotted', line_alpha=0.5,
+                              show_legend=False)
+            for date in pentads
+        ])
+
+        # Add text labels
+        mid_date_text = ['1', '2', '3', '4', '5', '6'] * 12
+        text_overlay = hv.Overlay([
+            hv.Text(date + dt.timedelta(days=2.2), 1, text).opts(
+                text_baseline='bottom', text_align='center',
+                text_font_size='9pt', text_color='gray',
+                text_alpha=0.5, text_font_style='italic',
+                show_legend=False)
+            for date, text in zip(pentads, mid_date_text)
+        ])
+
+    else:
+        # Create lines for pentad-number-based plots
+        pentad_numbers = range(1, 73)
+
+        # Create vertical lines
+        vlines = hv.Overlay([
+            hv.VLine(pentad).opts(color='gray', line_width=1,
+                                line_dash='dotted', line_alpha=0.5,
+                                show_legend=False)
+            for pentad in pentad_numbers
+        ])
+
+        # Add text labels
+        text_overlay = hv.Overlay([
+            hv.Text(pentad + 0.5, 1, str((pentad - 1) % 6 + 1)).opts(
+                text_baseline='bottom', text_align='center',
+                text_font_size='9pt', text_color='gray',
+                text_alpha=0.5, text_font_style='italic',
+                show_legend=False)
+            for pentad in pentad_numbers
+        ])
+
+    # Combine lines and text
+    combined = vlines * text_overlay
+
+    # Store in cache
+    PlotCache.set(cache_key, combined)
+
+    return combined
+
 def update_pentad_text(date_picker, _):
     """
     Function to calculate and return the dynamic pentad text based on the selected date.
@@ -1503,7 +1605,8 @@ def plot_daily_hydrograph_data(_, hydrograph_day_all, linreg_predictor, station,
             .opts(color=runoff_forecast_color_list[3], alpha=0.2, line_width=0,
                   muted_alpha=0.05, show_legend=False)
 
-    vlines = plot_pentadal_vlines(data, _('date column name'))
+    #vlines = plot_pentadal_vlines(data, _('date column name'))
+    vlines = create_cached_vlines(_, for_dates=True)
 
     full_range_area = plot_runoff_range_area(
         data, date_col, min_col, max_col, _("Full range legend entry"),
@@ -2721,6 +2824,9 @@ def create_forecast_summary_tabulator(_, forecasts_all, station, date_picker,
     # index is either 0 or 1. If the table has 1 row, the index is 0.
     # If two rows have the same accuracy, the first row is selected.
     max_accuracy_index = final_forecast_table[_('Accuracy')].idxmax()
+    # if max_accuracy_index is nan, set it to 0
+    if pd.isna(max_accuracy_index):
+        max_accuracy_index = 0
     print("max_accuracy_index\n", max_accuracy_index)
 
     # Update the Tabulator's value
@@ -3829,7 +3935,25 @@ def plot_forecast_skill(
 
     return all_skill_figures
 
+def create_skill_table(forecast_stats):
+    """Creates a tabulator widget for the forecast statistics."""
+    # Do not show column model_long
+    forecast_stats_loc = forecast_stats.drop(columns=['model_long']).copy()
 
+    # Create a Tabulator widget for the forecast statistics
+    # Allow filtering for a code, model_short and pentad_in_year
+    forecast_stats_table = pn.widgets.Tabulator(
+        value=forecast_stats_loc,
+        formatters={'Pentad': "{:,}",
+                    'year': "{:,}"},
+        #editors={_('δ'): None},  # Disable editing of the δ column
+        theme='bootstrap',
+        configuration={'columnFilters': True},  # Enable column filtering
+        layout='fit_data_stretch',  # Optional: adjust column sizing
+        sizing_mode='stretch_both',
+        show_index=False)
+
+    return forecast_stats_table
 
 
 # endregion

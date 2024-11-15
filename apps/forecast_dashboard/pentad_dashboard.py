@@ -839,6 +839,7 @@ forecast_skill_plot = pn.panel(
     ),
     sizing_mode='stretch_both'
 )
+skill_table = viz.create_skill_table(forecast_stats)
 
 
 def update_forecast_tabulator(event=None):
@@ -962,7 +963,8 @@ def tabs_change_language(language):
             forecast_summary_table, pentad_forecast_plot, forecast_skill_plot,
             bulletin_table, write_bulletin_button, bulletin_download_panel, disclaimer,
             station_card, forecast_card, add_to_bulletin_button, basin_card,
-            pentad_card, reload_card, add_to_bulletin_popup, show_daily_data_widget)
+            pentad_card, reload_card, add_to_bulletin_popup, show_daily_data_widget,
+            skill_table)
     except Exception as e:
         print(f"Error in tabs_change_language: {e}")
         print(traceback.format_exc())

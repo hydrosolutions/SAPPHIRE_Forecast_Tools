@@ -919,6 +919,11 @@ def get_best_models_for_station_and_pentad(forecasts_all, selected_station, sele
     forecasts = forecasts[forecasts['pentad_in_year'] == selected_pentad]
     # Get the model_long value of the row in forecasts with the highest value for accuracy
     forecasts_no_LR = forecasts[forecasts['model_long'] != 'Linear regression (LR)']
+    # Test if forecasts_no_LR is empty
+    # Check if forecasts_no_LR is empty or contains only NaN accuracy
+    if forecasts_no_LR.empty or forecasts_no_LR['accuracy'].isna().all():
+        print("No valid models found for the given station and pentad.")
+        return ['Linear regression (LR)']  # Return a fallback or appropriate message
     best_models = forecasts_no_LR.loc[forecasts_no_LR['accuracy'].idxmax(), 'model_long']
     best_models = [best_models, 'Linear regression (LR)']
     print("best models: ", best_models)

@@ -91,7 +91,8 @@ def define_tabs(_,
                 bulletin_table,
                 write_bulletin_button, bulletin_download_panel, disclaimer,
                 station_card, forecast_card, add_to_bulletin_button, basin_card,
-                pentad_card, reload_card, add_to_bulletin_popup, show_daily_data_widget):
+                pentad_card, reload_card, add_to_bulletin_popup, show_daily_data_widget,
+                skill_table):
 
     # Organize the panes in tabs
     no_date_overlap_flag = True
@@ -206,6 +207,13 @@ def define_tabs(_,
                     height=800,
                     collapsible=True,
             #         #pn.Card(pentad_skill, title=_("Forecast accuracy")),
+                ),
+                pn.Card(
+                    skill_table,
+                    title=_("Table of forecast skill metrics"),
+                    height=800,
+                    collapsible=True,
+                    sizing_mode='stretch_width',
                 )
             ),
             ),  # end of Forecast tab
