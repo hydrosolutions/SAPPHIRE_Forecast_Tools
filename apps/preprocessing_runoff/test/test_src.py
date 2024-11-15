@@ -31,7 +31,7 @@ def test_read_runoff_data_from_multiple_rivers_xlsx():
     }).reset_index(drop=True)
     expected_output['date'] = pd.to_datetime(expected_output['date']).dt.date
 
-    output = src.read_runoff_data_from_multiple_rivers_xlsx(filename).reset_index(drop=True)
+    output = src.read_runoff_data_from_multiple_rivers_xlsx(filename, code_list=['17123', '17456']).reset_index(drop=True)
 
     assert output.equals(expected_output)
 
@@ -49,7 +49,7 @@ def test_read_runoff_data_from_multiple_rivers_no_code():
     }).reset_index(drop=True)
     expected_output['date'] = pd.to_datetime(expected_output['date']).dt.date
 
-    output = src.read_runoff_data_from_multiple_rivers_xlsx(filename).reset_index(drop=True)
+    output = src.read_runoff_data_from_multiple_rivers_xlsx(filename, code_list=['17123']).reset_index(drop=True)
 
     # assert if all values in column discharge are NaN
     assert output.equals(expected_output)
@@ -58,7 +58,7 @@ def test_read_runoff_data_from_multiple_rivers_without_data_in_xls():
 
     filename = 'preprocessing_runoff/test/test_files/files_with_errors/test_runoff_file_no_data.xlsx'
 
-    output = src.read_runoff_data_from_multiple_rivers_xlsx(filename).reset_index(drop=True)
+    output = src.read_runoff_data_from_multiple_rivers_xlsx(filename, code_list=['17123']).reset_index(drop=True)
 
     # assert if all values in column discharge are NaN
     assert output['discharge'].isna().all()
@@ -69,14 +69,14 @@ def test_read_runoff_data_from_multiple_rivers_no_file():
 
     # Assert FileNotFoundError is raised
     with pytest.raises(FileNotFoundError):
-        src.read_runoff_data_from_multiple_rivers_xlsx(filename)
+        src.read_runoff_data_from_multiple_rivers_xlsx(filename, code_list=[123])
 
 def test_read_runoff_data_from_multiple_rivers_no_station_header():
 
     filename = 'preprocessing_runoff/test/test_files/files_with_errors/test_runoff_file_no_station_header.xlsx'
 
     with pytest.raises(ValueError):
-        src.read_runoff_data_from_multiple_rivers_xlsx(filename)
+        src.read_runoff_data_from_multiple_rivers_xlsx(filename, code_list=[123])
 
 def test_read_all_runoff_data_from_excel():
     expected_output = pd.DataFrame({
@@ -103,7 +103,7 @@ def test_read_all_runoff_data_from_excel():
 
     os.environ['ieasyforecast_daily_discharge_path'] = 'preprocessing_runoff/test/test_files'
 
-    output = src.read_all_runoff_data_from_excel().reset_index(drop=True)
+    output = src.read_all_runoff_data_from_excel(code_list=['17123', '17456', '12345']).reset_index(drop=True)
 
     os.environ.pop('ieasyforecast_daily_discharge_path')
 

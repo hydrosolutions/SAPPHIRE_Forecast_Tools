@@ -182,7 +182,6 @@ def read_runoff_data_from_multiple_rivers_xlsx(filename, code_list, date_col='da
     # Test if code_list is None
     if code_list is None:
         logger.error("read_runoff_data_from_multiple_rivers_xlsx: No code list provided.")
-        exit(1)
 
     # Test if excel file is available
     try:
@@ -299,7 +298,6 @@ def read_runoff_data_from_single_river_xlsx(filename, code_list, date_col='date'
     # Test if code_list is None
     if code_list is None:
         logger.error("read_runoff_data_from_single_river_xlsx: No code list provided.")
-        exit(1)
 
     # Test if excel file is available
     try:
@@ -438,7 +436,7 @@ def read_all_runoff_data_from_excel(date_col='date',
     # Test if code_list is none
     if code_list is None:
         logger.error("read_all_runoff_data_from_excel: No code list provided.")
-        exit(1)
+
     # Get the path to the daily_discharge directory
     daily_discharge_dir = os.getenv('ieasyforecast_daily_discharge_path')
 
