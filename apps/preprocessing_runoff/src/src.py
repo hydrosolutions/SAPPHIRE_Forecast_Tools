@@ -137,7 +137,9 @@ def filter_roughly_for_outliers(combined_data, group_by='Code',
 
     return combined_data
 
-def read_runoff_data_from_multiple_rivers_xlsx(filename, date_col='date', discharge_col='discharge', name_col='name', code_col='code'):
+def read_runoff_data_from_multiple_rivers_xlsx(filename, code_list, date_col='date',
+                                               discharge_col='discharge',
+                                               name_col='name', code_col='code'):
     """
     Read daily average river runoff data from an excel sheet.
 
@@ -164,6 +166,8 @@ def read_runoff_data_from_multiple_rivers_xlsx(filename, date_col='date', discha
         Name of the column containing the river name. Default is 'name'.
     code_col : str, optional
         Name of the column containing the river code. Default is 'code'.
+    code_list : list, required
+        List of 5-digit codes to include in the output DataFrame
 
     Returns
     -------
@@ -175,6 +179,11 @@ def read_runoff_data_from_multiple_rivers_xlsx(filename, date_col='date', discha
     FileNotFoundError
         If the excel file is not found.
     """
+    # Test if code_list is None
+    if code_list is None:
+        logger.error("read_runoff_data_from_multiple_rivers_xlsx: No code list provided.")
+        exit(1)
+
     # Test if excel file is available
     try:
         xls = pd.ExcelFile(filename)
@@ -209,6 +218,9 @@ def read_runoff_data_from_multiple_rivers_xlsx(filename, date_col='date', discha
 
         if is_numeric:
             code = int(full_river_name[:5])
+            if str(code) not in code_list:
+                logger.debug(f"Code {code} not in code_list. Skipping data for river {full_river_name}.")
+                continue
             river_name = full_river_name[5:].lstrip()
         else:
             code = 'NA'
@@ -249,7 +261,9 @@ def read_runoff_data_from_multiple_rivers_xlsx(filename, date_col='date', discha
 
     return df
 
-def read_runoff_data_from_single_river_xlsx(filename, date_col='date', discharge_col='discharge', name_col='name', code_col='code'):
+def read_runoff_data_from_single_river_xlsx(filename, code_list, date_col='date',
+                                            discharge_col='discharge',
+                                            name_col='name', code_col='code'):
     """
     Read daily average river runoff data from an excel sheet.
 
@@ -282,6 +296,11 @@ def read_runoff_data_from_single_river_xlsx(filename, date_col='date', discharge
     FileNotFoundError
         If the excel file is not found.
     """
+    # Test if code_list is None
+    if code_list is None:
+        logger.error("read_runoff_data_from_single_river_xlsx: No code list provided.")
+        exit(1)
+
     # Test if excel file is available
     try:
         xls = pd.ExcelFile(filename)
@@ -294,6 +313,11 @@ def read_runoff_data_from_single_river_xlsx(filename, date_col='date', discharge
     # Read the river name from the first 5 characters of the file name
     river_code = filename[:5]
     river_name = filename[6:-16]
+
+    # Test if river_code is in code_list and skip the file if it is not
+    if code_list is not None and river_code not in code_list:
+        logger.debug(f"River code {river_code} not in code_list. Skipping file {filename}")
+        return pd.DataFrame()
 
     # Extract all sheet names
     xls.sheet_names
@@ -327,6 +351,7 @@ def read_runoff_data_from_single_river_xlsx(filename, date_col='date', discharge
 
 def parallel_read_excel_files(file_paths: List[str],
                             read_function,
+                            code_list,
                             date_col='date',
                             discharge_col='discharge',
                             name_col='name',
@@ -342,19 +367,25 @@ def parallel_read_excel_files(file_paths: List[str],
         discharge_col: Name of discharge column
         name_col: Name of name column
         code_col: Name of code column
+        code_list: List of hydropost codes to include
 
     Returns:
         Combined DataFrame from all Excel files
     """
+    # Test if code_list is None
+    if code_list is None:
+        logger.warning("parallel_read_excel_files: No code list provided.")
+
     def read_file(file_path: str) -> Tuple[pd.DataFrame, str]:
         try:
             logger.info(f"Reading daily runoff from file {os.path.basename(file_path)}")
             df = read_function(
                 filename=file_path,
+                code_list=code_list,
                 date_col=date_col,
                 discharge_col=discharge_col,
                 name_col=name_col,
-                code_col=code_col
+                code_col=code_col,
             )
             return df, None
         except Exception as e:
@@ -398,11 +429,16 @@ def parallel_read_excel_files(file_paths: List[str],
 def read_all_runoff_data_from_excel(date_col='date',
                                   discharge_col='discharge',
                                   name_col='name',
-                                  code_col='code'):
+                                  code_col='code',
+                                  code_list=None):
     """
     Reads daily river runoff data from all excel sheets in the daily_discharge
     directory using parallel processing.
     """
+    # Test if code_list is none
+    if code_list is None:
+        logger.error("read_all_runoff_data_from_excel: No code list provided.")
+        exit(1)
     # Get the path to the daily_discharge directory
     daily_discharge_dir = os.getenv('ieasyforecast_daily_discharge_path')
 
@@ -436,10 +472,11 @@ def read_all_runoff_data_from_excel(date_col='date',
         df_multiple = parallel_read_excel_files(
             files_multiple_rivers,
             read_runoff_data_from_multiple_rivers_xlsx,
+            code_list=code_list,
             date_col=date_col,
             discharge_col=discharge_col,
             name_col=name_col,
-            code_col=code_col
+            code_col=code_col,
         )
     else:
         logger.warning(f"No excel files with multiple rivers data found in '{daily_discharge_dir}'.")
@@ -451,10 +488,11 @@ def read_all_runoff_data_from_excel(date_col='date',
         df_single = parallel_read_excel_files(
             files_single_rivers,
             read_runoff_data_from_single_river_xlsx,
+            code_list=code_list,
             date_col=date_col,
             discharge_col=discharge_col,
             name_col=name_col,
-            code_col=code_col
+            code_col=code_col,
         )
     else:
         logger.warning(f"No excel files with single river data found in '{daily_discharge_dir}'.")
@@ -885,7 +923,11 @@ def get_runoff_data(ieh_sdk=None, date_col='date', discharge_col='discharge', na
             Default is 'code'.
     """
     # Read data from excel files
-    read_data = read_all_runoff_data_from_excel(date_col=date_col, discharge_col=discharge_col, name_col=name_col, code_col=code_col)
+    read_data = read_all_runoff_data_from_excel(
+        date_col=date_col,
+        discharge_col=discharge_col,
+        name_col=name_col,
+        code_col=code_col)
 
     # Initialize a flag for virtual stations
     virtual_stations_present = False
@@ -982,7 +1024,12 @@ def get_runoff_data_for_sites(ieh_sdk=None, date_col='date',
             Default is 'code'.
     """
     # Read data from excel files
-    read_data = read_all_runoff_data_from_excel(date_col=date_col, discharge_col=discharge_col, name_col=name_col, code_col=code_col)
+    read_data = read_all_runoff_data_from_excel(
+        date_col=date_col,
+        discharge_col=discharge_col,
+        name_col=name_col,
+        code_col=code_col,
+        code_list=code_list)
 
     # Initialize a flag for virtual stations
     virtual_stations_present = False
@@ -1144,14 +1191,15 @@ def add_dangerous_discharge_from_sites(hydrograph_data: pd.DataFrame,
 
     # For each unique code, get the dangerous discharge value from the iEasyHydro database
     for site in site_list:
-        print(f"\n\n\n\nsite: {site}")
-        print(f"site.dangerous_discharge: {site.dangerous_discharge}")
+        print(f"\n\n\n\nsite: {site.code}: {site.qdanger}")
         try:
-            dangerous_discharge = site.dangerous_discharge
+            dangerous_discharge = site.qdanger
 
             # Add the dangerous discharge value to the hydrograph_data
-            hydrograph_data.loc[hydrograph_data[code_col] == site['code'], 'dangerous_discharge'] = dangerous_discharge
-        except Exception:
+            hydrograph_data.loc[hydrograph_data[code_col] == site.code, 'dangerous_discharge'] = dangerous_discharge
+        except Exception as e:
+            logger.warning(f"Error while adding dangerous discharge for site {site.code}.")
+            logger.warning(f"Error: {e}")
             continue
 
     return hydrograph_data
