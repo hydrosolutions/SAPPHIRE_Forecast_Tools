@@ -376,7 +376,7 @@ print(f"\n\n\nmodel_checkbox: {model_checkbox.value}\n\n\n")
 
 allowable_range_selection = pn.widgets.Select(
     name=_("Select forecast range for display:"),
-    options=[_("delta"), _("Manual range, select value below"), _("max[delta, %]")],
+    options=[_("delta"), _("Manual range, select value below"), _("min[delta, %]")],
     value=_("delta"),
     margin=(0, 0, 0, 0)
 )
@@ -991,7 +991,7 @@ def sidepane_change_language(language):
         forecast_card.title = _('Select forecasts:')
         model_checkbox.name = _("Select forecast model:")
         allowable_range_selection.name = _("Select forecast range for display:")
-        allowable_range_selection.options = [_("delta"), _("Manual range, select value below"), _("max[delta, %)")]
+        allowable_range_selection.options = [_("delta"), _("Manual range, select value below"), _("min[delta, %)")]
         manual_range.name = _("Manual range (%)")
         range_selection_title.object = _("Show ranges in figure:")
         show_range_button.name = _("Show ranges in figure:")

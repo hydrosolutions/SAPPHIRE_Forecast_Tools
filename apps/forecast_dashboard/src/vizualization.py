@@ -2086,10 +2086,10 @@ def plot_pentad_forecast_hydrograph_data_v2(_, hydrograph_day_all, linreg_predic
     elif range_type == _("Manual range, select value below"):
         forecasts['fc_lower'] = (1 - range_slider/100.0) * forecasts['forecasted_discharge']
         forecasts['fc_upper'] = (1 + range_slider/100.0) * forecasts['forecasted_discharge']
-    elif range_type == _("max[delta, %]"):
-        forecasts.loc[:, 'fc_lower'] = np.minimum(forecasts.loc[:, 'forecasted_discharge'] - forecasts.loc[:, 'delta'],
+    elif range_type == _("min[delta, %]"):
+        forecasts.loc[:, 'fc_lower'] = np.maximum(forecasts.loc[:, 'forecasted_discharge'] - forecasts.loc[:, 'delta'],
                                                   (1 - range_slider/100.0) * forecasts.loc[:, 'forecasted_discharge'])
-        forecasts.loc[:, 'fc_upper'] = np.maximum(forecasts.loc[:, 'forecasted_discharge'] + forecasts.loc[:, 'delta'],
+        forecasts.loc[:, 'fc_upper'] = np.minimum(forecasts.loc[:, 'forecasted_discharge'] + forecasts.loc[:, 'delta'],
                                                     (1 + range_slider/100.0) * forecasts.loc[:, 'forecasted_discharge'])
 
     # print tail of forecasts
@@ -2491,10 +2491,10 @@ def plot_pentad_forecast_hydrograph_data(_, hydrograph_pentad_all, forecasts_all
     elif range_type == _("Manual range, select value below"):
         forecasts['fc_lower'] = (1 - range_slider/100.0) * forecasts['forecasted_discharge']
         forecasts['fc_upper'] = (1 + range_slider/100.0) * forecasts['forecasted_discharge']
-    elif range_type == _("max[delta, %]"):
-        forecasts.loc[:, 'fc_lower'] = np.minimum(forecasts.loc[:, 'forecasted_discharge'] - forecasts.loc[:, 'delta'],
+    elif range_type == _("min[delta, %]"):
+        forecasts.loc[:, 'fc_lower'] = np.maximum(forecasts.loc[:, 'forecasted_discharge'] - forecasts.loc[:, 'delta'],
                                                   (1 - range_slider/100.0) * forecasts.loc[:, 'forecasted_discharge'])
-        forecasts.loc[:, 'fc_upper'] = np.maximum(forecasts.loc[:, 'forecasted_discharge'] + forecasts.loc[:, 'delta'],
+        forecasts.loc[:, 'fc_upper'] = np.minimum(forecasts.loc[:, 'forecasted_discharge'] + forecasts.loc[:, 'delta'],
                                                     (1 + range_slider/100.0) * forecasts.loc[:, 'forecasted_discharge'])
 
     # Filter hydrograph data for the current station

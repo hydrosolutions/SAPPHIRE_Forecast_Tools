@@ -299,10 +299,12 @@ def read_hydrograph_day_data_for_pentad_forecasting(iahhf_selected_stations):
             filepath = os.path.join(
                 os.getenv("ieasyforecast_configuration_path"),
                 os.getenv("ieasyforecast_restrict_stations_file"))
-            # Read the restricted stations from the environment variable
-            restricted_stations = fl.load_selected_stations_from_json(filepath)
-            # Filter data for restricted stations
-            hydrograph_day_all = hydrograph_day_all[hydrograph_day_all["code"].isin(restricted_stations)]
+            # Only read the file if it is present
+            if os.path.isfile(filepath):
+                # Read the restricted stations from the environment variable
+                restricted_stations = fl.load_selected_stations_from_json(filepath)
+                # Filter data for restricted stations
+                hydrograph_day_all = hydrograph_day_all[hydrograph_day_all["code"].isin(restricted_stations)]
 
     #print(f"DEBUG: read_hydrograph_day_data_for_pentad_forecasting: selected_stations: {iahhf_selected_stations}")
     #print(f"DEBUG: hydrograph_day_all:\n{hydrograph_day_all.head()}")
@@ -355,10 +357,12 @@ def read_hydrograph_pentad_data_for_pentad_forecasting(iahhf_selected_stations):
             filepath = os.path.join(
                 os.getenv("ieasyforecast_configuration_path"),
                 os.getenv("ieasyforecast_restrict_stations_file"))
-            # Read the restricted stations from the environment variable
-            restricted_stations = fl.load_selected_stations_from_json(filepath)
-            # Filter data for restricted stations
-            hydrograph_pentad_all = hydrograph_pentad_all[hydrograph_pentad_all["code"].isin(restricted_stations)]
+            # Only read the file if it is present
+            if os.path.isfile(filepath):
+                # Read the restricted stations from the environment variable
+                restricted_stations = fl.load_selected_stations_from_json(filepath)
+                # Filter data for restricted stations
+                hydrograph_pentad_all = hydrograph_pentad_all[hydrograph_pentad_all["code"].isin(restricted_stations)]
 
     #print(f"DEBUG: read_hydrograph_pentad_data_for_pentad_forecasting: selected_stations: {iahhf_selected_stations}")
     #print(f"DEBUG: hydrograph_pentad_all:\n{hydrograph_pentad_all.head()}")
