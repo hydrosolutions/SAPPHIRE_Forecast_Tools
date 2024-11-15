@@ -129,6 +129,7 @@ TODO: Insert a simplified flowchart of the modules
 These modules are described in the following sections. For detailed information about how the modules are implemented, please refer to the [development guide](development.md).
 
 ## Forecast configuration
+This module is optional and intended for the sand-alone deploymend of the forecast tools without linking the forecast tools to the iEasyHydro HF database.
 Once deployed, the forecast dashboard is accessed by double-clicking on the forecast dashboard icon on your desktop. This dashboard is available in Russian language only.
 The forecast configuration dashboard is used to select the stations for which forecasts are to be produced. The dashboard is accessed by double-clicking on the station configuration icon on your desktop. The dashboard is currently only available in Russian language. Detailed user instructions are available by clicking on the help button in upper right corner of the dashboard window.
 
@@ -136,6 +137,7 @@ The forecast configuration dashboard is used to select the stations for which fo
 
 ### Pre-processing runoff data (preprocessing_runoff)
 The module reads daily discharge data from the iEasyHydro database and/or from a local folder. The data is read from the iEasyHydro database using the iEasyHydro API. The data is read from the local folder as described in the section [daily discharge data](#daily-discharge-data). The module reads the data and writes it to a time series data and hydrograph data to files in the folder apps/internal_data. The data is then used by the forecasting modules to produce forecasts.
+The pre-processing runoff module can further read static hydropost attributes from iEasyHydro HF and identify for which sites to produce pentadal and decadal forecasts. Alternatively, you can configure the sites for which forecasts are to be produced in the forecast configuration dashboard.
 
 ### Pre-processing publicly available meteorological data (preprocessing_gateway)
 The module reads meteorological data from the SAPPHIRE data gateway. The data is read from the gateway using the gateway API. The data is read and written to a time series data file in the folder apps/internal_data. The data is then used by the forecasting modules to produce forecasts. The demo version of the forecast tools works without this module.
