@@ -496,20 +496,26 @@ def get_decadal_forecast_sites_from_HF_SDK(ieh_sdk):
     """
     # Get the list of discharge sites from the iEH HF SDK
     discharge_sites = ieh_sdk.get_discharge_sites()
-    print(f" {len(discharge_sites)} discharge site(s) found in iEH HF SDK, namely:\n{[site['site_code'] for site in discharge_sites]}")
+    logger.debug(f" {len(discharge_sites)} discharge site(s) found in iEH HF SDK, namely:\n{[site['site_code'] for site in discharge_sites]}")
     # Get the list of Site objects for pentadal or decadal forecasting
     fc_sites = fl.Site.decad_forecast_sites_from_iEH_HF_SDK(discharge_sites)
 
     # Read virtual stations to the list
     virtual_sites = ieh_sdk.get_virtual_sites()
-    print(f"  {len(virtual_sites)} virtual site(s) found in iEH HF SDK, namely:\n{[site['site_code'] for site in virtual_sites]}")
+    logger.debug(f"  {len(virtual_sites)} virtual site(s) found in iEH HF SDK, namely:\n{[site['site_code'] for site in virtual_sites]}")
     # Get list of virtual Site objects for pentadal or decadal forecasting
     virtual_sites = fl.Site.virtual_decad_forecast_sites_from_iEH_HF_SDK(virtual_sites)
     fc_sites.extend(virtual_sites)
 
-    print(f" {len(fc_sites)} Site object(s) created for decadal forecasting, namely:\n{[site.code for site in fc_sites]}")
     # Get the unique site codes
     site_codes = [site.code for site in fc_sites]
+
+    # We can have automatic and manual sensors at the same hydropost site.
+    # If we have duplicate site_codes, remove them from site_codes and from fc_sites.
+    site_codes = list(set(site_codes))
+    fc_sites = [site for site in fc_sites if site.code in site_codes]
+
+    logger.info(f" {len(fc_sites)} Site object(s) created for decadal forecasting, namely:\n{[site.code for site in fc_sites]}")
 
     # Write the updated site selection to the config file
     json_file = os.path.join(
@@ -601,20 +607,24 @@ def get_pentadal_forecast_sites_from_HF_SDK(ieh_sdk):
     """
     # Get the list of discharge sites from the iEH HF SDK
     discharge_sites = ieh_sdk.get_discharge_sites()
-    print(f" {len(discharge_sites)} discharge site(s) found in iEH HF SDK, namely:\n{[site['site_code'] for site in discharge_sites]}")
+    logger.debug(f" {len(discharge_sites)} discharge site(s) found in iEH HF SDK, namely:\n{[site['site_code'] for site in discharge_sites]}")
     # Get the list of Site objects for pentadal or decadal forecasting
     fc_sites = fl.Site.pentad_forecast_sites_from_iEH_HF_SDK(discharge_sites)
 
     # Read virtual stations to the list
     virtual_sites = ieh_sdk.get_virtual_sites()
-    print(f"  {len(virtual_sites)} virtual site(s) found in iEH HF SDK, namely:\n{[site['site_code'] for site in virtual_sites]}")
+    logger.debug(f"  {len(virtual_sites)} virtual site(s) found in iEH HF SDK, namely:\n{[site['site_code'] for site in virtual_sites]}")
     # Get list of virtual Site objects for pentadal or decadal forecasting
     virtual_sites = fl.Site.virtual_pentad_forecast_sites_from_iEH_HF_SDK(virtual_sites)
     fc_sites.extend(virtual_sites)
 
-    print(f" {len(fc_sites)} Site object(s) created for pentadal forecasting, namely:\n{[site.code for site in fc_sites]}")
     # Get the unique site codes
     site_codes = [site.code for site in fc_sites]
+
+    # Remove duplicates
+    site_codes = list(set(site_codes))
+    fc_sites = [site for site in fc_sites if site.code in site_codes]
+    logger.info(f" {len(fc_sites)} Site object(s) created for pentadal forecasting, namely:\n{[site.code for site in fc_sites]}")
 
     # Write the updated site selection to the config file
     json_file = os.path.join(
@@ -1078,7 +1088,7 @@ def read_machine_learning_forecasts_pentad(model):
 
     return forecast
 
-def read_linreg_forecasts_pentad_dummy(model):
+def deprecated_read_linreg_forecasts_pentad_dummy(model):
     """
     Dummy function
     """

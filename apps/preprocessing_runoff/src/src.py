@@ -3,6 +3,8 @@ import pandas as pd
 import numpy as np
 import datetime as dt
 import json
+import concurrent.futures
+from typing import List, Tuple
 
 # To avoid printing of warning
 pd.set_option('future.no_silent_downcasting', True)
@@ -323,7 +325,152 @@ def read_runoff_data_from_single_river_xlsx(filename, date_col='date', discharge
 
     return df
 
-def read_all_runoff_data_from_excel(date_col='date', discharge_col='discharge', name_col='name', code_col='code'):
+def parallel_read_excel_files(file_paths: List[str],
+                            read_function,
+                            date_col='date',
+                            discharge_col='discharge',
+                            name_col='name',
+                            code_col='code') -> pd.DataFrame:
+    """
+    Reads multiple Excel files in parallel using ThreadPoolExecutor.
+
+    Args:
+        file_paths: List of Excel file paths to read
+        read_function: Function to use for reading (either read_runoff_data_from_multiple_rivers_xlsx
+                      or read_runoff_data_from_single_river_xlsx)
+        date_col: Name of date column
+        discharge_col: Name of discharge column
+        name_col: Name of name column
+        code_col: Name of code column
+
+    Returns:
+        Combined DataFrame from all Excel files
+    """
+    def read_file(file_path: str) -> Tuple[pd.DataFrame, str]:
+        try:
+            logger.info(f"Reading daily runoff from file {os.path.basename(file_path)}")
+            df = read_function(
+                filename=file_path,
+                date_col=date_col,
+                discharge_col=discharge_col,
+                name_col=name_col,
+                code_col=code_col
+            )
+            return df, None
+        except Exception as e:
+            logger.error(f"Error reading file {file_path}: {str(e)}")
+            return pd.DataFrame(), str(e)
+
+    # Use ThreadPoolExecutor for parallel reading
+    # Number of workers is min(32, os.cpu_count() + 4) by default
+    results = []
+    errors = []
+
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        future_to_file = {executor.submit(read_file, fp): fp for fp in file_paths}
+
+        for future in concurrent.futures.as_completed(future_to_file):
+            file_path = future_to_file[future]
+            try:
+                df, error = future.result()
+                if error is None:
+                    if not df.empty:
+                        results.append(df)
+                else:
+                    errors.append((file_path, error))
+            except Exception as e:
+                logger.error(f"Exception occurred while processing {file_path}: {str(e)}")
+                errors.append((file_path, str(e)))
+
+    # Report any errors that occurred
+    if errors:
+        logger.warning(f"Encountered {len(errors)} errors while reading files:")
+        for file_path, error in errors:
+            logger.warning(f"  {os.path.basename(file_path)}: {error}")
+
+    # Combine all DataFrames
+    if not results:
+        logger.warning("No data was successfully read from any Excel files")
+        return pd.DataFrame()
+
+    return pd.concat(results, ignore_index=True)
+
+def read_all_runoff_data_from_excel(date_col='date',
+                                  discharge_col='discharge',
+                                  name_col='name',
+                                  code_col='code'):
+    """
+    Reads daily river runoff data from all excel sheets in the daily_discharge
+    directory using parallel processing.
+    """
+    # Get the path to the daily_discharge directory
+    daily_discharge_dir = os.getenv('ieasyforecast_daily_discharge_path')
+
+    # Test if the directory is available
+    if not os.path.exists(daily_discharge_dir):
+        raise FileNotFoundError(f"Directory '{daily_discharge_dir}' not found.")
+
+    # Get lists of files for multiple rivers and single rivers
+    files_multiple_rivers = [
+        os.path.join(daily_discharge_dir, f)
+        for f in os.listdir(daily_discharge_dir)
+        if os.path.isfile(os.path.join(daily_discharge_dir, f))
+        and f.endswith('.xlsx')
+        and not f[0].isdigit()
+        and not f.startswith('~')
+    ]
+
+    files_single_rivers = [
+        os.path.join(daily_discharge_dir, f)
+        for f in os.listdir(daily_discharge_dir)
+        if os.path.isfile(os.path.join(daily_discharge_dir, f))
+        and f.endswith('.xlsx')
+        and f[0].isdigit()
+        and not f.startswith('~')
+    ]
+
+    # Read multiple rivers files in parallel
+    df_multiple = pd.DataFrame()
+    if files_multiple_rivers:
+        logger.info(f"Reading {len(files_multiple_rivers)} files with multiple rivers data")
+        df_multiple = parallel_read_excel_files(
+            files_multiple_rivers,
+            read_runoff_data_from_multiple_rivers_xlsx,
+            date_col=date_col,
+            discharge_col=discharge_col,
+            name_col=name_col,
+            code_col=code_col
+        )
+    else:
+        logger.warning(f"No excel files with multiple rivers data found in '{daily_discharge_dir}'.")
+
+    # Read single river files in parallel
+    df_single = pd.DataFrame()
+    if files_single_rivers:
+        logger.info(f"Reading {len(files_single_rivers)} files with single river data")
+        df_single = parallel_read_excel_files(
+            files_single_rivers,
+            read_runoff_data_from_single_river_xlsx,
+            date_col=date_col,
+            discharge_col=discharge_col,
+            name_col=name_col,
+            code_col=code_col
+        )
+    else:
+        logger.warning(f"No excel files with single river data found in '{daily_discharge_dir}'.")
+
+    # Combine the results
+    if df_multiple.empty and df_single.empty:
+        logger.warning("No data found in the daily discharge directory")
+        return None
+    elif df_multiple.empty:
+        return df_single
+    elif df_single.empty:
+        return df_multiple
+    else:
+        return pd.concat([df_multiple, df_single], ignore_index=True)
+
+def original_read_all_runoff_data_from_excel(date_col='date', discharge_col='discharge', name_col='name', code_col='code'):
     """
     Reads daily river runoff data from all excel sheets in the daily_discharge
     directory.
@@ -813,6 +960,103 @@ def get_runoff_data(ieh_sdk=None, date_col='date', discharge_col='discharge', na
 
         return read_data
 
+def get_runoff_data_for_sites(ieh_sdk=None, date_col='date',
+                              discharge_col='discharge', name_col='name',
+                              code_col='code', site_list=None, code_list=None):
+    """
+    Reads runoff data from excel and, if possible, from iEasyHydro database.
+
+    Note: This function will only try to read data from the iEasyHydro database
+    which are already in the excel files.
+
+    Args:
+        ieh_sdk (object): An object that provides a method to get data values
+            for a site from a database. None in case of no access to the database.
+        date_col (str, optional): The name of the column containing the date data.
+            Default is 'date'.
+        discharge_col (str, optional): The name of the column containing the discharge data.
+            Default is 'discharge'.
+        name_col (str, optional): The name of the column containing the site name.
+            Default is 'name'.
+        code_col (str, optional): The name of the column containing the site code.
+            Default is 'code'.
+    """
+    # Read data from excel files
+    read_data = read_all_runoff_data_from_excel(date_col=date_col, discharge_col=discharge_col, name_col=name_col, code_col=code_col)
+
+    # Initialize a flag for virtual stations
+    virtual_stations_present = False
+    # Get virtual station codes from json (if file exists) print a warning if file
+    # does not exist.
+    if os.getenv('ieasyforecast_virtual_stations') is None:
+        logger.info(f"No calculation rules for virtual stations found.\n"
+                    f"Environment variable ieasyforecast_virtual_stations is not set.")
+    else:
+        virtual_stations_config_file_path = os.path.join(
+            os.getenv('ieasyforecast_configuration_path'),
+            os.getenv('ieasyforecast_virtual_stations'))
+        if not os.path.exists(virtual_stations_config_file_path):
+            raise FileNotFoundError(
+                f"File {virtual_stations_config_file_path} not found.\n",
+                f"Filename for calculateion rules for virtual stations in environment\n"
+                f"but file not found.\n"
+                f"Please provide a configuraion file ieasyforecast_virtual_stations\n"
+                f"or, if you don't have any virtual stations to predict, remove the\n"
+                f"variable ieasyforecast_virtual_stations from your configuration file."
+            )
+        else:
+            with open(virtual_stations_config_file_path, 'r') as f:
+                virtual_stations = json.load(f)['virtualStations'].keys()
+            virtual_stations_present = True
+
+            read_data = add_hydroposts(read_data, virtual_stations)
+
+    if ieh_sdk is None:
+        # We do not have access to an iEasyHydro database
+        logger.info("No data read from iEasyHydro Database.")
+
+        return read_data
+
+    else:
+        # Get the last row for each code in runoff_data
+        last_row = read_data.groupby(code_col).tail(1)
+        #print("DEBUG: last_row: \n", last_row)
+
+        # For each code in last_row, get the daily average discharge data from the
+        # iEasyHydro database using the function get_daily_average_discharge_from_iEH_per_site
+        for index, row in last_row.iterrows():
+            db_average_data = get_daily_average_discharge_from_iEH_per_site(
+                ieh_sdk, row[code_col], row[name_col], row[date_col],
+                date_col=date_col, discharge_col=discharge_col, name_col=name_col, code_col=code_col
+            )
+            db_morning_data = get_todays_morning_discharge_from_iEH_per_site(
+                ieh_sdk, row[code_col], row[name_col],
+                date_col=date_col, discharge_col=discharge_col, name_col=name_col, code_col=code_col)
+            # Append db_data to read_data if db_data is not empty
+            if not db_average_data.empty:
+                read_data = pd.concat([read_data, db_average_data], ignore_index=True)
+            if not db_morning_data.empty:
+                read_data = pd.concat([read_data, db_morning_data], ignore_index=True)
+
+        # Drop rows where 'code' is "NA"
+        read_data = read_data[read_data[code_col] != 'NA']
+
+        # Cast the 'code' column to string
+        read_data[code_col] = read_data[code_col].astype(str)
+
+        #print(read_data[read_data['code'] == "16936"].tail(10))
+        #print(read_data[read_data['code'] == "16059"].tail(10))
+        # Calculate virtual hydropost data where necessary
+        if virtual_stations_present:
+            read_data = calculate_virtual_stations_data(read_data)
+        #print(read_data[read_data['code'] == "16936"].tail(10))
+        #print(read_data[read_data['code'] == "16059"].tail(10))
+
+        # For sanity sake, we round the data to a mac of 3 decimal places
+        read_data[discharge_col] = read_data[discharge_col].round(3)
+
+        return read_data
+
 def from_daily_time_series_to_hydrograph(data_df: pd.DataFrame,
                                          date_col='date', discharge_col='discharge', code_col='code', name_col='name'):
     """
@@ -881,6 +1125,34 @@ def from_daily_time_series_to_hydrograph(data_df: pd.DataFrame,
     hydrograph_data = hydrograph_data.merge(
         last_year_data.groupby([code_col, 'day_of_year'])[date_col].first().reset_index(),
         on=[code_col, 'day_of_year'], how='left', suffixes=('', '_last_year'))
+
+    return hydrograph_data
+
+def add_dangerous_discharge_from_sites(hydrograph_data: pd.DataFrame,
+                                       code_col='code',
+                                       site_list=None,
+                                       site_code_list=None):
+    """
+    For each site, add the dangerous discharge value to the hydrograph data.
+    """
+    # Return error if any of the arguments is None
+    if hydrograph_data is None or site_list is None or site_code_list is None:
+        raise ValueError("hydrograph_data, site_list and site_code_list must be provided.")
+
+    # Initialize a column in hydrograph data for dangerous discharge
+    hydrograph_data['dangerous_discharge'] = np.nan
+
+    # For each unique code, get the dangerous discharge value from the iEasyHydro database
+    for site in site_list:
+        print(f"\n\n\n\nsite: {site}")
+        print(f"site.dangerous_discharge: {site.dangerous_discharge}")
+        try:
+            dangerous_discharge = site.dangerous_discharge
+
+            # Add the dangerous discharge value to the hydrograph_data
+            hydrograph_data.loc[hydrograph_data[code_col] == site['code'], 'dangerous_discharge'] = dangerous_discharge
+        except Exception:
+            continue
 
     return hydrograph_data
 
