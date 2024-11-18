@@ -91,7 +91,8 @@ def define_tabs(_,
                 bulletin_table,
                 write_bulletin_button, bulletin_download_panel, disclaimer,
                 station_card, forecast_card, add_to_bulletin_button, basin_card,
-                pentad_card, reload_card, add_to_bulletin_popup, show_daily_data_widget):
+                pentad_card, reload_card, add_to_bulletin_popup, show_daily_data_widget,
+                skill_table, skill_metrics_download_filename, skill_metrics_download_button):
 
     # Organize the panes in tabs
     no_date_overlap_flag = True
@@ -198,6 +199,11 @@ def define_tabs(_,
                     collapsible=True,
                     collapsed=False
                 ),
+                #pn.Card(
+                #    skill_table,
+                #    title = 'test card',
+                #    height=600,
+                #),
                 pn.Card(
                     pn.Row(
                      effectiveness_plot,
@@ -205,8 +211,18 @@ def define_tabs(_,
                     title=_("Forecast skill metrics"),
                     height=800,
                     collapsible=True,
-            #         #pn.Card(pentad_skill, title=_("Forecast accuracy")),
-                )
+                ),
+                pn.Card(
+                    pn.Column(
+                        skill_table,
+                        skill_metrics_download_filename,
+                        skill_metrics_download_button,
+                    ),
+                    title=_("Table of forecast skill metrics"),
+                    height=600,
+                    collapsible=True,
+                    #sizing_mode='stretch_width',
+                ),
             ),
             ),  # end of Forecast tab
             (_('Bulletin'),
