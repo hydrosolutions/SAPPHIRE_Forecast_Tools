@@ -38,9 +38,7 @@
 #
 # --------------------------------------------------------------------
 # TODO:
-# - Run This Code with fake data
-# - Implement the ARIMA Model
-# - Set up real environment variables
+# - Select only the codes which have the flag true for the model.
 # --------------------------------------------------------------------
 
 # Useage:
@@ -297,6 +295,12 @@ def make_ml_forecast():
     rivers_to_predict_pentad, rivers_to_predict_decad, hydroposts_available_for_ml_forecasting = utils_ml_forecast.get_hydroposts_for_pentadal_and_decadal_forecasts()
     # Combine rivers_to_predict_pentad and rivers_to_predict_decad to get all rivers to predict, only keep unique values
     rivers_to_predict = list(set(rivers_to_predict_pentad + rivers_to_predict_decad))
+    #select only codes which the model can predict.
+    mask_predictable = hydroposts_available_for_ml_forecasting[MODEL_TO_USE] == True
+    codes_model_can_predict = hydroposts_available_for_ml_forecasting[mask_predictable]['code'].tolist()
+    rivers_to_predict = list(set(rivers_to_predict) & set(codes_model_can_predict))
+    #convert to int 
+    rivers_to_predict = [int(code) for code in rivers_to_predict]
     logger.debug('Rivers to predict pentad: %s', rivers_to_predict_pentad)
     logger.debug('Rivers to predict decad: %s', rivers_to_predict_decad)
     logger.debug('Rivers to predict: %s', rivers_to_predict)
@@ -357,6 +361,7 @@ def make_ml_forecast():
     # --------------------------------------------------------------------
     # MODEL PREDICTOR
     # Load pre-trained model
+
     if MODEL_TO_USE == 'TFT':
         model = TFTModel.load(os.path.join(PATH_TO_MODEL), map_location=torch.device('cpu'))
     elif MODEL_TO_USE == 'TIDE':

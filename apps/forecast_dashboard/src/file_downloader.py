@@ -42,6 +42,16 @@ class FileDownloader(param.Parameterized):
         self.file_selector.link(self, callbacks={'value': self._update_selected_files})
         self.download_btn.on_click(self._handle_download)
 
+    def refresh_file_list(self):
+        """Refresh the file selector options with the latest files."""
+        print("Refreshing file list...")
+        new_options = self.get_sorted_files()
+        self.file_selector.options = new_options
+        # Clear current selection since files might have changed
+        self.file_selector.value = []
+        self.selected_files = []
+        print(f"Updated file list with {len(new_options)} files")
+
     def get_sorted_files(self):
         """Get list of files recursively from all subdirectories, sorted by modification time (newest first)."""
         print(f"\n\n\nGetting files from {self.directory_path}")
