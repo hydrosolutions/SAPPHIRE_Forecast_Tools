@@ -1006,6 +1006,11 @@ def perform_linear_regression(
     # Test that all input types are as expected.
     if not isinstance(data_df, pd.DataFrame):
         raise TypeError('data_df must be a pandas.DataFrame object')
+
+    # Validate DataFrame is not empty
+    if data_df.empty:
+        raise ValueError('Input DataFrame is empty')
+
     if not isinstance(station_col, str):
         raise TypeError('station_col must be a string')
     if not isinstance(pentad_col, str):
@@ -1029,23 +1034,41 @@ def perform_linear_regression(
     # 72.
     data_df[pentad_col] = data_df[pentad_col].astype(float)
     if not all(data_df[pentad_col].between(1, 72)):
+        # Print the rows where the values are not between 1 and 72
+        print(f"\n\n\nThe following rows have pentad not between 1 and 72: \n{data_df[~data_df[pentad_col].between(1, 71)]}")
         raise ValueError(f'Values in column {pentad_col} are not between 1 and 72')
+
+    # Forecast pentad must be convertable to an int and it must be between 1 and 72
+    if not 1 <= forecast_pentad <= 72:
+        raise ValueError(f'forecast_pentad must be an integer between 1 and 72')
 
     # Filter for the forecast pentad
     data_dfp = data_df[data_df[pentad_col] == float(forecast_pentad)]
 
+    # Initialize result DataFrame
+    data_dfp = data_dfp.assign(
+        slope=1.0,
+        intercept=0.0,
+        forecasted_discharge=-1.0,
+        q_mean=0.0,
+        q_std_sigma=0.0,
+        delta=0.0,
+        rsquared=0.0
+    )
+
+    # Create empty DataFrame with expected columns for fallback
+    empty_result = pd.DataFrame(columns=[
+        station_col, pentad_col, predictor_col, discharge_avg_col,
+        'slope', 'intercept', 'forecasted_discharge', 'q_mean',
+        'q_std_sigma', 'delta', 'rsquared'
+    ])
     # Test if data_df is empty
     if data_dfp.empty:
-        raise ValueError(f'DataFrame is empty after filtering for pentad {forecast_pentad}')
-
-    # Initialize the slope and intercept columns to 0 and 1
-    data_dfp = data_dfp.assign(slope=1.0)
-    data_dfp = data_dfp.assign(intercept=0.0)
-    data_dfp = data_dfp.assign(forecasted_discharge=-1.0)
-    data_dfp = data_dfp.assign(q_mean=0.0)
-    data_dfp = data_dfp.assign(q_std_sigma=0.0)
-    data_dfp = data_dfp.assign(delta=0.0)
-    data_dfp = data_dfp.assign(rsquared=0.0)
+        logger.warning(f'No data available for pentad {forecast_pentad}')
+        logger.warning(f"  Returning default values for slope, intercept, forecasted_discharge, q_mean, q_std_sigma, delta, rsquared")
+        logger.debug(f"Tail of data_df: \n{data_df.tail()}")
+        # Return an empty data frame
+        return empty_result
 
     # Loop over each station we have data for
     for station in data_dfp[station_col].unique():
@@ -1056,7 +1079,8 @@ def perform_linear_regression(
             station_data = data_dfp[(data_dfp[station_col] == station)]
             # Test if station_data is empty
             if station_data.empty:
-                raise ValueError(f'DataFrame is empty after filtering for station {station}')
+                logger.info(f'DataFrame is empty after filtering for station {station}')
+                continue
         except ValueError as e:
             print(f'Error in perform_linear_regression when filtering for station data: {e}')
 
@@ -1086,15 +1110,15 @@ def perform_linear_regression(
                 os.getenv('ieasyforecast_linreg_point_selection', 'linreg_point_selection')
             )
             # Define the file name
-            print(f"forecast_pentad: {forecast_pentad}")
-            print(f"columns of station_data: {station_data.columns}")
-            print(f"station_data: {station_data}")
+            logger.debug(f"forecast_pentad: {forecast_pentad}")
+            logger.debug(f"columns of station_data: {station_data.columns}")
+            logger.debug(f"station_data: {station_data}")
             forecast_date = tl.get_date_for_last_day_in_pentad(forecast_pentad)
-            print(f"forecast_date: {forecast_date}")
+            logger.debug(f"forecast_date: {forecast_date}")
             pentad_in_month = tl.get_pentad(forecast_date)
             title_month = tl.get_month_str_en(forecast_date)
-            print(f"pentad_in_month: {pentad_in_month}")
-            print(f"title_month: {title_month}")
+            logger.debug(f"pentad_in_month: {pentad_in_month}")
+            logger.debug(f"title_month: {title_month}")
             save_file_name = f"{station}_{pentad_in_month}_pentad_of_{title_month}.csv"
             save_file_path = os.path.join(SAVE_DIRECTORY, save_file_name)
 
@@ -1111,7 +1135,7 @@ def perform_linear_regression(
                 station_data = station_data[station_data['visible'] == True]
                 # Drop the 'visible' and 'year' columns
                 station_data.drop(columns=['visible', 'year'], inplace=True)
-                print(f"station_data after point selection: {station_data}")
+                logger.debug(f"station_data after point selection: {station_data}")
 
         #if int(station) == 15194:
         #    logger.debug("DEBUG: forecasting:perform_linear_regression: station_data: \n%s",
@@ -1189,6 +1213,11 @@ def perform_forecast(fc_sites, group_id=None, result_df=None,
                      code_col='code', group_col='pentad_in_year'):
     # Perform forecast
     logger.debug("Performing pentad forecast ...")
+
+    # Check if result_df is None or empty
+    if result_df is None or result_df.empty:
+        logger.warning("No regression results available for forecasting. Skipping forecast calculation.")
+        return
 
     # For each site, calculate the forecasted discharge
     for site in fc_sites:
@@ -1502,7 +1531,7 @@ def calculate_skill_metrics_pentad(observed: pd.DataFrame, simulated: pd.DataFra
         short_model_list = extract_first_parentheses_content(model_list)
         # Concatenat the model names
         unique_models = ', '.join(sorted(short_model_list))
-        return f'Ensemble Mean with {unique_models} (EM)'
+        return f'Ens. Mean with {unique_models} (EM)'
 
     def model_short_agg(x):
         return f'EM'
@@ -1893,6 +1922,10 @@ def write_linreg_pentad_forecast_data(data: pd.DataFrame):
 
     #logger.debug(f'data.head: \n{data.head()}')
     #logger.debug(f'data.tail: \n{data.tail()}')
+
+    # Only write results if data is not empty
+    if data.empty:
+        return
 
     # Reset index, dropping the old index
     data = data.reset_index(drop=True)
