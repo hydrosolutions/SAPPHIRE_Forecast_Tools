@@ -299,10 +299,12 @@ def read_hydrograph_day_data_for_pentad_forecasting(iahhf_selected_stations):
             filepath = os.path.join(
                 os.getenv("ieasyforecast_configuration_path"),
                 os.getenv("ieasyforecast_restrict_stations_file"))
-            # Read the restricted stations from the environment variable
-            restricted_stations = fl.load_selected_stations_from_json(filepath)
-            # Filter data for restricted stations
-            hydrograph_day_all = hydrograph_day_all[hydrograph_day_all["code"].isin(restricted_stations)]
+            # Only read the file if it is present
+            if os.path.isfile(filepath):
+                # Read the restricted stations from the environment variable
+                restricted_stations = fl.load_selected_stations_from_json(filepath)
+                # Filter data for restricted stations
+                hydrograph_day_all = hydrograph_day_all[hydrograph_day_all["code"].isin(restricted_stations)]
 
     #print(f"DEBUG: read_hydrograph_day_data_for_pentad_forecasting: selected_stations: {iahhf_selected_stations}")
     #print(f"DEBUG: hydrograph_day_all:\n{hydrograph_day_all.head()}")
@@ -355,10 +357,12 @@ def read_hydrograph_pentad_data_for_pentad_forecasting(iahhf_selected_stations):
             filepath = os.path.join(
                 os.getenv("ieasyforecast_configuration_path"),
                 os.getenv("ieasyforecast_restrict_stations_file"))
-            # Read the restricted stations from the environment variable
-            restricted_stations = fl.load_selected_stations_from_json(filepath)
-            # Filter data for restricted stations
-            hydrograph_pentad_all = hydrograph_pentad_all[hydrograph_pentad_all["code"].isin(restricted_stations)]
+            # Only read the file if it is present
+            if os.path.isfile(filepath):
+                # Read the restricted stations from the environment variable
+                restricted_stations = fl.load_selected_stations_from_json(filepath)
+                # Filter data for restricted stations
+                hydrograph_pentad_all = hydrograph_pentad_all[hydrograph_pentad_all["code"].isin(restricted_stations)]
 
     #print(f"DEBUG: read_hydrograph_pentad_data_for_pentad_forecasting: selected_stations: {iahhf_selected_stations}")
     #print(f"DEBUG: hydrograph_pentad_all:\n{hydrograph_pentad_all.head()}")
@@ -915,6 +919,11 @@ def get_best_models_for_station_and_pentad(forecasts_all, selected_station, sele
     forecasts = forecasts[forecasts['pentad_in_year'] == selected_pentad]
     # Get the model_long value of the row in forecasts with the highest value for accuracy
     forecasts_no_LR = forecasts[forecasts['model_long'] != 'Linear regression (LR)']
+    # Test if forecasts_no_LR is empty
+    # Check if forecasts_no_LR is empty or contains only NaN accuracy
+    if forecasts_no_LR.empty or forecasts_no_LR['accuracy'].isna().all():
+        print("No valid models found for the given station and pentad.")
+        return ['Linear regression (LR)']  # Return a fallback or appropriate message
     best_models = forecasts_no_LR.loc[forecasts_no_LR['accuracy'].idxmax(), 'model_long']
     best_models = [best_models, 'Linear regression (LR)']
     print("best models: ", best_models)
