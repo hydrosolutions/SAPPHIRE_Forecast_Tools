@@ -2146,13 +2146,13 @@ def plot_pentad_forecast_hydrograph_data_v2(_, hydrograph_day_all, linreg_predic
                                             range_type, range_slider, range_visibility,
                                             rram_forecast, ml_forecast):
 
-    forecast_date = title_date + dt.timedelta(days=1)
+    forecast_date = pd.to_datetime(title_date + dt.timedelta(days=1))
     title_pentad = tl.get_pentad(forecast_date)
     title_month = tl.get_month_str_case2_viz(_, forecast_date)
     title_day_start = tl.get_pentad_first_day(forecast_date.strftime("%Y-%m-%d"))
     title_day_end = tl.get_pentad_last_day(forecast_date.strftime("%Y-%m-%d"))
     # Take forecast_date and replace the day in that date with the string title_day_end
-    title_date_end = forecast_date.replace(day=int(title_day_end))
+    title_date_end = pd.to_datetime(forecast_date.replace(day=int(title_day_end)))
 
     # filter hydrograph_day_all & linreg_predictor by station
     #linreg_predictor = processing.add_predictor_dates(linreg_predictor, station, title_date)
@@ -2168,10 +2168,10 @@ def plot_pentad_forecast_hydrograph_data_v2(_, hydrograph_day_all, linreg_predic
     # The date in the forecasts dataframe refers to the date the forecast was
     # produced. Here, we need the first day of the pentad for which the forecast
     # was produced (forecast horizon)
-    forecasts['date'] = forecasts['date'] + dt.timedelta(days=1)
+    forecasts['date'] = pd.to_datetime(forecasts['date'] + dt.timedelta(days=1))
 
     # Filter forecasts dataframe for dates smaller than the title date
-    forecasts = forecasts[forecasts['date'] <= pd.Timestamp(title_date)+dt.timedelta(days=1)]
+    forecasts = forecasts[forecasts['date'] <= pd.to_datetime(title_date+dt.timedelta(days=1))]
     #print(f"Tail of forecasts\n{forecasts.tail(10)}")
 
     # Calculate the forecast ranges depending on the values of range_type and range_slider
@@ -2221,6 +2221,7 @@ def plot_pentad_forecast_hydrograph_data_v2(_, hydrograph_day_all, linreg_predic
     linreg_predictor = processing.add_predictor_dates(linreg_predictor, station, title_date)
 
     data = hydrograph_day_all[hydrograph_day_all['station_labels'] == station].copy()
+    data['date'] = pd.to_datetime(data['date'])
     current_year = data['date'].dt.year.max()
     last_year = current_year - 1
 
@@ -2263,8 +2264,8 @@ def plot_pentad_forecast_hydrograph_data_v2(_, hydrograph_day_all, linreg_predic
     print(f"Tail of forecasts\n{forecasts.tail(10)}")
     # print title_date
     print(f"title_date: {title_date}")
-    forecasts_current = forecasts[forecasts['date'] == pd.Timestamp(title_date)+dt.timedelta(days=1)]
-    forecasts_past = forecasts[forecasts['date'] <= pd.Timestamp(title_date)+dt.timedelta(days=1)]
+    forecasts_current = forecasts[forecasts['date'] == pd.to_datetime((title_date)+dt.timedelta(days=1))]
+    forecasts_past = forecasts[forecasts['date'] <= pd.to_datetime((title_date)+dt.timedelta(days=1))]
 
     # Filter for the current station (Only few stations have rram forecasts)
     current_rram_forecasts = rram_forecast[rram_forecast['station_labels'] == station].copy()
@@ -2300,14 +2301,14 @@ def plot_pentad_forecast_hydrograph_data_v2(_, hydrograph_day_all, linreg_predic
 
     # Create a holoviews bokeh plots of the daily hydrograph
     hvspan_predictor = hv.VSpan(
-        linreg_predictor['predictor_start_date'].values[0],
-        linreg_predictor['predictor_end_date'].values[0]) \
+        pd.to_datetime(linreg_predictor['predictor_start_date'].values[0]),
+        pd.to_datetime(linreg_predictor['predictor_end_date'].values[0])) \
             .opts(color=runoff_current_year_color, alpha=0.2, line_width=0,
                   muted_alpha=0.05, show_legend=True)
 
     hvspan_forecast = hv.VSpan(
-        linreg_predictor['forecast_start_date'].values[0],
-        linreg_predictor['forecast_end_date'].values[0]) \
+        pd.to_datetime(linreg_predictor['forecast_start_date'].values[0]),
+        pd.to_datetime(linreg_predictor['forecast_end_date'].values[0])) \
             .opts(color=runoff_forecast_color_list[3], alpha=0.2, line_width=0,
                   muted_alpha=0.05, show_legend=False)
 
@@ -2421,9 +2422,10 @@ def plot_pentad_forecast_hydrograph_data_v2(_, hydrograph_day_all, linreg_predic
         #       lambda p, e: add_custom_xticklabels_daily_dates(_, linreg_predictor['leap_year'].iloc[0], p, e)],
         xformatter=DatetimeTickFormatter(days="%b %d", months="%b %d"),
         ylim=(0, data[max_col].max() * 1.1),
-        xlim=(min(data[date_col]), max(data[date_col])),
+        xlim=(pd.to_datetime(min(data[date_col])), pd.to_datetime(max(data[date_col]))),
         tools=['hover'],
-        toolbar='right')
+        toolbar='right',
+        shared_axes=False)
 
     print("\n\n")
 
