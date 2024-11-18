@@ -26,7 +26,7 @@ import docker
 import threading
 
 
-
+from .gettext_config import translation_manager
 from . import processing
 
 # Import local library
@@ -3935,23 +3935,69 @@ def plot_forecast_skill(
 
     return all_skill_figures
 
+def add_month_pentad_per_month_to_df(df):
+    """Based on column pentad_in_year, add columns month and pentad_in_month."""
+    # Get date for pentad in year
+    df['date'] = df['pentad_in_year'].apply(tl.get_date_for_pentad)
+    print('df: ', df.head())
+    # Get month for date
+    df['month'] = pd.to_datetime(df['date']).dt.month
+    # Get pentad in month
+    df['pentad_in_month'] = df['date'].apply(tl.get_pentad)
+    return df
+
 def create_skill_table(forecast_stats):
     """Creates a tabulator widget for the forecast statistics."""
-    # Do not show column model_long
-    forecast_stats_loc = forecast_stats.drop(columns=['model_long']).copy()
+    # Load translation for the forecast statistics
+    _ = translation_manager._
+
+    # Get pentad in month and month
+    forecast_stats = add_month_pentad_per_month_to_df(forecast_stats)
+
+    # Do not show column model_long and pentad_in_year
+    forecast_stats_loc = forecast_stats.drop(columns=['model_long', 'pentad_in_year', 'date']).copy()
+
+    # Order the columns in the dataframe as follows:
+    # code, model_short, month, pentad_in_month, sdivsigma, nse, delta, accuracy, mae
+    forecast_stats_loc = forecast_stats_loc[['code', 'model_short', 'month', 'pentad_in_month', 'sdivsigma', 'nse', 'delta', 'accuracy', 'mae']]
+
+    # Sort the columns by code, month and pentad_in_month
+    forecast_stats_loc = forecast_stats_loc.sort_values(by=['code', 'month', 'pentad_in_month'])
+
+    # Rename columns for better display
+    forecast_stats_loc.rename(columns={
+        'pentad_in_month': _('Pentad'),
+        'month': _('Month'),
+        'code': _('Code'),
+        'model_short': _('Model'),
+        'sdivsigma': _('s/σ'),
+        'nse': _('NSE'),
+        'delta': _('δ'),
+        'accuracy': _('Accuracy'),
+        'mae': _('MAE'),
+    }, inplace=True)
+
+    # Add tabulator editors for the header_filters
+    filters = {
+        _('Pentad'): {'type': 'number', 'placeholder': _('Filter by pentad')},
+        _('Month'): {'type': 'number', 'placeholder': _('Filter by month')},
+        _('Model'): {'type': 'list', 'valuesLookup': True, 'placeholder': _('Filter by model')},
+        _('Code'): {'type': 'list', 'valuesLookup': True, 'placeholder': _('Filter by code')},
+    }
 
     # Create a Tabulator widget for the forecast statistics
     # Allow filtering for a code, model_short and pentad_in_year
     forecast_stats_table = pn.widgets.Tabulator(
         value=forecast_stats_loc,
-        formatters={'Pentad': "{:,}",
-                    'year': "{:,}"},
-        #editors={_('δ'): None},  # Disable editing of the δ column
         theme='bootstrap',
         configuration={'columnFilters': True},  # Enable column filtering
         layout='fit_data_stretch',  # Optional: adjust column sizing
-        sizing_mode='stretch_both',
-        show_index=False)
+        sizing_mode='stretch_width',
+        height=400,
+        show_index=False,
+        header_filters=filters,
+        page_size=72
+    )
 
     return forecast_stats_table
 
