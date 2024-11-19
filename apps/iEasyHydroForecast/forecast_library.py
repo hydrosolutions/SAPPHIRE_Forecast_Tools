@@ -950,6 +950,41 @@ def calculate_runoff_stats(data_df, value_col='discharge_avg'):
 
     return data_df_stats
 
+def split_name(name: str):
+    """Splits a name string from ieasyhydro python sdk into 2 parts"""
+    #print("DEBUG: forecasting:split_name: name: ", name)
+    name_parts = name.split(' - ')
+    #print("DEBUG: forecasting:split_name: first split ' - ' name_parts: ", name_parts)
+    # Cound the number of parts to see if the name was split
+    if len(name_parts) == 1:
+        # If the name is not split by ' - ' then split by ' -'
+        name_parts = name.split(' -')
+        if len(name_parts) == 1:
+            # Try '- '
+            name_parts = name.split('- ')
+            if len(name_parts) == 1:
+                # Test how many '-' are in the name.
+                # If there is only one '-' then split by '-'
+                if name.count('-') == 1:
+                    name_parts = name.split('-')
+                    #print("DEBUG: forecasting:split_name: split '-' name_parts: ", name_parts)
+                # If there are two '-' then we assume that we can split by the second '-'
+                elif name.count('-') == 2:
+                    name_parts = name.split('-')
+                    # Merge the first two parts
+                    name_parts[0] = name_parts[0] + '-' + name_parts[1]
+                # If there are 3 '-' then we assume that we can split by the second '-'
+                elif name.count('-') == 3:
+                    name_parts = name.split('-')
+                    # Merge the first two parts
+                    name_parts[0] = name_parts[0] + '-' + name_parts[1]
+                    # Merge tha last two parts
+                    name_parts[1] = name_parts[2] + '-' + name_parts[3]
+                # If none of the above applies, we'll not split at all
+                else:
+                    name_parts = [name, '']
+
+    return name_parts
 
 # endregion
 
@@ -3721,13 +3756,12 @@ class Site:
                     continue
                 elif (row['enabled_forecasts'].values[0]['decadal_forecast'] == True and row['enabled_forecasts'].values[0]['pentad_forecast'] == False):
                     # We need to create a pentadal forecast for the site as this is required to produce decadal forecasts as well.
-                    print(f'Creating a virtual pentadal forecast for site {row["site_code"].values[0]} as decadal forecasts are enabled.')
-                    name_parts = row['official_name'].values[0].split(' - ')
-                    name_nat_parts = row['national_name'].values[0].split(' - ')
-                    if len(name_parts) == 1:
-                        name_parts = [row['official_name'].values[0], '']
-                    if len(name_nat_parts) == 1:
-                        name_nat_parts = [row['national_name'].values[0], '']
+                    print(f'Creating a virtual pentadal forecast for site {row["site_code"].values[0]}, {row["official_name"].values[0]} as decadal forecasts are enabled.')
+                    # We try to split the name of the site into river and punkt
+                    # First try to separate by ' - '. If this fails, try to separate by '-'
+                    name_parts = split_name(row['official_name'].values[0])
+                    name_nat_parts = split_name(row['national_name'].values[0])
+                    print(f"Name parts: {name_parts}, name_nat_parts: {name_nat_parts}")
 
                     site = site = cls(
                         code=row['site_code'].values[0],
@@ -3755,13 +3789,11 @@ class Site:
                     )
                     sites.append(site)
                 elif (row['enabled_forecasts'].values[0]['pentad_forecast'] == True):
-                    print(f'Adding site {row["site_code"].values[0]} to the list of sites.')
-                    name_parts = row['official_name'].values[0].split(' - ')
-                    name_nat_parts = row['national_name'].values[0].split(' - ')
-                    if len(name_parts) == 1:
-                        name_parts = [row['official_name'].values[0], '']
-                    if len(name_nat_parts) == 1:
-                        name_nat_parts = [row['national_name'].values[0], '']
+                    print(f'Adding site {row["site_code"].values[0]}, {row["official_name"].values[0]} to the list of sites.')
+                    # Try to split the names into river and punkt
+                    name_parts = split_name(row['official_name'].values[0])
+                    name_nat_parts = split_name(row['national_name'].values[0])
+                    print(f"Name parts: {name_parts}, name_nat_parts: {name_nat_parts}")
 
                     site = cls(
                         code=row['site_code'].values[0],

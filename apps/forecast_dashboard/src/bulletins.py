@@ -158,6 +158,7 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
     report_settings = report.define_settings(env_file_path)
 
     # Define Tags
+    # region tags
     pentad_tag = Tag(
         name='PENTAD',
         get_value_fn=header_df['pentad'].values[0],
@@ -294,6 +295,7 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
         tag_settings=tag_settings,
         data=True
     )
+    # endregion tags
 
     tag_list = [pentad_tag, forecast_tag, header_tag, river_ru_tag, punkt_ru_tag,
                 model_tag, forecast_tag, dash_tag, linreg_predictor_tag,
