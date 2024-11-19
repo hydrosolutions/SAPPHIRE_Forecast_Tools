@@ -35,9 +35,17 @@ The structure of this document is as follows:
 
 
 # What are the SAPPHIRE Forecast Tools
-The SAPPHIRE Forecast Tools are a collection of software components that are used to produce forecasts of streamflow. The tools are designed to be used by hydromet organizations that have access to a database of historical discharge data and a database of meteorological forecasts through the software [iEasyHydro](www.ieasyhydro.org) and through the [SAPPHIRE data gateway]()(TODO insert link once repo is public) but the reduced demo version of the tools also work with data read from excel documents. The tools are written in Python and R and are deployed using the Docker system. The tools are designed to be run on a server and to be accessed through a web browser.
+The SAPPHIRE Forecast Tools are a collection of software components that are used to operationally produce forecasts of streamflow, developed within the frame of the project [SAPPHIRE Central Asia](https://www.hydrosolutions.ch/projects/sapphire-central-asia) in collaboration with Kyrgyz Hydromet and funded by the Swiss Agency for Development and Cooperation (SDC). The Forecast Tools have been developed to support operational hydrological forecasting in Central Asian hydromets by automizing workflows where appropriate and by the implementation of modern hydrological forecasting methods. 
+
+Although the forecast tools can be run independently of the other software components in the SAPPHIRE Central Asia Project, they are especially suited to be used by hydrometeorological organizations that have access to a database of operational discharge data through the software [iEasyHydro](www.ieasyhydro.org) and to a database of meteorological forecasts through the [SAPPHIRE data gateway]()(TODO insert link once repo is public). The tools are written in Python and R and are deployed using the Docker system. The tools are designed to be run on a server (cloud or local) and to be accessed through a web browser.
 
 ## Overview
+The forecast tools have 2 main components: 
+1. the backend (invisible which processes the necessary data, produces the forecasts and calculates forecast skill metrics, and
+2. a browser-based dashboard which visualizes the forecasts and allows the analysis of the forecasts and the production of forecast bulletins.  
+
+The user interacts with the forecast tools via the dashboard. 
+
 Forecasts are produced in two steps:
 1. At the beginning of the forecast season, select the stations for which forecasts are to be produced. This is done using the [forecast configuration dashboard](#forecast-configuration). The dashboard is accessed by double-clicking on the station configuration icon on your desktop. The dashboard is currently only available in Russian language.
 You may configure the Forecast Tools to generate Excel documents with the forecasts for each station. These documents are similar to the documents produced by the Kyrgyz Hydrometeorological Services. Please note that the writing of these forecast sheets takes some time. We therefore recommend to use this option only during the validation phase of the forecast tools.
