@@ -1,7 +1,10 @@
 ![test and deploy](https://github.com/hydrosolutions/SAPPHIRE_Forecast_Tools/actions/workflows/test_deploy_main.yml/badge.svg)
 
 # SAPPHIRE_forecast_tools
-Tools for operational hydrological forecasting for Central Asian hydromets. The tools are co-designed with the Kyrgyz Hydrometeorological Services as part of the ongoing [SAPPHIRE project](https://www.hydrosolutions.ch/projects/sapphire-central-asia) and funded by the [Swiss Agency for Development and Cooperation](https://www.eda.admin.ch/eda/en/home/fdfa/organisation-fdfa/directorates-divisions/sdc.html).
+The SAPPHIRE Forecast Tools are a component for the modernization of the operational hydrological forecasting for National Hydrometeorological Organizations of Central Asia. The tools are co-designed with the Kyrgyz Hydrometeorological Services as part of the [SAPPHIRE project](https://www.hydrosolutions.ch/projects/sapphire-central-asia) and funded by the [Swiss Agency for Development and Cooperation](https://www.eda.admin.ch/eda/en/home/fdfa/organisation-fdfa/directorates-divisions/sdc.html).
+
+The following figure illustrates the components of the SAPPHIRE Central Asia project. Operational hydrometeorological data is collected manually and/or digitally and stored in the central communication server. Operational hydrological data is then fed into the iEasyHydro High Frequency software where it is reviewed and quality controlled. The SAPPHIRE Forecast Tools are then used to produce forecasts based on the operational hydrological data. In addition to the station data collected by the hydrometeorological organizations, the Forecast Tools can take into account publicly available weather and snow melt forecasts. The runoff forecasts are then analyzed by the operational hydrologists in the Forecast Dashboard where they can also produce bulletins that are disseminated to decision-makers.
+<p align="center"><img src="doc/www/readme/sapphire_concept.png" alt="Schematic of the software components of the SAPPHIRE Central Asia project."/></p>
 
 The tools are designed to be deployed on a local computer with access to operational hydrometeorological data through the [iEasyHydro](https://ieasyhydro.org) database or through excel files. This repository holds data from the public domain for demonstration.
 
