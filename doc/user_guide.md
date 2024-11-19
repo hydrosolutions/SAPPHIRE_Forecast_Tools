@@ -1,6 +1,6 @@
 <h1>User Guide</h1>
 
-This user guide provides a general overview of the SAPPHIRE Forecast Tools and user instructions. Mode detailed information about how the modules are implemented can be found in the [development guide](development.md) and installation instructions are provided in the [deployment guide](deployment.md).
+This user guide provides a general overview of the SAPPHIRE Forecast Tools and user instructions. More detailed information about how the modules are implemented can be found in the [development guide](development.md) and installation instructions are provided in the [deployment guide](deployment.md).
 
 The structure of this document is as follows:
 <!-- How to add TOC: Install Extension Markdown All in One, then press Cmd+Shift+P to select Markdown All in One: Create Table of Contents -->
@@ -40,11 +40,11 @@ The SAPPHIRE Forecast Tools are a collection of software components that are use
 ## Overview
 Forecasts are produced in two steps:
 1. At the beginning of the forecast season, select the stations for which forecasts are to be produced. This is done using the [forecast configuration dashboard](#forecast-configuration). The dashboard is accessed by double-clicking on the station configuration icon on your desktop. The dashboard is currently only available in Russian language.
-You may configure the Forecast Tools to generate excell documents with the forecasts for each station. These documents are similar to the documents produced by the Kyrgyz Hydrometeorological Services. Please note that the writing of these forecast sheets takes some time. We therefore recommend to use this option only during the validation phase of the forecast tools.
+You may configure the Forecast Tools to generate Excel documents with the forecasts for each station. These documents are similar to the documents produced by the Kyrgyz Hydrometeorological Services. Please note that the writing of these forecast sheets takes some time. We therefore recommend to use this option only during the validation phase of the forecast tools.
 
 <p align="center"><img src="www/Station.png" alt="config_icon" width="50"/></p>
 
-1. The [forecast backend](#backend) consists of multiple modules which are automatically run every day at a given time (typically 10 a.m.). The tool reads the discharge data from the iEasyHydro database and/or from a local folder. The tool then produces forecasts for the selected stations and writes the results to forecast bulletins. Depending on the model, daily, pentadal and decadal operational runoff forecasts are available. Unless you configure the tool differently, you will find the forecast bulletins under SAPPHIRE_Forecast_Tools/data/bulletins/. The bulletins are written in follow a template that the user provides (see data/templates/pentad_forecast_bulletin_template.xlsx for an example for a template). Terms in the template bulletin indicated by {{}} are replaced by values by the linear regression tool. The following table shows which models and forecast horizons can be used in the forecasting tools:
+1. The [forecast backend](#backend) consists of multiple modules which are automatically run every day at a given time (typically 10 a.m.). The tool reads the discharge data from the iEasyHydro database and/or from a local folder. The tool then produces forecasts for the selected stations and writes the results to forecast bulletins. Depending on the model, daily, pentadal and decadal operational runoff forecasts are available. Unless you configure the tool differently, you will find the forecast bulletins under "SAPPHIRE_Forecast_Tools/data/bulletins/". The bulletins are written in follow a template that the user provides (see "data/templates/pentad_forecast_bulletin_template.xlsx" for an example for a template). Terms in the template bulletin indicated by {{}} are replaced by values by the linear regression tool. The following table shows which models and forecast horizons can be used in the forecasting tools:
    - Linear regression models (available in demo version): pentadal and decadal forecasts
    - Conceptual rainfall-runoff models: daily, pentadal and decadal forecasts
    - Machine learning models: daily, pentadal and decadal forecasts
@@ -57,8 +57,8 @@ You may configure the Forecast Tools to generate excell documents with the forec
 ## Important user information, limitations and special use cases
 - Currently, only pentadal forecasts are implemented, follwowing the method currently employed by Kyrgyz Hydromet. Further forecast horizons and forecast methods will be implemented in the coming months and years.
 - We assume that discharge stations start with the character '1'. This is currently hard-coded in the software. If your station codes do not start with '1', please contact us.
-- To save runtime, the current implementation checks the iEasyHydro database for new predictor data only after January 2020. If you need to change this, edit the date in the file apps/backend/src/data_processing.py in the section getting predictor.
-- Special use cases, like the discharge for virtual reservoirs are currently hardcoded in the backend. This affects station code 16936. If required, this code section with the special case can be commented in the files apps/backend/src/data_processing.py and apps/backend/src/forecasting.py.
+- To save runtime, the current implementation checks the iEasyHydro database for new predictor data only after January 2020. If you need to change this, edit the date in the file "apps/backend/src/data_processing.py" in the section getting predictor.
+- Special use cases, like the discharge for virtual reservoirs are currently hardcoded in the backend. This affects station code 16936. If required, this code section with the special case can be commented in the files "apps/backend/src/data_processing.py" and "apps/backend/src/forecasting.py".
 
 ## Installation
 For installation instructions, please refer to the [deployment guide](deployment.md).
@@ -70,15 +70,18 @@ For development instructions, please refer to the [development guide](developmen
 TODO: Update this section, differentiate between demo version and full version
 
 The SAPPHIRE Forecast Tools require the following input files to be available which will be further described in the linked or following sections:
-- A complete configuration under apps/config (see [doc/configuration.md](configuration.md) for more detailed instructions)
-- Either access to daily discharge data as excel files in data/daily_discharge and/or access to the iEasyHydro database (either the online or the locally installed version of the software)
+- A complete configuration under "apps/config" directory (see ["doc/configuration.md"](configuration.md) for more detailed instructions)
+- Either access to daily discharge data as excel files in "data/daily_discharge" directory and/or access to the iEasyHydro database (either the online or the locally installed version of the software)
 - Shape file layers of administrative boundaries in the area of your interest in data/GIS
 - Templates for the forecast bulletins in data/templates
 Examples of these files are provided in the repository. You can use them as a template for your own configuration.
 
 ## Daily discharge data
-Daily discharge data for the stations for which forecasts are to be produced. The data must be in the iEasyHydro database or in a local folder. Assuming the iEasyHydro contains operational data and the excel sheets contain data validated by the regime departement, precedence is given to data read from the excel sheets should both data sources be available and overlaps occur. The daily data can be read from 2 formats:
-- One excel document per station with excel sheets for each year with dates in the first column and discharge values in m3/s in the second column. We assume that each sheet has a header row. The excel files must be named with the station code (a 5-digit integer) followed by an underscore and then any name. For example: 12345_river_styx_2000-2020.xlsx (see data/daily_discharge_data for an example).
+Todo Bea: Aidar suggests to rewrite first two sentences into one: "Daily discharge data for the stations, for which forecasts are to be produced, must be in the iEasyHydro database or in a local folder."
+	The sentence is understantable until 'should' here: "Assuming the iEasyHydro contains operational data and the excel sheets that contain data validated by the regime departement, precedence is given to data read from the excel sheets should both data sources be available and overlaps occur."
+
+Daily discharge data for the stations for which forecasts are to be produced. The data must be in the iEasyHydro database or in a local folder. Assuming the iEasyHydro contains operational data and the excel sheets that contain data validated by the regime departement, precedence is given to data read from the excel sheets should both data sources be available and overlaps occur. The daily data can be read from 2 formats:
+- One excel document per station with excel sheets for each year with dates in the first column and discharge values in m3/s in the second column. We assume that each sheet has a header row. The excel files must be named with the station code (a 5-digit integer) followed by an underscore and then any name. For example: 12345_river_styx_2000-2020.xlsx (see "data/daily_discharge_data" for an example).
 - Excel documents with daily river runoff data in single sheets for each station. The format of these excel files is as follows. For each river, a header column, starting with the hydropost code must be present in cell A1. A second header column indicates the date and the river runoff columns. The expected date format is %d.%m.%Y and river runoff is assumed to be in cubic meters per second. Missing values of river runoff can be indicated either by blank cells or by '-'. Files containing multiple rivers daily runoff data must not start with a digit but with a character.
 
 Data from all excel files in the daily discharge data folder are read by the preprocessing_runoff module of the SAPPHIRE Forecast Tools and used for forecasting.
@@ -86,27 +89,29 @@ Data from all excel files in the daily discharge data folder are read by the pre
 
 
 ## Shape file layers of the area of interest
-Shape file layers of the area of interest in the folder data/GIS. The shape files must be in the WGS84 projection. Typically this will be the shape files of the administrative boundaries of the country. Please make sure to make available shp, shx, dbf and prj files.
+Shape file layers of the area of interest in the folder "data/GIS". The shape files must be in the WGS84 projection. Typically this will be the shape files of the administrative boundaries of the country. Please make sure to make available shp, shx, dbf and prj files.
 
 ## Templates for the forecast bulletins
-Templates for the forecast bulletins in the folder data/templates. The templates must be in the xlsx format. The templates can contain several sheets but only the first sheet of the bulletin template is used by the forecast tools to write to. The same logic is used for the bulletin template as in the iEasyHydro software. Terms in the template bulletin indicated by {{}} are replaced by values by the linear regression tool. Please see the list in [bulletin_template_tags.md](bulletin_template_tags.md) for a list of available tags and use the available templates as reference.
+Templates for the forecast bulletins in the folder "data/templates". The templates must be in the .xlsx format. The templates can contain several sheets but only the first sheet of the bulletin template is used by the forecast tools to write to. The same logic is used for the bulletin template as in the iEasyHydro software. Terms in the template bulletin indicated by {{}} are replaced by values by the linear regression tool. Please see the list in [bulletin_template_tags.md](bulletin_template_tags.md) for a list of available tags and use the available templates as reference.
 
-Please note that the template files available in this repository are currently only available in Russian language. They assume , as decimal separator and space as thousands separator. If you use different separators, calculations programmed in the excel file will not work and you will have to adjust the template or your language settings (File > Options > Advanced for Windows or Excel > Preferences > Edit for Mac).
+Please note that the template files available in this repository are currently only available in Russian language. They assume "," as decimal separator and space as thousands separator. If you use different separators, calculations programmed in the excel file will not work and you will have to adjust the template or your language settings (File > Options > Advanced for Windows or Excel > Preferences > Edit for Mac).
 
 
 
 # Output data
-A successful run of the SAPPHIRE Forecast Tools will produce the forecast bulletins in the .xlsx format and visualizations of the forecasts and forecast errors in the forecast dashboard. The bulletins are written to the folder data/bulletins. The visualizations are produced in the forecast dashboard and can be exported as .png files.
+A successful run of the SAPPHIRE Forecast Tools will produce the forecast bulletins in the .xlsx format and visualizations of the forecasts and forecast errors in the forecast dashboard. The bulletins are written to the folder "data/bulletins". The visualizations are produced in the forecast dashboard and can be exported as .png files.
 
 ## Forecast bulletins
-- A forecast bulletin for each forecast horizon and station in the folder data/bulletins
-- If the option is selected in the configuration dashboard, an excel sheet for each station in the folder data/pentadal_forecasts containing the linear regression forecasts as traditionally produced by the Kyrgyz Hydrometeorological Services
+TODO Bea: this is not understandable "If the option is selected in the configuration dashboard, an excel sheet for each station in the folder "data/pentadal_forecasts" containing the linear regression forecasts as traditionally produced by the Kyrgyz Hydrometeorological Services". Aidar suggests "If you select the option to download Excel files in the configuration dashboard, an Excel sheet for each station will be saved in the 'data/pentadal_forecasts' folder. These sheets will contain the linear regression forecasts, as typically produced by the Kyrgyz Hydrometeorological Services."
+
+- A forecast bulletin for each forecast horizon and station in the folder "data/bulletins"
+- If the option is selected in the configuration dashboard, an excel sheet for each station in the folder "data/pentadal_forecasts" containing the linear regression forecasts as traditionally produced by the Kyrgyz Hydrometeorological Services
 
 ## Internal output used for visualization of forecasts
 Intermediate results for visualization on the forecast dashboard:
-- Daily discharge data for each station in the folder apps/internal_data/hydrographs_day.pkl
-- Pentadal discharge data for each station in the folder apps/internal_data/hydrographs_pentad.pkl
-- A csv file with the forecasts for each station in the folder apps/internal_data/forecasts_pentad.csv. This file also contains the parameters of the linear regression model.
+- Daily discharge data for each station in the folder "apps/internal_data/hydrographs_day.pkl"
+- Pentadal discharge data for each station in the folder "apps/internal_data/hydrographs_pentad.pkl"
+- A .csv file with the forecasts for each station in the folder "apps/internal_data/forecasts_pentad.csv". This file also contains the parameters of the linear regression model.
 Please note that these internal files should not be edited manually by the user. You are, however, welcome to copy them to your local machine for further analysis.
 
 
@@ -140,7 +145,7 @@ The module reads daily discharge data from the iEasyHydro database and/or from a
 The pre-processing runoff module can further read static hydropost attributes from iEasyHydro HF and identify for which sites to produce pentadal and decadal forecasts. Alternatively, you can configure the sites for which forecasts are to be produced in the forecast configuration dashboard.
 
 ### Pre-processing publicly available meteorological data (preprocessing_gateway)
-The module reads meteorological data from the SAPPHIRE data gateway. The data is read from the gateway using the gateway API. The data is read and written to a time series data file in the folder apps/internal_data. The data is then used by the forecasting modules to produce forecasts. The demo version of the forecast tools works without this module.
+The module reads meteorological data from the SAPPHIRE data gateway. The data is read from the gateway using the gateway API. The data is read and written to a time series data file in the folder "apps/internal_data". The data is then used by the forecasting modules to produce forecasts. The demo version of the forecast tools works without this module.
 
 TODO: Sandro, please review the section above
 
