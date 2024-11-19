@@ -1653,8 +1653,8 @@ def calculate_skill_metrics_pentad(observed: pd.DataFrame, simulated: pd.DataFra
 
     # Dischard rows with model_long equal to 'Ensemble Mean with  (EM)' or equal to Ensemble Mean with LR (EM)
     skill_metrics_df_ensemble_avg = skill_metrics_df_ensemble_avg[
-        (skill_metrics_df_ensemble_avg['model_long'] != 'Ensemble Mean with  (EM)') &
-        (skill_metrics_df_ensemble_avg['model_long'] != 'Ensemble Mean with LR (EM)')].copy()
+        (skill_metrics_df_ensemble_avg['model_long'] != 'Ens. Mean with  (EM)') &
+        (skill_metrics_df_ensemble_avg['model_long'] != 'Ens. Mean with LR (EM)')].copy()
     #print("DEBUG: skill_metrics_df_ensemble_avg\n", skill_metrics_df_ensemble_avg.head(20))
 
     # Now recalculate the skill metrics for the ensemble
