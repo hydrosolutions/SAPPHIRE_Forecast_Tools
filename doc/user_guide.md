@@ -40,11 +40,32 @@ The SAPPHIRE Forecast Tools are a collection of software components that are use
 Although the forecast tools can be run independently of the other software components in the SAPPHIRE Central Asia Project, they are especially suited to be used by hydrometeorological organizations that have access to a database of operational discharge data through the software [iEasyHydro](www.ieasyhydro.org) and to a database of meteorological forecasts through the [SAPPHIRE data gateway]()(TODO insert link once repo is public). The tools are written in Python and R and are deployed using the Docker system. The tools are designed to be run on a server (cloud or local) and to be accessed through a web browser.
 
 ## Overview
-The forecast tools have 2 main components: 
-1. the backend (invisible which processes the necessary data, produces the forecasts and calculates forecast skill metrics, and
-2. a browser-based dashboard which visualizes the forecasts and allows the analysis of the forecasts and the production of forecast bulletins.  
+The SAPPHIRE Forecast Tools have 2 main components: 
+- the **backend** (invisible to the user) processes the necessary data, produces the forecasts for sites selected for hydrological forecasting (see section [How to select sites for forecasting](#how-to-select-sites-for-forecasting) below) and calculates forecast skill metrics, and  
+- a browser-based **dashboard** that visualizes the forecasts and allows the analysis of the forecasts and the production of forecast bulletins.  
 
-The user interacts with the forecast tools via the dashboard. 
+The SAPPHIRE Forecast Tools have multiple modi operandi (or configurations): 
+- A **stand-alone demo version** with minimal forecasting options which works independently of other software components developed in the SAPPHIRE Central Asia project
+- A **fully integrated version** which is coupled to [iEasyHydro HF]() (TODO: Add link once published) and to the [SAPPHIRE Data Gateway]() (TODO: Add link once published).
+
+The following user instructions will be detailed for both of the above software configurations where applicable. Please note that these user instructions assume that the Forecast Tools are already successfully deployed.   
+
+### How to select sites for forecasting
+The selection of sites for forecasting is done differently in the two software configurations. 
+
+<details>
+	<summary>Demo version</summary>
+	A site configuration dashboard is available to select sites for which to produce short-term forecasts. The site configuration dashboard is opened with a double click on the icon. It is easy to use and comes with detailed instructions. 
+</details>
+
+<details>
+	<summary>Full version</summary>
+	This assumes that iEasyHydro HF is already used operationally. In the discharge site attributes, the user toggles for which forecast horizons to produce operational hydrological forecasts. On the next forecast date, the Forecast Tools will then automatically produce forecasts with all available modles for the site. The user can also manually trigger a re-run of the forecasts with the new site selection in the [forecast dashboard]() (TODO: add link to section explaining the use of the forecast dashboard).  
+</details>
+
+
+
+
 
 Forecasts are produced in two steps:
 1. At the beginning of the forecast season, select the stations for which forecasts are to be produced. This is done using the [forecast configuration dashboard](#forecast-configuration). The dashboard is accessed by double-clicking on the station configuration icon on your desktop. The dashboard is currently only available in Russian language.
