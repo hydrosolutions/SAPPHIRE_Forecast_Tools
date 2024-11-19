@@ -317,6 +317,15 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
     # Modify the bulletin file name to include the basin (or all basins)
     bulletin_file_name = f"{str(header_df['year'].values[0])}_{header_df['month_number'].values[0]:02}_{header_df['month_str_nom_ru'].values[0]}_all_basins_short_term_forecast_bulletin.xlsx"
 
+    # Write to temporary bulletin file, then copy to the appropriate sheet
+    temp_bulletin_file_name = f"_temp_{bulletin_file_name}"
+
+    # Template is always the default template for the first pentad of the month
+    bulletin_template_file = os.getenv("ieasyforecast_template_pentad_bulletin_file")
+    # Write pentad 1 to the template
+    report_settings.templates_directory_path = os.getenv("ieasyreports_templates_directory_path")
+
+    '''
     # If we are not in the first pentad of the month, we want to use the
     # existing bulletin as template to append the new data to it.
     # Test if we are in the first pentad of the month.
@@ -336,26 +345,85 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
             # Fallback to the default template
             bulletin_template_file = os.getenv("ieasyforecast_template_pentad_bulletin_file")
             report_settings.templates_directory_path = os.getenv("ieasyreports_templates_directory_path")
+    '''
+    #print("DEBUG: write_to_excel: bulletin_template_file: ", bulletin_template_file)
+    #print("DEBUG: write_to_excel: report_settings.templates_directory_path: ", report_settings.templates_directory_path)
 
-    print("DEBUG: write_to_excel: bulletin_template_file: ", bulletin_template_file)
-    print("DEBUG: write_to_excel: report_settings.templates_directory_path: ", report_settings.templates_directory_path)
     # Create the report generator
-    report_generator = MultiSheetReportGenerator(
+    report_generator = DefaultReportGenerator(
         tags=tag_list,
         template=bulletin_template_file,
         templates_directory_path=report_settings.templates_directory_path,
         reports_directory_path=report_settings.report_output_path,
         tag_settings=tag_settings,
-        sheet=(int(header_df['pentad'].values[0]) - 1)
         )
 
     report_generator.validate()
 
     report_generator.generate_report(
         list_objects=bulletin_sites,
-        output_filename=bulletin_file_name
+        output_filename=temp_bulletin_file_name
         )
-    print('DEBUG: write_to_excel: Report generated.')
+    print('DEBUG: write_to_excel: Report generated. Now copying to final bulletin ...')
+
+    # Now copy the sheet 1 of the generated report to the appropriate sheet in the final bulletin
+    # Load the generated report
+    try:
+        generated_report = openpyxl.load_workbook(os.path.join(report_settings.report_output_path, temp_bulletin_file_name))
+    except Exception as e:
+        raise Exception(f"Error loading the generated report: {e}")
+
+    # If the file bulletin_file_name exists, do the following:
+    if os.path.exists(os.path.join(report_settings.report_output_path, bulletin_file_name)):
+        # Load the final bulletin
+        try:
+            final_bulletin = openpyxl.load_workbook(os.path.join(report_settings.report_output_path, bulletin_file_name))
+        except Exception as e:
+            raise Exception(f"Error loading the final bulletin: {e}")
+
+        print(f"DEBUG: write_to_excel: initial final_bulletin.sheetnames: {final_bulletin.sheetnames}")
+
+        # Test if we have a sheet already for the current pentad & remove if it exists
+        if f"{int(header_df['pentad'].values[0])} пентада" in final_bulletin.sheetnames:
+            print(f"DEBUG: write_to_excel: Removing sheet for pentad {int(header_df['pentad'].values[0])}")
+            # Remove the sheet for the current pentad
+            final_bulletin.remove(final_bulletin[f"{int(header_df['pentad'].values[0])} пентада"])
+
+        # Get the sheet 1 of the generated report
+        generated_sheet = generated_report.active
+
+        # Rename the sheet to the pentad number
+        generated_sheet.title = f"{int(header_df['pentad'].values[0])} пентада"
+
+        # Set parent workbook of the generated report to the final bulletin to allow copying
+        generated_sheet._parent = final_bulletin
+
+        # Add final_sheet to final_bulletin
+        final_bulletin._add_sheet(generated_sheet)
+
+        # Save the final bulletin
+        final_bulletin.save(os.path.join(report_settings.report_output_path, bulletin_file_name))
+
+        # Close the workbooks
+        generated_report.close()
+        final_bulletin.close()
+
+        # Delete the generated report
+        os.remove(os.path.join(report_settings.report_output_path, temp_bulletin_file_name))
+
+    else:
+        # If the file does not exist, rename the temp_bulletin_file_name to bulletin_file_name
+        os.rename(os.path.join(report_settings.report_output_path, temp_bulletin_file_name),
+                  os.path.join(report_settings.report_output_path, bulletin_file_name))
+        # Test if the sheet name is correct (it should be the pentad number)
+        # Load the final bulletin
+        final_bulletin = openpyxl.load_workbook(os.path.join(report_settings.report_output_path, bulletin_file_name))
+        # Rename the sheet to the pentad number
+        final_bulletin.active.title = f"{int(header_df['pentad'].values[0])} пентада"
+        # Save the final bulletin
+        final_bulletin.save(os.path.join(report_settings.report_output_path, bulletin_file_name))
+        # Close the workbook
+        final_bulletin.close()
 
     # Note all objects that are passed to generate_report through list_obsjects
     # should be 'data' tags. 'data' tags are listed below a 'header' tag.
