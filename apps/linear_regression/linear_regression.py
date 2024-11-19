@@ -99,7 +99,7 @@ def main():
 
     # Only perform the next steps if we have to produce a forecast.
     if not forecast_date:
-        logger.error("No valid forecast date. Exiting.")
+        logger.info("No valid forecast date. Exiting.")
         exit()
 
     # Get forecast flags (identify which forecasts to run based on the forecast date)
