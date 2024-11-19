@@ -2,6 +2,7 @@ import os
 import math
 import openpyxl
 import panel as pn
+import pandas as pd
 from typing import List
 
 # ieassyreport
@@ -143,6 +144,87 @@ def round_discharge_to_comma_separated_string(value: float) -> str:
         print(f'Error in round_discharge: {e}')
         return None
 
+def copy_worksheet(report_settings, temp_bulletin_file_name, bulletin_file_name, header_df):
+        # Now copy the sheet 1 of the generated report to the appropriate sheet in the final bulletin
+    # Load the generated report
+    try:
+        generated_report = openpyxl.load_workbook(os.path.join(report_settings.report_output_path, temp_bulletin_file_name))
+    except Exception as e:
+        raise Exception(f"Error loading the generated report: {e}")
+
+    # If the file bulletin_file_name exists, do the following:
+    if os.path.exists(os.path.join(report_settings.report_output_path, bulletin_file_name)):
+        # Load the final bulletin
+        try:
+            final_bulletin = openpyxl.load_workbook(os.path.join(report_settings.report_output_path, bulletin_file_name))
+        except Exception as e:
+            raise Exception(f"Error loading the final bulletin: {e}")
+
+        print(f"DEBUG: write_to_excel: initial final_bulletin.sheetnames: {final_bulletin.sheetnames}")
+
+        # Test if we have a sheet already for the current pentad & remove if it exists
+        if f"{int(header_df['pentad'].values[0])} пентада" in final_bulletin.sheetnames:
+            print(f"DEBUG: write_to_excel: Removing sheet for pentad {int(header_df['pentad'].values[0])}")
+            # Remove the sheet for the current pentad
+            final_bulletin.remove(final_bulletin[f"{int(header_df['pentad'].values[0])} пентада"])
+
+        # Get the sheet 1 of the generated report
+        generated_sheet = generated_report.active
+
+        # Rename the sheet to the pentad number
+        generated_sheet.title = f"{int(header_df['pentad'].values[0])} пентада"
+
+        # Set parent workbook of the generated report to the final bulletin to allow copying
+        generated_sheet._parent = final_bulletin
+
+        # Add final_sheet to final_bulletin
+        final_bulletin._add_sheet(generated_sheet)
+
+        # Save the final bulletin
+        final_bulletin.save(os.path.join(report_settings.report_output_path, bulletin_file_name))
+
+        # Close the workbooks
+        generated_report.close()
+        final_bulletin.close()
+
+        # Delete the generated report
+        os.remove(os.path.join(report_settings.report_output_path, temp_bulletin_file_name))
+
+    else:
+        # If the file does not exist, rename the temp_bulletin_file_name to bulletin_file_name
+        os.rename(os.path.join(report_settings.report_output_path, temp_bulletin_file_name),
+                  os.path.join(report_settings.report_output_path, bulletin_file_name))
+        # Test if the sheet name is correct (it should be the pentad number)
+        # Load the final bulletin
+        final_bulletin = openpyxl.load_workbook(os.path.join(report_settings.report_output_path, bulletin_file_name))
+        # Rename the sheet to the pentad number
+        final_bulletin.active.title = f"{int(header_df['pentad'].values[0])} пентада"
+        # Save the final bulletin
+        final_bulletin.save(os.path.join(report_settings.report_output_path, bulletin_file_name))
+        # Close the workbook
+        final_bulletin.close()
+
+def oder_sites_list_according_to_bulletin_order(sites_list):
+        """Order the sites_list according to the order in the attribute bulletin_order of each site"""
+        # Get the basin and bulletin order for each site
+        df = pd.DataFrame({
+            'codes': [site.code for site in sites_list],
+            'basins': [site.basin_ru for site in sites_list],
+            'bulletin_order': [site.bulletin_order for site in sites_list]
+        })
+        # Sort the sites_list according to the basin and bulletin order
+        df = df.sort_values(by=['basins', 'bulletin_order'])
+        print(f"Ordered sites: {df}")
+        # Get the ordered list of codes
+        ordered_codes = df['codes'].tolist()
+        # Iterate over the ordered_codes and add sites in sites_list to ordered_sites_list in the order of ordered_codes
+        ordered_sites_list = []
+        for code in ordered_codes:
+            for site in sites_list:
+                if site.code == code:
+                    ordered_sites_list.append(site)
+        return ordered_sites_list
+
 # Function to write data to Excel
 def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
                    tag_settings=None):
@@ -158,6 +240,7 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
     report_settings = report.define_settings(env_file_path)
 
     # Define Tags
+    # region tags
     pentad_tag = Tag(
         name='PENTAD',
         get_value_fn=header_df['pentad'].values[0],
@@ -294,6 +377,7 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
         tag_settings=tag_settings,
         data=True
     )
+    # endregion tags
 
     tag_list = [pentad_tag, forecast_tag, header_tag, river_ru_tag, punkt_ru_tag,
                 model_tag, forecast_tag, dash_tag, linreg_predictor_tag,
@@ -312,48 +396,54 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
         str(header_df['year'].values[0]))#,
         #start_date_month_num + "_" + start_date_month)
 
-    # Modify the bulletin file name to include the basin (or all basins)
-    bulletin_file_name = f"{str(header_df['year'].values[0])}_{header_df['month_number'].values[0]:02}_{header_df['month_str_nom_ru'].values[0]}_all_basins_short_term_forecast_bulletin.xlsx"
+    # From bulletin_sites get site lists for each unique basin
+    # Create a list of unique basins
+    basins = [site.basin_ru for site in bulletin_sites]
+    unique_basins = list(set(basins))
 
-    # If we are not in the first pentad of the month, we want to use the
-    # existing bulletin as template to append the new data to it.
-    # Test if we are in the first pentad of the month.
-    if int(header_df['day_start_pentad'].values[0]) == 1:
-        # We can use the default template for the first pentad of the month
-        bulletin_template_file = os.getenv("ieasyforecast_template_pentad_bulletin_file")
-        # Write pentad 1 to the template
-        report_settings.templates_directory_path = os.getenv("ieasyreports_templates_directory_path")
-    else:
-        # Test if the file exists and revert to the default template if it does not exist
-        if os.path.exists(os.path.join(report_settings.report_output_path, bulletin_file_name)):
-            # Overwrite the settings for the templates directory path.
-            bulletin_template_file = bulletin_file_name
-            # Write pentad >=2 to the existing bulletin
-            report_settings.templates_directory_path = report_settings.report_output_path
-        else:
-            # Fallback to the default template
-            bulletin_template_file = os.getenv("ieasyforecast_template_pentad_bulletin_file")
-            report_settings.templates_directory_path = os.getenv("ieasyreports_templates_directory_path")
+    # Create a list of sites for each unique basin
+    sites_by_basin = {basin: [site for site in bulletin_sites if site.basin_ru == basin] for basin in unique_basins}
 
-    print("DEBUG: write_to_excel: bulletin_template_file: ", bulletin_template_file)
-    print("DEBUG: write_to_excel: report_settings.templates_directory_path: ", report_settings.templates_directory_path)
-    # Create the report generator
-    report_generator = MultiSheetReportGenerator(
-        tags=tag_list,
-        template=bulletin_template_file,
-        templates_directory_path=report_settings.templates_directory_path,
-        reports_directory_path=report_settings.report_output_path,
-        tag_settings=tag_settings,
-        sheet=(int(header_df['pentad'].values[0]) - 1)
+    # Add bulletin_sitest to sites_by_basin under basin 'all_basins'
+    sites_by_basin['all_basins'] = bulletin_sites
+
+    # Print the keys in object sites_by_basin
+    print(f"DEBUG: write_to_excel: sites_by_basin keys: {sites_by_basin.keys()}")
+
+    # Iterate over the unique basins and generate a report for each basin
+    for basin in sites_by_basin.keys():
+        print(f"DEBUG: write_to_excel: Generating report for basin {basin} ...")
+        # Get the sites for the current basin
+        sites = sites_by_basin[basin]
+
+        # Order the sites according to the bulletin order
+        sites = oder_sites_list_according_to_bulletin_order(sites)
+
+        # Define the bulletin file name
+        bulletin_file_name = f"{str(header_df['year'].values[0])}_{header_df['month_number'].values[0]:02}_{header_df['month_str_nom_ru'].values[0]}_{basin}_short_term_forecast_bulletin.xlsx"
+        temp_bulletin_file_name = f"_temp_{bulletin_file_name}"
+
+        # Generate the report
+        report_generator = DefaultReportGenerator(
+            tags=tag_list,
+            template=os.getenv("ieasyforecast_template_pentad_bulletin_file"),
+            templates_directory_path=os.getenv("ieasyreports_templates_directory_path"),
+            reports_directory_path=report_settings.report_output_path,
+            tag_settings=tag_settings,
+            requires_header=True
         )
 
-    report_generator.validate()
+        report_generator.validate()
 
-    report_generator.generate_report(
-        list_objects=bulletin_sites,
-        output_filename=bulletin_file_name
+        report_generator.generate_report(
+            list_objects=sites,
+            output_filename=temp_bulletin_file_name
         )
-    print('DEBUG: write_to_excel: Report generated.')
+
+        copy_worksheet(report_settings, temp_bulletin_file_name, bulletin_file_name, header_df)
+
+
+    # Done with the report generation
 
     # Note all objects that are passed to generate_report through list_obsjects
     # should be 'data' tags. 'data' tags are listed below a 'header' tag.
