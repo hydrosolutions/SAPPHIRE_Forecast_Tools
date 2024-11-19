@@ -2,6 +2,7 @@ import os
 import math
 import openpyxl
 import panel as pn
+import pandas as pd
 from typing import List
 
 # ieassyreport
@@ -203,6 +204,27 @@ def copy_worksheet(report_settings, temp_bulletin_file_name, bulletin_file_name,
         # Close the workbook
         final_bulletin.close()
 
+def oder_sites_list_according_to_bulletin_order(sites_list):
+        """Order the sites_list according to the order in the attribute bulletin_order of each site"""
+        # Get the basin and bulletin order for each site
+        df = pd.DataFrame({
+            'codes': [site.code for site in sites_list],
+            'basins': [site.basin_ru for site in sites_list],
+            'bulletin_order': [site.bulletin_order for site in sites_list]
+        })
+        # Sort the sites_list according to the basin and bulletin order
+        df = df.sort_values(by=['basins', 'bulletin_order'])
+        print(f"Ordered sites: {df}")
+        # Get the ordered list of codes
+        ordered_codes = df['codes'].tolist()
+        # Iterate over the ordered_codes and add sites in sites_list to ordered_sites_list in the order of ordered_codes
+        ordered_sites_list = []
+        for code in ordered_codes:
+            for site in sites_list:
+                if site.code == code:
+                    ordered_sites_list.append(site)
+        return ordered_sites_list
+
 # Function to write data to Excel
 def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
                    tag_settings=None):
@@ -393,6 +415,9 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
         print(f"DEBUG: write_to_excel: Generating report for basin {basin} ...")
         # Get the sites for the current basin
         sites = sites_by_basin[basin]
+
+        # Order the sites according to the bulletin order
+        sites = oder_sites_list_according_to_bulletin_order(sites)
 
         # Define the bulletin file name
         bulletin_file_name = f"{str(header_df['year'].values[0])}_{header_df['month_number'].values[0]:02}_{header_df['month_str_nom_ru'].values[0]}_{basin}_short_term_forecast_bulletin.xlsx"
