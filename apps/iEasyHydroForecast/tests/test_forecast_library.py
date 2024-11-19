@@ -7,6 +7,10 @@ import math
 import os
 import sys
 
+from pandas.testing import assert_frame_equal
+from unittest.mock import patch, Mock
+import logging
+
 from pandas._testing import assert_frame_equal
 
 from iEasyHydroForecast import forecast_library as fl
@@ -158,6 +162,22 @@ class TestPerformLinearRegression(unittest.TestCase):
             fl.perform_linear_regression(df, 'station', 'pentad', 'discharge_sum', 'discharge_avg', '2')
         with self.assertRaises(TypeError):
             fl.perform_linear_regression(df, 'station', 'pentad', 'discharge_sum', 'discharge_avg', 2.0)
+
+    def test_perform_linear_regression_for_pentad_32(self):
+        # As pentad 3 is not present in the data, we expect the dataframe with default values to be returned
+        data = {'station': ['123', '123', '456', '456', '789', '789',
+                            '123', '123', '456', '456', '789', '789'],
+                'pentad': [1, 2, 1, 2, 1, 2,
+                           1, 2, 1, 2, 1, 2],
+                'discharge_sum': [100, 200, 150, 250, 120, 180,
+                                  1000, 2000, 1500, 2500, 1200, 1800],
+                'discharge_avg': [10, 20, 15, 25, 12, 18,
+                                  100, 200, 150, 250, 120, 180]}
+        df = pd.DataFrame(data)
+        result = fl.perform_linear_regression(
+            df, 'station', 'pentad', 'discharge_sum', 'discharge_avg', 3)
+        # Assert that an empty dataframe is returned
+        self.assertTrue(result.empty)
 
     def test_perform_linear_regression_with_simple_data(self):
         # Create a test DataFrame
@@ -384,174 +404,6 @@ class TestPerformLinearRegression(unittest.TestCase):
             assert np.isclose(slope, expected_slopes_p4[station], atol=1e-3)
             assert np.isclose(intercept, expected_intercepts_p4[station], atol=1e-3)
 
-
-"""
-deprecating this version of the function
-class TestCalculateForecastSkill_DEPRECATING(unittest.TestCase):
-    def test_calculate_forecast_skill_deprecating(self):
-        # Test case 1: Normal input
-        data_df1 = pd.DataFrame({
-            'station': ['A', 'A', 'A', 'A', 'B', 'B', 'B', 'B'],
-            'pentad': [1, 2, 1, 2, 1, 2, 1, 2],
-            'observation': [10.0, 12.0, 10.0, 12.0, 8.0, 9.0, 8.0, 9.0],
-            'simulation': [9.0, 11.0, 9.0, 11.0, 7.0, 8.0, 7.0, 8.0]
-        })
-        result_df1 = fl.calculate_forecast_skill_deprecating(data_df1, 'station', 'pentad', 'observation', 'simulation')
-        assert result_df1['absolute_error'].tolist() == [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
-        assert result_df1['observation_std0674'].tolist() == [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-        assert result_df1['flag'].tolist() == [False, False, False, False, False, False, False, False]
-
-        data_df2 = pd.DataFrame({
-            'station': ['A', 'A', 'A', 'A'],
-            'pentad': [1, 1, 1, 1],
-            'observation': [9.0, 10.0, 11.0, 12.0],
-            'simulation': [9.0, 11.0, 9.0, 11.0]
-        })
-        result_df2 = fl.calculate_forecast_skill_deprecating(data_df2, 'station', 'pentad', 'observation', 'simulation')
-        # print(result_df2['observation_std0674'].tolist())
-        assert result_df2['absolute_error'].tolist() == [0.0, 1.0, 2.0, 1.0]
-        assert result_df2['observation_std0674'].tolist() == [
-            0.870130258447933, 0.870130258447933, 0.870130258447933,
-            0.870130258447933]
-        assert result_df2['flag'].tolist() == [True, False, False, False]
-"""
-
-
-"""
-deprecating this version of the function
-class TestGenerateIssueAndForecastDates(unittest.TestCase):
-    def setUp(self):
-        # Create a sample DataFrame for testing
-        self.data_df = pd.concat([
-            pd.DataFrame({
-                'datetime': pd.date_range('2022-01-01', periods=11, freq='D'),
-                'station': ['A']*11,
-                'discharge': [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
-            }),
-            pd.DataFrame({
-                'datetime': pd.date_range('2022-01-01', periods=11, freq='D'),
-                'station': ['B']*11,
-                'discharge': [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
-            }),
-        ])
-        self.data_df_nan = pd.concat([
-            pd.DataFrame({
-                'datetime': pd.date_range('2022-01-01', periods=11, freq='D'),
-                'station': ['A']*11,
-                'discharge': [1, 2, np.nan, np.nan, 5, 6, 7, 8, 9, np.nan, 11]
-            }),
-            pd.DataFrame({
-                'datetime': pd.date_range('2022-01-01', periods=11, freq='D'),
-                'station': ['B']*11,
-                'discharge': [np.nan, np.nan, 3, 4, 5, 6, np.nan, 8, 9, 10, np.nan]
-            }),
-        ])
-
-    def test_output_type(self):
-        # Test that the output is a pandas DataFrame
-        output = fl.generate_issue_and_forecast_dates(self.data_df, 'datetime', 'station', 'discharge')
-        self.assertIsInstance(output, pd.DataFrame)
-
-    def test_output_columns(self):
-        # Test that the output DataFrame has the expected columns
-        output = fl.generate_issue_and_forecast_dates(self.data_df, 'datetime', 'station', 'discharge')
-        expected_columns = ['datetime', 'station', 'discharge', 'Date', 'issue_date', 'discharge_sum', 'discharge_avg']
-        self.assertCountEqual(output.columns, expected_columns)
-
-    def test_output_values(self):
-        # Test that the output DataFrame has the expected values
-        output = fl.generate_issue_and_forecast_dates(self.data_df, 'datetime', 'station', 'discharge')
-        expected_values = [
-            ('2022-01-01', 'A', 1, '2022-01-01', np.nan, np.nan, np.nan),
-            ('2022-01-02', 'A', 2, '2022-01-02', np.nan, np.nan, np.nan),
-            ('2022-01-03', 'A', 3, '2022-01-03', np.nan, np.nan, np.nan),
-            ('2022-01-04', 'A', 4, '2022-01-04', np.nan, np.nan, np.nan),
-            ('2022-01-05', 'A', 5, '2022-01-05',   True, 9.0, 8.0),
-            ('2022-01-06', 'A', 6, '2022-01-06', np.nan, np.nan, np.nan),
-            ('2022-01-07', 'A', 7, '2022-01-07', np.nan, np.nan, np.nan),
-            ('2022-01-08', 'A', 8, '2022-01-08', np.nan, np.nan, np.nan),
-            ('2022-01-09', 'A', 9, '2022-01-09', np.nan, np.nan, np.nan),
-            ('2022-01-10', 'A', 10, '2022-01-10',  True, 24.0, 11.0),
-            ('2022-01-11', 'A', 11, '2022-01-11', np.nan, np.nan, np.nan),
-            ('2022-01-01', 'B', 1, '2022-01-01', np.nan, np.nan, np.nan),
-            ('2022-01-02', 'B', 2, '2022-01-02', np.nan, np.nan, np.nan),
-            ('2022-01-03', 'B', 3, '2022-01-03', np.nan, np.nan, np.nan),
-            ('2022-01-04', 'B', 4, '2022-01-04', np.nan, np.nan, np.nan),
-            ('2022-01-05', 'B', 5, '2022-01-05',   True, 9.0, 8.0),
-            ('2022-01-06', 'B', 6, '2022-01-06', np.nan, np.nan, np.nan),
-            ('2022-01-07', 'B', 7, '2022-01-07', np.nan, np.nan, np.nan),
-            ('2022-01-08', 'B', 8, '2022-01-08', np.nan, np.nan, np.nan),
-            ('2022-01-09', 'B', 9, '2022-01-09', np.nan, np.nan, np.nan),
-            ('2022-01-10', 'B', 10, '2022-01-10',  True, 24.0, 11.0),
-            ('2022-01-11', 'B', 11, '2022-01-11', np.nan, np.nan, np.nan)
-        ]
-        counter = 0
-        for i, row in output.iterrows():
-            self.assertEqual(math.isnan(row[4]), math.isnan(expected_values[counter][4]))
-            self.assertEqual(math.isnan(row[5]), math.isnan(expected_values[counter][5]))
-            self.assertEqual(math.isnan(row[6]), math.isnan(expected_values[counter][6]))
-            counter += 1
-
-    def test_output_values_with_nan_input(self):
-        # Test that the output DataFrame has the expected values
-        output = fl.generate_issue_and_forecast_dates(self.data_df_nan, 'datetime', 'station', 'discharge')
-        expected_values = [
-            ('2022-01-01', 'A', 1, '2022-01-01', np.nan, np.nan, np.nan),
-            ('2022-01-02', 'A', 2, '2022-01-02', np.nan, np.nan, np.nan),
-            ('2022-01-03', 'A', np.nan, '2022-01-03', np.nan, np.nan, np.nan),
-            ('2022-01-04', 'A', np.nan, '2022-01-04', np.nan, np.nan, np.nan),
-            ('2022-01-05', 'A', 5, '2022-01-05',   True, 9.0, 8.0),
-            ('2022-01-06', 'A', 6, '2022-01-06', np.nan, np.nan, np.nan),
-            ('2022-01-07', 'A', 7, '2022-01-07', np.nan, np.nan, np.nan),
-            ('2022-01-08', 'A', 8, '2022-01-08', np.nan, np.nan, np.nan),
-            ('2022-01-09', 'A', 9, '2022-01-09', np.nan, np.nan, np.nan),
-            ('2022-01-10', 'A', np.nan, '2022-01-10',  True, 24.0, 11.0),
-            ('2022-01-11', 'A', 11, '2022-01-11', np.nan, np.nan, np.nan),
-            ('2022-01-01', 'B', np.nan, '2022-01-01', np.nan, np.nan, np.nan),
-            ('2022-01-02', 'B', np.nan, '2022-01-02', np.nan, np.nan, np.nan),
-            ('2022-01-03', 'B', 3, '2022-01-03', np.nan, np.nan, np.nan),
-            ('2022-01-04', 'B', 4, '2022-01-04', np.nan, np.nan, np.nan),
-            ('2022-01-05', 'B', 5, '2022-01-05',   True, 9.0, 8.0),
-            ('2022-01-06', 'B', 6, '2022-01-06', np.nan, np.nan, np.nan),
-            ('2022-01-07', 'B', np.nan, '2022-01-07', np.nan, np.nan, np.nan),
-            ('2022-01-08', 'B', 8, '2022-01-08', np.nan, np.nan, np.nan),
-            ('2022-01-09', 'B', 9, '2022-01-09', np.nan, np.nan, np.nan),
-            ('2022-01-10', 'B', 10, '2022-01-10',  True, 24.0, 11.0),
-            ('2022-01-11', 'B', np.nan, '2022-01-11', np.nan, np.nan, np.nan)
-        ]
-        counter = 0
-        for i, row in output.iterrows():
-            self.assertEqual(math.isnan(row[4]), math.isnan(expected_values[counter][4]))
-            self.assertEqual(math.isnan(row[5]), math.isnan(expected_values[counter][5]))
-            self.assertEqual(math.isnan(row[6]), math.isnan(expected_values[counter][6]))
-            counter += 1
-
-    def test_negative_discharge(self):
-        # Test that negative discharge values are handled correctly
-        self.data_df.loc[3, 'discharge'] = -1
-        output = fl.generate_issue_and_forecast_dates(self.data_df, 'datetime', 'station', 'discharge')
-        self.assertEqual((output.iloc[4, 5]), 9.0)
-        self.assertEqual((output.iloc[4, 6]), 8.0)
-
-    def test_missing_data(self):
-        # Test that missing data is handled correctly
-        self.data_df = self.data_df.iloc[:5]  # Only keep the first 5 rows
-        output = fl.generate_issue_and_forecast_dates(self.data_df, 'datetime', 'station', 'discharge')
-        self.assertEqual(len(output), 5)
-        self.assertEqual(output['discharge_sum'].tolist()[4], 9.0)
-        self.assertTrue(output['issue_date'].tolist()[4])
-        self.assertTrue(math.isnan(output['discharge_avg'].tolist()[4]))
-
-    def test_demo_data_test_case(self):
-        self.data_df = pd.DataFrame({
-            'Date': ['2022-04-26', '2022-04-27', '2022-04-28', '2022-04-29', '2022-04-30',
-                     '2022-05-01', '2022-05-02', '2022-05-03', '2022-05-04', '2022-05-05'],
-            'Q_m3s': [0.74, 0.74, 0.77, 0.84, 0.80, 0.78, 0.81, 0.85, 0.77, 0.74],
-            'Year': [2022]*10,
-            'Code': [12256]*10})
-        output = fl.generate_issue_and_forecast_dates(self.data_df, 'Date', 'Code', 'Q_m3s')
-        print("\n\nDEBUG: test_demo_data_test_case:\n", output)
-"""
 
 class TestLoadAllStationDataFromJSON(unittest.TestCase):
     def test_load(self):

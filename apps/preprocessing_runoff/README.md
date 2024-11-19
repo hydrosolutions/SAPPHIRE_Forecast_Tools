@@ -10,6 +10,17 @@ We perform a rough filtering of the data to remove outliers. The filtering is ba
 ## Output
 - CSV file with daily river runoff data for each site. The file contains the columns 'code', 'date', and 'discharge' (in m3/s).
 
+## Development
+### Run locally
+From the directory preprocessing_runoff run the following command:
+```
+ieasyhydroforecast_env_file_path=path/to/.env python preprocessing_runoff.py
+```
+### Run tests
+From the directory apps run the following command:
+```
+SAPPHIRE_TESTDEV_ENV=TRUE python -m pytest
+```
 
 
 

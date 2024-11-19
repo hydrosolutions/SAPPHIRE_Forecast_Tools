@@ -384,7 +384,7 @@ print(f"\n\n\nmodel_checkbox: {model_checkbox.value}\n\n\n")
 
 allowable_range_selection = pn.widgets.Select(
     name=_("Select forecast range for display:"),
-    options=[_("delta"), _("Manual range, select value below"), _("max[delta, %]")],
+    options=[_("delta"), _("Manual range, select value below"), _("min[delta, %]")],
     value=_("delta"),
     margin=(0, 0, 0, 0)
 )
@@ -1001,7 +1001,18 @@ forecast_skill_plot = pn.panel(
     ),
     sizing_mode='stretch_both'
 )
-
+skill_table = pn.panel(
+    viz.create_skill_table(forecast_stats),
+    sizing_mode='stretch_width')
+skill_metrics_download_filename, skill_metrics_download_button = skill_table.download_menu(
+    text_kwargs={'name': _('Enter filename:'), 'value': 'forecast_skill_metrics.csv'},
+    button_kwargs={'name': _('Download currently visible table')}
+)
+# Define a download button for the skill metrics table
+#skill_metrics_download_button = pn.widgets.FileDownload(
+#    file='forecast_skill_metrics.csv', button_type='success', auto=False,
+#    embed=False, name="Right-click to download using 'Save as' dialog"
+#)
 
 def update_forecast_tabulator(event=None):
     viz.create_forecast_summary_tabulator(
@@ -1124,7 +1135,8 @@ def tabs_change_language(language):
             forecast_summary_table, pentad_forecast_plot, forecast_skill_plot,
             bulletin_table, write_bulletin_button, bulletin_download_panel, disclaimer,
             station_card, forecast_card, add_to_bulletin_button, basin_card,
-            pentad_card, reload_card, add_to_bulletin_popup, show_daily_data_widget)
+            pentad_card, reload_card, add_to_bulletin_popup, show_daily_data_widget,
+            skill_table, skill_metrics_download_filename, skill_metrics_download_button)
     except Exception as e:
         print(f"Error in tabs_change_language: {e}")
         print(traceback.format_exc())
@@ -1153,7 +1165,7 @@ def sidepane_change_language(language):
         forecast_card.title = _('Select forecasts:')
         model_checkbox.name = _("Select forecast model:")
         allowable_range_selection.name = _("Select forecast range for display:")
-        allowable_range_selection.options = [_("delta"), _("Manual range, select value below"), _("max[delta, %)")]
+        allowable_range_selection.options = [_("delta"), _("Manual range, select value below"), _("min[delta, %)")]
         manual_range.name = _("Manual range (%)")
         range_selection_title.object = _("Show ranges in figure:")
         show_range_button.name = _("Show ranges in figure:")
