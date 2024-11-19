@@ -1415,7 +1415,7 @@ def plot_pentadal_vlines(data, date_col, y_text=1):
 
     return vlines
 
-def create_cached_vlines(_, for_dates=True):
+def create_cached_vlines(_, for_dates=True, y_text=1):
     """Create and cache vertical lines for pentad markers"""
     # Check if already in cache
     cache_key = 'vlines_dates' if for_dates else 'vlines_pentad'
@@ -1451,7 +1451,7 @@ def create_cached_vlines(_, for_dates=True):
         # Add text labels
         mid_date_text = ['1', '2', '3', '4', '5', '6'] * 12
         text_overlay = hv.Overlay([
-            hv.Text(date + dt.timedelta(days=2.2), 1, text).opts(
+            hv.Text(date + dt.timedelta(days=2.2), y_text, text).opts(
                 text_baseline='bottom', text_align='center',
                 text_font_size='9pt', text_color='gray',
                 text_alpha=0.5, text_font_style='italic',
@@ -1473,7 +1473,7 @@ def create_cached_vlines(_, for_dates=True):
 
         # Add text labels
         text_overlay = hv.Overlay([
-            hv.Text(pentad + 0.5, 1, str((pentad - 1) % 6 + 1)).opts(
+            hv.Text(pentad + 0.5, y_text, str((pentad - 1) % 6 + 1)).opts(
                 text_baseline='bottom', text_align='center',
                 text_font_size='9pt', text_color='gray',
                 text_alpha=0.5, text_font_style='italic',
@@ -1726,7 +1726,8 @@ def plot_rel_to_norm_runoff(_, hydrograph_day_all, linreg_predictor, station, ti
             .opts(color=runoff_forecast_color_list[3], alpha=0.2, line_width=0,
                   muted_alpha=0.05, show_legend=False)
 
-    vlines = plot_pentadal_vlines(data, 'date', y_text=maxy * 0.95)
+    #vlines = plot_pentadal_vlines(data, 'date', y_text=maxy * 0.95)
+    vlines = create_cached_vlines(_, for_dates=True, y_text=maxy * 0.95)
 
     # Horizontal line at 0
     zero_line = hv.HLine(0).opts(color='black', line_width=1,
@@ -1843,7 +1844,8 @@ def plot_daily_rainfall_data(_, daily_rainfall, station, date_picker,
             .opts(color=runoff_forecast_color_list[3], alpha=0.2, line_width=0,
                   muted_alpha=0.05, show_legend=False)
 
-    vlines = plot_pentadal_vlines(norm_rainfall, _('date'), y_text=station_data['P'].max() * 1.05)
+    #vlines = plot_pentadal_vlines(norm_rainfall, _('date'), y_text=station_data['P'].max() * 1.05)
+    vlines = create_cached_vlines(_, for_dates=True, y_text=station_data['P'].max() * 1.05)
 
     # A bar plot for the norm rainfall
     hv_norm_rainfall = hv.Curve(
@@ -1966,7 +1968,8 @@ def plot_daily_temperature_data(_, daily_rainfall, station, date_picker,
             .opts(color=runoff_forecast_color_list[3], alpha=0.2, line_width=0,
                   muted_alpha=0.05, show_legend=False)
 
-    vlines = plot_pentadal_vlines(norm_rainfall, _('date'), y_text=station_data['T'].max() * 1.05)
+    #vlines = plot_pentadal_vlines(norm_rainfall, _('date'), y_text=station_data['T'].max() * 1.05)
+    vlines = create_cached_vlines(_, for_dates=True, y_text=station_data['T'].max() * 1.05)
 
     # A bar plot for the norm rainfall
     hv_norm_rainfall = hv.Curve(
@@ -2100,7 +2103,9 @@ def plot_daily_rel_to_norm_rainfall(_, daily_rainfall, station, date_picker,
             .opts(color=runoff_forecast_color_list[3], alpha=0.2, line_width=0,
                   muted_alpha=0.05, show_legend=False)
 
-    vlines = plot_pentadal_vlines(norm_rainfall, _('date'), y_text=maxy * 0.9)
+    #vlines = plot_pentadal_vlines(norm_rainfall, _('date'), y_text=maxy * 0.9)
+    vlines = create_cached_vlines(_, for_dates=True, y_text=maxy * 0.9)
+
     # horizontal line
     zero_line = hv.HLine(0).opts(color='black', line_width=1,
                                     line_dash='solid', line_alpha=0.5,
@@ -2312,7 +2317,8 @@ def plot_pentad_forecast_hydrograph_data_v2(_, hydrograph_day_all, linreg_predic
             .opts(color=runoff_forecast_color_list[3], alpha=0.2, line_width=0,
                   muted_alpha=0.05, show_legend=False)
 
-    vlines = plot_pentadal_vlines(data, _('date column name'))
+    #vlines = plot_pentadal_vlines(data, _('date column name'))
+    vlines = create_cached_vlines(_, for_dates=True)
 
     full_range_area = plot_runoff_range_area(
         data, date_col, min_col, max_col, _("Full range legend entry"),
@@ -2511,7 +2517,9 @@ def plot_daily_rel_to_norm_rainfall(_, daily_rainfall, station, date_picker,
             .opts(color=runoff_forecast_color_list[3], alpha=0.2, line_width=0,
                   muted_alpha=0.05, show_legend=False)
 
-    vlines = plot_pentadal_vlines(norm_rainfall, _('date'), y_text=maxy * 0.9)
+    #vlines = plot_pentadal_vlines(norm_rainfall, _('date'), y_text=maxy * 0.9)
+    vlines = create_cached_vlines(_, for_dates=True, y_text=maxy * 0.9)
+
     # horizontal line
     zero_line = hv.HLine(0).opts(color='black', line_width=1,
                                     line_dash='solid', line_alpha=0.5,
