@@ -3974,6 +3974,12 @@ def create_skill_table(forecast_stats):
     # Sort the columns by code, month and pentad_in_month
     forecast_stats_loc = forecast_stats_loc.sort_values(by=['code', 'month', 'pentad_in_month'])
 
+    # Get unique values for each filterable column
+    unique_codes = sorted(forecast_stats_loc['code'].unique().tolist())
+    unique_models = sorted(forecast_stats_loc['model_short'].unique().tolist())
+    unique_months = sorted(forecast_stats_loc['month'].unique().tolist())
+    unique_pentads = sorted(forecast_stats_loc['pentad_in_month'].unique().tolist())
+
     # Rename columns for better display
     forecast_stats_loc.rename(columns={
         'pentad_in_month': _('Pentad'),
@@ -3987,29 +3993,69 @@ def create_skill_table(forecast_stats):
         'mae': _('MAE'),
     }, inplace=True)
 
-    # Add tabulator editors for the header_filters
+    # Define formatters for numeric columns
+    formatters = {
+        _('s/σ'): {'type': 'number', 'precision': 3},
+        _('NSE'): {'type': 'number', 'max': 1.0, 'precision': 3},
+        _('δ'): {'type': 'number', 'precision': 3},
+        _('Accuracy'): {'type': 'number', 'max': 1.0, 'precision': 3},
+        _('MAE'): {'type': 'number', 'precision': 3},
+    }
+
+    # Add tabulator editors for the header_filters with predefined values
     filters = {
-        _('Pentad'): {'type': 'number', 'placeholder': _('Filter by pentad')},
-        _('Month'): {'type': 'number', 'placeholder': _('Filter by month')},
-        _('Model'): {'type': 'list', 'valuesLookup': True, 'placeholder': _('Filter by model')},
-        _('Code'): {'type': 'list', 'valuesLookup': True, 'placeholder': _('Filter by code')},
+        _('Pentad'): {
+            'type': 'list',
+            'values': unique_pentads,
+            'placeholder': _('Filter by pentad')
+        },
+        _('Month'): {
+            'type': 'list',
+            'values': unique_months,
+            'placeholder': _('Filter by month')
+        },
+        _('Model'): {
+            'type': 'list',
+            'values': unique_models,
+            'placeholder': _('Filter by model')
+        },
+        _('Code'): {
+            'type': 'list',
+            'values': unique_codes,
+            'placeholder': _('Filter by code')
+        },
     }
 
     # Create a Tabulator widget for the forecast statistics
-    # Allow filtering for a code, model_short and pentad_in_year
     forecast_stats_table = pn.widgets.Tabulator(
         value=forecast_stats_loc,
         theme='bootstrap',
-        configuration={'columnFilters': True},  # Enable column filtering
-        layout='fit_data_stretch',  # Optional: adjust column sizing
+        configuration={
+            'columnFilters': True,
+            'pagination': 'local',        # Use local pagination
+            'paginationSize': 72000,       # Increased page size to show more rows
+            'paginationSizeSelector': [72, 720, 7200, 72000], # Allow user to change page size
+            'filterMode': 'local',        # Use local filtering
+            'sortMode': 'local',          # Use local sorting
+            'movableColumns': True,       # Allow column reordering
+            'headerFilterLiveFilter': True, # Live filtering as you type
+            'selectable': True,           # Allow row selection
+            'columnsResizable': True,     # Allow column resizing
+        },
+        layout='fit_data_stretch',
         sizing_mode='stretch_width',
         height=400,
         show_index=False,
         header_filters=filters,
-        page_size=72
+        formatters=formatters,
+        page_size=72000                    # Match the pagination size
     )
 
     return forecast_stats_table
+
+
+
+
 
 
 # endregion
