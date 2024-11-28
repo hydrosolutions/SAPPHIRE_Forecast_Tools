@@ -202,15 +202,15 @@ class SapphireSite:
             Site: A SapphireSite object.
         """
         print(f"\n\nget_forecast_attributes_for_site: dataframe: {df}")
-        self.forecast_pentad = df['Forecasted discharge'].values[0]
-        self.forecast_lower_bound = df['Forecast lower bound'].values[0]
-        self.forecast_upper_bound = df['Forecast upper bound'].values[0]
-        self.forecast_delta = df['δ'].values[0]
-        self.forecast_sdivsigma = df['s/σ'].values[0]
-        self.forecast_mae = df['MAE'].values[0]
-        self.forecast_accuracy = df['Accuracy'].values[0]
+        self.forecast_pentad = df[_('Forecasted discharge')].values[0]
+        self.forecast_lower_bound = df[_('Forecast lower bound')].values[0]
+        self.forecast_upper_bound = df[_('Forecast upper bound')].values[0]
+        self.forecast_delta = df[_('δ')].values[0]
+        self.forecast_sdivsigma = df[_('s/σ')].values[0]
+        self.forecast_mae = df[_('MAE')].values[0]
+        self.forecast_accuracy = df[_('Accuracy')].values[0]
         #self.forecast_nse = df['NSE']  # Not available yet
-        self.forecast_model = df['Model'].values[0]
+        self.forecast_model = df[_('Model')].values[0]
         # Calculate percentage of norm
         self.perc_norm = round((self.forecast_pentad / self.hydrograph_mean) *200, 2)
         print(f"Updated site {self.code} with forecast attributes from DataFrame.")

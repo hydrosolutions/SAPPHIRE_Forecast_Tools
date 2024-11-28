@@ -56,6 +56,8 @@ import calendar
 import csv
 from pathlib import Path
 
+from src.gettext_config import _
+
 # Get the absolute path of the directory containing the current script
 cwd = os.getcwd()
 
@@ -116,21 +118,24 @@ logger.addHandler(console_handler)
 # Set the primary color to be consistent with the icon color
 # Trying to fix the issue with the checkbox label not wrapping
 # Loads the font-awesome icons (used for the language icon)
-pn.extension(global_css=[
-    ':root { --design-primary-color: #307096; }',
-    """
-    .checkbox-label {
-        white-space: normal !important;
-        word-wrap: break-word !important;
-        width: 100%; /* Adjust as needed */
-    }
-    """
-    ])
+pn.extension(
+    'tabulator',
+    raw_css=[
+        ':root { --design-primary-color: #307096; }',
+        """
+        .checkbox-label {
+            white-space: normal !important;
+            word-wrap: break-word !important;
+            width: 100%; /* Adjust as needed */
+        }
+        """
+    ]
+)
 
 # CSS for language widget text color
 language_button_css = """
-header .bk.pn-widget-select .bk-select {
-    color: #307086 !important;  /* Change text color of select widget */
+header .bk.pn-widget-button {
+    color: #307086 !important;  /* Change text color of button widget */
 }
 """
 
@@ -178,14 +183,31 @@ bulletin_download_panel = downloader.panel()
 
 
 # region localization
-# Read the locale from the environment file
-current_locale = os.getenv("ieasyforecast_locale")
-print(f"INFO: Default locale: {current_locale}")
+# We'll use pn.state.location to get query parameters from the URL
+# This allows us to pass the selected language via the URL
+
+# Default language from .env file
+default_locale = os.getenv("ieasyforecast_locale", "en_CH")
+print(f"INFO: Default locale: {default_locale}")
+
+# Get the language from the URL query parameter
+selected_language = pn.state.location.query_params.get('lang', default_locale)
+print(f"INFO: Selected language: {selected_language}")
 
 # Localization, translation to different languages.
 localedir = os.getenv("ieasyforecast_locale_dir")
 
-_ = localize.load_translation(current_locale, localedir)
+# Set the locale directory in the translation manager
+localize.translation_manager.set_locale_dir(locale_dir=localedir)
+
+# Set the current language
+localize.translation_manager.language = selected_language
+
+# Load translations globally
+localize.translation_manager.load_translation_pentad_dashboard()
+
+# Import visualization module after setting up localization
+import src.vizualization as viz
 
 # endregion
 
@@ -298,18 +320,18 @@ model_dict_all = forecasts_all[['model_short', 'model_long']] \
 #print(f"DEBUG: pentad_dashboard.py: station_dict: {station_dict}")
 
 pentads = [
-    f"{i+1}st pentad of {calendar.month_name[month]}" if i == 0 else
-    f"{i+1}nd pentad of {calendar.month_name[month]}" if i == 1 else
-    f"{i+1}rd pentad of {calendar.month_name[month]}" if i == 2 else
-    f"{i+1}th pentad of {calendar.month_name[month]}"
+    f"{i+1}{_('st pentad of')} {calendar.month_name[month]}" if i == 0 else
+    f"{i+1}{_('nd pentad of')} {calendar.month_name[month]}" if i == 1 else
+    f"{i+1}{_('rd pentad of')} {calendar.month_name[month]}" if i == 2 else
+    f"{i+1}{_('th pentad of')} {calendar.month_name[month]}"
     for month in range(1, 13) for i in range(6)
 ]
 
 # Create a dictionary mapping each pentad description to its pentad_in_year value
-pentad_options = {f"{i+1}st pentad of {calendar.month_name[month]}" if i == 0 else
-                  f"{i+1}nd pentad of {calendar.month_name[month]}" if i == 1 else
-                  f"{i+1}rd pentad of {calendar.month_name[month]}" if i == 2 else
-                  f"{i+1}th pentad of {calendar.month_name[month]}": i + (month-1)*6 + 1
+pentad_options = {f"{i+1}{_('st pentad of')} {calendar.month_name[month]}" if i == 0 else
+                  f"{i+1}{_('nd pentad of')} {calendar.month_name[month]}" if i == 1 else
+                  f"{i+1}{_('rd pentad of')} {calendar.month_name[month]}" if i == 2 else
+                  f"{i+1}{_('th pentad of')} {calendar.month_name[month]}": i + (month-1)*6 + 1
                   for month in range(1, 13) for i in range(6)}
 
 # endregion
@@ -433,14 +455,18 @@ remove_bulletin_button = pn.widgets.Button(
     margin=(10, 0, 0, 0)  # top, right, bottom, left
 )
 
-# Create a language selection widget
-language_select = pn.widgets.Select(
-    name='',
-    options={'en':'en_CH', 'ru':'ru_KG', 'kg': 'ky_KG'},
-    value=current_locale,
-    width=50,
-    css_classes=['language_button_css']
-)
+# Create language selection buttons as links that reload the page with the selected language
+def create_language_buttons():
+    buttons = []
+    for lang_name, lang_code in {'English': 'en_CH', 'Русский': 'ru_KG', 'Кыргызча': 'ky_KG'}.items():
+        # Create a link that reloads the page with the selected language
+        href = pn.state.location.pathname + f'?lang={lang_code}'
+        button = pn.widgets.Button(name=lang_name, button_type='primary', width=80)
+        button.js_on_click(args={'href': href}, code='window.location.href=href')
+        buttons.append(button)
+    return pn.Row(*buttons, sizing_mode='fixed')
+
+language_buttons = create_language_buttons()
 
 # Create a single Tabulator instance
 forecast_tabulator = pn.widgets.Tabulator(
@@ -469,7 +495,7 @@ select_basin_widget = pn.widgets.Select(
 
 # Forecast card for sidepanel
 forecast_model_title = pn.pane.Markdown(
-    _("Select forecast model:"), margin=(0, 0, -15, 0))  # martin=(top, right, bottom, left)
+    _("Select forecast model:"), margin=(0, 0, -15, 0))  # margin=(top, right, bottom, left)
 range_selection_title = pn.pane.Markdown(
     _("Show ranges in figure:"), margin=(0, 0, -15, 0))
 forecast_card = pn.Card(
@@ -530,12 +556,32 @@ add_to_bulletin_button = pn.widgets.Button(name=_("Add to bulletin"), button_typ
 
 # Initialize the bulletin_tabulator as a global Tabulator with predefined columns and grouping
 bulletin_tabulator = pn.widgets.Tabulator(
-    pd.DataFrame(columns=['Hydropost', 'Model', 'Basin']),  # Ensure 'Basin' is included
+    value=pd.DataFrame(columns=[
+        _('Hydropost'), _('Model'), _('Basin'),
+        _('Forecasted discharge'), _('Forecast lower bound'), _('Forecast upper bound'),
+        _('δ'), _('s/σ'), _('MAE'), _('Accuracy')
+    ]),
+    theme='bootstrap',
+    configuration={
+        'columns': [
+            {'field': 'station_label', 'title': _('Hydropost')},
+            {'field': 'model_short', 'title': _('Model')},
+            {'field': 'basin_ru', 'title': _('Basin')},
+            {'field': 'forecasted_discharge', 'title': _('Forecasted discharge')},
+            {'field': 'fc_lower', 'title': _('Forecast lower bound')},
+            {'field': 'fc_upper', 'title': _('Forecast upper bound')},
+            {'field': 'delta', 'title': _('δ')},
+            {'field': 'sdivsigma', 'title': _('s/σ')},
+            {'field': 'mae', 'title': _('MAE')},
+            {'field': 'accuracy', 'title': _('Accuracy')},
+        ], 
+        'columnFilters': True  # Enable column filtering if needed
+    },
     show_index=False,
     height=300,
     selectable='checkbox',  # Allow multiple selections for removal
     sizing_mode='stretch_width',
-    groupby=['Basin'],  # Enable grouping by 'Basin'
+    groupby=[_('Basin')],  # Enable grouping by 'Basin'
     layout='fit_columns'
 )
 # endregion
@@ -632,14 +678,29 @@ def load_bulletin_from_csv():
     global bulletin_sites
     if os.path.exists(BULLETIN_CSV_PATH):
         try:
-            bulletin_df = pd.read_csv(BULLETIN_CSV_PATH)
+            bulletin_df = pd.read_csv(BULLETIN_CSV_PATH, encoding='utf-8-sig')
+
+            # Rename columns from original English to localized names for UI consistency
+            bulletin_df_display = bulletin_df.rename(columns={
+                'station_label': _('Hydropost'),
+                'model_short': _('Model'),
+                'basin_ru': _('Basin'),
+                'forecasted_discharge': _('Forecasted discharge'),
+                'fc_lower': _('Forecast lower bound'),
+                'fc_upper': _('Forecast upper bound'),
+                'delta': _('δ'),
+                'sdivsigma': _('s/σ'),
+                'mae': _('MAE'),
+                'accuracy': _('Accuracy')
+            })
+
             bulletin_sites = []
             for code in bulletin_df['code'].unique():
-                site_data = bulletin_df[bulletin_df['code'] == code].copy()
+                site_data = bulletin_df_display[bulletin_df['code'] == code].copy()
                 site = next((s for s in sites_list if s.code == str(code)), None)
                 if site:
                     # Assign forecasts to the site
-                    site.forecasts = site_data.drop(columns=['code', 'station_label', 'basin_ru'])
+                    site.forecasts = site_data.drop(columns=['code', _('Hydropost'), _('Basin')])
                     # Update site attributes
                     site.get_forecast_attributes_for_site(_, site.forecasts)
                     bulletin_sites.append(site)
@@ -664,10 +725,26 @@ def save_bulletin_to_csv():
             row_data['station_label'] = site.station_label
             row_data['basin_ru'] = getattr(site, 'basin_ru', '')
             data.append(row_data)
+    
     if data:
-        bulletin_df = pd.DataFrame(data)
+        bulletin_df_display = pd.DataFrame(data)
+
+        # Translate the localized columns back to their original names
+        bulletin_df = bulletin_df_display.rename(columns={
+            _('Hydropost'): 'station_label',
+            _('Model'): 'model_short',
+            _('Basin'): 'basin_ru',
+            _('Forecasted discharge'): 'forecasted_discharge',
+            _('Forecast lower bound'): 'fc_lower',
+            _('Forecast upper bound'): 'fc_upper',
+            _('δ'): 'delta',
+            _('s/σ'): 'sdivsigma',
+            _('MAE'): 'mae',
+            _('Accuracy'): 'accuracy'
+        })
+
         try:
-            bulletin_df.to_csv(BULLETIN_CSV_PATH, index=False)
+            bulletin_df.to_csv(BULLETIN_CSV_PATH, index=False, encoding='utf-8-sig')
             print("Bulletin saved to CSV.")
             logger.info("Bulletin saved to CSV.")
         except Exception as e:
@@ -718,6 +795,13 @@ def add_current_selection_to_bulletin(event=None):
 
     # Debugging: Print site details
     print(f"DEBUG: Added site '{selected_site.code}' to bulletin with forecasts: {selected_site.forecasts}")
+
+    add_to_bulletin_popup.object = _("Added to bulletin table")
+    add_to_bulletin_popup.alert_type = "success"
+    add_to_bulletin_popup.visible = True
+    pn.state.add_periodic_callback(
+        lambda: setattr(add_to_bulletin_popup, 'visible', False),
+        2000, count=1)
 
     # Update or add to bulletin_sites
     existing_site = next(
@@ -783,16 +867,16 @@ def create_bulletin_table():
         for site in bulletin_sites:
             for idx, forecast_row in site.forecasts.iterrows():
                 data.append({
-                    'Hydropost': site.station_label,
-                    'Model': forecast_row.get('Model', ''),
-                    'Basin': getattr(site, 'basin_ru', ''),
-                    'Forecasted discharge': forecast_row.get('Forecasted discharge', ''),
-                    'Forecast lower bound': forecast_row.get('Forecast lower bound', ''),
-                    'Forecast upper bound': forecast_row.get('Forecast upper bound', ''),
-                    'δ': forecast_row.get('δ', ''),
-                    's/σ': forecast_row.get('s/σ', ''),
-                    'MAE': forecast_row.get('MAE', ''),
-                    'Accuracy': forecast_row.get('Accuracy', ''),
+                    _('Hydropost'): site.station_label,
+                    _('Model'): forecast_row.get(_('Model'), ''),
+                    _('Basin'): getattr(site, 'basin_ru', ''),
+                    _('Forecasted discharge'): forecast_row.get(_('Forecasted discharge'), ''),
+                    _('Forecast lower bound'): forecast_row.get(_('Forecast lower bound'), ''),
+                    _('Forecast upper bound'): forecast_row.get(_('Forecast upper bound'), ''),
+                    _('δ'): forecast_row.get('δ', ''),
+                    _('s/σ'): forecast_row.get('s/σ', ''),
+                    _('MAE'): forecast_row.get('MAE', ''),
+                    _('Accuracy'): forecast_row.get(_('Accuracy'), ''),
                     # Add other fields as needed
                 })
         bulletin_df = pd.DataFrame(data)
@@ -805,12 +889,14 @@ def create_bulletin_table():
         bulletin_tabulator.value = bulletin_df
     else:
         # Empty DataFrame with predefined columns
-        empty_df = pd.DataFrame(columns=[
-            'Hydropost', 'Model', 'Basin',
-            'Forecasted discharge', 'Forecast lower bound', 'Forecast upper bound',
-            'δ', 's/σ', 'MAE', 'Accuracy'
+        bulletin_df = pd.DataFrame(columns=[
+            _('Hydropost'), _('Model'), _('Basin'),
+            _('Forecasted discharge'), _('Forecast lower bound'), _('Forecast upper bound'),
+            _('δ'), _('s/σ'), _('MAE'), _('Accuracy')
         ])
-        bulletin_tabulator.value = empty_df
+
+        # Update the Tabulator's value
+        bulletin_tabulator.value = bulletin_df
 
     print("Bulletin table updated.")
 
@@ -850,7 +936,7 @@ def remove_selected_from_bulletin(event=None):
 
     # Get the hydroposts of the selected rows
     selected_rows = bulletin_df.iloc[selected_indices]
-    selected_hydroposts = selected_rows['Hydropost'].unique()
+    selected_hydroposts = selected_rows[_('Hydropost')].unique()
 
     # Remove the selected sites from bulletin_sites
     for hydropost in selected_hydroposts:
@@ -932,12 +1018,13 @@ forecast_data_and_plot = pn.panel(
     ),
     sizing_mode='stretch_both'
 )
+
 def update_forecast_hydrograph(selected_option, _, hydrograph_day_all,
                                hydrograph_pentad_all, linreg_predictor,
                                forecasts_all, station, title_date,
                                model_selection, range_type, range_slider,
                                range_visibility, rram_forecast, ml_forecast):
-    if selected_option == 'Yes':
+    if selected_option == _('Yes'):
         # Show forecasts aggregated to pentadal values
         return viz.plot_pentad_forecast_hydrograph_data(
             _,
@@ -966,6 +1053,7 @@ def update_forecast_hydrograph(selected_option, _, hydrograph_day_all,
             rram_forecast=rram_forecast,
             ml_forecast=ml_forecast
         )
+
 pentad_forecast_plot = pn.panel(
     pn.bind(
         update_forecast_hydrograph,
@@ -986,6 +1074,7 @@ pentad_forecast_plot = pn.panel(
         ),
     sizing_mode='stretch_both'
 )
+
 forecast_skill_plot = pn.panel(
     pn.bind(
         viz.plot_forecast_skill,
@@ -1001,9 +1090,11 @@ forecast_skill_plot = pn.panel(
     ),
     sizing_mode='stretch_both'
 )
+
 skill_table = pn.panel(
-    viz.create_skill_table(forecast_stats),
+    viz.create_skill_table(_, forecast_stats),
     sizing_mode='stretch_width')
+
 skill_metrics_download_filename, skill_metrics_download_button = skill_table.download_menu(
     text_kwargs={'name': _('Enter filename:'), 'value': 'forecast_skill_metrics.csv'},
     button_kwargs={'name': _('Download currently visible table')}
@@ -1082,7 +1173,7 @@ manual_range.param.watch(update_forecast_tabulator, 'value')
 # Multi-threading does not seem to work
 #write_bulletin_button.on_click(lambda event: thread.write_forecast_bulletin_in_background(bulletin_table, env_file_path, status))
 # Create a container to hold the invisible download widget
-download_container = pn.pane.HTML()
+#download_container = pn.pane.HTML()
 
 # Button callback
 #write_bulletin_button.on_click(
@@ -1101,12 +1192,6 @@ download_container = pn.pane.HTML()
 # Use the new handler
 write_bulletin_button.on_click(handle_bulletin_write)
 
-# Create an icon using HTML for the select language widget
-language_icon_html = pn.pane.HTML(
-    '<i class="fas fa-language"></i>',
-    width=20
-)
-
 # Define the disclaimer of the dashboard
 disclaimer = layout.define_disclaimer(_, in_docker_flag)
 
@@ -1117,104 +1202,29 @@ disclaimer = layout.define_disclaimer(_, in_docker_flag)
 allowable_range_selection.param.watch(lambda event: viz.update_range_slider_visibility(
     _, manual_range, event), 'value')
 
-
-# Function to update the dashboard based on selected language
-def tabs_change_language(language):
-    try:
-        print("\nDEBUG: language: ", language)
-        print("\nDEBUG: locale_dir: ", localedir)
-        global _
-        _ = localize.load_translation(language, localedir)
-        # Print the currently selected language
-        print(f"Selected language: {language}")
-        return layout.define_tabs(
-            _,
-            daily_hydrograph_plot, daily_rainfall_plot, daily_temperature_plot,
-            #daily_rel_to_norm_runoff, daily_rel_to_norm_rainfall,
-            forecast_data_and_plot,
-            forecast_summary_table, pentad_forecast_plot, forecast_skill_plot,
-            bulletin_table, write_bulletin_button, bulletin_download_panel, disclaimer,
-            station_card, forecast_card, add_to_bulletin_button, basin_card,
-            pentad_card, reload_card, add_to_bulletin_popup, show_daily_data_widget,
-            skill_table, skill_metrics_download_filename, skill_metrics_download_button)
-    except Exception as e:
-        print(f"Error in tabs_change_language: {e}")
-        print(traceback.format_exc())
-
-# Partial function to update the station widget based on the selected language
-update_station = partial(layout.update_station_widget, station=station)
-
-# Watch for language changes
-localize.translation_manager.param.watch(update_station, 'language')
-
-# Link the language_select widget to the TranslationManager
-def update_language(event):
-    localize.translation_manager.language = event.new
-
-language_select.param.watch(update_language, 'value')
-
 reload_card = viz.create_reload_button()
 
-def sidepane_change_language(language):
-    try:
-        global _
-        _ = localize.load_translation(language, localedir)
-
-        # Update widgets
-        #station.name = _("Select discharge station:")
-        forecast_card.title = _('Select forecasts:')
-        model_checkbox.name = _("Select forecast model:")
-        allowable_range_selection.name = _("Select forecast range for display:")
-        allowable_range_selection.options = [_("delta"), _("Manual range, select value below"), _("min[delta, %)")]
-        manual_range.name = _("Manual range (%)")
-        range_selection_title.object = _("Show ranges in figure:")
-        show_range_button.name = _("Show ranges in figure:")
-        show_range_button.options = [_("Yes"), _("No")]
-
-        return layout.define_sidebar(_, station_card, forecast_card, basin_card,
-                                     message_pane, reload_card)
-    except Exception as e:
-        print(f"Error in sidepane_change_language: {e}")
-        print(traceback.format_exc())
-
-# Bind the function to the language selection widget
-tabs = tabs_change_language(language_select.value)
-sidebar = pn.bind(sidepane_change_language, language_select.param.value)
-
-def update_tabs(event=None):
-    # Get the new tabs
-    new_tabs = tabs_change_language(language_select.value)
-    # Clear the container and add the new tabs
-    tabs_container.clear()
-    tabs_container.append(new_tabs)
-    # Attach the function to the new tabs with all required arguments
-    new_tabs.param.watch(
-        partial(viz.update_sidepane_card_visibility, new_tabs, station_card, forecast_card, basin_card, pentad_card, reload_card),
-        'active'
-    )
-
-# Call update_tabs to initialize
-update_tabs()
+# We don't need to update tabs or UI components dynamically since the page reloads
 
 # Define the layout
 dashboard = pn.template.BootstrapTemplate(
     title=_('SAPPHIRE Central Asia - Pentadal forecast dashboard'),
     logo=icon_path,
-    header=[pn.Row(pn.layout.HSpacer(), language_select)],
-    sidebar=sidebar,
+    header=[pn.Row(pn.layout.HSpacer(), language_buttons)],
+    sidebar=layout.define_sidebar(_, station_card, forecast_card, basin_card,
+                                  message_pane, reload_card),
     collapsed_sidebar=False,
-    main=tabs_container,
+    main=layout.define_tabs(_, 
+        daily_hydrograph_plot, daily_rainfall_plot, daily_temperature_plot,
+        forecast_data_and_plot,
+        forecast_summary_table, pentad_forecast_plot, forecast_skill_plot,
+        bulletin_table, write_bulletin_button, bulletin_download_panel, disclaimer,
+        station_card, forecast_card, add_to_bulletin_button, basin_card,
+        pentad_card, reload_card, add_to_bulletin_popup, show_daily_data_widget,
+        skill_table, skill_metrics_download_filename, skill_metrics_download_button
+    ),
     favicon=icon_path
 )
-
-# Update function to change the language in the dashboard title
-def update_title_language(event):
-    global _
-    selected_language = event.new
-    _ = localize.load_translation(selected_language, localedir)
-    dashboard.title = _('SAPPHIRE Central Asia - Pentadal forecast dashboard')
-
-language_select.param.watch(update_title_language, 'value')
 
 # Make the dashboard servable
 dashboard.servable()

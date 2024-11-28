@@ -5,6 +5,8 @@ import numpy as np
 import param
 import re
 
+from .gettext_config import _
+
 # Get the absolute path of the directory containing the current script
 cwd = os.getcwd()
 

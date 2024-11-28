@@ -4,7 +4,7 @@ import param
 import panel as pn
 import datetime as dt
 from .vizualization import update_sidepane_card_visibility
-from .gettext_config import translation_manager
+from .gettext_config import translation_manager, _
 
 import param
 
@@ -13,7 +13,6 @@ import param
 # region Widget update functions
 
 def update_station_widget(event, station):
-    _ = translation_manager._
     station.name = _("Select discharge station:")
     print("update_station_widget: new name: ", station.name)
 
@@ -232,14 +231,14 @@ def define_tabs(_,
                             bulletin_table,
                             write_bulletin_button,
                         ),
-                        title='Forecast bulletin',
+                        title=_('Forecast bulletin'),
                         sizing_mode='stretch_width',
                     ),
                     pn.Card(
                         pn.Row(
                             bulletin_download_panel,
                         ),
-                        title='Download bulletin',
+                        title=_('Download bulletin'),
                         sizing_mode='stretch_width',
                         collapsed=True,
                     ),

@@ -9,22 +9,34 @@ class TranslationManager(param.Parameterized):
 
     def __init__(self, **params):
         super().__init__(**params)
-        self._ = lambda x: x  # Default to no translation
+        self.locale_dir = 'locale'  # Default locale directory
+        self.translations = {}
+        self.load_translation_pentad_dashboard()
+
+    def gettext(self, message):
+        # Use the current translation function
+        trans_func = self.translations.get(self.language, lambda x: x)
+        return trans_func(message)
 
     @param.depends('language', watch=True)
-    def load_translation(self):
-        print(f"\n\ndebug Translation manager: load_translation")
-        print(f"self.language: {self.language}")
+    def load_translation_pentad_dashboard(self):
+        print(f"Loading translation for language: {self.language}")
         try:
-            trans = gettext.translation('pentad_dashboard', localedir='locale', languages=[self.language])
-            trans.install()
-            self._ = trans.gettext
+            trans = gettext.translation('pentad_dashboard', localedir=self.locale_dir, languages=[self.language])
+            self.translations[self.language] = trans.gettext
         except FileNotFoundError:
-            # Fallback to default language if translation file not found
-            self._ = lambda x: x
+            print(f"Translation file not found for language {self.language}")
+            self.translations[self.language] = lambda x: x
+
+    def set_locale_dir(self, locale_dir):
+        self.locale_dir = locale_dir
 
 # Create and export an instance
 translation_manager = TranslationManager()
+
+# Define a global translation function
+def _(message):
+    return translation_manager.gettext(message)
 
 
 
