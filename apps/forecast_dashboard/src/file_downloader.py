@@ -5,7 +5,7 @@ from datetime import datetime
 import zipfile
 import io
 import pathlib
-from .gettext_config import translation_manager
+from .gettext_config import translation_manager, _
 import logging
 
 logger = logging.getLogger(__name__)
@@ -19,7 +19,7 @@ class FileDownloader(param.Parameterized):
         super().__init__(**params)
         self.directory_path = pathlib.Path(directory_path)
         print(f"\n\n\nFileDownloader: directory_path: {self.directory_path}")
-        self._ = translation_manager._
+        self._ = _
 
         # Create the interface components
         self.file_selector = pn.widgets.MultiSelect(

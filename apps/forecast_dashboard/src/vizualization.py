@@ -26,7 +26,7 @@ import docker
 import threading
 
 
-from .gettext_config import translation_manager
+from .gettext_config import translation_manager, _
 from . import processing
 
 # Import local library
@@ -1828,9 +1828,9 @@ def plot_daily_rainfall_data(_, daily_rainfall, station, date_picker,
     norm_rainfall['date'] = pd.to_datetime(norm_rainfall['date'])
 
     # Plot the daily rainfall data using holoviews
-    title_text = f"Daily precipitation sums for basin of {station} on {date_picker.strftime('%Y-%m-%d')}"
-    current_year_text = f"Current year, 3 day sum: {predictor_rainfall['P'].sum().round()} mm"
-    forecast_text = f"Precipitation forecast, 5 day sum: {forecasts['P'].sum().round()} mm"
+    title_text = f"{_('Daily precipitation sums for basin of')} {station} {_('on')} {date_picker.strftime('%Y-%m-%d')}"
+    current_year_text = f"{_('Current year, 3 day sum: ')}{predictor_rainfall['P'].sum().round()} mm"
+    forecast_text = f"{_('Precipitation forecast, 5 day sum: ')} {forecasts['P'].sum().round()} mm"
 
     hvspan_predictor = hv.VSpan(
         linreg_predictor['predictor_start_date'].values[0],
@@ -1852,7 +1852,7 @@ def plot_daily_rainfall_data(_, daily_rainfall, station, date_picker,
         norm_rainfall,
         kdims='date',
         vdims='P',
-        label='Norm')
+        label=_('Norm'))
     hv_norm_rainfall.opts(
         interpolation='steps-mid',
         color=runoff_mean_color,
@@ -1953,8 +1953,8 @@ def plot_daily_temperature_data(_, daily_rainfall, station, date_picker,
     norm_rainfall['date'] = pd.to_datetime(norm_rainfall['date'])
 
     # Plot the daily rainfall data using holoviews
-    title_text = f"Daily average temperature for basin of {station} on {date_picker.strftime('%Y-%m-%d')}"
-    current_year_text = f"Current year, 3 day mean: {predictor_rainfall['T'].mean().round()} °C"
+    title_text = f"{_('Daily average temperature for basin of')} {station} {_('on')} {date_picker.strftime('%Y-%m-%d')}"
+    current_year_text = f"{_('Current year, 3 day mean: ')} {predictor_rainfall['T'].mean().round()} °C"
 
     hvspan_predictor = hv.VSpan(
         linreg_predictor['predictor_start_date'].values[0],
@@ -1976,7 +1976,7 @@ def plot_daily_temperature_data(_, daily_rainfall, station, date_picker,
         norm_rainfall,
         kdims='date',
         vdims='T',
-        label='Norm')
+        label=_('Norm'))
     hv_norm_rainfall.opts(
         interpolation='linear',
         color=runoff_mean_color,
@@ -1998,7 +1998,7 @@ def plot_daily_temperature_data(_, daily_rainfall, station, date_picker,
             forecasts,
             kdims='date',
             vdims='T',
-            label='Forecast')
+            label=_('Forecast'))
         hv_forecast.opts(
             interpolation='linear',
             color=runoff_forecast_color_list[3],
@@ -2383,7 +2383,7 @@ def plot_pentad_forecast_hydrograph_data_v2(_, hydrograph_day_all, linreg_predic
         _('forecast upper bound column name'),
         runoff_forecast_color_list, _('m³/s'))
 
-    if 'RRAM' in forecasts_current['Model'].values:
+    if 'RRAM' in forecasts_current[_('forecast model short column name')].values:
         rram_forecast_range_point = plot_current_runoff_forecast_range_date_format(
             latest_rram_forecast, _('date'), _('forecast model short column name'),
             _('forecasted_discharge column name'), _('forecast lower bound column name'),
@@ -2393,7 +2393,7 @@ def plot_pentad_forecast_hydrograph_data_v2(_, hydrograph_day_all, linreg_predic
         rram_forecast_range_point = hv.Curve([])
 
     # if either of the following 'TFT', 'TiDE', 'TSMixer', 'NE', 'ARIMA', 'EM'
-    if 'TFT' in forecasts_current['Model'].values or 'TiDE' in forecasts_current['Model'].values or 'TSMixer' in forecasts_current['Model'].values or 'NE' in forecasts_current['Model'].values or 'ARIMA' in forecasts_current['Model'].values or 'EM' in forecasts_current['Model'].values:
+    if 'TFT' in forecasts_current[_('forecast model short column name')].values or 'TiDE' in forecasts_current[_('forecast model short column name')].values or 'TSMixer' in forecasts_current[_('forecast model short column name')].values or 'NE' in forecasts_current[_('forecast model short column name')].values or 'ARIMA' in forecasts_current[_('forecast model short column name')].values or 'EM' in forecasts_current[_('forecast model short column name')].values:
         ml_forecast_range_point = plot_current_runoff_forecast_range_date_format(
             latest_ml_forecast, _('date'), _('forecast model short column name'),
             _('forecasted_discharge column name'), _('forecast lower bound column name'),
@@ -2871,7 +2871,7 @@ def draw_forecast_raw_data(_, forecasts_linreg, station_widget, date_picker):
         (forecast_table['pentad_in_year'] == forecast_pentad)].copy().reset_index(drop=True)
 
     forecast_data_table = pn.widgets.Tabulator(
-        value=forecast_table[['predictor', 'discharge_avg']],
+        value=forecast_table[[_('predictor'), _('discharge_avg')]],
         #formatters={'Pentad': "{:,}"},
         #editors={_('δ'): None},  # Disable editing of the δ column
         theme='bootstrap',
@@ -2885,18 +2885,18 @@ def draw_forecast_raw_data(_, forecasts_linreg, station_widget, date_picker):
 
 
 pentads = [
-    f"{i+1}st pentad of {calendar.month_name[month]}" if i == 0 else
-    f"{i+1}nd pentad of {calendar.month_name[month]}" if i == 1 else
-    f"{i+1}rd pentad of {calendar.month_name[month]}" if i == 2 else
-    f"{i+1}th pentad of {calendar.month_name[month]}"
+    f"{i+1}{_('st pentad of')} {calendar.month_name[month]}" if i == 0 else
+    f"{i+1}{_('nd pentad of')} {calendar.month_name[month]}" if i == 1 else
+    f"{i+1}{_('rd pentad of')} {calendar.month_name[month]}" if i == 2 else
+    f"{i+1}{_('th pentad of')} {calendar.month_name[month]}"
     for month in range(1, 13) for i in range(6)
 ]
 
 # Create a dictionary mapping each pentad description to its pentad_in_year value
-pentad_options = {f"{i+1}st pentad of {calendar.month_name[month]}" if i == 0 else
-                  f"{i+1}nd pentad of {calendar.month_name[month]}" if i == 1 else
-                  f"{i+1}rd pentad of {calendar.month_name[month]}" if i == 2 else
-                  f"{i+1}th pentad of {calendar.month_name[month]}": i + (month-1)*6 + 1
+pentad_options = {f"{i+1}{_('st pentad of')} {calendar.month_name[month]}" if i == 0 else
+                  f"{i+1}{_('nd pentad of')} {calendar.month_name[month]}" if i == 1 else
+                  f"{i+1}{_('rd pentad of')} {calendar.month_name[month]}" if i == 2 else
+                  f"{i+1}{_('th pentad of')} {calendar.month_name[month]}": i + (month-1)*6 + 1
                   for month in range(1, 13) for i in range(6)}
 
 
@@ -3089,6 +3089,31 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
     print(f"visible_data.head(10):\n", visible_data.head(10))
     visible_data = visible_data.dropna(subset=['predictor', 'discharge_avg'])
 
+    # Create a localized copy of the forecast_table for display purposes
+    forecast_table_display = forecast_table.copy()
+
+    # Rename columns for better display (using localization)
+    forecast_table_display.rename(columns={
+        'index': _('index'),
+        'year': _('year'),
+        'predictor': _('predictor'),
+        'discharge_avg': _('discharge average'),
+        'visible': _('visible')
+    }, inplace=True)
+
+    # Create Tabulator for displaying forecast data using localized column names and header filters
+    forecast_data_table = pn.widgets.Tabulator(
+        value=forecast_table_display[['index', _('year'), _('predictor'), _('discharge average'), _('visible')]],
+        theme='bootstrap',
+        editors={_('visible'): CheckboxEditor()},  # Checkbox editor for the 'visible' column
+        formatters={_('visible'): BooleanFormatter(),
+                    _('year'): NumberFormatter(format='0')},  # Format the date column  # Enable column filtering if necessary
+        layout='fit_data_stretch',  # Adjust column sizing
+        sizing_mode='stretch_width',
+        height=450,
+        show_index=False
+    )
+    '''
     # Create Tabulator for displaying forecast data
     forecast_data_table = pn.widgets.Tabulator(
         value=forecast_table[['index', 'year', 'predictor', 'discharge_avg', 'visible']],
@@ -3099,11 +3124,11 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
                     'year': NumberFormatter(format='0')},  # Format the date column
         height=450,
         sizing_mode='stretch_width'  # Stretch the table to fill the available space
-    )
+    )'''
 
     # Create the title text
-    title_text = (f"{_('Hydropost')} {station_code}: {_('Regression')} {_('for')} "
-                  f"{title_pentad} {_('pentad')} {_('of')} {title_month} ")
+    title_text = (f"{_('Hydropost')} {station_code}: {_('Regression for')} "
+                  f"{title_pentad} {_(' pentad of ')} {title_month} ")
 
     # Define the plot
     plot_pane = pn.pane.HoloViews(sizing_mode='stretch_width')
@@ -3120,7 +3145,7 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
         forecast_table['visible'] = forecast_table['visible'].astype(bool)
 
         # Update only the 'visible' column based on the table interaction
-        forecast_table.loc[forecast_data_table.value['index'], 'visible'] = forecast_data_table.value['visible'].values
+        forecast_table.loc[forecast_data_table.value[_('index')], 'visible'] = forecast_data_table.value[_('visible')].values
 
         # Filter the data based on visibility
         visible_data = forecast_table[forecast_table['visible'] == True]
@@ -3135,9 +3160,9 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
         else:
             hover = HoverTool(
                 tooltips=[
-                    ('Year', '@year'),
-                    ('Predictor', '@predictor'),
-                    ('Discharge', '@discharge_avg'),
+                    (_('Year'), '@year'),
+                    (_('Predictor'), '@predictor'),
+                    (_('Discharge'), '@discharge_avg'),
                 ],
                 formatters={'@year': 'numeral'},  # Show year in the hover tool
             )
@@ -3309,14 +3334,14 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
     update_plot()
 
     # Create the pop-up notification pane (initially hidden)
-    popup = pn.pane.Alert("Changes Saved Successfully", alert_type="success", visible=False)
+    popup = pn.pane.Alert(_("Changes Saved Successfully"), alert_type="success", visible=False)
 
     # Adjust the sizing modes of your components
     forecast_data_table.sizing_mode = 'stretch_both'
     plot_pane.sizing_mode = 'stretch_both'
 
     progress_bar = pn.indicators.Progress(name="Progress", value=0, width=300, visible=False)
-    progress_message = pn.pane.Alert("Processing...", alert_type="info", visible=False)
+    progress_message = pn.pane.Alert(_("Processing..."), alert_type="info", visible=False)
 
     def run_docker_container(client, full_image_name, volumes, environment, container_name, progress_bar):
         """
@@ -3361,23 +3386,33 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
 
 
     # Create a save button
-    save_button = pn.widgets.Button(name="Save Changes", button_type="success")
+    save_button = pn.widgets.Button(name=_("Save Changes"), button_type="success")
 
     # Function to save table data to CSV and run Docker containers
     def save_to_csv(event):
         # Disable the save button and show the progress bar and message
         save_button.disabled = True
         progress_bar.visible = True
-        progress_message.object = "Processing..."
+        progress_message.object = _("Processing...")
         progress_message.visible = True
         progress_bar.value = 0
 
         # Convert the table value back to a DataFrame
-        updated_forecast_table = pd.DataFrame(forecast_data_table.value)
+        updated_forecast_display = pd.DataFrame(forecast_data_table.value)
+
+        # Translate the localized columns back to their original names
+        updated_forecast_table = updated_forecast_display.rename(columns={
+            _('year'): 'year',
+            _('predictor'): 'predictor',
+            _('discharge average'): 'discharge_avg',
+            _('visible'): 'visible',
+            _('index'): 'index'
+        })
 
         # Explicitly reset the index before saving, so it becomes a column
         updated_forecast_table = updated_forecast_table.reset_index(drop=True)
 
+        # Add the selected pentad information
         updated_forecast_table['pentad'] = selected_pentad
 
         # Save DataFrame to CSV, ensuring the index is saved
@@ -3427,7 +3462,7 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
 
             # When the container is finished, set progress to 100 and update message
             progress_bar.value = 100
-            progress_message.object = "Processing finished"
+            progress_message.object = _("Processing finished")
 
             # Wait a moment before hiding the progress bar and message
             time.sleep(2)
@@ -3480,7 +3515,7 @@ def update_forecast_data(_, linreg_predictor, station, pentad_selector):
     return callback
 
 def create_reload_button():
-    reload_button = pn.widgets.Button(name="Trigger forecasts", button_type="danger")
+    reload_button = pn.widgets.Button(name=_("Trigger forecasts"), button_type="danger")
 
     # Loading spinner and messages
     loading_spinner = pn.indicators.LoadingSpinner(value=True, width=50, height=50, color='success', visible=False)
@@ -3522,9 +3557,9 @@ def create_reload_button():
         if app_state.pipeline_running or check_containers_running():
             reload_button.disabled = True
             loading_spinner.visible = True
-            progress_message.object = "Processing..."
+            progress_message.object = _("Processing...")
             progress_message.visible = True
-            warning_message.object = "Please do not reload this page until processing is done!"
+            warning_message.object = _("Please do not reload this page until processing is done!")
             warning_message.visible = True
         else:
             reload_button.disabled = False
@@ -3539,7 +3574,7 @@ def create_reload_button():
     def run_pipeline(event):
         # Check containers again when button is clicked
         if check_containers_running():
-            warning_message.object = "Containers are still running. Please wait."
+            warning_message.object = _("Containers are still running. Please wait.")
             warning_message.visible = True
             return
 
@@ -3549,9 +3584,9 @@ def create_reload_button():
         # Disable the reload button and show loading spinner
         reload_button.disabled = True
         loading_spinner.visible = True
-        progress_message.object = "Processing..."
+        progress_message.object = _("Processing...")
         progress_message.visible = True
-        warning_message.object = "Please do not reload this page until processing is done!"
+        warning_message.object = _("Please do not reload this page until processing is done!")
         warning_message.visible = True
 
         def run_docker_pipeline():
@@ -3616,7 +3651,7 @@ def create_reload_button():
                 run_docker_container(client, "mabesa/sapphire-postprocessing:latest", volumes, environment, "postprocessing")
 
                 # Update message after all containers have run
-                progress_message.object = "Processing finished"
+                progress_message.object = _("Processing finished")
                 time.sleep(2)
             except docker.errors.ContainerError as ce:
                 progress_message.object = f"Container Error: {ce}"
@@ -3649,13 +3684,13 @@ def create_reload_button():
     # Create a card for the reload button
     reload_card = pn.Card(
         pn.Column(
-            pn.pane.Markdown("Click the button below to trigger the forecast pipeline.\nThis will re-run all forecasts for the latest data.\nThis process may take a few minutes to complete.\nNote: Current forecasts will be overwritten."),
+            pn.pane.Markdown(_("Click the button below to trigger the forecast pipeline.\nThis will re-run all forecasts for the latest data.\nThis process may take a few minutes to complete.\nNote: Current forecasts will be overwritten.")),
             reload_button,
             loading_spinner,
             progress_message,
             warning_message,
         ),
-        title='Manual re-run of latest forecasts',
+        title=_('Manual re-run of latest forecasts'),
         width_policy='fit',
         collapsed=True,
     )
@@ -3733,8 +3768,8 @@ def test_draw_forecast_raw_data(_, selected_data):
 
     # Create a Tabulator widget for the selected data
     forecast_data_table = pn.widgets.Tabulator(
-        value=selected_data[['year', 'predictor', 'discharge_avg',
-                              'forecasted_discharge']],
+        value=selected_data[[_('year'), _('predictor'), _('discharge_avg'),
+                              _('forecasted_discharge')]],
         formatters={'Pentad': "{:,}",
                     'year': "{:,}"},
         #editors={_('δ'): None},  # Disable editing of the δ column
@@ -3881,8 +3916,9 @@ def plot_forecast_skill(
         unit_string='[-]')
 
     # Plot column 'sdivsigma' over the pentad of the year
-    title_effectiveness = _("Station ") + str(station_widget) + _(" on ") + title_date_str + \
-        ", " + _("data from") + " 2010 - "+str(title_date.year)
+    title_effectiveness = _("Station {station} on {date}, data from 2010 - {year}").format(
+    station=station_widget, date=title_date_str, year=title_date.year
+)
     effectiveness_plot = hv_08a * hv_06a * hv_forecast_skill_effectiveness * hv_current_forecast_skill_effectiveness
     effectiveness_plot.opts(
         responsive=True,
@@ -3893,14 +3929,15 @@ def plot_forecast_skill(
         xticks=list(range(1,72,6)),
         title=title_effectiveness, shared_axes=False,
         #legend_position='bottom_left',  # 'right',
-        xlabel=_("Pentad of the month (starting from January 1)"), ylabel=_("Effectiveness")+" [-]",
+        xlabel=_("Pentad of the month (starting from January 1)"), ylabel=_("Effectiveness [-]"),
         show_grid=True, xlim=(1, 72), ylim=(0,1.4),
         fontsize={'legend':8}, fontscale=1.2
     )
 
     # Plot the forecast accuracy
-    title_accuracy = _("Station ") + str(station_widget) + _(" on ") + title_date_str + \
-        ", " + _("data from") + " 2010 - " + str(title_date.year)
+    title_effectiveness = _("Station {station} on {date}, data from 2010 - {year}").format(
+        station=station_widget, date=title_date_str, year=title_date.year
+    )
 
     hv_current_forecast_skill_accuracy = plot_current_runoff_forecasts(
         data=current_forecast_pentad,
@@ -3917,8 +3954,9 @@ def plot_forecast_skill(
         unit_string='[%]')
 
     # Plot column 'accuracy' over the pentad of the year
-    title_accuracy = _("Station ") + str(station_widget) + _(" on ") + title_date_str + \
-        ", " + _("data from") + " 2010 - "+str(title_date.year)
+    title_accuracy = _("Station {station} on {date}, data from 2010 - {year}").format(
+    station=station_widget, date=title_date_str, year=title_date.year
+    )
     accuracy_plot = hv_forecast_skill_accuracy * hv_current_forecast_skill_accuracy
     accuracy_plot.opts(
         responsive=True,
@@ -3929,7 +3967,7 @@ def plot_forecast_skill(
         xticks=list(range(1,72,6)),
         title=title_accuracy, shared_axes=False,
         #legend_position='bottom_left',  # 'right',
-        xlabel=_("Pentad of the month (starting from January 1)"), ylabel=_("Accruacy")+" [%]",
+        xlabel=_("Pentad of the month (starting from January 1)"), ylabel=_("Accuracy [%]"),
         show_grid=True, xlim=(1, 72), ylim=(0,100),
         fontsize={'legend':8}, fontscale=1.2
     )
@@ -3956,10 +3994,8 @@ def add_month_pentad_per_month_to_df(df):
     df['pentad_in_month'] = df['date'].apply(tl.get_pentad)
     return df
 
-def create_skill_table(forecast_stats):
+def create_skill_table(_, forecast_stats):
     """Creates a tabulator widget for the forecast statistics."""
-    # Load translation for the forecast statistics
-    _ = translation_manager._
 
     # Get pentad in month and month
     forecast_stats = add_month_pentad_per_month_to_df(forecast_stats)
