@@ -731,13 +731,13 @@ add_to_bulletin_button.disabled = viz.app_state.pipeline_running
 def update_model_select(station_value, selected_pentad):
     # Update the model_dict with the models we have results for for the selected
     # station
-    print(f"DEBUG: pentad_dashboard.py: update_model_select: station_value: {station_value}")
+    #print(f"DEBUG: pentad_dashboard.py: update_model_select: station_value: {station_value}")
     updated_model_dict = processing.update_model_dict(model_dict_all, forecasts_all, station_value, selected_pentad)
     model_checkbox.options = updated_model_dict
-    print(f"DEBUG: pentad_dashboard.py: update_model_select: updated_model_dict: {updated_model_dict}")
+    #print(f"DEBUG: pentad_dashboard.py: update_model_select: updated_model_dict: {updated_model_dict}")
     # Update the selected models based on the new options
     current_model_pre_selection = processing.get_best_models_for_station_and_pentad(forecasts_all, station_value, selected_pentad)
-    print(f"DEBUG: pentad_dashboard.py: update_model_select: current_model_pre_selection: {current_model_pre_selection}")
+    #print(f"DEBUG: pentad_dashboard.py: update_model_select: current_model_pre_selection: {current_model_pre_selection}")
     #model_checkbox.value = [updated_model_dict[model] for model in current_model_pre_selection]
     model_checkbox.value = [
         updated_model_dict[model] if "Ens. Mean" not in model else next(
@@ -745,6 +745,7 @@ def update_model_select(station_value, selected_pentad):
         )
         for model in current_model_pre_selection if model in updated_model_dict or "Ens. Mean" in model
     ]
+    print(f"DEBUG: pentad_dashboard.py: update_model_select: model_checkbox.value:\n   {model_checkbox.value}")
     return updated_model_dict
 
 

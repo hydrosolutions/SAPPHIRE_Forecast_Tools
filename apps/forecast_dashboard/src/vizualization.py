@@ -2283,8 +2283,8 @@ def plot_pentad_forecast_hydrograph_data_v2(_, hydrograph_day_all, linreg_predic
                  'Q50': 'E[Q]',
                  'model_short': 'Model'})
     # Add pentad_in_month and pentad_in_year to latest_rram_forecast
-    latest_rram_forecast['pentad_in_month'] = forecasts_current['pentad_in_month'].values[0]
-    latest_rram_forecast['pentad_in_year'] = forecasts_current['pentad_in_year'].values[0]
+    latest_rram_forecast['pentad_in_month'] = forecasts_current['pentad_in_month'].values[0] if not forecasts_current.empty else None
+    latest_rram_forecast['pentad_in_year'] = forecasts_current['pentad_in_year'].values[0] if not forecasts_current.empty else None
     latest_rram_forecast['Model name'] = 'Rainfall runoff assimilation model (RRAM)'
 
     # Filter for the current station
@@ -2298,8 +2298,8 @@ def plot_pentad_forecast_hydrograph_data_v2(_, hydrograph_day_all, linreg_predic
                     'forecasted_discharge': 'E[Q]',
                     'model_short': 'Model'})
     # Add pentad_in_month and pentad_in_year to latest_ml_forecast
-    latest_ml_forecast['pentad_in_month'] = forecasts_current['pentad_in_month'].values[0]
-    latest_ml_forecast['pentad_in_year'] = forecasts_current['pentad_in_year'].values[0]
+    latest_ml_forecast['pentad_in_month'] = forecasts_current['pentad_in_month'].values[0] if not forecasts_current.empty else None
+    latest_ml_forecast['pentad_in_year'] = forecasts_current['pentad_in_year'].values[0] if not forecasts_current.empty else None
     # Filter for selected models
     latest_ml_forecast = latest_ml_forecast[latest_ml_forecast['Model'].isin(model_selection)]
 
