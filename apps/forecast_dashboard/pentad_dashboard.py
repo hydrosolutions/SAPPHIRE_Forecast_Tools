@@ -644,7 +644,7 @@ bulletin_tabulator = pn.widgets.Tabulator(
             {'field': 'sdivsigma', 'title': _('s/σ')},
             {'field': 'mae', 'title': _('MAE')},
             {'field': 'accuracy', 'title': _('Accuracy')},
-        ], 
+        ],
         'columnFilters': True  # Enable column filtering if needed
     },
     show_index=False,
@@ -734,9 +734,17 @@ def update_model_select(station_value, selected_pentad):
     print(f"DEBUG: pentad_dashboard.py: update_model_select: station_value: {station_value}")
     updated_model_dict = processing.update_model_dict(model_dict_all, forecasts_all, station_value, selected_pentad)
     model_checkbox.options = updated_model_dict
+    print(f"DEBUG: pentad_dashboard.py: update_model_select: updated_model_dict: {updated_model_dict}")
     # Update the selected models based on the new options
     current_model_pre_selection = processing.get_best_models_for_station_and_pentad(forecasts_all, station_value, selected_pentad)
-    model_checkbox.value = [updated_model_dict[model] for model in current_model_pre_selection]
+    print(f"DEBUG: pentad_dashboard.py: update_model_select: current_model_pre_selection: {current_model_pre_selection}")
+    #model_checkbox.value = [updated_model_dict[model] for model in current_model_pre_selection]
+    model_checkbox.value = [
+        updated_model_dict[model] if "Ens. Mean" not in model else next(
+            (updated_model_dict[um] for um in updated_model_dict if "Ens. Mean" in um), None
+        )
+        for model in current_model_pre_selection if model in updated_model_dict or "Ens. Mean" in model
+    ]
     return updated_model_dict
 
 
@@ -795,7 +803,7 @@ def save_bulletin_to_csv():
             row_data['station_label'] = site.station_label
             row_data['basin_ru'] = getattr(site, 'basin_ru', '')
             data.append(row_data)
-    
+
     if data:
         bulletin_df_display = pd.DataFrame(data)
 
@@ -926,7 +934,7 @@ def handle_bulletin_write(event):
 
     except Exception as e:
         logger.error(f"Error writing bulletin to Excel: {e}")
-        
+
 # Function to create the bulletin table
 def create_bulletin_table():
     global bulletin_tabulator  # Declare as global to modify the global variable
@@ -973,7 +981,7 @@ def create_bulletin_table():
 
 # Function to update the bulletin table
 def update_bulletin_table(event=None):
-    create_bulletin_table() 
+    create_bulletin_table()
 
 
 bulletin_table = pn.Column(
@@ -1284,7 +1292,7 @@ dashboard = pn.template.BootstrapTemplate(
     sidebar=layout.define_sidebar(_, station_card, forecast_card, basin_card,
                                   message_pane, reload_card),
     collapsed_sidebar=False,
-    main=layout.define_tabs(_, 
+    main=layout.define_tabs(_,
         daily_hydrograph_plot, daily_rainfall_plot, daily_temperature_plot,
         forecast_data_and_plot,
         forecast_summary_table, pentad_forecast_plot, forecast_skill_plot,
