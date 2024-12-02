@@ -213,27 +213,98 @@ import src.vizualization as viz
 
 # region load_data
 
+def get_directory_mtime(directory_path):
+    mtimes = []
+    for root, dirs, files in os.walk(directory_path):
+        for file in files:
+            filepath = os.path.join(root, file)
+            mtimes.append(os.path.getmtime(filepath))
+    # Combine mtimes into a single value, e.g., take the maximum
+    combined_mtime = max(mtimes) if mtimes else 0
+    return combined_mtime
+
 def load_data():
     global hydrograph_day_all, hydrograph_pentad_all, linreg_predictor, \
         forecasts_all, forecast_stats, all_stations, station_dict, station_df, \
-            station_list, linreg_datatable, stations_iehhf, \
-            rram_forecast, ml_forecast
-    hydrograph_day_all = processing.read_hydrograph_day_data_for_pentad_forecasting(stations_iehhf)
-    hydrograph_pentad_all = processing.read_hydrograph_pentad_data_for_pentad_forecasting(stations_iehhf)
+        station_list, linreg_datatable, stations_iehhf, \
+        rram_forecast, ml_forecast, rain, temp
+    # File modification times
+    hydrograph_day_file = os.path.join(
+        os.getenv("ieasyforecast_intermediate_data_path"),
+        os.getenv("ieasyforecast_hydrograph_day_file"))
+    hydrograph_day_file_mtime = os.path.getmtime(hydrograph_day_file)
+
+    hydrograph_pentad_file = os.path.join(
+        os.getenv("ieasyforecast_intermediate_data_path"),
+        os.getenv("ieasyforecast_hydrograph_pentad_file"))
+    hydrograph_pentad_file_mtime = os.path.getmtime(hydrograph_pentad_file)
+
+    linreg_forecast_file = os.path.join(
+        os.getenv("ieasyforecast_intermediate_data_path"),
+        os.getenv("ieasyforecast_analysis_pentad_file"))
+    linreg_forecast_file_mtime = os.path.getmtime(linreg_forecast_file)
+
+    forecast_results_file = os.path.join(
+        os.getenv("ieasyforecast_intermediate_data_path"),
+        os.getenv("ieasyforecast_combined_forecast_pentad_file"))
+    forecast_results_file_mtime = os.path.getmtime(forecast_results_file)
+
+    forecast_stats_file = os.path.join(
+        os.getenv("ieasyforecast_intermediate_data_path"),
+        os.getenv("ieasyforecast_pentadal_skill_metrics_file"))
+    forecast_stats_file_mtime = os.path.getmtime(forecast_stats_file)
+
+    # For rram and ml forecasts, get the directory modification times
+    rram_file_path = os.getenv('ieasyhydroforecast_PATH_TO_RESULT')
+    rram_file_mtime = get_directory_mtime(rram_file_path)
+
+    ml_forecast_dir = os.path.join(
+        os.getenv("ieasyforecast_intermediate_data_path"),
+        os.getenv("ieasyhydroforecast_OUTPUT_PATH_DISCHARGE"))
+    ml_forecast_mtime = get_directory_mtime(ml_forecast_dir)
+
+    # Rainfall and temperature data files
+    hind_p_file = os.path.join(
+        os.getenv('ieasyhydroforecast_PATH_TO_HIND'),
+        os.getenv('ieasyhydroforecast_FILE_CF_HIND_P'))
+    hind_p_file_mtime = os.path.getmtime(hind_p_file)
+
+    cf_p_file = os.path.join(
+        os.getenv('ieasyhydroforecast_PATH_TO_CF'),
+        os.getenv('ieasyhydroforecast_FILE_CF_P'))
+    cf_p_file_mtime = os.path.getmtime(cf_p_file)
+
+    hind_t_file = os.path.join(
+        os.getenv('ieasyhydroforecast_PATH_TO_HIND'),
+        os.getenv('ieasyhydroforecast_FILE_CF_HIND_T'))
+    hind_t_file_mtime = os.path.getmtime(hind_t_file)
+
+    cf_t_file = os.path.join(
+        os.getenv('ieasyhydroforecast_PATH_TO_CF'),
+        os.getenv('ieasyhydroforecast_FILE_CF_T'))
+    cf_t_file_mtime = os.path.getmtime(cf_t_file)
+
+    # Hydrograph day and pentad data
+    hydrograph_day_all = processing.read_hydrograph_day_data_for_pentad_forecasting(
+        stations_iehhf, hydrograph_day_file_mtime)
+    hydrograph_pentad_all = processing.read_hydrograph_pentad_data_for_pentad_forecasting(
+        stations_iehhf, hydrograph_pentad_file_mtime)
 
     # Daily forecasts from RRAM & ML models
-    rram_forecast = processing.read_rram_forecast_data()
-    ml_forecast = processing.read_ml_forecast_data()
+    rram_forecast = processing.read_rram_forecast_data(rram_file_mtime)
+    ml_forecast = processing.read_ml_forecast_data(ml_forecast_mtime)
 
     # Pentadal forecast data
     # - linreg_predictor: for displaying predictor in predictor tab
-    linreg_predictor = processing.read_linreg_forecast_data(stations_iehhf)
-    # For site = 16059, show the last 5 rows of the linreg_predictor DataFrame
-    #print(f"DEBUG: pentad_dashboard.py: linreg_predictor: {linreg_predictor[linreg_predictor['code'] == '16059'].tail()}")
+    # Set multi-index for faster lookups
+    linreg_predictor = processing.read_linreg_forecast_data(
+        stations_iehhf, linreg_forecast_file_mtime)
     # - forecast results from all models
-    forecasts_all = processing.read_forecast_results_file(stations_iehhf)
+    forecasts_all = processing.read_forecast_results_file(
+        stations_iehhf, forecast_results_file_mtime)
     # Forecast statistics
-    forecast_stats = processing.read_forecast_stats_file(stations_iehhf)
+    forecast_stats = processing.read_forecast_stats_file(
+        stations_iehhf, forecast_stats_file_mtime)
 
     # Hydroposts metadata
     station_list, all_stations, station_df, station_dict = processing.read_all_stations_metadata_from_iehhf(
@@ -275,7 +346,12 @@ def load_data():
     forecasts_all = forecasts_all.merge(
         forecast_stats,
         on=['code', 'pentad_in_year', 'model_short', 'model_long'],
-        how='left')
+        how='left',
+        suffixes=('', '_stats'))
+
+    # Rainfall
+    rain = processing.read_rainfall_data(max(hind_p_file_mtime, cf_p_file_mtime))
+    temp = processing.read_temperature_data(max(hind_t_file_mtime, cf_t_file_mtime))
 
 # Get stations selected for pentadal forecasts
 # Not necessary as we write new config files in linear regression module.
@@ -284,13 +360,6 @@ def load_data():
 #else:
 #    stations_iehhf = None
 stations_iehhf = None
-
-# Rainfall
-rain = processing.read_rainfall_data()
-temp = processing.read_temperature_data()
-
-
-# Create a list of Site objects from the all_stations DataFrame
 
 load_data()
 
@@ -316,6 +385,7 @@ tabs_container = pn.Column()
 
 # Create a dictionary of the model names and the corresponding model labels
 model_dict_all = forecasts_all[['model_short', 'model_long']] \
+    .drop_duplicates() \
     .set_index('model_long')['model_short'].to_dict()
 #print(f"DEBUG: pentad_dashboard.py: station_dict: {station_dict}")
 
@@ -459,12 +529,12 @@ remove_bulletin_button = pn.widgets.Button(
 def create_language_buttons():
     buttons = []
     for lang_name, lang_code in {'English': 'en_CH', 'Русский': 'ru_KG', 'Кыргызча': 'ky_KG'}.items():
-        # Create a link that reloads the page with the selected language
+        # Create a hyperlink styled as a button
         href = pn.state.location.pathname + f'?lang={lang_code}'
-        button = pn.widgets.Button(name=lang_name, button_type='primary', width=80)
-        button.js_on_click(args={'href': href}, code='window.location.href=href')
-        buttons.append(button)
-    return pn.Row(*buttons, sizing_mode='fixed')
+        link = f'<a href="{href}" style="margin-right: 10px; padding: 5px 10px; background-color: white; color: #307086; text-decoration: none; border-radius: 4px;">{lang_name}</a>'
+        buttons.append(link)
+    # Combine the links into a single Markdown pane
+    return pn.pane.Markdown(' '.join(buttons))
 
 language_buttons = create_language_buttons()
 

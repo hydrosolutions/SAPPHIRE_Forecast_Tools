@@ -7,6 +7,8 @@ import re
 
 from .gettext_config import _
 
+import panel as pn
+
 # Get the absolute path of the directory containing the current script
 cwd = os.getcwd()
 
@@ -52,6 +54,10 @@ def get_icon_path(in_docker_flag):
 
 def get_station_codes_selected_for_pentadal_forecasts():
     """Read the station codes selected for pentadal forecasting from iEasyHydro High Frequency."""
+    cache_key = 'station_codes_selected_for_pentadal_forecasts'
+    if cache_key in pn.state.cache:
+        return pn.state.cache[cache_key]
+
     from ieasyhydro_sdk.sdk import IEasyHydroHFSDK
     iehhf = IEasyHydroHFSDK()
     discharge_sites = iehhf.get_discharge_sites()
@@ -86,6 +92,8 @@ def get_station_codes_selected_for_pentadal_forecasts():
             code = row['site_code'].values[0]
             sites.append(code)
 
+    # Cache the result
+    pn.state.cache[cache_key] = sites
     return sites
 
 
@@ -112,10 +120,16 @@ def parse_dates(date_str):
             continue
     return pd.NaT
 
-def read_rram_forecast_data():
+def read_rram_forecast_data(file_mtime):
     """
     Reads the forecasts from the RRAM model from the intermediate data directory.
     """
+    cache_key = 'rram_forecast_data'
+    if cache_key in pn.state.cache:
+        cached_mtime, rram_forecast = pn.state.cache[cache_key]
+        if cached_mtime == file_mtime:
+            return rram_forecast
+
     filepath = os.getenv('ieasyhydroforecast_PATH_TO_RESULT')
     # List all csv files in the directory and in the sub-directories
     # of the directory and read the forecast data
@@ -135,6 +149,9 @@ def read_rram_forecast_data():
     # Cast forecast_date and date columns to datetime
     rram_forecast['forecast_date'] = rram_forecast['forecast_date'].apply(parse_dates)
     rram_forecast['date'] = rram_forecast['date'].apply(parse_dates)
+
+    # Store in cache
+    pn.state.cache[cache_key] = (file_mtime, rram_forecast)
     return rram_forecast
 
 def read_daily_probabilistic_ml_forecasts_pentad(
@@ -175,7 +192,7 @@ def read_daily_probabilistic_ml_forecasts_pentad(
 
     return daily_data
 
-def read_machine_learning_forecasts_pentad(model):
+def read_machine_learning_forecasts_pentad(model, file_mtime):
     '''
     Reads forecast results from the machine learning model for the pentadal
     forecast horizon.
@@ -184,25 +201,26 @@ def read_machine_learning_forecasts_pentad(model):
     model (str): The machine learning model to read the forecast results from.
         Allowed values are 'TFT', 'TIDE', 'TSMIXER', and 'ARIMA'.
     '''
+    cache_key = f'read_machine_learning_forecasts_pentad_{model}'
+    if cache_key in pn.state.cache:
+        cached_mtime, forecast = pn.state.cache[cache_key]
+        if cached_mtime == file_mtime:
+            return forecast
 
     if model == 'TFT':
-        filename = f"pentad_{model}_forecast.csv".format(model=model)
-        hindcast_filename = f"{model}_PENTAD_hindcast_daily*.csv".format(model=model)
+        filename = f"pentad_{model}_forecast.csv"
         model_long = "Temporal-Fusion Transformer (TFT)"
         model_short = "TFT"
     elif model == 'TIDE':
-        filename = f"pentad_{model}_forecast.csv".format(model=model)
-        hindcast_filename = f"{model}_PENTAD_hindcast_daily*.csv".format(model=model)
+        filename = f"pentad_{model}_forecast.csv"
         model_long = "Time-Series Dense Encoder (TiDE)"
         model_short = "TiDE"
     elif model == 'TSMIXER':
-        filename = f"pentad_{model}_forecast.csv".format(model=model)
-        hindcast_filename = f"{model}_PENTAD_hindcast_daily*.csv".format(model=model)
+        filename = f"pentad_{model}_forecast.csv"
         model_long = "Time-Series Mixer (TSMixer)"
         model_short = "TSMixer"
     elif model == 'ARIMA':
-        filename = f"pentad_{model}_forecast.csv".format(model=model)
-        hindcast_filename = f"{model}_PENTAD_hindcast_daily*.csv".format(model=model)
+        filename = f"pentad_{model}_forecast.csv"
         model_long = "AutoRegressive Integrated Moving Average (ARIMA)"
         model_short = "ARIMA"
     else:
@@ -220,31 +238,41 @@ def read_machine_learning_forecasts_pentad(model):
 
     forecast = read_daily_probabilistic_ml_forecasts_pentad(filepath, model, model_long, model_short)
 
+    # Store in cache
+    pn.state.cache[cache_key] = (file_mtime, forecast)
     return forecast
 
-def read_ml_forecast_data():
+def read_ml_forecast_data(file_mtime):
     """
     Reads the forecasts from the ML model from the intermediate data directory.
     """
-    tide = read_machine_learning_forecasts_pentad(model='TIDE')
-    tft = read_machine_learning_forecasts_pentad(model='TFT')
-    tsmixer = read_machine_learning_forecasts_pentad(model='TSMIXER')
+    cache_key = 'ml_forecast_data'
+    if cache_key in pn.state.cache:
+        cached_mtime, ml_forecast = pn.state.cache[cache_key]
+        if cached_mtime == file_mtime:
+            return ml_forecast
+
+    tide = read_machine_learning_forecasts_pentad('TIDE', file_mtime)
+    tft = read_machine_learning_forecasts_pentad('TFT', file_mtime)
+    tsmixer = read_machine_learning_forecasts_pentad('TSMIXER', file_mtime)
     # Calculate the Neural Ensemble (NE) forecast as the average of the TFT,
     # TIDE, and TSMIXER forecasts
     ne = pd.concat([tide, tft, tsmixer], ignore_index=True)
     ne = ne.drop(columns=['model_long', 'model_short']).groupby(['code', 'date', 'forecast_date']).mean().reset_index()
     ne['model_long'] = 'Neural Ensemble (NE)'
     ne['model_short'] = 'NE'
-    arima = read_machine_learning_forecasts_pentad(model='ARIMA')
+    arima = read_machine_learning_forecasts_pentad('ARIMA', file_mtime)
     # Concatenate the data frames
     ml_forecast = pd.concat([tide, tft, tsmixer, ne, arima], ignore_index=True)
     print(f"Head of ml_forecast:\n{ml_forecast.head()}")
     # Cast forecast_date and date columns to datetime
     ml_forecast['forecast_date'] = ml_forecast['forecast_date'].apply(parse_dates)
 
+    # Store in cache
+    pn.state.cache[cache_key] = (file_mtime, ml_forecast)
     return ml_forecast
 
-def read_hydrograph_day_file():
+def read_hydrograph_day_file(file_mtime):
     """
     Reads the hydrograph_day file from the intermediate data directory.
 
@@ -257,6 +285,12 @@ def read_hydrograph_day_file():
     Raises:
         Exception: If the file is not found or empty.
     """
+    cache_key = 'hydrograph_day_file'
+    if cache_key in pn.state.cache:
+        cached_mtime, hydrograph_day_all = pn.state.cache[cache_key]
+        if cached_mtime == file_mtime:
+            return hydrograph_day_all
+
     hydrograph_day_file = os.path.join(
         os.getenv("ieasyforecast_intermediate_data_path"),
         os.getenv("ieasyforecast_hydrograph_day_file"))
@@ -274,18 +308,27 @@ def read_hydrograph_day_file():
     # Sort all columns in ascending Code and pentad order
     hydrograph_day_all = hydrograph_day_all.sort_values(by=["code", "day_of_year"])
 
+    # Store in cache
+    pn.state.cache[cache_key] = (file_mtime, hydrograph_day_all)
     return hydrograph_day_all
 
-def read_hydrograph_day_data_for_pentad_forecasting(iahhf_selected_stations):
+def read_hydrograph_day_data_for_pentad_forecasting(iahhf_selected_stations, file_mtime):
+    cache_key_base = 'hydrograph_day_data_pentad_forecasting'
+    stations_tuple = tuple(iahhf_selected_stations) if iahhf_selected_stations is not None else None
+    cache_key = (cache_key_base, stations_tuple)
+    if cache_key in pn.state.cache:
+        cached_mtime, hydrograph_day_all = pn.state.cache[cache_key]
+        if cached_mtime == file_mtime:
+            return hydrograph_day_all
 
     # Read hydrograph data with daily values
-    hydrograph_day_all = read_hydrograph_day_file()
+    hydrograph_day_all = read_hydrograph_day_file(file_mtime)
 
     # if we get data from iEasyHydro, we do the following
     if iahhf_selected_stations is not None:
         # Filter the data frame for the selected stations
         hydrograph_day_all = filter_dataframe_for_selected_stations(
-        hydrograph_day_all, "code", iahhf_selected_stations)
+            hydrograph_day_all, "code", iahhf_selected_stations)
     else:
         # Get station ids of stations selected for forecasting
         filepath = os.path.join(
@@ -313,7 +356,13 @@ def read_hydrograph_day_data_for_pentad_forecasting(iahhf_selected_stations):
 
     return hydrograph_day_all
 
-def read_hydrograph_pentad_file():
+def read_hydrograph_pentad_file(file_mtime):
+    cache_key = 'hydrograph_pentad_file'
+    if cache_key in pn.state.cache:
+        cached_mtime, hydrograph_pentad_all = pn.state.cache[cache_key]
+        if cached_mtime == file_mtime:
+            return hydrograph_pentad_all
+
     hydrograph_pentad_file = os.path.join(
         os.getenv("ieasyforecast_intermediate_data_path"),
         os.getenv("ieasyforecast_hydrograph_pentad_file"))
@@ -333,17 +382,26 @@ def read_hydrograph_pentad_file():
     # Sort all columns in ascending Code and pentad order
     hydrograph_pentad_all = hydrograph_pentad_all.sort_values(by=["code", "pentad_in_year"])
 
+    # Store in cache
+    pn.state.cache[cache_key] = (file_mtime, hydrograph_pentad_all)
     return hydrograph_pentad_all
 
-def read_hydrograph_pentad_data_for_pentad_forecasting(iahhf_selected_stations):
+def read_hydrograph_pentad_data_for_pentad_forecasting(iahhf_selected_stations, file_mtime):
+    cache_key_base = 'hydrograph_pentad_data_pentad_forecasting'
+    stations_tuple = tuple(iahhf_selected_stations) if iahhf_selected_stations is not None else None
+    cache_key = (cache_key_base, stations_tuple)
+    if cache_key in pn.state.cache:
+        cached_mtime, hydrograph_pentad_all = pn.state.cache[cache_key]
+        if cached_mtime == file_mtime:
+            return hydrograph_pentad_all
 
-    # Read hydrograph data with daily values
-    hydrograph_pentad_all = read_hydrograph_pentad_file()
+    # Read hydrograph data with pentad values
+    hydrograph_pentad_all = read_hydrograph_pentad_file(file_mtime)
 
     if iahhf_selected_stations is not None:
         # Filter the data frame for the selected stations
         hydrograph_pentad_all = filter_dataframe_for_selected_stations(
-        hydrograph_pentad_all, "code", iahhf_selected_stations)
+            hydrograph_pentad_all, "code", iahhf_selected_stations)
     else:
         # Get station ids of stations selected for forecasting
         filepath = os.path.join(
@@ -366,12 +424,19 @@ def read_hydrograph_pentad_data_for_pentad_forecasting(iahhf_selected_stations):
                 # Filter data for restricted stations
                 hydrograph_pentad_all = hydrograph_pentad_all[hydrograph_pentad_all["code"].isin(restricted_stations)]
 
-    #print(f"DEBUG: read_hydrograph_pentad_data_for_pentad_forecasting: selected_stations: {iahhf_selected_stations}")
-    #print(f"DEBUG: hydrograph_pentad_all:\n{hydrograph_pentad_all.head()}")
-
+    # Store in cache
+    pn.state.cache[cache_key] = (file_mtime, hydrograph_pentad_all)
     return hydrograph_pentad_all
 
-def read_linreg_forecast_data(iehhf_selected_stations):
+def read_linreg_forecast_data(iehhf_selected_stations, file_mtime):
+    cache_key_base = 'linreg_forecast_data'
+    stations_tuple = tuple(iehhf_selected_stations) if iehhf_selected_stations is not None else None
+    cache_key = (cache_key_base, stations_tuple)
+    if cache_key in pn.state.cache:
+        cached_mtime, linreg_forecast = pn.state.cache[cache_key]
+        if cached_mtime == file_mtime:
+            return linreg_forecast
+
     forecast_results_file = os.path.join(
         os.getenv("ieasyforecast_intermediate_data_path"),
         os.getenv("ieasyforecast_analysis_pentad_file")
@@ -407,7 +472,7 @@ def read_linreg_forecast_data(iehhf_selected_stations):
     if iehhf_selected_stations is not None:
         # Filter the data frame for the selected stations
         linreg_forecast = filter_dataframe_for_selected_stations(
-        linreg_forecast, "code", iehhf_selected_stations)
+            linreg_forecast, "code", iehhf_selected_stations)
 
     #print("DEBUG: read_linreg_forecast_data: linreg_forecast:\n", linreg_forecast.head())
 
@@ -416,7 +481,8 @@ def read_linreg_forecast_data(iehhf_selected_stations):
 
     # For site 15059, we want to see the latest 10 rows of columns 'date', 'code', 'slope, intercept, forecasted_discharge', 'delta' only (no other columns)
     #print("\n\n\n\n\nread_linreg_forecast_data:\n", linreg_forecast[((linreg_forecast['code'] == '16059') & (linreg_forecast['pentad_in_year'] == 54))][['date', 'code', 'slope', 'intercept', 'forecasted_discharge', 'delta']].tail(10).to_string(index=False))
-
+    # Store in cache
+    pn.state.cache[cache_key] = (file_mtime, linreg_forecast)
     return linreg_forecast
 
 def shift_date_by_n_days(linreg_predictor_orig, n=1):
@@ -449,7 +515,15 @@ def shift_date_by_n_days(linreg_predictor_orig, n=1):
 
     return linreg_predictor
 
-def read_forecast_results_file(iehhf_selected_stations):
+def read_forecast_results_file(iehhf_selected_stations, file_mtime):
+    cache_key_base = 'forecast_results_file'
+    stations_tuple = tuple(iehhf_selected_stations) if iehhf_selected_stations is not None else None
+    cache_key = (cache_key_base, stations_tuple)
+    if cache_key in pn.state.cache:
+        cached_mtime, forecast_pentad = pn.state.cache[cache_key]
+        if cached_mtime == file_mtime:
+            return forecast_pentad
+
     forecast_results_file = os.path.join(
         os.getenv("ieasyforecast_intermediate_data_path"),
         os.getenv("ieasyforecast_combined_forecast_pentad_file")
@@ -489,14 +563,23 @@ def read_forecast_results_file(iehhf_selected_stations):
     if iehhf_selected_stations is not None:
         # Filter the data frame for the selected stations
         forecast_pentad = filter_dataframe_for_selected_stations(
-        forecast_pentad, "code", iehhf_selected_stations)
+            forecast_pentad, "code", iehhf_selected_stations)
 
     #print(f"DEBUG: read_forecast_results_file: forecast_pentad:\n{forecast_pentad.tail()}")
     #print(f"DEBUG: read_forecast_results_file: unique models:\n{forecast_pentad['model_long'].unique()}")
-
+    # Store in cache
+    pn.state.cache[cache_key] = (file_mtime, forecast_pentad)
     return forecast_pentad
 
-def read_forecast_stats_file(stations_iehhf):
+def read_forecast_stats_file(stations_iehhf, file_mtime):
+    cache_key_base = 'forecast_stats_file'
+    stations_tuple = tuple(stations_iehhf) if stations_iehhf is not None else None
+    cache_key = (cache_key_base, stations_tuple)
+    if cache_key in pn.state.cache:
+        cached_mtime, forecast_stats = pn.state.cache[cache_key]
+        if cached_mtime == file_mtime:
+            return forecast_stats
+
     forecast_stats_file = os.path.join(
         os.getenv("ieasyforecast_intermediate_data_path"),
         os.getenv("ieasyforecast_pentadal_skill_metrics_file")
@@ -518,10 +601,11 @@ def read_forecast_stats_file(stations_iehhf):
     if stations_iehhf is not None:
         # Filter the data frame for the selected stations
         forecast_stats = filter_dataframe_for_selected_stations(
-        forecast_stats, "code", stations_iehhf)
+            forecast_stats, "code", stations_iehhf)
 
     #print("DEBUG: read_forecast_stats_file: forecast_stats:\n", forecast_stats.head())
-
+    # Store in cache
+    pn.state.cache[cache_key] = (file_mtime, forecast_stats)
     return forecast_stats
 
 # deprecated
@@ -562,17 +646,22 @@ def add_predictor_dates(linreg_predictor, station, date):
     """
     #print(f"\n\nDEBUG: add_predictor_dates: station: {station}, date: {date}")
     # Filter the predictor data for the hydropost
-    predictor = linreg_predictor[linreg_predictor['station_labels'] == station]
+    predictor = linreg_predictor[linreg_predictor['station_labels'] == station].copy()
 
     # Cast date column to datetime
-    predictor.loc[:, 'date'] = pd.to_datetime(predictor['date'], format='%Y-%m-%d')
+    predictor['date'] = pd.to_datetime(predictor['date'], format='%Y-%m-%d')
 
-    # Make sure predictor is a dataframe
-    if isinstance(predictor, pd.Series):
-        predictor = predictor.to_frame()
+    # Ensure predictor is not empty
+    if predictor.empty:
+        print(f"No predictor data available for station {station} up to date {date}.")
+        return pd.DataFrame()
 
     # Identify the next lowest date in the predictor data
     predictor = predictor[predictor['date'] <= pd.Timestamp(date)]
+    if predictor.empty:
+        print(f"No predictor data available for station {station} before date {date}.")
+        return pd.DataFrame()
+
     # Get the latest date in the predictor data
     predictor = predictor.sort_values('date').iloc[-1:]
 
@@ -613,7 +702,9 @@ def add_predictor_dates(linreg_predictor, station, date):
     #    predictor = predictor.to_frame()
 
     print(f"\n\n")
-
+    # Determine if the date is in a leap year
+    year = predictor['date'].dt.year.iloc[0]
+    predictor['leap_year'] = year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)
     return predictor
 
 def get_month_name_for_number(_, month_number):
@@ -772,20 +863,33 @@ def sapphire_sites_to_dataframe(sites_list):
     pd.DataFrame: A DataFrame where each row represents a SapphireSite object
                   and each column represents an attribute of the object.
     """
+    cache_key = 'sapphire_sites_dataframe'
+    sites_list_hash = hash(tuple([site.code for site in sites_list]))
+    if cache_key in pn.state.cache:
+        cached_hash, df = pn.state.cache[cache_key]
+        if cached_hash == sites_list_hash:
+            return df
     # Use a list comprehension to create a list of dictionaries
     # Each dictionary represents one SapphireSite object
     data = [vars(site) for site in sites_list]
 
     # Create a DataFrame from the list of dictionaries
     df = pd.DataFrame(data)
-
+    # Store in cache
+    pn.state.cache[cache_key] = (sites_list_hash, df)
     return df
 
 def read_all_stations_metadata_from_iehhf(station_list):
+    cache_key = 'all_stations_metadata_iehhf'
+    if cache_key in pn.state.cache:
+        station_list_cached, all_stations, station_df, station_dict = pn.state.cache[cache_key]
+        if station_list_cached == station_list:
+            return station_list, all_stations, station_df, station_dict
+
     from ieasyhydro_sdk.sdk import IEasyHydroHFSDK
     iehhf = IEasyHydroHFSDK()
     # Get a list of site objects from iEH HF
-    all_stations, station_list_we_dont_need = sl.get_pentadal_forecast_sites_from_HF_SDK(iehhf)
+    all_stations, _ = sl.get_pentadal_forecast_sites_from_HF_SDK(iehhf)
     # Cast all stations attributes to a dataframe
     all_stations = sapphire_sites_to_dataframe(all_stations)
     # Cast all_stations['code'] to string
@@ -799,22 +903,28 @@ def read_all_stations_metadata_from_iehhf(station_list):
     #print(f"all_stations columns: {all_stations.columns}")
 
     # Left-join
-    station_df=pd.DataFrame(station_list, columns=['code'])
-    station_df=station_df.merge(all_stations.loc[:,['code','station_labels', 'basin']],
-                            left_on='code', right_on='code', how='left')
+    station_df = pd.DataFrame(station_list, columns=['code'])
+    station_df = station_df.merge(
+        all_stations.loc[:, ['code', 'station_labels', 'basin']],
+        left_on='code', right_on='code', how='left')
     station_df['station_labels'] = station_df['code'] + ' - ' + station_df['station_labels']
 
     # Update the station list with the new station labels
     station_list = station_df['station_labels'].tolist()
 
-    # From station_df, get the columns basin and station_lables and convert to a
-    # dictionary where we have unique basins in the key and the station_labels
-    # in the values
+    # Create station dictionary
     station_dict = station_df.groupby('basin')['station_labels'].apply(list).to_dict()
 
+    # Store in cache
+    pn.state.cache[cache_key] = (station_list, all_stations, station_df, station_dict)
     return station_list, all_stations, station_df, station_dict
 
 def read_all_stations_metadata_from_file(station_list):
+    cache_key = 'all_stations_metadata_file'
+    if cache_key in pn.state.cache:
+        station_list_cached, all_stations, station_df, station_dict = pn.state.cache[cache_key]
+        if station_list_cached == station_list:
+            return station_list, all_stations, station_df, station_dict
 
     all_stations_file = os.path.join(
         os.getenv("ieasyforecast_configuration_path"),
@@ -830,36 +940,36 @@ def read_all_stations_metadata_from_file(station_list):
     all_stations['code'] = all_stations['code'].astype(str)
 
     # Left-join all_stations['code', 'river_ru', 'punkt_ru'] by 'Code' = 'code'
-    station_df=pd.DataFrame(station_list, columns=['code'])
-    station_df=station_df.merge(all_stations.loc[:,['code','river_ru','punkt_ru', 'basin']],
-                            left_on='code', right_on='code', how='left')
+    station_df = pd.DataFrame(station_list, columns=['code'])
+    station_df = station_df.merge(
+        all_stations.loc[:, ['code', 'river_ru', 'punkt_ru', 'basin']],
+        left_on='code', right_on='code', how='left')
 
-    # Paste together the columns Code, river_ru and punkt_ru to a new column
-    # station_labels. river and punkt names are currently only available in Russian.
+    # Create station labels
     station_df['station_labels'] = station_df['code'] + ' - ' + station_df['river_ru'] + ' ' + station_df['punkt_ru']
 
     # Update the station list with the new station labels
     station_list = station_df['station_labels'].tolist()
 
-    # From station_df, get the columns basin and station_lables and convert to a
-    # dictionary where we have unique basins in the key and the station_labels
-    # in the values
+    # Create station dictionary
     station_dict = station_df.groupby('basin')['station_labels'].apply(list).to_dict()
 
+    # Store in cache
+    pn.state.cache[cache_key] = (station_list, all_stations, station_df, station_dict)
     return station_list, all_stations, station_df, station_dict
 
 def add_labels_to_hydrograph(hydrograph, all_stations):
     hydrograph = hydrograph.merge(
-        all_stations.loc[:,['code','station_labels']],
-                            left_on='code', right_on='code', how='left')
+        all_stations.loc[:, ['code', 'station_labels']],
+        left_on='code', right_on='code', how='left').copy()
     hydrograph['station_labels'] = hydrograph['code'] + ' - ' + hydrograph['station_labels']
 
     return hydrograph
 
 def add_labels_to_forecast_pentad_df(forecast_pentad, all_stations):
     forecast_pentad = forecast_pentad.merge(
-        all_stations.loc[:,['code','station_labels']],
-        left_on='code', right_on='code', how='left')
+        all_stations.loc[:, ['code', 'station_labels']],
+        left_on='code', right_on='code', how='left').copy()
     forecast_pentad['station_labels'] = forecast_pentad['code'] + ' - ' + forecast_pentad['station_labels']
 
     return forecast_pentad
@@ -900,51 +1010,44 @@ def update_model_dict(model_dict, forecasts_all, selected_station, selected_pent
     """
     Update the model_dict with the models we have results for for the selected station
     """
-    print("\n\n\nDEBUG: selected pentad in update_model_dict: \n", selected_pentad)
-    #print("DEBUG: update_model_dict: selected_station:\n", selected_station)
-    #print("tail of forecasts_all:\n", forecasts_all.tail())
-    print("columns of forecasts_all:\n", forecasts_all.columns)
-    #print("DEBUG: update_model_dict: unique models for selected station:\n", test['model_long'].unique())
-    #print("DEBUG: update_model_dict: test:\n", test)
-
-    model_dict = forecasts_all[forecasts_all['station_labels'] == selected_station]
-    model_dict = model_dict[model_dict['pentad_in_year'] == selected_pentad]
-    # If we have several rows with model_short == 'EM', we only keep the last one
-    model_dict = model_dict.drop_duplicates(subset=['model_short'], keep='last')
-    model_dict = model_dict.set_index('model_long')['model_short'].to_dict()
-    #print("DEBUG: update_model_dict: model_dict:\n", model_dict)
+    filtered_forecasts = forecasts_all[
+        (forecasts_all['station_labels'] == selected_station) &
+        (forecasts_all['pentad_in_year'] == selected_pentad)
+    ]
+    # Remove duplicates in model_short
+    filtered_forecasts = filtered_forecasts.drop_duplicates(subset=['model_short'], keep='last')
+    model_dict = filtered_forecasts.set_index('model_long')['model_short'].to_dict()
     return model_dict
 
 def get_best_models_for_station_and_pentad(forecasts_all, selected_station, selected_pentad):
     """Returns a list of models with the best performance for the selected station and pentad"""
     # Filter the forecast results for the selected station and pentad
-    forecasts = forecasts_all[forecasts_all['station_labels'] == selected_station]
-    forecasts = forecasts[forecasts['pentad_in_year'] == selected_pentad]
-    # Get the model_long value of the row in forecasts with the highest value for accuracy
+    forecasts = forecasts_all[
+        (forecasts_all['station_labels'] == selected_station) &
+        (forecasts_all['pentad_in_year'] == selected_pentad)
+    ]
     forecasts_no_LR = forecasts[forecasts['model_long'] != 'Linear regression (LR)']
     # Test if forecasts_no_LR is empty
     # Check if forecasts_no_LR is empty or contains only NaN accuracy
     if forecasts_no_LR.empty or forecasts_no_LR['accuracy'].isna().all():
         print("No valid models found for the given station and pentad.")
-        return ['Linear regression (LR)']  # Return a fallback or appropriate message
-    best_models = forecasts_no_LR.loc[forecasts_no_LR['accuracy'].idxmax(), 'model_long']
-    best_models = [best_models, 'Linear regression (LR)']
-    print("best models: ", best_models)
+        return ['Linear regression (LR)']  # Return a fallback
+    best_model = forecasts_no_LR.loc[forecasts_no_LR['accuracy'].idxmax(), 'model_long']
+    best_models = [best_model, 'Linear regression (LR)']
     return best_models
 
 def add_labels_to_hydrograph_pentad_all(hydrograph_pentad_all, all_stations):
     hydrograph_pentad_all = hydrograph_pentad_all.merge(
-        all_stations.loc[:,['code','river_ru','punkt_ru']],
-                            left_on='code', right_on='code', how='left')
+        all_stations.loc[:, ['code', 'river_ru', 'punkt_ru']],
+        left_on='code', right_on='code', how='left')
     hydrograph_pentad_all['station_labels'] = hydrograph_pentad_all['code'] + ' - ' + hydrograph_pentad_all['river_ru'] + ' ' + hydrograph_pentad_all['punkt_ru']
     # Remove the columns river_ru and punkt_ru
-    hydrograph_pentad_all = hydrograph_pentad_all.drop(columns=['code', 'river_ru', 'punkt_ru'])
-
+    hydrograph_pentad_all = hydrograph_pentad_all.drop(columns=['river_ru', 'punkt_ru'])
     return hydrograph_pentad_all
 
 def add_labels_to_analysis_pentad_df(analysis_pentad, all_stations):
     analysis_pentad = analysis_pentad.merge(
-        all_stations.loc[:,['code','river_ru','punkt_ru']],
+        all_stations.loc[:, ['code', 'river_ru', 'punkt_ru']],
         left_on='code', right_on='code', how='left')
     analysis_pentad['station_labels'] = analysis_pentad['code'] + ' - ' + analysis_pentad['river_ru'] + ' ' + analysis_pentad['punkt_ru']
     analysis_pentad = analysis_pentad.drop(columns=['river_ru', 'punkt_ru'])
@@ -1026,30 +1129,29 @@ def preprocess_hydrograph_pentad_data(hydrograph_pentad: pd.DataFrame, today) ->
     station.
     '''
     # Test if we only have data for one unique code in the data frame.
-    # If we have more than one code, we raise an exception.
-    if len(hydrograph_pentad["Code"].unique()) > 1:
+    if len(hydrograph_pentad["code"].unique()) > 1:
         raise ValueError("Data frame contains more than one unique code.")
 
-    # Drop the Code column
-    hydrograph_pentad = hydrograph_pentad.drop(columns=["Code", "station_labels"])
+    # Drop the code column
+    hydrograph_pentad = hydrograph_pentad.drop(columns=["code", "station_labels"])
     # Melt the DataFrame to simplify the column index
-    hydrograph_pentad = hydrograph_pentad.melt(id_vars=["pentad"], var_name="Year", value_name="value")
+    hydrograph_pentad = hydrograph_pentad.melt(id_vars=["pentad_in_year", "year"], var_name="Variable", value_name="value")
 
-    # Set index to pentad of year
-    hydrograph_pentad = hydrograph_pentad.set_index("pentad")
+    # Set index to pentad_in_year
+    hydrograph_pentad = hydrograph_pentad.set_index("pentad_in_year")
 
-    # Calculate norm and percentiles for each day_of_year over all Years in the hydrograph
-    norm = hydrograph_pentad.groupby("pentad")["value"].mean().reset_index(drop=True)
-    perc_05 = hydrograph_pentad.groupby("pentad")["value"].quantile(0.05).reset_index(drop=True)
-    perc_25 = hydrograph_pentad.groupby("pentad")["value"].quantile(0.25).reset_index(drop=True)
-    perc_75 = hydrograph_pentad.groupby("pentad")["value"].quantile(0.75).reset_index(drop=True)
-    perc_95 = hydrograph_pentad.groupby("pentad")["value"].quantile(0.95).reset_index(drop=True)
-    min_val = hydrograph_pentad.groupby("pentad")["value"].min().reset_index(drop=True)
-    max_val = hydrograph_pentad.groupby("pentad")["value"].max().reset_index(drop=True)
+    # Calculate norm and percentiles for each pentad_in_year over all years
+    norm = hydrograph_pentad.groupby("pentad_in_year")["value"].mean().reset_index(drop=True)
+    perc_05 = hydrograph_pentad.groupby("pentad_in_year")["value"].quantile(0.05).reset_index(drop=True)
+    perc_25 = hydrograph_pentad.groupby("pentad_in_year")["value"].quantile(0.25).reset_index(drop=True)
+    perc_75 = hydrograph_pentad.groupby("pentad_in_year")["value"].quantile(0.75).reset_index(drop=True)
+    perc_95 = hydrograph_pentad.groupby("pentad_in_year")["value"].quantile(0.95).reset_index(drop=True)
+    min_val = hydrograph_pentad.groupby("pentad_in_year")["value"].min().reset_index(drop=True)
+    max_val = hydrograph_pentad.groupby("pentad_in_year")["value"].max().reset_index(drop=True)
 
     # Create a new DataFrame with the calculated values
     hydrograph_norm_perc = pd.DataFrame({
-        "pentad": norm.index,
+        "pentad_in_year": norm.index,
         "Norm": norm.values,
         "Perc_05": perc_05.values,
         "Perc_25": perc_25.values,
@@ -1061,46 +1163,45 @@ def preprocess_hydrograph_pentad_data(hydrograph_pentad: pd.DataFrame, today) ->
 
     # Get the current year from the system date
     current_year = today.year
-    current_year_col = str(current_year)
 
     # If current year data is not available, use the previous year data
-    if current_year_col not in hydrograph_pentad["Year"].values:
-        current_year_col = hydrograph_pentad["Year"].values[-1]
-    current_year_data = hydrograph_pentad[hydrograph_pentad["Year"] == str(current_year_col)]["value"].values
+    if current_year not in hydrograph_pentad["year"].values:
+        current_year = hydrograph_pentad["year"].values[-1]
+    current_year_data = hydrograph_pentad[hydrograph_pentad["year"] == current_year]["value"].values
 
     # Add the current year data to the DataFrame
     hydrograph_norm_perc["current_year"] = current_year_data
-    hydrograph_norm_perc["pentad"] = hydrograph_norm_perc["pentad"] + 1
+    hydrograph_norm_perc["pentad_in_year"] = hydrograph_norm_perc["pentad_in_year"] + 1
 
     return hydrograph_norm_perc
 
 def select_analysis_data(analysis_pentad_all, station_widget):
     analysis_pentad = analysis_pentad_all[analysis_pentad_all["station_labels"] == station_widget]
 
-    #print(analysis_pentad.head())
-    #print(analysis_pentad.columns)
-
-    # Select columns Year, predictor and discharge_avg
+    # Select columns
     analysis_pentad = analysis_pentad[
-        ["Year", "discharge_sum", "discharge_avg", "accuracy", "sdivsigma",
-         "pentad"]]
+        ["year", "discharge_sum", "discharge_avg", "accuracy", "sdivsigma", "pentad_in_year"]
+    ]
 
     # Rename the columns
     analysis_pentad = analysis_pentad.rename(
-        columns={"discharge_sum": "Predictor",
-                 "discharge_avg": "Q [m3/s]",
-                 "accuracy": "Accuracy",
-                 "sdivsigma": "Efficiency",
-                 "pentad": "Pentad"})
+        columns={
+            "discharge_sum": "Predictor",
+            "discharge_avg": "Q [m3/s]",
+            "accuracy": "Accuracy",
+            "sdivsigma": "Efficiency",
+            "pentad_in_year": "Pentad"
+        }
+    )
 
-    # Make sure Year is an integer
-    analysis_pentad["Year"] = analysis_pentad["Year"].astype(int)
+    # Make sure year is an integer
+    analysis_pentad["year"] = analysis_pentad["year"].astype(int)
 
     # Reset and drop index
     analysis_pentad = analysis_pentad.reset_index(drop=True)
 
-    # Set the Year column as index
-    analysis_pentad = analysis_pentad.set_index("Year")
+    # Set the year column as index
+    analysis_pentad = analysis_pentad.set_index("year")
 
     return analysis_pentad
 
@@ -1135,40 +1236,42 @@ def calculate_fc_stats(analysis_data):
 
     return fc_stats
 
-def read_rainfall_data():
+def read_rainfall_data(file_mtime):
+    cache_key = 'rainfall_data'
+    if cache_key in pn.state.cache:
+        cached_mtime, forcing = pn.state.cache[cache_key]
+        if cached_mtime == file_mtime:
+            return forcing
+
     # Get path to forcing files from environment variables
-    # reanalysis forcing
-    filepath = os.path.join(
+    # Reanalysis forcing
+    filepath_hind = os.path.join(
         os.getenv('ieasyhydroforecast_PATH_TO_HIND'),
         os.getenv('ieasyhydroforecast_FILE_CF_HIND_P')
     )
-    if not os.path.isfile(filepath):
-        raise Exception("File not found: " + filepath)
+    if not os.path.isfile(filepath_hind):
+        raise Exception("File not found: " + filepath_hind)
     # Read hindcast forcing data
-    hindcast_forcing = pd.read_csv(filepath)
+    hindcast_forcing = pd.read_csv(filepath_hind)
 
-    # Convert the date column to datetime. The format of the date string is %Y-%m-%d.
-    hindcast_forcing['date'] = pd.to_datetime(
-        hindcast_forcing['date'], format='%Y-%m-%d', errors='coerce').dt.date
+    # Convert the date column to datetime
+    hindcast_forcing['date'] = pd.to_datetime(hindcast_forcing['date'], format='%Y-%m-%d', errors='coerce').dt.date
 
-    # control member forcing
-    filepath = os.path.join(
+    # Control member forcing
+    filepath_cf = os.path.join(
         os.getenv('ieasyhydroforecast_PATH_TO_CF'),
         os.getenv('ieasyhydroforecast_FILE_CF_P')
     )
-    if not os.path.isfile(filepath):
-        raise Exception("File not found: " + filepath)
+    if not os.path.isfile(filepath_cf):
+        raise Exception("File not found: " + filepath_cf)
     # Read forecast forcing data
-    forecast_forcing = pd.read_csv(filepath)
+    forecast_forcing = pd.read_csv(filepath_cf)
 
-    # Convert the date column to datetime. The format of the date string is %Y-%m-%d.
-    forecast_forcing['date'] = pd.to_datetime(
-        forecast_forcing['date'], format='%Y-%m-%d', errors='coerce').dt.date
+    # Convert the date column to datetime
+    forecast_forcing['date'] = pd.to_datetime(forecast_forcing['date'], format='%Y-%m-%d', errors='coerce').dt.date
 
-    # Merge the two dataframes, keeping hindcast where hindcast is available
-    # and filling in with forecast where hindcast is missing
-    forcing = pd.merge(hindcast_forcing, forecast_forcing, how='outer',
-                       on=['date', 'code'])
+    # Merge the two dataframes
+    forcing = pd.merge(hindcast_forcing, forecast_forcing, how='outer', on=['date', 'code'])
     # Fill missing values in P_x with values from P_y
     forcing['P'] = forcing['P_x'].combine_first(forcing['P_y'])
     # Drop columns P_x and P_y
@@ -1180,49 +1283,50 @@ def read_rainfall_data():
     # Sort by code and date
     forcing = forcing.sort_values(by=['code', 'date'])
 
+    # Store in cache
+    pn.state.cache[cache_key] = (file_mtime, forcing)
     return forcing
 
-def read_temperature_data():
+def read_temperature_data(file_mtime):
+    cache_key = 'temperature_data'
+    if cache_key in pn.state.cache:
+        cached_mtime, forcing = pn.state.cache[cache_key]
+        if cached_mtime == file_mtime:
+            return forcing
+
     # Get path to forcing files from environment variables
-    # reanalysis forcing
-    filepath = os.path.join(
+    # Reanalysis forcing
+    filepath_hind = os.path.join(
         os.getenv('ieasyhydroforecast_PATH_TO_HIND'),
         os.getenv('ieasyhydroforecast_FILE_CF_HIND_T')
     )
-    if not os.path.isfile(filepath):
-        raise Exception("File not found: " + filepath)
+    if not os.path.isfile(filepath_hind):
+        raise Exception("File not found: " + filepath_hind)
     # Read hindcast forcing data
-    hindcast_forcing = pd.read_csv(filepath)
+    hindcast_forcing = pd.read_csv(filepath_hind)
 
-    # Convert the date column to datetime. The format of the date string is %Y-%m-%d.
-    hindcast_forcing['date'] = pd.to_datetime(
-        hindcast_forcing['date'], format='%Y-%m-%d', errors='coerce').dt.date
+    # Convert the date column to datetime
+    hindcast_forcing['date'] = pd.to_datetime(hindcast_forcing['date'], format='%Y-%m-%d', errors='coerce')
 
-    # control member forcing
-    filepath = os.path.join(
+    # Control member forcing
+    filepath_cf = os.path.join(
         os.getenv('ieasyhydroforecast_PATH_TO_CF'),
         os.getenv('ieasyhydroforecast_FILE_CF_T')
     )
-    if not os.path.isfile(filepath):
-        raise Exception("File not found: " + filepath)
+    if not os.path.isfile(filepath_cf):
+        raise Exception("File not found: " + filepath_cf)
     # Read forecast forcing data
-    forecast_forcing = pd.read_csv(filepath)
+    forecast_forcing = pd.read_csv(filepath_cf)
 
-    # Convert the date column to datetime. The format of the date string is %Y-%m-%d.
-    forecast_forcing['date'] = pd.to_datetime(
-        forecast_forcing['date'], format='%Y-%m-%d', errors='coerce').dt.date
+    # Convert the date column to datetime
+    forecast_forcing['date'] = pd.to_datetime(forecast_forcing['date'], format='%Y-%m-%d', errors='coerce')
 
-    # Merge the two dataframes, keeping hindcast where hindcast is available
-    # and filling in with forecast where hindcast is missing
-    forcing = pd.merge(hindcast_forcing, forecast_forcing, how='outer',
-                       on=['date', 'code'])
+    # Merge the two dataframes
+    forcing = pd.merge(hindcast_forcing, forecast_forcing, how='outer', on=['date', 'code'])
     # Fill missing values in T_x with values from T_y
     forcing['T'] = forcing['T_x'].combine_first(forcing['T_y'])
-    # Drop columns P_x and P_y
+    # Drop columns T_x and T_y
     forcing = forcing.drop(columns=['T_x', 'T_y'])
-
-    # Convert the date column to datetime. The format of the date string is %Y-%m-%d.
-    forcing['date'] = pd.to_datetime(forcing['date'], format='%Y-%m-%d', errors='coerce')
 
     # Convert the code column to string
     forcing['code'] = forcing['code'].astype(str)
@@ -1230,6 +1334,8 @@ def read_temperature_data():
     # Sort by code and date
     forcing = forcing.sort_values(by=['code', 'date'])
 
+    # Store in cache
+    pn.state.cache[cache_key] = (file_mtime, forcing)
     return forcing
 
 
