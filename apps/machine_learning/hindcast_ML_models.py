@@ -29,11 +29,9 @@
 # - Hindecast (Pentad):
 #       The hindecast for a pentad period, average over the pentad for different quantiles
 # --------------------------------------------------------------------
-# TODO:
-# --------------------------------------------------------------------
 
 # Usage
-# python hindcast_ML_models.py
+# SAPPHIRE_OPDEV_ENV=True SAPPHIRE_MODEL_TO_USE=TIDE SAPPHIRE_HINDCAST_MODE=PENTAD python hindcast_ML_models.py
 
 # --------------------------------------------------------------------
 # Load Libraries
@@ -121,222 +119,8 @@ class LossLogger(Callback):
 
 
 # --------------------------------------------------------------------
-# HELPER FUNCTIONS
-# --------------------------------------------------------------------
-def get_codes_to_use(past_discharge: pd.DataFrame, era5: pd.DataFrame, static_features: pd.DataFrame) -> list:
-    # Extract unique codes from each DataFrame column
-    codes_rivers = set(past_discharge['code'].unique())
-    codes_era5 = set(era5['code'].unique())
-    codes_static = set(static_features['CODE'].unique())
-
-    # Find intersection of all three sets
-    common_codes = codes_rivers & codes_era5 & codes_static
-
-    # Convert the set back to a list
-    return list(common_codes)
-
-def prepare_benchmark(benchmark_org, code):
-
-    benchmark = benchmark_org.copy()
-    benchmark = benchmark[benchmark['code'] == code]
-
-    benchmark['date'] = pd.to_datetime(benchmark['date'])
-
-    benchmark = benchmark.drop_duplicates(subset=['date'], keep='last')
-    benchmark = benchmark.sort_values(by='date')
-
-    return benchmark
-
-# --------------------------------------------------------------------
-# REDICT PENTAD
-# --------------------------------------------------------------------
-def predict_pentad(date)-> bool:
-    """
-    This function returns a boolean value, and the number of days until the next forecast.
-    """
-    days_to_save = [5, 10, 15, 20, 25]
-
-
-    #check if today is the last day of the month
-    tomorrow = date + datetime.timedelta(days=1)
-    is_last_day_of_month = tomorrow.month != date.month
-
-    #check if today is in the list of days to save
-    is_day_to_save = date.day in days_to_save
-
-    make_forecast = is_last_day_of_month or is_day_to_save
-
-    #days until next forecast
-    if is_last_day_of_month:
-        days_until_next_forecast = 5
-
-    elif date.day in [5, 10, 15, 20]:
-        days_until_next_forecast = 5
-
-    else:
-        # if the month has 30 days -> 5 days
-        # if the month has 31 days -> 6 days
-        # if the month has 28 days -> 3 days
-        # if the month has 29 days -> 4 days
-
-        if date.month in [1, 3, 5, 7, 8, 10, 12]:
-            days_until_next_forecast = 6
-        elif date.month in [2]:
-            #check if the year is a leap year
-            if date.year % 4 == 0:
-                days_until_next_forecast = 4
-            else:
-                days_until_next_forecast = 3
-        else:
-            days_until_next_forecast = 5
-
-    if not make_forecast:
-        days_until_next_forecast = 0
-
-    return make_forecast, days_until_next_forecast
-
-# --------------------------------------------------------------------
-# PREDICT DECAD
-# --------------------------------------------------------------------
-def predict_decad(date: pd.Timestamp) -> bool:
-    """
-    This function returns a boolean value, and the number of days until the next forecast.
-    """
-    days_to_save = [10, 20]
-
-    #check if today is the last day of the month
-    tomorrow = date + datetime.timedelta(days=1)
-    is_last_day_of_month = tomorrow.month != date.month
-
-    #check if today is in the list of days to save
-    is_day_to_save = date.day in days_to_save
-
-    make_forecast = is_last_day_of_month or is_day_to_save
-
-    #days until next forecast
-    if is_last_day_of_month:
-        days_until_next_forecast = 10
-
-    elif date.day in [10]:
-        days_until_next_forecast = 10
-
-    else:
-        # if the month has 30 days -> 10 days
-        # if the month has 31 days -> 11 days
-        # if the month has 28 days -> 8 days
-        # if the month has 29 days -> 9 days
-
-        if date.month in [1, 3, 5, 7, 8, 10, 12]:
-            days_until_next_forecast = 11
-        elif date.month in [2]:
-            #check if the year is a leap year
-            if date.year % 4 == 0:
-                days_until_next_forecast = 8
-            else:
-                days_until_next_forecast = 9
-        else:
-            days_until_next_forecast = 10
-
-    if not make_forecast:
-        days_until_next_forecast = 0
-
-    return make_forecast, days_until_next_forecast
-# --------------------------------------------------------------------
-# HINDECAST
-# --------------------------------------------------------------------
-
-def make_hindecast_pentad(
-        past_discharge: pd.DataFrame,
-        era5: pd.DataFrame,
-        predictor : predictor_TFT.PREDICTOR,
-        threshold_missing_days : int,
-        threshold_missing_days_end: int,
-        pentad_no_success: list,
-        decadal_no_success: list,
-        exceeds_threshhold_dict: dict,
-        code: int,
-        missing_values_dict: dict,
-        nans_at_end_dict: dict,
-        recursive_rivers: list,
-        days_until_next_forecast: int,
-    )-> tuple[pd.DataFrame, list, list, dict]:
-
-        #get the input chunck length -> this can than be used to determine the relevant allowed missing values
-        input_chunk_length = predictor.get_input_chunk_length()
-
-        #check for missing values, n = number of missing values at the end
-        missing_values, nans_at_end = utils_ml_forecast.check_for_nans(past_discharge.iloc[-input_chunk_length:], threshold_missing_days)
-
-        if missing_values['exceeds_threshold'] or nans_at_end >= threshold_missing_days_end:
-            pentad_no_success.append(code)
-            decadal_no_success.append(code)
-            exceeds_threshhold_dict[code] = True
-            #we predict and get nan values
-            predictions_pentad = predictor.predict(past_discharge, era5, None , code, n=days_until_next_forecast, make_plot=False)
-            return predictions_pentad, pentad_no_success, decadal_no_success, exceeds_threshhold_dict, missing_values_dict, nans_at_end_dict
-
-        elif missing_values['nans_in_between']:
-            past_discharge = utils_ml_forecast.gaps_imputation(past_discharge)
-
-        elif missing_values['nans_at_end'] and code in recursive_rivers:
-            decadal_forecast_is_possible = False
-            nans_at_end_dict[code] = nans_at_end
-            decadal_no_success.append(code)
-
-            past_discharge = utils_ml_forecast.recursive_imputation(past_discharge, None, era5, nans_at_end, predictor, make_plot=False)
-
-
-
-        predictions_pentad = predictor.predict(past_discharge, era5, None , code, n=days_until_next_forecast, make_plot=False)
-
-
-
-        return predictions_pentad, pentad_no_success, decadal_no_success, exceeds_threshhold_dict, missing_values_dict, nans_at_end_dict
-
-
-
-def make_hindecast_decad(
-        past_discharge: pd.DataFrame,
-        era5: pd.DataFrame,
-        predictor : predictor_TFT.PREDICTOR,
-        threshold_missing_days : int,
-        threshold_missing_days_end: int,
-        pentad_no_success: list,
-        decadal_no_success: list,
-        exceeds_threshhold_dict: dict,
-        code: int,
-        missing_values_dict: dict,
-        nans_at_end_dict: dict,
-        recursive_rivers: list,
-        days_until_next_forecast: int,
-    )-> tuple[pd.DataFrame, list, list, dict]:
-        
-        #get the input chunck length -> this can than be used to determine the relevant allowed missing values
-        input_chunk_length = predictor.get_input_chunk_length()
-        #check for missing values, n = number of missing values at the end
-        missing_values, nans_at_end = utils_ml_forecast.check_for_nans(past_discharge.iloc[-input_chunk_length:], threshold_missing_days)
-
-        if missing_values['exceeds_threshold'] or nans_at_end >= threshold_missing_days_end:
-            pentad_no_success.append(code)
-            decadal_no_success.append(code)
-            exceeds_threshhold_dict[code] = True
-            #we predict and get nan values
-            predictions = predictor.predict(past_discharge, era5, None , code, n=days_until_next_forecast, make_plot=False)
-            return predictions, pentad_no_success, decadal_no_success, exceeds_threshhold_dict, missing_values_dict, nans_at_end_dict
-
-        elif missing_values['nans_in_between']:
-            past_discharge = utils_ml_forecast.gaps_imputation(past_discharge)
-
-
-        # no recursive imputation for the decadal forecast
-        predictions = predictor.predict(past_discharge, era5, None , code, n=days_until_next_forecast, make_plot=False)
-
-        return predictions, pentad_no_success, decadal_no_success, exceeds_threshhold_dict, missing_values_dict, nans_at_end_dict
-
-# --------------------------------------------------------------------
 # MAIN FUNCTION
 # --------------------------------------------------------------------
-
 def main():
     # --------------------------------------------------------------------
     # DEFINE WHICH MODEL TO USE
@@ -438,6 +222,15 @@ def main():
     rivers_to_predict = list(set(rivers_to_predict) & set(codes_model_can_predict))
     #convert to int 
     rivers_to_predict = [int(code) for code in rivers_to_predict]
+
+    # read the ieasyhydroforecast_NEW_STATIONS variable
+    # this variables cantains the codes which should be hindcasted
+    # this is only used when a new station is added to the config file and we only hindcast this station to save time
+    NEW_STATIONS = os.getenv('ieasyhydroforecast_NEW_STATIONS')
+    if NEW_STATIONS != 'None':
+        new_stations = [int(code) for code in NEW_STATIONS.split(',')]
+        rivers_to_predict = list(set(rivers_to_predict) & set(new_stations))
+
     logger.debug('Rivers to predict pentad: %s', rivers_to_predict_pentad)
     logger.debug('Rivers to predict decad: %s', rivers_to_predict_decad)
     logger.debug('Rivers to predict: %s', rivers_to_predict)
@@ -549,10 +342,6 @@ def main():
     observed_discharge['code'] = observed_discharge['code'].astype(int)
     era5_data_transformed['code'] = era5_data_transformed['code'].astype(int)
 
-    #get the codes to use
-    codes_to_use = get_codes_to_use(observed_discharge, era5_data_transformed, static_features)
-
-
     # --------------------------------------------------------------------
     # Calculate PET Oudin and Daylight Hours
     # --------------------------------------------------------------------
@@ -608,11 +397,7 @@ def main():
     THRESHOLD_MISSING_DAYS= int(THRESHOLD_MISSING_DAYS)
     THRESHOLD_MISSING_DAYS_END = int(THRESHOLD_MISSING_DAYS_END)
 
-    """
-    if CODES_HINDECAST != 'None':
-        codes_hindecast = [int(code) for code in CODES_HINDECAST.split(',')]
-    else:
-        codes_hindecast = codes_to_use"""
+
 
 
     pred_date = pd.to_datetime(start_date)
@@ -625,84 +410,41 @@ def main():
 
     current_year = pred_date.year
     print(f'Starting Hindcast for the dates: {start_date} to {end_date}')
-    while pred_date <= pd.to_datetime(end_date):
+    input_chunk_length = predictor.get_input_chunk_length()
 
-            
-        days_until_next_forecast = forecast_horizon # either 5 or 10
+    start_date_string = start_date
+    end_date_string = end_date
+    
+    start_date = pd.to_datetime(start_date) - pd.DateOffset(days=input_chunk_length + 1)
+    end_date = pd.to_datetime(end_date)
 
-        if pred_date.year != current_year:
-            current_year = pred_date.year
-            print(f'Year: {current_year}')
-       
-        for code in rivers_to_predict:
+    # filter observed discharge to be only in the range of the start and end date
+    observed_discharge = observed_discharge[observed_discharge['date'] >= start_date].copy()
+    observed_discharge = observed_discharge[observed_discharge['date'] <= end_date].copy()
+    
+    timer_start = datetime.datetime.now()
+    for code in rivers_to_predict:
+    
+        discharge = observed_discharge[observed_discharge['code'] == code].copy()
+        era5 = era5_data_transformed[era5_data_transformed['code'] == code].copy()
+
+
+        # make hindcast 
+        hindcast_code = predictor.hindcast(
+            df_rivers_org = discharge,
+            df_era5 = era5,
+            df_swe = None,
+            code = code,
+            n = forecast_horizon,
+        )
+
+        hindcast_code['code'] = code
         
-            # get the discharge data
-            past_discharge = observed_discharge[observed_discharge['code'] == code]
-            past_discharge = past_discharge[past_discharge['date'] <= pred_date]
+        hindecast_daily_df = pd.concat([hindecast_daily_df, hindcast_code], axis=0)
+    
+    timer_end = datetime.datetime.now()
 
-            # get the era5 data
-            era5 = era5_data_transformed[era5_data_transformed['code'] == code]
-            date_end_forecast = pred_date + pd.DateOffset(days=15)
-            era5 = era5[era5['date'] <= date_end_forecast]
-
-            if HINDCAST_MODE == 'PENTAD':
-                # make prediction with predictor
-                predictions = make_hindecast_pentad(
-                        past_discharge=past_discharge,
-                        era5=era5,
-                        predictor=predictor,
-                        threshold_missing_days=THRESHOLD_MISSING_DAYS,
-                        threshold_missing_days_end=THRESHOLD_MISSING_DAYS_END,
-                        pentad_no_success=[],
-                        decadal_no_success=[],
-                        exceeds_threshhold_dict={},
-                        code=code,
-                        missing_values_dict={},
-                        nans_at_end_dict={},
-                        recursive_rivers=RECURSIVE_RIVERS,
-                        days_until_next_forecast=days_until_next_forecast
-
-                    )[0]
-
-            else:
-                predictions = make_hindecast_decad(
-                        past_discharge=past_discharge,
-                        era5=era5,
-                        predictor=predictor,
-                        threshold_missing_days=THRESHOLD_MISSING_DAYS,
-                        threshold_missing_days_end=THRESHOLD_MISSING_DAYS_END,
-                        pentad_no_success=[],
-                        decadal_no_success=[],
-                        exceeds_threshhold_dict={},
-                        code=code,
-                        missing_values_dict={},
-                        nans_at_end_dict={},
-                        recursive_rivers=RECURSIVE_RIVERS,
-                        days_until_next_forecast=days_until_next_forecast
-                    )[0]
-
-
-            # Calculate the mean for each quantile column
-            mean_values = predictions.drop(columns=['date']).mean(skipna=True)
-
-            # Create a DataFrame with the mean values, the prediction date and the code
-            hindecast = pd.DataFrame(mean_values).T
-            hindecast['date'] = pred_date
-            hindecast['forecast_date'] = pred_date  # the forecast date is the same as the prediction date
-            hindecast['code'] = code
-
-            # Append to the daily DataFrame
-            hindecast_daily_df_temp = predictions.copy()
-            # the date is already in the predictions
-            hindecast_daily_df_temp['code'] = code
-            hindecast_daily_df_temp['forecast_date'] = pred_date
-
-            hindecast_daily_df = pd.concat([hindecast_daily_df, hindecast_daily_df_temp], axis=0)
-            hindecast_df = pd.concat([hindecast_df, hindecast], axis=0)
-
-
-        pred_date = pred_date + pd.DateOffset(days=1)
-
+    print(f'Time to make hindcast: {timer_end - timer_start}')
 
     # --------------------------------------------------------------------
     # SAVE HINDECAST
@@ -714,10 +456,12 @@ def main():
     # Test if path exists and create it if it doesn't
     if not os.path.exists(OUTPUT_PATH_DISCHARGE):
         os.makedirs(OUTPUT_PATH_DISCHARGE, exist_ok=True)
+
+    start_date = start_date.strftime('%Y-%m-%d')
+    end_date = end_date.strftime('%Y-%m-%d')
     
-    
-    hindecast_df.to_csv(os.path.join(OUTPUT_PATH_DISCHARGE, f'{MODEL_TO_USE}_{HINDCAST_MODE}_hindcast_{start_date}_{end_date}.csv'), index=False)
-    hindecast_daily_df.to_csv(os.path.join(OUTPUT_PATH_DISCHARGE, f'{MODEL_TO_USE}_{HINDCAST_MODE}_hindcast_daily_{start_date}_{end_date}.csv'), index=False)
+    #hindecast_df.to_csv(os.path.join(OUTPUT_PATH_DISCHARGE, f'{MODEL_TO_USE}_{HINDCAST_MODE}_hindcast_{start_date}_{end_date}.csv'), index=False)
+    hindecast_daily_df.to_csv(os.path.join(OUTPUT_PATH_DISCHARGE, f'{MODEL_TO_USE}_{HINDCAST_MODE}_hindcast_daily_{start_date_string}_{end_date_string}.csv'), index=False)
 
 
     logger.info('Hindcast Done!')
