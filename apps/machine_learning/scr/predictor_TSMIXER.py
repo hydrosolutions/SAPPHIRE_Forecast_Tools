@@ -227,3 +227,98 @@ class PREDICTOR():
         
         return df_predictions
     
+
+    def hindcast(self, df_rivers_org: pd.DataFrame, df_era5: pd.DataFrame, df_swe:pd.DataFrame, code: int, n:int, make_plot: bool = False):
+        #copy the dataframes
+        df_rivers = df_rivers_org.copy()
+        df_era5 = df_era5.copy()
+        if df_swe is not None:
+            df_swe = df_swe.copy()
+        
+        #scale the data
+        df_rivers['discharge'] = self.scale_discharge(df_rivers, self.scaler_discharge.loc[code], type='standard')
+        for col in ['P', 'T', 'PET', 'daylight_hours']:
+            df_era5[col] = self.scale_covariates(df_era5, self.scaler_era5, type='minmax', col = col)
+
+        
+        if df_swe is not None:
+            df_swe['SWE'] = self.scale_covariates(df_swe, self.scaler_era5, type='minmax', col = 'SWE')
+
+        df_covariates_past = pd.DataFrame()
+        df_covariates_past['date'] = df_rivers['date'].values.copy()
+  
+        #moving average discharge
+        df_covariates_past['moving_avr_dis_10'] = self.calc_rolling_mean(df_rivers, df_era5, window=10)
+        df_covariates_past['moving_avr_dis_5'] = self.calc_rolling_mean(df_rivers, df_era5, window=5)
+        df_covariates_past['moving_avr_dis_3'] = self.calc_rolling_mean(df_rivers, df_era5, window=3)
+
+        #swe 
+        #reindex swe with df_covariates_past dates
+        if df_swe is not None: 
+            df_swe = df_swe.set_index('date')
+            df_swe = df_swe.reindex(df_covariates_past['date'])
+            df_swe['SWE'] = df_swe['SWE'].shift(periods = 6).bfill()
+            df_covariates_past['SWE'] = df_swe['SWE'].values
+
+
+        #create the time series
+        # It is really important for the TiDE Model, that the features are added in the same order as in the training 
+        # past covariates: SWE, moving_average_discharge, residuals
+        # future covariates: P, T, PET, month
+
+        discharge = TimeSeries.from_dataframe(df_rivers, time_col='date', value_cols = 'discharge', freq='1D')
+        #add static_features to the time series
+        discharge = discharge.with_static_covariates(self.static_features.drop(columns=['CODE']).loc[code])
+
+        #past covariates 
+        if df_swe is not None:
+            covariates_past = TimeSeries.from_dataframe(df_covariates_past, time_col='date', value_cols = [ 'SWE','moving_avr_dis_5','moving_avr_dis_10'], freq='1D')
+        else:
+            covariates_past = TimeSeries.from_dataframe(df_covariates_past, time_col='date', value_cols = ['moving_avr_dis_3','moving_avr_dis_5','moving_avr_dis_10'], freq='1D')
+
+        #future covariates with month
+        covariates_future = TimeSeries.from_dataframe(df_era5, time_col='date', value_cols = ['P', 'T', 'PET', 'daylight_hours'], freq='1D')
+        #covariates_future = self.add_month(covariates_future)
+
+        #to np.float32
+        discharge = discharge.astype(np.float32)
+        covariates_past = covariates_past.astype(np.float32)
+        covariates_future = covariates_future.astype(np.float32)
+
+        predict_kwargs = {
+            'trainer': Trainer(accelerator='cpu', logger=False,),
+        }
+        # hindcast the entire series
+        hindcasts = self.model.historical_forecasts(
+            series=discharge,
+            past_covariates=covariates_past,
+            future_covariates=covariates_future,
+            num_samples=200,
+            forecast_horizon=n,
+            stride=1,
+            retrain=False, # this is important, otherwise the model will be retrained
+            verbose=False,
+            last_points_only=False,
+            predict_kwargs=predict_kwargs)
+
+        # Returns 
+        # List[List[TimeSeries]] 
+        # – A list of lists of historical forecasts for a sequence of series and last_points_only=False.
+        #  For each series, and historical forecast, it contains the entire horizon forecast_horizon. 
+        # The outer list is over the series provided in the input sequence, and the inner lists contain the historical forecasts for each series.
+
+        hindcast_df = pd.DataFrame()
+        for hindcast in hindcasts:
+
+            df_predictions = self.create_prediction_df(hindcast, code)
+
+            min_date = df_predictions['date'].min()
+
+            forecast_date = min_date - pd.DateOffset(days=1)
+
+            df_predictions['forecast_date'] = forecast_date
+
+            hindcast_df = pd.concat([hindcast_df, df_predictions])
+
+        
+        return hindcast_df
