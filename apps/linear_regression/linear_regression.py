@@ -125,6 +125,13 @@ def main():
         forecast_flags=forecast_flags,
         site_list_pentad=site_list_pentad,
         site_list_decad=site_list_decad)
+    # Test if either data_pentad or data_decad is empty
+    if data_pentad.empty:
+        logger.info("No pentadal data available. Exiting.")
+        exit()
+    if forecast_flags.decad and data_decad.empty:
+        logger.info("No decad data available. Exiting.")
+        exit()
 
     logger.info(f"Tail of data pentad: {data_pentad.tail()}")
     if forecast_flags.decad:
