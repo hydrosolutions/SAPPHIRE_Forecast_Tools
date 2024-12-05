@@ -66,7 +66,7 @@ def call_hindcast_script(start_date: str,
     env['SAPPHIRE_HINDCAST_MODE'] = PREDICTION_MODE
     #transform the list to a string
     codes_hindcast = ','.join([str(code) for code in codes_hindcast])
-    env['ieasyhydroforecast_CODES_HINDECAST'] = codes_hindcast
+    env['ieasyhydroforecast_NEW_STATIONS'] = codes_hindcast
 
 
     # Prepare the command
@@ -176,12 +176,6 @@ def main():
     # --------------------------------------------------------------------
     # Compare which codes are new
     # --------------------------------------------------------------------
-    #HARD CODED PART FOR TESTING
-    # TODO: remove this part
-    day_threshold = '2024-05-12'
-    pentad_forecast = pentad_forecast[pentad_forecast['forecast_date'] < day_threshold]
-    decad_forecast = decad_forecast[decad_forecast['forecast_date'] < day_threshold]
-
     # Get the codes that are already in the decad forecast
     codes_decad_forecast = decad_forecast['code'].unique()
     pentad_codes = pentad_forecast['code'].unique()
@@ -197,56 +191,62 @@ def main():
     # Call the hindcast script
     # --------------------------------------------------------------------
     #Pentad
-    print("Starting Hindcast Pentad in daily intervall")
-    pentad_hindcast_daily = call_hindcast_script(start_date,
+    if len(new_codes_pentad) > 0:
+        logger.info('Starting Hindcast Pentad in daily intervall')
+        pentad_hindcast_daily = call_hindcast_script(start_date,
+                                                        end_date,
+                                                        new_codes_pentad,
+                                                        MODEL_TO_USE,
+                                                        intermediate_data_path,
+                                                        'PENTAD')
+
+        logger.info('Pentad hindcast daily is generated')
+        pentad_hindcast_daily['forecast_date'] = pd.to_datetime(pentad_hindcast_daily['forecast_date'])
+        pentad_hindcast_daily['date'] = pd.to_datetime(pentad_hindcast_daily['date'])
+
+        # Append the new pentad forecast to the existing pentad forecast
+        pentad_forecast = pd.concat([pentad_forecast, pentad_hindcast_daily], ignore_index=True)
+        #Sort by forecast_date and date
+        pentad_forecast = pentad_forecast.sort_values(by=['forecast_date', 'date'])
+        # remove duplicates by code, date and forecast_date
+        pentad_forecast = pentad_forecast.drop_duplicates(subset=['code', 'date', 'forecast_date'])
+
+        # Save 
+        path_pentad_out_daily = os.path.join(OUTPUT_PATH_DISCHARGE, f'pentad_{MODEL_TO_USE}_forecast.csv')
+        pentad_forecast.to_csv(path_pentad_out_daily, index=False)
+        print(f'The forecast files for model pentadal {MODEL_TO_USE} are saved in the directory: {OUTPUT_PATH_DISCHARGE}')
+    else:
+        logger.info('No new codes for pentad forecast')
+
+    if len(new_codes_decad) > 0:
+        #Decad
+        logger.info('Starting Hindcast Decad in daily intervall')
+        decad_hindcast_daily = call_hindcast_script(start_date,
                                                     end_date,
-                                                    new_codes_pentad,
+                                                    new_codes_decad,
                                                     MODEL_TO_USE,
                                                     intermediate_data_path,
-                                                    'PENTAD')
+                                                    'DECAD')
+        
+        logger.info('Decad hindcast daily is generated')
+        decad_hindcast_daily['forecast_date'] = pd.to_datetime(decad_hindcast_daily['forecast_date'])
+        decad_hindcast_daily['date'] = pd.to_datetime(decad_hindcast_daily['date'])
 
-    logger.info('Pentad hindcast daily is generated')
-    pentad_hindcast_daily['forecast_date'] = pd.to_datetime(pentad_hindcast_daily['forecast_date'])
-    pentad_hindcast_daily['date'] = pd.to_datetime(pentad_hindcast_daily['date'])
+        # Append the new decad forecast to the existing decad forecast
+        decad_forecast = pd.concat([decad_forecast, decad_hindcast_daily], ignore_index=True)
+        # Sort by forecast_date and date
+        decad_forecast = decad_forecast.sort_values(by=['forecast_date', 'date'])
+        # remove duplicates by code, date and forecast_date
+        decad_forecast = decad_forecast.drop_duplicates(subset=['code', 'date', 'forecast_date'])
 
-    # Append the new pentad forecast to the existing pentad forecast
-    pentad_forecast = pd.concat([pentad_forecast, pentad_hindcast_daily], ignore_index=True)
-    #Sort by forecast_date and date
-    pentad_forecast = pentad_forecast.sort_values(by=['forecast_date', 'date'])
-    # remove duplicates by code, date and forecast_date
-    pentad_forecast = pentad_forecast.drop_duplicates(subset=['code', 'date', 'forecast_date'])
+        # Save
+        path_decad_out_daily = os.path.join(OUTPUT_PATH_DISCHARGE, f'decad_{MODEL_TO_USE}_forecast.csv')
+        decad_forecast.to_csv(path_decad_out_daily, index=False)
+        print(f'The forecast files for model decadal {MODEL_TO_USE} are saved in the directory: {OUTPUT_PATH_DISCHARGE}')
 
-    # Save 
-    path_pentad_out_daily = os.path.join(OUTPUT_PATH_DISCHARGE, f'pentad_{MODEL_TO_USE}_forecast.csv')
-    pentad_forecast.to_csv(path_pentad_out_daily, index=False)
+    else:
+        logger.info('No new codes for decad forecast')
 
-    #Decad
-    print("Starting Hindcast Decad in daily intervall")
-    decad_hindcast_daily = call_hindcast_script(start_date,
-                                                end_date,
-                                                new_codes_decad,
-                                                MODEL_TO_USE,
-                                                intermediate_data_path,
-                                                'DECAD')
-    
-    logger.info('Decad hindcast daily is generated')
-    decad_hindcast_daily['forecast_date'] = pd.to_datetime(decad_hindcast_daily['forecast_date'])
-    decad_hindcast_daily['date'] = pd.to_datetime(decad_hindcast_daily['date'])
-
-    # Append the new decad forecast to the existing decad forecast
-    decad_forecast = pd.concat([decad_forecast, decad_hindcast_daily], ignore_index=True)
-    # Sort by forecast_date and date
-    decad_forecast = decad_forecast.sort_values(by=['forecast_date', 'date'])
-    # remove duplicates by code, date and forecast_date
-    decad_forecast = decad_forecast.drop_duplicates(subset=['code', 'date', 'forecast_date'])
-
-    # Save
-    path_decad_out_daily = os.path.join(OUTPUT_PATH_DISCHARGE, f'decad_{MODEL_TO_USE}_forecast.csv')
-    decad_forecast.to_csv(path_decad_out_daily, index=False)
-
-
-
-    print(f'The forecast files for model {MODEL_TO_USE} are saved in the directory: {OUTPUT_PATH_DISCHARGE}')
 
 if __name__ == '__main__':
     main()
