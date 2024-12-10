@@ -26,4 +26,4 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 
 # Run the application.
 # This cmd is moved to the pipeline definition
-CMD ["sh", "-c", "PYTHONPATH=/app/apps/iEasyHydroForecast python apps/machine_learning/make_forecast.py && python apps/machine_learning/fill_ml_gaps.py"]
+CMD ["sh", "-c", "PYTHONPATH=/app/apps/iEasyHydroForecast python apps/machine_learning/make_forecast.py && python apps/machine_learning/fill_ml_gaps.py  && python apps/machine_learning/add_new_station.py"]

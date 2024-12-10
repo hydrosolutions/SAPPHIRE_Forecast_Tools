@@ -227,7 +227,7 @@ def load_data():
     global hydrograph_day_all, hydrograph_pentad_all, linreg_predictor, \
         forecasts_all, forecast_stats, all_stations, station_dict, station_df, \
         station_list, linreg_datatable, stations_iehhf, \
-        rram_forecast, ml_forecast, rain, temp
+        rram_forecast, ml_forecast, rain, temp, latest_data_is_current_year
     # File modification times
     hydrograph_day_file = os.path.join(
         os.getenv("ieasyforecast_intermediate_data_path"),
@@ -326,6 +326,15 @@ def load_data():
     # Add the station_labels column to the hydrograph_day_all DataFrame
     hydrograph_day_all = processing.add_labels_to_hydrograph(hydrograph_day_all, all_stations)
     hydrograph_pentad_all = processing.add_labels_to_hydrograph(hydrograph_pentad_all, all_stations)
+
+    # Define a flag to indicate if the latest data in hydrograph_pentad_all is for the current year
+    current_year_temp = dt.datetime.now().year
+    if str(current_year_temp) in hydrograph_pentad_all.columns:
+        latest_data_is_current_year = True
+    else:
+        latest_data_is_current_year = False
+    del current_year_temp
+
     #print(f"DEBUG: linreg_predictor raw: {linreg_predictor.tail()}")
     linreg_predictor = processing.add_labels_to_forecast_pentad_df(linreg_predictor, all_stations)
     #print(f"DEBUG: linreg_predictor with labels: {linreg_predictor.tail()}")
@@ -366,12 +375,16 @@ load_data()
 
 # Test if we have sites in stations_iehhf which are not present in forecasts_all
 # Placeholder for a message pane
-message_pane = pn.pane.Markdown("")
+message_pane = pn.pane.Markdown("", width=300)
 if stations_iehhf is not None:
     missing_sites = set(stations_iehhf) - set(forecasts_all['code'].unique())
     if missing_sites:
-        missing_sites_message = f"WARNING: The following sites are missing from the forecast results: {missing_sites}. No forecasts are currently available for these sites. Please make sure your forecast models are configured to produce results for these sites, re-run hindcasts manually and re-run the forecast."
+        missing_sites_message = f"_('WARNING: The following sites are missing from the forecast results:') {missing_sites}. _('No forecasts are currently available for these sites. Please make sure your forecast models are configured to produce results for these sites, re-run hindcasts manually and re-run the forecast.')"
         message_pane.object = missing_sites_message
+
+# Add message to message_pane, depending on the status of recent data availability
+if not latest_data_is_current_year:
+    message_pane.object += "\n\n" + _("WARNING: The latest data available is not for the current year. Forecast Tools may not have access to iEasyHydro. Please contact the system administrator.")
 
 sites_list = Site.get_site_attribues_from_iehhf_dataframe(all_stations)
 
@@ -538,6 +551,14 @@ def create_language_buttons():
 
 language_buttons = create_language_buttons()
 
+# Put the message into a card with visibility set to off is the message is empty
+message_card = pn.Card(
+    message_pane,
+    title=_("Messages:"),
+    width_policy='fit',
+    width=station.width
+)
+
 # Create a single Tabulator instance
 forecast_tabulator = pn.widgets.Tabulator(
     theme='bootstrap',
@@ -663,12 +684,25 @@ bulletin_tabulator = pn.widgets.Tabulator(
 def update_site_attributes_with_hydrograph_statistics_for_selected_pentad(_,
     sites=sites_list, df=hydrograph_pentad_all, pentad=pentad_selector.value):
     """Update site attributes with hydrograph statistics for selected pentad"""
-    #print(f"column names: {df.columns}")
+    print(f"\n\n\nDEBUG update_site_attributes_with_hydrograph_statistics_for_selected_pentad: pentad: {pentad}")
+    print(f"column names: {df.columns}")
     # Based on column names and date, figure out which column indicates the
     # last year's Q for the selected pentad
     current_year = dt.datetime.now().year
+    print(f"current year: {current_year}")
     if str(current_year) in df.columns:
         last_year_column = str(current_year - 1)
+    else:
+        logger.info(f"Column for current year not found. Trying previous year.")
+        current_year -= 1
+        if str(current_year) in df.columns:
+            last_year_column = str(current_year - 1)
+        else:
+            current_year -= 1
+            if str(current_year) in df.columns:
+                last_year_column = str(current_year - 1)
+            else:
+                raise ValueError("No column found for last year's Q.")
     #print(f"\n\nupdate site attributes hydrograph stats: dataframe: {df}")
     # Filter the df for the selected pentad
     df = df[df['pentad_in_year'] == pentad].copy()
@@ -1291,7 +1325,7 @@ dashboard = pn.template.BootstrapTemplate(
     logo=icon_path,
     header=[pn.Row(pn.layout.HSpacer(), language_buttons)],
     sidebar=layout.define_sidebar(_, station_card, forecast_card, basin_card,
-                                  message_pane, reload_card),
+                                  message_card, reload_card),
     collapsed_sidebar=False,
     main=layout.define_tabs(_,
         daily_hydrograph_plot, daily_rainfall_plot, daily_temperature_plot,
