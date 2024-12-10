@@ -74,9 +74,9 @@ def call_hindcast_script(min_missing_date: str,
     env['ieasyhydroforecast_START_DATE'] = min_missing_date
     env['ieasyhydroforecast_END_DATE'] = max_missing_date
     env['SAPPHIRE_HINDCAST_MODE'] = PREDICTION_MODE
+    env['ieasyhydroforecast_NEW_STATIONS'] = 'None'
 
     # Prepare the command
-
     if (os.getenv('IN_DOCKER') == 'True'):
         command = ['python', 'apps/machine_learning/hindcast_ML_models.py']
         print('Running in Docker, calling command:', command)
