@@ -162,11 +162,16 @@ class PREDICTOR():
         np.random.seed(42)
         
         # Make predictions
-        predictions = model.predict(
-            n=n,
-            series=discharge,
-            future_covariates=covariates_future,
-        )
+        try:
+            predictions = model.predict(
+                n=n,
+                series=discharge,
+                future_covariates=covariates_future,
+            )
+        except Exception as e:
+            print(e)
+            print("Error in predicting for code", code)
+            return pd.DataFrame()
 
         # Create prediction DataFrame
         df_predictions = self.create_prediction_df(predictions, code)
@@ -262,15 +267,20 @@ class PREDICTOR():
         np.random.seed(42)
         
         # Perform historical forecasts
-        hindcasts = model.historical_forecasts(
-            series=discharge,
-            future_covariates=covariates_future,
-            forecast_horizon=n,
-            stride=1,
-            retrain=False,
-            verbose=False,
-            last_points_only=False
-        )
+        try:
+            hindcasts = model.historical_forecasts(
+                series=discharge,
+                future_covariates=covariates_future,
+                forecast_horizon=n,
+                stride=1,
+                retrain=False,
+                verbose=False,
+                last_points_only=False
+            )
+        except Exception as e:
+            print(e)
+            print("Error in predicting for code", code)
+            return pd.DataFrame()
 
         # Process results
         hindcast_df = pd.DataFrame()
