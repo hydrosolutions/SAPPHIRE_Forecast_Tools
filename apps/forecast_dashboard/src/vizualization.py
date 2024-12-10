@@ -25,6 +25,11 @@ import re
 import docker
 import threading
 
+import logging
+
+# Get logger
+logger = logging.getLogger("vizualizations")
+
 
 from .gettext_config import translation_manager, _
 from . import processing
@@ -352,6 +357,16 @@ def plot_runoff_line(data, date_col, line_data_col, label_text, color):
     Returns:
     hv.Curve plot of the runoff values
     """
+
+    # Return an empty plot if the data DataFrame is empty
+    if data.empty:
+        logger.debug("plot_runoff_line: Data is empty")
+        return hv.Curve([])
+
+    # Return an empty plot if date_col or line_data_col only contain NaN values
+    if data[date_col].isnull().all() or data[line_data_col].isnull().all():
+        logger.debug("plot_runoff_line: Date or line data column only contains NaN values")
+        return hv.Curve([])
 
     # Create the curve
     line = hv.Curve(
@@ -2229,6 +2244,8 @@ def plot_pentad_forecast_hydrograph_data_v2(_, hydrograph_day_all, linreg_predic
     data['date'] = pd.to_datetime(data['date'])
     current_year = data['date'].dt.year.max()
     last_year = current_year - 1
+    print(f"current_year: {current_year}")
+    print(f"last_year: {last_year}")
 
     # Define strings
     title_text = _("Hydropost ") + station + _(" on ") + title_date.strftime("%Y-%m-%d")
@@ -2346,6 +2363,7 @@ def plot_pentad_forecast_hydrograph_data_v2(_, hydrograph_day_all, linreg_predic
 
     mean = plot_runoff_line(
         data, date_col, mean_col, _('Mean legend entry'), runoff_mean_color)
+    print("head and tail fo data\n", data.head(), data.tail())
     last_year = plot_runoff_line(
         data, date_col, last_year_col,
         _('Last year legend entry'), runoff_last_year_color)
