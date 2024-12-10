@@ -68,9 +68,15 @@ def call_hindcast_script(start_date: str,
     codes_hindcast = ','.join([str(code) for code in codes_hindcast])
     env['ieasyhydroforecast_NEW_STATIONS'] = codes_hindcast
 
-
     # Prepare the command
-    command = ['python', 'hindcast_ML_models.py']
+    if (os.getenv('IN_DOCKER') == 'True'):
+        command = ['python', 'apps/machine_learning/hindcast_ML_models.py']
+        print('Running in Docker, calling command:', command)
+        logger.info('Running in Docker, calling command: %s', command)
+    else:
+        command = ['python', 'hindcast_ML_models.py']
+        print('Running locally, calling command:', command)
+        logger.info('Running locally, calling command: %s', command)
 
     # Call the script
     result = subprocess.run(command, capture_output=True, text=True, env=env)
