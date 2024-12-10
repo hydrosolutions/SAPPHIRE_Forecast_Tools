@@ -1119,7 +1119,7 @@ def perform_linear_regression(
         except ValueError as e:
             print(f'Error in perform_linear_regression when filtering for station data: {e}')
 
-        #if int(station) == 15194:
+        #if int(station) == 15030:
         #    logger.debug("DEBUG: forecasting:perform_linear_regression: station_data: \n%s",
         #                  station_data[['date', pentad_col, station_col, predictor_col, discharge_avg_col]].tail(10))
 
@@ -1146,8 +1146,8 @@ def perform_linear_regression(
             )
             # Define the file name
             logger.debug(f"forecast_pentad: {forecast_pentad}")
-            logger.debug(f"columns of station_data: {station_data.columns}")
-            logger.debug(f"station_data: {station_data}")
+            #logger.debug(f"columns of station_data: {station_data.columns}")
+            #logger.debug(f"station_data: {station_data}")
             forecast_date = tl.get_date_for_last_day_in_pentad(forecast_pentad)
             logger.debug(f"forecast_date: {forecast_date}")
             pentad_in_month = tl.get_pentad(forecast_date)
@@ -1170,9 +1170,9 @@ def perform_linear_regression(
                 station_data = station_data[station_data['visible'] == True]
                 # Drop the 'visible' and 'year' columns
                 station_data.drop(columns=['visible', 'year'], inplace=True)
-                logger.debug(f"station_data after point selection: {station_data}")
+                #logger.debug(f"station_data after point selection: {station_data}")
 
-        #if int(station) == 15194:
+        #if int(station) == 15030:
         #    logger.debug("DEBUG: forecasting:perform_linear_regression: station_data: \n%s",
         #                  station_data[['date', pentad_col, station_col, predictor_col, discharge_avg_col]].tail(10))
 
@@ -1181,12 +1181,12 @@ def perform_linear_regression(
         discharge_sum = station_data[predictor_col].values.reshape(-1, 1)
         discharge_avg = station_data[discharge_avg_col].values.reshape(-1, 1)
 
-        #if int(station) == 15194:
+        #if int(station) == 15030:
         #    logger.debug("DEBUG: forecasting:perform_linear_regression: discharge_sum: \n%s", discharge_sum)
         #    logger.debug("DEBUG: forecasting:perform_linear_regression: discharge_avg: \n%s", discharge_avg)
 
         # If we have more than 1 data point, perform the linear regression
-        if len(discharge_sum) < 2 or len(discharge_avg) < 2:
+        if len(discharge_sum) <= 2 or len(discharge_avg) <= 2:
             logger.info(f"Skipping linear regression for station {station} in pentad {forecast_pentad} due to insufficient data points.")
             slope = np.nan
             intercept = np.nan
@@ -1198,10 +1198,10 @@ def perform_linear_regression(
         else:
             # Perform the linear regression
             model = LinearRegression().fit(discharge_sum, discharge_avg)
-            if int(station) == 15194:
-                logger.debug("model output: %s", model)
-                logger.debug("model.coef_: %s", model.coef_)
-                logger.debug("model.intercept_: %s", model.intercept_)
+            #if int(station) == 15030:
+            #    logger.debug("model output: %s", model)
+            #    logger.debug("model.coef_: %s", model.coef_)
+            #    logger.debug("model.intercept_: %s", model.intercept_)
 
             # Calculate discharge statistics
             q_mean = np.mean(discharge_avg)
@@ -1209,8 +1209,8 @@ def perform_linear_regression(
             delta = 0.674 * q_std_sigma
             rsquared = model.score(discharge_sum, discharge_avg)
 
-            if int(station) == 15194:
-                logger.debug(f'Station: {station}, pentad: {forecast_pentad}, q_mean: {q_mean}, q_std_sigma: {q_std_sigma}, delta: {delta}')
+            #if int(station) == 15030:
+            #    logger.debug(f'Station: {station}, pentad: {forecast_pentad}, q_mean: {q_mean}, q_std_sigma: {q_std_sigma}, delta: {delta}')
 
             # Get the slope and intercept
             slope = model.coef_[0][0]
@@ -1237,8 +1237,8 @@ def perform_linear_regression(
             slope * data_dfp.loc[(data_dfp[station_col] == station), predictor_col] + intercept
 
         # print rows where code == 15292
-        #if int(station) == 15292:
-            #logger.debug("column names of data_dfp:\n%s", station_data.columns)
+        #if int(station) == 15030:
+        #    #logger.debug("column names of data_dfp:\n%s", station_data.columns)
         #    logger.debug("DEBUG: forecasting:perform_linear_regression: data_dfp after linear regression: \n%s",
         #      data_dfp.loc[data_dfp[station_col] == station, ['date', station_col, pentad_col, predictor_col, discharge_avg_col, 'slope', 'intercept', 'forecasted_discharge']].tail(10))
 

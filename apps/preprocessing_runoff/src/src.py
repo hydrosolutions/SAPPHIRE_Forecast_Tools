@@ -1251,6 +1251,7 @@ def write_daily_time_series_data_to_csv(data: pd.DataFrame, column_list=["code",
     Raises:
     Exception: If the data cannot be written to the csv file.
     """
+    data = data.copy()
 
     # Get the path to the intermediate data folder from the environmental
     # variables and the name of the ieasyforecast_analysis_daily_file.
@@ -1270,8 +1271,14 @@ def write_daily_time_series_data_to_csv(data: pd.DataFrame, column_list=["code",
         if col not in data.columns:
             raise ValueError(f"Column '{col}' not found in the DataFrame.")
 
+    # Print head of data
+    print(f'DEBUG: write_daily_time_series_data_to_csv: data.head(10)\n{data.head(10)}')
+
     # Round all values to 3 decimal places
     data = data.round(3)
+
+    # Cast the 'code' column to int and then string
+    data = data.astype({'code': 'Float64'}).astype({'code': 'Int64'})
 
     # Write the data to a csv file. Raise an error if this does not work.
     # If the data is written to the csv file, log a message that the data
@@ -1325,6 +1332,12 @@ def write_daily_hydrograph_data_to_csv(data: pd.DataFrame, column_list=["code", 
 
     # Round all values to 3 decimal places
     data = data.round(3)
+
+    # Cast the 'code' column to int and then string
+    data = data.astype({'code': 'Float64'}).astype({'code': 'Int64'})
+
+    # Test if we have rows where count is 0. If so, drop these rows.
+    data = data[data['count'] != 0]
 
     # Write the data to a csv file. Raise an error if this does not work.
     # If the data is written to the csv file, log a message that the data

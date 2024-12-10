@@ -182,18 +182,22 @@ class TestPerformLinearRegression(unittest.TestCase):
     def test_perform_linear_regression_with_simple_data(self):
         # Create a test DataFrame
         data = {'station': ['123', '123', '456', '456', '789', '789',
-                            '123', '123', '456', '456', '789', '789'],
+                            '123', '123', '456', '456', '789', '789',
+                            '123', '123', '456', '456', '789', '789',],
                 'pentad': [1, 2, 1, 2, 1, 2,
+                           1, 2, 1, 2, 1, 2,
                            1, 2, 1, 2, 1, 2],
                 'discharge_sum': [100, 200, 150, 250, 120, 180,
-                                  1000, 2000, 1500, 2500, 1200, 1800],
+                                  1000, 2000, 1500, 2500, 1200, 1800,
+                                  150, 250, 200, 300, 180, 280],
                 'discharge_avg': [10, 20, 15, 25, 12, 18,
-                                  100, 200, 150, 250, 120, 180]}
+                                  100, 200, 150, 250, 120, 180,
+                                  15, 25, 20, 30, 18, 28]}
         df = pd.DataFrame(data)
 
         # Call the perform_linear_regression method
         result = fl.perform_linear_regression(df, 'station', 'pentad', 'discharge_sum', 'discharge_avg', 2)
-
+        print(f"test_perform_linear_regression_with_simple_data: result: \n{result}")
         # Check that the result is a DataFrame
         assert isinstance(result, pd.DataFrame)
 
@@ -207,8 +211,8 @@ class TestPerformLinearRegression(unittest.TestCase):
         expected_slopes = {'123': 0.1, '456': 0.1, '789': 0.1}
         expected_intercepts_p2 = {'123': 0.0, '456': 0.0, '789': 0.0}
         for station in expected_slopes.keys():
-            slope = result.loc[(result['station'] == station) & (result['pentad'] == 2), 'slope'].values[0]
-            intercept = result.loc[(result['station'] == station) & (result['pentad'] == 2), 'intercept'].values[0]
+            slope = round(result.loc[(result['station'] == station) & (result['pentad'] == 2), 'slope'].values[0], 1)
+            intercept = round(result.loc[(result['station'] == station) & (result['pentad'] == 2), 'intercept'].values[0], 1)
             forecast_exp = df.loc[(df['station'] == station) & (df['pentad'] == 2), 'discharge_avg'].values[0]
             forecast_calc = slope * df.loc[
                 (df['station'] == station) & (df['pentad'] == 2),

@@ -1,0 +1,9 @@
+The forecast dashboard is a web application that provides a user interface for the operational hydrolgoical forecast service. The dashboard allows users to view and manage forecasts, as well as view forecast metrics and performance. The dashboard is built using the Panel web application framework for Python.
+
+Running the dashboard locally
+ieasyhydroforecast_env_file_path=/Path/to/.env_develop_kghm SAPPHIRE_OPDEV_ENV=True panel serve pentad_dashboard.py --show --autoreload --port <port number>
+
+Updating translations
+Manually add translation strings in the pentad_dashboard.po file. Then run the following command to compile the translations:
+msgfmt -o /path/to/locale/en_CH/LC_MESSAGES/pentad_dashboard.mo /path/to/locale/en_CH/LC_MESSAGES/pentad_dashboard.po
+
