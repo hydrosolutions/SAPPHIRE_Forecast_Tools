@@ -213,7 +213,8 @@ class PREDICTOR():
 
 
         #predict n steps
-        predictions = self.model.predict(n = n,
+        try:
+            predictions = self.model.predict(n = n,
                                          series = discharge,
                                          past_covariates = covariates_past,
                                          future_covariates=covariates_future,
@@ -221,6 +222,10 @@ class PREDICTOR():
                                          verbose=False,
                                          trainer = Trainer(accelerator='cpu',
                                                            logger=False,))
+        except Exception as e:
+            print(e)
+            print("Error in predicting for code", code)
+            return pd.DataFrame()
 
         df_predictions = self.create_prediction_df(predictions, code)
 
@@ -298,17 +303,22 @@ class PREDICTOR():
         }
 
         # hindcast the entire series
-        hindcasts = self.model.historical_forecasts(
-            series=discharge,
-            past_covariates=covariates_past,
-            future_covariates=covariates_future,
-            num_samples=200,
-            forecast_horizon=n,
-            stride=1,
-            retrain=False, # this is important, otherwise the model will be retrained
-            verbose=False,
-            last_points_only=False,
-            predict_kwargs=predict_kwargs)
+        try:
+            hindcasts = self.model.historical_forecasts(
+                series=discharge,
+                past_covariates=covariates_past,
+                future_covariates=covariates_future,
+                num_samples=200,
+                forecast_horizon=n,
+                stride=1,
+                retrain=False, # this is important, otherwise the model will be retrained
+                verbose=False,
+                last_points_only=False,
+                predict_kwargs=predict_kwargs)
+        except Exception as e:
+            print(e)
+            print("Error in hindcasting for code", code)
+            return pd.DataFrame()
 
         # Returns 
         # List[List[TimeSeries]] 
