@@ -213,4 +213,4 @@ apps/forecast_dashboard/logs/*
 apps/backend/tests/testspecial_*.ipynb
 
 /apps/forecast_dashboard/saved_data
-apps/backend/tests/visualize_operational_report.ipynb
+
