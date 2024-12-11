@@ -67,6 +67,7 @@ from dotenv import load_dotenv
 from datetime import datetime, timedelta
 import logging
 from logging.handlers import TimedRotatingFileHandler
+import traceback
 
 # Note that the sapphire data gateway client is currently a private repository
 # Access to the repository is required to install the package
@@ -331,11 +332,18 @@ def merge_ensemble_forecast(files_downloaded: list) -> pd.DataFrame:
         transformed_data_file = transform_data_file_ensemble_member(data_file, HRU_CODE)
         transformed_data_file['ensemble_member'] = int(ensemble_member)
 
-
         if variable == "tp":
             P_ensemble = pd.concat([P_ensemble, transformed_data_file], axis = 0)
         else:
             T_ensemble = pd.concat([T_ensemble, transformed_data_file], axis = 0)
+
+    # Test if P_ensemble and T_ensemble are empty
+    if P_ensemble.empty:
+        logger.error("No precipitation data found in the ensemble forecast files.")
+        sys.exit(1)
+    if T_ensemble.empty:
+        logger.error("No temperature data found in the ensemble forecast files.")
+        sys.exit(1)
 
     #combine the P and T data, on code, than name, than ensemble_member than date
     P_ensemble = P_ensemble.sort_values(['code', 'name', 'ensemble_member', 'date'])
@@ -494,6 +502,7 @@ def main():
 
         #get the parameters if available
         if perform_qmapping:
+            logger.info("Performing Quantile Mapping for Control Member")
             P_params_hru = pd.read_csv(os.path.join(Q_MAP_PARAM_PATH, f'HRU{c_m_hru}_P_params.csv'))
             T_params_hru = pd.read_csv(os.path.join(Q_MAP_PARAM_PATH, f'HRU{c_m_hru}_T_params.csv'))
 
@@ -503,6 +512,7 @@ def main():
 
             #perform the quantile mapping for the control member for the HRU's without Eleavtion bands
             P_data, T_data = do_quantile_mapping(transformed_data_file, P_params_hru, T_params_hru, ensemble=False)
+            logger.info("Quantile Mapping for Control Member Done.")
         else:
             P_data = transformed_data_file[['date', 'P', 'code']].copy()
             T_data = transformed_data_file[['date', 'T', 'code']].copy()
@@ -532,35 +542,61 @@ def main():
     for code_ens in hru_ensemble_forecast:
 
         print(f"Processing HRU Ensemble: {code_ens} (gateway code)")
-        print(f"Storing fiels downloaded to {OUTPUT_PATH_DG}")
+        print(f"Storing files downloaded to {OUTPUT_PATH_DG}")
         if ENSEMBLE_HRUS == 'None':
             break
         #download the ensemble forecast
         try:
-            files_downloaded = client.ecmwf_ens.get_ensemble_forecast(
-            hru_code=code_ens,
-            date=today,
-            models=["pf"],
-            directory=OUTPUT_PATH_DG
-            )
+            files_downloaded = []
+            for model in range(1, 51):
+                files = client.ecmwf_ens.get_ensemble_forecast(
+                    hru_code=code_ens,
+                    date=today,
+                    models=[str(model)],
+                    directory=OUTPUT_PATH_DG
+                )
+                files_downloaded.append(files)
+            # Unnest the list of lists
+            files_downloaded = [item for sublist in files_downloaded for item in sublist]
+            # May cause timeout errors from gateway server side. Better to download one by one.
+            #files_downloaded = client.ecmwf_ens.get_ensemble_forecast(
+            #    hru_code=code_ens,
+            #    date=today,
+            #    models=["pf"],
+            #    directory=OUTPUT_PATH_DG
+            #)
         except ValueError as e:
             if "Couldn't find any files for the given HRU code, date and models!" in str(e):
                 print(f"No data for {today}, trying {yesterday}")
                 try:
+                    files_downloaded = []
+                    for model in range(1, 51):
+                        files = client.ecmwf_ens.get_ensemble_forecast(
+                            hru_code=code_ens,
+                            date=yesterday,
+                            models=[str(model)],
+                            directory=OUTPUT_PATH_DG
+                        )
+                        files_downloaded.append(files)
+                    # Unnest the list of lists
+                    files_downloaded = [item for sublist in files_downloaded for item in sublist]
                     # Attempt to download the ensemble forecast for yesterday
-                    files_downloaded = client.ecmwf_ens.get_ensemble_forecast(
-                        hru_code=code_ens,
-                        date=yesterday,
-                        models=["pf"],
-                        directory=OUTPUT_PATH_DG
-                    )
+                    #files_downloaded = client.ecmwf_ens.get_ensemble_forecast(
+                    #    hru_code=code_ens,
+                    #    date=yesterday,
+                    #    models=["pf"],
+                    #    directory=OUTPUT_PATH_DG
+                    #)
                 except ValueError as e2:
-                    print(f"Error on {yesterday}: {e2}")
+                    print(f"Error for date {yesterday}: {e2}")
+                    print(traceback.format_exc())
                     # Handle the second error or re-raise it
                     sys.exit(1)
             else:
                 # If it's a different error, re-raise it.
                 # The exit value will be 1 (failure) in this case.
+                print(f"Unexpected error for date {today}: {e}")
+                print(traceback.format_exc())
                 sys.exit(1)
 
         #print(f"Files downloaded: {files_downloaded}")
