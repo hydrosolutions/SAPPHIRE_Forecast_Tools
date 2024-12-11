@@ -549,13 +549,15 @@ def main():
         try:
             files_downloaded = []
             for model in range(1, 51):
-                file = client.ecmwf_ens.get_ensemble_forecast(
+                files = client.ecmwf_ens.get_ensemble_forecast(
                     hru_code=code_ens,
                     date=today,
                     models=[str(model)],
                     directory=OUTPUT_PATH_DG
                 )
-                files_downloaded.append(file[0])
+                files_downloaded.append(files)
+            # Unnest the list of lists
+            files_downloaded = [item for sublist in files_downloaded for item in sublist]
             # May cause timeout errors from gateway server side. Better to download one by one.
             #files_downloaded = client.ecmwf_ens.get_ensemble_forecast(
             #    hru_code=code_ens,
@@ -569,13 +571,15 @@ def main():
                 try:
                     files_downloaded = []
                     for model in range(1, 51):
-                        file = client.ecmwf_ens.get_ensemble_forecast(
+                        files = client.ecmwf_ens.get_ensemble_forecast(
                             hru_code=code_ens,
                             date=yesterday,
                             models=[str(model)],
                             directory=OUTPUT_PATH_DG
                         )
-                        files_downloaded.append(file[0])
+                        files_downloaded.append(files)
+                    # Unnest the list of lists
+                    files_downloaded = [item for sublist in files_downloaded for item in sublist]
                     # Attempt to download the ensemble forecast for yesterday
                     #files_downloaded = client.ecmwf_ens.get_ensemble_forecast(
                     #    hru_code=code_ens,
