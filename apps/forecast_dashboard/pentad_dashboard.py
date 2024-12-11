@@ -58,6 +58,8 @@ from pathlib import Path
 
 from src.gettext_config import _
 
+from auth_utils import *
+
 # Get the absolute path of the directory containing the current script
 cwd = os.getcwd()
 
@@ -531,12 +533,20 @@ def create_language_buttons():
     for lang_name, lang_code in {'English': 'en_CH', 'Русский': 'ru_KG', 'Кыргызча': 'ky_KG'}.items():
         # Create a hyperlink styled as a button
         href = pn.state.location.pathname + f'?lang={lang_code}'
+        current_user = check_current_user()
+        
+        if current_user:
+            # Log language change before redirecting
+            log_user_activity(current_user, 'language_change')
+            
         link = f'<a href="{href}" style="margin-right: 10px; padding: 5px 10px; background-color: white; color: #307086; text-decoration: none; border-radius: 4px;">{lang_name}</a>'
         buttons.append(link)
     # Combine the links into a single Markdown pane
     return pn.pane.Markdown(' '.join(buttons))
 
 language_buttons = create_language_buttons()
+language_buttons.visible = False  # Initially hidden
+
 
 # Create a single Tabulator instance
 forecast_tabulator = pn.widgets.Tabulator(
@@ -1285,30 +1295,196 @@ reload_card = viz.create_reload_button()
 
 # We don't need to update tabs or UI components dynamically since the page reloads
 
-# Define the layout
+#------------------AUTHENTICATION-----------------------------
+
+# Create widgets for login
+username_input = pn.widgets.TextInput(name='Username', placeholder='Enter your username')
+password_input = pn.widgets.PasswordInput(name='Password', placeholder='Enter your password')
+login_submit_button = pn.widgets.Button(name='Login', button_type='primary')
+login_feedback = pn.pane.Markdown("", visible=False)
+dashboard_link = pn.pane.Markdown("", visible=False)
+
+# Create logout confirmation widgets
+logout_confirm = pn.pane.Markdown("**Are you sure you want to log out?**", visible=False)
+logout_yes = pn.widgets.Button(name="Yes", button_type="success", visible=False)
+logout_no = pn.widgets.Button(name="No", button_type="danger", visible=False)
+logout_button = pn.widgets.Button(name="Logout", button_type="danger")
+
+
+def handle_login(event):
+    """Handle login attempts."""
+    username = username_input.value
+    password = password_input.value
+    credentials = load_credentials()
+    
+    if username in credentials and credentials[username] == password:
+        current_user = check_auth_state()
+        
+        if current_user and current_user != username:
+            login_feedback.object = f"Another user ({current_user}) is currently using the app."
+            login_feedback.visible = True
+            return
+        
+        # Successful login
+        save_current_user(username)
+        log_auth_event(username, 'logged in')
+        log_user_activity(username, 'login')
+        
+        # Update UI
+        login_feedback.object = "Login successful!"
+        login_feedback.visible = True
+        show_dashboard()
+    else:
+        login_feedback.object = "Invalid username or password."
+        login_feedback.visible = True
+
+def handle_logout_request(event):
+    """Show logout confirmation."""
+    logout_confirm.visible = True
+    logout_yes.visible = True
+    logout_no.visible = True
+
+# Update handle_logout to clear activity logs
+def handle_logout_confirm(event):
+    """Handle confirmed logout."""
+    current_user = check_current_user()
+    if current_user:
+        log_auth_event(current_user, 'logged out')
+        log_user_activity(current_user, 'logout')
+        remove_current_user()
+        clear_auth_logs()
+        clear_activity_log()
+        
+        # Update UI
+        hide_dashboard()
+        show_login_form()
+        logout_confirm.visible = False
+        logout_yes.visible = False
+        logout_no.visible = False
+
+def handle_logout_cancel(event):
+    """Handle cancelled logout."""
+    logout_confirm.visible = False
+    logout_yes.visible = False
+    logout_no.visible = False
+
+def show_dashboard():
+    """Show the dashboard and hide login form."""
+    login_form.visible = False
+    dashboard_content.visible = True
+    sidebar_content.visible = True
+    logout_button.visible = True
+    logout_panel.visible = True  # Make sure logout panel is visible
+    language_buttons.visible = True
+
+
+def hide_dashboard():
+    """Hide the dashboard and show login form."""
+    dashboard_content.visible = False
+    sidebar_content.visible = False
+    logout_button.visible = False
+    logout_panel.visible = False  # Hide logout panel
+    language_buttons.visible = False
+    login_form.visible = True
+
+def show_login_form():
+    """Show login form and reset fields."""
+    username_input.value = ''
+    password_input.value = ''
+    login_feedback.visible = False
+    login_form.visible = True
+    dashboard_content.visible = False  # Explicitly hide dashboard
+    sidebar_content.visible = False
+    logout_button.visible = False
+    logout_panel.visible = False
+    language_buttons.visible = False
+
+
+
+# Bind event handlers
+login_submit_button.on_click(handle_login)
+logout_button.on_click(handle_logout_request)
+logout_yes.on_click(handle_logout_confirm)
+logout_no.on_click(handle_logout_cancel)
+
+
+
+# Create layout components
+login_form = pn.Column(
+    pn.pane.Markdown("# Login"),
+    username_input,
+    password_input,
+    login_submit_button,
+    login_feedback
+)
+
+logout_panel = pn.Column(
+    logout_confirm,
+    pn.Row(logout_yes, logout_no)
+)
+
+# Create a placeholder for the dashboard content
+dashboard_content = layout.define_tabs(_, 
+    daily_hydrograph_plot, daily_rainfall_plot, daily_temperature_plot,
+    forecast_data_and_plot,
+    forecast_summary_table, pentad_forecast_plot, forecast_skill_plot,
+    bulletin_table, write_bulletin_button, bulletin_download_panel, disclaimer,
+    station_card, forecast_card, add_to_bulletin_button, basin_card,
+    pentad_card, reload_card, add_to_bulletin_popup, show_daily_data_widget,
+    skill_table, skill_metrics_download_filename, skill_metrics_download_button
+)
+
+dashboard_content.visible = False
+
+
+sidebar_content=layout.define_sidebar(_, station_card, forecast_card, basin_card,
+                                  message_pane, reload_card)
+
+sidebar_content.visible = False
+
+
+# Handle language selection and session management
+def on_session_start():
+    """Handle new session start (including language changes)."""
+    current_user = check_auth_state()
+    
+    if current_user and check_recent_activity(current_user, 'language_change'):
+        show_dashboard()
+        return
+    
+    # If no valid session or recent activity, show login form
+    show_login_form()
+
+# Initialize the app with proper session handling
+on_session_start()
+
+
+# Define the main dashboard layout
 dashboard = pn.template.BootstrapTemplate(
     title=_('SAPPHIRE Central Asia - Pentadal forecast dashboard'),
     logo=icon_path,
-    header=[pn.Row(pn.layout.HSpacer(), language_buttons)],
-    sidebar=layout.define_sidebar(_, station_card, forecast_card, basin_card,
-                                  message_pane, reload_card),
+    header=[pn.Row(pn.layout.HSpacer(),language_buttons, logout_button, logout_panel)],
+    sidebar=pn.Column(sidebar_content),
     collapsed_sidebar=False,
-    main=layout.define_tabs(_,
-        daily_hydrograph_plot, daily_rainfall_plot, daily_temperature_plot,
-        forecast_data_and_plot,
-        forecast_summary_table, pentad_forecast_plot, forecast_skill_plot,
-        bulletin_table, write_bulletin_button, bulletin_download_panel, disclaimer,
-        station_card, forecast_card, add_to_bulletin_button, basin_card,
-        pentad_card, reload_card, add_to_bulletin_popup, show_daily_data_widget,
-        skill_table, skill_metrics_download_filename, skill_metrics_download_button
-    ),
+    main=pn.Column(login_form, dashboard_content),
     favicon=icon_path
 )
+
+# Initialize visibility states
+logout_button.visible = False
+logout_panel.visible = False
+dashboard_content.visible = False
+sidebar_content.visible=False
+login_form.visible = True 
+language_buttons.visible = False
+
+
 
 # Make the dashboard servable
 dashboard.servable()
 
 # Serve the dashboard
-#pn.serve(dashboard)
+# pn.serve(dashboard)
 
 # endregion
+
