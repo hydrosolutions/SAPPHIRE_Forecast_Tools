@@ -1026,14 +1026,17 @@ def get_best_models_for_station_and_pentad(forecasts_all, selected_station, sele
         (forecasts_all['station_labels'] == selected_station) &
         (forecasts_all['pentad_in_year'] == selected_pentad)
     ]
-    forecasts_no_LR = forecasts[forecasts['model_long'] != 'Linear regression (LR)']
+    forecasts_no_LR = forecasts[forecasts['model_short'] != 'LR']
     # Test if forecasts_no_LR is empty
     # Check if forecasts_no_LR is empty or contains only NaN accuracy
     if forecasts_no_LR.empty or forecasts_no_LR['accuracy'].isna().all():
         print("No valid models found for the given station and pentad.")
         return ['Linear regression (LR)']  # Return a fallback
-    best_model = forecasts_no_LR.loc[forecasts_no_LR['accuracy'].idxmax(), 'model_long']
-    best_models = [best_model, 'Linear regression (LR)']
+    best_model = forecasts_no_LR.loc[forecasts_no_LR['accuracy'].idxmax(), 'model_short']
+    best_models = [best_model, 'LR']
+    # Get long model name for short model names in best_models list into a list.
+    # This should avoid issues with EM long names.
+    best_models = [forecasts[forecasts['model_short'] == model]['model_long'].values[0] for model in best_models]
     return best_models
 
 def add_labels_to_hydrograph_pentad_all(hydrograph_pentad_all, all_stations):
