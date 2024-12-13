@@ -2551,7 +2551,8 @@ class Site:
                  accuracy=-10000.0, histqmin=-10000.0, histqmax=-10000.0,
                  bulletin_order=0,
                  daily_forecast=False, pentadal_forecast=False, decadal_forecast=False,
-                 monthly_forecast=False, seasonal_forecast=False):
+                 monthly_forecast=False, seasonal_forecast=False,
+                 site_type="default"):
         """
         Initializes a new Site object.
 
@@ -2601,6 +2602,7 @@ class Site:
         self.decadal_forecast = decadal_forecast if decadal_forecast is not False else False
         self.monthlly_forecast = monthly_forecast if monthly_forecast is not False else False
         self.seasonal_forecast = seasonal_forecast if seasonal_forecast is not False else False
+        self.site_type = site_type if site_type is not None else "default"
         # Dynamic attributes
         self.predictor = predictor if predictor is not None else -10000.0
         self.fc_qmin = fc_qmin if fc_qmin is not None else -10000.0
@@ -3785,15 +3787,16 @@ class Site:
                         pentadal_forecast=row['enabled_forecasts'].values[0]['pentad_forecast'],
                         decadal_forecast=row['enabled_forecasts'].values[0]['decadal_forecast'],
                         monthly_forecast=row['enabled_forecasts'].values[0]['monthly_forecast'],
-                        seasonal_forecast=row['enabled_forecasts'].values[0]['seasonal_forecast']
+                        seasonal_forecast=row['enabled_forecasts'].values[0]['seasonal_forecast'],
+                        site_type=row['site_type'].values[0]
                     )
                     sites.append(site)
                 elif (row['enabled_forecasts'].values[0]['pentad_forecast'] == True):
-                    print(f'Adding site {row["site_code"].values[0]}, {row["official_name"].values[0]} to the list of sites.')
+                    #print(f'Adding site {row["site_code"].values[0]}, {row["official_name"].values[0]} to the list of sites.')
                     # Try to split the names into river and punkt
                     name_parts = split_name(row['official_name'].values[0])
                     name_nat_parts = split_name(row['national_name'].values[0])
-                    print(f"Name parts: {name_parts}, name_nat_parts: {name_nat_parts}")
+                    #print(f"Name parts: {name_parts}, name_nat_parts: {name_nat_parts}")
 
                     site = cls(
                         code=row['site_code'].values[0],
@@ -3817,9 +3820,14 @@ class Site:
                         pentadal_forecast=row['enabled_forecasts'].values[0]['pentad_forecast'],
                         decadal_forecast=row['enabled_forecasts'].values[0]['decadal_forecast'],
                         monthly_forecast=row['enabled_forecasts'].values[0]['monthly_forecast'],
-                        seasonal_forecast=row['enabled_forecasts'].values[0]['seasonal_forecast']
+                        seasonal_forecast=row['enabled_forecasts'].values[0]['seasonal_forecast'],
+                        site_type=row['site_type'].values[0]
                     )
                     sites.append(site)
+
+            # Filter sites for manual stations only, otherwise we have duplicates in the list
+            sites = [site for site in sites if site.site_type == 'manual']
+
             # Get the basin and bulletin order for each site
             df = pd.DataFrame({
                 'codes': [site.code for site in sites],
@@ -3828,7 +3836,7 @@ class Site:
             })
             # Sort the sites_list according to the basin and bulletin order
             df = df.sort_values(by=['basins', 'bulletin_order'])
-            print(f"Ordered sites: {df}")
+            #print(f"Ordered sites: {df}")
             # Get the ordered list of codes
             ordered_codes = df['codes'].tolist()
             # Get site where site.code == ordered_codes[0]
@@ -3848,7 +3856,7 @@ class Site:
                     ordered_sites_list = [temp_site]
                 else: # ordered_sites_list is not 'NoneType'
                     ordered_sites_list.append(temp_site)
-            print(f"Ordered sites: {[site.code for site in ordered_sites_list]}")
+            #print(f"Ordered sites: {[site.code for site in ordered_sites_list]}")
             return ordered_sites_list
         except Exception as e:
             print(f'Error creating Site objects from DataFrame: {e}')

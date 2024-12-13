@@ -424,8 +424,8 @@ def plot_runoff_forecasts(data, date_col, forecast_data_col,
     # Create the overlay
     for i, model in enumerate(models):
         model_data = data[data[forecast_name_col] == model]
-        print("MODEL: ", model)
-        print("COLOR: ", runoff_forecast_color[i])
+        #print("MODEL: ", model)
+        #print("COLOR: ", runoff_forecast_color[i])
         # Get the latest forecast for the model
         #latest_forecast = fl.round_discharge(model_data[forecast_data_col].iloc[-1])
         #legend_entry = model + ": " + latest_forecast + " " + unit_string
@@ -501,8 +501,8 @@ def plot_runoff_forecasts_steps(data, date_col, forecast_data_col,
     # Create the overlay
     for i, model in enumerate(models):
         model_data = data[data[forecast_name_col] == model]
-        print("MODEL: ", model)
-        print("COLOR: ", runoff_forecast_color[i])
+        #print("MODEL: ", model)
+        #print("COLOR: ", runoff_forecast_color[i])
         # Get the latest forecast for the model
         #latest_forecast = fl.round_discharge(model_data[forecast_data_col].iloc[-1])
         #legend_entry = model + ": " + latest_forecast + " " + unit_string
@@ -579,8 +579,8 @@ def plot_runoff_forecasts_v2(data, date_col, forecast_data_col,
     # Create the overlay
     for i, model in enumerate(models):
         model_data = data[data[forecast_name_col] == model]
-        print("MODEL: ", model)
-        print("COLOR: ", runoff_forecast_color[i])
+        #print("MODEL: ", model)
+        #print("COLOR: ", runoff_forecast_color[i])
         # Get the latest forecast for the model
         #latest_forecast = fl.round_discharge(model_data[forecast_data_col].iloc[-1])
         #legend_entry = model + ": " + latest_forecast + " " + unit_string
@@ -640,8 +640,8 @@ def plot_current_runoff_forecasts(data, date_col, forecast_data_col,
     # Decide which colors to display
     # list of unique models in data
     models = data[forecast_name_col].unique()
-    print(f"Number of models in plot_current_runoff_forecasts: {len(models)}")
-    print(f"Models in plot_current_runoff_forecasts: {models}")
+    print(f"DEBUG: MODEL: Number of models in plot_current_runoff_forecasts: {len(models)}")
+    print(f"DEBUG: MODEL: namely: {models}")
     if len(models) > len(runoff_forecast_colors):
         # Add some random colors if there are more models than colors
         runoff_forecast_color = runoff_forecast_colors + ['#%06X' % random.randint(0, 0xFFFFFF) for i in range(len(models) - len(runoff_forecast_colors))]
@@ -1117,7 +1117,7 @@ def plot_current_runoff_forecast_range_date_format(
         latest_forecast = fl.round_discharge(model_data[mean_col].iloc[-1])
         point_legend_entry = model + ": " + latest_forecast + " " + unit_string
 
-        print(f"\n\n\n\n\n\n\n\nDebug: latest_forecast\n{latest_forecast}")
+        #print(f"\n\n\n\n\n\n\n\nDebug: latest_forecast\n{latest_forecast}")
 
         # Create a point
         point = hv.Scatter(
@@ -1174,6 +1174,8 @@ def plot_current_runoff_forecast_range_date_format_v2(
     # Decide which colors to display
     # list of unique models in data
     models = data[forecast_name_col].unique()
+    print(f"DEBUG: MODEL: Number of models in hydrograph plot: {len(models)}")
+    print(f"           {models}")
     if len(models) > len(runoff_forecast_colors):
         # Add some random colors if there are more models than colors
         runoff_forecast_color = runoff_forecast_colors + ['#%06X' % random.randint(0, 0xFFFFFF) for i in range(len(models) - len(runoff_forecast_colors))]
@@ -1221,7 +1223,7 @@ def plot_current_runoff_forecast_range_date_format_v2(
         model_data = data[data[forecast_name_col] == model].copy()
         # Drop all columns except the date, mean, min, and max columns
         model_data = model_data[[date_col, mean_col, min_col, max_col]]
-        print('original model_data:', model_data)
+        #print('original model_data:', model_data)
         # Get errors instead of lower and upper bounds for the range
         #if model == 'LR':
         #    pass
@@ -1248,7 +1250,7 @@ def plot_current_runoff_forecast_range_date_format_v2(
             # Append the last row to the DataFrame
             model_data_temp = pd.concat([model_data, model_data], ignore_index=True)
             model_data_temp.loc[model_data_temp.index[-1], date_col] = pd.Timestamp(title_date_end + dt.timedelta(hours=24))
-            print('\n\n\n\n\nmodel_data:\n', model_data_temp)
+            #print('\n\n\n\n\nmodel_data:\n', model_data_temp)
 
             point = hv.Curve(
                 model_data_temp,
@@ -1275,7 +1277,7 @@ def plot_current_runoff_forecast_range_date_format_v2(
             # Append the last row to the DataFrame
             model_data_temp = pd.concat([model_data, model_data], ignore_index=True)
             model_data_temp.loc[model_data_temp.index[-1], date_col] = pd.Timestamp(title_date_end + dt.timedelta(hours=24))
-            print('\n\n\n\n\nmodel_data:\n', model_data_temp)
+            #print('\n\n\n\n\nmodel_data:\n', model_data_temp)
 
             point = hv.Curve(
                 model_data_temp,
@@ -1572,8 +1574,8 @@ def plot_daily_hydrograph_data(_, hydrograph_day_all, linreg_predictor, station,
     # Set the title date to the date of the last available data if the forecast date is in the future
     title_pentad = tl.get_pentad(title_date + dt.timedelta(days=1))
     title_month = tl.get_month_str_case2_viz(_, title_date)
-    print(f"title_pentad: {title_pentad}")
-    print(f"title_month: {title_month}")
+    #print(f"title_pentad: {title_pentad}")
+    #print(f"title_month: {title_month}")
 
     # filter hydrograph_day_all & linreg_predictor by station
     linreg_predictor = processing.add_predictor_dates(linreg_predictor, station, title_date)
@@ -1812,8 +1814,8 @@ def plot_daily_rainfall_data(_, daily_rainfall, station, date_picker,
 
     # Get the forecasts for the selected date
     forecasts = station_data[station_data['date'] >= date_picker].copy()
-    print(f"Head of P forecasts\n{forecasts.head(10)}")
-    print(f"Tail of P forecasts\n{forecasts.tail(10)}")
+    #print(f"Head of P forecasts\n{forecasts.head(10)}")
+    #print(f"Tail of P forecasts\n{forecasts.tail(10)}")
 
     # Get current year rainfall
     station_data['year'] = pd.to_datetime(station_data['date']).dt.year
@@ -2216,7 +2218,7 @@ def plot_pentad_forecast_hydrograph_data_v2(_, hydrograph_day_all, linreg_predic
                                                     (1 + range_slider/100.0) * forecasts.loc[:, 'forecasted_discharge'])
 
     # print tail of forecasts
-    print(f"Tail of forecasts\n{forecasts.tail(10)}")
+    #print(f"Tail of forecasts\n{forecasts.tail(10)}")
 
     # Custom hover tool tip for the daily hydrograph
     date_col = _('date column name')
@@ -2234,8 +2236,8 @@ def plot_pentad_forecast_hydrograph_data_v2(_, hydrograph_day_all, linreg_predic
     # Set the title date to the date of the last available data if the forecast date is in the future
     title_pentad = tl.get_pentad(title_date + dt.timedelta(days=1))
     title_month = tl.get_month_str_case2_viz(_, title_date)
-    print(f"title_pentad: {title_pentad}")
-    print(f"title_month: {title_month}")
+    #print(f"title_pentad: {title_pentad}")
+    #print(f"title_month: {title_month}")
 
     # filter hydrograph_day_all & linreg_predictor by station
     linreg_predictor = processing.add_predictor_dates(linreg_predictor, station, title_date)
@@ -2244,8 +2246,8 @@ def plot_pentad_forecast_hydrograph_data_v2(_, hydrograph_day_all, linreg_predic
     data['date'] = pd.to_datetime(data['date'])
     current_year = data['date'].dt.year.max()
     last_year = current_year - 1
-    print(f"current_year: {current_year}")
-    print(f"last_year: {last_year}")
+    #print(f"current_year: {current_year}")
+    #print(f"last_year: {last_year}")
 
     # Define strings
     title_text = _("Hydropost ") + station + _(" on ") + title_date.strftime("%Y-%m-%d")
@@ -2283,9 +2285,9 @@ def plot_pentad_forecast_hydrograph_data_v2(_, hydrograph_day_all, linreg_predic
     # The last row of forecasts corresponds to the forecast for the title date.
     # We want to display past and current forecasts slighly differently.
     # Print tail of forecasts
-    print(f"Tail of forecasts\n{forecasts.tail(10)}")
+    #print(f"Tail of forecasts\n{forecasts.tail(10)}")
     # print title_date
-    print(f"title_date: {title_date}")
+    #print(f"title_date: {title_date}")
     forecasts_current = forecasts[forecasts['date'] == pd.to_datetime((title_date)+dt.timedelta(days=1))]
     forecasts_past = forecasts[forecasts['date'] <= pd.to_datetime((title_date)+dt.timedelta(days=1))]
 
@@ -2363,7 +2365,7 @@ def plot_pentad_forecast_hydrograph_data_v2(_, hydrograph_day_all, linreg_predic
 
     mean = plot_runoff_line(
         data, date_col, mean_col, _('Mean legend entry'), runoff_mean_color)
-    print("head and tail fo data\n", data.head(), data.tail())
+    #print("head and tail fo data\n", data.head(), data.tail())
     last_year = plot_runoff_line(
         data, date_col, last_year_col,
         _('Last year legend entry'), runoff_last_year_color)
@@ -2391,10 +2393,10 @@ def plot_pentad_forecast_hydrograph_data_v2(_, hydrograph_day_all, linreg_predic
         forecasts_past, _('date'), _('forecasted_discharge column name'),
         _('forecast model short column name'), runoff_forecast_color_list, _('m³/s'))
 
-    print("\n\n")
-    print('Debugging current forecast range point')
-    print('columns of forecasts_current:\n', forecasts_current.columns)
-    print('forecasts_current:\n', forecasts_current)
+    #print("\n\n")
+    #print('Debugging current forecast range point')
+    #print('columns of forecasts_current:\n', forecasts_current.columns)
+    #print('forecasts_current:\n', forecasts_current)
     current_forecast_range_point = plot_current_runoff_forecast_range_date_format_v2(
         forecasts_current, _('date'), title_date_end, _('forecast model short column name'),
         _('forecasted_discharge column name'), _('forecast lower bound column name'),
@@ -2588,9 +2590,9 @@ def plot_pentad_forecast_hydrograph_data(_, hydrograph_pentad_all, forecasts_all
     title_month = tl.get_month_str_case2_viz(_, forecast_date)
     title_day_start = tl.get_pentad_first_day(forecast_date.strftime("%Y-%m-%d"))
     title_day_end = tl.get_pentad_last_day(forecast_date.strftime("%Y-%m-%d"))
-    print(f"forecast_date: {forecast_date}")
-    print(f"title_pentad: {title_pentad}")
-    print(f"title_month: {title_month}")
+    #print(f"forecast_date: {forecast_date}")
+    #print(f"title_pentad: {title_pentad}")
+    #print(f"title_month: {title_month}")
 
     # filter hydrograph_day_all & linreg_predictor by station
     #linreg_predictor = processing.add_predictor_dates(linreg_predictor, station, title_date)
@@ -2795,8 +2797,13 @@ def create_forecast_summary_table(_, forecasts_all, station, date_picker,
                             (forecast_table['model_short'].isin(model_selection))].copy().reset_index(drop=True)
 
     # Select the row with the maximum date
-    forecast_table = forecast_table.loc[forecast_table['date']==max(forecast_table['date'])]
-    print("forecast_table\n", forecast_table)
+    if not forecast_table.empty and not forecast_table['date'].empty:
+        max_date = forecast_table['date'].max()
+        if not pd.isna(max_date):
+            forecast_table = forecast_table.loc[forecast_table['date']==max(forecast_table['date'])]
+        else:
+            print("max_date is nan")
+    #print("forecast_table\n", forecast_table)
 
     # Drop a couple of columns
     forecast_table.drop(
@@ -2848,6 +2855,11 @@ def create_forecast_summary_tabulator(_, forecasts_all, station, date_picker,
     final_forecast_table = create_forecast_summary_table(_, forecasts_all, station, date_picker,
                                     model_selection, range_type, range_slider).reset_index(drop=True)
 
+    # Return empty Tabulator if the table is empty
+    if final_forecast_table.empty:
+        forecast_tabulator.value = pd.DataFrame({_('Please select a forecast model.'):[]})
+        return forecast_tabulator
+
     # Get the row with the maximum accuracy. If the table has 2 rows, the
     # index is either 0 or 1. If the table has 1 row, the index is 0.
     # If two rows have the same accuracy, the first row is selected.
@@ -2855,7 +2867,7 @@ def create_forecast_summary_tabulator(_, forecasts_all, station, date_picker,
     # if max_accuracy_index is nan, set it to 0
     if pd.isna(max_accuracy_index):
         max_accuracy_index = 0
-    print("max_accuracy_index\n", max_accuracy_index)
+    #print("max_accuracy_index\n", max_accuracy_index)
 
     # Update the Tabulator's value
     forecast_tabulator.value = final_forecast_table
@@ -3104,7 +3116,7 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
     forecast_table = forecast_table.reset_index()
 
     visible_data = forecast_table[forecast_table['visible'] == True] # Initialize the visible data
-    print(f"visible_data.head(10):\n", visible_data.head(10))
+    #print(f"visible_data.head(10):\n", visible_data.head(10))
     visible_data = visible_data.dropna(subset=['predictor', 'discharge_avg'])
 
     # Create a localized copy of the forecast_table for display purposes
@@ -4005,7 +4017,7 @@ def add_month_pentad_per_month_to_df(df):
     """Based on column pentad_in_year, add columns month and pentad_in_month."""
     # Get date for pentad in year
     df['date'] = df['pentad_in_year'].apply(tl.get_date_for_pentad)
-    print('df: ', df.head())
+    #print('df: ', df.head())
     # Get month for date
     df['month'] = pd.to_datetime(df['date']).dt.month
     # Get pentad in month

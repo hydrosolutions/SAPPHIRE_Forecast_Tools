@@ -609,6 +609,7 @@ def get_pentadal_forecast_sites_from_HF_SDK(ieh_sdk):
     discharge_sites = ieh_sdk.get_discharge_sites()
     logger.debug(f" {len(discharge_sites)} discharge site(s) found in iEH HF SDK, namely:\n{[site['site_code'] for site in discharge_sites]}")
     # Get the list of Site objects for pentadal or decadal forecasting
+    # Note that this only returns manual stations
     fc_sites = fl.Site.pentad_forecast_sites_from_iEH_HF_SDK(discharge_sites)
 
     # Read virtual stations to the list
