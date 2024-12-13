@@ -787,11 +787,36 @@ def update_model_select(station_value, selected_pentad):
 add_to_bulletin_popup = pn.pane.Alert(_("Added to bulletin"), alert_type="success", visible=False)
 
 # Function to load bulletin data from CSV
+def get_bulletin_csv_path(pentad):
+    """Generate CSV path with pentad information"""
+    bulletin_filename = f'bulletin_pentad_{pentad}.csv'
+    return os.path.join(SAVE_DIRECTORY, bulletin_filename)
+
+def cleanup_old_bulletin_files(current_pentad):
+    """Remove bulletin CSV files from previous pentads"""
+    try:
+        for file in os.listdir(SAVE_DIRECTORY):
+            if file.startswith('bulletin_pentad_') and file.endswith('.csv'):
+                file_pentad = int(file.replace('bulletin_pentad_', '').replace('.csv', ''))
+                if file_pentad != current_pentad:
+                    file_path = os.path.join(SAVE_DIRECTORY, file)
+                    os.remove(file_path)
+                    logger.info(f"Removed old bulletin file: {file}")
+    except Exception as e:
+        logger.error(f"Error cleaning up old bulletin files: {e}")
+
 def load_bulletin_from_csv():
+    """Load bulletin data from CSV file for current pentad"""
     global bulletin_sites
-    if os.path.exists(BULLETIN_CSV_PATH):
+    
+    # Get current pentad
+    current_date = pd.Timestamp.now()
+    current_pentad = tl.get_pentad_for_date(current_date)
+    current_bulletin_path = get_bulletin_csv_path(current_pentad)
+    
+    if os.path.exists(current_bulletin_path):
         try:
-            bulletin_df = pd.read_csv(BULLETIN_CSV_PATH, encoding='utf-8-sig')
+            bulletin_df = pd.read_csv(current_bulletin_path, encoding='utf-8-sig')
 
             # Rename columns from original English to localized names for UI consistency
             bulletin_df_display = bulletin_df.rename(columns={
@@ -818,17 +843,30 @@ def load_bulletin_from_csv():
                     site.get_forecast_attributes_for_site(_, site.forecasts)
                     bulletin_sites.append(site)
 
-            print("DEBUG: Loaded bulletin_sites from CSV:")
+            print(f"DEBUG: Loaded bulletin_sites from CSV for pentad {current_pentad}:")
             for site in bulletin_sites:
                 print(f"Site '{site.code}' with forecasts: {site.forecasts}")
+            
+            logger.info(f"Loaded bulletin data for pentad {current_pentad}")
         except Exception as e:
             logger.error(f"Error loading bulletin CSV: {e}")
             bulletin_sites = []
     else:
+        logger.info(f"No bulletin data found for current pentad {current_pentad}")
         bulletin_sites = []
 
 # Function to save bulletin data to CSV
 def save_bulletin_to_csv():
+    # Get current pentad
+    current_date = pd.Timestamp.now()
+    current_pentad = tl.get_pentad_for_date(current_date)
+    
+    # Clean up old bulletin files
+    cleanup_old_bulletin_files(current_pentad)
+    
+    # Generate path for current pentad's bulletin
+    current_bulletin_path = get_bulletin_csv_path(current_pentad)
+    
     data = []
     for site in bulletin_sites:
         # We need to extract the forecast data and site information
@@ -857,17 +895,17 @@ def save_bulletin_to_csv():
         })
 
         try:
-            bulletin_df.to_csv(BULLETIN_CSV_PATH, index=False, encoding='utf-8-sig')
-            print("Bulletin saved to CSV.")
-            logger.info("Bulletin saved to CSV.")
+            bulletin_df.to_csv(current_bulletin_path, index=False, encoding='utf-8-sig')
+            print(f"Bulletin saved to CSV for pentad {current_pentad}")
+            logger.info(f"Bulletin saved to CSV for pentad {current_pentad}")
         except Exception as e:
             logger.error(f"Error writing bulletin CSV: {e}")
     else:
-        # If data is empty, remove the CSV file
-        if os.path.exists(BULLETIN_CSV_PATH):
-            os.remove(BULLETIN_CSV_PATH)
-            print("Bulletin CSV file removed because bulletin is empty.")
-            logger.info("Bulletin CSV file removed because bulletin is empty.")
+        # If data is empty, remove the current pentad's CSV file
+        if os.path.exists(current_bulletin_path):
+            os.remove(current_bulletin_path)
+            print(f"Bulletin CSV file removed for pentad {current_pentad} because bulletin is empty")
+            logger.info(f"Bulletin CSV file removed for pentad {current_pentad} because bulletin is empty")
 
 # Call the function to load the bulletin data
 load_bulletin_from_csv()
