@@ -201,7 +201,7 @@ class SapphireSite:
         Returns:
             Site: A SapphireSite object.
         """
-        print(f"\n\nget_forecast_attributes_for_site: dataframe: {df}")
+        #print(f"\n\nget_forecast_attributes_for_site: dataframe: {df}")
         self.forecast_pentad = df[_('Forecasted discharge')].values[0]
         self.forecast_lower_bound = df[_('Forecast lower bound')].values[0]
         self.forecast_upper_bound = df[_('Forecast upper bound')].values[0]

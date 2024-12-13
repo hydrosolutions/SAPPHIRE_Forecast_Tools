@@ -10,6 +10,7 @@ The structure of this document is as follows:
   - [Important user information, limitations and special use cases](#important-user-information-limitations-and-special-use-cases)
   - [Installation](#installation)
   - [Development](#development)
+- [Dashboard](#dashboard)
 - [Input data](#input-data)
   - [Daily discharge data](#daily-discharge-data)
   - [Shape file layers of the area of interest](#shape-file-layers-of-the-area-of-interest)
@@ -56,15 +57,18 @@ You may configure the Forecast Tools to generate Excel documents with the foreca
 
 ## Important user information, limitations and special use cases
 - Currently, only pentadal forecasts are implemented, follwowing the method currently employed by Kyrgyz Hydromet. Further forecast horizons and forecast methods will be implemented in the coming months and years.
-- We assume that discharge stations start with the character '1'. This is currently hard-coded in the software. If your station codes do not start with '1', please contact us.
-- To save runtime, the current implementation checks the iEasyHydro database for new predictor data only after January 2020. If you need to change this, edit the date in the file "apps/backend/src/data_processing.py" in the section getting predictor.
-- Special use cases, like the discharge for virtual reservoirs are currently hardcoded in the backend. This affects station code 16936. If required, this code section with the special case can be commented in the files "apps/backend/src/data_processing.py" and "apps/backend/src/forecasting.py".
+- We assume that discharge stations are numeric values that start with `1`. This is currently hard-coded in the software.
+- To save runtime, the current implementation checks the iEasyHydro database for new predictor data only after January 2020.
+- We allow hindcasting of the linear regression model for the time period where observed runoff is available either from excel files in the folder `daily_runoff` or from the iEasyHydro database. All other forecast models are limited by the availability of weather data in the SAPPHIRE data gateway. The weather repository currently contains data starting from 1979. You can therefore not produce forecasts for the time period before 1979.
 
 ## Installation
 For installation instructions, please refer to the [deployment guide](deployment.md).
 
 ## Development
 For development instructions, please refer to the [development guide](development.md).
+
+# Dashboard
+To get instructions of how to use the dashboard, please refer to the [dashboard guide](dashboard.md).
 
 # Input data
 TODO: Update this section, differentiate between demo version and full version
