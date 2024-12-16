@@ -6,15 +6,13 @@ import pandas as pd
 from datetime import datetime
 
 # Get credentials path from environment configuration
-CREDENTIALS_PATH = os.path.join(os.getenv('ieasyforecast_configuration_path'), os.getenv('ieasyforecast_configuration_path_credentials'))
+CREDENTIALS_PATH = os.getenv('ieasyforecast_configuration_path_credentials')
 
 
 CURRENT_USER_PATH = "current_user.csv"
 ACTIVITY_LOG_PATH = 'user_activity.csv'
 AUTH_LOGS_PATH = "auth_logs.csv"
 
-SESSION_TIMEOUT_MINUTES = 60  # 1 hour timeout
-LAST_ACTIVITY_PATH = 'last_activity.csv'
 
 def load_credentials():
     """Load credentials from JSON file."""
@@ -126,5 +124,12 @@ def check_recent_activity(username, activity_type, minutes=1):
     
     return False
 
-
+def handle_session_end(username, reason):
+    """End user session with reason"""
+    if username:
+        log_auth_event(username, f'logged out ({reason})')
+        log_user_activity(username, f'session_end_{reason}')
+        remove_current_user()
+        clear_auth_logs()
+        clear_activity_log()
         

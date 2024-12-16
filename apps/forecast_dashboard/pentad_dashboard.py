@@ -60,6 +60,8 @@ from src.gettext_config import _
 
 from auth_utils import *
 
+from datetime import datetime, timedelta
+
 # Get the absolute path of the directory containing the current script
 cwd = os.getcwd()
 
@@ -179,6 +181,9 @@ bulletin_folder = os.path.join(
     'bulletins', 'pentad')
 downloader = FileDownloader(bulletin_folder)
 bulletin_download_panel = downloader.panel()
+
+INACTIVITY_TIMEOUT = timedelta(minutes=5)
+last_activity_time = None
 
 # endregion
 
@@ -1311,14 +1316,46 @@ logout_no = pn.widgets.Button(name="No", button_type="danger", visible=False)
 logout_button = pn.widgets.Button(name="Logout", button_type="danger")
 
 
+def update_last_activity():
+    global last_activity_time
+    last_activity_time = datetime.now()
+
+def check_inactivity():
+    """Check if user has been inactive and logout if needed"""
+    global last_activity_time
+    current_user = check_current_user()
+    
+    if current_user:
+        if datetime.now() - last_activity_time > INACTIVITY_TIMEOUT:
+            print(f"User {current_user} logged out due to inactivity")
+            handle_logout_confirm(None)  # Use existing logout function
+
+def logout_user(user):
+    """Perform the logout actions: remove user CSV files, clear logs, show login form."""
+    if os.path.exists("current_user.csv"):
+        os.remove("current_user.csv")
+    if os.path.exists("auth_logs.csv"):
+        os.remove("auth_logs.csv")
+    if os.path.exists("user_activity.csv"):
+        os.remove("user_activity.csv")
+
+    # Hide dashboard and show login form
+    hide_dashboard()
+    show_login_form()
+    print(f"User {user} logged out due to inactivity.")
+
 def handle_login(event):
     """Handle login attempts."""
+    global last_activity_time
     username = username_input.value
     password = password_input.value
     credentials = load_credentials()
     
     if username in credentials and credentials[username] == password:
         current_user = check_auth_state()
+
+        last_activity_time = datetime.now()  # Reset activity timer on login
+        show_dashboard()
         
         if current_user and current_user != username:
             login_feedback.object = f"Another user ({current_user}) is currently using the app."
@@ -1329,14 +1366,44 @@ def handle_login(event):
         save_current_user(username)
         log_auth_event(username, 'logged in')
         log_user_activity(username, 'login')
+        update_last_activity()
         
         # Update UI
         login_feedback.object = "Login successful!"
         login_feedback.visible = True
         show_dashboard()
+
+        # Periodically check inactivity every 5 minutes
+        pn.state.add_periodic_callback(check_inactivity, 300000)
     else:
         login_feedback.object = "Invalid username or password."
         login_feedback.visible = True
+
+def on_user_interaction(event=None):
+    """Update last activity time when user interacts with the dashboard"""
+    global last_activity_time
+    last_activity_time = datetime.now()
+
+# Add watchers to widgets:
+station.param.watch(on_user_interaction, 'value')
+pentad_selector.param.watch(on_user_interaction, 'value')
+date_picker.param.watch(on_user_interaction, 'value')
+model_checkbox.param.watch(on_user_interaction, 'value')
+allowable_range_selection.param.watch(on_user_interaction, 'value')
+show_range_button.param.watch(on_user_interaction, 'value')
+show_daily_data_widget.param.watch(on_user_interaction, 'value')
+select_basin_widget.param.watch(on_user_interaction, 'value')
+
+# For buttons that trigger actions, watch the 'clicks' parameter:
+add_to_bulletin_button.param.watch(on_user_interaction, 'clicks')
+write_bulletin_button.param.watch(on_user_interaction, 'clicks')
+remove_bulletin_button.param.watch(on_user_interaction, 'clicks')
+
+# Track when the user interacts with the forecast_tabulator 
+# (e.g., by selecting rows), you can watch the 'selection' parameter:
+forecast_tabulator.param.watch(on_user_interaction, 'selection')
+
+
 
 def handle_logout_request(event):
     """Show logout confirmation."""
