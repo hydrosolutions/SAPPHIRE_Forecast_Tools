@@ -1036,7 +1036,8 @@ def plot_current_runoff_forecast_range(
     return overlay
 
 def plot_current_runoff_forecast_range_date_format(
-          data, date_col, forecast_name_col, mean_col, min_col, max_col, runoff_forecast_colors, unit_string):
+          data, date_col, forecast_name_col, mean_col, min_col, max_col,
+          runoff_forecast_colors, unit_string):
     """
     Creates an area plot for the range of runoff values. can be used for daily or pentadal data.
 
@@ -2415,10 +2416,15 @@ def plot_pentad_forecast_hydrograph_data_v2(_, hydrograph_day_all, linreg_predic
     # if either of the following 'TFT', 'TiDE', 'TSMixer', 'NE', 'ARIMA', 'EM'
     if 'TFT' in forecasts_current[_('forecast model short column name')].values or 'TiDE' in forecasts_current[_('forecast model short column name')].values or 'TSMixer' in forecasts_current[_('forecast model short column name')].values or 'NE' in forecasts_current[_('forecast model short column name')].values or 'ARIMA' in forecasts_current[_('forecast model short column name')].values or 'EM' in forecasts_current[_('forecast model short column name')].values:
         ml_forecast_range_point = plot_current_runoff_forecast_range_date_format(
-            latest_ml_forecast, _('date'), _('forecast model short column name'),
-            _('forecasted_discharge column name'), _('forecast lower bound column name'),
-            _('forecast upper bound column name'),
-            runoff_forecast_color_list, _('m³/s'))
+            latest_ml_forecast,
+            date_col='date',
+            forecast_name_col='Model',
+            mean_col='E[Q]',
+            min_col='Q5',
+            max_col='Q95',
+            runoff_forecast_colors=runoff_forecast_color_list,
+            unit_string='m³/s'
+            )
     else:
         ml_forecast_range_point = hv.Curve([])
 
