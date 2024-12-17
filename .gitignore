@@ -214,3 +214,6 @@ apps/backend/tests/testspecial_*.ipynb
 
 /apps/forecast_dashboard/saved_data
 
+apps/forecast_dashboard/auth_logs.csv
+apps/forecast_dashboard/current_user.csv
+apps/forecast_dashboard/user_activity.csv
