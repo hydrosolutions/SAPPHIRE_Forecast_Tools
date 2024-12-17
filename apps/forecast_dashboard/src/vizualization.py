@@ -3406,6 +3406,59 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
     # Create a save button
     save_button = pn.widgets.Button(name=_("Save Changes"), button_type="success")
 
+    def check_ssh_tunnel(port="8881"):
+        """Check if SSH tunnel is established on specified port"""
+        import socket
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        result = sock.connect_ex(('127.0.0.1', int(port)))
+        sock.close()
+        return result == 0
+
+    def setup_ssh_tunnel():
+        """Setup SSH tunnel and wait for it to be established"""
+        import subprocess
+        import time
+        
+        logger.info("Checking SSH tunnel...")
+        
+        # Path to the SSH tunnel script
+        ssh_script_path = os.path.join(
+            os.getenv('ieasyhydroforecast_data_root_dir'),
+            'sensitive_data_forecast_tools/bin/.ssh/open_ssh_tunnel.sh'
+        )
+        
+        if not check_ssh_tunnel():
+            logger.info("SSH tunnel not found. Attempting to establish...")
+            try:
+                # Make sure the script is executable
+                subprocess.run(['chmod', '+x', ssh_script_path], check=True)
+                
+                # Run the SSH tunnel script
+                process = subprocess.Popen(['bash', ssh_script_path], 
+                                        stdout=subprocess.PIPE,
+                                        stderr=subprocess.PIPE)
+                
+                # Wait for tunnel to be established (max 30 seconds)
+                max_attempts = 30
+                attempt = 0
+                while not check_ssh_tunnel() and attempt < max_attempts:
+                    time.sleep(1)
+                    attempt += 1
+                    
+                if attempt >= max_attempts:
+                    raise Exception("Failed to establish SSH tunnel after 30 seconds")
+                    
+                logger.info("SSH tunnel established successfully")
+                return True
+                
+            except Exception as e:
+                error_msg = f"Failed to establish SSH tunnel: {str(e)}"
+                logger.error(error_msg)
+                raise Exception(error_msg)
+        else:
+            logger.info("SSH tunnel already established")
+            return True
+
     # Function to save table data to CSV and run Docker containers
     def save_to_csv(event):
         # Disable the save button and show the progress bar and message
@@ -3444,6 +3497,7 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
         pn.state.onload(lambda: pn.state.add_periodic_callback(lambda: setattr(popup, 'visible', False), 2000, count=1))
 
         try:
+            setup_ssh_tunnel()
             absolute_volume_path_config = get_absolute_path(env.get('ieasyforecast_configuration_path'))
             absolute_volume_path_internal_data = get_absolute_path(env.get('ieasyforecast_intermediate_data_path'))
             absolute_volume_path_discharge = get_absolute_path(env.get('ieasyforecast_daily_discharge_path'))
