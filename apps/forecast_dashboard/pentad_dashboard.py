@@ -1530,21 +1530,20 @@ def handle_login(event):
     credentials = load_credentials()
 
     if username in credentials and credentials[username] == password:
-        current_user = check_auth_state()
-
-        last_activity_time = datetime.now()  # Reset activity timer on login
-        show_dashboard()
-
+        # Check if another user is currently logged in
+        current_user = check_current_user()
         if current_user and current_user != username:
-            login_feedback.object = f"Another user ({current_user}) is currently using the app."
+            login_feedback.object = f"Another user ({current_user}) is currently logged in."
             login_feedback.visible = True
             return
 
-        # Successful login
+        # At this point, either no one is logged in, or the same user is re-logging in.
+        last_activity_time = datetime.now()  # Reset activity timer on login
+
+        # Proceed with login
         save_current_user(username)
         log_auth_event(username, 'logged in')
         log_user_activity(username, 'login')
-        update_last_activity()
 
         # Update UI
         login_feedback.object = "Login successful!"
