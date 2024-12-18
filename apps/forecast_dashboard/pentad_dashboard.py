@@ -181,7 +181,7 @@ downloader = FileDownloader(bulletin_folder)
 bulletin_download_panel = downloader.panel()
 
 # Set time until user is logged out automatically
-INACTIVITY_TIMEOUT = timedelta(minutes=5)
+INACTIVITY_TIMEOUT = timedelta(minutes=1)
 last_activity_time = None
 # endregion
 
@@ -1476,6 +1476,7 @@ reload_card = viz.create_reload_button()
 
 # We don't need to update tabs or UI components dynamically since the page reloads
 
+# region authentication
 #------------------AUTHENTICATION-----------------------------
 # Custom authentication logic by Vjekoslav Večković
 
@@ -1702,6 +1703,7 @@ def on_session_start():
 # Initialize the app with proper session handling
 on_session_start()
 # ------------------END OF AUTHENTICATION---------------------
+# endregion
 
 
 dashboard = pn.template.BootstrapTemplate(
