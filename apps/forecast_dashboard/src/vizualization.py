@@ -33,6 +33,7 @@ logger = logging.getLogger("vizualizations")
 
 from .gettext_config import translation_manager, _
 from . import processing
+import subprocess
 
 # Import local library
 # Get the absolute path of the directory containing the current script
@@ -2954,6 +2955,8 @@ TAG = env.get('ieasyhydroforecast_backend_docker_image_tag')
 ORGANIZATION = env.get('ieasyhydroforecast_organization')
 # URL of the sapphire data gateway
 SAPPHIRE_DG_HOST = env.get('SAPPHIRE_DG_HOST')
+# open ssh tunnel connection
+SSH_TUNNEL_SCRIPT_PATH = env.get('SSH_TUNNEL_SCRIPT_PATH', '../../../sensitive_data_forecast_tools/bin/.ssh/open_ssh_tunnel.sh')
 
 
 
@@ -3384,42 +3387,50 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
         Reusable function to run a Docker container and track its progress.
         If a container with the same name exists, it will be removed before running a new one.
         """
-        # Check if a container with the specified name already exists
+        # Convert the SSH tunnel script path to an absolute path
+        SSH_TUNNEL_SCRIPT_ABSOLUTE = get_absolute_path(SSH_TUNNEL_SCRIPT_PATH)
+        print(f"Using SSH tunnel script at: {SSH_TUNNEL_SCRIPT_ABSOLUTE}")
         try:
-            existing_container = client.containers.get(container_name)
-            print(f"Removing existing container '{container_name}' (ID: {existing_container.id})...")
-            existing_container.remove(force=True)
-            print(f"Container '{container_name}' removed.")
-        except docker.errors.NotFound:
-            # Container does not exist, so we can proceed
-            pass
-        except docker.errors.APIError as e:
-            print(f"Error removing existing container '{container_name}': {e}")
-            raise
+        # Establish SSH tunnel before running the container
+            subprocess.run([SSH_TUNNEL_SCRIPT_ABSOLUTE], check=True)
+            # Check if a container with the specified name already exists
+            try:
+                existing_container = client.containers.get(container_name)
+                print(f"Removing existing container '{container_name}' (ID: {existing_container.id})...")
+                existing_container.remove(force=True)
+                print(f"Container '{container_name}' removed.")
+            except docker.errors.NotFound:
+                # Container does not exist, so we can proceed
+                pass
+            except docker.errors.APIError as e:
+                print(f"Error removing existing container '{container_name}': {e}")
+                raise
 
-        # Now run the new container
-        container = client.containers.run(
-            full_image_name,
-            detach=True,
-            environment=environment,
-            volumes=volumes,
-            name=container_name,
-            network='host'
-        )
-        print(f"Container '{container_name}' (ID: {container.id}) is running.")
 
-        # Monitor the container's progress
-        progress_bar.value = 0
-        while container.status != 'exited':
-            container.reload()  # Refresh the container's status
-            progress_bar.value += 10  # Increment progress
-            if progress_bar.value > 90:
-                progress_bar.value = 90  # Limit progress to 90% until the process finishes
-            time.sleep(1)
-        container.wait()  # Ensure the container has finished
-        progress_bar.value = 100  # Set progress to 100% after the container is done
-        print(f"Container '{container_name}' has stopped.")
+            # Now run the new container
+            container = client.containers.run(
+                full_image_name,
+                detach=True,
+                environment=environment,
+                volumes=volumes,
+                name=container_name,
+                network='host'
+            )
+            print(f"Container '{container_name}' (ID: {container.id}) is running.")
 
+            # Monitor the container's progress
+            progress_bar.value = 0
+            while container.status != 'exited':
+                container.reload()  # Refresh the container's status
+                progress_bar.value += 10  # Increment progress
+                if progress_bar.value > 90:
+                    progress_bar.value = 90  # Limit progress to 90% until the process finishes
+                time.sleep(1)
+            container.wait()  # Ensure the container has finished
+            progress_bar.value = 100  # Set progress to 100% after the container is done
+            print(f"Container '{container_name}' has stopped.")
+        except Exception as e:
+            print(f"Error running container '{container_name}': {e}")
 
     # Create a save button
     save_button = pn.widgets.Button(name=_("Save Changes"), button_type="success")
@@ -3743,11 +3754,16 @@ def run_docker_container(client, full_image_name, volumes, environment, containe
         volumes (dict): A dictionary of volumes to bind.
         environment (list): A list of environment variables.
         container_name (str): The name to assign to the Docker container.
-
+    
     Raises:
         docker.errors.ContainerError: If the container exits with a non-zero status.
     """
+    # Convert the SSH tunnel script path to an absolute path
+    SSH_TUNNEL_SCRIPT_ABSOLUTE = get_absolute_path(SSH_TUNNEL_SCRIPT_PATH)
+    print(f"Using SSH tunnel script at: {SSH_TUNNEL_SCRIPT_ABSOLUTE}")
     try:
+        # Establish SSH tunnel before running the container
+        subprocess.run([SSH_TUNNEL_SCRIPT_ABSOLUTE], check=True)
         # Remove existing container with the same name if it exists
         try:
             existing_container = client.containers.get(container_name)
