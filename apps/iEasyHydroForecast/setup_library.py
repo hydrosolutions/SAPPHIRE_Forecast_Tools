@@ -239,55 +239,43 @@ def load_environment():
     except subprocess.CalledProcessError as e:
         print(f"Error running netstat: {e}")
         return []'''
+
 def check_local_ssh_tunnels():
     """
-    Check for local SSH tunnels using methods that work inside Docker containers.
+    Check for local SSH tunnels using pure Python socket connections.
+    No additional system packages required.
     """
     try:
-        # Try multiple methods to detect tunnels
-        methods = [
-            # Method 1: Using ss (usually available in containers)
-            ['ss', '-ln'],
-            # Method 2: Using netstat if available
-            ['netstat', '-an'],
-            # Method 3: Direct check of /proc/net/tcp on Linux
-            'cat /proc/net/tcp'
-        ]
+        # Check the specific port we know the tunnel should be using
+        tunnel_port = 8881  # Your SSH tunnel port
 
-        for cmd in methods:
-            try:
-                if isinstance(cmd, str):
-                    output = subprocess.check_output(cmd, shell=True, universal_newlines=True)
-                else:
-                    output = subprocess.check_output(cmd, universal_newlines=True)
-
-                tunnels = []
-                for line in output.split('\n'):
-                    # Look for listening ports (both netstat and ss format)
-                    if ('LISTEN' in line or 'tcp' in line.lower()) and ('127.0.0.1:' in line or '[::1]:' in line):
-                        match = re.search(r'[.:](\d+)\s+.*(?:LISTEN|tcp)', line)
-                        if match:
-                            port = match.group(1)
-                            tunnels.append({
-                                'port': port,
-                                'line': line.strip()
-                            })
-
-                if tunnels:
-                    return tunnels
-
-            except (subprocess.CalledProcessError, FileNotFoundError):
-                continue
-
-        # If we get here, try a direct socket test
-        tunnel_port = 8881  # Your tunnel port
+        # Try to connect to localhost on the tunnel port
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        result = sock.connect_ex(('localhost', tunnel_port))
-        sock.close()
+        sock.settimeout(2)  # 2 second timeout
 
-        if result == 0:
-            return [{'port': tunnel_port, 'line': f'Port {tunnel_port} is listening'}]
+        try:
+            # Try localhost first
+            result = sock.connect_ex(('localhost', tunnel_port))
+            if result == 0:
+                return [{'port': tunnel_port, 'line': f'Port {tunnel_port} is listening on localhost'}]
 
+            # If localhost fails, try 127.0.0.1 explicitly
+            result = sock.connect_ex(('127.0.0.1', tunnel_port))
+            if result == 0:
+                return [{'port': tunnel_port, 'line': f'Port {tunnel_port} is listening on 127.0.0.1'}]
+
+            # If both fail, try host.docker.internal (for macOS)
+            result = sock.connect_ex(('host.docker.internal', tunnel_port))
+            if result == 0:
+                return [{'port': tunnel_port, 'line': f'Port {tunnel_port} is listening on host.docker.internal'}]
+
+        except socket.error as e:
+            print(f"Socket error while checking port {tunnel_port}: {e}")
+        finally:
+            sock.close()
+
+        # If we get here, no tunnel was found
+        print(f"No listening service found on port {tunnel_port}")
         return []
 
     except Exception as e:
