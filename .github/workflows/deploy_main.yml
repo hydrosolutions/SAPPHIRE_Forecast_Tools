@@ -17,9 +17,9 @@ env:
 
 on:
   push:
-    branches: [ "main"]
+    branches: [ "vjeko_ssh_connection"]
   pull_request:
-    branches: [ "main" ]
+    branches: [ "vjeko_ssh_connection" ]
 
 jobs:
 
