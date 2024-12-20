@@ -7,6 +7,7 @@ import datetime as dt
 import fnmatch
 import re
 import subprocess
+import socket
 
 from dotenv import load_dotenv
 
@@ -205,7 +206,7 @@ def load_environment():
 
 
 # --- Tools for accessing the iEasyHydro DB --------------------------------------
-def check_local_ssh_tunnels(ssh_port=8881):
+'''def check_local_ssh_tunnels(ssh_port=8881):
     """
     Check for local SSH tunnels by examining netstat output.
 
@@ -237,6 +238,60 @@ def check_local_ssh_tunnels(ssh_port=8881):
         return tunnels
     except subprocess.CalledProcessError as e:
         print(f"Error running netstat: {e}")
+        return []'''
+def check_local_ssh_tunnels():
+    """
+    Check for local SSH tunnels using methods that work inside Docker containers.
+    """
+    try:
+        # Try multiple methods to detect tunnels
+        methods = [
+            # Method 1: Using ss (usually available in containers)
+            ['ss', '-ln'],
+            # Method 2: Using netstat if available
+            ['netstat', '-an'],
+            # Method 3: Direct check of /proc/net/tcp on Linux
+            'cat /proc/net/tcp'
+        ]
+
+        for cmd in methods:
+            try:
+                if isinstance(cmd, str):
+                    output = subprocess.check_output(cmd, shell=True, universal_newlines=True)
+                else:
+                    output = subprocess.check_output(cmd, universal_newlines=True)
+
+                tunnels = []
+                for line in output.split('\n'):
+                    # Look for listening ports (both netstat and ss format)
+                    if ('LISTEN' in line or 'tcp' in line.lower()) and ('127.0.0.1:' in line or '[::1]:' in line):
+                        match = re.search(r'[.:](\d+)\s+.*(?:LISTEN|tcp)', line)
+                        if match:
+                            port = match.group(1)
+                            tunnels.append({
+                                'port': port,
+                                'line': line.strip()
+                            })
+
+                if tunnels:
+                    return tunnels
+
+            except (subprocess.CalledProcessError, FileNotFoundError):
+                continue
+
+        # If we get here, try a direct socket test
+        tunnel_port = 8881  # Your tunnel port
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        result = sock.connect_ex(('localhost', tunnel_port))
+        sock.close()
+
+        if result == 0:
+            return [{'port': tunnel_port, 'line': f'Port {tunnel_port} is listening'}]
+
+        return []
+
+    except Exception as e:
+        print(f"Error checking SSH tunnels: {e}")
         return []
 
 

@@ -24,8 +24,10 @@ from dotenv import load_dotenv
 import re
 import docker
 import threading
+import platform
 
 import logging
+from contextlib import contextmanager
 
 # Get logger
 logger = logging.getLogger("vizualizations")
@@ -3023,6 +3025,25 @@ class AppState(param.Parameterized):
 # Instantiate the shared state
 app_state = AppState()
 
+@contextmanager
+def establish_ssh_tunnel(ssh_script_path):
+    """
+    Context manager to establish and manage SSH tunnel lifecycle.
+
+    Args:
+        ssh_script_path (str): Path to the SSH tunnel script
+    """
+    try:
+        # Start SSH tunnel
+        tunnel_process = subprocess.Popen([ssh_script_path])
+        # Give the tunnel time to establish
+        time.sleep(2)
+        yield tunnel_process
+    finally:
+        if tunnel_process:
+            tunnel_process.terminate()
+            tunnel_process.wait()
+
 def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
                          SAVE_DIRECTORY):
     # Define a variable to hold the visible data across functions
@@ -3384,53 +3405,106 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
 
     def run_docker_container(client, full_image_name, volumes, environment, container_name, progress_bar):
         """
-        Reusable function to run a Docker container and track its progress.
-        If a container with the same name exists, it will be removed before running a new one.
+        Runs a Docker container and blocks until it completes.
+
+        Args:
+            client (docker.DockerClient): The Docker client instance.
+            full_image_name (str): The full name of the Docker image to run.
+            volumes (dict): A dictionary of volumes to bind.
+            environment (list): A list of environment variables.
+            container_name (str): The name to assign to the Docker container.
+            progress_bar (Optional): Progress bar widget if available.
+
+        Raises:
+            docker.errors.ContainerError: If the container exits with a non-zero status.
         """
         # Convert the SSH tunnel script path to an absolute path
         SSH_TUNNEL_SCRIPT_ABSOLUTE = get_absolute_path(SSH_TUNNEL_SCRIPT_PATH)
         print(f"Using SSH tunnel script at: {SSH_TUNNEL_SCRIPT_ABSOLUTE}")
         try:
-        # Establish SSH tunnel before running the container
-            subprocess.run([SSH_TUNNEL_SCRIPT_ABSOLUTE], check=True)
-            # Check if a container with the specified name already exists
-            try:
-                existing_container = client.containers.get(container_name)
-                print(f"Removing existing container '{container_name}' (ID: {existing_container.id})...")
-                existing_container.remove(force=True)
-                print(f"Container '{container_name}' removed.")
-            except docker.errors.NotFound:
-                # Container does not exist, so we can proceed
-                pass
-            except docker.errors.APIError as e:
-                print(f"Error removing existing container '{container_name}': {e}")
-                raise
+            with establish_ssh_tunnel(SSH_TUNNEL_SCRIPT_ABSOLUTE):
+                # Check if a container with the specified name already exists
+                try:
+                    existing_container = client.containers.get(container_name)
+                    print(f"Removing existing container '{container_name}' (ID: {existing_container.id})...")
+                    existing_container.remove(force=True)
+                    print(f"Container '{container_name}' removed.")
+                except docker.errors.NotFound:
+                    # Container does not exist, so we can proceed
+                    pass
+                except docker.errors.APIError as e:
+                    print(f"Error removing existing container '{container_name}': {e}")
+                    raise
 
+                # Add important environment variables
+                # if os is macOS, add the host.docker.internal and the port for the tunnel, for unix systems use 'host'
+                if platform.system() == 'Darwin':
+                    environment.extend([
+                        'SSH_TUNNEL_HOST=host.docker.internal',  # For macOS
+                        'SSH_TUNNEL_PORT=8881'  # Your tunnel port
+                    ])
+                else: # For Linux
+                    environment.extend([
+                        'SSH_TUNNEL_HOST=host',  # For Linux
+                        'SSH_TUNNEL_PORT=8881'  # Your tunnel port
+                    ])
+                # Create a custom network if it doesn't exist
+                network_name = 'ssh-tunnel-network'
 
-            # Now run the new container
-            container = client.containers.run(
-                full_image_name,
-                detach=True,
-                environment=environment,
-                volumes=volumes,
-                name=container_name,
-                network='host'
-            )
-            print(f"Container '{container_name}' (ID: {container.id}) is running.")
+                try:
+                    client.networks.get(network_name)
+                except docker.errors.NotFound:
+                    client.networks.create(network_name, driver='bridge')
 
-            # Monitor the container's progress
-            progress_bar.value = 0
-            while container.status != 'exited':
-                container.reload()  # Refresh the container's status
-                progress_bar.value += 10  # Increment progress
-                if progress_bar.value > 90:
-                    progress_bar.value = 90  # Limit progress to 90% until the process finishes
-                time.sleep(1)
-            container.wait()  # Ensure the container has finished
-            progress_bar.value = 100  # Set progress to 100% after the container is done
-            print(f"Container '{container_name}' has stopped.")
+                # Now run the new container
+                container = client.containers.run(
+                    full_image_name,
+                    detach=True,
+                    environment=environment,
+                    volumes=volumes,
+                    name=container_name,
+                    network_mode='host',
+                    extra_hosts={
+                        'host.docker.internal': 'host-gateway',
+                        'localhost': '127.0.0.1'
+                    }
+                )
+                print(f"Container '{container_name}' (ID: {container.id}) is running.")
+
+                # Stream logs in real-time
+                for line in container.logs(stream=True, follow=True):
+                    print(line.decode().strip())
+
+                # Monitor the container's progress
+                progress_bar.value = 0
+                while container.status != 'exited':
+                    container.reload()  # Refresh the container's status
+                    progress_bar.value += 10  # Increment progress
+                    if progress_bar.value > 90:
+                        progress_bar.value = 90  # Limit progress to 90% until the process finishes
+                    time.sleep(1)
+                result = container.wait()  # Ensure the container has finished
+                progress_bar.value = 100  # Set progress to 100% after the container is done
+                if result['StatusCode'] != 0:
+                    print(f"Container '{container_name}' exited with status code {result['StatusCode']}.")
+                    raise docker.errors.ContainerError(
+                        container=container,
+                        exit_status=result['StatusCode'],
+                        command=None,
+                        image=full_image_name
+                    )
+                else:
+                    print(f"Container '{container_name}' has stopped successfully.")
+
         except Exception as e:
             print(f"Error running container '{container_name}': {e}")
+        finally:
+            # Cleanup: remove the network if it exists
+            try:
+                network = client.networks.get(network_name)
+                network.remove()
+            except (docker.errors.NotFound, docker.errors.APIError):
+                pass
 
     # Create a save button
     save_button = pn.widgets.Button(name=_("Save Changes"), button_type="success")
