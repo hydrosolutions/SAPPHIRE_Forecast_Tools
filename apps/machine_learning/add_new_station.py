@@ -57,6 +57,13 @@ def call_hindcast_script(start_date: str,
     # --------------------------------------------------------------------
     # CALL THE HINDCAST SCRIPT
     # --------------------------------------------------------------------
+    #get models which produce assimilated forecasts
+    assimilation_models = os.getenv('ieasyhydroforecast_ASSIMILATION_MODELS')
+    if assimilation_models:
+        assimilation_models = assimilation_models.split(',')
+    else:
+        assimilation_models = []
+
     sys.path.append(os.path.dirname(os.path.abspath(__file__)))
     # Ensure the environment variable is set
     env = os.environ.copy()
@@ -100,13 +107,49 @@ def call_hindcast_script(start_date: str,
     PATH_FORECAST = os.path.join(intermediate_data_path, OUTPUT_PATH_DISCHARGE)
     PATH_HINDCAST = os.path.join(PATH_FORECAST, 'hindcast', MODEL_TO_USE)
 
-    
-    file_name = f'{MODEL_TO_USE}_{PREDICTION_MODE}_hindcast_daily_{start_date}_{end_date}.csv' 
+    if MODEL_TO_USE in assimilation_models:
+        file_name_org = f'{MODEL_TO_USE}_{PREDICTION_MODE}_hindcast_daily_{start_date}_{end_date}.csv'
+        file_name_assim = f'{MODEL_TO_USE}_ASSIMILATION_{PREDICTION_MODE}_hindcast_daily_{start_date}_{end_date}.csv'
 
-    hindcast = pd.read_csv(os.path.join(PATH_HINDCAST, file_name))
+        hindcast_org = pd.read_csv(os.path.join(PATH_HINDCAST, file_name_org))
+        hindcast_assim = pd.read_csv(os.path.join(PATH_HINDCAST, file_name_assim))
 
-    return hindcast
+        return (hindcast_org, hindcast_assim)
 
+    else:
+        file_name = f'{MODEL_TO_USE}_{PREDICTION_MODE}_hindcast_daily_{start_date}_{end_date}.csv' 
+
+        hindcast = pd.read_csv(os.path.join(PATH_HINDCAST, file_name))
+
+        return hindcast
+
+
+def save_assimilation_forecast(assimilimation_hindcast, OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, PREDICTION_MODE):
+    assimilimation_hindcast = assimilimation_hindcast.copy()
+    # go the differnet parent dir
+    MODEL_TO_USE_ASSIM = MODEL_TO_USE + '_ASSIMILATION'
+    parent_path = os.path.dirname(OUTPUT_PATH_DISCHARGE)  # Get parent directory
+    OUTPUT_PATH_OUTPUT_ASSIM = os.path.join(parent_path, MODEL_TO_USE_ASSIM)
+
+    #load the forecast
+    file_name = f'{PREDICTION_MODE}_{MODEL_TO_USE_ASSIM}_forecast.csv'
+    forecast = pd.read_csv(os.path.join(OUTPUT_PATH_OUTPUT_ASSIM, file_name), parse_dates=['date'])
+
+    # date and forecast_date to datetime
+    assimilimation_hindcast['date'] = pd.to_datetime(assimilimation_hindcast['date'])
+    assimilimation_hindcast['forecast_date'] = pd.to_datetime(assimilimation_hindcast['forecast_date'])
+
+    # Append the new pentad forecast to the existing pentad forecast
+    forecast = pd.concat([forecast, assimilimation_hindcast], ignore_index=True)
+    #Sort by forecast_date and date
+    forecast = forecast.sort_values(by=['forecast_date', 'date'])
+    # remove duplicates by code, date and forecast_date
+    forecast = forecast.drop_duplicates(subset=['code', 'date', 'forecast_date'])
+
+    # Save 
+    path_out_daily = os.path.join(OUTPUT_PATH_OUTPUT_ASSIM, file_name)
+    forecast.to_csv(path_out_daily, index=False)
+    print(f'The forecast files for model pentadal {MODEL_TO_USE_ASSIM} are saved in the directory: {OUTPUT_PATH_OUTPUT_ASSIM}')
 
 
 def main():
@@ -122,10 +165,17 @@ def main():
     MODEL_TO_USE = os.getenv('SAPPHIRE_MODEL_TO_USE')
     logger.info('Model to use: %s', MODEL_TO_USE)
 
-    if MODEL_TO_USE not in ['TFT', 'TIDE', 'TSMIXER', 'ARIMA']:
+    if MODEL_TO_USE not in ['TFT', 'TIDE', 'TSMIXER', 'ARIMA', 'RRMAMBA']:
         raise ValueError('Model not supported')
     else:
         print('Model to use: ', MODEL_TO_USE)
+
+    #get models which produce assimilated forecasts
+    assimilation_models = os.getenv('ieasyhydroforecast_ASSIMILATION_MODELS')
+    if assimilation_models:
+        assimilation_models = assimilation_models.split(',')
+    else:
+        assimilation_models = []
 
     # Access the environment variables
     intermediate_data_path = os.getenv('ieasyforecast_intermediate_data_path')
@@ -207,6 +257,10 @@ def main():
                                                         'PENTAD')
 
         logger.info('Pentad hindcast daily is generated')
+        if MODEL_TO_USE in assimilation_models:
+            pentad_hindcast_daily, pentad_hindcast_daily_assim = pentad_hindcast_daily
+            save_assimilation_forecast(pentad_hindcast_daily_assim, OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, 'pentad')
+
         pentad_hindcast_daily['forecast_date'] = pd.to_datetime(pentad_hindcast_daily['forecast_date'])
         pentad_hindcast_daily['date'] = pd.to_datetime(pentad_hindcast_daily['date'])
 
@@ -235,6 +289,9 @@ def main():
                                                     'DECAD')
         
         logger.info('Decad hindcast daily is generated')
+        if MODEL_TO_USE in assimilation_models:
+            decad_hindcast_daily, decad_hindcast_daily_assim = decad_hindcast_daily
+            save_assimilation_forecast(decad_hindcast_daily_assim, OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, 'decad')
         decad_hindcast_daily['forecast_date'] = pd.to_datetime(decad_hindcast_daily['forecast_date'])
         decad_hindcast_daily['date'] = pd.to_datetime(decad_hindcast_daily['date'])
 

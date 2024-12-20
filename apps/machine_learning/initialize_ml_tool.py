@@ -61,6 +61,15 @@ def call_hindcast_script(start_date: str,
     # --------------------------------------------------------------------
     # CALL THE HINDCAST SCRIPT
     # --------------------------------------------------------------------
+
+    #get models which produce assimilated forecasts
+    assimilation_models = os.getenv('ieasyhydroforecast_ASSIMILATION_MODELS')
+    if assimilation_models:
+        assimilation_models = assimilation_models.split(',')
+    else:
+        assimilation_models = []
+
+
     sys.path.append(os.path.dirname(os.path.abspath(__file__)))
     # Ensure the environment variable is set
     env = os.environ.copy()
@@ -95,12 +104,21 @@ def call_hindcast_script(start_date: str,
     PATH_FORECAST = os.path.join(intermediate_data_path, OUTPUT_PATH_DISCHARGE)
     PATH_HINDCAST = os.path.join(PATH_FORECAST, 'hindcast', MODEL_TO_USE)
 
-    
-    file_name = f'{MODEL_TO_USE}_{PREDICTION_MODE}_hindcast_daily_{start_date}_{end_date}.csv' 
+    if MODEL_TO_USE in assimilation_models:
+        file_name_org = f'{MODEL_TO_USE}_{PREDICTION_MODE}_hindcast_daily_{start_date}_{end_date}.csv'
+        file_name_assim = f'{MODEL_TO_USE}_ASSIMILATION_{PREDICTION_MODE}_hindcast_daily_{start_date}_{end_date}.csv'
 
-    hindcast = pd.read_csv(os.path.join(PATH_HINDCAST, file_name))
+        hindcast_org = pd.read_csv(os.path.join(PATH_HINDCAST, file_name_org))
+        hindcast_assim = pd.read_csv(os.path.join(PATH_HINDCAST, file_name_assim))
 
-    return hindcast
+        return (hindcast_org, hindcast_assim)
+
+    else:
+        file_name = f'{MODEL_TO_USE}_{PREDICTION_MODE}_hindcast_daily_{start_date}_{end_date}.csv' 
+
+        hindcast = pd.read_csv(os.path.join(PATH_HINDCAST, file_name))
+
+        return hindcast
 
 
 
@@ -117,7 +135,7 @@ def main():
     MODEL_TO_USE = os.getenv('SAPPHIRE_MODEL_TO_USE')
     logger.info('Model to use: %s', MODEL_TO_USE)
 
-    if MODEL_TO_USE not in ['TFT', 'TIDE', 'TSMIXER', 'ARIMA']:
+    if MODEL_TO_USE not in ['TFT', 'TIDE', 'TSMIXER', 'ARIMA', 'RRMAMBA']:
         raise ValueError('Model not supported')
     else:
         print('Model to use: ', MODEL_TO_USE)
@@ -139,6 +157,13 @@ def main():
     if not os.listdir(PATH_ERA5_REANALYSIS):
        raise ValueError('No forcing data. Please run the script: get_era5_reanalysis_data.py')
        
+
+    #get models which produce assimilated forecasts
+    assimilation_models = os.getenv('ieasyhydroforecast_ASSIMILATION_MODELS')
+    if assimilation_models:
+        assimilation_models = assimilation_models.split(',')
+    else:
+        assimilation_models = []
     
     # --------------------------------------------------------------------
     # read the start and end date from the users input
@@ -163,8 +188,19 @@ def main():
                                                     'PENTAD')
     logger.info('Pentad hindcast daily is generated')
     # save the pentad hindcast to a csv file at the right location. So the operational script can access it.
-    path_pentad_out_daily = os.path.join(OUTPUT_PATH_DISCHARGE, f'pentad_{MODEL_TO_USE}_forecast.csv')
-    pentad_hindcast_daily.to_csv(path_pentad_out_daily, index=False)
+    if MODEL_TO_USE in assimilation_models:
+        path_pentad_out_daily = os.path.join(OUTPUT_PATH_DISCHARGE, f'pentad_{MODEL_TO_USE}_forecast.csv')
+        pentad_hindcast_daily[0].to_csv(path_pentad_out_daily, index=False)
+        #Adjust the path for the assimilation model
+        MODEL_TO_USE_ASSIM = MODEL_TO_USE + '_ASSIMILATION'
+        parent_path = os.path.dirname(OUTPUT_PATH_DISCHARGE)  # Get parent directory
+        OUTPUT_PATH_DISCHARGE_ASSIM = os.path.join(parent_path, MODEL_TO_USE_ASSIM)
+        path_pentad_out_daily = os.path.join(OUTPUT_PATH_DISCHARGE_ASSIM, f'pentad_{MODEL_TO_USE}_ASSIMILATION_forecast.csv')
+        pentad_hindcast_daily[1].to_csv(path_pentad_out_daily, index=False)
+
+    else:
+        path_pentad_out_daily = os.path.join(OUTPUT_PATH_DISCHARGE, f'pentad_{MODEL_TO_USE}_forecast.csv')
+        pentad_hindcast_daily.to_csv(path_pentad_out_daily, index=False)
     del pentad_hindcast_daily
 
     print("Starting Hindcast Decad in daily intervall")
@@ -176,8 +212,19 @@ def main():
     
     logger.info('Decad hindcast daily is generated')
     # save the decad hindcast to a csv file at the right location. So the operational script can access it.
-    path_decad_out_daily = os.path.join(OUTPUT_PATH_DISCHARGE, f'decad_{MODEL_TO_USE}_forecast.csv')
-    decad_hindcast_daily.to_csv(path_decad_out_daily, index=False)
+    if MODEL_TO_USE in assimilation_models:
+        path_decad_out_daily = os.path.join(OUTPUT_PATH_DISCHARGE, f'decad_{MODEL_TO_USE}_forecast.csv')
+        decad_hindcast_daily[0].to_csv(path_decad_out_daily, index=False)
+        #Adjust the path for the assimilation model
+        MODEL_TO_USE_ASSIM = MODEL_TO_USE + '_ASSIMILATION'
+        parent_path = os.path.dirname(OUTPUT_PATH_DISCHARGE)  # Get parent directory
+        OUTPUT_PATH_DISCHARGE_ASSIM = os.path.join(parent_path, MODEL_TO_USE_ASSIM)
+        path_decad_out_daily = os.path.join(OUTPUT_PATH_DISCHARGE_ASSIM, f'decad_{MODEL_TO_USE}_ASSIMILATION_forecast.csv')
+        decad_hindcast_daily[1].to_csv(path_decad_out_daily, index=False)
+    else:
+        path_decad_out_daily = os.path.join(OUTPUT_PATH_DISCHARGE, f'decad_{MODEL_TO_USE}_forecast.csv')
+        decad_hindcast_daily.to_csv(path_decad_out_daily, index=False)
+    
     del decad_hindcast_daily
 
     print(f'The forecast files for model {MODEL_TO_USE} are saved in the directory: {OUTPUT_PATH_DISCHARGE}')
