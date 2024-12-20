@@ -3476,10 +3476,12 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
             absolute_volume_path_config = get_absolute_path(env.get('ieasyforecast_configuration_path'))
             absolute_volume_path_internal_data = get_absolute_path(env.get('ieasyforecast_intermediate_data_path'))
             absolute_volume_path_discharge = get_absolute_path(env.get('ieasyforecast_daily_discharge_path'))
+            absolute_volume_path_bin = get_absolute_path(env.get('ieasyhydroforecast_bin_path'))
 
             bind_volume_path_config = get_bind_path(env.get('ieasyforecast_configuration_path'))
             bind_volume_path_internal_data = get_bind_path(env.get('ieasyforecast_intermediate_data_path'))
             bind_volume_path_discharge = get_bind_path(env.get('ieasyforecast_daily_discharge_path'))
+            bind_volume_path_bin = get_bind_path(env.get('ieasyhydroforecast_bin_path'))
 
             # Initialize Docker client
             client = docker.from_env()
@@ -3494,7 +3496,8 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
             volumes = {
                 absolute_volume_path_config: {'bind': bind_volume_path_config, 'mode': 'rw'},
                 absolute_volume_path_internal_data: {'bind': bind_volume_path_internal_data, 'mode': 'rw'},
-                absolute_volume_path_discharge: {'bind': bind_volume_path_discharge, 'mode': 'rw'}
+                absolute_volume_path_discharge: {'bind': bind_volume_path_discharge, 'mode': 'rw'},
+                absolute_volume_path_bin: {'bind': bind_volume_path_bin, 'mode': 'rw'}
             }
             print("volumes: ", volumes)
 
@@ -3667,6 +3670,10 @@ def create_reload_button():
                         'bind': get_bind_path(env.get("ieasyhydroforecast_conceptual_model_path")),
                         'mode': 'rw'
                     },
+                    get_absolute_path(env.get("ieasyhydroforecast_bin_path")): {
+                        'bind': get_bind_path(env.get("ieasyhydroforecast_bin_path")),
+                        'mode': 'rw'
+                    },
                     "/var/run/docker.sock": {
                         'bind': "/var/run/docker.sock",
                         'mode': 'rw'
@@ -3754,7 +3761,7 @@ def run_docker_container(client, full_image_name, volumes, environment, containe
         volumes (dict): A dictionary of volumes to bind.
         environment (list): A list of environment variables.
         container_name (str): The name to assign to the Docker container.
-    
+
     Raises:
         docker.errors.ContainerError: If the container exits with a non-zero status.
     """

@@ -181,7 +181,7 @@ downloader = FileDownloader(bulletin_folder)
 bulletin_download_panel = downloader.panel()
 
 # Set time until user is logged out automatically
-INACTIVITY_TIMEOUT = timedelta(minutes=1)
+INACTIVITY_TIMEOUT = timedelta(minutes=10)
 last_activity_time = None
 # endregion
 
