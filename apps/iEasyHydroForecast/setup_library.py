@@ -6,6 +6,7 @@ import json
 import datetime as dt
 import fnmatch
 import re
+import subprocess
 
 from dotenv import load_dotenv
 
@@ -204,6 +205,41 @@ def load_environment():
 
 
 # --- Tools for accessing the iEasyHydro DB --------------------------------------
+def check_local_ssh_tunnels(ssh_port=8881):
+    """
+    Check for local SSH tunnels by examining netstat output.
+
+    Returns:
+        list: List of found local SSH tunnels with their details
+    """
+    try:
+        # Run netstat command
+        if os.name == 'nt':  # Windows, not tested
+            cmd = ['netstat -an']
+        else:  # Unix/Linux/macOS
+            cmd = ['netstat -an | grep LISTEN']
+
+        output = subprocess.check_output(cmd, shell=True, universal_newlines=True)
+        #logger.debug(f"Output from netstat: {output}")
+
+        # Test if we have output
+        if not output:
+            logger.info("No output from netstat")
+            return []
+
+        # Look for listening ports that might be SSH tunnels
+        tunnels = []
+        for line in output.split('\n'):
+            if f"127.0.0.1.{ssh_port}" in line or f"::1.8881" in line:
+                tunnels.append({
+                    'line': line.strip()
+                })
+        return tunnels
+    except subprocess.CalledProcessError as e:
+        print(f"Error running netstat: {e}")
+        return []
+
+
 # region iEH_DB
 def check_database_access(ieh_sdk):
     """
@@ -226,9 +262,11 @@ def check_database_access(ieh_sdk):
     # Test if the backand has access to an iEasyHydro database and set a flag accordingly.
     try:
         test = ieh_sdk.get_discharge_sites()
+        #logger.debug(f"test[0]: {test[0]}")
         logger.info(f"Access to iEasyHydro database.")
         return True
     except Exception as e:
+        logger.debug(f"Met exception {e} when trying to access iEasyHydro database.")
         # Test if there are any files in the data/daily_runoff directory
         if os.listdir(os.getenv("ieasyforecast_daily_discharge_path")):
             logger.info(f"No access to iEasyHydro database. "
