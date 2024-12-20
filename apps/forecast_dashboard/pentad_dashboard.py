@@ -468,7 +468,7 @@ print("DEBUG: pentad_dashboard.py: station.value: ", station.value)
 model_dict = processing.update_model_dict(model_dict_all, forecasts_all, station.value, pentad_selector.value)
 #print(f"DEBUG: pentad_dashboard.py: model_dict: {model_dict}")
 
-@pn.depends(station, pentad_selector, watch=True)
+#@pn.depends(station, pentad_selector, watch=True)
 def get_best_models_for_station_and_pentad(station_value, pentad_value):
     return processing.get_best_models_for_station_and_pentad(forecasts_all, station_value, pentad_value)
 current_model_pre_selection = get_best_models_for_station_and_pentad(station.value, pentad_selector.value)
@@ -684,12 +684,12 @@ bulletin_tabulator = pn.widgets.Tabulator(
 def update_site_attributes_with_hydrograph_statistics_for_selected_pentad(_,
     sites=sites_list, df=hydrograph_pentad_all, pentad=pentad_selector.value):
     """Update site attributes with hydrograph statistics for selected pentad"""
-    print(f"\n\n\nDEBUG update_site_attributes_with_hydrograph_statistics_for_selected_pentad: pentad: {pentad}")
-    print(f"column names: {df.columns}")
+    #print(f"\n\n\nDEBUG update_site_attributes_with_hydrograph_statistics_for_selected_pentad: pentad: {pentad}")
+    #print(f"column names: {df.columns}")
     # Based on column names and date, figure out which column indicates the
     # last year's Q for the selected pentad
     current_year = dt.datetime.now().year
-    print(f"current year: {current_year}")
+    #print(f"current year: {current_year}")
     if str(current_year) in df.columns:
         last_year_column = str(current_year - 1)
     else:
@@ -761,7 +761,111 @@ viz.app_state.param.watch(update_add_to_bulletin_button, 'pipeline_running')
 add_to_bulletin_button.disabled = viz.app_state.pipeline_running
 
 # Function to update the model select widget based on the selected station
+# Create a callback that only updates the widget when data has actually changed
+def create_widget_updater():
+    last_values = {'options': None, 'value': None}
+
+    def update_widget(options, values):
+        # Only update if there's an actual change
+        if (options != last_values['options'] or
+            values != last_values['value']):
+
+            # Force a complete widget reset
+            #model_checkbox.param.update(
+            #    options={},  # Clear options first
+            #    value=[]     # Clear values
+            #)
+
+            # Then set new values
+            model_checkbox.param.update(
+                options=options,
+                value=values
+            )
+
+            # Update last known state
+            last_values['options'] = options
+            last_values['value'] = values
+
+            print(f"\nDEBUG: Widget Update")
+            print(f"Setting options to: {options}")
+            print(f"Setting values to: {values}")
+            print(f"Widget state after update:")
+            print(f"  Options: {model_checkbox.options}")
+            print(f"  Value: {model_checkbox.value}")
+
+    return update_widget
+
+widget_updater = create_widget_updater()
+
 @pn.depends(station, pentad_selector, watch=True)
+def update_model_select(station_value, selected_pentad):
+    print("\n=== Starting Model Select Update ===")
+    print(f"Initial widget state:")
+    print(f"  Options: {model_checkbox.options}")
+    print(f"  Current value: {model_checkbox.value}")
+
+    # First get the updated model dictionary
+    updated_model_dict = processing.update_model_dict(model_dict_all, forecasts_all, station_value, selected_pentad)
+
+    print("\nAfter update_model_dict:")
+    print(f"  Updated model dict: {updated_model_dict}")
+
+    # Get pre-selected models
+    current_model_pre_selection = processing.get_best_models_for_station_and_pentad(
+        forecasts_all, station_value, selected_pentad
+    )
+
+    print("\nAfter get_best_models:")
+    print(f"  Pre-selected models: {current_model_pre_selection}")
+
+    # Create new values list
+    new_values = []
+    for model in current_model_pre_selection:
+        if model in updated_model_dict:
+            print(f"  Adding model from dict: {model} -> {updated_model_dict[model]}")
+            new_values.append(updated_model_dict[model])
+        elif "Ens. Mean" in model:
+            ensemble_option = next(
+                (updated_model_dict[key] for key in updated_model_dict if "Ens. Mean" in key),
+                None
+            )
+            if ensemble_option:
+                print(f"  Adding ensemble model: {model} -> {ensemble_option}")
+                new_values.append(ensemble_option)
+
+    print("\nBefore widget update:")
+    print(f"  New options to set: {updated_model_dict}")
+    print(f"  New values to set: {new_values}")
+
+    # Try updating options first, then values
+    #model_checkbox.options = {}  # Clear first
+    #model_checkbox.param.trigger('options')
+    model_checkbox.options = updated_model_dict
+    model_checkbox.param.trigger('options')
+
+    print("\nAfter options update:")
+    print(f"  Widget options: {model_checkbox.options}")
+    print(f"  Widget value: {model_checkbox.value}")
+
+    #model_checkbox.value = []  # Clear first
+    #model_checkbox.param.trigger('value')
+    model_checkbox.value = new_values
+    model_checkbox.param.trigger('value')
+
+    print("\nFinal widget state:")
+    print(f"  Widget options: {model_checkbox.options}")
+    print(f"  Widget value: {model_checkbox.value}")
+
+    # Add event monitoring
+    #@model_checkbox.param.watch('value')
+    #def value_watcher(event):
+    #    print(f"\nValue change detected:")
+    #    print(f"  Old: {event.old}")
+    #    print(f"  New: {event.new}")
+
+    return updated_model_dict
+
+'''@pn.depends(station, pentad_selector, watch=True)
 def update_model_select(station_value, selected_pentad):
     # Update the model_dict with the models we have results for for the selected
     # station
@@ -773,14 +877,15 @@ def update_model_select(station_value, selected_pentad):
     current_model_pre_selection = processing.get_best_models_for_station_and_pentad(forecasts_all, station_value, selected_pentad)
     #print(f"DEBUG: pentad_dashboard.py: update_model_select: current_model_pre_selection: {current_model_pre_selection}")
     #model_checkbox.value = [updated_model_dict[model] for model in current_model_pre_selection]
-    model_checkbox.value = [
+    new_pre_selection = [
         updated_model_dict[model] if "Ens. Mean" not in model else next(
             (updated_model_dict[um] for um in updated_model_dict if "Ens. Mean" in um), None
         )
         for model in current_model_pre_selection if model in updated_model_dict or "Ens. Mean" in model
     ]
-    print(f"DEBUG: pentad_dashboard.py: update_model_select: model_checkbox.value:\n   {model_checkbox.value}")
-    return updated_model_dict
+    model_checkbox.value = new_pre_selection
+    print(f"\n\n\n------\nDEBUG: MODEL: update_model_select: model_checkbox.value:\n   {model_checkbox.value}")
+    return updated_model_dict'''
 
 
 # Create the pop-up notification pane (initially hidden)

@@ -264,7 +264,7 @@ def read_ml_forecast_data(file_mtime):
     arima = read_machine_learning_forecasts_pentad('ARIMA', file_mtime)
     # Concatenate the data frames
     ml_forecast = pd.concat([tide, tft, tsmixer, ne, arima], ignore_index=True)
-    print(f"Head of ml_forecast:\n{ml_forecast.head()}")
+    #print(f"Head of ml_forecast:\n{ml_forecast.head()}")
     # Cast forecast_date and date columns to datetime
     ml_forecast['forecast_date'] = ml_forecast['forecast_date'].apply(parse_dates)
 
@@ -895,7 +895,7 @@ def read_all_stations_metadata_from_iehhf(station_list):
     # Cast all_stations['code'] to string
     all_stations['code'] = all_stations['code'].astype(str)
     # print column names of all_stations
-    print(f"all_stations columns: {all_stations.columns}")
+    #print(f"all_stations columns: {all_stations.columns}")
     #print(f"head of all_stations: {all_stations[['code', 'name', 'river_name', 'punkt_name']].head(20)}")
 
     # Rename
@@ -1017,23 +1017,54 @@ def update_model_dict(model_dict, forecasts_all, selected_station, selected_pent
     # Remove duplicates in model_short
     filtered_forecasts = filtered_forecasts.drop_duplicates(subset=['model_short'], keep='last')
     model_dict = filtered_forecasts.set_index('model_long')['model_short'].to_dict()
+
+    print(f"\nDEBUG: update_model_dict:")
+    print(f"Filtered forecasts:\n{filtered_forecasts[['model_long', 'model_short', 'forecasted_discharge']]}")
+    print(f"Resulting model_dict: {model_dict}")
+
     return model_dict
 
 def get_best_models_for_station_and_pentad(forecasts_all, selected_station, selected_pentad):
     """Returns a list of models with the best performance for the selected station and pentad"""
     # Filter the forecast results for the selected station and pentad
-    forecasts = forecasts_all[
+    forecasts_local = forecasts_all[
         (forecasts_all['station_labels'] == selected_station) &
         (forecasts_all['pentad_in_year'] == selected_pentad)
-    ]
-    forecasts_no_LR = forecasts[forecasts['model_long'] != 'Linear regression (LR)']
+    ].copy()
+    # Drop duplicates (columns model_short) and only keep the last one
+    forecasts_filtered = forecasts_local.drop_duplicates(subset=['model_short'], keep='last').copy()
+    # Remove Nan forecasts before calculating the best model
+    # If no forecasts are currently available, this will procude an empty DataFrame
+    print(f"forecasts before dropping NaN forecasts:\n{forecasts_filtered[['model_short', 'forecasted_discharge']]}")
+    print(f"column names: {forecasts_filtered.columns}")
+    forecasts_filtered = forecasts_filtered.dropna(subset=['forecasted_discharge'])
+    print(f"forecasts after dropping NaN forecasts:\n{forecasts_filtered[['model_short', 'forecasted_discharge']]}")
+
+    forecasts_no_LR = forecasts_filtered[forecasts_filtered['model_short'] != 'LR']
+    print(f"forecasts_no_LR:\n{forecasts_no_LR[['model_short', 'forecasted_discharge']]}")
     # Test if forecasts_no_LR is empty
     # Check if forecasts_no_LR is empty or contains only NaN accuracy
     if forecasts_no_LR.empty or forecasts_no_LR['accuracy'].isna().all():
         print("No valid models found for the given station and pentad.")
         return ['Linear regression (LR)']  # Return a fallback
-    best_model = forecasts_no_LR.loc[forecasts_no_LR['accuracy'].idxmax(), 'model_long']
-    best_models = [best_model, 'Linear regression (LR)']
+    best_model = forecasts_no_LR.loc[forecasts_no_LR['accuracy'].idxmax(), 'model_short']
+    print("best_model: ", best_model)
+    best_models = [best_model, 'LR']
+    # If length of best_models is 1, we only have the LR model
+    if len(best_models) == 1:
+        return ['Linear regression (LR)']
+    # if forecasted_discharge of forecasts is NaN, we remove the model from best_models
+    best_models = [
+        model for model in best_models if not forecasts_filtered[
+            forecasts_filtered['model_short'] == model]['forecasted_discharge'].isna().all()
+    ]
+    # Get long model name for short model names in best_models list into a list.
+    # This should avoid issues with EM long names.
+    best_models = [
+        forecasts_filtered[forecasts_filtered['model_short'] == model]['model_long'].iloc[0]
+        for model in best_models
+    ]
+    print(f"Best models for station {selected_station}: {best_models}")
     return best_models
 
 def add_labels_to_hydrograph_pentad_all(hydrograph_pentad_all, all_stations):
