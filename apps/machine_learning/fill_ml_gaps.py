@@ -67,6 +67,14 @@ def call_hindcast_script(min_missing_date: str,
     # --------------------------------------------------------------------
     # CALL THE HINDCAST SCRIPT
     # --------------------------------------------------------------------
+    #get models which produce assimilated forecasts
+    assimilation_models = os.getenv('ieasyhydroforecast_ASSIMILATION_MODELS')
+    if assimilation_models:
+        assimilation_models = assimilation_models.split(',')
+    else:
+        assimilation_models = []
+
+
     sys.path.append(os.path.dirname(os.path.abspath(__file__)))
     # Ensure the environment variable is set
     env = os.environ.copy()
@@ -110,14 +118,67 @@ def call_hindcast_script(min_missing_date: str,
 
     PATH_HINDCAST = os.path.join(PATH_FORECAST, 'hindcast', MODEL_TO_USE)
 
+    if MODEL_TO_USE in assimilation_models:
+        file_name_org = f'{MODEL_TO_USE}_{PREDICTION_MODE}_hindcast_daily_{min_missing_date}_{max_missing_date}.csv'
+        file_name_assim = f'{MODEL_TO_USE}_ASSIMILATION_{PREDICTION_MODE}_hindcast_daily_{min_missing_date}_{max_missing_date}.csv'
 
-    file_name = f'{MODEL_TO_USE}_{PREDICTION_MODE}_hindcast_daily_{min_missing_date}_{max_missing_date}.csv'
+        hindcast_org = pd.read_csv(os.path.join(PATH_HINDCAST, file_name_org))
+        hindcast_assim = pd.read_csv(os.path.join(PATH_HINDCAST, file_name_assim))
 
-    hindcast = pd.read_csv(os.path.join(PATH_HINDCAST, file_name))
+        return (hindcast_org, hindcast_assim)
 
-    return hindcast
+    else:
+        file_name = f'{MODEL_TO_USE}_{PREDICTION_MODE}_hindcast_daily_{min_missing_date}_{max_missing_date}.csv' 
+
+        hindcast = pd.read_csv(os.path.join(PATH_HINDCAST, file_name))
+
+        return hindcast
+
+def fill_missing_forecasts(forecast: pd.DataFrame, this_hindcast: pd.DataFrame, missing_forecasts_dict: dict) -> pd.DataFrame:
+    """
+    Fill missing forecasts using hindcast data for specified date ranges per code.
+    
+    Args:
+        forecast (pd.DataFrame): Original forecast DataFrame
+        hindcast (pd.DataFrame): Hindcast DataFrame to fill missing values from
+        missing_forecasts_dict (dict): Dictionary with station codes as keys and list of 
+            tuples (start_date, end_date) as values indicating missing forecast periods
+    
+    Returns:
+        pd.DataFrame: Combined forecast DataFrame with missing periods filled from hindcast
+    """
+    # Create a copy to avoid modifying the original
+    forecast_filled = forecast.copy()
+    hindcast = this_hindcast.copy()
+    hindcast['forecast_date'] = pd.to_datetime(hindcast['forecast_date'])
+    
+    # Iterate through each station code and its missing forecast periods
+    for code, missing_forecasts in missing_forecasts_dict.items():
+        # Create mask for all dates that need filling for this code
+        mask_dates = pd.Series(False, index=hindcast.index)
+        
+        # Add each missing period to the mask
+        for start_date, end_date in missing_forecasts:
+            mask_dates = mask_dates | (
+                (hindcast.forecast_date >= start_date) & 
+                (hindcast.forecast_date <= end_date)
+            )
+        
+        # Create final mask combining code and dates
+        mask_fill = (hindcast.code == code) & mask_dates
+        
+        # Extract relevant hindcast data
+        hindcast_missing = hindcast[mask_fill].copy()
+        
+        # Append missing forecasts to the original
+        forecast_filled = pd.concat([forecast_filled, hindcast_missing], axis=0)
 
 
+    forecast_filled['forecast_date'] = pd.to_datetime(forecast_filled['forecast_date'])
+    # Sort the forecast by forecast_date
+    forecast_filled = forecast_filled.sort_values(by='forecast_date')
+
+    return forecast_filled
 
 
 def fill_ml_gaps():
@@ -128,7 +189,7 @@ def fill_ml_gaps():
     logger.info('Model to use: %s', MODEL_TO_USE)
     print('Model to use:', MODEL_TO_USE)
 
-    if MODEL_TO_USE not in ['TFT', 'TIDE', 'TSMIXER', 'ARIMA']:
+    if MODEL_TO_USE not in ['TFT', 'TIDE', 'TSMIXER', 'ARIMA', 'RRMAMBA']:
         raise ValueError('Model not supported')
 
     # --------------------------------------------------------------------
@@ -138,8 +199,6 @@ def fill_ml_gaps():
     logger.debug('Prediction mode: %s', PREDICTION_MODE)
     if PREDICTION_MODE not in ['PENTAD', 'DECAD']:
         raise ValueError('Prediction mode %s is not supported.\nPlease choose one of the following prediction modes: PENTAD, DECAD')
-
-
 
     # --------------------------------------------------------------------
     # INITIALIZE THE ENVIRONMENT
@@ -157,6 +216,13 @@ def fill_ml_gaps():
 
     # Path to the output directory
     OUTPUT_PATH_DISCHARGE = os.getenv('ieasyhydroforecast_OUTPUT_PATH_DISCHARGE')
+
+    #get models which produce assimilated forecasts
+    assimilation_models = os.getenv('ieasyhydroforecast_ASSIMILATION_MODELS')
+    if assimilation_models:
+        assimilation_models = assimilation_models.split(',')
+    else:
+        assimilation_models = []
 
 
     PATH_FORECAST = os.path.join(intermediate_data_path, OUTPUT_PATH_DISCHARGE)
@@ -238,29 +304,24 @@ def fill_ml_gaps():
         hindcast = call_hindcast_script(min_missing_date, max_missing_date,
             MODEL_TO_USE, intermediate_data_path, PREDICTION_MODE)
 
-        hindcast['forecast_date'] = pd.to_datetime(hindcast['forecast_date'])
+        if MODEL_TO_USE in assimilation_models:
+            print('Assimilation model')
+            forecast = fill_missing_forecasts(forecast, hindcast[0], missing_forecasts_dict)
+            forecast_assim = fill_missing_forecasts(forecast, hindcast[1], missing_forecasts_dict)
 
-        #now iterate and fill the missing forecasts, 
-        #this complicated way is needed to ensure that the original forecast are not overwrtitten by the hindcast
-        for code, missing_forecasts in missing_forecasts_dict.items():
-            
-            mask_dates = pd.Series(False, index=hindcast.index)
-            for missing_forecast in missing_forecasts:
-                mask_dates = mask_dates | ((hindcast.forecast_date >= missing_forecast[0]) & (hindcast.forecast_date <= missing_forecast[1]))
-            
-            mask_fill = (hindcast.code == code) & mask_dates
+            MODEL_TO_USE_ASSIM = MODEL_TO_USE + '_ASSIMILATION'
+            parent_path = os.path.dirname(PATH_FORECAST)  # Get parent directory
+            OUTPUT_PATH_FORECAST_ASSIM = os.path.join(parent_path, MODEL_TO_USE_ASSIM)
 
-            hindcast_missing = hindcast[mask_fill].copy()
+            # save the forecast
+            forecast.to_csv(os.path.join(PATH_FORECAST, prefix + '_' +  MODEL_TO_USE + '_forecast.csv'), index=False)
+            forecast_assim.to_csv(os.path.join(OUTPUT_PATH_FORECAST_ASSIM, prefix + '_' +  MODEL_TO_USE_ASSIM + '_forecast.csv'), index=False)
 
-            # append the missing forecasts to the original forecast
-            forecast = pd.concat([forecast, hindcast_missing], axis=0)
-
-
-        forecast['forecast_date'] = pd.to_datetime(forecast['forecast_date'])
-        # sort the forecast by forecast_date
-        forecast = forecast.sort_values(by='forecast_date')
-        # save the forecast
-        forecast.to_csv(os.path.join(PATH_FORECAST, prefix + '_' +  MODEL_TO_USE + '_forecast.csv'), index=False)
+        else:
+            print('Non-assimilation model')
+            forecast = fill_missing_forecasts(forecast, hindcast, missing_forecasts_dict)
+            # save the forecast
+            forecast.to_csv(os.path.join(PATH_FORECAST, prefix + '_' +  MODEL_TO_USE + '_forecast.csv'), index=False)
 
 
         logger.info('Missing forecasts filled in')

@@ -42,8 +42,8 @@
 # --------------------------------------------------------------------
 
 # Useage:
-# SAPPHIRE_MODEL_TO_USE=TFT SAPPHIRE_PREDICTION_MODE=PENTAD python make_forecast.py
-# Possible values for MODEL_TO_USE: TFT, TIDE, TSMIXER
+# SAPPHIRE_OPDEV_ENV=True SAPPHIRE_MODEL_TO_USE=TFT SAPPHIRE_PREDICTION_MODE=PENTAD python make_forecast.py
+# Possible values for MODEL_TO_USE: TFT, TIDE, TSMIXER, ARIMA, RRMAMBA
 # Possible values for MODEL_TO_USE: PENTAD, DECAD
 
 
@@ -150,6 +150,7 @@ def write_pentad_forecast(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, forecast_pentad):
     None
     """
 
+
     # Read the latest forecast and append the new forecast
     forecast_file_path = os.path.join(OUTPUT_PATH_DISCHARGE, f'pentad_{MODEL_TO_USE}_forecast.csv')
     try:
@@ -163,6 +164,8 @@ def write_pentad_forecast(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, forecast_pentad):
     forecast_pentad['date'] = pd.to_datetime(forecast_pentad['date'])
     forecast_pentad['forecast_date'] = pd.to_datetime(forecast_pentad['forecast_date'])
     forecast_pentad = forecast_pentad.drop_duplicates(subset=['forecast_date','date', 'code'], keep='last')
+    #round to 2 decimals
+    forecast_pentad = forecast_pentad.round(decimals = 2)
     # Save the updated forecast
     forecast_pentad.to_csv(forecast_file_path, index=False)
 
@@ -180,6 +183,8 @@ def write_decad_forecast(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, forecast_decad):
     Returns:
     None
     """
+
+
     try:
         forecast_decad_old = pd.read_csv(os.path.join(OUTPUT_PATH_DISCHARGE, f'decad_{MODEL_TO_USE}_forecast.csv'))
     except FileNotFoundError:
@@ -192,6 +197,9 @@ def write_decad_forecast(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, forecast_decad):
     forecast_decad['forecast_date'] = pd.to_datetime(forecast_decad['forecast_date'])
 
     forecast_decad = forecast_decad.drop_duplicates(subset=['forecast_date','date', 'code'], keep='last')
+    
+    #round to 2 decimals
+    forecast_decad = forecast_decad.round(decimals = 2)
     forecast_decad.to_csv(os.path.join(OUTPUT_PATH_DISCHARGE, f'decad_{MODEL_TO_USE}_forecast.csv'), index=False)
 
 
@@ -206,7 +214,7 @@ def make_ml_forecast():
     MODEL_TO_USE = os.getenv('SAPPHIRE_MODEL_TO_USE')
     logger.debug('Model to use: %s', MODEL_TO_USE)
 
-    if MODEL_TO_USE not in ['TFT', 'TIDE', 'TSMIXER', 'ARIMA']:
+    if MODEL_TO_USE not in ['TFT', 'TIDE', 'TSMIXER', 'ARIMA', 'RRMAMBA']:
         raise ValueError('Model %s is not supported.\nPlease choose one of the following models: TFT, TIDE, TSMIXER, ARIMA')
     else:
         logger.debug('Model to use: %s', MODEL_TO_USE)
@@ -219,6 +227,8 @@ def make_ml_forecast():
             from scr import predictor_TSMIXER as predictor_class
         elif MODEL_TO_USE == 'ARIMA':
             from scr import predictor_ARIMA as predictor_class
+        elif MODEL_TO_USE == 'RRMAMBA':
+            from scr import predictor_RRMamba as predictor_class
 
     # --------------------------------------------------------------------
     # DEFINE THE PREDICTION MODE
@@ -260,7 +270,7 @@ def make_ml_forecast():
 
     PATH_TO_SCALER = os.getenv('ieasyhydroforecast_PATH_TO_SCALER_' + MODEL_TO_USE)
     # Append Decad to the scaler path if the prediction mode is DECAD
-    if PREDICTION_MODE == 'DECAD' and MODEL_TO_USE != 'ARIMA':
+    if PREDICTION_MODE == 'DECAD' and MODEL_TO_USE in ['TFT', 'TIDE', 'TSMIXER']:
         PATH_TO_SCALER = PATH_TO_SCALER + '_Decad'
 
     PATH_TO_SCALER = os.path.join(MODELS_AND_SCALERS_PATH, PATH_TO_SCALER)
@@ -269,7 +279,7 @@ def make_ml_forecast():
         raise FileNotFoundError(f"Directory {PATH_TO_SCALER} not found.")
     logger.debug('PATH_TO_SCALER: %s' , PATH_TO_SCALER)
 
-    if MODEL_TO_USE != 'ARIMA':
+    if MODEL_TO_USE in ['TFT', 'TIDE', 'TSMIXER']:
         # select the file which ends on .pt
         PATH_TO_MODEL = glob.glob(os.path.join(PATH_TO_SCALER, '*.pt'))[0]
     else:
@@ -346,7 +356,7 @@ def make_ml_forecast():
     # --------------------------------------------------------------------
     # LOAD SCALER
     # --------------------------------------------------------------------
-    if MODEL_TO_USE == 'ARIMA':
+    if MODEL_TO_USE in ['ARIMA', 'RRMAMBA']:
         scaler = None
     else:
         scaler_discharge = pd.read_csv(os.path.join(PATH_TO_SCALER, 'scaler_stats_discharge.csv'))
@@ -374,7 +384,7 @@ def make_ml_forecast():
 
 
 
-    if MODEL_TO_USE == 'ARIMA':
+    if MODEL_TO_USE in ['ARIMA', 'RRMAMBA']:
         predictor = predictor_class.PREDICTOR(PATH_TO_MODEL)
     else:
         predictor = predictor_class.PREDICTOR(model, scaler_discharge, scaler_era5, scaler_static, static_features)
@@ -397,7 +407,8 @@ def make_ml_forecast():
         RECURSIVE_RIVERS = hydroposts_available_for_ml_forecasting.loc[hydroposts_available_for_ml_forecasting['recursive_imputation_tsmixer'], 'code'].dropna().astype(int).tolist()
     elif MODEL_TO_USE == 'ARIMA':
         RECURSIVE_RIVERS = hydroposts_available_for_ml_forecasting.loc[hydroposts_available_for_ml_forecasting['recursive_imputation_arima'], 'code'].dropna().astype(int).tolist()
-
+    elif MODEL_TO_USE == 'RRMAMBA':
+        RECURSIVE_RIVERS = hydroposts_available_for_ml_forecasting.loc[hydroposts_available_for_ml_forecasting['recursive_imputation_rrmamba'], 'code'].dropna().astype(int).tolist()
     logger.debug('Recursive rivers: %s', RECURSIVE_RIVERS)
 
     #thresholds to ints
@@ -413,6 +424,8 @@ def make_ml_forecast():
     exceeds_threshhold_dict = {}
     nans_at_end_dict = {}
 
+
+    models_non_autoregressive = ['RRMAMBA']
 
     for code in rivers_to_predict:
         # Cast code to int.
@@ -434,7 +447,7 @@ def make_ml_forecast():
 
         #chec if we can make a forecast: 
         # if the last observation is not older than today - 1 days, we don't make a forecast
-        if past_discharge_code['date'].iloc[-1] < pd.to_datetime(datetime.datetime.now().date()) - pd.Timedelta(days=1):
+        if past_discharge_code['date'].iloc[-1] < pd.to_datetime(datetime.datetime.now().date()) - pd.Timedelta(days=1) and MODEL_TO_USE not in models_non_autoregressive:
             logger.debug('No forecast due to no recent available discharge for code: %s', code )
             continue
 
@@ -445,19 +458,19 @@ def make_ml_forecast():
         #check for missing values, n = number of missing values at the end
         missing_values, nans_at_end = utils_ml_forecast.check_for_nans(past_discharge_code.iloc[-input_chunk_length:], THRESHOLD_MISSING_DAYS)
 
-        if missing_values['exceeds_threshold'] or nans_at_end >= THRESHOLD_MISSING_DAYS_END:
+        if missing_values['exceeds_threshold'] or nans_at_end >= THRESHOLD_MISSING_DAYS_END and MODEL_TO_USE not in models_non_autoregressive:
             pentad_no_success.append(code)
             decadal_no_success.append(code)
             exceeds_threshhold_dict[code] = True
             # The Predicition output will be NaN, but the file will be written
             predictions =  predictor.predict(past_discharge_code, qmapped_era5_code, None , code, n=forecast_horizon, make_plot=False)
 
-        elif missing_values['nans_in_between']:
+        elif missing_values['nans_in_between'] and MODEL_TO_USE not in models_non_autoregressive:
             missing_values_dict[code] = True
             # Impute the missing values
             past_discharge_code = utils_ml_forecast.gaps_imputation(past_discharge_code)
 
-        elif missing_values['nans_at_end']:
+        elif missing_values['nans_at_end'] and MODEL_TO_USE not in models_non_autoregressive:
             decadal_forecast_is_possible = False
             nans_at_end_dict[code] = nans_at_end
             decadal_no_success.append(code)
@@ -505,11 +518,47 @@ def make_ml_forecast():
                                        exceeds_threshhold_dict,
                                        nans_at_end_dict)
 
-
-
     # --------------------------------------------------------------------
     # SAVE FORECAST
     # --------------------------------------------------------------------
+    #round to 2 decimals
+    forecast = forecast.round(2)
+
+    #get models which produce assimilated forecasts
+    assimilation_models = os.getenv('ieasyhydroforecast_ASSIMILATION_MODELS')
+    if assimilation_models:
+        assimilation_models = assimilation_models.split(',')
+    else:
+        assimilation_models = []
+    
+    if MODEL_TO_USE in assimilation_models:
+        #select ASSIM cols
+        cols = [col for col in forecast.columns if 'ASSIM' in col]
+         # select the cols without the ASSIM
+        cols_no_assim = [col for col in forecast.columns if 'ASSIM' not in col]
+
+        #select the assimilated forecast
+        cols = cols + ['date', 'code' , 'forecast_date']
+        forecast_assim = forecast[cols].copy()
+
+        #rename the columns , remove the ASSIM
+        cols = [col.replace('_ASSIM', '') for col in cols]
+        forecast_assim.columns = cols
+
+        MODEL_TO_USE_ASSIM = MODEL_TO_USE + '_ASSIMILATION'
+
+        parent_path = os.path.dirname(OUTPUT_PATH_DISCHARGE)  # Get parent directory
+        OUTPUT_PATH_DISCHARGE_ASSIM = os.path.join(parent_path, MODEL_TO_USE_ASSIM)
+
+        #save the forecast
+        if PREDICTION_MODE == 'PENTAD':
+            write_pentad_forecast(OUTPUT_PATH_DISCHARGE_ASSIM, MODEL_TO_USE_ASSIM, forecast_assim)
+        else:
+            write_decad_forecast(OUTPUT_PATH_DISCHARGE_ASSIM, MODEL_TO_USE_ASSIM, forecast_assim)
+
+        forecast = forecast[cols_no_assim]
+
+
     if PREDICTION_MODE == 'PENTAD':
         write_pentad_forecast(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, forecast)
     else:

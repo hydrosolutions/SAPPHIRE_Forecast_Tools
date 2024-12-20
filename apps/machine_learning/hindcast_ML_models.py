@@ -128,7 +128,7 @@ def main():
     MODEL_TO_USE = os.getenv('SAPPHIRE_MODEL_TO_USE')
     logger.info('Model to use: %s', MODEL_TO_USE)
 
-    if MODEL_TO_USE not in ['TFT', 'TIDE', 'TSMIXER', 'ARIMA']:
+    if MODEL_TO_USE not in ['TFT', 'TIDE', 'TSMIXER', 'ARIMA', "RRMAMBA"]:
         raise ValueError('Model not supported')
     else:
         print('Model to use: ', MODEL_TO_USE)
@@ -140,6 +140,8 @@ def main():
             from scr import predictor_TSMIXER as predictor_class
         elif MODEL_TO_USE == 'ARIMA':
             from scr import predictor_ARIMA as predictor_class
+        elif MODEL_TO_USE == 'RRMAMBA':
+            from scr import predictor_RRMamba as predictor_class
 
         # --------------------------------------------------------------------
     # DEFINE THE HINDCAST MODE
@@ -186,7 +188,7 @@ def main():
     
     PATH_TO_SCALER = os.getenv('ieasyhydroforecast_PATH_TO_SCALER_' + MODEL_TO_USE)
     # Append Decad to the scaler path if the prediction mode is DECAD
-    if HINDCAST_MODE == 'DECAD' and MODEL_TO_USE != 'ARIMA':
+    if HINDCAST_MODE == 'DECAD' and MODEL_TO_USE in ['TFT', 'TIDE', 'TSMIXER']:
         PATH_TO_SCALER = PATH_TO_SCALER + '_Decad'
     PATH_TO_SCALER = os.path.join(MODELS_AND_SCALERS_PATH, PATH_TO_SCALER)
     # Test if the path exists
@@ -195,7 +197,7 @@ def main():
     logger.debug('PATH_TO_SCALER: %s' , PATH_TO_SCALER)
 
 
-    if MODEL_TO_USE != 'ARIMA':
+    if MODEL_TO_USE in ['TFT', 'TIDE', 'TSMIXER']:
         # select the file which ends on .pt
         PATH_TO_MODEL = glob.glob(os.path.join(PATH_TO_SCALER, '*.pt'))[0]
     else:
@@ -325,7 +327,7 @@ def main():
     static_features = static_features.drop(columns=['cluster', 'log_q'])
     static_features.index = static_features['CODE']
 
-    if MODEL_TO_USE == 'ARIMA':
+    if MODEL_TO_USE in ['ARIMA', 'RRMAMBA']:
         scaler = None
     else:
         scaler_discharge = pd.read_csv(os.path.join(PATH_TO_SCALER, 'scaler_stats_discharge.csv'))
@@ -366,9 +368,11 @@ def main():
         model = TSMixerModel.load(os.path.join(PATH_TO_MODEL), map_location=torch.device('cpu'))
     elif MODEL_TO_USE == 'ARIMA':
         model = None
+    elif MODEL_TO_USE == 'RRMAMBA':
+        model = None
 
 
-    if MODEL_TO_USE == 'ARIMA':
+    if MODEL_TO_USE in ['ARIMA', "RRMAMBA"]:
         predictor = predictor_class.PREDICTOR(PATH_TO_MODEL)
  
     else:
@@ -390,14 +394,13 @@ def main():
         RECURSIVE_RIVERS = hydroposts_available_for_ml_forecasting.loc[hydroposts_available_for_ml_forecasting['recursive_imputation_tsmixer'], 'code'].dropna().astype(int).tolist()
     elif MODEL_TO_USE == 'ARIMA':
         RECURSIVE_RIVERS = hydroposts_available_for_ml_forecasting.loc[hydroposts_available_for_ml_forecasting['recursive_imputation_arima'], 'code'].dropna().astype(int).tolist()
-
+    elif MODEL_TO_USE == 'RRMAMBA':
+        RECURSIVE_RIVERS = hydroposts_available_for_ml_forecasting.loc[hydroposts_available_for_ml_forecasting['recursive_imputation_rrmamba'], 'code'].dropna().astype
     logger.debug('Recursive rivers: %s', RECURSIVE_RIVERS)
 
     #thresholds to ints
     THRESHOLD_MISSING_DAYS= int(THRESHOLD_MISSING_DAYS)
     THRESHOLD_MISSING_DAYS_END = int(THRESHOLD_MISSING_DAYS_END)
-
-
 
 
     pred_date = pd.to_datetime(start_date)
@@ -421,13 +424,17 @@ def main():
     # filter observed discharge to be only in the range of the start and end date
     observed_discharge = observed_discharge[observed_discharge['date'] >= start_date].copy()
     observed_discharge = observed_discharge[observed_discharge['date'] <= end_date].copy()
-    
+
+    start_date_era5 = pd.to_datetime(start_date) - pd.DateOffset(days=360)
+    end_date_era5 = pd.to_datetime(end_date) + pd.DateOffset(days=30)
+    era5_data_transformed = era5_data_transformed[era5_data_transformed['date'] >= start_date_era5].copy()
+    era5_data_transformed = era5_data_transformed[era5_data_transformed['date'] <= end_date_era5].copy()
+
     timer_start = datetime.datetime.now()
     for code in rivers_to_predict:
-    
+        
         discharge = observed_discharge[observed_discharge['code'] == code].copy()
         era5 = era5_data_transformed[era5_data_transformed['code'] == code].copy()
-
 
         # make hindcast 
         hindcast_code = predictor.hindcast(
@@ -460,6 +467,37 @@ def main():
     start_date = start_date.strftime('%Y-%m-%d')
     end_date = end_date.strftime('%Y-%m-%d')
     
+    #round the data to 2 decimals
+    hindecast_daily_df = hindecast_daily_df.round(2)
+
+    #get models which produce assimilated forecasts
+    assimilation_models = os.getenv('ieasyhydroforecast_ASSIMILATION_MODELS')
+    if assimilation_models:
+        assimilation_models = assimilation_models.split(',')
+    else:
+        assimilation_models = []
+
+    #-- Handle the special case of assimilated forecasts --
+    if MODEL_TO_USE in assimilation_models:
+        # selcet the ASSIM cols
+        cols = [col for col in hindecast_daily_df.columns if 'ASSIM' in col]
+        # select the cols without the ASSIM
+        cols_no_assim = [col for col in hindecast_daily_df.columns if 'ASSIM' not in col]
+
+        #select the assimilated forecast
+        cols = cols + ['date', 'code' , 'forecast_date']
+        hindcast_daily_df_assim = hindecast_daily_df[cols].copy()
+
+        #rename the columns , remove the ASSIM
+        cols = [col.replace('_ASSIM', '') for col in cols]
+        hindcast_daily_df_assim.columns = cols
+
+        #save the assimilated forecast
+        hindcast_daily_df_assim.to_csv(os.path.join(OUTPUT_PATH_DISCHARGE, f'{MODEL_TO_USE}_ASSIMILATION_{HINDCAST_MODE}_hindcast_daily_{start_date_string}_{end_date_string}.csv'), index=False)
+
+        # keep the cols without the assim
+        hindecast_daily_df = hindecast_daily_df[cols_no_assim].copy()
+        
     #hindecast_df.to_csv(os.path.join(OUTPUT_PATH_DISCHARGE, f'{MODEL_TO_USE}_{HINDCAST_MODE}_hindcast_{start_date}_{end_date}.csv'), index=False)
     hindecast_daily_df.to_csv(os.path.join(OUTPUT_PATH_DISCHARGE, f'{MODEL_TO_USE}_{HINDCAST_MODE}_hindcast_daily_{start_date_string}_{end_date_string}.csv'), index=False)
 

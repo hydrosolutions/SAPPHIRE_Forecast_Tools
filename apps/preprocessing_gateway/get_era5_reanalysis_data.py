@@ -322,6 +322,8 @@ def main():
             print("Take Last Observation")
             T_data = T_data.ffill()
 
+        #threshold P data to 0
+        P_data.loc[P_data['P'] < 0, 'P'] = 0
         P_data.to_csv(os.path.join( OUTPUT_PATH_REANALYSIS, f"{c_m_hru}_P_reanalysis.csv"), index=False)
         T_data.to_csv(os.path.join( OUTPUT_PATH_REANALYSIS, f"{c_m_hru}_T_reanalysis.csv"), index=False)
 
