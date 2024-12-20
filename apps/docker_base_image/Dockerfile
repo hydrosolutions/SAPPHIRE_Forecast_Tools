@@ -42,6 +42,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     apt-get install -y libpcre3-dev && \
     apt-get install -y gnutls-bin libc6 && \
     apt-get upgrade -y gcc libc6 && \
+    apt-get install -y iproute2 netcat && \
     apt-get clean && \
     # update python packages \
     pip install --upgrade pip setuptools wheel tornado && \
