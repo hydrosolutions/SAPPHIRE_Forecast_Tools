@@ -3037,7 +3037,7 @@ def establish_ssh_tunnel(ssh_script_path):
     tunnel_process = None
     try:
         # Start SSH tunnel
-        tunnel_process = subprocess.Popen([ssh_script_path])
+        tunnel_process = subprocess.Popen(['bash', ssh_script_path])
         # Give the tunnel time to establish
         time.sleep(2)
         yield tunnel_process
@@ -3853,7 +3853,8 @@ def run_docker_container(client, full_image_name, volumes, environment, containe
     print(f"Using SSH tunnel script at: {SSH_TUNNEL_SCRIPT_ABSOLUTE}")
     try:
         # Establish SSH tunnel before running the container
-        subprocess.run([SSH_TUNNEL_SCRIPT_ABSOLUTE], check=True)
+        #subprocess.run([SSH_TUNNEL_SCRIPT_ABSOLUTE], check=True)
+        subprocess.run(['bash', SSH_TUNNEL_SCRIPT_ABSOLUTE], check=True)
         # Remove existing container with the same name if it exists
         try:
             existing_container = client.containers.get(container_name)
