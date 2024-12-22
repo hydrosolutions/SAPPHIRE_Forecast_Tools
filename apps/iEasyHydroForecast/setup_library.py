@@ -201,17 +201,17 @@ def load_environment():
     hostport = os.getenv("IEASYHYDRO_HOST")
     # Separate host from port by :
     if hostport is not None:
-        host = hostport.split(":")[0]
-        port = hostport.split(":")[1]
+        host = hostport.split(":")[1]
+        port = hostport.split(":")[2]
         # Set the environment variable IEASYHYDRO_PORT
         os.environ["IEASYHYDRO_PORT"] = port
         # Make sure we have system-consistent host names. In a docker container,
         # the host name is 'host.docker.internal'. In a local environment, the host
         # name is 'localhost'.
         if os.getenv('IN_DOCKER_CONTAINER') == "True":
-            os.environ["IEASYHYDRO_HOST"] = "host.docker.internal:" + port
+            os.environ["IEASYHYDRO_HOST"] = "http://host.docker.internal:" + port
         else:
-            os.environ["IEASYHYDRO_HOST"] = "localhost:" + port
+            os.environ["IEASYHYDRO_HOST"] = "http://localhost:" + port
         logger.info(f"IEASYHYDRO_HOST: {os.getenv('IEASYHYDRO_HOST')}")
     else:
         logger.info("IEASYHYDRO_HOST not set in the .env file")
