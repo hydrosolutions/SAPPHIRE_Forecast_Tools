@@ -8,6 +8,7 @@ import fnmatch
 import re
 import subprocess
 import socket
+import platform
 
 from dotenv import load_dotenv
 
@@ -209,7 +210,12 @@ def load_environment():
         # the host name is 'host.docker.internal'. In a local environment, the host
         # name is 'localhost'.
         if os.getenv('IN_DOCKER_CONTAINER') == "True":
-            os.environ["IEASYHYDRO_HOST"] = "http://host.docker.internal:" + port
+            # If run on ubuntu
+            system = platform.system()
+            if system == "Linux":
+                os.environ["IEASYHYDRO_HOST"] = "http://localhost:" + port
+            elif system == "Darwin":
+                os.environ["IEASYHYDRO_HOST"] = "http://host.docker.internal:" + port
         else:
             os.environ["IEASYHYDRO_HOST"] = "http://localhost:" + port
         logger.info(f"IEASYHYDRO_HOST: {os.getenv('IEASYHYDRO_HOST')}")
