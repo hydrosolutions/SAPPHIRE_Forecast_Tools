@@ -193,10 +193,29 @@ def load_environment():
     # Load the environment variables
     logger.info(f"Loading environment variables from {env_file_path}")
     res = load_dotenv(env_file_path)
-    logger.debug(f"IEASYHYDRO_HOST: {os.getenv('IEASYHYDRO_HOST')}")
     # Test if the environment variables were loaded
     if not res:
         logger.warning(f"Could not load environment variables from {env_file_path}")
+
+    # Get host name
+    hostport = os.getenv("IEASYHYDRO_HOST")
+    # Separate host from port by :
+    if hostport is not None:
+        host = hostport.split(":")[0]
+        port = hostport.split(":")[1]
+        # Set the environment variable IEASYHYDRO_PORT
+        os.environ["IEASYHYDRO_PORT"] = port
+        # Make sure we have system-consistent host names. In a docker container,
+        # the host name is 'host.docker.internal'. In a local environment, the host
+        # name is 'localhost'.
+        if os.getenv('IN_DOCKER_CONTAINER') == "True":
+            os.environ["IEASYHYDRO_HOST"] = "host.docker.internal:" + port
+        else:
+            os.environ["IEASYHYDRO_HOST"] = "localhost:" + port
+        logger.info(f"IEASYHYDRO_HOST: {os.getenv('IEASYHYDRO_HOST')}")
+    else:
+        logger.info("IEASYHYDRO_HOST not set in the .env file")
+
     # Test if specific environment variables were loaded
     if os.getenv("ieasyforecast_daily_discharge_path") is None:
         logger.error("config.load_environment(): Environment variable ieasyforecast_daily_discharge_path not set")

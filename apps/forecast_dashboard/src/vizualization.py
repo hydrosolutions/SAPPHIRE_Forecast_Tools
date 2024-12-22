@@ -3033,6 +3033,8 @@ def establish_ssh_tunnel(ssh_script_path):
     Args:
         ssh_script_path (str): Path to the SSH tunnel script
     """
+    # Initialize tunnel_process to None before the try block
+    tunnel_process = None
     try:
         # Start SSH tunnel
         tunnel_process = subprocess.Popen([ssh_script_path])
@@ -3418,8 +3420,14 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
         Raises:
             docker.errors.ContainerError: If the container exits with a non-zero status.
         """
+        # Define network_name at the function level so it's accessible everywhere
+        network_name = 'ssh-tunnel-network'
+
         # Convert the SSH tunnel script path to an absolute path
-        SSH_TUNNEL_SCRIPT_ABSOLUTE = get_absolute_path(SSH_TUNNEL_SCRIPT_PATH)
+        SSH_TUNNEL_SCRIPT_ABSOLUTE = os.path.join(
+            get_absolute_path(os.getenv('ieasyhydroforecast_bin_path')),
+            SSH_TUNNEL_SCRIPT_PATH
+            )
         print(f"Using SSH tunnel script at: {SSH_TUNNEL_SCRIPT_ABSOLUTE}")
         try:
             with establish_ssh_tunnel(SSH_TUNNEL_SCRIPT_ABSOLUTE):
@@ -3441,15 +3449,13 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
                 if platform.system() == 'Darwin':
                     environment.extend([
                         'SSH_TUNNEL_HOST=host.docker.internal',  # For macOS
-                        'SSH_TUNNEL_PORT=8881'  # Your tunnel port
+                        f'SSH_TUNNEL_PORT={os.getenv("IEASYHYDRO_PORT")}'  # Your tunnel port
                     ])
                 else: # For Linux
                     environment.extend([
                         'SSH_TUNNEL_HOST=host',  # For Linux
-                        'SSH_TUNNEL_PORT=8881'  # Your tunnel port
+                        f'SSH_TUNNEL_PORT={os.getenv("IEASYHYDRO_PORT")}'  # Your tunnel port
                     ])
-                # Create a custom network if it doesn't exist
-                network_name = 'ssh-tunnel-network'
 
                 try:
                     client.networks.get(network_name)
@@ -3840,7 +3846,10 @@ def run_docker_container(client, full_image_name, volumes, environment, containe
         docker.errors.ContainerError: If the container exits with a non-zero status.
     """
     # Convert the SSH tunnel script path to an absolute path
-    SSH_TUNNEL_SCRIPT_ABSOLUTE = get_absolute_path(SSH_TUNNEL_SCRIPT_PATH)
+    SSH_TUNNEL_SCRIPT_ABSOLUTE = os.path.join(
+        get_absolute_path(os.getenv('ieasyhydroforecast_bin_path')),
+        SSH_TUNNEL_SCRIPT_PATH
+    )
     print(f"Using SSH tunnel script at: {SSH_TUNNEL_SCRIPT_ABSOLUTE}")
     try:
         # Establish SSH tunnel before running the container
