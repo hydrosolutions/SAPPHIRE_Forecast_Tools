@@ -206,10 +206,12 @@ def load_environment():
         port = hostport.split(":")[2]
         # Set the environment variable IEASYHYDRO_PORT
         os.environ["IEASYHYDRO_PORT"] = port
+        logger.info(f"IEASYHYDRO_PORT: {os.getenv('IEASYHYDRO_PORT')}")
         # Make sure we have system-consistent host names. In a docker container,
         # the host name is 'host.docker.internal'. In a local environment, the host
         # name is 'localhost'.
         if os.getenv('IN_DOCKER_CONTAINER') == "True":
+            logger.info("Running in a Docker container.")
             # If run on ubuntu
             system = platform.system()
             if system == "Linux":
@@ -217,6 +219,7 @@ def load_environment():
             elif system == "Darwin":
                 os.environ["IEASYHYDRO_HOST"] = "http://host.docker.internal:" + port
         else:
+            logger.info("Running in a local environment.")
             os.environ["IEASYHYDRO_HOST"] = "http://localhost:" + port
         logger.info(f"IEASYHYDRO_HOST: {os.getenv('IEASYHYDRO_HOST')}")
     else:
