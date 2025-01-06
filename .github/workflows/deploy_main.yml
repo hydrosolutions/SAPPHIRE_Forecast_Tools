@@ -354,7 +354,7 @@ jobs:
 
 
   test_reset_forecast_run_date:
-
+    needs: [test_ieasyhydroforecast]
     runs-on: ubuntu-latest
     name: Test reset forecast run date
     strategy:

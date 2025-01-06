@@ -213,11 +213,12 @@ def load_environment():
         if os.getenv('IN_DOCKER_CONTAINER') == "True":
             logger.info("Running in a Docker container.")
             # If run on ubuntu
-            system = platform.system()
-            if system == "Linux":
-                os.environ["IEASYHYDRO_HOST"] = "http://localhost:" + port
-            elif system == "Darwin":
-                os.environ["IEASYHYDRO_HOST"] = "http://host.docker.internal:" + port
+            #system = platform.system()
+            #if system == "Linux":
+            #    os.environ["IEASYHYDRO_HOST"] = "http://localhost:" + port
+            #elif system == "Darwin":
+            #    os.environ["IEASYHYDRO_HOST"] = "http://host.docker.internal:" + port
+            os.environ["IEASYHYDRO_HOST"] = "http://host.docker.internal:" + port
         else:
             logger.info("Running in a local environment.")
             os.environ["IEASYHYDRO_HOST"] = "http://localhost:" + port
