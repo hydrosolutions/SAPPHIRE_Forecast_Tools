@@ -1585,7 +1585,7 @@ def plot_daily_hydrograph_data(_, hydrograph_day_all, linreg_predictor, station,
     linreg_predictor = processing.add_predictor_dates(linreg_predictor, station, title_date)
 
     data = hydrograph_day_all[hydrograph_day_all['station_labels'] == station].copy()
-    current_year = data['date'].dt.year.max()
+    current_year = int(data['date'].dt.year.max())
     last_year = current_year - 1
 
     # Define strings
@@ -1702,7 +1702,7 @@ def plot_rel_to_norm_runoff(_, hydrograph_day_all, linreg_predictor, station, ti
     linreg_predictor = processing.add_predictor_dates(linreg_predictor, station, title_date)
 
     data = hydrograph_day_all[hydrograph_day_all['station_labels'] == station].copy()
-    current_year = data['date'].dt.year.max()
+    current_year = int(data['date'].dt.year.max())
     last_year = current_year - 1
 
     # Calculate relative to norm runoff
@@ -2248,7 +2248,7 @@ def plot_pentad_forecast_hydrograph_data_v2(_, hydrograph_day_all, linreg_predic
 
     data = hydrograph_day_all[hydrograph_day_all['station_labels'] == station].copy()
     data['date'] = pd.to_datetime(data['date'])
-    current_year = data['date'].dt.year.max()
+    current_year = int(data['date'].dt.year.max())
     last_year = current_year - 1
     #print(f"current_year: {current_year}")
     #print(f"last_year: {last_year}")
