@@ -2959,7 +2959,12 @@ ORGANIZATION = env.get('ieasyhydroforecast_organization')
 SAPPHIRE_DG_HOST = env.get('SAPPHIRE_DG_HOST')
 # open ssh tunnel connection
 SSH_TUNNEL_SCRIPT_PATH = env.get('SSH_TUNNEL_SCRIPT_PATH', '../../../sensitive_data_forecast_tools/bin/.ssh/open_ssh_tunnel.sh')
-
+# If the dashboard is running in a container, the SSH tunnel script path needs to be adjusted
+if os.getenv('IN_DOCKER_CONTAINER'):
+    # instead of filename 'open_ssh_tunnel.sh' use filename
+    # 'open_ssh_tunnel_docker.sh' which has an addapted path to the .pem file
+    # accessible from within docker containers
+    SSH_TUNNEL_SCRIPT_PATH = re.sub(r'open_ssh_tunnel.sh', 'open_ssh_tunnel_docker.sh', SSH_TUNNEL_SCRIPT_PATH)
 
 
 

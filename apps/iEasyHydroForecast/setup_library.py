@@ -212,7 +212,8 @@ def load_environment():
         # name is 'localhost'.
         if os.getenv('IN_DOCKER_CONTAINER') == "True":
             logger.info("Running in a Docker container.")
-            # If run on ubuntu
+            # If run on Ubuntu.
+            # As Docker containers run on Ubuntu, this will always return to 'Linux'
             #system = platform.system()
             #if system == "Linux":
             #    os.environ["IEASYHYDRO_HOST"] = "http://localhost:" + port
