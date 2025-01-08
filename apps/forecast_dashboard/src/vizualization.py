@@ -3451,14 +3451,17 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
 
                 # Add important environment variables
                 # if os is macOS, add the host.docker.internal and the port for the tunnel, for unix systems use 'host'
+                # This does not actually seem to be used anywhere.
                 if platform.system() == 'Darwin':
+                    print(f"In select_and_plot_data: platform.system() == 'Darwin'")
                     environment.extend([
                         'SSH_TUNNEL_HOST=host.docker.internal',  # For macOS
                         f'SSH_TUNNEL_PORT={os.getenv("IEASYHYDRO_PORT")}'  # Your tunnel port
                     ])
                 else: # For Linux
+                    print(f"In select_and_plot_data: platform.system() == 'Linux'")
                     environment.extend([
-                        'SSH_TUNNEL_HOST=host',  # For Linux
+                        'SSH_TUNNEL_HOST=localhost',  # For Linux
                         f'SSH_TUNNEL_PORT={os.getenv("IEASYHYDRO_PORT")}'  # Your tunnel port
                     ])
 

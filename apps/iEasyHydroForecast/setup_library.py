@@ -148,6 +148,52 @@ def define_run_dates():
 
     return date_start, date_end, bulletin_date
 
+# Methods to check on which system the docker container is running
+def check_users_mount():
+    return os.path.exists("/Users") and os.listdir("/Users")
+
+def check_hypervisor():
+    try:
+        result = subprocess.run(["lscpu"], capture_output=True, text=True)
+        if result.returncode == 0:
+            for line in result.stdout.splitlines():
+                if "Hypervisor vendor" in line:
+                    return line.split(":")[1].strip()
+        return None
+    except Exception as e:
+        return f"Error: {e}"
+
+def check_os_release():
+    try:
+        with open("/proc/sys/kernel/osrelease", "r") as f:
+            os_release = f.read().strip()
+        return os_release
+    except Exception as e:
+        return f"Error: {e}"
+
+def identify_host_system():
+    os_release = check_os_release()
+    users_mount = check_users_mount()
+    hypervisor = check_hypervisor()
+
+    system_id = None
+
+    if os_release is not None:
+        if "generic" in os_release.lower():
+            print("Likely running on a Linux system.")
+            system_id = "Linux"
+    elif users_mount:
+        print("Likely running on a macOS system.")
+        system_id = "macOS"
+    elif hypervisor and "apple" in hypervisor.lower():
+        print("Likely running on a macOS system.")
+        system_id = "macOS"
+    else:
+        print("Could not identify the host system. Defaulting to Linux.")
+        system_id = "Linux"
+
+    return system_id
+
 def load_environment():
     """
     Load environment variables from a .env file based on the context.
@@ -211,15 +257,16 @@ def load_environment():
         # the host name is 'host.docker.internal'. In a local environment, the host
         # name is 'localhost'.
         if os.getenv('IN_DOCKER_CONTAINER') == "True":
+            host_system = identify_host_system()
             logger.info("Running in a Docker container.")
             # If run on Ubuntu.
             # As Docker containers run on Ubuntu, this will always return to 'Linux'
             #system = platform.system()
-            #if system == "Linux":
-            #    os.environ["IEASYHYDRO_HOST"] = "http://localhost:" + port
-            #elif system == "Darwin":
-            #    os.environ["IEASYHYDRO_HOST"] = "http://host.docker.internal:" + port
-            os.environ["IEASYHYDRO_HOST"] = "http://host.docker.internal:" + port
+            if host_system == "Linux":
+                os.environ["IEASYHYDRO_HOST"] = "http://localhost:" + port
+            elif host_system == "macOS":
+                os.environ["IEASYHYDRO_HOST"] = "http://host.docker.internal:" + port
+            #os.environ["IEASYHYDRO_HOST"] = "http://host.docker.internal:" + port
         else:
             logger.info("Running in a local environment.")
             os.environ["IEASYHYDRO_HOST"] = "http://localhost:" + port
