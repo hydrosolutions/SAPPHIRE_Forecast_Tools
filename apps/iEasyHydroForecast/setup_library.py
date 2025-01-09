@@ -391,6 +391,8 @@ def check_database_access(ieh_sdk):
         try:
             # Replace current host with localhost ("host.docker.internal" with "localhost")
             os.environ["IEASYHYDRO_HOST"] = os.getenv("IEASYHYDRO_HOST").replace("host.docker.internal", "localhost")
+            # Test if this has worked:
+            logger.debug("IEASYHYDRO_HOST: " + os.getenv("IEASYHYDRO_HOST"))
             test = ieh_sdk.get_discharge_sites()
             #logger.debug(f"test[0]: {test[0]}")
             logger.info(f"Access to iEasyHydro database.")
