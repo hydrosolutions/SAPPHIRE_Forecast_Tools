@@ -180,16 +180,16 @@ def identify_host_system():
 
     if os_release is not None:
         if "generic" in os_release.lower():
-            print("Likely running on a Linux system.")
+            logger.info("Likely running on a Linux system.")
             system_id = "Linux"
     elif users_mount:
-        print("Likely running on a macOS system.")
+        logger.info("Likely running on a macOS system.")
         system_id = "macOS"
     elif hypervisor and "apple" in hypervisor.lower():
-        print("Likely running on a macOS system.")
+        logger.info("Likely running on a macOS system.")
         system_id = "macOS"
     else:
-        print("Could not identify the host system. Defaulting to Linux.")
+        logger.info("Could not identify the host system. Defaulting to Linux.")
         system_id = "Linux"
 
     return system_id
