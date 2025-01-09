@@ -387,6 +387,16 @@ def check_database_access(ieh_sdk):
         return True
     except Exception as e:
         logger.debug(f"Met exception {e} when trying to access iEasyHydro database.")
+        logger.debug(f"Trying with localhost.")
+        try:
+            # Replace current host with localhost ("host.docker.internal" with "localhost")
+            os.environ["IEASYHYDRO_HOST"] = os.getenv("IEASYHYDRO_HOST").replace("host.docker.internal", "localhost")
+            test = ieh_sdk.get_discharge_sites()
+            #logger.debug(f"test[0]: {test[0]}")
+            logger.info(f"Access to iEasyHydro database.")
+        except Exception as e:
+            logger.error(f"Error replacing host with localhost: {e}")
+            raise e
         # Test if there are any files in the data/daily_runoff directory
         if os.listdir(os.getenv("ieasyforecast_daily_discharge_path")):
             logger.info(f"No access to iEasyHydro database. "
