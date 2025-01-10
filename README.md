@@ -1,6 +1,6 @@
 ![test and deploy](https://github.com/hydrosolutions/SAPPHIRE_Forecast_Tools/actions/workflows/test_deploy_main.yml/badge.svg)
 
-# SAPPHIRE_forecast_tools
+# SAPPHIRE Forecast Tools
 The SAPPHIRE Forecast Tools are a component for the modernization of the operational hydrological forecasting for National Hydrometeorological Organizations of Central Asia. The tools are co-designed with the Kyrgyz Hydrometeorological Services as part of the [SAPPHIRE project](https://www.hydrosolutions.ch/projects/sapphire-central-asia) and funded by the [Swiss Agency for Development and Cooperation](https://www.eda.admin.ch/eda/en/home/fdfa/organisation-fdfa/directorates-divisions/sdc.html).
 
 The following figure illustrates the components of the SAPPHIRE Central Asia project. Operational hydrometeorological data is collected manually and/or digitally and stored in the central communication server. Operational hydrological data is then fed into the iEasyHydro High Frequency software where it is reviewed and quality controlled. The SAPPHIRE Forecast Tools are then used to produce forecasts based on the operational hydrological data. In addition to the station data collected by the hydrometeorological organizations, the Forecast Tools can take into account publicly available weather and snow melt forecasts. The runoff forecasts are then analyzed by the operational hydrologists in the Forecast Dashboard where they can also produce bulletins that are disseminated to decision-makers.
@@ -8,18 +8,17 @@ The following figure illustrates the components of the SAPPHIRE Central Asia pro
 
 The tools are designed to be deployed on a local computer with access to operational hydrometeorological data through the [iEasyHydro](https://ieasyhydro.org) database or through excel files. This repository holds data from the public domain for demonstration.
 
-Note that this repository is **WORK IN PROGRESS**.
+Note that this repository is currently still **WORK IN PROGRESS**.
 
 # Overview
 4 tools are currently deployed via Docker and provided in this repository (see folder apps):
-  - A dashboard to configure the forecast tools (currently only available in Russian language)
-  - A tool to produce forecasts (in the present version linear regressions as currently employed by the Kyrgyz Hydrometeorological Services)
-  - A tool for manual re-run of the latest forecast
-  - A dashboard to visualize and download the forecasts
+  - A dashboard to configure the forecast tools in a stand-alone version of the Forecast Tools (currently only available in Russian language)
+  - A backend to produce operational hydrological forecasts with various hydrological models
+  - A dashboard to visualize, edit and download the forecasts
 
 ## Folder structure
-All software components are in the apps directory. They are discussed in more detail in the file doc/deployment.md.
-Potentially sensitive data that needs to be provided by a hydromet (for example daily discharge data used for the development of the forecast models) is stored in the data folder. Here we provide publicly available data examples from Switzerland for demonstration.
+All major software components are in the apps directory and in the bin directory. They are discussed in more detail in the file doc/deployment.md.
+Potentially sensitive data that needs to be provided by a hydromet organisation (for example daily discharge data used for the development of the forecast models) is stored in the data folder. In this repository we provide publicly available data examples from Switzerland for demonstration.
 <details>
 <summary>Click to expand the folder structure</summary>
 Files that need to be reviewed and potentially edited or replaced for local deployment are highlighted with a #.
@@ -61,6 +60,15 @@ Files that need to be reviewed and potentially edited or replaced for local depl
       - `get_era5_reanalysis_data.py`: To get ERA5-Land data to produce hindcasts.
       - `requirements.txt`: List of python packages that need to be installed in the docker image.
     - `bat` (being deprecated): Batch files that are used for deployment on Windows.
+    - `bin`: bash scrips and docker compose files to support development and deployment
+      - `utils`: helper functions
+      - `daily_update_sapphire_frontend.sh`: used to re-deploy the frontend components of the Forecast tools. Used in deployment in a cronjob. <TODO: LINK TO SECTION>
+      - `deploy_sapphire_forecast_tools.sh`: script to deploy the forecast tools for the first time <TODO: LINK TO SECTION>
+      - `docker-compose-dashboards.yml`: docker compose file for the frontend
+      - `docker-compose-luigi.yml`: docker compose file for the backend
+      - `locally_run_forecast_tools.sh`: script that runs each backend componend in sequence. Helpful during development.
+      - `rerun_latest_forecasts.sh` (being deprecated)
+      - `run_sapphire_forecast_tools.sh`: used to run the forecast backend on a daily basis as a cron job. <TODO: LINK TO SECTION>
     - `#data`: Example data to demonstrate how the forecast tools work. The Needs to be replaced with data by the hydromet organization for deployment. The data and file formats are described in more detail in the file doc/user_guide.md.
       - `daily_runoff`: Daily discharge data for the development of the forecast models. The data is stored in Excel files. The paths to these files are configured in the .env file.
       - `GIS`: GIS data for the forecast configuration dashboard. The data is stored in shape files. The paths to these files are configured in the .env file.
