@@ -181,7 +181,8 @@ downloader = FileDownloader(bulletin_folder)
 bulletin_download_panel = downloader.panel()
 
 # Set time until user is logged out automatically
-INACTIVITY_TIMEOUT = timedelta(minutes=10)
+minutes_inactive_until_logout = int(os.getenv('ieasyforecast_minutes_inactive_until_logout', 10))
+INACTIVITY_TIMEOUT = timedelta(minutes=minutes_inactive_until_logout)
 last_activity_time = None
 # endregion
 
