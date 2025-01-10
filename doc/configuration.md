@@ -6,14 +6,21 @@ TODO: UPDATE FIGURE ...
 
 <img src="www/io.png" alt="IO" width="700"/>
 
+while the file names and paths can be edited, we do not generally recommend to do so. 
+
+Configuration further depends on the mode the Forecast Tools are run in. The current status of this project is tested for integrated deployment of the Forecast Tools together with iEasyHydro (iEH)/iEasyHydro High Frequency (iEH HF)  and the SAPPHIRE Data Gateway. Note that as iEH HF is still under development, operational data is currently read from iEH Database which is still in operational use. 
+
+Note: Pre-release https://github.com/hydrosolutions/SAPPHIRE_Forecast_Tools/releases/tag/v0.1.0-alpha03 was deployed with integration to iEH only and can be run as stand-alone ase well. Please refer to the documentation in this version for more details.
+
 ## Configuration of the forecast tools
+All configuration is done in the directory `<path_to_your_data_folder>/config`. 
 We recommend not changing the path ieasyforecast_configuration_path nor the names of the configuration files. You will need to edit the contents of the ieasyforecast_config_file_all_stations and make sure that the station codes given in ieasyforecast_config_file_station_selection are present also in ieasyforecast_config_file_all_stations. Please have a look at the example files in the config folder for guidance.
 ```
 # Path to the configuration files and names of the configuration files
 ieasyforecast_configuration_path=../config
-ieasyforecast_config_file_all_stations=config_all_stations_library.json
+ieasyforecast_config_file_all_stations=config_all_stations_library.json 
 ieasyforecast_config_file_station_selection=config_station_selection.json
-ieasyforecast_config_file_output=config_output.json
+ieasyforecast_config_file_output=config_output.json (deprecating)
 ```
 
 ### The config all stations library file
