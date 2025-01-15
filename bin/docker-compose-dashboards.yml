@@ -48,6 +48,7 @@ services:
       pentad_dashboard.py
       --autoreload
       --num-threads=4
+    restart: always
     ports:
       - "5006:5006"
     volumes:
