@@ -182,6 +182,12 @@ def identify_host_system():
         if "generic" in os_release.lower():
             logger.info("Likely running on a Linux system.")
             system_id = "Linux"
+        elif "darwin" in os_release.lower():
+            logger.info("Likely running on a macOS system.")
+            system_id = "macOS"
+        else:
+            logger.info(f"Could not identify os_release from {os_release}. Defaulting to Linux.")
+            system_id = "Linux"
     elif users_mount:
         logger.info("Likely running on a macOS system.")
         system_id = "macOS"
