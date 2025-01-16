@@ -69,6 +69,15 @@ def main():
     sl.load_environment()
 
     # Set up the iEasyHydro SDK
+    # Test if we need to connect via ssh tunnel
+    if os.getenv('ieasyhydroforecast_ssh_to_iEH') == 'True':
+        tunnels = sl.check_local_ssh_tunnels()
+        if not tunnels:
+            logger.error("No SSH tunnels found but required according to env variable ieasyhydroforecast_ssh_to_iEH. Exiting.")
+            exit()
+        else:
+            logger.debug(f"SSH tunnels found: {tunnels}")
+
     # Test if we read from iEasyHydro or iEasyHydro HF
     if os.getenv('ieasyhydroforecast_connect_to_iEH') == 'True':
         ieh_sdk = IEasyHydroSDK()

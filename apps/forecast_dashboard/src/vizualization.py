@@ -24,8 +24,10 @@ from dotenv import load_dotenv
 import re
 import docker
 import threading
+import platform
 
 import logging
+from contextlib import contextmanager
 
 # Get logger
 logger = logging.getLogger("vizualizations")
@@ -33,6 +35,7 @@ logger = logging.getLogger("vizualizations")
 
 from .gettext_config import translation_manager, _
 from . import processing
+import subprocess
 
 # Import local library
 # Get the absolute path of the directory containing the current script
@@ -1582,7 +1585,7 @@ def plot_daily_hydrograph_data(_, hydrograph_day_all, linreg_predictor, station,
     linreg_predictor = processing.add_predictor_dates(linreg_predictor, station, title_date)
 
     data = hydrograph_day_all[hydrograph_day_all['station_labels'] == station].copy()
-    current_year = data['date'].dt.year.max()
+    current_year = int(data['date'].dt.year.max())
     last_year = current_year - 1
 
     # Define strings
@@ -1699,7 +1702,7 @@ def plot_rel_to_norm_runoff(_, hydrograph_day_all, linreg_predictor, station, ti
     linreg_predictor = processing.add_predictor_dates(linreg_predictor, station, title_date)
 
     data = hydrograph_day_all[hydrograph_day_all['station_labels'] == station].copy()
-    current_year = data['date'].dt.year.max()
+    current_year = int(data['date'].dt.year.max())
     last_year = current_year - 1
 
     # Calculate relative to norm runoff
@@ -2245,7 +2248,7 @@ def plot_pentad_forecast_hydrograph_data_v2(_, hydrograph_day_all, linreg_predic
 
     data = hydrograph_day_all[hydrograph_day_all['station_labels'] == station].copy()
     data['date'] = pd.to_datetime(data['date'])
-    current_year = data['date'].dt.year.max()
+    current_year = int(data['date'].dt.year.max())
     last_year = current_year - 1
     #print(f"current_year: {current_year}")
     #print(f"last_year: {last_year}")
@@ -2954,7 +2957,14 @@ TAG = env.get('ieasyhydroforecast_backend_docker_image_tag')
 ORGANIZATION = env.get('ieasyhydroforecast_organization')
 # URL of the sapphire data gateway
 SAPPHIRE_DG_HOST = env.get('SAPPHIRE_DG_HOST')
-
+# open ssh tunnel connection
+SSH_TUNNEL_SCRIPT_PATH = env.get('SSH_TUNNEL_SCRIPT_PATH', '../../../sensitive_data_forecast_tools/bin/.ssh/open_ssh_tunnel.sh')
+# If the dashboard is running in a container, the SSH tunnel script path needs to be adjusted
+if os.getenv('IN_DOCKER_CONTAINER'):
+    # instead of filename 'open_ssh_tunnel.sh' use filename
+    # 'open_ssh_tunnel_docker.sh' which has an addapted path to the .pem file
+    # accessible from within docker containers
+    SSH_TUNNEL_SCRIPT_PATH = re.sub(r'open_ssh_tunnel.sh', 'open_ssh_tunnel_docker.sh', SSH_TUNNEL_SCRIPT_PATH)
 
 
 
@@ -3019,6 +3029,27 @@ class AppState(param.Parameterized):
 
 # Instantiate the shared state
 app_state = AppState()
+
+@contextmanager
+def establish_ssh_tunnel(ssh_script_path):
+    """
+    Context manager to establish and manage SSH tunnel lifecycle.
+
+    Args:
+        ssh_script_path (str): Path to the SSH tunnel script
+    """
+    # Initialize tunnel_process to None before the try block
+    tunnel_process = None
+    try:
+        # Start SSH tunnel
+        tunnel_process = subprocess.Popen(['bash', ssh_script_path])
+        # Give the tunnel time to establish
+        time.sleep(2)
+        yield tunnel_process
+    finally:
+        if tunnel_process:
+            tunnel_process.terminate()
+            tunnel_process.wait()
 
 def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
                          SAVE_DIRECTORY):
@@ -3381,45 +3412,113 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
 
     def run_docker_container(client, full_image_name, volumes, environment, container_name, progress_bar):
         """
-        Reusable function to run a Docker container and track its progress.
-        If a container with the same name exists, it will be removed before running a new one.
+        Runs a Docker container and blocks until it completes.
+
+        Args:
+            client (docker.DockerClient): The Docker client instance.
+            full_image_name (str): The full name of the Docker image to run.
+            volumes (dict): A dictionary of volumes to bind.
+            environment (list): A list of environment variables.
+            container_name (str): The name to assign to the Docker container.
+            progress_bar (Optional): Progress bar widget if available.
+
+        Raises:
+            docker.errors.ContainerError: If the container exits with a non-zero status.
         """
-        # Check if a container with the specified name already exists
+        # Define network_name at the function level so it's accessible everywhere
+        network_name = 'ssh-tunnel-network'
+
+        # Convert the SSH tunnel script path to an absolute path
+        SSH_TUNNEL_SCRIPT_ABSOLUTE = os.path.join(
+            get_absolute_path(os.getenv('ieasyhydroforecast_bin_path')),
+            SSH_TUNNEL_SCRIPT_PATH
+            )
+        print(f"Using SSH tunnel script at: {SSH_TUNNEL_SCRIPT_ABSOLUTE}")
         try:
-            existing_container = client.containers.get(container_name)
-            print(f"Removing existing container '{container_name}' (ID: {existing_container.id})...")
-            existing_container.remove(force=True)
-            print(f"Container '{container_name}' removed.")
-        except docker.errors.NotFound:
-            # Container does not exist, so we can proceed
-            pass
-        except docker.errors.APIError as e:
-            print(f"Error removing existing container '{container_name}': {e}")
-            raise
+            with establish_ssh_tunnel(SSH_TUNNEL_SCRIPT_ABSOLUTE):
+                # Check if a container with the specified name already exists
+                try:
+                    existing_container = client.containers.get(container_name)
+                    print(f"Removing existing container '{container_name}' (ID: {existing_container.id})...")
+                    existing_container.remove(force=True)
+                    print(f"Container '{container_name}' removed.")
+                except docker.errors.NotFound:
+                    # Container does not exist, so we can proceed
+                    pass
+                except docker.errors.APIError as e:
+                    print(f"Error removing existing container '{container_name}': {e}")
+                    raise
 
-        # Now run the new container
-        container = client.containers.run(
-            full_image_name,
-            detach=True,
-            environment=environment,
-            volumes=volumes,
-            name=container_name,
-            network='host'
-        )
-        print(f"Container '{container_name}' (ID: {container.id}) is running.")
+                # Add important environment variables
+                # if os is macOS, add the host.docker.internal and the port for the tunnel, for unix systems use 'host'
+                # This does not actually seem to be used anywhere.
+                if platform.system() == 'Darwin':
+                    print(f"In select_and_plot_data: platform.system() == 'Darwin'")
+                    environment.extend([
+                        'SSH_TUNNEL_HOST=host.docker.internal',  # For macOS
+                        f'SSH_TUNNEL_PORT={os.getenv("IEASYHYDRO_PORT")}'  # Your tunnel port
+                    ])
+                else: # For Linux
+                    print(f"In select_and_plot_data: platform.system() == 'Linux'")
+                    environment.extend([
+                        'SSH_TUNNEL_HOST=localhost',  # For Linux
+                        f'SSH_TUNNEL_PORT={os.getenv("IEASYHYDRO_PORT")}'  # Your tunnel port
+                    ])
 
-        # Monitor the container's progress
-        progress_bar.value = 0
-        while container.status != 'exited':
-            container.reload()  # Refresh the container's status
-            progress_bar.value += 10  # Increment progress
-            if progress_bar.value > 90:
-                progress_bar.value = 90  # Limit progress to 90% until the process finishes
-            time.sleep(1)
-        container.wait()  # Ensure the container has finished
-        progress_bar.value = 100  # Set progress to 100% after the container is done
-        print(f"Container '{container_name}' has stopped.")
+                try:
+                    client.networks.get(network_name)
+                except docker.errors.NotFound:
+                    client.networks.create(network_name, driver='bridge')
 
+                # Now run the new container
+                container = client.containers.run(
+                    full_image_name,
+                    detach=True,
+                    environment=environment,
+                    volumes=volumes,
+                    name=container_name,
+                    network_mode='host',
+                    extra_hosts={
+                        'host.docker.internal': 'host-gateway',
+                        'localhost': '127.0.0.1'
+                    }
+                )
+                print(f"Container '{container_name}' (ID: {container.id}) is running.")
+
+                # Stream logs in real-time
+                for line in container.logs(stream=True, follow=True):
+                    print(line.decode().strip())
+
+                # Monitor the container's progress
+                progress_bar.value = 0
+                while container.status != 'exited':
+                    container.reload()  # Refresh the container's status
+                    progress_bar.value += 10  # Increment progress
+                    if progress_bar.value > 90:
+                        progress_bar.value = 90  # Limit progress to 90% until the process finishes
+                    time.sleep(1)
+                result = container.wait()  # Ensure the container has finished
+                progress_bar.value = 100  # Set progress to 100% after the container is done
+                if result['StatusCode'] != 0:
+                    print(f"Container '{container_name}' exited with status code {result['StatusCode']}.")
+                    raise docker.errors.ContainerError(
+                        container=container,
+                        exit_status=result['StatusCode'],
+                        command=None,
+                        image=full_image_name
+                    )
+                else:
+                    print(f"Container '{container_name}' has stopped successfully.")
+
+        except Exception as e:
+            print(f"Error running container '{container_name}': {e}")
+        finally:
+            # Cleanup: remove the network if it exists
+            try:
+                network = client.networks.get(network_name)
+                network.remove()
+            except (docker.errors.NotFound, docker.errors.APIError):
+                pass
 
     # Create a save button
     save_button = pn.widgets.Button(name=_("Save Changes"), button_type="success")
@@ -3465,10 +3564,12 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
             absolute_volume_path_config = get_absolute_path(env.get('ieasyforecast_configuration_path'))
             absolute_volume_path_internal_data = get_absolute_path(env.get('ieasyforecast_intermediate_data_path'))
             absolute_volume_path_discharge = get_absolute_path(env.get('ieasyforecast_daily_discharge_path'))
+            absolute_volume_path_bin = get_absolute_path(env.get('ieasyhydroforecast_bin_path'))
 
             bind_volume_path_config = get_bind_path(env.get('ieasyforecast_configuration_path'))
             bind_volume_path_internal_data = get_bind_path(env.get('ieasyforecast_intermediate_data_path'))
             bind_volume_path_discharge = get_bind_path(env.get('ieasyforecast_daily_discharge_path'))
+            bind_volume_path_bin = get_bind_path(env.get('ieasyhydroforecast_bin_path'))
 
             # Initialize Docker client
             client = docker.from_env()
@@ -3483,7 +3584,8 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
             volumes = {
                 absolute_volume_path_config: {'bind': bind_volume_path_config, 'mode': 'rw'},
                 absolute_volume_path_internal_data: {'bind': bind_volume_path_internal_data, 'mode': 'rw'},
-                absolute_volume_path_discharge: {'bind': bind_volume_path_discharge, 'mode': 'rw'}
+                absolute_volume_path_discharge: {'bind': bind_volume_path_discharge, 'mode': 'rw'},
+                absolute_volume_path_bin: {'bind': bind_volume_path_bin, 'mode': 'rw'}
             }
             print("volumes: ", volumes)
 
@@ -3656,6 +3758,10 @@ def create_reload_button():
                         'bind': get_bind_path(env.get("ieasyhydroforecast_conceptual_model_path")),
                         'mode': 'rw'
                     },
+                    get_absolute_path(env.get("ieasyhydroforecast_bin_path")): {
+                        'bind': get_bind_path(env.get("ieasyhydroforecast_bin_path")),
+                        'mode': 'rw'
+                    },
                     "/var/run/docker.sock": {
                         'bind': "/var/run/docker.sock",
                         'mode': 'rw'
@@ -3747,7 +3853,16 @@ def run_docker_container(client, full_image_name, volumes, environment, containe
     Raises:
         docker.errors.ContainerError: If the container exits with a non-zero status.
     """
+    # Convert the SSH tunnel script path to an absolute path
+    SSH_TUNNEL_SCRIPT_ABSOLUTE = os.path.join(
+        get_absolute_path(os.getenv('ieasyhydroforecast_bin_path')),
+        SSH_TUNNEL_SCRIPT_PATH
+    )
+    print(f"Using SSH tunnel script at: {SSH_TUNNEL_SCRIPT_ABSOLUTE}")
     try:
+        # Establish SSH tunnel before running the container
+        #subprocess.run([SSH_TUNNEL_SCRIPT_ABSOLUTE], check=True)
+        subprocess.run(['bash', SSH_TUNNEL_SCRIPT_ABSOLUTE], check=True)
         # Remove existing container with the same name if it exists
         try:
             existing_container = client.containers.get(container_name)

@@ -80,4 +80,24 @@ def load_configuration(env_file_path: str=None) -> None:
     if os.getenv("ieasyforecast_hydrograph_day_file") is None:
         raise Exception("Environment not loaded. Please check if the .env file is available and if the environment variable IN_DOCKER_CONTAINER is set correctly.")
 
+    # Make sure the host environments are properly set
+    # Get host name
+    hostport = os.getenv("IEASYHYDRO_HOST")
+    # Separate host from port by :
+    if hostport is not None:
+        host = hostport.split(":")[0]
+        port = hostport.split(":")[1]
+        # Set the environment variable IEASYHYDRO_PORT
+        os.environ["IEASYHYDRO_PORT"] = port
+        # Make sure we have system-consistent host names. In a docker container,
+        # the host name is 'host.docker.internal'. In a local environment, the host
+        # name is 'localhost'.
+        if os.getenv('IN_DOCKER_CONTAINER') == "True":
+            os.environ["IEASYHYDRO_HOST"] = "host.docker.internal:" + port
+        else:
+            os.environ["IEASYHYDRO_HOST"] = "localhost:" + port
+        logger.info(f"IEASYHYDRO_HOST: {os.getenv('IEASYHYDRO_HOST')}")
+    else:
+        logger.info("IEASYHYDRO_HOST not set in the .env file")
+
     return in_docker_flag

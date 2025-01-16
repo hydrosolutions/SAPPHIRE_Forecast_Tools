@@ -56,6 +56,7 @@ services:
       - ${ieasyhydroforecast_data_ref_dir}/intermediate_data:${ieasyhydroforecast_container_data_ref_dir}/intermediate_data
       - ${ieasyhydroforecast_data_ref_dir}/templates:${ieasyhydroforecast_container_data_ref_dir}/templates
       - ${ieasyhydroforecast_data_ref_dir}/reports:${ieasyhydroforecast_container_data_ref_dir}/reports
+      - ${ieasyhydroforecast_data_ref_dir}/bin:${ieasyhydroforecast_container_data_ref_dir}/bin
       - /var/run/docker.sock:/var/run/docker.sock
     container_name: sapphire-frontend-forecast
     labels:

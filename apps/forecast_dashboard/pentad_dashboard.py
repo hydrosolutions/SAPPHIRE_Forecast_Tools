@@ -3,7 +3,7 @@
 # This script creates a dashboard for the pentadal forecast.
 #
 # Run with the following command:
-# ieasyhydroforecast_env_file_path=/absolute/path/to/sensitive_data_forecast_tools/config/.env_develop_kghm SAPPHIRE_OPDEV_ENV=True panel serve pentad_dashboard.py --show --autoreload
+# ieasyhydroforecast_data_root_dir=/absolute/path/to ieasyhydroforecast_env_file_path=/absolute/path/to/sensitive_data_forecast_tools/config/.env_develop_kghm SAPPHIRE_OPDEV_ENV=True panel serve pentad_dashboard.py --show --autoreload
 #
 
 # region load_libraries
@@ -181,7 +181,8 @@ downloader = FileDownloader(bulletin_folder)
 bulletin_download_panel = downloader.panel()
 
 # Set time until user is logged out automatically
-INACTIVITY_TIMEOUT = timedelta(minutes=1)
+minutes_inactive_until_logout = int(os.getenv('ieasyforecast_minutes_inactive_until_logout', 10))
+INACTIVITY_TIMEOUT = timedelta(minutes=minutes_inactive_until_logout)
 last_activity_time = None
 # endregion
 

@@ -5,6 +5,8 @@ import pandas as pd
 import datetime as dt
 import logging
 from logging.handlers import TimedRotatingFileHandler
+import time
+from contextlib import contextmanager
 
 # Local libraries, installed with pip install -e ./iEasyHydroForecast
 # Get the absolute path of the directory containing the current script
@@ -23,6 +25,54 @@ import tag_library as tl
 
 # endregion
 
+# region Timing Tools
+class TimingStats:
+    def __init__(self):
+        self.timings = {}
+        self.start_times = {}
+
+    def start(self, section):
+        self.start_times[section] = time.time()
+
+    def end(self, section):
+        if section in self.start_times:
+            elapsed = time.time() - self.start_times[section]
+            if section not in self.timings:
+                self.timings[section] = []
+            self.timings[section].append(elapsed)
+            del self.start_times[section]
+
+    def summary(self):
+        results = []
+        total_time = 0
+        for section, times in self.timings.items():
+            total = sum(times)
+            total_time += total
+            avg = total / len(times) if times else 0
+            results.append({
+                'section': section,
+                'total_time': total,
+                'avg_time': avg,
+                'calls': len(times)
+            })
+
+        # Sort by total time
+        results.sort(key=lambda x: x['total_time'], reverse=True)
+
+        # Calculate percentages
+        for result in results:
+            result['percentage'] = (result['total_time'] / total_time) * 100 if total_time else 0
+
+        return results, total_time
+
+@contextmanager
+def timer(stats, section):
+    stats.start(section)
+    try:
+        yield
+    finally:
+        stats.end(section)
+# endregion
 
 # region Logging
 # Configure the logging level and formatter
@@ -50,35 +100,58 @@ logger.addHandler(console_handler)
 
 # endregion
 
+# Initialize the timing stats object
+timing_stats = TimingStats()
+
 def postprocessing_forecasts():
+    global timing_stats
 
     logger.info(f"\n\n====== Post-processing forecasts =================")
     logger.debug(f"Script started at {dt.datetime.now()}.")
-    logger.info(f"\n\n------ Setting up --------------------------------")
 
-    # Configuration
-    sl.load_environment()
+    with timer(timing_stats, 'total execution'):
 
-    logger.info(f"\n\n------ Reading observed and modelled data -------")
-    # Data processing
-    observed, modelled = sl.read_observed_and_modelled_data_pentade()
+        with timer(timing_stats, 'setup'):
+            logger.info(f"\n\n------ Setting up --------------------------------")
+            # Configuration
+            sl.load_environment()
 
-    logger.info(f"\n\n------ Calculating skill metrics -----------------")
-    # Calculate forecast skill metrics, adds ensemble forecast to modelled
-    skill_metrics, modelled = fl.calculate_skill_metrics_pentad(observed, modelled)
-    logger.debug(f"Skill metrics: {skill_metrics.columns}")
-    logger.debug(f"Skill metrics: {skill_metrics.tail()}")
+        with timer(timing_stats, 'reading data'):
+            logger.info(f"\n\n------ Reading observed and modelled data -------")
+            # Data processing
+            observed, modelled = sl.read_observed_and_modelled_data_pentade()
 
-    logger.info(f"\n\n------ Saving results ----------------------")
-    # Save the observed and modelled data to CSV files
-    ret = fl.save_forecast_data_pentad(modelled)
-    if ret is None:
-        logger.info(f"Pentadal forecast results for all models saved successfully.")
-    else:
-        logger.error(f"Error saving the pentadal forecast results.")
+        with timer(timing_stats, 'calculating skill metrics'):
+            logger.info(f"\n\n------ Calculating skill metrics -----------------")
+            # Calculate forecast skill metrics, adds ensemble forecast to modelled
+            skill_metrics, modelled, timing_stats = fl.calculate_skill_metrics_pentad(
+                observed, modelled, timing_stats)
+            logger.debug(f"Skill metrics: {skill_metrics.columns}")
+            logger.debug(f"Skill metrics: {skill_metrics.tail()}")
 
-    # Save the skill metrics to a CSV file
-    ret = fl.save_pentadal_skill_metrics(skill_metrics)
+        with timer(timing_stats, 'saving results'):
+            logger.info(f"\n\n------ Saving results ----------------------")
+            # Save the observed and modelled data to CSV files
+            ret = fl.save_forecast_data_pentad(modelled)
+            if ret is None:
+                logger.info(f"Pentadal forecast results for all models saved successfully.")
+            else:
+                logger.error(f"Error saving the pentadal forecast results.")
+
+            # Save the skill metrics to a CSV file
+            ret = fl.save_pentadal_skill_metrics(skill_metrics)
+
+    # Print timing summary
+    summary, total = timing_stats.summary()
+    logger.info("\n\n")
+    logger.info("Timing summary for postprocessin_forecasts:")
+    logger.info("Total execution time: {:.2f} seconds".format(total))
+    logger.info("Breakdown by section:")
+    for entry in summary:
+        logger.info(f"{entry['section']}:")
+        logger.info(f"  Total time: {entry['total_time']:.2f} seconds ({entry['percentage']:.1f}%)")
+        logger.info(f"  Average time per call: {entry['avg_time']:.2f} seconds")
+        logger.info(f"  Number of calls: {entry['calls']}")
 
     if ret is None:
         logger.info(f"Script finished at {dt.datetime.now()}.")

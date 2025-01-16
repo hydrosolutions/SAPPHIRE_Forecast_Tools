@@ -6,6 +6,9 @@ import json
 import datetime as dt
 import fnmatch
 import re
+import subprocess
+import socket
+import platform
 
 from dotenv import load_dotenv
 
@@ -145,6 +148,60 @@ def define_run_dates():
 
     return date_start, date_end, bulletin_date
 
+# Methods to check on which system the docker container is running
+def check_users_mount():
+    return os.path.exists("/Users") and os.listdir("/Users")
+
+def check_hypervisor():
+    try:
+        result = subprocess.run(["lscpu"], capture_output=True, text=True)
+        if result.returncode == 0:
+            for line in result.stdout.splitlines():
+                if "Hypervisor vendor" in line:
+                    return line.split(":")[1].strip()
+        return None
+    except Exception as e:
+        return f"Error: {e}"
+
+def check_os_release():
+    try:
+        with open("/proc/sys/kernel/osrelease", "r") as f:
+            os_release = f.read().strip()
+        return os_release
+    except Exception as e:
+        return f"Error: {e}"
+
+def identify_host_system():
+    os_release = check_os_release()
+    users_mount = check_users_mount()
+    hypervisor = check_hypervisor()
+
+    system_id = None
+
+    if os_release is not None:
+        if ("generic" in os_release.lower()) or ("aws" in os_release.lower()):
+            # aws is returned when run in Docker container on AWS server
+            logger.info("Likely running on a Linux system.")
+            system_id = "Linux"
+        elif ("darwin" in os_release.lower()) or ("linuxkit" in os_release.lower()):
+            # Linuxkit is returned when run in Docker container on MacOS
+            logger.info("Likely running on a macOS system.")
+            system_id = "macOS"
+        else:
+            logger.info(f"Could not identify os_release from {os_release}. Defaulting to Linux.")
+            system_id = "Linux"
+    elif users_mount:
+        logger.info("Likely running on a macOS system.")
+        system_id = "macOS"
+    elif hypervisor and "apple" in hypervisor.lower():
+        logger.info("Likely running on a macOS system.")
+        system_id = "macOS"
+    else:
+        logger.info("Could not identify the host system. Defaulting to Linux.")
+        system_id = "Linux"
+
+    return system_id
+
 def load_environment():
     """
     Load environment variables from a .env file based on the context.
@@ -191,10 +248,40 @@ def load_environment():
     # Load the environment variables
     logger.info(f"Loading environment variables from {env_file_path}")
     res = load_dotenv(env_file_path)
-    logger.debug(f"IEASYHYDRO_HOST: {os.getenv('IEASYHYDRO_HOST')}")
     # Test if the environment variables were loaded
     if not res:
         logger.warning(f"Could not load environment variables from {env_file_path}")
+
+    # Get host name
+    hostport = os.getenv("IEASYHYDRO_HOST")
+    # Separate host from port by :
+    if hostport is not None:
+        host = hostport.split(":")[1]
+        port = hostport.split(":")[2]
+        # Set the environment variable IEASYHYDRO_PORT
+        os.environ["IEASYHYDRO_PORT"] = port
+        logger.info(f"IEASYHYDRO_PORT: {os.getenv('IEASYHYDRO_PORT')}")
+        # Make sure we have system-consistent host names. In a docker container,
+        # the host name is 'host.docker.internal'. In a local environment, the host
+        # name is 'localhost'.
+        if os.getenv('IN_DOCKER_CONTAINER') == "True":
+            host_system = identify_host_system()
+            logger.info("Running in a Docker container.")
+            # If run on Ubuntu.
+            # As Docker containers run on Ubuntu, this will always return to 'Linux'
+            #system = platform.system()
+            if host_system == "Linux":
+                os.environ["IEASYHYDRO_HOST"] = "http://localhost:" + port
+            elif host_system == "macOS":
+                os.environ["IEASYHYDRO_HOST"] = "http://host.docker.internal:" + port
+            #os.environ["IEASYHYDRO_HOST"] = "http://host.docker.internal:" + port
+        else:
+            logger.info("Running in a local environment.")
+            os.environ["IEASYHYDRO_HOST"] = "http://localhost:" + port
+        logger.info(f"IEASYHYDRO_HOST: {os.getenv('IEASYHYDRO_HOST')}")
+    else:
+        logger.info("IEASYHYDRO_HOST not set in the .env file")
+
     # Test if specific environment variables were loaded
     if os.getenv("ieasyforecast_daily_discharge_path") is None:
         logger.error("config.load_environment(): Environment variable ieasyforecast_daily_discharge_path not set")
@@ -204,6 +291,83 @@ def load_environment():
 
 
 # --- Tools for accessing the iEasyHydro DB --------------------------------------
+'''def check_local_ssh_tunnels(ssh_port=8881):
+    """
+    Check for local SSH tunnels by examining netstat output.
+
+    Returns:
+        list: List of found local SSH tunnels with their details
+    """
+    try:
+        # Run netstat command
+        if os.name == 'nt':  # Windows, not tested
+            cmd = ['netstat -an']
+        else:  # Unix/Linux/macOS
+            cmd = ['netstat -an | grep LISTEN']
+
+        output = subprocess.check_output(cmd, shell=True, universal_newlines=True)
+        #logger.debug(f"Output from netstat: {output}")
+
+        # Test if we have output
+        if not output:
+            logger.info("No output from netstat")
+            return []
+
+        # Look for listening ports that might be SSH tunnels
+        tunnels = []
+        for line in output.split('\n'):
+            if f"127.0.0.1.{ssh_port}" in line or f"::1.8881" in line:
+                tunnels.append({
+                    'line': line.strip()
+                })
+        return tunnels
+    except subprocess.CalledProcessError as e:
+        print(f"Error running netstat: {e}")
+        return []'''
+
+def check_local_ssh_tunnels():
+    """
+    Check for local SSH tunnels using pure Python socket connections.
+    No additional system packages required.
+    """
+    try:
+        # Check the specific port we know the tunnel should be using
+        tunnel_port = 8881  # Your SSH tunnel port
+
+        # Try to connect to localhost on the tunnel port
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(2)  # 2 second timeout
+
+        try:
+            # Try localhost first
+            result = sock.connect_ex(('localhost', tunnel_port))
+            if result == 0:
+                return [{'port': tunnel_port, 'line': f'Port {tunnel_port} is listening on localhost'}]
+
+            # If localhost fails, try 127.0.0.1 explicitly
+            result = sock.connect_ex(('127.0.0.1', tunnel_port))
+            if result == 0:
+                return [{'port': tunnel_port, 'line': f'Port {tunnel_port} is listening on 127.0.0.1'}]
+
+            # If both fail, try host.docker.internal (for macOS)
+            result = sock.connect_ex(('host.docker.internal', tunnel_port))
+            if result == 0:
+                return [{'port': tunnel_port, 'line': f'Port {tunnel_port} is listening on host.docker.internal'}]
+
+        except socket.error as e:
+            print(f"Socket error while checking port {tunnel_port}: {e}")
+        finally:
+            sock.close()
+
+        # If we get here, no tunnel was found
+        print(f"No listening service found on port {tunnel_port}")
+        return []
+
+    except Exception as e:
+        print(f"Error checking SSH tunnels: {e}")
+        return []
+
+
 # region iEH_DB
 def check_database_access(ieh_sdk):
     """
@@ -226,9 +390,23 @@ def check_database_access(ieh_sdk):
     # Test if the backand has access to an iEasyHydro database and set a flag accordingly.
     try:
         test = ieh_sdk.get_discharge_sites()
+        #logger.debug(f"test[0]: {test[0]}")
         logger.info(f"Access to iEasyHydro database.")
         return True
     except Exception as e:
+        logger.debug(f"Met exception {e} when trying to access iEasyHydro database.")
+        #logger.debug(f"Trying with localhost.")
+        #try:
+        #    # Replace current host with localhost ("host.docker.internal" with "localhost")
+        #    os.environ["IEASYHYDRO_HOST"] = os.getenv("IEASYHYDRO_HOST").replace("host.docker.internal", "localhost")
+        #    # Test if this has worked:
+        #    logger.debug("IEASYHYDRO_HOST: " + os.getenv("IEASYHYDRO_HOST"))
+        #    test = ieh_sdk.get_discharge_sites()
+        #    #logger.debug(f"test[0]: {test[0]}")
+        #    logger.info(f"Access to iEasyHydro database.")
+        #except Exception as e:
+        #    logger.error(f"Error replacing host with localhost: {e}")
+        #    raise e
         # Test if there are any files in the data/daily_runoff directory
         if os.listdir(os.getenv("ieasyforecast_daily_discharge_path")):
             logger.info(f"No access to iEasyHydro database. "
