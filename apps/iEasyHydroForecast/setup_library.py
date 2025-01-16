@@ -179,10 +179,12 @@ def identify_host_system():
     system_id = None
 
     if os_release is not None:
-        if "generic" in os_release.lower():
+        if ("generic" in os_release.lower()) or ("aws" in os_release.lower()):
+            # aws is returned when run in Docker container on AWS server
             logger.info("Likely running on a Linux system.")
             system_id = "Linux"
-        elif "darwin" in os_release.lower():
+        elif ("darwin" in os_release.lower()) or ("linuxkit" in os_release.lower()):
+            # Linuxkit is returned when run in Docker container on MacOS
             logger.info("Likely running on a macOS system.")
             system_id = "macOS"
         else:
