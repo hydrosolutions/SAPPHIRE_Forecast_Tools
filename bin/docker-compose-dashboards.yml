@@ -34,6 +34,7 @@ services:
       context: ../
       dockerfile: ./apps/forecast_dashboard/Dockerfile
     working_dir: /app/apps/forecast_dashboard
+    init: true
     environment:
       - PYTHONPATH=/app
       - ieasyhydroforecast_data_root_dir=${ieasyhydroforecast_data_root_dir}
