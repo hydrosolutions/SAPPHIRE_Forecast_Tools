@@ -150,6 +150,9 @@ def read_rram_forecast_data(file_mtime):
     rram_forecast['forecast_date'] = rram_forecast['forecast_date'].apply(parse_dates)
     rram_forecast['date'] = rram_forecast['date'].apply(parse_dates)
 
+    # Only keep latest forecast for each station
+    rram_forecast = rram_forecast.sort_values(by=['code', 'forecast_date']).groupby('code').tail(17)
+
     # Store in cache
     pn.state.cache[cache_key] = (file_mtime, rram_forecast)
     return rram_forecast
