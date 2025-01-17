@@ -1295,6 +1295,61 @@ def sdivsigma_nse(data: pd.DataFrame, observed_col: str, simulated_col: str):
     if not all(column in data.columns for column in [observed_col, simulated_col]):
         raise ValueError(f'DataFrame is missing one or more required columns: {observed_col, simulated_col}')
 
+    # Convert to numpy arrays for faster computation
+    # Use float64 for better numerical stability
+    observed = data[observed_col].to_numpy(dtype=np.float64)
+    simulated = data[simulated_col].to_numpy(dtype=np.float64)
+
+    # Check for empty data after dropping NaNs
+    mask = ~(np.isnan(observed) | np.isnan(simulated))
+    if not np.any(mask):
+        return pd.Series([np.nan, np.nan], index=['sdivsigma', 'nse'])
+
+    # Filter arrays using mask
+    observed = observed[mask]
+    simulated = simulated[mask]
+
+    # Early return if not enough data points
+    if len(observed) < 2:  # Need at least 2 points for std calculation
+        return pd.Series([np.nan, np.nan], index=['sdivsigma', 'nse'])
+
+    # Calculate mean once for reuse
+    observed_mean = np.mean(observed)
+
+    # Calculate denominators
+    denominator_nse = np.sum((observed - observed_mean) ** 2)
+    denominator_sdivsigma = np.std(observed)
+
+    # Check for numerical stability
+    if denominator_nse < 1e-10 or denominator_sdivsigma < 1e-10:
+        logger.debug(f"Numerical stability issue in sdivsigma_nse:")
+        logger.debug(f"denominator_nse: {denominator_nse}")
+        logger.debug(f"denominator_sdivsigma: {denominator_sdivsigma}")
+        return pd.Series([np.nan, np.nan], index=['sdivsigma', 'nse'])
+
+    try:
+        # Calculate differences once for reuse
+        differences = observed - simulated
+
+        # Calculate NSE
+        numerator_nse = np.sum(differences ** 2)
+        nse_value = 1 - (numerator_nse / denominator_nse)
+
+        # Calculate sdivsigma
+        numerator_sdivsigma = np.std(np.abs(differences))
+        sdivsigma = numerator_sdivsigma / denominator_sdivsigma
+
+        # Sanity checks
+        if not (-np.inf < nse_value < np.inf) or not (0 <= sdivsigma < np.inf):
+            return pd.Series([np.nan, np.nan], index=['sdivsigma', 'nse'])
+
+        return pd.Series([sdivsigma, nse_value], index=['sdivsigma', 'nse'])
+
+    except (RuntimeWarning, FloatingPointError) as e:
+        logger.debug(f"Numerical computation error in sdivsigma_nse: {str(e)}")
+        return pd.Series([np.nan, np.nan], index=['sdivsigma', 'nse'])
+    '''
+    # SLOW VERSION
     # Drop NaN values in columns with observed and simulated data
     dataN = data.dropna(subset=[observed_col, simulated_col]).copy()
 
@@ -1333,6 +1388,9 @@ def sdivsigma_nse(data: pd.DataFrame, observed_col: str, simulated_col: str):
     nse_value = 1 - (numerator_nse / denominator_nse)
 
     return pd.Series([sdivsigma, nse_value], index=['sdivsigma', 'nse'])
+    '''
+
+
 
 def forecast_accuracy_hydromet(data: pd.DataFrame, observed_col: str, simulated_col: str, delta_col: str):
     """
@@ -1354,6 +1412,47 @@ def forecast_accuracy_hydromet(data: pd.DataFrame, observed_col: str, simulated_
     if not all(column in data.columns for column in [observed_col, simulated_col, delta_col]):
         raise ValueError(f'DataFrame is missing one or more required columns: {observed_col, simulated_col, delta_col}')
 
+    # Convert to numpy arrays for faster computation
+    observed = data[observed_col].to_numpy(dtype=np.float64)
+    simulated = data[simulated_col].to_numpy(dtype=np.float64)
+    delta_values = data[delta_col].to_numpy(dtype=np.float64)
+
+    # Check for empty data after dropping NaNs
+    mask = ~(np.isnan(observed) | np.isnan(simulated) | np.isnan(delta_values))
+    if not np.any(mask):
+        return pd.Series([np.nan, np.nan], index=['delta', 'accuracy'])
+
+    # Filter arrays using mask
+    observed = observed[mask]
+    simulated = simulated[mask]
+    delta_values = delta_values[mask]
+
+    # Early return if not enough data points
+    if len(observed) < 1:
+        return pd.Series([np.nan, np.nan], index=['delta', 'accuracy'])
+
+    try:
+        # Calculate absolute differences once
+        abs_diff = np.abs(observed - simulated)
+
+        # Calculate accuracy using vectorized operations
+        accuracy = np.mean(abs_diff <= delta_values)
+
+        # Get the last delta value
+        delta = delta_values[-1]
+
+        # Sanity checks
+        if not (0 <= accuracy <= 1) or not (0 <= delta < np.inf):
+            return pd.Series([np.nan, np.nan], index=['delta', 'accuracy'])
+
+        return pd.Series([delta, accuracy], index=['delta', 'accuracy'])
+
+    except (RuntimeWarning, FloatingPointError) as e:
+        logger.debug(f"Numerical computation error in forecast_accuracy_hydromet: {str(e)}")
+        return pd.Series([np.nan, np.nan], index=['delta', 'accuracy'])
+
+    '''
+    # SLOW VERSION
     # Drop NaN values
     dataN = data.dropna(subset=[observed_col, simulated_col]).copy()
 
@@ -1372,6 +1471,7 @@ def forecast_accuracy_hydromet(data: pd.DataFrame, observed_col: str, simulated_
     delta = dataN[delta_col].iloc[-1]
 
     return pd.Series([delta, accuracy], index=['delta', 'accuracy'])
+    '''
 
 def mae(data: pd.DataFrame, observed_col: str, simulated_col: str):
     """
@@ -1393,6 +1493,38 @@ def mae(data: pd.DataFrame, observed_col: str, simulated_col: str):
     if not all(column in data.columns for column in [observed_col, simulated_col]):
         raise ValueError(f'DataFrame is missing one or more required columns: {observed_col, simulated_col}')
 
+    # Convert to numpy arrays for faster computation
+    observed = data[observed_col].to_numpy(dtype=np.float64)
+    simulated = data[simulated_col].to_numpy(dtype=np.float64)
+
+    # Check for empty data after dropping NaNs
+    mask = ~(np.isnan(observed) | np.isnan(simulated))
+    if not np.any(mask):
+        return pd.Series([np.nan], index=['mae'])
+
+    # Filter arrays using mask
+    observed = observed[mask]
+    simulated = simulated[mask]
+
+    # Early return if not enough data points
+    if len(observed) < 1:
+        return pd.Series([np.nan], index=['mae'])
+
+    try:
+        # Calculate MAE using vectorized operations
+        mae_value = np.mean(np.abs(observed - simulated))
+
+        # Sanity check
+        if not (0 <= mae_value < np.inf):
+            return pd.Series([np.nan], index=['mae'])
+
+        return pd.Series([mae_value], index=['mae'])
+
+    except (RuntimeWarning, FloatingPointError) as e:
+        logger.debug(f"Numerical computation error in mae: {str(e)}")
+        return pd.Series([np.nan], index=['mae'])
+    '''
+    # SLOW VERSION
     # Drop NaN values
     dataN = data.dropna(subset=[observed_col, simulated_col]).copy()
 
@@ -1405,6 +1537,7 @@ def mae(data: pd.DataFrame, observed_col: str, simulated_col: str):
     mae = abs(dataN[observed_col] - dataN[simulated_col]).mean()
 
     return pd.Series([mae], index=['mae'])
+    '''
 
 def calculate_forecast_skill_deprecating(data_df: pd.DataFrame, station_col: str,
                              pentad_col: str, observation_col: str,
