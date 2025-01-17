@@ -270,25 +270,18 @@ def load_data():
     ml_forecast_mtime = get_directory_mtime(ml_forecast_dir)
 
     # Rainfall and temperature data files
-    hind_p_file = os.path.join(
+    p_file = os.path.join(
         os.getenv('ieasyhydroforecast_PATH_TO_HIND'),
         os.getenv('ieasyhydroforecast_FILE_CF_HIND_P'))
-    hind_p_file_mtime = os.path.getmtime(hind_p_file)
-
-    cf_p_file = os.path.join(
-        os.getenv('ieasyhydroforecast_PATH_TO_CF'),
-        os.getenv('ieasyhydroforecast_FILE_CF_P'))
-    cf_p_file_mtime = os.path.getmtime(cf_p_file)
-
-    hind_t_file = os.path.join(
+    t_file = os.path.join(
         os.getenv('ieasyhydroforecast_PATH_TO_HIND'),
-        os.getenv('ieasyhydroforecast_FILE_CF_HIND_T'))
-    hind_t_file_mtime = os.path.getmtime(hind_t_file)
-
-    cf_t_file = os.path.join(
-        os.getenv('ieasyhydroforecast_PATH_TO_CF'),
-        os.getenv('ieasyhydroforecast_FILE_CF_T'))
-    cf_t_file_mtime = os.path.getmtime(cf_t_file)
+        os.getenv('ieasyhydroforecast_FILE_CF_HIND_T')
+    )
+    # replace .csv with _dashboard.csv
+    p_file = p_file.replace('.csv', '_dashboard.csv')
+    t_file = t_file.replace('.csv', '_dashboard.csv')
+    p_file_mtime = os.path.getmtime(p_file)
+    t_file_mtime = os.path.getmtime(t_file)
 
     # Hydrograph day and pentad data
     hydrograph_day_all = processing.read_hydrograph_day_data_for_pentad_forecasting(
@@ -365,8 +358,8 @@ def load_data():
         suffixes=('', '_stats'))
 
     # Rainfall
-    rain = processing.read_rainfall_data(max(hind_p_file_mtime, cf_p_file_mtime))
-    temp = processing.read_temperature_data(max(hind_t_file_mtime, cf_t_file_mtime))
+    rain = processing.read_rainfall_data(p_file_mtime)  # (max(hind_p_file_mtime, cf_p_file_mtime))
+    temp = processing.read_temperature_data(t_file_mtime)  # max(hind_t_file_mtime, cf_t_file_mtime))
 
 # Get stations selected for pentadal forecasts
 # Not necessary as we write new config files in linear regression module.

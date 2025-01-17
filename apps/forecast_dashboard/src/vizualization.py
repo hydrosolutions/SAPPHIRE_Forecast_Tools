@@ -1835,6 +1835,8 @@ def plot_daily_rainfall_data(_, daily_rainfall, station, date_picker,
     predictor_rainfall = current_year[(current_year['date'] >= predictor_start_date) &
                                         (current_year['date'] <= predictor_end_date)].copy()
 
+    norm_rainfall = station_data.drop(columns=['P']).rename(columns={'P_norm': 'P'}).copy()
+    '''
     # Calculate norm rainfall, excluding the current year
     norm_rainfall = station_data[station_data['year'] != date_picker.year].copy()
     norm_rainfall['doy'] = pd.to_datetime(norm_rainfall['date']).dt.dayofyear
@@ -1847,6 +1849,7 @@ def plot_daily_rainfall_data(_, daily_rainfall, station, date_picker,
     norm_rainfall = norm_rainfall.drop(columns=['doy', 'year']).sort_values('date')
     # Convert date column to datetime
     norm_rainfall['date'] = pd.to_datetime(norm_rainfall['date'])
+    '''
 
     # Plot the daily rainfall data using holoviews
     title_text = f"{_('Daily precipitation sums for basin of')} {station} {_('on')} {date_picker.strftime('%Y-%m-%d')}"
@@ -1914,7 +1917,7 @@ def plot_daily_rainfall_data(_, daily_rainfall, station, date_picker,
         show_legend=True,
         hooks=[remove_bokeh_logo],
         xformatter=DatetimeTickFormatter(days="%b %d", months="%b %d"),
-        ylim=(0, station_data['P'].max() * 1.1),
+        ylim=(0, max([station_data['P'].max(), station_data['P_norm'].max()]) * 1.1),
         xlim=(min(norm_rainfall['date']), max(norm_rainfall['date'])),
         tools=['hover'],
         toolbar='right')
@@ -1961,6 +1964,8 @@ def plot_daily_temperature_data(_, daily_rainfall, station, date_picker,
     predictor_rainfall = current_year[(current_year['date'] >= predictor_start_date) &
                                         (current_year['date'] <= predictor_end_date)].copy()
 
+    norm_rainfall = station_data.drop(columns=['T']).rename(columns={'T_norm': 'T'}).copy()
+    '''
     # Calculate norm rainfall, excluding the current year
     norm_rainfall = station_data[station_data['year'] != date_picker.year].copy()
     norm_rainfall['doy'] = pd.to_datetime(norm_rainfall['date']).dt.dayofyear
@@ -1972,6 +1977,7 @@ def plot_daily_temperature_data(_, daily_rainfall, station, date_picker,
     norm_rainfall = norm_rainfall.drop(columns=['doy', 'year']).sort_values('date')
     # Convert date column to datetime
     norm_rainfall['date'] = pd.to_datetime(norm_rainfall['date'])
+    '''
 
     # Plot the daily rainfall data using holoviews
     title_text = f"{_('Daily average temperature for basin of')} {station} {_('on')} {date_picker.strftime('%Y-%m-%d')}"
@@ -2038,7 +2044,8 @@ def plot_daily_temperature_data(_, daily_rainfall, station, date_picker,
         show_legend=True,
         hooks=[remove_bokeh_logo],
         xformatter=DatetimeTickFormatter(days="%b %d", months="%b %d"),
-        ylim=(station_data['T'].min() * 0.9, station_data['T'].max() * 1.1),
+        ylim=(min([station_data['T'].min(), station_data['T_norm'].min()]) * 0.9,
+              max([station_data['T'].max(), station_data['T_norm'].max()]) * 1.1),
         xlim=(min(norm_rainfall['date']), max(norm_rainfall['date'])),
         tools=['hover'],
         toolbar='right')
