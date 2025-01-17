@@ -1102,6 +1102,12 @@ def get_runoff_data_for_sites(ieh_sdk=None, date_col='date',
 
         return read_data
 
+def is_leap_year(year):
+    if (year % 4 == 0 and year % 100 != 0) or (year % 400 == 0):
+        return True
+    else:
+        return False
+
 def from_daily_time_series_to_hydrograph(data_df: pd.DataFrame,
                                          date_col='date', discharge_col='discharge', code_col='code', name_col='name'):
     """
@@ -1132,10 +1138,18 @@ def from_daily_time_series_to_hydrograph(data_df: pd.DataFrame,
     data_df['day_of_year'] = data_df[date_col].dt.dayofyear
 
     # Drop all rows where the date is the 29th of February
-    data_df = data_df[~((data_df[date_col].dt.month == 2) & (data_df[date_col].dt.day == 29))]
+    #data_df = data_df[~((data_df[date_col].dt.month == 2) & (data_df[date_col].dt.day == 29))]
 
     # Adjust the day_of_year for the 29th of February for leap years
-    data_df.loc[(data_df[date_col].dt.month > 2) & (data_df[date_col].dt.is_leap_year), 'day_of_year'] -= 1
+    #data_df.loc[(data_df[date_col].dt.month > 2) & (data_df[date_col].dt.is_leap_year), 'day_of_year'] -= 1
+
+    # Get the current year data
+    current_year = dt.date.today().year
+
+    # If we are not in a leap year, drop the 29th of February and adjust the day_of_year
+    if not is_leap_year(current_year):
+        data_df = data_df[~((data_df[date_col].dt.month == 2) & (data_df[date_col].dt.day == 29))]
+        data_df.loc[(data_df[date_col].dt.month > 2), 'day_of_year'] -= 1
 
     # Group the data by the code and day_of_year columns and calculate the min,
     # max, mean, 5th, 25th, 50th, 75th, and 95th percentiles of the discharge.
@@ -1143,8 +1157,6 @@ def from_daily_time_series_to_hydrograph(data_df: pd.DataFrame,
         percentiles=[0.05, 0.25, 0.5, 0.75, 0.95])
 
     # Also get last year and current year data for the hydrograph
-    # Get the current year data
-    current_year = dt.date.today().year
     current_year_data = data_df[data_df[date_col].dt.year == current_year]
     # Drop the date column
     current_year_data = current_year_data.drop(columns=[date_col, name_col])
@@ -1156,7 +1168,7 @@ def from_daily_time_series_to_hydrograph(data_df: pd.DataFrame,
     # Drop the date column
     last_year_data = last_year_data.drop(columns=[name_col])
     # Add 1 year to the date column
-    last_year_data[date_col] = last_year_data[date_col] + pd.DateOffset(years=1)
+    #last_year_data[date_col] = last_year_data[date_col] + pd.DateOffset(years=1)
     # Rename the discharge column to the last year
     last_year_data = last_year_data.rename(columns={discharge_col: f"{last_year}"})
 
@@ -1167,9 +1179,14 @@ def from_daily_time_series_to_hydrograph(data_df: pd.DataFrame,
     hydrograph_data = hydrograph_data.merge(
         last_year_data.groupby([code_col, 'day_of_year'])[str(last_year)].mean().reset_index(),
         on=[code_col, 'day_of_year'], how='left', suffixes=('', '_last_year'))
-    hydrograph_data = hydrograph_data.merge(
-        last_year_data.groupby([code_col, 'day_of_year'])[date_col].first().reset_index(),
-        on=[code_col, 'day_of_year'], how='left', suffixes=('', '_last_year'))
+    #hydrograph_data = hydrograph_data.merge(
+    #    last_year_data.groupby([code_col, 'day_of_year'])[date_col].first().reset_index(),
+    #    on=[code_col, 'day_of_year'], how='left', suffixes=('', '_last_year'))
+    # Create date based on day of year and the current year
+    hydrograph_data['date'] = pd.Timestamp(str(current_year)) + pd.to_timedelta(hydrograph_data['day_of_year'] - 1, unit='D')
+    # print head and tail of hydrograph_data for code == '15194'
+    print(f"DEBUG: hydrograph_data[hydrograph_data['code'] == '15194'].head(10)\n{hydrograph_data[hydrograph_data['code'] == '15194'].head(10)}")
+    print(f"DEBUG: hydrograph_data[hydrograph_data['code'] == '15194'].tail(10)\n{hydrograph_data[hydrograph_data['code'] == '15194'].tail(10)}")
 
     return hydrograph_data
 
