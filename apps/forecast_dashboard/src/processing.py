@@ -138,6 +138,43 @@ def read_rram_forecast_data(file_mtime):
         # Extract the 5-digit number in the root
         code = re.findall(r'\d{5}', root)
         for file in files:
+            if file.startswith('daily') and file.endswith('.csv'):
+                filename = os.path.join(root, file)
+                temp_data = pd.read_csv(filename)
+                # Add a column code to the data frame
+                temp_data['code'] = code[0]
+                # Add a column model_short to the data frame
+                temp_data['model_short'] = 'RRAM'
+                rram_forecast = pd.concat([rram_forecast, temp_data], ignore_index=True)
+    # Cast forecast_date and date columns to datetime
+    rram_forecast['forecast_date'] = rram_forecast['forecast_date'].apply(parse_dates)
+    rram_forecast['date'] = rram_forecast['date'].apply(parse_dates)
+
+    # Only keep latest forecast for each station
+    rram_forecast = rram_forecast.sort_values(by=['code', 'forecast_date']).groupby('code').tail(17)
+
+    # Store in cache
+    pn.state.cache[cache_key] = (file_mtime, rram_forecast)
+    return rram_forecast
+
+def read_rram_forecast_data_deprecating(file_mtime):
+    """
+    Reads the forecasts from the RRAM model from the intermediate data directory.
+    """
+    cache_key = 'rram_forecast_data'
+    if cache_key in pn.state.cache:
+        cached_mtime, rram_forecast = pn.state.cache[cache_key]
+        if cached_mtime == file_mtime:
+            return rram_forecast
+
+    filepath = os.getenv('ieasyhydroforecast_PATH_TO_RESULT')
+    # List all csv files in the directory and in the sub-directories
+    # of the directory and read the forecast data
+    rram_forecast = pd.DataFrame()
+    for root, dirs, files in os.walk(filepath):
+        # Extract the 5-digit number in the root
+        code = re.findall(r'\d{5}', root)
+        for file in files:
             if file.endswith('.csv'):
                 filename = os.path.join(root, file)
                 temp_data = pd.read_csv(filename)
@@ -189,6 +226,11 @@ def read_daily_probabilistic_ml_forecasts_pentad(
 
     # Cast code column to string
     daily_data['code'] = daily_data['code'].astype(str)
+
+    # Only keep the rows where forecast_date is equal to the most recent forecast
+    # date for each station
+    latest_forecast_date = daily_data['forecast_date'].max()
+    daily_data = daily_data[daily_data['forecast_date'] == latest_forecast_date]
 
     return daily_data
 
@@ -1280,6 +1322,39 @@ def read_rainfall_data(file_mtime):
         os.getenv('ieasyhydroforecast_PATH_TO_HIND'),
         os.getenv('ieasyhydroforecast_FILE_CF_HIND_P')
     )
+    # Replace .csv with _dashboard.csv
+    filepath_hind = filepath_hind.replace('.csv', '_dashboard.csv')
+    if not os.path.isfile(filepath_hind):
+        raise Exception("File not found: " + filepath_hind)
+    # Read hindcast forcing data
+    forcing = pd.read_csv(filepath_hind)
+
+    # Convert the date column to datetime
+    forcing['date'] = pd.to_datetime(forcing['date'], format='%Y-%m-%d', errors='coerce').dt.date
+
+    # Convert the code column to string
+    forcing['code'] = forcing['code'].astype(str)
+
+    # Sort by code and date
+    forcing = forcing.sort_values(by=['code', 'date'])
+
+    # Store in cache
+    pn.state.cache[cache_key] = (file_mtime, forcing)
+    return forcing
+
+def read_rainfall_data_deprecating(file_mtime):
+    cache_key = 'rainfall_data'
+    if cache_key in pn.state.cache:
+        cached_mtime, forcing = pn.state.cache[cache_key]
+        if cached_mtime == file_mtime:
+            return forcing
+
+    # Get path to forcing files from environment variables
+    # Reanalysis forcing
+    filepath_hind = os.path.join(
+        os.getenv('ieasyhydroforecast_PATH_TO_HIND'),
+        os.getenv('ieasyhydroforecast_FILE_CF_HIND_P')
+    )
     if not os.path.isfile(filepath_hind):
         raise Exception("File not found: " + filepath_hind)
     # Read hindcast forcing data
@@ -1319,6 +1394,39 @@ def read_rainfall_data(file_mtime):
     return forcing
 
 def read_temperature_data(file_mtime):
+    cache_key = 'temperature_data'
+    if cache_key in pn.state.cache:
+        cached_mtime, forcing = pn.state.cache[cache_key]
+        if cached_mtime == file_mtime:
+            return forcing
+
+    # Get path to forcing files from environment variables
+    # Reanalysis forcing
+    filepath_hind = os.path.join(
+        os.getenv('ieasyhydroforecast_PATH_TO_HIND'),
+        os.getenv('ieasyhydroforecast_FILE_CF_HIND_T')
+    )
+    # Replace .csv with _dashboard.csv
+    filepath_hind = filepath_hind.replace('.csv', '_dashboard.csv')
+    if not os.path.isfile(filepath_hind):
+        raise Exception("File not found: " + filepath_hind)
+    # Read hindcast forcing data
+    forcing = pd.read_csv(filepath_hind)
+
+    # Convert the date column to datetime
+    forcing['date'] = pd.to_datetime(forcing['date'], format='%Y-%m-%d', errors='coerce')
+
+    # Convert the code column to string
+    forcing['code'] = forcing['code'].astype(str)
+
+    # Sort by code and date
+    forcing = forcing.sort_values(by=['code', 'date'])
+
+    # Store in cache
+    pn.state.cache[cache_key] = (file_mtime, forcing)
+    return forcing
+
+def read_temperature_data_deprecating(file_mtime):
     cache_key = 'temperature_data'
     if cache_key in pn.state.cache:
         cached_mtime, forcing = pn.state.cache[cache_key]
