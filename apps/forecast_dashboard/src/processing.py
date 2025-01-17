@@ -138,6 +138,40 @@ def read_rram_forecast_data(file_mtime):
         # Extract the 5-digit number in the root
         code = re.findall(r'\d{5}', root)
         for file in files:
+            if file.startswith('daily') and file.endswith('.csv'):
+                filename = os.path.join(root, file)
+                temp_data = pd.read_csv(filename)
+                # Add a column code to the data frame
+                temp_data['code'] = code[0]
+                # Add a column model_short to the data frame
+                temp_data['model_short'] = 'RRAM'
+                rram_forecast = pd.concat([rram_forecast, temp_data], ignore_index=True)
+    # Cast forecast_date and date columns to datetime
+    rram_forecast['forecast_date'] = rram_forecast['forecast_date'].apply(parse_dates)
+    rram_forecast['date'] = rram_forecast['date'].apply(parse_dates)
+
+    # Store in cache
+    pn.state.cache[cache_key] = (file_mtime, rram_forecast)
+    return rram_forecast
+
+def read_rram_forecast_data_deprecating(file_mtime):
+    """
+    Reads the forecasts from the RRAM model from the intermediate data directory.
+    """
+    cache_key = 'rram_forecast_data'
+    if cache_key in pn.state.cache:
+        cached_mtime, rram_forecast = pn.state.cache[cache_key]
+        if cached_mtime == file_mtime:
+            return rram_forecast
+
+    filepath = os.getenv('ieasyhydroforecast_PATH_TO_RESULT')
+    # List all csv files in the directory and in the sub-directories
+    # of the directory and read the forecast data
+    rram_forecast = pd.DataFrame()
+    for root, dirs, files in os.walk(filepath):
+        # Extract the 5-digit number in the root
+        code = re.findall(r'\d{5}', root)
+        for file in files:
             if file.endswith('.csv'):
                 filename = os.path.join(root, file)
                 temp_data = pd.read_csv(filename)
