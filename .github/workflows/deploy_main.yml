@@ -17,9 +17,9 @@ env:
 
 on:
   push:
-    branches: [ "snappy_bea"]
+    branches: [ "main"]
   pull_request:
-    branches: [ "snappy_bea" ]
+    branches: [ "main" ]
 
 jobs:
 
