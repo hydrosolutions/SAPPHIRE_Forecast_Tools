@@ -227,6 +227,11 @@ def read_daily_probabilistic_ml_forecasts_pentad(
     # Cast code column to string
     daily_data['code'] = daily_data['code'].astype(str)
 
+    # Only keep the rows where forecast_date is equal to the most recent forecast
+    # date for each station
+    latest_forecast_date = daily_data['forecast_date'].max()
+    daily_data = daily_data[daily_data['forecast_date'] == latest_forecast_date]
+
     return daily_data
 
 def read_machine_learning_forecasts_pentad(model, file_mtime):
