@@ -286,6 +286,10 @@ def load_data():
     # Hydrograph day and pentad data
     hydrograph_day_all = processing.read_hydrograph_day_data_for_pentad_forecasting(
         stations_iehhf, hydrograph_day_file_mtime)
+    # print head and tail of hydrograph_day_all where code == 15194
+    print(f"DEBUG: pentad_dashboard.py: hydrograph_day_all head:\n{hydrograph_day_all[hydrograph_day_all['code'] == '15194'].head()}")
+    print(f"DEBUG: pentad_dashboard.py: hydrograph_day_all tail:\n{hydrograph_day_all[hydrograph_day_all['code'] == '15194'].tail()}")
+
     hydrograph_pentad_all = processing.read_hydrograph_pentad_data_for_pentad_forecasting(
         stations_iehhf, hydrograph_pentad_file_mtime)
 

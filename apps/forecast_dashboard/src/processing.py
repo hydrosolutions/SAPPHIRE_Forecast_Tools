@@ -340,7 +340,7 @@ def read_hydrograph_day_file(file_mtime):
     if not os.path.isfile(hydrograph_day_file):
         raise Exception("File not found: " + hydrograph_day_file)
 
-    hydrograph_day_all = pd.read_csv(hydrograph_day_file, parse_dates=['date']).reset_index(drop=True)
+    hydrograph_day_all = pd.read_csv(hydrograph_day_file).reset_index(drop=True)
     # Test if hydrograph_day_all is empty
     if hydrograph_day_all.empty:
         raise Exception("File is empty: " + hydrograph_day_file)
@@ -349,6 +349,13 @@ def read_hydrograph_day_file(file_mtime):
     hydrograph_day_all['code'] = hydrograph_day_all['code'].astype(str)
     # Sort all columns in ascending Code and pentad order
     hydrograph_day_all = hydrograph_day_all.sort_values(by=["code", "day_of_year"])
+
+    # Cast date column to datetime
+    hydrograph_day_all['date'] = pd.to_datetime(hydrograph_day_all['date'], format='%Y-%m-%d')
+
+    # Print tail of hydrograph_day_all for code == 15194
+    print(f"DEBUG: read_hydrograph_day_file: hydrograph_day_all:\n{hydrograph_day_all[hydrograph_day_all['code'] == '15194'].head()}")
+    print(f"DEBUG: read_hydrograph_day_file: hydrograph_day_all:\n{hydrograph_day_all[hydrograph_day_all['code'] == '15194'].tail()}")
 
     # Store in cache
     pn.state.cache[cache_key] = (file_mtime, hydrograph_day_all)
