@@ -1167,7 +1167,8 @@ def from_daily_time_series_to_hydrograph(data_df: pd.DataFrame,
     last_year_data = data_df[data_df[date_col].dt.year == last_year]
     # Drop the date column
     last_year_data = last_year_data.drop(columns=[name_col])
-    # Add 1 year to the date column
+    # Add 1 year to the date column, this leads to a bug in the hydrograph when
+    # leap years are involved. Better to recalculate the date as further below.
     #last_year_data[date_col] = last_year_data[date_col] + pd.DateOffset(years=1)
     # Rename the discharge column to the last year
     last_year_data = last_year_data.rename(columns={discharge_col: f"{last_year}"})

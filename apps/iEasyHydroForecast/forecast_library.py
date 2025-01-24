@@ -2260,6 +2260,12 @@ def write_linreg_decad_forecast_data(data: pd.DataFrame):
 
     return ret
 
+def is_leap_year(year):
+    if (year % 4 == 0 and year % 100 != 0) or (year % 400 == 0):
+        return True
+    else:
+        return False
+
 def write_pentad_hydrograph_data(data: pd.DataFrame):
     """
     Calculates statistics of the pentadal hydrograph and saves it to a csv file.
@@ -2272,7 +2278,7 @@ def write_pentad_hydrograph_data(data: pd.DataFrame):
     """
 
     # Only keep rows where issue_date is True
-    data = data[data['issue_date'] == True]
+    data = data[data['issue_date'] == True].copy()
 
     # Drop the issue_date column
     data = data.drop(columns=['issue_date', 'discharge'])
@@ -2292,6 +2298,12 @@ def write_pentad_hydrograph_data(data: pd.DataFrame):
     current_year = data['date'].dt.year.max()
 
     logger.debug(f"Calculating pentadal runoff statistics with data from {data['date'].min()} to {data['date'].max()}")
+
+    # If we are not in a leap year, drop the 29th of February and adjust the day_of_year
+    data['day_of_year'] = data['date'].dt.dayofyear
+    if not is_leap_year(current_year):
+        data = data[~((data['date'].dt.month == 2) & (data['date'].dt.day == 29))]
+        data.loc[(data['date'].dt.month > 2), 'day_of_year'] -= 1
 
     # Calculate runoff statistics
     runoff_stats = data[data['date'].dt.year != current_year]. \
@@ -2314,7 +2326,8 @@ def write_pentad_hydrograph_data(data: pd.DataFrame):
     current_year_data = data[data['date'].dt.year == current_year]
     #last_year_data = last_year_data.drop(columns=['date'])
     # Add 1 year to date of last_year_data
-    last_year_data.loc[:, 'date'] = last_year_data.loc[:, 'date'] + pd.DateOffset(years=1)
+    #last_year_data.loc[:, 'date'] = last_year_data.loc[:, 'date'] + pd.DateOffset(years=1)
+    last_year_data.loc[:, 'date'] = pd.Timestamp(str(current_year)) + pd.to_timedelta(last_year_data['day_of_year'] - 1, unit='D')
     current_year_data = current_year_data.drop(columns=['date'])
     last_year_data = last_year_data.rename(columns={'discharge_avg': str(last_year)}).reset_index(drop=True)
     current_year_data = current_year_data.rename(columns={'discharge_avg': str(current_year)}).reset_index(drop=True)

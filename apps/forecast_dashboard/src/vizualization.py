@@ -2651,8 +2651,8 @@ def plot_pentad_forecast_hydrograph_data(_, hydrograph_pentad_all, forecasts_all
     # Filter hydrograph data for the current station
     data = hydrograph_pentad_all[hydrograph_pentad_all['station_labels'] == station].copy()
     print("\n\nFirst getting data for station:")
-    print("head of data:\n", data.head())
-    print("tail of data:\n", data.tail())
+    print("head of data:\n", data.head()[['code', 'pentad_in_year', 'mean', '2024', '2025', 'date']])
+    print("tail of data:\n", data.tail()[['code', 'pentad_in_year', 'mean', '2024', '2025', 'date']])
 
     current_year = int(data['date'].dt.year.max())
     last_year = current_year - 1
@@ -2667,6 +2667,11 @@ def plot_pentad_forecast_hydrograph_data(_, hydrograph_pentad_all, forecasts_all
     # If the first date is NaT, set it to the first day of the year of the current year
     if pd.isna(data['date'].iloc[0]):
         data['date'].iloc[0] = pd.Timestamp(f"{current_year}-01-01")
+
+    # Print pentad of first date in data
+    print(f"\n\n\n\n\npentad of first date in data: {data['pentad_in_year'].iloc[0]} of {data['date'].iloc[0]}")
+    print(f"head(data): {data.head()[['code', 'pentad_in_year', 'mean', '2024', '2025', 'date']]}")
+    print(f"data.columns: {data.columns}")
 
     # Set values after the title date to NaN
     # WHY DO WE DO THAT?
