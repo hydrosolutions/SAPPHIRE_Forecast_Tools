@@ -17,9 +17,9 @@ env:
 
 on:
   push:
-    branches: [ "main"]
+    branches: [ "rerun_failed_prep_gateway"]
   pull_request:
-    branches: [ "main" ]
+    branches: [ "rerun_failed_prep_gateway" ]
 
 jobs:
 
