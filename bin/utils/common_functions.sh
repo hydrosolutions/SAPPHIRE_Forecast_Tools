@@ -105,7 +105,7 @@ read_configuration(){
     echo "|    $ieasyhydroforecast_organization"
 
     # Set up logging directory
-    SAP_LOG_DIR="/var/log/docker-cleanup"
+    SAP_LOG_DIR="$ieasyhydroforecast_data_root_dir/docker-cleanup"
     mkdir -p "$SAP_LOG_DIR"
     export SAP_LOG_DIR
 
