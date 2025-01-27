@@ -17,6 +17,7 @@ import docker
 import datetime
 import re
 from dotenv import load_dotenv
+from typing import Optional
 
 # Import local utils
 from apps.pipeline.src import pipeline_utils as pu
@@ -176,10 +177,107 @@ class PreprocessingRunoff(luigi.Task):
 
 class PreprocessingGatewayQuantileMapping(luigi.Task):
 
+    max_retries = 3
+    retry_delay = 5
+
     def output(self):
          # Define a unique output file for this task
         return luigi.LocalTarget(f'/app/log_prepgateway.txt')
 
+    def _run_container(self, attempt_number) -> tuple[Optional[str], int, str]:
+        """
+        Run the docker container and return container ID, exit status, and logs
+        """
+        client = docker.from_env()
+
+        try:
+            # Construct the absolute volume paths to bind to the containers
+            absolute_volume_path_config = get_absolute_path(
+                env.get('ieasyforecast_configuration_path'))
+            absolute_volume_path_internal_data = get_absolute_path(
+                env.get('ieasyforecast_intermediate_data_path'))
+            bind_volume_path_config = get_bind_path(
+                env.get('ieasyforecast_configuration_path'))
+            bind_volume_path_internal_data = get_bind_path(
+                env.get('ieasyforecast_intermediate_data_path'))
+
+            # Pull the latest image if needed
+            if pu.there_is_a_newer_image_on_docker_hub(
+                client, repository='mabesa', image_name='sapphire-prepgateway', tag=TAG):
+                print("Pulling the latest image from Docker Hub.")
+                client.images.pull('mabesa/sapphire-prepgateway', tag=TAG)
+
+            # Define environment variables
+            environment = [
+                'SAPPHIRE_OPDEV_ENV=True',
+                'SAPPHIRE_DG_HOST=' + SAPPHIRE_DG_HOST
+            ]
+
+            # Define volumes
+            volumes = {
+                absolute_volume_path_config: {'bind': bind_volume_path_config, 'mode': 'rw'},
+                absolute_volume_path_internal_data: {'bind': bind_volume_path_internal_data, 'mode': 'rw'}
+            }
+
+            # Run the container with unique name for each attempt
+            container = client.containers.run(
+                f"mabesa/sapphire-prepgateway:{TAG}",
+                detach=True,
+                environment=environment,
+                volumes=volumes,
+                name=f"prepgateway_attempt_{attempt_number}_{time.time()}",  # Unique name per attempt
+                network='host'
+            )
+
+            print(f"Container {container.id} is running.")
+
+            # Wait for the container to finish running
+            result = container.wait()
+            exit_status = result['StatusCode']
+            logs = container.logs().decode('utf-8')
+
+            print(f"Container {container.id} exited with status code {exit_status}")
+            print(f"Logs from container {container.id}:\n{logs}")
+
+            # Clean up container
+            try:
+                container.remove()
+            except Exception as e:
+                print(f"Warning: Could not remove container {container.id}: {str(e)}")
+
+            return container.id, exit_status, logs
+
+        except Exception as e:
+            print(f"Error running container: {str(e)}")
+            return None, 1, str(e)
+
+    def run(self):
+        print("------------------------------------")
+        print(" Running PreprocessingGateway task.")
+        print("------------------------------------")
+
+        attempts = 0
+        while attempts < self.max_retries:
+            attempts += 1
+            print(f"Attempt {attempts} of {self.max_retries}")
+
+            container_id, exit_status, logs = self._run_container(attempts)
+
+            if exit_status == 0:
+                # Success - write output and exit
+                with self.output().open('w') as f:
+                    f.write('Task completed successfully\n')
+                    f.write(f'Container ID: {container_id}\n')
+                    f.write(f'Logs:\n{logs}')
+                return
+
+            if attempts < self.max_retries:
+                print(f"Container failed with status {exit_status}. Retrying in {self.retry_delay} seconds...")
+                time.sleep(self.retry_delay)
+            else:
+                print(f"Container failed after {self.max_retries} attempts.")
+                raise RuntimeError(f"Task failed after {self.max_retries} attempts. Last exit status: {exit_status}\nLogs:\n{logs}")
+    '''
     def run(self):
         print("------------------------------------")
         print(" Running PreprocessingGateway task.")
@@ -245,6 +343,8 @@ class PreprocessingGatewayQuantileMapping(luigi.Task):
         # Create the output marker file
         with self.output().open('w') as f:
             f.write('Task completed')
+        '''
+
 
 class LinearRegression(luigi.Task):
 
