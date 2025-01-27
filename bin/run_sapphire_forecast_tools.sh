@@ -86,4 +86,5 @@ wait $DOCKER_COMPOSE_LUIGI_PID
 # Additional actions to be taken after Docker Compose service stops
 echo "Docker Compose service for backend has finished running"
 
-
+# Clean up remaining docker stuff, remove unused containers and images
+clean_up_docker_space

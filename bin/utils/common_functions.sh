@@ -104,6 +104,11 @@ read_configuration(){
     echo "| Deploying the SAPPHIRE forecast tools for organization:"
     echo "|    $ieasyhydroforecast_organization"
 
+    # Set up logging directory
+    SAP_LOG_DIR="/var/log/docker-cleanup"
+    mkdir -p "$SAP_LOG_DIR"
+    export SAP_LOG_DIR
+
 }
 
 # Function to remove all Docker containers and images
@@ -115,6 +120,24 @@ clean_out_docker_space() {
     # Take down the frontend if it is running
     docker compose -f bin/docker-compose-dashboards.yml down
     ieasyhydroforecast_data_root_dir=$ieasyhydroforecast_data_root_dir source ./bin/utils/clean_docker.sh --execute
+}
+
+# Function to save container logs
+save_container_logs() {
+    local container_name=$1
+    local timestamp=$(date +%Y%m%d_%H%M%S)
+    local log_file="$SAP_LOG_DIR/${container_name}_${timestamp}.log"
+
+    echo "Saving logs for container: $container_name"
+    echo "Container: $container_name - Log saved at: $(date)" > "$log_file"
+    echo "----------------------------------------" >> "$log_file"
+    docker logs "$container_name" &>> "$log_file" || echo "Failed to get logs for $container_name" >> "$log_file"
+}
+
+# Function to clean up old log files
+cleanup_old_logs() {
+    echo "Cleaning up log files older than 10 days..."
+    find "$SAP_LOG_DIR" -name "*.log" -type f -mtime +10 -exec rm {} \;
 }
 
 # Function to stop and remove a container if it exists
@@ -151,6 +174,76 @@ clean_out_backend() {
     stop_and_remove_container ml_ARIMA_PENTAD
     stop_and_remove_container ml_ARIMA_DECAD
     stop_and_remove_container conceptmod
+}
+
+# Function to check if a container needs to be restarted
+check_and_restart() {
+    local container_name=$1
+    local exit_code=$(docker inspect "$container_name" --format='{{.State.ExitCode}}' 2>/dev/null)
+
+    if [ "$exit_code" = "1" ]; then
+        echo "Container $container_name has exit code 1. Attempting to restart..."
+        docker restart "$container_name"
+
+        # Wait a moment and check if restart was successful
+        sleep 5
+        if [ "$(docker inspect "$container_name" --format='{{.State.Running}}')" = "true" ]; then
+            echo "Successfully restarted $container_name"
+        else
+            echo "Failed to restart $container_name"
+        fi
+    fi
+}
+
+# Function to clean up a forecast run
+clean_up_docker_space() {
+    echo "Starting Docker cleanup process..."
+
+    # Clean up old log files first
+    cleanup_old_logs
+
+    # Get all exited containers except those containing 'nginx' and exact match for sapphire-frontend-forecast
+    exited_containers=$(docker ps -a --filter "status=exited" --format "{{.Names}}" | grep -vE "nginx|sapphire-frontend-forecast")
+
+    # Save logs and remove exited containers
+    if [ -n "$exited_containers" ]; then
+        echo "Processing exited containers..."
+        while IFS= read -r container; do
+            save_container_logs "$container"
+        done <<< "$exited_containers"
+
+        echo "Removing exited containers..."
+        echo "$exited_containers" | xargs -r docker rm
+        echo "Finished removing exited containers"
+    else
+        echo "No exited containers to remove"
+    fi
+
+    # Check and restart nginx containers and sapphire-frontend-forecast if needed
+    echo "Checking special containers..."
+
+    # Find and check all nginx containers
+    nginx_containers=$(docker ps -a --format "{{.Names}}" | grep "nginx")
+    if [ -n "$nginx_containers" ]; then
+        echo "Found nginx containers: $nginx_containers"
+        echo "$nginx_containers" | while read -r container; do
+            check_and_restart "$container"
+        done
+    else
+        echo "No nginx containers found"
+    fi
+
+    # Check sapphire-frontend-forecast
+    check_and_restart "sapphire-frontend-forecast"
+
+    # Remove unused images
+    echo "Removing unused Docker images..."
+    docker image prune -f
+
+    echo "Cleanup process completed"
+
+    # Add timestamp to the log file for this run
+    echo "Script completed at: $(date)" >> "$SAP_LOG_DIR/cleanup_script.log"
 }
 
 # Function to pull Docker images for the forecast tools
