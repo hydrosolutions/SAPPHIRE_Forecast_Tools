@@ -4,6 +4,7 @@ import pandas as pd
 import numpy as np
 import param
 import re
+from concurrent.futures import ThreadPoolExecutor
 
 from .gettext_config import _
 
@@ -147,8 +148,10 @@ def read_rram_forecast_data(file_mtime):
                 temp_data['model_short'] = 'RRAM'
                 rram_forecast = pd.concat([rram_forecast, temp_data], ignore_index=True)
     # Cast forecast_date and date columns to datetime
-    rram_forecast['forecast_date'] = rram_forecast['forecast_date'].apply(parse_dates)
-    rram_forecast['date'] = rram_forecast['date'].apply(parse_dates)
+    # rram_forecast['forecast_date'] = rram_forecast['forecast_date'].apply(parse_dates)
+    # rram_forecast['date'] = rram_forecast['date'].apply(parse_dates)
+    rram_forecast['forecast_date'] = pd.to_datetime(rram_forecast['forecast_date'], errors='coerce')
+    rram_forecast['date'] = pd.to_datetime(rram_forecast['date'], errors='coerce')
 
     # Only keep latest forecast for each station
     rram_forecast = rram_forecast.sort_values(by=['code', 'forecast_date']).groupby('code').tail(17)
@@ -210,7 +213,10 @@ def read_daily_probabilistic_ml_forecasts_pentad(
     forecast (pandas.DataFrame): The forecast results for the pentadal forecast horizon.
     """
     # Read the forecast results
-    daily_data = pd.read_csv(filepath, parse_dates=["date", "forecast_date"])
+    # daily_data = pd.read_csv(filepath, parse_dates=["date", "forecast_date"])
+    daily_data = pd.read_csv(filepath)
+    daily_data['date'] = pd.to_datetime(daily_data['date'], errors='coerce')
+    daily_data['forecast_date'] = pd.to_datetime(daily_data['forecast_date'], errors='coerce')
 
     # Rename the column forecast_date to date and Q50 to forecasted_discharge.
     # In the case of the ARIMA model, we don't have quantiles but rename the
@@ -294,16 +300,27 @@ def read_ml_forecast_data(file_mtime):
         if cached_mtime == file_mtime:
             return ml_forecast
 
-    tide = read_machine_learning_forecasts_pentad('TIDE', file_mtime)
-    tft = read_machine_learning_forecasts_pentad('TFT', file_mtime)
-    tsmixer = read_machine_learning_forecasts_pentad('TSMIXER', file_mtime)
+    # tide = read_machine_learning_forecasts_pentad('TIDE', file_mtime)
+    # tft = read_machine_learning_forecasts_pentad('TFT', file_mtime)
+    # tsmixer = read_machine_learning_forecasts_pentad('TSMIXER', file_mtime)
+    # arima = read_machine_learning_forecasts_pentad('ARIMA', file_mtime)
+
+    with ThreadPoolExecutor() as executor:
+        # List of parameters for each forecast type
+        forecast_types = ['TIDE', 'TFT', 'TSMIXER', 'ARIMA']
+
+        # Use executor.map to apply read_machine_learning_forecasts_pentad concurrently
+        results = executor.map(read_machine_learning_forecasts_pentad, forecast_types, [file_mtime] * len(forecast_types))
+
+        # Map the results to their respective variables
+        tide, tft, tsmixer, arima = results
+
     # Calculate the Neural Ensemble (NE) forecast as the average of the TFT,
     # TIDE, and TSMIXER forecasts
     ne = pd.concat([tide, tft, tsmixer], ignore_index=True)
     ne = ne.drop(columns=['model_long', 'model_short']).groupby(['code', 'date', 'forecast_date']).mean().reset_index()
     ne['model_long'] = 'Neural Ensemble (NE)'
     ne['model_short'] = 'NE'
-    arima = read_machine_learning_forecasts_pentad('ARIMA', file_mtime)
     # Concatenate the data frames
     ml_forecast = pd.concat([tide, tft, tsmixer, ne, arima], ignore_index=True)
     #print(f"Head of ml_forecast:\n{ml_forecast.head()}")
