@@ -2818,14 +2818,40 @@ def create_forecast_summary_table(_, forecasts_all, station, date_picker,
                                   model_selection, range_type, range_slider):
 
     # Filter forecasts_all for selected station, date and models
-    forecast_table = forecasts_all[(forecasts_all['station_labels'] == station)].copy()
+    if hasattr(station, 'value'):
+        forecast_table = forecasts_all[(forecasts_all['station_labels'] == station.value)].copy()
+    else:
+        forecast_table = forecasts_all[(forecasts_all['station_labels'] == station)].copy()
 
     # Cast date column to datetime
     forecast_table['date'] = pd.to_datetime(forecast_table['date'])
 
+    print(f"create_forecast_summary_table: model_selection: {model_selection}")
+    # List of unique models in forecast_table before filtering.
+    print(f"create_forecast_summary_table: forecast_table['model_short'].unique(): {forecast_table['model_short'].unique()}")
+    print(f"columns of forecast_table: {forecast_table.columns}")
+
     # Filter further for the selected date and models
-    forecast_table = forecast_table[(forecast_table['date'] <= (pd.Timestamp(date_picker) + pd.Timedelta(days=1))) &
+    # if model_selection has attribute value, use it, otherwise use model_selection
+    if hasattr(model_selection, 'value'):
+        if hasattr(date_picker, 'value'):
+            forecast_table = forecast_table[(forecast_table['date'] <= (pd.Timestamp(date_picker.value) + pd.Timedelta(days=1))) &
+                            (forecast_table['model_short'].isin(model_selection.value))].copy().reset_index(drop=True)
+        else:
+            forecast_table = forecast_table[(forecast_table['date'] <= (pd.Timestamp(date_picker) + pd.Timedelta(days=1))) &
+                            (forecast_table['model_short'].isin(model_selection.value))].copy().reset_index(drop=True)
+    else:
+        if hasattr(date_picker, 'value'):
+            forecast_table = forecast_table[(forecast_table['date'] <= (pd.Timestamp(date_picker.value) + pd.Timedelta(days=1))) &
                             (forecast_table['model_short'].isin(model_selection))].copy().reset_index(drop=True)
+        else:
+            forecast_table = forecast_table[(forecast_table['date'] <= (pd.Timestamp(date_picker) + pd.Timedelta(days=1))) &
+                                        (forecast_table['model_short'].isin(model_selection))].copy().reset_index(drop=True)
+
+    # List of unique models in forecast_table after filtering.
+    print(f"create_forecast_summary_table: forecast_table['model_short'].unique(): {forecast_table['model_short'].unique()}")
+    # print columns model_short, date, and forecasted_discharge
+    print(f"create_forecast_summary_table: forecast_table[['model_short', 'date', 'forecasted_discharge']].tail(10): {forecast_table[['model_short', 'date', 'forecasted_discharge']].tail(10)}")
 
     # Select the row with the maximum date
     if not forecast_table.empty and not forecast_table['date'].empty:
@@ -2899,6 +2925,8 @@ def create_forecast_summary_tabulator(_, forecasts_all, station, date_picker,
     if pd.isna(max_accuracy_index):
         max_accuracy_index = 0
     #print("max_accuracy_index\n", max_accuracy_index)
+
+    print("final_forecast_table\n", final_forecast_table)
 
     # Update the Tabulator's value
     forecast_tabulator.value = final_forecast_table
