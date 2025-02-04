@@ -417,6 +417,7 @@ def make_ml_forecast():
     for code in rivers_to_predict:
         # Cast code to int.
         code = int(code)
+
         logger.debug('Code: %s', code)
 
         #get the data
@@ -432,8 +433,8 @@ def make_ml_forecast():
         logger.debug('past_discharge_code: %s', past_discharge_code.tail())
         logger.debug('qmapped_era5_code: %s', qmapped_era5_code.tail())
 
-        #chec if we can make a forecast: 
-        # if the last observation is not older than today - 1 days, we don't make a forecast
+        #check if we can make a forecast: 
+        # if the last observation is older than today - 1 days, we don't make a forecast
         if past_discharge_code['date'].iloc[-1] < pd.to_datetime(datetime.datetime.now().date()) - pd.Timedelta(days=1):
             logger.debug('No forecast due to no recent available discharge for code: %s', code )
             continue
@@ -482,7 +483,7 @@ def make_ml_forecast():
         predictions['forecast_date'] = pd.to_datetime(datetime.datetime.now().date())
         predictions['date'] = pd.to_datetime(predictions['date'])
 
-        forecast = pd.concat([forecast, predictions], axis=0)
+        forecast = pd.concat([forecast, predictions], axis=0, ignore_index=True)
 
         # Check if for this code we have a twin vitrual gauge which is > 0
         test_value = hydroposts_available_for_ml_forecasting.loc[hydroposts_available_for_ml_forecasting['code'] == str(code), 'virtual_station_name_twin'].iloc[0]
