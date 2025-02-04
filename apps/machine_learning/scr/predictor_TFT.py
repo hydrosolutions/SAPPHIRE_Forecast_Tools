@@ -315,6 +315,7 @@ class PREDICTOR():
                 verbose=False,
                 last_points_only=False,
                 predict_kwargs=predict_kwargs)
+                
         except Exception as e:
             print(e)
             print("Error in hindcasting for code", code)

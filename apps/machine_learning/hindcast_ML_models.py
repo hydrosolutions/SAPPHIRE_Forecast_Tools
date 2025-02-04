@@ -421,11 +421,21 @@ def main():
     # filter observed discharge to be only in the range of the start and end date
     observed_discharge = observed_discharge[observed_discharge['date'] >= start_date].copy()
     observed_discharge = observed_discharge[observed_discharge['date'] <= end_date].copy()
+
     
     timer_start = datetime.datetime.now()
     for code in rivers_to_predict:
     
         discharge = observed_discharge[observed_discharge['code'] == code].copy()
+        
+        #ensure that the discharge data has no missing dates in the range of the start and end date + forecast horizon
+        # if it has missing dates, then fill the missing dates with nan
+        date_range = pd.date_range(start=start_date, end=end_date + pd.Timedelta(days=forecast_horizon), freq='D')
+        discharge.set_index('date', inplace=True)
+        discharge = discharge.reindex(date_range)
+        discharge.reset_index(inplace=True)
+        discharge.rename(columns={'index': 'date'}, inplace=True)
+
         era5 = era5_data_transformed[era5_data_transformed['code'] == code].copy()
 
 
