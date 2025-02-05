@@ -397,9 +397,6 @@ def main():
     THRESHOLD_MISSING_DAYS= int(THRESHOLD_MISSING_DAYS)
     THRESHOLD_MISSING_DAYS_END = int(THRESHOLD_MISSING_DAYS_END)
 
-
-
-
     pred_date = pd.to_datetime(start_date)
     
     observed_discharge['date'] = pd.to_datetime(observed_discharge['date'])
@@ -451,11 +448,26 @@ def main():
         hindcast_code['code'] = code
         
         hindecast_daily_df = pd.concat([hindecast_daily_df, hindcast_code], axis=0)
+
+        # Check if for this code we have a twin vitrual gauge which is > 0
+        test_value = hydroposts_available_for_ml_forecasting.loc[hydroposts_available_for_ml_forecasting['code'] == str(code), 'virtual_station_name_twin'].iloc[0]
+        if test_value is not False:
+            logger.debug('Forecast for twin virtual gauge: %s', test_value)
+
+            hindcast_code['code'] = int(test_value)
+            hindecast_daily_df = pd.concat([hindecast_daily_df, hindcast_code], axis=0)
+
+            logger.debug('Copied data and appended: %s', hindcast_code)
     
     timer_end = datetime.datetime.now()
 
-    print(f'Time to make hindcast: {timer_end - timer_start}')
+    #Flagging:
+    # if the forecast is nan -> flag = 3
+    # if there is a value in the forecast: -> flag = 4
+    hindecast_daily_df['flag'] = 4
+    hindecast_daily_df.loc[hindecast_daily_df['forecast_date'].isna(), 'flag'] = 3
 
+    print(f'Time to make hindcast: {timer_end - timer_start}')
     # --------------------------------------------------------------------
     # SAVE HINDECAST
     # --------------------------------------------------------------------
