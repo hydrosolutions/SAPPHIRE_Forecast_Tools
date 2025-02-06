@@ -1316,9 +1316,13 @@ def sdivsigma_nse(data: pd.DataFrame, observed_col: str, simulated_col: str):
     # Calculate mean once for reuse
     observed_mean = np.mean(observed)
 
+    # Count the number of data points
+    n = len(observed)
+
     # Calculate denominators
     denominator_nse = np.sum((observed - observed_mean) ** 2)
-    denominator_sdivsigma = np.std(observed)
+    # sigma: Standard deviation of the observed data
+    denominator_sdivsigma = np.std(observed, ddof=1)  # ddof=1 for sample std
 
     # Check for numerical stability
     if denominator_nse < 1e-10 or denominator_sdivsigma < 1e-10:
@@ -1336,7 +1340,9 @@ def sdivsigma_nse(data: pd.DataFrame, observed_col: str, simulated_col: str):
         nse_value = 1 - (numerator_nse / denominator_nse)
 
         # Calculate sdivsigma
-        numerator_sdivsigma = np.std(np.abs(differences))
+        # s: Average of squared differences between observed and simulated data
+        numerator_sdivsigma = np.sqrt(np.sum(differences ** 2) / (n - 1))
+        # s/sigma: Efficacy of the model
         sdivsigma = numerator_sdivsigma / denominator_sdivsigma
 
         # Sanity checks
@@ -1483,6 +1489,58 @@ def mae(data: pd.DataFrame, observed_col: str, simulated_col: str):
         simulated_col (str): The name of the column containing the simulated data.
 
     Returns:
+        pandas.Series: A series containing:
+            - mae: mean average error between observed and simulated data
+            - n_pairs: number of valid observed-simulated pairs used in calculation
+
+    Raises:
+        ValueError: If the input data is missing one or more required columns.
+    """
+    # Test the input. Make sure that the DataFrame contains the required columns
+    if not all(column in data.columns for column in [observed_col, simulated_col]):
+        raise ValueError(f'DataFrame is missing one or more required columns: {observed_col, simulated_col}')
+
+    # Convert to numpy arrays for faster computation
+    observed = data[observed_col].to_numpy(dtype=np.float64)
+    simulated = data[simulated_col].to_numpy(dtype=np.float64)
+
+    # Check for empty data after dropping NaNs
+    mask = ~(np.isnan(observed) | np.isnan(simulated))
+    if not np.any(mask):
+        return pd.Series([np.nan, 0], index=['mae', 'n_pairs'])
+
+    # Filter arrays using mask
+    observed = observed[mask]
+    simulated = simulated[mask]
+
+    # Early return if not enough data points
+    if len(observed) < 1:
+        return pd.Series([np.nan, 0], index=['mae', 'n_pairs'])
+
+    try:
+        # Calculate MAE using vectorized operations
+        mae_value = np.mean(np.abs(observed - simulated))
+
+        # Sanity check
+        if not (0 <= mae_value < np.inf):  # MAE must be non-negative
+            return pd.Series([np.nan, 0], index=['mae', 'n_pairs'])
+
+        return pd.Series([mae_value, len(observed)], index=['mae', 'n_pairs'])
+
+    except (RuntimeWarning, FloatingPointError) as e:
+        logger.debug(f"Numerical computation error in mae: {str(e)}")
+        return pd.Series([np.nan, 0], index=['mae', 'n_pairs'])
+
+'''def mae(data: pd.DataFrame, observed_col: str, simulated_col: str):
+    """
+    Calculate the mean average error between observed and simulated data
+
+    Args:
+        data (pandas.DataFrame): The input data containing the observed and simulated data.
+        observed_col (str): The name of the column containing the observed data.
+        simulated_col (str): The name of the column containing the simulated data.
+
+    Returns:
         float: mean average error between observed and simulated data
 
     Raises:
@@ -1523,7 +1581,9 @@ def mae(data: pd.DataFrame, observed_col: str, simulated_col: str):
     except (RuntimeWarning, FloatingPointError) as e:
         logger.debug(f"Numerical computation error in mae: {str(e)}")
         return pd.Series([np.nan], index=['mae'])
-    '''
+'''
+
+'''
     # SLOW VERSION
     # Drop NaN values
     dataN = data.dropna(subset=[observed_col, simulated_col]).copy()
@@ -1537,7 +1597,7 @@ def mae(data: pd.DataFrame, observed_col: str, simulated_col: str):
     mae = abs(dataN[observed_col] - dataN[simulated_col]).mean()
 
     return pd.Series([mae], index=['mae'])
-    '''
+'''
 
 def calculate_forecast_skill_deprecating(data_df: pd.DataFrame, station_col: str,
                              pentad_col: str, observation_col: str,
@@ -1796,8 +1856,9 @@ def calculate_skill_metrics_pentad(
             apply(
                 mae,
                 observed_col='discharge_avg',
-                simulated_col='forecasted_discharge').\
+                simulated_col='forecasted_discharge'). \
             reset_index()
+        #print("DEBUG: mae_stats\n", mae_stats.columns)
         test_for_tuples(mae_stats)
 
     with timer(timing_stats, 'calculate_skill_metrics_pentad - Calculate forecast_accuracy_hydromet'):

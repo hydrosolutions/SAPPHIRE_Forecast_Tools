@@ -2,6 +2,7 @@ import datetime
 import numpy as np
 import pandas as pd
 import unittest
+import pytest
 import datetime as dt
 import math
 import os
@@ -878,8 +879,308 @@ class TestDataProcessing(unittest.TestCase):
         np.testing.assert_array_equal(result['discharge_avg'].dropna().values, expected_result['discharge_avg'].dropna().values)
 
 
+class TestMAE(unittest.TestCase):
+
+    def test_mae_perfect_match(self):
+        """Test MAE when observed and simulated values match perfectly"""
+        df = pd.DataFrame({
+            'observed': [1.0, 2.0, 3.0, 4.0, 5.0],
+            'simulated': [1.0, 2.0, 3.0, 4.0, 5.0]
+        })
+        result = fl.mae(df, 'observed', 'simulated')
+        np.testing.assert_almost_equal(result['mae'], 0.0)
+        self.assertEqual(result['n_pairs'], 5)
+
+    def test_mae_constant_difference(self):
+        """Test MAE with constant difference between observed and simulated"""
+        df = pd.DataFrame({
+            'observed': [1.0, 2.0, 3.0, 4.0, 5.0],
+            'simulated': [2.0, 3.0, 4.0, 5.0, 6.0]  # Constant difference of 1
+        })
+        result = fl.mae(df, 'observed', 'simulated')
+        np.testing.assert_almost_equal(result['mae'], 1.0)
+        self.assertEqual(result['n_pairs'], 5)
+
+    def test_mae_with_negatives(self):
+        """Test MAE with negative values"""
+        df = pd.DataFrame({
+            'observed': [-1.0, -2.0, 3.0, 4.0, -5.0],
+            'simulated': [1.0, 2.0, -3.0, -4.0, 5.0]
+        })
+        result = fl.mae(df, 'observed', 'simulated')
+        np.testing.assert_almost_equal(result['mae'], 6.0)
+        self.assertEqual(result['n_pairs'], 5)
+
+    def test_mae_with_zeros(self):
+        """Test MAE with zero values"""
+        df = pd.DataFrame({
+            'observed': [0.0, 0.0, 0.0],
+            'simulated': [1.0, 2.0, 3.0]
+        })
+        result = fl.mae(df, 'observed', 'simulated')
+        np.testing.assert_almost_equal(result['mae'], 2.0)
+        self.assertEqual(result['n_pairs'], 3)
+
+    def test_mae_single_value(self):
+        """Test MAE with single value"""
+        df = pd.DataFrame({
+            'observed': [1.0],
+            'simulated': [2.0]
+        })
+        result = fl.mae(df, 'observed', 'simulated')
+        np.testing.assert_almost_equal(result['mae'], 1.0)
+        self.assertEqual(result['n_pairs'], 1)
+
+    def test_mae_empty_dataframe(self):
+        """Test MAE with empty DataFrame"""
+        df = pd.DataFrame({
+            'observed': [],
+            'simulated': []
+        })
+        result = fl.mae(df, 'observed', 'simulated')
+        assert np.isnan(result['mae'])
+        self.assertEqual(result['n_pairs'], 0)
+
+    def test_mae_all_nans_observed(self):
+        """Test MAE with all NaNs in observed column"""
+        df = pd.DataFrame({
+            'observed': [np.nan, np.nan, np.nan],
+            'simulated': [1.0, 2.0, 3.0]
+        })
+        result = fl.mae(df, 'observed', 'simulated')
+        assert np.isnan(result['mae'])
+        self.assertEqual(result['n_pairs'], 0)
+
+    def test_mae_all_nans_simulated(self):
+        """Test MAE with all NaNs in simulated column"""
+        df = pd.DataFrame({
+            'observed': [1.0, 2.0, 3.0],
+            'simulated': [np.nan, np.nan, np.nan]
+        })
+        result = fl.mae(df, 'observed', 'simulated')
+        assert np.isnan(result['mae'])
+        self.assertEqual(result['n_pairs'], 0)
+
+    def test_mae_some_nans(self):
+        """Test MAE with some NaN values"""
+        df = pd.DataFrame({
+            'observed': [1.0, np.nan, 3.0, 4.0],
+            'simulated': [1.0, 2.0, np.nan, 4.0]
+        })
+        result = fl.mae(df, 'observed', 'simulated')
+        np.testing.assert_almost_equal(result['mae'], 0.0)  # Only compares non-NaN pairs
+        self.assertEqual(result['n_pairs'], 2)  # Only two valid pairs: [1.0, 1.0] and [4.0, 4.0]
+
+    def test_mae_infinity(self):
+        """Test MAE with infinity values"""
+        df = pd.DataFrame({
+            'observed': [1.0, 2.0, np.inf],
+            'simulated': [1.0, 2.0, 3.0]
+        })
+        result = fl.mae(df, 'observed', 'simulated')
+        assert np.isnan(result['mae'])
+        self.assertEqual(result['n_pairs'], 0)
+
+    def test_mae_missing_columns(self):
+        """Test MAE with missing columns"""
+        df = pd.DataFrame({
+            'observed': [1.0, 2.0, 3.0]
+        })
+        with pytest.raises(ValueError):
+            fl.mae(df, 'observed', 'simulated')
+
+    def test_mae_wrong_column_names(self):
+        """Test MAE with wrong column names"""
+        df = pd.DataFrame({
+            'actual': [1.0, 2.0, 3.0],
+            'predicted': [1.0, 2.0, 3.0]
+        })
+        with pytest.raises(ValueError):
+            fl.mae(df, 'observed', 'simulated')
+
+    def test_mae_float_precision(self):
+        """Test MAE with floating point precision"""
+        df = pd.DataFrame({
+            'observed': [1.123456789, 2.123456789],
+            'simulated': [1.123456780, 2.123456780]
+        })
+        result = fl.mae(df, 'observed', 'simulated')
+        np.testing.assert_almost_equal(result['mae'], 9e-9, decimal=9)
+        self.assertEqual(result['n_pairs'], 2)
+
+    def test_mae_large_numbers(self):
+        """Test MAE with very large numbers"""
+        df = pd.DataFrame({
+            'observed': [1e8, 2e8],
+            'simulated': [1e8 + 1, 2e8 + 1]
+        })
+        result = fl.mae(df, 'observed', 'simulated')
+        np.testing.assert_almost_equal(result['mae'], 1.0)
+        self.assertEqual(result['n_pairs'], 2)
+
+    def test_mae_small_numbers(self):
+        """Test MAE with very small numbers"""
+        df = pd.DataFrame({
+            'observed': [1e-8, 2e-8],
+            'simulated': [1.1e-8, 2.1e-8]
+        })
+        result = fl.mae(df, 'observed', 'simulated')
+        np.testing.assert_almost_equal(result['mae'], 1e-9)
+        self.assertEqual(result['n_pairs'], 2)
 
 
+class TestSdivsigmaNSE(unittest.TestCase):
+
+    def test_perfect_match(self):
+        """Test when observed and simulated values match perfectly"""
+        df = pd.DataFrame({
+            'observed': [1.0, 2.0, 3.0, 4.0, 5.0],
+            'simulated': [1.0, 2.0, 3.0, 4.0, 5.0]
+        })
+        result = fl.sdivsigma_nse(df, 'observed', 'simulated')
+        np.testing.assert_almost_equal(result['sdivsigma'], 0.0)  # Perfect match means no error
+        np.testing.assert_almost_equal(result['nse'], 1.0)  # Perfect NSE score
+
+    def test_constant_difference(self):
+        """Test with constant difference between observed and simulated"""
+        df = pd.DataFrame({
+            'observed': [1.0, 2.0, 3.0, 4.0, 5.0],
+            'simulated': [2.0, 3.0, 4.0, 5.0, 6.0]  # Constant difference of 1
+        })
+        result = fl.sdivsigma_nse(df, 'observed', 'simulated')
+        # s/sigma will be smaller than 1 because std of observed is not 1
+        self.assertLess(result['sdivsigma'], 1.0)
+        # NSE will be less than 1 due to systematic bias
+        self.assertLess(result['nse'], 1.0)
+
+    def test_with_negatives(self):
+        """Test with negative values"""
+        df = pd.DataFrame({
+            'observed': [-1.0, -2.0, 3.0, 4.0, -5.0],
+            'simulated': [1.0, 2.0, -3.0, -4.0, 5.0]
+        })
+        result = fl.sdivsigma_nse(df, 'observed', 'simulated')
+        self.assertGreater(result['sdivsigma'], 0.0)
+        self.assertLess(result['nse'], 1.0)
+
+    def test_with_zeros(self):
+        """Test with zero values"""
+        df = pd.DataFrame({
+            'observed': [0.0, 0.0, 0.0],
+            'simulated': [1.0, 2.0, 3.0]
+        })
+        result = fl.sdivsigma_nse(df, 'observed', 'simulated')
+        # When observed is constant, denominator will be near zero
+        self.assertTrue(np.isnan(result['sdivsigma']))
+        self.assertTrue(np.isnan(result['nse']))
+
+    def test_single_value(self):
+        """Test with single value - should return NaN as std requires at least 2 points"""
+        df = pd.DataFrame({
+            'observed': [1.0],
+            'simulated': [2.0]
+        })
+        result = fl.sdivsigma_nse(df, 'observed', 'simulated')
+        self.assertTrue(np.isnan(result['sdivsigma']))
+        self.assertTrue(np.isnan(result['nse']))
+
+    def test_empty_dataframe(self):
+        """Test with empty DataFrame"""
+        df = pd.DataFrame({
+            'observed': [],
+            'simulated': []
+        })
+        result = fl.sdivsigma_nse(df, 'observed', 'simulated')
+        self.assertTrue(np.isnan(result['sdivsigma']))
+        self.assertTrue(np.isnan(result['nse']))
+
+    def test_all_nans_observed(self):
+        """Test with all NaNs in observed column"""
+        df = pd.DataFrame({
+            'observed': [np.nan, np.nan, np.nan],
+            'simulated': [1.0, 2.0, 3.0]
+        })
+        result = fl.sdivsigma_nse(df, 'observed', 'simulated')
+        self.assertTrue(np.isnan(result['sdivsigma']))
+        self.assertTrue(np.isnan(result['nse']))
+
+    def test_all_nans_simulated(self):
+        """Test with all NaNs in simulated column"""
+        df = pd.DataFrame({
+            'observed': [1.0, 2.0, 3.0],
+            'simulated': [np.nan, np.nan, np.nan]
+        })
+        result = fl.sdivsigma_nse(df, 'observed', 'simulated')
+        self.assertTrue(np.isnan(result['sdivsigma']))
+        self.assertTrue(np.isnan(result['nse']))
+
+    def test_some_nans(self):
+        """Test with some NaN values"""
+        df = pd.DataFrame({
+            'observed': [1.0, np.nan, 3.0, 4.0],
+            'simulated': [1.0, 2.0, np.nan, 4.0]
+        })
+        result = fl.sdivsigma_nse(df, 'observed', 'simulated')
+        # Should only use the two valid pairs: [1.0, 1.0] and [4.0, 4.0]
+        np.testing.assert_almost_equal(result['sdivsigma'], 0.0)
+        np.testing.assert_almost_equal(result['nse'], 1.0)
+
+    def test_infinity(self):
+        """Test with infinity values"""
+        df = pd.DataFrame({
+            'observed': [1.0, 2.0, np.inf],
+            'simulated': [1.0, 2.0, 3.0]
+        })
+        result = fl.sdivsigma_nse(df, 'observed', 'simulated')
+        self.assertTrue(np.isnan(result['sdivsigma']))
+        self.assertTrue(np.isnan(result['nse']))
+
+    def test_missing_columns(self):
+        """Test with missing columns"""
+        df = pd.DataFrame({
+            'observed': [1.0, 2.0, 3.0]
+        })
+        with self.assertRaises(ValueError):
+            fl.sdivsigma_nse(df, 'observed', 'simulated')
+
+    def test_wrong_column_names(self):
+        """Test with wrong column names"""
+        df = pd.DataFrame({
+            'actual': [1.0, 2.0, 3.0],
+            'predicted': [1.0, 2.0, 3.0]
+        })
+        with self.assertRaises(ValueError):
+            fl.sdivsigma_nse(df, 'observed', 'simulated')
+
+    def test_numerical_stability(self):
+        """Test NSE calculation with very small differences"""
+        df = pd.DataFrame({
+            'observed': [1.0, 2.0, 3.0],
+            'simulated': [1.0 + 1e-10, 2.0 + 1e-10, 3.0 + 1e-10]
+        })
+        result = fl.sdivsigma_nse(df, 'observed', 'simulated')
+        np.testing.assert_almost_equal(result['nse'], 1.0, decimal=6)
+        self.assertLess(result['sdivsigma'], 1e-6)
+
+    def test_nse_range(self):
+        """Test NSE with perfect anti-correlation (should give negative NSE)"""
+        df = pd.DataFrame({
+            'observed': [1.0, 2.0, 3.0],
+            'simulated': [3.0, 2.0, 1.0]  # Perfect negative correlation
+        })
+        result = fl.sdivsigma_nse(df, 'observed', 'simulated')
+        self.assertLess(result['nse'], 0.0)  # NSE should be negative
+        self.assertGreater(result['sdivsigma'], 1.0)  # s/sigma should be > 1
+
+    def test_constant_observed(self):
+        """Test with constant observed values (should give NaN due to zero variance)"""
+        df = pd.DataFrame({
+            'observed': [2.0, 2.0, 2.0],
+            'simulated': [1.0, 2.0, 3.0]
+        })
+        result = fl.sdivsigma_nse(df, 'observed', 'simulated')
+        self.assertTrue(np.isnan(result['sdivsigma']))
+        self.assertTrue(np.isnan(result['nse']))
 
 
 if __name__ == '__main__':

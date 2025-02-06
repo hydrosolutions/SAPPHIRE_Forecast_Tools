@@ -27,7 +27,7 @@ import tag_library as tl
 ```
 
 ## Testing
-To run the tests, run the following command:
+To run the tests, run the following command from the apps directory:
 ```bash
 SAPPHIRE_TEST_ENV=True python -m unittest discover -s iEasyHydroForecast/tests -p 'test_*.py'
 ```
