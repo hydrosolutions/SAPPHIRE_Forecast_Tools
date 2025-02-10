@@ -168,16 +168,22 @@ pull_docker_images() {
 # Function to establish an SSH tunnel to the iEasyHydro (HF) server
 establish_ssh_tunnel() {
     echo "| ieasyhydroforecast_ssh_to_iEH: $ieasyhydroforecast_ssh_to_iEH"
-    if [ "${ieasyhydroforecast_ssh_to_iEH,,}" = "true" ]; then
-        echo "|      "
-        echo "| ------"
-        echo "| Establishing SSH tunnel to iEasyHydro server"
-        echo "| ------"
 
-        echo "| Establishing SSH tunnel to SAPPHIRE server..."
-        source $ieasyhydroforecast_data_ref_dir/bin/.ssh/open_ssh_tunnel.sh
-        wait  # Wait for the tunnel to be established
+    # Check if SSH tunnel is required
+    if [ "${ieasyhydroforecast_ssh_to_iEH,,}" != "true" ]; then
+        echo "| SSH tunnel not required (ieasyhydroforecast_ssh_to_iEH is not set to true)"
+        return 0
     fi
+
+    echo "|      "
+    echo "| ------"
+    echo "| Establishing SSH tunnel to iEasyHydro server"
+    echo "| ------"
+
+    echo "| Establishing SSH tunnel to SAPPHIRE server..."
+    source $ieasyhydroforecast_data_ref_dir/bin/.ssh/open_ssh_tunnel.sh
+    wait  # Wait for the tunnel to be established
+
 }
 
 # Function to start the Docker container to re-set the run date
