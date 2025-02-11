@@ -17,11 +17,13 @@ import docker
 import datetime
 import re
 from dotenv import load_dotenv
-from typing import Optional
+from typing import Optional, Tuple
+import signal
+from contextlib import contextmanager
+import threading
 
 # Import local utils
 from apps.pipeline.src import pipeline_utils as pu
-
 
 
 class Environment:
@@ -175,7 +177,7 @@ class PreprocessingRunoff(luigi.Task):
         return current_time - output_file_mtime < 10  # 24 * 60 * 60
     '''
 
-class PreprocessingGatewayQuantileMapping(luigi.Task):
+class PreprocessingGatewayQuantileMapping(pu.TimeoutMixin, luigi.Task):
 
     max_retries = 3
     retry_delay = 5
@@ -231,9 +233,14 @@ class PreprocessingGatewayQuantileMapping(luigi.Task):
 
             print(f"Container {container.id} is running.")
 
-            # Wait for the container to finish running
-            result = container.wait()
-            exit_status = result['StatusCode']
+            # Wait for container with timeout
+            try:
+                self.run_with_timeout(container.wait)
+                exit_status = 0
+            except TimeoutError:
+                print(f"Container {container.id} timed out after {self.timeout_seconds} seconds")
+                container.stop()
+                exit_status = 124
             logs = container.logs().decode('utf-8')
 
             print(f"Container {container.id} exited with status code {exit_status}")
@@ -249,34 +256,66 @@ class PreprocessingGatewayQuantileMapping(luigi.Task):
 
         except Exception as e:
             print(f"Error running container: {str(e)}")
+            if container:
+                try:
+                    container.stop()
+                    container.remove()
+                except:
+                    pass
             return None, 1, str(e)
 
     def run(self):
+
+        logger = pu.TaskLogger()
+        start_time = datetime.now()
+
         print("------------------------------------")
         print(" Running PreprocessingGateway task.")
         print("------------------------------------")
 
         attempts = 0
-        while attempts < self.max_retries:
-            attempts += 1
-            print(f"Attempt {attempts} of {self.max_retries}")
+        final_status = "Failed"
+        details = ""
 
-            container_id, exit_status, logs = self._run_container(attempts)
+        try:
+            while attempts < self.max_retries:
+                attempts += 1
+                print(f"Attempt {attempts} of {self.max_retries}")
 
-            if exit_status == 0:
-                # Success - write output and exit
-                with self.output().open('w') as f:
-                    f.write('Task completed successfully\n')
-                    f.write(f'Container ID: {container_id}\n')
-                    f.write(f'Logs:\n{logs}')
-                return
+                container_id, exit_status, logs = self._run_container(attempts)
 
-            if attempts < self.max_retries:
-                print(f"Container failed with status {exit_status}. Retrying in {self.retry_delay} seconds...")
-                time.sleep(self.retry_delay)
-            else:
-                print(f"Container failed after {self.max_retries} attempts.")
-                raise RuntimeError(f"Task failed after {self.max_retries} attempts. Last exit status: {exit_status}\nLogs:\n{logs}")
+                if exit_status == 0:
+                    # Success - write output and exit
+                    with self.output().open('w') as f:
+                        f.write('Task completed successfully\n')
+                        f.write(f'Container ID: {container_id}\n')
+                        f.write(f'Logs:\n{logs}')
+                    final_status = "Success"
+                    details = f"Completed on attempt {attempts}"
+                    break
+
+                if exit_status == 124:  # Timeout
+                    final_status = "Timeout"
+                    details = f"Task timed out after {self.timeout_seconds} seconds"
+                    break
+
+                if attempts < self.max_retries:
+                    print(f"Container failed with status {exit_status}. Retrying in {self.retry_delay} seconds...")
+                    time.sleep(self.retry_delay)
+                else:
+                    print(f"Container failed after {self.max_retries} attempts.")
+                    raise RuntimeError(f"Task failed after {self.max_retries} attempts. Last exit status: {exit_status}\nLogs:\n{logs}")
+
+        finally:
+            end_time = datetime.now()
+            logger.log_task_timing(
+                task_name="PreprocessingGatewayQuantileMapping",
+                start_time=start_time,
+                end_time=end_time,
+                status=final_status,
+                details=details
+            )
+
     '''
     def run(self):
         print("------------------------------------")
@@ -508,6 +547,13 @@ class RunMLModel(luigi.Task):
         return luigi.LocalTarget(f'/app/log_ml_{self.model_type}_{self.prediction_mode}.txt')
 
     def run(self):
+
+        #logger = pu.TaskLogger()
+        #start_time = datetime.now()
+        #container = None
+        #final_status = "Failed"
+        #details = ""
+
         print("------------------------------------")
         print(" Running MachineLearning task.")
         print("------------------------------------")

@@ -88,8 +88,12 @@ The full power of the forecast tools can of course only be unleashed by deployin
 - Adapt the configuration files
 
 ### Configuring your server
-You may have to open specific ports on your server to allow you to view the dashboards in a browser. The following ports are used:
-- 3647 for the configuration dashboard
+You may have to open specific ports on your server to allow you to view the dashboards in a browser. The following ports are typically used for the SAPPHIRE Forecast Tools:
+- 22 for ssh
+- 80 for http
+- 81 for nginx proxy manager (optional)
+- 443 for https
+- 3647 for the configuration dashboard (optional)
 - 5006 for the forecast dashboard
 - 8082 for the luigi task monitor (optional)
 
@@ -114,15 +118,12 @@ To be described.
 ### Deploy the forecast tools
 We provide you with a shell script that pulls the latest images from Docker Hub and runs the containers. The script is located in the bin folder and run as follows from the SAPPHIRE_Forecast_Tools folder:
 ```bash
-bash .bin/run_sapphire_forecast_tools.sh <path_to_data_root_folder>
+ieasyhydroforecast_url=<url you set up for your forecast dashboard> bash ./bin/deploy_sapphire_forecast_tools.sh <absolute_path_to_data_directory>/config/.env_develop_kghm
 ```
-The path to the data root folder is the parent directory of your data folder where you store your discharge, bulletin templates and other data. By default this is the data folder in the SAPPHIRE_Forecast_Tools folder (in which case the path to the data root folder would be the path to the SAPPHIRE_Forecast_Tools):
+The path to the data root folder is the parent directory of your data folder where you store your discharge, bulletin templates and other data.
+For deployment with sensitive data, we recommend a separate data folder which is located at the same hierarchical level as the SAPPHIRE_Forecast_Tools folder. In this case the path to the data root folder would be:
 ```bash
-bash .bin/run_sapphire_forecast_tools.sh /absolute/path/to/SAPPHIRE_Forecast_Tools
-```
-For deployment with sensitive data from our partners, we have our data in a separate data folder which is located at the same hierarchical level as the SAPPHIRE_Forecast_Tools folder. In this case the path to the data root folder would be:
-```bash
-bash .bin/run_sapphire_forecast_tools.sh /absolute/path/to/parent/directory/of/SAPPHIRE_Forecast_Tools
+ieasyhydroforecast_url=<url you set up for your forecast dashboard> bash .bin/run_sapphire_forecast_tools.sh /absolute/path/to/parent/directory/of/SAPPHIRE_Forecast_Tools
 ```
 
 For convenience sake you may want to run the forecast tools in the background and redirect the output to a log file. You can do this by running the following command:
