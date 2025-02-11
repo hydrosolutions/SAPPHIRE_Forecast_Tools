@@ -548,83 +548,109 @@ class RunMLModel(luigi.Task):
 
     def run(self):
 
-        #logger = pu.TaskLogger()
-        #start_time = datetime.now()
-        #container = None
-        #final_status = "Failed"
-        #details = ""
+        logger = pu.TaskLogger()
+        start_time = datetime.now()
+        container = None
+        final_status = "Failed"
+        details = ""
 
-        print("------------------------------------")
-        print(" Running MachineLearning task.")
-        print("------------------------------------")
+        try:
+            print("------------------------------------")
+            print(" Running MachineLearning task.")
+            print("------------------------------------")
 
-        # Construct the absolute volume paths to bind to the containers
-        absolute_volume_path_config = get_absolute_path(
-            env.get('ieasyforecast_configuration_path'))
-        absolute_volume_path_internal_data = get_absolute_path(
-            env.get('ieasyforecast_intermediate_data_path'))
-        bind_volume_path_config = get_bind_path(
-            env.get('ieasyforecast_configuration_path'))
-        bind_volume_path_internal_data = get_bind_path(
-            env.get('ieasyforecast_intermediate_data_path'))
+            # Construct the absolute volume paths to bind to the containers
+            absolute_volume_path_config = get_absolute_path(
+                env.get('ieasyforecast_configuration_path'))
+            absolute_volume_path_internal_data = get_absolute_path(
+                env.get('ieasyforecast_intermediate_data_path'))
+            bind_volume_path_config = get_bind_path(
+                env.get('ieasyforecast_configuration_path'))
+            bind_volume_path_internal_data = get_bind_path(
+                env.get('ieasyforecast_intermediate_data_path'))
 
-        #print(f"env.get('ieasyforecast_configuration_path'): {env.get('ieasyforecast_configuration_path')}")
-        #print(f"absolute_volume_path_config: {absolute_volume_path_config}")
-        #print(f"absolute_volume_path_internal_data: {absolute_volume_path_internal_data}")
-        #print(f"bind_volume_path_config: {bind_volume_path_config}")
-        #print(f"bind_volume_path_internal_data: {bind_volume_path_internal_data}")
+            #print(f"env.get('ieasyforecast_configuration_path'): {env.get('ieasyforecast_configuration_path')}")
+            #print(f"absolute_volume_path_config: {absolute_volume_path_config}")
+            #print(f"absolute_volume_path_internal_data: {absolute_volume_path_internal_data}")
+            #print(f"bind_volume_path_config: {bind_volume_path_config}")
+            #print(f"bind_volume_path_internal_data: {bind_volume_path_internal_data}")
 
-        # Run the docker container to forecast using machine learning
-        client = docker.from_env()
+            # Run the docker container to forecast using machine learning
+            client = docker.from_env()
 
-        # Pull the latest image
-        if pu.there_is_a_newer_image_on_docker_hub(
-            client, repository='mabesa', image_name='sapphire-ml', tag=TAG):
-            print("Pulling the latest image from Docker Hub.")
-            client.images.pull('mabesa/sapphire-ml', tag=TAG)
+            # Pull the latest image
+            if pu.there_is_a_newer_image_on_docker_hub(
+                client, repository='mabesa', image_name='sapphire-ml', tag=TAG):
+                print("Pulling the latest image from Docker Hub.")
+                client.images.pull('mabesa/sapphire-ml', tag=TAG)
 
-        # Define environment variables
-        environment = [
-            'SAPPHIRE_OPDEV_ENV=True',
-            'IN_DOCKER=True',
-            f'SAPPHIRE_MODEL_TO_USE={self.model_type}',  # TFT, TIDE, TSMIXER, ARIMA
-            f'SAPPHIRE_PREDICTION_MODE={self.prediction_mode}'  # PENTAD, DECAD
-        ]
-        print(f"Environment variables:\n{environment}")
+            # Define environment variables
+            environment = [
+                'SAPPHIRE_OPDEV_ENV=True',
+                'IN_DOCKER=True',
+                f'SAPPHIRE_MODEL_TO_USE={self.model_type}',  # TFT, TIDE, TSMIXER, ARIMA
+                f'SAPPHIRE_PREDICTION_MODE={self.prediction_mode}'  # PENTAD, DECAD
+            ]
+            print(f"Environment variables:\n{environment}")
 
-        # Define volumes
-        volumes = {
-            absolute_volume_path_config: {'bind': bind_volume_path_config, 'mode': 'rw'},
-            absolute_volume_path_internal_data: {'bind': bind_volume_path_internal_data, 'mode': 'rw'}
-        }
-        print(f"Volumes:\n{volumes}")
+            # Define volumes
+            volumes = {
+                absolute_volume_path_config: {'bind': bind_volume_path_config, 'mode': 'rw'},
+                absolute_volume_path_internal_data: {'bind': bind_volume_path_internal_data, 'mode': 'rw'}
+            }
+            print(f"Volumes:\n{volumes}")
 
 
-        # Run the container
-        container = client.containers.run(
-            f"mabesa/sapphire-ml:{TAG}",
-            detach=True,
-            environment=environment,
-            volumes=volumes,
-            name=f"ml_{self.model_type}_{self.prediction_mode}",
-            #labels=labels,
-            network='host'  # To test
-        )
+            # Run the container
+            container = client.containers.run(
+                f"mabesa/sapphire-ml:{TAG}",
+                detach=True,
+                environment=environment,
+                volumes=volumes,
+                name=f"ml_{self.model_type}_{self.prediction_mode}",
+                #labels=labels,
+                network='host'  # To test
+            )
 
-        print(f"Container {container.id} is running.")
+            print(f"Container {container.id} is running.")
 
-        # Wait for the container to finish running
-        container.wait()
+            try:
+                self.run_with_timeout(container.wait)
+                logs = container.logs().decode('utf-8')
 
-        # Get the logs from the container
-        logs = container.logs().decode('utf-8')
-        print(f"Logs from container {container.id}:\n{logs}")
+                with self.output().open('w') as f:
+                    f.write('Task completed\n')
+                    f.write(f'Container ID: {container.id}\n')
+                    f.write(f'Logs:\n{logs}')
 
-        print(f"Container {container.id} has stopped.")
+                final_status = "Success"
+                details = "Task completed successfully"
 
-        # Write the output marker file
-        with self.output().open('w') as f:
-            f.write('Task completed')
+            except TimeoutError:
+                container.stop()
+                final_status = "Timeout"
+                details = f"Task timed out after {self.timeout_seconds} seconds"
+                raise
+
+        except Exception as e:
+            details = str(e)
+            raise
+
+        finally:
+            end_time = datetime.now()
+            logger.log_task_timing(
+                task_name=f"RunMLModel_{self.model_type}_{self.prediction_mode}",
+                start_time=start_time,
+                end_time=end_time,
+                status=final_status,
+                details=details
+            )
+
+            if container:
+                try:
+                    container.remove()
+                except:
+                    pass
 
 class RunAllMLModels(luigi.WrapperTask):
     def requires(self):
