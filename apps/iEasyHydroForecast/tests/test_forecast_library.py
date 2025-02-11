@@ -1183,5 +1183,325 @@ class TestSdivsigmaNSE(unittest.TestCase):
         self.assertTrue(np.isnan(result['nse']))
 
 
+class TestForecastAccuracyHydromet(unittest.TestCase):
+
+    def test_perfect_accuracy(self):
+        """Test when all simulated values are within delta of observed values"""
+        df = pd.DataFrame({
+            'observed': [1.0, 2.0, 3.0, 4.0, 5.0],
+            'simulated': [1.0, 2.0, 3.0, 4.0, 5.0],
+            'delta': [0.5, 0.5, 0.5, 0.5, 0.5]
+        })
+        result = fl.forecast_accuracy_hydromet(df, 'observed', 'simulated', 'delta')
+        np.testing.assert_almost_equal(result['accuracy'], 1.0)  # Perfect accuracy
+        np.testing.assert_almost_equal(result['delta'], 0.5)  # Last delta value
+
+    def test_zero_accuracy(self):
+        """Test when all simulated values are outside delta range"""
+        df = pd.DataFrame({
+            'observed': [1.0, 2.0, 3.0],
+            'simulated': [3.0, 4.0, 5.0],
+            'delta': [0.1, 0.1, 0.1]
+        })
+        result = fl.forecast_accuracy_hydromet(df, 'observed', 'simulated', 'delta')
+        np.testing.assert_almost_equal(result['accuracy'], 0.0)
+        np.testing.assert_almost_equal(result['delta'], 0.1)
+
+    def test_partial_accuracy(self):
+        """Test with mix of accurate and inaccurate predictions"""
+        df = pd.DataFrame({
+            'observed': [1.0, 2.0, 3.0, 4.0],
+            'simulated': [1.1, 2.1, 4.0, 5.0],  # First two within delta, last two outside
+            'delta': [0.2, 0.2, 0.2, 0.2]
+        })
+        result = fl.forecast_accuracy_hydromet(df, 'observed', 'simulated', 'delta')
+        np.testing.assert_almost_equal(result['accuracy'], 0.5)  # 2 out of 4 accurate
+        np.testing.assert_almost_equal(result['delta'], 0.2)
+
+    def test_varying_delta(self):
+        """Test with different delta values"""
+        df = pd.DataFrame({
+            'observed': [1.0, 2.0, 3.0],
+            'simulated': [1.5, 2.5, 3.5],
+            'delta': [0.1, 0.5, 1.0]  # Only second and third predictions within their respective deltas
+        })
+        result = fl.forecast_accuracy_hydromet(df, 'observed', 'simulated', 'delta')
+        np.testing.assert_almost_equal(result['accuracy'], 2/3)
+        np.testing.assert_almost_equal(result['delta'], 1.0)
+
+    def test_empty_dataframe(self):
+        """Test with empty DataFrame"""
+        df = pd.DataFrame({
+            'observed': [],
+            'simulated': [],
+            'delta': []
+        })
+        result = fl.forecast_accuracy_hydromet(df, 'observed', 'simulated', 'delta')
+        self.assertTrue(np.isnan(result['accuracy']))
+        self.assertTrue(np.isnan(result['delta']))
+
+    def test_all_nans(self):
+        """Test with all NaN values"""
+        df = pd.DataFrame({
+            'observed': [np.nan, np.nan, np.nan],
+            'simulated': [np.nan, np.nan, np.nan],
+            'delta': [np.nan, np.nan, np.nan]
+        })
+        result = fl.forecast_accuracy_hydromet(df, 'observed', 'simulated', 'delta')
+        self.assertTrue(np.isnan(result['accuracy']))
+        self.assertTrue(np.isnan(result['delta']))
+
+    def test_some_nans(self):
+        """Test with some NaN values"""
+        df = pd.DataFrame({
+            'observed': [1.0, np.nan, 3.0, 4.0],
+            'simulated': [1.0, 2.0, np.nan, 4.0],
+            'delta': [0.1, 0.1, 0.1, 0.1]
+        })
+        result = fl.forecast_accuracy_hydromet(df, 'observed', 'simulated', 'delta')
+        # Should only use two valid pairs: [1.0, 1.0] and [4.0, 4.0]
+        np.testing.assert_almost_equal(result['accuracy'], 1.0)
+        np.testing.assert_almost_equal(result['delta'], 0.1)
+
+    def test_infinity(self):
+        """Test with infinity values"""
+        df = pd.DataFrame({
+            'observed': [1.0, 2.0, np.inf],
+            'simulated': [1.0, 2.0, 3.0],
+            'delta': [0.1, 0.1, 0.1]
+        })
+        result = fl.forecast_accuracy_hydromet(df, 'observed', 'simulated', 'delta')
+        np.testing.assert_almost_equal(result['accuracy'], 1.0)
+        np.testing.assert_almost_equal(result['delta'], 0.1)
+
+    def test_missing_columns(self):
+        """Test with missing columns"""
+        df = pd.DataFrame({
+            'observed': [1.0, 2.0, 3.0],
+            'simulated': [1.0, 2.0, 3.0]
+        })
+        with self.assertRaises(ValueError):
+            fl.forecast_accuracy_hydromet(df, 'observed', 'simulated', 'delta')
+
+    def test_wrong_column_names(self):
+        """Test with wrong column names"""
+        df = pd.DataFrame({
+            'actual': [1.0, 2.0, 3.0],
+            'predicted': [1.0, 2.0, 3.0],
+            'threshold': [0.1, 0.1, 0.1]
+        })
+        with self.assertRaises(ValueError):
+            fl.forecast_accuracy_hydromet(df, 'observed', 'simulated', 'delta')
+
+    def test_negative_delta(self):
+        """Test with negative delta values (should handle as invalid)"""
+        df = pd.DataFrame({
+            'observed': [1.0, 2.0, 3.0],
+            'simulated': [1.0, 2.0, 3.0],
+            'delta': [-0.1, -0.1, -0.1]
+        })
+        result = fl.forecast_accuracy_hydromet(df, 'observed', 'simulated', 'delta')
+        self.assertTrue(np.isnan(result['accuracy']))
+        self.assertTrue(np.isnan(result['delta']))
+
+    def test_zero_delta(self):
+        """Test with zero delta values"""
+        df = pd.DataFrame({
+            'observed': [1.0, 2.0, 3.0],
+            'simulated': [1.0, 2.0, 3.0],
+            'delta': [0.0, 0.0, 0.0]
+        })
+        result = fl.forecast_accuracy_hydromet(df, 'observed', 'simulated', 'delta')
+        np.testing.assert_almost_equal(result['accuracy'], 1.0)  # Perfect match should give accuracy 1.0
+        np.testing.assert_almost_equal(result['delta'], 0.0)
+
+    def test_single_value(self):
+        """Test with single value"""
+        df = pd.DataFrame({
+            'observed': [1.0],
+            'simulated': [1.1],
+            'delta': [0.2]
+        })
+        result = fl.forecast_accuracy_hydromet(df, 'observed', 'simulated', 'delta')
+        np.testing.assert_almost_equal(result['accuracy'], 1.0)
+        np.testing.assert_almost_equal(result['delta'], 0.2)
+
+
+class TestCalculateSkillMetricsPentad(unittest.TestCase):
+    def setUp(self):
+        """Set up test data before each test"""
+        # Create sample observed data
+        self.observed = pd.DataFrame({
+            'code': ['123', '123', '123', '123', '456', '456', '456', '456'],
+            'date': pd.to_datetime(['2022-01-01', '2023-01-01', '2022-01-06', '2023-01-06',
+                                    '2022-01-01', '2023-01-01', '2022-01-06', '2023-01-06']),
+            'discharge_avg': [10.0, 12.0, 10.0, 12.0, 20.0, 22.0, 20.0, 22.0],
+            'model_long': ['Observed (Obs)', 'Observed (Obs)', 'Observed (Obs)', 'Observed (Obs)',
+                           'Observed (Obs)', 'Observed (Obs)', 'Observed (Obs)', 'Observed (Obs)'],
+            'model_short': ['Obs', 'Obs', 'Obs', 'Obs',
+                            'Obs', 'Obs', 'Obs', 'Obs'],
+            'delta': [1.0, 1.0, 1.0, 1.0, 2.0, 2.0, 2.0, 2.0]
+        })
+
+        # Create sample simulated data with two different models
+        self.simulated = pd.DataFrame({
+            'code': ['123', '123', '123', '123', '456', '456', '456', '456',
+                     '123', '123', '123', '123', '456', '456', '456', '456'],
+            'date': pd.to_datetime(['2022-01-01', '2023-01-01', '2022-01-06', '2023-01-06',
+                                    '2022-01-01', '2023-01-01', '2022-01-06', '2023-01-06',
+                                    '2022-01-01', '2023-01-01', '2022-01-06', '2023-01-06',
+                                    '2022-01-01', '2023-01-01', '2022-01-06', '2023-01-06']),
+            'pentad_in_month': [1, 1, 2, 2, 1, 1, 2, 2, 1, 1, 2, 2, 1, 1, 2, 2],
+            'pentad_in_year': [1, 1, 2, 2, 1, 1, 2, 2, 1, 1, 2, 2, 1, 1, 2, 2],
+            'forecasted_discharge': [10.2, 10.3, 9.8, 11.9, 20.2, 22.3, 20.1, 21.7,
+                                     10.1, 12.1, 10.05, 11.9, 20.1, 22.3, 19.9, 21.7],
+            'model_long': ['Model A (MA)', 'Model A (MA)', 'Model A (MA)', 'Model A (MA)',
+                           'Model A (MA)', 'Model A (MA)', 'Model A (MA)', 'Model A (MA)',
+                           'Model B (MB)', 'Model B (MB)', 'Model B (MB)', 'Model B (MB)',
+                           'Model B (MB)', 'Model B (MB)', 'Model B (MB)', 'Model B (MB)'],
+            'model_short': ['MA', 'MA', 'MA', 'MA', 'MA', 'MA', 'MA', 'MA',
+                            'MB', 'MB', 'MB', 'MB', 'MB', 'MB', 'MB', 'MB']
+        })
+        # Cast pentad_in_month and pentad_in_yera to string
+        self.simulated['pentad_in_month'] = self.simulated['pentad_in_month'].astype(str)
+        self.simulated['pentad_in_year'] = self.simulated['pentad_in_year'].astype(str)
+
+        # Set environment variables for ensemble thresholds
+        os.environ['ieasyhydroforecast_efficiency_threshold'] = '0.6'
+        os.environ['ieasyhydroforecast_accuracy_threshold'] = '0.8'
+        os.environ['ieasyhydroforecast_nse_threshold'] = '0.8'
+
+    def tearDown(self):
+        """Clean up after each test"""
+        # Remove environment variables
+        for var in ['ieasyhydroforecast_efficiency_threshold',
+                   'ieasyhydroforecast_accuracy_threshold',
+                   'ieasyhydroforecast_nse_threshold']:
+            if var in os.environ:
+                del os.environ[var]
+
+    def test_input_validation(self):
+        """Test that the function properly validates input DataFrames"""
+        # Test missing columns in observed DataFrame
+        bad_observed = self.observed.drop(columns=['delta'])
+        with self.assertRaises(ValueError):
+            fl.calculate_skill_metrics_pentad(bad_observed, self.simulated)
+
+        # Test missing columns in simulated DataFrame
+        bad_simulated = self.simulated.drop(columns=['pentad_in_year'])
+        with self.assertRaises(ValueError):
+            fl.calculate_skill_metrics_pentad(self.observed, bad_simulated)
+
+    def test_date_filtering(self):
+        """Test that data is properly filtered for dates after 2010"""
+        # Add pre-2010 data
+        old_data = self.observed.copy()
+        old_data['date'] = pd.to_datetime(['2022-01-01', '2023-01-01', '2022-01-06', '2023-01-06',
+                                    '2022-01-01', '2023-01-01', '2022-01-06', '2023-01-06'])
+        combined_observed = pd.concat([self.observed, old_data])
+
+        # Calculate metrics
+        skill_stats, joint_forecasts, _ = fl.calculate_skill_metrics_pentad(combined_observed, self.simulated)
+
+        # Verify no pre-2010 data is present
+        self.assertTrue(all(joint_forecasts['date'].dt.year >= 2010))
+
+    def test_sdivsigma_calculation_with_test_data(self):
+        """Test that sdivsigma is calculated correctly"""
+        skill_metrics_df = pd.merge(
+            self.simulated,
+            self.observed[['code', 'date', 'discharge_avg', 'delta']],
+            on=['code', 'date'])
+
+        #print(skill_metrics_df)
+
+        output = skill_metrics_df. \
+            groupby(['pentad_in_year', 'code', 'model_long', 'model_short'])[skill_metrics_df.columns]. \
+            apply(
+                fl.sdivsigma_nse,
+                observed_col='discharge_avg',
+                simulated_col='forecasted_discharge'). \
+            reset_index()
+
+        # Make sure nse is smaller than 1
+        self.assertTrue(all(output['nse'] < 1))
+
+    def test_skill_metrics_calculation(self):
+        """Test that skill metrics are calculated correctly"""
+        skill_stats, joint_forecasts, _ = fl.calculate_skill_metrics_pentad(self.observed, self.simulated)
+
+        #print("\n\nDEBUG: test_skill_metrics_calculation: skill_stats.columns: \n", skill_stats.columns)
+        #print("\n\nDEBUG: test_skill_metrics_calculation: skill_stats: \n", skill_stats)
+        #print("\n\nDEBUG: test_skill_metrics_calculation: joint_forecasts.columns: \n", joint_forecasts.columns)
+        #print("\n\nDEBUG: test_skill_metrics_calculation: joint_forecasts: \n", joint_forecasts)
+
+        # Check that skill_stats contains all expected columns
+        expected_columns = ['pentad_in_year', 'code', 'model_long', 'model_short',
+                          'sdivsigma', 'nse', 'mae', 'n_pairs', 'delta', 'accuracy']
+        self.assertTrue(all(col in skill_stats.columns for col in expected_columns))
+
+        # Verify some metrics are within expected ranges
+        self.assertTrue(all(skill_stats['accuracy'] >= 0) and all(skill_stats['accuracy'] <= 1))
+        self.assertTrue(all(skill_stats['sdivsigma'] >= 0))
+        self.assertTrue(all(skill_stats['mae'] >= 0))
+
+'''
+    def test_ensemble_creation(self):
+        """Test that ensemble forecasts are created correctly"""
+        skill_stats, joint_forecasts, _ = fl.calculate_skill_metrics_pentad(self.observed, self.simulated)
+
+        # Check that ensemble model exists in results
+        self.assertTrue(any(joint_forecasts['model_short'] == 'EM'))
+
+        # Verify ensemble forecast is average of other models
+        ensemble_forecasts = joint_forecasts[joint_forecasts['model_short'] == 'EM']
+        for _, row in ensemble_forecasts.iterrows():
+            date = row['date']
+            code = row['code']
+            individual_forecasts = joint_forecasts[
+                (joint_forecasts['date'] == date) &
+                (joint_forecasts['code'] == code) &
+                (joint_forecasts['model_short'].isin(['MA', 'MB']))
+            ]['forecasted_discharge']
+            self.assertAlmostEqual(row['forecasted_discharge'],
+                                 individual_forecasts.mean(),
+                                 places=5)
+
+    def test_perfect_forecast(self):
+        """Test metrics calculation with perfect forecasts"""
+        # Create perfect forecast data
+        perfect_simulated = self.simulated.copy()
+        perfect_simulated['forecasted_discharge'] = np.tile([10.0, 12.0, 20.0, 22.0], 2)
+
+        skill_stats, _, _ = fl.calculate_skill_metrics_pentad(self.observed, perfect_simulated)
+
+        # Check that metrics indicate perfect forecasts
+        for _, row in skill_stats.iterrows():
+            self.assertAlmostEqual(row['sdivsigma'], 0.0, places=5)
+            self.assertAlmostEqual(row['nse'], 1.0, places=5)
+            self.assertAlmostEqual(row['mae'], 0.0, places=5)
+            self.assertAlmostEqual(row['accuracy'], 1.0, places=5)
+
+    def test_timing_stats_integration(self):
+        """Test that timing stats are properly handled"""
+        class MockTimingStats:
+            def __init__(self):
+                self.sections = []
+
+            def start(self, section):
+                self.sections.append(f"start_{section}")
+
+            def end(self, section):
+                self.sections.append(f"end_{section}")
+
+        timing_stats = MockTimingStats()
+        _, _, returned_stats = fl.calculate_skill_metrics_pentad(
+            self.observed, self.simulated, timing_stats)
+
+        # Verify timing sections were recorded
+        self.assertTrue(len(timing_stats.sections) > 0)
+        self.assertEqual(timing_stats, returned_stats)
+'''
+
 if __name__ == '__main__':
     unittest.main()

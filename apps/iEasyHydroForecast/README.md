@@ -32,5 +32,9 @@ To run the tests, run the following command from the apps directory:
 SAPPHIRE_TEST_ENV=True python -m unittest discover -s iEasyHydroForecast/tests -p 'test_*.py'
 ```
 
+To test a specific method in a class:
+```bash
+SAPPHIRE_TEST_ENV=True python -m unittest iEasyHydroForecast.tests.test_forecast_library.TestCalculateSkillMetricsPentad.test_skill_metrics_calculation
+```
 
 

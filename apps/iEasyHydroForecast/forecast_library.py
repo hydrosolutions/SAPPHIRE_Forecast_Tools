@@ -625,7 +625,7 @@ def calculate_decadaldischargeavg(data_df, datetime_col, discharge_col):
     # decade which we find in the discharge_avg column at the last day of the
     # previous month.
     # Create a temporary DataFrame that drops the NaN values
-    temp_df = data_df[data_df['issue_date'] != False]
+    temp_df = data_df[data_df['issue_date'] != False].copy()
 
     # Shift the 'avg' column in the temporary DataFrame
     temp_df['avg_shifted'] = temp_df['discharge_avg'].shift(1)
@@ -720,9 +720,15 @@ def generate_issue_and_forecast_dates(data_df_0: pd.DataFrame, datetime_col: str
 
     # Apply the calculation function to each group based on the 'station' column
     data_df_decad = data_df_0.copy(deep=True)
-    modified_data = data_df_0.groupby(station_col).apply(apply_calculation, datetime_col = datetime_col, discharge_col = discharge_col)
+    modified_data = data_df_0.groupby(station_col)[data_df_0.columns].apply(
+        apply_calculation,
+        datetime_col = datetime_col,
+        discharge_col = discharge_col)
     if forecast_flags.decad:
-        modified_data_decad = data_df_decad.groupby(station_col).apply(apply_calculation_decad, datetime_col = datetime_col, discharge_col = discharge_col)
+        modified_data_decad = data_df_decad.groupby(station_col)[data_df_decad.columns].apply(
+            apply_calculation_decad,
+            datetime_col = datetime_col,
+            discharge_col = discharge_col)
     else:
         modified_data_decad = []
 
@@ -1295,6 +1301,8 @@ def sdivsigma_nse(data: pd.DataFrame, observed_col: str, simulated_col: str):
     if not all(column in data.columns for column in [observed_col, simulated_col]):
         raise ValueError(f'DataFrame is missing one or more required columns: {observed_col, simulated_col}')
 
+    #print("DEBUG: forecasting:sdivsigma_nse: data: \n", data)
+
     # Convert to numpy arrays for faster computation
     # Use float64 for better numerical stability
     observed = data[observed_col].to_numpy(dtype=np.float64)
@@ -1311,6 +1319,8 @@ def sdivsigma_nse(data: pd.DataFrame, observed_col: str, simulated_col: str):
 
     # Early return if not enough data points
     if len(observed) < 2:  # Need at least 2 points for std calculation
+        logger.info(f"Not enough data points for sdivsigma_nse calculation.")
+        print(f"Not enough data points for sdivsigma_nse calculation.")
         return pd.Series([np.nan, np.nan], index=['sdivsigma', 'nse'])
 
     # Calculate mean once for reuse
@@ -1354,49 +1364,6 @@ def sdivsigma_nse(data: pd.DataFrame, observed_col: str, simulated_col: str):
     except (RuntimeWarning, FloatingPointError) as e:
         logger.debug(f"Numerical computation error in sdivsigma_nse: {str(e)}")
         return pd.Series([np.nan, np.nan], index=['sdivsigma', 'nse'])
-    '''
-    # SLOW VERSION
-    # Drop NaN values in columns with observed and simulated data
-    dataN = data.dropna(subset=[observed_col, simulated_col]).copy()
-
-    # Test if we still have data after dropping NaN values
-    if dataN.empty:
-        logger.debug("sdivsigma_nse: data is empty after dropping NaN values")
-        return pd.Series([np.nan, np.nan], index=['sdivsigma', 'nse'])
-
-    # Calculate the numerator and denominator of the NSE formula
-    numerator_nse = ((dataN[observed_col] - dataN[simulated_col])**2).sum()
-    denominator_nse = ((dataN[observed_col] - dataN[observed_col].mean())**2).sum()
-
-    # Calculate the numerator and the denominator of the sdivsigma formula
-    numerator_sdivsigma = (abs(dataN[observed_col] - dataN[simulated_col])).std()
-    denominator_sdivsigma = dataN[observed_col].std()
-
-    # Catch cases where the denomitar is 0
-    if denominator_nse == 0:
-        logger.debug("-----------")
-        logger.debug("Problem in sdivsigma_nse")
-        logger.debug(f"sdivsigma_nse: Model: {dataN['model_long'].iloc[0]}")
-        logger.debug(f"code: {dataN['code'].iloc[0]}")
-        logger.debug(f"pentad: {dataN['pentad_in_year'].iloc[0]}")
-        logger.debug("sdivsigma_nse: Denominator is 0")
-        logger.debug(f"sdivsigma: data['date']: {dataN['date']}")
-        logger.debug(f"data[observed_col]: {dataN[observed_col]}")
-        logger.debug(f"data[observed_col].mean(): {dataN[observed_col].mean()}")
-        logger.debug(f"numerator: {numerator_nse}")
-        logger.debug(f"denominator: {denominator_nse}")
-        return pd.Series([np.nan, np.nan], index=['sdivsigma', 'nse'])
-
-    # Calculate the efficacy of the model
-    sdivsigma = numerator_sdivsigma / denominator_sdivsigma
-
-    # Calculate the NSE value
-    nse_value = 1 - (numerator_nse / denominator_nse)
-
-    return pd.Series([sdivsigma, nse_value], index=['sdivsigma', 'nse'])
-    '''
-
-
 
 def forecast_accuracy_hydromet(data: pd.DataFrame, observed_col: str, simulated_col: str, delta_col: str):
     """
@@ -1428,6 +1395,11 @@ def forecast_accuracy_hydromet(data: pd.DataFrame, observed_col: str, simulated_
     if not np.any(mask):
         return pd.Series([np.nan, np.nan], index=['delta', 'accuracy'])
 
+    # Also drop rows where observed, simulated or delta_valus is inf
+    mask = mask & ~(np.isinf(observed) | np.isinf(simulated) | np.isinf(delta_values))
+    if not np.any(mask):
+        return pd.Series([np.nan, np.nan], index=['delta', 'accuracy'])
+
     # Filter arrays using mask
     observed = observed[mask]
     simulated = simulated[mask]
@@ -1444,7 +1416,7 @@ def forecast_accuracy_hydromet(data: pd.DataFrame, observed_col: str, simulated_
         # Calculate accuracy using vectorized operations
         accuracy = np.mean(abs_diff <= delta_values)
 
-        # Get the last delta value
+        # Get the last delta value (they are all the same)
         delta = delta_values[-1]
 
         # Sanity checks
@@ -1456,28 +1428,6 @@ def forecast_accuracy_hydromet(data: pd.DataFrame, observed_col: str, simulated_
     except (RuntimeWarning, FloatingPointError) as e:
         logger.debug(f"Numerical computation error in forecast_accuracy_hydromet: {str(e)}")
         return pd.Series([np.nan, np.nan], index=['delta', 'accuracy'])
-
-    '''
-    # SLOW VERSION
-    # Drop NaN values
-    dataN = data.dropna(subset=[observed_col, simulated_col]).copy()
-
-    # Check if the DataFrame is empty
-    if dataN.empty:
-        logger.debug("forecast_accuracy_hydromet: data is empty after dropping NaN values")
-        return pd.Series([np.nan, np.nan], index=['delta', 'accuracy'])
-
-    # Test if we still have data after dropping NaN values
-    if dataN.empty:
-        logger.debug("forecast_accuracy_hydromet: data is empty after dropping NaN values")
-        return pd.Series([np.nan, np.nan], index=['delta', 'accuracy'])
-
-    # Calculate the forecast accuracy
-    accuracy = (abs(dataN[observed_col] - dataN[simulated_col]) <= dataN[delta_col]).mean()
-    delta = dataN[delta_col].iloc[-1]
-
-    return pd.Series([delta, accuracy], index=['delta', 'accuracy'])
-    '''
 
 def mae(data: pd.DataFrame, observed_col: str, simulated_col: str):
     """
@@ -1530,74 +1480,6 @@ def mae(data: pd.DataFrame, observed_col: str, simulated_col: str):
     except (RuntimeWarning, FloatingPointError) as e:
         logger.debug(f"Numerical computation error in mae: {str(e)}")
         return pd.Series([np.nan, 0], index=['mae', 'n_pairs'])
-
-'''def mae(data: pd.DataFrame, observed_col: str, simulated_col: str):
-    """
-    Calculate the mean average error between observed and simulated data
-
-    Args:
-        data (pandas.DataFrame): The input data containing the observed and simulated data.
-        observed_col (str): The name of the column containing the observed data.
-        simulated_col (str): The name of the column containing the simulated data.
-
-    Returns:
-        float: mean average error between observed and simulated data
-
-    Raises:
-        ValueError: If the input data is missing one or more required columns.
-
-    """
-    # Test the input. Make sure that the DataFrame contains the required columns
-    if not all(column in data.columns for column in [observed_col, simulated_col]):
-        raise ValueError(f'DataFrame is missing one or more required columns: {observed_col, simulated_col}')
-
-    # Convert to numpy arrays for faster computation
-    observed = data[observed_col].to_numpy(dtype=np.float64)
-    simulated = data[simulated_col].to_numpy(dtype=np.float64)
-
-    # Check for empty data after dropping NaNs
-    mask = ~(np.isnan(observed) | np.isnan(simulated))
-    if not np.any(mask):
-        return pd.Series([np.nan], index=['mae'])
-
-    # Filter arrays using mask
-    observed = observed[mask]
-    simulated = simulated[mask]
-
-    # Early return if not enough data points
-    if len(observed) < 1:
-        return pd.Series([np.nan], index=['mae'])
-
-    try:
-        # Calculate MAE using vectorized operations
-        mae_value = np.mean(np.abs(observed - simulated))
-
-        # Sanity check
-        if not (0 <= mae_value < np.inf):
-            return pd.Series([np.nan], index=['mae'])
-
-        return pd.Series([mae_value], index=['mae'])
-
-    except (RuntimeWarning, FloatingPointError) as e:
-        logger.debug(f"Numerical computation error in mae: {str(e)}")
-        return pd.Series([np.nan], index=['mae'])
-'''
-
-'''
-    # SLOW VERSION
-    # Drop NaN values
-    dataN = data.dropna(subset=[observed_col, simulated_col]).copy()
-
-    # Check if the DataFrame is empty
-    if dataN.empty:
-        logger.debug("mae: data is empty after dropping NaN values")
-        return pd.Series([np.nan], index=['mae'])
-
-    # Calculate the mean average error between the observed and simulated data
-    mae = abs(dataN[observed_col] - dataN[simulated_col]).mean()
-
-    return pd.Series([mae], index=['mae'])
-'''
 
 def calculate_forecast_skill_deprecating(data_df: pd.DataFrame, station_col: str,
                              pentad_col: str, observation_col: str,
@@ -1819,11 +1701,11 @@ def calculate_skill_metrics_pentad(
         observed = observed[observed['date'].dt.year >= 2010]
         simulated = simulated[simulated['date'].dt.year >= 2010]
 
-    #logger.debug(f"DEBUG: simulated.columns\n{simulated.columns}")
-    #logger.debug(f"DEBUG: simulated.head()\n{simulated.head(5)}")
+    #print(f"DEBUG: simulated.columns\n{simulated.columns}")
+    #print(f"DEBUG: simulated.head()\n{simulated.head(8)}")
     #logger.debug(f"DEBUG: simulated.tail()\n{simulated.tail(5)}")
-    #logger.info(f"DEBUG: observed.columns\n{observed.columns}")
-    #logger.debug(f"DEBUG: observed.head()\n{observed.head(5)}")
+    #print(f"DEBUG: observed.columns\n{observed.columns}")
+    #print(f"DEBUG: observed.head()\n{observed.head(8)}")
     #logger.debug(f"DEBUG: observed.tail()\n{observed.tail(5)}")
     # Merge the observed and simulated DataFrames
     with timer(timing_stats, 'calculate_skill_metrics_pentad - Initially merge data'):
@@ -1831,15 +1713,15 @@ def calculate_skill_metrics_pentad(
             simulated,
             observed[['code', 'date', 'discharge_avg', 'delta']],
             on=['code', 'date'])
-        #logger.debug(f"DEBUG: skill_metrics_df.columns\n{skill_metrics_df.columns}")
-        #logger.debug(f"DEBUG: skill_metrics_df.head()\n{skill_metrics_df.head(5)}")
+        #print(f"DEBUG: skill_metrics_df.columns\n{skill_metrics_df.columns}")
+        #print(f"DEBUG: skill_metrics_df.head()\n{skill_metrics_df.head(8)}")
         #logger.debug(f"DEBUG: skill_metrics_df.tail()\n{skill_metrics_df.tail(5)}")
         test_for_tuples(skill_metrics_df)
 
     # Calculate the skill metrics for each group based on the 'pentad_in_year', 'code' and 'model' columns
     with timer(timing_stats, 'calculate_skill_metrics_pentad - Calculate sdivsigma_nse'):
         skill_stats = skill_metrics_df. \
-            groupby(['pentad_in_year', 'code', 'model_long', 'model_short']). \
+            groupby(['pentad_in_year', 'code', 'model_long', 'model_short'])[skill_metrics_df.columns]. \
             apply(
                 sdivsigma_nse,
                 observed_col='discharge_avg',
@@ -1847,23 +1729,25 @@ def calculate_skill_metrics_pentad(
             reset_index()
         test_for_tuples(skill_stats)
         # Print dimensions of skill_metrics_df and skill_stats
-        #logger.debug(f"\n\nDEBUG: skill_metrics_df.shape: {skill_metrics_df.shape}")
-        #logger.debug(f"DEBUG: skill_stats.shape: {skill_stats.shape}\n\n")
+        #print(f"\n\nDEBUG: skill_metrics_df.shape: {skill_metrics_df.shape}")
+        #print(f"DEBUG: skill_stats.shape: {skill_stats.shape}\n\n")
+        print(f"DEBUG: nse: skill_stats.columns\n{skill_stats.columns}")
+        #print(f"DEBUG: skill_stats.head()\n{skill_stats.head(8)}")
 
     with timer(timing_stats, 'calculate_skill_metrics_pentad - Calculate mae'):
         mae_stats = skill_metrics_df. \
-            groupby(['pentad_in_year', 'code', 'model_long', 'model_short']). \
+            groupby(['pentad_in_year', 'code', 'model_long', 'model_short'])[skill_metrics_df.columns]. \
             apply(
                 mae,
                 observed_col='discharge_avg',
                 simulated_col='forecasted_discharge'). \
             reset_index()
-        #print("DEBUG: mae_stats\n", mae_stats.columns)
+        print("DEBUG: mae_stats\n", mae_stats.columns)
         test_for_tuples(mae_stats)
 
     with timer(timing_stats, 'calculate_skill_metrics_pentad - Calculate forecast_accuracy_hydromet'):
         accuracy_stats = skill_metrics_df. \
-            groupby(['pentad_in_year', 'code', 'model_long', 'model_short']). \
+            groupby(['pentad_in_year', 'code', 'model_long', 'model_short'])[skill_metrics_df.columns]. \
             apply(
                 forecast_accuracy_hydromet,
                 observed_col='discharge_avg',
@@ -1871,6 +1755,7 @@ def calculate_skill_metrics_pentad(
                 delta_col='delta').\
             reset_index()
         test_for_tuples(accuracy_stats)
+        print("DEBUG: accuracy_stats\n", accuracy_stats.columns)
 
     with timer(timing_stats, 'calculate_skill_metrics_pentad - merge all skill stats'):
         # Merge the skill metrics with the accuracy stats
@@ -1883,10 +1768,13 @@ def calculate_skill_metrics_pentad(
         #print("DEBUG: mae_stats.columns\n", mae_stats.columns)
         skill_stats = pd.merge(skill_stats, mae_stats, on=['pentad_in_year', 'code', 'model_long', 'model_short'])
         test_for_tuples(skill_stats)
-        #print("DEBUG: skill_stats.columns\n", skill_stats.columns)
+        print("DEBUG: skill_stats.columns\n", skill_stats.columns)
+        print("DEBUG: skill_stats.head()\n", skill_stats.head(20))
 
     with timer(timing_stats, 'calculate_skill_metrics_pentad - Calculate ensemble skill metrics for highly skilled forecasts'):
         skill_stats_ensemble = filter_for_highly_skilled_forecasts(skill_stats)
+        print("DEBUG: skill_stats_ensemble\n", skill_stats_ensemble.columns)
+        print("DEBUG: skill_stats_ensemble\n", skill_stats_ensemble.head(20))
 
         # Now we get the rows from the skill_metrics_df where pentad_in_year, code,
         # model_long and model_short are the same as in skill_stats_ensemble
@@ -1895,6 +1783,8 @@ def calculate_skill_metrics_pentad(
             skill_metrics_df['code'].isin(skill_stats_ensemble['code']) &
             skill_metrics_df['model_long'].isin(skill_stats_ensemble['model_long']) &
             skill_metrics_df['model_short'].isin(skill_stats_ensemble['model_short'])].copy()
+        print("DEBUG: skill_metrics_df_ensemble\n", skill_metrics_df_ensemble.columns)
+        print("DEBUG: skill_metrics_df_ensemble\n", skill_metrics_df_ensemble.head(20))
 
         # Drop columns with model_short == NE (neural ensemble)
         skill_metrics_df_ensemble = skill_metrics_df_ensemble[skill_metrics_df_ensemble['model_short'] != 'NE'].copy()
@@ -1907,8 +1797,10 @@ def calculate_skill_metrics_pentad(
             'model_long': model_long_agg,
             'model_short': model_short_agg
         }).reset_index()
+        print("DEBUG: skill_metrics_df_ensemble_avg\n", skill_metrics_df_ensemble_avg.columns)
+        print("DEBUG: skill_metrics_df_ensemble_avg\n", skill_metrics_df_ensemble_avg.head(20))
 
-        # Dischard rows with model_long equal to 'Ensemble Mean with  (EM)' or equal to Ensemble Mean with LR (EM)
+        # Discard rows with model_long equal to 'Ensemble Mean with  (EM)' or equal to Ensemble Mean with LR (EM)
         skill_metrics_df_ensemble_avg = skill_metrics_df_ensemble_avg[
             (skill_metrics_df_ensemble_avg['model_long'] != 'Ens. Mean with  (EM)') &
             (skill_metrics_df_ensemble_avg['model_long'] != 'Ens. Mean with LR (EM)')].copy()
@@ -1919,20 +1811,21 @@ def calculate_skill_metrics_pentad(
             skill_metrics_df_ensemble_avg,
             observed[['code', 'date', 'discharge_avg', 'delta']],
             on=['code', 'date'])
-        #print("DEBUG: ensemble_skill_metrics_df\n", ensemble_skill_metrics_df.columns)
-        #print("DEBUG: ensemble_skill_metrics_df\n", ensemble_skill_metrics_df.head(20))
+        print("DEBUG: ensemble_skill_metrics_df\n", ensemble_skill_metrics_df.columns)
+        print("DEBUG: ensemble_skill_metrics_df\n", ensemble_skill_metrics_df.head(20))
 
         ensemble_skill_stats = ensemble_skill_metrics_df. \
-            groupby(['pentad_in_year', 'code', 'model_long', 'model_short']). \
+            groupby(['pentad_in_year', 'code', 'model_long', 'model_short'])[ensemble_skill_metrics_df.columns]. \
             apply(
                 sdivsigma_nse,
                 observed_col='discharge_avg',
                 simulated_col='forecasted_discharge'). \
             reset_index()
-        #print("DEBUG: ensemble_skill_stats\n", ensemble_skill_stats.head(20))
+        print("DEBUG: ensemble_skill_stats\n", ensemble_skill_stats.columns)
+        print("DEBUG: ensemble_skill_stats\n", ensemble_skill_stats.head(20))
 
         ensemble_mae_stats = ensemble_skill_metrics_df. \
-            groupby(['pentad_in_year', 'code', 'model_long', 'model_short']). \
+            groupby(['pentad_in_year', 'code', 'model_long', 'model_short'])[ensemble_skill_metrics_df.columns]. \
             apply(
                 mae,
                 observed_col='discharge_avg',
@@ -1940,7 +1833,7 @@ def calculate_skill_metrics_pentad(
             reset_index()
 
         ensemble_accuracy_stats = ensemble_skill_metrics_df. \
-            groupby(['pentad_in_year', 'code', 'model_long', 'model_short']). \
+            groupby(['pentad_in_year', 'code', 'model_long', 'model_short'])[ensemble_skill_metrics_df.columns]. \
             apply(
                 forecast_accuracy_hydromet,
                 observed_col='discharge_avg',
@@ -1956,7 +1849,7 @@ def calculate_skill_metrics_pentad(
         # Append the ensemble skill metrics to the skill metrics
         skill_stats = pd.concat([skill_stats, ensemble_skill_stats], ignore_index=True)
 
-        # TODO: Add ensemble mean forecasts to simulated dataframe
+        # Add ensemble mean forecasts to simulated dataframe
         logger.debug(f"DEBUG: simulated.columns\n{simulated.columns}")
         logger.debug(f"DEBUG: simulated.head()\n{simulated.head(5)}")
         logger.debug(f"DEBUG: unique models in simulated: {simulated['model_long'].unique()}")
