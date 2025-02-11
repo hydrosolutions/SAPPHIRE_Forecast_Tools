@@ -71,7 +71,7 @@ class TaskLogger:
     """Utility class to handle task logging"""
     def __init__(self, log_file=None):
         if log_file is None:
-            root_dir = os.getenv('ieasyhydroforecast_data_root_dir', '/app')
+            root_dir = os.getenv('ieasyforecast_intermediate_data_path', '/app')
             self.log_file = os.path.join(root_dir, 'task_timings.log')
         else:
             self.log_file = log_file
