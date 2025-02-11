@@ -17,9 +17,9 @@ env:
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "unittests_for_postprocessing" ]
   pull_request:
-    branches: [ "main" ]
+    branches: [ "unittests_for_postprocessing" ]
 
 jobs:
 
