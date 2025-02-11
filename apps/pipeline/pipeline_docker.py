@@ -587,7 +587,7 @@ class RunAllMLModels(luigi.WrapperTask):
         yield PreprocessingGatewayQuantileMapping()
 
         models = ['TFT', 'TIDE', 'TSMIXER', 'ARIMA']
-        prediction_modes = ['PENTAD']  #, 'DECAD']
+        prediction_modes = ['PENTAD', 'DECAD']
 
         for model in models:
             for mode in prediction_modes:
