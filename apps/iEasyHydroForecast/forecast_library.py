@@ -1731,7 +1731,7 @@ def calculate_skill_metrics_pentad(
         # Print dimensions of skill_metrics_df and skill_stats
         #print(f"\n\nDEBUG: skill_metrics_df.shape: {skill_metrics_df.shape}")
         #print(f"DEBUG: skill_stats.shape: {skill_stats.shape}\n\n")
-        print(f"DEBUG: nse: skill_stats.columns\n{skill_stats.columns}")
+        #print(f"DEBUG: nse: skill_stats.columns\n{skill_stats.columns}")
         #print(f"DEBUG: skill_stats.head()\n{skill_stats.head(8)}")
 
     with timer(timing_stats, 'calculate_skill_metrics_pentad - Calculate mae'):
@@ -1742,7 +1742,7 @@ def calculate_skill_metrics_pentad(
                 observed_col='discharge_avg',
                 simulated_col='forecasted_discharge'). \
             reset_index()
-        print("DEBUG: mae_stats\n", mae_stats.columns)
+        #print("DEBUG: mae_stats\n", mae_stats.columns)
         test_for_tuples(mae_stats)
 
     with timer(timing_stats, 'calculate_skill_metrics_pentad - Calculate forecast_accuracy_hydromet'):
@@ -1755,7 +1755,7 @@ def calculate_skill_metrics_pentad(
                 delta_col='delta').\
             reset_index()
         test_for_tuples(accuracy_stats)
-        print("DEBUG: accuracy_stats\n", accuracy_stats.columns)
+        #print("DEBUG: accuracy_stats\n", accuracy_stats.columns)
 
     with timer(timing_stats, 'calculate_skill_metrics_pentad - merge all skill stats'):
         # Merge the skill metrics with the accuracy stats
@@ -1768,13 +1768,13 @@ def calculate_skill_metrics_pentad(
         #print("DEBUG: mae_stats.columns\n", mae_stats.columns)
         skill_stats = pd.merge(skill_stats, mae_stats, on=['pentad_in_year', 'code', 'model_long', 'model_short'])
         test_for_tuples(skill_stats)
-        print("DEBUG: skill_stats.columns\n", skill_stats.columns)
-        print("DEBUG: skill_stats.head()\n", skill_stats.head(20))
+        #print("DEBUG: skill_stats.columns\n", skill_stats.columns)
+        #print("DEBUG: skill_stats.head()\n", skill_stats.head(20))
 
     with timer(timing_stats, 'calculate_skill_metrics_pentad - Calculate ensemble skill metrics for highly skilled forecasts'):
         skill_stats_ensemble = filter_for_highly_skilled_forecasts(skill_stats)
-        print("DEBUG: skill_stats_ensemble\n", skill_stats_ensemble.columns)
-        print("DEBUG: skill_stats_ensemble\n", skill_stats_ensemble.head(20))
+        #print("DEBUG: skill_stats_ensemble\n", skill_stats_ensemble.columns)
+        #print("DEBUG: skill_stats_ensemble\n", skill_stats_ensemble.head(20))
 
         # Now we get the rows from the skill_metrics_df where pentad_in_year, code,
         # model_long and model_short are the same as in skill_stats_ensemble
@@ -1783,8 +1783,8 @@ def calculate_skill_metrics_pentad(
             skill_metrics_df['code'].isin(skill_stats_ensemble['code']) &
             skill_metrics_df['model_long'].isin(skill_stats_ensemble['model_long']) &
             skill_metrics_df['model_short'].isin(skill_stats_ensemble['model_short'])].copy()
-        print("DEBUG: skill_metrics_df_ensemble\n", skill_metrics_df_ensemble.columns)
-        print("DEBUG: skill_metrics_df_ensemble\n", skill_metrics_df_ensemble.head(20))
+        #print("DEBUG: skill_metrics_df_ensemble\n", skill_metrics_df_ensemble.columns)
+        #print("DEBUG: skill_metrics_df_ensemble\n", skill_metrics_df_ensemble.head(20))
 
         # Drop columns with model_short == NE (neural ensemble)
         skill_metrics_df_ensemble = skill_metrics_df_ensemble[skill_metrics_df_ensemble['model_short'] != 'NE'].copy()
@@ -1797,8 +1797,8 @@ def calculate_skill_metrics_pentad(
             'model_long': model_long_agg,
             'model_short': model_short_agg
         }).reset_index()
-        print("DEBUG: skill_metrics_df_ensemble_avg\n", skill_metrics_df_ensemble_avg.columns)
-        print("DEBUG: skill_metrics_df_ensemble_avg\n", skill_metrics_df_ensemble_avg.head(20))
+        #print("DEBUG: skill_metrics_df_ensemble_avg\n", skill_metrics_df_ensemble_avg.columns)
+        #print("DEBUG: skill_metrics_df_ensemble_avg\n", skill_metrics_df_ensemble_avg.head(20))
 
         # Discard rows with model_long equal to 'Ensemble Mean with  (EM)' or equal to Ensemble Mean with LR (EM)
         skill_metrics_df_ensemble_avg = skill_metrics_df_ensemble_avg[
@@ -1811,8 +1811,8 @@ def calculate_skill_metrics_pentad(
             skill_metrics_df_ensemble_avg,
             observed[['code', 'date', 'discharge_avg', 'delta']],
             on=['code', 'date'])
-        print("DEBUG: ensemble_skill_metrics_df\n", ensemble_skill_metrics_df.columns)
-        print("DEBUG: ensemble_skill_metrics_df\n", ensemble_skill_metrics_df.head(20))
+        #print("DEBUG: ensemble_skill_metrics_df\n", ensemble_skill_metrics_df.columns)
+        #print("DEBUG: ensemble_skill_metrics_df\n", ensemble_skill_metrics_df.head(20))
 
         ensemble_skill_stats = ensemble_skill_metrics_df. \
             groupby(['pentad_in_year', 'code', 'model_long', 'model_short'])[ensemble_skill_metrics_df.columns]. \
@@ -1821,8 +1821,8 @@ def calculate_skill_metrics_pentad(
                 observed_col='discharge_avg',
                 simulated_col='forecasted_discharge'). \
             reset_index()
-        print("DEBUG: ensemble_skill_stats\n", ensemble_skill_stats.columns)
-        print("DEBUG: ensemble_skill_stats\n", ensemble_skill_stats.head(20))
+        #print("DEBUG: ensemble_skill_stats\n", ensemble_skill_stats.columns)
+        #print("DEBUG: ensemble_skill_stats\n", ensemble_skill_stats.head(20))
 
         ensemble_mae_stats = ensemble_skill_metrics_df. \
             groupby(['pentad_in_year', 'code', 'model_long', 'model_short'])[ensemble_skill_metrics_df.columns]. \
@@ -1850,12 +1850,12 @@ def calculate_skill_metrics_pentad(
         skill_stats = pd.concat([skill_stats, ensemble_skill_stats], ignore_index=True)
 
         # Add ensemble mean forecasts to simulated dataframe
-        logger.debug(f"DEBUG: simulated.columns\n{simulated.columns}")
-        logger.debug(f"DEBUG: simulated.head()\n{simulated.head(5)}")
-        logger.debug(f"DEBUG: unique models in simulated: {simulated['model_long'].unique()}")
-        print(f"DEBUG: simulated.columns\n{ensemble_skill_metrics_df.columns}")
-        print("DEBUG: head of ensemble_skill_metrics_df: \n", ensemble_skill_metrics_df.head(5))
-        print("DEBUG: unique models in ensemble_skill_metrics_df: ", ensemble_skill_metrics_df['model_long'].unique())
+        #logger.debug(f"DEBUG: simulated.columns\n{simulated.columns}")
+        #logger.debug(f"DEBUG: simulated.head()\n{simulated.head(5)}")
+        #logger.debug(f"DEBUG: unique models in simulated: {simulated['model_long'].unique()}")
+        #print(f"DEBUG: simulated.columns\n{ensemble_skill_metrics_df.columns}")
+        #print("DEBUG: head of ensemble_skill_metrics_df: \n", ensemble_skill_metrics_df.head(5))
+        #print("DEBUG: unique models in ensemble_skill_metrics_df: ", ensemble_skill_metrics_df['model_long'].unique())
 
         # Calculate pentad in month
         ensemble_skill_metrics_df['pentad_in_month'] = ensemble_skill_metrics_df['date'].apply(tl.get_pentad)
@@ -1867,9 +1867,9 @@ def calculate_skill_metrics_pentad(
             on=['code', 'date', 'pentad_in_month', 'pentad_in_year', 'model_long', 'model_short', 'forecasted_discharge'],
             how='outer')
 
-        print(f"DEBUG: joint_forecasts.columns\n{joint_forecasts.columns}")
-        print(f"DEBUG: joint_forecasts.head()\n{joint_forecasts.head(5)}")
-        print(f"DEBUG: unique models in joint_forecasts: {joint_forecasts['model_long'].unique()}")
+        #print(f"DEBUG: joint_forecasts.columns\n{joint_forecasts.columns}")
+        #print(f"DEBUG: joint_forecasts.head()\n{joint_forecasts.head(5)}")
+        #print(f"DEBUG: unique models in joint_forecasts: {joint_forecasts['model_long'].unique()}")
 
     return skill_stats, joint_forecasts, timing_stats
 

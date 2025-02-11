@@ -267,7 +267,7 @@ class PreprocessingGatewayQuantileMapping(pu.TimeoutMixin, luigi.Task):
     def run(self):
 
         logger = pu.TaskLogger()
-        start_time = datetime.now()
+        start_time = datetime.datetime.now()
 
         print("------------------------------------")
         print(" Running PreprocessingGateway task.")
@@ -307,7 +307,7 @@ class PreprocessingGatewayQuantileMapping(pu.TimeoutMixin, luigi.Task):
                     raise RuntimeError(f"Task failed after {self.max_retries} attempts. Last exit status: {exit_status}\nLogs:\n{logs}")
 
         finally:
-            end_time = datetime.now()
+            end_time = datetime.datetime.now()
             logger.log_task_timing(
                 task_name="PreprocessingGatewayQuantileMapping",
                 start_time=start_time,
@@ -549,7 +549,7 @@ class RunMLModel(luigi.Task):
     def run(self):
 
         logger = pu.TaskLogger()
-        start_time = datetime.now()
+        start_time = datetime.datetime.now()
         container = None
         final_status = "Failed"
         details = ""
@@ -637,7 +637,7 @@ class RunMLModel(luigi.Task):
             raise
 
         finally:
-            end_time = datetime.now()
+            end_time = datetime.datetime.now()
             logger.log_task_timing(
                 task_name=f"RunMLModel_{self.model_type}_{self.prediction_mode}",
                 start_time=start_time,

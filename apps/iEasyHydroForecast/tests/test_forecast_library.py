@@ -1445,7 +1445,6 @@ class TestCalculateSkillMetricsPentad(unittest.TestCase):
         self.assertTrue(all(skill_stats['sdivsigma'] >= 0))
         self.assertTrue(all(skill_stats['mae'] >= 0))
 
-'''
     def test_ensemble_creation(self):
         """Test that ensemble forecasts are created correctly"""
         skill_stats, joint_forecasts, _ = fl.calculate_skill_metrics_pentad(self.observed, self.simulated)
@@ -1471,7 +1470,7 @@ class TestCalculateSkillMetricsPentad(unittest.TestCase):
         """Test metrics calculation with perfect forecasts"""
         # Create perfect forecast data
         perfect_simulated = self.simulated.copy()
-        perfect_simulated['forecasted_discharge'] = np.tile([10.0, 12.0, 20.0, 22.0], 2)
+        perfect_simulated['forecasted_discharge'] = np.tile([10.0, 12.0, 10.0, 12.0, 20.0, 22.0, 20.0, 22.0], 2)
 
         skill_stats, _, _ = fl.calculate_skill_metrics_pentad(self.observed, perfect_simulated)
 
@@ -1501,7 +1500,7 @@ class TestCalculateSkillMetricsPentad(unittest.TestCase):
         # Verify timing sections were recorded
         self.assertTrue(len(timing_stats.sections) > 0)
         self.assertEqual(timing_stats, returned_stats)
-'''
+
 
 if __name__ == '__main__':
     unittest.main()
