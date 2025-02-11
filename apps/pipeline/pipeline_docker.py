@@ -316,74 +316,6 @@ class PreprocessingGatewayQuantileMapping(pu.TimeoutMixin, luigi.Task):
                 details=details
             )
 
-    '''
-    def run(self):
-        print("------------------------------------")
-        print(" Running PreprocessingGateway task.")
-        print("------------------------------------")
-
-        # Construct the absolute volume paths to bind to the containers
-        absolute_volume_path_config = get_absolute_path(
-            env.get('ieasyforecast_configuration_path'))
-        absolute_volume_path_internal_data = get_absolute_path(
-            env.get('ieasyforecast_intermediate_data_path'))
-        bind_volume_path_config = get_bind_path(
-            env.get('ieasyforecast_configuration_path'))
-        bind_volume_path_internal_data = get_bind_path(
-            env.get('ieasyforecast_intermediate_data_path'))
-
-        # Run the docker container to pre-process runoff data
-        client = docker.from_env()
-
-        # Pull the latest image
-        if pu.there_is_a_newer_image_on_docker_hub(
-            client, repository='mabesa', image_name='sapphire-prepgateway', tag=TAG):
-            print("Pulling the latest image from Docker Hub.")
-            client.images.pull('mabesa/sapphire-prepgateway', tag=TAG)
-
-        # Define environment variables
-        environment = [
-            'SAPPHIRE_OPDEV_ENV=True',
-            'SAPPHIRE_DG_HOST=' + SAPPHIRE_DG_HOST
-        ]
-
-        # Define volumes
-        volumes = {
-            absolute_volume_path_config: {'bind': bind_volume_path_config, 'mode': 'rw'},
-            absolute_volume_path_internal_data: {'bind': bind_volume_path_internal_data, 'mode': 'rw'}
-        }
-
-        # Run the container
-        container = client.containers.run(
-            f"mabesa/sapphire-prepgateway:{TAG}",
-            detach=True,
-            environment=environment,
-            volumes=volumes,
-            name="prepgateway",
-            #labels=labels,
-            network='host'  # To test
-        )
-
-        print(f"Container {container.id} is running.")
-
-        # Wait for the container to finish running
-        result = container.wait()
-
-        # Get the exit status code
-        exit_status = result['StatusCode']
-        print(f"Container {container.id} exited with status code {exit_status}.")
-
-        # Get the logs from the container
-        logs = container.logs().decode('utf-8')
-        print(f"Logs from container {container.id}:\n{logs}")
-
-        print(f"Container {container.id} has stopped.")
-
-        # Create the output marker file
-        with self.output().open('w') as f:
-            f.write('Task completed')
-        '''
-
 
 class LinearRegression(luigi.Task):
 
@@ -465,6 +397,10 @@ class LinearRegression(luigi.Task):
 
 
 class ConceptualModel(luigi.Task):
+     # Set timeout to 30 minutes (1800 seconds)
+    timeout_seconds = luigi.IntParameter(default=1800)
+    max_retries = 2
+    retry_delay = 5
 
     def requires(self):
         return [PreprocessingRunoff(), PreprocessingGatewayQuantileMapping()]
@@ -472,68 +408,140 @@ class ConceptualModel(luigi.Task):
     def output(self):
         return luigi.LocalTarget(f'/app/log_conceptmod.txt')
 
+    def _run_container(self, attempt_number) -> tuple[Optional[str], int, str]:
+        """
+        Run the docker container and return container ID, exit status, and logs
+        """
+        client = docker.from_env()
+        container = None
+
+        try:
+            # Construct the absolute volume paths to bind to the containers
+            absolute_volume_path_config = get_absolute_path(
+                env.get('ieasyforecast_configuration_path'))
+            absolute_volume_path_internal_data = get_absolute_path(
+                env.get('ieasyforecast_intermediate_data_path'))
+            absolute_volume_path_conceptmod = get_absolute_path(
+                env.get('ieasyhydroforecast_conceptual_model_path'))
+            bind_volume_path_config = get_bind_path(
+                env.get('ieasyforecast_configuration_path'))
+            bind_volume_path_internal_data = get_bind_path(
+                env.get('ieasyforecast_intermediate_data_path'))
+            bind_volume_path_conceptmod = get_bind_path(
+                env.get('ieasyhydroforecast_conceptual_model_path'))
+
+            # Pull the latest image if needed
+            if pu.there_is_a_newer_image_on_docker_hub(
+                client, repository='mabesa', image_name='sapphire-conceptmod', tag=TAG):
+                print("Pulling the latest image from Docker Hub.")
+                client.images.pull('mabesa/sapphire-conceptmod', tag=TAG)
+
+            # Define environment variables
+            environment = [
+                'SAPPHIRE_OPDEV_ENV=True',
+                'IN_DOCKER_CONTAINER=True'
+            ]
+
+            # Define volumes
+            volumes = {
+                absolute_volume_path_config: {'bind': bind_volume_path_config, 'mode': 'rw'},
+                absolute_volume_path_internal_data: {'bind': bind_volume_path_internal_data, 'mode': 'rw'},
+                absolute_volume_path_conceptmod: {'bind': bind_volume_path_conceptmod, 'mode': 'rw'}
+            }
+
+            # Run the container with unique name for each attempt
+            container = client.containers.run(
+                f"mabesa/sapphire-conceptmod:{TAG}",
+                detach=True,
+                environment=environment,
+                volumes=volumes,
+                name=f"conceptmod_attempt_{attempt_number}_{time.time()}",  # Unique name per attempt
+                network='host'
+            )
+
+            print(f"Container {container.id} is running.")
+
+            # Wait for container with timeout
+            try:
+                self.run_with_timeout(container.wait)
+                exit_status = 0
+            except TimeoutError:
+                print(f"Container {container.id} timed out after {self.timeout_seconds} seconds")
+                container.stop()
+                exit_status = 124
+            logs = container.logs().decode('utf-8')
+
+            print(f"Container {container.id} exited with status code {exit_status}")
+            print(f"Logs from container {container.id}:\n{logs}")
+
+            # Clean up container
+            try:
+                container.remove()
+            except Exception as e:
+                print(f"Warning: Could not remove container {container.id}: {str(e)}")
+
+            return container.id, exit_status, logs
+
+        except Exception as e:
+            print(f"Error running container: {str(e)}")
+            if container:
+                try:
+                    container.stop()
+                    container.remove()
+                except:
+                    pass
+            return None, 1, str(e)
+
     def run(self):
+        logger = pu.TaskLogger()
+        start_time = datetime.datetime.now()
+
         print("------------------------------------")
         print(" Running ConceptualModel task.")
         print("------------------------------------")
 
-        # Construct the absolute volume paths to bind to the containers
-        absolute_volume_path_config = get_absolute_path(
-            env.get('ieasyforecast_configuration_path'))
-        absolute_volume_path_internal_data = get_absolute_path(
-            env.get('ieasyforecast_intermediate_data_path'))
-        absolute_volume_path_conceptmod = get_absolute_path(
-            env.get('ieasyhydroforecast_conceptual_model_path'))
-        bind_volume_path_config = get_bind_path(
-            env.get('ieasyforecast_configuration_path'))
-        bind_volume_path_internal_data = get_bind_path(
-            env.get('ieasyforecast_intermediate_data_path'))
-        bind_volume_path_conceptmod = get_bind_path(
-            env.get('ieasyhydroforecast_conceptual_model_path'))
+        attempts = 0
+        final_status = "Failed"
+        details = ""
 
-        # Run the docker container to pre-process runoff data
-        client = docker.from_env()
+        try:
+            while attempts < self.max_retries:
+                attempts += 1
+                print(f"Attempt {attempts} of {self.max_retries}")
 
-        # Pull the latest image
-        if pu.there_is_a_newer_image_on_docker_hub(
-            client, repository='mabesa', image_name='sapphire-conceptmod', tag=TAG):
-            print("Pulling the latest image from Docker Hub.")
-            client.images.pull('mabesa/sapphire-conceptmod', tag=TAG)
+                container_id, exit_status, logs = self._run_container(attempts)
 
-        # Define environment variables
-        environment = [
-            'SAPPHIRE_OPDEV_ENV=True',
-            'IN_DOCKER_CONTAINER=True'
-        ]
+                if exit_status == 0:
+                    # Success - write output and exit
+                    with self.output().open('w') as f:
+                        f.write('Task completed successfully\n')
+                        f.write(f'Container ID: {container_id}\n')
+                        f.write(f'Logs:\n{logs}')
+                    final_status = "Success"
+                    details = f"Completed on attempt {attempts}"
+                    break
 
-        # Define volumes
-        volumes = {
-            absolute_volume_path_config: {'bind': bind_volume_path_config, 'mode': 'rw'},
-            absolute_volume_path_internal_data: {'bind': bind_volume_path_internal_data, 'mode': 'rw'},
-            absolute_volume_path_conceptmod: {'bind': bind_volume_path_conceptmod, 'mode': 'rw'}
-        }
+                if exit_status == 124:  # Timeout
+                    final_status = "Timeout"
+                    details = f"Task timed out after {self.timeout_seconds} seconds"
+                    break
 
-        # Run the container
-        container = client.containers.run(
-            f"mabesa/sapphire-conceptmod:{TAG}",
-            detach=True,
-            environment=environment,
-            volumes=volumes,
-            name="conceptmod",
-            #labels=labels,
-            network='host'  # To test
-        )
+                if attempts < self.max_retries:
+                    print(f"Container failed with status {exit_status}. Retrying in {self.retry_delay} seconds...")
+                    time.sleep(self.retry_delay)
+                else:
+                    print(f"Container failed after {self.max_retries} attempts.")
+                    raise RuntimeError(f"Task failed after {self.max_retries} attempts. Last exit status: {exit_status}\nLogs:\n{logs}")
 
-        print(f"Container {container.id} is running.")
-
-        # Wait for the container to finish running
-        container.wait()
-
-        print(f"Container {container.id} has stopped.")
-
-        # Write the output marker file
-        with self.output().open('w') as f:
-            f.write('Task completed')
+        finally:
+            end_time = datetime.datetime.now()
+            logger.log_task_timing(
+                task_name="ConceptualModel",
+                start_time=start_time,
+                end_time=end_time,
+                status=final_status,
+                details=details
+            )
 
 
 class RunMLModel(luigi.Task):
