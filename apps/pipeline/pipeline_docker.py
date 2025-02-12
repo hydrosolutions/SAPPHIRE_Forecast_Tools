@@ -399,7 +399,7 @@ class LinearRegression(luigi.Task):
 
 
 class ConceptualModel(pu.TimeoutMixin, luigi.Task):
-     # Set timeout to 30 minutes (1800 seconds)
+    # Set timeout to 30 minutes (1800 seconds)
     timeout_seconds = luigi.IntParameter(default=1800)
     max_retries = 2
     retry_delay = 5
@@ -549,6 +549,9 @@ class ConceptualModel(pu.TimeoutMixin, luigi.Task):
 class RunMLModel(luigi.Task):
     model_type = luigi.Parameter()
     prediction_mode = luigi.Parameter()
+
+    # Set timeout to 8 minutes (480 seconds)
+    timeout_seconds = luigi.IntParameter(default=480)
 
     def requires(self):
         return [PreprocessingRunoff(), PreprocessingGatewayQuantileMapping()]
