@@ -546,7 +546,7 @@ class ConceptualModel(pu.TimeoutMixin, luigi.Task):
             )
 
 
-class RunMLModel(luigi.Task):
+class RunMLModel(pu.TimeoutError, luigi.Task):
     model_type = luigi.Parameter()
     prediction_mode = luigi.Parameter()
 
