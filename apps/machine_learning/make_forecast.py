@@ -289,7 +289,6 @@ def prepare_forecast_data(
     
 
 
-
 # --------------------------------------------------------------------
 # MAIN FUNCTION
 # --------------------------------------------------------------------
@@ -559,7 +558,10 @@ def make_ml_forecast():
         #add the code to the predictions
         predictions['code'] = code
         predictions['forecast_date'] = pd.to_datetime(datetime.datetime.now().date())
-        predictions['date'] = pd.to_datetime(predictions['date'])
+        if flag != 2:
+            predictions['date'] = pd.to_datetime(predictions['date'])
+        else:
+            predictions['date'] = pd.to_datetime(datetime.datetime.now().date())
         predictions['flag'] = flag
 
         forecast = pd.concat([forecast, predictions], axis=0, ignore_index=True)

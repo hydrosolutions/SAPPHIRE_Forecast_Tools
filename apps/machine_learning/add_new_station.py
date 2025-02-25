@@ -161,7 +161,7 @@ def main():
     # --------------------------------------------------------------------
     # Define the start and end date
     # --------------------------------------------------------------------
-    start_date = '2009-12-31'
+    start_date = min(min(decad_forecast['forecast_date']), min(pentad_forecast['forecast_date'])).strftime('%Y-%m-%d')
     end_date = max(max(decad_forecast['forecast_date']), max(pentad_forecast['forecast_date'])).strftime('%Y-%m-%d')
 
     logger.info('Start date: %s', start_date)

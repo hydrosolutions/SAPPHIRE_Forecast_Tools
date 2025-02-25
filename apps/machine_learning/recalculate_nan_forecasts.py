@@ -21,7 +21,8 @@ import subprocess
 
 import logging
 from logging.handlers import TimedRotatingFileHandler
-
+logging.getLogger("pytorch_lightning.utilities.rank_zero").setLevel(logging.WARNING)
+logging.getLogger("pytorch_lightning.accelerators.cuda").setLevel(logging.WARNING)
 formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 # Ensure the logs directory exists
 logs_dir = 'logs'
@@ -36,15 +37,10 @@ logger = logging.getLogger('recalculate_nan_forecasts')
 logger.setLevel(logging.DEBUG)
 logger.handlers = []
 logger.addHandler(file_handler)
-#logger.addHandler(console_handler)
 
 import warnings
 warnings.filterwarnings("ignore")
 
-# Print logging level of the logger
-logger.info('Logging level: %s', logger.getEffectiveLevel())
-# Level 10: DEBUG, Level 20: INFO, Level 30: WARNING, Level 40: ERROR, Level 50: CRITICAL
-logger.debug('Debug message for logger level 10')
 
 
 
@@ -190,8 +186,20 @@ def recalculate_nan_forecasts():
     max_missing_dates = []
 
     forecast['flag'] = forecast['flag'].astype(int, errors='ignore')
-    forecast['date'] = pd.to_datetime(forecast['date'])
-    forecast['forecast_date'] = pd.to_datetime(forecast['forecast_date'])
+    try:
+        # First attempt with default parsing
+        forecast['date'] = pd.to_datetime(forecast['date'])
+        forecast['forecast_date'] = pd.to_datetime(forecast['forecast_date'])
+    except:
+        # Fallback to mixed format parsing if the first attempt fails
+        try:
+            forecast['date'] = pd.to_datetime(forecast['date'], format='mixed')
+            forecast['forecast_date'] = pd.to_datetime(forecast['forecast_date'], format='mixed')
+        except Exception as e:
+            # Handle the case where both parsing methods fail
+            logger.error('Error parsing date columns: %s', e)
+            raise e
+            
 
     for code in unique_codes:
         #select the forecast for the specific code
@@ -210,8 +218,7 @@ def recalculate_nan_forecasts():
 
 
     if len(codes_with_nan) == 0:
-        logger.debug('No forecasts to recalculate')
-        logger.info('No forecasts to recalculate. Exiting recalculate_nan_forecasts.py\n')
+        logger.debug('No forecasts to recalculate. Exiting recalculate_nan_forecasts.py\n')
         return
 
     #call the hindcast script
@@ -224,6 +231,10 @@ def recalculate_nan_forecasts():
     logger.debug('Min missing date: %s', min_date)
     logger.debug('Max missing date: %s', max_date)
 
+    print('Recalculating forecasts for codes:', codes_with_nan)
+    print('Min missing date:', min_date)
+    print('Max missing date:', max_date)
+
     hindcast = call_hindcast_script(min_missing_date=min_date,
                                     max_missing_date=max_date,
                                     MODEL_TO_USE=MODEL_TO_USE,
@@ -231,6 +242,9 @@ def recalculate_nan_forecasts():
                                     codes_with_nan=codes_with_nan,
                                     PREDICTION_MODE=PREDICTION_MODE)
 
+    print('Hindcast shape:', hindcast.shape)
+    print('Hindcast columns:', hindcast.columns)
+    print('Hindcast head:', hindcast.head())
     # --------------------------------------------------------------------
     # UPDATE THE FORECAST
     # Only replace the values with flag == 1

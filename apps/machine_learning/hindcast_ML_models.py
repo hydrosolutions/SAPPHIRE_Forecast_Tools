@@ -415,9 +415,16 @@ def main():
     start_date = pd.to_datetime(start_date) - pd.DateOffset(days=input_chunk_length + 1)
     end_date = pd.to_datetime(end_date)
 
+    logger.debug('Last Observation date: %s', observed_discharge['date'].max())
+
     # filter observed discharge to be only in the range of the start and end date
     observed_discharge = observed_discharge[observed_discharge['date'] >= start_date].copy()
     observed_discharge = observed_discharge[observed_discharge['date'] <= end_date].copy()
+
+    logger.debug('Start date: %s', start_date)
+    logger.debug('End date: %s', end_date)
+
+    logger.debug('Observation discharge: %s', observed_discharge)
 
     
     timer_start = datetime.datetime.now()
@@ -427,14 +434,28 @@ def main():
         
         #ensure that the discharge data has no missing dates in the range of the start and end date + forecast horizon
         # if it has missing dates, then fill the missing dates with nan
+        # Create complete date range
+        date_range = pd.date_range(start=start_date, end=end_date + pd.Timedelta(days=forecast_horizon), freq='D')
+
+        #ensure that the discharge data has no missing dates in the range of the start and end date + forecast horizon
+        # if it has missing dates, then fill the missing dates with nan
         date_range = pd.date_range(start=start_date, end=end_date + pd.Timedelta(days=forecast_horizon), freq='D')
         discharge.set_index('date', inplace=True)
         discharge = discharge.reindex(date_range)
         discharge.reset_index(inplace=True)
         discharge.rename(columns={'index': 'date'}, inplace=True)
+        discharge['code'] = code
 
         era5 = era5_data_transformed[era5_data_transformed['code'] == code].copy()
 
+        if era5.isnull().values.any():
+            logger.debug(f'Era5 data for code {code} has missing values')
+            logger.debug('Number of missing values: %s', era5.isnull().sum())
+        
+        if discharge.isnull().values.any():
+            logger.debug(f'Discharge data for code {code} has missing values')
+            logger.debug('Length of discharge: %s', len(discharge))
+            logger.debug('Number of missing values: %s', discharge.isnull().sum())
 
         # make hindcast 
         hindcast_code = predictor.hindcast(
@@ -446,6 +467,9 @@ def main():
         )
 
         hindcast_code['code'] = code
+
+        logger.debug('Hindcast for code: %s', code)
+        logger.debug('Hindcast: %s', hindcast_code)
         
         hindecast_daily_df = pd.concat([hindecast_daily_df, hindcast_code], axis=0)
 
@@ -465,7 +489,8 @@ def main():
     # if the forecast is nan -> flag = 3
     # if there is a value in the forecast: -> flag = 4
     hindecast_daily_df['flag'] = 4
-    hindecast_daily_df.loc[hindecast_daily_df['forecast_date'].isna(), 'flag'] = 3
+    pred_cols = [col for col in hindecast_daily_df.columns if 'Q' in col]
+    hindecast_daily_df.loc[hindecast_daily_df[pred_cols].isna().any(axis=1), 'flag'] = 3
 
     print(f'Time to make hindcast: {timer_end - timer_start}')
     # --------------------------------------------------------------------

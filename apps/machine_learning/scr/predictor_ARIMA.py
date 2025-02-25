@@ -35,7 +35,7 @@ class PREDICTOR():
         self.mean_daily_discharge = self.mean_daily_discharge.rename(columns={'discharge': 'discharge_daily_mean'})
 
     def get_input_chunk_length(self):
-        return 20
+        return 30
     
     def get_max_forecast_horizon(self):
         return 11
