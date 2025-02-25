@@ -1059,13 +1059,23 @@ def calculate_forecast_range(_, forecast_table, range_type, range_slider):
         forecast_table['fc_lower'] = forecast_table['forecasted_discharge'] - forecast_table['delta']
         forecast_table['fc_upper'] = forecast_table['forecasted_discharge'] + forecast_table['delta']
     elif range_type == _("Manual range, select value below"):
-        forecast_table['fc_lower'] = (1 - range_slider/100.0) * forecast_table['forecasted_discharge']
-        forecast_table['fc_upper'] = (1 + range_slider/100.0) * forecast_table['forecasted_discharge']
+        if hasattr(range_slider, 'value'):
+            forecast_table['fc_lower'] = (1 - range_slider.value/100.0) * forecast_table['forecasted_discharge']
+            forecast_table['fc_upper'] = (1 + range_slider.value/100.0) * forecast_table['forecasted_discharge']
+        else:
+            forecast_table['fc_lower'] = (1 - range_slider/100.0) * forecast_table['forecasted_discharge']
+            forecast_table['fc_upper'] = (1 + range_slider/100.0) * forecast_table['forecasted_discharge']
     elif range_type == _("max[delta, %]"):
-        forecast_table['fc_lower'] = np.minimum(forecast_table['forecasted_discharge'] - forecast_table['delta'],
-                                                (1 - range_slider/100.0) * forecast_table['forecasted_discharge'])
-        forecast_table['fc_upper'] = np.maximum(forecast_table['forecasted_discharge'] + forecast_table['delta'],
-                                                (1 + range_slider/100.0) * forecast_table['forecasted_discharge'])
+        if hasattr(range_slider, 'value'):
+            forecast_table['fc_lower'] = np.maximum(forecast_table['forecasted_discharge'] - forecast_table['delta'],
+                                                    (1 - range_slider.value/100.0) * forecast_table['forecasted_discharge'])
+            forecast_table['fc_upper'] = np.minimum(forecast_table['forecasted_discharge'] + forecast_table['delta'],
+                                                    (1 + range_slider.value/100.0) * forecast_table['forecasted_discharge'])
+        else:
+            forecast_table['fc_lower'] = np.minimum(forecast_table['forecasted_discharge'] - forecast_table['delta'],
+                                                    (1 - range_slider/100.0) * forecast_table['forecasted_discharge'])
+            forecast_table['fc_upper'] = np.maximum(forecast_table['forecasted_discharge'] + forecast_table['delta'],
+                                                    (1 + range_slider/100.0) * forecast_table['forecasted_discharge'])
     else:
         forecast_table['fc_lower'] = forecast_table['forecasted_discharge'] - forecast_table['delta']
         forecast_table['fc_upper'] = forecast_table['forecasted_discharge'] + forecast_table['delta']
@@ -1090,8 +1100,50 @@ def update_model_dict(model_dict, forecasts_all, selected_station, selected_pent
 
     return model_dict
 
+def update_model_dict_date(model_dict, forecasts_all, selected_station, selected_date):
+    """
+    Update the model_dict with the models we have results for for the selected station
+    """
+    print(f"DEBUG: update_model_dict_date for date: {selected_date}")
+    print(f"Tail of forecasts_all:\n{forecasts_all.tail()}")
+    print(f"Type of forecasts_all['date']: {forecasts_all['date'].dtype}")
+    print(f"Type of selected_date: {type(selected_date)}")
+    if hasattr(selected_station, 'value'):
+        if hasattr(selected_date, 'value'):
+            filtered_forecasts = forecasts_all[
+                (forecasts_all['station_labels'] == selected_station.value) &
+                (forecasts_all['date'] == pd.Timestamp(selected_date.value))
+            ]
+        else:
+            filtered_forecasts = forecasts_all[
+                (forecasts_all['station_labels'] == selected_station.value) &
+                (forecasts_all['date'] == pd.Timestamp(selected_date))
+            ]
+    else:
+        if hasattr(selected_date, 'value'):
+            filtered_forecasts = forecasts_all[
+                (forecasts_all['station_labels'] == selected_station) &
+                (forecasts_all['date'] == pd.Timestamp(selected_date.value))
+            ]
+        else:
+            filtered_forecasts = forecasts_all[
+                (forecasts_all['station_labels'] == selected_station) &
+                (forecasts_all['date'] == pd.Timestamp(selected_date))
+            ]
+    # Remove duplicates in model_short
+    filtered_forecasts = filtered_forecasts.drop_duplicates(subset=['model_short'], keep='last')
+    model_dict = filtered_forecasts.set_index('model_long')['model_short'].to_dict()
+
+    print(f"\nDEBUG: update_model_dict:")
+    print(f"Filtered forecasts:\n{filtered_forecasts[['model_long', 'model_short', 'forecasted_discharge']]}")
+    print(f"Resulting model_dict: {model_dict}")
+
+    return model_dict
+
+
 def get_best_models_for_station_and_pentad(forecasts_all, selected_station, selected_pentad):
     """Returns a list of models with the best performance for the selected station and pentad"""
+    print(f"\n  dbg: get_best_models_for_station_and_pentad: selected_station: {selected_station}")
     # Filter the forecast results for the selected station and pentad
     forecasts_local = forecasts_all[
         (forecasts_all['station_labels'] == selected_station) &
@@ -1118,6 +1170,7 @@ def get_best_models_for_station_and_pentad(forecasts_all, selected_station, sele
     best_models = [best_model, 'LR']
     # If length of best_models is 1, we only have the LR model
     if len(best_models) == 1:
+        print("Only LR model available for the given station and pentad.")
         return ['Linear regression (LR)']
     # if forecasted_discharge of forecasts is NaN, we remove the model from best_models
     best_models = [

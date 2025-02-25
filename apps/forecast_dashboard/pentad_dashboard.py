@@ -468,7 +468,7 @@ station = pn.widgets.Select(
 # Update the model_dict with the models we have results for for the selected
 # station
 print("DEBUG: pentad_dashboard.py: station.value: ", station.value)
-model_dict = processing.update_model_dict(model_dict_all, forecasts_all, station.value, pentad_selector.value)
+model_dict = processing.update_model_dict_date(model_dict_all, forecasts_all, station.value, date_picker.value)
 #print(f"DEBUG: pentad_dashboard.py: model_dict: {model_dict}")
 
 #@pn.depends(station, pentad_selector, watch=True)
@@ -816,7 +816,7 @@ def update_model_select(station_value, selected_pentad):
     print(f"  Current value: {model_checkbox.value}")
 
     # First get the updated model dictionary
-    updated_model_dict = processing.update_model_dict(model_dict_all, forecasts_all, station_value, selected_pentad)
+    updated_model_dict = processing.update_model_dict_date(model_dict_all, forecasts_all, station_value, date_picker.value)
 
     print("\nAfter update_model_dict:")
     print(f"  Updated model dict: {updated_model_dict}")
@@ -1373,26 +1373,47 @@ skill_metrics_download_filename, skill_metrics_download_button = skill_table.dow
 #    embed=False, name="Right-click to download using 'Save as' dialog"
 #)
 
-def update_forecast_tabulator(event=None):
+@pn.depends(station, model_checkbox, allowable_range_selection, manual_range, watch=True)
+def update_forecast_tabulator(station, model_checkbox, allowable_range_selection, manual_range):
     viz.create_forecast_summary_tabulator(
-        _, forecasts_all, station.value, date_picker.value,
-        model_checkbox.value, allowable_range_selection.value, manual_range.value,
+        _, forecasts_all, station, date_picker,
+        model_checkbox, allowable_range_selection, manual_range,
         forecast_tabulator
     )
 
 # Initial update
-update_forecast_tabulator()
+update_forecast_tabulator(station, model_checkbox, allowable_range_selection, manual_range)
 
 
 def update_visualizations():
     # Re-bind the plots to use the updated data
 
-    viz.plot_pentad_forecast_hydrograph_data,
-    _, hydrograph_pentad_all, forecasts_all, station, date_picker,
-    model_checkbox, allowable_range_selection, manual_range,
-    show_range_button
+    viz.plot_pentad_forecast_hydrograph_data(
+        hydrograph_pentad_all,
+        forecasts_all,
+        station,
+        date_picker,
+        model_checkbox,
+        allowable_range_selection,
+        manual_range,
+        show_range_button
+    )
 
-    update_forecast_tabulator()
+    viz.plot_pentad_forecast_hydrograph_data_v2(
+        hydrograph_day_all,
+        linreg_predictor,
+        forecasts_all,
+        station,
+        date_picker,
+        model_checkbox,
+        allowable_range_selection,
+        manual_range,
+        show_range_button,
+        rram_forecast,
+        ml_forecast
+    )
+
+    update_forecast_tabulator(station, model_checkbox, allowable_range_selection, manual_range)
 
 
 def on_data_needs_reload_changed(event):
@@ -1428,11 +1449,11 @@ update_site_object = pn.bind(
     tabulator=forecast_summary_table)
 
 # Watch for changes in parameters to update the Tabulator
-station.param.watch(update_forecast_tabulator, 'value')
-date_picker.param.watch(update_forecast_tabulator, 'value')
-model_checkbox.param.watch(update_forecast_tabulator, 'value')
-allowable_range_selection.param.watch(update_forecast_tabulator, 'value')
-manual_range.param.watch(update_forecast_tabulator, 'value')
+#station.param.watch(update_forecast_tabulator, 'value')
+#date_picker.param.watch(update_forecast_tabulator, 'value')
+#model_checkbox.param.watch(update_forecast_tabulator, 'value')
+#allowable_range_selection.param.watch(update_forecast_tabulator, 'value')
+#manual_range.param.watch(update_forecast_tabulator, 'value')
 
 # Bind the update function to the button
 #pn.bind(update_indicator, write_bulletin_button, watch=True)
