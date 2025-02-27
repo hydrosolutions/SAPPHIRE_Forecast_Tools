@@ -42,7 +42,7 @@
 # --------------------------------------------------------------------
 
 # Useage:
-# SAPPHIRE_MODEL_TO_USE=TFT SAPPHIRE_PREDICTION_MODE=PENTAD python make_forecast.py
+# SAPPHIRE_OPDEV_ENV=True SAPPHIRE_MODEL_TO_USE=TFT SAPPHIRE_PREDICTION_MODE=PENTAD python make_forecast.py
 # Possible values for MODEL_TO_USE: TFT, TIDE, TSMIXER
 # Possible values for MODEL_TO_USE: PENTAD, DECAD
 
@@ -195,10 +195,110 @@ def write_decad_forecast(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, forecast_decad):
     forecast_decad.to_csv(os.path.join(OUTPUT_PATH_DISCHARGE, f'decad_{MODEL_TO_USE}_forecast.csv'), index=False)
 
 
+
+def prepare_forecast_data(
+        past_discharge: pd.DataFrame,
+        threshold_missing_days: int,
+        threshold_missing_days_end: int,
+        old_forecast: pd.DataFrame,
+        code: int,
+        forecast_horizon: int,
+        input_chunk_length: int,
+) -> (pd.DataFrame, int):
+    """
+    Workflow for data preparation for forecasting.
+    1. Make time series continuous by reindexing -> missing days will be nan
+    2. Check the nan values in the time series
+    3. Check the conditions: if we exceed the threshold of missing days, or missing_days_end, we will not make a forecast
+        -> this will return a dataframe with nans in it and the flag 1
+    4. We take the old forecast file and replace the missing days with the latest forecasted values
+    5. if we still have missing days we interpolate or if it is at the end we take the last value
+    6. We return the prepared data and the flag 0
+    """
+    discharge_df = past_discharge.copy()
+
+    try:
+        prev_forecast = old_forecast[old_forecast['code'] == code].copy()
+        prev_forecast['date'] = pd.to_datetime(prev_forecast['date'])
+        prev_forecast['forecast_date'] = pd.to_datetime(prev_forecast['forecast_date'])
+    except:
+        prev_forecast = None
+
+    #1: Make time series continouus.
+    today = pd.to_datetime(datetime.datetime.now().date())
+    lockback_start = today - pd.Timedelta(days=input_chunk_length+1)
+    discharge_df = discharge_df[(discharge_df['date'] >= lockback_start) & (discharge_df['date'] <= today)]
+    date_range = pd.date_range(start=lockback_start, end=today, freq='D')
+    discharge_df.set_index('date', inplace=True)
+    discharge_df = discharge_df.reindex(date_range)
+    discharge_df.reset_index(inplace=True)
+    discharge_df.rename(columns={'index': 'date'}, inplace=True)
+
+    #2: Check for missing values
+    missing_values, nans_at_end = utils_ml_forecast.check_for_nans(discharge_df.iloc[-input_chunk_length:], threshold_missing_days)
+
+    #3: Check the conditions
+    if missing_values['exceeds_threshold'] or nans_at_end >= threshold_missing_days_end:
+        return discharge_df, 1
+
+    #4: Replace missing values with the latest forecasted values (Q50)
+    if prev_forecast is not None:
+        days_with_nan = discharge_df[discharge_df['discharge'].isna()]['date']
+        prev_forecast = prev_forecast[prev_forecast['date'].isin(days_with_nan)]
+        #sort by forecast_date
+        prev_forecast = prev_forecast.sort_values(by='forecast_date')
+        prev_forecast = prev_forecast.drop_duplicates(subset=['date'], keep='last')
+
+        col_name = 'Q50'
+        #check if the column exists
+        if col_name not in prev_forecast.columns:
+            col_name = 'Q'
+        try:
+            # First method: Update all dates at once
+            discharge_df.loc[discharge_df['date'].isin(prev_forecast['date']), 'discharge'] = prev_forecast[col_name].values
+            logger.debug(f'Nans replaced with forecasted values 1st method: {len(prev_forecast)}')
+        except Exception as e1:
+            logger.debug(f"First method failed: {e1}")
+            try:
+                # Second method: Update date by date
+                counter = 0
+                for missing_date in days_with_nan:
+                    discharge_df.loc[discharge_df['date'] == missing_date, 'discharge'] = prev_forecast[prev_forecast['date'] == missing_date][col_name].values[0]
+                    counter += 1
+                logger.debug(f'Nans replaced with forecasted values 2nd method: {counter}')
+            except Exception as e2:
+                loger.debug(f"Second method failed: {e2}")
+                pass  # Both methods failed, moving on
+
+    #5: Interpolate missing values and ffill missing values at the end
+    # check again for missing values
+    missing_values, nans_at_end = utils_ml_forecast.check_for_nans(discharge_df.iloc[-input_chunk_length:], threshold_missing_days)
+    if missing_values['exceeds_threshold'] or nans_at_end >= threshold_missing_days_end:
+        return discharge_df, 1
+
+    if missing_values['nans_in_between']:
+        print('Interpolating missing values')
+        discharge_df = utils_ml_forecast.gaps_imputation(discharge_df)
+
+    if missing_values['nans_at_end']:
+        print(f'Filling missing values at the end: {nans_at_end}')
+        discharge_df = discharge_df.ffill(limit_area='outside')
+
+    #6: Return the prepared data
+    return discharge_df, 0
+
+
+
 # --------------------------------------------------------------------
 # MAIN FUNCTION
 # --------------------------------------------------------------------
 def make_ml_forecast():
+
+    logger.info(f'--------------------------------------------------------------------')
+    logger.info(f"Starting make_forecast.py")
+    print(f'--------------------------------------------------------------------')
+    print(f"Starting make_forecast.py")
+
 
     # --------------------------------------------------------------------
     # DEFINE WHICH MODEL TO USE
@@ -299,7 +399,7 @@ def make_ml_forecast():
     mask_predictable = hydroposts_available_for_ml_forecasting[MODEL_TO_USE] == True
     codes_model_can_predict = hydroposts_available_for_ml_forecasting[mask_predictable]['code'].tolist()
     rivers_to_predict = list(set(rivers_to_predict) & set(codes_model_can_predict))
-    #convert to int 
+    #convert to int
     rivers_to_predict = [int(code) for code in rivers_to_predict]
     logger.debug('Rivers to predict pentad: %s', rivers_to_predict_pentad)
     logger.debug('Rivers to predict decad: %s', rivers_to_predict_decad)
@@ -371,9 +471,6 @@ def make_ml_forecast():
     elif MODEL_TO_USE == 'ARIMA':
         model = None
 
-
-
-
     if MODEL_TO_USE == 'ARIMA':
         predictor = predictor_class.PREDICTOR(PATH_TO_MODEL)
     else:
@@ -404,15 +501,17 @@ def make_ml_forecast():
     THRESHOLD_MISSING_DAYS = int(THRESHOLD_MISSING_DAYS)
     THRESHOLD_MISSING_DAYS_END = int(THRESHOLD_MISSING_DAYS_END)
 
-
-    used_decad_model_for_pentad_forecast = False
-    decadal_forecast_is_possible = True
-    pentad_no_success = []
-    decadal_no_success = []
-    missing_values_dict = {}
-    exceeds_threshhold_dict = {}
-    nans_at_end_dict = {}
-
+    #load the old forecast
+    if PREDICTION_MODE == 'PENTAD':
+        try:
+            old_forecast = pd.read_csv(os.path.join(OUTPUT_PATH_DISCHARGE, f'pentad_{MODEL_TO_USE}_forecast.csv'))
+        except FileNotFoundError:
+            old_forecast = pd.DataFrame()
+    else:
+        try:
+            old_forecast = pd.read_csv(os.path.join(OUTPUT_PATH_DISCHARGE, f'decad_{MODEL_TO_USE}_forecast.csv'))
+        except FileNotFoundError:
+            old_forecast = pd.DataFrame()
 
     for code in rivers_to_predict:
         # Cast code to int.
@@ -430,58 +529,46 @@ def make_ml_forecast():
         #sort by date
         past_discharge_code = past_discharge_code.sort_values(by='date')
         qmapped_era5_code = qmapped_era5_code.sort_values(by='date')
+
         logger.debug('past_discharge_code: %s', past_discharge_code.tail())
         logger.debug('qmapped_era5_code: %s', qmapped_era5_code.tail())
-
-        #check if we can make a forecast: 
-        # if the last observation is older than today - 1 days, we don't make a forecast
-        if past_discharge_code['date'].iloc[-1] < pd.to_datetime(datetime.datetime.now().date()) - pd.Timedelta(days=1):
-            logger.debug('No forecast due to no recent available discharge for code: %s', code )
-            continue
 
         #get the input chunck length -> this can than be used to determine the relevant allowed missing values
         input_chunk_length = predictor.get_input_chunk_length()
         logger.debug('input_chunk_length: %s', input_chunk_length)
 
-        #check for missing values, n = number of missing values at the end
-        missing_values, nans_at_end = utils_ml_forecast.check_for_nans(past_discharge_code.iloc[-input_chunk_length:], THRESHOLD_MISSING_DAYS)
+        #prepare the data
+        past_discharge_code, flag = prepare_forecast_data(
+            past_discharge = past_discharge_code,
+            threshold_missing_days = THRESHOLD_MISSING_DAYS,
+            threshold_missing_days_end = THRESHOLD_MISSING_DAYS_END,
+            old_forecast = old_forecast,
+            code = code,
+            forecast_horizon = forecast_horizon,
+            input_chunk_length = input_chunk_length
+            )
 
-        if missing_values['exceeds_threshold'] or nans_at_end >= THRESHOLD_MISSING_DAYS_END:
-            pentad_no_success.append(code)
-            decadal_no_success.append(code)
-            exceeds_threshhold_dict[code] = True
-            # The Predicition output will be NaN, but the file will be written
-            predictions =  predictor.predict(past_discharge_code, qmapped_era5_code, None , code, n=forecast_horizon, make_plot=False)
+        predictions = predictor.predict(past_discharge_code, qmapped_era5_code, None , code, n=forecast_horizon, make_plot=False)
 
-        elif missing_values['nans_in_between']:
-            missing_values_dict[code] = True
-            # Impute the missing values
-            past_discharge_code = utils_ml_forecast.gaps_imputation(past_discharge_code)
-
-        elif missing_values['nans_at_end']:
-            decadal_forecast_is_possible = False
-            nans_at_end_dict[code] = nans_at_end
-            decadal_no_success.append(code)
-
-            if code in RECURSIVE_RIVERS and PREDICTION_MODE == 'PENTAD':
-                past_discharge_code = utils_ml_forecast.recursive_imputation(past_discharge_code, None, qmapped_era5_code, nans_at_end, predictor, make_plot=False)
-            elif PREDICTION_MODE == 'DECAD':
-                #TODO: check if the model can predict the decad when there are missing values at the end
-                # maybe an additional method is needed
-                used_decad_model_for_pentad_forecast = True
-                predictions = predictor.predict(past_discharge_code, qmapped_era5_code, None , code, n=forecast_horizon, make_plot=False)
-
-        # if there is no issue with missing data
-        if not used_decad_model_for_pentad_forecast and code not in pentad_no_success:
-            #pentad
-            predictions = predictor.predict(past_discharge_code, qmapped_era5_code, None , code, n=forecast_horizon, make_plot=False)
-
+        if len(predictions) == 0:
+            #error in forecast - something else is wrong
+            flag = 2
+            logger.debug('Error in forecast for code: %s', code)
+        elif predictions.isna().sum().sum() > 0:
+            # nan values in the forecast
+            flag = 1
+            logger.debug('Nan values in the forecast for code: %s', code)
+        else:
+            flag = 0
 
         #add the code to the predictions
         predictions['code'] = code
-
         predictions['forecast_date'] = pd.to_datetime(datetime.datetime.now().date())
-        predictions['date'] = pd.to_datetime(predictions['date'])
+        if flag != 2:
+            predictions['date'] = pd.to_datetime(predictions['date'])
+        else:
+            predictions['date'] = pd.to_datetime(datetime.datetime.now().date())
+        predictions['flag'] = flag
 
         forecast = pd.concat([forecast, predictions], axis=0, ignore_index=True)
 
@@ -497,17 +584,6 @@ def make_ml_forecast():
             logger.debug('Copied data and appended: %s', predictions)
 
 
-
-
-    utils_ml_forecast.write_output_txt(OUTPUT_PATH_DISCHARGE,
-                                       pentad_no_success,
-                                       decadal_no_success,
-                                       missing_values_dict,
-                                       exceeds_threshhold_dict,
-                                       nans_at_end_dict)
-
-
-
     # --------------------------------------------------------------------
     # SAVE FORECAST
     # --------------------------------------------------------------------
@@ -517,6 +593,9 @@ def make_ml_forecast():
         write_decad_forecast(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, forecast)
 
     logger.info('Forecast saved successfully. Exiting make_forecast.py\n')
+    logger.info('--------------------------------------------------------------------')
+    print('Forecast saved successfully. Exiting make_forecast.py\n')
+    print('--------------------------------------------------------------------')
 
 
 if __name__ == '__main__':
