@@ -67,11 +67,13 @@ class TimingStats:
 
 @contextmanager
 def timer(stats, section):
-    stats.start(section)
+    if stats is not None:
+        stats.start(section)
     try:
         yield
     finally:
-        stats.end(section)
+        if stats is not None:
+            stats.end(section)
 # endregion
 
 # region Logging
