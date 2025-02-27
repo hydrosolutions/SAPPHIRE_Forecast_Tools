@@ -5,7 +5,7 @@
 # Description: This script checks if there are any nan values in the forecasts and then recalculates them.
 # Nan values from operational forecasts have flag == 0, while nan values from hindcasts have flag == 1.
 # This script checks if there are nan values in the forecasts and then recalculates them, by calling the hindcast script.
-# The hindcast will return a file which is already flagged: 
+# The hindcast will return a file which is already flagged:
 # - flag == 3 for nan values even after the hindcast
 # - flag == 4 for valid values after the hindcast
 # ----------------------------------------------------------------
@@ -120,7 +120,13 @@ def call_hindcast_script(min_missing_date: str,
 
 
 def recalculate_nan_forecasts():
-        # --------------------------------------------------------------------
+
+    logger.info(f'--------------------------------------------------------------------')
+    logger.info(f"Starting recalculate_nan_forecasts.py")
+    print(f'--------------------------------------------------------------------')
+    print(f"Starting recalculate_nan_forecasts.py")
+
+    # --------------------------------------------------------------------
     # DEFINE WHICH MODEL TO USE
     # --------------------------------------------------------------------
     MODEL_TO_USE = os.getenv('SAPPHIRE_MODEL_TO_USE')
@@ -199,7 +205,7 @@ def recalculate_nan_forecasts():
             # Handle the case where both parsing methods fail
             logger.error('Error parsing date columns: %s', e)
             raise e
-            
+
 
     for code in unique_codes:
         #select the forecast for the specific code
@@ -255,22 +261,22 @@ def recalculate_nan_forecasts():
     def update_forecast(forecast_code, hindcast_code):
         # Fix the syntax error in value_cols definition
         value_cols = [col for col in forecast_code.columns if 'Q' in col]
-        
+
         forecast_code = forecast_code.copy()
         hindcast_code = hindcast_code.copy()
-        
+
         # Get dates where flag is 1
         forecast_dates_flag1 = forecast_code[forecast_code['flag'].isin([1,2])]['forecast_date'].unique()
-        
+
         # Only update those specific dates
         for forecast_date in forecast_dates_flag1:
             mask = forecast_code['forecast_date'] == forecast_date
             hindcast_mask = hindcast_code['forecast_date'] == forecast_date
-            
+
             if hindcast_mask.any():  # Check if we have matching hindcast data
                 forecast_code.loc[mask, value_cols] = hindcast_code.loc[hindcast_mask, value_cols].values
                 forecast_code.loc[mask, 'flag'] = hindcast_code.loc[hindcast_mask, 'flag'].values
-        
+
         return forecast_code
 
     # Main loop
@@ -288,6 +294,9 @@ def recalculate_nan_forecasts():
     forecast.to_csv(os.path.join(PATH_FORECAST, prefix + '_' +  MODEL_TO_USE + '_forecast.csv'), index=False)
 
     logger.info('Nan Values are replaced. Exiting recalculate_nan_forecasts.py\n')
+    logger.info('--------------------------------------------------------------------')
+    print('Nan Values are replaced. Exiting recalculate_nan_forecasts.py\n')
+    print('--------------------------------------------------------------------')
 
 if __name__ == '__main__':
     recalculate_nan_forecasts()

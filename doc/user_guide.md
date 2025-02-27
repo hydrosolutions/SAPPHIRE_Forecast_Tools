@@ -168,7 +168,7 @@ TODO: Adrian, please review the section above. We might link to the course book 
 ### Forecasting using machine learning models (machine learning)
 Machine learning models are a set of algorithms that can learn from and make predictions on data. They are currently at the center of research for operational hydrological forecasting. Machine learning models can be linked to the SAPPHIRE Forecast Tools to produce daily, pentadal and decadal forecasts. Because of the complexity of the models, we can not currently provide a machine learning model in the demo version of the Forecast Tools.
 
-TODO: Sandro, please review the section above. You might want to add a couple of sentences that describe generally how machine learning models work and maybe provide a link to a general description of machine learning models.
+Please note that it takes one day for the backend to produce hindcasts and forecasts for sites newly configured for short-term forecasting in iEasyHydro HF or in the forecast configuration as the maintenance run for the backend is typically performed over night. It can, however be triggered manually by a user with admin rights to the server by manually running the maintenance task in cronjob (see [doc/deployment.md](deployment.md)).
 
 ### Post-processing of forecasts (postprocessing_forecasts)
 TODO

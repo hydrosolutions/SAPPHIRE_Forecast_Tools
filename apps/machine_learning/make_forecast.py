@@ -286,13 +286,19 @@ def prepare_forecast_data(
 
     #6: Return the prepared data
     return discharge_df, 0
-    
+
 
 
 # --------------------------------------------------------------------
 # MAIN FUNCTION
 # --------------------------------------------------------------------
 def make_ml_forecast():
+
+    logger.info(f'--------------------------------------------------------------------')
+    logger.info(f"Starting make_forecast.py")
+    print(f'--------------------------------------------------------------------')
+    print(f"Starting make_forecast.py")
+
 
     # --------------------------------------------------------------------
     # DEFINE WHICH MODEL TO USE
@@ -393,7 +399,7 @@ def make_ml_forecast():
     mask_predictable = hydroposts_available_for_ml_forecasting[MODEL_TO_USE] == True
     codes_model_can_predict = hydroposts_available_for_ml_forecasting[mask_predictable]['code'].tolist()
     rivers_to_predict = list(set(rivers_to_predict) & set(codes_model_can_predict))
-    #convert to int 
+    #convert to int
     rivers_to_predict = [int(code) for code in rivers_to_predict]
     logger.debug('Rivers to predict pentad: %s', rivers_to_predict_pentad)
     logger.debug('Rivers to predict decad: %s', rivers_to_predict_decad)
@@ -516,7 +522,7 @@ def make_ml_forecast():
         #get the data
         past_discharge_code = past_discharge[past_discharge['code'] == code]
         qmapped_era5_code = qmapped_era5[qmapped_era5['code'] == code]
-        
+
         #reformat the past discharge data
         past_discharge_code['date'] = pd.to_datetime(past_discharge_code['date'])
 
@@ -533,7 +539,7 @@ def make_ml_forecast():
 
         #prepare the data
         past_discharge_code, flag = prepare_forecast_data(
-            past_discharge = past_discharge_code, 
+            past_discharge = past_discharge_code,
             threshold_missing_days = THRESHOLD_MISSING_DAYS,
             threshold_missing_days_end = THRESHOLD_MISSING_DAYS_END,
             old_forecast = old_forecast,
@@ -541,15 +547,15 @@ def make_ml_forecast():
             forecast_horizon = forecast_horizon,
             input_chunk_length = input_chunk_length
             )
-            
+
         predictions = predictor.predict(past_discharge_code, qmapped_era5_code, None , code, n=forecast_horizon, make_plot=False)
-        
+
         if len(predictions) == 0:
             #error in forecast - something else is wrong
             flag = 2
             logger.debug('Error in forecast for code: %s', code)
         elif predictions.isna().sum().sum() > 0:
-            # nan values in the forecast 
+            # nan values in the forecast
             flag = 1
             logger.debug('Nan values in the forecast for code: %s', code)
         else:
@@ -587,6 +593,9 @@ def make_ml_forecast():
         write_decad_forecast(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, forecast)
 
     logger.info('Forecast saved successfully. Exiting make_forecast.py\n')
+    logger.info('--------------------------------------------------------------------')
+    print('Forecast saved successfully. Exiting make_forecast.py\n')
+    print('--------------------------------------------------------------------')
 
 
 if __name__ == '__main__':

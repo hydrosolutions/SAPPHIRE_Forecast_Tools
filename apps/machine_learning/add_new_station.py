@@ -42,15 +42,15 @@ forecast_dir = os.path.join(script_dir, '..', 'iEasyHydroForecast')
 sys.path.append(forecast_dir)
 
 # Import the setup_library module from the iEasyHydroForecast package
-import setup_library as sl 
+import setup_library as sl
 from scr import utils_ml_forecast
 
 
 
 def call_hindcast_script(start_date: str,
-                         end_date: str, 
+                         end_date: str,
                          codes_hindcast: list,
-                         MODEL_TO_USE: str, 
+                         MODEL_TO_USE: str,
                          intermediate_data_path: str,
                          PREDICTION_MODE: str) -> pd.DataFrame:
 
@@ -100,8 +100,8 @@ def call_hindcast_script(start_date: str,
     PATH_FORECAST = os.path.join(intermediate_data_path, OUTPUT_PATH_DISCHARGE)
     PATH_HINDCAST = os.path.join(PATH_FORECAST, 'hindcast', MODEL_TO_USE)
 
-    
-    file_name = f'{MODEL_TO_USE}_{PREDICTION_MODE}_hindcast_daily_{start_date}_{end_date}.csv' 
+
+    file_name = f'{MODEL_TO_USE}_{PREDICTION_MODE}_hindcast_daily_{start_date}_{end_date}.csv'
 
     hindcast = pd.read_csv(os.path.join(PATH_HINDCAST, file_name))
 
@@ -110,6 +110,12 @@ def call_hindcast_script(start_date: str,
 
 
 def main():
+
+    logger.info(f'--------------------------------------------------------------------')
+    logger.info('Starting the script to add new stations to the forecast')
+    print(f'--------------------------------------------------------------------')
+    print('Starting the script to add new stations to the forecast')
+
     # --------------------------------------------------------------------
     # INITIALIZE THE ENVIRONMENT
     # --------------------------------------------------------------------
@@ -131,7 +137,7 @@ def main():
     intermediate_data_path = os.getenv('ieasyforecast_intermediate_data_path')
     OUTPUT_PATH_DISCHARGE = os.getenv('ieasyhydroforecast_OUTPUT_PATH_DISCHARGE')
     OUTPUT_PATH_DISCHARGE = os.path.join(intermediate_data_path, OUTPUT_PATH_DISCHARGE)
-    #Extend the OUTPUT_PATH_DISCHARGE with the model name, 
+    #Extend the OUTPUT_PATH_DISCHARGE with the model name,
     OUTPUT_PATH_DISCHARGE = os.path.join(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE)
 
     PATH_ERA5_REANALYSIS = os.getenv('ieasyhydroforecast_OUTPUT_PATH_REANALYSIS')
@@ -143,7 +149,7 @@ def main():
 
     if not os.listdir(PATH_ERA5_REANALYSIS):
        raise ValueError('No forcing data. Please run the script: get_era5_reanalysis_data.py')
-       
+
     # --------------------------------------------------------------------
     # Read in the decad and pentad forecast files already created
     # --------------------------------------------------------------------
@@ -176,7 +182,7 @@ def main():
     mask_predictable = hydroposts_available_for_ml_forecasting[MODEL_TO_USE] == True
     codes_model_can_predict = hydroposts_available_for_ml_forecasting[mask_predictable]['code'].tolist()
     rivers_to_predict = list(set(rivers_to_predict) & set(codes_model_can_predict))
-    #convert to int 
+    #convert to int
     rivers_to_predict = [int(code) for code in rivers_to_predict]
 
     # --------------------------------------------------------------------
@@ -217,7 +223,7 @@ def main():
         # remove duplicates by code, date and forecast_date
         pentad_forecast = pentad_forecast.drop_duplicates(subset=['code', 'date', 'forecast_date'])
 
-        # Save 
+        # Save
         path_pentad_out_daily = os.path.join(OUTPUT_PATH_DISCHARGE, f'pentad_{MODEL_TO_USE}_forecast.csv')
         pentad_forecast.to_csv(path_pentad_out_daily, index=False)
         print(f'The forecast files for model pentadal {MODEL_TO_USE} are saved in the directory: {OUTPUT_PATH_DISCHARGE}')
@@ -233,7 +239,7 @@ def main():
                                                     MODEL_TO_USE,
                                                     intermediate_data_path,
                                                     'DECAD')
-        
+
         logger.info('Decad hindcast daily is generated')
         decad_hindcast_daily['forecast_date'] = pd.to_datetime(decad_hindcast_daily['forecast_date'])
         decad_hindcast_daily['date'] = pd.to_datetime(decad_hindcast_daily['date'])
@@ -252,6 +258,11 @@ def main():
 
     else:
         logger.info('No new codes for decad forecast')
+
+    logger.info('The script to add new stations to the forecast is finished')
+    print('The script to add new stations to the forecast is finished')
+    print(f'--------------------------------------------------------------------')
+    logger.info(f'--------------------------------------------------------------------')
 
 
 if __name__ == '__main__':

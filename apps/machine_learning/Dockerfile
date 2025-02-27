@@ -26,4 +26,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 
 # Run the application.
 # This cmd is moved to the pipeline definition
-CMD ["sh", "-c", "PYTHONPATH=/app/apps/iEasyHydroForecast python apps/machine_learning/make_forecast.py && python apps/machine_learning/fill_ml_gaps.py  && python apps/machine_learning/add_new_station.py"]
+#CMD ["sh", "-c", "PYTHONPATH=/app/apps/iEasyHydroForecast python apps/machine_learning/make_forecast.py && python apps/machine_learning/fill_ml_gaps.py  && python apps/machine_learning/add_new_station.py"]
+# New CMD to allow for different run modes
+# RUN_MODE can be forecast, maintenance or not given (which defaults to running all maintenance and forecast tasks)
+CMD ["sh", "-c", "echo \"Environment Variables:\" && echo \"RUN_MODE=$RUN_MODE\" && echo \"SAPPHIRE_MODEL_TO_USE=$SAPPHIRE_MODEL_TO_USE\" && echo \"SAPPHIRE_PREDICTION_MODE=$SAPPHIRE_PREDICTION_MODE\" && export PYTHONPATH=/app/apps/iEasyHydroForecast && if [ \"$RUN_MODE\" = \"forecast\" ]; then python apps/machine_learning/make_forecast.py; elif [ \"$RUN_MODE\" = \"maintenance\" ]; then python apps/machine_learning/recalculate_nan_forecasts.py && python apps/machine_learning/fill_ml_gaps.py && python apps/machine_learning/add_new_station.py; else python apps/machine_learning/recalculate_nan_forecasts.py && python apps/machine_learning/make_forecast.py && python apps/machine_learning/fill_ml_gaps.py && python apps/machine_learning/add_new_station.py; fi"]

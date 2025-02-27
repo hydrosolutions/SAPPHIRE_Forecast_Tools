@@ -120,6 +120,12 @@ def call_hindcast_script(min_missing_date: str,
 
 
 def fill_ml_gaps():
+
+    logger.info(f'--------------------------------------------------------------------')
+    logger.info(f"Starting fill_ml_gaps.py")
+    print(f'--------------------------------------------------------------------')
+    print(f"Starting fill_ml_gaps.py")
+
     # --------------------------------------------------------------------
     # DEFINE WHICH MODEL TO USE
     # --------------------------------------------------------------------
@@ -221,7 +227,7 @@ def fill_ml_gaps():
     if len(missing_forecasts_dict) == 0:
         logger.info('No missing forecasts')
         print('No missing forecasts')
-    
+
     # if there are missing forecasts
     else:
 
@@ -240,13 +246,13 @@ def fill_ml_gaps():
 
         hindcast['forecast_date'] = pd.to_datetime(hindcast['forecast_date'])
 
-        #now iterate and fill the missing forecasts, 
+        #now iterate and fill the missing forecasts,
         #this complicated way is needed to ensure that the original forecast are not overwrtitten by the hindcast
         for code, missing_forecasts in missing_forecasts_dict.items():
             mask_dates = pd.Series(False, index=hindcast.index)
             for missing_forecast in missing_forecasts:
                 mask_dates = mask_dates | ((hindcast.forecast_date >= missing_forecast[0]) & (hindcast.forecast_date <= missing_forecast[1]))
-            
+
             mask_fill = (hindcast.code == code) & mask_dates
 
             hindcast_missing = hindcast[mask_fill].copy()
@@ -265,6 +271,9 @@ def fill_ml_gaps():
         logger.info('Missing forecasts filled in')
 
     logger.info('Script fill_ml_gaps.py finished at %s. Exiting.', datetime.datetime.now())
+    logger.info(f'--------------------------------------------------------------------')
+    print('Script fill_ml_gaps.py finished at', datetime.datetime.now())
+    print(f'--------------------------------------------------------------------')
 
 
 if __name__ == '__main__':
