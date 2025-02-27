@@ -3834,7 +3834,7 @@ def create_reload_button():
                 for model in ["TFT", "TIDE", "TSMIXER", "ARIMA"]:
                     for mode in ["PENTAD", "DECAD"]:
                         container_name = f"ml_{model}_{mode}"
-                        run_docker_container(client, f"mabesa/sapphire-ml:latest", volumes, environment + [f"SAPPHIRE_MODEL_TO_USE={model}", f"SAPPHIRE_PREDICTION_MODE={mode}"], container_name)
+                        run_docker_container(client, f"mabesa/sapphire-ml:latest", volumes, environment + [f"SAPPHIRE_MODEL_TO_USE={model}", f"SAPPHIRE_PREDICTION_MODE={mode}", f"RUN_MODE=forecast"], container_name)
 
                 # Run the conceptmod container
                 run_docker_container(client, "mabesa/sapphire-conceptmod:latest", volumes, environment, "conceptmod")
