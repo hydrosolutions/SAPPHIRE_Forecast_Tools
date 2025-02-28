@@ -30,7 +30,7 @@ for model in TFT TIDE TSMIXER ARIMA; do
         log_file="logs/log_${model}_${horizon}_$(date +%Y%m%d_%H%M%S).log"
 
         export SAPPHIRE_OPDEV_ENV=True SAPPHIRE_MODEL_TO_USE=$model SAPPHIRE_PREDICTION_MODE=$horizon
-        python make_forecast.py && python fill_ml_gaps.py && python add_new_station.py
+        python make_forecast.py #&& python fill_ml_gaps.py && python add_new_station.py
 
         # Run commands and tee output to log file
         {
