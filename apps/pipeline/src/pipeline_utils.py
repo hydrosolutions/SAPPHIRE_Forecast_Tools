@@ -1,7 +1,13 @@
 import docker
+import os
+import luigi
+import datetime
 import requests
 from dateutil.parser import parse
 import pytz
+from contextlib import contextmanager
+import threading
+import signal
 
 
 
@@ -48,4 +54,50 @@ def there_is_a_newer_image_on_docker_hub(client, repository, image_name, tag):
         print("The local image does not exist.")
         return True
 
+@contextmanager
+def timeout(seconds):
+    """Context manager for timeout functionality"""
+    timer = threading.Timer(seconds, lambda: signal.pthread_kill(threading.main_thread().ident, signal.SIGINT))
+    timer.start()
+    try:
+        yield
+    finally:
+        timer.cancel()
+
+class TimeoutError(Exception):
+    pass
+
+class TaskLogger:
+    """Utility class to handle task logging"""
+    def __init__(self, log_file=None):
+        if log_file is None:
+            root_dir = os.getenv('ieasyforecast_intermediate_data_path', '/app')
+            self.log_file = os.path.join(root_dir, 'task_timings.log')
+        else:
+            self.log_file = log_file
+
+    def log_task_timing(self, task_name: str, start_time: datetime.datetime, end_time: datetime.datetime, status: str, details: str = ""):
+        with open(self.log_file, 'a') as f:
+            duration = (end_time - start_time).total_seconds()
+            log_entry = (
+                f"Task: {task_name}\n"
+                f"Start Time: {start_time.isoformat()}\n"
+                f"End Time: {end_time.isoformat()}\n"
+                f"Duration: {duration:.2f} seconds\n"
+                f"Status: {status}\n"
+                f"Details: {details}\n"
+                f"{'-'*50}\n"
+            )
+            f.write(log_entry)
+
+class TimeoutMixin:
+    """Mixin to add timeout functionality to Luigi tasks"""
+    timeout_seconds = luigi.IntParameter(default=360)  # 6 minutes default
+
+    def run_with_timeout(self, func, *args, **kwargs):
+        try:
+            with timeout(self.timeout_seconds):
+                return func(*args, **kwargs)
+        except KeyboardInterrupt:
+            raise TimeoutError(f"Task timed out after {self.timeout_seconds} seconds")
 

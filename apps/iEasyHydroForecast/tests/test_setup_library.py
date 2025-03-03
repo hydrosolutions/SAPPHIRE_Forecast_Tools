@@ -1,6 +1,9 @@
 import os
 import shutil
+import unittest
+import pandas as pd
 from iEasyHydroForecast import setup_library as sl
+from iEasyHydroForecast import tag_library as tl
 
 class TestLoadConfiguration():
     # Temporary directory to store output
@@ -70,3 +73,68 @@ class TestLoadConfiguration():
     assert ret == test_ieasyforecast_intermediate_data_path
     ret=os.environ.pop("ieasyreports_report_output_path")
     assert ret == test_ieasyreports_report_output_path
+
+
+class TestReadDailyProbabilisticMLForecastsPentad(unittest.TestCase):
+
+    def setUp(self):
+        # Setup runs before each test
+        self.file_path = "iEasyHydroForecast/tests/test_data/test_probabil_forecast.csv"
+
+        # Read validation data
+        self.val_data = pd.read_csv(self.file_path)
+        self.val_data.loc[:, "pentad_in_year"] = self.val_data["date"].apply(tl.get_pentad_in_year)
+
+        # Process using the function to test
+        self.test_data = sl.read_daily_probabilistic_ml_forecasts_pentad(
+            self.file_path, 'test', 't', 'test')
+
+    def test_columns_present(self):
+        # Test if columns in val_data are present in test_data, except for the
+        # column Q50, which is renamed to forecasted_discharge in the test_data
+        for col in self.val_data.columns:
+            if col == 'forecast_date':
+                continue
+            elif col == 'Q50':
+                self.assertIn('forecasted_discharge', self.test_data.columns, f"Column {col} is missing in processed data")
+            else:
+                self.assertIn(col, self.test_data.columns, f"Column {col} is missing in processed data")
+
+    def test_data(self):
+
+        # Define a few codes and dates to test
+        codes = [16161, 15083, 14283, 15054]
+        # Dates are in the format YYYY-MM-DD and are the last day of the previous pentad
+        dates = ['2010-12-31', '2010-04-05', '2010-10-25', '2010-07-10']
+
+        for code in codes:
+            for date in dates:
+                print(f"Testing code {code} and date {date}")
+                validation_data_code = self.val_data[(self.val_data['code'] == code) & (self.val_data['forecast_date'] == date)]
+                # Test if validation_data_code is not empty
+                self.assertFalse(validation_data_code.empty)
+                # Sort validation_data_code by date
+                validation_data_code = validation_data_code.sort_values(by='date')
+                # Calculate the mean of the quantiles, only for columns starting with 'Q'
+                mean = validation_data_code.filter(regex='^Q').mean(axis=0).round(3)
+                # Get the test data for the code and forecast date
+                test_data_code = self.test_data[(self.test_data['code'] == code) & (self.test_data['date'] == date)]
+                # Test if test_data_code is not empty
+                self.assertFalse(test_data_code.empty)
+
+                # Special case for code 16161 and date 2010-07-10: We don't have data and all quantiles are not defined
+                if code == 16161 and date == '2010-07-10':
+                    self.assertTrue(test_data_code['forecasted_discharge'].isnull().values[0])
+                    self.assertTrue(test_data_code['Q10'].isnull().values[0])
+                    self.assertTrue(test_data_code['Q25'].isnull().values[0])
+                    self.assertTrue(test_data_code['Q75'].isnull().values[0])
+                    self.assertTrue(test_data_code['Q90'].isnull().values[0])
+                    continue
+
+                # Assert that all values in columns starting with Q are equal in both dataframes
+                for col in mean.index:
+                    if col == 'Q50':
+                        self.assertAlmostEqual(mean[col], test_data_code['forecasted_discharge'].values[0], places=2)
+                    else:
+                        self.assertAlmostEqual(mean[col], test_data_code[col].values[0], places=2)
+
