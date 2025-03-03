@@ -170,6 +170,7 @@ Add the following line to the crontab file (skip the comment line, this is just 
 # m h  dom mon dow   command
 3 5 * * * cd /data/SAPPHIRE_Forecast_Tools && /bin/bash -c 'bash bin/run_sapphire_forecast_tools.sh /path/to/.env' >> /data/logs/daily_run_of_sapphire_forecast_tools.log 2>&1
 2 20 * * * cd /data/SAPPHIRE_Forecast_Tools && /bin/bash -c 'bash bin/daily_update_sapphire_frontend.sh /path/to/.env' >> /data/logs/restart_dashboards.log 2>&1
+0 10 * * * cd /data/SAPPHIRE_Forecast_Tools && /bin/bash -c 'bash bin/daily_ml_maintenance.sh /path/to/.env' >> /data/logs/ml_maintenance.log 2>&1
 ```
 To run the forecast tools every day at 5:03 a.m (server time, check by typing `date` to the console). The log file will be stored in the logs folder in the data folder.
 

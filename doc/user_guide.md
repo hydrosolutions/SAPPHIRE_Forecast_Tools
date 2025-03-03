@@ -30,8 +30,11 @@ The structure of this document is as follows:
     - [Post-processing of forecasts (postprocessing\_forecasts)](#post-processing-of-forecasts-postprocessing_forecasts)
     - [Pipeline manager for the modules (pipeline)](#pipeline-manager-for-the-modules-pipeline)
   - [Forecast dashboard](#forecast-dashboard)
-    - [Predictor tab](#predictor-tab)
-    - [Forecast tab](#forecast-tab)
+    - [General forecasting workflow](#general-forecasting-workflow)
+    - [Feature description](#feature-description)
+      - [Predictor tab](#predictor-tab)
+      - [Forecast tab](#forecast-tab)
+      - [Bulletin tab](#bulletin-tab)
   - [Forecast horizons](#forecast-horizons)
 
 
@@ -174,7 +177,7 @@ TODO: Adrian, please review the section above. We might link to the course book 
 ### Forecasting using machine learning models (machine learning)
 Machine learning models are a set of algorithms that can learn from and make predictions on data. They are currently at the center of research for operational hydrological forecasting. Machine learning models can be linked to the SAPPHIRE Forecast Tools to produce daily, pentadal and decadal forecasts. Because of the complexity of the models, we can not currently provide a machine learning model in the demo version of the Forecast Tools.
 
-TODO: Sandro, please review the section above. You might want to add a couple of sentences that describe generally how machine learning models work and maybe provide a link to a general description of machine learning models.
+Please note that it takes one day for the backend to produce hindcasts and forecasts for sites newly configured for short-term forecasting in iEasyHydro HF or in the forecast configuration as the maintenance run for the backend is typically performed over night. It can, however be triggered manually by a user with admin rights to the server by manually running the maintenance task in cronjob (see [doc/deployment.md](deployment.md)).
 
 ### Post-processing of forecasts (postprocessing_forecasts)
 TODO
@@ -183,19 +186,32 @@ TODO
 TODO
 
 ## Forecast dashboard
-Once deployed, the forecast dashboard is accessed by double-clicking on the forecast dashboard icon on your desktop. The dashboard can be configured to display Russian or English language (see [doc/configuration.md](configuration.md)). Please note that upon reboot of the computer, the dashboard may not display correctly from the start. In this case, please wait a second and reload the browser window.
-The forecast dashboard is used to visualize the forecasts. The dashboard is accessed by double-clicking on the forecast dashboard icon on your desktop. The dashboard can be configured to run in Russian or English. The current version of the dashboard has the following features:
+Once deployed, the forecast dashboard is accessed by double-clicking on the forecast dashboard icon on your desktop. The dashboard can be configured to display Russian or English language (see [doc/configuration.md](configuration.md)).
+The forecast dashboard is used to visualize the current state of hydrological conditions and short-term forecasts of future hydrological conditions. The dashboard is currently available in Russian and English.
+
+### General forecasting workflow
+In Central Asia, the forecasts are automatically produced after the latest operational data of the morning has ben verified by the operational hydrolgists, that is at 11 o'clock local time. The production of these forecasts takes 30 minutes to 1 hour. The forecasts are then checked by the operational hydrologists and published in the forecast bulletins.
+
+The current version of the dashboard has the following features:
 - A predictor tab that allows to visualize the predictor data for the station selected in the side pane. The predictor data is read from the iEasyHydro database or from the excel sheets.
-- A forecast tab that visualizes the hydrograph with the forecasted discharge for the station selected in the side pane. The forecast is produced by the forecast tools based on past discharge data using the linear regression method.
+- A forecast tab that visualizes the hydrograph with the forecasted discharge for the station selected in the side pane. The forecast is produced by the forecast tools based on past discharge data using the linear regression method and other hydrological modelling methods if they are available.
 The tabs are described in more detail in the following sections.
 
-### Predictor tab
+Should operational data be available only after 11 o'clock, the forecasts can be manually retriggered in the forecast dahsboard.
+
+Please note that forecasts for sites which are newly configured for short-term forecasting will only be available on the following day as the production of hindcasts necessary to calculate the forecast skill statistics is performed over night.
+
+### Feature description
+
+#### Predictor tab
 In the current version of the software, the predictor tab shows
 
-### Forecast tab
+#### Forecast tab
 The method to calculate the forecast range can be selected in the side pane. Following options are available:
 a) The forecast range is calculated based on 0.674 times the standard deviation of the observed discharge data.
 b) The forecast range is plus/minus a manually selected percentage of the forecasted discharge.
+
+#### Bulletin tab
 
 
 

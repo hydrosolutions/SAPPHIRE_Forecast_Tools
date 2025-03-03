@@ -2112,8 +2112,21 @@ def write_linreg_pentad_forecast_data(data: pd.DataFrame):
     last_line.loc[last_line['date'].dt.year != year, 'predictor'] = np.nan
     last_line.loc[last_line['date'].dt.year != year, 'discharge_avg'] = np.nan
     last_line.loc[last_line['date'].dt.year != year, 'forecasted_discharge'] = np.nan
-    last_line.loc[last_line['date'].dt.year != year, 'date'] = pd.to_datetime(
-        last_line.loc[last_line['date'].dt.year != year, 'date'].dt.strftime(f'{year}-%m-%d'))
+
+    # Iterate over last_line dates. Determine the most frequently occuring date.
+    # If the other dates are shifted by 1 day, set the date to the most frequently
+    # occuring date.
+    for code in last_line['code'].unique():
+        date_counts = last_line[last_line['code'] == code]['date'].value_counts()
+        if len(date_counts) > 1:
+            most_common_date = date_counts.idxmax()
+            for date in date_counts.index:
+                if date != most_common_date:
+                    last_line.loc[(last_line['code'] == code) & (last_line['date'] == date), 'date'] = most_common_date
+
+    # Test if all dates are valid dates
+    #last_line.loc[last_line['date'].dt.year != year, 'date'] = pd.to_datetime(
+    #    last_line.loc[last_line['date'].dt.year != year, 'date'].dt.strftime(f'{year}-%m-%d'))
 
     logger.debug(f'last_line after edits: \n{last_line}')
 
@@ -2192,8 +2205,17 @@ def write_linreg_decad_forecast_data(data: pd.DataFrame):
     last_line.loc[last_line['date'].dt.year != year, 'predictor'] = np.nan
     last_line.loc[last_line['date'].dt.year != year, 'discharge_avg'] = np.nan
     last_line.loc[last_line['date'].dt.year != year, 'forecasted_discharge'] = np.nan
-    last_line.loc[last_line['date'].dt.year != year, 'date'] = pd.to_datetime(
-        last_line.loc[last_line['date'].dt.year != year, 'date'].dt.strftime(f'{year}-%m-%d'))
+
+    # Iterate over last_line dates. Determine the most frequently occuring date.
+    # If the other dates are shifted by 1 day, set the date to the most frequently
+    # occuring date.
+    for code in last_line['code'].unique():
+        date_counts = last_line[last_line['code'] == code]['date'].value_counts()
+        if len(date_counts) > 1:
+            most_common_date = date_counts.idxmax()
+            for date in date_counts.index:
+                if date != most_common_date:
+                    last_line.loc[(last_line['code'] == code) & (last_line['date'] == date), 'date'] = most_common_date
 
     # Test if the output file already exists
     if os.path.exists(output_file_path):

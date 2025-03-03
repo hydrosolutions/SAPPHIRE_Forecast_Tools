@@ -1,6 +1,6 @@
 ![test and deploy](https://github.com/hydrosolutions/SAPPHIRE_Forecast_Tools/actions/workflows/test_deploy_main.yml/badge.svg)
 
-# SAPPHIRE_forecast_tools
+# SAPPHIRE Forecast Tools
 Tools for operational hydrological forecasting for Central Asian hydromets. The tools are co-designed with the Kyrgyz Hydrometeorological Services as part of the ongoing [SAPPHIRE project](https://www.hydrosolutions.ch/projects/sapphire-central-asia) and funded by the [Swiss Agency for Development and Cooperation](https://www.eda.admin.ch/eda/en/home/fdfa/organisation-fdfa/directorates-divisions/sdc.html).
 
 The tools are designed to be deployed on a local computer with access to operational hydrometeorological data through the [iEasyHydro](https://ieasyhydro.org) database or through excel files. This repository holds data from the public domain for demonstration.
@@ -13,6 +13,87 @@ Note that this repository is **WORK IN PROGRESS**.
   - A tool to produce forecasts (in the present version linear regressions as currently employed by the Kyrgyz Hydrometeorological Services)
   - A tool for manual re-run of the latest forecast
   - A dashboard to visualize and download the forecasts
+
+## Available forecast models
+The following models are available in the forecast tools:
+  - Linear regression models
+  - Machine learning models (e.g. Temporal Fusion Transformer)
+  - Conceptual rainfall-runoff models (e.g. GR4J)
+
+The basic principles of the hydrological models available in the SAPPHIRE Forecast Tools are described here below. For more technical details, please refer to the respective documentation of the models.
+
+<details>
+
+<summary>English</summary>
+
+**Empirical models**
+Empirical models are based on statistical relationships that link the runoff to be predicted with data that is correlated with it, such as recent runoff, snow conditions, rainfall, or temperature.
+
+***Linear regression***
+The linear regression (LR) method currently implemented is only considering past runoff and no other predictors for runoff. It is the only method that does not consider weather forecasts for forecasting. It is also the only method which produces pentadal average runoff one day before the start of each pentad and not daily forecasts.
+
+***Autoregressive model***
+The auto-regressive integrated moving average (ARIMA) model is often used in the literature to forecast time series data with trend and seasonality.
+
+***Machine learning models***
+Machine learning (ML) models are empirical models which can handle many predictors and non-linearity as well as complex relationships that cannot easily be captured by other model types. The machine learning models learn common patterns applicable to all rivers as opposed to tailoring models to individual rivers. We therefore have one model of each model type that is applied to make forecasts for all mountainous rivers.
+ML models include static features (elevation, land use, etc.) into the model as predictors.
+The currently available machine learning models are suited for forecasting time series with complex patterns. The average forecast of all 3 machine learning models is called the Neural Ensemble (NE).
+
+*Temporal Fusion Transformer (TFT)*
+TFT models learn which parts of the entire time series are most important predictors to forecast patterns in the runoff. They are especially good at identifying both short-term and long-term dependencies dynamically (a mechanism called attention) which might be missed by simpler methods as TIDE and are therefore suited for handling slow and/or complex processes. The TFT is the most sophisticated but also the most complex and resource intensive ML model.
+
+*Time-Series Dense Encoder (TIDE)*
+TIDE models, like TFT models, learn which parts of the time series are most important but then simplify the time series for forecasting (a mechanism called dense encoding leading to a simplification of the attention mechanism). It is faster and easier to train than TFT but may not capture very slow or complex relationships between the data.
+
+*Time-series Mixer (TSMIXER)*
+While TFT and TIDE use static data as a separate layer next to the time-series data, TSMIXER combines both data types and different time steps across time steps and evaluates the impact of each static feature on the dynamic feature. This process is called mixing and allows the model to capture the influence of static features in a more integrated way than TFT and TIDE. TSMIXER is simpler and therefore easier to train than TFT and TIDE, but it does not have the attention mechanism.
+
+**Conceptual models**
+Conceptual rainfall runoff models (RRM) implement the main runoff formation processes in a spatially semi-distributed way. Semi-distributed means that we define zones with similar runoff formation characteristics and accumulate runoff from these zones at the outlet. In the Forecast Tools, we correct the simulated forecasts using measured runoff data in a process called Data Assimilation and therefore call the model Rainfall Runoff Assimilation Model (RRAM). Our models uncertainties in model parameters and forcing into account. The forecast range is determined by the parameter and the forcing uncertainty.
+This type of forecasting is state-of-the-art and often used in operational runoff forecasting in Central Europe. We have this model type for Ala Archa and Toktogul Inflow only because model setup, calibration and validation are much more involved than for empirical models.
+
+**Ensemble Mean (EM)**
+The average pentadal forecast over all models which have a forecast accuracy of 80% or higher is combined in the ensemble mean.
+</details>
+
+<details>
+
+<summary>Русский</summary>
+
+**Эмпирические модели**
+Эмпирические модели основаны на статистических взаимосвязях, которые связывают прогнозируемый сток с данными, с ним коррелирующими, такими как недавний сток, снег, осадки или температура.
+
+***Линейная регрессия***
+Метод линейной регрессии (LR), реализованный в данный момент, учитывает только прошлый сток и не использует другие предикторы для стока. Это единственный метод, который не использует прогнозы погоды для предсказания. Также это единственный метод, который производит пентадальные средние значения стока за день до начала каждого пентада, а не ежедневные прогнозы.
+
+***Автопрогнозирующая модель***
+Модель авторегрессионного интегрированного скользящего среднего (ARIMA) часто используется в литературе для прогнозирования временных рядов с трендом и сезонностью.
+
+***Модели машинного обучения***
+Модели машинного обучения (ML) — это эмпирические модели, которые могут обрабатывать множество предикторов и нелинейности, а также сложные зависимости, которые трудно захватить другими типами моделей. Модели машинного обучения изучают общие закономерности, применимые ко всем рекам, в отличие от создания моделей для отдельных рек. Поэтому для всех горных рек используется по одной модели каждого типа.
+Модели машинного обучения включают статические характеристики (высота над уровнем моря, тип подстилающей поверхности и др.) как предикторы.
+Доступные в настоящее время модели машинного обучения подходят для прогнозирования временных рядов с комплексными паттернами. Средний прогноз всех 3 моделей машинного обучения называется Нейронным ансамблем (NE).
+
+*Temporal Fusion Transformer (TFT)*
+Модели TFT изучают, какие части всего временного ряда являются наиболее важными предсказателями для прогнозирования паттернов стока. Они особенно хороши в выявлении как краткосрочных, так и долгосрочных зависимостей динамически (механизм, называемый вниманием), которые могут быть упущены более простыми методами, такими как TIDE, и поэтому подходят для обработки медленных и/или сложных процессов. TFT является самой сложной, но также и самой ресурсозатратной моделью машинного обучения.
+
+*Time-Series Dense Encoder (TIDE)*
+Модели TIDE, как и модели TFT, изучают, какие части временного ряда наиболее важны, но затем упрощают временной ряд для прогнозирования (механизм, называемый плотным кодированием, что приводит к упрощению механизма внимания). Эта модель быстрее и проще в обучении, чем TFT, но может не захватывать очень медленные или сложные зависимости между данными.
+
+*Time-series Mixer (TSMIXER)*
+В то время как TFT и TIDE используют статические данные как отдельный слой рядом с данными временного ряда, TSMIXER сочетает оба типа данных и различные временные шаги и оценивает влияние каждого статического признака на динамический признак. Этот процесс называется смешиванием и позволяет модели захватывать влияние статических признаков более интегрированным способом, чем TFT и TIDE. TSMIXER проще и поэтому легче обучать, чем TFT и TIDE, но он не имеет механизма внимания.
+
+**Концептуальные модели**
+Концептуальные модели формирования стока (RRM) реализуют основные процессы формирования стока в пространственно полусмещенном виде. Полусмещенное означает, что мы определяем зоны с похожими характеристиками формирования стока и аккумулируем сток из этих зон на выходе. В инструментах прогнозирования мы корректируем смоделированные прогнозы с использованием измеренных данных о стоке в процессе, называемом ассимиляцией данных, и поэтому называем модель Моделью ассимиляции стока (RRAM). Мы учитываем неопределенности в параметрах модели и воздействии. Диапазон прогноза определяется неопределенностью параметров и воздействия.
+Этот тип прогнозирования является современным и часто используется в оперативном прогнозировании стока в Центральной Европе. Мы имеем этот тип модели только для Ала-Арчи и притока в Токтогул, так как настройка модели, калибровка и валидация гораздо более сложны, чем для эмпирических моделей.
+
+**Среднее ансамбля (EM)**
+Средний пентадальный прогноз по всем моделям с точностью прогноза 80% и выше комбинируется в ансамблевое среднее.
+
+
+</details>
+
 
 ## Folder structure
 All software components are in the apps directory. They are discussed in more detail in the file doc/deployment.md.
