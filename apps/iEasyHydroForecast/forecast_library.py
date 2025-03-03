@@ -1603,10 +1603,16 @@ def calculate_skill_metrics_pentad(
         pd.DataFrame: Combined forecasts and observations DataFrame
         timing_stats: Timing statistics collector
     """
+    # Create a new timing_stats object if none was provided
+    #create_new_timing_stats = False
     if timing_stats is None:
-        # Create a dummy timer if no timing_stats provided
+        # Import TimingStats class only if needed
+        #from .. postprocessing_forecasts import TimingStats
+        #timing_stats = TimingStats()
+        #create_new_timing_stats = True
+
         @contextmanager
-        def timer(_, __):
+        def timer(stats, section):
             yield
 
     else:
