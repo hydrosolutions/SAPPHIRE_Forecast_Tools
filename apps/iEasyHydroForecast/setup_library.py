@@ -935,175 +935,284 @@ def read_linreg_forecasts_pentad():
 
     return forecasts, stats
 
-def read_daily_probabilistic_ml_forecasts_pentad(
-        filepath,
-        model,
-        model_long,
-        model_short):
+def read_daily_probabilistic_ml_forecasts_pentad(filepath, model, model_long, model_short):
     """
-    Reads in forecast results from probabilistic machine learning models for the pentadal forecast
+    Reads in forecast results from probabilistic machine learning models for the pentadal forecast.
+    Added robust error handling.
 
     Args:
-    filepath (str): The path to the file with the forecast results.
-    model (str): The model to read the forecast results from. Allowed values are
-        'TFT', 'TIDE', 'TSMIXER', and 'ARIMA'.
-    model_long (str): The long name of the model.
-    model_short (str): The short name of the model.
+        filepath (str): The path to the file with the forecast results.
+        model (str): The model to read the forecast results from.
+        model_long (str): The long name of the model.
+        model_short (str): The short name of the model.
 
     Returns:
-    forecast (pandas.DataFrame): The forecast results for the pentadal forecast horizon.
+        forecast (pandas.DataFrame): The forecast results or an empty DataFrame if error occurs.
     """
-    # Read the forecast results
-    daily_data = pd.read_csv(filepath, parse_dates=["date", "forecast_date"])
+    import logging
+    logger = logging.getLogger(__name__)
 
-    # Only keep the forecast the rows of daily forecast data for pentadal
-    # forecasts, i.e. the forecast produced on the 5th, 10th, 15th, 20th, 25th
-    # and on the last day of a month.
-    # Add a column last_day_of_month to daily_data
-    daily_data["last_day_of_month"] = daily_data["forecast_date"].apply(fl.get_last_day_of_month)
-    daily_data["day_of_month"] = daily_data["forecast_date"].dt.day
-    # Keep rows that have forecast_date equal to either 5, 10, 15, 20, 25 or
-    # last_day_of_month
-    data = daily_data[(daily_data["day_of_month"].isin([5, 10, 15, 20, 25])) | \
-                      (daily_data["forecast_date"] == daily_data["last_day_of_month"])]
+    try:
+        # Read the forecast results
+        daily_data = pd.read_csv(filepath, parse_dates=["date", "forecast_date"])
 
-    # Group by code and forecast_date and calculate the mean of all columns
-    forecast = data \
-        .drop(columns=["date", "day_of_month", "last_day_of_month"]) \
-        .groupby(["code", "forecast_date"]) \
-        .mean() \
-        .reset_index()
+        # Only keep the forecast rows for pentadal forecasts
+        # Add a column last_day_of_month to daily_data
+        daily_data["last_day_of_month"] = daily_data["forecast_date"].apply(fl.get_last_day_of_month)
+        daily_data["day_of_month"] = daily_data["forecast_date"].dt.day
 
-    # Rename the column forecast_date to date and Q50 to forecasted_discharge.
-    # In the case of the ARIMA model, we don't have quantiles but rename the
-    # column Q to forecasted_discharge.
-    forecast.rename(
-        columns={"forecast_date": "date",
-                 "Q50": "forecasted_discharge",  # For ml models
-                 "Q": "forecasted_discharge"},  # For the ARIMA model
-        inplace=True)
+        # Keep rows that have forecast_date equal to either 5, 10, 15, 20, 25 or last_day_of_month
+        data = daily_data[(daily_data["day_of_month"].isin([5, 10, 15, 20, 25])) | \
+                        (daily_data["forecast_date"] == daily_data["last_day_of_month"])]
 
-    # Add a column model to the dataframe
-    forecast["model_long"] = model_long
-    forecast["model_short"] = model_short
+        # Check if we have any data after filtering
+        if data.empty:
+            logger.warning(f"No pentadal forecast data found for {model} after filtering")
+            return pd.DataFrame()
 
-    # Recalculate pentad in month and pentad in year
-    forecast["pentad_in_month"] = (forecast["date"] + pd.Timedelta(days=1)).apply(tl.get_pentad)
-    forecast["pentad_in_year"] = (forecast["date"] + pd.Timedelta(days=1)).apply(tl.get_pentad_in_year)
+        # Group by code and forecast_date and calculate the mean of all columns
+        forecast = data \
+            .drop(columns=["date", "day_of_month", "last_day_of_month"], errors='ignore') \
+            .groupby(["code", "forecast_date"]) \
+            .mean() \
+            .reset_index()
 
-    logger.info(f"Read {len(forecast)} rows of {model} forecasts for the pentadal forecast horizon.")
-    logger.debug(f"Colums in the {model} forecast data:\n{forecast.columns}")
-    logger.debug(f"Read forecast data: \n{forecast.head()}")
+        # Rename the column forecast_date to date and Q50 to forecasted_discharge.
+        # In the case of the ARIMA model, we don't have quantiles but rename the column Q to forecasted_discharge.
+        columns_to_rename = {}
+        if "forecast_date" in forecast.columns:
+            columns_to_rename["forecast_date"] = "date"
+        if "Q50" in forecast.columns:
+            columns_to_rename["Q50"] = "forecasted_discharge"
+        if "Q" in forecast.columns:
+            columns_to_rename["Q"] = "forecasted_discharge"
 
-    return forecast
+        forecast.rename(columns=columns_to_rename, inplace=True)
+
+        # Add model information
+        forecast["model_long"] = model_long
+        forecast["model_short"] = model_short
+
+        # Recalculate pentad in month and pentad in year if date column exists
+        if "date" in forecast.columns:
+            forecast["pentad_in_month"] = (forecast["date"] + pd.Timedelta(days=1)).apply(tl.get_pentad)
+            forecast["pentad_in_year"] = (forecast["date"] + pd.Timedelta(days=1)).apply(tl.get_pentad_in_year)
+
+        logger.info(f"Read {len(forecast)} rows of {model} forecasts for the pentadal forecast horizon.")
+        logger.debug(f"Columns in the {model} forecast data: {forecast.columns}")
+        logger.debug(f"Read forecast data sample: {forecast.head()}")
+
+        return forecast
+
+    except Exception as e:
+        logger.warning(f"Error processing {model} forecast data from {filepath}: {e}")
+        return pd.DataFrame()
 
 def read_csv_with_multiple_date_formats(filepath):
-    # Read the CSV file without parsing dates
-    daily_data = pd.read_csv(filepath)
-
-    # Try to parse the 'date' column with the first format
-    try:
-        daily_data['date'] = pd.to_datetime(daily_data['date'], format='%d.%m.%Y')
-    except ValueError:
-        # If it fails, try the second format
-        daily_data['date'] = pd.to_datetime(daily_data['date'], format='%Y-%m-%d')
-
-    # Try to parse the 'forecast_date' column with the first format
-    try:
-        daily_data['forecast_date'] = pd.to_datetime(daily_data['forecast_date'], format='%d.%m.%Y')
-    except ValueError:
-        # If it fails, try the second format
-        daily_data['forecast_date'] = pd.to_datetime(daily_data['forecast_date'], format='%Y-%m-%d')
-
-    return daily_data
-
-def read_daily_probabilistic_conceptmod_forecasts_pentad(
-        filepath,
-        code,
-        model_long,
-        model_short):
     """
-    Reads in forecast results from probabilistic conceptual models for the pentadal forecast
+    Read a CSV file with date fields that might be in different formats.
+    Added robust error handling.
 
     Args:
-    filepath (str): The path to the file with the forecast results.
-    code (str): The code of the hydropost for which to read the forecast results.
-    model_long (str): The long name of the model.
-    model_short (str): The short name of the model.
+        filepath (str): Path to the CSV file
 
     Returns:
-    forecast (pandas.DataFrame): The forecast results for the pentadal forecast horizon.
+        pandas.DataFrame: The read data or an empty DataFrame if error occurs
     """
-    # Read the forecast results
-    daily_data = read_csv_with_multiple_date_formats(filepath)
+    import logging
+    logger = logging.getLogger(__name__)
 
-    # Only keep the forecast the rows of daily forecast data for pentadal
-    # forecasts, i.e. the forecast produced on the 5th, 10th, 15th, 20th, 25th
-    # and on the last day of a month.
-    # Add a column last_day_of_month to daily_data
-    daily_data["last_day_of_month"] = daily_data["forecast_date"].apply(fl.get_last_day_of_month)
-    daily_data["day_of_month"] = daily_data["forecast_date"].dt.day
-    # Keep rows that have forecast_date equal to either 5, 10, 15, 20, 25 or
-    # last_day_of_month
-    data = daily_data[(daily_data["day_of_month"].isin([5, 10, 15, 20, 25])) | \
-                      (daily_data["forecast_date"] == daily_data["last_day_of_month"])].copy()
+    try:
+        # First try to read the file
+        daily_data = pd.read_csv(filepath)
 
-    # Add code to the data, cast code to int
-    data.loc[:, "code"] = int(code)
+        # Handle empty dataframe
+        if daily_data.empty:
+            logger.warning(f"CSV file {filepath} is empty")
+            return pd.DataFrame()
 
-    # Add pentad of the forecasts to the data
-    data.loc[:, "pentad_in_year"] = data["date"].apply(tl.get_pentad_in_year)
+        # Check if required columns exist
+        required_columns = ['date', 'forecast_date']
+        for col in required_columns:
+            if col not in daily_data.columns:
+                logger.warning(f"Column {col} missing from {filepath}")
+                return pd.DataFrame()
 
-    # Group by code and forecast_date and calculate the mean of all columns,
-    # Daily values are stored by the  model for each forecasts. We therefore
-    # have to aggregate only data for the first pentad for each forecast date.
-    forecast = data \
-        .drop(columns=["date", "day_of_month", "last_day_of_month"]) \
-        .groupby(["code", "forecast_date", "pentad_in_year"]) \
-        .mean() \
-        .reset_index()
+        # Try to parse the 'date' column with the first format
+        try:
+            daily_data['date'] = pd.to_datetime(daily_data['date'], format='%d.%m.%Y')
+        except ValueError:
+            # If it fails, try the second format
+            try:
+                daily_data['date'] = pd.to_datetime(daily_data['date'], format='%Y-%m-%d')
+            except ValueError:
+                # If both fail, try a general approach
+                try:
+                    daily_data['date'] = pd.to_datetime(daily_data['date'], errors='coerce')
+                    # Check if we have any valid dates
+                    if daily_data['date'].isna().all():
+                        logger.warning(f"Could not parse 'date' column in {filepath}")
+                        return pd.DataFrame()
+                except Exception as e:
+                    logger.warning(f"Error parsing 'date' column in {filepath}: {e}")
+                    return pd.DataFrame()
 
-    # Keep only the first pentad that appears for each forecast_date and discard
-    # the rest.
-    forecast = forecast.groupby(["code", "forecast_date"]).first().reset_index()
+        # Try to parse the 'forecast_date' column with the first format
+        try:
+            daily_data['forecast_date'] = pd.to_datetime(daily_data['forecast_date'], format='%d.%m.%Y')
+        except ValueError:
+            # If it fails, try the second format
+            try:
+                daily_data['forecast_date'] = pd.to_datetime(daily_data['forecast_date'], format='%Y-%m-%d')
+            except ValueError:
+                # If both fail, try a general approach
+                try:
+                    daily_data['forecast_date'] = pd.to_datetime(daily_data['forecast_date'], errors='coerce')
+                    # Check if we have any valid dates
+                    if daily_data['forecast_date'].isna().all():
+                        logger.warning(f"Could not parse 'forecast_date' column in {filepath}")
+                        return pd.DataFrame()
+                except Exception as e:
+                    logger.warning(f"Error parsing 'forecast_date' column in {filepath}: {e}")
+                    return pd.DataFrame()
 
-    # Rename the column forecast_date to date and Q50 to forecasted_discharge.
-    # In the case of the ARIMA model, we don't have quantiles but rename the
-    # column Q to forecasted_discharge.
-    forecast.rename(
-        columns={"forecast_date": "date",
-                 "Q50": "forecasted_discharge",
-                 "Q": "forecasted_discharge"},
-        inplace=True)
+        return daily_data
 
-    # Add a column model to the dataframe
-    forecast.loc[:, "model_long"] = model_long
-    forecast.loc[:, "model_short"] = model_short
+    except Exception as e:
+        logger.warning(f"Error reading CSV file {filepath}: {e}")
+        return pd.DataFrame()
 
-    # Recalculate pentad in month and pentad in year
-    forecast.loc[:, "pentad_in_month"] = (forecast["date"] + pd.Timedelta(days=1)).apply(tl.get_pentad)
-    forecast.loc[:, "pentad_in_year"] = (forecast["date"] + pd.Timedelta(days=1)).apply(tl.get_pentad_in_year)
+def read_daily_probabilistic_conceptmod_forecasts_pentad(filepath, code, model_long, model_short):
+    """
+    Reads in forecast results from probabilistic conceptual models for the pentadal forecast.
+    Added robust error handling.
 
-    logger.info(f"Read {len(forecast)} rows of {model_short} forecasts for the pentadal forecast horizon.")
-    logger.debug(f"Colums in the {model_short} forecast data:\n{forecast.columns}")
-    logger.debug(f"Read forecast data: \n{forecast.head()}")
+    Args:
+        filepath (str): The path to the file with the forecast results.
+        code (str): The code of the hydropost for which to read the forecast results.
+        model_long (str): The long name of the model.
+        model_short (str): The short name of the model.
 
-    return forecast
+    Returns:
+        forecast (pandas.DataFrame): The forecast results or an empty DataFrame if error occurs.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+
+    try:
+        # Read the forecast results
+        daily_data = read_csv_with_multiple_date_formats(filepath)
+
+        # If the reading failed, return empty DataFrame
+        if daily_data.empty:
+            return pd.DataFrame()
+
+        # Only keep the forecast rows for pentadal forecasts
+        # Add a column last_day_of_month to daily_data
+        daily_data["last_day_of_month"] = daily_data["forecast_date"].apply(fl.get_last_day_of_month)
+        daily_data["day_of_month"] = daily_data["forecast_date"].dt.day
+
+        # Keep rows that have forecast_date equal to either 5, 10, 15, 20, 25 or last_day_of_month
+        data = daily_data[(daily_data["day_of_month"].isin([5, 10, 15, 20, 25])) | \
+                        (daily_data["forecast_date"] == daily_data["last_day_of_month"])].copy()
+
+        # If no data after filtering, return empty DataFrame
+        if data.empty:
+            logger.warning(f"No pentadal forecast data found for {filepath} after filtering")
+            return pd.DataFrame()
+
+        # Add code to the data, cast code to int
+        try:
+            data.loc[:, "code"] = int(code)
+        except ValueError:
+            # If code can't be converted to int, use as string
+            data.loc[:, "code"] = str(code)
+
+        # Add pentad of the forecasts to the data
+        try:
+            data.loc[:, "pentad_in_year"] = data["date"].apply(tl.get_pentad_in_year)
+        except Exception as e:
+            logger.warning(f"Error calculating pentad_in_year: {e}")
+            # Try to continue without it
+            data.loc[:, "pentad_in_year"] = 0
+
+        # Group by code and forecast_date and pentad_in_year
+        # We have to aggregate only data for the first pentad for each forecast date
+        try:
+            forecast = data \
+                .drop(columns=["date", "day_of_month", "last_day_of_month"], errors='ignore') \
+                .groupby(["code", "forecast_date", "pentad_in_year"]) \
+                .mean() \
+                .reset_index()
+
+            # Keep only the first pentad that appears for each forecast_date
+            forecast = forecast.groupby(["code", "forecast_date"]).first().reset_index()
+        except Exception as e:
+            logger.warning(f"Error grouping forecast data: {e}")
+            return pd.DataFrame()
+
+        # Rename columns
+        columns_to_rename = {}
+        if "forecast_date" in forecast.columns:
+            columns_to_rename["forecast_date"] = "date"
+        if "Q50" in forecast.columns:
+            columns_to_rename["Q50"] = "forecasted_discharge"
+        if "Q" in forecast.columns:
+            columns_to_rename["Q"] = "forecasted_discharge"
+
+        forecast.rename(columns=columns_to_rename, inplace=True)
+
+        # Add model information
+        forecast.loc[:, "model_long"] = model_long
+        forecast.loc[:, "model_short"] = model_short
+
+        # Recalculate pentad in month and pentad in year
+        if "date" in forecast.columns:
+            try:
+                forecast.loc[:, "pentad_in_month"] = (forecast["date"] + pd.Timedelta(days=1)).apply(tl.get_pentad)
+                forecast.loc[:, "pentad_in_year"] = (forecast["date"] + pd.Timedelta(days=1)).apply(tl.get_pentad_in_year)
+            except Exception as e:
+                logger.warning(f"Error calculating pentad values: {e}")
+                # Set default values to avoid further errors
+                forecast.loc[:, "pentad_in_month"] = 1
+                forecast.loc[:, "pentad_in_year"] = 1
+
+        logger.info(f"Read {len(forecast)} rows of {model_short} forecasts for the pentadal forecast horizon.")
+        logger.debug(f"Columns in the {model_short} forecast data: {forecast.columns}")
+        logger.debug(f"Read forecast data sample: {forecast.head()}")
+
+        return forecast
+
+    except Exception as e:
+        logger.warning(f"Error processing conceptual model forecast data from {filepath}: {e}")
+        return pd.DataFrame()
 
 def extract_code_from_conceptmod_results_filename(filename):
     """
     Extract the code from the filename.
+    Added robust error handling.
 
     Args:
-    filename (str): The filename to extract the code from.
+        filename (str): The filename to extract the code from.
 
     Returns:
-    str: The extracted code.
+        str: The extracted code or None if extraction fails.
     """
-    match = re.search(r'_(\d+)\.csv$', filename)
-    if match:
-        return match.group(1)
-    return None
+    import re
+    import logging
+    logger = logging.getLogger(__name__)
+
+    try:
+        match = re.search(r'_(\d+)\.csv$', filename)
+        if match:
+            return match.group(1)
+        else:
+            logger.warning(f"Could not extract code from filename: {filename}")
+            return None
+    except Exception as e:
+        logger.warning(f"Error extracting code from filename {filename}: {e}")
+        return None
+
 
 def read_conceptual_model_forecast_pentad(filepath):
     """
@@ -1111,122 +1220,202 @@ def read_conceptual_model_forecast_pentad(filepath):
     forecast horizon.
 
     Args:
-    filepath (str): The code of the hydropost for which to read the forecast results.
+    filepath (str): The path to the forecast file.
 
     Returns:
-    forecast (pandas.DataFrame): The forecast results for the pentadal forecast horizon.
+    forecast (pandas.DataFrame): The forecast results for the pentadal forecast horizon,
+                              or an empty DataFrame if file can't be read.
     """
-    # Test if the fielpath exists
+    import logging
+    logger = logging.getLogger(__name__)
+
+    # Test if the filepath exists
     if not os.path.exists(filepath):
-        raise FileNotFoundError(f"File {filepath} not found")
+        logger.warning(f"File {filepath} not found")
+        return pd.DataFrame()
 
     # Get the filename from the filepath
     filename = os.path.basename(filepath)
 
     # Get the code from the filename
     code = extract_code_from_conceptmod_results_filename(filename)
+    if code is None:
+        logger.warning(f"Could not extract code from filename {filename}")
+        return pd.DataFrame()
 
     logger.info(f"Reading forecast results from {filename}")
     logger.debug(f"{filepath}")
 
-    forecast = read_daily_probabilistic_conceptmod_forecasts_pentad(
-        filepath,
-        code=code,
-        model_long="Rainfall runoff assimilation model (RRAM)",
-        model_short="RRAM"
-    )
+    try:
+        forecast = read_daily_probabilistic_conceptmod_forecasts_pentad(
+            filepath,
+            code=code,
+            model_long="Rainfall runoff assimilation model (RRAM)",
+            model_short="RRAM"
+        )
 
-    logger.debug(f"Type of forecast: {type(forecast)}")
-    logger.debug(f"Columns in forecast: {forecast.columns}")
-    logger.debug(f"Head of forecast: {forecast.head()}")
+        logger.debug(f"Type of forecast: {type(forecast)}")
+        logger.debug(f"Columns in forecast: {forecast.columns}")
+        logger.debug(f"Head of forecast: {forecast.head()}")
 
-    return forecast
+        return forecast
+
+    except Exception as e:
+        logger.warning(f"Error reading forecast from {filepath}: {e}")
+        return pd.DataFrame()
 
 def get_files_in_subdirectories(directory, pattern):
     """
     Get a list of all files in subdirectories of a directory that match a pattern.
+    Added robust error handling.
 
     Args:
-    directory (str): The directory to search in.
-    pattern (str): The pattern to match.
+        directory (str): The directory to search in.
+        pattern (str): The pattern to match.
 
     Returns:
-    files (list): A list of files that match the pattern.
+        list: A list of files that match the pattern or empty list if error occurs.
     """
-    files = []
-    for root, _, filenames in os.walk(directory):
-        #logger.debug(f"Searching in {root}")
-        for filename in fnmatch.filter(filenames, pattern):
-            full_path = os.path.abspath(os.path.join(root, filename))
-            #logger.debug(f"Found file: {full_path}")
-            files.append(full_path)
-    #logger.debug(f"Found {len(files)} files in subdirectories of")
-    #logger.debug(f"    {directory}")
-    #logger.debug(f"    that match the pattern {pattern}")
-    return files
+    import fnmatch
+    import logging
+    import os
+    logger = logging.getLogger(__name__)
+
+    if not os.path.exists(directory):
+        logger.warning(f"Directory {directory} does not exist")
+        return []
+
+    if not os.path.isdir(directory):
+        logger.warning(f"{directory} is not a directory")
+        return []
+
+    try:
+        files = []
+        for root, _, filenames in os.walk(directory):
+            for filename in fnmatch.filter(filenames, pattern):
+                full_path = os.path.abspath(os.path.join(root, filename))
+                files.append(full_path)
+
+        logger.debug(f"Found {len(files)} files matching {pattern} in {directory}")
+        return files
+
+    except Exception as e:
+        logger.warning(f"Error searching for files in {directory}: {e}")
+        return []
 
 def read_all_conceptual_model_forecasts_pentad():
     """
     From the folder, ieasyhydroforecast_PATH_TO_RESULT, reads all available
-    forecast files.
+    forecast files. Returns an empty DataFrame if no files are found or the
+    directory doesn't exist.
 
     Returns:
-    forecasts (pandas.DataFrame): The forecast results from all conceptual models.
+    forecasts (pandas.DataFrame): The forecast results from all conceptual models,
+                                or an empty DataFrame if none are found.
     """
+    import logging
+    logger = logging.getLogger(__name__)
 
     # Get the path to the results directory
     path_to_results_dir = os.getenv("ieasyhydroforecast_PATH_TO_RESULT")
 
-    # Test if this path exists
-    if not os.path.exists(path_to_results_dir):
-        raise FileNotFoundError(f"Directory {path_to_results_dir} not found")
+    # If path is not set, return empty DataFrame with warning
+    if path_to_results_dir is None:
+        logger.warning("Environment variable ieasyhydroforecast_PATH_TO_RESULT is not set. Skipping conceptual model forecasts.")
+        return pd.DataFrame()
 
-    # Get a list of operational daily forecast files in subdirectories of
-    # path_to_results_dir
-    files = get_files_in_subdirectories(path_to_results_dir, "daily_*.csv")
+    # If directory doesn't exist, return empty DataFrame with warning
+    if not os.path.exists(path_to_results_dir):
+        logger.warning(f"Directory {path_to_results_dir} does not exist. Skipping conceptual model forecasts.")
+        return pd.DataFrame()
+
+    # Get a list of operational daily forecast files in subdirectories of path_to_results_dir
+    try:
+        files = get_files_in_subdirectories(path_to_results_dir, "daily_*.csv")
+    except Exception as e:
+        logger.warning(f"Error searching for daily_*.csv files in {path_to_results_dir}: {e}")
+        files = []
+
+    # If no files found, return empty DataFrame with warning
+    if not files:
+        logger.warning(f"No daily_*.csv files found in {path_to_results_dir}. Skipping conceptual model forecasts.")
+        return pd.DataFrame()
 
     # Read the forecast results from all files
-    for file in files:
-        logger.debug(f"Reading forecast results from {file}")
-        forecast = read_conceptual_model_forecast_pentad(file)
-        if file == files[0]:
-            forecasts = forecast
-        else:
-            forecasts = pd.concat([forecasts, forecast])
+    forecasts = pd.DataFrame()  # Create an empty DataFrame to hold all forecasts
 
-    # Also read the hindcast files
-    hindcast_files = get_files_in_subdirectories(path_to_results_dir, "hindcast_daily_*.csv")
+    for file in files:
+        try:
+            logger.debug(f"Reading forecast results from {file}")
+            forecast = read_conceptual_model_forecast_pentad(file)
+
+            if forecasts.empty:
+                forecasts = forecast
+            else:
+                forecasts = pd.concat([forecasts, forecast])
+
+        except Exception as e:
+            logger.warning(f"Error reading forecast from {file}: {e}")
+            # Continue to next file instead of failing
+
+    # Also try to read hindcast files
+    try:
+        hindcast_files = get_files_in_subdirectories(path_to_results_dir, "hindcast_daily_*.csv")
+    except Exception as e:
+        logger.warning(f"Error searching for hindcast_daily_*.csv files: {e}")
+        hindcast_files = []
 
     # Only read hindcast files if they exist
-    if len(hindcast_files) == 0:
-        logger.info("No hindcast files found.")
-        return forecasts
+    if hindcast_files:
+        hindcasts = pd.DataFrame()  # Create an empty DataFrame to hold all hindcasts
 
-    # Read the hindcast results from all files
-    for hindcast_file in hindcast_files:
-        logger.debug(f"Reading hindcast results from {hindcast_file}")
-        hindcast = read_conceptual_model_forecast_pentad(hindcast_file)
-        if hindcast_file == hindcast_files[0]:
-            hindcasts = hindcast
-        else:
-            hindcasts = pd.concat([hindcasts, hindcast])
+        # Read the hindcast results from all files
+        for hindcast_file in hindcast_files:
+            try:
+                logger.debug(f"Reading hindcast results from {hindcast_file}")
+                hindcast = read_conceptual_model_forecast_pentad(hindcast_file)
 
-    # Append hindcasts to forecasts, if there are duplicates, keep the forecast
-    # and discard the hindcast
-    forecasts = pd.concat([forecasts, hindcasts]).drop_duplicates(subset=["code", "date"], keep="first")
+                if hindcasts.empty:
+                    hindcasts = hindcast
+                else:
+                    hindcasts = pd.concat([hindcasts, hindcast])
+
+            except Exception as e:
+                logger.warning(f"Error reading hindcast from {hindcast_file}: {e}")
+                # Continue to next file instead of failing
+
+        # If we have any hindcasts, append them to forecasts
+        if not hindcasts.empty:
+            if forecasts.empty:
+                forecasts = hindcasts
+            else:
+                # Append hindcasts to forecasts, if there are duplicates, keep the forecast
+                # and discard the hindcast
+                forecasts = pd.concat([forecasts, hindcasts]).drop_duplicates(
+                    subset=["code", "date"], keep="first")
+
+    # If we still have no data, return empty DataFrame with warning
+    if forecasts.empty:
+        logger.warning("No valid conceptual model forecasts or hindcasts found.")
 
     return forecasts
 
 def read_machine_learning_forecasts_pentad(model):
     '''
     Reads forecast results from the machine learning model for the pentadal
-    forecast horizon.
+    forecast horizon with robust error handling.
 
     Args:
     model (str): The machine learning model to read the forecast results from.
         Allowed values are 'TFT', 'TIDE', 'TSMIXER', and 'ARIMA'.
-    '''
 
+    Returns:
+    pandas.DataFrame: Forecast results or an empty DataFrame if files not found or error occurs.
+    '''
+    import logging
+    logger = logging.getLogger(__name__)
+
+    # Set model-specific parameters
     if model == 'TFT':
         filename = f"pentad_{model}_forecast.csv".format(model=model)
         hindcast_filename = f"{model}_PENTAD_hindcast_daily*.csv".format(model=model)
@@ -1248,24 +1437,36 @@ def read_machine_learning_forecasts_pentad(model):
         model_long = "AutoRegressive Integrated Moving Average (ARIMA)"
         model_short = "ARIMA"
     else:
-        raise ValueError("Invalid model. Valid models are: 'TFT', 'TIDE', 'TSMIXER', 'ARIMA'")
+        logger.warning(f"Invalid model: {model}. Valid models are: 'TFT', 'TIDE', 'TSMIXER', 'ARIMA'")
+        return pd.DataFrame()
 
-    # Read environment variables to construct the file path with forecast
-    # results for the machine learning and ARIMA models
+    # Read environment variables to construct the file path
     intermediate_data_path = os.getenv("ieasyforecast_intermediate_data_path")
+    if intermediate_data_path is None:
+        logger.warning("Environment variable ieasyforecast_intermediate_data_path is not set")
+        return pd.DataFrame()
+
     subfolder = os.getenv("ieasyhydroforecast_OUTPUT_PATH_DISCHARGE")
+    if subfolder is None:
+        logger.warning("Environment variable ieasyhydroforecast_OUTPUT_PATH_DISCHARGE is not set")
+        return pd.DataFrame()
+
     filepath = os.path.join(intermediate_data_path, subfolder, model, filename)
 
-    # Test if the fielpath exists
+    # Test if the filepath exists
     if not os.path.exists(filepath):
-        raise FileNotFoundError(f"File {filepath} not found")
+        logger.warning(f"File {filepath} not found for model {model}")
+        return pd.DataFrame()
 
     logger.info(f"Reading forecast results from {filename}")
     logger.debug(f"{filepath}")
 
-    forecast = read_daily_probabilistic_ml_forecasts_pentad(filepath, model, model_long, model_short)
-
-    return forecast
+    try:
+        forecast = read_daily_probabilistic_ml_forecasts_pentad(filepath, model, model_long, model_short)
+        return forecast
+    except Exception as e:
+        logger.warning(f"Error reading {model} forecast from {filepath}: {e}")
+        return pd.DataFrame()
 
 def deprecated_read_linreg_forecasts_pentad_dummy(model):
     """

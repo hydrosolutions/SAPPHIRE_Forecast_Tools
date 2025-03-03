@@ -67,11 +67,13 @@ class TimingStats:
 
 @contextmanager
 def timer(stats, section):
-    stats.start(section)
+    if stats is not None:
+        stats.start(section)
     try:
         yield
     finally:
-        stats.end(section)
+        if stats is not None:
+            stats.end(section)
 # endregion
 
 # region Logging
@@ -123,11 +125,20 @@ def postprocessing_forecasts():
 
         with timer(timing_stats, 'calculating skill metrics'):
             logger.info(f"\n\n------ Calculating skill metrics -----------------")
+            # Store the original timing_stats in case the function returns None
+            original_timing_stats = timing_stats
+
             # Calculate forecast skill metrics, adds ensemble forecast to modelled
-            skill_metrics, modelled, timing_stats = fl.calculate_skill_metrics_pentad(
+            skill_metrics, modelled, returned_timing_stats = fl.calculate_skill_metrics_pentad(
                 observed, modelled, timing_stats)
             logger.debug(f"Skill metrics: {skill_metrics.columns}")
             logger.debug(f"Skill metrics: {skill_metrics.tail()}")
+
+            # Use returned timing_stats only if it's not None
+            if returned_timing_stats is not None:
+                timing_stats = returned_timing_stats
+            else:
+                timing_stats = original_timing_stats
 
         with timer(timing_stats, 'saving results'):
             logger.info(f"\n\n------ Saving results ----------------------")
