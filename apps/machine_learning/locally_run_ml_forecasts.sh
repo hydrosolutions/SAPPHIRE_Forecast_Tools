@@ -21,24 +21,80 @@ get_last_lines() {
     tail -n $lines "$file"
 }
 
+# Function to get current timestamp in seconds
+# Works on both Linux and macOS
+get_timestamp() {
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        # macOS
+        date +%s
+    else
+        # Linux
+        date +%s
+    fi
+}
+
 
 for model in TFT TIDE TSMIXER ARIMA; do
+#for model in TFT; do
     for horizon in PENTAD DECAD; do
+    #for horizon in PENTAD; do
         echo "Running model $model for horizon $horizon"
 
         # Create a unique log file name
         log_file="logs/log_${model}_${horizon}_$(date +%Y%m%d_%H%M%S).log"
 
-        export SAPPHIRE_OPDEV_ENV=True SAPPHIRE_MODEL_TO_USE=$model SAPPHIRE_PREDICTION_MODE=$horizon
-        python make_forecast.py #&& python fill_ml_gaps.py && python add_new_station.py
+        # Get start time and save to log file
+        start_time=$(get_timestamp)
+        echo "Start time: $(date)" >> "$log_file"
 
-        # Run commands and tee output to log file
-        {
-            echo "=== Running with model=$model, horizon=$horizon ==="
-            echo "Command: python make_forecast.py && python fill_ml_gaps.py"
-            echo "=== Output ==="
-            python make_forecast.py && python fill_ml_gaps.py
-        } 2>&1 | tee "$log_file"
+        export SAPPHIRE_OPDEV_ENV=True SAPPHIRE_MODEL_TO_USE=$model SAPPHIRE_PREDICTION_MODE=$horizon
+
+        # Record the run times for nan dealing
+        start_nan_time=$(get_timestamp)
+        echo "Starting nan dealing, time: $(date)" >> "$log_file"
+        python recalculate_nan_forecasts.py 2>&1 | tee -a "$log_file"
+        end_nan_time=$(get_timestamp)
+        echo "End nan dealing, time: $(date)" >> "$log_file"
+
+        start_make_forecast_time=$(get_timestamp)
+        echo "Starting make_forecast, time: $(date)" >> "$log_file"
+        python make_forecast.py 2>&1 | tee -a "$log_file"
+        end_make_forecast_time=$(get_timestamp)
+        echo "End make_forecast, time: $(date)" >> "$log_file"
+
+        # Record the start time for fill_ml_gaps
+        start_fill_ml_gaps_time=$(get_timestamp)
+        echo "Starting fill_ml_gaps, time: $(date)" >> "$log_file"
+        python fill_ml_gaps.py 2>&1 | tee -a "$log_file"
+        end_fill_ml_gaps_time=$(get_timestamp)
+        echo "End fill_ml_gaps, time: $(date)" >> "$log_file"
+
+        # Record the start time for add_new_station
+        start_add_new_station_time=$(get_timestamp)
+        echo "Starting add_new_station, time: $(date)" >> "$log_file"
+        python add_new_station.py 2>&1 | tee -a "$log_file"
+        end_add_new_station_time=$(get_timestamp)
+        echo "End add_new_station, time: $(date)" >> "$log_file"
+
+        # Get end time and save to log file
+        end_time=$(get_timestamp)
+        echo "End time: $(date)" >> "$log_file"
+
+        # Calculate run times
+        total_run_time=$((end_time - start_time))
+        nan_time=$((end_nan_time - start_nan_time))
+        forecast_time=$((end_make_forecast_time - start_make_forecast_time))
+        gaps_time=$((end_fill_ml_gaps_time - start_fill_ml_gaps_time))
+        station_time=$((end_add_new_station_time - start_add_new_station_time))
+
+        # Log all the timing information
+        echo "---" >> "$log_file"
+        echo "Total run time: $total_run_time seconds" >> "$log_file"
+        echo "Nan dealing time: $nan_time seconds" >> "$log_file"
+        echo "Make forecast time: $forecast_time seconds" >> "$log_file"
+        echo "Fill ml gaps time: $gaps_time seconds" >> "$log_file"
+        echo "Add new station time: $station_time seconds" >> "$log_file"
+        echo "---" >> "$log_file"
 
         # Extract the last 30 lines and append to a summary file
         echo "=== Last 30 lines of output for model=$model, horizon=$horizon ===" >> logs/summary.log

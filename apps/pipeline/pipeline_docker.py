@@ -549,6 +549,7 @@ class ConceptualModel(pu.TimeoutMixin, luigi.Task):
 class RunMLModel(pu.TimeoutMixin, luigi.Task):
     model_type = luigi.Parameter()
     prediction_mode = luigi.Parameter()
+    run_mode = luigi.Parameter(default='forecast')
 
     # Set timeout to 8 minutes (480 seconds)
     timeout_seconds = luigi.IntParameter(default=480)
@@ -602,7 +603,8 @@ class RunMLModel(pu.TimeoutMixin, luigi.Task):
                 'SAPPHIRE_OPDEV_ENV=True',
                 'IN_DOCKER=True',
                 f'SAPPHIRE_MODEL_TO_USE={self.model_type}',  # TFT, TIDE, TSMIXER, ARIMA
-                f'SAPPHIRE_PREDICTION_MODE={self.prediction_mode}'  # PENTAD, DECAD
+                f'SAPPHIRE_PREDICTION_MODE={self.prediction_mode}',  # PENTAD, DECAD
+                f'RUN_MODE={self.run_mode}'  # only run make_forecast.py in operational mode
             ]
             print(f"Environment variables:\n{environment}")
 
@@ -676,7 +678,7 @@ class RunAllMLModels(luigi.WrapperTask):
 
         for model in models:
             for mode in prediction_modes:
-                yield RunMLModel(model_type=model, prediction_mode=mode)
+                yield RunMLModel(model_type=model, prediction_mode=mode, run_mode='forecast')
 
 class PostProcessingForecasts(luigi.Task):
 

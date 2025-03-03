@@ -1,20 +1,17 @@
-#
-#
 # ----------------------------------------------------------------
-# FILE: fill_ml_gaps.py
+# FILE: recalculate_nan_forecasts.py
 # ----------------------------------------------------------------
 #
-# Description: This script checks if there are any missing forecasts from the ML models.
-# If there are, it calls the hindcast script to fill in the missing forecasts
-# in order to make the ML model forecasts continuous for evaluation.
-# NOTE: This script only fills in the values which are not represented in the forecast file.
-# If there are nan values in the forecast file, they will not be filled in.
+# Description: This script checks if there are any nan values in the forecasts and then recalculates them.
+# Nan values from operational forecasts have flag == 0, while nan values from hindcasts have flag == 1.
+# This script checks if there are nan values in the forecasts and then recalculates them, by calling the hindcast script.
+# The hindcast will return a file which is already flagged:
+# - flag == 3 for nan values even after the hindcast
+# - flag == 4 for valid values after the hindcast
 # ----------------------------------------------------------------
 # USAGE:
-# SAPPHIRE_OPDEV_ENV=True SAPPHIRE_MODEL_TO_USE=TFT SAPPHIRE_PREDICTION_MODE=PENTAD python fill_ml_gaps.py
+# SAPPHIRE_OPDEV_ENV=True SAPPHIRE_MODEL_TO_USE=TFT SAPPHIRE_PREDICTION_MODE=PENTAD python recalculate_nan_forecasts.py
 # ----------------------------------------------------------------
-
-
 import os
 import sys
 import pandas as pd
@@ -24,7 +21,8 @@ import subprocess
 
 import logging
 from logging.handlers import TimedRotatingFileHandler
-
+logging.getLogger("pytorch_lightning.utilities.rank_zero").setLevel(logging.WARNING)
+logging.getLogger("pytorch_lightning.accelerators.cuda").setLevel(logging.WARNING)
 formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 # Ensure the logs directory exists
 logs_dir = 'logs'
@@ -35,13 +33,15 @@ file_handler = TimedRotatingFileHandler('logs/log', when='midnight',
 file_handler.setFormatter(formatter)
 console_handler = logging.StreamHandler()
 console_handler.setFormatter(formatter)
-logger = logging.getLogger('make_ml_hindcast')
+logger = logging.getLogger('recalculate_nan_forecasts')
 logger.setLevel(logging.DEBUG)
 logger.handlers = []
 logger.addHandler(file_handler)
 
 import warnings
 warnings.filterwarnings("ignore")
+
+
 
 
 # Local libraries, installed with pip install -e ./iEasyHydroForecast
@@ -61,6 +61,7 @@ def call_hindcast_script(min_missing_date: str,
                          max_missing_date: str,
                          MODEL_TO_USE: str,
                          intermediate_data_path: str,
+                         codes_with_nan: list,
                          PREDICTION_MODE: str) -> pd.DataFrame:
 
     # --------------------------------------------------------------------
@@ -73,7 +74,8 @@ def call_hindcast_script(min_missing_date: str,
     env['ieasyhydroforecast_START_DATE'] = min_missing_date
     env['ieasyhydroforecast_END_DATE'] = max_missing_date
     env['SAPPHIRE_HINDCAST_MODE'] = PREDICTION_MODE
-    env['ieasyhydroforecast_NEW_STATIONS'] = 'None'
+    codes_hindcast = ','.join([str(code) for code in codes_with_nan])
+    env['ieasyhydroforecast_NEW_STATIONS'] = codes_hindcast
 
     # Prepare the command
     if (os.getenv('IN_DOCKER') == 'True'):
@@ -117,14 +119,12 @@ def call_hindcast_script(min_missing_date: str,
     return hindcast
 
 
-
-
-def fill_ml_gaps():
+def recalculate_nan_forecasts():
 
     logger.info(f'--------------------------------------------------------------------')
-    logger.info(f"Starting fill_ml_gaps.py")
+    logger.info(f"Starting recalculate_nan_forecasts.py")
     print(f'--------------------------------------------------------------------')
-    print(f"Starting fill_ml_gaps.py")
+    print(f"Starting recalculate_nan_forecasts.py")
 
     # --------------------------------------------------------------------
     # DEFINE WHICH MODEL TO USE
@@ -143,8 +143,6 @@ def fill_ml_gaps():
     logger.debug('Prediction mode: %s', PREDICTION_MODE)
     if PREDICTION_MODE not in ['PENTAD', 'DECAD']:
         raise ValueError('Prediction mode %s is not supported.\nPlease choose one of the following prediction modes: PENTAD, DECAD')
-
-
 
     # --------------------------------------------------------------------
     # INITIALIZE THE ENVIRONMENT
@@ -180,8 +178,6 @@ def fill_ml_gaps():
 
 
     forecast_path = os.path.join(PATH_FORECAST, prefix + '_' +  MODEL_TO_USE + '_forecast.csv')
-    limit_day_gap = 1
-
 
     try:
         forecast = pd.read_csv(forecast_path)
@@ -189,92 +185,118 @@ def fill_ml_gaps():
         logger.error('No forecast file found')
         return
 
-    missing_forecasts_dict = {}
-    min_missing_date = None
-    max_missing_date = None
-    #iterate over the unique codes
-    for code in forecast.code.unique():
-        #select the forecast for the specific code
-        forecast_code = forecast[forecast.code == code].copy()
-        #get the unique forecast dates
-        forecast_dates = forecast_code['forecast_date'].unique()
-        forecast_dates = pd.to_datetime(forecast_dates)
-        forecast_dates = forecast_dates.sort_values()
-        # check if there are any missing forecasts
-        missing_forecasts = []
+    unique_codes = forecast['code'].unique()
 
-        for i in range(1, len(forecast_dates)):
-            if (forecast_dates[i] - forecast_dates[i-1]).days > limit_day_gap:
-                missing_tuple = (forecast_dates[i-1], forecast_dates[i])
-                # append the previous date with a forecast
-                # append the next date which has a forecast
-                missing_forecasts.append(missing_tuple)
+    codes_with_nan = []
+    min_missing_dates = []
+    max_missing_dates = []
 
-        # update the missing_forecasts_dict and min_missing_date and max_missing_date
-        if len(missing_forecasts) > 0:
-            missing_forecasts_dict[code] = missing_forecasts
-            min_missing_date_current = missing_forecasts[0][0]
-            max_missing_date_current = missing_forecasts[-1][1]
-
-            if min_missing_date is None:
-                min_missing_date = min_missing_date_current
-                max_missing_date = max_missing_date_current
-            else:
-                min_missing_date = min(min_missing_date, min_missing_date_current)
-                max_missing_date = max(max_missing_date, max_missing_date_current)
-
-    # if there are no missing forecasts
-    if len(missing_forecasts_dict) == 0:
-        logger.info('No missing forecasts')
-        print('No missing forecasts')
-
-    # if there are missing forecasts
-    else:
-
-        # get the minimum and maximum missing dates
-        min_missing_date = min_missing_date.strftime('%Y-%m-%d')
-        max_missing_date = max_missing_date - datetime.timedelta(days=1)
-        max_missing_date = max_missing_date.strftime('%Y-%m-%d')
-
-        logger.info('Missing forecasts from %s to %s', min_missing_date, max_missing_date)
-        print('Missing forecasts from', min_missing_date, 'to', max_missing_date)
-        print("Missing forecasts for the following code:", list(missing_forecasts_dict.keys()))
-
-        # trigger the hindcast script to fill in the missing forecasts
-        hindcast = call_hindcast_script(min_missing_date, max_missing_date,
-            MODEL_TO_USE, intermediate_data_path, PREDICTION_MODE)
-
-        hindcast['forecast_date'] = pd.to_datetime(hindcast['forecast_date'])
-
-        #now iterate and fill the missing forecasts,
-        #this complicated way is needed to ensure that the original forecast are not overwrtitten by the hindcast
-        for code, missing_forecasts in missing_forecasts_dict.items():
-            mask_dates = pd.Series(False, index=hindcast.index)
-            for missing_forecast in missing_forecasts:
-                mask_dates = mask_dates | ((hindcast.forecast_date >= missing_forecast[0]) & (hindcast.forecast_date <= missing_forecast[1]))
-
-            mask_fill = (hindcast.code == code) & mask_dates
-
-            hindcast_missing = hindcast[mask_fill].copy()
-
-            # append the missing forecasts to the original forecast
-            forecast = pd.concat([forecast, hindcast_missing], axis=0)
-
-
+    forecast['flag'] = forecast['flag'].astype(int, errors='ignore')
+    try:
+        # First attempt with default parsing
+        forecast['date'] = pd.to_datetime(forecast['date'])
         forecast['forecast_date'] = pd.to_datetime(forecast['forecast_date'])
-        # sort the forecast by forecast_date
-        forecast = forecast.sort_values(by='forecast_date')
-        # save the forecast
-        forecast.to_csv(os.path.join(PATH_FORECAST, prefix + '_' +  MODEL_TO_USE + '_forecast.csv'), index=False)
+    except:
+        # Fallback to mixed format parsing if the first attempt fails
+        try:
+            forecast['date'] = pd.to_datetime(forecast['date'], format='mixed')
+            forecast['forecast_date'] = pd.to_datetime(forecast['forecast_date'], format='mixed')
+        except Exception as e:
+            # Handle the case where both parsing methods fail
+            logger.error('Error parsing date columns: %s', e)
+            raise e
 
 
-        logger.info('Missing forecasts filled in')
+    for code in unique_codes:
+        #select the forecast for the specific code
+        forecast_code = forecast[forecast['code'] == code].copy()
 
-    logger.info('Script fill_ml_gaps.py finished at %s. Exiting.', datetime.datetime.now())
-    logger.info(f'--------------------------------------------------------------------')
-    print('Script fill_ml_gaps.py finished at', datetime.datetime.now())
-    print(f'--------------------------------------------------------------------')
+        #check where the flag is equal to 1
+        nan_values = forecast_code[forecast_code['flag'].isin([1,2])]
 
+        if nan_values.shape[0] > 0:
+            min_missing_date = nan_values['forecast_date'].min()
+            max_missing_date = nan_values['forecast_date'].max()
+
+            min_missing_dates.append(min_missing_date)
+            max_missing_dates.append(max_missing_date)
+            codes_with_nan.append(code)
+
+
+    if len(codes_with_nan) == 0:
+        logger.debug('No forecasts to recalculate. Exiting recalculate_nan_forecasts.py\n')
+        return
+
+    #call the hindcast script
+    max_date = max(max_missing_dates).strftime('%Y-%m-%d')
+    #min date - 1 day
+    min_date = min(min_missing_dates) - datetime.timedelta(days=1)
+    min_date = min_date.strftime('%Y-%m-%d')
+
+    logger.debug('Recalculating forecasts for codes %s', codes_with_nan)
+    logger.debug('Min missing date: %s', min_date)
+    logger.debug('Max missing date: %s', max_date)
+
+    print('Recalculating forecasts for codes:', codes_with_nan)
+    print('Min missing date:', min_date)
+    print('Max missing date:', max_date)
+
+    hindcast = call_hindcast_script(min_missing_date=min_date,
+                                    max_missing_date=max_date,
+                                    MODEL_TO_USE=MODEL_TO_USE,
+                                    intermediate_data_path=intermediate_data_path,
+                                    codes_with_nan=codes_with_nan,
+                                    PREDICTION_MODE=PREDICTION_MODE)
+
+    print('Hindcast shape:', hindcast.shape)
+    print('Hindcast columns:', hindcast.columns)
+    print('Hindcast head:', hindcast.head())
+    # --------------------------------------------------------------------
+    # UPDATE THE FORECAST
+    # Only replace the values with flag == 1
+    hindcast['flag'] = hindcast['flag'].astype(int)
+    hindcast['date'] = pd.to_datetime(hindcast['date'])
+    hindcast['forecast_date'] = pd.to_datetime(hindcast['forecast_date'])
+
+    def update_forecast(forecast_code, hindcast_code):
+        # Fix the syntax error in value_cols definition
+        value_cols = [col for col in forecast_code.columns if 'Q' in col]
+
+        forecast_code = forecast_code.copy()
+        hindcast_code = hindcast_code.copy()
+
+        # Get dates where flag is 1
+        forecast_dates_flag1 = forecast_code[forecast_code['flag'].isin([1,2])]['forecast_date'].unique()
+
+        # Only update those specific dates
+        for forecast_date in forecast_dates_flag1:
+            mask = forecast_code['forecast_date'] == forecast_date
+            hindcast_mask = hindcast_code['forecast_date'] == forecast_date
+
+            if hindcast_mask.any():  # Check if we have matching hindcast data
+                forecast_code.loc[mask, value_cols] = hindcast_code.loc[hindcast_mask, value_cols].values
+                forecast_code.loc[mask, 'flag'] = hindcast_code.loc[hindcast_mask, 'flag'].values
+
+        return forecast_code
+
+    # Main loop
+    for code in codes_with_nan:
+        forecast_code = forecast[forecast['code'] == code].copy()
+        hindcast_code = hindcast[hindcast['code'] == code].copy()
+        forecast[forecast['code'] == code] = update_forecast(forecast_code, hindcast_code)
+
+
+    # Save the updated forecast
+    forecast['forecast_date'] = pd.to_datetime(forecast['forecast_date'])
+    # sort the forecast by forecast_date
+    forecast = forecast.sort_values(by='forecast_date')
+    # save the forecast
+    forecast.to_csv(os.path.join(PATH_FORECAST, prefix + '_' +  MODEL_TO_USE + '_forecast.csv'), index=False)
+
+    logger.info('Nan Values are replaced. Exiting recalculate_nan_forecasts.py\n')
+    logger.info('--------------------------------------------------------------------')
+    print('Nan Values are replaced. Exiting recalculate_nan_forecasts.py\n')
+    print('--------------------------------------------------------------------')
 
 if __name__ == '__main__':
-    fill_ml_gaps()
+    recalculate_nan_forecasts()
