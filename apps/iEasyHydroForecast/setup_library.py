@@ -926,6 +926,14 @@ def read_linreg_forecasts_pentad():
     forecasts["pentad_in_month"] = (forecasts["date"] + pd.Timedelta(days=1)).apply(tl.get_pentad)
     forecasts["pentad_in_year"] = (forecasts["date"] + pd.Timedelta(days=1)).apply(tl.get_pentad_in_year)
 
+    # Save the most recent forecasts to CSV for comparison
+    try:
+        save_most_recent_forecasts(forecasts, "LR")
+    except ImportError:
+        logger.warning("Could not import save_most_recent_forecasts from src.postprocessing_tools")
+    except Exception as e:
+        logger.warning(f"Error saving most recent LR forecasts: {e}")
+
     logger.info(f"Read {len(forecasts)} rows of linear regression forecasts for the pentadal forecast horizon.")
     logger.info(f"Read {len(stats)} rows of general runoff statistics for the pentadal forecast horizon.")
     logger.debug(f"Colums in the linear regression forecast data:\n{forecasts.columns}")
@@ -1395,8 +1403,18 @@ def read_all_conceptual_model_forecasts_pentad():
                     subset=["code", "date"], keep="first")
 
     # If we still have no data, return empty DataFrame with warning
+    # If we still have no data, return empty DataFrame with warning
     if forecasts.empty:
         logger.warning("No valid conceptual model forecasts or hindcasts found.")
+    else:
+        # Save the most recent forecasts to CSV for comparison
+        try:
+            save_most_recent_forecasts(forecasts, "RRAM")
+        except ImportError:
+            logger.warning("Could not import save_most_recent_forecasts from src.postprocessing_tools")
+        except Exception as e:
+            logger.warning(f"Error saving most recent RRAM forecasts: {e}")
+
 
     return forecasts
 
@@ -1463,6 +1481,14 @@ def read_machine_learning_forecasts_pentad(model):
 
     try:
         forecast = read_daily_probabilistic_ml_forecasts_pentad(filepath, model, model_long, model_short)
+        # Save the most recent forecasts to CSV for comparison
+        try:
+            save_most_recent_forecasts(forecast, model_short)
+        except ImportError:
+            logger.warning(f"Could not import save_most_recent_forecasts from src.postprocessing_tools")
+        except Exception as e:
+            logger.warning(f"Error saving most recent {model_short} forecasts: {e}")
+
         return forecast
     except Exception as e:
         logger.warning(f"Error reading {model} forecast from {filepath}: {e}")
@@ -1716,6 +1742,57 @@ def calculate_virtual_stations_data(data_df: pd.DataFrame,
     return data_df
 
 # endregion
+def save_most_recent_forecasts(forecasts, model_name):
+    """
+    Save the most recent forecasts for a specific model.
+
+    Args:
+        forecasts (pd.DataFrame): DataFrame containing forecast data for a model
+        model_name (str): Name of the model (e.g., 'LR', 'TFT', 'ARIMA')
+
+    Returns:
+        None
+    """
+    if forecasts.empty:
+        logger.warning(f"No forecasts available for model {model_name} to save")
+        return
+
+    # Get the most recent date in the dataset
+    most_recent_date = forecasts['date'].max()
+
+    # Filter for the most recent date
+    recent_forecasts = forecasts[forecasts['date'] == most_recent_date]
+
+    if recent_forecasts.empty:
+        logger.warning(f"No recent forecasts available for model {model_name}")
+        return
+
+    # Create directory if it doesn't exist
+    raw_forecast_dir = os.path.join(
+        os.getenv("ieasyforecast_intermediate_data_path"),
+        "raw_forecast_logs"
+    )
+    os.makedirs(raw_forecast_dir, exist_ok=True)
+
+    # Save the filtered data to CSV
+    forecast_file = os.path.join(
+        raw_forecast_dir,
+        f"raw_{model_name}_forecasts_{most_recent_date.strftime('%Y%m%d')}.csv"
+    )
+
+    # Save relevant columns only
+    columns_to_save = ['code', 'date', 'pentad_in_month', 'pentad_in_year',
+                     'forecasted_discharge', 'model_short', 'model_long']
+
+    # Only keep columns that exist in the DataFrame
+    columns_to_save = [col for col in columns_to_save if col in recent_forecasts.columns]
+
+    # Save to CSV
+    recent_forecasts[columns_to_save].to_csv(forecast_file, index=False)
+
+    logger.info(f"Raw {model_name} forecasts saved to: {forecast_file}")
+    logger.info(f"Number of stations with {model_name} forecasts: {len(recent_forecasts)}")
+
 
 def read_observed_and_modelled_data_pentade():
     """

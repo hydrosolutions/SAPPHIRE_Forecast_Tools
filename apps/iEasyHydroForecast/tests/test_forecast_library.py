@@ -4,6 +4,8 @@ import pandas as pd
 import unittest
 import pytest
 import datetime as dt
+import shutil
+import tempfile
 import math
 import os
 import sys
@@ -1500,6 +1502,211 @@ class TestCalculateSkillMetricsPentad(unittest.TestCase):
         # Verify timing sections were recorded
         self.assertTrue(len(timing_stats.sections) > 0)
         self.assertEqual(timing_stats, returned_stats)
+
+
+
+class TestWriteLinregPentadForecastData(unittest.TestCase):
+    def setUp(self):
+        # Create a temporary directory for test files
+        self.temp_dir = tempfile.mkdtemp()
+
+        # Set environment variables needed by the function
+        os.environ["ieasyforecast_intermediate_data_path"] = self.temp_dir
+        os.environ["ieasyforecast_analysis_pentad_file"] = "test_pentad_forecast.csv"
+
+        # Create test data - ensure code is string type
+        self.test_data = pd.DataFrame({
+            'code': ['15001', '15002', '15003'],
+            'date': pd.to_datetime(['2023-05-01', '2023-05-01', '2023-05-01']),
+            'discharge': [10.0, 20.0, 30.0],
+            'discharge_avg': [11.0, 21.0, 31.0],
+            'predictor': [12.0, 22.0, 32.0],
+            'forecasted_discharge': [13.0, 23.0, 33.0],
+            'issue_date': [True, True, True],
+            'pentad_in_year': [25, 25, 25],
+            'pentad_in_month': [1, 1, 1],
+            'q_mean': [14.0, 24.0, 34.0],
+            'q_std_sigma': [1.5, 2.5, 3.5],
+            'delta': [1.0, 2.0, 3.0],
+            'slope': [0.5, 0.6, 0.7],
+            'intercept': [5.0, 5.0, 5.0]
+        })
+
+        self.output_path = os.path.join(
+            self.temp_dir,
+            os.getenv("ieasyforecast_analysis_pentad_file")
+        )
+
+    def tearDown(self):
+        # Remove temporary directory and files
+        shutil.rmtree(self.temp_dir)
+
+    def _get_output_data(self):
+        """Helper to read output data and print debug info"""
+        result = pd.read_csv(self.output_path, parse_dates=['date'])
+        # Debug prints
+        print(f"DEBUG: Output file contents:")
+        print(result)
+        print(f"DEBUG: Codes in output: {result['code'].unique()}")
+        print(f"DEBUG: Data types: {result.dtypes}")
+        return result
+
+    def test_write_to_new_file(self):
+        """Test writing to a new file that doesn't exist yet"""
+        if os.path.exists(self.output_path):
+            os.remove(self.output_path)
+
+        # Call the function
+        fl.write_linreg_pentad_forecast_data(self.test_data)
+
+        # Check that the file exists
+        self.assertTrue(os.path.exists(self.output_path))
+
+        # Read the file and check contents
+        result = self._get_output_data()
+
+        # Should contain rows
+        self.assertGreater(len(result), 0, "Output file is empty")
+
+        # Check columns - should drop 'issue_date' and 'discharge'
+        self.assertNotIn('issue_date', result.columns)
+        self.assertNotIn('discharge', result.columns)
+
+        # Skip individual row checks, just verify total row count matches expected
+        self.assertEqual(len(result), 3, f"Expected 3 rows, got {len(result)}")
+
+    def test_append_to_existing_file(self):
+        """Test appending to an existing file with non-overlapping data"""
+        # Create initial file
+        initial_data = pd.DataFrame({
+            'code': ['15004', '15005'],
+            'date': pd.to_datetime(['2023-05-01', '2023-05-01']),
+            'discharge_avg': [41.0, 51.0],
+            'predictor': [42.0, 52.0],
+            'forecasted_discharge': [43.0, 53.0],
+            'pentad_in_year': [25, 25],
+            'pentad_in_month': [1, 1],
+            'q_mean': [44.0, 54.0],
+            'q_std_sigma': [4.5, 5.5],
+            'delta': [4.0, 5.0],
+            'slope': [0.8, 0.9],
+            'intercept': [5.0, 5.0]
+        })
+
+        initial_data.to_csv(self.output_path, index=False)
+
+        # Call the function with new data
+        fl.write_linreg_pentad_forecast_data(self.test_data)
+
+        # Read the file and check contents
+        result = self._get_output_data()
+
+        # Should contain 5 rows (2 original + 3 new)
+        self.assertEqual(len(result), 5)
+
+        # Check that we have the expected number of unique codes
+        unique_codes_count = len(result['code'].unique())
+        self.assertEqual(unique_codes_count, 5,
+                         f"Expected 5 unique codes, got {unique_codes_count}")
+
+    def test_update_with_duplicates(self):
+        """Test updating an existing file with overlapping data"""
+        # Create initial file
+        initial_data = pd.DataFrame({
+            'code': ['15001', '15003', '15004'],
+            'date': pd.to_datetime(['2023-05-01', '2023-05-01', '2023-05-01']),
+            'discharge_avg': [91.0, 93.0, 94.0],
+            'predictor': [92.0, 92.0, 92.0],
+            'forecasted_discharge': [93.0, 93.0, 93.0],
+            'pentad_in_year': [25, 25, 25],
+            'pentad_in_month': [1, 1, 1],
+            'q_mean': [94.0, 94.0, 94.0],
+            'q_std_sigma': [9.5, 9.5, 9.5],
+            'delta': [9.0, 9.0, 9.0],
+            'slope': [0.9, 0.9, 0.9],
+            'intercept': [9.0, 9.0, 9.0]
+        })
+
+        # Write initial data
+        initial_data.to_csv(self.output_path, index=False)
+
+        # Call the function with new data that includes duplicates for codes 15001 and 15003
+        fl.write_linreg_pentad_forecast_data(self.test_data)
+
+        # Read the file and check contents
+        result = self._get_output_data()
+
+        # Should contain 4 unique codes (15001, 15002, 15003, 15004)
+        unique_codes = result['code'].unique()
+        self.assertEqual(len(unique_codes), 4,
+                        f"Expected 4 unique codes, got {len(unique_codes)}: {unique_codes}")
+
+        # Verify no duplicates (each code should appear exactly once)
+        code_counts = result['code'].value_counts()
+        self.assertTrue(all(count == 1 for count in code_counts),
+                       f"Found duplicates in output: {code_counts}")
+
+    def test_handling_different_years(self):
+        """Test the handling of dates from different years"""
+        # Create data with different years
+        mixed_year_data = pd.DataFrame({
+            'code': ['15001', '15002', '15003'],
+            'date': pd.to_datetime(['2022-05-01', '2023-05-01', '2024-05-01']),
+            'discharge': [10.0, 20.0, 30.0],
+            'discharge_avg': [11.0, 21.0, 31.0],
+            'predictor': [12.0, 22.0, 32.0],
+            'forecasted_discharge': [13.0, 23.0, 33.0],
+            'issue_date': [True, True, True],
+            'pentad_in_year': [25, 25, 25],
+            'pentad_in_month': [1, 1, 1],
+            'q_mean': [14.0, 24.0, 34.0],
+            'q_std_sigma': [1.5, 2.5, 3.5],
+            'delta': [1.0, 2.0, 3.0],
+            'slope': [0.5, 0.6, 0.7],
+            'intercept': [5.0, 5.0, 5.0]
+        })
+
+        # Call the function
+        fl.write_linreg_pentad_forecast_data(mixed_year_data)
+
+        # Read the file and check contents
+        result = self._get_output_data()
+
+        # All dates should be standardized to match the maximum year (2024)
+        years = result['date'].dt.year.unique()
+        self.assertEqual(len(years), 1, f"Expected 1 unique year, got {len(years)}: {years}")
+        self.assertEqual(years[0], 2024, f"Expected year 2024, got {years[0]}")
+
+        # Check for NaN values in the row from 2022
+        # Find all rows with NaN forecasted_discharge
+        nan_rows = result[pd.isna(result['forecasted_discharge'])]
+        self.assertGreater(len(nan_rows), 0, "Expected at least one row with NaN values")
+
+    def test_empty_dataframe(self):
+        """Test handling of empty DataFrame input"""
+        empty_data = pd.DataFrame({
+            'code': [],
+            'date': [],
+            'discharge': [],
+            'discharge_avg': [],
+            'predictor': [],
+            'forecasted_discharge': [],
+            'issue_date': [],
+            'pentad_in_year': [],
+            'pentad_in_month': [],
+            'q_mean': [],
+            'q_std_sigma': [],
+            'delta': [],
+            'slope': [],
+            'intercept': []
+        })
+
+        # Call the function with empty data
+        fl.write_linreg_pentad_forecast_data(empty_data)
+
+        # File should not be created
+        self.assertFalse(os.path.exists(self.output_path))
+
 
 
 if __name__ == '__main__':

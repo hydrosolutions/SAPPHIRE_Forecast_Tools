@@ -23,6 +23,8 @@ import setup_library as sl
 import forecast_library as fl
 import tag_library as tl
 
+from src import postprocessing_tools as pt
+
 # endregion
 
 # region Timing Tools
@@ -139,6 +141,11 @@ def postprocessing_forecasts():
                 timing_stats = returned_timing_stats
             else:
                 timing_stats = original_timing_stats
+
+        with timer(timing_stats, 'logging recent forecasts'):
+            logger.info(f"\n\n------ Logging most recent forecasts -------------")
+            # Log the most recent forecast for each module
+            recent_forecasts = pt.log_most_recent_forecasts(modelled)
 
         with timer(timing_stats, 'saving results'):
             logger.info(f"\n\n------ Saving results ----------------------")

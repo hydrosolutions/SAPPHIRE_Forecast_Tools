@@ -1863,8 +1863,8 @@ def calculate_skill_metrics_pentad(
         #print("DEBUG: head of ensemble_skill_metrics_df: \n", ensemble_skill_metrics_df.head(5))
         #print("DEBUG: unique models in ensemble_skill_metrics_df: ", ensemble_skill_metrics_df['model_long'].unique())
 
-        # Calculate pentad in month
-        ensemble_skill_metrics_df['pentad_in_month'] = ensemble_skill_metrics_df['date'].apply(tl.get_pentad)
+        # Calculate pentad in month (add 1 day to date)
+        ensemble_skill_metrics_df['pentad_in_month'] = (ensemble_skill_metrics_df['date']+dt.timedelta(days=1.0)).apply(tl.get_pentad)
 
         # Join the two dataframes
         joint_forecasts = pd.merge(
@@ -1993,7 +1993,7 @@ def load_selected_stations_from_json(file_path: str) -> list:
     except ValueError as e:
         raise ValueError('Could not read config file. Error message: {}'.format(e))
 
-def  read_daily_discharge_data_from_csv():
+def read_daily_discharge_data_from_csv():
     """
     Read the discharge data from a csv file specified in the environment.
 
@@ -2053,6 +2053,102 @@ def  read_daily_discharge_data_from_csv():
     return discharge_data
 
 def write_linreg_pentad_forecast_data(data: pd.DataFrame):
+    """
+    Writes the data to a csv file for later reading into the forecast dashboard.
+    Checks for duplicates by date and code, keeping only the most recent entry.
+
+    Args:
+    data (pd.DataFrame): The data to be written to a csv file.
+
+    Returns:
+    None
+    """
+    # Get the path to the output file
+    try:
+        output_file_path = os.path.join(
+            os.getenv("ieasyforecast_intermediate_data_path"),
+            os.getenv("ieasyforecast_analysis_pentad_file"))
+    except Exception as e:
+        logger.error("Could not get the output file path.")
+        print(os.getenv("ieasyforecast_intermediate_data_path"))
+        print(os.getenv("ieasyforecast_analysis_pentad_file"))
+        raise e
+
+    # Only proceed if data is not empty
+    if data.empty:
+        return
+
+    # Reset index, dropping the old index
+    data = data.reset_index(drop=True)
+
+    # Filter to include only forecast data (where issue_date is True)
+    data = data[data['issue_date'] == True]
+    data = data.drop(columns=['issue_date', 'discharge'])
+
+    # Round all values to 3 digits
+    data = data.round(3)
+
+    # For each code, extract the last row (most recent data in current batch)
+    last_line = data.groupby('code').tail(1)
+
+    # Get the max year of the last_line dates
+    year = last_line['date'].dt.year.max()
+    logger.debug(f'mode of year: {year}')
+
+    # Standardize dates to the current year for consistency
+    last_line.loc[last_line['date'].dt.year != year, 'predictor'] = np.nan
+    last_line.loc[last_line['date'].dt.year != year, 'discharge_avg'] = np.nan
+    last_line.loc[last_line['date'].dt.year != year, 'forecasted_discharge'] = np.nan
+
+    # Iterate over last_line dates. Determine the most frequently occuring date.
+    # If the other dates are shifted by 1 day, set the date to the most frequently
+    # occuring date.
+    for code in last_line['code'].unique():
+        date_counts = last_line[last_line['code'] == code]['date'].value_counts()
+        if len(date_counts) > 1:
+            most_common_date = date_counts.idxmax()
+            for date in date_counts.index:
+                if date != most_common_date:
+                    last_line.loc[(last_line['code'] == code) & (last_line['date'] == date), 'date'] = most_common_date
+
+
+    # Handle existing file
+    existing_data = None
+    if os.path.exists(output_file_path):
+        # Read existing data
+        existing_data = pd.read_csv(output_file_path, parse_dates=['date'])
+
+        # Combine with new data
+        combined_data = pd.concat([existing_data, last_line], ignore_index=True)
+
+        # Make sure 'code' column is treated as string (otherwise looking for duplicates will not work as expected)
+        combined_data['code'] = combined_data['code'].astype(str)
+
+        # Remove duplicates, keeping last occurrence (which has been added last)
+        combined_data = combined_data.drop_duplicates(subset=['date', 'code'], keep='last')
+
+        # Write back to file
+        try:
+            ret = combined_data.to_csv(output_file_path, index=False)
+            logger.info(f"Data written to {output_file_path}. Removed duplicates keeping most recent entries.")
+        except Exception as e:
+            logger.error(f"Could not write the data to {output_file_path}.")
+            raise e
+    else:
+        # Write the data to a new file
+        try:
+            ret = last_line.to_csv(output_file_path, index=False)
+            if ret is None:
+                logger.info(f"Data written to {output_file_path}.")
+            else:
+                logger.error(f"Could not write the data to {output_file_path}.")
+        except Exception as e:
+            logger.error(f"Could not write the data to {output_file_path}.")
+            raise e
+
+    return ret
+
+def write_linreg_pentad_forecast_data_deprecating(data: pd.DataFrame):
     """
     Writes the data to a csv file for later reading into the forecast dashboard.
 
@@ -2143,6 +2239,100 @@ def write_linreg_pentad_forecast_data(data: pd.DataFrame):
     return ret
 
 def write_linreg_decad_forecast_data(data: pd.DataFrame):
+    """
+    Writes the data to a csv file for later reading into the forecast dashboard.
+    Checks for duplicates by date and code, keeping only the most recent entry.
+
+    Args:
+    data (pd.DataFrame): The data to be written to a csv file.
+
+    Returns:
+    None
+    """
+    # Get the path to the output file
+    try:
+        output_file_path = os.path.join(
+            os.getenv("ieasyforecast_intermediate_data_path"),
+            os.getenv("ieasyforecast_analysis_decad_file"))
+    except Exception as e:
+        logger.error("Could not get the output file path.")
+        print(os.getenv("ieasyforecast_intermediate_data_path"))
+        print(os.getenv("ieasyforecast_analysis_decad_file"))
+        raise e
+
+    # Only proceed if data is not empty
+    if data.empty:
+        return
+
+    # Reset index, dropping the old index
+    data = data.reset_index(drop=True)
+
+    # Filter to include only forecast data (where issue_date is True)
+    data = data[data['issue_date'] == True]
+    data = data.drop(columns=['issue_date', 'discharge'])
+
+    # Round all values to 3 digits
+    data = data.round(3)
+
+    # For each code, extract the last row (most recent data in current batch)
+    last_line = data.groupby('code').tail(1)
+
+    # Get the max year of the last_line dates
+    year = last_line['date'].dt.year.max()
+    logger.debug(f'mode of year: {year}')
+
+    # Standardize dates to the current year for consistency
+    last_line.loc[last_line['date'].dt.year != year, 'predictor'] = np.nan
+    last_line.loc[last_line['date'].dt.year != year, 'discharge_avg'] = np.nan
+    last_line.loc[last_line['date'].dt.year != year, 'forecasted_discharge'] = np.nan
+
+    # Iterate over last_line dates. Determine the most frequently occuring date.
+    # If the other dates are shifted by 1 day, set the date to the most frequently
+    # occuring date.
+    for code in last_line['code'].unique():
+        date_counts = last_line[last_line['code'] == code]['date'].value_counts()
+        if len(date_counts) > 1:
+            most_common_date = date_counts.idxmax()
+            for date in date_counts.index:
+                if date != most_common_date:
+                    last_line.loc[(last_line['code'] == code) & (last_line['date'] == date), 'date'] = most_common_date
+
+    # Handle existing file
+    if os.path.exists(output_file_path):
+        # Read existing data
+        existing_data = pd.read_csv(output_file_path, parse_dates=['date'])
+
+        # Combine with new data
+        combined_data = pd.concat([existing_data, last_line])
+
+        # Remove duplicates, keeping last occurrence (most recently added)
+        combined_data = combined_data.drop_duplicates(subset=['date', 'code'], keep='last')
+
+        # Sort by code and date for readability
+        combined_data = combined_data.sort_values(['code', 'date'])
+
+        # Write back to file
+        try:
+            ret = combined_data.to_csv(output_file_path, index=False)
+            logger.info(f"Data written to {output_file_path}. Removed duplicates keeping most recent entries.")
+        except Exception as e:
+            logger.error(f"Could not write the data to {output_file_path}.")
+            raise e
+    else:
+        # Write the data to a new file
+        try:
+            ret = last_line.to_csv(output_file_path, index=False)
+            if ret is None:
+                logger.info(f"Data written to {output_file_path}.")
+            else:
+                logger.error(f"Could not write the data to {output_file_path}.")
+        except Exception as e:
+            logger.error(f"Could not write the data to {output_file_path}.")
+            raise e
+
+    return ret
+
+def write_linreg_decad_forecast_data_deprecating(data: pd.DataFrame):
     """
     Writes the data to a csv file for later reading into the forecast dashboard.
 
