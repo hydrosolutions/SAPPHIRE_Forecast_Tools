@@ -1672,10 +1672,10 @@ class TestWriteLinregPentadForecastData(unittest.TestCase):
         # Read the file and check contents
         result = self._get_output_data()
 
-        # All dates should be standardized to match the maximum year (2024)
-        years = result['date'].dt.year.unique()
-        self.assertEqual(len(years), 1, f"Expected 1 unique year, got {len(years)}: {years}")
-        self.assertEqual(years[0], 2024, f"Expected year 2024, got {years[0]}")
+        # We should find data for all years in the output
+        unique_years = result['date'].dt.year.unique()
+        self.assertEqual(len(unique_years), 3,
+                         f"Expected 3 unique years, got {len(unique_years)}: {unique_years}")
 
         # Check for NaN values in the row from 2022
         # Find all rows with NaN forecasted_discharge
