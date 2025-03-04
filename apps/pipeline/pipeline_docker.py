@@ -24,16 +24,9 @@ import threading
 
 # Import local utils
 from apps.pipeline.src import pipeline_utils as pu
+from apps.pipeline.src.environment import Environment
+from apps.pipeline.src.notification_manager import NotificationManager
 
-
-class Environment:
-    def __init__(self, dotenv_path):
-        print(f"Current working directory: {os.getcwd()}")
-        print(f"Loading environment variables from {dotenv_path}")
-        load_dotenv(dotenv_path=dotenv_path)
-
-    def get(self, key, default=None):
-        return os.getenv(key, default)
 
 # Initialize the Environment class with the path to your .env file
 env_file_path = os.getenv('ieasyhydroforecast_env_file_path')
@@ -44,7 +37,6 @@ TAG = env.get('ieasyhydroforecast_backend_docker_image_tag')
 ORGANIZATION = env.get('ieasyhydroforecast_organization')
 # URL of the sapphire data gateway
 SAPPHIRE_DG_HOST = env.get('SAPPHIRE_DG_HOST')
-
 
 
 
@@ -948,6 +940,7 @@ class PostProcessingForecasts(pu.TimeoutMixin, luigi.Task):
                 details=details
             )
 
+
 class DeleteOldGatewayFiles(pu.TimeoutMixin, luigi.Task):
     # Fix the typo in the class name (was "Gateywayy")
 
@@ -1083,26 +1076,166 @@ class DeleteOldGatewayFiles(pu.TimeoutMixin, luigi.Task):
                 details=details
             )
 
+
+class SendPipelineCompletionNotification(luigi.Task):
+    """Send notification when the entire pipeline is complete."""
+
+    # Custom message parameter
+    custom_message = luigi.Parameter(default="")
+
+    # Tasks this notification depends on
+    depends_on = luigi.Parameter(default=[])
+
+    def requires(self):
+        return self.depends_on
+
+    def output(self):
+        return luigi.LocalTarget(f'/app/log_notification.txt')
+
+    def run(self):
+        print("------------------------------------")
+        print(" Sending pipeline completion notifications.")
+        print("------------------------------------")
+
+        logger = pu.TaskLogger()
+        start_time = datetime.datetime.now()
+
+        success = True
+        notification_results = []
+
+        try:
+            # Get email recipients from environment variable
+            email_recipients_str = os.getenv('SAPPHIRE_PIPELINE_EMAIL_RECIPIENTS', '')
+            if email_recipients_str:
+                email_recipients = [email.strip() for email in email_recipients_str.split(',')]
+            else:
+                email_recipients = []
+
+            # Create notification messages
+            current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            subject = f"{ORGANIZATION.upper()} Forecast Pipeline Complete - {current_time}"
+
+            # Base message
+            message = f"Sapphire Forecast Pipeline for {ORGANIZATION.upper()} completed successfully at {current_time}.\n\n"
+
+            # Add custom message if provided
+            if self.custom_message:
+                message += f"Message: {self.custom_message}\n\n"
+
+            # Add links to dashboard if applicable
+            dashboard_url = os.getenv('SAPPHIRE_PIPELINE_DASHBOARD_URL', '')
+            if dashboard_url:
+                message += f"View the latest forecasts on the dashboard: {dashboard_url}\n\n"
+
+            # Add a summary of tasks that were run
+            message += f"Tasks completed for {ORGANIZATION.upper()}:\n"
+            if ORGANIZATION == 'demo':
+                message += "- PreprocessingRunoff\n"
+                message += "- LinearRegression\n"
+                message += "- PostProcessingForecasts\n"
+            elif ORGANIZATION == 'kghm':
+                message += "- PreprocessingRunoff\n"
+                message += "- LinearRegression\n"
+                message += "- PostProcessingForecasts\n"
+                message += "- RunAllMLModels\n"
+                message += "- ConceptualModel\n"
+                message += "- DeleteOldGatewayFiles\n"
+
+            message += "\nThis is an automated notification."
+
+            # Send email notifications if recipients are specified
+            if email_recipients:
+                # You could also attach summary files or plots here
+                attachment_paths = []
+
+                email_success = NotificationManager.send_email(
+                    recipients=email_recipients,
+                    subject=subject,
+                    message=message,
+                    attachment_paths=attachment_paths
+                )
+
+                if email_success:
+                    notification_results.append(f"Email sent to {', '.join(email_recipients)}")
+                else:
+                    notification_results.append(f"Failed to send email to {', '.join(email_recipients)}")
+                    success = False
+            else:
+                notification_results.append("No email recipients configured")
+
+            # Write output
+            with self.output().open('w') as f:
+                f.write(f"Notification task completed at {current_time}\n\n")
+                f.write("\n".join(notification_results))
+
+        except Exception as e:
+            print(f"Error sending notifications: {str(e)}")
+            success = False
+
+            with self.output().open('w') as f:
+                f.write(f"Notification task failed: {str(e)}")
+
+        finally:
+            end_time = datetime.datetime.now()
+            status = "Success" if success else "Failed"
+            details = ", ".join(notification_results) if notification_results else "No notifications sent"
+
+            logger.log_task_timing(
+                task_name="SendPipelineCompletionNotification",
+                start_time=start_time,
+                end_time=end_time,
+                status=status,
+                details=details
+            )
+
+
+
 class RunWorkflow(luigi.Task):
+    """Main wrapper task that runs the entire forecast pipeline."""
+
+    # Parameters for notifications
+    custom_message = luigi.Parameter(default="")
+
+    # Flag to control whether to send notifications
+    send_notifications = luigi.BoolParameter(default=True)
 
     def requires(self):
         if ORGANIZATION=='demo':
             print("Running demo workflow.")
-            return [PostProcessingForecasts()]
+            base_tasks = [PostProcessingForecasts()]
 
         elif ORGANIZATION=='kghm':
             print("Running KGHM workflow.")
-            return [PostProcessingForecasts(),
-                    RunAllMLModels(),
-                    ConceptualModel(),
-                    DeleteOldGateywayFiles()
-                    ]
-
+            base_tasks =  [PostProcessingForecasts(),
+                           RunAllMLModels(),
+                           ConceptualModel(),
+                           DeleteOldGatewayFiles()
+                           ]
         # You can add workflow definitions for other organizations here.
+
+        # Default to demo workflow
+        else:
+            print("ORGANIZATION not specified.\n  -> Defaulting to demo workflow.")
+            base_task = [PostProcessingForecasts()]
+
+        # If notifications are enabled, add the notification task
+        if self.send_notifications:
+            return SendPipelineCompletionNotification(
+                custom_message=self.custom_message,
+                depends_on=base_tasks  # Pass the base tasks as dependencies
+            )
+        else:
+            return base_tasks
+
+    def output(self):
+        return luigi.LocalTarget(f'/app/log_workflow_complete.txt')
 
     def run(self):
         print("Workflow completed.")
-        return None
+
+        # Create output file to mark completion
+        with self.output().open('w') as f:
+            f.write(f"Workflow for {ORGANIZATION} completed at {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
 
 if __name__ == '__main__':

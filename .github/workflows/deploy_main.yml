@@ -17,9 +17,9 @@ env:
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "email_notifications" ]
   pull_request:
-    branches: [ "main" ]
+    branches: [ "email_notifications" ]
 
 jobs:
 
