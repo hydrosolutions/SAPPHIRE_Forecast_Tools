@@ -42,12 +42,16 @@ services:
       - IN_DOCKER_CONTAINER=True
       - ieasyhydroforecast_env_file_path=${ieasyhydroforecast_env_file_path}
       - ieasyhydroforecast_url=${ieasyhydroforecast_url}
+      - ALLOWED_WEBSOCKET_ORIGINS=${ieasyhydroforecast_url}
     command: >
+      bash -c "
+      ORIGINS_ARGS=$(echo $${ieasyhydroforecast_url} | sed 's/,/ --allow-websocket-origin=/g' | sed 's/^/--allow-websocket-origin=/') &&
       panel serve
       --address=0.0.0.0
-      --allow-websocket-origin=fc.ieasyhydro.org
+      $${ORIGINS_ARGS}
       pentad_dashboard.py
       --num-threads=4
+      "
     restart: always
     ports:
       - "5006:5006"
