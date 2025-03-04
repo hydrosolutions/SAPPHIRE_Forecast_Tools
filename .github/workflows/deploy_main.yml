@@ -17,9 +17,9 @@ env:
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "deploy_local" ]
   pull_request:
-    branches: [ "main" ]
+    branches: [ "deploy_local" ]
 
 jobs:
 
