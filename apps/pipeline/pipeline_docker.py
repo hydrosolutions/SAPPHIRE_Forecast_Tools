@@ -84,98 +84,157 @@ def get_local_path(relative_path):
 
 
 
-class PreprocessingRunoff(luigi.Task):
+class PreprocessingRunoff(pu.TimeoutMixin, luigi.Task):
+    # Set timeout to 15 minutes (900 seconds)
+    timeout_seconds = luigi.IntParameter(default=900)
+
+    max_retries = 2
+    retry_delay = 5
 
     def output(self):
         return luigi.LocalTarget(f'/app/log_preprunoff.txt')
 
+    def _run_container(self, attempt_number) -> tuple[Optional[str], int, str]:
+        """
+        Run the docker container and return container ID, exit status, and logs
+        """
+        client = docker.from_env()
+
+        try:
+            # Construct the absolute volume paths to bind to the containers
+            absolute_volume_path_config = get_absolute_path(
+                env.get('ieasyforecast_configuration_path'))
+            absolute_volume_path_internal_data = get_absolute_path(
+                env.get('ieasyforecast_intermediate_data_path'))
+            absolute_volume_path_discharge = get_absolute_path(
+                env.get('ieasyforecast_daily_discharge_path'))
+            bind_volume_path_config = get_bind_path(
+                env.get('ieasyforecast_configuration_path'))
+            bind_volume_path_internal_data = get_bind_path(
+                env.get('ieasyforecast_intermediate_data_path'))
+            bind_volume_path_discharge = get_bind_path(
+                env.get('ieasyforecast_daily_discharge_path'))
+
+            print(f"env.get('ieasyforecast_configuration_path'): {env.get('ieasyforecast_configuration_path')}")
+            print(f"absolute_volume_path_config: {absolute_volume_path_config}")
+            print(f"absolute_volume_path_internal_data: {absolute_volume_path_internal_data}")
+            print(f"absolute_volume_path_discharge: {absolute_volume_path_discharge}")
+            print(f"bind_volume_path_config: {bind_volume_path_config}")
+            print(f"bind_volume_path_internal_data: {bind_volume_path_internal_data}")
+            print(f"bind_volume_path_discharge: {bind_volume_path_discharge}")
+
+            # Pull the latest image if needed
+            if pu.there_is_a_newer_image_on_docker_hub(
+                client, repository='mabesa', image_name='sapphire-preprunoff', tag=TAG):
+                print("Pulling the latest image from Docker Hub.")
+                client.images.pull('mabesa/sapphire-preprunoff', tag=TAG)
+
+            # Define environment variables
+            environment = [
+                'SAPPHIRE_OPDEV_ENV=True',
+            ]
+
+            # Define volumes
+            volumes = {
+                absolute_volume_path_config: {'bind': bind_volume_path_config, 'mode': 'rw'},
+                absolute_volume_path_internal_data: {'bind': bind_volume_path_internal_data, 'mode': 'rw'},
+                absolute_volume_path_discharge: {'bind': bind_volume_path_discharge, 'mode': 'rw'}
+            }
+
+            # Run the container with unique name for each attempt
+            container = client.containers.run(
+                f"mabesa/sapphire-preprunoff:{TAG}",
+                detach=True,
+                environment=environment,
+                volumes=volumes,
+                name=f"preprunoff_attempt_{attempt_number}_{time.time()}",  # Unique name per attempt
+                network='host'
+            )
+
+            print(f"Container {container.id} is running.")
+
+            # Wait for container with timeout
+            try:
+                self.run_with_timeout(container.wait)
+                exit_status = 0
+            except TimeoutError:
+                print(f"Container {container.id} timed out after {self.timeout_seconds} seconds")
+                container.stop()
+                exit_status = 124
+            logs = container.logs().decode('utf-8')
+
+            print(f"Container {container.id} exited with status code {exit_status}")
+            print(f"Logs from container {container.id}:\n{logs}")
+
+            # Clean up container
+            try:
+                container.remove()
+            except Exception as e:
+                print(f"Warning: Could not remove container {container.id}: {str(e)}")
+
+            return container.id, exit_status, logs
+
+        except Exception as e:
+            print(f"Error running container: {str(e)}")
+            if 'container' in locals() and container:
+                try:
+                    container.stop()
+                    container.remove()
+                except:
+                    pass
+            return None, 1, str(e)
+
     def run(self):
+        logger = pu.TaskLogger()
+        start_time = datetime.datetime.now()
+
         print("------------------------------------")
         print(" Running PreprocessingRunoff task.")
         print("------------------------------------")
-        # Construct the absolute volume paths to bind to the containers
-        # TODO: Insted of constructing the paths here, we define relative paths
-        # to data ref dir in the .env file and use them here.
-        # Use also ieasyhydroforecast_data_ref_dir (absolute pathe) and
-        # ieasyhydroforecast_container_data_ref_dir (bind path)
-        absolute_volume_path_config = get_absolute_path(
-            env.get('ieasyforecast_configuration_path'))
-        absolute_volume_path_internal_data = get_absolute_path(
-            env.get('ieasyforecast_intermediate_data_path'))
-        absolute_volume_path_discharge = get_absolute_path(
-            env.get('ieasyforecast_daily_discharge_path'))
-        bind_volume_path_config = get_bind_path(
-            env.get('ieasyforecast_configuration_path'))
-        bind_volume_path_internal_data = get_bind_path(
-            env.get('ieasyforecast_intermediate_data_path'))
-        bind_volume_path_discharge = get_bind_path(
-            env.get('ieasyforecast_daily_discharge_path'))
 
-        print(f"env.get('ieasyforecast_configuration_path'): {env.get('ieasyforecast_configuration_path')}")
-        print(f"absolute_volume_path_config: {absolute_volume_path_config}")
-        print(f"absolute_volume_path_internal_data: {absolute_volume_path_internal_data}")
-        print(f"absolute_volume_path_discharge: {absolute_volume_path_discharge}")
-        print(f"bind_volume_path_config: {bind_volume_path_config}")
-        print(f"bind_volume_path_internal_data: {bind_volume_path_internal_data}")
-        print(f"bind_volume_path_discharge: {bind_volume_path_discharge}")
+        attempts = 0
+        final_status = "Failed"
+        details = ""
 
-        # Run the docker container to pre-process runoff data
-        client = docker.from_env()
+        try:
+            while attempts < self.max_retries:
+                attempts += 1
+                print(f"Attempt {attempts} of {self.max_retries}")
 
-        # Pull the latest image
-        if pu.there_is_a_newer_image_on_docker_hub(
-            client, repository='mabesa', image_name='sapphire-preprunoff', tag=TAG):
-            print("Pulling the latest image from Docker Hub.")
-            client.images.pull('mabesa/sapphire-preprunoff', tag=TAG)
+                container_id, exit_status, logs = self._run_container(attempts)
 
-        # Define environment variables
-        environment = [
-            'SAPPHIRE_OPDEV_ENV=True',
-        ]
+                if exit_status == 0:
+                    # Success - write output and exit
+                    with self.output().open('w') as f:
+                        f.write('Task completed successfully\n')
+                        f.write(f'Container ID: {container_id}\n')
+                        f.write(f'Logs:\n{logs}')
+                    final_status = "Success"
+                    details = f"Completed on attempt {attempts}"
+                    break
 
-        # Define volumes
-        volumes = {
-            absolute_volume_path_config: {'bind': bind_volume_path_config, 'mode': 'rw'},
-            absolute_volume_path_internal_data: {'bind': bind_volume_path_internal_data, 'mode': 'rw'},
-            absolute_volume_path_discharge: {'bind': bind_volume_path_discharge, 'mode': 'rw'}
-        }
+                if exit_status == 124:  # Timeout
+                    final_status = "Timeout"
+                    details = f"Task timed out after {self.timeout_seconds} seconds"
+                    break
 
-        # Run the container
-        container = client.containers.run(
-            f"mabesa/sapphire-preprunoff:{TAG}",
-            detach=True,
-            environment=environment,
-            volumes=volumes,
-            name="preprunoff",
-            #labels=labels,
-            network='host'  # To test
-        )
+                if attempts < self.max_retries:
+                    print(f"Container failed with status {exit_status}. Retrying in {self.retry_delay} seconds...")
+                    time.sleep(self.retry_delay)
+                else:
+                    print(f"Container failed after {self.max_retries} attempts.")
+                    raise RuntimeError(f"Task failed after {self.max_retries} attempts. Last exit status: {exit_status}\nLogs:\n{logs}")
 
-        print(f"Container {container.id} is running.")
+        finally:
+            end_time = datetime.datetime.now()
+            logger.log_task_timing(
+                task_name="PreprocessingRunoff",
+                start_time=start_time,
+                end_time=end_time,
+                status=final_status,
+                details=details
+            )
 
-        # Wait for the container to finish running
-        container.wait()
-
-        print(f"Container {container.id} has stopped.")
-
-        # Create the output marker file
-        with self.output().open('w') as f:
-            f.write('Task completed')
-
-    '''
-    def complete(self):
-        if not self.output().exists():
-            return False
-
-        # Get the modified time of the output file
-        output_file_mtime = os.path.getmtime(self.output().path)
-
-        # Get the current time
-        current_time = time.time()
-
-        # Check if the output file was modified within the last number of seconds
-        return current_time - output_file_mtime < 10  # 24 * 60 * 60
-    '''
 
 class PreprocessingGatewayQuantileMapping(pu.TimeoutMixin, luigi.Task):
     # Set timeout to 30 minutes (1800 seconds)
@@ -319,7 +378,12 @@ class PreprocessingGatewayQuantileMapping(pu.TimeoutMixin, luigi.Task):
             )
 
 
-class LinearRegression(luigi.Task):
+class LinearRegression(pu.TimeoutMixin, luigi.Task):
+    # Set timeout to 10 minutes (600 seconds)
+    timeout_seconds = luigi.IntParameter(default=600)
+
+    max_retries = 2
+    retry_delay = 5
 
     def requires(self):
         return PreprocessingRunoff()
@@ -327,75 +391,138 @@ class LinearRegression(luigi.Task):
     def output(self):
         return luigi.LocalTarget(f'/app/log_linreg.txt')
 
+    def _run_container(self, attempt_number) -> tuple[Optional[str], int, str]:
+        """
+        Run the docker container and return container ID, exit status, and logs
+        """
+        client = docker.from_env()
+
+        try:
+            # Construct the absolute volume paths to bind to the containers
+            absolute_volume_path_config = get_absolute_path(
+                env.get('ieasyforecast_configuration_path'))
+            absolute_volume_path_internal_data = get_absolute_path(
+                env.get('ieasyforecast_intermediate_data_path'))
+            absolute_volume_path_discharge = get_absolute_path(
+                env.get('ieasyforecast_daily_discharge_path'))
+            bind_volume_path_config = get_bind_path(
+                env.get('ieasyforecast_configuration_path'))
+            bind_volume_path_internal_data = get_bind_path(
+                env.get('ieasyforecast_intermediate_data_path'))
+            bind_volume_path_discharge = get_bind_path(
+                env.get('ieasyforecast_daily_discharge_path'))
+
+            # Pull the latest image if needed
+            if pu.there_is_a_newer_image_on_docker_hub(
+                client, repository='mabesa', image_name='sapphire-linreg', tag=TAG):
+                print("Pulling the latest image from Docker Hub.")
+                client.images.pull('mabesa/sapphire-linreg', tag=TAG)
+
+            # Define environment variables
+            environment = [
+                'SAPPHIRE_OPDEV_ENV=True',
+            ]
+
+            # Define volumes
+            volumes = {
+                absolute_volume_path_config: {'bind': bind_volume_path_config, 'mode': 'rw'},
+                absolute_volume_path_internal_data: {'bind': bind_volume_path_internal_data, 'mode': 'rw'},
+                absolute_volume_path_discharge: {'bind': bind_volume_path_discharge, 'mode': 'rw'}
+            }
+
+            # Run the container with unique name for each attempt
+            container = client.containers.run(
+                f"mabesa/sapphire-linreg:{TAG}",
+                detach=True,
+                environment=environment,
+                volumes=volumes,
+                name=f"linreg_attempt_{attempt_number}_{time.time()}",  # Unique name per attempt
+                network='host'
+            )
+
+            print(f"Container {container.id} is running.")
+
+            # Wait for container with timeout
+            try:
+                self.run_with_timeout(container.wait)
+                exit_status = 0
+            except TimeoutError:
+                print(f"Container {container.id} timed out after {self.timeout_seconds} seconds")
+                container.stop()
+                exit_status = 124
+            logs = container.logs().decode('utf-8')
+
+            print(f"Container {container.id} exited with status code {exit_status}")
+            print(f"Logs from container {container.id}:\n{logs}")
+
+            # Clean up container
+            try:
+                container.remove()
+            except Exception as e:
+                print(f"Warning: Could not remove container {container.id}: {str(e)}")
+
+            return container.id, exit_status, logs
+
+        except Exception as e:
+            print(f"Error running container: {str(e)}")
+            if 'container' in locals() and container:
+                try:
+                    container.stop()
+                    container.remove()
+                except:
+                    pass
+            return None, 1, str(e)
+
     def run(self):
+        logger = pu.TaskLogger()
+        start_time = datetime.datetime.now()
+
         print("------------------------------------")
         print(" Running LinearRegression task.")
         print("------------------------------------")
 
-        # Construct the absolute volume paths to bind to the containers
-        absolute_volume_path_config = get_absolute_path(
-            env.get('ieasyforecast_configuration_path'))
-        absolute_volume_path_internal_data = get_absolute_path(
-            env.get('ieasyforecast_intermediate_data_path'))
-        absolute_volume_path_discharge = get_absolute_path(
-            env.get('ieasyforecast_daily_discharge_path'))
-        bind_volume_path_config = get_bind_path(
-            env.get('ieasyforecast_configuration_path'))
-        bind_volume_path_internal_data = get_bind_path(
-            env.get('ieasyforecast_intermediate_data_path'))
-        bind_volume_path_discharge = get_bind_path(
-            env.get('ieasyforecast_daily_discharge_path'))
+        attempts = 0
+        final_status = "Failed"
+        details = ""
 
-        #print(f"env.get('ieasyforecast_configuration_path'): {env.get('ieasyforecast_configuration_path')}")
-        #print(f"absolute_volume_path_config: {absolute_volume_path_config}")
-        #print(f"absolute_volume_path_internal_data: {absolute_volume_path_internal_data}")
-        #print(f"absolute_volume_path_discharge: {absolute_volume_path_discharge}")
-        #print(f"bind_volume_path_config: {bind_volume_path_config}")
-        #print(f"bind_volume_path_internal_data: {bind_volume_path_internal_data}")
-        #print(f"bind_volume_path_discharge: {bind_volume_path_discharge}")
+        try:
+            while attempts < self.max_retries:
+                attempts += 1
+                print(f"Attempt {attempts} of {self.max_retries}")
 
-        # Run the docker container to pre-process runoff data
-        client = docker.from_env()
+                container_id, exit_status, logs = self._run_container(attempts)
 
-        # Pull the latest image
-        if pu.there_is_a_newer_image_on_docker_hub(
-            client, repository='mabesa', image_name='sapphire-linreg', tag=TAG):
-            print("Pulling the latest image from Docker Hub.")
-            client.images.pull('mabesa/sapphire-linreg', tag=TAG)
+                if exit_status == 0:
+                    # Success - write output and exit
+                    with self.output().open('w') as f:
+                        f.write('Task completed successfully\n')
+                        f.write(f'Container ID: {container_id}\n')
+                        f.write(f'Logs:\n{logs}')
+                    final_status = "Success"
+                    details = f"Completed on attempt {attempts}"
+                    break
 
-        # Define environment variables
-        environment = [
-            'SAPPHIRE_OPDEV_ENV=True',
-        ]
+                if exit_status == 124:  # Timeout
+                    final_status = "Timeout"
+                    details = f"Task timed out after {self.timeout_seconds} seconds"
+                    break
 
-        # Define volumes
-        volumes = {
-            absolute_volume_path_config: {'bind': bind_volume_path_config, 'mode': 'rw'},
-            absolute_volume_path_internal_data: {'bind': bind_volume_path_internal_data, 'mode': 'rw'},
-            absolute_volume_path_discharge: {'bind': bind_volume_path_discharge, 'mode': 'rw'}
-        }
+                if attempts < self.max_retries:
+                    print(f"Container failed with status {exit_status}. Retrying in {self.retry_delay} seconds...")
+                    time.sleep(self.retry_delay)
+                else:
+                    print(f"Container failed after {self.max_retries} attempts.")
+                    raise RuntimeError(f"Task failed after {self.max_retries} attempts. Last exit status: {exit_status}\nLogs:\n{logs}")
 
-        # Run the container
-        container = client.containers.run(
-            f"mabesa/sapphire-linreg:{TAG}",
-            detach=True,
-            environment=environment,
-            volumes=volumes,
-            name="linreg",
-            #labels=labels,
-            network='host'  # To test
-        )
-
-        print(f"Container {container.id} is running.")
-
-        # Wait for the container to finish running
-        container.wait()
-
-        print(f"Container {container.id} has stopped.")
-
-        # Write the output marker file
-        with self.output().open('w') as f:
-            f.write('Task completed')
+        finally:
+            end_time = datetime.datetime.now()
+            logger.log_task_timing(
+                task_name="LinearRegression",
+                start_time=start_time,
+                end_time=end_time,
+                status=final_status,
+                details=details
+            )
 
 
 class ConceptualModel(pu.TimeoutMixin, luigi.Task):
@@ -680,7 +807,12 @@ class RunAllMLModels(luigi.WrapperTask):
             for mode in prediction_modes:
                 yield RunMLModel(model_type=model, prediction_mode=mode, run_mode='forecast')
 
-class PostProcessingForecasts(luigi.Task):
+class PostProcessingForecasts(pu.TimeoutMixin, luigi.Task):
+    # Set timeout to 15 minutes (900 seconds)
+    timeout_seconds = luigi.IntParameter(default=900)
+
+    max_retries = 2
+    retry_delay = 5
 
     def requires(self):
         return LinearRegression()
@@ -688,82 +820,136 @@ class PostProcessingForecasts(luigi.Task):
     def output(self):
         return luigi.LocalTarget(f'/app/log_postproc.txt')
 
+    def _run_container(self, attempt_number) -> tuple[Optional[str], int, str]:
+        """
+        Run the docker container and return container ID, exit status, and logs
+        """
+        client = docker.from_env()
+
+        try:
+            # Construct the absolute volume paths to bind to the containers
+            absolute_volume_path_config = get_absolute_path(
+                env.get('ieasyforecast_configuration_path'))
+            absolute_volume_path_internal_data = get_absolute_path(
+                env.get('ieasyforecast_intermediate_data_path'))
+            bind_volume_path_config = get_bind_path(
+                env.get('ieasyforecast_configuration_path'))
+            bind_volume_path_internal_data = get_bind_path(
+                env.get('ieasyforecast_intermediate_data_path'))
+
+            # Pull the latest image if needed
+            if pu.there_is_a_newer_image_on_docker_hub(
+                client, repository='mabesa', image_name='sapphire-postprocessing', tag=TAG):
+                print("Pulling the latest image from Docker Hub.")
+                client.images.pull('mabesa/sapphire-postprocessing', tag=TAG)
+
+            # Define environment variables
+            environment = [
+                'SAPPHIRE_OPDEV_ENV=True',
+            ]
+
+            # Define volumes
+            volumes = {
+                absolute_volume_path_config: {'bind': bind_volume_path_config, 'mode': 'rw'},
+                absolute_volume_path_internal_data: {'bind': bind_volume_path_internal_data, 'mode': 'rw'},
+            }
+
+            # Run the container with unique name for each attempt
+            container = client.containers.run(
+                f"mabesa/sapphire-postprocessing:{TAG}",
+                detach=True,
+                environment=environment,
+                volumes=volumes,
+                name=f"postprocessing_attempt_{attempt_number}_{time.time()}",  # Unique name per attempt
+                network='host'
+            )
+
+            print(f"Container {container.id} is running.")
+
+            # Wait for container with timeout
+            try:
+                self.run_with_timeout(container.wait)
+                exit_status = 0
+            except TimeoutError:
+                print(f"Container {container.id} timed out after {self.timeout_seconds} seconds")
+                container.stop()
+                exit_status = 124
+            logs = container.logs().decode('utf-8')
+
+            print(f"Container {container.id} exited with status code {exit_status}")
+            print(f"Logs from container {container.id}:\n{logs}")
+
+            # Clean up container
+            try:
+                container.remove()
+            except Exception as e:
+                print(f"Warning: Could not remove container {container.id}: {str(e)}")
+
+            return container.id, exit_status, logs
+
+        except Exception as e:
+            print(f"Error running container: {str(e)}")
+            if 'container' in locals() and container:
+                try:
+                    container.stop()
+                    container.remove()
+                except:
+                    pass
+            return None, 1, str(e)
+
     def run(self):
+        logger = pu.TaskLogger()
+        start_time = datetime.datetime.now()
+
         print("------------------------------------")
         print(" Running PostprocessingForecasts task.")
         print("------------------------------------")
 
-        # Construct the absolute volume paths to bind to the containers
-        absolute_volume_path_config = get_absolute_path(
-            env.get('ieasyforecast_configuration_path'))
-        absolute_volume_path_internal_data = get_absolute_path(
-            env.get('ieasyforecast_intermediate_data_path'))
-        bind_volume_path_config = get_bind_path(
-            env.get('ieasyforecast_configuration_path'))
-        bind_volume_path_internal_data = get_bind_path(
-            env.get('ieasyforecast_intermediate_data_path'))
+        attempts = 0
+        final_status = "Failed"
+        details = ""
 
-        #print(f"absolute_volume_path_internal_data: {absolute_volume_path_internal_data}")
-        #print(f"bind_volume_path_internal_data: {bind_volume_path_internal_data}")
+        try:
+            while attempts < self.max_retries:
+                attempts += 1
+                print(f"Attempt {attempts} of {self.max_retries}")
 
-        # Run the docker container to pre-process runoff data
-        client = docker.from_env()
+                container_id, exit_status, logs = self._run_container(attempts)
 
-        # Pull the latest image
-        if pu.there_is_a_newer_image_on_docker_hub(
-            client, repository='mabesa', image_name='sapphire-postprocessing', tag=TAG):
-            print("Pulling the latest image from Docker Hub.")
-            client.images.pull('mabesa/sapphire-postprocessing', tag=TAG)
+                if exit_status == 0:
+                    # Success - write output and exit
+                    with self.output().open('w') as f:
+                        f.write('Task completed successfully\n')
+                        f.write(f'Container ID: {container_id}\n')
+                        f.write(f'Logs:\n{logs}')
+                    final_status = "Success"
+                    details = f"Completed on attempt {attempts}"
+                    break
 
-        # Define environment variables
-        environment = [
-            'SAPPHIRE_OPDEV_ENV=True',
-        ]
+                if exit_status == 124:  # Timeout
+                    final_status = "Timeout"
+                    details = f"Task timed out after {self.timeout_seconds} seconds"
+                    break
 
-        # Define volumes
-        volumes = {
-            absolute_volume_path_config: {'bind': bind_volume_path_config, 'mode': 'rw'},
-            absolute_volume_path_internal_data: {'bind': bind_volume_path_internal_data, 'mode': 'rw'},
-        }
+                if attempts < self.max_retries:
+                    print(f"Container failed with status {exit_status}. Retrying in {self.retry_delay} seconds...")
+                    time.sleep(self.retry_delay)
+                else:
+                    print(f"Container failed after {self.max_retries} attempts.")
+                    raise RuntimeError(f"Task failed after {self.max_retries} attempts. Last exit status: {exit_status}\nLogs:\n{logs}")
 
-        # Run the container
-        container = client.containers.run(
-            f"mabesa/sapphire-postprocessing:{TAG}",
-            detach=True,
-            environment=environment,
-            volumes=volumes,
-            name="postprocessing",
-            #labels=labels,
-            network='host'  # To test
-        )
+        finally:
+            end_time = datetime.datetime.now()
+            logger.log_task_timing(
+                task_name="PostProcessingForecasts",
+                start_time=start_time,
+                end_time=end_time,
+                status=final_status,
+                details=details
+            )
 
-        print(f"Container {container.id} is running.")
-
-        # Wait for the container to finish running
-        container.wait()
-
-        print(f"Container {container.id} has stopped.")
-
-        # Write the output marker file
-        with self.output().open('w') as f:
-            f.write('Task completed')
-
-    '''
-    def complete(self):
-        if not self.output().exists():
-            return False
-
-        # Get the modified time of the output file
-        output_file_mtime = os.path.getmtime(self.output().path)
-
-        # Get the current time
-        current_time = time.time()
-
-        # Check if the output file was modified within the last number of seconds
-        return current_time - output_file_mtime < 10  # 24 * 60 * 60
-    '''
-
-class DeleteOldGateywayFiles(luigi.Task):
+class DeleteOldGatewayFiles(pu.TimeoutMixin, luigi.Task):
+    # Fix the typo in the class name (was "Gateywayy")
 
     # Define the folder path where the files are stored
     folder_path = get_local_path(os.path.join(
@@ -773,31 +959,129 @@ class DeleteOldGateywayFiles(luigi.Task):
     # Define the number of days old the files should be before they are deleted
     days_old = luigi.IntParameter(default=2)
 
+    # Set timeout to 5 minutes (300 seconds) - should be plenty for a file deletion task
+    timeout_seconds = luigi.IntParameter(default=300)
+
     def output(self):
         return luigi.LocalTarget(f'/app/log_deleteoldfiles.txt')
 
+    def _delete_old_files(self) -> tuple[int, list[str], list[str]]:
+        """
+        Delete files older than days_old and return count of deleted files,
+        list of deleted files, and any errors encountered
+        """
+        deleted_files = []
+        errors = []
+        deleted_count = 0
+
+        try:
+            # Test if the path exists
+            if not os.path.exists(self.folder_path):
+                errors.append(f"The path {self.folder_path} does not exist.")
+                return 0, deleted_files, errors
+
+            # Delete files older than `days_old`
+            age_limit = datetime.datetime.now() - datetime.timedelta(days=self.days_old)
+
+            for filename in os.listdir(self.folder_path):
+                try:
+                    file_path = os.path.join(self.folder_path, filename)
+
+                    # Skip directories
+                    if os.path.isdir(file_path):
+                        continue
+
+                    file_time = datetime.datetime.fromtimestamp(os.path.getmtime(file_path))
+                    if file_time < age_limit:
+                        os.remove(file_path)
+                        deleted_files.append(file_path)
+                        deleted_count += 1
+                        print(f"Deleted {file_path} as it was older than {self.days_old} days.")
+                except Exception as e:
+                    error_msg = f"Error processing file {filename}: {str(e)}"
+                    errors.append(error_msg)
+                    print(error_msg)
+
+            return deleted_count, deleted_files, errors
+
+        except Exception as e:
+            error_msg = f"Error in delete_old_files: {str(e)}"
+            errors.append(error_msg)
+            print(error_msg)
+            return deleted_count, deleted_files, errors
+
     def run(self):
+        logger = pu.TaskLogger()
+        start_time = datetime.datetime.now()
+
         print("------------------------------------")
         print(" Running DeleteOldGatewayFiles task.")
         print("------------------------------------")
+        print(f"Looking for files older than {self.days_old} days in: {self.folder_path}")
 
-        print(self.folder_path)
-        # Test if the path exists
-        if not os.path.exists(self.folder_path):
-            print(f"The path {self.folder_path} does not exist.")
+        final_status = "Failed"
+        details = ""
 
-        # Delete files older than `days_old`
-        age_limit = datetime.datetime.now() - datetime.timedelta(days=self.days_old)
-        for filename in os.listdir(self.folder_path):
-            file_path = os.path.join(self.folder_path, filename)
-            file_time = datetime.datetime.fromtimestamp(os.path.getmtime(file_path))
-            if file_time < age_limit:
-                os.remove(file_path)
-                print(f"Deleted {file_path} as it was older than {self.days_old} days.")
+        try:
+            # Run with timeout protection
+            try:
+                # Using a lambda here to call our method with self's timeout
+                self.run_with_timeout(lambda: self._delete_old_files())
+                deleted_count, deleted_files, errors = self._delete_old_files()
 
-        # Create the output marker file
-        with self.output().open('w') as f:
-            f.write('Task completed')
+                # Format results for the log file
+                result_details = [
+                    f"Found and deleted {deleted_count} files older than {self.days_old} days.",
+                ]
+
+                if deleted_count > 0:
+                    result_details.append("\nDeleted files:")
+                    for file_path in deleted_files:
+                        result_details.append(f"- {file_path}")
+
+                if errors:
+                    result_details.append("\nErrors encountered:")
+                    for error in errors:
+                        result_details.append(f"- {error}")
+
+                # Write detailed output
+                with self.output().open('w') as f:
+                    f.write('Task completed successfully\n')
+                    f.write('\n'.join(result_details))
+
+                final_status = "Success"
+                details = f"Deleted {deleted_count} files"
+
+            except TimeoutError:
+                final_status = "Timeout"
+                details = f"Task timed out after {self.timeout_seconds} seconds"
+
+                with self.output().open('w') as f:
+                    f.write(f'Task timed out after {self.timeout_seconds} seconds')
+
+        except Exception as e:
+            error_message = f"Unexpected error: {str(e)}"
+            print(error_message)
+            details = error_message
+
+            # Try to write to output even in case of error
+            try:
+                with self.output().open('w') as f:
+                    f.write(f'Task failed: {error_message}')
+            except:
+                pass
+
+            raise
+
+        finally:
+            end_time = datetime.datetime.now()
+            logger.log_task_timing(
+                task_name="DeleteOldGatewayFiles",
+                start_time=start_time,
+                end_time=end_time,
+                status=final_status,
+                details=details
+            )
 
 class RunWorkflow(luigi.Task):
 
