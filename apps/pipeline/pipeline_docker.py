@@ -1095,7 +1095,7 @@ class RunWorkflow(luigi.Task):
             return [PostProcessingForecasts(),
                     RunAllMLModels(),
                     ConceptualModel(),
-                    DeleteOldGateywayFiles()
+                    DeleteOldGatewayFiles()
                     ]
 
         # You can add workflow definitions for other organizations here.
