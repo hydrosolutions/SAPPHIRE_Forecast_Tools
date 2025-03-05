@@ -117,7 +117,7 @@ if ! docker info > /dev/null 2>&1; then
 fi
 
 # Check if the Docker image exists
-IMAGE_ID="sha256:acf31b001d2160312714637b9fda188fdedf2deed5beb22f7afd53f8f71441a1"
+IMAGE_ID="mabesa/sapphire-ml:latest"
 if ! docker image inspect $IMAGE_ID > /dev/null 2>&1; then
   log_message "ERROR: Docker image $IMAGE_ID not found. Please verify the image exists."
   docker images >> "$log_file"
