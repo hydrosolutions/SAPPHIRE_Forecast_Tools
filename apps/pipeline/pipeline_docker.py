@@ -84,7 +84,12 @@ class PreprocessingRunoff(pu.TimeoutMixin, luigi.Task):
     retry_delay = 5
 
     def output(self):
-        return luigi.LocalTarget(f'/app/log_preprunoff.txt')
+        # Use the intermediate_data_path for log files instead of /app/
+        intermediate_data_path = get_bind_path(env.get('ieasyforecast_intermediate_data_path'))
+        # Create a log directory if it does not already exist
+        if not os.path.exists(intermediate_data_path):
+            os.makedirs(intermediate_data_path)
+        return luigi.LocalTarget(f'{intermediate_data_path}/log/log_preprunoff.txt')
 
     def _run_container(self, attempt_number) -> tuple[Optional[str], int, str]:
         """
@@ -236,8 +241,12 @@ class PreprocessingGatewayQuantileMapping(pu.TimeoutMixin, luigi.Task):
     retry_delay = 5
 
     def output(self):
-         # Define a unique output file for this task
-        return luigi.LocalTarget(f'/app/log_prepgateway.txt')
+        # Use the intermediate_data_path for log files instead of /app/
+        intermediate_data_path = get_bind_path(env.get('ieasyforecast_intermediate_data_path'))
+        # Create a log directory if it does not already exist
+        if not os.path.exists(intermediate_data_path):
+            os.makedirs(intermediate_data_path)
+        return luigi.LocalTarget(f'{intermediate_data_path}/log/log_pregateway.txt')
 
     def _run_container(self, attempt_number) -> tuple[Optional[str], int, str]:
         """
@@ -381,7 +390,12 @@ class LinearRegression(pu.TimeoutMixin, luigi.Task):
         return PreprocessingRunoff()
 
     def output(self):
-        return luigi.LocalTarget(f'/app/log_linreg.txt')
+        # Use the intermediate_data_path for log files instead of /app/
+        intermediate_data_path = get_bind_path(env.get('ieasyforecast_intermediate_data_path'))
+        # Create a log directory if it does not already exist
+        if not os.path.exists(intermediate_data_path):
+            os.makedirs(intermediate_data_path)
+        return luigi.LocalTarget(f'{intermediate_data_path}/log/log_linreg.txt')
 
     def _run_container(self, attempt_number) -> tuple[Optional[str], int, str]:
         """
@@ -527,7 +541,12 @@ class ConceptualModel(pu.TimeoutMixin, luigi.Task):
         return [PreprocessingRunoff(), PreprocessingGatewayQuantileMapping()]
 
     def output(self):
-        return luigi.LocalTarget(f'/app/log_conceptmod.txt')
+        # Use the intermediate_data_path for log files instead of /app/
+        intermediate_data_path = get_bind_path(env.get('ieasyforecast_intermediate_data_path'))
+        # Create a log directory if it does not already exist
+        if not os.path.exists(intermediate_data_path):
+            os.makedirs(intermediate_data_path)
+        return luigi.LocalTarget(f'{intermediate_data_path}/log/log_conceptmod.txt')
 
     def _run_container(self, attempt_number) -> tuple[Optional[str], int, str]:
         """
@@ -677,7 +696,12 @@ class RunMLModel(pu.TimeoutMixin, luigi.Task):
         return [PreprocessingRunoff(), PreprocessingGatewayQuantileMapping()]
 
     def output(self):
-        return luigi.LocalTarget(f'/app/log_ml_{self.model_type}_{self.prediction_mode}.txt')
+        # Use the intermediate_data_path for log files instead of /app/
+        intermediate_data_path = get_bind_path(env.get('ieasyforecast_intermediate_data_path'))
+        # Create a log directory if it does not already exist
+        if not os.path.exists(intermediate_data_path):
+            os.makedirs(intermediate_data_path)
+        return luigi.LocalTarget(f'{intermediate_data_path}/log/log_ml_{self.model_type}_{self.prediction_mode}.txt')
 
     def run(self):
 
@@ -810,7 +834,12 @@ class PostProcessingForecasts(pu.TimeoutMixin, luigi.Task):
         return LinearRegression()
 
     def output(self):
-        return luigi.LocalTarget(f'/app/log_postproc.txt')
+        # Use the intermediate_data_path for log files instead of /app/
+        intermediate_data_path = get_bind_path(env.get('ieasyforecast_intermediate_data_path'))
+        # Create a log directory if it does not already exist
+        if not os.path.exists(intermediate_data_path):
+            os.makedirs(intermediate_data_path)
+        return luigi.LocalTarget(f'{intermediate_data_path}/log/log_postproc.txt')
 
     def _run_container(self, attempt_number) -> tuple[Optional[str], int, str]:
         """
@@ -956,7 +985,12 @@ class DeleteOldGatewayFiles(pu.TimeoutMixin, luigi.Task):
     timeout_seconds = luigi.IntParameter(default=300)
 
     def output(self):
-        return luigi.LocalTarget(f'/app/log_deleteoldfiles.txt')
+        # Use the intermediate_data_path for log files instead of /app/
+        intermediate_data_path = get_bind_path(env.get('ieasyforecast_intermediate_data_path'))
+        # Create a log directory if it does not already exist
+        if not os.path.exists(intermediate_data_path):
+            os.makedirs(intermediate_data_path)
+        return luigi.LocalTarget(f'{intermediate_data_path}/log/log_deleteoldfiles.txt')
 
     def _delete_old_files(self) -> tuple[int, list[str], list[str]]:
         """
@@ -1090,7 +1124,12 @@ class SendPipelineCompletionNotification(luigi.Task):
         return self.depends_on
 
     def output(self):
-        return luigi.LocalTarget(f'/app/log_notification.txt')
+        # Use the intermediate_data_path for log files instead of /app/
+        intermediate_data_path = get_bind_path(env.get('ieasyforecast_intermediate_data_path'))
+        # Create a log directory if it does not already exist
+        if not os.path.exists(intermediate_data_path):
+            os.makedirs(intermediate_data_path)
+        return luigi.LocalTarget(f'{intermediate_data_path}/log/log_notification.txt')
 
     def run(self):
         print("------------------------------------")
@@ -1228,7 +1267,12 @@ class RunWorkflow(luigi.Task):
             return base_tasks
 
     def output(self):
-        return luigi.LocalTarget(f'/app/log_workflow_complete.txt')
+        # Use the intermediate_data_path for log files instead of /app/
+        intermediate_data_path = get_bind_path(env.get('ieasyforecast_intermediate_data_path'))
+        # Create a log directory if it does not already exist
+        if not os.path.exists(intermediate_data_path):
+            os.makedirs(intermediate_data_path)
+        return luigi.LocalTarget(f'{intermediate_data_path}/log/log_workflow_complete.txt')
 
     def run(self):
         print("Workflow completed.")
