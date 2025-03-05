@@ -673,25 +673,30 @@ class RunMLModel(pu.TimeoutMixin, luigi.Task):
     # Set timeout to 8 minutes (480 seconds)
     timeout_seconds = luigi.IntParameter(default=480)
 
+    # Retry parameters
+    max_retries = 3
+    retry_delay = 5
+
     def requires(self):
         return [PreprocessingRunoff(), PreprocessingGatewayQuantileMapping()]
 
     def output(self):
-        return luigi.LocalTarget(f'/app/log_ml_{self.model_type}_{self.prediction_mode}.txt')
+        # Use the intermediate_data_path for log files instead of /app/
+        intermediate_data_path = get_bind_path(env.get('ieasyforecast_intermediate_data_path'))
+        # Create a log directory if it does not already exist
+        if not os.path.exists(intermediate_data_path):
+            os.makedirs(intermediate_data_path)
+        return luigi.LocalTarget(f'{intermediate_data_path}/log/log_ml_{self.model_type}_{self.prediction_mode}.txt')
 
-    def run(self):
 
-        logger = pu.TaskLogger()
-        start_time = datetime.datetime.now()
+    def _run_container(self, attempt_number) -> tuple[Optional[str], int, str]:
+        """
+        Run the docker container and return container ID, exit status, and logs
+        """
+        client = docker.from_env()
         container = None
-        final_status = "Failed"
-        details = ""
 
         try:
-            print("------------------------------------")
-            print(" Running MachineLearning task.")
-            print("------------------------------------")
-
             # Construct the absolute volume paths to bind to the containers
             absolute_volume_path_config = get_absolute_path(
                 env.get('ieasyforecast_configuration_path'))
@@ -702,16 +707,7 @@ class RunMLModel(pu.TimeoutMixin, luigi.Task):
             bind_volume_path_internal_data = get_bind_path(
                 env.get('ieasyforecast_intermediate_data_path'))
 
-            #print(f"env.get('ieasyforecast_configuration_path'): {env.get('ieasyforecast_configuration_path')}")
-            #print(f"absolute_volume_path_config: {absolute_volume_path_config}")
-            #print(f"absolute_volume_path_internal_data: {absolute_volume_path_internal_data}")
-            #print(f"bind_volume_path_config: {bind_volume_path_config}")
-            #print(f"bind_volume_path_internal_data: {bind_volume_path_internal_data}")
-
-            # Run the docker container to forecast using machine learning
-            client = docker.from_env()
-
-            # Pull the latest image
+            # Pull the latest image if needed
             if pu.there_is_a_newer_image_on_docker_hub(
                 client, repository='mabesa', image_name='sapphire-ml', tag=TAG):
                 print("Pulling the latest image from Docker Hub.")
@@ -734,41 +730,89 @@ class RunMLModel(pu.TimeoutMixin, luigi.Task):
             }
             print(f"Volumes:\n{volumes}")
 
-
-            # Run the container
+            # Run the container with unique name for each attempt
             container = client.containers.run(
                 f"mabesa/sapphire-ml:{TAG}",
                 detach=True,
                 environment=environment,
                 volumes=volumes,
-                name=f"ml_{self.model_type}_{self.prediction_mode}",
-                #labels=labels,
-                network='host'  # To test
+                name=f"ml_{self.model_type}_{self.prediction_mode}_attempt_{attempt_number}_{time.time()}",  # Unique name per attempt
+                network='host'
             )
 
             print(f"Container {container.id} is running.")
 
+            # Wait for container with timeout
             try:
                 self.run_with_timeout(container.wait)
-                logs = container.logs().decode('utf-8')
-
-                with self.output().open('w') as f:
-                    f.write('Task completed\n')
-                    f.write(f'Container ID: {container.id}\n')
-                    f.write(f'Logs:\n{logs}')
-
-                final_status = "Success"
-                details = "Task completed successfully"
-
+                exit_status = 0
             except TimeoutError:
+                print(f"Container {container.id} timed out after {self.timeout_seconds} seconds")
                 container.stop()
-                final_status = "Timeout"
-                details = f"Task timed out after {self.timeout_seconds} seconds"
-                raise
+                exit_status = 124
+            logs = container.logs().decode('utf-8')
+
+            print(f"Container {container.id} exited with status code {exit_status}")
+            print(f"Logs from container {container.id}:\n{logs}")
+
+            # Clean up container
+            try:
+                container.remove()
+            except Exception as e:
+                print(f"Warning: Could not remove container {container.id}: {str(e)}")
+
+            return container.id, exit_status, logs
 
         except Exception as e:
-            details = str(e)
-            raise
+            print(f"Error running container: {str(e)}")
+            if container:
+                try:
+                    container.stop()
+                    container.remove()
+                except:
+                    pass
+            return None, 1, str(e)
+
+    def run(self):
+        logger = pu.TaskLogger()
+        start_time = datetime.datetime.now()
+
+        print("------------------------------------")
+        print(" Running MachineLearning task.")
+        print("------------------------------------")
+
+        attempts = 0
+        final_status = "Failed"
+        details = ""
+
+        try:
+            while attempts < self.max_retries:
+                attempts += 1
+                print(f"Attempt {attempts} of {self.max_retries}")
+
+                container_id, exit_status, logs = self._run_container(attempts)
+
+                if exit_status == 0:
+                    # Success - write output and exit
+                    with self.output().open('w') as f:
+                        f.write('Task completed successfully\n')
+                        f.write(f'Container ID: {container_id}\n')
+                        f.write(f'Logs:\n{logs}')
+                    final_status = "Success"
+                    details = f"Completed on attempt {attempts}"
+                    break
+
+                if exit_status == 124:  # Timeout
+                    final_status = "Timeout"
+                    details = f"Task timed out after {self.timeout_seconds} seconds"
+                    break
+
+                if attempts < self.max_retries:
+                    print(f"Container failed with status {exit_status}. Retrying in {self.retry_delay} seconds...")
+                    time.sleep(self.retry_delay)
+                else:
+                    print(f"Container failed after {self.max_retries} attempts.")
+                    raise RuntimeError(f"Task failed after {self.max_retries} attempts. Last exit status: {exit_status}\nLogs:\n{logs}")
 
         finally:
             end_time = datetime.datetime.now()
@@ -779,12 +823,6 @@ class RunMLModel(pu.TimeoutMixin, luigi.Task):
                 status=final_status,
                 details=details
             )
-
-            if container:
-                try:
-                    container.remove()
-                except:
-                    pass
 
 class RunAllMLModels(luigi.WrapperTask):
     def requires(self):
