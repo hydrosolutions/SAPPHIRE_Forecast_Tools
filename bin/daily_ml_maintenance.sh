@@ -119,9 +119,10 @@ fi
 # Check if the Docker image exists
 IMAGE_ID="mabesa/sapphire-ml:latest"
 if ! docker image inspect $IMAGE_ID > /dev/null 2>&1; then
-  log_message "ERROR: Docker image $IMAGE_ID not found. Please verify the image exists."
-  docker images >> "$log_file"
-  exit 1
+  docker pull $IMAGE_ID
+  #log_message "ERROR: Docker image $IMAGE_ID not found. Please verify the image exists."
+  #docker images >> "$log_file"
+  #exit 1
 fi
 
 log_message "Verifying Docker Compose..."
