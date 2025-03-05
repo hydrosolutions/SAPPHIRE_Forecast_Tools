@@ -69,7 +69,7 @@ for MODEL in "${MODEL_OPTIONS[@]}"; do
     # Add the service configuration to the compose file
     cat >> $COMPOSE_FILE << EOF
   ${SERVICE_NAME}:
-    image: sha256:acf31b001d2160312714637b9fda188fdedf2deed5beb22f7afd53f8f71441a1
+    image: mabesa/sapphire-ml:latest
     environment:
       - PYTHONPATH=/app
       - ieasyhydroforecast_data_root_dir=${ieasyhydroforecast_data_root_dir}
