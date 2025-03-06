@@ -1122,7 +1122,7 @@ class DeleteOldGatewayFiles(pu.TimeoutMixin, luigi.Task):
 
 class LogFileCleanup(pu.TimeoutMixin, luigi.Task):
 
-    log_directory = f'{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/log'
+    log_directory = f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/log"
     days_to_keep = luigi.IntParameter(default=15)
     file_path_pattern = 'log_*.txt'
 
