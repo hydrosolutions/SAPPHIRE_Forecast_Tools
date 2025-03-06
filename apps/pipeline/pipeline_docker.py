@@ -1365,7 +1365,8 @@ class RunWorkflow(luigi.Task):
         # Create a log directory if it does not already exist
         if not os.path.exists(intermediate_data_path):
             os.makedirs(intermediate_data_path)
-        return luigi.LocalTarget(f'{intermediate_data_path}/log/log_workflow_complete.txt')
+        timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+        return luigi.LocalTarget(f'{intermediate_data_path}/log/log_workflow_complete_{timestamp}.txt')
 
     def run(self):
         print("Workflow completed.")
