@@ -1334,14 +1334,16 @@ class RunWorkflow(luigi.Task):
     def requires(self):
         if ORGANIZATION=='demo':
             print("Running demo workflow.")
-            base_tasks = [PostProcessingForecasts()]
+            base_tasks = [PostProcessingForecasts(),
+                          LogFileCleanup()]
 
         elif ORGANIZATION=='kghm':
             print("Running KGHM workflow.")
             base_tasks =  [PostProcessingForecasts(),
                            RunAllMLModels(),
                            ConceptualModel(),
-                           DeleteOldGatewayFiles()
+                           DeleteOldGatewayFiles(),
+                           LogFileCleanup()
                            ]
         # You can add workflow definitions for other organizations here.
 
