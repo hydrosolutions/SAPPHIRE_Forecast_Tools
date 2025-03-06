@@ -284,4 +284,9 @@ log_message "Cleaning up docker resources"
 docker compose -f $COMPOSE_FILE down
 rm $COMPOSE_FILE
 
+# Remove old log files
+log_message "Removing old log files"
+# Find all files in the log directory older than 15 days and delete them
+find $LOG_DIR -type f -mtime +15 -delete
+
 log_message "ML maintenance run completed successfully"

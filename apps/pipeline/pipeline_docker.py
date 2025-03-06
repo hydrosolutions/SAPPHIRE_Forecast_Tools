@@ -12,6 +12,7 @@
 
 import luigi
 import os
+import glob
 import time
 import docker
 import datetime
@@ -89,7 +90,9 @@ class PreprocessingRunoff(pu.TimeoutMixin, luigi.Task):
         # Create a log directory if it does not already exist
         if not os.path.exists(intermediate_data_path):
             os.makedirs(intermediate_data_path)
-        return luigi.LocalTarget(f'{intermediate_data_path}/log/log_preprunoff.txt')
+
+        timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+        return luigi.LocalTarget(f'{intermediate_data_path}/log/log_preprunoff_{timestamp}.txt')
 
     def _run_container(self, attempt_number) -> tuple[Optional[str], int, str]:
         """
@@ -246,7 +249,8 @@ class PreprocessingGatewayQuantileMapping(pu.TimeoutMixin, luigi.Task):
         # Create a log directory if it does not already exist
         if not os.path.exists(intermediate_data_path):
             os.makedirs(intermediate_data_path)
-        return luigi.LocalTarget(f'{intermediate_data_path}/log/log_pregateway.txt')
+        timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+        return luigi.LocalTarget(f'{intermediate_data_path}/log/log_pregateway_{timestamp}.txt')
 
     def _run_container(self, attempt_number) -> tuple[Optional[str], int, str]:
         """
@@ -395,7 +399,8 @@ class LinearRegression(pu.TimeoutMixin, luigi.Task):
         # Create a log directory if it does not already exist
         if not os.path.exists(intermediate_data_path):
             os.makedirs(intermediate_data_path)
-        return luigi.LocalTarget(f'{intermediate_data_path}/log/log_linreg.txt')
+        timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+        return luigi.LocalTarget(f'{intermediate_data_path}/log/log_linreg_{timestamp}.txt')
 
     def _run_container(self, attempt_number) -> tuple[Optional[str], int, str]:
         """
@@ -546,7 +551,8 @@ class ConceptualModel(pu.TimeoutMixin, luigi.Task):
         # Create a log directory if it does not already exist
         if not os.path.exists(intermediate_data_path):
             os.makedirs(intermediate_data_path)
-        return luigi.LocalTarget(f'{intermediate_data_path}/log/log_conceptmod.txt')
+        timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+        return luigi.LocalTarget(f'{intermediate_data_path}/log/log_conceptmod_{timestamp}.txt')
 
     def _run_container(self, attempt_number) -> tuple[Optional[str], int, str]:
         """
@@ -701,7 +707,8 @@ class RunMLModel(pu.TimeoutMixin, luigi.Task):
         # Create a log directory if it does not already exist
         if not os.path.exists(intermediate_data_path):
             os.makedirs(intermediate_data_path)
-        return luigi.LocalTarget(f'{intermediate_data_path}/log/log_ml_{self.model_type}_{self.prediction_mode}.txt')
+        timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+        return luigi.LocalTarget(f'{intermediate_data_path}/log/log_ml_{self.model_type}_{self.prediction_mode}_{timestamp}.txt')
 
     def run(self):
 
@@ -839,7 +846,8 @@ class PostProcessingForecasts(pu.TimeoutMixin, luigi.Task):
         # Create a log directory if it does not already exist
         if not os.path.exists(intermediate_data_path):
             os.makedirs(intermediate_data_path)
-        return luigi.LocalTarget(f'{intermediate_data_path}/log/log_postproc.txt')
+        timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+        return luigi.LocalTarget(f'{intermediate_data_path}/log/log_postproc_{timestamp}.txt')
 
     def _run_container(self, attempt_number) -> tuple[Optional[str], int, str]:
         """
@@ -990,7 +998,8 @@ class DeleteOldGatewayFiles(pu.TimeoutMixin, luigi.Task):
         # Create a log directory if it does not already exist
         if not os.path.exists(intermediate_data_path):
             os.makedirs(intermediate_data_path)
-        return luigi.LocalTarget(f'{intermediate_data_path}/log/log_deleteoldfiles.txt')
+        timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+        return luigi.LocalTarget(f'{intermediate_data_path}/log/log_deleteoldfiles_{timestamp}.txt')
 
     def _delete_old_files(self) -> tuple[int, list[str], list[str]]:
         """
@@ -1111,6 +1120,89 @@ class DeleteOldGatewayFiles(pu.TimeoutMixin, luigi.Task):
             )
 
 
+class LogFileCleanup(pu.TimeoutMixin, luigi.Task):
+
+    log_directory = f'{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/log'
+    days_to_keep = luigi.IntParameter(default=15)
+    file_path_pattern = 'log_*.txt'
+
+    def output(self):
+        # Use the intermediate_data_path for log files instead of /app/
+        intermediate_data_path = get_bind_path(env.get('ieasyforecast_intermediate_data_path'))
+        # Create a log directory if it does not already exist
+        if not os.path.exists(intermediate_data_path):
+            os.makedirs(intermediate_data_path)
+        timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+        return luigi.LocalTarget(f'{intermediate_data_path}/log/log_cleanuplogs_{timestamp}.txt')
+
+    def run(self):
+
+        logger = pu.TaskLogger()
+        start_time = datetime.datetime.now()
+
+        try:
+
+            # Calculate cutoff date
+            cutoff_date = datetime.datetime.now() - datetime.timedelta(days=self.days_to_keep)
+
+            # Get list of log files matching pattern
+            file_path_pattern = os.path.join(self.log_directory, self.file_pattern)
+            log_files = glob.glob(file_path_pattern)
+
+            # Track statistics
+            deleted_count = 0
+            failed_count = 0
+
+            for file_path in log_files:
+                try:
+                    # Get file modification time
+                    file_mtime = os.path.getmtime(file_path)
+                    file_datetime = datetime.datetime.fromtimestamp(file_mtime)
+
+                    # Check if file is older than cutoff date
+                    if file_datetime < cutoff_date:
+                        # Delete the file
+                        os.remove(file_path)
+                        deleted_count += 1
+                except Exception as e:
+                    failed_count += 1
+
+            # Write summary to output file
+            with self.output().open('w') as f:
+                summary = {
+                    'timestamp': datetime.datetime.now().isoformat(),
+                    'log_directory': self.log_directory,
+                    'file_pattern': self.file_pattern,
+                    'days_to_keep': self.days_to_keep,
+                    'cutoff_date': cutoff_date.isoformat(),
+                    'total_files_found': len(log_files),
+                    'files_deleted': deleted_count,
+                    'failures': failed_count
+                }
+                for key, value in summary.items():
+                    f.write(f"{key}: {value}\n")
+            status = "Success"
+            details = f"Deleted {deleted_count} files, {failed_count} failures"
+
+        except Exception as e:
+            print(f"Error in LogFileCleanup: {str(e)}")
+            status = "Failed"
+            details = str(e)
+            raise
+
+        finally:
+            end_time = datetime.datetime.now()
+
+            logger.log_task_timing(
+                task_name="LogFileCleanup",
+                start_time=start_time,
+                end_time=end_time,
+                status=status,
+                details=details
+            )
+
+
+
 class SendPipelineCompletionNotification(luigi.Task):
     """Send notification when the entire pipeline is complete."""
 
@@ -1129,7 +1221,8 @@ class SendPipelineCompletionNotification(luigi.Task):
         # Create a log directory if it does not already exist
         if not os.path.exists(intermediate_data_path):
             os.makedirs(intermediate_data_path)
-        return luigi.LocalTarget(f'{intermediate_data_path}/log/log_notification.txt')
+        timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+        return luigi.LocalTarget(f'{intermediate_data_path}/log/log_notification_{timestamp}.txt')
 
     def run(self):
         print("------------------------------------")
