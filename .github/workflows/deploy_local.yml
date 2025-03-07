@@ -1,7 +1,7 @@
-name: Test & deploy main branch
+name: Test & deploy local branch to Dockerhub
 
 env:
-  IMAGE_TAG: latest
+  IMAGE_TAG: local
 
   BASE_IMAGE_NAME: mabesa/sapphire-pythonbaseimage
   PIPELINE_IMAGE_NAME: mabesa/sapphire-pipeline
@@ -17,13 +17,15 @@ env:
 
 on:
   push:
-    branches: [ "configure_task_timeout" ]
+    branches: [ "local" ]
   pull_request:
-    branches: [ "main" ]
+    types: [closed]
+    branches: [ "local" ]
 
 jobs:
 
   test_ieasyhydroforecast:
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.merged == true)
     runs-on: ubuntu-latest
     name: Test iEasyHydroForecast
     strategy:
@@ -152,6 +154,7 @@ jobs:
 
 
   push_conceptual_model_to_Dckerhub:
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.merged == true)
     runs-on: ubuntu-latest
     name: Dockerize and push conceptual model module to Dockerhub
 
