@@ -402,6 +402,8 @@ class PreprocessingGatewayQuantileMapping(pu.TimeoutMixin, luigi.Task):
                     with open(self.docker_logs_file_path, 'w') as f:
                         f.write('Task completed successfully\n')
                         f.write(f'Container ID: {container_id}\n')
+                        f.write(f'Timeout: {self.timeout_seconds}\n')
+                        f.write(f'Max retries: {self.max_retries}\n')
                         f.write(f'Logs:\n{logs}')
                     final_status = "Success"
                     details = f"Completed on attempt {attempts}"
@@ -574,6 +576,8 @@ class LinearRegression(pu.TimeoutMixin, luigi.Task):
                     with open(self.docker_logs_file_path, 'w') as f:
                         f.write('Task completed successfully\n')
                         f.write(f'Container ID: {container_id}\n')
+                        f.write(f'Timeout: {self.timeout_seconds}\n')
+                        f.write(f'Max retries: {self.max_retries}\n')
                         f.write(f'Logs:\n{logs}')
                     final_status = "Success"
                     details = f"Completed on attempt {attempts}"
@@ -764,6 +768,8 @@ class ConceptualModel(pu.TimeoutMixin, luigi.Task):
                     with open(self.docker_logs_file_path, 'w') as f:
                         f.write('Task completed successfully\n')
                         f.write(f'Container ID: {container_id}\n')
+                        f.write(f'Timeout: {self.timeout_seconds}\n')
+                        f.write(f'Max retries: {self.max_retries}\n')
                         f.write(f'Logs:\n{logs}')
                     final_status = "Success"
                     details = f"Completed on attempt {attempts}"
@@ -911,6 +917,8 @@ class RunMLModel(pu.TimeoutMixin, luigi.Task):
                 with open(docker_logs_file_path, 'w') as f:
                     f.write('Task completed\n')
                     f.write(f'Container ID: {container.id}\n')
+                    f.write(f'Timeout: {self.timeout_seconds}\n')
+                    f.write(f'Max retries: {self.max_retries}\n')
                     f.write(f'Logs:\n{logs}')
 
                 final_status = "Success"
@@ -1095,6 +1103,8 @@ class PostProcessingForecasts(pu.TimeoutMixin, luigi.Task):
                     with open(self.docker_logs_file_path, 'w') as f:
                         f.write('Task completed successfully\n')
                         f.write(f'Container ID: {container_id}\n')
+                        f.write(f'Timeout: {self.timeout_seconds}\n')
+                        f.write(f'Max retries: {self.max_retries}\n')
                         f.write(f'Logs:\n{logs}')
                     final_status = "Success"
                     details = f"Completed on attempt {attempts}"

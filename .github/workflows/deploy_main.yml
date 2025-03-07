@@ -17,7 +17,7 @@ env:
 
 on:
   push:
-    branches: [ "configure_task_timeout" ]
+    branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
 
