@@ -1133,7 +1133,7 @@ class LogFileCleanup(pu.TimeoutMixin, luigi.Task):
 
     log_directory = f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/docker_logs"
     days_to_keep = luigi.IntParameter(default=15)
-    file_path_pattern = 'log_*.txt'
+    file_pattern = 'log_*.txt'
 
     # Use the intermediate_data_path for log files instead of /app/
     intermediate_data_path = get_bind_path(env.get('ieasyforecast_intermediate_data_path'))
@@ -1345,6 +1345,10 @@ class RunWorkflow(luigi.Task):
 
 
     def requires(self):
+
+        # Test if directory of docker_logs_file_path exists and create it if not
+        os.makedirs(os.path.dirname(self.docker_logs_file_path), exist_ok=True)
+
         if ORGANIZATION=='demo':
             print("Running demo workflow.")
             base_tasks = [PostProcessingForecasts(),
