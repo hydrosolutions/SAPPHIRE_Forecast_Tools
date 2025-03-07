@@ -27,6 +27,7 @@ import threading
 from apps.pipeline.src import pipeline_utils as pu
 from apps.pipeline.src.environment import Environment
 from apps.pipeline.src.notification_manager import NotificationManager
+from apps.pipeline.src.timeout_manager import get_task_parameters
 
 
 # Initialize the Environment class with the path to your .env file
@@ -79,15 +80,30 @@ def get_local_path(relative_path):
 
 class PreprocessingRunoff(pu.TimeoutMixin, luigi.Task):
     # Set timeout to 15 minutes (900 seconds)
-    timeout_seconds = luigi.IntParameter(default=900)
-
-    max_retries = 2
-    retry_delay = 5
+    timeout_seconds = luigi.IntParameter(default=None)
+    max_retries = luigi.IntParameter(default=None)
+    retry_delay = luigi.IntParameter(default=None)
 
     # Use the intermediate_data_path for log files instead of /app/
     intermediate_data_path = get_bind_path(env.get('ieasyforecast_intermediate_data_path'))
     # Define the logging output of the task.
     docker_logs_file_path = f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/docker_logs/log_preprunoff_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        # Get parameters from timeout manager
+        task_name = self.__class__.__name__
+        task_params = get_task_parameters(task_name)
+
+        if self.timeout_seconds is None:
+            self.timeout_seconds = task_params['timeout_seconds']
+
+        if self.max_retries is None:
+            self.max_retries = task_params['max_retries']
+
+        if self.retry_delay is None:
+            self.retry_delay = task_params['retry_delay']
 
     def output(self):
         # Test if docker_logs is available and create it if its are not.
@@ -209,6 +225,9 @@ class PreprocessingRunoff(pu.TimeoutMixin, luigi.Task):
                     with open(self.docker_logs_file_path, 'w') as f:
                         f.write('Task completed successfully\n')
                         f.write(f'Container ID: {container_id}\n')
+                        # log timeout configuration to log file
+                        f.write(f'Timeout: {self.timeout_seconds}\n')
+                        f.write(f'Max retries: {self.max_retries}\n')
                         f.write(f'Logs:\n{logs}')
                     final_status = "Success"
                     details = f"Completed on attempt {attempts}"
@@ -244,16 +263,31 @@ class PreprocessingRunoff(pu.TimeoutMixin, luigi.Task):
 
 class PreprocessingGatewayQuantileMapping(pu.TimeoutMixin, luigi.Task):
     # Set timeout to 30 minutes (1800 seconds)
-    timeout_seconds = luigi.IntParameter(default=1800)
-
-    max_retries = 3
-    retry_delay = 5
+    timeout_seconds = luigi.IntParameter(default=None)
+    max_retries = luigi.IntParameter(default=None)
+    retry_delay = luigi.IntParameter(default=None)
 
     # Use the intermediate_data_path for log files instead of /app/
     intermediate_data_path = get_bind_path(env.get('ieasyforecast_intermediate_data_path'))
     # Define the logging output of the task.
     docker_logs_file_path = f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/docker_logs/log_pregateway_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
     # Note: docker_logs get cleaned up after n days in the pipeline_logs directory
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        # Get parameters from timeout manager
+        task_name = self.__class__.__name__
+        task_params = get_task_parameters(task_name)
+
+        if self.timeout_seconds is None:
+            self.timeout_seconds = task_params['timeout_seconds']
+
+        if self.max_retries is None:
+            self.max_retries = task_params['max_retries']
+
+        if self.retry_delay is None:
+            self.retry_delay = task_params['retry_delay']
 
     def output(self):
         # The output file is written in the docker container, so it
@@ -368,6 +402,8 @@ class PreprocessingGatewayQuantileMapping(pu.TimeoutMixin, luigi.Task):
                     with open(self.docker_logs_file_path, 'w') as f:
                         f.write('Task completed successfully\n')
                         f.write(f'Container ID: {container_id}\n')
+                        f.write(f'Timeout: {self.timeout_seconds}\n')
+                        f.write(f'Max retries: {self.max_retries}\n')
                         f.write(f'Logs:\n{logs}')
                     final_status = "Success"
                     details = f"Completed on attempt {attempts}"
@@ -403,15 +439,30 @@ class PreprocessingGatewayQuantileMapping(pu.TimeoutMixin, luigi.Task):
 
 class LinearRegression(pu.TimeoutMixin, luigi.Task):
     # Set timeout to 10 minutes (600 seconds)
-    timeout_seconds = luigi.IntParameter(default=600)
-
-    max_retries = 2
-    retry_delay = 5
+    timeout_seconds = luigi.IntParameter(default=None)
+    max_retries = luigi.IntParameter(default=None)
+    retry_delay = luigi.IntParameter(default=None)
 
     # Use the intermediate_data_path for log files instead of /app/
     intermediate_data_path = get_bind_path(env.get('ieasyforecast_intermediate_data_path'))
     # Define the logging output of the task.
     docker_logs_file_path = f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/docker_logs/log_linreg_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        # Get parameters from timeout manager
+        task_name = self.__class__.__name__
+        task_params = get_task_parameters(task_name)
+
+        if self.timeout_seconds is None:
+            self.timeout_seconds = task_params['timeout_seconds']
+
+        if self.max_retries is None:
+            self.max_retries = task_params['max_retries']
+
+        if self.retry_delay is None:
+            self.retry_delay = task_params['retry_delay']
 
     def requires(self):
         return PreprocessingRunoff()
@@ -525,6 +576,8 @@ class LinearRegression(pu.TimeoutMixin, luigi.Task):
                     with open(self.docker_logs_file_path, 'w') as f:
                         f.write('Task completed successfully\n')
                         f.write(f'Container ID: {container_id}\n')
+                        f.write(f'Timeout: {self.timeout_seconds}\n')
+                        f.write(f'Max retries: {self.max_retries}\n')
                         f.write(f'Logs:\n{logs}')
                     final_status = "Success"
                     details = f"Completed on attempt {attempts}"
@@ -560,15 +613,46 @@ class LinearRegression(pu.TimeoutMixin, luigi.Task):
 
 class ConceptualModel(pu.TimeoutMixin, luigi.Task):
     # Set timeout to 30 minutes (1800 seconds)
-    timeout_seconds = luigi.IntParameter(default=1800)
-    max_retries = 2
-    retry_delay = 5
+    timeout_seconds = luigi.IntParameter(default=None)
+    max_retries = luigi.IntParameter(default=None)
+    retry_delay = luigi.IntParameter(default=None)
 
     # Use the intermediate_data_path for log files instead of /app/
     intermediate_data_path = get_bind_path(env.get('ieasyforecast_intermediate_data_path'))
     # Define the logging output of the task.
     docker_logs_file_path = f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/docker_logs/log_linreg_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        # Get parameters from timeout manager
+        task_name = self.__class__.__name__
+        task_params = get_task_parameters(task_name)
+
+        if self.timeout_seconds is None:
+            self.timeout_seconds = task_params['timeout_seconds']
+
+        if self.max_retries is None:
+            self.max_retries = task_params['max_retries']
+
+        if self.retry_delay is None:
+            self.retry_delay = task_params['retry_delay']
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        # Get parameters from timeout manager
+        task_name = self.__class__.__name__
+        task_params = get_task_parameters(task_name)
+
+        if self.timeout_seconds is None:
+            self.timeout_seconds = task_params['timeout_seconds']
+
+        if self.max_retries is None:
+            self.max_retries = task_params['max_retries']
+
+        if self.retry_delay is None:
+            self.retry_delay = task_params['retry_delay']
 
     def requires(self):
         return [PreprocessingRunoff(), PreprocessingGatewayQuantileMapping()]
@@ -684,6 +768,8 @@ class ConceptualModel(pu.TimeoutMixin, luigi.Task):
                     with open(self.docker_logs_file_path, 'w') as f:
                         f.write('Task completed successfully\n')
                         f.write(f'Container ID: {container_id}\n')
+                        f.write(f'Timeout: {self.timeout_seconds}\n')
+                        f.write(f'Max retries: {self.max_retries}\n')
                         f.write(f'Logs:\n{logs}')
                     final_status = "Success"
                     details = f"Completed on attempt {attempts}"
@@ -723,13 +809,28 @@ class RunMLModel(pu.TimeoutMixin, luigi.Task):
     run_mode = luigi.Parameter(default='forecast')
 
     # Set timeout to 8 minutes (480 seconds)
-    timeout_seconds = luigi.IntParameter(default=480)
+    timeout_seconds = luigi.IntParameter(default=None)
+    max_retries = luigi.IntParameter(default=None)
+    retry_delay = luigi.IntParameter(default=None)
 
     # Use the intermediate_data_path for log files instead of /app/
     intermediate_data_path = get_bind_path(env.get('ieasyforecast_intermediate_data_path'))
-    # Define the logging output of the task.
-    docker_logs_file_path = f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/docker_logs/log_ml_{model_type}_{prediction_mode}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        # Get parameters from timeout manager
+        task_name = self.__class__.__name__
+        task_params = get_task_parameters(task_name)
+
+        if self.timeout_seconds is None:
+            self.timeout_seconds = task_params['timeout_seconds']
+
+        if self.max_retries is None:
+            self.max_retries = task_params['max_retries']
+
+        if self.retry_delay is None:
+            self.retry_delay = task_params['retry_delay']
 
     def requires(self):
         return [PreprocessingRunoff(), PreprocessingGatewayQuantileMapping()]
@@ -738,6 +839,9 @@ class RunMLModel(pu.TimeoutMixin, luigi.Task):
         return luigi.LocalTarget(f'/app/log_ml_{self.model_type}_{self.prediction_mode}.txt')
 
     def run(self):
+
+        # Define the logging output of the task.
+        docker_logs_file_path = f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/docker_logs/log_ml_{self.model_type}_{self.prediction_mode}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
 
         logger = pu.TaskLogger()
         start_time = datetime.datetime.now()
@@ -810,9 +914,11 @@ class RunMLModel(pu.TimeoutMixin, luigi.Task):
                 self.run_with_timeout(container.wait)
                 logs = container.logs().decode('utf-8')
 
-                with open(self.docker_logs_file_path, 'w') as f:
+                with open(docker_logs_file_path, 'w') as f:
                     f.write('Task completed\n')
                     f.write(f'Container ID: {container.id}\n')
+                    f.write(f'Timeout: {self.timeout_seconds}\n')
+                    f.write(f'Max retries: {self.max_retries}\n')
                     f.write(f'Logs:\n{logs}')
 
                 final_status = "Success"
@@ -865,16 +971,30 @@ class RunAllMLModels(luigi.WrapperTask):
 
 class PostProcessingForecasts(pu.TimeoutMixin, luigi.Task):
     # Set timeout to 15 minutes (900 seconds)
-    timeout_seconds = luigi.IntParameter(default=900)
-
-    max_retries = 2
-    retry_delay = 5
+    timeout_seconds = luigi.IntParameter(default=None)
+    max_retries = luigi.IntParameter(default=None)
+    retry_delay = luigi.IntParameter(default=None)
 
     # Use the intermediate_data_path for log files instead of /app/
     intermediate_data_path = get_bind_path(env.get('ieasyforecast_intermediate_data_path'))
     # Define the logging output of the task.
     docker_logs_file_path = f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/docker_logs/log_postproc_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        # Get parameters from timeout manager
+        task_name = self.__class__.__name__
+        task_params = get_task_parameters(task_name)
+
+        if self.timeout_seconds is None:
+            self.timeout_seconds = task_params['timeout_seconds']
+
+        if self.max_retries is None:
+            self.max_retries = task_params['max_retries']
+
+        if self.retry_delay is None:
+            self.retry_delay = task_params['retry_delay']
 
     def requires(self):
         return LinearRegression()
@@ -983,6 +1103,8 @@ class PostProcessingForecasts(pu.TimeoutMixin, luigi.Task):
                     with open(self.docker_logs_file_path, 'w') as f:
                         f.write('Task completed successfully\n')
                         f.write(f'Container ID: {container_id}\n')
+                        f.write(f'Timeout: {self.timeout_seconds}\n')
+                        f.write(f'Max retries: {self.max_retries}\n')
                         f.write(f'Logs:\n{logs}')
                     final_status = "Success"
                     details = f"Completed on attempt {attempts}"
@@ -1028,13 +1150,30 @@ class DeleteOldGatewayFiles(pu.TimeoutMixin, luigi.Task):
     days_old = luigi.IntParameter(default=2)
 
     # Set timeout to 5 minutes (300 seconds) - should be plenty for a file deletion task
-    timeout_seconds = luigi.IntParameter(default=300)
+    timeout_seconds = luigi.IntParameter(default=None)
+    max_retries = luigi.IntParameter(default=None)
+    retry_delay = luigi.IntParameter(default=None)
 
     # Use the intermediate_data_path for log files instead of /app/
     intermediate_data_path = get_bind_path(env.get('ieasyforecast_intermediate_data_path'))
     # Define the logging output of the task.
     docker_logs_file_path = f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/docker_logs/log_deleteOldGatewayFiles_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        # Get parameters from timeout manager
+        task_name = self.__class__.__name__
+        task_params = get_task_parameters(task_name)
+
+        if self.timeout_seconds is None:
+            self.timeout_seconds = task_params['timeout_seconds']
+
+        if self.max_retries is None:
+            self.max_retries = task_params['max_retries']
+
+        if self.retry_delay is None:
+            self.retry_delay = task_params['retry_delay']
 
     def output(self):
         return luigi.LocalTarget(f'/app/log_deleteoldfiles.txt')
@@ -1179,6 +1318,25 @@ class LogFileCleanup(pu.TimeoutMixin, luigi.Task):
     # Define the logging output of the task.
     docker_logs_file_path = f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/docker_logs/log_dockerLogsFileCleanup_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
 
+    timeout_seconds = luigi.IntParameter(default=None)
+    max_retries = luigi.IntParameter(default=None)
+    retry_delay = luigi.IntParameter(default=None)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        # Get parameters from timeout manager
+        task_name = self.__class__.__name__
+        task_params = get_task_parameters(task_name)
+
+        if self.timeout_seconds is None:
+            self.timeout_seconds = task_params['timeout_seconds']
+
+        if self.max_retries is None:
+            self.max_retries = task_params['max_retries']
+
+        if self.retry_delay is None:
+            self.retry_delay = task_params['retry_delay']
 
     def output(self):
         return luigi.LocalTarget(f'/app/log_cleanuplogs.txt')
