@@ -1126,12 +1126,12 @@ class DeleteOldGatewayFiles(pu.TimeoutMixin, luigi.Task):
                 final_status = "Success"
                 details = f"Deleted {deleted_count} files"
 
+                with open(self.docker_logs_file_path, 'w') as f:
+                    f.write(f'Task timed out after {self.timeout_seconds} seconds')
+
             except TimeoutError:
                 final_status = "Timeout"
                 details = f"Task timed out after {self.timeout_seconds} seconds"
-
-                with open(self.docker_logs_file_path, 'w') as f:
-                    f.write(f'Task timed out after {self.timeout_seconds} seconds')
 
         except Exception as e:
             error_message = f"Unexpected error: {str(e)}"
