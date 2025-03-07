@@ -94,7 +94,7 @@ class PreprocessingRunoff(pu.TimeoutMixin, luigi.Task):
 
         # Get parameters from timeout manager
         task_name = self.__class__.__name__
-        task_params = TimeoutManager.get_task_parameters(task_name)
+        task_params = get_task_parameters(task_name)
 
         if self.timeout_seconds is None:
             self.timeout_seconds = task_params['timeout_seconds']
