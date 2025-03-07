@@ -212,6 +212,11 @@ class PreprocessingRunoff(pu.TimeoutMixin, luigi.Task):
                         f.write(f'Logs:\n{logs}')
                     final_status = "Success"
                     details = f"Completed on attempt {attempts}"
+
+                    # Create the output marker file
+                    with self.output().open('w') as f:
+                        f.write('Task completed')
+
                     break
 
                 if exit_status == 124:  # Timeout
@@ -366,6 +371,11 @@ class PreprocessingGatewayQuantileMapping(pu.TimeoutMixin, luigi.Task):
                         f.write(f'Logs:\n{logs}')
                     final_status = "Success"
                     details = f"Completed on attempt {attempts}"
+
+                    # Create the output marker file
+                    with self.output().open('w') as f:
+                        f.write('Task completed')
+
                     break
 
                 if exit_status == 124:  # Timeout
@@ -518,6 +528,11 @@ class LinearRegression(pu.TimeoutMixin, luigi.Task):
                         f.write(f'Logs:\n{logs}')
                     final_status = "Success"
                     details = f"Completed on attempt {attempts}"
+
+                    # Create the output marker file
+                    with self.output().open('w') as f:
+                        f.write('Task completed')
+
                     break
 
                 if exit_status == 124:  # Timeout
@@ -672,6 +687,11 @@ class ConceptualModel(pu.TimeoutMixin, luigi.Task):
                         f.write(f'Logs:\n{logs}')
                     final_status = "Success"
                     details = f"Completed on attempt {attempts}"
+
+                    # Create the output marker file
+                    with self.output().open('w') as f:
+                        f.write('Task completed')
+
                     break
 
                 if exit_status == 124:  # Timeout
@@ -797,6 +817,10 @@ class RunMLModel(pu.TimeoutMixin, luigi.Task):
 
                 final_status = "Success"
                 details = "Task completed successfully"
+
+                # Create the output marker file
+                with self.output().open('w') as f:
+                    f.write('Task completed')
 
             except TimeoutError:
                 container.stop()
@@ -962,6 +986,11 @@ class PostProcessingForecasts(pu.TimeoutMixin, luigi.Task):
                         f.write(f'Logs:\n{logs}')
                     final_status = "Success"
                     details = f"Completed on attempt {attempts}"
+
+                    # Create the output marker file
+                    with self.output().open('w') as f:
+                        f.write('Task completed')
+
                     break
 
                 if exit_status == 124:  # Timeout
@@ -1193,6 +1222,10 @@ class LogFileCleanup(pu.TimeoutMixin, luigi.Task):
             status = "Success"
             details = f"Deleted {deleted_count} files, {failed_count} failures"
 
+            # Create the output marker file
+            with self.output().open('w') as f:
+                f.write('Task completed')
+
         except Exception as e:
             print(f"Error in LogFileCleanup: {str(e)}")
             status = "Failed"
@@ -1308,6 +1341,10 @@ class SendPipelineCompletionNotification(luigi.Task):
                 f.write(f"Notification task completed at {current_time}\n\n")
                 f.write("\n".join(notification_results))
 
+            # Create the output marker file
+            with self.output().open('w') as f:
+                f.write('Task completed')
+
         except Exception as e:
             print(f"Error sending notifications: {str(e)}")
             success = False
@@ -1387,6 +1424,10 @@ class RunWorkflow(luigi.Task):
         # Create output file to mark completion
         with open(self.docker_logs_file_path, 'w') as f:
             f.write(f"Workflow for {ORGANIZATION} completed at {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
+        # Create the output marker file
+        with self.output().open('w') as f:
+            f.write('Task completed')
 
 
 if __name__ == '__main__':
