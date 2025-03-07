@@ -595,6 +595,7 @@ select_basin_widget = pn.widgets.Select(
 
 # region forecast_card
 
+update_forecast_button = pn.widgets.Button(name="Update Forecast", button_type="success")
 # Forecast card for sidepanel
 forecast_model_title = pn.pane.Markdown(
     _("Select forecast model:"), margin=(0, 0, -15, 0))  # margin=(top, right, bottom, left)
@@ -607,7 +608,8 @@ forecast_card = pn.Card(
         allowable_range_selection,
         manual_range,
         range_selection_title,
-        show_range_button
+        show_range_button,
+        update_forecast_button
     ),
     title=_('Select forecasts:'),
     width_policy='fit', width=station.width,
@@ -852,7 +854,7 @@ def update_model_select(station_value, selected_pentad):
     #model_checkbox.options = {}  # Clear first
     #model_checkbox.param.trigger('options')
     model_checkbox.options = updated_model_dict
-    model_checkbox.param.trigger('options')
+    # model_checkbox.param.trigger('options')
 
     print("\nAfter options update:")
     print(f"  Widget options: {model_checkbox.options}")
@@ -861,7 +863,7 @@ def update_model_select(station_value, selected_pentad):
     #model_checkbox.value = []  # Clear first
     #model_checkbox.param.trigger('value')
     model_checkbox.value = new_values
-    model_checkbox.param.trigger('value')
+    # model_checkbox.param.trigger('value')
 
     print("\nFinal widget state:")
     print(f"  Widget options: {model_checkbox.options}")
@@ -1244,26 +1246,9 @@ pentad_selector.param.watch(update_callback, 'value')
 
 # Initial setup: populate the main area with the initial selection
 #update_callback(None)  # This does not seem to be needed
-
-daily_hydrograph_plot = pn.panel(
-    pn.bind(
-        viz.plot_daily_hydrograph_data,
-        _, hydrograph_day_all, linreg_predictor, station, date_picker
-        ),
-    sizing_mode='stretch_both'
-    )
-daily_rainfall_plot = pn.panel(
-    pn.bind(
-        viz.plot_daily_rainfall_data,
-        _, rain, station, date_picker, linreg_predictor
-    ),
-)
-daily_temperature_plot = pn.panel(
-    pn.bind(
-        viz.plot_daily_temperature_data,
-        _, temp, station, date_picker, linreg_predictor
-    ),
-)
+daily_hydrograph_plot = pn.pane.HoloViews(hv.Curve([]), sizing_mode="stretch_both")
+daily_rainfall_plot = pn.pane.HoloViews(hv.Curve([]), sizing_mode="stretch_both")
+daily_temperature_plot = pn.pane.HoloViews(hv.Curve([]), sizing_mode="stretch_both")
 '''
 daily_rel_to_norm_runoff = pn.panel(
     pn.bind(
@@ -1279,13 +1264,7 @@ daily_rel_to_norm_rainfall = pn.panel(
 )
 '''
 
-forecast_data_and_plot = pn.panel(
-    pn.bind(
-        viz.select_and_plot_data,
-        _, linreg_predictor, station, pentad_selector, SAVE_DIRECTORY
-    ),
-    sizing_mode='stretch_both'
-)
+forecast_data_and_plot = pn.Column(sizing_mode="stretch_both")
 
 def update_forecast_hydrograph(selected_option, _, hydrograph_day_all,
                                hydrograph_pentad_all, linreg_predictor,
@@ -1322,42 +1301,47 @@ def update_forecast_hydrograph(selected_option, _, hydrograph_day_all,
             ml_forecast=ml_forecast
         )
 
-pentad_forecast_plot = pn.panel(
-    pn.bind(
-        update_forecast_hydrograph,
-        show_daily_data_widget,
+pentad_forecast_plot = pn.pane.HoloViews(hv.Curve([]), sizing_mode="stretch_both")
+effectiveness_plot = pn.pane.HoloViews(hv.Curve([]), sizing_mode="stretch_both")
+accuracy_plot = pn.pane.HoloViews(hv.Curve([]), sizing_mode="stretch_both")
+forecast_skill_plot = pn.Column(effectiveness_plot, accuracy_plot)
+
+
+def update_forecast_plots(event):
+    """Updates 2nd, 3rd and 4th plots on Forecast tab"""
+    pentad_forecast_plot.object = update_forecast_hydrograph(
+        show_daily_data_widget.value,
         _,
         hydrograph_day_all=hydrograph_day_all,
         hydrograph_pentad_all=hydrograph_pentad_all,
         linreg_predictor=linreg_predictor,
         forecasts_all=forecasts_all,
-        station=station,
-        title_date=date_picker,
-        model_selection=model_checkbox,
-        range_type=allowable_range_selection,
-        range_slider=manual_range,
-        range_visibility=show_range_button,
+        station=station.value,
+        title_date=date_picker.value,
+        model_selection=model_checkbox.value,
+        range_type=allowable_range_selection.value,
+        range_slider=manual_range.value,
+        range_visibility=show_range_button.value,
         rram_forecast=rram_forecast,
         ml_forecast=ml_forecast
-        ),
-    sizing_mode='stretch_both'
-)
-
-forecast_skill_plot = pn.panel(
-    pn.bind(
-        viz.plot_forecast_skill,
+    )
+    temp = viz.plot_forecast_skill(
         _,
         hydrograph_pentad_all,
         forecasts_all,
-        station_widget=station,
-        date_picker=date_picker,
-        model_checkbox=model_checkbox,
-        range_selection_widget=allowable_range_selection,
-        manual_range_widget=manual_range,
-        show_range_button=show_range_button
-    ),
-    sizing_mode='stretch_both'
-)
+        station_widget=station.value,
+        date_picker=date_picker.value,
+        model_checkbox=model_checkbox.value,
+        range_selection_widget=allowable_range_selection.value,
+        manual_range_widget=manual_range.value,
+        show_range_button=show_range_button.value
+    )
+    effectiveness_plot.object = temp[0].object
+    accuracy_plot.object = temp[1].object
+
+    forecast_summary_table.object = update_forecast_tabulator(station, model_checkbox, allowable_range_selection, manual_range)
+
+update_forecast_button.on_click(update_forecast_plots)
 
 skill_table = pn.panel(
     viz.create_skill_table(_, forecast_stats),
@@ -1373,7 +1357,7 @@ skill_metrics_download_filename, skill_metrics_download_button = skill_table.dow
 #    embed=False, name="Right-click to download using 'Save as' dialog"
 #)
 
-@pn.depends(station, model_checkbox, allowable_range_selection, manual_range, watch=True)
+# @pn.depends(station, model_checkbox, allowable_range_selection, manual_range, watch=True)
 def update_forecast_tabulator(station, model_checkbox, allowable_range_selection, manual_range):
     viz.create_forecast_summary_tabulator(
         _, forecasts_all, station, date_picker,
@@ -1696,6 +1680,32 @@ dashboard_content = layout.define_tabs(_,
     pentad_card, reload_card, add_to_bulletin_popup, show_daily_data_widget,
     skill_table, skill_metrics_download_filename, skill_metrics_download_button
 )
+
+latest_predictors = None
+latest_forecast = None
+
+
+def update_active_tab(event):
+    """Callback function to handle tab and station changes"""
+    global latest_predictors
+    global latest_forecast
+    active_tab = dashboard_content.active  # 0: Predictors tab, 1: Forecast tab
+    if active_tab == 0 and latest_predictors != station.value:
+        latest_predictors = station.value
+        daily_hydrograph_plot.object = viz.plot_daily_hydrograph_data(_, hydrograph_day_all, linreg_predictor, station.value, date_picker.value)
+        daily_rainfall_plot.object = viz.plot_daily_rainfall_data(_, rain, station.value, date_picker.value, linreg_predictor)
+        daily_temperature_plot.object = viz.plot_daily_temperature_data(_, temp, station.value, date_picker.value, linreg_predictor)
+    elif active_tab == 1 and latest_forecast != station.value:
+        latest_forecast = station.value
+        plot = viz.select_and_plot_data(_, linreg_predictor, station.value, pentad_selector.value, SAVE_DIRECTORY)
+        forecast_data_and_plot[:] = plot.objects
+        update_forecast_plots(None)
+
+
+# Attach the callback to the tabs and station
+dashboard_content.param.watch(update_active_tab, 'active')
+station.param.watch(update_active_tab, 'value')
+update_active_tab(None)
 
 dashboard_content.visible = False
 
