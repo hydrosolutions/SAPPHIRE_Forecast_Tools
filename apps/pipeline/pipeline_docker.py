@@ -27,7 +27,7 @@ import threading
 from apps.pipeline.src import pipeline_utils as pu
 from apps.pipeline.src.environment import Environment
 from apps.pipeline.src.notification_manager import NotificationManager
-from apps.pipeline.src.timeout_manager import TimeoutManager
+from apps.pipeline.src.timeout_manager import get_task_parameters
 
 
 # Initialize the Environment class with the path to your .env file
@@ -80,10 +80,9 @@ def get_local_path(relative_path):
 
 class PreprocessingRunoff(pu.TimeoutMixin, luigi.Task):
     # Set timeout to 15 minutes (900 seconds)
-    timeout_seconds = luigi.IntParameter(default=900)
-
-    max_retries = 2
-    retry_delay = 5
+    timeout_seconds = luigi.IntParameter(default=None)
+    max_retries = luigi.IntParameter(default=None)
+    retry_delay = luigi.IntParameter(default=None)
 
     # Use the intermediate_data_path for log files instead of /app/
     intermediate_data_path = get_bind_path(env.get('ieasyforecast_intermediate_data_path'))
