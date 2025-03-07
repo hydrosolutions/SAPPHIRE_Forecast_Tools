@@ -1246,26 +1246,9 @@ pentad_selector.param.watch(update_callback, 'value')
 
 # Initial setup: populate the main area with the initial selection
 #update_callback(None)  # This does not seem to be needed
-
-daily_hydrograph_plot = pn.panel(
-    pn.bind(
-        viz.plot_daily_hydrograph_data,
-        _, hydrograph_day_all, linreg_predictor, station, date_picker
-        ),
-    sizing_mode='stretch_both'
-    )
-daily_rainfall_plot = pn.panel(
-    pn.bind(
-        viz.plot_daily_rainfall_data,
-        _, rain, station, date_picker, linreg_predictor
-    ),
-)
-daily_temperature_plot = pn.panel(
-    pn.bind(
-        viz.plot_daily_temperature_data,
-        _, temp, station, date_picker, linreg_predictor
-    ),
-)
+daily_hydrograph_plot = pn.pane.HoloViews(hv.Curve([]), sizing_mode="stretch_both")
+daily_rainfall_plot = pn.pane.HoloViews(hv.Curve([]), sizing_mode="stretch_both")
+daily_temperature_plot = pn.pane.HoloViews(hv.Curve([]), sizing_mode="stretch_both")
 '''
 daily_rel_to_norm_runoff = pn.panel(
     pn.bind(
@@ -1281,13 +1264,7 @@ daily_rel_to_norm_rainfall = pn.panel(
 )
 '''
 
-forecast_data_and_plot = pn.panel(
-    pn.bind(
-        viz.select_and_plot_data,
-        _, linreg_predictor, station, pentad_selector, SAVE_DIRECTORY
-    ),
-    sizing_mode='stretch_both'
-)
+forecast_data_and_plot = pn.Column(sizing_mode="stretch_both")
 
 def update_forecast_hydrograph(selected_option, _, hydrograph_day_all,
                                hydrograph_pentad_all, linreg_predictor,
@@ -1703,6 +1680,32 @@ dashboard_content = layout.define_tabs(_,
     pentad_card, reload_card, add_to_bulletin_popup, show_daily_data_widget,
     skill_table, skill_metrics_download_filename, skill_metrics_download_button
 )
+
+latest_predictors = None
+latest_forecast = None
+
+
+def update_active_tab(event):
+    """Callback function to handle tab and station changes"""
+    global latest_predictors
+    global latest_forecast
+    active_tab = dashboard_content.active  # 0: Predictors tab, 1: Forecast tab
+    if active_tab == 0 and latest_predictors != station.value:
+        latest_predictors = station.value
+        daily_hydrograph_plot.object = viz.plot_daily_hydrograph_data(_, hydrograph_day_all, linreg_predictor, station.value, date_picker.value)
+        daily_rainfall_plot.object = viz.plot_daily_rainfall_data(_, rain, station.value, date_picker.value, linreg_predictor)
+        daily_temperature_plot.object = viz.plot_daily_temperature_data(_, temp, station.value, date_picker.value, linreg_predictor)
+    elif active_tab == 1 and latest_forecast != station.value:
+        latest_forecast = station.value
+        plot = viz.select_and_plot_data(_, linreg_predictor, station.value, pentad_selector.value, SAVE_DIRECTORY)
+        forecast_data_and_plot[:] = plot.objects
+        update_forecast_plots(None)
+
+
+# Attach the callback to the tabs and station
+dashboard_content.param.watch(update_active_tab, 'active')
+station.param.watch(update_active_tab, 'value')
+update_active_tab(None)
 
 dashboard_content.visible = False
 
