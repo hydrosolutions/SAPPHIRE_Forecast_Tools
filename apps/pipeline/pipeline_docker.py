@@ -12,6 +12,7 @@
 
 import luigi
 import os
+import glob
 import time
 import docker
 import datetime
@@ -83,13 +84,16 @@ class PreprocessingRunoff(pu.TimeoutMixin, luigi.Task):
     max_retries = 2
     retry_delay = 5
 
+    # Use the intermediate_data_path for log files instead of /app/
+    intermediate_data_path = get_bind_path(env.get('ieasyforecast_intermediate_data_path'))
+    # Define the logging output of the task.
+    docker_logs_file_path = f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/docker_logs/log_preprunoff_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+
     def output(self):
-        # Use the intermediate_data_path for log files instead of /app/
-        intermediate_data_path = get_bind_path(env.get('ieasyforecast_intermediate_data_path'))
-        # Create a log directory if it does not already exist
-        if not os.path.exists(intermediate_data_path):
-            os.makedirs(intermediate_data_path)
-        return luigi.LocalTarget(f'{intermediate_data_path}/log/log_preprunoff.txt')
+        # Test if docker_logs is available and create it if its are not.
+        if not os.path.exists(f'self.intermediate_data_path/docker_logs'):
+            os.makedirs(f'self.intermediate_data_path/docker_logs')
+        return luigi.LocalTarget(f'/app/log_preprunoff.txt')
 
     def _run_container(self, attempt_number) -> tuple[Optional[str], int, str]:
         """
@@ -202,12 +206,17 @@ class PreprocessingRunoff(pu.TimeoutMixin, luigi.Task):
 
                 if exit_status == 0:
                     # Success - write output and exit
-                    with self.output().open('w') as f:
+                    with open(self.docker_logs_file_path, 'w') as f:
                         f.write('Task completed successfully\n')
                         f.write(f'Container ID: {container_id}\n')
                         f.write(f'Logs:\n{logs}')
                     final_status = "Success"
                     details = f"Completed on attempt {attempts}"
+
+                    # Create the output marker file
+                    with self.output().open('w') as f:
+                        f.write('Task completed')
+
                     break
 
                 if exit_status == 124:  # Timeout
@@ -240,13 +249,21 @@ class PreprocessingGatewayQuantileMapping(pu.TimeoutMixin, luigi.Task):
     max_retries = 3
     retry_delay = 5
 
+    # Use the intermediate_data_path for log files instead of /app/
+    intermediate_data_path = get_bind_path(env.get('ieasyforecast_intermediate_data_path'))
+    # Define the logging output of the task.
+    docker_logs_file_path = f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/docker_logs/log_pregateway_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+    # Note: docker_logs get cleaned up after n days in the pipeline_logs directory
+
     def output(self):
-        # Use the intermediate_data_path for log files instead of /app/
-        intermediate_data_path = get_bind_path(env.get('ieasyforecast_intermediate_data_path'))
-        # Create a log directory if it does not already exist
-        if not os.path.exists(intermediate_data_path):
-            os.makedirs(intermediate_data_path)
-        return luigi.LocalTarget(f'{intermediate_data_path}/log/log_pregateway.txt')
+        # The output file is written in the docker container, so it
+        # automatically disappears after the container is removed and does not
+        # have to be cleaned up.
+        # Test if docker_logs directory is available and create them if they are not.
+        if not os.path.exists(f'self.intermediate_data_path/docker_logs'):
+            os.makedirs(f'self.intermediate_data_path/docker_logs')
+
+        return luigi.LocalTarget(f'/app/log_pregateway.txt')
 
     def _run_container(self, attempt_number) -> tuple[Optional[str], int, str]:
         """
@@ -348,12 +365,17 @@ class PreprocessingGatewayQuantileMapping(pu.TimeoutMixin, luigi.Task):
 
                 if exit_status == 0:
                     # Success - write output and exit
-                    with self.output().open('w') as f:
+                    with open(self.docker_logs_file_path, 'w') as f:
                         f.write('Task completed successfully\n')
                         f.write(f'Container ID: {container_id}\n')
                         f.write(f'Logs:\n{logs}')
                     final_status = "Success"
                     details = f"Completed on attempt {attempts}"
+
+                    # Create the output marker file
+                    with self.output().open('w') as f:
+                        f.write('Task completed')
+
                     break
 
                 if exit_status == 124:  # Timeout
@@ -386,16 +408,16 @@ class LinearRegression(pu.TimeoutMixin, luigi.Task):
     max_retries = 2
     retry_delay = 5
 
+    # Use the intermediate_data_path for log files instead of /app/
+    intermediate_data_path = get_bind_path(env.get('ieasyforecast_intermediate_data_path'))
+    # Define the logging output of the task.
+    docker_logs_file_path = f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/docker_logs/log_linreg_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+
     def requires(self):
         return PreprocessingRunoff()
 
     def output(self):
-        # Use the intermediate_data_path for log files instead of /app/
-        intermediate_data_path = get_bind_path(env.get('ieasyforecast_intermediate_data_path'))
-        # Create a log directory if it does not already exist
-        if not os.path.exists(intermediate_data_path):
-            os.makedirs(intermediate_data_path)
-        return luigi.LocalTarget(f'{intermediate_data_path}/log/log_linreg.txt')
+        return luigi.LocalTarget(f'/app/log_linreg.txt')
 
     def _run_container(self, attempt_number) -> tuple[Optional[str], int, str]:
         """
@@ -500,12 +522,17 @@ class LinearRegression(pu.TimeoutMixin, luigi.Task):
 
                 if exit_status == 0:
                     # Success - write output and exit
-                    with self.output().open('w') as f:
+                    with open(self.docker_logs_file_path, 'w') as f:
                         f.write('Task completed successfully\n')
                         f.write(f'Container ID: {container_id}\n')
                         f.write(f'Logs:\n{logs}')
                     final_status = "Success"
                     details = f"Completed on attempt {attempts}"
+
+                    # Create the output marker file
+                    with self.output().open('w') as f:
+                        f.write('Task completed')
+
                     break
 
                 if exit_status == 124:  # Timeout
@@ -537,16 +564,17 @@ class ConceptualModel(pu.TimeoutMixin, luigi.Task):
     max_retries = 2
     retry_delay = 5
 
+    # Use the intermediate_data_path for log files instead of /app/
+    intermediate_data_path = get_bind_path(env.get('ieasyforecast_intermediate_data_path'))
+    # Define the logging output of the task.
+    docker_logs_file_path = f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/docker_logs/log_linreg_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+
+
     def requires(self):
         return [PreprocessingRunoff(), PreprocessingGatewayQuantileMapping()]
 
     def output(self):
-        # Use the intermediate_data_path for log files instead of /app/
-        intermediate_data_path = get_bind_path(env.get('ieasyforecast_intermediate_data_path'))
-        # Create a log directory if it does not already exist
-        if not os.path.exists(intermediate_data_path):
-            os.makedirs(intermediate_data_path)
-        return luigi.LocalTarget(f'{intermediate_data_path}/log/log_conceptmod.txt')
+        return luigi.LocalTarget(f'/app/log_conceptmod.txt')
 
     def _run_container(self, attempt_number) -> tuple[Optional[str], int, str]:
         """
@@ -653,12 +681,17 @@ class ConceptualModel(pu.TimeoutMixin, luigi.Task):
 
                 if exit_status == 0:
                     # Success - write output and exit
-                    with self.output().open('w') as f:
+                    with open(self.docker_logs_file_path, 'w') as f:
                         f.write('Task completed successfully\n')
                         f.write(f'Container ID: {container_id}\n')
                         f.write(f'Logs:\n{logs}')
                     final_status = "Success"
                     details = f"Completed on attempt {attempts}"
+
+                    # Create the output marker file
+                    with self.output().open('w') as f:
+                        f.write('Task completed')
+
                     break
 
                 if exit_status == 124:  # Timeout
@@ -692,16 +725,17 @@ class RunMLModel(pu.TimeoutMixin, luigi.Task):
     # Set timeout to 8 minutes (480 seconds)
     timeout_seconds = luigi.IntParameter(default=480)
 
+    # Use the intermediate_data_path for log files instead of /app/
+    intermediate_data_path = get_bind_path(env.get('ieasyforecast_intermediate_data_path'))
+    # Define the logging output of the task.
+    docker_logs_file_path = f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/docker_logs/log_ml_{model_type}_{prediction_mode}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+
+
     def requires(self):
         return [PreprocessingRunoff(), PreprocessingGatewayQuantileMapping()]
 
     def output(self):
-        # Use the intermediate_data_path for log files instead of /app/
-        intermediate_data_path = get_bind_path(env.get('ieasyforecast_intermediate_data_path'))
-        # Create a log directory if it does not already exist
-        if not os.path.exists(intermediate_data_path):
-            os.makedirs(intermediate_data_path)
-        return luigi.LocalTarget(f'{intermediate_data_path}/log/log_ml_{self.model_type}_{self.prediction_mode}.txt')
+        return luigi.LocalTarget(f'/app/log_ml_{self.model_type}_{self.prediction_mode}.txt')
 
     def run(self):
 
@@ -776,13 +810,17 @@ class RunMLModel(pu.TimeoutMixin, luigi.Task):
                 self.run_with_timeout(container.wait)
                 logs = container.logs().decode('utf-8')
 
-                with self.output().open('w') as f:
+                with open(self.docker_logs_file_path, 'w') as f:
                     f.write('Task completed\n')
                     f.write(f'Container ID: {container.id}\n')
                     f.write(f'Logs:\n{logs}')
 
                 final_status = "Success"
                 details = "Task completed successfully"
+
+                # Create the output marker file
+                with self.output().open('w') as f:
+                    f.write('Task completed')
 
             except TimeoutError:
                 container.stop()
@@ -810,6 +848,7 @@ class RunMLModel(pu.TimeoutMixin, luigi.Task):
                 except:
                     pass
 
+
 class RunAllMLModels(luigi.WrapperTask):
     def requires(self):
         # Ensure preprocessing tasks are completed first
@@ -823,6 +862,7 @@ class RunAllMLModels(luigi.WrapperTask):
             for mode in prediction_modes:
                 yield RunMLModel(model_type=model, prediction_mode=mode, run_mode='forecast')
 
+
 class PostProcessingForecasts(pu.TimeoutMixin, luigi.Task):
     # Set timeout to 15 minutes (900 seconds)
     timeout_seconds = luigi.IntParameter(default=900)
@@ -830,16 +870,17 @@ class PostProcessingForecasts(pu.TimeoutMixin, luigi.Task):
     max_retries = 2
     retry_delay = 5
 
+    # Use the intermediate_data_path for log files instead of /app/
+    intermediate_data_path = get_bind_path(env.get('ieasyforecast_intermediate_data_path'))
+    # Define the logging output of the task.
+    docker_logs_file_path = f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/docker_logs/log_postproc_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+
+
     def requires(self):
         return LinearRegression()
 
     def output(self):
-        # Use the intermediate_data_path for log files instead of /app/
-        intermediate_data_path = get_bind_path(env.get('ieasyforecast_intermediate_data_path'))
-        # Create a log directory if it does not already exist
-        if not os.path.exists(intermediate_data_path):
-            os.makedirs(intermediate_data_path)
-        return luigi.LocalTarget(f'{intermediate_data_path}/log/log_postproc.txt')
+        return luigi.LocalTarget(f'/app/log_postproc.txt')
 
     def _run_container(self, attempt_number) -> tuple[Optional[str], int, str]:
         """
@@ -939,12 +980,17 @@ class PostProcessingForecasts(pu.TimeoutMixin, luigi.Task):
 
                 if exit_status == 0:
                     # Success - write output and exit
-                    with self.output().open('w') as f:
+                    with open(self.docker_logs_file_path, 'w') as f:
                         f.write('Task completed successfully\n')
                         f.write(f'Container ID: {container_id}\n')
                         f.write(f'Logs:\n{logs}')
                     final_status = "Success"
                     details = f"Completed on attempt {attempts}"
+
+                    # Create the output marker file
+                    with self.output().open('w') as f:
+                        f.write('Task completed')
+
                     break
 
                 if exit_status == 124:  # Timeout
@@ -984,13 +1030,14 @@ class DeleteOldGatewayFiles(pu.TimeoutMixin, luigi.Task):
     # Set timeout to 5 minutes (300 seconds) - should be plenty for a file deletion task
     timeout_seconds = luigi.IntParameter(default=300)
 
+    # Use the intermediate_data_path for log files instead of /app/
+    intermediate_data_path = get_bind_path(env.get('ieasyforecast_intermediate_data_path'))
+    # Define the logging output of the task.
+    docker_logs_file_path = f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/docker_logs/log_deleteOldGatewayFiles_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+
+
     def output(self):
-        # Use the intermediate_data_path for log files instead of /app/
-        intermediate_data_path = get_bind_path(env.get('ieasyforecast_intermediate_data_path'))
-        # Create a log directory if it does not already exist
-        if not os.path.exists(intermediate_data_path):
-            os.makedirs(intermediate_data_path)
-        return luigi.LocalTarget(f'{intermediate_data_path}/log/log_deleteoldfiles.txt')
+        return luigi.LocalTarget(f'/app/log_deleteoldfiles.txt')
 
     def _delete_old_files(self) -> tuple[int, list[str], list[str]]:
         """
@@ -1072,19 +1119,26 @@ class DeleteOldGatewayFiles(pu.TimeoutMixin, luigi.Task):
                         result_details.append(f"- {error}")
 
                 # Write detailed output
-                with self.output().open('w') as f:
+                with open(self.docker_logs_file_path, 'w') as f:
                     f.write('Task completed successfully\n')
                     f.write('\n'.join(result_details))
 
                 final_status = "Success"
                 details = f"Deleted {deleted_count} files"
 
+                # Create the output marker file
+                with self.output().open('w') as f:
+                    f.write(f'Task completed: deleted {deleted_count} files')
+
             except TimeoutError:
                 final_status = "Timeout"
                 details = f"Task timed out after {self.timeout_seconds} seconds"
 
-                with self.output().open('w') as f:
+                with open(self.docker_logs_file_path, 'w') as f:
                     f.write(f'Task timed out after {self.timeout_seconds} seconds')
+
+                with self.output().open('w') as f:
+                    f.write('Task timed out after {self.timeout_seconds} seconds')
 
         except Exception as e:
             error_message = f"Unexpected error: {str(e)}"
@@ -1093,8 +1147,11 @@ class DeleteOldGatewayFiles(pu.TimeoutMixin, luigi.Task):
 
             # Try to write to output even in case of error
             try:
-                with self.output().open('w') as f:
+                with open(self.docker_logs_file_path, 'w') as f:
                     f.write(f'Task failed: {error_message}')
+
+                with self.output().open('w') as f:
+                    f.write('Task failed: ' + error_message)
             except:
                 pass
 
@@ -1111,6 +1168,92 @@ class DeleteOldGatewayFiles(pu.TimeoutMixin, luigi.Task):
             )
 
 
+class LogFileCleanup(pu.TimeoutMixin, luigi.Task):
+
+    log_directory = f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/docker_logs"
+    days_to_keep = luigi.IntParameter(default=15)
+    file_pattern = 'log_*.txt'
+
+    # Use the intermediate_data_path for log files instead of /app/
+    intermediate_data_path = get_bind_path(env.get('ieasyforecast_intermediate_data_path'))
+    # Define the logging output of the task.
+    docker_logs_file_path = f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/docker_logs/log_dockerLogsFileCleanup_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+
+
+    def output(self):
+        return luigi.LocalTarget(f'/app/log_cleanuplogs.txt')
+
+    def run(self):
+
+        logger = pu.TaskLogger()
+        start_time = datetime.datetime.now()
+
+        try:
+
+            # Calculate cutoff date
+            cutoff_date = datetime.datetime.now() - datetime.timedelta(days=self.days_to_keep)
+
+            # Get list of log files matching pattern
+            file_path_pattern = os.path.join(self.log_directory, self.file_pattern)
+            log_files = glob.glob(file_path_pattern)
+
+            # Track statistics
+            deleted_count = 0
+            failed_count = 0
+
+            for file_path in log_files:
+                try:
+                    # Get file modification time
+                    file_mtime = os.path.getmtime(file_path)
+                    file_datetime = datetime.datetime.fromtimestamp(file_mtime)
+
+                    # Check if file is older than cutoff date
+                    if file_datetime < cutoff_date:
+                        # Delete the file
+                        os.remove(file_path)
+                        deleted_count += 1
+                except Exception as e:
+                    failed_count += 1
+
+            # Write summary to output file
+            with open(self.docker_logs_file_path, 'w') as f:
+                summary = {
+                    'timestamp': datetime.datetime.now().isoformat(),
+                    'log_directory': self.log_directory,
+                    'file_pattern': self.file_pattern,
+                    'days_to_keep': self.days_to_keep,
+                    'cutoff_date': cutoff_date.isoformat(),
+                    'total_files_found': len(log_files),
+                    'files_deleted': deleted_count,
+                    'failures': failed_count
+                }
+                for key, value in summary.items():
+                    f.write(f"{key}: {value}\n")
+            status = "Success"
+            details = f"Deleted {deleted_count} files, {failed_count} failures"
+
+            # Create the output marker file
+            with self.output().open('w') as f:
+                f.write('Task completed')
+
+        except Exception as e:
+            print(f"Error in LogFileCleanup: {str(e)}")
+            status = "Failed"
+            details = str(e)
+            raise
+
+        finally:
+            end_time = datetime.datetime.now()
+
+            logger.log_task_timing(
+                task_name="LogFileCleanup",
+                start_time=start_time,
+                end_time=end_time,
+                status=status,
+                details=details
+            )
+
+
 class SendPipelineCompletionNotification(luigi.Task):
     """Send notification when the entire pipeline is complete."""
 
@@ -1120,16 +1263,17 @@ class SendPipelineCompletionNotification(luigi.Task):
     # Tasks this notification depends on
     depends_on = luigi.Parameter(default=[])
 
+    # Use the intermediate_data_path for log files instead of /app/
+    intermediate_data_path = get_bind_path(env.get('ieasyforecast_intermediate_data_path'))
+    # Define the logging output of the task.
+    docker_logs_file_path = f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/docker_logs/log_sendPipelineCompletionNotification_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+
+
     def requires(self):
         return self.depends_on
 
     def output(self):
-        # Use the intermediate_data_path for log files instead of /app/
-        intermediate_data_path = get_bind_path(env.get('ieasyforecast_intermediate_data_path'))
-        # Create a log directory if it does not already exist
-        if not os.path.exists(intermediate_data_path):
-            os.makedirs(intermediate_data_path)
-        return luigi.LocalTarget(f'{intermediate_data_path}/log/log_notification.txt')
+        return luigi.LocalTarget(f'/app/log_notification.txt')
 
     def run(self):
         print("------------------------------------")
@@ -1172,12 +1316,14 @@ class SendPipelineCompletionNotification(luigi.Task):
                 message += "- PreprocessingRunoff\n"
                 message += "- LinearRegression\n"
                 message += "- PostProcessingForecasts\n"
+                message += "- LogFileCleanup\n"
             elif ORGANIZATION == 'kghm':
                 message += "- PreprocessingRunoff\n"
                 message += "- LinearRegression\n"
                 message += "- PostProcessingForecasts\n"
                 message += "- RunAllMLModels\n"
                 message += "- ConceptualModel\n"
+                message += "- LogFileCleanup\n"
                 message += "- DeleteOldGatewayFiles\n"
 
             message += "\nThis is an automated notification."
@@ -1203,15 +1349,19 @@ class SendPipelineCompletionNotification(luigi.Task):
                 notification_results.append("No email recipients configured")
 
             # Write output
-            with self.output().open('w') as f:
+            with open(self.docker_logs_file_path, 'w') as f:
                 f.write(f"Notification task completed at {current_time}\n\n")
                 f.write("\n".join(notification_results))
+
+            # Create the output marker file
+            with self.output().open('w') as f:
+                f.write('Task completed')
 
         except Exception as e:
             print(f"Error sending notifications: {str(e)}")
             success = False
 
-            with self.output().open('w') as f:
+            with open(self.docker_logs_file_path, 'w') as f:
                 f.write(f"Notification task failed: {str(e)}")
 
         finally:
@@ -1228,7 +1378,6 @@ class SendPipelineCompletionNotification(luigi.Task):
             )
 
 
-
 class RunWorkflow(luigi.Task):
     """Main wrapper task that runs the entire forecast pipeline."""
 
@@ -1238,17 +1387,29 @@ class RunWorkflow(luigi.Task):
     # Flag to control whether to send notifications
     send_notifications = luigi.BoolParameter(default=True)
 
+    # Use the intermediate_data_path for log files instead of /app/
+    intermediate_data_path = get_bind_path(env.get('ieasyforecast_intermediate_data_path'))
+    # Define the logging output of the task.
+    docker_logs_file_path = f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/docker_logs/log_runWorkflow_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+
+
     def requires(self):
+
+        # Test if directory of docker_logs_file_path exists and create it if not
+        os.makedirs(os.path.dirname(self.docker_logs_file_path), exist_ok=True)
+
         if ORGANIZATION=='demo':
             print("Running demo workflow.")
-            base_tasks = [PostProcessingForecasts()]
+            base_tasks = [PostProcessingForecasts(),
+                          LogFileCleanup()]
 
         elif ORGANIZATION=='kghm':
             print("Running KGHM workflow.")
             base_tasks =  [PostProcessingForecasts(),
                            RunAllMLModels(),
                            ConceptualModel(),
-                           DeleteOldGatewayFiles()
+                           DeleteOldGatewayFiles(),
+                           LogFileCleanup()
                            ]
         # You can add workflow definitions for other organizations here.
 
@@ -1267,19 +1428,18 @@ class RunWorkflow(luigi.Task):
             return base_tasks
 
     def output(self):
-        # Use the intermediate_data_path for log files instead of /app/
-        intermediate_data_path = get_bind_path(env.get('ieasyforecast_intermediate_data_path'))
-        # Create a log directory if it does not already exist
-        if not os.path.exists(intermediate_data_path):
-            os.makedirs(intermediate_data_path)
-        return luigi.LocalTarget(f'{intermediate_data_path}/log/log_workflow_complete.txt')
+        return luigi.LocalTarget(f'/app/log_workflow_complete.txt')
 
     def run(self):
         print("Workflow completed.")
 
         # Create output file to mark completion
-        with self.output().open('w') as f:
+        with open(self.docker_logs_file_path, 'w') as f:
             f.write(f"Workflow for {ORGANIZATION} completed at {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
+        # Create the output marker file
+        with self.output().open('w') as f:
+            f.write('Task completed')
 
 
 if __name__ == '__main__':
