@@ -206,7 +206,7 @@ class PreprocessingRunoff(pu.TimeoutMixin, luigi.Task):
 
                 if exit_status == 0:
                     # Success - write output and exit
-                    with self.docker_logs_file_path().open('w') as f:
+                    with open(self.docker_logs_file_path, 'w') as f:
                         f.write('Task completed successfully\n')
                         f.write(f'Container ID: {container_id}\n')
                         f.write(f'Logs:\n{logs}')
@@ -360,7 +360,7 @@ class PreprocessingGatewayQuantileMapping(pu.TimeoutMixin, luigi.Task):
 
                 if exit_status == 0:
                     # Success - write output and exit
-                    with self.docker_logs_file_path.open('w') as f:
+                    with open(self.docker_logs_file_path, 'w') as f:
                         f.write('Task completed successfully\n')
                         f.write(f'Container ID: {container_id}\n')
                         f.write(f'Logs:\n{logs}')
@@ -512,7 +512,7 @@ class LinearRegression(pu.TimeoutMixin, luigi.Task):
 
                 if exit_status == 0:
                     # Success - write output and exit
-                    with self.docker_logs_file_path().open('w') as f:
+                    with open(self.docker_logs_file_path, 'w') as f:
                         f.write('Task completed successfully\n')
                         f.write(f'Container ID: {container_id}\n')
                         f.write(f'Logs:\n{logs}')
@@ -666,7 +666,7 @@ class ConceptualModel(pu.TimeoutMixin, luigi.Task):
 
                 if exit_status == 0:
                     # Success - write output and exit
-                    with self.docker_logs_file_path.open('w') as f:
+                    with open(self.docker_logs_file_path, 'w') as f:
                         f.write('Task completed successfully\n')
                         f.write(f'Container ID: {container_id}\n')
                         f.write(f'Logs:\n{logs}')
@@ -790,7 +790,7 @@ class RunMLModel(pu.TimeoutMixin, luigi.Task):
                 self.run_with_timeout(container.wait)
                 logs = container.logs().decode('utf-8')
 
-                with self.docker_logs_file_path.open('w') as f:
+                with open(self.docker_logs_file_path, 'w') as f:
                     f.write('Task completed\n')
                     f.write(f'Container ID: {container.id}\n')
                     f.write(f'Logs:\n{logs}')
@@ -956,7 +956,7 @@ class PostProcessingForecasts(pu.TimeoutMixin, luigi.Task):
 
                 if exit_status == 0:
                     # Success - write output and exit
-                    with self.docker_logs_file_path.open('w') as f:
+                    with open(self.docker_logs_file_path, 'w') as f:
                         f.write('Task completed successfully\n')
                         f.write(f'Container ID: {container_id}\n')
                         f.write(f'Logs:\n{logs}')
@@ -1090,7 +1090,7 @@ class DeleteOldGatewayFiles(pu.TimeoutMixin, luigi.Task):
                         result_details.append(f"- {error}")
 
                 # Write detailed output
-                with self.docker_logs_file_path.open('w') as f:
+                with open(self.docker_logs_file_path, 'w') as f:
                     f.write('Task completed successfully\n')
                     f.write('\n'.join(result_details))
 
@@ -1101,7 +1101,7 @@ class DeleteOldGatewayFiles(pu.TimeoutMixin, luigi.Task):
                 final_status = "Timeout"
                 details = f"Task timed out after {self.timeout_seconds} seconds"
 
-                with self.docker_logs_file_path.open('w') as f:
+                with open(self.docker_logs_file_path, 'w') as f:
                     f.write(f'Task timed out after {self.timeout_seconds} seconds')
 
         except Exception as e:
@@ -1111,7 +1111,7 @@ class DeleteOldGatewayFiles(pu.TimeoutMixin, luigi.Task):
 
             # Try to write to output even in case of error
             try:
-                with self.docker_logs_file_path.open('w') as f:
+                with open(self.docker_logs_file_path, 'w') as f:
                     f.write(f'Task failed: {error_message}')
             except:
                 pass
@@ -1177,7 +1177,7 @@ class LogFileCleanup(pu.TimeoutMixin, luigi.Task):
                     failed_count += 1
 
             # Write summary to output file
-            with self.docker_logs_file_path.open('w') as f:
+            with open(self.docker_logs_file_path, 'w') as f:
                 summary = {
                     'timestamp': datetime.datetime.now().isoformat(),
                     'log_directory': self.log_directory,
@@ -1304,7 +1304,7 @@ class SendPipelineCompletionNotification(luigi.Task):
                 notification_results.append("No email recipients configured")
 
             # Write output
-            with self.docker_logs_file_path.open('w') as f:
+            with open(self.docker_logs_file_path, 'w') as f:
                 f.write(f"Notification task completed at {current_time}\n\n")
                 f.write("\n".join(notification_results))
 
@@ -1312,7 +1312,7 @@ class SendPipelineCompletionNotification(luigi.Task):
             print(f"Error sending notifications: {str(e)}")
             success = False
 
-            with self.docker_logs_file_path.open('w') as f:
+            with open(self.docker_logs_file_path, 'w') as f:
                 f.write(f"Notification task failed: {str(e)}")
 
         finally:
@@ -1381,7 +1381,7 @@ class RunWorkflow(luigi.Task):
         print("Workflow completed.")
 
         # Create output file to mark completion
-        with self.docker_logs_file_path.open('w') as f:
+        with open(self.docker_logs_file_path, 'w') as f:
             f.write(f"Workflow for {ORGANIZATION} completed at {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
 
