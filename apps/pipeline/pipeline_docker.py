@@ -1316,12 +1316,14 @@ class SendPipelineCompletionNotification(luigi.Task):
                 message += "- PreprocessingRunoff\n"
                 message += "- LinearRegression\n"
                 message += "- PostProcessingForecasts\n"
+                message += "- LogFileCleanup\n"
             elif ORGANIZATION == 'kghm':
                 message += "- PreprocessingRunoff\n"
                 message += "- LinearRegression\n"
                 message += "- PostProcessingForecasts\n"
                 message += "- RunAllMLModels\n"
                 message += "- ConceptualModel\n"
+                message += "- LogFileCleanup\n"
                 message += "- DeleteOldGatewayFiles\n"
 
             message += "\nThis is an automated notification."
