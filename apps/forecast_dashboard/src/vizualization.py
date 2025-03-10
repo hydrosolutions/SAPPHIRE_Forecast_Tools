@@ -93,6 +93,7 @@ runoff_full_range_color = "#eaf0f4"
 runoff_90percentile_range_color = "#d5e2ea"
 runoff_50percentile_range_color = "#c0d4df"
 runoff_mean_color = "#307096"
+runoff_norm_color = "#9F5F9F"
 observed_runoff_palette = "black"
 if observed_runoff_palette == "purple":
     # Purple color palette for the runoff last year and current year
@@ -2670,7 +2671,7 @@ def plot_pentad_forecast_hydrograph_data(_, hydrograph_pentad_all, forecasts_all
 
     # Print pentad of first date in data
     print(f"\n\n\n\n\npentad of first date in data: {data['pentad_in_year'].iloc[0]} of {data['date'].iloc[0]}")
-    print(f"head(data): {data.head()[['code', 'pentad_in_year', 'mean', '2024', '2025', 'date']]}")
+    print(f"head(data): {data.head()[['code', 'pentad_in_year', 'norm', 'mean', '2024', '2025', 'date']]}")
     print(f"data.columns: {data.columns}")
 
     # Set values after the title date to NaN
@@ -2697,6 +2698,7 @@ def plot_pentad_forecast_hydrograph_data(_, hydrograph_pentad_all, forecasts_all
         'q25': _('25% column name'),
         'q75': _('75% column name'),
         'mean': _('mean column name'),
+        'norm': _('norm column name'),
         str(last_year): _('Last year column name'),
         str(current_year): _('Current year column name')
         })
@@ -2752,6 +2754,9 @@ def plot_pentad_forecast_hydrograph_data(_, hydrograph_pentad_all, forecasts_all
         data, _('pentad_of_year column name'), _('75% column name'),
         runoff_50percentile_range_color, hover_tool=False)
 
+    norm = plot_runoff_line(
+        data, _('pentad_of_year column name'), _('norm column name'),
+        _('Norm legend entry'), runoff_norm_color)
     mean = plot_runoff_line(
         data, _('pentad_of_year column name'), _('mean column name'),
         _('Mean legend entry'), runoff_mean_color)
@@ -2792,10 +2797,10 @@ def plot_pentad_forecast_hydrograph_data(_, hydrograph_pentad_all, forecasts_all
         area_05_95 * line_05 * line_95 * \
         area_25_75 * line_25 * line_75 * \
         forecast_area * forecast_lower_bound * forecast_upper_bound * \
-        mean * current_year * forecast_line * \
+        norm * mean * current_year * forecast_line * \
         current_forecast_range_point
     else:
-        pentad_hydrograph = mean * current_year * forecast_line * \
+        pentad_hydrograph = norm * mean * current_year * forecast_line * \
         current_forecast_range_point
 
     pentad_hydrograph.opts(

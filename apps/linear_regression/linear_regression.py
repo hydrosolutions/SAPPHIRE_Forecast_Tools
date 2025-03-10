@@ -148,12 +148,12 @@ def main():
 
     # Save pentadal data
     #print("DEBUG data_pentad\n", data_pentad.tail(10))
-    fl.write_pentad_hydrograph_data(data_pentad)
+    fl.write_pentad_hydrograph_data(data_pentad, iehhf_sdk=ieh_hf_sdk)
     fl.write_pentad_time_series_data(data_pentad)
 
     # Save decadal data
     if forecast_flags.decad:
-        fl.write_decad_hydrograph_data(data_decad)
+        fl.write_decad_hydrograph_data(data_decad, iehhf_sdk=ieh_hf_sdk)
         fl.write_decad_time_series_data(data_decad)
 
     # Iterate over the dates
