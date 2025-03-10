@@ -3,7 +3,7 @@
 # This script creates a dashboard for the pentadal forecast.
 #
 # Run with the following command:
-# ieasyhydroforecast_data_root_dir=/absolute/path/to ieasyhydroforecast_env_file_path=/absolute/path/to/sensitive_data_forecast_tools/config/.env_develop_kghm SAPPHIRE_OPDEV_ENV=True panel serve pentad_dashboard.py --show --autoreload
+# ieasyhydroforecast_data_root_dir=/absolute/path/to ieasyhydroforecast_env_file_path=/absolute/path/to/sensitive_data_forecast_tools/config/.env_develop_kghm SAPPHIRE_OPDEV_ENV=True panel serve pentad_dashboard.py --show --autoreload --port 5007
 #
 
 # region load_libraries
@@ -730,6 +730,7 @@ def update_site_attributes_with_hydrograph_statistics_for_selected_pentad(_,
         # Get the hydrograph statistics for each site
         row = df[df['site_code'] == site.code]
         site.hydrograph_mean = row['mean'].values[0]
+        site.hydrograph_norm = row['norm'].values[0]
         site.hydrograph_max = row['max'].values[0]
         site.hydrograph_min = row['min'].values[0]
         site.last_year_q_pentad_mean = row[last_year_column].values[0]

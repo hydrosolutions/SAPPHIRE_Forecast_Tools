@@ -769,8 +769,42 @@ def save_discharge_avg(modified_data, fc_sites, group_id=None,
 
     # Now we need to write the discharge_avg for the current pentad to the site: Site
     for site in fc_sites:
-        logger.debug(f'    Calculating norm discharge for site {site.code} ...')
+        logger.debug(f'    calculating norm, min,max discharge for site {site.code} ...')
         Site.from_df_get_norm_discharge(
+            site, group_id, norm_discharge, min_discharge, max_discharge,
+            code_col=code_col, group_col=group_col, value_col=value_col)
+
+    logger.debug(f'   {len(fc_sites)} Norm discharge calculated, namely:\n{[site1.qnorm for site1 in fc_sites]}')
+    logger.debug("   ... done")
+
+def save_discharge_avg_decad(modified_data, fc_sites, group_id=None,
+                       code_col='code', group_col=None, value_col=None):
+    """
+    Calculate the norm discharge for each site and write it to the site object.
+    """
+    # Test if all columns here are in the modified_data DataFrame
+    if not all(column in modified_data.columns for column in [code_col, group_col, value_col]):
+        raise ValueError(f'DataFrame is missing one or more required columns: {code_col, group_col, value_col}')
+
+    # Group modified_data by Code and calculate the mean over discharge_avg
+    # while ignoring NaN values
+    norm_discharge = (
+        modified_data.reset_index(drop=True).groupby([code_col, group_col], as_index=False)[value_col]
+                      .apply(lambda x: x.mean(skipna=True))
+    )
+    min_discharge = (
+        modified_data.reset_index(drop=True).groupby([code_col, group_col], as_index=False)[value_col]
+                        .apply(lambda x: x.min(skipna=True))
+    )
+    max_discharge = (
+        modified_data.reset_index(drop=True).groupby([code_col, group_col], as_index=False)[value_col]
+                        .apply(lambda x: x.max(skipna=True))
+    )
+
+    # Now we need to write the discharge_avg for the current pentad to the site: Site
+    for site in fc_sites:
+        logger.debug(f'    calculating norm, min,max discharge for site {site.code} ...')
+        Site.from_df_get_norm_discharge_decad(
             site, group_id, norm_discharge, min_discharge, max_discharge,
             code_col=code_col, group_col=group_col, value_col=value_col)
 
@@ -2438,12 +2472,14 @@ def is_leap_year(year):
     else:
         return False
 
-def write_pentad_hydrograph_data(data: pd.DataFrame):
+def write_pentad_hydrograph_data(data: pd.DataFrame, iehhf_sdk = None):
     """
     Calculates statistics of the pentadal hydrograph and saves it to a csv file.
 
     Args:
     data (pd.DataFrame): The data to be written to a csv file.
+    iehhf_sdk (ieasyhydroforecast_sdk): The iEH HF SDK object. Required only if
+        norms are to be read from iEH HF.
 
     Returns:
     None
@@ -2477,7 +2513,6 @@ def write_pentad_hydrograph_data(data: pd.DataFrame):
         data = data[~((data['date'].dt.month == 2) & (data['date'].dt.day == 29))]
         data.loc[(data['date'].dt.month > 2), 'day_of_year'] -= 1
 
-    # Calculate runoff statistics
     runoff_stats = data[data['date'].dt.year != current_year]. \
         reset_index(drop=True). \
         groupby(['code', 'pentad_in_year']). \
@@ -2489,6 +2524,33 @@ def write_pentad_hydrograph_data(data: pd.DataFrame):
             q75=pd.NamedAgg(column='discharge_avg', aggfunc=lambda x: x.quantile(0.75)),
             q95=pd.NamedAgg(column='discharge_avg', aggfunc=lambda x: x.quantile(0.95))). \
         reset_index(drop=False)
+    # If the forecast tools are connected to iEH HF, we get the norm values from there.
+    if os.getenv('ieasyhydroforecast_connect_to_iEH') == 'False':
+        # Read the norm data from iEH HF
+        # Test if iehhf_sdk is not None, throw an error if it is
+        if iehhf_sdk is None:
+            raise ValueError("ieasyhydroforecast_sdk object is required to read norms from iEH HF.")
+        # Read the norms from iEH HF for each site
+        all_pentadal_norms = pd.DataFrame({'pentad_in_year': range(1, 73)})
+        # Cast pentad in year to string
+        all_pentadal_norms['pentad_in_year'] = all_pentadal_norms['pentad_in_year'].astype(str)
+        for code in runoff_stats['code'].unique():
+            try:
+                temp_norm = iehhf_sdk.get_norm_for_site(code, "discharge", norm_period="p")
+            except Exception as e:
+                logger.error(f"Could not get norm for site {code}.")
+                temp_norm = []
+            if len(temp_norm) > 0:
+                all_pentadal_norms[code] = temp_norm
+            else:
+                all_pentadal_norms[code] = [None] * 72  # 72 pentads in a year
+        # Melt to long format
+        all_pentadal_norms = all_pentadal_norms.melt(id_vars=['pentad_in_year'], var_name='code', value_name='norm')
+        # Merge with runoff_stats
+        runoff_stats = pd.merge(runoff_stats, all_pentadal_norms, left_on=['pentad_in_year', 'code'], right_on=['pentad_in_year', 'code'], how='left')
+    else:
+        # Add a norm column to runoff_stats which is NaN
+        runoff_stats['norm'] = np.nan
 
     # Get current and last years data for each station and pentad_in_year and
     # merge to runoff_stats
@@ -2548,12 +2610,14 @@ def write_pentad_hydrograph_data(data: pd.DataFrame):
 
     return ret
 
-def write_decad_hydrograph_data(data: pd.DataFrame):
+def write_decad_hydrograph_data(data: pd.DataFrame, iehhf_sdk = None):
     """
     Calculates statistics of the decadal hydrograph and saves it to a csv file.
 
     Args:
     data (pd.DataFrame): The data to be written to a csv file.
+    iehhf_sdk (ieasyhydroforecast_sdk): The iEH HF SDK object. Required only if
+        norms are to be read from iEH HF.
 
     Returns:
     None
@@ -2591,6 +2655,33 @@ def write_decad_hydrograph_data(data: pd.DataFrame):
             q75=pd.NamedAgg(column='discharge_avg', aggfunc=lambda x: x.quantile(0.75)),
             q95=pd.NamedAgg(column='discharge_avg', aggfunc=lambda x: x.quantile(0.95))). \
         reset_index(drop=False)
+    # If the forecast tools are connected to iEH HF, we get the norm values from there.
+    if os.getenv('ieasyhydroforecast_connect_to_iEH') == 'False':
+        # Read the norm data from iEH HF
+        # Test if iehhf_sdk is not None, throw an error if it is
+        if iehhf_sdk is None:
+            raise ValueError("ieasyhydroforecast_sdk object is required to read norms from iEH HF.")
+        # Read the norms from iEH HF for each site
+        all_pentadal_norms = pd.DataFrame({'decad_in_year': range(1, 37)})
+        # Cast pentad in year to string
+        all_pentadal_norms['decad_in_year'] = all_pentadal_norms['decad_in_year'].astype(str)
+        for code in runoff_stats['code'].unique():
+            try:
+                temp_norm = iehhf_sdk.get_norm_for_site(code, "discharge")
+            except Exception as e:
+                logger.error(f"Could not get norm for site {code}.")
+                temp_norm = []
+            if len(temp_norm) > 0:
+                all_pentadal_norms[code] = temp_norm
+            else:
+                all_pentadal_norms[code] = [None] * 36  # 36 decads in a year
+        # Melt to long format
+        all_pentadal_norms = all_pentadal_norms.melt(id_vars=['decad_in_year'], var_name='code', value_name='norm')
+        # Merge with runoff_stats
+        runoff_stats = pd.merge(runoff_stats, all_pentadal_norms, left_on=['decad_in_year', 'code'], right_on=['decad_in_year', 'code'], how='left')
+    else:
+        # Add a norm column to runoff_stats which is NaN
+        runoff_stats['norm'] = np.nan
 
     # Get current and last years data for each station and pentad_in_year and
     # merge to runoff_stats
@@ -4134,7 +4225,7 @@ class Site:
                         decadal_forecast=row['enabled_forecasts'].values[0]['decadal_forecast'],
                         monthly_forecast=row['enabled_forecasts'].values[0]['monthly_forecast'],
                         seasonal_forecast=row['enabled_forecasts'].values[0]['seasonal_forecast'],
-                        site_type=row['site_type'].values[0]
+                        site_type=row['site_type'].values[0],
                     )
                     sites.append(site)
                 elif (row['enabled_forecasts'].values[0]['pentad_forecast'] == True):

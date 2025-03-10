@@ -359,7 +359,7 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
 
     hydrograph_norm_tag = Tag(
         name='QNORM',
-        get_value_fn=lambda obj, **kwargs: round_discharge_to_comma_separated_string(obj.hydrograph_mean),
+        get_value_fn=lambda obj, **kwargs: round_discharge_to_comma_separated_string(obj.hydrograph_norm),
         tag_settings=tag_settings,
         data=True
     )
