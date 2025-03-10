@@ -620,23 +620,7 @@ class ConceptualModel(pu.TimeoutMixin, luigi.Task):
     # Use the intermediate_data_path for log files instead of /app/
     intermediate_data_path = get_bind_path(env.get('ieasyforecast_intermediate_data_path'))
     # Define the logging output of the task.
-    docker_logs_file_path = f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/docker_logs/log_linreg_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-        # Get parameters from timeout manager
-        task_name = self.__class__.__name__
-        task_params = get_task_parameters(task_name)
-
-        if self.timeout_seconds is None:
-            self.timeout_seconds = task_params['timeout_seconds']
-
-        if self.max_retries is None:
-            self.max_retries = task_params['max_retries']
-
-        if self.retry_delay is None:
-            self.retry_delay = task_params['retry_delay']
+    docker_logs_file_path = f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/docker_logs/log_conceptmod_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
