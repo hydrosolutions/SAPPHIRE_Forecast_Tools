@@ -17,7 +17,7 @@ env:
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "evaluate-logged-times" ]
   pull_request:
     branches: [ "main" ]
 
