@@ -9,6 +9,7 @@ ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 # Set an environment variable to indicate the container environment.
 ENV SAPPHIRE_OPDEV_ENV=True
+ENV PATH="/home/appuser/.local/bin:${PATH}"
 
 # Update the packages to the latest OS version.
 RUN apt-get clean && \
@@ -37,6 +38,9 @@ ARG USER_ID=1000
 ARG GROUP_ID=1000
 RUN groupadd --gid $GROUP_ID appgroup && \
     useradd --uid $USER_ID --gid $GROUP_ID --create-home appuser
+# Add appuser to docker group
+RUN groupadd -g 999 docker_ext || true && \
+    usermod -aG docker_ext appuser
 
 # Set permissions for the application directory
 WORKDIR /app
@@ -46,7 +50,7 @@ RUN chown -R appuser:appgroup /app
 USER appuser
 
 # Copy the source code into the container.
-COPY apps/iEasyHydroForecast/ /app/apps/iEasyHydroForecast
+COPY --chown=appuser:appgroup apps/iEasyHydroForecast/ /app/apps/iEasyHydroForecast
 
 # Install dependencies as the non-root user
 RUN --mount=type=cache,target=/home/appuser/.cache/pip \
