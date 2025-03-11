@@ -54,4 +54,4 @@ RUN --mount=type=cache,target=/home/appuser/.cache/pip \
     pip install --upgrade pip setuptools wheel tornado && \
     pip install --trusted-host pypi.python.org -r /app/apps/docker_base_image/requirements.txt && \
     pip install git+https://github.com/hydrosolutions/ieasyhydro-python-sdk && \
-    pip install --no-cache-dir /app/apps/iEasyHydroForecast
+    sudo pip install --no-cache-dir /app/apps/iEasyHydroForecast
