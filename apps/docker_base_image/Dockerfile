@@ -39,8 +39,18 @@ ARG GROUP_ID=1000
 RUN groupadd --gid $GROUP_ID appgroup && \
     useradd --uid $USER_ID --gid $GROUP_ID --create-home appuser
 # Add appuser to docker group
-RUN groupadd -g 999 docker_ext || true && \
-    usermod -aG docker_ext appuser
+# More robust handling of docker group
+# Adaptive approach - use existing group with GID 999 or create one
+RUN DOCKER_GRP=$(getent group 999 | cut -d: -f1 || echo "") && \
+    if [ -z "$DOCKER_GRP" ]; then \
+        echo "Creating docker_ext group with GID 999" && \
+        groupadd -g 999 docker_ext && \
+        DOCKER_GRP="docker_ext"; \
+    else \
+        echo "Using existing group $DOCKER_GRP with GID 999"; \
+    fi && \
+    usermod -aG $DOCKER_GRP appuser && \
+    echo "Added appuser to group $DOCKER_GRP"
 
 # Set permissions for the application directory
 WORKDIR /app
