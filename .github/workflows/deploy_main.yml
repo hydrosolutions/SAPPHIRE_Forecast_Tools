@@ -85,10 +85,10 @@ jobs:
 
       - name: Sign Docker Image with Cosign
         run: |
-          cosign sign --key env://COSIGN_PRIVATE_KEY "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
+          cosign sign --key env://COSIGN_PRIVATE_KEY --tlog-upload=false "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
         env:
           COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
-          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}  # Only if your key has a password
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
 
       # Log in to the Docker registry
       - name: Log in to the Docker registry
