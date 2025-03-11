@@ -103,6 +103,14 @@ jobs:
           COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
           COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
 
+      - name: Re-Tag Image
+        run: |
+          # Store only the latest digest
+          echo "LATEST_IMAGE_DIGEST=${DIGEST}" >> $GITHUB_ENV
+
+          # Tag with latest
+          docker tag "${DIGEST}" "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG}}"
+          docker push "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
 
 
   build_and_push_pipeline_image:
