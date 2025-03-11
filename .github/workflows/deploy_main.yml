@@ -84,6 +84,11 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
+      # Push the image to Dockerhub
+      - name: Push the image to Dockerhub
+        run: |
+          docker push "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
+
       - name: Install Cosign
         run: |
           curl -L https://github.com/sigstore/cosign/releases/latest/download/cosign-linux-amd64 -o cosign
@@ -97,11 +102,6 @@ jobs:
         env:
           COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
           COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
-
-      # Push the image to Dockerhub
-      - name: Push the image to Dockerhub
-        run: |
-          docker push "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
 
 
 
