@@ -36,6 +36,8 @@ services:
       - ${ieasyhydroforecast_data_ref_dir}/intermediate_data:${ieasyhydroforecast_container_data_ref_dir}/intermediate_data
       - ${ieasyhydroforecast_data_ref_dir}/bin:${ieasyhydroforecast_container_data_ref_dir}/bin
     container_name: sapphire-backend-pipeline
+    group_add:
+      - ${DOCKER_GID:-988}  # Add host's Docker GID dynamically
 
 
 
