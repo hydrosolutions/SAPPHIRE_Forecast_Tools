@@ -8,12 +8,13 @@ FROM rocker/tidyverse:4.4.1 AS base
 
 # Set environment
 ENV SAPPHIRE_OPDEV_ENV=True
+ENV PATH="/home/appuser/.local/bin:${PATH}"
 
 # Set working directory
 WORKDIR /app
 
 # Copy the directory
-COPY apps/conceptual_model /app/apps/conceptual_model
+COPY --chown=appuser:appgroup apps/conceptual_model /app/apps/conceptual_model
 
 # Install packages
 #RUN R -e "install.packages('remotes')"
