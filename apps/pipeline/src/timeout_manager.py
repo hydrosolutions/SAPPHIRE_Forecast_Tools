@@ -100,7 +100,8 @@ class TimeoutManager:
         params = {
             'timeout_seconds': 900,  # 15 minutes default
             'max_retries': 2,
-            'retry_delay': 5
+            'retry_delay': 5,
+            'timeout_config': 'default'
         }
 
         # Get task-specific overrides if available
@@ -123,6 +124,9 @@ class TimeoutManager:
                 params['max_retries'] = task_config['max_retries']
             if 'retry_delay' in task_config:
                 params['retry_delay'] = task_config['retry_delay']
+
+        # Get time out config to print to email notification
+        params['timeout_config'] = self.current_env
 
         return params
 

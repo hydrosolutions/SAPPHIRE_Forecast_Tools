@@ -1436,9 +1436,13 @@ class SendPipelineCompletionNotification(luigi.Task):
             else:
                 email_recipients = []
 
+            # Get parameters from timeout manager
+            task_name = self.__class__.__name__
+            task_params = get_task_parameters(task_name)
+
             # Create notification messages
             current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            subject = f"{ORGANIZATION.upper()} Forecast Pipeline Complete - {current_time}"
+            subject = f"{ORGANIZATION.upper()} {task_params['timeout_config']} Forecast Pipeline Complete - {current_time}"
 
             # Base message
             message = f"Sapphire Forecast Pipeline for {ORGANIZATION.upper()} completed successfully at {current_time}.\n\n"
@@ -1448,7 +1452,7 @@ class SendPipelineCompletionNotification(luigi.Task):
                 message += f"Message: {self.custom_message}\n\n"
 
             # Add links to dashboard if applicable
-            dashboard_url = os.getenv('SAPPHIRE_PIPELINE_DASHBOARD_URL', '')
+            dashboard_url = os.getenv('ieasyhydroforecast_url', '')
             if dashboard_url:
                 message += f"View the latest forecasts on the dashboard: {dashboard_url}\n\n"
 
