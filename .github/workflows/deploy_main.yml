@@ -73,7 +73,7 @@ jobs:
       # Run the dockerization & deployment script
       - name: Build Docker image
         run: |
-          docker build --no-cache \
+          DOCKER_BUILDKIT=1 docker build --no-cache \
           -t "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
           -f ./apps/docker_base_image/Dockerfile .
 
@@ -89,6 +89,29 @@ jobs:
         run: |
           docker push "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
 
+      - name: Install Cosign
+        run: |
+          curl -L https://github.com/sigstore/cosign/releases/latest/download/cosign-linux-amd64 -o cosign
+          chmod +x cosign
+          sudo mv cosign /usr/local/bin/
+
+      - name: Sign Docker Image with Cosign
+        run: |
+          DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}")
+          echo "DIGEST=$DIGEST" >> $GITHUB_ENV  # Explicitly set as env var
+          cosign sign --key env://COSIGN_PRIVATE_KEY --tlog-upload=false --yes "$DIGEST"
+        env:
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+
+      - name: Re-Tag Image
+        run: |
+          # Store only the latest digest
+          echo "LATEST_IMAGE_DIGEST=${DIGEST}" >> $GITHUB_ENV
+
+          # Tag with latest
+          docker tag "${DIGEST}" "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG}}"
+          docker push "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
 
 
   build_and_push_pipeline_image:

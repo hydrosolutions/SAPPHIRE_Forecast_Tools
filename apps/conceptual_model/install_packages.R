@@ -1,5 +1,8 @@
 
 
+# Set secure, reliable mirror at the very beginning
+options(repos = c(CRAN = "https://cloud.r-project.org"))
+
 # Intendent to be run from the ~app/ direction in the Docker container
 requirements <- readLines("apps/conceptual_model/requirements.txt")
 
@@ -10,19 +13,18 @@ if (!requireNamespace("remotes", quietly = TRUE)) {
 
 # Install CRAN packages
 for (pkg in requirements) {
-  
+
   package <- strsplit(pkg, "==")[[1]][1]
   version <- strsplit(pkg, "==")[[1]][2]
-  
+
   if (!requireNamespace(package, quietly = TRUE) || packageVersion(package) != version) {
     print(paste("Installing package", package, "version", version))
     remotes::install_version(
-      package, 
-      version = version, 
-      repos = "http://cran.us.r-project.org", 
+      package,
+      version = version,
       dependencies = TRUE)
   }
-  
+
   # Test if the package has been installed suscessfully
   if (!requireNamespace(package, quietly = TRUE)) {
     stop(paste("Package", package, "not installed."))
