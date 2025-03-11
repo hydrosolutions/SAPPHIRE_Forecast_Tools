@@ -92,7 +92,8 @@ jobs:
 
       - name: Sign Docker Image with Cosign
         run: |
-          cosign sign --key env://COSIGN_PRIVATE_KEY --tlog-upload=false --yes "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
+          DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}")
+          cosign sign --key env://COSIGN_PRIVATE_KEY --tlog-upload=false --yes "$DIGEST"
         env:
           COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
           COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
