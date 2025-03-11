@@ -5,35 +5,13 @@ FROM python:${PYTHON_VERSION}-slim-bookworm AS base
 
 # Prevents Python from writing pyc files.
 ENV PYTHONDONTWRITEBYTECODE=1
-
-# Keeps Python from buffering stdout and stderr to avoid situations where
-# the application crashes without emitting any logs due to buffering.
+# Keeps Python from buffering stdout and stderr.
 ENV PYTHONUNBUFFERED=1
+# Set an environment variable to indicate the container environment.
+ENV SAPPHIRE_OPDEV_ENV=True
 
-# Set an environment variable that can be read by the application to know if it
-# is running in a container.
-#ENV IN_DOCKER_CONTAINER=true
-ENV SAPPHRIE_OPDEV_ENV=True
-
-# Setting the working directory to /app
-WORKDIR /app
-
-# Copy the source code into the container.
-# Note: It is not possible to include files from a parent directory in a docker
-# image. The way to do it would
-COPY apps/iEasyHydroForecast/ /app/apps/iEasyHydroForecast
-
-# Download dependencies as a separate step to take advantage of Docker's caching.
-# Leverage a cache mount to /root/.cache/pip to speed up subsequent builds.
-# Leverage a bind mount to requirements.txt to avoid having to copy them into
-# into this layer.
-# Update libraries of the operating system. Especially the ones which are flaged
-# for vulnerabilities in dockerhub. The -y flag automatically anwwers yes to all
-# prompts.
-RUN --mount=type=cache,target=/root/.cache/pip \
-    --mount=type=bind,source=apps/docker_base_image/requirements.txt,target=/app/apps/docker_base_image/requirements.txt \
-    # Update the packages to the latest OS version
-    apt-get clean && \
+# Update the packages to the latest OS version.
+RUN apt-get clean && \
     apt-get install debian-archive-keyring && \
     apt-get update && \
     apt-get install -y gcc git libkrb5-dev && \
@@ -42,10 +20,38 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     apt-get install -y libpcre3-dev && \
     apt-get install -y gnutls-bin libc6 && \
     apt-get upgrade -y gcc libc6 && \
-    apt-get clean && \
-    # update python packages \
-    pip install --upgrade pip setuptools wheel tornado && \
+    apt-get clean
+
+# Install sudo should child images need it.
+RUN apt-get install -y sudo && \
+    echo "appuser ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+
+# Create the non-root user with specific UID/GID
+# Check the UID/GID of the host user and group with `id -u` and `id -g`
+# For Ubuntu servers this is usually 1000:1000
+# This aligns container permissions with host permissions by default.
+# Custom builds for other users can be created by passing the USER_ID and
+# GROUP_ID build arguments
+# docker build --build-arg USER_ID=10001 --build-arg GROUP_ID=10001 ...
+ARG USER_ID=1000
+ARG GROUP_ID=1000
+RUN groupadd --gid $GROUP_ID appgroup && \
+    useradd --uid $USER_ID --gid $GROUP_ID --create-home appuser
+
+# Set permissions for the application directory
+WORKDIR /app
+RUN chown -R appuser:appgroup /app
+
+# Switch to the non-root user
+USER appuser
+
+# Copy the source code into the container.
+COPY apps/iEasyHydroForecast/ /app/apps/iEasyHydroForecast
+
+# Install dependencies as the non-root user
+RUN --mount=type=cache,target=/home/appuser/.cache/pip \
+    --mount=type=bind,source=apps/docker_base_image/requirements.txt,target=/app/apps/docker_base_image/requirements.txt \
+    pip install --upgrade pip "setuptools>=70.0.0" wheel tornado && \
     pip install --trusted-host pypi.python.org -r /app/apps/docker_base_image/requirements.txt && \
     pip install git+https://github.com/hydrosolutions/ieasyhydro-python-sdk && \
-    pip install --no-cache-dir /app/apps/iEasyHydroForecast
-
+    sudo pip install --no-cache-dir /app/apps/iEasyHydroForecast
