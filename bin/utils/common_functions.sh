@@ -345,8 +345,12 @@ setup_cosign() {
             }
         fi
 
+        # Print version of cosign
+        cosign version
+
         echo "Cosign installed successfully."
     else
+        cosign version
         echo "Cosign is already installed."
     fi
 
