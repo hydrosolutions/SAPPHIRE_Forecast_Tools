@@ -380,6 +380,44 @@ pull_and_verify() {
     return 0
 }
 
+# Function to pull and verify an image
+pull_and_verify_image() {
+    local image_name="$1"
+    local tag="${2:-latest}"
+    local full_image="$REPO/$image_name:$tag"
+
+    echo "Pulling image: $full_image"
+    docker pull "$full_image"
+    pull_status=$?
+
+    if [ $pull_status -ne 0 ]; then
+        echo "❌ Failed to pull image: $full_image"
+        return 1
+    fi
+
+    if $VERIFY_SIGNATURES; then
+        echo "Verifying signature for $full_image..."
+        if cosign verify --key "$COSIGN_PUBLIC_KEY" "$full_image" --insecure-ignore-tlog; then
+            echo "✅ Signature verified for $full_image"
+        else
+            echo "❌ Failed to verify signature for $full_image"
+
+            # Only prompt if we're in an interactive shell
+            if [ -t 0 ]; then
+                echo "Would you like to continue anyway? (y/n)"
+                read -r answer
+                if [[ "$answer" != "y" ]]; then
+                    echo "Aborting due to signature verification failure"
+                    return 1
+                fi
+            else
+                echo "Non-interactive mode detected, continuing despite verification failure"
+            fi
+        fi
+    fi
+    return 0
+}
+
 # Function to check if images are prepared
 check_backend_images_prepared() {
     local tag="${1:-$ieasyhydroforecast_backend_docker_image_tag}"

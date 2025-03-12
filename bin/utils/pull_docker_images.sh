@@ -4,7 +4,7 @@
 # is available. If not, it will install the Cosign binary. The user can opt to
 # skip signature verification if the public key is not available. The script will
 # then pull the Docker images for the specified tag and verify their signatures.
-source "bin/utils/common_functions.sh"
+source "$(dirname "$0")/common_functions.sh"
 
 if test -z "$1"
 then
@@ -36,21 +36,21 @@ KGHM_IMAGES="sapphire-prepgateway sapphire-ml sapphire-conceptmod"
 
 # Pull images used in the demo version
 echo "Pulling core images"
-for image in $CORE_IMAGES; do
-    pull_and_verify "$REPO/$image:$TAG" true || exit 1
+for image in $DEMO_IMAGES; do
+    pull_and_verify_image "$image" "$TAG" || exit 1
 done
 
 # Pull images used in the KGHM version
 if [ "$ieasyhydroforecast_organization" = "kghm" ]; then
     echo "Pulling KGHM-specific images"
     for image in $KGHM_IMAGES; do
-        pull_and_verify "$REPO/$image:$TAG" true || exit 1
+        pull_and_verify_image "$image" "$TAG" || exit 1
     done
 fi
 
 echo "Building local pipeline image..."
 
 # Build forecast pipeline locally
-docker compose -f "$PROJECT_ROOTbin/docker-compose-luigi.yml" build --no-cache
+docker compose -f "$PROJECT_ROOT/bin/docker-compose-luigi.yml" build --no-cache
 
 echo "All images pulled and verified successfully!"
