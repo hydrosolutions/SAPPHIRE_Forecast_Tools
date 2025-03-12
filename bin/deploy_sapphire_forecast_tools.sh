@@ -103,24 +103,26 @@ fi
 setup_cosign "$COSIGN_PUBLIC_KEY" || exit 1
 
 # pull backend images and verify signatures
-pull_docker_images $ieasyhydroforecast_backend_docker_image_tag
+bash "$SCRIPT_DIR/utils/pull_docker_images.sh" $ieasyhydroforecast_backend_docker_image_tag
 
 # pull frontend images and verify signatures
 # Pull and verify the frontend images
 REPO="mabesa"
 IMAGES="sapphire-configuration sapphire-dashboard"
+FRONTEND_TAG="${ieasyhydroforecast_frontend_docker_image_tag:-latest}"
+MARKER_FILE="/tmp/sapphire_frontend_images_prepared_${FRONTEND_TAG}"
 
-echo "| Pulling and verifying frontend images with TAG=${TAG}"
+echo "| Pulling and verifying frontend images with TAG=${FRONTEND_TAG}"
 all_successful=true
 
 for image in $IMAGES; do
-    echo "| Processing $image:${TAG}"
-    if ! pull_and_verify_image "${REPO}/${image}:${TAG}" true; then
-        echo "| ❌ Failed to pull/verify ${image}:${TAG}"
+    echo "| Processing $image:${FRONTEND_TAG}"
+    if ! pull_and_verify_image "${image}" "${FRONTEND_TAG}"; then
+        echo "| ❌ Failed to pull/verify ${image} ${FRONTEND_TAG}"
         all_successful=false
         break
     fi
-    echo "| ✅ Successfully pulled and verified ${image}:${TAG}"
+    echo "| ✅ Successfully pulled and verified ${image} ${FRONTEND_TAG}"
 done
 
 # Create marker file if all images were pulled and verified successfully
