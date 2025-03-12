@@ -21,7 +21,10 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 echo "PROJECT_ROOT=$PROJECT_ROOT"
 
 # By default, look for the public key in the Git repository
-export COSIGN_PUBLIC_KEY="$PROJECT_ROOT/keys/cosign.pub"
+# Check if we already have a variable COSIGN_PUBLIC_KEY set
+if [ -z "$COSIGN_PUBLIC_KEY" ]; then
+    export COSIGN_PUBLIC_KEY="$PROJECT_ROOT/keys/cosign.pub"
+fi
 
 echo "Pulling with TAG=$TAG"
 
