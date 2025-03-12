@@ -319,8 +319,22 @@ setup_cosign() {
             arch="arm64"
         fi
 
+        # Architecture should be amd64 or arm64
+        if [ "$arch" != "amd64" ] && [ "$arch" != "arm64" ]; then
+            echo "Unsupported architecture: $arch. Skipping Cosign installation."
+            VERIFY_SIGNATURES=false
+            return 1
+        fi
+
+        # OS should be linux or darwin (windows not tested)
+        if [ "$os_lower" != "linux" ] && [ "$os_lower" != "darwin" ]; then
+            echo "Unsupported OS: $os_lower. Skipping Cosign installation."
+            VERIFY_SIGNATURES=false
+            return 1
+        fi
+
         # Download appropriate binary
-        curl -L "https://github.com/sigstore/cosign/releases/latest/download/cosign-$os_lower-$arch" -o /tmp/cosign
+        curl -L "https://github.com/sigstore/cosign/releases/latest/download/cosign-$os_lower-$arch" -o cosign
 
         if [ $? -ne 0 ]; then
             echo "Failed to download cosign. Continuing without verification."
@@ -328,17 +342,17 @@ setup_cosign() {
             return 1
         fi
 
-        chmod +x /tmp/cosign
+        chmod +x cosign
 
         # Move to path with sudo (if available) or directly
         if command -v sudo &> /dev/null; then
-            sudo mv /tmp/cosign /usr/local/bin/ || {
+            sudo mv cosign /usr/local/bin/ || {
                 echo "Failed to install cosign. Continuing without verification.";
                 VERIFY_SIGNATURES=false;
                 return 1;
             }
         else
-            mv /tmp/cosign /usr/local/bin/ || {
+            mv cosign /usr/local/bin/ || {
                 echo "Failed to install cosign. Continuing without verification.";
                 VERIFY_SIGNATURES=false;
                 return 1;
