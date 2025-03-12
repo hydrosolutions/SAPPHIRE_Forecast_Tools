@@ -300,9 +300,15 @@ setup_cosign() {
 
     echo "Setting up Cosign for image verification..."
 
-    # Check for Cosign installation
-    if ! command -v cosign &> /dev/null; then
-        echo "Cosign not found. Installing..."
+    # Check for Cosign installation AND verify it's working
+    if ! command -v cosign &> /dev/null || ! cosign version &> /dev/null; then
+        echo "Cosign not found or not working properly. Installing..."
+
+        # Remove any existing broken cosign binary
+        if [ -f /usr/local/bin/cosign ]; then
+            echo "Removing existing cosign binary..."
+            sudo rm -f /usr/local/bin/cosign || rm -f /usr/local/bin/cosign
+        fi
 
         # Determine OS and architecture for download
         local os_lower=$(uname -s | tr '[:upper:]' '[:lower:]')
