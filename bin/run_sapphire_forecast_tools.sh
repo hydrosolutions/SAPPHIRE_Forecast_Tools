@@ -1,60 +1,74 @@
 #!/bin/bash
+#==============================================================================
+# SAPPHIRE OPERATIONAL HYDROLOGICAL FORECAST
+#==============================================================================
+# Description:
+#   This script executes the operational hydrological forecasting workflow for
+#   SAPPHIRE. It handles Docker container orchestration, data processing, and
+#   forecast generation in a streamlined pipeline designed for daily operation.
+#
+# Usage:
+#   Interactive mode:
+#     bash bin/run_sapphire_forecast_tools.sh <env_file_path>
+#
+#   Background execution:
+#     nohup bash bin/run_sapphire_forecast_tools.sh <env_file_path> > output.log 2>&1 &
+#
+# Parameters:
+#   env_file_path - Absolute path to the .env configuration file containing
+#                   environment variables for the SAPPHIRE forecast tools
+#
+# Process:
+#   1. Reads configuration from the specified .env file
+#   2. Cleans up existing backend containers
+#   3. Uses pre-prepared Docker images (if available) or pulls them
+#   4. Establishes SSH tunnel for data access (if configured)
+#   5. Executes the forecasting pipeline via Docker Compose
+#   6. Monitors execution and handles cleanup on completion
+#
+# Performance:
+#   Typical execution time: ~4 minutes on standard hardware with cached images
+#   Resource usage: Moderate CPU and memory during forecast calculations
+#
+# Dependencies:
+#   - common_functions.sh - Core utility functions
+#   - docker-compose-luigi.yml - Container orchestration definition
+#   - Pre-prepared images (optional) - From daily_docker_image_update.sh
+#
+# Helper Scripts:
+#   - bin/utils/common_functions.sh - Shared utility functions
+#   - bin/utils/pull_docker_images.sh - Container image management
+#   - bin/.ssh/open_ssh_tunnel.sh - Data access setup
+#   - bin/.ssh/close_ssh_tunnel.sh - Network cleanup
+#
+# Directory Structure Requirements:
+#   ieasyhydroforecast_data_root_dir
+#   ├── SAPPHIRE_forecast_tools       # This repository
+#   │   ├── apps
+#   │   └── bin
+#   └── ieasyhydroforecast_data_ref_dir
+#       ├── config
+#       │   └── .env                  # Environment file
+#       └── bin
+#           └── .ssh                  # SSH configuration
+#
+# Optimization:
+#   This script checks for pre-prepared Docker images to improve startup time.
+#   Run daily_docker_image_update.sh beforehand for best performance.
+#
+# Exit Codes:
+#   0 - Success: Forecast completed successfully
+#   1 - Failure: Error in setup or execution
+#
+# Recommended Scheduling:
+#   Run daily during operational forecasting window (e.g., 4:00 AM)
+#   Schedule after daily_maintenance_sapphire_backend.sh for optimal performance
+#
+# Contributors:
+#   - Beatrice Marti: Implementation and integration
+#   - Developed with assistance from AI pair programming tools
+#==============================================================================
 
-# This script runs the SAPPHIRE forecast tools in local daily deployment mode
-# Working directory is the root of the repository, i.e. SAPPHIRE_forecast_tools
-#
-# Useage:
-# Run the script in your terminal:
-# bash bin/run_sapphire_forecast_tools.sh <env_file_path>
-# Run the script in the background:
-# nohup bash bin/run_sapphire_forecast_tools.sh <env_file_path> > output.log 2>&1 &
-# note: nohup: no hangup, i.e. the process will not be terminated when the terminal is closed
-# note: > output.log 2>&1: redirect stdout and stderr to a file called output.log
-# note: &: run the process in the background
-#
-# Details: The script performs the following tasks and takes 4 minutes on a
-# reasonably fast machine with a good internet connection:
-# 1. Parse the argument <env_file_path> which is the absolute path to the .env
-#    file containing your environment variables for the SAPPHIRE forecast tools
-#    and derive the ieasyhydroforecast_data_root_dir and ieasyhydroforecast_data_ref_dir
-#    from the env_file_path.
-# 2. Clean up docker space (remove all containers and images)
-# 3. Build the Docker images with the tag "latest"
-# 4. Establish an SSH tunnel to the SAPPHIRE server
-# 5. Start the Docker Compose service (start luigi daemon and the SAPPHIRE forecast tools)
-# 6. Wait for the Docker Compose service to finish
-# 7. Close the SSH tunnel
-# 8. Down the Docker Compose service
-#
-# Note: The script uses the following helper scripts:
-# 1. bin/clean_docker.sh
-# 4. bin/pull_docker_images.sh
-# 5. bin/docker-compose-luigi.yml and bin/docker-compose-dashboards.yml
-# 6. bin/.ssh/open_ssh_tunnel.sh
-# 7. bin/.ssh/close_ssh_tunnel.sh
-#
-# Note: The script assumes the location of the .env file  and the .ssh directory
-# in the ieasyforecast data reference directory. The ieasyhydroforecast data
-# root directory is assumed to be one level above the ieasyforecast data reference
-# directory.
-# Assumed data directory sturcture:
-# ieasyhydroforecast_data_root_dir
-#   |- SAPPHIRE_forecast_tools
-#       |- apps
-#       |- bin
-#       |- ...
-#   |- ieasyhydroforecast_data_ref_dir
-#       |- config
-#           |- .env  # <- env_file_path
-#           |- ...
-#       |- bin
-#           |- .ssh
-#               |- open_ssh_tunnel.sh
-#               |- close_ssh_tunnel.sh
-#           |- ...
-#       |- ...
-#
-# Author: Beatrice Marti
 
 # Source the common functions
 source "$(dirname "$0")/utils/common_functions.sh"
@@ -68,8 +82,18 @@ read_configuration $1
 # Clean up backend containers
 clean_out_backend
 
-# Pull docker images
-pull_docker_images
+TAG="${ieasyhydroforecast_backend_docker_image_tag:-latest}"
+MARKER_FILE="/tmp/sapphire_backend_images_prepared_${TAG}"
+
+if [ -f "${MARKER_FILE}" ]; then
+    PREP_TIME=$(cat "${MARKER_FILE}")
+    echo "| Using images prepared earlier at: ${PREP_TIME}"
+    echo "| Skipping image pull and verification"
+else
+    echo "| No pre-prepared images found - pulling now"
+    # Pull docker images using the existing function
+    pull_docker_images
+fi
 
 # Establish SSH tunnel (if required)
 establish_ssh_tunnel

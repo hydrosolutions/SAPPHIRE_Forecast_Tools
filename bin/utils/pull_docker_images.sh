@@ -1,4 +1,11 @@
 #!/bin/bash
+
+# This script will check if the Cosign binary is installed and if the public key
+# is available. If not, it will install the Cosign binary. The user can opt to
+# skip signature verification if the public key is not available. The script will
+# then pull the Docker images for the specified tag and verify their signatures.
+source "$(dirname "$0")/common_functions.sh"
+
 if test -z "$1"
 then
       echo "Usage bash ./bin/pull_docker_images.sh TAG"
@@ -7,21 +14,41 @@ then
 fi
 
 TAG=$1
+REPO="mabesa"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+# By default, look for the public key in the Git repository
+COSIGN_PUBLIC_KEY="${COSIGN_PUBLIC_KEY:-$PROJECT_ROOT/keys/cosign.pub}"
+
 echo "Pulling with TAG=$TAG"
+
+# Check for Cosign installation
+setup_cosign "$PROJECT_ROOT/keys/cosign.pub"
+
+# Define core images
+DEMO_IMAGES="sapphire-pythonbaseimage sapphire-preprunoff sapphire-linreg sapphire-postprocessing sapphire-rerun"
+
+# Define KGHM-specific images
+KGHM_IMAGES="sapphire-prepgateway sapphire-ml sapphire-conceptmod"
+
 # Pull images used in the demo version
-echo "Pulling images"
-docker pull mabesa/sapphire-pythonbaseimage:$TAG
-docker pull mabesa/sapphire-preprunoff:$TAG
-docker pull mabesa/sapphire-linreg:$TAG
-docker pull mabesa/sapphire-postprocessing:$TAG
-docker pull mabesa/sapphire-rerun:$TAG
+echo "Pulling core images"
+for image in $CORE_IMAGES; do
+    pull_and_verify_image "$REPO/$image:$TAG" true || exit 1
+done
 
 # Pull images used in the KGHM version
-if ["$ieasyhydroforecast_organization" = "kghm"]; then
-      docker pull mabesa/sapphire-prepgateway:$TAG
-      docker pull mabesa/sapphire-ml:$TAG
-      docker pull mabesa/sapphire-conceptmod:$TAG
+if [ "$ieasyhydroforecast_organization" = "kghm" ]; then
+    echo "Pulling KGHM-specific images"
+    for image in $KGHM_IMAGES; do
+        pull_and_verify_image "$REPO/$image:$TAG" true || exit 1
+    done
 fi
 
+echo "Building local pipeline image..."
+
 # Build forecast pipeline locally
-docker compose -f bin/docker-compose-luigi.yml build --no-cache
+docker compose -f "$PROJECT_ROOTbin/docker-compose-luigi.yml" build --no-cache
+
+echo "All images pulled and verified successfully!"

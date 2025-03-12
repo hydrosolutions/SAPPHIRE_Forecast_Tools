@@ -1,4 +1,68 @@
 #!/bin/bash
+#==============================================================================
+# SAPPHIRE ML MODEL MAINTENANCE
+#==============================================================================
+# Description:
+#   This script performs routine maintenance on SAPPHIRE machine learning models
+#   to ensure optimal prediction performance. It executes maintenance tasks for
+#   multiple ML models across various forecasting horizons in an efficient,
+#   resource-aware batch process.
+#
+# Usage:
+#   bash bin/utils/daily_ml_maintenance.sh <env_file_path>
+#
+#   Example:
+#     bash bin/utils/daily_ml_maintenance.sh /path/to/config/.env
+#
+# Parameters:
+#   env_file_path - Absolute path to the .env configuration file containing
+#                   environment variables for the SAPPHIRE forecast tools
+#
+# Process:
+#   1. Configures resource allocation based on system capabilities
+#   2. Creates a temporary Docker Compose file for all model combinations
+#   3. Executes maintenance jobs in batches to optimize resource usage
+#   4. Captures detailed logs for each model maintenance run
+#   5. Performs cleanup of containers and old log files
+#
+# Models Maintained:
+#   - TFT (Temporal Fusion Transformer)
+#   - TIDE (Time-series Data Embedding)
+#   - TSMIXER (Time Series Mixer)
+#   - ARIMA (Statistical forecasting model)
+#
+# Forecasting Horizons:
+#   - PENTAD (5-day forecast periods)
+#   - DECAD (10-day forecast periods)
+#
+# Resource Management:
+#   - Runs containers in parallel batches (default: 3 containers)
+#   - Sets memory limits per container (12GB + 4GB swap)
+#   - Allocates 2 CPU cores per maintenance job
+#   - Implements timeout handling for stalled processes
+#
+# Log Files:
+#   - Main log: logs/ml_maintenance/run_YYYYMMDD_HHMMSS.log
+#   - Per-model logs: logs/ml_maintenance/ml-maintenance-MODEL-HORIZON_TIMESTAMP.log
+#   - Automatic cleanup of logs older than 15 days
+#
+# Exit Codes:
+#   0 - Success: All maintenance tasks completed successfully
+#   1 - Failure: Error in setup or execution of maintenance tasks
+#
+# Dependencies:
+#   - common_functions.sh - For utility functions
+#   - Docker and Docker Compose - Must be installed and running
+#   - mabesa/sapphire-ml:latest Docker image - Will be pulled if not present
+#   - Sufficient system resources (memory, CPU, disk space)
+#
+# Recommended Scheduling:
+#   Run daily during off-peak hours when system resources are available
+#
+# Contributors:
+#   - Beatrice Marti: Implementation and integration
+#   - Developed with assistance from AI pair programming tools
+#==============================================================================
 
 # Source the common functions
 source "$(dirname "$0")/utils/common_functions.sh"

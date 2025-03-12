@@ -206,10 +206,42 @@ start_docker_compose_luigi() {
     echo "| ------"
     echo "| Starting backend services"
     echo "| ------"
+    # Auto-detect Docker group ID
+    if [ "$(uname)" = "Linux" ]; then
+        DOCKER_GID=$(getent group docker | cut -d: -f3 2>/dev/null)
+        if [ -z "$DOCKER_GID" ] && [ -S /var/run/docker.sock ]; then
+            # Fallback to socket group if docker group not found
+            DOCKER_GID=$(stat -c "%g" /var/run/docker.sock 2>/dev/null)
+        fi
+        echo "| Detected Docker group ID: $DOCKER_GID"
+    else
+        # Default for macOS/non-Linux
+        DOCKER_GID=999
+        echo "| Non-Linux OS detected, using default Docker group ID: $DOCKER_GID"
+    fi
+    # Export for docker-compose
+    export DOCKER_GID
+
     echo "| Starting Docker Compose service for backend ..."
     docker compose -f bin/docker-compose-luigi.yml up -d &
     DOCKER_COMPOSE_LUIGI_PID=$!
     echo "| Docker Compose service started with PID $DOCKER_COMPOSE_LUIGI_PID"
+
+    # Verify Docker socket access
+    echo "Verifying Docker socket access..."
+    sleep 5  # Give container time to start
+    if docker exec sapphire-backend-pipeline sh -c "docker ps" &>/dev/null; then
+        echo "✅ Pipeline container has Docker socket access"
+    else
+        echo "❌ Docker socket access failed. Trying fallback..."
+        sudo chmod 666 /var/run/docker.sock
+        sleep 2
+        if docker exec sapphire-backend-pipeline sh -c "docker ps" &>/dev/null; then
+            echo "✅ Access fixed with socket permission change"
+        else
+            echo "❌ Still cannot access Docker socket"
+        fi
+    fi
 }
 
 # Function to start the Docker Compose service for the dashboards
@@ -257,4 +289,123 @@ cleanup_deployment() {
   echo "| "
 }
 
+# Setup Cosign for image verification
+# Usage: setup_cosign [/path/to/key.pub]
+# Returns: Sets VERIFY_SIGNATURES=true/false global variable
+setup_cosign() {
+    # Default public key location or use passed parameter
+    local key_path="${1:-$PROJECT_ROOT/keys/cosign.pub}"
+    COSIGN_PUBLIC_KEY="$key_path"
+    VERIFY_SIGNATURES=true
+
+    echo "Setting up Cosign for image verification..."
+
+    # Check for Cosign installation
+    if ! command -v cosign &> /dev/null; then
+        echo "Cosign not found. Installing..."
+
+        # Determine OS and architecture for download
+        local os_lower=$(uname -s | tr '[:upper:]' '[:lower:]')
+        local arch=$(uname -m)
+
+        # Handle arm64/aarch64 architecture naming differences
+        if [ "$arch" = "aarch64" ]; then
+            arch="arm64"
+        fi
+
+        # Download appropriate binary
+        curl -L "https://github.com/sigstore/cosign/releases/latest/download/cosign-$os_lower-$arch" -o /tmp/cosign
+
+        if [ $? -ne 0 ]; then
+            echo "Failed to download cosign. Continuing without verification."
+            VERIFY_SIGNATURES=false
+            return 1
+        fi
+
+        chmod +x /tmp/cosign
+
+        # Move to path with sudo (if available) or directly
+        if command -v sudo &> /dev/null; then
+            sudo mv /tmp/cosign /usr/local/bin/ || {
+                echo "Failed to install cosign. Continuing without verification.";
+                VERIFY_SIGNATURES=false;
+                return 1;
+            }
+        else
+            mv /tmp/cosign /usr/local/bin/ || {
+                echo "Failed to install cosign. Continuing without verification.";
+                VERIFY_SIGNATURES=false;
+                return 1;
+            }
+        fi
+
+        echo "Cosign installed successfully."
+    else
+        echo "Cosign is already installed."
+    fi
+
+    # Check for public key
+    if [ ! -f "$COSIGN_PUBLIC_KEY" ]; then
+        echo "Warning: Cosign public key not found at $COSIGN_PUBLIC_KEY"
+        echo "Signature verification will be skipped."
+        VERIFY_SIGNATURES=false
+        return 1
+    else
+        echo "Using Cosign public key: $COSIGN_PUBLIC_KEY"
+    fi
+
+    return 0
+}
+
+# Function to pull and verify an image
+pull_and_verify() {
+    local image="$REPO/$1:$TAG"
+    echo "Pulling image: $image"
+    docker pull "$image"
+
+    if $VERIFY_SIGNATURES; then
+        echo "Verifying signature for $image..."
+        if cosign verify --key "$COSIGN_PUBLIC_KEY" "$image" --insecure-ignore-tlog; then
+            echo "✅ Signature verified for $image"
+        else
+            echo "❌ Failed to verify signature for $image"
+            echo "Would you like to continue anyway? (y/n)"
+            read -r answer
+            if [[ "$answer" != "y" ]]; then
+                echo "Aborting due to signature verification failure"
+                return 1
+            fi
+        fi
+    fi
+    return 0
+}
+
+# Function to check if images are prepared
+check_backend_images_prepared() {
+    local tag="${1:-$ieasyhydroforecast_backend_docker_image_tag}"
+    local marker_file="/tmp/sapphire_backend_images_prepared_${tag}"
+
+    if [ -f "${marker_file}" ]; then
+        local prep_time=$(cat "${marker_file}")
+        echo "| Images were prepared at: ${prep_time}"
+        return 0  # Success - images are prepared
+    else
+        echo "| No prepared images found"
+        return 1  # Failure - images are not prepared
+    fi
+}
+
+check_frontend_images_prepared() {
+    local tag="${1:-$ieasyhydroforecast_frontend_docker_image_tag}"
+    local marker_file="/tmp/sapphire_backend_images_prepared_${tag}"
+
+    if [ -f "${marker_file}" ]; then
+        local prep_time=$(cat "${marker_file}")
+        echo "| Images were prepared at: ${prep_time}"
+        return 0  # Success - images are prepared
+    else
+        echo "| No prepared images found"
+        return 1  # Failure - images are not prepared
+    fi
+}
 

@@ -17,7 +17,7 @@ env:
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "modular_docker_group" ]
   pull_request:
     branches: [ "main" ]
 
