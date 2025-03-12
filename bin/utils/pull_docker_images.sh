@@ -16,7 +16,9 @@ fi
 TAG=$1
 REPO="mabesa"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+echo "SCRIPT_DIR=$SCRIPT_DIR"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../" && pwd)"
+echo "PROJECT_ROOT=$PROJECT_ROOT"
 
 # By default, look for the public key in the Git repository
 COSIGN_PUBLIC_KEY="${COSIGN_PUBLIC_KEY:-$PROJECT_ROOT/keys/cosign.pub}"
