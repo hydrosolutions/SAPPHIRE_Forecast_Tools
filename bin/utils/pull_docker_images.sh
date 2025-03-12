@@ -35,14 +35,14 @@ KGHM_IMAGES="sapphire-prepgateway sapphire-ml sapphire-conceptmod"
 # Pull images used in the demo version
 echo "Pulling core images"
 for image in $CORE_IMAGES; do
-    pull_and_verify_image "$REPO/$image:$TAG" true || exit 1
+    pull_and_verify "$REPO/$image:$TAG" true || exit 1
 done
 
 # Pull images used in the KGHM version
 if [ "$ieasyhydroforecast_organization" = "kghm" ]; then
     echo "Pulling KGHM-specific images"
     for image in $KGHM_IMAGES; do
-        pull_and_verify_image "$REPO/$image:$TAG" true || exit 1
+        pull_and_verify "$REPO/$image:$TAG" true || exit 1
     done
 fi
 
