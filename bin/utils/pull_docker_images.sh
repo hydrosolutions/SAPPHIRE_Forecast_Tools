@@ -4,7 +4,7 @@
 # is available. If not, it will install the Cosign binary. The user can opt to
 # skip signature verification if the public key is not available. The script will
 # then pull the Docker images for the specified tag and verify their signatures.
-source "$(dirname "$0")/common_functions.sh"
+source "bin/utils/common_functions.sh"
 
 if test -z "$1"
 then

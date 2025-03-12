@@ -75,7 +75,7 @@
 #==============================================================================
 
 # Source the common functions
-source "$(dirname "$0")/utils/common_functions.sh"
+source "bin/utils/common_functions.sh"
 
 # Print the banner
 print_banner "SAPPHIRE Full Deployment"
