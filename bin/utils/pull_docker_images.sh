@@ -16,15 +16,15 @@ fi
 TAG=$1
 REPO="mabesa"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+#PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 # By default, look for the public key in the Git repository
-COSIGN_PUBLIC_KEY="${COSIGN_PUBLIC_KEY:-$PROJECT_ROOT/keys/cosign.pub}"
+COSIGN_PUBLIC_KEY="${COSIGN_PUBLIC_KEY:-keys/cosign.pub}"
 
 echo "Pulling with TAG=$TAG"
 
 # Check for Cosign installation
-setup_cosign "$PROJECT_ROOT/keys/cosign.pub"
+setup_cosign "$COSIGN_PUBLIC_KEY" || exit 1
 
 # Define core images
 DEMO_IMAGES="sapphire-pythonbaseimage sapphire-preprunoff sapphire-linreg sapphire-postprocessing sapphire-rerun"
