@@ -101,12 +101,12 @@ else
 
     for image in $IMAGES; do
         echo "| Processing $image:${TAG}"
-        if ! pull_and_verify_image "${REPO}/${image}:${TAG}" true; then
-            echo "| ❌ Failed to pull/verify ${image}:${TAG}"
+        if ! pull_and_verify_image "${image}" "${TAG}" true; then
+            echo "| ❌ Failed to pull/verify ${image}" "${TAG}"
             all_successful=false
             break
         fi
-        echo "| ✅ Successfully pulled and verified ${image}:${TAG}"
+        echo "| ✅ Successfully pulled and verified ${image} ${TAG}"
     done
 
     # Create marker file if all images were pulled and verified successfully
