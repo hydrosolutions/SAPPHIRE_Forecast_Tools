@@ -302,6 +302,8 @@ def load_data():
     # Set multi-index for faster lookups
     linreg_predictor = processing.read_linreg_forecast_data(
         stations_iehhf, linreg_forecast_file_mtime)
+    # Print tail of linreg_predictor where code == '15149'
+    #print(f"DEBUG: pentad_dashboard.py: linreg_predictor tail:\n{linreg_predictor[linreg_predictor['code'] == '15149'].tail()}")
     # - forecast results from all models
     forecasts_all = processing.read_forecast_results_file(
         stations_iehhf, forecast_results_file_mtime)
@@ -341,7 +343,9 @@ def load_data():
     #print(f"DEBUG: linreg_predictor raw: {linreg_predictor.tail()}")
     linreg_predictor = processing.add_labels_to_forecast_pentad_df(linreg_predictor, all_stations)
     #print(f"DEBUG: linreg_predictor with labels: {linreg_predictor.tail()}")
+    print(f"DEBUG: pentad_dashboard.py: linreg_predictor tail:\n{linreg_predictor[linreg_predictor['code'] == '15149'].tail()}")
     linreg_datatable = processing.shift_date_by_n_days(linreg_predictor, 1)
+    print(f"DEBUG: pentad_dashboard.py: linreg_predictor tail:\n{linreg_predictor[linreg_predictor['code'] == '15149'].tail()}")
     #print(f"DEBUG: linreg_datatable.columns: {linreg_datatable.columns}")
     #print(f"DEBUG: linreg_datatable: {linreg_datatable.tail()}")
     #print(f"DEBUG: linreg_predictor.columns: {linreg_predictor.columns}")
@@ -742,10 +746,15 @@ def update_site_attributes_with_hydrograph_statistics_for_selected_pentad(_,
 @pn.depends(pentad_selector, watch=True)
 def update_site_attributes_with_linear_regression_predictor(_, sites=sites_list, df=linreg_predictor, pentad=pentad_selector.value):
     """Update site attributes with linear regression predictor"""
+    # Print pentad
+    #print(f"\n\nDEBUGGING update_site_attributes_with_linear_regression_predictor: pentad: {pentad}")
     # Get row in def for selected pentad
-    df = df[df['pentad_in_year'] == pentad].copy()
+    df = df[df['pentad_in_year'] == (pentad-1)].copy()
+    #print("\n\nDEBUGGING update_site_attributes_with_linear_regression_predictor")
+    #print(f"linreg_predictor: \n{df[df['code'] == '15149']}.tail()")
     # Only keep the last row for each site
-    df = df.drop_duplicates(subset='code', keep='last')
+    #df = df.drop_duplicates(subset='code', keep='last')
+    df = df.sort_values('date').groupby('code').last().reset_index()
     for site in sites:
         #print(f"site: {site.code}")
         # Test if site.code is in df['code']
@@ -755,12 +764,13 @@ def update_site_attributes_with_linear_regression_predictor(_, sites=sites_list,
         # Get the linear regression predictor for each site
         row = df[df['code'] == site.code]
         site.linreg_predictor = row['predictor'].values[0]
-        #print(f"site: {site.code}, linreg predictor: {site.linreg_predictor}")
+        print(f"site: {site.code}, linreg predictor: {site.linreg_predictor}")
 
     #print(f"Updated sites with linear regression predictor from DataFrame.")
     return sites
 
 sites_list = update_site_attributes_with_hydrograph_statistics_for_selected_pentad(_=_, sites=sites_list, df=hydrograph_pentad_all, pentad=pentad_selector.value)
+#print(f"DEBUG: pentad_dashboard.py before update: linreg_predictor tail:\n{linreg_predictor.loc[linreg_predictor['code'] == '15149', ['date', 'code', 'predictor', 'pentad_in_year', 'pentad_in_month']].tail()}")
 sites_list = update_site_attributes_with_linear_regression_predictor(_, sites=sites_list, df=linreg_predictor, pentad=pentad_selector.value)
 
 # Adding the watcher logic for disabling the "Add to Bulletin" button
@@ -855,7 +865,7 @@ def update_model_select(station_value, selected_pentad):
     #model_checkbox.options = {}  # Clear first
     #model_checkbox.param.trigger('options')
     model_checkbox.options = updated_model_dict
-    # model_checkbox.param.trigger('options')
+    model_checkbox.param.trigger('options')
 
     print("\nAfter options update:")
     print(f"  Widget options: {model_checkbox.options}")
@@ -864,7 +874,7 @@ def update_model_select(station_value, selected_pentad):
     #model_checkbox.value = []  # Clear first
     #model_checkbox.param.trigger('value')
     model_checkbox.value = new_values
-    # model_checkbox.param.trigger('value')
+    model_checkbox.param.trigger('value')
 
     print("\nFinal widget state:")
     print(f"  Widget options: {model_checkbox.options}")

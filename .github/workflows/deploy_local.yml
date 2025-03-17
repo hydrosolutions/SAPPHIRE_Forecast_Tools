@@ -15,6 +15,8 @@ env:
   RERUN_IMAGE_NAME: mabesa/sapphire-rerun
   CONCMOD_IMAGE_NAME: mabesa/sapphire-conceptmod
 
+  # Test main
+
 on:
   push:
     branches: [ "local" ]
