@@ -865,7 +865,7 @@ def update_model_select(station_value, selected_pentad):
     #model_checkbox.options = {}  # Clear first
     #model_checkbox.param.trigger('options')
     model_checkbox.options = updated_model_dict
-    # model_checkbox.param.trigger('options')
+    model_checkbox.param.trigger('options')
 
     print("\nAfter options update:")
     print(f"  Widget options: {model_checkbox.options}")
@@ -874,7 +874,7 @@ def update_model_select(station_value, selected_pentad):
     #model_checkbox.value = []  # Clear first
     #model_checkbox.param.trigger('value')
     model_checkbox.value = new_values
-    # model_checkbox.param.trigger('value')
+    model_checkbox.param.trigger('value')
 
     print("\nFinal widget state:")
     print(f"  Widget options: {model_checkbox.options}")

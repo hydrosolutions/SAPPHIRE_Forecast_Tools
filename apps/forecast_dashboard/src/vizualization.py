@@ -1448,38 +1448,36 @@ def create_cached_vlines(_, for_dates=True, y_text=1):
     if for_dates:
         # Create lines for date-based plots
         year = dt.datetime.now().year
-        pentads = [dt.datetime(year, month, day) for month, day in [
-            (1, 1), (1, 6), (1, 11), (1, 16), (1, 21), (1, 26),  # Jan
-            (2, 1), (2, 6), (2, 11), (2, 16), (2, 21), (2, 26),
-            (3, 1), (3, 6), (3, 11), (3, 16), (3, 21), (3, 26),  # Mar
-            (4, 1), (4, 6), (4, 11), (4, 16), (4, 21), (4, 26),
-            (5, 1), (5, 6), (5, 11), (5, 16), (5, 21), (5, 26),  # May
-            (6, 1), (6, 6), (6, 11), (6, 16), (6, 21), (6, 26),
-            (7, 1), (7, 6), (7, 11), (7, 16), (7, 21), (7, 26),  # Jul
-            (8, 1), (8, 6), (8, 11), (8, 16), (8, 21), (8, 26),
-            (9, 1), (9, 6), (9, 11), (9, 16), (9, 21), (9, 26),  # Sep
-            (10, 1), (10, 6), (10, 11), (10, 16), (10, 21), (10, 26),
-            (11, 1), (11, 6), (11, 11), (11, 16), (11, 21), (11, 26),  # Nov
-            (12, 1), (12, 6), (12, 11), (12, 16), (12, 21), (12, 26)]]
+        pentads = [dt.datetime(year, month, day) for month in range(1, 13) for day in [1, 6, 11, 16, 21, 26]]
 
         # Create vertical lines
-        vlines = hv.Overlay([
-            hv.VLine(date).opts(color='gray', line_width=1,
-                              line_dash='dotted', line_alpha=0.5,
-                              show_legend=False)
-            for date in pentads
-        ])
+        path_data = []
+        for i in range(len(pentads)):
+            if i % 2 == 0:
+                path_data.append((pentads[i], -100))  # Start at -100
+                path_data.append((pentads[i], 3000))  # Move to 3000
+            else:
+                path_data.append((pentads[i], 3000))  # Stay at 3000
+                path_data.append((pentads[i], -100))  # Move to -100
+        vlines = hv.Path(path_data).opts(
+            color='gray', line_width=1,
+            line_dash='dotted', line_alpha=0.5,
+            show_legend=False
+        )
 
         # Add text labels
         mid_date_text = ['1', '2', '3', '4', '5', '6'] * 12
-        text_overlay = hv.Overlay([
-            hv.Text(date + dt.timedelta(days=2.2), y_text, text).opts(
-                text_baseline='bottom', text_align='center',
-                text_font_size='9pt', text_color='gray',
-                text_alpha=0.5, text_font_style='italic',
-                show_legend=False)
-            for date, text in zip(pentads, mid_date_text)
-        ])
+        labels_df = pd.DataFrame({
+            'x': [date + dt.timedelta(days=2.2) for date in pentads],
+            'y': [y_text for _ in pentads],
+            'text': mid_date_text
+        })
+        text_overlay = hv.Labels(labels_df, ['x', 'y'], 'text').opts(
+            text_baseline='bottom', text_align='center',
+            text_font_size='9pt', text_color='gray',
+            text_alpha=0.5, text_font_style='italic',
+            show_legend=False
+        )
 
     else:
         # Create lines for pentad-number-based plots
@@ -1923,7 +1921,9 @@ def plot_daily_rainfall_data(_, daily_rainfall, station, date_picker,
         ylim=(0, max([station_data['P'].max(), station_data['P_norm'].max()]) * 1.1),
         xlim=(min(norm_rainfall['date']), max(norm_rainfall['date'])),
         tools=['hover'],
-        toolbar='right')
+        toolbar='right',
+        shared_axes=False
+    )
 
     return figure
 
@@ -2051,7 +2051,9 @@ def plot_daily_temperature_data(_, daily_rainfall, station, date_picker,
               max([station_data['T'].max(), station_data['T_norm'].max()]) * 1.1),
         xlim=(min(norm_rainfall['date']), max(norm_rainfall['date'])),
         tools=['hover'],
-        toolbar='right')
+        toolbar='right',
+        shared_axes=False
+    )
 
     return figure
 
