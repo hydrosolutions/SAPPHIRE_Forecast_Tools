@@ -256,19 +256,19 @@ def read_machine_learning_forecasts_pentad(model, file_mtime):
             return forecast
 
     if model == 'TFT':
-        filename = f"pentad_{model}_forecast.csv"
+        filename = f"pentad_{model}_forecast_latest.csv"
         model_long = "Temporal-Fusion Transformer (TFT)"
         model_short = "TFT"
     elif model == 'TIDE':
-        filename = f"pentad_{model}_forecast.csv"
+        filename = f"pentad_{model}_forecast_latest.csv"
         model_long = "Time-Series Dense Encoder (TiDE)"
         model_short = "TiDE"
     elif model == 'TSMIXER':
-        filename = f"pentad_{model}_forecast.csv"
+        filename = f"pentad_{model}_forecast_latest.csv"
         model_long = "Time-Series Mixer (TSMixer)"
         model_short = "TSMixer"
     elif model == 'ARIMA':
-        filename = f"pentad_{model}_forecast.csv"
+        filename = f"pentad_{model}_forecast_latest.csv"
         model_long = "AutoRegressive Integrated Moving Average (ARIMA)"
         model_short = "ARIMA"
     else:
