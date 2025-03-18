@@ -24,6 +24,8 @@ from datetime import datetime, timedelta
 import logging
 from logging.handlers import TimedRotatingFileHandler
 
+import dg_utils
+
 # Note that the sapphire data gateway client is currently a private repository
 # Access to the repository is required to install the package
 # Further, access to the data gateway through an API key is required to use the
@@ -74,141 +76,6 @@ logger = logging.getLogger()
 logger.handlers = []
 logger.addHandler(file_handler)
 logger.addHandler(console_handler)
-
-
-# --------------------------------------------------------------------
-# Quantile Mapping
-# --------------------------------------------------------------------
-def ptf(x: np.array,  a: float, b:float ) -> np.array:
-    return a * np.power(x, b)
-
-def quantile_mapping_ptf(sce_data:np.array, a: float, b: float, wet_days: bool = True, wet_day_threshold: float = 0) -> np.array:
-    """
-    Perform quantile mapping for precipitation or temperature data.
-    FORMULA: y_fit = a * y_era^b
-    Inputs:
-        sce_data: numpy array of shape (n,) with the data to be transformed.
-        a: float
-        b: float
-        wet_days: boolean, if True, the transformation is performed only for wet days.
-        wet_day_threshold: float, the threshold to define wet days.
-    Outputs:
-        transformed_sce: numpy array of shape (n,) with the transformed data.
-    """
-    if wet_days:
-        dry_days = sce_data <= wet_day_threshold
-        # dry days to zero
-        sce_data[dry_days] = 0
-        transformed_sce = ptf(sce_data, a, b)
-
-    else:
-        transformed_sce = ptf(sce_data, a, b)
-
-    #round to 3 decimals
-    transformed_sce = np.round(transformed_sce, 2)
-
-    return transformed_sce
-
-def do_quantile_mapping(era5_data: pd.DataFrame, P_param: pd.DataFrame, T_param: pd.DataFrame, ensemble: bool) -> pd.DataFrame:
-    """
-    Loop over all the stations and perform the quantile mapping for each station for the control member.
-    Inputs:
-        era5_data: pandas DataFrame with the ERA5 data.
-        P_param: pandas DataFrame with the precipitation parameters.
-        T_param: pandas DataFrame with the temperature parameters.
-    Outputs:
-        P_data: pandas DataFrame with the transformed precipitation data.
-        T_data: pandas DataFrame with the transformed temperature data.
-    """
-    era5_data = era5_data.copy()
-    #get the unique codes
-    codes = era5_data['code'].unique()
-    #iterate over the codes
-    for code in codes:
-        #get the data for the code
-        code_data = era5_data[era5_data['code'] == code]
-
-        #get the parameters for the code
-        P_param_code = P_param[P_param['code'] == code]
-        T_param_code = T_param[T_param['code'] == code]
-
-        #get the parameters
-        a_P = P_param_code['a'].values
-        b_P = P_param_code['b'].values
-        threshold_P = P_param_code['wet_day'].values
-
-        a_T = T_param_code['a'].values
-        b_T = T_param_code['b'].values
-
-        #transform the data
-        code_data.loc[:,'P'] = quantile_mapping_ptf(code_data['P'].values, a_P, b_P, wet_days=True, wet_day_threshold=threshold_P)
-
-        #for temperature we need to tranform it to Kelvin
-        T_data = code_data['T'].values + 273.15
-        T_fitted = quantile_mapping_ptf(T_data, a_T, b_T, wet_days=False, wet_day_threshold=0)
-        code_data.loc[:,'T'] = T_fitted - 273.15
-
-        era5_data.loc[era5_data['code'] == code, 'P'] = code_data['P']
-        era5_data.loc[era5_data['code'] == code, 'T'] = code_data['T']
-
-    if ensemble:
-        P_data = era5_data[['date', 'P', 'code', 'ensemble_member']].copy()
-        T_data = era5_data[['date', 'T', 'code', 'ensemble_member']].copy()
-    else:
-        P_data = era5_data[['date', 'P', 'code']].copy()
-        T_data = era5_data[['date', 'T', 'code']].copy()
-
-    return P_data, T_data
-
-
-# --------------------------------------------------------------------
-# TRANSFORM DATA FILE
-# --------------------------------------------------------------------
-def transform_data_file_control_member(data_file:pd.DataFrame) -> pd.DataFrame:
-    """
-    Transforms the data file from the data gateaway in a more handy format.
-    Inputs:
-        data_file: pd.DataFrame with the data from the data gateaway. columns Code XXXXX is T and columns Code XXXXX.1 is P
-    Outputs:
-        transformed_data: pd.DataFrame with the transformed data. Columns are 'date', 'P', 'T', 'code'
-    """
-    data_file = data_file.copy()
-    # rename the Station column to 'date'
-    data_file.rename(columns={'Station': 'date'}, inplace=True)
-
-    #than we need to drop the first 7 rows of the era5 data
-    data_file = data_file.iloc[7:]
-
-    # now we need to convert the date column to a datetime object
-    data_file['date'] = pd.to_datetime(data_file['date'], dayfirst=True)
-
-    #sort by the date
-    data_file = data_file.sort_values('date')
-
-
-    transformed_data_file = pd.DataFrame()
-
-    #unique codes
-    codes = data_file.columns[1:]
-
-    # if the ".1" is not in code
-    codes = [code for code in codes if (code[-2:] != '.1' and code != 'Source')]
-
-    #iterate over the codes
-    for code in codes:
-        # get the data for the code
-        code_data = data_file[['date', code, code + '.1']].copy()
-        # rename the columns
-        code_data.rename(columns={code: 'T', code + '.1': 'P'}, inplace=True)
-        # Add the 'code' column
-        code_data['code'] = code
-        # Convert 'T' and 'P' columns to numeric, coercing errors
-        code_data['T'] = pd.to_numeric(code_data['T'], errors='coerce').astype(float)
-        code_data['P'] = pd.to_numeric(code_data['P'], errors='coerce').astype(float)
-        transformed_data_file = pd.concat([transformed_data_file, code_data], axis = 0)
-
-
-    return transformed_data_file
 
 
 def main():
@@ -293,7 +160,7 @@ def main():
 
         df_c_m = pd.read_csv(control_member_era5)
         #transform the data file
-        transformed_data_file = transform_data_file_control_member(df_c_m)
+        transformed_data_file = dg_utils.transform_data_file_control_member(df_c_m)
         transformed_data_file['code'] = transformed_data_file['code'].astype(str)
 
         #get the parameters if available
@@ -306,7 +173,7 @@ def main():
             T_params_hru['code'] = T_params_hru['code'].astype(str)
 
             #perform the quantile mapping for the control member for the HRU's without Eleavtion bands
-            P_data, T_data = do_quantile_mapping(transformed_data_file, P_params_hru, T_params_hru, ensemble=False)
+            P_data, T_data = dg_utils.do_quantile_mapping(transformed_data_file, P_params_hru, T_params_hru, ensemble=False)
         else:
             P_data = transformed_data_file[['date', 'P', 'code']].copy()
             T_data = transformed_data_file[['date', 'T', 'code']].copy()
