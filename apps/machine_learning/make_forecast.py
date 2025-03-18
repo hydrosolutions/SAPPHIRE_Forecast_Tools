@@ -570,6 +570,9 @@ def make_ml_forecast():
             predictions['date'] = pd.to_datetime(datetime.datetime.now().date())
         predictions['flag'] = flag
 
+        predictions['date'] = pd.to_datetime(predictions['date'])
+        predictions['forecast_date'] = pd.to_datetime(predictions['forecast_date'])
+
         forecast = pd.concat([forecast, predictions], axis=0, ignore_index=True)
 
         # Check if for this code we have a twin vitrual gauge which is > 0
@@ -584,19 +587,24 @@ def make_ml_forecast():
             logger.debug('Copied data and appended: %s', predictions)
 
 
+
+
     # --------------------------------------------------------------------
     # SAVE FORECAST
     # --------------------------------------------------------------------
     if PREDICTION_MODE == 'PENTAD':
+        # first save the latest forecast
+        forecast_today_path = os.path.join(OUTPUT_PATH_DISCHARGE, f'pentad_{MODEL_TO_USE}_forecast_latest.csv')
+        forecast.to_csv(forecast_today_path, index=False)
+        # Append the new forecast to the existing forecast file
         write_pentad_forecast(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, forecast)
     else:
+        forecast_today_path = os.path.join(OUTPUT_PATH_DISCHARGE, f'decad_{MODEL_TO_USE}_forecast_latest.csv')
+        forecast.to_csv(forecast_today_path, index=False)
         write_decad_forecast(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, forecast)
 
     logger.info('Forecast saved successfully. Exiting make_forecast.py\n')
     logger.info('--------------------------------------------------------------------')
-    print('Forecast saved successfully. Exiting make_forecast.py\n')
-    print('--------------------------------------------------------------------')
-
 
 if __name__ == '__main__':
     make_ml_forecast()
