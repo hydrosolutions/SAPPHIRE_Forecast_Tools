@@ -176,7 +176,275 @@ jobs:
           -t "${{ env.PREPQ_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
           -f ./apps/preprocessing_runoff/Dockerfile .
 
-  # Repeat this pattern for all other images
+  # Set up the preprocessing gateway environment
+  set_up_preprocessing_gateway:
+    needs: [build_python_311_base_image]
+    runs-on: ubuntu-latest
+    name: Setting up of preprocessing gateway
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11"]
+
+    steps:
+    - name: Check out the current branch
+      uses: actions/checkout@v4
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+    - name: Install dependencies for pre-processing of gateway data
+      working-directory: ./apps
+      run: |
+        python -m pip install --upgrade pip
+        python -m pip install -r preprocessing_gateway/requirements.txt
+        python -m pip install git+https://github.com/hydrosolutions/sapphire-dg-client.git
+
+  # Build the preprocessing gateway image
+  build_preprocessing_gateway:
+    needs: [set_up_preprocessing_gateway]
+    runs-on: ubuntu-latest
+    name: Dockerize preprocessing gateway module
+
+    steps:
+      # To use this repository's private action, you must check out the
+      # repository.
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Run the dockerization & deployment script
+      - name: Build Docker image
+        run: |
+          docker build --no-cache \
+          --build-arg SAPPHIRE_DG_HOST=${{ secrets.SAPPHIRE_DG_HOST }} \
+          -t "${{ env.PREPG_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
+          -f ./apps/preprocessing_gateway/Dockerfile .
+
+  # Set up the machine learning environment
+  set_up_machine_learning:
+    needs: [build_python_311_base_image, test_ieasyhydroforecast]
+    runs-on: ubuntu-latest
+    name: Setting up of machine learning environment
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11"]
+
+    steps:
+    - name: Check out the current branch
+      uses: actions/checkout@v4
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+    - name: Install dependencies for the machine learning module
+      working-directory: ./apps
+      run: |
+        python -m pip install --upgrade pip
+        python -m pip install -r machine_learning/requirements.txt
+
+  # Build the machine learning image
+  build_machine_learning_image:
+    needs: [set_up_machine_learning]
+    runs-on: ubuntu-latest
+    name: Dockerize and push machine learning module to Dockerhub
+
+    steps:
+      # To use this repository's private action, you must check out the
+      # repository.
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Run the dockerization & deployment script
+      - name: Build Docker image
+        run: |
+          docker build --no-cache \
+          -t "${{ env.ML_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
+          -f ./apps/machine_learning/Dockerfile .
+
+  # Test the reset run date
+  test_reset_forecast_run_date:
+    needs: [test_ieasyhydroforecast]
+    runs-on: ubuntu-latest
+    name: Test reset forecast run date
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11"]
+
+    steps:
+      - name: Check out the current branch
+        uses: actions/checkout@v4
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Set PYTHONPATH
+        run: |
+          # Adding the iEasyHydroForecast folder to the PYTHONPATH
+          echo "PYTHONPATH=${GITHUB_WORKSPACE}/apps/iEasyHydroForecast" >> $GITHUB_ENV
+      - name: Install dependencies for reset of run date
+        working-directory: ./apps
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install flake8
+          pip install -r reset_forecast_run_date/requirements.txt
+          pip install git+https://github.com/hydrosolutions/ieasyhydro-python-sdk
+          pip install -e iEasyHydroForecast
+      - name: Test
+        working-directory: ./apps
+        run: |
+          SAPPHIRE_TEST_ENV=True pytest reset_forecast_run_date/tests
+
+  # Build the reset forecast run date image
+  build_reset_forecast:
+    needs: [test_reset_forecast_run_date, test_ieasyhydroforecast, build_python_311_base_image]
+    runs-on: ubuntu-latest
+    name: Dockerize resetting of forecast run date and push to Dockerhub
+
+    steps:
+      # To use this repository's private action, you must check out the
+      # repository.
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Run the dockerization & deployment script
+      - name: Build Docker image
+        run: |
+          docker build --no-cache \
+          -t "${{ env.RERUN_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
+          -f ./apps/reset_forecast_run_date/Dockerfile .
+
+  # Set up the forecast dashboard environment
+  test_dashboard:
+    needs: [build_python_311_base_image]
+    runs-on: ubuntu-latest
+    name: Test forecast dashboard
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11"]
+
+    steps:
+      - name: Checks out current branch
+        uses: actions/checkout@v4
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Set PYTHONPATH
+        run: |
+          # Adding the iEasyHydroForecast folder to the PYTHONPATH
+          echo "PYTHONPATH=${GITHUB_WORKSPACE}/apps/iEasyHydroForecast" >> $GITHUB_ENV
+      - name: Get env var from GitHub secrets
+        run: |
+          echo "ieasyhydroforecast_url=${{ secrets.ieasyhydroforecast_url }}" >> $GITHUB_ENV
+      - name: Install dependencies
+        # Default working directory is the repository root folder
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r ./apps/forecast_dashboard/requirements.txt
+          python -m pip install git+https://github.com/hydrosolutions/ieasyhydro-python-sdk
+          python -m pip install git+https://github.com/hydrosolutions/ieasyreports.git@main
+          python -m pip install -e ./apps/iEasyHydroForecast
+      - name: Test with pytest
+        working-directory: ./apps
+        run: |
+          # Currently no tests implemented. No tests to run for the moment
+          #SAPPHIRE_TEST_ENV=True python -m pytest -s forecast_dashboard/tests/
+
+  # Build the forecast dashboard image
+  build_dashboard:
+    needs: [test_dashboard, test_ieasyhydroforecast]
+    runs-on: ubuntu-latest
+    name: Dockerize and push forecast dashboard to Dockerhub
+
+    steps:
+      # To use this repository's private action, you must check out the
+      # repository.
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Run the dockerization & deployment script
+      - name: Build Docker image
+        run: |
+          docker build --no-cache \
+          -t "${{ env.DASHBOARD_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
+          -f ./apps/forecast_dashboard/Dockerfile .
+
+  # Build postprocessing image
+  build_postprocessing_runoff:
+    # Same requirements as preprocessing_runoff module
+    needs: [test_preprocessing_runoff, test_ieasyhydroforecast]
+    runs-on: ubuntu-latest
+    name: Dockerize and push postprocessing module to Dockerhub
+
+    steps:
+      # To use this repository's private action, you must check out the
+      # repository.
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Run the dockerization & deployment script
+      - name: Build Docker image
+        run: |
+          docker build --no-cache \
+          -t "${{ env.POSTPQ_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
+          -f ./apps/postprocessing_forecasts/Dockerfile .
+
+  # Test linear regression
+  test_linear_regression:
+    needs: [build_python_311_base_image]
+    runs-on: ubuntu-latest
+    name: Test linear regression module
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11"]
+
+    steps:
+      - name: Check out the current branch
+        uses: actions/checkout@v4
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Set PYTHONPATH
+        run: |
+          # Adding the iEasyHydroForecast folder to the PYTHONPATH
+          echo "PYTHONPATH=${GITHUB_WORKSPACE}/apps/iEasyHydroForecast" >> $GITHUB_ENV
+      - name: Install dependencies for reset of run date
+        working-directory: ./apps
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r linear_regression/requirements.txt
+          python -m pip install git+https://github.com/hydrosolutions/ieasyhydro-python-sdk
+          python -m pip install -e iEasyHydroForecast
+      - name: Test
+        working-directory: ./apps
+        run: |
+          #SAPPHIRE_TEST_ENV=True pytest linear_regression/test
+
+  # Build linear regression image
+  build_linreg:
+    # Same requirements as preprocessing_runoff module
+    needs: [test_linear_regression, test_ieasyhydroforecast]
+    runs-on: ubuntu-latest
+    name: Dockerize and push linear regression module to Dockerhub
+
+    steps:
+      # To use this repository's private action, you must check out the
+      # repository.
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Run the dockerization & deployment script
+      - name: Build Docker image
+        run: |
+          docker build --no-cache \
+          -t "${{ env.LINREG_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
+          -f ./apps/linear_regression/Dockerfile .
+
 
   # Final job that summarizes all built images
   summarize_builds:
@@ -185,7 +453,12 @@ jobs:
       build_pipeline_image,
       build_conceptual_model,
       build_preprocessing_runoff,
-      # Add all other build jobs here
+      build_preprocessing_gateway,
+      build_machine_learning_image,
+      build_reset_forecast,
+      build_dashboard,
+      build_postprocessing_runoff,
+      build_linreg
     ]
     runs-on: ubuntu-latest
     name: Summarize Docker image builds

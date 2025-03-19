@@ -603,4 +603,33 @@ jobs:
         run: |
           docker push "${{ env.LINREG_IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
 
-
+  # Final job that summarizes all built images
+  summarize_builds:
+    needs: [
+      build_and_push_python_311_base_image,
+      build_and_push_pipeline_image,
+      push_conceptual_model_to_Dckerhub,
+      push_preprocessing_runoff_to_Dckerhub,
+      push_preprocessing_gateway_to_Dckerhub,
+      push_machine_learning_to_Dckerhub,
+      push_reset_forecast_to_Dckerhub,
+      push_dashboard_to_Dckerhub,
+      push_postprocessing_runoff_to_Dckerhub,
+      push_linreg_to_Dckerhub
+    ]
+    runs-on: ubuntu-latest
+    name: Summarize Docker image builds
+    steps:
+      - name: Generate summary
+        run: |
+          echo "# Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Successfully built the following Docker images:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- ${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" >> $GITHUB_STEP_SUMMARY
+          echo "- ${{ env.PIPELINE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" >> $GITHUB_STEP_SUMMARY
+          echo "- ${{ env.CONCMOD_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" >> $GITHUB_STEP_SUMMARY
+          echo "- ${{ env.PREPQ_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" >> $GITHUB_STEP_SUMMARY
+          # Add all other images here
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Note:** These images were built on Ubuntu:latest and pushed to DockerHub." >> $GITHUB_STEP_SUMMARY
