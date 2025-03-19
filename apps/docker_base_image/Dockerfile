@@ -21,11 +21,18 @@ RUN apt-get clean && \
     apt-get install -y libpcre3-dev && \
     apt-get install -y gnutls-bin libc6 && \
     apt-get upgrade -y gcc libc6 && \
-    apt-get clean
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
 # Install sudo should child images need it.
 RUN apt-get install -y sudo && \
     echo "appuser ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+
+# Fix setuptools
+RUN pip install --no-cacha-dir --upgrade pip && \
+    pip uninstall -y setuptools && \
+    pip install --no-cache-dir "setuptools>=70.0.0" && \
+    python -c "import setuptools; print(f'Setuptools version: {setuptools.__version__}')"
 
 # Create the non-root user with specific UID/GID
 # Check the UID/GID of the host user and group with `id -u` and `id -g`
@@ -56,18 +63,16 @@ RUN DOCKER_GRP=$(getent group 999 | cut -d: -f1 || echo "") && \
 WORKDIR /app
 RUN chown -R appuser:appgroup /app
 
-# Switch to the non-root user
-USER appuser
-
 # Copy the source code into the container.
 COPY --chown=appuser:appgroup apps/iEasyHydroForecast/ /app/apps/iEasyHydroForecast
 
 # Install dependencies as the non-root user
 RUN --mount=type=cache,target=/home/appuser/.cache/pip \
     --mount=type=bind,source=apps/docker_base_image/requirements.txt,target=/app/apps/docker_base_image/requirements.txt \
-    pip install --upgrade pip && \
-    pip uninstall -y setuptools && \
-    pip install --no-cache-dir "setuptools>=70.0.0" wheel tornado && \
+    pip install --no-cache-dir wheel tornado && \
     pip install --trusted-host pypi.python.org -r /app/apps/docker_base_image/requirements.txt && \
     pip install git+https://github.com/hydrosolutions/ieasyhydro-python-sdk && \
     sudo pip install --no-cache-dir /app/apps/iEasyHydroForecast
+
+# Switch to the non-root user
+USER appuser
