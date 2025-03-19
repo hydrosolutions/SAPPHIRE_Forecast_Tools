@@ -2928,6 +2928,15 @@ def save_forecast_data_pentad(simulated: pd.DataFrame):
     # write the data to csv
     ret = simulated.to_csv(filename, index=False)
 
+    # Select the last unique row by 'code', pentad_in_year', and 'model_short'
+    simulated_latest = simulated.groupby(['code', 'pentad_in_year', 'model_short']).tail(1)
+
+    # Edit filename by appending '_latest' to the filename
+    filename_latest = filename.replace('.csv', '_latest.csv')
+
+    # Write the latest data to a csv file
+    ret = simulated_latest.to_csv(filename_latest, index=False)
+
     return ret
 
 # endregion
