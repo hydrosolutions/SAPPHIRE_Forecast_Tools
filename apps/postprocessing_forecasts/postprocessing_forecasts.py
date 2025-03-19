@@ -124,6 +124,7 @@ def postprocessing_forecasts():
             logger.info(f"\n\n------ Reading observed and modelled data -------")
             # Data processing
             observed, modelled = sl.read_observed_and_modelled_data_pentade()
+            observed_decade, modelled_decade = sl.read_observed_and_modelled_data_decade()
 
         with timer(timing_stats, 'calculating skill metrics'):
             logger.info(f"\n\n------ Calculating skill metrics -----------------")
