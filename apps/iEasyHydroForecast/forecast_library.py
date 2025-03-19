@@ -2540,7 +2540,7 @@ def write_pentad_hydrograph_data(data: pd.DataFrame, iehhf_sdk = None):
             except Exception as e:
                 logger.error(f"Could not get norm for site {code}.")
                 temp_norm = []
-            if len(temp_norm) > 0:
+            if len(temp_norm) == 72:
                 all_pentadal_norms[code] = temp_norm
             else:
                 all_pentadal_norms[code] = [None] * 72  # 72 pentads in a year
@@ -2671,7 +2671,8 @@ def write_decad_hydrograph_data(data: pd.DataFrame, iehhf_sdk = None):
             except Exception as e:
                 logger.error(f"Could not get norm for site {code}.")
                 temp_norm = []
-            if len(temp_norm) > 0:
+            if len(temp_norm) == 36:
+                #print(f"code {code} len(temp_norm): {len(temp_norm)}\ntemp_norm: {temp_norm}")
                 all_pentadal_norms[code] = temp_norm
             else:
                 all_pentadal_norms[code] = [None] * 36  # 36 decads in a year

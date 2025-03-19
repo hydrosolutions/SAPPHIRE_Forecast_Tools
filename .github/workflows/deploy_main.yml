@@ -1,4 +1,4 @@
-name: Test & deploy main branch
+name: Test & bush main branch do Dockerhub
 
 env:
   IMAGE_TAG: latest
