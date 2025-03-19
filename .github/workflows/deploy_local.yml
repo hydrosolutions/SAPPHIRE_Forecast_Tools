@@ -20,14 +20,10 @@ env:
 on:
   push:
     branches: [ "local" ]
-  pull_request:
-    types: [closed]
-    branches: [ "local" ]
 
 jobs:
 
   test_ieasyhydroforecast:
-    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.merged == true)
     runs-on: ubuntu-latest
     name: Test iEasyHydroForecast
     strategy:
