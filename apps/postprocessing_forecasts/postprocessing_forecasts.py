@@ -120,13 +120,18 @@ def postprocessing_forecasts():
             # Configuration
             sl.load_environment()
 
-        with timer(timing_stats, 'reading data'):
-            logger.info(f"\n\n------ Reading observed and modelled data -------")
+        with timer(timing_stats, 'reading pentadal data'):
+            logger.info(f"\n\n------ Reading pentadal observed and modelled data -------")
             # Data processing
             observed, modelled = sl.read_observed_and_modelled_data_pentade()
 
-        with timer(timing_stats, 'calculating skill metrics'):
-            logger.info(f"\n\n------ Calculating skill metrics -----------------")
+        with timer(timing_stats, 'reading decadal data'):
+            logger.info(f"\n\n------ Reading decadal observed and modelled data -------")
+            # Data processing
+            observed_decade, modelled_decade = sl.read_observed_and_modelled_data_decade()
+
+        with timer(timing_stats, 'calculating skill metrics pentads'):
+            logger.info(f"\n\n------ Calculating skill metrics pentads -----------------")
             # Store the original timing_stats in case the function returns None
             original_timing_stats = timing_stats
 
@@ -142,13 +147,36 @@ def postprocessing_forecasts():
             else:
                 timing_stats = original_timing_stats
 
-        with timer(timing_stats, 'logging recent forecasts'):
-            logger.info(f"\n\n------ Logging most recent forecasts -------------")
-            # Log the most recent forecast for each module
-            recent_forecasts = pt.log_most_recent_forecasts(modelled)
+        with timer(timing_stats, 'calculating skill metrics decads'):
+            logger.info(f"\n\n------ Calculating skill metrics decads -----------------")
+            # Store the original timing_stats in case the function returns None
+            original_timing_stats = timing_stats
 
-        with timer(timing_stats, 'saving results'):
-            logger.info(f"\n\n------ Saving results ----------------------")
+            # Calculate forecast skill metrics, adds ensemble forecast to modelled
+            skill_metrics_decade, modelled_decade, returned_timing_stats = fl.calculate_skill_metrics_decade(
+                observed_decade, modelled_decade, timing_stats)
+            logger.debug(f"Skill metrics: {skill_metrics_decade.columns}")
+            logger.debug(f"Skill metrics: {skill_metrics_decade.tail()}")
+
+            # Use returned timing_stats only if it's not None
+            if returned_timing_stats is not None:
+                timing_stats = returned_timing_stats
+            else:
+                timing_stats = original_timing_stats
+
+        # We log the most recent forecasts in save_forecast_data_pentad/decade below
+        #with timer(timing_stats, 'logging recent pentadal forecasts'):
+        #    logger.info(f"\n\n------ Logging most recent pentadal forecasts -------------")
+        #    # Log the most recent forecast for each module
+        #    recent_forecasts = pt.log_most_recent_forecasts_pentad(modelled)
+
+        #with timer(timing_stats, 'logging recent decadal forecasts'):
+        #    logger.info(f"\n\n------ Logging most recent decadal forecasts -------------")
+        #    # Log the most recent forecast for each module
+        #    recent_forecasts = pt.log_most_recent_forecasts_decade(modelled_decade)
+
+        with timer(timing_stats, 'saving pentad results'):
+            logger.info(f"\n\n------ Saving pentad results ----------------------")
             # Save the observed and modelled data to CSV files
             ret = fl.save_forecast_data_pentad(modelled)
             if ret is None:
@@ -158,6 +186,18 @@ def postprocessing_forecasts():
 
             # Save the skill metrics to a CSV file
             ret = fl.save_pentadal_skill_metrics(skill_metrics)
+
+        with timer(timing_stats, 'saving decade results'):
+            logger.info(f"\n\n------ Saving decade results ----------------------")
+            # Save the observed and modelled data to CSV files
+            ret = fl.save_forecast_data_decade(modelled_decade)
+            if ret is None:
+                logger.info(f"Decadal forecast results for all models saved successfully.")
+            else:
+                logger.error(f"Error saving the decadal forecast results.")
+
+            # Save the skill metrics to a CSV file
+            ret = fl.save_decadal_skill_metrics(skill_metrics_decade)
 
     # Print timing summary
     summary, total = timing_stats.summary()
