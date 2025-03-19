@@ -253,6 +253,8 @@ def load_data():
     forecast_results_file = os.path.join(
         os.getenv("ieasyforecast_intermediate_data_path"),
         os.getenv("ieasyforecast_combined_forecast_pentad_file"))
+    # Append _latest to the filename to get the latest file
+    forecast_results_file = forecast_results_file.replace('.csv', '_latest.csv')
     forecast_results_file_mtime = os.path.getmtime(forecast_results_file)
 
     forecast_stats_file = os.path.join(
