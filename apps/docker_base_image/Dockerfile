@@ -21,12 +21,12 @@ RUN apt-get clean && \
     apt-get install -y libpcre3-dev && \
     apt-get install -y gnutls-bin libc6 && \
     apt-get upgrade -y gcc libc6 && \
+    apt-get install -y sudo && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# Install sudo should child images need it.
-RUN apt-get install -y sudo && \
-    echo "appuser ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+# SEt up sudo for the non-root user (will be created later)
+RUN echo "appuser ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
 
 # Fix setuptools
 RUN pip install --no-cacha-dir --upgrade pip && \
