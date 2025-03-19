@@ -65,7 +65,9 @@ COPY --chown=appuser:appgroup apps/iEasyHydroForecast/ /app/apps/iEasyHydroForec
 # Install dependencies as the non-root user
 RUN --mount=type=cache,target=/home/appuser/.cache/pip \
     --mount=type=bind,source=apps/docker_base_image/requirements.txt,target=/app/apps/docker_base_image/requirements.txt \
-    pip install --upgrade pip "setuptools>=70.0.0" wheel tornado && \
+    pip install --upgrade pip && \
+    pip uninstall -y setuptools && \
+    pip install --no-cache-dir "setuptools>=70.0.0" wheel tornado && \
     pip install --trusted-host pypi.python.org -r /app/apps/docker_base_image/requirements.txt && \
     pip install git+https://github.com/hydrosolutions/ieasyhydro-python-sdk && \
     sudo pip install --no-cache-dir /app/apps/iEasyHydroForecast
