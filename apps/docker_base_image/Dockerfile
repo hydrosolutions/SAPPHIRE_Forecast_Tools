@@ -29,7 +29,7 @@ RUN apt-get clean && \
 RUN echo "appuser ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
 
 # Fix setuptools
-RUN pip install --no-cacha-dir --upgrade pip && \
+RUN pip install --no-cache-dir --upgrade pip && \
     pip uninstall -y setuptools && \
     pip install --no-cache-dir "setuptools>=70.0.0" && \
     python -c "import setuptools; print(f'Setuptools version: {setuptools.__version__}')"
