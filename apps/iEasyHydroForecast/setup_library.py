@@ -858,6 +858,33 @@ def read_observed_pentadal_data():
 
     return data
 
+def read_observed_decadal_data():
+    """
+    Read the decadal hydrograph data.
+
+    Returns:
+    data (pandas.DataFrame): The decadal data.
+
+    Details:
+    The file to read is specified in the environment variable
+    ieasyforecast_daily_discharge_file. It is expected to have a column 'date'
+    with the date of the hydrograph data.
+    """
+    # Read the pentadal hydrograph data
+    filepath = os.path.join(
+        os.getenv("ieasyforecast_intermediate_data_path"),
+        os.getenv("ieasyforecast_decad_discharge_file")
+    )
+    data = pd.read_csv(filepath, parse_dates=["date"])
+
+    # Add a column model to the dataframe
+    data["model_long"] = "Observed (Obs)"
+    data["model_short"] = "Obs"
+
+    logger.info(f"Read {len(data)} rows of observed data for the pentadal forecast horizon.")
+
+    return data
+
 def read_linreg_forecasts_pentad():
     """
     Read the linear regression forecasts for the pentadal forecast horizon and
@@ -943,6 +970,91 @@ def read_linreg_forecasts_pentad():
 
     return forecasts, stats
 
+def read_linreg_forecasts_decade():
+    """
+    Read the linear regression forecasts for the decadal forecast horizon and
+    adds the name of the model to the DataFrame.
+
+    Since the linreg result file currently holds some general runoff statistics,
+    we need to filter these out and return them in a separate DataFrame.
+
+    Returns:
+    forecasts (pandas.DataFrame): The linear regression forecasts for the
+        decadal forecast horizon with added model_long and model_short columns.
+    stats (pandas.DataFrame): The statistics of the observed data for the
+        pentadal forecast horizon.
+
+    Details:
+    The file to read is specified in the environment variable
+    ieasyforecast_analysis_decad_file. It is expected to have a column 'date'
+    with the date of the forecast.
+
+    Generally, we expect the following columns in the forecast files:
+    date: The date the forecast is produced for the following pentad
+    code: The unique hydropost identifier
+    forecasted_discharge: The forecasted discharge for the pentad
+
+    Optional columns are, in the case of the linear regression method:
+    predictor: The predictor used in the linear regression model
+    discharge_avg: The average discharge for the pentad used in the linear regression model
+    decad_in_month: The decade in the month for which the forecast is produced
+    decad_in_year: The decade in the year for which the forecast is produced
+    slope: The slope of the linear regression model
+    intercept: The intercept of the linear regression model
+
+    The following columns are in the linreg forecast result file but referr to
+    general runoff statistics and are later merged to the observed DataFrame:
+    q_mean: The mean discharge over the available data for the forecast decade
+    q_std_sigma: The standard deviation of the discharge over the available data for the forecast decade
+        Generally referred to as sigma in the hydromet.
+    delta: The acceptable range for the forecast around the observed discharge.
+        Calculated by the hydromet as 0.674 * q_std_sigma (assuming normal distribution of the decadal discharge)
+    """
+    # Read the linear regression forecasts for the pentadal forecast horizon
+    filepath = os.path.join(
+        os.getenv("ieasyforecast_intermediate_data_path"),
+        os.getenv("ieasyforecast_analysis_decad_file")
+    )
+    data = pd.read_csv(filepath, parse_dates=["date"])
+
+    # Drop duplicate rows in date and code if they exist, keeping the last row
+    data.drop_duplicates(subset=["date", "code"], keep="last", inplace=True)
+
+    # Add a column model to the dataframe
+    data["model_long"] = "Linear regression (LR)"
+    data["model_short"] = "LR"
+
+    # Split the data into forecasts and statistics
+    # The statistics are general runoff statistics and are later merged to the
+    # observed DataFrame
+    stats = data[["date", "code", "q_mean", "q_std_sigma", "delta"]]
+    forecasts = data.drop(columns=["q_mean", "q_std_sigma", "delta", "discharge_avg"])
+
+    # Add one day to date
+    #forecasts.loc[:, "date"] = forecasts.loc[:, "date"] + pd.DateOffset(days=1)
+    #stats.loc[:, "date"] = stats.loc[:, "date"] + pd.DateOffset(days=1)
+
+    # Recalculate pentad in month and pentad in year
+    forecasts["decad_in_month"] = (forecasts["date"] + pd.Timedelta(days=1)).apply(tl.get_decad_in_month)
+    forecasts["decad_in_year"] = (forecasts["date"] + pd.Timedelta(days=1)).apply(tl.get_decad_in_year)
+
+    # Save the most recent forecasts to CSV for comparison
+    try:
+        save_most_recent_forecasts_decade(forecasts, "LR")
+    except ImportError:
+        logger.warning("Could not import save_most_recent_forecasts from src.postprocessing_tools")
+    except Exception as e:
+        logger.warning(f"Error saving most recent LR forecasts: {e}")
+
+    logger.info(f"Read {len(forecasts)} rows of linear regression forecasts for the decadal forecast horizon.")
+    logger.info(f"Read {len(stats)} rows of general runoff statistics for the decadal forecast horizon.")
+    logger.debug(f"Colums in the linear regression forecast data:\n{forecasts.columns}")
+    logger.debug(f"Linear regression forecast data: \n{forecasts.head()}")
+    logger.debug(f"Colums in the general runoff statistics data:\n{stats.columns}")
+    logger.debug(f"General runoff statistics data: \n{stats.head()}")
+
+    return forecasts, stats
+
 def read_daily_probabilistic_ml_forecasts_pentad(filepath, model, model_long, model_short):
     """
     Reads in forecast results from probabilistic machine learning models for the pentadal forecast.
@@ -1007,6 +1119,79 @@ def read_daily_probabilistic_ml_forecasts_pentad(filepath, model, model_long, mo
             forecast["pentad_in_year"] = (forecast["date"] + pd.Timedelta(days=1)).apply(tl.get_pentad_in_year)
 
         logger.info(f"Read {len(forecast)} rows of {model} forecasts for the pentadal forecast horizon.")
+        logger.debug(f"Columns in the {model} forecast data: {forecast.columns}")
+        logger.debug(f"Read forecast data sample: {forecast.head()}")
+
+        return forecast
+
+    except Exception as e:
+        logger.warning(f"Error processing {model} forecast data from {filepath}: {e}")
+        return pd.DataFrame()
+
+def read_daily_probabilistic_ml_forecasts_decade(filepath, model, model_long, model_short):
+    """
+    Reads in forecast results from probabilistic machine learning models for the decadal forecast.
+    Added robust error handling.
+
+    Args:
+        filepath (str): The path to the file with the forecast results.
+        model (str): The model to read the forecast results from.
+        model_long (str): The long name of the model.
+        model_short (str): The short name of the model.
+
+    Returns:
+        forecast (pandas.DataFrame): The forecast results or an empty DataFrame if error occurs.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+
+    try:
+        # Read the forecast results
+        daily_data = pd.read_csv(filepath, parse_dates=["date", "forecast_date"])
+
+        # Only keep the forecast rows for pentadal forecasts
+        # Add a column last_day_of_month to daily_data
+        daily_data["last_day_of_month"] = daily_data["forecast_date"].apply(fl.get_last_day_of_month)
+        daily_data["day_of_month"] = daily_data["forecast_date"].dt.day
+
+        # Keep rows that have forecast_date equal to either 10, 20, or last_day_of_month
+        data = daily_data[(daily_data["day_of_month"].isin([10, 20])) | \
+                        (daily_data["forecast_date"] == daily_data["last_day_of_month"])]
+
+        # Check if we have any data after filtering
+        if data.empty:
+            logger.warning(f"No decadal forecast data found for {model} after filtering")
+            return pd.DataFrame()
+
+        # Group by code and forecast_date and calculate the mean of all columns
+        forecast = data \
+            .drop(columns=["date", "day_of_month", "last_day_of_month"], errors='ignore') \
+            .groupby(["code", "forecast_date"]) \
+            .mean() \
+            .reset_index()
+
+        # Rename the column forecast_date to date and Q50 to forecasted_discharge.
+        # In the case of the ARIMA model, we don't have quantiles but rename the column Q to forecasted_discharge.
+        columns_to_rename = {}
+        if "forecast_date" in forecast.columns:
+            columns_to_rename["forecast_date"] = "date"
+        if "Q50" in forecast.columns:
+            columns_to_rename["Q50"] = "forecasted_discharge"
+        if "Q" in forecast.columns:
+            columns_to_rename["Q"] = "forecasted_discharge"
+
+        forecast.rename(columns=columns_to_rename, inplace=True)
+
+        # Add model information
+        forecast["model_long"] = model_long
+        forecast["model_short"] = model_short
+
+        # Recalculate pentad in month and pentad in year if date column exists
+        if "date" in forecast.columns:
+            forecast["decad_in_month"] = (forecast["date"] + pd.Timedelta(days=1)).apply(tl.get_decad_in_month)
+            forecast["decad_in_year"] = (forecast["date"] + pd.Timedelta(days=1)).apply(tl.get_decad_in_year)
+
+        logger.info(f"Read {len(forecast)} rows of {model} forecasts for the decadal forecast horizon.")
         logger.debug(f"Columns in the {model} forecast data: {forecast.columns}")
         logger.debug(f"Read forecast data sample: {forecast.head()}")
 
@@ -1415,6 +1600,111 @@ def read_all_conceptual_model_forecasts_pentad():
         except Exception as e:
             logger.warning(f"Error saving most recent RRAM forecasts: {e}")
 
+    return forecasts
+
+def read_all_conceptual_model_forecasts_decade():
+    """
+    From the folder, ieasyhydroforecast_PATH_TO_RESULT, reads all available
+    forecast files. Returns an empty DataFrame if no files are found or the
+    directory doesn't exist.
+
+    Returns:
+    forecasts (pandas.DataFrame): The forecast results from all conceptual models,
+                                or an empty DataFrame if none are found.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+
+    # Get the path to the results directory
+    path_to_results_dir = os.getenv("ieasyhydroforecast_PATH_TO_RESULT")
+
+    # If path is not set, return empty DataFrame with warning
+    if path_to_results_dir is None:
+        logger.warning("Environment variable ieasyhydroforecast_PATH_TO_RESULT is not set. Skipping conceptual model forecasts.")
+        return pd.DataFrame()
+
+    # If directory doesn't exist, return empty DataFrame with warning
+    if not os.path.exists(path_to_results_dir):
+        logger.warning(f"Directory {path_to_results_dir} does not exist. Skipping conceptual model forecasts.")
+        return pd.DataFrame()
+
+    # Get a list of operational daily forecast files in subdirectories of path_to_results_dir
+    try:
+        files = get_files_in_subdirectories(path_to_results_dir, "daily_*.csv")
+    except Exception as e:
+        logger.warning(f"Error searching for daily_*.csv files in {path_to_results_dir}: {e}")
+        files = []
+
+    # If no files found, return empty DataFrame with warning
+    if not files:
+        logger.warning(f"No daily_*.csv files found in {path_to_results_dir}. Skipping conceptual model forecasts.")
+        return pd.DataFrame()
+
+    # Read the forecast results from all files
+    forecasts = pd.DataFrame()  # Create an empty DataFrame to hold all forecasts
+
+    for file in files:
+        try:
+            logger.debug(f"Reading forecast results from {file}")
+            forecast = read_conceptual_model_forecast_pentad(file)
+
+            if forecasts.empty:
+                forecasts = forecast
+            else:
+                forecasts = pd.concat([forecasts, forecast])
+
+        except Exception as e:
+            logger.warning(f"Error reading forecast from {file}: {e}")
+            # Continue to next file instead of failing
+
+    # Also try to read hindcast files
+    try:
+        hindcast_files = get_files_in_subdirectories(path_to_results_dir, "hindcast_daily_*.csv")
+    except Exception as e:
+        logger.warning(f"Error searching for hindcast_daily_*.csv files: {e}")
+        hindcast_files = []
+
+    # Only read hindcast files if they exist
+    if hindcast_files:
+        hindcasts = pd.DataFrame()  # Create an empty DataFrame to hold all hindcasts
+
+        # Read the hindcast results from all files
+        for hindcast_file in hindcast_files:
+            try:
+                logger.debug(f"Reading hindcast results from {hindcast_file}")
+                hindcast = read_conceptual_model_forecast_pentad(hindcast_file)
+
+                if hindcasts.empty:
+                    hindcasts = hindcast
+                else:
+                    hindcasts = pd.concat([hindcasts, hindcast])
+
+            except Exception as e:
+                logger.warning(f"Error reading hindcast from {hindcast_file}: {e}")
+                # Continue to next file instead of failing
+
+        # If we have any hindcasts, append them to forecasts
+        if not hindcasts.empty:
+            if forecasts.empty:
+                forecasts = hindcasts
+            else:
+                # Append hindcasts to forecasts, if there are duplicates, keep the forecast
+                # and discard the hindcast
+                forecasts = pd.concat([forecasts, hindcasts]).drop_duplicates(
+                    subset=["code", "date"], keep="first")
+
+    # If we still have no data, return empty DataFrame with warning
+    # If we still have no data, return empty DataFrame with warning
+    if forecasts.empty:
+        logger.warning("No valid conceptual model forecasts or hindcasts found.")
+    else:
+        # Save the most recent forecasts to CSV for comparison
+        try:
+            save_most_recent_forecasts_decade(forecasts, "RRAM")
+        except ImportError:
+            logger.warning("Could not import save_most_recent_forecasts from src.postprocessing_tools")
+        except Exception as e:
+            logger.warning(f"Error saving most recent RRAM forecasts: {e}")
 
     return forecasts
 
@@ -1486,6 +1776,82 @@ def read_machine_learning_forecasts_pentad(model):
             save_most_recent_forecasts(forecast, model_short)
         except ImportError:
             logger.warning(f"Could not import save_most_recent_forecasts from src.postprocessing_tools")
+        except Exception as e:
+            logger.warning(f"Error saving most recent {model_short} forecasts: {e}")
+
+        return forecast
+    except Exception as e:
+        logger.warning(f"Error reading {model} forecast from {filepath}: {e}")
+        return pd.DataFrame()
+
+def read_machine_learning_forecasts_decade(model):
+    '''
+    Reads forecast results from the machine learning model for the decadal
+    forecast horizon with robust error handling.
+
+    Args:
+    model (str): The machine learning model to read the forecast results from.
+        Allowed values are 'TFT', 'TIDE', 'TSMIXER', and 'ARIMA'.
+
+    Returns:
+    pandas.DataFrame: Forecast results or an empty DataFrame if files not found or error occurs.
+    '''
+    import logging
+    logger = logging.getLogger(__name__)
+
+    # Set model-specific parameters
+    if model == 'TFT':
+        filename = f"decad_{model}_forecast.csv".format(model=model)
+        hindcast_filename = f"{model}_DECAD_hindcast_daily*.csv".format(model=model)
+        model_long = "Temporal-Fusion Transformer (TFT)"
+        model_short = "TFT"
+    elif model == 'TIDE':
+        filename = f"decad_{model}_forecast.csv".format(model=model)
+        hindcast_filename = f"{model}_DECAD_hindcast_daily*.csv".format(model=model)
+        model_long = "Time-Series Dense Encoder (TiDE)"
+        model_short = "TiDE"
+    elif model == 'TSMIXER':
+        filename = f"decad_{model}_forecast.csv".format(model=model)
+        hindcast_filename = f"{model}_DECAD_hindcast_daily*.csv".format(model=model)
+        model_long = "Time-Series Mixer (TSMixer)"
+        model_short = "TSMixer"
+    elif model == 'ARIMA':
+        filename = f"decad_{model}_forecast.csv".format(model=model)
+        hindcast_filename = f"{model}_DECAD_hindcast_daily*.csv".format(model=model)
+        model_long = "AutoRegressive Integrated Moving Average (ARIMA)"
+        model_short = "ARIMA"
+    else:
+        logger.warning(f"Invalid model: {model}. Valid models are: 'TFT', 'TIDE', 'TSMIXER', 'ARIMA'")
+        return pd.DataFrame()
+
+    # Read environment variables to construct the file path
+    intermediate_data_path = os.getenv("ieasyforecast_intermediate_data_path")
+    if intermediate_data_path is None:
+        logger.warning("Environment variable ieasyforecast_intermediate_data_path is not set")
+        return pd.DataFrame()
+
+    subfolder = os.getenv("ieasyhydroforecast_OUTPUT_PATH_DISCHARGE")
+    if subfolder is None:
+        logger.warning("Environment variable ieasyhydroforecast_OUTPUT_PATH_DISCHARGE is not set")
+        return pd.DataFrame()
+
+    filepath = os.path.join(intermediate_data_path, subfolder, model, filename)
+
+    # Test if the filepath exists
+    if not os.path.exists(filepath):
+        logger.warning(f"File {filepath} not found for model {model}")
+        return pd.DataFrame()
+
+    logger.info(f"Reading forecast results from {filename}")
+    logger.debug(f"{filepath}")
+
+    try:
+        forecast = read_daily_probabilistic_ml_forecasts_decade(filepath, model, model_long, model_short)
+        # Save the most recent forecasts to CSV for comparison
+        try:
+            save_most_recent_forecasts_decade(forecast, model_short)
+        except ImportError:
+            logger.warning(f"Could not import save_most_recent_forecasts_decade from src.postprocessing_tools")
         except Exception as e:
             logger.warning(f"Error saving most recent {model_short} forecasts: {e}")
 
@@ -1577,6 +1943,51 @@ def calculate_neural_ensemble_forecast(forecasts):
     forecasts = pd.concat([forecasts, ensemble_mean])
 
     logger.info(f"Calculated ensemble forecast for models: {model_names}")
+    logger.debug(f"Columns of forecasts:\n{forecasts.columns}")
+    logger.debug(f"Forecasts:\n{forecasts.loc[:,['date', 'code', 'model_long', 'forecasted_discharge']].head()}")
+    logger.debug(f"Forecasts:\n{forecasts.loc[:,['date', 'code', 'model_long', 'forecasted_discharge']].tail()}")
+    logger.debug(f"Unique models in forecasts:\n{forecasts['model_long'].unique()}")
+
+    return forecasts
+
+def calculate_neural_ensemble_forecast_decade(forecasts):
+    # Define the models we're interested in
+    target_models = ['TiDE', 'TFT', 'TSMixer', 'TIDE', 'TSMIXER']
+
+    # Filter forecasts to include only the target models if they exist
+    available_target_models = [model for model in target_models if any(forecasts['model_short'].str.contains(model))]
+
+    if not available_target_models:
+        logger.warning("None of the specified models (TiDE, TFT, TSMixer) are present in the forecasts.")
+        return forecasts
+
+    filtered_forecasts = forecasts[forecasts['model_short'].str.contains('|'.join(available_target_models))]
+
+    # Create a dataframe with unique date and codes from filtered forecasts
+    ensemble_mean = filtered_forecasts[["date", "code", "decad_in_month", "decad_in_year"]]\
+        .drop_duplicates(keep='last').copy()
+
+    # Add model_long and model_short columns to the ensemble_mean dataframe
+    model_names = ', '.join(available_target_models)
+    ensemble_mean['model_long'] = f"Neural Ensemble with {model_names} (NE)"
+    ensemble_mean['model_short'] = f"NE"
+
+    # Calculate the ensemble mean over the filtered models
+    ensemble_mean_q = filtered_forecasts \
+        .groupby(["date", "code", "decad_in_month", "decad_in_year"]) \
+            .agg({"forecasted_discharge": "mean"}).reset_index()
+
+    # Merge ensemble_mean_q into ensemble_mean
+    ensemble_mean = pd.merge(
+        ensemble_mean,
+        ensemble_mean_q,
+        on=["date", "code", "decad_in_month", "decad_in_year"],
+        how="left")
+
+    # Append ensemble_mean to original forecasts
+    forecasts = pd.concat([forecasts, ensemble_mean])
+
+    logger.info(f"Calculated decadal ensemble forecast for models: {model_names}")
     logger.debug(f"Columns of forecasts:\n{forecasts.columns}")
     logger.debug(f"Forecasts:\n{forecasts.loc[:,['date', 'code', 'model_long', 'forecasted_discharge']].head()}")
     logger.debug(f"Forecasts:\n{forecasts.loc[:,['date', 'code', 'model_long', 'forecasted_discharge']].tail()}")
@@ -1777,7 +2188,7 @@ def save_most_recent_forecasts(forecasts, model_name):
     # Save the filtered data to CSV
     forecast_file = os.path.join(
         raw_forecast_dir,
-        f"raw_{model_name}_forecasts_{most_recent_date.strftime('%Y%m%d')}.csv"
+        f"raw_{model_name}_ml_pentad_forecasts_{most_recent_date.strftime('%Y%m%d')}.csv"
     )
 
     # Save relevant columns only
@@ -1791,6 +2202,57 @@ def save_most_recent_forecasts(forecasts, model_name):
     recent_forecasts[columns_to_save].to_csv(forecast_file, index=False)
 
     logger.info(f"Raw {model_name} forecasts saved to: {forecast_file}")
+    logger.info(f"Number of stations with {model_name} forecasts: {len(recent_forecasts)}")
+
+def save_most_recent_forecasts_decade(forecasts, model_name):
+    """
+    Save the most recent forecasts for a specific model.
+
+    Args:
+        forecasts (pd.DataFrame): DataFrame containing forecast data for a model
+        model_name (str): Name of the model (e.g., 'LR', 'TFT', 'ARIMA')
+
+    Returns:
+        None
+    """
+    if forecasts.empty:
+        logger.warning(f"No forecasts available for model {model_name} to save")
+        return
+
+    # Get the most recent date in the dataset
+    most_recent_date = forecasts['date'].max()
+
+    # Filter for the most recent date
+    recent_forecasts = forecasts[forecasts['date'] == most_recent_date]
+
+    if recent_forecasts.empty:
+        logger.warning(f"No recent forecasts available for model {model_name}")
+        return
+
+    # Create directory if it doesn't exist
+    raw_forecast_dir = os.path.join(
+        os.getenv("ieasyforecast_intermediate_data_path"),
+        "raw_forecast_logs"
+    )
+    os.makedirs(raw_forecast_dir, exist_ok=True)
+
+    # Save the filtered data to CSV
+    forecast_file = os.path.join(
+        raw_forecast_dir,
+        f"raw_{model_name}_ml_decade_forecasts_{most_recent_date.strftime('%Y%m%d')}.csv"
+    )
+
+    # Save relevant columns only
+    columns_to_save = ['code', 'date', 'pentad_in_month', 'pentad_in_year',
+                     'forecasted_discharge', 'model_short', 'model_long']
+
+    # Only keep columns that exist in the DataFrame
+    columns_to_save = [col for col in columns_to_save if col in recent_forecasts.columns]
+
+    # Save to CSV
+    recent_forecasts[columns_to_save].to_csv(forecast_file, index=False)
+
+    logger.info(f"Raw {model_name} decadal forecasts saved to: {forecast_file}")
     logger.info(f"Number of stations with {model_name} forecasts: {len(recent_forecasts)}")
 
 
@@ -1858,6 +2320,76 @@ def read_observed_and_modelled_data_pentade():
     logger.info(f"Concatenated forecast results from all methods for the pentadal forecast horizon.")
 
     forecasts = calculate_neural_ensemble_forecast(forecasts)
+
+    # Merge the general runoff statistics to the observed DataFrame
+    observed = pd.merge(observed, stats, on=["date", "code"], how="left")
+
+    return observed, forecasts
+
+def read_observed_and_modelled_data_decade():
+    """
+    Reads results from all forecast methods into a dataframe.
+
+    Returns:
+    forecasts (pandas.DataFrame): The forecasts from all methods.
+    """
+    # Read the observed data
+    observed = read_observed_decadal_data()
+
+    # Read the linear regression forecasts for the pentadal forecast horizon
+    linreg, stats_linreg = read_linreg_forecasts_decade()
+
+    # Read the forecasts from the other methods
+    tide = read_machine_learning_forecasts_decade(model='TIDE')
+    tft = read_machine_learning_forecasts_decade(model='TFT')
+    tsmixer = read_machine_learning_forecasts_decade(model='TSMIXER')
+    arima = read_machine_learning_forecasts_decade(model='ARIMA')
+    cm = read_all_conceptual_model_forecasts_decade()
+
+    logger.debug(f"type of code in linreg: {linreg['code'].dtype}")
+    logger.debug(f"type of code in tide: {tide['code'].dtype}")
+    logger.debug(f"type of code in cm: {cm['code'].dtype}")
+
+    # Test if there are any nans in the model long column of either linreg, tide, tft, tsmixer, arima and cm
+    if linreg['model_long'].isnull().values.any():
+        logger.error("There are nans in the model_long column of linreg.")
+        exit()
+    if tide['model_long'].isnull().values.any():
+        logger.error("There are nans in the model_long column of tide.")
+        exit()
+    if tft['model_long'].isnull().values.any():
+        logger.error("There are nans in the model_long column of tft.")
+        exit()
+    if tsmixer['model_long'].isnull().values.any():
+        logger.error("There are nans in the model_long column of tsmixer.")
+        exit()
+    if arima['model_long'].isnull().values.any():
+        logger.error("There are nans in the model_long column of arima.")
+        exit()
+    if cm['model_long'].isnull().values.any():
+        logger.error("There are nans in the model_long column of cm.")
+        exit()
+
+    # Merge tide, tft, tsmixer and arima into linreg.
+    # same columns are: date, code, pentad_in_month, pentad_in_year,
+    # forecasted_discharge, model_long and model_short
+    forecasts = pd.concat([linreg, tide, tft, tsmixer, arima, cm])
+    logger.debug(f"columns of forecasts concatenated:\n{forecasts.columns}")
+    logger.debug(f"forecasts concatenated:\n{forecasts.loc[:, ['date', 'code', 'model_long']].head()}\n{forecasts.loc[:, ['date', 'code', 'model_long']].tail()}")
+
+    # Calculate virtual stations forecasts if needed
+    forecasts = calculate_virtual_stations_data(forecasts)
+    # Test if we have any nans in the model_long column
+    if forecasts['model_long'].isnull().values.any():
+        logger.error("There are nans in the model_long column of forecasts.")
+        exit()
+
+    stats = stats_linreg
+    logger.debug(f"columns of stats concatenated:\n{stats.columns}")
+    logger.debug(f"stats concatenated:\n{stats.head()}\n{stats.tail()}")
+    logger.info(f"Concatenated forecast results from all methods for the pentadal forecast horizon.")
+
+    forecasts = calculate_neural_ensemble_forecast_decade(forecasts)
 
     # Merge the general runoff statistics to the observed DataFrame
     observed = pd.merge(observed, stats, on=["date", "code"], how="left")

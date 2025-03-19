@@ -1914,6 +1914,301 @@ def calculate_skill_metrics_pentad(
     return skill_stats, joint_forecasts, timing_stats
 
 
+
+def calculate_skill_metrics_decade(
+        observed: pd.DataFrame, simulated: pd.DataFrame, timing_stats=None):
+    """
+    For each model and hydropost in the simulated DataFrame, calculates a number
+    of skill metrics based on the observed DataFrame.
+
+    Args:
+        observed (pd.DataFrame): The DataFrame containing the observed data.
+        simulated (pd.DataFrame): The DataFrame containing the simulated data.
+        timing_stats (TimingStats, optional): Timing statistics collector
+
+    Returns:
+        pd.DataFrame: The DataFrame containing the skill metrics for each model
+            and hydropost.
+        pd.DataFrame: Combined forecasts and observations DataFrame
+        timing_stats: Timing statistics collector
+    """
+    # Create a new timing_stats object if none was provided
+    #create_new_timing_stats = False
+    if timing_stats is None:
+        # Import TimingStats class only if needed
+        #from .. postprocessing_forecasts import TimingStats
+        #timing_stats = TimingStats()
+        #create_new_timing_stats = True
+
+        @contextmanager
+        def timer(stats, section):
+            yield
+
+    else:
+        @contextmanager
+        def timer(stats, section):
+            stats.start(section)
+            try:
+                yield
+            finally:
+                stats.end(section)
+
+    # Test the input. Make sure that the DataFrames contain the required columns
+    if not all(column in observed.columns for column in ['code', 'date', 'discharge_avg', 'model_long', 'model_short', 'delta']):
+        raise ValueError(f'Observed DataFrame is missing one or more required columns: {["code", "date", "discharge_avg", "model_long", "model_short", "delta"]}')
+    if not all(column in simulated.columns for column in ['code', 'date', 'decad_in_year', 'forecasted_discharge', 'model_long', 'model_short']):
+        raise ValueError(f'Simulated DataFrame is missing one or more required columns: {["code", "date", "decad_in_year", "forecasted_discharge", "model_long", "model_short"]}')
+
+    # Local functions
+    def test_for_tuples(df):
+        # Identify tuples in each cell
+        is_tuple = df.apply(lambda col: col.map(lambda x: isinstance(x, tuple)))
+        # Check if there are any True values in is_tuple
+        contains_tuples = is_tuple.any(axis=1).any()
+        # Test if there are any tuples in the DataFrame
+        if contains_tuples:
+            logger.debug("There are tuples after the merge.")
+
+            # Step 2: Filter rows that contain any tuples
+            rows_with_tuples = df[is_tuple.any(axis=1)]
+
+            # Print rows with tuples
+            logger.debug(rows_with_tuples)
+        else:
+            logger.debug("No tuples found after the merge.")
+
+    def extract_first_parentheses_content(string_list):
+        pattern = r'\((.*?)\)'
+
+        result = []
+        for string in string_list:
+            match = re.search(pattern, string)
+            if match:
+                result.append(match.group(1))
+            else:
+                result.append('')  # or None, or any other placeholder
+
+        return result
+
+    def model_long_agg(x):
+        # Get unique models
+        model_list = x.unique()
+        # Only keep strings within brackets (), discard the rest of the string and the brackets
+        short_model_list = extract_first_parentheses_content(model_list)
+        # Concatenat the model names
+        unique_models = ', '.join(sorted(short_model_list))
+        return f'Ens. Mean with {unique_models} (EM)'
+
+    def model_short_agg(x):
+        return f'EM'
+
+    def filter_for_highly_skilled_forecasts(skill_stats):
+        # Get thresholds from environment
+        threshold_sdivsigma = os.getenv('ieasyhydroforecast_efficiency_threshold', 0.6)
+        threshold_accuracy = os.getenv('ieasyhydroforecast_accuracy_threshold', 0.8)
+        threshold_nse = os.getenv('ieasyhydroforecast_nse_threshold', 0.8)
+
+        # Test if threshold_sdivsigma is equal to False
+        if threshold_sdivsigma != 'False':
+            # Filter for rows where sdivsigma is smaller than the threshold
+            skill_stats_ensemble = skill_stats[skill_stats['sdivsigma'] < float(threshold_sdivsigma)].copy()
+        else:
+            skill_stats_ensemble = skill_stats.copy()
+
+        if threshold_accuracy != 'False':
+            # Filter for rows where accuracy is larger than the threshold
+            skill_stats_ensemble = skill_stats_ensemble[skill_stats_ensemble['accuracy'] > float(threshold_accuracy)].copy()
+        else:
+            skill_stats_ensemble = skill_stats_ensemble.copy()
+
+        if threshold_nse != 'False':
+            # Filter for rows where nse is larger than the threshold
+            skill_stats_ensemble = skill_stats_ensemble[skill_stats_ensemble['nse'] > float(threshold_nse)].copy()
+        else:
+            skill_stats_ensemble = skill_stats_ensemble.copy()
+        #print("DEBUG: skill_stats_ensemble\n", skill_stats_ensemble.head(20))
+
+        return skill_stats_ensemble
+
+    with timer(timing_stats, 'calculate_skill_metrics_decade - Filter data'):
+        # We calculate skill metrics only on forecasts after 2010
+        # Filter observed and simulated DataFrames for dates after 2010
+        observed = observed[observed['date'].dt.year >= 2010]
+        simulated = simulated[simulated['date'].dt.year >= 2010]
+
+    #print(f"DEBUG: simulated.columns\n{simulated.columns}")
+    #print(f"DEBUG: simulated.head()\n{simulated.head(8)}")
+    #logger.debug(f"DEBUG: simulated.tail()\n{simulated.tail(5)}")
+    #print(f"DEBUG: observed.columns\n{observed.columns}")
+    #print(f"DEBUG: observed.head()\n{observed.head(8)}")
+    #logger.debug(f"DEBUG: observed.tail()\n{observed.tail(5)}")
+    # Merge the observed and simulated DataFrames
+    with timer(timing_stats, 'calculate_skill_metrics_decade - Initially merge data'):
+        skill_metrics_df = pd.merge(
+            simulated,
+            observed[['code', 'date', 'discharge_avg', 'delta']],
+            on=['code', 'date'])
+        #print(f"DEBUG: skill_metrics_df.columns\n{skill_metrics_df.columns}")
+        #print(f"DEBUG: skill_metrics_df.head()\n{skill_metrics_df.head(8)}")
+        #logger.debug(f"DEBUG: skill_metrics_df.tail()\n{skill_metrics_df.tail(5)}")
+        test_for_tuples(skill_metrics_df)
+
+    # Calculate the skill metrics for each group based on the 'pentad_in_year', 'code' and 'model' columns
+    with timer(timing_stats, 'calculate_skill_metrics_decade - Calculate sdivsigma_nse'):
+        skill_stats = skill_metrics_df. \
+            groupby(['decad_in_year', 'code', 'model_long', 'model_short'])[skill_metrics_df.columns]. \
+            apply(
+                sdivsigma_nse,
+                observed_col='discharge_avg',
+                simulated_col='forecasted_discharge'). \
+            reset_index()
+        test_for_tuples(skill_stats)
+        # Print dimensions of skill_metrics_df and skill_stats
+        #print(f"\n\nDEBUG: skill_metrics_df.shape: {skill_metrics_df.shape}")
+        #print(f"DEBUG: skill_stats.shape: {skill_stats.shape}\n\n")
+        #print(f"DEBUG: nse: skill_stats.columns\n{skill_stats.columns}")
+        #print(f"DEBUG: skill_stats.head()\n{skill_stats.head(8)}")
+
+    with timer(timing_stats, 'calculate_skill_metrics_decad - Calculate mae'):
+        mae_stats = skill_metrics_df. \
+            groupby(['decad_in_year', 'code', 'model_long', 'model_short'])[skill_metrics_df.columns]. \
+            apply(
+                mae,
+                observed_col='discharge_avg',
+                simulated_col='forecasted_discharge'). \
+            reset_index()
+        #print("DEBUG: mae_stats\n", mae_stats.columns)
+        test_for_tuples(mae_stats)
+
+    with timer(timing_stats, 'calculate_skill_metrics_decad - Calculate forecast_accuracy_hydromet'):
+        accuracy_stats = skill_metrics_df. \
+            groupby(['decad_in_year', 'code', 'model_long', 'model_short'])[skill_metrics_df.columns]. \
+            apply(
+                forecast_accuracy_hydromet,
+                observed_col='discharge_avg',
+                simulated_col='forecasted_discharge',
+                delta_col='delta').\
+            reset_index()
+        test_for_tuples(accuracy_stats)
+        #print("DEBUG: accuracy_stats\n", accuracy_stats.columns)
+
+    with timer(timing_stats, 'calculate_skill_metrics_decad - merge all skill stats'):
+        # Merge the skill metrics with the accuracy stats
+        #print("DEBUG: skill_stats.columns\n", skill_stats.columns)
+        #print("DEBUG: accuracy_stats.columns\n", accuracy_stats.columns)
+        skill_stats = pd.merge(skill_stats, accuracy_stats, on=['decad_in_year', 'code', 'model_long', 'model_short'])
+        test_for_tuples(skill_stats)
+
+        #print("DEBUG: skill_stats.columns\n", skill_stats.columns)
+        #print("DEBUG: mae_stats.columns\n", mae_stats.columns)
+        skill_stats = pd.merge(skill_stats, mae_stats, on=['decad_in_year', 'code', 'model_long', 'model_short'])
+        test_for_tuples(skill_stats)
+        #print("DEBUG: skill_stats.columns\n", skill_stats.columns)
+        #print("DEBUG: skill_stats.head()\n", skill_stats.head(20))
+
+    with timer(timing_stats, 'calculate_skill_metrics_decad - Calculate ensemble skill metrics for highly skilled forecasts'):
+        skill_stats_ensemble = filter_for_highly_skilled_forecasts(skill_stats)
+        #print("DEBUG: skill_stats_ensemble\n", skill_stats_ensemble.columns)
+        #print("DEBUG: skill_stats_ensemble\n", skill_stats_ensemble.head(20))
+
+        # Now we get the rows from the skill_metrics_df where decad_in_year, code,
+        # model_long and model_short are the same as in skill_stats_ensemble
+        skill_metrics_df_ensemble = skill_metrics_df[
+            skill_metrics_df['decad_in_year'].isin(skill_stats_ensemble['decad_in_year']) &
+            skill_metrics_df['code'].isin(skill_stats_ensemble['code']) &
+            skill_metrics_df['model_long'].isin(skill_stats_ensemble['model_long']) &
+            skill_metrics_df['model_short'].isin(skill_stats_ensemble['model_short'])].copy()
+        #print("DEBUG: skill_metrics_df_ensemble\n", skill_metrics_df_ensemble.columns)
+        #print("DEBUG: skill_metrics_df_ensemble\n", skill_metrics_df_ensemble.head(20))
+
+        # Drop columns with model_short == NE (neural ensemble)
+        skill_metrics_df_ensemble = skill_metrics_df_ensemble[skill_metrics_df_ensemble['model_short'] != 'NE'].copy()
+        #print("DEBUG: skill_metrics_df_ensemble\n", skill_metrics_df_ensemble.head(20))
+
+        # Perform the aggregations and keep only the unique combinations
+        skill_metrics_df_ensemble_avg = skill_metrics_df_ensemble.groupby(['date', 'code']).agg({
+            'decad_in_year': 'first',
+            'forecasted_discharge': 'mean',
+            'model_long': model_long_agg,
+            'model_short': model_short_agg
+        }).reset_index()
+        #print("DEBUG: skill_metrics_df_ensemble_avg\n", skill_metrics_df_ensemble_avg.columns)
+        #print("DEBUG: skill_metrics_df_ensemble_avg\n", skill_metrics_df_ensemble_avg.head(20))
+
+        # Discard rows with model_long equal to 'Ensemble Mean with  (EM)' or equal to Ensemble Mean with LR (EM)
+        skill_metrics_df_ensemble_avg = skill_metrics_df_ensemble_avg[
+            (skill_metrics_df_ensemble_avg['model_long'] != 'Ens. Mean with  (EM)') &
+            (skill_metrics_df_ensemble_avg['model_long'] != 'Ens. Mean with LR (EM)')].copy()
+        #print("DEBUG: skill_metrics_df_ensemble_avg\n", skill_metrics_df_ensemble_avg.head(20))
+
+        # Now recalculate the skill metrics for the ensemble
+        ensemble_skill_metrics_df = pd.merge(
+            skill_metrics_df_ensemble_avg,
+            observed[['code', 'date', 'discharge_avg', 'delta']],
+            on=['code', 'date'])
+        #print("DEBUG: ensemble_skill_metrics_df\n", ensemble_skill_metrics_df.columns)
+        #print("DEBUG: ensemble_skill_metrics_df\n", ensemble_skill_metrics_df.head(20))
+
+        ensemble_skill_stats = ensemble_skill_metrics_df. \
+            groupby(['decad_in_year', 'code', 'model_long', 'model_short'])[ensemble_skill_metrics_df.columns]. \
+            apply(
+                sdivsigma_nse,
+                observed_col='discharge_avg',
+                simulated_col='forecasted_discharge'). \
+            reset_index()
+        #print("DEBUG: ensemble_skill_stats\n", ensemble_skill_stats.columns)
+        #print("DEBUG: ensemble_skill_stats\n", ensemble_skill_stats.head(20))
+
+        ensemble_mae_stats = ensemble_skill_metrics_df. \
+            groupby(['decad_in_year', 'code', 'model_long', 'model_short'])[ensemble_skill_metrics_df.columns]. \
+            apply(
+                mae,
+                observed_col='discharge_avg',
+                simulated_col='forecasted_discharge').\
+            reset_index()
+
+        ensemble_accuracy_stats = ensemble_skill_metrics_df. \
+            groupby(['decad_in_year', 'code', 'model_long', 'model_short'])[ensemble_skill_metrics_df.columns]. \
+            apply(
+                forecast_accuracy_hydromet,
+                observed_col='discharge_avg',
+                simulated_col='forecasted_discharge',
+                delta_col='delta').\
+            reset_index()
+
+        ensemble_skill_stats = pd.merge(
+            ensemble_skill_stats, ensemble_mae_stats, on=['decad_in_year', 'code', 'model_long', 'model_short'])
+        ensemble_skill_stats = pd.merge(
+            ensemble_skill_stats, ensemble_accuracy_stats, on=['decad_in_year', 'code', 'model_long', 'model_short'])
+
+        # Append the ensemble skill metrics to the skill metrics
+        skill_stats = pd.concat([skill_stats, ensemble_skill_stats], ignore_index=True)
+
+        # Add ensemble mean forecasts to simulated dataframe
+        #logger.debug(f"DEBUG: simulated.columns\n{simulated.columns}")
+        #logger.debug(f"DEBUG: simulated.head()\n{simulated.head(5)}")
+        #logger.debug(f"DEBUG: unique models in simulated: {simulated['model_long'].unique()}")
+        #print(f"DEBUG: simulated.columns\n{ensemble_skill_metrics_df.columns}")
+        #print("DEBUG: head of ensemble_skill_metrics_df: \n", ensemble_skill_metrics_df.head(5))
+        #print("DEBUG: unique models in ensemble_skill_metrics_df: ", ensemble_skill_metrics_df['model_long'].unique())
+
+        # Calculate pentad in month (add 1 day to date)
+        ensemble_skill_metrics_df['decad_in_month'] = (ensemble_skill_metrics_df['date']+dt.timedelta(days=1.0)).apply(tl.get_decad_in_month)
+
+        # Join the two dataframes
+        joint_forecasts = pd.merge(
+            simulated,
+            ensemble_skill_metrics_df[['code', 'date', 'decad_in_month', 'decad_in_year', 'forecasted_discharge', 'model_long', 'model_short']],
+            on=['code', 'date', 'decad_in_month', 'decad_in_year', 'model_long', 'model_short', 'forecasted_discharge'],
+            how='outer')
+
+        #print(f"DEBUG: joint_forecasts.columns\n{joint_forecasts.columns}")
+        #print(f"DEBUG: joint_forecasts.head()\n{joint_forecasts.head(5)}")
+        #print(f"DEBUG: unique models in joint_forecasts: {joint_forecasts['model_long'].unique()}")
+
+    return skill_stats, joint_forecasts, timing_stats
+
+
 # endregion
 
 
@@ -2540,7 +2835,7 @@ def write_pentad_hydrograph_data(data: pd.DataFrame, iehhf_sdk = None):
             except Exception as e:
                 logger.error(f"Could not get norm for site {code}.")
                 temp_norm = []
-            if len(temp_norm) > 0:
+            if len(temp_norm) == 72:
                 all_pentadal_norms[code] = temp_norm
             else:
                 all_pentadal_norms[code] = [None] * 72  # 72 pentads in a year
@@ -2671,7 +2966,8 @@ def write_decad_hydrograph_data(data: pd.DataFrame, iehhf_sdk = None):
             except Exception as e:
                 logger.error(f"Could not get norm for site {code}.")
                 temp_norm = []
-            if len(temp_norm) > 0:
+            if len(temp_norm) == 36:
+                #print(f"code {code} len(temp_norm): {len(temp_norm)}\ntemp_norm: {temp_norm}")
                 all_pentadal_norms[code] = temp_norm
             else:
                 all_pentadal_norms[code] = [None] * 36  # 36 decads in a year
@@ -2904,6 +3200,47 @@ def save_pentadal_skill_metrics(data: pd.DataFrame):
 
     return ret
 
+def save_decadal_skill_metrics(data: pd.DataFrame):
+    """
+    Saves decadal skill metrics to a csv file.
+
+    Args:
+    data (pd.DataFrame): The data to be written to a csv file.
+
+    Returns:
+    None
+
+    """
+
+    # Round all values to 4 decimal places
+    data = data.round(4)
+
+    # convert decad_in_year to int
+    data['decad_in_year'] = data['decad_in_year'].astype(int)
+
+    # Sort in ascending order by 'decad_in_year', 'code', and 'model_short'
+    data = data.sort_values(by=['decad_in_year', 'code', 'model_short'])
+
+    filepath = os.path.join(
+        os.getenv("ieasyforecast_intermediate_data_path"),
+        os.getenv("ieasyforecast_decadal_skill_metrics_file"))
+
+    # Overwrite the file if it already exists
+    if os.path.exists(filepath):
+        os.remove(filepath)
+
+    # Write the data to a csv file. Raise an error if this does not work.
+    # If the data is written to the csv file, log a message that the data
+    # has been written.
+    try:
+        ret = data.to_csv(filepath, index=False)
+        logger.info(f"Data written to {filepath}.")
+    except Exception as e:
+        logger.error(f"Could not write the data to {filepath}.")
+        raise e
+
+    return ret
+
 def save_forecast_data_pentad(simulated: pd.DataFrame):
     """
     Save observed pentadal runoff and simulated pentadal runoff for different models to csv.
@@ -2927,6 +3264,50 @@ def save_forecast_data_pentad(simulated: pd.DataFrame):
 
     # write the data to csv
     ret = simulated.to_csv(filename, index=False)
+
+    # Select the last unique row by 'code', pentad_in_year', and 'model_short'
+    simulated_latest = simulated.groupby(['code', 'pentad_in_year', 'model_short']).tail(1)
+
+    # Edit filename by appending '_latest' to the filename
+    filename_latest = filename.replace('.csv', '_latest.csv')
+
+    # Write the latest data to a csv file
+    ret = simulated_latest.to_csv(filename_latest, index=False)
+
+    return ret
+
+def save_forecast_data_decade(simulated: pd.DataFrame):
+    """
+    Save observed decadal runoff and simulated decadal runoff for different models to csv.
+
+    Args:
+    observed (pd.DataFrame): The DataFrame containing the observed data.
+    simulated (pd.DataFrame): The DataFrame containing the simulated data.
+
+    Returns:
+    None
+    """
+    filename = os.path.join(
+        os.getenv("ieasyforecast_intermediate_data_path"),
+        os.getenv("ieasyforecast_combined_forecast_decad_file"))
+
+    # Only keep relevant columns
+    #simulated = simulated[['code', 'date', 'decad_in_month', 'decad_in_year', 'forecasted_discharge', 'model_long', 'model_short']]
+
+    # Round all float values to 3 decimal places
+    simulated = simulated.round(3)
+
+    # write the data to csv
+    ret = simulated.to_csv(filename, index=False)
+
+    # Select the last unique row by 'code', pentad_in_year', and 'model_short'
+    simulated_latest = simulated.groupby(['code', 'decad_in_year', 'model_short']).tail(1)
+
+    # Edit filename by appending '_latest' to the filename
+    filename_latest = filename.replace('.csv', '_latest.csv')
+
+    # Write the latest data to a csv file
+    ret = simulated_latest.to_csv(filename_latest, index=False)
 
     return ret
 

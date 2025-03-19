@@ -35,7 +35,7 @@ get_timestamp() {
 
 
 for model in TFT TIDE TSMIXER ARIMA; do
-#for model in TFT; do
+#for model in TIDE; do
     for horizon in PENTAD DECAD; do
     #for horizon in PENTAD; do
         echo "Running model $model for horizon $horizon"
@@ -96,16 +96,16 @@ for model in TFT TIDE TSMIXER ARIMA; do
         echo "Add new station time: $station_time seconds" >> "$log_file"
         echo "---" >> "$log_file"
 
-        # Extract the last 30 lines and append to a summary file
-        echo "=== Last 30 lines of output for model=$model, horizon=$horizon ===" >> logs/summary.log
-        get_last_lines "$log_file" 30 >> logs/summary.log
+        # Extract the last 10 lines and append to a summary file
+        echo "=== Last 10 lines of output for model=$model, horizon=$horizon ===" >> logs/summary.log
+        get_last_lines "$log_file" 10 >> logs/summary.log
         echo -e "\n\n" >> logs/summary.log
 
         echo "Full log saved to $log_file"
-        echo "Last 30 lines appended to logs/summary.log"
+        echo "Last 10 lines appended to logs/summary.log"
         echo "----------------------------------------"
     done
 done
 
-echo "All runs completed. Check logs/summary.log for the last 30 lines of each run."
+echo "All runs completed. Check logs/summary.log for the last 10 lines of each run."
 
