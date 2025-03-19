@@ -1074,7 +1074,11 @@ def read_daily_probabilistic_ml_forecasts_pentad(filepath, model, model_long, mo
 
     try:
         # Read the forecast results
-        daily_data = pd.read_csv(filepath, parse_dates=["date", "forecast_date"])
+        daily_data = pd.read_csv(
+            filepath, 
+            parse_dates=["date", "forecast_date"], 
+            on_bad_lines='skip', 
+            low_memory=False)
 
         # Only keep the forecast rows for pentadal forecasts
         # Add a column last_day_of_month to daily_data
@@ -2276,9 +2280,21 @@ def read_observed_and_modelled_data_pentade():
     arima = read_machine_learning_forecasts_pentad(model='ARIMA')
     cm = read_all_conceptual_model_forecasts_pentad()
 
-    logger.debug(f"type of code in linreg: {linreg['code'].dtype}")
-    logger.debug(f"type of code in tide: {tide['code'].dtype}")
-    logger.debug(f"type of code in cm: {cm['code'].dtype}")
+    # Debug only dataframes that exist and have the 'code' column
+    if not linreg.empty and 'code' in linreg.columns:
+        logger.debug(f"type of code in linreg: {linreg['code'].dtype}")
+    else:
+        logger.warning("Linear regression data is empty or missing 'code' column")
+
+    if not tide.empty and 'code' in tide.columns:
+        logger.debug(f"type of code in tide: {tide['code'].dtype}")
+    else:
+        logger.warning("TIDE data is empty or missing 'code' column")
+
+    if not cm.empty and 'code' in cm.columns:
+        logger.debug(f"type of code in cm: {cm['code'].dtype}")
+    else:
+        logger.warning("Conceptual model data is empty or missing 'code' column")
 
     # Test if there are any nans in the model long column of either linreg, tide, tft, tsmixer, arima and cm
     if linreg['model_long'].isnull().values.any():
