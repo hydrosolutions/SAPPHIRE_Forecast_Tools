@@ -272,7 +272,7 @@ def main():
 
             # Calculate norm discharge for the decad forecast
             forecast_decad_of_year = tl.get_decad_in_year(current_day)
-            fl.save_discharge_avg(
+            fl.save_discharge_avg_decad(
                 discharge_decad, fc_sites_decad, group_id=forecast_decad_of_year,
                 code_col='code', group_col='decad_in_year', value_col='discharge_avg')
 
