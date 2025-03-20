@@ -361,6 +361,11 @@ def load_data():
     forecast_stats = processing.internationalize_forecast_model_names(_, forecast_stats)
 
     # Merge forecast stats with forecasts by code and pentad_in_year and model_short
+    print(f'\n\nhead of forecasts_all:\n{forecasts_all.head()}')
+    print(f'column names of forecasts_all:\n{forecasts_all.columns}')
+    print(f'type of forecasts_all[pentad_in_year]: {forecasts_all["pentad_in_year"].dtype}')
+    print(f'\n\nhead of forecast_stats:\n{forecast_stats.head()}')
+    print(f'type of forecast_stats[pentad_in_year]: {forecast_stats["pentad_in_year"].dtype}')
     forecasts_all = forecasts_all.merge(
         forecast_stats,
         on=['code', 'pentad_in_year', 'model_short', 'model_long'],
