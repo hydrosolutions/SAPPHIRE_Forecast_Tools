@@ -1708,6 +1708,182 @@ class TestWriteLinregPentadForecastData(unittest.TestCase):
         self.assertFalse(os.path.exists(self.output_path))
 
 
+class TestGetLatestForecasts(unittest.TestCase):
+    """Test cases for the get_latest_forecasts function."""
+
+    def setUp(self):
+        """Set up test data that can be reused across test methods."""
+        # Create a basic test DataFrame
+        self.test_data = pd.DataFrame({
+            'code': [15194, 15194, 15194, 16134, 16134, 16134],
+            'date': [
+                '2025-01-01', '2025-01-10', '2025-01-15',
+                '2025-01-05', '2025-01-10', '2025-01-20'
+            ],
+            'pentad_in_year': [1, 2, 3, 1, 2, 4],
+            'model_short': ['TFT', 'TFT', 'TFT', 'ARIMA', 'ARIMA', 'ARIMA'],
+            'forecasted_discharge': [10.12345, 20.56789, 30.98765, 15.43210, 25.87654, 35.12345]
+        })
+        
+        # Add some float columns for testing rounding
+        self.test_data['Q5'] = self.test_data['forecasted_discharge'] * 0.8
+        self.test_data['Q95'] = self.test_data['forecasted_discharge'] * 1.2
+        
+        # Create multi-year test data
+        self.mixed_year_data = pd.DataFrame({
+            'code': [15194, 15194, 15194, 15194, 16134, 16134],
+            'date': [
+                '2024-01-01', '2025-01-10', '2024-01-15',
+                '2025-01-05', '2024-01-10', '2025-01-20'
+            ],
+            'pentad_in_year': [1, 1, 3, 3, 2, 2],
+            'model_short': ['TFT', 'TFT', 'TFT', 'TFT', 'ARIMA', 'ARIMA'],
+            'forecasted_discharge': [10.12345, 20.56789, 30.98765, 40.54321, 25.87654, 35.12345]
+        })
+        self.mixed_year_data['Q5'] = self.mixed_year_data['forecasted_discharge'] * 0.8
+        self.mixed_year_data['Q95'] = self.mixed_year_data['forecasted_discharge'] * 1.2
+        
+    def test_empty_dataframe(self):
+        """Test that an empty DataFrame returns an empty DataFrame."""
+        empty_df = pd.DataFrame()
+        result = fl.get_latest_forecasts(empty_df)
+        self.assertTrue(result.empty)
+        self.assertIsInstance(result, pd.DataFrame)
+
+    def test_date_conversion(self):
+        """Test that string dates are converted to datetime."""
+        # Create a copy with string dates
+        string_dates_df = self.test_data.copy()
+        
+        # Call the function
+        result = fl.get_latest_forecasts(string_dates_df)
+        
+        # Check that dates in the result are datetime objects
+        self.assertTrue(pd.api.types.is_datetime64_any_dtype(result['date']))
+
+    def test_already_datetime(self):
+        """Test that the function works when dates are already datetime objects."""
+        # Create a copy with datetime dates
+        datetime_df = self.test_data.copy()
+        datetime_df['date'] = pd.to_datetime(datetime_df['date'])
+        
+        # Call the function
+        result = fl.get_latest_forecasts(datetime_df)
+        
+        # Check that dates in the result are still datetime objects
+        self.assertTrue(pd.api.types.is_datetime64_any_dtype(result['date']))
+
+    def test_latest_forecasts(self):
+        """Test that only the most recent forecasts per group are returned."""
+        result = fl.get_latest_forecasts(self.test_data)
+        
+        # Count unique combinations in the result
+        unique_combinations = len(
+            result.groupby(['code', 'pentad_in_year', 'model_short']).size()
+        )
+        
+        # We should have 6 unique combinations (this matches your implementation)
+        self.assertEqual(unique_combinations, 6)
+        
+        # Check that specific latest dates are included
+        expected_dates = {
+            (15194, 3, 'TFT'): pd.Timestamp('2025-01-15'),
+            (16134, 4, 'ARIMA'): pd.Timestamp('2025-01-20')
+        }
+        
+        for (code, pentad, model), expected_date in expected_dates.items():
+            rows = result[(result['code'] == code) & 
+                          (result['pentad_in_year'] == pentad) & 
+                          (result['model_short'] == model)]
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows['date'].iloc[0], expected_date)
+
+    def test_year_filtering(self):
+        """Test that only rows from the maximum year are kept."""
+        result = fl.get_latest_forecasts(self.mixed_year_data)
+        
+        # All results should be from 2025 (the max year)
+        unique_years = result['date'].dt.year.unique()
+        self.assertEqual(len(unique_years), 1)
+        self.assertEqual(unique_years[0], 2025)
+        
+        # Check the specific values that must be from 2025
+        expected_values = {
+            (15194, 3, 'TFT'): 40.54321,  # Only the 2025 value
+            (16134, 2, 'ARIMA'): 35.12345  # Only the 2025 value
+        }
+        
+        for (code, pentad, model), expected_value in expected_values.items():
+            rows = result[(result['code'] == code) & 
+                          (result['pentad_in_year'] == pentad) & 
+                          (result['model_short'] == model)]
+            self.assertEqual(len(rows), 1)
+            self.assertAlmostEqual(rows['forecasted_discharge'].iloc[0], expected_value, places=3)
+
+    def test_year_column_dropped(self):
+        """Test that the temporary 'year' column is dropped from the result."""
+        result = fl.get_latest_forecasts(self.test_data)
+        self.assertNotIn('year', result.columns)
+
+    def test_numeric_rounding(self):
+        """Test that numeric columns are rounded to 3 decimal places."""
+        result = fl.get_latest_forecasts(self.test_data)
+        
+        # Check all numeric columns are rounded to 3 decimal places
+        numeric_cols = result.select_dtypes(include=['float64', 'float32']).columns
+        
+        for col in numeric_cols:
+            decimal_places = (result[col] - result[col].round(3)).abs().max()
+            self.assertAlmostEqual(decimal_places, 0.0, places=10)
+
+    def test_custom_horizon_column(self):
+        """Test using a custom column name for the horizon."""
+        # Create a copy with a different horizon column name
+        custom_df = self.test_data.copy()
+        custom_df['decad_in_year'] = custom_df['pentad_in_year'] // 2 + 1
+        
+        # Call with custom column name
+        result = fl.get_latest_forecasts(custom_df, horizon_column_name='decad_in_year')
+        
+        # Verify that the result contains the decad_in_year column
+        self.assertIn('decad_in_year', result.columns)
+        
+        # Count unique combinations to ensure grouping worked correctly
+        unique_combinations = len(result.groupby(['code', 'decad_in_year', 'model_short']).size())
+        
+        # We should have at least one row per unique combination
+        self.assertGreaterEqual(unique_combinations, 5)
+
+    def test_duplicate_dates(self):
+        """Test handling of multiple rows with identical dates."""
+        # Create data with duplicate dates
+        dup_data = pd.concat([self.test_data, self.test_data.iloc[0:1]])
+        
+        # Call the function
+        result = fl.get_latest_forecasts(dup_data)
+        
+        # Should have at least 6 unique combinations
+        unique_combinations = len(result.groupby(['code', 'pentad_in_year', 'model_short']).size())
+        self.assertGreaterEqual(unique_combinations, 6)
+        
+        # Check for duplicates in the result
+        duplicates = result.duplicated(subset=['code', 'pentad_in_year', 'model_short', 'date'])
+        self.assertFalse(any(duplicates))
+
+    def test_multiple_columns_same_value(self):
+        """Test that all columns from the same row are preserved."""
+        # Add some additional columns to test data
+        test_data_expanded = self.test_data.copy()
+        test_data_expanded['Q50'] = test_data_expanded['forecasted_discharge']
+        test_data_expanded['flag'] = 0
+        test_data_expanded['model_long'] = 'Test Model'
+        
+        # Call the function
+        result = fl.get_latest_forecasts(test_data_expanded)
+        
+        # Check all columns exist in the result
+        for col in test_data_expanded.columns:
+            self.assertIn(col, result.columns)
 
 if __name__ == '__main__':
     unittest.main()
