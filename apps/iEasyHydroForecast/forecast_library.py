@@ -3273,7 +3273,7 @@ def get_latest_forecasts(simulated_df, horizon_column_name='pentad_in_year'):
     latest_forecasts = sorted_df.drop_duplicates(
         subset=['code', horizon_column_name, 'model_short'], keep='first')
     
-    # Only keep lines where date is equal to the maximum date
+    # Only keep lines where year of date is equal to the maximum year
     latest_date = simulated_df['date'].max()
     # Write year into column, derived from date column
     latest_forecasts['year'] = latest_forecasts['date'].dt.year
