@@ -917,9 +917,9 @@ def update_model_select(station_value, selected_pentad):
 # Create the pop-up notification pane (initially hidden)
 add_to_bulletin_popup = pn.pane.Alert(_("Added to bulletin"), alert_type="success", visible=False)
 
-def get_bulletin_csv_path(pentad):
+def get_bulletin_csv_path(year, pentad):
     """Generate CSV path with pentad information"""
-    bulletin_filename = f'bulletin_pentad_{pentad}.csv'
+    bulletin_filename = f'bulletin_pentad_{year}_{pentad}.csv'
     return os.path.join(SAVE_DIRECTORY, bulletin_filename)
 
 def cleanup_old_bulletin_files(current_pentad):
@@ -942,8 +942,9 @@ def load_bulletin_from_csv():
 
     # Get current pentad
     current_date = pd.Timestamp.now()
+    current_year = current_date.year
     current_pentad = tl.get_pentad_for_date(current_date)
-    current_bulletin_path = get_bulletin_csv_path(current_pentad)
+    current_bulletin_path = get_bulletin_csv_path(current_year, current_pentad)
 
     if os.path.exists(current_bulletin_path):
         try:
@@ -990,13 +991,14 @@ def load_bulletin_from_csv():
 def save_bulletin_to_csv():
     # Get current pentad
     current_date = pd.Timestamp.now()
+    current_year = current_date.year
     current_pentad = tl.get_pentad_for_date(current_date)
 
     # Clean up old bulletin files
-    cleanup_old_bulletin_files(current_pentad)
+    # cleanup_old_bulletin_files(current_pentad)
 
     # Generate path for current pentad's bulletin
-    current_bulletin_path = get_bulletin_csv_path(current_pentad)
+    current_bulletin_path = get_bulletin_csv_path(current_year, current_pentad)
 
     data = []
     for site in bulletin_sites:
