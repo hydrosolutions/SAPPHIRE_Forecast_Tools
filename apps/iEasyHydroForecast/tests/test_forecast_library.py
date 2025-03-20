@@ -1708,6 +1708,172 @@ class TestWriteLinregPentadForecastData(unittest.TestCase):
         self.assertFalse(os.path.exists(self.output_path))
 
 
+class TestGetLatestForecasts(unittest.TestCase):
+    """Test cases for the get_latest_forecasts function."""
+
+    def setUp(self):
+        """Set up test data that can be reused across test methods."""
+        # Create a basic test DataFrame
+        self.test_data = pd.DataFrame({
+            'code': [15194, 15194, 15194, 16134, 16134, 16134],
+            'date': [
+                '2025-01-01', '2025-01-10', '2025-01-15',
+                '2025-01-05', '2025-01-10', '2025-01-20'
+            ],
+            'pentad_in_year': [1, 2, 3, 1, 2, 4],
+            'model_short': ['TFT', 'TFT', 'TFT', 'ARIMA', 'ARIMA', 'ARIMA'],
+            'forecasted_discharge': [10.12345, 20.56789, 30.98765, 15.43210, 25.87654, 35.12345]
+        })
+        
+        # Add some float columns for testing rounding
+        self.test_data['Q5'] = self.test_data['forecasted_discharge'] * 0.8
+        self.test_data['Q95'] = self.test_data['forecasted_discharge'] * 1.2
+        
+    def test_empty_dataframe(self):
+        """Test that an empty DataFrame returns an empty DataFrame."""
+        empty_df = pd.DataFrame()
+        result = fl.get_latest_forecasts(empty_df)
+        self.assertTrue(result.empty)
+        self.assertIsInstance(result, pd.DataFrame)
+
+    def test_date_conversion(self):
+        """Test that string dates are converted to datetime."""
+        # Create a copy with string dates
+        string_dates_df = self.test_data.copy()
+        
+        # Call the function
+        result = fl.get_latest_forecasts(string_dates_df)
+        
+        # Check that dates in the result are datetime objects
+        self.assertTrue(pd.api.types.is_datetime64_any_dtype(result['date']))
+
+    def test_already_datetime(self):
+        """Test that the function works when dates are already datetime objects."""
+        # Create a copy with datetime dates
+        datetime_df = self.test_data.copy()
+        datetime_df['date'] = pd.to_datetime(datetime_df['date'])
+        
+        # Call the function
+        result = fl.get_latest_forecasts(datetime_df)
+        
+        # Check that dates in the result are still datetime objects
+        self.assertTrue(pd.api.types.is_datetime64_any_dtype(result['date']))
+
+    def test_latest_forecasts(self):
+        """Test that only the most recent forecasts per group are returned."""
+        result = fl.get_latest_forecasts(self.test_data)
+        
+        # Should return 5 rows (unique combinations of code, pentad_in_year, model_short)
+        expected_shape = (4, len(self.test_data.columns))
+        self.assertEqual(result.shape, expected_shape)
+        
+        # Check that we got the right rows
+        expected_dates = {
+            (15194, 1, 'TFT'): pd.Timestamp('2025-01-01'),
+            (15194, 2, 'TFT'): pd.Timestamp('2025-01-10'),
+            (15194, 3, 'TFT'): pd.Timestamp('2025-01-15'),
+            (16134, 4, 'ARIMA'): pd.Timestamp('2025-01-20')
+        }
+        
+        for (code, pentad, model), expected_date in expected_dates.items():
+            rows = result[(result['code'] == code) & 
+                          (result['pentad_in_year'] == pentad) & 
+                          (result['model_short'] == model)]
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows['date'].iloc[0], expected_date)
+
+    def test_numeric_rounding(self):
+        """Test that numeric columns are rounded to 3 decimal places."""
+        result = fl.get_latest_forecasts(self.test_data)
+        
+        # Check all numeric columns are rounded to 3 decimal places
+        numeric_cols = result.select_dtypes(include=['float64', 'float32']).columns
+        
+        for col in numeric_cols:
+            decimal_places = (result[col] - result[col].round(3)).abs().max()
+            self.assertAlmostEqual(decimal_places, 0.0, places=10)
+
+    def test_custom_horizon_column(self):
+        """Test using a custom column name for the horizon."""
+        # Create a copy with a different horizon column name
+        custom_df = self.test_data.copy()
+        custom_df['decad_in_year'] = custom_df['pentad_in_year'] // 2 + 1
+        
+        # Call with custom column name
+        result = fl.get_latest_forecasts(custom_df, horizon_column_name='decad_in_year')
+        
+        # Check that decad_in_year was used for grouping
+        # Fewer groups should be returned since we combined pentads into decads
+        self.assertLess(len(result), len(self.test_data))
+        
+        # Check the specific groups
+        groups = result.groupby(['code', 'decad_in_year', 'model_short']).size()
+        self.assertEqual(len(groups), 3)  # 3 unique combinations with decads
+
+    def test_duplicate_dates(self):
+        """Test handling of multiple rows with identical dates."""
+        # Create data with duplicate dates
+        dup_data = pd.concat([self.test_data, self.test_data.iloc[0:1]])
+        
+        # Call the function
+        result = fl.get_latest_forecasts(dup_data)
+        
+        # Should still have the same number of groups
+        expected_shape = (4, len(dup_data.columns))
+        self.assertEqual(result.shape, expected_shape)
+
+    def test_multiple_columns_same_value(self):
+        """Test that all columns from the same row are preserved."""
+        # Add some additional columns to test data
+        test_data_expanded = self.test_data.copy()
+        test_data_expanded['Q50'] = test_data_expanded['forecasted_discharge']
+        test_data_expanded['flag'] = 0
+        test_data_expanded['model_long'] = 'Test Model'
+        
+        # Call the function
+        result = fl.get_latest_forecasts(test_data_expanded)
+        
+        # Check all columns exist in the result
+        for col in test_data_expanded.columns:
+            self.assertIn(col, result.columns)
+
+    def test_performance_large_dataset(self):
+        """Test performance with a large dataset."""
+        # Only run for more detailed testing
+        if os.environ.get('RUN_PERFORMANCE_TESTS') != 'True':
+            self.skipTest("Skipping performance test")
+            
+        # Create a large dataframe
+        np.random.seed(42)
+        codes = np.random.choice(range(1000, 2000), 10000)
+        dates = [datetime(2025, 1, 1) + datetime.timedelta(days=i) for i in range(365)]
+        random_dates = np.random.choice(dates, 10000)
+        pentads = np.random.choice(range(1, 73), 10000)
+        models = np.random.choice(['TFT', 'ARIMA', 'TIDE', 'LSTM'], 10000)
+        forecasts = np.random.random(10000) * 100
+        
+        large_df = pd.DataFrame({
+            'code': codes,
+            'date': random_dates,
+            'pentad_in_year': pentads,
+            'model_short': models,
+            'forecasted_discharge': forecasts
+        })
+        
+        # Time the execution
+        import time
+        start_time = time.time()
+        result = fl.get_latest_forecasts(large_df)
+        execution_time = time.time() - start_time
+        
+        # Verify result is correct
+        unique_groups = large_df.groupby(['code', 'pentad_in_year', 'model_short']).size().reset_index()
+        self.assertEqual(len(result), len(unique_groups))
+        
+        # Performance should be reasonable
+        self.assertLess(execution_time, 2.0)  # Should execute in less than 2 seconds
+
+
 
 if __name__ == '__main__':
     unittest.main()

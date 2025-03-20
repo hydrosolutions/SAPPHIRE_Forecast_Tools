@@ -3241,6 +3241,53 @@ def save_decadal_skill_metrics(data: pd.DataFrame):
 
     return ret
 
+def get_latest_forecasts(simulated_df, horizon_column_name='pentad_in_year'):
+    """
+    Extract the latest forecasts for each unique combination of code, pentad_in_year, and model_short.
+    
+    Args:
+        simulated_df (pd.DataFrame): DataFrame containing forecast data with columns 'code', 
+                                    <horizon_column_name>, 'model_short', 'date', and forecast values
+        horizon_column_name (str): Name of the column that represents the forecast horizon.
+                                    Default is 'pentad_in_year'.
+    
+    Returns:
+        pd.DataFrame: DataFrame containing only the most recent forecast for each unique 
+                     combination of code, pentad_in_year, and model_short
+    """
+    if simulated_df.empty:
+        return pd.DataFrame()
+        
+    # Ensure date is in datetime format
+    if not pd.api.types.is_datetime64_any_dtype(simulated_df['date']):
+        simulated_df = simulated_df.copy()
+        simulated_df['date'] = pd.to_datetime(simulated_df['date'])
+
+    # Method 1: Using groupby and idxmax (most efficient for large dataframes)
+    # idx = simulated_df.groupby(['code', horizon_column_name, 'model_short'])['date'].idxmax()
+    # latest_forecasts = simulated_df.loc[idx]
+    
+    # Alternatively, Method 2: Using drop_duplicates (easier to read)
+    # Sort by date in descending order first
+    sorted_df = simulated_df.sort_values('date', ascending=False)
+    latest_forecasts = sorted_df.drop_duplicates(
+        subset=['code', horizon_column_name, 'model_short'], keep='first')
+    
+    # Only keep lines where date is equal to the maximum date
+    latest_date = simulated_df['date'].max()
+    # Write year into column, derived from date column
+    latest_forecasts['year'] = latest_forecasts['date'].dt.year
+    latest_forecasts = latest_forecasts[latest_forecasts['year'] == latest_date.year]
+
+    # Drop the 'year' column
+    latest_forecasts = latest_forecasts.drop(columns=['year'])
+
+    # Round numeric columns to 3 decimal places
+    numeric_cols = latest_forecasts.select_dtypes(include=['float64', 'float32']).columns
+    latest_forecasts[numeric_cols] = latest_forecasts[numeric_cols].round(3)
+    
+    return latest_forecasts
+
 def save_forecast_data_pentad(simulated: pd.DataFrame):
     """
     Save observed pentadal runoff and simulated pentadal runoff for different models to csv.
@@ -3265,9 +3312,9 @@ def save_forecast_data_pentad(simulated: pd.DataFrame):
     # write the data to csv
     ret = simulated.to_csv(filename, index=False)
 
-    # Select the last unique row by 'code', pentad_in_year', and 'model_short'
-    simulated_latest = simulated.groupby(['code', 'pentad_in_year', 'model_short']).tail(1)
-
+    # Select forecast of the latest date for each code, pentad_in_year, and model_short
+    simulated_latest = get_latest_forecasts(simulated, horizon_column_name='pentad_in_year')
+    
     # Edit filename by appending '_latest' to the filename
     filename_latest = filename.replace('.csv', '_latest.csv')
 
@@ -3300,8 +3347,8 @@ def save_forecast_data_decade(simulated: pd.DataFrame):
     # write the data to csv
     ret = simulated.to_csv(filename, index=False)
 
-    # Select the last unique row by 'code', pentad_in_year', and 'model_short'
-    simulated_latest = simulated.groupby(['code', 'decad_in_year', 'model_short']).tail(1)
+    # Select forecast of the latest date for each code, decad_in_year, and model_short
+    simulated_latest = get_latest_forecasts(simulated, horizon_column_name='decad_in_year')
 
     # Edit filename by appending '_latest' to the filename
     filename_latest = filename.replace('.csv', '_latest.csv')
