@@ -594,6 +594,7 @@ def read_forecast_results_file(iehhf_selected_stations, file_mtime):
         os.getenv("ieasyforecast_intermediate_data_path"),
         os.getenv("ieasyforecast_combined_forecast_pentad_file")
     )
+    forecast_results_file = forecast_results_file.replace('.csv', '_latest.csv')
     # Test if file exists and thorw an error if not
     if not os.path.isfile(forecast_results_file):
         raise Exception("File not found: " + forecast_results_file)

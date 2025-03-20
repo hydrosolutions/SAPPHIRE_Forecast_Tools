@@ -34,10 +34,10 @@ get_timestamp() {
 }
 
 
-#for model in TFT TIDE TSMIXER ARIMA; do
-for model in TIDE; do
-    #for horizon in PENTAD DECAD; do
-    for horizon in PENTAD; do
+for model in TFT TIDE TSMIXER ARIMA; do
+#for model in TIDE; do
+    for horizon in PENTAD DECAD; do
+    #for horizon in PENTAD; do
         echo "Running model $model for horizon $horizon"
 
         # Create a unique log file name
