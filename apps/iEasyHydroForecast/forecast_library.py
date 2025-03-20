@@ -1911,6 +1911,10 @@ def calculate_skill_metrics_pentad(
         #print(f"DEBUG: joint_forecasts.head()\n{joint_forecasts.head(5)}")
         #print(f"DEBUG: unique models in joint_forecasts: {joint_forecasts['model_long'].unique()}")
 
+        # Remove " from model_long values
+        skill_stats['model_long'] = skill_stats['model_long'].str.replace('"', '')
+        joint_forecasts['model_long'] = joint_forecasts['model_long'].str.replace('"', '')
+
     return skill_stats, joint_forecasts, timing_stats
 
 
@@ -2205,6 +2209,10 @@ def calculate_skill_metrics_decade(
         #print(f"DEBUG: joint_forecasts.columns\n{joint_forecasts.columns}")
         #print(f"DEBUG: joint_forecasts.head()\n{joint_forecasts.head(5)}")
         #print(f"DEBUG: unique models in joint_forecasts: {joint_forecasts['model_long'].unique()}")
+
+        # Remove " from model_long values
+        skill_stats['model_long'] = skill_stats['model_long'].str.replace('"', '')
+        joint_forecasts['model_long'] = joint_forecasts['model_long'].str.replace('"', '')
 
     return skill_stats, joint_forecasts, timing_stats
 
@@ -3309,6 +3317,9 @@ def save_forecast_data_pentad(simulated: pd.DataFrame):
     # Round all float values to 3 decimal places
     simulated = simulated.round(3)
 
+    # Remove " from model_long values
+    simulated['model_long'] = simulated['model_long'].str.replace('"', '')
+
     # write the data to csv
     ret = simulated.to_csv(filename, index=False)
 
@@ -3343,6 +3354,9 @@ def save_forecast_data_decade(simulated: pd.DataFrame):
 
     # Round all float values to 3 decimal places
     simulated = simulated.round(3)
+
+    # Remove " from model_long values
+    simulated['model_long'] = simulated['model_long'].str.replace('"', '')
 
     # write the data to csv
     ret = simulated.to_csv(filename, index=False)
