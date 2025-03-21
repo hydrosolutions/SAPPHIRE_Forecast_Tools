@@ -449,6 +449,11 @@ last_date = linreg_predictor['date'].max() + dt.timedelta(days=1)
 
 # Determine the corresponding pentad
 current_pentad = tl.get_pentad_for_date(last_date)
+# The forecast is produced on the day before the first day of the forecast 
+# pentad, therefore we add 1 to the forecast pentad in linreg_predictor to get 
+# the pentad of the forecast period. 
+forecast_pentad_for_saving_bulletin = int(linreg_predictor['pentad_in_year'].tail(1).values[0]) + 1
+forecast_year_for_saving_bulletin = last_date.year
 
 # Get information for bulletin headers into a dataframe that can be passed to
 # the bulletin writer.
@@ -946,12 +951,17 @@ def load_bulletin_from_csv():
     global bulletin_sites
 
     # Get current pentad
-    current_date = pd.Timestamp.now()
-    current_year = current_date.year
-    current_pentad = tl.get_pentad_for_date(current_date)
-    current_bulletin_path = get_bulletin_csv_path(current_year, current_pentad)
+    #current_date = pd.Timestamp.now()
+    #current_year = current_date.year
+    #current_pentad = tl.get_pentad_for_date(current_date)
+    #current_bulletin_path = get_bulletin_csv_path(current_year, current_pentad)
+    current_bulletin_path = get_bulletin_csv_path(forecast_year_for_saving_bulletin, forecast_pentad_for_saving_bulletin)
+    # Print bulletin path
+    print(f"DEBUG: pentad_dashboard.py: current_bulletin_path: {current_bulletin_path}")
 
     if os.path.exists(current_bulletin_path):
+        # Print that bulletin path exists
+        print(f"DEBUG: pentad_dashboard.py: Bulletin path exists: {current_bulletin_path}")
         try:
             bulletin_df = pd.read_csv(current_bulletin_path, encoding='utf-8-sig')
 
@@ -980,30 +990,31 @@ def load_bulletin_from_csv():
                     site.get_forecast_attributes_for_site(_, site.forecasts)
                     bulletin_sites.append(site)
 
-            print(f"DEBUG: Loaded bulletin_sites from CSV for pentad {current_pentad}:")
+            print(f"DEBUG: Loaded bulletin_sites from CSV for pentad {forecast_pentad_for_saving_bulletin}:")
             for site in bulletin_sites:
                 print(f"Site '{site.code}' with forecasts: {site.forecasts}")
 
-            logger.info(f"Loaded bulletin data for pentad {current_pentad}")
+            logger.info(f"Loaded bulletin data for pentad {forecast_pentad_for_saving_bulletin}")
         except Exception as e:
             logger.error(f"Error loading bulletin CSV: {e}")
             bulletin_sites = []
     else:
-        logger.info(f"No bulletin data found for current pentad {current_pentad}")
+        logger.info(f"No bulletin data found for current pentad {forecast_pentad_for_saving_bulletin}")
         bulletin_sites = []
 
 # Function to save bulletin data to CSV
 def save_bulletin_to_csv():
     # Get current pentad
-    current_date = pd.Timestamp.now()
-    current_year = current_date.year
-    current_pentad = tl.get_pentad_for_date(current_date)
+    #current_date = pd.Timestamp.now()
+    #current_year = current_date.year
+    #current_pentad = tl.get_pentad_for_date(current_date)
 
     # Clean up old bulletin files
     # cleanup_old_bulletin_files(current_pentad)
 
     # Generate path for current pentad's bulletin
-    current_bulletin_path = get_bulletin_csv_path(current_year, current_pentad)
+    #current_bulletin_path = get_bulletin_csv_path(current_year, current_pentad)
+    current_bulletin_path = get_bulletin_csv_path(forecast_year_for_saving_bulletin, forecast_pentad_for_saving_bulletin)
 
     data = []
     for site in bulletin_sites:
@@ -1034,8 +1045,8 @@ def save_bulletin_to_csv():
 
         try:
             bulletin_df.to_csv(current_bulletin_path, index=False, encoding='utf-8-sig')
-            print(f"Bulletin saved to CSV for pentad {current_pentad}")
-            logger.info(f"Bulletin saved to CSV for pentad {current_pentad}")
+            print(f"Bulletin saved to CSV for pentad {forecast_pentad_for_saving_bulletin}")
+            logger.info(f"Bulletin saved to CSV for pentad {forecast_pentad_for_saving_bulletin}")
         except Exception as e:
             logger.error(f"Error writing bulletin CSV: {e}")
     else:
@@ -1043,8 +1054,8 @@ def save_bulletin_to_csv():
         # If data is empty, remove the current pentad's CSV file
         if os.path.exists(current_bulletin_path):
             os.remove(current_bulletin_path)
-            print(f"Bulletin CSV file removed for pentad {current_pentad} because bulletin is empty")
-            logger.info(f"Bulletin CSV file removed for pentad {current_pentad} because bulletin is empty")
+            print(f"Bulletin CSV file removed for pentad {forecast_pentad_for_saving_bulletin} because bulletin is empty")
+            logger.info(f"Bulletin CSV file removed for pentad {forecast_pentad_for_saving_bulletin} because bulletin is empty")
 
 # Call the function to load the bulletin data
 load_bulletin_from_csv()
