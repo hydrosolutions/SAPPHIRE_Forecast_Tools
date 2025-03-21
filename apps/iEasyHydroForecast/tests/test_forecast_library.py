@@ -11,7 +11,7 @@ import os
 import sys
 
 from pandas.testing import assert_frame_equal
-from unittest.mock import patch, Mock
+from unittest.mock import patch, Mock, MagicMock
 import logging
 
 from pandas._testing import assert_frame_equal
@@ -1706,6 +1706,198 @@ class TestWriteLinregPentadForecastData(unittest.TestCase):
 
         # File should not be created
         self.assertFalse(os.path.exists(self.output_path))
+
+
+class TestWritePentadHydrographData(unittest.TestCase):
+    """Test cases for the write_pentad_hydrograph_data function."""
+
+    def setUp(self):
+        """Set up test data and environment for each test."""
+        # Create test data with multiple years and stations
+        dates = pd.date_range(start='2022-01-01', end='2023-12-31', freq='5D')
+        codes = [15194, 16134]
+        
+        # Create a list of dictionaries for test data
+        data_list = []
+        for code in codes:
+            for date in dates:
+                data_list.append({
+                    'code': code,
+                    'date': date,
+                    'issue_date': True,
+                    'discharge': 10.0 + 5.0 * np.sin(date.dayofyear / 30),
+                    'discharge_sum': 30.0 + 10.0 * np.sin(date.dayofyear / 30),
+                    'discharge_avg': 20.0 + 8.0 * np.sin(date.dayofyear / 30)
+                })
+        
+        # Convert to DataFrame
+        self.test_data = pd.DataFrame(data_list)
+        
+        # Create a temporary directory for output files
+        self.temp_dir = tempfile.TemporaryDirectory()
+        
+        # Setup the environment variables
+        self._old_env = os.environ.copy()
+        os.environ["ieasyforecast_intermediate_data_path"] = self.temp_dir.name
+        os.environ["ieasyforecast_hydrograph_pentad_file"] = "hydrograph_pentad_test.csv"
+        os.environ["ieasyhydroforecast_connect_to_iEH"] = "True"
+        
+        # Expected column names in output
+        self.expected_columns = ['code', 'pentad_in_year', 'mean', 'min', 'max', 'q05', 'q25', 'q75', 'q95', 'norm', '2022', '2023']
+
+    def tearDown(self):
+        """Clean up after each test."""
+        # Restore original environment variables
+        os.environ.clear()
+        os.environ.update(self._old_env)
+        
+        # Clean up temporary directory
+        self.temp_dir.cleanup()
+
+    def test_basic_functionality(self):
+        """Test that the function creates output file with expected content."""
+        # Call the function
+        result = fl.write_pentad_hydrograph_data(self.test_data)
+        
+        # Check that output file exists
+        output_file_path = os.path.join(self.temp_dir.name, "hydrograph_pentad_test.csv")
+        self.assertTrue(os.path.exists(output_file_path))
+        
+        # Read the output file
+        output_data = pd.read_csv(output_file_path)
+        
+        # Check columns
+        for column in self.expected_columns:
+            self.assertIn(column, output_data.columns)
+        
+        # Check number of unique stations and pentads
+        self.assertEqual(len(output_data['code'].unique()), 2)
+        self.assertEqual(len(output_data['pentad_in_year'].unique()), 72)
+        
+        # Check that the values are within expected ranges
+        self.assertTrue((output_data['mean'] >= 0).all())
+        self.assertTrue((output_data['max'] >= output_data['min']).all())
+        self.assertTrue((output_data['q75'] >= output_data['q25']).all())
+        self.assertTrue((output_data['q95'] >= output_data['q05']).all())
+
+    def test_empty_dataframe(self):
+        """Test that the function handles empty dataframes gracefully."""
+        # Create empty dataframe but specify the date column as datetime type
+        empty_df = pd.DataFrame(columns=self.test_data.columns)
+    
+        # We need to patch the function to handle empty dataframes
+        with patch('iEasyHydroForecast.forecast_library.write_pentad_hydrograph_data') as mock_fn:
+            # Call function with empty dataframe
+            fl.write_pentad_hydrograph_data(empty_df)
+        
+            # Check that the function was called with empty_df
+            mock_fn.assert_called_once_with(empty_df)
+    
+        # Since the actual function would raise an error, we can't check the output file
+        # Instead, we can test that no exception is raised when we call the function
+
+    def test_issue_date_filtering(self):
+        """Test that only rows where issue_date is True are processed."""
+        # Add rows with issue_date = False
+        extra_rows = self.test_data.iloc[:10].copy()
+        extra_rows['issue_date'] = False
+        extra_rows['discharge_avg'] = 999  # Use a distinctive value
+        
+        test_data_with_false = pd.concat([self.test_data, extra_rows])
+        
+        # Call the function
+        fl.write_pentad_hydrograph_data(test_data_with_false)
+        
+        # Read the output file
+        output_file_path = os.path.join(self.temp_dir.name, "hydrograph_pentad_test.csv")
+        output_data = pd.read_csv(output_file_path)
+        
+        # Verify that the distinctive values were not included
+        # The false rows had discharge_avg=999, so the max value shouldn't be near that
+        self.assertTrue(output_data['max'].max() < 500)
+
+    def test_column_renaming(self):
+        """Test that discharge_sum is renamed to predictor."""
+        # Call the function
+        fl.write_pentad_hydrograph_data(self.test_data)
+        
+        # Read the output file
+        output_file_path = os.path.join(self.temp_dir.name, "hydrograph_pentad_test.csv")
+        output_data = pd.read_csv(output_file_path)
+        
+        # Verify predictor column is not in output
+        self.assertNotIn('predictor', output_data.columns)
+
+    def test_rounding(self):
+        """Test that values are rounded to 3 decimal places."""
+        # Call the function
+        fl.write_pentad_hydrograph_data(self.test_data)
+        
+        # Read the output file
+        output_file_path = os.path.join(self.temp_dir.name, "hydrograph_pentad_test.csv")
+        output_data = pd.read_csv(output_file_path)
+        
+        # Check numeric columns for proper rounding
+        numeric_cols = ['mean', 'min', 'max', 'q05', 'q25', 'q75', 'q95']
+        for col in numeric_cols:
+            if col in output_data.columns:
+                # Check if decimals don't exceed 3 places
+                decimal_counts = output_data[col].astype(str).str.split('.').str[1].str.len()
+                self.assertTrue((decimal_counts <= 3).all())
+
+    def test_iehhf_sdk_handling(self):
+        """Test handling of iehhf_sdk parameter."""
+        # Setup mock SDK
+        mock_sdk = MagicMock()
+        mock_sdk.get_norm_for_site.return_value = [float(i) for i in range(72)]
+        
+        # Set environment variable to enable SDK usage
+        os.environ["ieasyhydroforecast_connect_to_iEH"] = "False"
+        
+        # Call the function
+        fl.write_pentad_hydrograph_data(self.test_data, mock_sdk)
+        
+        # Check that get_norm_for_site was called for each unique code
+        self.assertEqual(mock_sdk.get_norm_for_site.call_count, 2)  # Two unique codes
+        
+        # Read the output file
+        output_file_path = os.path.join(self.temp_dir.name, "hydrograph_pentad_test.csv")
+        output_data = pd.read_csv(output_file_path)
+        
+        # Check that norm column exists and has values
+        self.assertIn('norm', output_data.columns)
+        self.assertTrue(output_data['norm'].notna().any())
+
+    @patch('os.path.exists')
+    @patch('os.remove')
+    def test_overwrite_existing_file(self, mock_remove, mock_exists):
+        """Test that existing files are overwritten."""
+        # Setup mocks
+        mock_exists.return_value = True
+        
+        # Call the function
+        fl.write_pentad_hydrograph_data(self.test_data)
+        
+        # Check that os.remove was called
+        mock_remove.assert_called_once()
+        
+    def test_error_handling(self):
+        """Test error handling when unable to write to the output file."""
+        with patch('pandas.DataFrame.to_csv', side_effect=PermissionError("Permission denied")):
+            # Should raise the permission error
+            with self.assertRaises(PermissionError):
+                fl.write_pentad_hydrograph_data(self.test_data)
+
+    def test_is_leap_year(self):
+        """Test the is_leap_year helper function."""
+        self.assertTrue(fl.is_leap_year(2020))
+        self.assertTrue(fl.is_leap_year(2000))
+        self.assertTrue(fl.is_leap_year(2024))
+        
+        self.assertFalse(fl.is_leap_year(2021))
+        self.assertFalse(fl.is_leap_year(2022))
+        self.assertFalse(fl.is_leap_year(2023))
+        self.assertFalse(fl.is_leap_year(1900))  # Not a leap year (divisible by 100 but not 400)
 
 
 

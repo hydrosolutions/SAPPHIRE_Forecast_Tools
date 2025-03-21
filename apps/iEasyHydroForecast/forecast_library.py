@@ -804,7 +804,8 @@ def save_discharge_avg_decad(modified_data, fc_sites, group_id=None,
     # Now we need to write the discharge_avg for the current pentad to the site: Site
     for site in fc_sites:
         logger.debug(f'    calculating norm, min,max discharge for site {site.code} ...')
-        Site.from_df_get_norm_discharge_decad(
+        # Generic function to get the norm discharge for the site (either pentadal and decadal)
+        Site.from_df_get_norm_discharge(
             site, group_id, norm_discharge, min_discharge, max_discharge,
             code_col=code_col, group_col=group_col, value_col=value_col)
 
@@ -1107,17 +1108,41 @@ def perform_linear_regression(
     if missing_columns:
         raise ValueError(f"DataFrame is missing one or more required columns: {missing_columns}")
 
-    # Make sure pentad_col is of type int and values therein are between 1 and
-    # 72.
-    data_df[pentad_col] = data_df[pentad_col].astype(float)
-    if not all(data_df[pentad_col].between(1, 72)):
-        # Print the rows where the values are not between 1 and 72
-        print(f"\n\n\nThe following rows have pentad not between 1 and 72: \n{data_df[~data_df[pentad_col].between(1, 71)]}")
-        raise ValueError(f'Values in column {pentad_col} are not between 1 and 72')
+    # Do we have string 'pentad' in pentad_col?
+    if 'pentad' in pentad_col:
+        logger.info(f"-- Performing linear regression for penatadal forecasting --")
+        horizon_flag = 'pentad'
 
-    # Forecast pentad must be convertable to an int and it must be between 1 and 72
-    if not 1 <= forecast_pentad <= 72:
-        raise ValueError(f'forecast_pentad must be an integer between 1 and 72')
+        # Make sure pentad_col is of type int and values therein are between 1 and
+        # 72.
+        data_df[pentad_col] = data_df[pentad_col].astype(float)
+        if not all(data_df[pentad_col].between(1, 72)):
+            # Print the rows where the values are not between 1 and 72
+            print(f"\n\n\nThe following rows have pentad not between 1 and 72: \n{data_df[~data_df[pentad_col].between(1, 71)]}")
+            raise ValueError(f'Values in column {pentad_col} are not between 1 and 72')
+
+        # Forecast pentad must be convertable to an int and it must be between 1 and 72
+        if not 1 <= forecast_pentad <= 72:
+            raise ValueError(f'forecast_pentad must be an integer between 1 and 72')
+        
+    elif 'decad' in pentad_col:
+        logger.info(f"-- Performing linear regression for decad forecasting --")
+        horizon_flag = 'decad'
+
+        # Make sure pentad_col is of type int and values therein are between 1 and
+        # 36.
+        data_df[pentad_col] = data_df[pentad_col].astype(float)
+        if not all(data_df[pentad_col].between(1, 36)):
+            # Print the rows where the values are not between 1 and 36
+            print(f"\n\n\nThe following rows have decad not between 1 and 36: \n{data_df[~data_df[pentad_col].between(1, 36)]}")
+            raise ValueError(f'Values in column {pentad_col} are not between 1 and 36')
+        
+        # Forecast pentad must be convertable to an int and it must be between 1 and 36
+        if not 1 <= forecast_pentad <= 36:
+            raise ValueError(f'forecast_pentad must be an integer between 1 and 36')
+        
+    else: 
+        raise ValueError(f'pentad_col must contain the string "pentad" or "decad"')
 
     # Filter for the forecast pentad
     data_dfp = data_df[data_df[pentad_col] == float(forecast_pentad)]
@@ -1192,11 +1217,17 @@ def perform_linear_regression(
             #logger.debug(f"station_data: {station_data}")
             forecast_date = tl.get_date_for_last_day_in_pentad(forecast_pentad)
             logger.debug(f"forecast_date: {forecast_date}")
-            pentad_in_month = tl.get_pentad(forecast_date)
+            if horizon_flag == 'pentad':
+                pentad_in_month = tl.get_pentad(forecast_date)
+                logger.debug(f"pentad_in_month: {pentad_in_month}")
+            elif horizon_flag == 'decad':
+                pentad_in_month = tl.get_decad_in_month(forecast_date)
+                logger.debug(f"decad_in_month: {pentad_in_month}")
+            else:
+                raise ValueError(f"horizon_flag {horizon_flag} is not valid.")
             title_month = tl.get_month_str_en(forecast_date)
-            logger.debug(f"pentad_in_month: {pentad_in_month}")
             logger.debug(f"title_month: {title_month}")
-            save_file_name = f"{station}_{pentad_in_month}_pentad_of_{title_month}.csv"
+            save_file_name = f"{station}_{pentad_in_month}_{horizon_flag}_of_{title_month}.csv"
             save_file_path = os.path.join(SAVE_DIRECTORY, save_file_name)
 
             # Check if the file exists
@@ -1259,7 +1290,7 @@ def perform_linear_regression(
             intercept = model.intercept_[0]
 
             # Print the slope and intercept
-            logger.debug(f'Station: {station}, pentad: {forecast_pentad}, slope: {slope}, intercept: {intercept}')
+            logger.debug(f'Station: {station}, pentad/decad: {forecast_pentad}, slope: {slope}, intercept: {intercept}')
 
         # Store the slope and intercept in the data_df
         data_dfp.loc[(data_dfp[station_col] == station), 'slope'] = slope
@@ -2919,6 +2950,143 @@ def write_decad_hydrograph_data(data: pd.DataFrame, iehhf_sdk = None):
     """
 
     # Only keep rows where issue_date is True
+    data = data[data['issue_date'] == True].copy()
+
+    # Drop the issue_date column
+    data = data.drop(columns=['issue_date', 'discharge'])
+
+    # If there is a column called discharge_sum, rename it to predictor
+    if 'discharge_sum' in data.columns:
+        data = data.rename(columns={'discharge_sum': 'predictor'})
+
+    # These runoff statistics are now written to the date of the forecast
+    # production. For the hydrograph output, we want the date to reflect the
+    # decade, the data is collected for. Therefore, we add 1 day to the 'date'
+    # column and recalculate decad_in_month and decad_in_year.
+    data.loc[:, 'decad_in_month'] = (data['date'] + pd.Timedelta(days=1)).apply(tl.get_decad_in_month)
+    data.loc[:, 'decad_in_year'] = (data['date'] + pd.Timedelta(days=1)).apply(tl.get_decad_in_year)
+    # Get year of the latest date in data
+    current_year = data['date'].dt.year.max()
+
+    logger.debug(f"Calculating decadal runoff statistics with data from {data['date'].min()} to {data['date'].max()}")
+
+    # If we are not in a leap year, drop the 29th of February and adjust the day_of_year
+    data['day_of_year'] = data['date'].dt.dayofyear
+    if not is_leap_year(current_year):
+        data = data[~((data['date'].dt.month == 2) & (data['date'].dt.day == 29))]
+        data.loc[(data['date'].dt.month > 2), 'day_of_year'] -= 1
+
+    runoff_stats = data[data['date'].dt.year != current_year]. \
+        reset_index(drop=True). \
+        groupby(['code', 'decad_in_year']). \
+        agg(mean=pd.NamedAgg(column='discharge_avg', aggfunc='mean'),
+            min=pd.NamedAgg(column='discharge_avg', aggfunc='min'),
+            max=pd.NamedAgg(column='discharge_avg', aggfunc='max'),
+            q05=pd.NamedAgg(column='discharge_avg', aggfunc=lambda x: x.quantile(0.05)),
+            q25=pd.NamedAgg(column='discharge_avg', aggfunc=lambda x: x.quantile(0.25)),
+            q75=pd.NamedAgg(column='discharge_avg', aggfunc=lambda x: x.quantile(0.75)),
+            q95=pd.NamedAgg(column='discharge_avg', aggfunc=lambda x: x.quantile(0.95))). \
+        reset_index(drop=False)
+    # If the forecast tools are connected to iEH HF, we get the norm values from there.
+    if os.getenv('ieasyhydroforecast_connect_to_iEH') == 'False':
+        # Read the norm data from iEH HF
+        # Test if iehhf_sdk is not None, throw an error if it is
+        if iehhf_sdk is None:
+            raise ValueError("ieasyhydroforecast_sdk object is required to read norms from iEH HF.")
+        # Read the norms from iEH HF for each site
+        all_pentadal_norms = pd.DataFrame({'decad_in_year': range(1, 37)})
+        # Cast pentad in year to string
+        all_pentadal_norms['decad_in_year'] = all_pentadal_norms['decad_in_year'].astype(str)
+        for code in runoff_stats['code'].unique():
+            try:
+                temp_norm = iehhf_sdk.get_norm_for_site(code, "discharge")
+            except Exception as e:
+                logger.error(f"Could not get norm for site {code}.")
+                temp_norm = []
+            if len(temp_norm) == 36:
+                all_pentadal_norms[code] = temp_norm
+            else:
+                all_pentadal_norms[code] = [None] * 36  # 36 pentads in a year
+        # Melt to long format
+        all_pentadal_norms = all_pentadal_norms.melt(id_vars=['decad_in_year'], var_name='code', value_name='norm')
+        # Merge with runoff_stats
+        runoff_stats = pd.merge(runoff_stats, all_pentadal_norms, left_on=['decad_in_year', 'code'], right_on=['decad_in_year', 'code'], how='left')
+    else:
+        # Add a norm column to runoff_stats which is NaN
+        runoff_stats['norm'] = np.nan
+
+    # Get current and last years data for each station and pentad_in_year and
+    # merge to runoff_stats
+    last_year = data['date'].dt.year.max() - 1
+    current_year = data['date'].dt.year.max()
+    last_year_data = data[data['date'].dt.year == last_year]
+    current_year_data = data[data['date'].dt.year == current_year]
+    #last_year_data = last_year_data.drop(columns=['date'])
+    # Add 1 year to date of last_year_data
+    #last_year_data.loc[:, 'date'] = last_year_data.loc[:, 'date'] + pd.DateOffset(years=1)
+    last_year_data.loc[:, 'date'] = pd.Timestamp(str(current_year)) + pd.to_timedelta(last_year_data['day_of_year'] - 1, unit='D')
+    current_year_data = current_year_data.drop(columns=['date'])
+    last_year_data = last_year_data.rename(columns={'discharge_avg': str(last_year)}).reset_index(drop=True)
+    current_year_data = current_year_data.rename(columns={'discharge_avg': str(current_year)}).reset_index(drop=True)
+
+    runoff_stats = pd.merge(runoff_stats, last_year_data, on=['code', 'decad_in_year'], how='left')
+    runoff_stats = pd.merge(runoff_stats, current_year_data[['code', 'decad_in_year', str(current_year)]], on=['code', 'decad_in_year'], how='left')
+
+    # Drop the column predictor if it is in runoff_stats
+    if 'predictor' in runoff_stats.columns:
+        runoff_stats = runoff_stats.drop(columns=['predictor'])
+
+    # Round all values to 3 decimal places
+    runoff_stats = runoff_stats.round(3)
+
+    # Sort the DataFrame by 'code' and 'pentad_in_year', using 'pentad_in_year'
+    # as numerical values
+    runoff_stats['decad_in_year'] = runoff_stats['decad_in_year'].astype(int)
+    runoff_stats = runoff_stats.sort_values(by=['code', 'decad_in_year'])
+
+    # Get the path to the intermediate data folder from the environmental
+    # variables and the name of the ieasyforecast_hydrograph_pentad_file.
+    # Concatenate them to the output file path.
+    try:
+        output_file_path = os.path.join(
+            os.getenv("ieasyforecast_intermediate_data_path"),
+            os.getenv("ieasyforecast_hydrograph_decad_file"))
+    except Exception as e:
+        logger.error("Could not get the output file path.")
+        print(os.getenv("ieasyforecast_intermediate_data_path"))
+        print(os.getenv("ieasyforecast_hydrograph_decad_file"))
+        raise e
+
+    # Overwrite the file if it already exists
+    if os.path.exists(output_file_path):
+        os.remove(output_file_path)
+
+    # Write the data to a csv file. Raise an error if this does not work.
+    # If the data is written to the csv file, log a message that the data
+    # has been written.
+    try:
+        ret = runoff_stats.to_csv(output_file_path, index=False)
+        logger.info(f"Data written to {output_file_path}.")
+    except Exception as e:
+        logger.error(f"Could not write the data to {output_file_path}.")
+        raise e
+
+    return ret
+
+def write_decad_hydrograph_data_first_version(data: pd.DataFrame, iehhf_sdk = None):
+    """
+    Calculates statistics of the decadal hydrograph and saves it to a csv file.
+
+    Args:
+    data (pd.DataFrame): The data to be written to a csv file.
+    iehhf_sdk (ieasyhydroforecast_sdk): The iEH HF SDK object. Required only if
+        norms are to be read from iEH HF.
+
+    Returns:
+    None
+    """
+
+    # Only keep rows where issue_date is True
     data = data[data['issue_date'] == True]
 
     # Drop the issue_date column
@@ -3241,6 +3409,54 @@ def save_decadal_skill_metrics(data: pd.DataFrame):
 
     return ret
 
+def get_latest_forecasts(simulated_df, horizon_column_name='pentad_in_year'):
+    """
+    Extract the latest forecasts for each unique combination of code, pentad_in_year, and model_short.
+    
+    Args:
+        simulated_df (pd.DataFrame): DataFrame containing forecast data with columns 'code', 
+                                    <horizon_column_name>, 'model_short', 'date', and forecast values
+        horizon_column_name (str): Name of the column that represents the forecast horizon.
+                                    Default is 'pentad_in_year'.
+    
+    Returns:
+        pd.DataFrame: DataFrame containing only the most recent forecast for each unique 
+                     combination of code, pentad_in_year, and model_short
+    """
+    if simulated_df.empty:
+        return pd.DataFrame()
+        
+    # Ensure date is in datetime format
+    if not pd.api.types.is_datetime64_any_dtype(simulated_df['date']):
+        simulated_df = simulated_df.copy()
+        simulated_df['date'] = pd.to_datetime(simulated_df['date'])
+
+    # Method 1: Using groupby and idxmax (most efficient for large dataframes)
+    # idx = simulated_df.groupby(['code', horizon_column_name, 'model_short'])['date'].idxmax()
+    # latest_forecasts = simulated_df.loc[idx]
+    
+    # Alternatively, Method 2: Using drop_duplicates (easier to read)
+    # Sort by date in descending order first
+    sorted_df = simulated_df.sort_values('date', ascending=False)
+    latest_forecasts = sorted_df.drop_duplicates(
+        subset=['code', horizon_column_name, 'model_short'], keep='first')
+    
+    # Only keep lines where year of date is equal to the maximum year
+    # Here we take data from second to last and last year
+    latest_year = simulated_df['date'].max().year
+    # Write year into column, derived from date column
+    latest_forecasts['year'] = latest_forecasts['date'].dt.year
+    latest_forecasts = latest_forecasts[latest_forecasts['year'] >= (latest_year - 1)]
+
+    # Drop the 'year' column
+    latest_forecasts = latest_forecasts.drop(columns=['year'])
+
+    # Round numeric columns to 3 decimal places
+    numeric_cols = latest_forecasts.select_dtypes(include=['float64', 'float32']).columns
+    latest_forecasts[numeric_cols] = latest_forecasts[numeric_cols].round(3)
+    
+    return latest_forecasts
+
 def save_forecast_data_pentad(simulated: pd.DataFrame):
     """
     Save observed pentadal runoff and simulated pentadal runoff for different models to csv.
@@ -3265,9 +3481,9 @@ def save_forecast_data_pentad(simulated: pd.DataFrame):
     # write the data to csv
     ret = simulated.to_csv(filename, index=False)
 
-    # Select the last unique row by 'code', pentad_in_year', and 'model_short'
-    simulated_latest = simulated.groupby(['code', 'pentad_in_year', 'model_short']).tail(1)
-
+    # Select forecast of the latest date for each code, pentad_in_year, and model_short
+    simulated_latest = get_latest_forecasts(simulated, horizon_column_name='pentad_in_year')
+    
     # Edit filename by appending '_latest' to the filename
     filename_latest = filename.replace('.csv', '_latest.csv')
 
@@ -3300,8 +3516,8 @@ def save_forecast_data_decade(simulated: pd.DataFrame):
     # write the data to csv
     ret = simulated.to_csv(filename, index=False)
 
-    # Select the last unique row by 'code', pentad_in_year', and 'model_short'
-    simulated_latest = simulated.groupby(['code', 'decad_in_year', 'model_short']).tail(1)
+    # Select forecast of the latest date for each code, decad_in_year, and model_short
+    simulated_latest = get_latest_forecasts(simulated, horizon_column_name='decad_in_year')
 
     # Edit filename by appending '_latest' to the filename
     filename_latest = filename.replace('.csv', '_latest.csv')

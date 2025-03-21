@@ -2834,26 +2834,22 @@ def create_forecast_summary_table(_, forecasts_all, station, date_picker,
     forecast_table['date'] = pd.to_datetime(forecast_table['date'])
 
     print(f"create_forecast_summary_table: model_selection: {model_selection}")
+    all_models = list()
+    for key, value in model_selection.options.items():
+        all_models.append(value)
+
     # List of unique models in forecast_table before filtering.
     print(f"create_forecast_summary_table: forecast_table['model_short'].unique(): {forecast_table['model_short'].unique()}")
     print(f"columns of forecast_table: {forecast_table.columns}")
 
-    # Filter further for the selected date and models
-    # if model_selection has attribute value, use it, otherwise use model_selection
-    if hasattr(model_selection, 'value'):
-        if hasattr(date_picker, 'value'):
-            forecast_table = forecast_table[(forecast_table['date'] <= (pd.Timestamp(date_picker.value) + pd.Timedelta(days=1))) &
-                            (forecast_table['model_short'].isin(model_selection.value))].copy().reset_index(drop=True)
-        else:
-            forecast_table = forecast_table[(forecast_table['date'] <= (pd.Timestamp(date_picker) + pd.Timedelta(days=1))) &
-                            (forecast_table['model_short'].isin(model_selection.value))].copy().reset_index(drop=True)
+    # Filter further for the selected date
+    if hasattr(date_picker, 'value'):
+        forecast_table = forecast_table[
+            (forecast_table['date'] <= (pd.Timestamp(date_picker.value) + pd.Timedelta(days=1))) &
+            (forecast_table['model_short'].isin(all_models))].copy().reset_index(drop=True)
     else:
-        if hasattr(date_picker, 'value'):
-            forecast_table = forecast_table[(forecast_table['date'] <= (pd.Timestamp(date_picker.value) + pd.Timedelta(days=1))) &
-                            (forecast_table['model_short'].isin(model_selection))].copy().reset_index(drop=True)
-        else:
-            forecast_table = forecast_table[(forecast_table['date'] <= (pd.Timestamp(date_picker) + pd.Timedelta(days=1))) &
-                                        (forecast_table['model_short'].isin(model_selection))].copy().reset_index(drop=True)
+        forecast_table = forecast_table[(forecast_table['date'] <= (pd.Timestamp(date_picker) + pd.Timedelta(days=1))) &
+                                        (forecast_table['model_short'].isin(all_models))].copy().reset_index(drop=True)
 
     # List of unique models in forecast_table after filtering.
     print(f"create_forecast_summary_table: forecast_table['model_short'].unique(): {forecast_table['model_short'].unique()}")

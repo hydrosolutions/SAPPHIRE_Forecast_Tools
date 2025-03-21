@@ -184,7 +184,7 @@ def define_tabs(_,
                     forecast_summary_table,
                     title=_('Summary table'),
                     sizing_mode='stretch_both',
-                    min_height=400,
+                    min_height=500,
 
                 ),
                 pn.Card(
