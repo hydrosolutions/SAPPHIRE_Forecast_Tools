@@ -3,7 +3,7 @@
 # This script creates a dashboard for the pentadal forecast.
 #
 # Run with the following command:
-# ieasyhydroforecast_data_root_dir=/absolute/path/to ieasyhydroforecast_env_file_path=/absolute/path/to/sensitive_data_forecast_tools/config/.env_develop_kghm SAPPHIRE_OPDEV_ENV=True panel serve pentad_dashboard.py --show --autoreload --port 5007
+# ieasyhydroforecast_data_root_dir=/absolute/path/to ieasyhydroforecast_env_file_path=/absolute/path/to/sensitive_data_forecast_tools/config/.env_develop_kghm SAPPHIRE_OPDEV_ENV=True panel serve pentad_dashboard.py --show --autoreload --port 5055
 #
 
 # region load_libraries
@@ -214,6 +214,10 @@ localize.translation_manager.load_translation_pentad_dashboard()
 
 # Import visualization module after setting up localization
 import src.vizualization as viz
+
+# Print forecast horizon variable from environment
+sapphire_forecast_horizon = os.getenv('ieasyforecast_sapphire_forecast_horizon')
+print(f"INFO: Forecast horizon: {sapphire_forecast_horizon}")
 
 # endregion
 
