@@ -507,6 +507,9 @@ def read_linreg_forecast_data(iehhf_selected_stations, file_mtime):
         os.getenv("ieasyforecast_intermediate_data_path"),
         os.getenv("ieasyforecast_analysis_pentad_file")
     )
+    # No possibility to shorten that file. Need all results for linear regression
+    # pane in forecast tab
+    #forecast_results_file = forecast_results_file.replace('.csv', '_latest.csv')
 
     # Test if file exists and thorw an error if not
     if not os.path.isfile(forecast_results_file):

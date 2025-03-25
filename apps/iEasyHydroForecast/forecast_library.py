@@ -2433,6 +2433,9 @@ def write_linreg_pentad_forecast_data(data: pd.DataFrame):
         print(os.getenv("ieasyforecast_intermediate_data_path"))
         print(os.getenv("ieasyforecast_analysis_pentad_file"))
         raise e
+    
+    # Get the path to the output file containing only the latest data
+    output_file_path_latest = str(output_file_path).replace('.csv', '_latest.csv')
 
     # Only proceed if data is not empty
     if data.empty:
@@ -2471,7 +2474,6 @@ def write_linreg_pentad_forecast_data(data: pd.DataFrame):
                 if date != most_common_date:
                     last_line.loc[(last_line['code'] == code) & (last_line['date'] == date), 'date'] = most_common_date
 
-
     # Handle existing file
     existing_data = None
     if os.path.exists(output_file_path):
@@ -2487,10 +2489,24 @@ def write_linreg_pentad_forecast_data(data: pd.DataFrame):
         # Remove duplicates, keeping last occurrence (which has been added last)
         combined_data = combined_data.drop_duplicates(subset=['date', 'code'], keep='last')
 
+        # Group by pentad and code, kepp the most recent entries 
+        # for each pentad and code. 
+        combined_data_latest = combined_data.copy()
+        combined_data_latest = combined_data_latest.groupby(['pentad_in_year', 'code']).tail(1)
+
         # Write back to file
         try:
             ret = combined_data.to_csv(output_file_path, index=False)
-            logger.info(f"Data written to {output_file_path}. Removed duplicates keeping most recent entries.")
+            if ret is None:
+                logger.info(f"Data written to {output_file_path}.")
+            else:
+                logger.error(f"Could not write the data to {output_file_path}.")
+            # Also write line to latest file
+            ret = combined_data_latest.to_csv(output_file_path_latest, index=False)
+            if ret is None:
+                logger.info(f"Data written to {output_file_path_latest}.")
+            else:
+                logger.error(f"Could not write the data to {output_file_path_latest}.")
         except Exception as e:
             logger.error(f"Could not write the data to {output_file_path}.")
             raise e
@@ -2502,6 +2518,9 @@ def write_linreg_pentad_forecast_data(data: pd.DataFrame):
                 logger.info(f"Data written to {output_file_path}.")
             else:
                 logger.error(f"Could not write the data to {output_file_path}.")
+            # Also write line to latest file
+            last_line.to_csv(output_file_path_latest, index=False)
+            logger.info(f"Data written to {output_file_path_latest}.")
         except Exception as e:
             logger.error(f"Could not write the data to {output_file_path}.")
             raise e
@@ -2632,6 +2651,9 @@ def write_linreg_decad_forecast_data(data: pd.DataFrame):
         print(os.getenv("ieasyforecast_intermediate_data_path"))
         print(os.getenv("ieasyforecast_analysis_decad_file"))
         raise e
+    
+    # Get the path to the output file containing only the latest data
+    output_file_path_latest = str(output_file_path).replace('.csv', '_latest.csv')
 
     # Only proceed if data is not empty
     if data.empty:
@@ -2684,10 +2706,20 @@ def write_linreg_decad_forecast_data(data: pd.DataFrame):
         # Sort by code and date for readability
         combined_data = combined_data.sort_values(['code', 'date'])
 
+        # Group by pentad and code, kepp the most recent entries 
+        # for each pentad and code. 
+        combined_data_latest = combined_data.copy()
+        combined_data_latest = combined_data_latest.groupby(['decad_in_year', 'code']).tail(1)
+
         # Write back to file
         try:
             ret = combined_data.to_csv(output_file_path, index=False)
-            logger.info(f"Data written to {output_file_path}. Removed duplicates keeping most recent entries.")
+            if ret is None:
+                logger.info(f"Data written to {output_file_path}. Removed duplicates keeping most recent entries.")
+            else:
+                logger.error(f"Could not write the data to {output_file_path}.")
+            # Also write line to latest file
+            combined_data_latest.to_csv(output_file_path_latest, index=False)
         except Exception as e:
             logger.error(f"Could not write the data to {output_file_path}.")
             raise e
@@ -2699,6 +2731,12 @@ def write_linreg_decad_forecast_data(data: pd.DataFrame):
                 logger.info(f"Data written to {output_file_path}.")
             else:
                 logger.error(f"Could not write the data to {output_file_path}.")
+            # Also write line to latest file
+            ret = last_line.to_csv(output_file_path_latest, index=False)
+            if ret is None: 
+                logger.info(f"Data written to {output_file_path_latest}.")
+            else:
+                logger.error(f"Could not write the data to {output_file_path_latest}.")
         except Exception as e:
             logger.error(f"Could not write the data to {output_file_path}.")
             raise e

@@ -27,7 +27,10 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     python -m pip install git+https://github.com/hydrosolutions/ieasyreports.git@main
 
 # Expose the port that the application listens on.
+# Port 5006 for the pentad dashboard
+# Port 5007 for the decad dashboard
 EXPOSE 5006
+EXPOSE 5007
 
 # Test if file apps/forecast_dashboard/pentad_dashboard.py exists. Print the result.
 # CMD test -f apps/forecast_dashboard/pentad_dashboard.py && echo "File exists" || echo "File does not exist"
