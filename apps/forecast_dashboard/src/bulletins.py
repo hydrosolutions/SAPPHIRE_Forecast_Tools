@@ -49,6 +49,30 @@ class MultiSheetReportGenerator(DefaultReportGenerator):
         self.data_tags_info = []
         self.general_tags = {}
 
+def round_percentage_to_integer_string(value: float) -> int:
+    '''
+    Round percentage to integers.
+
+    Args:
+        value (float): The percentage value to round.
+
+    Returns:
+        str: The rounded percentage value. An empty string is returned in case of
+            a negative input value.
+    '''
+    try:
+        if not isinstance(value, float):
+            raise TypeError('Input value must be a float')
+
+        if value < 0.0:
+            return None
+        return f'{round(value)}'
+    except TypeError as e:
+        print(f'Error in round_percentage: {e}')
+        return None
+    except Exception as e:
+        print(f'Error in round_percentage: {e}')
+        return None
 
 def round_percentage_to_comma_separated_string(value: float) -> str:
     '''
@@ -373,7 +397,7 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
 
     perc_norm_tag = Tag(
         name='PERC_NORM',
-        get_value_fn=lambda obj, **kwargs: round_percentage_to_comma_separated_string(obj.perc_norm),
+        get_value_fn=lambda obj, **kwargs: round_percentage_to_integer_string(obj.perc_norm),
         tag_settings=tag_settings,
         data=True
     )
