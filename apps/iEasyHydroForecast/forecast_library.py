@@ -3560,6 +3560,9 @@ def save_forecast_data_decade(simulated: pd.DataFrame):
     # Round all float values to 3 decimal places
     simulated = simulated.round(3)
 
+    # Rename the column decad_in_month to decad
+    simulated = simulated.rename(columns={'decad_in_month': 'decad'})
+
     # write the data to csv
     ret = simulated.to_csv(filename, index=False)
 

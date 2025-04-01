@@ -15,6 +15,14 @@ The header of the dashboard allows the configuration of the view and the user to
 
 </details>
 
+## Sidebar
+The sidebar of the dashboard allows the user to configure the visualizations of the data. 
+
+<details>
+<summary>It contains the following elements:</summary>
+
+</details>
+
 ## Predictor tab
 
 
