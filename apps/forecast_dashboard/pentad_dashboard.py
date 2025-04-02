@@ -202,6 +202,9 @@ print(f"INFO: Selected language: {selected_language}")
 
 # Localization, translation to different languages.
 localedir = os.getenv("ieasyforecast_locale_dir")
+print(f"DEBUG: Translation directory: {localedir}")
+print(f"DEBUG: Translation directory exists: {os.path.exists(localedir)}")
+print(f"DEBUG: Files in translation directory: {os.listdir(localedir)}")
 
 # Set the locale directory in the translation manager
 localize.translation_manager.set_locale_dir(locale_dir=localedir)
@@ -211,6 +214,15 @@ localize.translation_manager.language = selected_language
 
 # Load translations globally
 localize.translation_manager.load_translation_pentad_dashboard()
+print(f"DEBUG: Selected language: {selected_language}")
+print(f"DEBUG: Translation manager language: {localize.translation_manager.language}")
+
+print(f"DEBUG: Translation test - 'Hydropost:' translates to: {_('Hydropost:')}")
+print(f"DEBUG: Translation test - 'Forecast' translates to: {_('Forecast')}")
+
+# Check for cached translations
+if hasattr(pn.state, 'cache') and 'translations' in pn.state.cache:
+    print(f"DEBUG: Cached translations found.")
 
 # Import visualization module after setting up localization
 import src.vizualization as viz
