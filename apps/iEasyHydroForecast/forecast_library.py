@@ -1739,6 +1739,10 @@ def calculate_skill_metrics_pentad(
         return f'EM'
 
     def filter_for_highly_skilled_forecasts(skill_stats):
+        """
+        Filter the skill_stats DataFrame for highly skilled forecasts based on
+        the thresholds set in the environment.
+        """
         # Get thresholds from environment
         threshold_sdivsigma = os.getenv('ieasyhydroforecast_efficiency_threshold', 0.6)
         threshold_accuracy = os.getenv('ieasyhydroforecast_accuracy_threshold', 0.8)
@@ -1854,9 +1858,11 @@ def calculate_skill_metrics_pentad(
             skill_metrics_df['code'].isin(skill_stats_ensemble['code']) &
             skill_metrics_df['model_long'].isin(skill_stats_ensemble['model_long']) &
             skill_metrics_df['model_short'].isin(skill_stats_ensemble['model_short'])].copy()
+        # Filter out rows where forecasted_discharge is NaN
+        skill_metrics_df_ensemble = skill_metrics_df_ensemble.dropna(subset=['forecasted_discharge']).copy()
         #print("DEBUG: skill_metrics_df_ensemble\n", skill_metrics_df_ensemble.columns)
         #print("DEBUG: skill_metrics_df_ensemble\n", skill_metrics_df_ensemble.head(20))
-
+        
         # Drop columns with model_short == NE (neural ensemble)
         skill_metrics_df_ensemble = skill_metrics_df_ensemble[skill_metrics_df_ensemble['model_short'] != 'NE'].copy()
         #print("DEBUG: skill_metrics_df_ensemble\n", skill_metrics_df_ensemble.head(20))
@@ -1990,6 +1996,9 @@ def calculate_skill_metrics_decade(
     if not all(column in simulated.columns for column in ['code', 'date', 'decad_in_year', 'forecasted_discharge', 'model_long', 'model_short']):
         raise ValueError(f'Simulated DataFrame is missing one or more required columns: {["code", "date", "decad_in_year", "forecasted_discharge", "model_long", "model_short"]}')
 
+    # Print column names of simulated
+    logger.debug(f"DEBUG: simulated.columns\n{simulated.columns}")
+
     # Local functions
     def test_for_tuples(df):
         # Identify tuples in each cell
@@ -2084,7 +2093,7 @@ def calculate_skill_metrics_decade(
         #logger.debug(f"DEBUG: skill_metrics_df.tail()\n{skill_metrics_df.tail(5)}")
         test_for_tuples(skill_metrics_df)
 
-    # Calculate the skill metrics for each group based on the 'pentad_in_year', 'code' and 'model' columns
+    # Calculate the skill metrics for each group based on the 'decad_in_year', 'code' and 'model' columns
     with timer(timing_stats, 'calculate_skill_metrics_decade - Calculate sdivsigma_nse'):
         skill_stats = skill_metrics_df. \
             groupby(['decad_in_year', 'code', 'model_long', 'model_short'])[skill_metrics_df.columns]. \
@@ -2216,11 +2225,11 @@ def calculate_skill_metrics_decade(
         skill_stats = pd.concat([skill_stats, ensemble_skill_stats], ignore_index=True)
 
         # Add ensemble mean forecasts to simulated dataframe
-        #logger.debug(f"DEBUG: simulated.columns\n{simulated.columns}")
-        #logger.debug(f"DEBUG: simulated.head()\n{simulated.head(5)}")
+        logger.debug(f"DEBUG: simulated.columns\n{simulated.columns}")
+        logger.debug(f"DEBUG: simulated.tail()\n{simulated.head(5)}")
         #logger.debug(f"DEBUG: unique models in simulated: {simulated['model_long'].unique()}")
-        #print(f"DEBUG: simulated.columns\n{ensemble_skill_metrics_df.columns}")
-        #print("DEBUG: head of ensemble_skill_metrics_df: \n", ensemble_skill_metrics_df.head(5))
+        print(f"DEBUG: simulated.columns\n{ensemble_skill_metrics_df.columns}")
+        print("DEBUG: head of ensemble_skill_metrics_df: \n", ensemble_skill_metrics_df.head(5))
         #print("DEBUG: unique models in ensemble_skill_metrics_df: ", ensemble_skill_metrics_df['model_long'].unique())
 
         # Calculate pentad in month (add 1 day to date)
@@ -3550,6 +3559,9 @@ def save_forecast_data_decade(simulated: pd.DataFrame):
 
     # Round all float values to 3 decimal places
     simulated = simulated.round(3)
+
+    # Rename the column decad_in_month to decad
+    simulated = simulated.rename(columns={'decad_in_month': 'decad'})
 
     # write the data to csv
     ret = simulated.to_csv(filename, index=False)

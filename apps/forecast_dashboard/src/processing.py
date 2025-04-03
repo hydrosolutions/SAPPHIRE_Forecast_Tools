@@ -45,7 +45,11 @@ def get_icon_path(in_docker_flag):
     #if in_docker_flag == "True":
     #    icon_path = os.path.join("apps", "forecast_dashboard", "www", "Pentad.png")
     #else:
-    icon_path = os.path.join("www", "Pentad.png")
+    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+    if horizon == "pentad":
+        icon_path = os.path.join("www", "Pentad.png")
+    else:
+        icon_path = os.path.join("www", "Dekad.png")
 
     # Test if file exists and thorw an error if not
     if not os.path.isfile(icon_path):
@@ -249,26 +253,27 @@ def read_machine_learning_forecasts_pentad(model, file_mtime):
     model (str): The machine learning model to read the forecast results from.
         Allowed values are 'TFT', 'TIDE', 'TSMIXER', and 'ARIMA'.
     '''
-    cache_key = f'read_machine_learning_forecasts_pentad_{model}'
+    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+    cache_key = f'read_machine_learning_forecasts_{horizon}_{model}'
     if cache_key in pn.state.cache:
         cached_mtime, forecast = pn.state.cache[cache_key]
         if cached_mtime == file_mtime:
             return forecast
 
     if model == 'TFT':
-        filename = f"pentad_{model}_forecast_latest.csv"
+        filename = f"{horizon}_{model}_forecast_latest.csv"
         model_long = "Temporal-Fusion Transformer (TFT)"
         model_short = "TFT"
     elif model == 'TIDE':
-        filename = f"pentad_{model}_forecast_latest.csv"
+        filename = f"{horizon}_{model}_forecast_latest.csv"
         model_long = "Time-Series Dense Encoder (TiDE)"
         model_short = "TiDE"
     elif model == 'TSMIXER':
-        filename = f"pentad_{model}_forecast_latest.csv"
+        filename = f"{horizon}_{model}_forecast_latest.csv"
         model_long = "Time-Series Mixer (TSMixer)"
         model_short = "TSMixer"
     elif model == 'ARIMA':
-        filename = f"pentad_{model}_forecast_latest.csv"
+        filename = f"{horizon}_{model}_forecast_latest.csv"
         model_long = "AutoRegressive Integrated Moving Average (ARIMA)"
         model_short = "ARIMA"
     else:
@@ -379,7 +384,8 @@ def read_hydrograph_day_file(file_mtime):
     return hydrograph_day_all
 
 def read_hydrograph_day_data_for_pentad_forecasting(iahhf_selected_stations, file_mtime):
-    cache_key_base = 'hydrograph_day_data_pentad_forecasting'
+    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+    cache_key_base = f'hydrograph_day_data_{horizon}_forecasting'
     stations_tuple = tuple(iahhf_selected_stations) if iahhf_selected_stations is not None else None
     cache_key = (cache_key_base, stations_tuple)
     if cache_key in pn.state.cache:
@@ -423,15 +429,21 @@ def read_hydrograph_day_data_for_pentad_forecasting(iahhf_selected_stations, fil
     return hydrograph_day_all
 
 def read_hydrograph_pentad_file(file_mtime):
-    cache_key = 'hydrograph_pentad_file'
+    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+    if horizon == "pentad":
+        horizon_in_year = "pentad_in_year"
+        hydrograph_file = os.getenv("ieasyforecast_hydrograph_pentad_file")
+    else:
+        horizon_in_year = "decad_in_year"
+        hydrograph_file = os.getenv("ieasyforecast_hydrograph_decad_file")
+
+    cache_key = f'hydrograph_{horizon}_file'
     if cache_key in pn.state.cache:
         cached_mtime, hydrograph_pentad_all = pn.state.cache[cache_key]
         if cached_mtime == file_mtime:
             return hydrograph_pentad_all
 
-    hydrograph_pentad_file = os.path.join(
-        os.getenv("ieasyforecast_intermediate_data_path"),
-        os.getenv("ieasyforecast_hydrograph_pentad_file"))
+    hydrograph_pentad_file = os.path.join(os.getenv("ieasyforecast_intermediate_data_path"), hydrograph_file)
     # Test if file exists and thorw an error if not
     if not os.path.isfile(hydrograph_pentad_file):
         raise Exception("File not found: " + hydrograph_pentad_file)
@@ -442,18 +454,19 @@ def read_hydrograph_pentad_file(file_mtime):
     if hydrograph_pentad_all.empty:
         raise Exception("File is empty: " + hydrograph_pentad_file)
 
-    hydrograph_pentad_all["pentad_in_year"] = hydrograph_pentad_all["pentad_in_year"].astype(int)
+    hydrograph_pentad_all[horizon_in_year] = hydrograph_pentad_all[horizon_in_year].astype(int)
     hydrograph_pentad_all['code'] = hydrograph_pentad_all['code'].astype(str)
     hydrograph_pentad_all['date'] = pd.to_datetime(hydrograph_pentad_all['date'], format='%Y-%m-%d')
     # Sort all columns in ascending Code and pentad order
-    hydrograph_pentad_all = hydrograph_pentad_all.sort_values(by=["code", "pentad_in_year"])
+    hydrograph_pentad_all = hydrograph_pentad_all.sort_values(by=["code", horizon_in_year])
 
     # Store in cache
     pn.state.cache[cache_key] = (file_mtime, hydrograph_pentad_all)
     return hydrograph_pentad_all
 
 def read_hydrograph_pentad_data_for_pentad_forecasting(iahhf_selected_stations, file_mtime):
-    cache_key_base = 'hydrograph_pentad_data_pentad_forecasting'
+    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+    cache_key_base = f'hydrograph_{horizon}_data_{horizon}_forecasting'
     stations_tuple = tuple(iahhf_selected_stations) if iahhf_selected_stations is not None else None
     cache_key = (cache_key_base, stations_tuple)
     if cache_key in pn.state.cache:
@@ -503,10 +516,17 @@ def read_linreg_forecast_data(iehhf_selected_stations, file_mtime):
         if cached_mtime == file_mtime:
             return linreg_forecast
 
-    forecast_results_file = os.path.join(
-        os.getenv("ieasyforecast_intermediate_data_path"),
-        os.getenv("ieasyforecast_analysis_pentad_file")
-    )
+    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+    if horizon == "pentad":
+        forecast_results_file = os.path.join(
+            os.getenv("ieasyforecast_intermediate_data_path"),
+            os.getenv("ieasyforecast_analysis_pentad_file")
+        )
+    else:
+        forecast_results_file = os.path.join(
+            os.getenv("ieasyforecast_intermediate_data_path"),
+            os.getenv("ieasyforecast_analysis_decad_file")
+        )
     # No possibility to shorten that file. Need all results for linear regression
     # pane in forecast tab
     #forecast_results_file = forecast_results_file.replace('.csv', '_latest.csv')
@@ -593,10 +613,12 @@ def read_forecast_results_file(iehhf_selected_stations, file_mtime):
         if cached_mtime == file_mtime:
             return forecast_pentad
 
-    forecast_results_file = os.path.join(
-        os.getenv("ieasyforecast_intermediate_data_path"),
-        os.getenv("ieasyforecast_combined_forecast_pentad_file")
-    )
+    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+    if horizon == "pentad":
+        forecast_file = os.getenv("ieasyforecast_combined_forecast_pentad_file")
+    else:
+        forecast_file = os.getenv("ieasyforecast_combined_forecast_decad_file")
+    forecast_results_file = os.path.join(os.getenv("ieasyforecast_intermediate_data_path"), forecast_file)
     forecast_results_file = forecast_results_file.replace('.csv', '_latest.csv')
     # Test if file exists and thorw an error if not
     if not os.path.isfile(forecast_results_file):
@@ -622,9 +644,13 @@ def read_forecast_results_file(iehhf_selected_stations, file_mtime):
     # Print the last 20 values.
     forecast_pentad = forecast_pentad.drop_duplicates(subset=['Date', 'code', 'model_short'], keep='last').sort_values('Date')
     # Get the pentad of the year. Refers to the pentad the forecast is produced for.
-    forecast_pentad = tl.add_pentad_in_year_column(forecast_pentad)
+    if horizon == "pentad":
+        forecast_pentad = tl.add_pentad_in_year_column(forecast_pentad)
+    else:
+        forecast_pentad = tl.add_decad_in_year_column(forecast_pentad)
+        forecast_pentad["decad_in_year"] = forecast_pentad["decad_in_year"].astype(int)
     # Cast pentad column no number
-    forecast_pentad['pentad'] = forecast_pentad['pentad'].astype(int)
+    forecast_pentad[horizon] = forecast_pentad[horizon].astype(int)
     # Add a year column
     forecast_pentad['year'] = forecast_pentad['Date'].dt.year
     # Drop duplicates in Date, code and model_short columns
@@ -650,10 +676,12 @@ def read_forecast_stats_file(stations_iehhf, file_mtime):
         if cached_mtime == file_mtime:
             return forecast_stats
 
-    forecast_stats_file = os.path.join(
-        os.getenv("ieasyforecast_intermediate_data_path"),
-        os.getenv("ieasyforecast_pentadal_skill_metrics_file")
-    )
+    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+    if horizon == "pentad":
+        forecast_file = os.getenv("ieasyforecast_pentadal_skill_metrics_file")
+    else:
+        forecast_file = os.getenv("ieasyforecast_decadal_skill_metrics_file")
+    forecast_stats_file = os.path.join(os.getenv("ieasyforecast_intermediate_data_path"), forecast_file)
     # Test if file exists and thorw an error if not
     if not os.path.isfile(forecast_stats_file):
         raise Exception("File not found: " + forecast_stats_file)
@@ -735,10 +763,20 @@ def add_predictor_dates(linreg_predictor, station, date):
     # Get the latest date in the predictor data
     predictor = predictor.sort_values('date').iloc[-1:]
 
+    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+    if horizon == "pentad":
+        predictor_start_days = 2
+        forecast_end_days = 5
+        last_day = 26
+    else:
+        predictor_start_days = 9
+        forecast_end_days = 10
+        last_day = 21
+
     # Add start and end days for predictor period and forecast period
-    predictor['predictor_start_date'] = predictor['date'] - pd.DateOffset(days=2)
+    predictor['predictor_start_date'] = predictor['date'] - pd.DateOffset(days=predictor_start_days)
     predictor['forecast_start_date'] = predictor['date'] + pd.DateOffset(days=1)
-    predictor['forecast_end_date'] = predictor['date'] + pd.DateOffset(days=5)
+    predictor['forecast_end_date'] = predictor['date'] + pd.DateOffset(days=forecast_end_days)
 
     #print(f"DEBUG: add_predictor_dates: predictor:\n{predictor}")
 
@@ -746,7 +784,7 @@ def add_predictor_dates(linreg_predictor, station, date):
     predictor['predictor'] = fl.round_discharge_to_float(predictor['predictor'].values[0])
 
     # Test if the forecast_start_date is 26, set the forecast_end_date to the end of the month of the forecast_start_date
-    if (predictor['forecast_start_date'].dt.day == 26).any():
+    if (predictor['forecast_start_date'].dt.day == last_day).any():
         predictor['forecast_end_date'] = predictor['forecast_start_date'] + pd.offsets.MonthEnd(0)
 
     # Add 23 hours and 58 minutes to the forecast_end_date
@@ -1145,13 +1183,20 @@ def update_model_dict_date(model_dict, forecasts_all, selected_station, selected
     return model_dict
 
 
-def get_best_models_for_station_and_pentad(forecasts_all, selected_station, selected_pentad):
+def get_best_models_for_station_and_pentad(forecasts_all, selected_station, selected_pentad, selected_decad):
     """Returns a list of models with the best performance for the selected station and pentad"""
+    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+    if horizon == "pentad":
+        horizon_in_year = "pentad_in_year"
+        horizon_value = selected_pentad
+    else:
+        horizon_in_year = "decad_in_year"
+        horizon_value = selected_decad
     print(f"\n  dbg: get_best_models_for_station_and_pentad: selected_station: {selected_station}")
     # Filter the forecast results for the selected station and pentad
     forecasts_local = forecasts_all[
         (forecasts_all['station_labels'] == selected_station) &
-        (forecasts_all['pentad_in_year'] == selected_pentad)
+        (forecasts_all[horizon_in_year] == horizon_value)
     ].copy()
     # Drop duplicates (columns model_short) and only keep the last one
     forecasts_filtered = forecasts_local.drop_duplicates(subset=['model_short'], keep='last').copy()
@@ -1167,14 +1212,14 @@ def get_best_models_for_station_and_pentad(forecasts_all, selected_station, sele
     # Test if forecasts_no_LR is empty
     # Check if forecasts_no_LR is empty or contains only NaN accuracy
     if forecasts_no_LR.empty or forecasts_no_LR['accuracy'].isna().all():
-        print("No valid models found for the given station and pentad.")
+        print(f"No valid models found for the given station and {horizon}.")
         return ['Linear regression (LR)']  # Return a fallback
     best_model = forecasts_no_LR.loc[forecasts_no_LR['accuracy'].idxmax(), 'model_short']
     print("best_model: ", best_model)
     best_models = [best_model, 'LR']
     # If length of best_models is 1, we only have the LR model
     if len(best_models) == 1:
-        print("Only LR model available for the given station and pentad.")
+        print(f"Only LR model available for the given station and {horizon}.")
         return ['Linear regression (LR)']
     # if forecasted_discharge of forecasts is NaN, we remove the model from best_models
     best_models = [
@@ -1563,17 +1608,28 @@ def read_temperature_data_deprecating(file_mtime):
 
 
 # --- Bulletin preparation --------------------------------------------------------
-def get_bulletin_header_info(date):
+def get_bulletin_header_info(date, sapphire_forecast_horizon):
     """Get information from date relevant for the bulletin header."""
-    df = pd.DataFrame({
-        "pentad": [tl.get_pentad(date)],
-        "month_number": [tl.get_month_num(date)],
-        "month_str_nom_ru": [tl.get_month_str_case1(date)],
-        "month_str_gen_ru": [tl.get_month_str_case2(date)],
-        "year": [tl.get_year(date)],
-        "day_start_pentad": [tl.get_pentad_first_day(date)],
-        "day_end_pentad": [tl.get_pentad_last_day(date)],
-    })
+    if sapphire_forecast_horizon=='pentad':
+        df = pd.DataFrame({
+            "pentad": [tl.get_pentad(date)],
+            "month_number": [tl.get_month_num(date)],
+            "month_str_nom_ru": [tl.get_month_str_case1(date)],
+            "month_str_gen_ru": [tl.get_month_str_case2(date)],
+            "year": [tl.get_year(date)],
+            "day_start_pentad": [tl.get_pentad_first_day(date)],
+            "day_end_pentad": [tl.get_pentad_last_day(date)],
+        })
+    elif sapphire_forecast_horizon=='decad':
+        df = pd.DataFrame({
+            'decad': [tl.get_decad_in_month(date)],
+            'month_number': [tl.get_month_num(date)],
+            'month_str_nom_ru': [tl.get_month_str_case1(date)],
+            'month_str_gen_ru': [tl.get_month_str_case2(date)],
+            'year': [tl.get_year(date)],
+            'day_start_decad': [tl.get_decad_first_day(date)],
+            'day_end_decad': [tl.get_decad_last_day(date)],
+        })
 
     return df
 

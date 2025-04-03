@@ -201,8 +201,9 @@ class SapphireSite:
         Returns:
             Site: A SapphireSite object.
         """
-        #print(f"\n\nget_forecast_attributes_for_site: dataframe: {df}")
-        self.forecast_pentad = df[_('Forecasted discharge')].values[0]
+        print(f"\n\nget_forecast_attributes_for_site: dataframe: {df}")
+        print(f"df.columns: {df.columns}")
+        self.forecast_expected = df[_('Forecasted discharge')].values[0]
         self.forecast_lower_bound = df[_('Forecast lower bound')].values[0]
         self.forecast_upper_bound = df[_('Forecast upper bound')].values[0]
         self.forecast_delta = df[_('δ')].values[0]
@@ -212,7 +213,7 @@ class SapphireSite:
         #self.forecast_nse = df['NSE']  # Not available yet
         self.forecast_model = df[_('Model')].values[0]
         # Calculate percentage of norm
-        self.perc_norm = round((self.forecast_pentad / self.hydrograph_norm) * 100, 2)
+        self.perc_norm = round((self.forecast_expected / self.hydrograph_norm) * 100, 2)
         print(f"Updated site {self.code} with forecast attributes from DataFrame.")
 
     def get_site_attributes_from_selected_forecast(cls,
@@ -237,7 +238,7 @@ class SapphireSite:
             selected_row = tabulator.value
             print("\n---\n---\nSelected row: ", selected_row, "\n---\n---\n")
             selected_site.forecast_model = selected_row[_('Model')]
-            selected_site.forecast_pentad = selected_row[_('Forecasted discharge')]
+            selected_site.forecast_expected = selected_row[_('Forecasted discharge')]
             selected_site.forecast_lower_bound = selected_row[_('Forecast lower bound')]
             selected_site.forecast_upper_bound = selected_row[_('Forecast upper bound')]
             selected_site.forecast_delta = selected_row[_('δ')]
