@@ -3,7 +3,7 @@
 import os
 import gettext
 import param
-from functools import lru_cache
+#from functools import lru_cache
 
 class TranslationManager(param.Parameterized):
     language = param.String(default='en')
@@ -36,7 +36,7 @@ class TranslationManager(param.Parameterized):
 translation_manager = TranslationManager()
 
 # Define a global translation function
-@lru_cache(maxsize=None)
+#@lru_cache(maxsize=None)
 def _(message):
     return translation_manager.gettext(message)
 
