@@ -173,13 +173,6 @@ os.makedirs(SAVE_DIRECTORY, exist_ok=True)
 
 BULLETIN_CSV_PATH = os.path.join(SAVE_DIRECTORY, 'bulletin.csv')  # Added for CSV storage
 
-# Initialize the downloader with a specific directory
-bulletin_folder = os.path.join(
-    os.getenv('ieasyreports_report_output_path'),
-    'bulletins', 'pentad')
-downloader = FileDownloader(bulletin_folder)
-bulletin_download_panel = downloader.panel()
-
 # Set time until user is logged out automatically
 minutes_inactive_until_logout = int(os.getenv('ieasyforecast_minutes_inactive_until_logout', 10))
 INACTIVITY_TIMEOUT = timedelta(minutes=minutes_inactive_until_logout)
@@ -228,8 +221,20 @@ if hasattr(pn.state, 'cache') and 'translations' in pn.state.cache:
 import src.vizualization as viz
 
 # Print forecast horizon variable from environment
-sapphire_forecast_horizon = os.getenv('ieasyforecast_sapphire_forecast_horizon')
-print(f"INFO: Forecast horizon: {sapphire_forecast_horizon}")
+sapphire_forecast_horizon = os.getenv('sapphire_forecast_horizon')
+if sapphire_forecast_horizon:
+    print(f"INFO: Forecast horizon: {sapphire_forecast_horizon}")
+else: 
+    print("WARNING: Forecast horizon not set. Assuming default 'decad'.")
+    sapphire_forecast_horizon = 'decad'
+
+# Initialize the downloader with a specific directory
+bulletin_folder = os.path.join(
+    os.getenv('ieasyreports_report_output_path'),
+    'bulletins', sapphire_forecast_horizon)
+downloader = FileDownloader(bulletin_folder)
+bulletin_download_panel = downloader.panel()
+
 
 # endregion
 
@@ -481,12 +486,12 @@ current_pentad = tl.get_pentad_for_date(last_date)
 # the pentad of the forecast period.
 horizon = os.getenv("sapphire_forecast_horizon", "pentad")
 horizon_in_year = "pentad_in_year" if horizon == "pentad" else "decad_in_year"
-forecast_pentad_for_saving_bulletin = int(linreg_predictor[horizon_in_year].tail(1).values[0]) + 1
+forecast_horizon_for_saving_bulletin = int(linreg_predictor[horizon_in_year].tail(1).values[0]) + 1
 forecast_year_for_saving_bulletin = last_date.year
 
 # Get information for bulletin headers into a dataframe that can be passed to
 # the bulletin writer.
-bulletin_header_info = processing.get_bulletin_header_info(last_date)
+bulletin_header_info = processing.get_bulletin_header_info(last_date, sapphire_forecast_horizon)
 #print(f"DEBUG: pentad_dashboard.py: bulletin_header_info:\n{bulletin_header_info}")
 
 # Create the dropdown widget for pentad selection
@@ -834,6 +839,7 @@ def update_site_attributes_with_linear_regression_predictor(_, sites=sites_list,
     return sites
 
 sites_list = update_site_attributes_with_hydrograph_statistics_for_selected_pentad(_=_, sites=sites_list, df=hydrograph_pentad_all, pentad=pentad_selector.value, decad=decad_selector.value)
+
 #print(f"DEBUG: pentad_dashboard.py before update: linreg_predictor tail:\n{linreg_predictor.loc[linreg_predictor['code'] == '15149', ['date', 'code', 'predictor', 'pentad_in_year', 'pentad_in_month']].tail()}")
 sites_list = update_site_attributes_with_linear_regression_predictor(_, sites=sites_list, df=linreg_predictor, pentad=pentad_selector.value, decad=decad_selector.value)
 
@@ -979,12 +985,18 @@ def update_model_select(station_value, selected_pentad):
 # Create the pop-up notification pane (initially hidden)
 add_to_bulletin_popup = pn.pane.Alert(_("Added to bulletin"), alert_type="success", visible=False)
 
-def get_bulletin_csv_path(year, pentad):
+def get_bulletin_csv_path(year, horizon_value):
     """Generate CSV path with pentad information"""
-    bulletin_filename = f'bulletin_pentad_{year}_{pentad}.csv'
+    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+    if horizon == "pentad":
+        horizon_string = f"{horizon_value:02d}"
+    else:
+        horizon_string = f"{horizon_value:02d}"
+    bulletin_filename = f'bulletin_{horizon}_{year}_{horizon_string}.csv'
     return os.path.join(SAVE_DIRECTORY, bulletin_filename)
 
 def cleanup_old_bulletin_files(current_pentad):
+    """! Currently not used !"""
     """Remove bulletin CSV files from previous pentads"""
     try:
         for file in os.listdir(SAVE_DIRECTORY):
@@ -1007,7 +1019,7 @@ def load_bulletin_from_csv():
     #current_year = current_date.year
     #current_pentad = tl.get_pentad_for_date(current_date)
     #current_bulletin_path = get_bulletin_csv_path(current_year, current_pentad)
-    current_bulletin_path = get_bulletin_csv_path(forecast_year_for_saving_bulletin, forecast_pentad_for_saving_bulletin)
+    current_bulletin_path = get_bulletin_csv_path(forecast_year_for_saving_bulletin, forecast_horizon_for_saving_bulletin)
     # Print bulletin path
     print(f"DEBUG: pentad_dashboard.py: current_bulletin_path: {current_bulletin_path}")
 
@@ -1042,16 +1054,16 @@ def load_bulletin_from_csv():
                     site.get_forecast_attributes_for_site(_, site.forecasts)
                     bulletin_sites.append(site)
 
-            print(f"DEBUG: Loaded bulletin_sites from CSV for pentad {forecast_pentad_for_saving_bulletin}:")
+            print(f"DEBUG: Loaded bulletin_sites from CSV for pentad {forecast_horizon_for_saving_bulletin}:")
             for site in bulletin_sites:
                 print(f"Site '{site.code}' with forecasts: {site.forecasts}")
 
-            logger.info(f"Loaded bulletin data for pentad {forecast_pentad_for_saving_bulletin}")
+            logger.info(f"Loaded bulletin data for pentad {forecast_horizon_for_saving_bulletin}")
         except Exception as e:
             logger.error(f"Error loading bulletin CSV: {e}")
             bulletin_sites = []
     else:
-        logger.info(f"No bulletin data found for current pentad {forecast_pentad_for_saving_bulletin}")
+        logger.info(f"No bulletin data found for current pentad {forecast_horizon_for_saving_bulletin}")
         bulletin_sites = []
 
 # Function to save bulletin data to CSV
@@ -1066,7 +1078,7 @@ def save_bulletin_to_csv():
 
     # Generate path for current pentad's bulletin
     #current_bulletin_path = get_bulletin_csv_path(current_year, current_pentad)
-    current_bulletin_path = get_bulletin_csv_path(forecast_year_for_saving_bulletin, forecast_pentad_for_saving_bulletin)
+    current_bulletin_path = get_bulletin_csv_path(forecast_year_for_saving_bulletin, forecast_horizon_for_saving_bulletin)
 
     data = []
     for site in bulletin_sites:
@@ -1097,8 +1109,8 @@ def save_bulletin_to_csv():
 
         try:
             bulletin_df.to_csv(current_bulletin_path, index=False, encoding='utf-8-sig')
-            print(f"Bulletin saved to CSV for pentad {forecast_pentad_for_saving_bulletin}")
-            logger.info(f"Bulletin saved to CSV for pentad {forecast_pentad_for_saving_bulletin}")
+            print(f"Bulletin saved to CSV for pentad {forecast_horizon_for_saving_bulletin}")
+            logger.info(f"Bulletin saved to CSV for pentad {forecast_horizon_for_saving_bulletin}")
         except Exception as e:
             logger.error(f"Error writing bulletin CSV: {e}")
     else:
@@ -1106,8 +1118,8 @@ def save_bulletin_to_csv():
         # If data is empty, remove the current pentad's CSV file
         if os.path.exists(current_bulletin_path):
             os.remove(current_bulletin_path)
-            print(f"Bulletin CSV file removed for pentad {forecast_pentad_for_saving_bulletin} because bulletin is empty")
-            logger.info(f"Bulletin CSV file removed for pentad {forecast_pentad_for_saving_bulletin} because bulletin is empty")
+            print(f"Bulletin CSV file removed for pentad {forecast_horizon_for_saving_bulletin} because bulletin is empty")
+            logger.info(f"Bulletin CSV file removed for pentad {forecast_horizon_for_saving_bulletin} because bulletin is empty")
 
 # Call the function to load the bulletin data
 load_bulletin_from_csv()
@@ -1200,8 +1212,8 @@ def handle_bulletin_write(event):
             print(f"DEBUG: Writing site '{site.code}' with forecasts: {site.forecasts}")
 
         write_to_excel(
-            sites_list, filtered_bulletin_sites, bulletin_header_info, env_file_path
-        )
+            sites_list, filtered_bulletin_sites, bulletin_header_info, 
+            env_file_path)
         print("DEBUG: Bulletin written to Excel successfully.")
 
         # Refresh the file downloader panel
@@ -1816,9 +1828,14 @@ on_session_start()
 # ------------------END OF AUTHENTICATION---------------------
 # endregion
 
+# Define dashboard title
+if sapphire_forecast_horizon == 'pentad': 
+    dashboard_title = _('SAPPHIRE Central Asia - Pentadal forecast dashboard')
+else: 
+    dashboard_title = _('SAPPHIRE Central Asia - Decadal forecast dashboard')
 
 dashboard = pn.template.BootstrapTemplate(
-    title=_('SAPPHIRE Central Asia - Pentadal forecast dashboard'),
+    title=dashboard_title,
     logo=icon_path,
     header=[pn.Row(pn.layout.HSpacer(),language_buttons, logout_button, logout_panel)],
     sidebar=pn.Column(sidebar_content),

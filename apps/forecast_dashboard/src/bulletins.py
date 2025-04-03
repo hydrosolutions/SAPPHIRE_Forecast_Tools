@@ -61,6 +61,10 @@ def round_percentage_to_integer_string(value: float) -> int:
             a negative input value.
     '''
     try:
+        # Test if value is NaN
+        if math.isnan(value):
+            return None
+        
         if not isinstance(value, float):
             raise TypeError('Input value must be a float')
 
@@ -168,11 +172,34 @@ def round_discharge_to_comma_separated_string(value: float) -> str:
         print(f'Error in round_discharge: {e}')
         return None
 
-def copy_worksheet(report_settings, temp_bulletin_file_name, bulletin_file_name, header_df):
-        # Now copy the sheet 1 of the generated report to the appropriate sheet in the final bulletin
+def copy_worksheet(report_settings, temp_bulletin_file_name, bulletin_file_name, 
+                   header_df):
+    """
+    Copy the sheet 1 of the generated report to the appropriate sheet in the final bulletin.
+
+    Args:
+        report_settings (ReportGeneratorSettings): The report settings.
+        temp_bulletin_file_name (str): The temporary bulletin file name.
+        bulletin_file_name (str): The bulletin file name.
+        header_df (pandas.DataFrame): A DataFrame containing the header information for the Excel file.
+
+    Returns:
+        None
+    """
+    sapphire_forecast_horizon = os.getenv("sapphire_forecast_horizon")
+    if sapphire_forecast_horizon == 'pentad':
+        horizon_string_ru = "пентада"
+    elif sapphire_forecast_horizon == 'decad':
+        horizon_string_ru = "декада"
+    else:
+        raise ValueError(f"Invalid sapphire_forecast_horizon: {sapphire_forecast_horizon}")
+    
+    # Now copy the sheet 1 of the generated report to the appropriate sheet in the final bulletin
     # Load the generated report
     try:
-        generated_report = openpyxl.load_workbook(os.path.join(report_settings.report_output_path, temp_bulletin_file_name))
+        generated_report = openpyxl.load_workbook(
+            os.path.join(
+                report_settings.report_output_path, temp_bulletin_file_name))
     except Exception as e:
         raise Exception(f"Error loading the generated report: {e}")
 
@@ -186,17 +213,31 @@ def copy_worksheet(report_settings, temp_bulletin_file_name, bulletin_file_name,
 
         print(f"DEBUG: write_to_excel: initial final_bulletin.sheetnames: {final_bulletin.sheetnames}")
 
-        # Test if we have a sheet already for the current pentad & remove if it exists
-        if f"{int(header_df['pentad'].values[0])} пентада" in final_bulletin.sheetnames:
-            print(f"DEBUG: write_to_excel: Removing sheet for pentad {int(header_df['pentad'].values[0])}")
-            # Remove the sheet for the current pentad
-            final_bulletin.remove(final_bulletin[f"{int(header_df['pentad'].values[0])} пентада"])
+        if f"{int(header_df[sapphire_forecast_horizon].values[0])} {horizon_string_ru}" in final_bulletin.sheetnames:
+                print(f"DEBUG: write_to_excel: Removing sheet for {sapphire_forecast_horizon} {int(header_df[sapphire_forecast_horizon].values[0])}")
+                # Remove the sheet for the current pentad
+                final_bulletin.remove(final_bulletin[f"{int(header_df[sapphire_forecast_horizon].values[0])} {horizon_string_ru}"])
+        '''if sapphire_forecast_horizon == 'pentad':
+            # Test if we have a sheet already for the current pentad & remove if it exists
+            if f"{int(header_df['pentad'].values[0])} пентада" in final_bulletin.sheetnames:
+                print(f"DEBUG: write_to_excel: Removing sheet for pentad {int(header_df['pentad'].values[0])}")
+                # Remove the sheet for the current pentad
+                final_bulletin.remove(final_bulletin[f"{int(header_df['pentad'].values[0])} пентада"])
+        elif sapphire_forecast_horizon == 'decad':
+            if f"{int(header_df['decad'].values[0])} декада" in final_bulletin.sheetnames:
+                print(f"DEBUG: write_to_excel: Removing sheet for decad {int(header_df['decad'].values[0])}")
+                # Remove the sheet for the current decad
+                final_bulletin.remove(final_bulletin[f"{int(header_df['decad'].values[0])} декада"])'''
 
         # Get the sheet 1 of the generated report
         generated_sheet = generated_report.active
 
         # Rename the sheet to the pentad number
-        generated_sheet.title = f"{int(header_df['pentad'].values[0])} пентада"
+        generated_sheet.title = f"{int(header_df[sapphire_forecast_horizon].values[0])} {horizon_string_ru}"
+        '''if sapphire_forecast_horizon == 'pentad':
+            generated_sheet.title = f"{int(header_df['pentad'].values[0])} пентада"
+        elif sapphire_forecast_horizon == 'decad':
+            generated_sheet.title = f"{int(header_df['decad'].values[0])} декада"'''
 
         # Set parent workbook of the generated report to the final bulletin to allow copying
         generated_sheet._parent = final_bulletin
@@ -222,7 +263,11 @@ def copy_worksheet(report_settings, temp_bulletin_file_name, bulletin_file_name,
         # Load the final bulletin
         final_bulletin = openpyxl.load_workbook(os.path.join(report_settings.report_output_path, bulletin_file_name))
         # Rename the sheet to the pentad number
-        final_bulletin.active.title = f"{int(header_df['pentad'].values[0])} пентада"
+        final_bulletin.active.title = f"{int(header_df[sapphire_forecast_horizon].values[0])} {horizon_string_ru}"
+        '''if sapphire_forecast_horizon == 'pentad':
+            final_bulletin.active.title = f"{int(header_df['pentad'].values[0])} пентада"
+        elif sapphire_forecast_horizon == 'decad':
+            final_bulletin.active.title = f"{int(header_df['decad_in_month'].values[0])} декада"'''
         # Save the final bulletin
         final_bulletin.save(os.path.join(report_settings.report_output_path, bulletin_file_name))
         # Close the workbook
@@ -241,7 +286,8 @@ def oder_sites_list_according_to_bulletin_order(sites_list):
         print(f"Ordered sites: {df}")
         # Get the ordered list of codes
         ordered_codes = df['codes'].tolist()
-        # Iterate over the ordered_codes and add sites in sites_list to ordered_sites_list in the order of ordered_codes
+        # Iterate over the ordered_codes and add sites in sites_list to 
+        # ordered_sites_list in the order of ordered_codes
         ordered_sites_list = []
         for code in ordered_codes:
             for site in sites_list:
@@ -252,9 +298,33 @@ def oder_sites_list_according_to_bulletin_order(sites_list):
 # Function to write data to Excel
 def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
                    tag_settings=None):
+    """
+    Writes data to an Excel file.
+
+    Args:
+        sites_list (list): A list of sites for which to write data to the Excel file.
+        bulletin_sites (list): A list of sites for which to write data to the Excel file.
+        header_df (pandas.DataFrame): A DataFrame containing the header information for the Excel file.
+        env_file_path (str): The path to the environment file.
+        tag_settings (TagSettings): The tag settings.
+
+    Returns:
+        None
+
+    """
 
     # Show the loading spinner
     #indicator.value = True
+
+    # Get the forecast horizon from environment
+    sapphire_forecast_horizon = os.getenv("sapphire_forecast_horizon")
+    if sapphire_forecast_horizon is None:
+        raise ValueError("sapphire_forecast_horizon is not set in the environment variables")
+    if sapphire_forecast_horizon not in ['pentad', 'decad']:
+        raise ValueError("sapphire_forecast_horizon must be either 'pentad' or 'decad'")
+    # Print the forecast horizon
+    print(f"DEBUG: write_to_excel: sapphire_forecast_horizon: {sapphire_forecast_horizon}")
+
 
     print('DEBUG: write_to_excel: Initializing report generator ...')
 
@@ -265,10 +335,38 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
 
     # Define Tags
     # region tags
-    pentad_tag = Tag(
-        name='PENTAD',
-        get_value_fn=header_df['pentad'].values[0],
-        tag_settings=tag_settings)
+    # Some tags are only defined for certain forecast horizons
+    if sapphire_forecast_horizon == 'pentad':
+        pentad_tag = Tag(
+            name='PENTAD',
+            get_value_fn=header_df['pentad'].values[0],
+            tag_settings=tag_settings)
+        
+        day_start_pentad_tag = Tag(
+            name='DAY_START_PENTAD',
+            get_value_fn=header_df['day_start_pentad'].values[0],
+            tag_settings=tag_settings)
+
+        day_end_pentad_tag = Tag(
+            name='DAY_END_PENTAD',
+            get_value_fn=header_df['day_end_pentad'].values[0],
+            tag_settings=tag_settings)
+
+    else: 
+        decad_tag = Tag(
+            name='DEKAD',
+            get_value_fn=header_df['decad'].values[0],
+            tag_settings=tag_settings)
+        
+        day_start_decad_tag = Tag(
+            name='DAY_START_DEKAD',
+            get_value_fn=header_df['day_start_decad'].values[0],
+            tag_settings=tag_settings)
+
+        day_end_decad_tag = Tag(
+            name='DAY_END_DEKAD',
+            get_value_fn=header_df['day_end_decad'].values[0],
+            tag_settings=tag_settings)
 
     month_string_nom_ru_tag = Tag(
         name='MONTH_STR_NOM_RU',
@@ -283,16 +381,6 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
     year_tag = Tag(
         name='YEAR',
         get_value_fn=header_df['year'].values[0],
-        tag_settings=tag_settings)
-
-    day_start_pentad_tag = Tag(
-        name='DAY_START_PENTAD',
-        get_value_fn=header_df['day_start_pentad'].values[0],
-        tag_settings=tag_settings)
-
-    day_end_pentad_tag = Tag(
-        name='DAY_END_PENTAD',
-        get_value_fn=header_df['day_end_pentad'].values[0],
         tag_settings=tag_settings)
 
     header_tag = Tag(
@@ -327,7 +415,7 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
 
     forecast_tag = Tag(
         name='QEXP',
-        get_value_fn=lambda obj, **kwargs: round_discharge_to_comma_separated_string(obj.forecast_pentad),
+        get_value_fn=lambda obj, **kwargs: round_discharge_to_comma_separated_string(obj.forecast_expected),
         tag_settings=tag_settings,
         data=True
     )
@@ -403,7 +491,10 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
     )
     # endregion tags
 
-    tag_list = [pentad_tag, forecast_tag, header_tag, river_ru_tag, punkt_ru_tag,
+    report_settings.report_output_path = os.getenv("ieasyreports_report_output_path")
+    
+    if sapphire_forecast_horizon == 'pentad':
+        tag_list = [pentad_tag, forecast_tag, header_tag, river_ru_tag, punkt_ru_tag,
                 model_tag, forecast_tag, dash_tag, linreg_predictor_tag,
                 hydrograph_max_tag, hydrograph_min_tag, hydrograph_norm_tag,
                 month_string_nom_ru_tag, month_string_gen_ru_tag, year_tag,
@@ -411,15 +502,30 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
                 delta_tag, sdivsigma_tag,
                 forecast_lower_bound_tag, forecast_upper_bound_tag,
                 qdanger_tag, perc_norm_tag]
+        report_settings.report_output_path = os.path.join(
+            report_settings.report_output_path,
+            "bulletins",
+            "pentad",
+            str(header_df['year'].values[0]))
+        template_file_name=os.getenv("ieasyforecast_template_pentad_bulletin_file")
 
-    report_settings.report_output_path = os.getenv("ieasyreports_report_output_path")
-    report_settings.report_output_path = os.path.join(
-        report_settings.report_output_path,
-        "bulletins",
-        "pentad",
-        str(header_df['year'].values[0]))#,
-        #start_date_month_num + "_" + start_date_month)
+    elif sapphire_forecast_horizon == 'decad':
+        tag_list = [decad_tag, forecast_tag, header_tag, river_ru_tag, punkt_ru_tag,
+                model_tag, forecast_tag, dash_tag, linreg_predictor_tag,
+                hydrograph_max_tag, hydrograph_min_tag, hydrograph_norm_tag,
+                month_string_nom_ru_tag, month_string_gen_ru_tag, year_tag,
+                day_start_decad_tag, day_end_decad_tag,
+                delta_tag, sdivsigma_tag,
+                forecast_lower_bound_tag, forecast_upper_bound_tag,
+                qdanger_tag, perc_norm_tag]
 
+        report_settings.report_output_path = os.path.join(
+            report_settings.report_output_path,
+            "bulletins",
+            "decad",
+            str(header_df['year'].values[0]))
+        template_file_name=os.getenv("ieasyforecast_template_decad_bulletin_file")
+    
     # From bulletin_sites get site lists for each unique basin
     # Create a list of unique basins
     basins = [site.basin_ru for site in bulletin_sites]
@@ -450,7 +556,7 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
         # Generate the report
         report_generator = DefaultReportGenerator(
             tags=tag_list,
-            template=os.getenv("ieasyforecast_template_pentad_bulletin_file"),
+            template=template_file_name,
             templates_directory_path=os.getenv("ieasyreports_templates_directory_path"),
             reports_directory_path=report_settings.report_output_path,
             tag_settings=tag_settings,
@@ -464,7 +570,9 @@ def write_to_excel(sites_list, bulletin_sites, header_df, env_file_path,
             output_filename=temp_bulletin_file_name
         )
 
-        copy_worksheet(report_settings, temp_bulletin_file_name, bulletin_file_name, header_df)
+        copy_worksheet(
+            report_settings, temp_bulletin_file_name, bulletin_file_name, 
+            header_df)
 
 
     # Done with the report generation

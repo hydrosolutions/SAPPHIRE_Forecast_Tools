@@ -49,7 +49,7 @@ def get_icon_path(in_docker_flag):
     if horizon == "pentad":
         icon_path = os.path.join("www", "Pentad.png")
     else:
-        icon_path = os.path.join("www", "Pentad.png")
+        icon_path = os.path.join("www", "Dekad.png")
 
     # Test if file exists and thorw an error if not
     if not os.path.isfile(icon_path):
@@ -1608,17 +1608,28 @@ def read_temperature_data_deprecating(file_mtime):
 
 
 # --- Bulletin preparation --------------------------------------------------------
-def get_bulletin_header_info(date):
+def get_bulletin_header_info(date, sapphire_forecast_horizon):
     """Get information from date relevant for the bulletin header."""
-    df = pd.DataFrame({
-        "pentad": [tl.get_pentad(date)],
-        "month_number": [tl.get_month_num(date)],
-        "month_str_nom_ru": [tl.get_month_str_case1(date)],
-        "month_str_gen_ru": [tl.get_month_str_case2(date)],
-        "year": [tl.get_year(date)],
-        "day_start_pentad": [tl.get_pentad_first_day(date)],
-        "day_end_pentad": [tl.get_pentad_last_day(date)],
-    })
+    if sapphire_forecast_horizon=='pentad':
+        df = pd.DataFrame({
+            "pentad": [tl.get_pentad(date)],
+            "month_number": [tl.get_month_num(date)],
+            "month_str_nom_ru": [tl.get_month_str_case1(date)],
+            "month_str_gen_ru": [tl.get_month_str_case2(date)],
+            "year": [tl.get_year(date)],
+            "day_start_pentad": [tl.get_pentad_first_day(date)],
+            "day_end_pentad": [tl.get_pentad_last_day(date)],
+        })
+    elif sapphire_forecast_horizon=='decad':
+        df = pd.DataFrame({
+            'decad': [tl.get_decad_in_month(date)],
+            'month_number': [tl.get_month_num(date)],
+            'month_str_nom_ru': [tl.get_month_str_case1(date)],
+            'month_str_gen_ru': [tl.get_month_str_case2(date)],
+            'year': [tl.get_year(date)],
+            'day_start_decad': [tl.get_decad_first_day(date)],
+            'day_end_decad': [tl.get_decad_last_day(date)],
+        })
 
     return df
 

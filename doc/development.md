@@ -37,14 +37,14 @@ This document describes how to develop the application and how to add hydrologic
       - [Description of module](#description-of-module-1)
       - [Prerequisites](#prerequisites-2)
       - [How to run the tool](#how-to-run-the-tool-2)
-    - [Conceptual rainfall-runoff (conceptual...)](#conceptual-rainfall-runoff-conceptual)
+    - [2.2.5 Conceptual rainfall-runoff assimilation model (conceptual\_model)](#225-conceptual-rainfall-runoff-assimilation-model-conceptual_model)
       - [Description of the Conceptual Model Module](#description-of-the-conceptual-model-module)
-      - [Prerequisites](#prerequisites-4)
+      - [Prerequisites](#prerequisites-3)
       - [I/O](#io-2)
       - [How to run the tool](#how-to-run-the-tool-3)
-    - [Machine learning (machine\_learning)](#machine-learning-machine_learning)
+    - [2.2.6 Machine learning (machine\_learning)](#226-machine-learning-machine_learning)
       - [Description of module](#description-of-module-2)
-      - [Prerequisites](#prerequisites-5)
+      - [Prerequisites](#prerequisites-4)
       - [I/O](#io-3)
         - [Output Files](#output-files)
       - [How to run the tool](#how-to-run-the-tool-4)
@@ -53,6 +53,7 @@ This document describes how to develop the application and how to add hydrologic
       - [How to re-run the forecast pipeline manually](#how-to-re-run-the-forecast-pipeline-manually)
     - [2.2.9 Forecast dashboard](#229-forecast-dashboard)
       - [How to run the forecast dashboard locally](#how-to-run-the-forecast-dashboard-locally)
+      - [How to test the dashboard containers locally](#how-to-test-the-dashboard-containers-locally)
   - [2.3 The backend (note: this module is deprecated)](#23-the-backend-note-this-module-is-deprecated)
       - [Prerequisites](#prerequisites-5)
       - [How to run the backend modules locally {#how-to-run-the-backend-modules-locally}](#how-to-run-the-backend-modules-locally-how-to-run-the-backend-modules-locally)
@@ -1164,6 +1165,15 @@ panel serve pentad_dashboard.py --show --autoreload --port 5009
 ```
 
 The options --show, --autoreload, and --port 5009 are optional. The show and autoreload options open your devault browser window (we used chrome) at <http://localhost:5009/pentad_dashboard> and automatically reload the dashboard if you save changes in the file pentad_dashboard.py. The port option tells you on which port the dashboard is being displayed. Should port 5009 be already occupied on your computer, you can change the number. You can then select the station and view predictors and forecasts in the respective tabs.
+
+#### How to test the dashboard containers locally
+From the project root, run: 
+
+``` bash
+bash bin/daily_update_sapphire_frontend.sh <path/to/your>/.env_develop_kghm
+```
+
+This will download the latest image and run the conatiners for pentadal and decadal dashboards. 
 
 ## 2.3 The backend (note: this module is deprecated)
 
