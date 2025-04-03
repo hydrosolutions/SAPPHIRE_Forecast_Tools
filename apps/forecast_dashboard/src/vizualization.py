@@ -2794,7 +2794,7 @@ def plot_pentad_forecast_hydrograph_data(_, hydrograph_pentad_all, forecasts_all
         str(current_year): _('Current year column name')
         })
     forecasts = forecasts.rename(columns={
-        horizon: horizon_column_name,
+        horizon_in_year: horizon_column_name,
         'forecasted_discharge': _('forecasted_discharge column name'),
         'fc_lower': _('forecast lower bound column name'),
         'fc_upper': _('forecast upper bound column name'),
@@ -4213,9 +4213,11 @@ def plot_forecast_skill(
     if horizon == "pentad":
         horizon_in_year = "pentad_in_year"
         horizon_x_label = _("Pentad of the month (starting from January 1)")
+        area_x_lim = 72
     else:
         horizon_in_year = "decad_in_year"
         horizon_x_label = _("Decad of the month (starting from January 1)")
+        area_x_lim = 36
 
     # Convert the date from the date picker to a pandas Timestamp
     selected_date = pd.Timestamp(date_picker)
@@ -4236,21 +4238,21 @@ def plot_forecast_skill(
 
     # Plot the effectiveness of the forecast method
     # Plot a green area between y = 0 and y = 0.6
-    hv_06a = hv.Area(pd.DataFrame({"x":[1, 72], "y":[0.6, 0.6]}),
+    hv_06a = hv.Area(pd.DataFrame({"x":[1, area_x_lim], "y":[0.6, 0.6]}),
                         kdims=["x"], vdims=["y"], label=_("Effectiveness")+" <= 0.6") \
             .opts(alpha=0.05, color="green", line_width=0)
-    hv_08a = hv.Area(pd.DataFrame({"x":[1, 72], "y":[0.8, 0.8]}),
+    hv_08a = hv.Area(pd.DataFrame({"x":[1, area_x_lim], "y":[0.8, 0.8]}),
                         kdims=["x"], vdims=["y"], label=_("Effectiveness")+" <= 0.8") \
             .opts(alpha=0.05, color="orange", line_width=0)
     hv_current_forecast_skill_effectiveness = plot_current_runoff_forecasts(
         data=current_forecast_pentad,
-        date_col=horizon,
+        date_col=horizon_in_year,
         forecast_data_col='sdivsigma',
         forecast_name_col='model_short',
         runoff_forecast_colors=runoff_forecast_color_list,
         unit_string='[-]')
     hv_forecast_skill_effectiveness = plot_runoff_forecasts_steps(
-        forecast_pentad, date_col=horizon,
+        forecast_pentad, date_col=horizon_in_year,
         forecast_data_col='sdivsigma',
         forecast_name_col='model_short',
         runoff_forecast_colors=runoff_forecast_color_list,
@@ -4267,11 +4269,12 @@ def plot_forecast_skill(
             remove_bokeh_logo,
             lambda p, e: add_custom_xticklabels_pentad(_, p, e)
         ],
-        xticks=list(range(1,72,6)),
+        #xticks=list(range(1,72,6)),
         title=title_effectiveness, shared_axes=False,
         #legend_position='bottom_left',  # 'right',
         xlabel=horizon_x_label, ylabel=_("Effectiveness [-]"),
-        show_grid=True, xlim=(1, 72), ylim=(0,1.4),
+        show_grid=True, #xlim=(1, 72), 
+        ylim=(0,1.4),
         fontsize={'legend':8}, fontscale=1.2
     )
 
@@ -4282,13 +4285,13 @@ def plot_forecast_skill(
 
     hv_current_forecast_skill_accuracy = plot_current_runoff_forecasts(
         data=current_forecast_pentad,
-        date_col=horizon,
+        date_col=horizon_in_year,
         forecast_data_col='accuracy',
         forecast_name_col='model_short',
         runoff_forecast_colors=runoff_forecast_color_list,
         unit_string='[%]')
     hv_forecast_skill_accuracy = plot_runoff_forecasts_steps(
-        forecast_pentad, date_col=horizon,
+        forecast_pentad, date_col=horizon_in_year,
         forecast_data_col='accuracy',
         forecast_name_col='model_short',
         runoff_forecast_colors=runoff_forecast_color_list,
@@ -4305,11 +4308,12 @@ def plot_forecast_skill(
             remove_bokeh_logo,
             lambda p, e: add_custom_xticklabels_pentad(_, p, e)
         ],
-        xticks=list(range(1,72,6)),
+        #xticks=list(range(1,72,6)),
         title=title_accuracy, shared_axes=False,
         #legend_position='bottom_left',  # 'right',
         xlabel=horizon_x_label, ylabel=_("Accuracy [%]"),
-        show_grid=True, xlim=(1, 72), ylim=(0,100),
+        show_grid=True, #xlim=(1, 72), 
+        ylim=(0,100),
         fontsize={'legend':8}, fontscale=1.2
     )
 
@@ -4330,18 +4334,21 @@ def add_month_pentad_per_month_to_df(df):
     if horizon == "pentad":
         horizon_in_year = "pentad_in_year"
         horizon_in_month = 'pentad_in_month'
-        horizon_fn = tl.get_pentad
+        horizon_fn_month = tl.get_pentad
+        horizon_fn_year = tl.get_date_for_pentad
     else:
         horizon_in_year = "decad_in_year"
         horizon_in_month = 'decad_in_month'
-        horizon_fn = tl.get_decad_in_month
+        horizon_fn_month = tl.get_decad_in_month
+        horizon_fn_year = tl.get_date_for_decad
+
     # Get date for pentad in year
-    df['date'] = df[horizon_in_year].apply(tl.get_date_for_pentad)
+    df['date'] = df[horizon_in_year].apply(horizon_fn_year)
     #print('df: ', df.head())
     # Get month for date
     df['month'] = pd.to_datetime(df['date']).dt.month
     # Get pentad in month
-    df[horizon_in_month] = df['date'].apply(horizon_fn)
+    df[horizon_in_month] = df['date'].apply(horizon_fn_month)
     return df
 
 def create_skill_table(_, forecast_stats):
