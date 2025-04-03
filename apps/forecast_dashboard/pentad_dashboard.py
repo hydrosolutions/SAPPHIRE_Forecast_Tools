@@ -376,15 +376,18 @@ def load_data():
     forecasts_all = processing.internationalize_forecast_model_names(_, forecasts_all)
     forecast_stats = processing.internationalize_forecast_model_names(_, forecast_stats)
 
+    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+    horizon_in_year = "pentad_in_year" if horizon == "pentad" else "decad_in_year"
+
     # Merge forecast stats with forecasts by code and pentad_in_year and model_short
     print(f'\n\nhead of forecasts_all:\n{forecasts_all.head()}')
     print(f'column names of forecasts_all:\n{forecasts_all.columns}')
-    print(f'type of forecasts_all[pentad_in_year]: {forecasts_all["pentad_in_year"].dtype}')
+    print(f'type of forecasts_all[pentad_in_year]: {forecasts_all[horizon_in_year].dtype}')
     print(f'\n\nhead of forecast_stats:\n{forecast_stats.head()}')
-    print(f'type of forecast_stats[pentad_in_year]: {forecast_stats["pentad_in_year"].dtype}')
+    print(f'type of forecast_stats[pentad_in_year]: {forecast_stats[horizon_in_year].dtype}')
     forecasts_all = forecasts_all.merge(
         forecast_stats,
-        on=['code', 'pentad_in_year', 'model_short', 'model_long'],
+        on=['code', horizon_in_year, 'model_short', 'model_long'],
         how='left',
         suffixes=('', '_stats'))
 
@@ -447,6 +450,14 @@ pentad_options = {f"{i+1}{_('st pentad of')} {calendar.month_name[month]}" if i 
                   f"{i+1}{_('th pentad of')} {calendar.month_name[month]}": i + (month-1)*6 + 1
                   for month in range(1, 13) for i in range(6)}
 
+# Create a dictionary mapping each decade description to its decad_in_year value
+decad_options = {
+    f"{i+1}{_('st decade of')} {calendar.month_name[month]}" if i == 0 else
+    f"{i+1}{_('nd decade of')} {calendar.month_name[month]}" if i == 1 else
+    f"{i+1}{_('rd decade of')} {calendar.month_name[month]}" if i == 2 else
+    f"{i+1}{_('th decade of')} {calendar.month_name[month]}": i + (month - 1) * 3 + 1
+    for month in range(1, 13) for i in range(3)
+}
 # endregion
 
 
@@ -467,8 +478,10 @@ last_date = linreg_predictor['date'].max() + dt.timedelta(days=1)
 current_pentad = tl.get_pentad_for_date(last_date)
 # The forecast is produced on the day before the first day of the forecast 
 # pentad, therefore we add 1 to the forecast pentad in linreg_predictor to get 
-# the pentad of the forecast period. 
-forecast_pentad_for_saving_bulletin = int(linreg_predictor['pentad_in_year'].tail(1).values[0]) + 1
+# the pentad of the forecast period.
+horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+horizon_in_year = "pentad_in_year" if horizon == "pentad" else "decad_in_year"
+forecast_pentad_for_saving_bulletin = int(linreg_predictor[horizon_in_year].tail(1).values[0]) + 1
 forecast_year_for_saving_bulletin = last_date.year
 
 # Get information for bulletin headers into a dataframe that can be passed to
@@ -481,6 +494,15 @@ pentad_selector = pn.widgets.Select(
     name=_("Select Pentad"),
     options=pentad_options,
     value=current_pentad,  # Default to the last available pentad
+    margin=(0, 0, 0, 0)
+)
+
+current_decad = tl.get_decad_for_date(last_date)
+# Create the dropdown widget for decad selection
+decad_selector = pn.widgets.Select(
+    name=_("Select Decad"),
+    options=decad_options,
+    value=current_decad,  # Default to the last available decad
     margin=(0, 0, 0, 0)
 )
 
@@ -504,9 +526,9 @@ model_dict = processing.update_model_dict_date(model_dict_all, forecasts_all, st
 #print(f"DEBUG: pentad_dashboard.py: model_dict: {model_dict}")
 
 #@pn.depends(station, pentad_selector, watch=True)
-def get_best_models_for_station_and_pentad(station_value, pentad_value):
-    return processing.get_best_models_for_station_and_pentad(forecasts_all, station_value, pentad_value)
-current_model_pre_selection = get_best_models_for_station_and_pentad(station.value, pentad_selector.value)
+def get_best_models_for_station_and_pentad(station_value, pentad_value, decad_value):
+    return processing.get_best_models_for_station_and_pentad(forecasts_all, station_value, pentad_value, decad_value)
+current_model_pre_selection = get_best_models_for_station_and_pentad(station.value, pentad_selector.value, decad_selector.value)
 
 # Widget for forecast model selection, only visible in forecast tab
 # a given hydropost/station.
@@ -725,9 +747,9 @@ bulletin_tabulator = pn.widgets.Tabulator(
 #endregion
 
 # region update_functions
-@pn.depends(pentad_selector, watch=True)
+@pn.depends(pentad_selector, decad_selector, watch=True)
 def update_site_attributes_with_hydrograph_statistics_for_selected_pentad(_,
-    sites=sites_list, df=hydrograph_pentad_all, pentad=pentad_selector.value):
+    sites=sites_list, df=hydrograph_pentad_all, pentad=pentad_selector.value, decad=decad_selector.value):
     """Update site attributes with hydrograph statistics for selected pentad"""
     #print(f"\n\n\nDEBUG update_site_attributes_with_hydrograph_statistics_for_selected_pentad: pentad: {pentad}")
     #print(f"column names: {df.columns}")
@@ -750,7 +772,14 @@ def update_site_attributes_with_hydrograph_statistics_for_selected_pentad(_,
                 raise ValueError("No column found for last year's Q.")
     #print(f"\n\nupdate site attributes hydrograph stats: dataframe: {df}")
     # Filter the df for the selected pentad
-    df = df[df['pentad_in_year'] == pentad].copy()
+    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+    if horizon == "pentad":
+        horizon_in_year = "pentad_in_year"
+        horizon_value = pentad
+    else:
+        horizon_in_year = "decad_in_year"
+        horizon_value = decad
+    df = df[df[horizon_in_year] == horizon_value].copy()
     # Add a column with the site code
     df['site_code'] = df['station_labels'].str.split(' - ').str[0]
     for site in sites:
@@ -772,12 +801,19 @@ def update_site_attributes_with_hydrograph_statistics_for_selected_pentad(_,
     return sites
 
 @pn.depends(pentad_selector, watch=True)
-def update_site_attributes_with_linear_regression_predictor(_, sites=sites_list, df=linreg_predictor, pentad=pentad_selector.value):
+def update_site_attributes_with_linear_regression_predictor(_, sites=sites_list, df=linreg_predictor, pentad=pentad_selector.value, decad=decad_selector.value):
     """Update site attributes with linear regression predictor"""
     # Print pentad
     #print(f"\n\nDEBUGGING update_site_attributes_with_linear_regression_predictor: pentad: {pentad}")
+    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+    if horizon == "pentad":
+        horizon_in_year = "pentad_in_year"
+        horizon_value = pentad
+    else:
+        horizon_in_year = "decad_in_year"
+        horizon_value = decad
     # Get row in def for selected pentad
-    df = df[df['pentad_in_year'] == (pentad-1)].copy()
+    df = df[df[horizon_in_year] == (horizon_value - 1)].copy()
     #print("\n\nDEBUGGING update_site_attributes_with_linear_regression_predictor")
     #print(f"linreg_predictor: \n{df[df['code'] == '15149']}.tail()")
     # Only keep the last row for each site
@@ -797,9 +833,9 @@ def update_site_attributes_with_linear_regression_predictor(_, sites=sites_list,
     #print(f"Updated sites with linear regression predictor from DataFrame.")
     return sites
 
-sites_list = update_site_attributes_with_hydrograph_statistics_for_selected_pentad(_=_, sites=sites_list, df=hydrograph_pentad_all, pentad=pentad_selector.value)
+sites_list = update_site_attributes_with_hydrograph_statistics_for_selected_pentad(_=_, sites=sites_list, df=hydrograph_pentad_all, pentad=pentad_selector.value, decad=decad_selector.value)
 #print(f"DEBUG: pentad_dashboard.py before update: linreg_predictor tail:\n{linreg_predictor.loc[linreg_predictor['code'] == '15149', ['date', 'code', 'predictor', 'pentad_in_year', 'pentad_in_month']].tail()}")
-sites_list = update_site_attributes_with_linear_regression_predictor(_, sites=sites_list, df=linreg_predictor, pentad=pentad_selector.value)
+sites_list = update_site_attributes_with_linear_regression_predictor(_, sites=sites_list, df=linreg_predictor, pentad=pentad_selector.value, decad=decad_selector.value)
 
 # Adding the watcher logic for disabling the "Add to Bulletin" button
 def update_add_to_bulletin_button(event):
@@ -849,8 +885,8 @@ def create_widget_updater():
 
 widget_updater = create_widget_updater()
 
-@pn.depends(station, pentad_selector, watch=True)
-def update_model_select(station_value, selected_pentad):
+@pn.depends(station, pentad_selector, decad_selector, watch=True)
+def update_model_select(station_value, selected_pentad, selected_decad):
     print("\n=== Starting Model Select Update ===")
     print(f"Initial widget state:")
     print(f"  Options: {model_checkbox.options}")
@@ -864,7 +900,7 @@ def update_model_select(station_value, selected_pentad):
 
     # Get pre-selected models
     current_model_pre_selection = processing.get_best_models_for_station_and_pentad(
-        forecasts_all, station_value, selected_pentad
+        forecasts_all, station_value, selected_pentad, selected_decad
     )
 
     print("\nAfter get_best_models:")
@@ -1744,7 +1780,7 @@ def update_active_tab(event):
         daily_temperature_plot.object = viz.plot_daily_temperature_data(_, temp, station.value, date_picker.value, linreg_predictor)
     elif active_tab == 1 and latest_forecast != station.value:
         latest_forecast = station.value
-        plot = viz.select_and_plot_data(_, linreg_predictor, station.value, pentad_selector.value, SAVE_DIRECTORY)
+        plot = viz.select_and_plot_data(_, linreg_predictor, station.value, pentad_selector.value, decad_selector.value, SAVE_DIRECTORY)
         forecast_data_and_plot[:] = plot.objects
         update_forecast_plots(None)
 

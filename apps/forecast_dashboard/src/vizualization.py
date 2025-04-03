@@ -9,6 +9,7 @@ import numpy as np
 import datetime as dt
 import time
 import calendar
+from calendar import month_abbr
 import holoviews as hv
 from holoviews import streams
 from holoviews.streams import PointDraw, Selection1D
@@ -310,19 +311,25 @@ def add_custom_xticklabels_daily_dates(_, leap_year, plot, element):
 def add_custom_xticklabels_pentad(_, plot, element):
     # Specify the positions and labels of the ticks. Here we use the first day
     # of each month & pentad per month as a tick.
-    ticks = list(range(1,72,1))  # Replace with your desired positions
-    labels = {1:_('Jan')+', 1', 2:'2', 3:'3', 4:'4', 5:'5', 6:'6',
-              7:_('Feb')+', 1', 8:'2', 9:'3', 10:'4', 11:'5', 12:'6',
-              13:_('Mar')+', 1', 14:'2', 15:'3', 16:'4', 17:'5', 18:'6',
-              19:_('Apr')+', 1', 20:'2', 21:'3', 22:'4', 23:'5', 24:'6',
-              25:_('May')+', 1', 26:'2', 27:'3', 28:'4', 29:'5', 30:'6',
-              31:_('Jun')+', 1', 32:'2', 33:'3', 34:'4', 35:'5', 36:'6',
-              37:_('Jul')+', 1', 38:'2', 39:'3', 40:'4', 41:'5', 42:'6',
-              43:_('Aug')+', 1', 44:'2', 45:'3', 46:'4', 47:'5', 48:'6',
-              49:_('Sep')+', 1', 50:'2', 51:'3', 52:'4', 53:'5', 54:'6',
-              55:_('Oct')+', 1', 56:'2', 57:'3', 58:'4', 59:'5', 60:'6',
-              61:_('Nov')+', 1', 62:'2', 63:'3', 64:'4', 65:'5', 66:'6',
-              67:_('Dec')+', 1', 68:'2', 69:'3', 70:'4', 71:'5', 72:'6'}
+    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+    if horizon == "pentad":
+        ticks = list(range(1, 73))
+        labels = {}
+
+        for i in range(12):
+            month_label = _(month_abbr[i + 1])  # Translatable short month name
+            for j in range(6):
+                pentad_number = i * 6 + j + 1
+                labels[pentad_number] = f"{month_label}, {j + 1}" if j == 0 else f"{j + 1}"
+    else:
+        ticks = list(range(1, 37))
+        labels = {}
+
+        for i in range(12):
+            month_label = _(month_abbr[i + 1])
+            for j in range(3):
+                decade_number = i * 3 + j + 1
+                labels[decade_number] = f"{month_label}, {j + 1}" if j == 0 else f"{j + 1}"
 
     # Create a FixedTicker and a FuncTickFormatter with the specified ticks and labels
     ticker = FixedTicker(ticks=ticks)
@@ -425,6 +432,8 @@ def plot_runoff_forecasts(data, date_col, forecast_data_col,
         runoff_forecast_color = runoff_forecast_colors
         line_types = ['solid', 'dashed', 'dotdash', 'dotted', 'dashdot', 'solid', 'dashed']
 
+    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+
     # Create the overlay
     for i, model in enumerate(models):
         model_data = data[data[forecast_name_col] == model]
@@ -437,7 +446,7 @@ def plot_runoff_forecasts(data, date_col, forecast_data_col,
 
         # Create a HoverTool
         hover = HoverTool(tooltips=[
-            ('Pentad', f'@{date_col}'),
+            (horizon.capitalize(), f'@{date_col}'),
             ('Value', f'@{forecast_data_col}'),
             ('Model', f'@{forecast_name_col}')
         ])
@@ -502,6 +511,8 @@ def plot_runoff_forecasts_steps(data, date_col, forecast_data_col,
         runoff_forecast_color = runoff_forecast_colors
         line_types = ['solid', 'dashed', 'dotdash', 'dotted', 'dashdot', 'solid', 'dashed']
 
+    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+
     # Create the overlay
     for i, model in enumerate(models):
         model_data = data[data[forecast_name_col] == model]
@@ -514,7 +525,7 @@ def plot_runoff_forecasts_steps(data, date_col, forecast_data_col,
 
         # Create a HoverTool
         hover = HoverTool(tooltips=[
-            ('Pentad', f'@{date_col}'),
+            (horizon.capitalize(), f'@{date_col}'),
             ('Value', f'@{forecast_data_col}'),
             ('Model', f'@{forecast_name_col}')
         ])
@@ -580,6 +591,8 @@ def plot_runoff_forecasts_v2(data, date_col, forecast_data_col,
         runoff_forecast_color = runoff_forecast_colors
         line_types = ['solid', 'dashed', 'dotdash', 'dotted', 'dashdot', 'solid', 'dashed']
 
+    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+
     # Create the overlay
     for i, model in enumerate(models):
         model_data = data[data[forecast_name_col] == model]
@@ -592,7 +605,7 @@ def plot_runoff_forecasts_v2(data, date_col, forecast_data_col,
 
         # Create a HoverTool
         hover = HoverTool(tooltips=[
-            ('Pentad', f'@{date_col}'),
+            (horizon.capitalize(), f'@{date_col}'),
             ('Value', f'@{forecast_data_col}'),
             ('Model', f'@{forecast_name_col}')
         ])
@@ -666,6 +679,8 @@ def plot_current_runoff_forecasts(data, date_col, forecast_data_col,
     elif len(models) == 7:
         runoff_forecast_color = runoff_forecast_colors
 
+    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+
     # Create the overlay
     for i, model in enumerate(models):
         model_data = data[data[forecast_name_col] == model]
@@ -678,7 +693,7 @@ def plot_current_runoff_forecasts(data, date_col, forecast_data_col,
 
         # Create a HoverTool
         hover = HoverTool(tooltips=[
-            ('Pentad', f'@{date_col}'),
+            (horizon.capitalize(), f'@{date_col}'),
             ('Value', f'@{forecast_data_col}'),
             ('Model', f'@{forecast_name_col}')
         ])
@@ -1445,20 +1460,28 @@ def create_cached_vlines(_, for_dates=True, y_text=1):
     if PlotCache.contains(cache_key):
         return PlotCache.get(cache_key)
 
+    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
     if for_dates:
+        if horizon == "pentad":
+            days = [1, 6, 11, 16, 21, 26]
+            labels_per_month = ['1', '2', '3', '4', '5', '6'] * 12
+        else:
+            days = [1, 11, 21]
+            labels_per_month = ['1', '2', '3'] * 12
         # Create lines for date-based plots
         year = dt.datetime.now().year
-        pentads = [dt.datetime(year, month, day) for month in range(1, 13) for day in [1, 6, 11, 16, 21, 26]]
+        # Generate list of datetime objects for the chosen forecast horizon
+        time_horizons = [dt.datetime(year, month, day) for month in range(1, 13) for day in days]
 
         # Create vertical lines
         path_data = []
-        for i in range(len(pentads)):
+        for i in range(len(time_horizons)):
             if i % 2 == 0:
-                path_data.append((pentads[i], -100))  # Start at -100
-                path_data.append((pentads[i], 3000))  # Move to 3000
+                path_data.append((time_horizons[i], -100))  # Start at -100
+                path_data.append((time_horizons[i], 3000))  # Move to 3000
             else:
-                path_data.append((pentads[i], 3000))  # Stay at 3000
-                path_data.append((pentads[i], -100))  # Move to -100
+                path_data.append((time_horizons[i], 3000))  # Stay at 3000
+                path_data.append((time_horizons[i], -100))  # Move to -100
         vlines = hv.Path(path_data).opts(
             color='gray', line_width=1,
             line_dash='dotted', line_alpha=0.5,
@@ -1466,11 +1489,10 @@ def create_cached_vlines(_, for_dates=True, y_text=1):
         )
 
         # Add text labels
-        mid_date_text = ['1', '2', '3', '4', '5', '6'] * 12
         labels_df = pd.DataFrame({
-            'x': [date + dt.timedelta(days=2.2) for date in pentads],
-            'y': [y_text for _ in pentads],
-            'text': mid_date_text
+            'x': [date + dt.timedelta(days=2.2) for date in time_horizons],
+            'y': [y_text for _ in time_horizons],
+            'text': labels_per_month
         })
         text_overlay = hv.Labels(labels_df, ['x', 'y'], 'text').opts(
             text_baseline='bottom', text_align='center',
@@ -1516,19 +1538,33 @@ def update_pentad_text(date_picker, _):
     # Calculate the next day's date (to align with the logic used earlier)
     selected_date = date_picker
 
-    # Calculate pentad, month, and day range
-    title_pentad = tl.get_pentad(selected_date)
-    title_month = tl.get_month_str_case2_viz(_, selected_date)
-    title_day_start = tl.get_pentad_first_day(selected_date.strftime("%Y-%m-%d"))
-    title_day_end = tl.get_pentad_last_day(selected_date.strftime("%Y-%m-%d"))
-    title_year = selected_date.year
+    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+    if horizon == "pentad":
+        # Calculate pentad, month, and day range
+        title_pentad = tl.get_pentad(selected_date)
+        title_month = tl.get_month_str_case2_viz(_, selected_date)
+        title_day_start = tl.get_pentad_first_day(selected_date.strftime("%Y-%m-%d"))
+        title_day_end = tl.get_pentad_last_day(selected_date.strftime("%Y-%m-%d"))
+        title_year = selected_date.year
 
-    # Create the formatted text for display
-    pentad_text = (f"**{_('Selected Pentad')}**: {title_pentad} {_('pentad')} {_('of')} "
-                   f"{title_month} {title_year} "
-                   f"({_('days')} {title_day_start}-{title_day_end})")
+        # Create the formatted text for display
+        text = (f"**{_('Selected Pentad')}**: {title_pentad} {_('pentad')} {_('of')} "
+                f"{title_month} {title_year} "
+                f"({_('days')} {title_day_start}-{title_day_end})")
+    else:
+        title_decad = tl.get_decad_in_month(selected_date)
+        title_month = tl.get_month_str_case2_viz(_, selected_date)
+        title_day_start = tl.get_decad_first_day(selected_date.strftime("%Y-%m-%d"))
+        title_day_end = tl.get_decad_last_day(selected_date.strftime("%Y-%m-%d"))
+        title_year = selected_date.year
 
-    return pentad_text
+        # Create the formatted text for display
+        text = (f"**{_('Selected Pentad')}**: {title_decad} {_('pentad')} {_('of')} "
+                f"{title_month} {title_year} "
+                f"({_('days')} {title_day_start}-{title_day_end})")
+
+    return text
+
 
 def create_date_picker_with_pentad_text(date_picker, _):
 
@@ -1589,9 +1625,16 @@ def plot_daily_hydrograph_data(_, hydrograph_day_all, linreg_predictor, station,
     current_year = int(data['date'].dt.year.max())
     last_year = current_year - 1
 
+
+    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+    if horizon == "pentad":
+        period = "3 day sum"
+    else:
+        period = "10 day average"
+
     # Define strings
     title_text = _("Hydropost ") + station + _(" on ") + title_date.strftime("%Y-%m-%d")
-    predictor_string=_("Current year, 3 day sum: ") + f"{linreg_predictor['predictor'].values[0]}" + " " + _("m3/s")
+    predictor_string=_(f"Current year, {period}: ") + f"{linreg_predictor['predictor'].values[0]}" + " " + _("m3/s")
     forecast_string=_("Forecast horizon for ") + title_pentad + _(" pentad of ") + title_month
 
     # Rename columns to be used in the plot to allow internationalization
@@ -1852,10 +1895,18 @@ def plot_daily_rainfall_data(_, daily_rainfall, station, date_picker,
     norm_rainfall['date'] = pd.to_datetime(norm_rainfall['date'])
     '''
 
+    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+    if horizon == "pentad":
+        current_period = "3 day sum"
+        forecast_period = "5 day sum"
+    else:
+        current_period = "10 day average"
+        forecast_period = "10 day sum"
+
     # Plot the daily rainfall data using holoviews
     title_text = f"{_('Daily precipitation sums for basin of')} {station} {_('on')} {date_picker.strftime('%Y-%m-%d')}"
-    current_year_text = f"{_('Current year, 3 day sum: ')}{predictor_rainfall['P'].sum().round()} mm"
-    forecast_text = f"{_('Precipitation forecast, 5 day sum: ')} {forecasts['P'].sum().round()} mm"
+    current_year_text = f"{_(f'Current year, {current_period}: ')}{predictor_rainfall['P'].sum().round()} mm"
+    forecast_text = f"{_(f'Precipitation forecast, {forecast_period}: ')} {forecasts['P'].sum().round()} mm"
 
     hvspan_predictor = hv.VSpan(
         linreg_predictor['predictor_start_date'].values[0],
@@ -1982,9 +2033,15 @@ def plot_daily_temperature_data(_, daily_rainfall, station, date_picker,
     norm_rainfall['date'] = pd.to_datetime(norm_rainfall['date'])
     '''
 
+    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+    if horizon == "pentad":
+        period = "3 day mean"
+    else:
+        period = "10 day mean"
+
     # Plot the daily rainfall data using holoviews
     title_text = f"{_('Daily average temperature for basin of')} {station} {_('on')} {date_picker.strftime('%Y-%m-%d')}"
-    current_year_text = f"{_('Current year, 3 day mean: ')} {predictor_rainfall['T'].mean().round()} °C"
+    current_year_text = f"{_(f'Current year, {period}: ')} {predictor_rainfall['T'].mean().round()} °C"
 
     hvspan_predictor = hv.VSpan(
         linreg_predictor['predictor_start_date'].values[0],
@@ -2185,10 +2242,21 @@ def plot_pentad_forecast_hydrograph_data_v2(_, hydrograph_day_all, linreg_predic
                                             rram_forecast, ml_forecast):
 
     forecast_date = pd.to_datetime(title_date + dt.timedelta(days=1))
+    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+    if horizon == "pentad":
+        horizon_in_year = "pentad_in_year"
+        horizon_in_month = 'pentad_in_month'
+        title_day_end = tl.get_pentad_last_day(forecast_date.strftime("%Y-%m-%d"))
+        horizon_column_name = _('pentad_of_year column name')
+    else:
+        horizon_in_year = "decad_in_year"
+        horizon_in_month = 'decad_in_year'
+        title_day_end = tl.get_decad_last_day(forecast_date.strftime("%Y-%m-%d"))
+        horizon_column_name = _('decad_of_year column name')
+
     title_pentad = tl.get_pentad(forecast_date)
     title_month = tl.get_month_str_case2_viz(_, forecast_date)
     title_day_start = tl.get_pentad_first_day(forecast_date.strftime("%Y-%m-%d"))
-    title_day_end = tl.get_pentad_last_day(forecast_date.strftime("%Y-%m-%d"))
     # Take forecast_date and replace the day in that date with the string title_day_end
     title_date_end = pd.to_datetime(forecast_date.replace(day=int(title_day_end)))
 
@@ -2291,7 +2359,7 @@ def plot_pentad_forecast_hydrograph_data_v2(_, hydrograph_day_all, linreg_predic
         })
 
     forecasts = forecasts.rename(columns={
-        'pentad': _('pentad_of_year column name'),
+        horizon: horizon_column_name,
         'forecasted_discharge': _('forecasted_discharge column name'),
         'fc_lower': _('forecast lower bound column name'),
         'fc_upper': _('forecast upper bound column name'),
@@ -2318,8 +2386,8 @@ def plot_pentad_forecast_hydrograph_data_v2(_, hydrograph_day_all, linreg_predic
                  'Q50': 'E[Q]',
                  'model_short': 'Model'})
     # Add pentad_in_month and pentad_in_year to latest_rram_forecast
-    latest_rram_forecast['pentad_in_month'] = forecasts_current['pentad_in_month'].values[0] if not forecasts_current.empty else None
-    latest_rram_forecast['pentad_in_year'] = forecasts_current['pentad_in_year'].values[0] if not forecasts_current.empty else None
+    latest_rram_forecast[horizon_in_month] = forecasts_current[horizon_in_month].values[0] if not forecasts_current.empty else None
+    latest_rram_forecast[horizon_in_year] = forecasts_current[horizon_in_year].values[0] if not forecasts_current.empty else None
     latest_rram_forecast['Model name'] = 'Rainfall runoff assimilation model (RRAM)'
 
     # Filter for the current station
@@ -2333,8 +2401,8 @@ def plot_pentad_forecast_hydrograph_data_v2(_, hydrograph_day_all, linreg_predic
                     'forecasted_discharge': 'E[Q]',
                     'model_short': 'Model'})
     # Add pentad_in_month and pentad_in_year to latest_ml_forecast
-    latest_ml_forecast['pentad_in_month'] = forecasts_current['pentad_in_month'].values[0] if not forecasts_current.empty else None
-    latest_ml_forecast['pentad_in_year'] = forecasts_current['pentad_in_year'].values[0] if not forecasts_current.empty else None
+    latest_ml_forecast[horizon_in_month] = forecasts_current[horizon_in_month].values[0] if not forecasts_current.empty else None
+    latest_ml_forecast[horizon_in_year] = forecasts_current[horizon_in_year].values[0] if not forecasts_current.empty else None
     # Filter for selected models
     latest_ml_forecast = latest_ml_forecast[latest_ml_forecast['Model'].isin(model_selection)]
 
@@ -2607,10 +2675,36 @@ def plot_pentad_forecast_hydrograph_data(_, hydrograph_pentad_all, forecasts_all
     #print(f"\n\nDEBUG: plot_pentad_forecast_hydrograph_data")
     #print(f"title_date: {title_date}")
     forecast_date = title_date + dt.timedelta(days=1)
-    title_pentad = tl.get_pentad(forecast_date)
-    title_month = tl.get_month_str_case2_viz(_, forecast_date)
-    title_day_start = tl.get_pentad_first_day(forecast_date.strftime("%Y-%m-%d"))
-    title_day_end = tl.get_pentad_last_day(forecast_date.strftime("%Y-%m-%d"))
+    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+    if horizon == "pentad":
+        horizon_in_year = "pentad_in_year"
+        horizon_column_name = _('pentad_of_year column name')
+        horizon_of_year = _('Pentad of the year')
+
+        title_pentad = tl.get_pentad(forecast_date)
+        title_month = tl.get_month_str_case2_viz(_, forecast_date)
+        title_day_start = tl.get_pentad_first_day(forecast_date.strftime("%Y-%m-%d"))
+        title_day_end = tl.get_pentad_last_day(forecast_date.strftime("%Y-%m-%d"))
+
+        # Define strings
+        title_text = (f"{_('Hydropost')} {station}: {_('Forecast')} {_('for')} "
+                      f"{title_pentad} {_('pentad')} {_('of')} {title_month} "
+                      f"({_('days')} {title_day_start}-{title_day_end})")
+    else:
+        horizon_in_year = "decad_in_year"
+        horizon_column_name = _('decad_of_year column name')
+        horizon_of_year = _('Decad of the year')
+
+        title_decad = tl.get_decad_in_month(forecast_date)
+        title_month = tl.get_month_str_case2_viz(_, forecast_date)
+        title_day_start = tl.get_decad_first_day(forecast_date.strftime("%Y-%m-%d"))
+        title_day_end = tl.get_decad_last_day(forecast_date.strftime("%Y-%m-%d"))
+
+        # Define strings
+        title_text = (f"{_('Hydropost')} {station}: {_('Forecast')} {_('for')} "
+                      f"{title_decad} {_('decad')} {_('of')} {title_month} "
+                      f"({_('days')} {title_day_start}-{title_day_end})")
+
     #print(f"forecast_date: {forecast_date}")
     #print(f"title_pentad: {title_pentad}")
     #print(f"title_month: {title_month}")
@@ -2654,8 +2748,8 @@ def plot_pentad_forecast_hydrograph_data(_, hydrograph_pentad_all, forecasts_all
     # Filter hydrograph data for the current station
     data = hydrograph_pentad_all[hydrograph_pentad_all['station_labels'] == station].copy()
     print("\n\nFirst getting data for station:")
-    print("head of data:\n", data.head()[['code', 'pentad_in_year', 'mean', '2024', '2025', 'date']])
-    print("tail of data:\n", data.tail()[['code', 'pentad_in_year', 'mean', '2024', '2025', 'date']])
+    print("head of data:\n", data.head()[['code', horizon_in_year, 'mean', '2024', '2025', 'date']])
+    print("tail of data:\n", data.tail()[['code', horizon_in_year, 'mean', '2024', '2025', 'date']])
 
     current_year = int(data['date'].dt.year.max())
     last_year = current_year - 1
@@ -2672,8 +2766,8 @@ def plot_pentad_forecast_hydrograph_data(_, hydrograph_pentad_all, forecasts_all
         data['date'].iloc[0] = pd.Timestamp(f"{current_year}-01-01")
 
     # Print pentad of first date in data
-    print(f"\n\n\n\n\npentad of first date in data: {data['pentad_in_year'].iloc[0]} of {data['date'].iloc[0]}")
-    print(f"head(data): {data.head()[['code', 'pentad_in_year', 'norm', 'mean', '2024', '2025', 'date']]}")
+    print(f"\n\n\n\n\n{horizon} of first date in data: {data[horizon_in_year].iloc[0]} of {data['date'].iloc[0]}")
+    print(f"head(data): {data.head()[['code', horizon_in_year, 'norm', 'mean', '2024', '2025', 'date']]}")
     print(f"data.columns: {data.columns}")
 
     # Set values after the title date to NaN
@@ -2685,14 +2779,9 @@ def plot_pentad_forecast_hydrograph_data(_, hydrograph_pentad_all, forecasts_all
     data.loc[data['date'] >= pd.Timestamp(title_date), str(current_year)] = np.nan
     #print(f"Tail of data\n{data.tail(25).head(10)}")
 
-    # Define strings
-    title_text = (f"{_('Hydropost')} {station}: {_('Forecast')} {_('for')} "
-                  f"{title_pentad} {_('pentad')} {_('of')} {title_month} "
-                  f"({_('days')} {title_day_start}-{title_day_end})")
-
     # Rename columns to be used in the plot to allow internationalization
     data = data.rename(columns={
-        'pentad_in_year': _('pentad_of_year column name'),
+        horizon_in_year: horizon_column_name,
         'min': _('min column name'),
         'max': _('max column name'),
         'q05': _('5% column name'),
@@ -2705,7 +2794,7 @@ def plot_pentad_forecast_hydrograph_data(_, hydrograph_pentad_all, forecasts_all
         str(current_year): _('Current year column name')
         })
     forecasts = forecasts.rename(columns={
-        'pentad': _('pentad_of_year column name'),
+        horizon_in_year: horizon_column_name,
         'forecasted_discharge': _('forecasted_discharge column name'),
         'fc_lower': _('forecast lower bound column name'),
         'fc_upper': _('forecast upper bound column name'),
@@ -2727,68 +2816,68 @@ def plot_pentad_forecast_hydrograph_data(_, hydrograph_pentad_all, forecasts_all
 
     # Create a holoviews bokeh plots of the daily hydrograph
     full_range_area = plot_runoff_range_area(
-        data, _('pentad_of_year column name'), _('min column name'), _('max column name'),
+        data, horizon_column_name, _('min column name'), _('max column name'),
         _("Full range legend entry"), runoff_full_range_color)
     lower_bound = plot_runoff_range_bound(
-        data, _('pentad_of_year column name'), _('min column name'),
+        data, horizon_column_name, _('min column name'),
         runoff_full_range_color, hover_tool=False)
     upper_bound = plot_runoff_range_bound(
-        data, _('pentad_of_year column name'), _('max column name'),
+        data, horizon_column_name, _('max column name'),
         runoff_full_range_color, hover_tool=False)
 
     area_05_95 = plot_runoff_range_area(
-        data, _('pentad_of_year column name'), _('5% column name'), _('95% column name'),
+        data, horizon_column_name, _('5% column name'), _('95% column name'),
         _("90-percentile range legend entry"), runoff_90percentile_range_color)
     line_05 = plot_runoff_range_bound(
-        data, _('pentad_of_year column name'), _('5% column name'),
+        data, horizon_column_name, _('5% column name'),
         runoff_90percentile_range_color, hover_tool=False)
     line_95 = plot_runoff_range_bound(
-        data, _('pentad_of_year column name'), _('95% column name'),
+        data, horizon_column_name, _('95% column name'),
         runoff_90percentile_range_color, hover_tool=False)
 
     area_25_75 = plot_runoff_range_area(
-        data, _('pentad_of_year column name'), _('25% column name'), _('75% column name'),
+        data, horizon_column_name, _('25% column name'), _('75% column name'),
         _("50-percentile range legend entry"), runoff_50percentile_range_color)
     line_25 = plot_runoff_range_bound(
-        data, _('pentad_of_year column name'), _('25% column name'),
+        data, horizon_column_name, _('25% column name'),
         runoff_50percentile_range_color, hover_tool=False)
     line_75 = plot_runoff_range_bound(
-        data, _('pentad_of_year column name'), _('75% column name'),
+        data, horizon_column_name, _('75% column name'),
         runoff_50percentile_range_color, hover_tool=False)
 
     norm = plot_runoff_line(
-        data, _('pentad_of_year column name'), _('norm column name'),
+        data, horizon_column_name, _('norm column name'),
         _('Norm legend entry'), runoff_norm_color)
     mean = plot_runoff_line(
-        data, _('pentad_of_year column name'), _('mean column name'),
+        data, horizon_column_name, _('mean column name'),
         _('Mean legend entry'), runoff_mean_color)
     """last_year = plot_runoff_line(
-        data, _('pentad_of_year column name'), _('Last year column name'),
+        data, horizon_column_name, _('Last year column name'),
         _('Last year legend entry'), runoff_last_year_color)"""
     current_year = plot_runoff_line(
-        data, _('pentad_of_year column name'), _('Current year column name'),
+        data, horizon_column_name, _('Current year column name'),
         _('Current year legend entry'), runoff_current_year_color)
 
     forecast_area = plot_runoff_forecast_range_area(
         data=forecasts_past,
-        date_col=_('pentad_of_year column name'),
+        date_col=horizon_column_name,
         forecast_name_col=_('forecast model short column name'),
         min_col=_('forecast lower bound column name'),
         max_col= _('forecast upper bound column name'),
         runoff_forecast_colors=runoff_forecast_color_list,
         unit_string=_("m³/s"))
     forecast_lower_bound = plot_runoff_range_bound(
-        forecasts_past, _('pentad_of_year column name'), _('forecast lower bound column name'),
+        forecasts_past, horizon_column_name, _('forecast lower bound column name'),
         runoff_forecast_color_list[3], hover_tool=True)
     forecast_upper_bound = plot_runoff_range_bound(
-        forecasts_past, _('pentad_of_year column name'), _('forecast upper bound column name'),
+        forecasts_past, horizon_column_name, _('forecast upper bound column name'),
         runoff_forecast_color_list[3], hover_tool=True)
     forecast_line = plot_runoff_forecasts(
-        forecasts_past, _('pentad_of_year column name'), _('forecasted_discharge column name'),
+        forecasts_past, horizon_column_name, _('forecasted_discharge column name'),
         _('forecast model short column name'), runoff_forecast_color_list, _('m³/s'))
 
     current_forecast_range_point = plot_current_runoff_forecast_range(
-        forecasts_current, _('pentad_of_year column name'), _('forecast model short column name'),
+        forecasts_current, horizon_column_name, _('forecast model short column name'),
         _('forecasted_discharge column name'), _('forecast lower bound column name'), _('forecast upper bound column name'),
         runoff_forecast_color_list, _('m³/s'))
 
@@ -2807,7 +2896,7 @@ def plot_pentad_forecast_hydrograph_data(_, hydrograph_pentad_all, forecasts_all
 
     pentad_hydrograph.opts(
         title=title_text,
-        xlabel=_('Pentad of the year'),
+        xlabel=horizon_of_year,
         ylabel=_('Discharge (m³/s)'),
         show_grid=True,
         show_legend=True,
@@ -2823,6 +2912,11 @@ def plot_pentad_forecast_hydrograph_data(_, hydrograph_pentad_all, forecasts_all
 
 def create_forecast_summary_table(_, forecasts_all, station, date_picker,
                                   model_selection, range_type, range_slider):
+    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+    if horizon == "pentad":
+        horizon_in_year = "pentad_in_year"
+    else:
+        horizon_in_year = "decad_in_year"
 
     # Filter forecasts_all for selected station, date and models
     if hasattr(station, 'value'):
@@ -2867,8 +2961,8 @@ def create_forecast_summary_table(_, forecasts_all, station, date_picker,
 
     # Drop a couple of columns
     forecast_table.drop(
-        columns=['code', 'date', 'Date', 'year', 'pentad_in_year',
-                 'pentad', 'pentad_in_month', 'model_long', 'station_labels'],
+        columns=['code', 'date', 'Date', 'year', horizon_in_year,
+                 horizon, 'model_long', 'station_labels'],
         inplace=True)
 
     # Calculate the forecast range depending on the values of range_type and range_slider
@@ -2991,6 +3085,14 @@ pentad_options = {f"{i+1}{_('st pentad of')} {calendar.month_name[month]}" if i 
                   f"{i+1}{_('th pentad of')} {calendar.month_name[month]}": i + (month-1)*6 + 1
                   for month in range(1, 13) for i in range(6)}
 
+# Create a dictionary mapping each decade description to its decad_in_year value
+decad_options = {
+    f"{i+1}{_('st decade of')} {calendar.month_name[month]}" if i == 0 else
+    f"{i+1}{_('nd decade of')} {calendar.month_name[month]}" if i == 1 else
+    f"{i+1}{_('rd decade of')} {calendar.month_name[month]}" if i == 2 else
+    f"{i+1}{_('th decade of')} {calendar.month_name[month]}": i + (month - 1) * 3 + 1
+    for month in range(1, 13) for i in range(3)
+}
 
 class Environment:
     def __init__(self, dotenv_path):
@@ -3104,7 +3206,7 @@ def establish_ssh_tunnel(ssh_script_path):
             tunnel_process.terminate()
             tunnel_process.wait()
 
-def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
+def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector, decad_selector,
                          SAVE_DIRECTORY):
     # Define a variable to hold the visible data across functions
     global visible_data
@@ -3116,21 +3218,52 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
     #print(f"linreg_predictor[linreg_predictor['code'] == '16059'].tail(10):\n",
     #      linreg_predictor[linreg_predictor['code'] == '16059'].tail(10))
 
+    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+    if horizon == "pentad":
+        horizon_in_year = "pentad_in_year"
+
+        # Check if pentad_selector is a widget or an integer
+        if isinstance(pentad_selector, int):
+            selected_pentad = pentad_selector  # If it's an integer, use it directly
+        else:
+            selected_pentad = pentad_selector.value  # If it's a widget, get the value
+
+        # Find out the month and pentad for display purposes
+        selected_pentad_text = [k for k, v in pentad_options.items() if v == selected_pentad][0]
+        title_pentad = selected_pentad_text.split(' ')[0]
+        title_month = selected_pentad_text.split('of ')[-1]
+        partial_title_text = f"{title_pentad} {_(' pentad of ')} {title_month} "
+
+        pentad_in_month = selected_pentad % 6 if selected_pentad % 6 != 0 else 6
+        partial_file_name = f"{pentad_in_month}_pentad_of_{title_month}"
+
+        horizon_value = selected_pentad
+        add_date_column = lambda horizon_value: tl.get_date_for_pentad(horizon_value)
+
+    else:
+        horizon_in_year = "decad_in_year"
+
+        # Check if decad_selector is a widget or an integer
+        if isinstance(decad_selector, int):
+            selected_decad = decad_selector  # If it's an integer, use it directly
+        else:
+            selected_decad = decad_selector.value  # If it's a widget, get the value
+
+        selected_decad_text = [k for k, v in decad_options.items() if v == selected_decad][0]
+        title_decad = selected_decad_text.split(' ')[0]
+        title_month = selected_decad_text.split('of ')[-1]
+        partial_title_text = f"{title_decad} {_(' decade of ')} {title_month} "
+
+        decad_in_month = selected_decad % 3 if selected_decad % 3 != 0 else 3
+        partial_file_name = f"{decad_in_month}_decade_of_{title_month}"
+
+        horizon_value = selected_decad
+        add_date_column = lambda horizon_value: tl.get_date_for_decad(horizon_value)
+
     if isinstance(station_widget, str):
         station_code = station_widget.split(' - ')[0]
     else:
         station_code = station_widget.value.split(' - ')[0]
-
-    # Check if pentad_selector is a widget or an integer
-    if isinstance(pentad_selector, int):
-        selected_pentad = pentad_selector  # If it's an integer, use it directly
-    else:
-        selected_pentad = pentad_selector.value  # If it's a widget, get the value
-
-    # Find out the month and pentad for display purposes
-    selected_pentad_text = [k for k, v in pentad_options.items() if v == selected_pentad][0]
-    title_pentad = selected_pentad_text.split(' ')[0]
-    title_month = selected_pentad_text.split('of ')[-1]
 
     # Generate dynamic filename based on the selected pentad and station
     station_name = station_widget
@@ -3139,15 +3272,13 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
         print(f"Error: No data found for station code '{station_code}'")
         return None
 
-    pentad_in_month = selected_pentad % 6 if selected_pentad % 6 != 0 else 6
-
-    save_file_name = f"{station_code}_{pentad_in_month}_pentad_of_{title_month}.csv"
+    save_file_name = f"{station_code}_{partial_file_name}.csv"
     save_file_path = os.path.join(SAVE_DIRECTORY, save_file_name)
 
     # Add the 'date' column if it doesn't exist
     if 'date' not in linreg_predictor.columns:
         # Map the 'pentad_in_year' to the corresponding date using get_date_for_pentad
-        linreg_predictor['date'] = linreg_predictor['pentad_in_year'].apply(lambda pentad: tl.get_date_for_pentad(pentad))
+        linreg_predictor['date'] = linreg_predictor[horizon_in_year].apply(add_date_column)
 
     # Extract the year from the date column and create a 'year' column
     linreg_predictor['year'] = pd.to_datetime(linreg_predictor['date']).dt.year.astype(int)
@@ -3156,7 +3287,7 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
     # Filter data for the selected station and pentad across all years
     forecast_table = linreg_predictor[
         (linreg_predictor['station_labels'] == station_widget) &
-        (linreg_predictor['pentad_in_year'] == selected_pentad)
+        (linreg_predictor[horizon_in_year] == horizon_value)
     ].copy().reset_index(drop=True)
 
 # Check if the saved CSV file exists
@@ -3247,8 +3378,7 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
     )'''
 
     # Create the title text
-    title_text = (f"{_('Hydropost')} {station_code}: {_('Regression for')} "
-                  f"{title_pentad} {_(' pentad of ')} {title_month} ")
+    title_text = (f"{_('Hydropost')} {station_code}: {_('Regression for')} {partial_title_text}")
 
     # Define the plot
     plot_pane = pn.pane.HoloViews(sizing_mode='stretch_width')
@@ -3601,7 +3731,7 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector,
         updated_forecast_table = updated_forecast_table.reset_index(drop=True)
 
         # Add the selected pentad information
-        updated_forecast_table['pentad'] = selected_pentad
+        updated_forecast_table[horizon] = horizon_value
 
         # Save DataFrame to CSV, ensuring the index is saved
         updated_forecast_table[['index', 'year', 'visible']].to_csv(save_file_path, index=False)
@@ -4079,6 +4209,15 @@ def plot_forecast_skill(
         _, hydrograph_pentad_all, forecasts_all, station_widget, date_picker,
         model_checkbox, range_selection_widget, manual_range_widget,
         show_range_button):
+    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+    if horizon == "pentad":
+        horizon_in_year = "pentad_in_year"
+        horizon_x_label = _("Pentad of the month (starting from January 1)")
+        area_x_lim = 72
+    else:
+        horizon_in_year = "decad_in_year"
+        horizon_x_label = _("Decad of the month (starting from January 1)")
+        area_x_lim = 36
 
     # Convert the date from the date picker to a pandas Timestamp
     selected_date = pd.Timestamp(date_picker)
@@ -4095,25 +4234,25 @@ def plot_forecast_skill(
     # Drop any duplicates in date and model_short
     current_forecast_pentad = forecast_pentad[forecast_pentad['date'] == selected_date]
     # Sort by model_short and pentad_in_year
-    forecast_pentad = forecast_pentad.sort_values(by=['model_short', 'pentad_in_year'])
+    forecast_pentad = forecast_pentad.sort_values(by=['model_short', horizon_in_year])
 
     # Plot the effectiveness of the forecast method
     # Plot a green area between y = 0 and y = 0.6
-    hv_06a = hv.Area(pd.DataFrame({"x":[1, 72], "y":[0.6, 0.6]}),
+    hv_06a = hv.Area(pd.DataFrame({"x":[1, area_x_lim], "y":[0.6, 0.6]}),
                         kdims=["x"], vdims=["y"], label=_("Effectiveness")+" <= 0.6") \
             .opts(alpha=0.05, color="green", line_width=0)
-    hv_08a = hv.Area(pd.DataFrame({"x":[1, 72], "y":[0.8, 0.8]}),
+    hv_08a = hv.Area(pd.DataFrame({"x":[1, area_x_lim], "y":[0.8, 0.8]}),
                         kdims=["x"], vdims=["y"], label=_("Effectiveness")+" <= 0.8") \
             .opts(alpha=0.05, color="orange", line_width=0)
     hv_current_forecast_skill_effectiveness = plot_current_runoff_forecasts(
         data=current_forecast_pentad,
-        date_col='pentad',
+        date_col=horizon_in_year,
         forecast_data_col='sdivsigma',
         forecast_name_col='model_short',
         runoff_forecast_colors=runoff_forecast_color_list,
         unit_string='[-]')
     hv_forecast_skill_effectiveness = plot_runoff_forecasts_steps(
-        forecast_pentad, date_col='pentad',
+        forecast_pentad, date_col=horizon_in_year,
         forecast_data_col='sdivsigma',
         forecast_name_col='model_short',
         runoff_forecast_colors=runoff_forecast_color_list,
@@ -4130,11 +4269,12 @@ def plot_forecast_skill(
             remove_bokeh_logo,
             lambda p, e: add_custom_xticklabels_pentad(_, p, e)
         ],
-        xticks=list(range(1,72,6)),
+        #xticks=list(range(1,72,6)),
         title=title_effectiveness, shared_axes=False,
         #legend_position='bottom_left',  # 'right',
-        xlabel=_("Pentad of the month (starting from January 1)"), ylabel=_("Effectiveness [-]"),
-        show_grid=True, xlim=(1, 72), ylim=(0,1.4),
+        xlabel=horizon_x_label, ylabel=_("Effectiveness [-]"),
+        show_grid=True, #xlim=(1, 72), 
+        ylim=(0,1.4),
         fontsize={'legend':8}, fontscale=1.2
     )
 
@@ -4145,13 +4285,13 @@ def plot_forecast_skill(
 
     hv_current_forecast_skill_accuracy = plot_current_runoff_forecasts(
         data=current_forecast_pentad,
-        date_col='pentad',
+        date_col=horizon_in_year,
         forecast_data_col='accuracy',
         forecast_name_col='model_short',
         runoff_forecast_colors=runoff_forecast_color_list,
         unit_string='[%]')
     hv_forecast_skill_accuracy = plot_runoff_forecasts_steps(
-        forecast_pentad, date_col='pentad',
+        forecast_pentad, date_col=horizon_in_year,
         forecast_data_col='accuracy',
         forecast_name_col='model_short',
         runoff_forecast_colors=runoff_forecast_color_list,
@@ -4168,11 +4308,12 @@ def plot_forecast_skill(
             remove_bokeh_logo,
             lambda p, e: add_custom_xticklabels_pentad(_, p, e)
         ],
-        xticks=list(range(1,72,6)),
+        #xticks=list(range(1,72,6)),
         title=title_accuracy, shared_axes=False,
         #legend_position='bottom_left',  # 'right',
-        xlabel=_("Pentad of the month (starting from January 1)"), ylabel=_("Accuracy [%]"),
-        show_grid=True, xlim=(1, 72), ylim=(0,100),
+        xlabel=horizon_x_label, ylabel=_("Accuracy [%]"),
+        show_grid=True, #xlim=(1, 72), 
+        ylim=(0,100),
         fontsize={'legend':8}, fontscale=1.2
     )
 
@@ -4189,40 +4330,63 @@ def plot_forecast_skill(
 
 def add_month_pentad_per_month_to_df(df):
     """Based on column pentad_in_year, add columns month and pentad_in_month."""
+    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+    if horizon == "pentad":
+        horizon_in_year = "pentad_in_year"
+        horizon_in_month = 'pentad_in_month'
+        horizon_fn_month = tl.get_pentad
+        horizon_fn_year = tl.get_date_for_pentad
+    else:
+        horizon_in_year = "decad_in_year"
+        horizon_in_month = 'decad_in_month'
+        horizon_fn_month = tl.get_decad_in_month
+        horizon_fn_year = tl.get_date_for_decad
+
     # Get date for pentad in year
-    df['date'] = df['pentad_in_year'].apply(tl.get_date_for_pentad)
+    df['date'] = df[horizon_in_year].apply(horizon_fn_year)
     #print('df: ', df.head())
     # Get month for date
     df['month'] = pd.to_datetime(df['date']).dt.month
     # Get pentad in month
-    df['pentad_in_month'] = df['date'].apply(tl.get_pentad)
+    df[horizon_in_month] = df['date'].apply(horizon_fn_month)
     return df
 
 def create_skill_table(_, forecast_stats):
     """Creates a tabulator widget for the forecast statistics."""
+    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+    if horizon == "pentad":
+        horizon_in_year = "pentad_in_year"
+        horizon_in_month = 'pentad_in_month'
+        horizon_title = _('Pentad')
+        horizon_placeholder = _('Filter by pentad')
+    else:
+        horizon_in_year = "decad_in_year"
+        horizon_in_month = 'decad_in_month'
+        horizon_title = _('Decad')
+        horizon_placeholder = _('Filter by decad')
 
     # Get pentad in month and month
     forecast_stats = add_month_pentad_per_month_to_df(forecast_stats)
 
     # Do not show column model_long and pentad_in_year
-    forecast_stats_loc = forecast_stats.drop(columns=['model_long', 'pentad_in_year', 'date']).copy()
+    forecast_stats_loc = forecast_stats.drop(columns=['model_long', horizon_in_year, 'date']).copy()
 
     # Order the columns in the dataframe as follows:
     # code, model_short, month, pentad_in_month, sdivsigma, nse, delta, accuracy, mae
-    forecast_stats_loc = forecast_stats_loc[['code', 'model_short', 'month', 'pentad_in_month', 'sdivsigma', 'nse', 'delta', 'accuracy', 'mae']]
+    forecast_stats_loc = forecast_stats_loc[['code', 'model_short', 'month', horizon_in_month, 'sdivsigma', 'nse', 'delta', 'accuracy', 'mae']]
 
     # Sort the columns by code, month and pentad_in_month
-    forecast_stats_loc = forecast_stats_loc.sort_values(by=['code', 'month', 'pentad_in_month'])
+    forecast_stats_loc = forecast_stats_loc.sort_values(by=['code', 'month', horizon_in_month])
 
     # Get unique values for each filterable column
     unique_codes = sorted(forecast_stats_loc['code'].unique().tolist())
     unique_models = sorted(forecast_stats_loc['model_short'].unique().tolist())
     unique_months = sorted(forecast_stats_loc['month'].unique().tolist())
-    unique_pentads = sorted(forecast_stats_loc['pentad_in_month'].unique().tolist())
+    unique_pentads = sorted(forecast_stats_loc[horizon_in_month].unique().tolist())
 
     # Rename columns for better display
     forecast_stats_loc.rename(columns={
-        'pentad_in_month': _('Pentad'),
+        horizon_in_month: horizon_title,
         'month': _('Month'),
         'code': _('Code'),
         'model_short': _('Model'),
@@ -4244,10 +4408,10 @@ def create_skill_table(_, forecast_stats):
 
     # Add tabulator editors for the header_filters with predefined values
     filters = {
-        _('Pentad'): {
+        horizon_title: {
             'type': 'list',
             'values': unique_pentads,
-            'placeholder': _('Filter by pentad')
+            'placeholder': horizon_placeholder
         },
         _('Month'): {
             'type': 'list',
