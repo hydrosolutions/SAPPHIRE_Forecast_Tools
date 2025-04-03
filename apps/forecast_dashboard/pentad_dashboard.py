@@ -1468,6 +1468,7 @@ def update_visualizations():
     # Re-bind the plots to use the updated data
 
     viz.plot_pentad_forecast_hydrograph_data(
+        _, 
         hydrograph_pentad_all,
         forecasts_all,
         station,
@@ -1479,6 +1480,7 @@ def update_visualizations():
     )
 
     viz.plot_pentad_forecast_hydrograph_data_v2(
+        _, 
         hydrograph_day_all,
         linreg_predictor,
         forecasts_all,
@@ -1499,8 +1501,12 @@ def on_data_needs_reload_changed(event):
     if event.new:
         print("Triggered rerunning of forecasts.")
         try:
+            print("---loading data---")
             load_data()
+            print("---data loaded---")
+            print("---updating viz---")
             update_visualizations()
+            print("---viz updated---")
             print("Forecasts produced and visualizations updated successfully.")
         except Exception as e:
             print(f"Error during forecast rerun: {e}")
