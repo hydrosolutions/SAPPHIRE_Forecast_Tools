@@ -769,7 +769,11 @@ def add_predictor_dates(linreg_predictor, station, date):
         forecast_end_days = 5
         last_day = 26
     else:
-        predictor_start_days = 9
+        predictor_day = predictor['date'].max().day
+        if predictor_day > 20:
+            predictor_start_days = predictor_day % 20 - 1
+        else:
+            predictor_start_days = 9
         forecast_end_days = 10
         last_day = 21
 
