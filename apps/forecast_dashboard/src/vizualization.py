@@ -1465,9 +1465,11 @@ def create_cached_vlines(_, for_dates=True, y_text=1):
         if horizon == "pentad":
             days = [1, 6, 11, 16, 21, 26]
             labels_per_month = ['1', '2', '3', '4', '5', '6'] * 12
+            position = 2.2
         else:
             days = [1, 11, 21]
             labels_per_month = ['1', '2', '3'] * 12
+            position = 5
         # Create lines for date-based plots
         year = dt.datetime.now().year
         # Generate list of datetime objects for the chosen forecast horizon
@@ -1490,7 +1492,7 @@ def create_cached_vlines(_, for_dates=True, y_text=1):
 
         # Add text labels
         labels_df = pd.DataFrame({
-            'x': [date + dt.timedelta(days=2.2) for date in time_horizons],
+            'x': [date + dt.timedelta(days=position) for date in time_horizons],
             'y': [y_text for _ in time_horizons],
             'text': labels_per_month
         })
@@ -1900,7 +1902,7 @@ def plot_daily_rainfall_data(_, daily_rainfall, station, date_picker,
         current_period = "3 day sum"
         forecast_period = "5 day sum"
     else:
-        current_period = "10 day average"
+        current_period = "10 day sum"
         forecast_period = "10 day sum"
 
     # Plot the daily rainfall data using holoviews
@@ -2035,13 +2037,16 @@ def plot_daily_temperature_data(_, daily_rainfall, station, date_picker,
 
     horizon = os.getenv("sapphire_forecast_horizon", "pentad")
     if horizon == "pentad":
-        period = "3 day mean"
+        current_period = "3 day mean"
+        forecast_period = "5 day mean"
     else:
-        period = "10 day mean"
+        current_period = "10 day mean"
+        forecast_period = "10 day mean"
 
     # Plot the daily rainfall data using holoviews
     title_text = f"{_('Daily average temperature for basin of')} {station} {_('on')} {date_picker.strftime('%Y-%m-%d')}"
-    current_year_text = f"{_(f'Current year, {period}: ')} {predictor_rainfall['T'].mean().round()} °C"
+    current_year_text = f"{_(f'Current year, {current_period}: ')} {predictor_rainfall['T'].mean().round()} °C"
+    forecast_text = f"{_(f'Forecast, {forecast_period}: ')} {forecasts['T'].mean().round()} °C"
 
     hvspan_predictor = hv.VSpan(
         linreg_predictor['predictor_start_date'].values[0],
@@ -2085,7 +2090,7 @@ def plot_daily_temperature_data(_, daily_rainfall, station, date_picker,
             forecasts,
             kdims='date',
             vdims='T',
-            label=_('Forecast'))
+            label=forecast_text)
         hv_forecast.opts(
             interpolation='linear',
             color=runoff_forecast_color_list[3],
