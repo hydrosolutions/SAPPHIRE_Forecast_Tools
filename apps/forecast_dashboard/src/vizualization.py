@@ -3265,7 +3265,7 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector, d
         partial_title_text = f"{title_decad} {_(' decade of ')} {title_month} "
 
         decad_in_month = selected_decad % 3 if selected_decad % 3 != 0 else 3
-        partial_file_name = f"{decad_in_month}_decade_of_{title_month}"
+        partial_file_name = f"{decad_in_month}_decad_of_{title_month}"
 
         horizon_value = selected_decad
         add_date_column = lambda horizon_value: tl.get_date_for_decad(horizon_value)

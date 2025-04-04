@@ -829,6 +829,64 @@ def get_date_for_last_day_in_pentad(pentad_in_year, year=dt.datetime.now().year)
         # Return None if there's an error (invalid pentad, etc.)
         print(f"Error: {e}")
         return None
+    
+def get_date_for_last_day_in_decad(decad_in_year, year=dt.datetime.now().year):
+    """
+    Get the date of the last day in a given decade in the year. I.e. the day on
+    which a forecast is produced for the coming decade.
+
+    Parameters:
+        decade_in_year (int): The decade number within the year (1-36).
+        year (int): The year for which the date is needed. Defaults to the current year.
+
+    Returns:
+        str: A string representing the date for the input decade in the format 'YYYY-MM-DD',
+             or None if the input is not valid.
+
+    Examples:
+        >>> get_date_for_last_day_in_decad(1)
+        'YYYY-01-05'
+        >>> get_date_for_last_day_in_decad(36)
+        'YYYY-12-31'
+    """
+    if not isinstance(decad_in_year, int):
+        try:
+            decad_in_year = int(decad_in_year)
+        except ValueError:
+            raise ValueError('Invalid decad') from None
+
+    if not isinstance(year, int):
+        try:
+            year = int(year)
+        except ValueError:
+            raise ValueError('Invalid year') from None
+
+    try:
+        # Calculate the month and the decad within the month
+        month = (decad_in_year - 1) // 3 + 1
+        decad_in_month = (decad_in_year - 1) % 3 + 1
+
+        # Calculate the first day of the decad
+        first_day_of_decad = 10 * (decad_in_month - 1) + 1
+
+        # Calculate the last day of the pentad
+        last_day_of_decad = 10 * decad_in_month
+
+        # Ensure the calculated day is valid within the month
+        days_in_month = (dt.date(year, month, 1) + dt.timedelta(days=31)).replace(day=1) - dt.timedelta(days=1)
+        if last_day_of_decad > 25:
+            last_day_of_decad = days_in_month.day
+
+        # Create the date
+        date = dt.date(year, month, last_day_of_decad)
+
+        # Return the date as a string in 'YYYY-MM-DD' format
+        return date.strftime('%Y-%m-%d')
+
+    except Exception as e:
+        # Return None if there's an error (invalid pentad, etc.)
+        print(f"Error: {e}")
+        return None
 
 def get_month_str_latin(date_str):
     """
