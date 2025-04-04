@@ -1466,48 +1466,53 @@ update_forecast_tabulator(station, model_checkbox, allowable_range_selection, ma
 
 def update_visualizations():
     # Re-bind the plots to use the updated data
-
+    #print('---   ---plot_pentad_forecast_hydrograph_data---   ---')
     viz.plot_pentad_forecast_hydrograph_data(
         _, 
-        hydrograph_pentad_all,
-        forecasts_all,
-        station,
-        date_picker,
-        model_checkbox,
-        allowable_range_selection,
-        manual_range,
-        show_range_button
+        hydrograph_pentad_all=hydrograph_pentad_all,
+        forecasts_all=forecasts_all,
+        station=station.value,
+        title_date=date_picker.value,
+        model_selection=model_checkbox.value,
+        range_type=allowable_range_selection.value,
+        range_slider=manual_range.value,
+        range_visibility=show_range_button.value
     )
+    #print('---   ---done with plot_pentad_forecast_hydrograph_data---   ---')
 
+    #print('---   ---plot_pentad_forecast_hydrograph_data_v2---   ---')
     viz.plot_pentad_forecast_hydrograph_data_v2(
         _, 
-        hydrograph_day_all,
-        linreg_predictor,
-        forecasts_all,
-        station,
-        date_picker,
-        model_checkbox,
-        allowable_range_selection,
-        manual_range,
-        show_range_button,
-        rram_forecast,
-        ml_forecast
+        hydrograph_day_all=hydrograph_day_all,
+        linreg_predictor=linreg_predictor,
+        forecasts_all=forecasts_all,
+        station=station.value,
+        title_date=date_picker.value,
+        model_selection=model_checkbox.value,
+        range_type=allowable_range_selection.value,
+        range_slider=manual_range.value,
+        range_visibility=show_range_button.value,
+        rram_forecast=rram_forecast,
+        ml_forecast=ml_forecast
     )
+    #print('---   ---done with plot_pentad_forecast_hydrograph_data_v2---   ---')
 
+    #print('---   ---update_forecast_tabulator---   ---')
     update_forecast_tabulator(station, model_checkbox, allowable_range_selection, manual_range)
+    #print('---   ---done with update_forecast_tabulator---   ---')
 
 
 def on_data_needs_reload_changed(event):
     if event.new:
         print("Triggered rerunning of forecasts.")
         try:
-            print("---loading data---")
+            #print("---loading data---")
             load_data()
-            print("---data loaded---")
-            print("---updating viz---")
+            #print("---data loaded---")
+            #print("---updating viz---")
             update_visualizations()
-            print("---viz updated---")
-            print("Forecasts produced and visualizations updated successfully.")
+            #print("---viz updated---")
+            #print("Forecasts produced and visualizations updated successfully.")
         except Exception as e:
             print(f"Error during forecast rerun: {e}")
         finally:

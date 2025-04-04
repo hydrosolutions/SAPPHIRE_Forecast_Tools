@@ -1216,19 +1216,21 @@ def perform_linear_regression(
             #logger.debug(f"columns of station_data: {station_data.columns}")
             #logger.debug(f"station_data: {station_data}")
             forecast_date = tl.get_date_for_last_day_in_pentad(forecast_pentad)
+            first_day_of_forecast_horizon = pd.to_datetime(forecast_date).date() + pd.DateOffset(days=1)
             logger.debug(f"forecast_date: {forecast_date}")
             if horizon_flag == 'pentad':
-                pentad_in_month = tl.get_pentad(forecast_date)
-                logger.debug(f"pentad_in_month: {pentad_in_month}")
+                pentad_in_month = tl.get_pentad(first_day_of_forecast_horizon)
+                logger.debug(f"pentad_in_month: {first_day_of_forecast_horizon}")
             elif horizon_flag == 'decad':
-                pentad_in_month = tl.get_decad_in_month(forecast_date)
-                logger.debug(f"decad_in_month: {pentad_in_month}")
+                pentad_in_month = tl.get_decad_in_month(first_day_of_forecast_horizon)
+                logger.debug(f"decad_in_month: {first_day_of_forecast_horizon}")
             else:
                 raise ValueError(f"horizon_flag {horizon_flag} is not valid.")
-            title_month = tl.get_month_str_en(forecast_date)
+            title_month = tl.get_month_str_en(first_day_of_forecast_horizon)
             logger.debug(f"title_month: {title_month}")
             save_file_name = f"{station}_{pentad_in_month}_{horizon_flag}_of_{title_month}.csv"
             save_file_path = os.path.join(SAVE_DIRECTORY, save_file_name)
+            logger.debug(f"save_file_path: {save_file_path}")
 
             # Check if the file exists
             if os.path.exists(save_file_path):
@@ -1244,11 +1246,14 @@ def perform_linear_regression(
                 # Drop the 'visible' and 'year' columns
                 station_data.drop(columns=['visible', 'year'], inplace=True)
                 #logger.debug(f"station_data after point selection: {station_data}")
+            else: 
+                if station == '15013':
+                   logger.debug(f"No point selection file {save_file_path} available for site {station}. Skipping point selection.")
 
         #if int(station) == 15030:
         #    logger.debug("DEBUG: forecasting:perform_linear_regression: station_data: \n%s",
         #                  station_data[['date', pentad_col, station_col, predictor_col, discharge_avg_col]].tail(10))
-
+        exit()
 
         # Get the discharge_sum and discharge_avg columns
         discharge_sum = station_data[predictor_col].values.reshape(-1, 1)
