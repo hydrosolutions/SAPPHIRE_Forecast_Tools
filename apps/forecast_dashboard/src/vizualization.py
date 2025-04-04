@@ -260,10 +260,10 @@ def add_custom_xticklabels_daily_dates(_, leap_year, plot, element):
 
     # Create a date for each tick, based on days, months (1-12), and the year
     datetimes = [dt.datetime(year, month, day) for month, day in month_day_tuples]
-    print("datetimes\n", datetimes[0])
+    #print("datetimes\n", datetimes[0])
     # Convert datetimes to timestamps
     timestamps = [int(time.mktime(dt.timetuple())) for dt in datetimes]
-    print("ticks\n", timestamps[0])
+    #print("ticks\n", timestamps[0])
 
     labels = {timestamps[0]:_('Jan')+', 1', timestamps[1]:'2', timestamps[2]:'3',
               timestamps[3]:'4', timestamps[4]:'5', timestamps[5]:'6',
@@ -290,7 +290,7 @@ def add_custom_xticklabels_daily_dates(_, leap_year, plot, element):
               timestamps[66]:_('Dec')+', 1', timestamps[67]:'2', timestamps[68]:'3',
               timestamps[69]:'4', timestamps[70]:'5', timestamps[71]:'6'}
 
-    print("labels\n", labels[0])
+    #print("labels\n", labels[0])
 
     # Create a FixedTicker and a CustomJSTickFormatter with the specified ticks and labels
     ticker = FixedTicker(ticks=list(labels.keys()))
@@ -657,8 +657,8 @@ def plot_current_runoff_forecasts(data, date_col, forecast_data_col,
     # Decide which colors to display
     # list of unique models in data
     models = data[forecast_name_col].unique()
-    print(f"DEBUG: MODEL: Number of models in plot_current_runoff_forecasts: {len(models)}")
-    print(f"DEBUG: MODEL: namely: {models}")
+    #print(f"DEBUG: MODEL: Number of models in plot_current_runoff_forecasts: {len(models)}")
+    #print(f"DEBUG: MODEL: namely: {models}")
     if len(models) > len(runoff_forecast_colors):
         # Add some random colors if there are more models than colors
         runoff_forecast_color = runoff_forecast_colors + ['#%06X' % random.randint(0, 0xFFFFFF) for i in range(len(models) - len(runoff_forecast_colors))]
@@ -1194,8 +1194,8 @@ def plot_current_runoff_forecast_range_date_format_v2(
     # Decide which colors to display
     # list of unique models in data
     models = data[forecast_name_col].unique()
-    print(f"DEBUG: MODEL: Number of models in hydrograph plot: {len(models)}")
-    print(f"           {models}")
+    #print(f"DEBUG: MODEL: Number of models in hydrograph plot: {len(models)}")
+    #print(f"           {models}")
     if len(models) > len(runoff_forecast_colors):
         # Add some random colors if there are more models than colors
         runoff_forecast_color = runoff_forecast_colors + ['#%06X' % random.randint(0, 0xFFFFFF) for i in range(len(models) - len(runoff_forecast_colors))]
@@ -1622,8 +1622,8 @@ def plot_daily_hydrograph_data(_, hydrograph_day_all, linreg_predictor, station,
     linreg_predictor = processing.add_predictor_dates(linreg_predictor, station, title_date)
 
     data = hydrograph_day_all[hydrograph_day_all['station_labels'] == station].copy()
-    print("\n\n\ncolumns of data: ", data.columns)
-    print("head and tail of data: \n", data.head(), "\n", data.tail())
+    #print("\n\n\ncolumns of data: ", data.columns)
+    #print("head and tail of data: \n", data.head(), "\n", data.tail())
     current_year = int(data['date'].dt.year.max())
     last_year = current_year - 1
 
@@ -1733,7 +1733,7 @@ def plot_daily_hydrograph_data(_, hydrograph_day_all, linreg_predictor, station,
         tools=['hover'],
         toolbar='right')
 
-    print("\n\n")
+    #print("\n\n")
 
     return daily_hydrograph
 
@@ -2547,7 +2547,7 @@ def plot_pentad_forecast_hydrograph_data_v2(_, hydrograph_day_all, linreg_predic
         toolbar='right',
         shared_axes=False)
 
-    print("\n\n")
+    #print("\n\n")
 
     return daily_hydrograph
 
@@ -2680,6 +2680,9 @@ def plot_pentad_forecast_hydrograph_data(_, hydrograph_pentad_all, forecasts_all
     #print(f"\n\nDEBUG: plot_pentad_forecast_hydrograph_data")
     #print(f"title_date: {title_date}")
     forecast_date = title_date + dt.timedelta(days=1)
+    #print(f"forecast_date: {forecast_date}")
+
+    # Get variables depending on forecast horizon (pentad or decad)
     horizon = os.getenv("sapphire_forecast_horizon", "pentad")
     if horizon == "pentad":
         horizon_in_year = "pentad_in_year"
@@ -2710,10 +2713,6 @@ def plot_pentad_forecast_hydrograph_data(_, hydrograph_pentad_all, forecasts_all
                       f"{title_decad} {_('decad')} {_('of')} {title_month} "
                       f"({_('days')} {title_day_start}-{title_day_end})")
 
-    #print(f"forecast_date: {forecast_date}")
-    #print(f"title_pentad: {title_pentad}")
-    #print(f"title_month: {title_month}")
-
     # filter hydrograph_day_all & linreg_predictor by station
     #linreg_predictor = processing.add_predictor_dates(linreg_predictor, station, title_date)
 
@@ -2721,6 +2720,10 @@ def plot_pentad_forecast_hydrograph_data(_, hydrograph_pentad_all, forecasts_all
     forecasts = forecasts_all[(forecasts_all['station_labels'] == station) &
                             (forecasts_all['year'] == title_date.year) &
                             (forecasts_all['model_short'].isin(model_selection))].copy()
+    
+    # Test if forecasts is empty
+    if forecasts.empty:
+        print(f"DEBUG: No forecasts found for station {station} for date {title_date}")
 
     # Cast date to datetime
     forecasts['date'] = pd.to_datetime(forecasts['date'])
@@ -2750,11 +2753,18 @@ def plot_pentad_forecast_hydrograph_data(_, hydrograph_pentad_all, forecasts_all
         forecasts.loc[:, 'fc_upper'] = np.minimum(forecasts.loc[:, 'forecasted_discharge'] + forecasts.loc[:, 'delta'],
                                                     (1 + range_slider/100.0) * forecasts.loc[:, 'forecasted_discharge'])
 
+    # Print column names of hydrograph_pentad_all
+    #print("hydrograph_pentad_all.columns\n", hydrograph_pentad_all.columns)
+    # Print unique station_labels for hydrograph_pentad_all
+    #print("hydrograph_pentad_all['station_labels'].unique()\n", hydrograph_pentad_all['station_labels'].unique())
+    # Print station
+    #print("station\n", station)
+
     # Filter hydrograph data for the current station
     data = hydrograph_pentad_all[hydrograph_pentad_all['station_labels'] == station].copy()
-    print("\n\nFirst getting data for station:")
-    print("head of data:\n", data.head()[['code', horizon_in_year, 'mean', '2024', '2025', 'date']])
-    print("tail of data:\n", data.tail()[['code', horizon_in_year, 'mean', '2024', '2025', 'date']])
+    #print("\n\nFirst getting data for station:")
+    #print("head of data:\n", data.head()[['code', horizon_in_year, 'mean', '2024', '2025', 'date']])
+    #print("tail of data:\n", data.tail()[['code', horizon_in_year, 'mean', '2024', '2025', 'date']])
 
     current_year = int(data['date'].dt.year.max())
     last_year = current_year - 1
@@ -2771,9 +2781,9 @@ def plot_pentad_forecast_hydrograph_data(_, hydrograph_pentad_all, forecasts_all
         data['date'].iloc[0] = pd.Timestamp(f"{current_year}-01-01")
 
     # Print pentad of first date in data
-    print(f"\n\n\n\n\n{horizon} of first date in data: {data[horizon_in_year].iloc[0]} of {data['date'].iloc[0]}")
-    print(f"head(data): {data.head()[['code', horizon_in_year, 'norm', 'mean', '2024', '2025', 'date']]}")
-    print(f"data.columns: {data.columns}")
+    #print(f"\n\n\n\n\n{horizon} of first date in data: {data[horizon_in_year].iloc[0]} of {data['date'].iloc[0]}")
+    #print(f"head(data): {data.head()[['code', horizon_in_year, 'norm', 'mean', '2024', '2025', 'date']]}")
+    #print(f"data.columns: {data.columns}")
 
     # Set values after the title date to NaN
     # WHY DO WE DO THAT?
@@ -2911,7 +2921,7 @@ def plot_pentad_forecast_hydrograph_data(_, hydrograph_pentad_all, forecasts_all
         #tools=['hover'],
         toolbar='right')
 
-    print("\n\n")
+    #print("\n\n")
 
     return pentad_hydrograph
 
@@ -2932,14 +2942,14 @@ def create_forecast_summary_table(_, forecasts_all, station, date_picker,
     # Cast date column to datetime
     forecast_table['date'] = pd.to_datetime(forecast_table['date'])
 
-    print(f"create_forecast_summary_table: model_selection: {model_selection}")
+    #print(f"create_forecast_summary_table: model_selection: {model_selection}")
     all_models = list()
     for key, value in model_selection.options.items():
         all_models.append(value)
 
     # List of unique models in forecast_table before filtering.
-    print(f"create_forecast_summary_table: forecast_table['model_short'].unique(): {forecast_table['model_short'].unique()}")
-    print(f"columns of forecast_table: {forecast_table.columns}")
+    #print(f"create_forecast_summary_table: forecast_table['model_short'].unique(): {forecast_table['model_short'].unique()}")
+    #print(f"columns of forecast_table: {forecast_table.columns}")
 
     # Filter further for the selected date
     if hasattr(date_picker, 'value'):
@@ -2951,9 +2961,9 @@ def create_forecast_summary_table(_, forecasts_all, station, date_picker,
                                         (forecast_table['model_short'].isin(all_models))].copy().reset_index(drop=True)
 
     # List of unique models in forecast_table after filtering.
-    print(f"create_forecast_summary_table: forecast_table['model_short'].unique(): {forecast_table['model_short'].unique()}")
+    #print(f"create_forecast_summary_table: forecast_table['model_short'].unique(): {forecast_table['model_short'].unique()}")
     # print columns model_short, date, and forecasted_discharge
-    print(f"create_forecast_summary_table: forecast_table[['model_short', 'date', 'forecasted_discharge']].tail(10): {forecast_table[['model_short', 'date', 'forecasted_discharge']].tail(10)}")
+    #print(f"create_forecast_summary_table: forecast_table[['model_short', 'date', 'forecasted_discharge']].tail(10): {forecast_table[['model_short', 'date', 'forecasted_discharge']].tail(10)}")
 
     # Select the row with the maximum date
     if not forecast_table.empty and not forecast_table['date'].empty:
@@ -3028,7 +3038,7 @@ def create_forecast_summary_tabulator(_, forecasts_all, station, date_picker,
         max_accuracy_index = 0
     #print("max_accuracy_index\n", max_accuracy_index)
 
-    print("final_forecast_table\n", final_forecast_table)
+    #print("final_forecast_table\n", final_forecast_table)
 
     # Update the Tabulator's value
     forecast_tabulator.value = final_forecast_table
@@ -3048,7 +3058,7 @@ def create_forecast_summary_tabulator(_, forecasts_all, station, date_picker,
 
 def draw_forecast_raw_data(_, forecasts_linreg, station_widget, date_picker):
 
-    print("forecasts_linreg.head():\n", forecasts_linreg.head())
+    #print("forecasts_linreg.head():\n", forecasts_linreg.head())
 
     # From date_picker, get the pentad and month of the latest forecast
     forecast_date = date_picker + dt.timedelta(days=1)
@@ -3260,7 +3270,7 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector, d
         partial_title_text = f"{title_decad} {_(' decade of ')} {title_month} "
 
         decad_in_month = selected_decad % 3 if selected_decad % 3 != 0 else 3
-        partial_file_name = f"{decad_in_month}_decade_of_{title_month}"
+        partial_file_name = f"{decad_in_month}_decad_of_{title_month}"
 
         horizon_value = selected_decad
         add_date_column = lambda horizon_value: tl.get_date_for_decad(horizon_value)

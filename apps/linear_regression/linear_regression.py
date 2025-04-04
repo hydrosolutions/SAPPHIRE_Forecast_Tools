@@ -221,10 +221,10 @@ def main():
             linreg_pentad = fl.perform_linear_regression(
                 data_df=discharge_pentad,
                 station_col='code',
-                pentad_col='pentad_in_year',
+                horizon_col='pentad_in_year',
                 predictor_col='discharge_sum',
                 discharge_avg_col='discharge_avg',
-                forecast_pentad=int(forecast_pentad_of_year))
+                forecast_horizon_int=int(forecast_pentad_of_year))
 
             #logger.debug(f"linreg_pentad.head: {linreg_pentad.head()}")
             logger.debug(f"linreg_pentad.tail (linreg): {linreg_pentad.tail()}")
@@ -282,10 +282,10 @@ def main():
             linreg_decad = fl.perform_linear_regression(
                 data_df=discharge_decad,
                 station_col='code',
-                pentad_col='decad_in_year',
+                horizon_col='decad_in_year',
                 predictor_col='predictor',
                 discharge_avg_col='discharge_avg',
-                forecast_pentad=int(forecast_decad_of_year))
+                forecast_horizon_int=int(forecast_decad_of_year))
 
             #logger.debug(f"Linear regression for decad: {linreg_decad.head()}")
 

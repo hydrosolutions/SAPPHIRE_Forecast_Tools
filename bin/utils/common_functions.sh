@@ -220,7 +220,7 @@ start_docker_compose_dashboards() {
     echo "| ------"
     echo "| Starting Docker Compose service for the dashboards..."
     echo "| Deploying dashboard to: ieasyhydroforecast_url: $ieasyhydroforecast_url"
-    ieasyhydroforecast_url=$ieasyhydroforecast_url docker compose -f bin/docker-compose-dashboards.yml up -d &
+    ieasyhydroforecast_url=$ieasyhydroforecast_url ieasyhydroforecast_frontend_docker_image_tag=$ieasyhydroforecast_frontend_docker_image_tag docker compose -f bin/docker-compose-dashboards.yml up -d &
     DOCKER_COMPOSE_DASHBOARD_PID=$!
     echo "| Docker Compose service started with PID $DOCKER_COMPOSE_DASHBOARD_PID"
 }
