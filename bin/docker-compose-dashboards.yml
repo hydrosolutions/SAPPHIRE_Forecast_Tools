@@ -43,7 +43,7 @@ services:
       - ieasyhydroforecast_env_file_path=${ieasyhydroforecast_env_file_path}
       - ieasyhydroforecast_url=${ieasyhydroforecast_url}
       - ALLOWED_WEBSOCKET_ORIGINS=${ieasyhydroforecast_url}
-      - sapphire_forecast_horizon='pentad'
+      - sapphire_forecast_horizon=pentad
     command: >
       bash -c "
       ORIGINS_ARGS=$(echo $${ieasyhydroforecast_url} | sed 's/,/ --allow-websocket-origin=/g' | sed 's/^/--allow-websocket-origin=/') &&
@@ -83,7 +83,7 @@ services:
       - ieasyhydroforecast_env_file_path=${ieasyhydroforecast_env_file_path}
       - ieasyhydroforecast_url=${ieasyhydroforecast_url}
       - ALLOWED_WEBSOCKET_ORIGINS=${ieasyhydroforecast_url}
-      - sapphire_forecast_horizon='decad'
+      - sapphire_forecast_horizon=decad
     command: >
       bash -c "
       ORIGINS_ARGS=$(echo $${ieasyhydroforecast_url} | sed 's/,/ --allow-websocket-origin=/g' | sed 's/^/--allow-websocket-origin=/') &&
