@@ -544,6 +544,8 @@ You can specifiy the HRU for which you need the control member forecast and the 
 
 In order to keep the hindcast data updated, you can run the extend_era5_reanalysis.py script. This only works if you have operational data and you should ensure that you don't have any gaps longer than 6 months between the end of the hindcast file, and the start of the operational forcing data, or else you will have some forcing gaps.
 
+You can set the HRU for which you need snow data (ieasyhydroforecast_HRU_SNOW_DATA) and which are the variables you are interested in (ieasyhydroforecast_SNOW_VARS).
+
 ### 2.2.4 Linear regression (linear_regression)
 
 #### Description of module
