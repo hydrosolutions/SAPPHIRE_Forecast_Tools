@@ -308,8 +308,10 @@ The proprocessing_gateway module gets weather forecasts and re-analysis weather 
 - Operational workflow:
   - Downolading of operational weather forecasts and downscaling of weather forecasts (Quantile_Mapping_OP.py)
   - Updating of re-analysis weather data and downscaling of re-analysis weather data (extend_era5_reanalysis.py)
+  - Downloading the operational snow forecast(snow_data_operational.py).
 - Production of hindcasts:
   - Downloading of re-analysis weather data and downscaling of re-analysis weather data (get_era5_reanalysis_data.py)
+  - Downloading of the re-analysis snow data (snow_data_reanalysis.py)
 
 The Quantile_Mapping_OP.py script accesses the the SAPPHIRE Data Gateway and downloads the ERA5 ECMWF IFS control member and ensemble forecast. Afterwards, it can perform a downscaling using the quantile mapping  method using a set of previously fitted parameters. The fitting of the parameters for downscaling is performed with a parametric transformations where the new transformed value is obtained by the formula $y = a*x^b$ in the [fitQmap](#https://search.r-project.org/CRAN/refmans/qmap/html/fitqmapptf.html) package in R. As we use operational weather forecasts from ECMWF served through the SAPPHIRE Data Gateway, we do not expect to have any gaps in the weather forecast time series. However, in case there should be nan values in the forcing data, the preprocessing_gateway module fills them by taking the last available observation.
 
@@ -317,7 +319,11 @@ TODO: Sandro: the downscaling is optional as I understand. How can a user turn t
 
 The extend_era5_reanalysis.py file is used to maintain a set of past and current weather forcing data for each river basin. It is updated operationally by appending the latest ERA5 Land Reanalysis data to the hindcast forcing file. It reads in the hindcast file and the operational forcing data, combines them and removes dublicates.
 
+The snow_data_operational.py script accesses the SAPPHIRE Data Gateway and downloads the forecast from the TopoPyScale snow model. Additionally, it also gets the data for the past 365 days. This process is done for a set of user defined HRU's (ieasyhydroforecast_HRU_SNOW_DATA) (Note that the TopoPyScale snow model is not valid on glaciers, therefore it is suggested to upload shapefiles,where the glaciers were removed). There are three possible variables which can be downloaded (ieasyhydroforecast_SNOW_VARS). SWE (snow water equivalent (mm)), HS (snow water depth (m)) and RoF (runoff from snowmelt and precipitation (mm)). The new operational data is directly appended to the file which also contains the historical data.
+
 The get_era5_reanalysis_data.py is an initialization file. It also accesses the data-gateway and pulls the ERA5 Land Reanalysis data for a provided time window and a given HRU. It also performs the downscaling on this data. The reason behind this script is, to obtain a file where we have past forcing data saved to perform for example hindcasts.
+
+The snow_data_reanalysis.py script is an initialization file. It accesses the SAPPHIRE Data Gateway and downloads the snow data for the user specified HRU's (ieasyhydroforecast_HRU_SNOW_DATA) and variables (ieasyhydroforecast_SNOW_VARS) for the time period of 2000 to (today - 180 days). 
 
 #### Prerequisites
 
@@ -402,6 +408,15 @@ Here is the folder structure represented which interacts with the module preproc
 
             -   YOUR_HRU_T_reanalysis.csv
 
+        -   snow_data
+
+            -   SWE
+                -   YOUR_HRU_SWE.csv
+            -   HS
+                -   YOUR_HRU_HS.csv
+            -   RoF
+                -   YOUR_HRU_RoF.csv
+
 The only input file you need to provide, if you would like to make the downscaling, are the files in the params_quantile_mapping folder. This files should have the following structure:
 
 | code  | a                | b                | wet_day             |
@@ -426,7 +441,7 @@ When accessing the SAPPHIRE data gateway, the client downloads a csv file and sa
 
 The ensemble forecast files downloaded through the data gateway client have the following format (corresponding to the forcing data file format of the free hydrologic-hydraulic model [RS Minerve](https://crealp.ch/rs-minerve/) developed and maintained by the [CREALP](https://crealp.ch/) foundation):
 
-|                   | YOUR_NAME          |
+|                   | name               |
 |-------------------|--------------------|
 | **Sensor**        | T                  |
 | **Category**      | Temperature        |
@@ -439,8 +454,7 @@ The ensemble forecast files downloaded through the data gateway client have the 
 | **...**           | ...                |
 |
 
-TODO: Sandro: What is YOUR_NAME above? Is this defined in the shapefile that you upload to the data gateway?
-
+Here the name is defined in the shapefile (see "How to run the model")
 And for the control member it looks like this:
 
 | Station           | xxxx1              | xxxx2              | xxxx1.1            | xxxx2.1            |
@@ -470,9 +484,39 @@ These files are than transformed and, optionally, downscaled. The transformed (a
 | ...       | ...  | ...   | ...             |
 |
 
-**TODO:** if snow data like SWE and melt is added. Update the documentation.
-
 The files in the hindcast folder (YOUR_HRU_P_reanalysis.csv) have the exact same format as the control member file.
+
+The snow data comes in the following format from the SAPPHIRE Data-Gateway, for both the operational and re-analysis data.
+
+|                   | name               |
+|-------------------|--------------------|
+| **Sensor**        | snow               |
+| **Category**      | Height             |
+| **Unit**          | mm                 |
+| **Interpolation** | linear             |
+| **21.08.2024**    | 49.886254967534398 |
+| **22.08.2024**    | 46.874600198227881 |
+| **23.08.2024**    | 43.76900162280549  |
+| **24.08.2024**    | 45.889982012342898 |
+| **...**           | ...                |
+
+This data is then transformed into the same format as previously shown. The name of the SWE columns is replaced with the correspondign variable for HS and RoF.
+
+| date       | SWE    | code  |
+|------------|------|-------|
+| 2024-08-21 | 7.26 | xxxx1 | 
+| 2024-08-22 | 7.62 | xxxx1 | 
+| 2024-08-23 | 8.95 | xxxx1 |
+| ...       | ...  | ...   | 
+
+If the provided HRU contains multiple zones per basin (for example elevation bands), then the format looks slightly different. Here SWE_1 represents the first elevation band, SWE_2 the second and so on. Note that the elevation bands are infered from the name column of the shapefile of the shapefile. The name is expected to be {basin code}_{elevation band}.
+
+| date       | code  | SWE_1 | SWE_2 | SWE_x |
+|------------|-------| ------ | -----| ----- |
+| 2024-09-21 |  xxxx1 | 12.1 | 13.3 | 15.1 |
+| 2024-09-22 |  xxxx1 | 12.2 | 13.6 | 15.7 |
+| 2024-09-23 |  xxxx1 | 12.9 | 14.2 | 15.9 |
+| ...       |  ...   | 13.5  | 14.9 | 16.2 |
 
 #### How to run the tool
 As mentioned above, the preprocessing_gateway module requires access to operational data provided by the SAPPHIRE Data Gateway.
@@ -482,7 +526,7 @@ The first thing you need to ensure is that your HRU is on the SAPPHIRE data-gate
 |-----------|-----|----------|
 | YOUR_CODE | 1   | ...      |
 
-Ensure that you are consistent with the codes and name. If you have processed your HRU on the data-gateway you are ready to proceed.
+Ensure that you are consistent with the codes and name. If you have a HRU with multiple zones per basins set the name according to this scheme: {basin}_{zone}. If you have processed your HRU on the data-gateway you are ready to proceed.
 
 First you might want to download hindcast data from the SAPPHIRE Data Gateway so that you can produce hindcasts with your models to calculate forecast skill statistics over an extended time period (ensure that you have triggered the ERA5 land reanalysis on the data-gateway for this period). You can do this by running the following command in the terminal:
 
@@ -499,6 +543,8 @@ SAPPHIRE_OPDEV_ENV=True python Quantile_Mapping_OP.py
 You can specifiy the HRU for which you need the control member forecast and the HRU's for which you need the ensemble forecast in the config file (ieasyhydroforecast_HRU_CONTROL_MEMBER and ieasyhydroforecast_HRU_ENSEMBLE).
 
 In order to keep the hindcast data updated, you can run the extend_era5_reanalysis.py script. This only works if you have operational data and you should ensure that you don't have any gaps longer than 6 months between the end of the hindcast file, and the start of the operational forcing data, or else you will have some forcing gaps.
+
+You can set the HRU for which you need snow data (ieasyhydroforecast_HRU_SNOW_DATA) and which are the variables you are interested in (ieasyhydroforecast_SNOW_VARS).
 
 ### 2.2.4 Linear regression (linear_regression)
 
