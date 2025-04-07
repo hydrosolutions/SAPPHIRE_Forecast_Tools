@@ -31,4 +31,4 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 # The docker container will then return an error code if the first script fails
 # and subsequent luigi tasks will know not to run if no operational weather
 # data is available.
-CMD ["sh", "-c", "python apps/preprocessing_gateway/Quantile_Mapping_OP.py && python apps/preprocessing_gateway/extend_era5_reanalysis.py && python apps/snow_data_operational.py"]
+CMD ["sh", "-c", "python apps/preprocessing_gateway/Quantile_Mapping_OP.py && python apps/preprocessing_gateway/extend_era5_reanalysis.py && python apps/preprocessing_gateway/snow_data_operational.py"]
