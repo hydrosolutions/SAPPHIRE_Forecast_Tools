@@ -54,7 +54,7 @@ Conceptual rainfall runoff models (RRM) implement the main runoff formation proc
 This type of forecasting is state-of-the-art and often used in operational runoff forecasting in Central Europe. We have this model type for Ala Archa and Toktogul Inflow only because model setup, calibration and validation are much more involved than for empirical models.
 
 **Ensemble Mean (EM)**
-The average pentadal forecast over all models which have a forecast accuracy of 80% or higher is combined in the ensemble mean.
+The average pentadal or decadal forecast over all models which have a forecast accuracy of 80% or higher is combined in the ensemble mean.
 </details>
 
 <details>
@@ -89,7 +89,7 @@ The average pentadal forecast over all models which have a forecast accuracy of 
 Этот тип прогнозирования является современным и часто используется в оперативном прогнозировании стока в Центральной Европе. Мы имеем этот тип модели только для Ала-Арчи и притока в Токтогул, так как настройка модели, калибровка и валидация гораздо более сложны, чем для эмпирических моделей.
 
 **Среднее ансамбля (EM)**
-Средний пентадальный прогноз по всем моделям с точностью прогноза 80% и выше комбинируется в ансамблевое среднее.
+Средний пентадальный или декадный прогноз по всем моделям с точностью прогноза 80% и выше комбинируется в ансамблевое среднее.
 
 
 </details>

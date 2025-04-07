@@ -94,7 +94,8 @@ You may have to open specific ports on your server to allow you to view the dash
 - 81 for nginx proxy manager (optional)
 - 443 for https
 - 3647 for the configuration dashboard (optional)
-- 5006 for the forecast dashboard
+- 5006 for the forecast dashboard for displaying pentadal forecasts
+- 5007 for the forecast dashboard for displaying decadal forecasts
 - 8082 for the luigi task monitor (optional)
 
 ### Copy your data to the repository
@@ -133,7 +134,7 @@ nohup bash .bin/run_sapphire_forecast_tools.sh /absolute/path/to/SAPPHIRE_Foreca
 This will run the forecast tools in the background and redirect the output to a log file called logfile.log. The log file will be stored in the SAPPHIRE_Forecast_Tools folder.
 
 ### Accessing the outputs
-You should now be able to view the configuration dashboard in your browser under <your servers url> and the forecast dashboard under <your servers url>:5006/penetad_dashboard. You can trigger the writing of the forecast bulletins from the forecast dashboard.
+You should now be able to view the configuration dashboard in your browser under <your servers url> and the forecast dashboard under <your servers url>:5006/forecast_dashboard for pentadal or <your servers url>:5007/forecast_dashboard for decadal forecasts. You can trigger the writing of the forecast bulletins from the forecast dashboard.
 
 ### Monitoring the forecast tools
 You can check the progress of the forecast tools by looking at the log file with one of the following command:
