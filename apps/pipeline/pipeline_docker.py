@@ -985,6 +985,8 @@ class PostProcessingForecasts(pu.TimeoutMixin, luigi.Task):
             return LinearRegression()
         if ORGANIZATION=='kghm':
             return [ConceptualModel(), RunAllMLModels(), LinearRegression()]
+        if ORGANIZATION=='tjhm': 
+            return RunAllMLModels()
 
     def output(self):
         return luigi.LocalTarget(f'/app/log_postproc.txt')
@@ -1549,17 +1551,29 @@ class RunWorkflow(luigi.Task):
 
         if ORGANIZATION=='demo':
             print("Running demo workflow.")
-            base_tasks = [PostProcessingForecasts(),
-                          LogFileCleanup()]
+            base_tasks = [
+                PostProcessingForecasts(),
+                LogFileCleanup()
+            ]
 
         elif ORGANIZATION=='kghm':
             print("Running KGHM workflow.")
-            base_tasks =  [PostProcessingForecasts(),
-                           RunAllMLModels(),
-                           ConceptualModel(),
-                           DeleteOldGatewayFiles(),
-                           LogFileCleanup()
-                           ]
+            base_tasks =  [
+                PostProcessingForecasts(),
+                RunAllMLModels(),
+                ConceptualModel(),
+                DeleteOldGatewayFiles(),
+                LogFileCleanup()
+            ]
+            
+        elif ORGANIZATION=='tjhm': 
+            print("Running TJHM workflow.")
+            base_tasks =  [
+                PostProcessingForecasts(),
+                RunAllMLModels(),
+                DeleteOldGatewayFiles(),
+                LogFileCleanup()
+            ]
         # You can add workflow definitions for other organizations here.
 
         # Default to demo workflow
