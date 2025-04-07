@@ -52,10 +52,11 @@ This document describes how to develop the application and how to add hydrologic
     - [2.2.8 Manual triggering of the forecast pipeline](#228-manual-triggering-of-the-forecast-pipeline)
       - [How to re-run the forecast pipeline manually](#how-to-re-run-the-forecast-pipeline-manually)
     - [2.2.9 Forecast dashboard](#229-forecast-dashboard)
+      - [Prerequisites](#prerequisites-5)
       - [How to run the forecast dashboard locally](#how-to-run-the-forecast-dashboard-locally)
       - [How to test the dashboard containers locally](#how-to-test-the-dashboard-containers-locally)
   - [2.3 The backend (note: this module is deprecated)](#23-the-backend-note-this-module-is-deprecated)
-      - [Prerequisites](#prerequisites-5)
+      - [Prerequisites](#prerequisites-6)
       - [How to run the backend modules locally {#how-to-run-the-backend-modules-locally}](#how-to-run-the-backend-modules-locally-how-to-run-the-backend-modules-locally)
         - [Pre-processing of river runoff data {#pre-processing-of-river-runoff-data}](#pre-processing-of-river-runoff-data-pre-processing-of-river-runoff-data)
         - [Pre-processing of forcing data from the data gateway {#pre-processing-of-forcing-data-from-the-data-gateway}](#pre-processing-of-forcing-data-from-the-data-gateway-pre-processing-of-forcing-data-from-the-data-gateway)
@@ -1148,9 +1149,10 @@ where <container_id> is the id of the container you want to inspect. You can fin
 
 ### 2.2.9 Forecast dashboard
 
-TODO: Bea \#### Prerequisites The forecast dashboard is implemented in python using the panel framework. As for the backend development, we recommend the use of a Python IDE and conda for managing the Python environment. Please refer to the instructions above should you require more information on how to install these tools.
+#### Prerequisites 
+The forecast dashboard is implemented in python using the panel framework. As for the backend development, we recommend the use of a Python IDE and conda for managing the Python environment. Please refer to the instructions above should you require more information on how to install these tools.
 
-If you have already set up a python environment for the backend, you can activate it by running the following command in the terminal and skipp the installation of python_requirements.txt:
+If you have already set up a python environment for the forecast dashboard, you can activate it by running the following command in the terminal and skipp the installation of python_requirements.txt:
 
 ``` bash
 conda activate my_environment
@@ -1161,10 +1163,14 @@ conda activate my_environment
 To run the forecast dashboard locally, navigate to the apps/forecast_dashboard folder and run the following command in the terminal:
 
 ``` bash
-panel serve pentad_dashboard.py --show --autoreload --port 5009
+ieasyhydroforecast_data_root_dir=/absolute/path/to ieasyhydroforecast_env_file_path=/absolute/path/to/sensitive_data_forecast_tools/config/.env_develop_kghm sapphire_forecast_horizon=pentad SAPPHIRE_OPDEV_ENV=True panel serve forecast_dashboard.py --show --autoreload --port <port number>
 ```
 
-The options --show, --autoreload, and --port 5009 are optional. The show and autoreload options open your devault browser window (we used chrome) at <http://localhost:5009/pentad_dashboard> and automatically reload the dashboard if you save changes in the file pentad_dashboard.py. The port option tells you on which port the dashboard is being displayed. Should port 5009 be already occupied on your computer, you can change the number. You can then select the station and view predictors and forecasts in the respective tabs.
+Currently available options for the `sapphire_forecast_horizon` are `pentad` and `decad` to display forecasts for pentadal and decadal forecast horizons. If you specify `sapphire_forecast_horizon=pentad`, the dashboard will display the pentadal forecast. If you specify `sapphire_forecast_horizon=decad`, the dashboard will display the decadal forecast.    
+
+The options --show, --autoreload, and --port <port number> are optional. Please replace <port number> with a number of your choice. The default port is 5006. If you do not specify a port number, the dashboard will be displayed on port 5006.
+
+The show and autoreload options open your devault browser window (we used chrome) at <http://localhost:<port number>/forecast_dashboard> and automatically reload the dashboard if you save changes in the file forecast_dashboard.py. The port option tells you on which port the dashboard is being displayed. Should your port of choice be already occupied on your computer, you can change the number. You can then select the station and view predictors and forecasts in the respective tabs.
 
 #### How to test the dashboard containers locally
 From the project root, run: 
@@ -1308,10 +1314,11 @@ Run the image locally for testing (not for deployment). Replace <full_path_to> w
 ``` bash
 docker run -e "IN_DOCKER_CONTAINER=True" -v <full_path_to>/data:/app/data -v <full_path_to>/apps/config:/app/apps/config -v <full_path_to>/apps/internal_data/:/app/apps/internal_data -p 5006:5006 --name fcboard forecast_dashboard
 ```
+You might have to add a few additional environment variables to the command above. Please refer to the file `bin/docker-compose-dashboards.yml` for an up-to-date list of the environment variables used to run the forecast dashboard.
 
 Make sure that the port 5006 is not occupied on your computer. You can change the port number in the command above if necessary but you'll have to edit the port exposed in the docker file and edit the panel serve command in the dockerfile to make sure panel renders the dashboards to your desired port.
 
-You can now access the dashboard in your browser at <http://localhost:5006/pentad_dashboard> and review it's functionality.
+You can now access the dashboard in your browser at <http://localhost:5006/forecast_dashboard> and review it's functionality.
 
 ## How to use private data
 

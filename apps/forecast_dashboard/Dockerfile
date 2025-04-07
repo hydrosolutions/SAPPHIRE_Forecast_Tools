@@ -32,14 +32,14 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 EXPOSE 5006
 EXPOSE 5007
 
-# Test if file apps/forecast_dashboard/pentad_dashboard.py exists. Print the result.
-# CMD test -f apps/forecast_dashboard/pentad_dashboard.py && echo "File exists" || echo "File does not exist"
+# Test if file apps/forecast_dashboard/forecast_dashboard.py exists. Print the result.
+# CMD test -f apps/forecast_dashboard/forecast_dashboard.py && echo "File exists" || echo "File does not exist"
 
 # Run the application.
 # On local machine
-#CMD ["panel", "serve", "pentad_dashboard.py", "--show", "--autoreload", "--port", "5006"]
+#CMD ["panel", "serve", "forecast_dashboard.py", "--show", "--autoreload", "--port", "5006"]
 # On server
-#CMD panel serve --allow-websocket-origin=$ieasyhydroforecast_url pentad_dashboard.py --show --autoreload --num-threads 4 --address 0.0.0.0
+#CMD panel serve --allow-websocket-origin=$ieasyhydroforecast_url forecast_dashboard.py --show --autoreload --num-threads 4 --address 0.0.0.0
 
 # CMD to list all files in app/apps/forecast_dashboard and print the results to the console.
 #CMD ["/bin/sh", "-c", "echo 'here!' && ls /app/apps/forecast_dashboard && echo ' ' && pip list"]

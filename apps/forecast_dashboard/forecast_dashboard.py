@@ -1,9 +1,9 @@
-# pentad_dashboard.py
+# forecast_dashboard.py
 #
 # This script creates a dashboard for the pentadal forecast.
 #
 # Run with the following command:
-# ieasyhydroforecast_data_root_dir=/absolute/path/to ieasyhydroforecast_env_file_path=/absolute/path/to/sensitive_data_forecast_tools/config/.env_develop_kghm sapphire_forecast_horizon=pentad SAPPHIRE_OPDEV_ENV=True panel serve pentad_dashboard.py --show --autoreload --port 5055
+# ieasyhydroforecast_data_root_dir=/absolute/path/to ieasyhydroforecast_env_file_path=/absolute/path/to/sensitive_data_forecast_tools/config/.env_develop_kghm sapphire_forecast_horizon=pentad SAPPHIRE_OPDEV_ENV=True panel serve forecast_dashboard.py --show --autoreload --port 5055
 #
 
 # region load_libraries
@@ -206,7 +206,7 @@ localize.translation_manager.set_locale_dir(locale_dir=localedir)
 localize.translation_manager.language = selected_language
 
 # Load translations globally
-localize.translation_manager.load_translation_pentad_dashboard()
+localize.translation_manager.load_translation_forecast_dashboard()
 print(f"DEBUG: Selected language: {selected_language}")
 print(f"DEBUG: Translation manager language: {localize.translation_manager.language}")
 
@@ -310,8 +310,8 @@ def load_data():
     hydrograph_day_all = processing.read_hydrograph_day_data_for_pentad_forecasting(
         stations_iehhf, hydrograph_day_file_mtime)
     # print head and tail of hydrograph_day_all where code == 15194
-    print(f"DEBUG: pentad_dashboard.py: hydrograph_day_all head:\n{hydrograph_day_all[hydrograph_day_all['code'] == '15194'].head()}")
-    print(f"DEBUG: pentad_dashboard.py: hydrograph_day_all tail:\n{hydrograph_day_all[hydrograph_day_all['code'] == '15194'].tail()}")
+    print(f"DEBUG: forecast_dashboard.py: hydrograph_day_all head:\n{hydrograph_day_all[hydrograph_day_all['code'] == '15194'].head()}")
+    print(f"DEBUG: forecast_dashboard.py: hydrograph_day_all tail:\n{hydrograph_day_all[hydrograph_day_all['code'] == '15194'].tail()}")
 
     hydrograph_pentad_all = processing.read_hydrograph_pentad_data_for_pentad_forecasting(
         stations_iehhf, hydrograph_pentad_file_mtime)
@@ -326,7 +326,7 @@ def load_data():
     linreg_predictor = processing.read_linreg_forecast_data(
         stations_iehhf, linreg_forecast_file_mtime)
     # Print tail of linreg_predictor where code == '15149'
-    #print(f"DEBUG: pentad_dashboard.py: linreg_predictor tail:\n{linreg_predictor[linreg_predictor['code'] == '15149'].tail()}")
+    #print(f"DEBUG: forecast_dashboard.py: linreg_predictor tail:\n{linreg_predictor[linreg_predictor['code'] == '15149'].tail()}")
     # - forecast results from all models
     forecasts_all = processing.read_forecast_results_file(
         stations_iehhf, forecast_results_file_mtime)
@@ -341,13 +341,13 @@ def load_data():
     #    hydrograph_day_all['code'].unique().tolist())
     if not station_list:
         raise ValueError("The station list is empty. Please check the data source and ensure it contains valid stations.")
-    #print("DEBUG: pentad_dashboard.py: Station list:\n", station_list)
-    #print("DEBUG: pentad_dashboard.py: All stations: \n", all_stations)
-    #logger.debug(f"DEBUG: pentad_dashboard.py: Station list:\n{station_list}")
+    #print("DEBUG: forecast_dashboard.py: Station list:\n", station_list)
+    #print("DEBUG: forecast_dashboard.py: All stations: \n", all_stations)
+    #logger.debug(f"DEBUG: forecast_dashboard.py: Station list:\n{station_list}")
     #print(f"DEBUG: columns of all_stations:\n{all_stations.columns}")
-    #logger.debug(f"DEBUG: pentad_dashboard.py: All stations:\n{all_stations}")
-    #print(f"DEBUG: pentad_dashboard.py: Station dataframe:\n{station_df}")
-    #print(f"DEBUG: pentad_dashboard.py: Station dictionary:\n{station_dict}")
+    #logger.debug(f"DEBUG: forecast_dashboard.py: All stations:\n{all_stations}")
+    #print(f"DEBUG: forecast_dashboard.py: Station dataframe:\n{station_df}")
+    #print(f"DEBUG: forecast_dashboard.py: Station dictionary:\n{station_dict}")
     #print(f"DEBUG: First dictionary entry: {next(iter(station_dict))}")
     #print(f"DEBUG: First station: {station_dict[next(iter(station_dict))][0]}")
 
@@ -366,9 +366,9 @@ def load_data():
     #print(f"DEBUG: linreg_predictor raw: {linreg_predictor.tail()}")
     linreg_predictor = processing.add_labels_to_forecast_pentad_df(linreg_predictor, all_stations)
     #print(f"DEBUG: linreg_predictor with labels: {linreg_predictor.tail()}")
-    print(f"DEBUG: pentad_dashboard.py: linreg_predictor tail:\n{linreg_predictor[linreg_predictor['code'] == '15149'].tail()}")
+    print(f"DEBUG: forecast_dashboard.py: linreg_predictor tail:\n{linreg_predictor[linreg_predictor['code'] == '15149'].tail()}")
     linreg_datatable = processing.shift_date_by_n_days(linreg_predictor, 1)
-    print(f"DEBUG: pentad_dashboard.py: linreg_predictor tail:\n{linreg_predictor[linreg_predictor['code'] == '15149'].tail()}")
+    print(f"DEBUG: forecast_dashboard.py: linreg_predictor tail:\n{linreg_predictor[linreg_predictor['code'] == '15149'].tail()}")
     #print(f"DEBUG: linreg_datatable.columns: {linreg_datatable.columns}")
     #print(f"DEBUG: linreg_datatable: {linreg_datatable.tail()}")
     #print(f"DEBUG: linreg_predictor.columns: {linreg_predictor.columns}")
@@ -438,7 +438,7 @@ tabs_container = pn.Column()
 model_dict_all = forecasts_all[['model_short', 'model_long']] \
     .drop_duplicates() \
     .set_index('model_long')['model_short'].to_dict()
-#print(f"DEBUG: pentad_dashboard.py: station_dict: {station_dict}")
+#print(f"DEBUG: forecast_dashboard.py: station_dict: {station_dict}")
 
 pentads = [
     f"{i+1}{_('st pentad of')} {calendar.month_name[month]}" if i == 0 else
@@ -492,7 +492,7 @@ forecast_year_for_saving_bulletin = last_date.year
 # Get information for bulletin headers into a dataframe that can be passed to
 # the bulletin writer.
 bulletin_header_info = processing.get_bulletin_header_info(last_date, sapphire_forecast_horizon)
-#print(f"DEBUG: pentad_dashboard.py: bulletin_header_info:\n{bulletin_header_info}")
+#print(f"DEBUG: forecast_dashboard.py: bulletin_header_info:\n{bulletin_header_info}")
 
 # Create the dropdown widget for pentad selection
 pentad_selector = pn.widgets.Select(
@@ -512,7 +512,7 @@ decad_selector = pn.widgets.Select(
 )
 
 # Widget for station selection, always visible
-#print(f"\n\nDEBUG: pentad_dashboard.py: station select name string: {_('Select discharge station:')}\n\n")
+#print(f"\n\nDEBUG: forecast_dashboard.py: station select name string: {_('Select discharge station:')}\n\n")
 #station = layout.create_station_selection_widget(station_dict)
 station = pn.widgets.Select(
     name=_("Select discharge station:"),
@@ -522,21 +522,21 @@ station = pn.widgets.Select(
     )
 
 # Print the station widget selection
-#print(f"DEBUG: pentad_dashboard.py: Station widget selection: {station.value}")
+#print(f"DEBUG: forecast_dashboard.py: Station widget selection: {station.value}")
 
 # Update the model_dict with the models we have results for for the selected
 # station
-print("DEBUG: pentad_dashboard.py: station.value: ", station.value)
+print("DEBUG: forecast_dashboard.py: station.value: ", station.value)
 model_dict = processing.update_model_dict_date(model_dict_all, forecasts_all, station.value, date_picker.value)
-#print(f"DEBUG: pentad_dashboard.py: model_dict: {model_dict}")
+#print(f"DEBUG: forecast_dashboard.py: model_dict: {model_dict}")
 
 #@pn.depends(station, pentad_selector, watch=True)
 def get_best_models_for_station_and_pentad(station_value, pentad_value, decad_value):
     return processing.get_best_models_for_station_and_pentad(forecasts_all, station_value, pentad_value, decad_value)
 current_model_pre_selection = get_best_models_for_station_and_pentad(station.value, pentad_selector.value, decad_selector.value)
 
-#print(f"DEBUG: pentad_dashboard.py: model_dict: \n{model_dict}")
-#print(f"DEBUG: pentad_dashboard.py: current_model_pre_selection: \n{current_model_pre_selection}")
+#print(f"DEBUG: forecast_dashboard.py: model_dict: \n{model_dict}")
+#print(f"DEBUG: forecast_dashboard.py: current_model_pre_selection: \n{current_model_pre_selection}")
 
 # Widget for forecast model selection, only visible in forecast tab
 # a given hydropost/station.
@@ -843,7 +843,7 @@ def update_site_attributes_with_linear_regression_predictor(_, sites=sites_list,
 
 sites_list = update_site_attributes_with_hydrograph_statistics_for_selected_pentad(_=_, sites=sites_list, df=hydrograph_pentad_all, pentad=pentad_selector.value, decad=decad_selector.value)
 
-#print(f"DEBUG: pentad_dashboard.py before update: linreg_predictor tail:\n{linreg_predictor.loc[linreg_predictor['code'] == '15149', ['date', 'code', 'predictor', 'pentad_in_year', 'pentad_in_month']].tail()}")
+#print(f"DEBUG: forecast_dashboard.py before update: linreg_predictor tail:\n{linreg_predictor.loc[linreg_predictor['code'] == '15149', ['date', 'code', 'predictor', 'pentad_in_year', 'pentad_in_month']].tail()}")
 sites_list = update_site_attributes_with_linear_regression_predictor(_, sites=sites_list, df=linreg_predictor, pentad=pentad_selector.value, decad=decad_selector.value)
 
 # Adding the watcher logic for disabling the "Add to Bulletin" button
@@ -966,13 +966,13 @@ def update_model_select(station_value, selected_pentad, selected_decad):
 def update_model_select(station_value, selected_pentad):
     # Update the model_dict with the models we have results for for the selected
     # station
-    #print(f"DEBUG: pentad_dashboard.py: update_model_select: station_value: {station_value}")
+    #print(f"DEBUG: forecast_dashboard.py: update_model_select: station_value: {station_value}")
     updated_model_dict = processing.update_model_dict(model_dict_all, forecasts_all, station_value, selected_pentad)
     model_checkbox.options = updated_model_dict
-    #print(f"DEBUG: pentad_dashboard.py: update_model_select: updated_model_dict: {updated_model_dict}")
+    #print(f"DEBUG: forecast_dashboard.py: update_model_select: updated_model_dict: {updated_model_dict}")
     # Update the selected models based on the new options
     current_model_pre_selection = processing.get_best_models_for_station_and_pentad(forecasts_all, station_value, selected_pentad)
-    #print(f"DEBUG: pentad_dashboard.py: update_model_select: current_model_pre_selection: {current_model_pre_selection}")
+    #print(f"DEBUG: forecast_dashboard.py: update_model_select: current_model_pre_selection: {current_model_pre_selection}")
     #model_checkbox.value = [updated_model_dict[model] for model in current_model_pre_selection]
     new_pre_selection = [
         updated_model_dict[model] if "Ens. Mean" not in model else next(
@@ -1024,11 +1024,11 @@ def load_bulletin_from_csv():
     #current_bulletin_path = get_bulletin_csv_path(current_year, current_pentad)
     current_bulletin_path = get_bulletin_csv_path(forecast_year_for_saving_bulletin, forecast_horizon_for_saving_bulletin)
     # Print bulletin path
-    print(f"DEBUG: pentad_dashboard.py: current_bulletin_path: {current_bulletin_path}")
+    print(f"DEBUG: forecast_dashboard.py: current_bulletin_path: {current_bulletin_path}")
 
     if os.path.exists(current_bulletin_path):
         # Print that bulletin path exists
-        print(f"DEBUG: pentad_dashboard.py: Bulletin path exists: {current_bulletin_path}")
+        print(f"DEBUG: forecast_dashboard.py: Bulletin path exists: {current_bulletin_path}")
         try:
             bulletin_df = pd.read_csv(current_bulletin_path, encoding='utf-8-sig')
 
@@ -1533,7 +1533,7 @@ forecast_summary_table = pn.panel(
 )
 
 # Update the site object based on site and forecast selection
-#print(f"DEBUG: pentad_dashboard.py: forecast_tabulator: {forecast_summary_tabulator}")
+#print(f"DEBUG: forecast_dashboard.py: forecast_tabulator: {forecast_summary_tabulator}")
 update_site_object = pn.bind(
     Site.get_site_attributes_from_selected_forecast,
     _=_,
