@@ -202,3 +202,56 @@ def transform_data_file_control_member(data_file:pd.DataFrame) -> pd.DataFrame:
         transformed_data_file = pd.concat([transformed_data_file, code_data], axis = 0)
 
     return transformed_data_file
+
+
+
+
+# --------------------------------------------------------------------
+# SNOW MODEL
+# --------------------------------------------------------------------
+def transform_snow_data(df, var_name):
+    df = df.copy()
+    #rename the first column to date
+    columns = df.columns
+    columns = list(columns)
+    columns[0] = 'date'
+    df.columns = columns
+
+    # this is hard coded
+    df = df.iloc[4:]
+
+    df['date'] = pd.to_datetime(df['date'], dayfirst=True)
+
+    code_dict = {}
+
+    for col in df.columns:
+        if col != 'date' and col != 'Source':
+            #split by "_"
+            new_col = col.split("_")
+            if len(new_col) > 1:
+                code = int(new_col[0])
+                elevation_band = int(new_col[1])
+                new_var_name = f"{var_name}_{elevation_band}"
+            else:
+                code = int(new_col[0])
+                elevation_band = None
+                new_var_name = var_name
+
+            dates = df['date']
+            values = df[col].astype(float)
+            if code not in code_dict:
+                code_dict[code] = {'date': dates, new_var_name: values}
+            else:
+                code_dict[code][new_var_name] = values
+
+    new_df = pd.DataFrame()
+    for code, data in code_dict.items():
+        code_df = pd.DataFrame(data)
+        code_df['code'] = code
+        new_df = pd.concat([new_df, code_df], ignore_index=True)
+
+    return new_df
+
+
+
+
