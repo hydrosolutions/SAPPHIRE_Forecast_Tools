@@ -137,6 +137,75 @@ def filter_roughly_for_outliers(combined_data, group_by='Code',
 
     return combined_data
 
+def read_runoff_data_from_csv_files(filename, code_list, date_col='date', 
+                                    discharge_col='discharge', name_col='name', 
+                                    code_col='code'):
+    """
+    Read daily average river runoff data from a csv file.
+    
+    The function reads dates from the first column, station code from the second 
+    column, river runoff in m3/s from the third column and the name of the river 
+    from the third column. 
+
+    Parameters
+    ----------
+    filename : str
+        Path to the csv file containing the river runoff data.
+    date_col : str, optional
+        Name of the column containing the date data. Default is 'date'.
+    discharge_col : str, optional
+        Name of the column containing the river runoff data. Default is 'discharge'.
+    name_col : str, optional
+        Name of the column containing the river name. Default is 'name'.
+    code_col : str, optional
+        Name of the column containing the river code. Default is 'code'.
+    code_list : list, required
+        List of 5-digit codes to include in the output DataFrame
+
+    Returns
+    -------
+    pandas.DataFrame
+        A DataFrame containing the river runoff data.
+    """
+
+    # Test if code_list is None
+    if code_list is None:
+        logger.error("read_runoff_data_from_multiple_rivers_xlsx: No code list provided.")
+
+    # Test if csv file is available
+    try:
+        df = pd.read_csv(filename, header=0, usecols=[0, 1, 2, 3],
+                         names=[date_col, code_col, discharge_col, name_col])
+        print(f"read_runoff_data_from_csv_files: raw df.head(): \n{df.head()}")
+    except FileNotFoundError:
+        raise FileNotFoundError(f"File '{filename}' not found.")
+    except pd.errors.ParserError:
+        raise ValueError(f"Error parsing file '{filename}'. Please check the file format.")
+    except Exception as e:
+        raise Exception(f"An error occurred while reading the file '{filename}': {e}")
+    
+    # Test if the file is empty
+    if df.empty:
+        logger.warning(f"File '{filename}' is empty. No data to read.")
+        return pd.DataFrame()
+    
+    # Convert the date column to datetime format
+    df[date_col] = pd.to_datetime(df[date_col], format='%Y-%m-%d').dt.date
+
+    # convert discharge column to numeric format
+    df[discharge_col] = pd.to_numeric(df[discharge_col], errors='coerce')
+
+    # make sure code_col is integer
+    df[code_col] = df[code_col].astype(int)
+
+    # Filter for codes in code_list
+    if code_list is not None:
+        df = df[df[code_col].astype(str).isin(code_list)]
+
+    print(f"read_runoff_data_from_csv_files: final df.head: \n{df.head()}")
+
+    return df
+
 def read_runoff_data_from_multiple_rivers_xlsx(filename, code_list, date_col='date',
                                                discharge_col='discharge',
                                                name_col='name', code_col='code'):
@@ -423,6 +492,64 @@ def parallel_read_excel_files(file_paths: List[str],
         return pd.DataFrame()
 
     return pd.concat(results, ignore_index=True)
+
+def read_all_runoff_data_from_csv(date_col='date', 
+                                  discharge_col='discharge', 
+                                  name_col='name', 
+                                  code_col='code',
+                                  code_list=None):
+    """
+    Reads daily river runoff data from all csv files in the daily_discharge
+    directory.
+    """
+    # Test if code_list is none
+    if code_list is None:
+        logger.error("read_all_runoff_data_from_excel: No code list provided.")
+
+    # Get the path to the daily_discharge directory
+    daily_discharge_dir = os.getenv('ieasyforecast_daily_discharge_path')
+
+    # Test if the directory is available
+    if not os.path.exists(daily_discharge_dir):
+        raise FileNotFoundError(f"Directory '{daily_discharge_dir}' not found.")
+
+    # Get the list of csv files in the directory
+    files = [
+        os.path.join(daily_discharge_dir, f)
+        for f in os.listdir(daily_discharge_dir)
+        if os.path.isfile(os.path.join(daily_discharge_dir, f))
+        and f.endswith('.csv')
+    ]
+
+    # Read the data from all files
+    df = pd.DataFrame()
+    for file in files:
+        logger.info(f"Reading daily runoff from file {file}")
+        if df.empty:
+            df = read_runoff_data_from_csv_files(
+                filename=file,
+                code_list=code_list,
+                date_col=date_col,
+                discharge_col=discharge_col,
+                name_col=name_col,
+                code_col=code_col
+            )
+        else:
+            df = pd.concat([df, read_runoff_data_from_csv_files(
+                filename=file_path,
+                code_list=code_list,
+                date_col=date_col,
+                discharge_col=discharge_col,
+                name_col=name_col,
+                code_col=code_col
+            )], axis=0)
+
+    # Test if the file is empty
+    if df.empty:
+        logger.warning(f"No data found in the daily discharge directory")
+        return None
+    
+    return df
 
 def read_all_runoff_data_from_excel(date_col='date',
                                   discharge_col='discharge',
@@ -1021,13 +1148,29 @@ def get_runoff_data_for_sites(ieh_sdk=None, date_col='date',
         code_col (str, optional): The name of the column containing the site code.
             Default is 'code'.
     """
-    # Read data from excel files
-    read_data = read_all_runoff_data_from_excel(
-        date_col=date_col,
-        discharge_col=discharge_col,
-        name_col=name_col,
-        code_col=code_col,
-        code_list=code_list)
+    # Get organization from environment variable
+    organization = os.getenv('ieasyhydroforecast_organization')
+
+    if organization=='kghm': 
+        # Read data from excel files
+        read_data = read_all_runoff_data_from_excel(
+            date_col=date_col,
+            discharge_col=discharge_col,
+            name_col=name_col,
+            code_col=code_col,
+            code_list=code_list)
+    elif organization=='tjhm':
+        # Read data from csv files
+        read_data = read_all_runoff_data_from_csv(
+            date_col=date_col,
+            discharge_col=discharge_col,
+            name_col=name_col,
+            code_col=code_col,
+            code_list=code_list)
+    else:
+        # Raise an error if the organization is not recognized
+        raise ValueError(f"Organization '{organization}' not recognized. "
+                         f"Please set the environment variable 'ieasyhydroforecast_organization' to 'kghm' or 'tjhm'.")
 
     # Initialize a flag for virtual stations
     virtual_stations_present = False
