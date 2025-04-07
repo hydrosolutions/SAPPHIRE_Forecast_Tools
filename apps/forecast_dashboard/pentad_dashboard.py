@@ -3,7 +3,7 @@
 # This script creates a dashboard for the pentadal forecast.
 #
 # Run with the following command:
-# ieasyhydroforecast_data_root_dir=/absolute/path/to ieasyhydroforecast_env_file_path=/absolute/path/to/sensitive_data_forecast_tools/config/.env_develop_kghm SAPPHIRE_OPDEV_ENV=True panel serve pentad_dashboard.py --show --autoreload --port 5055
+# ieasyhydroforecast_data_root_dir=/absolute/path/to ieasyhydroforecast_env_file_path=/absolute/path/to/sensitive_data_forecast_tools/config/.env_develop_kghm sapphire_forecast_horizon=pentad SAPPHIRE_OPDEV_ENV=True panel serve pentad_dashboard.py --show --autoreload --port 5055
 #
 
 # region load_libraries
@@ -534,6 +534,9 @@ model_dict = processing.update_model_dict_date(model_dict_all, forecasts_all, st
 def get_best_models_for_station_and_pentad(station_value, pentad_value, decad_value):
     return processing.get_best_models_for_station_and_pentad(forecasts_all, station_value, pentad_value, decad_value)
 current_model_pre_selection = get_best_models_for_station_and_pentad(station.value, pentad_selector.value, decad_selector.value)
+
+#print(f"DEBUG: pentad_dashboard.py: model_dict: \n{model_dict}")
+#print(f"DEBUG: pentad_dashboard.py: current_model_pre_selection: \n{current_model_pre_selection}")
 
 # Widget for forecast model selection, only visible in forecast tab
 # a given hydropost/station.

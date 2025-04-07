@@ -742,6 +742,98 @@ def add_predictor_dates(linreg_predictor, station, date):
     Returns:
         pd.Series: The predictor data for the station.
     """
+
+    # Get lates forecast date from linre_predictor
+    linreg_predictor['date'] = pd.to_datetime(linreg_predictor['date'], format='%Y-%m-%d')
+    latest_forecast_date = linreg_predictor['date'].max()
+
+    #print(f"\n\nDEBUG: add_predictor_dates: station: {station}, date: {date}")
+    # Filter the predictor data for the hydropost
+    predictor = linreg_predictor[linreg_predictor['station_labels'] == station].copy()
+
+    # Ensure predictor is not empty
+    if predictor.empty:
+        print(f"No predictor data available for station {station} up to date {date}.")
+        return pd.DataFrame()
+
+    # Identify the next lowest date in the predictor data
+    predictor = predictor[predictor['date'] <= pd.Timestamp(date)]
+    if predictor.empty:
+        print(f"No predictor data available for station {station} before date {date}.")
+        return pd.DataFrame()
+
+    # Get the latest date in the predictor data
+    predictor = predictor.sort_values('date').iloc[-1:]
+
+    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+    if horizon == "pentad":
+        predictor_start_days = 2
+        forecast_end_days = 5
+        last_day = 26
+    else:
+        predictor_day = latest_forecast_date.day
+        if predictor_day > 20:
+            predictor_start_days = predictor_day % 20 - 1
+        else:
+            predictor_start_days = 9
+        forecast_end_days = 10
+        last_day = 21
+
+    # Add start and end days for predictor period and forecast period
+    predictor['predictor_start_date'] = latest_forecast_date - pd.DateOffset(days=predictor_start_days)
+    predictor['forecast_start_date'] = latest_forecast_date + pd.DateOffset(days=1)
+    predictor['forecast_end_date'] = latest_forecast_date + pd.DateOffset(days=forecast_end_days)
+
+    #print(f"DEBUG: add_predictor_dates: predictor:\n{predictor}")
+
+    # Round the predictor according to common rules
+    predictor['predictor'] = fl.round_discharge_to_float(predictor['predictor'].values[0])
+
+    # Test if the forecast_start_date is 26, set the forecast_end_date to the end of the month of the forecast_start_date
+    if (predictor['forecast_start_date'].dt.day == last_day).any():
+        predictor['forecast_end_date'] = predictor['forecast_start_date'] + pd.offsets.MonthEnd(0)
+
+    # Add 23 hours and 58 minutes to the forecast_end_date
+    predictor['forecast_end_date'] = predictor['forecast_end_date'] + pd.Timedelta(hours=23, minutes=58)
+
+    # Define predictor end date to be 23 hours plus 58 minutes after for 'date'
+    predictor['predictor_end_date'] = latest_forecast_date + pd.Timedelta(hours=23, minutes=58)
+
+    # Add a day_of_year column to the predictor DataFrame
+    predictor['day_of_year'] = predictor['date'].dt.dayofyear
+    predictor['predictor_start_day_of_year'] = float(predictor['predictor_start_date'].dt.dayofyear.iloc[0]) - 0.2
+    predictor['predictor_end_day_of_year'] = float(predictor['day_of_year'].iloc[0]) + 0.2
+    predictor['forecast_start_day_of_year'] = predictor['forecast_start_date'].dt.dayofyear - 0.1
+    predictor['forecast_end_day_of_year'] = predictor['forecast_end_date'].dt.dayofyear + 0.8
+
+    # Test if 'date' is a leap year
+    if (predictor['date'].dt.year % 4 != 0).any() or (predictor['date'].dt.year % 100 == 0).any() and (predictor['date'].dt.year % 400 != 0).any():
+        predictor['leap_year'] = False
+    else:
+        predictor['leap_year'] = True
+
+    #if isinstance(predictor, pd.Series):
+    #    predictor = predictor.to_frame()
+
+    print(f"\n\n")
+    # Determine if the date is in a leap year
+    #year = predictor['date'].dt.year.iloc[0]
+    #predictor['leap_year'] = year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)
+    return predictor
+
+def add_predictor_dates_deprecating(linreg_predictor, station, date):
+    """
+    Add start and end days for predictor period and forecast period to the
+    linreg_predictor DataFrame.
+
+    Args:
+        linreg_predictor (pd.DataFrame): The linreg_predictor DataFrame.
+        station (str): The station label.
+        date (datetime.date): The date for which the predictor data is needed.
+
+    Returns:
+        pd.Series: The predictor data for the station.
+    """
     #print(f"\n\nDEBUG: add_predictor_dates: station: {station}, date: {date}")
     # Filter the predictor data for the hydropost
     predictor = linreg_predictor[linreg_predictor['station_labels'] == station].copy()
@@ -1149,40 +1241,51 @@ def update_model_dict(model_dict, forecasts_all, selected_station, selected_pent
 def update_model_dict_date(model_dict, forecasts_all, selected_station, selected_date):
     """
     Update the model_dict with the models we have results for for the selected station
+
+    Note: This function may throw an error if processing of forecasts is not done yet. 
     """
-    print(f"DEBUG: update_model_dict_date for date: {selected_date}")
-    print(f"Tail of forecasts_all:\n{forecasts_all.tail()}")
-    print(f"Type of forecasts_all['date']: {forecasts_all['date'].dtype}")
-    print(f"Type of selected_date: {type(selected_date)}")
+    #print(f"DEBUG: update_model_dict_date for date: {selected_date}")
+    #print(f"Tail of forecasts_all:\n{forecasts_all.tail()}")
+    #print(f"Type of forecasts_all['date']: {forecasts_all['date'].dtype}")
+    #print(f"Type of selected_date: {type(selected_date)}")
     if hasattr(selected_station, 'value'):
+        #print(f"selected_station has attribute value: {selected_station.value}")
         if hasattr(selected_date, 'value'):
+            #print(f"selected_date has attribute value: {selected_date.value}")
             filtered_forecasts = forecasts_all[
                 (forecasts_all['station_labels'] == selected_station.value) &
                 (forecasts_all['date'] == pd.Timestamp(selected_date.value))
             ]
         else:
+            #print(f"selected_date does not have attribute value: {selected_date}")
             filtered_forecasts = forecasts_all[
                 (forecasts_all['station_labels'] == selected_station.value) &
                 (forecasts_all['date'] == pd.Timestamp(selected_date))
             ]
     else:
+        #print(f"selected_station does not have attribute value: {selected_station}")
         if hasattr(selected_date, 'value'):
+            #print(f"selected_date has attribute value: {selected_date.value}")
             filtered_forecasts = forecasts_all[
                 (forecasts_all['station_labels'] == selected_station) &
                 (forecasts_all['date'] == pd.Timestamp(selected_date.value))
             ]
         else:
+            #print(f"selected_date does not have attribute value: {selected_date}")
             filtered_forecasts = forecasts_all[
                 (forecasts_all['station_labels'] == selected_station) &
                 (forecasts_all['date'] == pd.Timestamp(selected_date))
             ]
+    # Print filtered_forecasts after station & date filtering
+    #print(f"--Filtered forecasts:\n{filtered_forecasts[['station_labels', 'date', 'model_long', 'model_short', 'forecasted_discharge']]}")
+    
     # Remove duplicates in model_short
     filtered_forecasts = filtered_forecasts.drop_duplicates(subset=['model_short'], keep='last')
     model_dict = filtered_forecasts.set_index('model_long')['model_short'].to_dict()
 
-    print(f"\nDEBUG: update_model_dict:")
-    print(f"Filtered forecasts:\n{filtered_forecasts[['model_long', 'model_short', 'forecasted_discharge']]}")
-    print(f"Resulting model_dict: {model_dict}")
+    #print(f"\nDEBUG: update_model_dict:")
+    #print(f"Filtered forecasts:\n{filtered_forecasts[['model_long', 'model_short', 'forecasted_discharge']]}")
+    #print(f"Resulting model_dict: {model_dict}")
 
     return model_dict
 
