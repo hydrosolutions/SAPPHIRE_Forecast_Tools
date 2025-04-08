@@ -107,17 +107,6 @@ def main():
     end_time = time.time()
     time_load_environment = end_time - overall_start_time
 
-    # Set up the iEasyHydro SDK
-    # Todo: For when iEH HF SDK is working: We need to do that only when 
-    # os.getenv('ieasyhydroforecast_connect_to_iEH') == 'True'
-    #start_time = time.time()
-    #ieh_sdk = IEasyHydroSDK()
-    #has_access_to_db = sl.check_database_access(ieh_sdk)
-    #if not has_access_to_db:
-    #    ieh_sdk = None
-    #end_time = time.time()
-    #time_check_database_access = end_time - start_time
-
     # Update configuration files for selected sites (only if iEH HF is used)
     # Test if we read from iEasyHydro or iEasyHydro HF
     start_time = time.time()
@@ -165,7 +154,7 @@ def main():
         )    
     else: 
         runoff_data = src.get_runoff_data_for_sites(
-            ieh_sdk,  # ieh_hf_sdk,
+            ieh_hf_sdk,
             date_col='date',
             discharge_col='discharge',
             name_col='name',
@@ -205,7 +194,7 @@ def main():
 
     # Get dangerous discharge values from iEasyHydro DB
     start_time = time.time()
-    if ieh_sdk is not None:
+    if ieh_hf_sdk is not None:
         hydrograph = src.add_dangerous_discharge_from_sites(
             hydrograph,
             code_col='code',
@@ -239,7 +228,6 @@ def main():
     print("\n")
     logger.info(f"Overall time: {overall_end_time - overall_start_time:.2f} seconds")
     logger.info(f"Time to load environment: {time_load_environment:.2f} seconds")
-    logger.info(f"Time to check database access: {time_check_database_access:.2f} seconds")
     logger.info(f"Time to get forecast sites: {time_get_forecast_sites:.2f} seconds")
     logger.info(f"Time to get runoff data: {time_get_runoff_data:.2f} seconds")
     logger.info(f"Time to filter roughly for outliers: {time_filter_roughly_for_outliers:.2f} seconds")

@@ -1360,7 +1360,7 @@ def get_runoff_data_for_sites_HF(ieh_hf_sdk=None, date_col='date',
     which are already in the excel files.
 
     Args:
-        ieh_hf_sdk (object): An object that provides a method to get data values
+        ieh_sdk (object): An object that provides a method to get data values
             for a site from a database. None in case of no access to the database.
         date_col (str, optional): The name of the column containing the date data.
             Default is 'date'.
@@ -1371,29 +1371,102 @@ def get_runoff_data_for_sites_HF(ieh_hf_sdk=None, date_col='date',
         code_col (str, optional): The name of the column containing the site code.
             Default is 'code'.
     """
-    # Get organization from environment variable
-    organization = os.getenv('ieasyhydroforecast_organization')
+    # Test if there have been any changes in the daily_discharge directory
+    if should_reprocess_input_files(): 
+        logger.info("Regime data has changed, reprocessing input files.")
+    
+        # Get organization from environment variable
+        organization = os.getenv('ieasyhydroforecast_organization')
 
-    if organization=='kghm': 
-        # Read data from excel files
-        read_data = read_all_runoff_data_from_excel(
-            date_col=date_col,
-            discharge_col=discharge_col,
-            name_col=name_col,
-            code_col=code_col,
-            code_list=code_list)
-    elif organization=='tjhm':
-        # Read data from csv files
-        read_data = read_all_runoff_data_from_csv(
-            date_col=date_col,
-            discharge_col=discharge_col,
-            name_col=name_col,
-            code_col=code_col,
-            code_list=code_list)
+        if organization=='kghm': 
+            # Read data from excel files
+            read_data = read_all_runoff_data_from_excel(
+                date_col=date_col,
+                discharge_col=discharge_col,
+                name_col=name_col,
+                code_col=code_col,
+                code_list=code_list)
+        elif organization=='tjhm':
+            # Read data from csv files
+            read_data = read_all_runoff_data_from_csv(
+                date_col=date_col,
+                discharge_col=discharge_col,
+                name_col=name_col,
+                code_col=code_col,
+                code_list=code_list)
+        else:
+            # Raise an error if the organization is not recognized
+            raise ValueError(f"Organization '{organization}' not recognized. "
+                             f"Please set the environment variable 'ieasyhydroforecast_organization' to 'kghm' or 'tjhm'.")
     else:
-        # Raise an error if the organization is not recognized
-        raise ValueError(f"Organization '{organization}' not recognized. "
-                         f"Please set the environment variable 'ieasyhydroforecast_organization' to 'kghm' or 'tjhm'.")
+        logger.info("No changes in the daily_discharge directory, using previous data.")
+        intermediate_data_path = os.getenv('ieasyforecast_intermediate_data_path')
+        output_file_path = os.path.join(
+            intermediate_data_path,
+            os.getenv("ieasyforecast_daily_discharge_file"))
+        try:
+            read_data = pd.read_csv(output_file_path)
+            read_data['date'] = pd.to_datetime(read_data['date']).dt.date
+            read_data['code'] = read_data['code'].astype(str)
+            read_data['discharge'] = read_data['discharge'].astype(float)
+            # Get a dummy name column 
+            read_data['name'] = read_data['code']
+            # Check the latest date. If it is before today minus 51 days, go to 
+            # the fallback and read in all regime data. 
+            # This is to avoid shortening of the regime data in case operational 
+            # data is not available. 
+            if read_data['date'].max() < dt.date.today() - dt.timedelta(days=51):
+                logger.info("Cached data is older than 50 days, reprocessing input files.")
+                # Reprocess input files
+                organization = os.getenv('ieasyhydroforecast_organization')
+                if organization=='kghm': 
+                    # Read data from excel files
+                    read_data = read_all_runoff_data_from_excel(
+                        date_col=date_col,
+                        discharge_col=discharge_col,
+                        name_col=name_col,
+                        code_col=code_col,
+                        code_list=code_list)
+                elif organization=='tjhm':
+                    # Read data from csv files
+                    read_data = read_all_runoff_data_from_csv(
+                        date_col=date_col,
+                        discharge_col=discharge_col,
+                        name_col=name_col,
+                        code_col=code_col,
+                        code_list=code_list)
+                else:
+                    # Raise an error if the organization is not recognized
+                    raise ValueError(f"Organization '{organization}' not recognized. "
+                                     f"Please set the environment variable 'ieasyhydroforecast_organization' to 'kghm' or 'tjhm'.")
+            else: 
+                logger.info("Cached data is newer than 50 days, using cached data.")
+                # Discard the last 50 days of previous operational data and update 
+                # these with the new data in the next code section. 
+                read_data = read_data[read_data['date'] < dt.date.today() - dt.timedelta(days=50)]
+        except Exception as e:
+            logger.warning(f"Failed to read cached data: {e}, reprocessing input files")
+            # Fall back to processing logic
+            if organization=='kghm': 
+                # Read data from excel files
+                read_data = read_all_runoff_data_from_excel(
+                    date_col=date_col,
+                    discharge_col=discharge_col,
+                    name_col=name_col,
+                    code_col=code_col,
+                    code_list=code_list)
+            elif organization=='tjhm':
+                # Read data from csv files
+                read_data = read_all_runoff_data_from_csv(
+                    date_col=date_col,
+                    discharge_col=discharge_col,
+                    name_col=name_col,
+                    code_col=code_col,
+                    code_list=code_list)
+            else:
+                # Raise an error if the organization is not recognized
+                raise ValueError(f"Organization '{organization}' not recognized. "
+                                 f"Please set the environment variable 'ieasyhydroforecast_organization' to 'kghm' or 'tjhm'.")
 
     # Initialize a flag for virtual stations
     virtual_stations_present = False
@@ -1422,7 +1495,7 @@ def get_runoff_data_for_sites_HF(ieh_hf_sdk=None, date_col='date',
 
             read_data = add_hydroposts(read_data, virtual_stations)
 
-    if ieh_hf_sdk is None:
+    if ieh_sdk is None:
         # We do not have access to an iEasyHydro database
         logger.info("No data read from iEasyHydro Database.")
 
@@ -1437,11 +1510,12 @@ def get_runoff_data_for_sites_HF(ieh_hf_sdk=None, date_col='date',
         # iEasyHydro database using the function get_daily_average_discharge_from_iEH_per_site
         for index, row in last_row.iterrows():
             db_average_data = get_daily_average_discharge_from_iEH_per_site(
-                ieh_hf_sdk, row[code_col], row[name_col], row[date_col],
+                ieh_sdk=ieh_sdk, site=row[code_col], name=row[name_col], 
+                start_date=row[date_col],
                 date_col=date_col, discharge_col=discharge_col, name_col=name_col, code_col=code_col
             )
             db_morning_data = get_todays_morning_discharge_from_iEH_per_site(
-                ieh_hf_sdk, row[code_col], row[name_col],
+                ieh_sdk, row[code_col], row[name_col],
                 date_col=date_col, discharge_col=discharge_col, name_col=name_col, code_col=code_col)
             # Append db_data to read_data if db_data is not empty
             if not db_average_data.empty:
