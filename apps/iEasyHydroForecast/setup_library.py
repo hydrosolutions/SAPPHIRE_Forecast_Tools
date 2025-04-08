@@ -260,7 +260,7 @@ def load_environment():
         port = hostport.split(":")[2]
         # Set the environment variable IEASYHYDRO_PORT
         os.environ["IEASYHYDRO_PORT"] = port
-        logger.info(f"IEASYHYDRO_PORT: {os.getenv('IEASYHYDRO_PORT')}")
+        logger.debug(f"IEASYHYDRO_PORT: {os.getenv('IEASYHYDRO_PORT')}")
         # Make sure we have system-consistent host names. In a docker container,
         # the host name is 'host.docker.internal'. In a local environment, the host
         # name is 'localhost'.
@@ -278,9 +278,9 @@ def load_environment():
         else:
             logger.info("Running in a local environment.")
             os.environ["IEASYHYDRO_HOST"] = "http://localhost:" + port
-        logger.info(f"IEASYHYDRO_HOST: {os.getenv('IEASYHYDRO_HOST')}")
+        logger.debug(f"IEASYHYDRO_HOST: {os.getenv('IEASYHYDRO_HOST')}")
     else:
-        logger.info("IEASYHYDRO_HOST not set in the .env file")
+        logger.warning("IEASYHYDRO_HOST not set in the .env file")
 
     # Test if specific environment variables were loaded
     if os.getenv("ieasyforecast_daily_discharge_path") is None:
@@ -371,10 +371,11 @@ def check_local_ssh_tunnels():
 # region iEH_DB
 def check_database_access(ieh_sdk):
     """
-    Check if the backend has access to an iEasyHydro database.
+    Check if the backend has access to an iEasyHydro database. Also works for 
+    testing access to iEasyHydro HF database.
 
     Args:
-        ieh_sdk: The iEasyHydro SDK.
+        ieh_sdk: The iEasyHydro SDK object or iEasyHydro HF SDK object.
 
     Returns:
         bool: True if the backend has access to the database, False otherwise.
@@ -395,18 +396,6 @@ def check_database_access(ieh_sdk):
         return True
     except Exception as e:
         logger.debug(f"Met exception {e} when trying to access iEasyHydro database.")
-        #logger.debug(f"Trying with localhost.")
-        #try:
-        #    # Replace current host with localhost ("host.docker.internal" with "localhost")
-        #    os.environ["IEASYHYDRO_HOST"] = os.getenv("IEASYHYDRO_HOST").replace("host.docker.internal", "localhost")
-        #    # Test if this has worked:
-        #    logger.debug("IEASYHYDRO_HOST: " + os.getenv("IEASYHYDRO_HOST"))
-        #    test = ieh_sdk.get_discharge_sites()
-        #    #logger.debug(f"test[0]: {test[0]}")
-        #    logger.info(f"Access to iEasyHydro database.")
-        #except Exception as e:
-        #    logger.error(f"Error replacing host with localhost: {e}")
-        #    raise e
         # Test if there are any files in the data/daily_runoff directory
         if os.listdir(os.getenv("ieasyforecast_daily_discharge_path")):
             logger.info(f"No access to iEasyHydro database. "

@@ -996,7 +996,7 @@ def plot_current_runoff_forecast_range(
         plot.handles["glyph"].lower_head.line_color = color
 
     # Define jitter width (in minutes)
-    jitter_width = 0.2  # Jitter by 0.2 pentads
+    jitter_width = 0.2  # Jitter by 0.2 pentads or decads
 
     # Apply jitter to the datetime column
     data.loc[:, date_col] = data[date_col] + np.linspace(-jitter_width, jitter_width, len(data))

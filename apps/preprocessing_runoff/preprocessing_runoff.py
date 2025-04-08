@@ -108,18 +108,24 @@ def main():
     time_load_environment = end_time - overall_start_time
 
     # Set up the iEasyHydro SDK
-    start_time = time.time()
-    ieh_sdk = IEasyHydroSDK()
-    has_access_to_db = sl.check_database_access(ieh_sdk)
-    if not has_access_to_db:
-        ieh_sdk = None
-    end_time = time.time()
-    time_check_database_access = end_time - start_time
+    # Todo: For when iEH HF SDK is working: We need to do that only when 
+    # os.getenv('ieasyhydroforecast_connect_to_iEH') == 'True'
+    #start_time = time.time()
+    #ieh_sdk = IEasyHydroSDK()
+    #has_access_to_db = sl.check_database_access(ieh_sdk)
+    #if not has_access_to_db:
+    #    ieh_sdk = None
+    #end_time = time.time()
+    #time_check_database_access = end_time - start_time
 
     # Update configuration files for selected sites (only if iEH HF is used)
     # Test if we read from iEasyHydro or iEasyHydro HF
     start_time = time.time()
     if os.getenv('ieasyhydroforecast_connect_to_iEH') == 'True':
+        ieh_sdk = IEasyHydroSDK()
+        has_access_to_db = sl.check_database_access(ieh_sdk)
+        if not has_access_to_db:
+            ieh_sdk = None
         # Get site information from iEH (no update of configuration files)
         # Do nothing and exit the script directly
         fc_sites_pentad, site_codes_pentad = sl.get_pentadal_forecast_sites(ieh_sdk)
@@ -127,9 +133,17 @@ def main():
             fc_sites_pentad, site_codes_pentad)
         pass
     else:  # Get information from iEH HF
-        ieh_hf_sdk = IEasyHydroHFSDK()
-        fc_sites_pentad, site_codes_pentad = sl.get_pentadal_forecast_sites_from_HF_SDK(ieh_hf_sdk)
-        fc_sites_decad, site_codes_decad = sl.get_decadal_forecast_sites_from_HF_SDK(ieh_hf_sdk)
+        try: 
+            ieh_hf_sdk = IEasyHydroHFSDK()
+            has_access_to_db = sl.check_database_access(ieh_hf_sdk)
+            if not has_access_to_db:
+                ieh_hf_sdk = None
+            fc_sites_pentad, site_codes_pentad = sl.get_pentadal_forecast_sites_from_HF_SDK(ieh_hf_sdk)
+            fc_sites_decad, site_codes_decad = sl.get_decadal_forecast_sites_from_HF_SDK(ieh_hf_sdk)
+        except Exception as e:
+            logger.error(f"Error while accessing iEasyHydro HF SDK: {e}")
+            sys.exit(1)
+
     # Concatenate the two lists
     fc_sites = fc_sites_pentad + fc_sites_decad
     site_codes = site_codes_pentad + site_codes_decad
@@ -139,22 +153,27 @@ def main():
     ## Data processing
     # Reading data from various sources
     start_time = time.time()
-    runoff_data = src.get_runoff_data_for_sites(
-        ieh_sdk,
-        date_col='date',
-        discharge_col='discharge',
-        name_col='name',
-        code_col='code',
-        site_list=fc_sites,
-        code_list=site_codes
-    )    
+    if os.getenv('ieasyhydroforecast_connect_to_iEH') == 'True':
+        runoff_data = src.get_runoff_data_for_sites(
+            ieh_sdk,
+            date_col='date',
+            discharge_col='discharge',
+            name_col='name',
+            code_col='code',
+            site_list=fc_sites,
+            code_list=site_codes
+        )    
+    else: 
+        runoff_data = src.get_runoff_data_for_sites(
+            ieh_sdk,  # ieh_hf_sdk,
+            date_col='date',
+            discharge_col='discharge',
+            name_col='name',
+            code_col='code',
+            site_list=fc_sites,
+            code_list=site_codes
+        )    
 
-    #runoff_data = src.get_runoff_data(
-    #    ieh_sdk,
-    #    date_col='date',
-    #    discharge_col='discharge',
-    #    name_col='name',
-    #    code_col='code')
     end_time = time.time()
     time_get_runoff_data = end_time - start_time
 

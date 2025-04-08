@@ -15,6 +15,36 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def should_reprocess_input_files():
+    """Check if any input files have been modified since the last run."""
+    # Get the path to the daily_discharge directory
+    daily_discharge_dir = os.getenv('ieasyforecast_daily_discharge_path')
+    
+    # Get the path to the output file
+    intermediate_data_path = os.getenv('ieasyforecast_intermediate_data_path')
+    output_file_path = os.path.join(
+        intermediate_data_path,
+        os.getenv("ieasyforecast_daily_discharge_file"))
+    
+    # Get last modification time of output file
+    if not os.path.exists(output_file_path):
+        return True  # Output file doesn't exist, need to process input files
+        
+    output_mod_time = os.path.getmtime(output_file_path)
+    
+    # Check if any input file was modified after the output file
+    for file in os.listdir(daily_discharge_dir):
+        full_path = os.path.join(daily_discharge_dir, file)
+        if (os.path.isfile(full_path) and 
+            (file.endswith('.xlsx') or file.endswith('.csv')) and
+            not file.startswith('~')):
+            if os.path.getmtime(full_path) > output_mod_time:
+                logger.info(f"File {file} was modified since last processing")
+                return True
+                
+    # No input files were modified after the output was generated
+    return False
+
 def filter_roughly_for_outliers(combined_data, group_by='Code',
                                 filter_col='Q_m3s', date_col='date'):
     """
@@ -826,6 +856,7 @@ def get_daily_average_discharge_from_iEH_per_site(
         db_df[code_col] = site
 
     except Exception as e:
+        logger.debug(f"Error reading daily average discharge data for site {site}: {e}")
         logger.info(f"Skip reading daily average discharge data for site {site}")
         # Return an empty dataframe with columns 'date', 'discharge', 'name', 'code'
         db_df = pd.DataFrame(columns=[date_col, discharge_col, name_col, code_col])
@@ -1148,6 +1179,198 @@ def get_runoff_data_for_sites(ieh_sdk=None, date_col='date',
         code_col (str, optional): The name of the column containing the site code.
             Default is 'code'.
     """
+    # Test if there have been any changes in the daily_discharge directory
+    if should_reprocess_input_files(): 
+        logger.info("Regime data has changed, reprocessing input files.")
+    
+        # Get organization from environment variable
+        organization = os.getenv('ieasyhydroforecast_organization')
+
+        if organization=='kghm': 
+            # Read data from excel files
+            read_data = read_all_runoff_data_from_excel(
+                date_col=date_col,
+                discharge_col=discharge_col,
+                name_col=name_col,
+                code_col=code_col,
+                code_list=code_list)
+        elif organization=='tjhm':
+            # Read data from csv files
+            read_data = read_all_runoff_data_from_csv(
+                date_col=date_col,
+                discharge_col=discharge_col,
+                name_col=name_col,
+                code_col=code_col,
+                code_list=code_list)
+        else:
+            # Raise an error if the organization is not recognized
+            raise ValueError(f"Organization '{organization}' not recognized. "
+                             f"Please set the environment variable 'ieasyhydroforecast_organization' to 'kghm' or 'tjhm'.")
+    else:
+        logger.info("No changes in the daily_discharge directory, using previous data.")
+        intermediate_data_path = os.getenv('ieasyforecast_intermediate_data_path')
+        output_file_path = os.path.join(
+            intermediate_data_path,
+            os.getenv("ieasyforecast_daily_discharge_file"))
+        try:
+            read_data = pd.read_csv(output_file_path)
+            read_data['date'] = pd.to_datetime(read_data['date']).dt.date
+            read_data['code'] = read_data['code'].astype(str)
+            read_data['discharge'] = read_data['discharge'].astype(float)
+            # Get a dummy name column 
+            read_data['name'] = read_data['code']
+            # Check the latest date. If it is before today minus 51 days, go to 
+            # the fallback and read in all regime data. 
+            # This is to avoid shortening of the regime data in case operational 
+            # data is not available. 
+            if read_data['date'].max() < dt.date.today() - dt.timedelta(days=51):
+                logger.info("Cached data is older than 50 days, reprocessing input files.")
+                # Reprocess input files
+                organization = os.getenv('ieasyhydroforecast_organization')
+                if organization=='kghm': 
+                    # Read data from excel files
+                    read_data = read_all_runoff_data_from_excel(
+                        date_col=date_col,
+                        discharge_col=discharge_col,
+                        name_col=name_col,
+                        code_col=code_col,
+                        code_list=code_list)
+                elif organization=='tjhm':
+                    # Read data from csv files
+                    read_data = read_all_runoff_data_from_csv(
+                        date_col=date_col,
+                        discharge_col=discharge_col,
+                        name_col=name_col,
+                        code_col=code_col,
+                        code_list=code_list)
+                else:
+                    # Raise an error if the organization is not recognized
+                    raise ValueError(f"Organization '{organization}' not recognized. "
+                                     f"Please set the environment variable 'ieasyhydroforecast_organization' to 'kghm' or 'tjhm'.")
+            else: 
+                logger.info("Cached data is newer than 50 days, using cached data.")
+                # Discard the last 50 days of previous operational data and update 
+                # these with the new data in the next code section. 
+                read_data = read_data[read_data['date'] < dt.date.today() - dt.timedelta(days=50)]
+        except Exception as e:
+            logger.warning(f"Failed to read cached data: {e}, reprocessing input files")
+            # Fall back to processing logic
+            if organization=='kghm': 
+                # Read data from excel files
+                read_data = read_all_runoff_data_from_excel(
+                    date_col=date_col,
+                    discharge_col=discharge_col,
+                    name_col=name_col,
+                    code_col=code_col,
+                    code_list=code_list)
+            elif organization=='tjhm':
+                # Read data from csv files
+                read_data = read_all_runoff_data_from_csv(
+                    date_col=date_col,
+                    discharge_col=discharge_col,
+                    name_col=name_col,
+                    code_col=code_col,
+                    code_list=code_list)
+            else:
+                # Raise an error if the organization is not recognized
+                raise ValueError(f"Organization '{organization}' not recognized. "
+                                 f"Please set the environment variable 'ieasyhydroforecast_organization' to 'kghm' or 'tjhm'.")
+
+    # Initialize a flag for virtual stations
+    virtual_stations_present = False
+    # Get virtual station codes from json (if file exists) print a warning if file
+    # does not exist.
+    if os.getenv('ieasyforecast_virtual_stations') is None:
+        logger.info(f"No calculation rules for virtual stations found.\n"
+                    f"Environment variable ieasyforecast_virtual_stations is not set.")
+    else:
+        virtual_stations_config_file_path = os.path.join(
+            os.getenv('ieasyforecast_configuration_path'),
+            os.getenv('ieasyforecast_virtual_stations'))
+        if not os.path.exists(virtual_stations_config_file_path):
+            raise FileNotFoundError(
+                f"File {virtual_stations_config_file_path} not found.\n",
+                f"Filename for calculateion rules for virtual stations in environment\n"
+                f"but file not found.\n"
+                f"Please provide a configuraion file ieasyforecast_virtual_stations\n"
+                f"or, if you don't have any virtual stations to predict, remove the\n"
+                f"variable ieasyforecast_virtual_stations from your configuration file."
+            )
+        else:
+            with open(virtual_stations_config_file_path, 'r') as f:
+                virtual_stations = json.load(f)['virtualStations'].keys()
+            virtual_stations_present = True
+
+            read_data = add_hydroposts(read_data, virtual_stations)
+
+    if ieh_sdk is None:
+        # We do not have access to an iEasyHydro database
+        logger.info("No data read from iEasyHydro Database.")
+
+        return read_data
+
+    else:
+        # Get the last row for each code in runoff_data
+        last_row = read_data.groupby(code_col).tail(1)
+        #print("DEBUG: last_row: \n", last_row)
+
+        # For each code in last_row, get the daily average discharge data from the
+        # iEasyHydro database using the function get_daily_average_discharge_from_iEH_per_site
+        for index, row in last_row.iterrows():
+            db_average_data = get_daily_average_discharge_from_iEH_per_site(
+                ieh_sdk=ieh_sdk, site=row[code_col], name=row[name_col], 
+                start_date=row[date_col],
+                date_col=date_col, discharge_col=discharge_col, name_col=name_col, code_col=code_col
+            )
+            db_morning_data = get_todays_morning_discharge_from_iEH_per_site(
+                ieh_sdk, row[code_col], row[name_col],
+                date_col=date_col, discharge_col=discharge_col, name_col=name_col, code_col=code_col)
+            # Append db_data to read_data if db_data is not empty
+            if not db_average_data.empty:
+                read_data = pd.concat([read_data, db_average_data], ignore_index=True)
+            if not db_morning_data.empty:
+                read_data = pd.concat([read_data, db_morning_data], ignore_index=True)
+
+        # Drop rows where 'code' is "NA"
+        read_data = read_data[read_data[code_col] != 'NA']
+
+        # Cast the 'code' column to string
+        read_data[code_col] = read_data[code_col].astype(str)
+
+        #print(read_data[read_data['code'] == "16936"].tail(10))
+        #print(read_data[read_data['code'] == "16059"].tail(10))
+        # Calculate virtual hydropost data where necessary
+        if virtual_stations_present:
+            read_data = calculate_virtual_stations_data(read_data)
+        #print(read_data[read_data['code'] == "16936"].tail(10))
+        #print(read_data[read_data['code'] == "16059"].tail(10))
+
+        # For sanity sake, we round the data to a mac of 3 decimal places
+        read_data[discharge_col] = read_data[discharge_col].round(3)
+
+        return read_data
+    
+def get_runoff_data_for_sites_HF(ieh_hf_sdk=None, date_col='date',
+                              discharge_col='discharge', name_col='name',
+                              code_col='code', site_list=None, code_list=None):
+    """
+    Reads runoff data from excel and, if possible, from iEasyHydro database.
+
+    Note: This function will only try to read data from the iEasyHydro database
+    which are already in the excel files.
+
+    Args:
+        ieh_hf_sdk (object): An object that provides a method to get data values
+            for a site from a database. None in case of no access to the database.
+        date_col (str, optional): The name of the column containing the date data.
+            Default is 'date'.
+        discharge_col (str, optional): The name of the column containing the discharge data.
+            Default is 'discharge'.
+        name_col (str, optional): The name of the column containing the site name.
+            Default is 'name'.
+        code_col (str, optional): The name of the column containing the site code.
+            Default is 'code'.
+    """
     # Get organization from environment variable
     organization = os.getenv('ieasyhydroforecast_organization')
 
@@ -1199,7 +1422,7 @@ def get_runoff_data_for_sites(ieh_sdk=None, date_col='date',
 
             read_data = add_hydroposts(read_data, virtual_stations)
 
-    if ieh_sdk is None:
+    if ieh_hf_sdk is None:
         # We do not have access to an iEasyHydro database
         logger.info("No data read from iEasyHydro Database.")
 
@@ -1214,11 +1437,11 @@ def get_runoff_data_for_sites(ieh_sdk=None, date_col='date',
         # iEasyHydro database using the function get_daily_average_discharge_from_iEH_per_site
         for index, row in last_row.iterrows():
             db_average_data = get_daily_average_discharge_from_iEH_per_site(
-                ieh_sdk, row[code_col], row[name_col], row[date_col],
+                ieh_hf_sdk, row[code_col], row[name_col], row[date_col],
                 date_col=date_col, discharge_col=discharge_col, name_col=name_col, code_col=code_col
             )
             db_morning_data = get_todays_morning_discharge_from_iEH_per_site(
-                ieh_sdk, row[code_col], row[name_col],
+                ieh_hf_sdk, row[code_col], row[name_col],
                 date_col=date_col, discharge_col=discharge_col, name_col=name_col, code_col=code_col)
             # Append db_data to read_data if db_data is not empty
             if not db_average_data.empty:
@@ -1414,16 +1637,27 @@ def write_daily_time_series_data_to_csv(data: pd.DataFrame, column_list=["code",
     """
     data = data.copy()
 
+    # Get intermediate data path from environment variable
+    intermediate_data_path = os.getenv("ieasyforecast_intermediate_data_path")
+    if intermediate_data_path is None:
+        raise ValueError("Environment variable ieasyforecast_intermediate_data_path is not set.")
+    
+    # Test if the intermediate data path exists. If not, create it.
+    if not os.path.exists(intermediate_data_path):
+        os.makedirs(intermediate_data_path)
+        logger.info(f"Created directory {intermediate_data_path}.")
+        print(f"Created directory {intermediate_data_path}.")
+
     # Get the path to the intermediate data folder from the environmental
     # variables and the name of the ieasyforecast_analysis_daily_file.
     # Concatenate them to the output file path.
     try:
        output_file_path = os.path.join(
-            os.getenv("ieasyforecast_intermediate_data_path"),
+            intermediate_data_path,
             os.getenv("ieasyforecast_daily_discharge_file"))
     except Exception as e:
         logger.error("Could not get the output file path.")
-        print(os.getenv("ieasyforecast_intermediate_data_path"))
+        print(intermediate_data_path)
         print(os.getenv("ieasyforecast_daily_discharge_file"))
         raise e
 
