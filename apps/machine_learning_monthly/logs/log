@@ -1,0 +1,211 @@
+2025-04-08 11:40:01,606 - INFO - Logging level: 10
+2025-04-08 11:40:01,606 - DEBUG - Debug message for logger level 10
+2025-04-08 11:41:12,743 - INFO - Logging level: 10
+2025-04-08 11:41:12,743 - DEBUG - Debug message for logger level 10
+2025-04-08 11:44:57,570 - INFO - Logging level: 10
+2025-04-08 11:44:57,571 - DEBUG - Debug message for logger level 10
+2025-04-08 11:45:52,449 - INFO - Logging level: 10
+2025-04-08 11:45:52,449 - DEBUG - Debug message for logger level 10
+2025-04-08 11:45:52,895 - INFO - Logging level: 10
+2025-04-08 11:45:52,895 - DEBUG - Debug message for logger level 10
+2025-04-08 11:45:52,895 - INFO - --------------------------------------------------------------------
+2025-04-08 11:45:52,895 - INFO - Starting make_forecast.py
+2025-04-08 11:45:52,895 - DEBUG - Model to use: LR
+2025-04-08 11:45:52,895 - DEBUG - Horizon to use: 1
+2025-04-08 11:47:07,749 - INFO - Logging level: 10
+2025-04-08 11:47:07,749 - DEBUG - Debug message for logger level 10
+2025-04-08 11:47:08,247 - INFO - Logging level: 10
+2025-04-08 11:47:08,247 - DEBUG - Debug message for logger level 10
+2025-04-08 11:47:08,247 - INFO - --------------------------------------------------------------------
+2025-04-08 11:47:08,248 - INFO - Starting make_forecast.py
+2025-04-08 11:47:08,248 - DEBUG - Model to use: LR
+2025-04-08 11:47:08,248 - DEBUG - Horizon to use: 1
+2025-04-08 11:47:08,252 - DEBUG - Loaded the feature config
+2025-04-08 11:47:08,253 - DEBUG - Loaded the general config
+2025-04-08 11:47:55,109 - INFO - Logging level: 10
+2025-04-08 11:47:55,109 - DEBUG - Debug message for logger level 10
+2025-04-08 11:47:55,571 - INFO - Logging level: 10
+2025-04-08 11:47:55,571 - DEBUG - Debug message for logger level 10
+2025-04-08 11:47:55,571 - INFO - --------------------------------------------------------------------
+2025-04-08 11:47:55,571 - INFO - Starting make_forecast.py
+2025-04-08 11:47:55,571 - DEBUG - Model to use: LR
+2025-04-08 11:47:55,572 - DEBUG - Horizon to use: 1
+2025-04-08 11:47:55,576 - DEBUG - Loaded the feature config
+2025-04-08 11:47:55,576 - DEBUG - Loaded the general config
+2025-04-08 11:47:55,784 - DEBUG - Loaded the data
+2025-04-08 11:47:55,784 - DEBUG - Head of the data:     code       date  discharge   P   T
+0  15013 2000-01-01        1.9 NaN NaN
+1  15013 2000-01-02        1.9 NaN NaN
+2  15013 2000-01-03        1.9 NaN NaN
+3  15013 2000-01-04        1.9 NaN NaN
+4  15013 2000-01-05        1.9 NaN NaN
+2025-04-08 11:47:55,787 - DEBUG - Head of the static features:     code        LAT        LON       h_mean   h_max   h_min  ...  bare_cover_perc  glacier_volume_per_area  gl_dmdtda_mma  cluster     log_q  max_discharge_week
+0  15013  42.652788  78.921090  2968.916504  4152.0  1967.0  ...         0.024835                 0.000041    -394.885714        0  1.774952                24.0
+1  15016  42.585012  78.883448  3405.278809  4755.0  2044.0  ...         0.106953                 0.002314    -475.450000        0  2.014903                27.0
+2  15020  42.471215  78.531209  3377.967529  4708.0  1874.0  ...         0.072845                 0.003562    -415.719672        0  1.945910                31.0
+3  15022  42.467058  78.537862  3374.202881  4622.0  1902.0  ...         0.054484                 0.004695    -388.280000        0  1.693779                29.0
+4  15025  42.424441  78.434206  3382.035400  5227.0  1987.0  ...         0.105532                 0.005008    -389.683333        0  2.041220                30.0
+
+[5 rows x 36 columns]
+2025-04-08 11:48:18,382 - INFO - Logging level: 10
+2025-04-08 11:48:18,382 - DEBUG - Debug message for logger level 10
+2025-04-08 11:48:18,822 - INFO - Logging level: 10
+2025-04-08 11:48:18,822 - DEBUG - Debug message for logger level 10
+2025-04-08 11:48:18,823 - INFO - --------------------------------------------------------------------
+2025-04-08 11:48:18,823 - INFO - Starting make_forecast.py
+2025-04-08 11:48:18,823 - DEBUG - Model to use: LR
+2025-04-08 11:48:18,823 - DEBUG - Horizon to use: 1
+2025-04-08 11:48:18,827 - DEBUG - Loaded the feature config
+2025-04-08 11:48:18,827 - DEBUG - Loaded the general config
+2025-04-08 11:48:19,042 - DEBUG - Loaded the data
+2025-04-08 11:48:19,042 - DEBUG - Head of the data:     code       date  discharge   P   T
+0  15013 2000-01-01        1.9 NaN NaN
+1  15013 2000-01-02        1.9 NaN NaN
+2  15013 2000-01-03        1.9 NaN NaN
+3  15013 2000-01-04        1.9 NaN NaN
+4  15013 2000-01-05        1.9 NaN NaN
+2025-04-08 11:48:19,045 - DEBUG - Head of the static features:     code        LAT        LON       h_mean   h_max   h_min  ...  bare_cover_perc  glacier_volume_per_area  gl_dmdtda_mma  cluster     log_q  max_discharge_week
+0  15013  42.652788  78.921090  2968.916504  4152.0  1967.0  ...         0.024835                 0.000041    -394.885714        0  1.774952                24.0
+1  15016  42.585012  78.883448  3405.278809  4755.0  2044.0  ...         0.106953                 0.002314    -475.450000        0  2.014903                27.0
+2  15020  42.471215  78.531209  3377.967529  4708.0  1874.0  ...         0.072845                 0.003562    -415.719672        0  1.945910                31.0
+3  15022  42.467058  78.537862  3374.202881  4622.0  1902.0  ...         0.054484                 0.004695    -388.280000        0  1.693779                29.0
+4  15025  42.424441  78.434206  3382.035400  5227.0  1987.0  ...         0.105532                 0.005008    -389.683333        0  2.041220                30.0
+
+[5 rows x 36 columns]
+2025-04-08 11:51:30,832 - INFO - Logging level: 10
+2025-04-08 11:51:30,832 - DEBUG - Debug message for logger level 10
+2025-04-08 11:51:31,308 - INFO - Logging level: 10
+2025-04-08 11:51:31,308 - DEBUG - Debug message for logger level 10
+2025-04-08 11:51:31,308 - INFO - --------------------------------------------------------------------
+2025-04-08 11:51:31,308 - INFO - Starting make_forecast.py
+2025-04-08 11:51:31,308 - DEBUG - Model to use: LR_SWE
+2025-04-08 11:51:31,308 - DEBUG - Horizon to use: 1
+2025-04-08 11:51:31,312 - DEBUG - Loaded the feature config
+2025-04-08 11:51:31,312 - DEBUG - Loaded the general config
+2025-04-08 11:51:31,922 - DEBUG - Loaded the data
+2025-04-08 11:51:31,922 - DEBUG - Head of the data:     code       date  discharge   P   T  SWE_3  SWE_6  SWE_4  SWE_7  SWE_5  SWE_8  SWE_9  SWE_10  SWE_2  SWE_1  SWE_12  SWE_11  SWE_13  SWE_14
+0  15013 2000-01-01        1.9 NaN NaN  35.95  53.57  31.37  48.15  42.71  20.29    NaN     NaN    NaN    NaN     NaN     NaN     NaN     NaN
+1  15013 2000-01-02        1.9 NaN NaN  37.99  55.29  31.39  50.07  43.35  22.20    NaN     NaN    NaN    NaN     NaN     NaN     NaN     NaN
+2  15013 2000-01-03        1.9 NaN NaN  42.68  61.36  33.30  56.52  46.28  28.77    NaN     NaN    NaN    NaN     NaN     NaN     NaN     NaN
+3  15013 2000-01-04        1.9 NaN NaN  46.57  64.71  33.89  60.18  47.13  32.47    NaN     NaN    NaN    NaN     NaN     NaN     NaN     NaN
+4  15013 2000-01-05        1.9 NaN NaN  48.85  64.67  32.87  60.16  46.35  32.27    NaN     NaN    NaN    NaN     NaN     NaN     NaN     NaN
+2025-04-08 11:51:31,929 - DEBUG - Head of the static features:     code        LAT        LON       h_mean   h_max   h_min  ...  bare_cover_perc  glacier_volume_per_area  gl_dmdtda_mma  cluster     log_q  max_discharge_week
+0  15013  42.652788  78.921090  2968.916504  4152.0  1967.0  ...         0.024835                 0.000041    -394.885714        0  1.774952                24.0
+1  15016  42.585012  78.883448  3405.278809  4755.0  2044.0  ...         0.106953                 0.002314    -475.450000        0  2.014903                27.0
+2  15020  42.471215  78.531209  3377.967529  4708.0  1874.0  ...         0.072845                 0.003562    -415.719672        0  1.945910                31.0
+3  15022  42.467058  78.537862  3374.202881  4622.0  1902.0  ...         0.054484                 0.004695    -388.280000        0  1.693779                29.0
+4  15025  42.424441  78.434206  3382.035400  5227.0  1987.0  ...         0.105532                 0.005008    -389.683333        0  2.041220                30.0
+
+[5 rows x 36 columns]
+2025-04-08 13:23:28,764 - INFO - Logging level: 10
+2025-04-08 13:23:28,765 - DEBUG - Debug message for logger level 10
+2025-04-08 13:23:29,467 - INFO - Logging level: 10
+2025-04-08 13:23:29,467 - DEBUG - Debug message for logger level 10
+2025-04-08 13:23:29,467 - INFO - --------------------------------------------------------------------
+2025-04-08 13:23:29,467 - INFO - Starting make_forecast.py
+2025-04-08 13:23:29,467 - DEBUG - Model to use: LR_SWE
+2025-04-08 13:23:29,467 - DEBUG - Horizon to use: 1
+2025-04-08 13:23:29,472 - DEBUG - Loaded the feature config
+2025-04-08 13:23:29,472 - DEBUG - Loaded the general config
+2025-04-08 13:23:30,421 - DEBUG - Loaded the data
+2025-04-08 13:23:30,421 - DEBUG - Head of the data:     code       date  discharge   P  dayofyear_x   T  dayofyear_y  SWE_3  SWE_6  SWE_4  SWE_7  SWE_5  SWE_8  SWE_9  SWE_10  SWE_2  SWE_1  SWE_12  SWE_11  SWE_13  SWE_14
+0  15013 2000-01-01        1.9 NaN          NaN NaN          NaN  35.95  53.57  31.37  48.15  42.71  20.29    NaN     NaN    NaN    NaN     NaN     NaN     NaN     NaN
+1  15013 2000-01-02        1.9 NaN          NaN NaN          NaN  37.99  55.29  31.39  50.07  43.35  22.20    NaN     NaN    NaN    NaN     NaN     NaN     NaN     NaN
+2  15013 2000-01-03        1.9 NaN          NaN NaN          NaN  42.68  61.36  33.30  56.52  46.28  28.77    NaN     NaN    NaN    NaN     NaN     NaN     NaN     NaN
+3  15013 2000-01-04        1.9 NaN          NaN NaN          NaN  46.57  64.71  33.89  60.18  47.13  32.47    NaN     NaN    NaN    NaN     NaN     NaN     NaN     NaN
+4  15013 2000-01-05        1.9 NaN          NaN NaN          NaN  48.85  64.67  32.87  60.16  46.35  32.27    NaN     NaN    NaN    NaN     NaN     NaN     NaN     NaN
+2025-04-08 13:23:30,428 - DEBUG - Head of the static features:     code        LAT        LON       h_mean   h_max   h_min  ...  bare_cover_perc  glacier_volume_per_area  gl_dmdtda_mma  cluster     log_q  max_discharge_week
+0  15013  42.652788  78.921090  2968.916504  4152.0  1967.0  ...         0.024835                 0.000041    -394.885714        0  1.774952                24.0
+1  15016  42.585012  78.883448  3405.278809  4755.0  2044.0  ...         0.106953                 0.002314    -475.450000        0  2.014903                27.0
+2  15020  42.471215  78.531209  3377.967529  4708.0  1874.0  ...         0.072845                 0.003562    -415.719672        0  1.945910                31.0
+3  15022  42.467058  78.537862  3374.202881  4622.0  1902.0  ...         0.054484                 0.004695    -388.280000        0  1.693779                29.0
+4  15025  42.424441  78.434206  3382.035400  5227.0  1987.0  ...         0.105532                 0.005008    -389.683333        0  2.041220                30.0
+
+[5 rows x 36 columns]
+2025-04-08 13:23:58,811 - INFO - Logging level: 10
+2025-04-08 13:23:58,811 - DEBUG - Debug message for logger level 10
+2025-04-08 13:23:59,297 - INFO - Logging level: 10
+2025-04-08 13:23:59,297 - DEBUG - Debug message for logger level 10
+2025-04-08 13:23:59,297 - INFO - --------------------------------------------------------------------
+2025-04-08 13:23:59,297 - INFO - Starting make_forecast.py
+2025-04-08 13:23:59,297 - DEBUG - Model to use: LR_SWE
+2025-04-08 13:23:59,297 - DEBUG - Horizon to use: 1
+2025-04-08 13:23:59,301 - DEBUG - Loaded the feature config
+2025-04-08 13:23:59,302 - DEBUG - Loaded the general config
+2025-04-08 13:24:00,007 - DEBUG - Loaded the data
+2025-04-08 13:24:00,007 - DEBUG - Head of the data:     code       date  discharge   P  dayofyear_x   T  dayofyear_y    SWE
+0  15013 2000-01-01        1.9 NaN          NaN NaN          NaN  44.78
+1  15013 2000-01-02        1.9 NaN          NaN NaN          NaN  45.87
+2  15013 2000-01-03        1.9 NaN          NaN NaN          NaN  50.24
+3  15013 2000-01-04        1.9 NaN          NaN NaN          NaN  52.36
+4  15013 2000-01-05        1.9 NaN          NaN NaN          NaN  51.91
+2025-04-08 13:24:00,012 - DEBUG - Head of the static features:     code        LAT        LON       h_mean   h_max   h_min  ...  bare_cover_perc  glacier_volume_per_area  gl_dmdtda_mma  cluster     log_q  max_discharge_week
+0  15013  42.652788  78.921090  2968.916504  4152.0  1967.0  ...         0.024835                 0.000041    -394.885714        0  1.774952                24.0
+1  15016  42.585012  78.883448  3405.278809  4755.0  2044.0  ...         0.106953                 0.002314    -475.450000        0  2.014903                27.0
+2  15020  42.471215  78.531209  3377.967529  4708.0  1874.0  ...         0.072845                 0.003562    -415.719672        0  1.945910                31.0
+3  15022  42.467058  78.537862  3374.202881  4622.0  1902.0  ...         0.054484                 0.004695    -388.280000        0  1.693779                29.0
+4  15025  42.424441  78.434206  3382.035400  5227.0  1987.0  ...         0.105532                 0.005008    -389.683333        0  2.041220                30.0
+
+[5 rows x 36 columns]
+2025-04-08 13:25:40,129 - INFO - Logging level: 10
+2025-04-08 13:25:40,130 - DEBUG - Debug message for logger level 10
+2025-04-08 13:25:40,602 - INFO - Logging level: 10
+2025-04-08 13:25:40,602 - DEBUG - Debug message for logger level 10
+2025-04-08 13:25:40,602 - INFO - --------------------------------------------------------------------
+2025-04-08 13:25:40,602 - INFO - Starting make_forecast.py
+2025-04-08 13:25:40,602 - DEBUG - Model to use: LR_SWE
+2025-04-08 13:25:40,602 - DEBUG - Horizon to use: 1
+2025-04-08 13:25:40,607 - DEBUG - Loaded the feature config
+2025-04-08 13:25:40,607 - DEBUG - Loaded the general config
+2025-04-08 13:25:41,039 - DEBUG - Head of forcing_df:         date     P   code  dayofyear_x      T  dayofyear_y
+0 2009-01-01  1.61  15013          1.0 -18.15          1.0
+1 2009-01-01  1.32  15016          1.0 -20.86          1.0
+2 2009-01-01  1.17  15020          1.0 -19.46          1.0
+3 2009-01-01  1.22  15022          1.0 -19.96          1.0
+4 2009-01-01  1.19  15025          1.0 -19.06          1.0
+2025-04-08 13:25:41,305 - DEBUG - Loaded the data
+2025-04-08 13:25:41,305 - DEBUG - Head of the data:     code       date  discharge   P  dayofyear_x   T  dayofyear_y    SWE
+0  15013 2000-01-01        1.9 NaN          NaN NaN          NaN  44.78
+1  15013 2000-01-02        1.9 NaN          NaN NaN          NaN  45.87
+2  15013 2000-01-03        1.9 NaN          NaN NaN          NaN  50.24
+3  15013 2000-01-04        1.9 NaN          NaN NaN          NaN  52.36
+4  15013 2000-01-05        1.9 NaN          NaN NaN          NaN  51.91
+2025-04-08 13:25:41,307 - DEBUG - Head of the static features:     code        LAT        LON       h_mean   h_max   h_min  ...  bare_cover_perc  glacier_volume_per_area  gl_dmdtda_mma  cluster     log_q  max_discharge_week
+0  15013  42.652788  78.921090  2968.916504  4152.0  1967.0  ...         0.024835                 0.000041    -394.885714        0  1.774952                24.0
+1  15016  42.585012  78.883448  3405.278809  4755.0  2044.0  ...         0.106953                 0.002314    -475.450000        0  2.014903                27.0
+2  15020  42.471215  78.531209  3377.967529  4708.0  1874.0  ...         0.072845                 0.003562    -415.719672        0  1.945910                31.0
+3  15022  42.467058  78.537862  3374.202881  4622.0  1902.0  ...         0.054484                 0.004695    -388.280000        0  1.693779                29.0
+4  15025  42.424441  78.434206  3382.035400  5227.0  1987.0  ...         0.105532                 0.005008    -389.683333        0  2.041220                30.0
+
+[5 rows x 36 columns]
+2025-04-08 13:32:21,725 - INFO - Logging level: 10
+2025-04-08 13:32:21,725 - DEBUG - Debug message for logger level 10
+2025-04-08 13:32:22,208 - INFO - Logging level: 10
+2025-04-08 13:32:22,208 - DEBUG - Debug message for logger level 10
+2025-04-08 13:32:22,208 - INFO - --------------------------------------------------------------------
+2025-04-08 13:32:22,208 - INFO - Starting make_forecast.py
+2025-04-08 13:32:22,208 - DEBUG - Model to use: LR_SWE
+2025-04-08 13:32:22,208 - DEBUG - Horizon to use: 1
+2025-04-08 13:32:22,214 - DEBUG - Loaded the feature config
+2025-04-08 13:32:22,214 - DEBUG - Loaded the general config
+2025-04-08 13:32:22,737 - DEBUG - Head of forcing_df:             date   code     P      T
+0     2000-01-01  15013  0.69 -13.59
+9132  2000-01-01  15016  0.43 -16.77
+18264 2000-01-01  15020  0.23 -15.20
+27396 2000-01-01  15022  0.32 -15.78
+36528 2000-01-01  15025  0.21 -14.59
+2025-04-08 13:32:22,978 - DEBUG - Loaded the data
+2025-04-08 13:32:22,979 - DEBUG - Head of the data:     code       date  discharge      P      T    SWE
+0  15013 2000-01-01        1.9   0.69 -13.59  44.78
+1  15013 2000-01-02        1.9   5.23  -9.48  45.87
+2  15013 2000-01-03        1.9  21.25  -8.81  50.24
+3  15013 2000-01-04        1.9  20.26  -9.63  52.36
+4  15013 2000-01-05        1.9   0.99 -11.26  51.91
+2025-04-08 13:32:22,981 - DEBUG - Head of the static features:     code        LAT        LON       h_mean   h_max   h_min  ...  bare_cover_perc  glacier_volume_per_area  gl_dmdtda_mma  cluster     log_q  max_discharge_week
+0  15013  42.652788  78.921090  2968.916504  4152.0  1967.0  ...         0.024835                 0.000041    -394.885714        0  1.774952                24.0
+1  15016  42.585012  78.883448  3405.278809  4755.0  2044.0  ...         0.106953                 0.002314    -475.450000        0  2.014903                27.0
+2  15020  42.471215  78.531209  3377.967529  4708.0  1874.0  ...         0.072845                 0.003562    -415.719672        0  1.945910                31.0
+3  15022  42.467058  78.537862  3374.202881  4622.0  1902.0  ...         0.054484                 0.004695    -388.280000        0  1.693779                29.0
+4  15025  42.424441  78.434206  3382.035400  5227.0  1987.0  ...         0.105532                 0.005008    -389.683333        0  2.041220                30.0
+
+[5 rows x 36 columns]

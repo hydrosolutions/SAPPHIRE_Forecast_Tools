@@ -10,7 +10,7 @@
 #
 # --------------------------------------------------------------------
 # USAGE
-# SAPPHIRE_OPDEV_ENV=True ieasyhydroforecast_reanalysis_START_DATE=2009-01-01 ieasyhydroforecast_reanalysis_END_DATE=2023-12-31 python get_era5_reanalysis_data.py
+# SAPPHIRE_OPDEV_ENV=True ieasyhydroforecast_reanalysis_START_DATE=2000-01-01 ieasyhydroforecast_reanalysis_END_DATE=2023-12-31 python get_era5_reanalysis_data.py
 # --------------------------------------------------------------------
 
 # Import necessary libraries

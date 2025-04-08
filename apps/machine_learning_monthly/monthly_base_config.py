@@ -6,7 +6,7 @@ import json
 PATH_CONFIG = {}
 
 
-EXPERIMENT_CONFIG = {
+GENERAL_CONFIG = {
     "experiment_name" : "with_forecast_15d_with_LR",
     "prediction_horizon" : 30,
     "offset" : None,

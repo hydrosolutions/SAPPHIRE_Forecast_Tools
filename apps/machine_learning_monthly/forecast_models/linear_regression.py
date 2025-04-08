@@ -3,7 +3,7 @@ import pandas as pd
 from abc import ABC, abstractmethod
 from typing import Dict, Any
 
-from base_class import BaseForecastModel
+from forecast_models.base_class import BaseForecastModel
 from sklearn.linear_model import LinearRegression, Ridge, Lasso
 
 
