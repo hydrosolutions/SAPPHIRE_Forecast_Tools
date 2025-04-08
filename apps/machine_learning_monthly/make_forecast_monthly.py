@@ -21,33 +21,15 @@ import pandas as pd
 import numpy as np
 import json
 
+import matplotlib.pyplot as plt
 import datetime
 
+# Shared logging
 import logging
-from logging.handlers import TimedRotatingFileHandler
-formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-# Ensure the logs directory exists
-logs_dir = 'logs'
-if not os.path.exists(logs_dir):
-    os.makedirs(logs_dir)
-file_handler = TimedRotatingFileHandler('logs/log', when='midnight',
-                                        interval=1, backupCount=30)
-file_handler.setFormatter(formatter)
-console_handler = logging.StreamHandler()
-console_handler.setFormatter(formatter)
-logger = logging.getLogger('make_forecast_monthly')
-logger.setLevel(logging.DEBUG)
-logger.handlers = []
-logger.addHandler(file_handler)
-#logger.addHandler(console_handler)
+from log_config import setup_logging
+setup_logging()  
 
-import warnings
-warnings.filterwarnings("ignore")
-
-# Print logging level of the logger
-logger.info('Logging level: %s', logger.getEffectiveLevel())
-# Level 10: DEBUG, Level 20: INFO, Level 30: WARNING, Level 40: ERROR, Level 50: CRITICAL
-logger.debug('Debug message for logger level 10')
+logger = logging.getLogger(__name__)  # Use __name__ to get module-specific logger
 
 # Local libraries, installed with pip install -e ./iEasyHydroForecast
 # Get the absolute path of the directory containing the current script
@@ -182,9 +164,80 @@ def make_forecast_monthly():
 
     logger.debug('Loaded the data')
     logger.debug('Head of the data: %s', hydro_df.head())
+    logger.debug('Tail of the data: %s', hydro_df.tail())
     logger.debug('Head of the static features: %s', static_features.head())
 
 
+    # -----------------------------------------------------------
+    # Predictions
+    # -----------------------------------------------------------
+
+    # get the basins we want to predict 
+    # TODO: Replace with Configuration
+    codes_to_predict = static_features['code'].unique()
+    codes_to_predict = [16936, 16100, 15102]
+    logger.debug('Codes to predict: %s', codes_to_predict)
+
+    hydro_df = hydro_df[hydro_df['code'].isin(codes_to_predict)]
+
+    model_first = MODEL_TO_USE.split('_')[0]
+    if model_first == 'LR':
+        model_class = LINEAR_REGRESSION.LinearRegressionModel(
+            data =hydro_df,
+            static_data = static_features,
+            general_config=GENERAL_CONFIG,
+            model_config=MODEL_CONFIG,
+            feature_config=FEATURE_CONFIG,
+            path_config=PATH_CONFIG
+        )
+    else:
+        raise ValueError(f"Model {MODEL_TO_USE} is not implemented yet.")
+
+
+    forecast_df = model_class.predict_operational()
+
+    logger.debug('Head of the forecast: %s', forecast_df.head())
+
+    sys.exit(0)
+    
+    fig, ax = plt.subplots(len(codes_to_predict), 1, figsize=(10, 6))
+    if len(codes_to_predict) == 1:
+        ax = [ax]  # Convert to list when only one subplot is created
+    else:
+        ax = ax.flatten()
+    
+
+    for i, code in enumerate(forecast_df['code'].unique()):
+        code_df = forecast_df[forecast_df['code'] == code]
+        
+        # Extract dates and convert to datetime
+        valid_from = pd.to_datetime(code_df['valid_from'].values[0])  # Get first value
+        valid_to = pd.to_datetime(code_df['valid_to'].values[0])      # Get first value
+        Q = code_df['Q'].values[0]  # Get the forecast value
+
+        logger.debug(f'Code: {code}, Valid from: {valid_from}, Valid to: {valid_to}, Q: {Q}')
+        
+        # Plot the horizontal forecast line using proper date formatting
+        ax[i].hlines(y=Q, xmin=valid_from, xmax=valid_to, colors='red', label='Forecast', linewidth=2)
+        
+        # Plot past discharge data
+        past_discharge_code = hydro_df[hydro_df['code'] == code]
+        start_of_year = datetime.datetime.now().year
+        past_discharge_code['year'] = past_discharge_code['date'].dt.year
+        past_discharge_code = past_discharge_code[past_discharge_code['year'] == start_of_year]
+        ax[i].plot(past_discharge_code['date'], past_discharge_code['discharge'], label='Past Discharge', color='black')
+        
+        # Set plot formatting
+        ax[i].set_title(f'Code: {code}')
+        ax[i].set_xlabel('Date')
+        ax[i].set_ylabel('Discharge (m3/s)')
+        ax[i].legend()
+
+
+    # Adjust layout to prevent overlapping
+    plt.tight_layout()
+    plt.show()
+        
 
 if __name__ == "__main__":
     make_forecast_monthly()

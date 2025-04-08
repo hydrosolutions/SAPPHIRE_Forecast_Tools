@@ -4,31 +4,13 @@ from typing import Dict, Any, Tuple
 # Ensure the logs directory exists
 import datetime
 
+# Shared logging
 import logging
-from logging.handlers import TimedRotatingFileHandler
-formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-# Ensure the logs directory exists
-logs_dir = 'logs'
-if not os.path.exists(logs_dir):
-    os.makedirs(logs_dir)
-file_handler = TimedRotatingFileHandler('logs/log', when='midnight',
-                                        interval=1, backupCount=30)
-file_handler.setFormatter(formatter)
-console_handler = logging.StreamHandler()
-console_handler.setFormatter(formatter)
-logger = logging.getLogger('scr/data_loading')
-logger.setLevel(logging.DEBUG)
-logger.handlers = []
-logger.addHandler(file_handler)
-#logger.addHandler(console_handler)
+from log_config import setup_logging
+setup_logging()  
 
-import warnings
-warnings.filterwarnings("ignore")
+logger = logging.getLogger(__name__)  # Use __name__ to get module-specific logger
 
-# Print logging level of the logger
-logger.info('Logging level: %s', logger.getEffectiveLevel())
-# Level 10: DEBUG, Level 20: INFO, Level 30: WARNING, Level 40: ERROR, Level 50: CRITICAL
-logger.debug('Debug message for logger level 10')
 # Custom Libraries
 from monthly_base_config import PATH_CONFIG, GENERAL_CONFIG, MODEL_CONFIG, FEATURE_CONFIG
 
@@ -45,8 +27,25 @@ def load_data(path_discharge,
     Load the data from the given paths.
     """
     discharge = pd.read_csv(path_discharge, parse_dates=['date'])
-
     discharge['date'] = pd.to_datetime(discharge['date'])
+    # Get the list of unique codes
+    unique_codes = discharge['code'].unique()
+    
+    # Find the min and max dates from the discharge data
+    min_date = discharge['date'].min()
+    # Use today's date as the max date to ensure completeness through present
+    max_date = pd.Timestamp.today().normalize()
+    
+    # Create a continuous date range
+    date_range = pd.date_range(start=min_date, end=max_date, freq='D')
+    
+    # Create a complete dataframe with all dates for all codes
+    all_dates = pd.DataFrame([(date, code) for code in unique_codes for date in date_range],
+                            columns=['date', 'code'])
+    
+    # Merge with the original discharge data to fill in missing dates
+    discharge = pd.merge(all_dates, discharge, on=['date', 'code'], how='left')
+
 
     P_data_operational = pd.read_csv(path_to_P_operational, parse_dates=['date'])
     P_data_operational['date'] = pd.to_datetime(P_data_operational['date'])
