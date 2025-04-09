@@ -17,7 +17,7 @@ env:
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "deploy_decad_dashboard" ]
   #pull_request:
   #  branches: [ "main" ]
 

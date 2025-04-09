@@ -3,14 +3,16 @@
 FROM mabesa/sapphire-pythonbaseimage:latest AS base
 
 # Copy the contents of the apps/forecast_dashboard directory into the container
-COPY --chown=appuser:appgroup apps/forecast_dashboard /app/apps/forecast_dashboard
+#COPY --chown=appuser:appgroup apps/forecast_dashboard /app/apps/forecast_dashboard
+COPY apps/forecast_dashboard /app/apps/forecast_dashboard
 
 # Specify the working directory inside the container
 WORKDIR /app/apps/forecast_dashboard
 
 # Env
 ENV SAPPHIRE_OPDEV_ENV=True
-ENV PATH="/home/appuser/.local/bin:${PATH}"
+#ENV PATH="/home/appuser/.local/bin:${PATH}"
+ENV PATH="/root/.local/bin:${PATH}"
 
 # Add Display to the container. This is needed for the dashboard to work.
 ENV DISPLAY=:0
@@ -31,6 +33,9 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 # Port 5007 for the decad dashboard
 EXPOSE 5006
 EXPOSE 5007
+
+# Run as root to allow running of containers from within dashboard
+USER root
 
 # Test if file apps/forecast_dashboard/forecast_dashboard.py exists. Print the result.
 # CMD test -f apps/forecast_dashboard/forecast_dashboard.py && echo "File exists" || echo "File does not exist"
