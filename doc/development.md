@@ -1349,7 +1349,15 @@ docker run -e "IN_DOCKER_CONTAINER=True" -v <full_path_to>/apps/config:/app/apps
 
 ### Forecast dashboard
 
-The forecast dashboard is dockerized using the Dockerfile in the apps/forecast_dashboard folder. To build the docker image locally, run the following command in the root directory of the repository:
+The most straight forward way to test the forecast dashboard locally is to run the following command in the root directory of the repository:
+
+``` bash
+ieasyhydroforecast_url_decad=0.0.0.0:5007 ieasyhydroforecast_url_pentad=0.0.0.0:5006 bash bin/daily_update_sapphire_frontend.sh <path/to/your/data>/config/.env
+```
+
+Given you have all data folders set up correctly, the dashboard will display the latest results produced by the forecast tools at 0.0.0.0:5006/forecast_dashboard (pentadal forecasts) and at 0.0.0.0:5007/forecast_dashboard (decadal dashboard). Note that these two urls need to be specified in your .env file under variable `ieasyhydroforecast_url`.  
+
+During development, you might perfer to go step-by-step with the following instructions: The forecast dashboard is dockerized using the Dockerfile in the apps/forecast_dashboard folder. To build the docker image locally, run the following command in the root directory of the repository:
 
 ``` bash
 docker build --no-cache -t forecast_dashboard -f ./apps/forecast_dashboard/Dockerfile .

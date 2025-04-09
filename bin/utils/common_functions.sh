@@ -224,7 +224,8 @@ start_docker_compose_dashboards() {
     echo "| ------"
     echo "| Starting Docker Compose service for the dashboards..."
     echo "| Deploying dashboard to: ieasyhydroforecast_url: $ieasyhydroforecast_url"
-    ieasyhydroforecast_url_pentad=$ieasyhydroforecast_url_pentad ieasyhydroforecast_url_decad=$ieasyhydroforecast_url_decad ieasyhydroforecast_frontend_docker_image_tag=$ieasyhydroforecast_frontend_docker_image_tag docker compose -f bin/docker-compose-dashboards.yml up -d &
+    echo "| Inside the container, the path to the .ssh directory is: $ieasyhydroforecast_container_data_ref_dir/bin/.ssh"
+    ieasyhydroforecast_url_pentad=$ieasyhydroforecast_url_pentad ieasyhydroforecast_url_decad=$ieasyhydroforecast_url_decad ieasyhydroforecast_frontend_docker_image_tag=$ieasyhydroforecast_frontend_docker_image_tag ieasyhydroforecast_container_data_ref_dir=$ieasyhydroforecast_container_data_ref_dir docker compose -f bin/docker-compose-dashboards.yml up -d &
     DOCKER_COMPOSE_DASHBOARD_PID=$!
     echo "| Docker Compose service started with PID $DOCKER_COMPOSE_DASHBOARD_PID"
 }
