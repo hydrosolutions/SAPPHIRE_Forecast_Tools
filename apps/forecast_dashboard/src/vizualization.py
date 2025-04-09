@@ -3553,7 +3553,7 @@ def run_docker_container(client, full_image_name, volumes, environment, containe
         print(f"trying a different path")
         # Try to access the file at ieasyhydroforecast_container_data_ref_dir
         SSH_TUNNEL_SCRIPT_ABSOLUTE = os.path.join(
-            get_absolute_path(os.getenv('ieasyhydroforecast_container_data_ref_dir')),
+            os.getenv('ieasyhydroforecast_container_data_ref_dir'),
             'bin', 
             SSH_TUNNEL_SCRIPT_PATH
         )
