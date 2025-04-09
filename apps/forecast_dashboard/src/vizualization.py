@@ -2641,13 +2641,13 @@ def get_absolute_path(relative_path):
         return os.path.join(cwd, relative_path)
 
 
-# TODO: use this function for local development instead of initial get_absolute_path function
-# def get_absolute_path(relative_path):
-#    # function for local development
-#    project_root = '/home/vjeko/Desktop/Projects/sapphire_forecast'
-#    # Remove leading ../../../ from the relative path
-#    relative_path = re.sub(r'^\.\./\.\./\.\./', '', relative_path)
-#    return os.path.join(project_root, relative_path)
+"""# TODO: use this function for local development instead of initial get_absolute_path function
+def get_absolute_path(relative_path):
+    # function for local development
+    project_root = '/home/vjeko/Desktop/Projects/sapphire_forecast'
+    # Remove leading ../../../ from the relative path
+    relative_path = re.sub(r'^\.\./\.\./\.\./', '', relative_path)
+    return os.path.join(project_root, relative_path)"""
 
 def get_bind_path(relative_path):
     # Strip the relative path from ../../.. to get the path to bind to the container
@@ -3547,6 +3547,14 @@ def run_docker_container(client, full_image_name, volumes, environment, containe
         get_absolute_path(os.getenv('ieasyhydroforecast_bin_path')),
         SSH_TUNNEL_SCRIPT_PATH
     )
+    # Test if file exists
+    if not os.path.isfile(SSH_TUNNEL_SCRIPT_ABSOLUTE):
+        print(f"SSH tunnel script not found at: {SSH_TUNNEL_SCRIPT_ABSOLUTE}")
+        return
+    # Test if file is executable
+    if not os.access(SSH_TUNNEL_SCRIPT_ABSOLUTE, os.X_OK):
+        print(f"SSH tunnel script is not executable: {SSH_TUNNEL_SCRIPT_ABSOLUTE}")
+        return
     print(f"Using SSH tunnel script at: {SSH_TUNNEL_SCRIPT_ABSOLUTE}")
     try:
         # Establish SSH tunnel before running the container
