@@ -68,9 +68,11 @@ git clone https://github.com/hydrosolutions/SAPPHIRE_Forecast_Tools.git
 We provide a script the should take care of most deployment steps for you and run the forecast tools for the first time.
 The script is located in the bin folder and run as follows from the SAPPHIRE_Forecast_Tools folder:
 ```bash
-nohup bash .bin/deploy_sapphire_forecast_tools.sh <env_file_path> > deployment.log 2>&1 &
+ieasyhydroforecast_url=<base url> nohup bash .bin/deploy_sapphire_forecast_tools.sh <env_file_path> > deployment.log 2>&1 &
 ```
 where the env_file_path is the absolute path to your .env file. This command will log all output of the command to a file deployment.log in your folder SAPPHIRE_Forecast_Tools. You can view the progress of the deployment script by looking at the log file, for example with `less deployment.log`, and by checking the progress of the individual containers with `docker ps -a` and `docker logs <container_name>`.
+
+Please note that the deployment script assumes that the pentad forecast dashboard will be deployed at fc.pentad.<base url> and the decad dashboard will be deployed at fc.decad.<base url>. 
 
 
 ## Deployment of demo version on a local machine
@@ -119,13 +121,15 @@ To be described.
 ### Deploy the forecast tools
 We provide you with a shell script that pulls the latest images from Docker Hub and runs the containers. The script is located in the bin folder and run as follows from the SAPPHIRE_Forecast_Tools folder:
 ```bash
-ieasyhydroforecast_url=<url you set up for your forecast dashboard> bash ./bin/deploy_sapphire_forecast_tools.sh <absolute_path_to_data_directory>/config/.env_develop_kghm
+ieasyhydroforecast_url=<base url> bash ./bin/deploy_sapphire_forecast_tools.sh <absolute_path_to_data_directory>/config/.env_develop_kghm
 ```
 The path to the data root folder is the parent directory of your data folder where you store your discharge, bulletin templates and other data.
 For deployment with sensitive data, we recommend a separate data folder which is located at the same hierarchical level as the SAPPHIRE_Forecast_Tools folder. In this case the path to the data root folder would be:
 ```bash
-ieasyhydroforecast_url=<url you set up for your forecast dashboard> bash .bin/run_sapphire_forecast_tools.sh /absolute/path/to/parent/directory/of/SAPPHIRE_Forecast_Tools
+ieasyhydroforecast_url=<base url> bash .bin/run_sapphire_forecast_tools.sh /absolute/path/to/parent/directory/of/SAPPHIRE_Forecast_Tools
 ```
+
+Please note that the deployment script assumes that the pentad forecast dashboard will be deployed at fc.pentad.<base url> and the decad dashboard will be deployed at fc.decad.<base url>. You will have to configure your proxy manager and domain manager to forward port 5006 to fc.pentad.<base url> and port 5007 to fc.decad.<base url>. 
 
 For convenience sake you may want to run the forecast tools in the background and redirect the output to a log file. You can do this by running the following command:
 ```bash
