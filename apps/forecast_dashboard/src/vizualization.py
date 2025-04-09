@@ -3550,7 +3550,17 @@ def run_docker_container(client, full_image_name, volumes, environment, containe
     # Test if file exists
     if not os.path.isfile(SSH_TUNNEL_SCRIPT_ABSOLUTE):
         print(f"SSH tunnel script not found at: {SSH_TUNNEL_SCRIPT_ABSOLUTE}")
-        return
+        print(f"trying a different path")
+        # Try to access the file at ieasyhydroforecast_container_data_ref_dir
+        SSH_TUNNEL_SCRIPT_ABSOLUTE = os.path.join(
+            get_absolute_path(os.getenv('ieasyhydroforecast_container_data_ref_dir')),
+            'bin', 
+            SSH_TUNNEL_SCRIPT_PATH
+        )
+        if not os.path.isfile(SSH_TUNNEL_SCRIPT_ABSOLUTE):
+            print(f"SSH tunnel script not found at: {SSH_TUNNEL_SCRIPT_ABSOLUTE}")
+            return
+        
     # Test if file is executable
     if not os.access(SSH_TUNNEL_SCRIPT_ABSOLUTE, os.X_OK):
         print(f"SSH tunnel script is not executable: {SSH_TUNNEL_SCRIPT_ABSOLUTE}")
