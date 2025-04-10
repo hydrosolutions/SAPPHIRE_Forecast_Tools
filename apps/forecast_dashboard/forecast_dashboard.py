@@ -1517,9 +1517,9 @@ reload_card = viz.create_reload_button()
 # Custom authentication logic by Vjekoslav Večković
 
 # Create widgets for login
-username_input = pn.widgets.TextInput(name='Username', placeholder='Enter your username')
-password_input = pn.widgets.PasswordInput(name='Password', placeholder='Enter your password')
-login_submit_button = pn.widgets.Button(name='Login', button_type='primary')
+username_input = pn.widgets.TextInput(name=_('Username'), placeholder=_('Enter your username'))
+password_input = pn.widgets.PasswordInput(name=_('Password'), placeholder=_('Enter your password'))
+login_submit_button = pn.widgets.Button(name=_('Login'), button_type='primary')
 login_feedback = pn.pane.Markdown("", visible=False)
 dashboard_link = pn.pane.Markdown("", visible=False)
 
@@ -1697,7 +1697,7 @@ logout_no.on_click(handle_logout_cancel)
 
 # Create layout components
 login_form = pn.Column(
-    pn.pane.Markdown("# Login"),
+    pn.pane.Markdown(f"# {_('Login')}"),
     username_input,
     password_input,
     login_submit_button,
