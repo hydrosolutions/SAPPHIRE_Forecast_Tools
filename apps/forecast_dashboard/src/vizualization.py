@@ -284,7 +284,7 @@ def plot_runoff_forecasts(data, date_col, forecast_data_col,
         # Get the latest forecast for the model
         # latest_forecast = fl.round_discharge(model_data[forecast_data_col].iloc[-1])
         # legend_entry = model + ": " + latest_forecast + " " + unit_string
-        legend_entry = model + ": Past forecasts"
+        legend_entry = model + ": " + _("Past forecasts")
 
         # Create a HoverTool
         hover = HoverTool(tooltips=[
@@ -367,7 +367,7 @@ def plot_runoff_forecasts_steps(data, date_col, forecast_data_col,
         # Get the latest forecast for the model
         # latest_forecast = fl.round_discharge(model_data[forecast_data_col].iloc[-1])
         # legend_entry = model + ": " + latest_forecast + " " + unit_string
-        legend_entry = model + ": Past forecasts"
+        legend_entry = model + ": " + _("Past forecasts")
 
         # Create a HoverTool
         hover = HoverTool(tooltips=[
@@ -451,7 +451,7 @@ def plot_runoff_forecasts_v2(data, date_col, forecast_data_col,
         # Get the latest forecast for the model
         # latest_forecast = fl.round_discharge(model_data[forecast_data_col].iloc[-1])
         # legend_entry = model + ": " + latest_forecast + " " + unit_string
-        legend_entry = model + ": Past forecasts"
+        legend_entry = model + ": " + _("Past forecasts")
 
         # Create a HoverTool
         hover = HoverTool(tooltips=[
@@ -883,7 +883,7 @@ def plot_current_runoff_forecast_range(
 
         lower_bound = fl.round_discharge(model_data[min_col].iloc[-1])
         upper_bound = fl.round_discharge(model_data[max_col].iloc[-1])
-        range_legend_entry = model + "range : " + lower_bound + "-" + upper_bound + " " + unit_string
+        range_legend_entry = model + " " + _("range") + ": " + lower_bound + "-" + upper_bound + " " + unit_string
         # print(f"Debug: model_data\n{model_data}")
         # print("MODEL: ", model)
         # print("COLOR: ", runoff_forecast_color[i])
@@ -999,7 +999,7 @@ def plot_current_runoff_forecast_range_date_format(
 
         lower_bound = fl.round_discharge(model_data[min_col].iloc[-1])
         upper_bound = fl.round_discharge(model_data[max_col].iloc[-1])
-        range_legend_entry = model + "range : " + lower_bound + "-" + upper_bound + " " + unit_string
+        range_legend_entry = model + " " + _("range") + ": " + lower_bound + "-" + upper_bound + " " + unit_string
         # print(f"Debug: model_data\n{model_data}")
         # print("MODEL: ", model)
         # print("COLOR: ", runoff_forecast_color[i])
@@ -1131,7 +1131,7 @@ def plot_current_runoff_forecast_range_date_format_v2(
 
         lower_bound = fl.round_discharge(model_data[min_col].iloc[-1])
         upper_bound = fl.round_discharge(model_data[max_col].iloc[-1])
-        range_legend_entry = model + "range : " + lower_bound + "-" + upper_bound + " " + unit_string
+        range_legend_entry = model + " " + _("range") + ": " + lower_bound + "-" + upper_bound + " " + unit_string
         # print(f"Debug: model_data\n{model_data}")
         # print("MODEL: ", model)
         # print("COLOR: ", runoff_forecast_color[i])
@@ -1772,16 +1772,16 @@ def plot_daily_temperature_data(_, daily_rainfall, station, date_picker,
 
     horizon = os.getenv("sapphire_forecast_horizon", "pentad")
     if horizon == "pentad":
-        current_period = "3 day mean"
-        forecast_period = "5 day mean"
+        current_period = _("3 day mean")
+        forecast_period = _("5 day mean")
     else:
-        current_period = "10 day mean"
-        forecast_period = "10 day mean"
+        current_period = _("10 day mean")
+        forecast_period = _("10 day mean")
 
     # Plot the daily rainfall data using holoviews
     title_text = f"{_('Daily average temperature for basin of')} {station} {_('on')} {date_picker.strftime('%Y-%m-%d')}"
-    current_year_text = f"{_(f'Current year, {current_period}: ')} {predictor_rainfall['T'].mean().round()} °C"
-    forecast_text = f"{_(f'Forecast, {forecast_period}: ')} {forecasts['T'].mean().round()} °C"
+    current_year_text = f"{_('Current year')}, {current_period}: {predictor_rainfall['T'].mean().round()} °C"
+    forecast_text = f"{_('Forecast')}, {forecast_period}: {forecasts['T'].mean().round()} °C"
 
     hvspan_predictor = hv.VSpan(
         linreg_predictor['predictor_start_date'].values[0],
@@ -2723,7 +2723,7 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector, d
         selected_pentad_text = [k for k, v in pentad_options.items() if v == selected_pentad][0]
         title_pentad = selected_pentad_text.split(' ')[0]
         title_month = selected_pentad_text.split('of ')[-1]
-        partial_title_text = f"{title_pentad} {_(' pentad of ')} {title_month} "
+        partial_title_text = f"{_(title_pentad)} {_('pentad of ' + title_month)}"
 
         pentad_in_month = selected_pentad % 6 if selected_pentad % 6 != 0 else 6
         partial_file_name = f"{pentad_in_month}_pentad_of_{title_month}"
@@ -2743,7 +2743,7 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector, d
         selected_decad_text = [k for k, v in decad_options.items() if v == selected_decad][0]
         title_decad = selected_decad_text.split(' ')[0]
         title_month = selected_decad_text.split('of ')[-1]
-        partial_title_text = f"{title_decad} {_(' decade of ')} {title_month} "
+        partial_title_text = f"{_(title_decad)} {_('decade of ' + title_month)}"
 
         decad_in_month = selected_decad % 3 if selected_decad % 3 != 0 else 3
         partial_file_name = f"{decad_in_month}_decad_of_{title_month}"
@@ -2924,7 +2924,7 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector, d
 
             # Create the dynamic scatter plot (updates during interaction)
             scatter = hv.Scatter(visible_data, kdims='predictor', vdims=['discharge_avg', 'year']) \
-                .opts(color='blue', size=5, tools=[hover, 'tap'], xlim=x_range, ylim=y_range)
+                .opts(xlabel=_('predictor'), ylabel=_('discharge_avg'), color='blue', size=5, tools=[hover, 'tap'], xlim=x_range, ylim=y_range)
 
             if len(visible_data) > 1:
                 # Compute dynamic regression parameters
@@ -3036,7 +3036,8 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector, d
                     show_legend=True,
                     width=1000,
                     height=450,
-                    hooks=[remove_bokeh_logo, hook]
+                    hooks=[remove_bokeh_logo, hook],
+                    fontsize={'title': 10}
                 )
             else:
                 plot = scatter.opts(
@@ -3679,7 +3680,7 @@ def plot_forecast_skill(
         xlabel=horizon_x_label, ylabel=_("Effectiveness [-]"),
         show_grid=True,  # xlim=(1, 72),
         ylim=(0, 1.4),
-        fontsize={'legend': 8}, fontscale=1.2
+        fontsize={'legend': 8, 'title': 10}, fontscale=1.2
     )
 
     # Plot the forecast accuracy
@@ -3718,7 +3719,7 @@ def plot_forecast_skill(
         xlabel=horizon_x_label, ylabel=_("Accuracy [%]"),
         show_grid=True,  # xlim=(1, 72),
         ylim=(0, 100),
-        fontsize={'legend': 8}, fontscale=1.2
+        fontsize={'legend': 8, 'title': 10}, fontscale=1.2
     )
 
     # Plot observed runoff against forecasted runoff
