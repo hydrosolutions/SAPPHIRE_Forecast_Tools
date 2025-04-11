@@ -997,6 +997,11 @@ def calculate_forecast_range(_, forecast_table, range_type, range_slider):
     Returns:
         pd.DataFrame: The forecast table with the calculated forecast range.
     """
+
+    # Check if range_type is a widget or a string
+    if not isinstance(range_type, str):
+        range_type = range_type.value
+
     if range_type == _('delta'):
         forecast_table['fc_lower'] = forecast_table['forecasted_discharge'] - forecast_table['delta']
         forecast_table['fc_upper'] = forecast_table['forecasted_discharge'] + forecast_table['delta']
