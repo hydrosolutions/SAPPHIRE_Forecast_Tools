@@ -3841,6 +3841,7 @@ def create_skill_table(_, forecast_stats):
     forecast_stats_table = pn.widgets.Tabulator(
         value=forecast_stats_loc,
         theme='bootstrap',
+        editors={col: None for col in forecast_stats_loc.columns},
         configuration={
             'columnFilters': True,
             'pagination': 'local',  # Use local pagination
