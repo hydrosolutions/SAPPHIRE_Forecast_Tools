@@ -89,8 +89,8 @@ read_configuration(){
     export ieasyhydroforecast_data_root_dir
 
     # Define subdomains for url: 
-    export ieasyhydroforecast_url_pentad=fc.pentad.$ieasyhydroforecast_url
-    export ieasyhydroforecast_url_decad=fc.decad.$ieasyhydroforecast_url
+    export ieasyhydroforecast_url_pentad=$ieasyhydroforecast_url
+    export ieasyhydroforecast_url_decad=$ieasyhydroforecast_url
 
     # Load environment variables from the specified .env file
     if [ -f "$env_file_path" ]; then
