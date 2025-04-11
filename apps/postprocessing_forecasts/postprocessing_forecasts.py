@@ -138,9 +138,7 @@ def postprocessing_forecasts():
             # Calculate forecast skill metrics, adds ensemble forecast to modelled
             skill_metrics, modelled, returned_timing_stats = fl.calculate_skill_metrics_pentad(
                 observed, modelled, timing_stats)
-            logger.debug(f"Skill metrics: {skill_metrics.columns}")
-            logger.debug(f"Skill metrics: {skill_metrics.tail()}")
-
+            
             # Use returned timing_stats only if it's not None
             if returned_timing_stats is not None:
                 timing_stats = returned_timing_stats
@@ -155,8 +153,6 @@ def postprocessing_forecasts():
             # Calculate forecast skill metrics, adds ensemble forecast to modelled
             skill_metrics_decade, modelled_decade, returned_timing_stats = fl.calculate_skill_metrics_decade(
                 observed_decade, modelled_decade, timing_stats)
-            logger.debug(f"Skill metrics: {skill_metrics_decade.columns}")
-            logger.debug(f"Skill metrics: {skill_metrics_decade.tail()}")
 
             # Use returned timing_stats only if it's not None
             if returned_timing_stats is not None:

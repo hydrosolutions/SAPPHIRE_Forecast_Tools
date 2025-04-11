@@ -472,6 +472,43 @@ def get_pentad_first_day(date_str):
     # return the first day of the pentad as a string
     return str(first_day)
 
+
+def get_decad_first_day(date_str):
+    """
+    Returns the first day of the decade of the month for a given date string.
+
+    Args:
+        date_str (str): A string representing a date in the format 'YYYY-MM-DD'.
+
+    Returns:
+        str: A string representing the first day of the decade for the input
+             date string, in the format 'D'.
+
+        If the input date string is not a valid date or not Gregorian, returns None.
+    """
+    # If date is a Timestamp, convert it to a string
+    if isinstance(date_str, pd.Timestamp):
+        date_str = date_str.strftime('%Y-%m-%d')
+
+    try:
+        date = dt.datetime.strptime(date_str, '%Y-%m-%d').date()
+    except ValueError:
+        return None
+
+    if not is_gregorian_date(date_str):
+        return None
+
+    day = date.day
+    if day <= 10:
+        first_day = 1
+    elif day <= 20:
+        first_day = 11
+    else:
+        first_day = 21
+
+    return str(first_day)
+
+
 def get_pentad_last_day(date_str):
     """
     Returns the last day of the pentad of the month for a given date string.
@@ -523,6 +560,43 @@ def get_pentad_last_day(date_str):
     # return the first day of the pentad as a string
     return str(last_day)
 
+
+def get_decad_last_day(date_str):
+    """
+    Returns the last day of the decade of the month for a given date string.
+
+    Args:
+        date_str (str): A string representing a date in the format 'YYYY-MM-DD'.
+
+    Returns:
+        str: A string representing the last day of the decade for the input
+            date string, in the format 'D'. If the date is not valid or not Gregorian, returns None.
+    """
+    if isinstance(date_str, pd.Timestamp):
+        date_str = date_str.strftime('%Y-%m-%d')
+
+    try:
+        date = dt.datetime.strptime(date_str, '%Y-%m-%d').date()
+    except ValueError:
+        return None
+
+    if not is_gregorian_date(date_str):
+        return None
+
+    day = date.day
+
+    # Determine which decade the day belongs to
+    if day <= 10:
+        return "10"
+    elif day <= 20:
+        return "20"
+    else:
+        # Calculate last day of the month
+        next_month = date.replace(day=1) + dt.timedelta(days=31)
+        last_day_of_month = (next_month - dt.timedelta(days=next_month.day)).day
+        return str(last_day_of_month)
+
+
 def get_year(date_str):
     """
     Returns the year number for a given date string.
@@ -565,6 +639,23 @@ def get_pentad_for_date(date):
     pentad_in_year = (date.month - 1) * 6 + pentad_in_month
 
     return pentad_in_year
+
+
+def get_decad_for_date(date):
+    """Returns the decade number in the year for a given date."""
+    day = date.day
+    month = date.month
+
+    if day <= 10:
+        decade_in_month = 1
+    elif day <= 20:
+        decade_in_month = 2
+    else:
+        decade_in_month = 3
+
+    decade_in_year = (month - 1) * 3 + decade_in_month
+    return decade_in_year
+
 
 def get_date_for_pentad(pentad_in_year, year=dt.datetime.now().year):
     """
@@ -621,6 +712,66 @@ def get_date_for_pentad(pentad_in_year, year=dt.datetime.now().year):
         print(f"Error: {e}")
         return None
 
+
+def get_date_for_decad(decad_in_year, year=dt.datetime.now().year):
+    """
+    Get the date for a given decade in the year.
+
+    Parameters:
+        decad_in_year (int): The decade number within the year (1–36).
+        year (int): The year for which the date is needed. Defaults to the current year.
+
+    Returns:
+        str: A string representing the date for the input decade in the format 'YYYY-MM-DD',
+             or None if the input is not valid.
+
+    Examples:
+        >>> get_date_for_decad(1)
+        'YYYY-01-01'
+        >>> get_date_for_decad(36)
+        'YYYY-12-21'
+    """
+    if not isinstance(decad_in_year, int):
+        try:
+            decad_in_year = int(decad_in_year)
+        except ValueError:
+            raise ValueError('Invalid decade') from None
+
+    if not isinstance(year, int):
+        try:
+            year = int(year)
+        except ValueError:
+            raise ValueError('Invalid year') from None
+
+    try:
+        if not (1 <= decad_in_year <= 36):
+            raise ValueError("Decade must be in the range 1–36")
+
+        # Each month has 3 decades (1–10, 11–20, 21–end)
+        month = (decad_in_year - 1) // 3 + 1
+        decad_in_month = (decad_in_year - 1) % 3
+
+        # Determine the start day of the decade
+        if decad_in_month == 0:
+            day = 1
+        elif decad_in_month == 1:
+            day = 11
+        else:
+            day = 21
+
+        # Handle months where the last decade starts but might go over the number of days in that month
+        last_day_of_month = (dt.date(year, month, 1) + dt.timedelta(days=31)).replace(day=1) - dt.timedelta(days=1)
+        if day > last_day_of_month.day:
+            day = last_day_of_month.day
+
+        date = dt.date(year, month, day)
+        return date.strftime('%Y-%m-%d')
+
+    except Exception as e:
+        print(f"Error: {e}")
+        return None
+
+
 def get_date_for_last_day_in_pentad(pentad_in_year, year=dt.datetime.now().year):
     """
     Get the date of the last day in a given pentad in the year. I.e. the day on
@@ -670,6 +821,64 @@ def get_date_for_last_day_in_pentad(pentad_in_year, year=dt.datetime.now().year)
 
         # Create the date
         date = dt.date(year, month, last_day_of_pentad)
+
+        # Return the date as a string in 'YYYY-MM-DD' format
+        return date.strftime('%Y-%m-%d')
+
+    except Exception as e:
+        # Return None if there's an error (invalid pentad, etc.)
+        print(f"Error: {e}")
+        return None
+    
+def get_date_for_last_day_in_decad(decad_in_year, year=dt.datetime.now().year):
+    """
+    Get the date of the last day in a given decade in the year. I.e. the day on
+    which a forecast is produced for the coming decade.
+
+    Parameters:
+        decade_in_year (int): The decade number within the year (1-36).
+        year (int): The year for which the date is needed. Defaults to the current year.
+
+    Returns:
+        str: A string representing the date for the input decade in the format 'YYYY-MM-DD',
+             or None if the input is not valid.
+
+    Examples:
+        >>> get_date_for_last_day_in_decad(1)
+        'YYYY-01-05'
+        >>> get_date_for_last_day_in_decad(36)
+        'YYYY-12-31'
+    """
+    if not isinstance(decad_in_year, int):
+        try:
+            decad_in_year = int(decad_in_year)
+        except ValueError:
+            raise ValueError('Invalid decad') from None
+
+    if not isinstance(year, int):
+        try:
+            year = int(year)
+        except ValueError:
+            raise ValueError('Invalid year') from None
+
+    try:
+        # Calculate the month and the decad within the month
+        month = (decad_in_year - 1) // 3 + 1
+        decad_in_month = (decad_in_year - 1) % 3 + 1
+
+        # Calculate the first day of the decad
+        first_day_of_decad = 10 * (decad_in_month - 1) + 1
+
+        # Calculate the last day of the pentad
+        last_day_of_decad = 10 * decad_in_month
+
+        # Ensure the calculated day is valid within the month
+        days_in_month = (dt.date(year, month, 1) + dt.timedelta(days=31)).replace(day=1) - dt.timedelta(days=1)
+        if last_day_of_decad > 25:
+            last_day_of_decad = days_in_month.day
+
+        # Create the date
+        date = dt.date(year, month, last_day_of_decad)
 
         # Return the date as a string in 'YYYY-MM-DD' format
         return date.strftime('%Y-%m-%d')

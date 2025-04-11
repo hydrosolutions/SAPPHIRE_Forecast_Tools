@@ -2,15 +2,20 @@
 
 FROM mabesa/sapphire-pythonbaseimage:latest AS base
 
+# Run as root to allow running of containers from within dashboard
+USER root
+
 # Copy the contents of the apps/forecast_dashboard directory into the container
-COPY --chown=appuser:appgroup apps/forecast_dashboard /app/apps/forecast_dashboard
+#COPY --chown=appuser:appgroup apps/forecast_dashboard /app/apps/forecast_dashboard
+COPY apps/forecast_dashboard /app/apps/forecast_dashboard
 
 # Specify the working directory inside the container
 WORKDIR /app/apps/forecast_dashboard
 
 # Env
 ENV SAPPHIRE_OPDEV_ENV=True
-ENV PATH="/home/appuser/.local/bin:${PATH}"
+#ENV PATH="/home/appuser/.local/bin:${PATH}"
+ENV PATH="/root/.local/bin:${PATH}"
 
 # Add Display to the container. This is needed for the dashboard to work.
 ENV DISPLAY=:0
@@ -27,16 +32,19 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     python -m pip install git+https://github.com/hydrosolutions/ieasyreports.git@main
 
 # Expose the port that the application listens on.
+# Port 5006 for the pentad dashboard
+# Port 5007 for the decad dashboard
 EXPOSE 5006
+EXPOSE 5007
 
-# Test if file apps/forecast_dashboard/pentad_dashboard.py exists. Print the result.
-# CMD test -f apps/forecast_dashboard/pentad_dashboard.py && echo "File exists" || echo "File does not exist"
+# Test if file apps/forecast_dashboard/forecast_dashboard.py exists. Print the result.
+# CMD test -f apps/forecast_dashboard/forecast_dashboard.py && echo "File exists" || echo "File does not exist"
 
 # Run the application.
 # On local machine
-#CMD ["panel", "serve", "pentad_dashboard.py", "--show", "--autoreload", "--port", "5006"]
+#CMD ["panel", "serve", "forecast_dashboard.py", "--show", "--autoreload", "--port", "5006"]
 # On server
-#CMD panel serve --allow-websocket-origin=$ieasyhydroforecast_url pentad_dashboard.py --show --autoreload --num-threads 4 --address 0.0.0.0
+#CMD panel serve --allow-websocket-origin=$ieasyhydroforecast_url forecast_dashboard.py --show --autoreload --num-threads 4 --address 0.0.0.0
 
 # CMD to list all files in app/apps/forecast_dashboard and print the results to the console.
 #CMD ["/bin/sh", "-c", "echo 'here!' && ls /app/apps/forecast_dashboard && echo ' ' && pip list"]

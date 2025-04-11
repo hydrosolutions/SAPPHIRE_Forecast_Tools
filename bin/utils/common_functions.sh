@@ -88,6 +88,10 @@ read_configuration(){
     export ieasyhydroforecast_data_ref_dir
     export ieasyhydroforecast_data_root_dir
 
+    # Define subdomains for url: 
+    export ieasyhydroforecast_url_pentad=fc.pentad.$ieasyhydroforecast_url
+    export ieasyhydroforecast_url_decad=fc.decad.$ieasyhydroforecast_url
+
     # Load environment variables from the specified .env file
     if [ -f "$env_file_path" ]; then
         source "$env_file_path"
@@ -220,7 +224,8 @@ start_docker_compose_dashboards() {
     echo "| ------"
     echo "| Starting Docker Compose service for the dashboards..."
     echo "| Deploying dashboard to: ieasyhydroforecast_url: $ieasyhydroforecast_url"
-    ieasyhydroforecast_url=$ieasyhydroforecast_url docker compose -f bin/docker-compose-dashboards.yml up -d &
+    echo "| Inside the container, the path to the .ssh directory is: $ieasyhydroforecast_container_data_ref_dir/bin/.ssh"
+    ieasyhydroforecast_url_pentad=$ieasyhydroforecast_url_pentad ieasyhydroforecast_url_decad=$ieasyhydroforecast_url_decad ieasyhydroforecast_frontend_docker_image_tag=$ieasyhydroforecast_frontend_docker_image_tag ieasyhydroforecast_container_data_ref_dir=$ieasyhydroforecast_container_data_ref_dir docker compose -f bin/docker-compose-dashboards.yml up -d &
     DOCKER_COMPOSE_DASHBOARD_PID=$!
     echo "| Docker Compose service started with PID $DOCKER_COMPOSE_DASHBOARD_PID"
 }

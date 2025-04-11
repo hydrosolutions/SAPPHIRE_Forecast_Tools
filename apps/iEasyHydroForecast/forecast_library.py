@@ -1036,27 +1036,30 @@ def split_name(name: str):
 # region forecasting
 
 def perform_linear_regression(
-        data_df: pd.DataFrame, station_col: str, pentad_col: str, predictor_col: str,
-        discharge_avg_col: str, forecast_pentad: int) -> pd.DataFrame:
+        data_df: pd.DataFrame, station_col: str, horizon_col: str, predictor_col: str,
+        discharge_avg_col: str, forecast_horizon_int: int) -> pd.DataFrame:
     '''
-    Perform a linear regression for each station & pentad in a DataFrame.
+    Perform a linear regression for each station & forecast horizon in a DataFrame.
 
     Details:
     The linear regression is performed for the forecast pentad of the year
-    (value between 1 and 72).
+    (value between 1 and 72) or for the forecast decad of the year (value 
+    between 1 and 36).
 
     Args:
         data_df (pd.DataFrame): The DataFrame containing the data to perform the
             linear regression on.
         station_col (str): The name of the column containing the station codes.
-        pentad_col (str): The name of the column containing the pentad values.
-            pentad is a place holder here. It can be pentad or decad.
+        horizon_col (str): The name of the column containing the 'horizon' values.
+            horizon is a place holder here. It can be pentad or decad.
         predictor_col (str): The name of the column containing the discharge
             predictor values.
         discharge_avg_col (str): The name of the column containing the discharge
             average values.
-        forecast_pentad(int): The pentad of the year to perform the linear
-            regression for. Must be a value between 1 and 72.
+        forecast_horizon_int(int): The pentad or decad of the year to perform 
+            the linear regression for. Must be a value between 1 and 72 for 
+            pentadal forecast horizons or a value between 1 and 36 for decadal 
+            forecast horizons.
 
     Returns:
         pd.DataFrame: A DataFrame containing the columns of the input data frame
@@ -1091,61 +1094,54 @@ def perform_linear_regression(
 
     if not isinstance(station_col, str):
         raise TypeError('station_col must be a string')
-    if not isinstance(pentad_col, str):
-        raise TypeError('pentad_col must be a string')
+    if not isinstance(horizon_col, str):
+        raise TypeError('horizon_col must be a string')
     if not isinstance(predictor_col, str):
         raise TypeError('predictor_col must be a string')
     if not isinstance(discharge_avg_col, str):
         raise TypeError('discharge_avg_col must be a string')
-    if not isinstance(forecast_pentad, int):
-        raise TypeError('forecast_pentad must be an integer')
-    if not all(column in data_df.columns for column in [station_col, pentad_col, predictor_col, discharge_avg_col]):
-        raise ValueError(f'DataFrame is missing one or more required columns.\n   Required columns: station_col, pentad_col, predictor_col, discharge_avg_col\n   present columns {data_df.columns}')
+    if not isinstance(forecast_horizon_int, int):
+        raise TypeError('forecast_horizon_int must be an integer')
+    if not all(column in data_df.columns for column in [station_col, horizon_col, predictor_col, discharge_avg_col]):
+        raise ValueError(f'DataFrame is missing one or more required columns.\n   Required columns: station_col, horizon_col, predictor_col, discharge_avg_col\n   present columns {data_df.columns}')
 
     # Test that the required columns exist in the input DataFrame.
-    required_columns = [station_col, pentad_col, predictor_col, discharge_avg_col]
+    required_columns = [station_col, horizon_col, predictor_col, discharge_avg_col]
     missing_columns = [col for col in required_columns if not hasattr(data_df, col)]
     if missing_columns:
         raise ValueError(f"DataFrame is missing one or more required columns: {missing_columns}")
 
-    # Do we have string 'pentad' in pentad_col?
-    if 'pentad' in pentad_col:
+    # Do we have string 'pentad' in horizon_col?
+    if 'pentad' in horizon_col:
         logger.info(f"-- Performing linear regression for penatadal forecasting --")
         horizon_flag = 'pentad'
+        forecast_horizon_max = 72
+        forecast_date = tl.get_date_for_last_day_in_pentad(forecast_horizon_int)
 
-        # Make sure pentad_col is of type int and values therein are between 1 and
-        # 72.
-        data_df[pentad_col] = data_df[pentad_col].astype(float)
-        if not all(data_df[pentad_col].between(1, 72)):
-            # Print the rows where the values are not between 1 and 72
-            print(f"\n\n\nThe following rows have pentad not between 1 and 72: \n{data_df[~data_df[pentad_col].between(1, 71)]}")
-            raise ValueError(f'Values in column {pentad_col} are not between 1 and 72')
-
-        # Forecast pentad must be convertable to an int and it must be between 1 and 72
-        if not 1 <= forecast_pentad <= 72:
-            raise ValueError(f'forecast_pentad must be an integer between 1 and 72')
-        
-    elif 'decad' in pentad_col:
+    elif 'decad' in horizon_col:
         logger.info(f"-- Performing linear regression for decad forecasting --")
         horizon_flag = 'decad'
-
-        # Make sure pentad_col is of type int and values therein are between 1 and
-        # 36.
-        data_df[pentad_col] = data_df[pentad_col].astype(float)
-        if not all(data_df[pentad_col].between(1, 36)):
-            # Print the rows where the values are not between 1 and 36
-            print(f"\n\n\nThe following rows have decad not between 1 and 36: \n{data_df[~data_df[pentad_col].between(1, 36)]}")
-            raise ValueError(f'Values in column {pentad_col} are not between 1 and 36')
-        
-        # Forecast pentad must be convertable to an int and it must be between 1 and 36
-        if not 1 <= forecast_pentad <= 36:
-            raise ValueError(f'forecast_pentad must be an integer between 1 and 36')
+        forecast_horizon_max = 36
+        forecast_date = tl.get_date_for_last_day_in_decad(forecast_horizon_int)
         
     else: 
-        raise ValueError(f'pentad_col must contain the string "pentad" or "decad"')
+        raise ValueError(f'horizon_col must contain the string "pentad" or "decad"')
+
+    # Make sure horizon_col is of type int and values therein are between 1 and
+    # the maximum number of pentads of decads in a year.
+    data_df[horizon_col] = data_df[horizon_col].astype(float)
+    if not all(data_df[horizon_col].between(1, forecast_horizon_max)):
+        # Print the rows where the values are not between 1 and forecast_horizon_max
+        print(f"\n\n\nThe following rows have pentad not between 1 and {forecast_horizon_max}: \n{data_df[~data_df[horizon_col].between(1, (forecast_horizon_max-1))]}")
+        raise ValueError(f'Values in column {horizon_col} are not between 1 and {forecast_horizon_max}')
+
+    # Forecast pentad must be convertable to an int and it must be between 1 and forecast_horizon_max
+    if not 1 <= forecast_horizon_int <= forecast_horizon_max:
+        raise ValueError(f'forecast_horizon_int must be an integer between 1 and {forecast_horizon_max}')
+        
 
     # Filter for the forecast pentad
-    data_dfp = data_df[data_df[pentad_col] == float(forecast_pentad)]
+    data_dfp = data_df[data_df[horizon_col] == float(forecast_horizon_int)]
 
     # Initialize result DataFrame
     data_dfp = data_dfp.assign(
@@ -1160,13 +1156,13 @@ def perform_linear_regression(
 
     # Create empty DataFrame with expected columns for fallback
     empty_result = pd.DataFrame(columns=[
-        station_col, pentad_col, predictor_col, discharge_avg_col,
+        station_col, horizon_col, predictor_col, discharge_avg_col,
         'slope', 'intercept', 'forecasted_discharge', 'q_mean',
         'q_std_sigma', 'delta', 'rsquared'
     ])
     # Test if data_df is empty
     if data_dfp.empty:
-        logger.warning(f'No data available for pentad {forecast_pentad}')
+        logger.warning(f'No data available for {horizon_flag} {forecast_horizon_int}')
         logger.warning(f"  Returning default values for slope, intercept, forecasted_discharge, q_mean, q_std_sigma, delta, rsquared")
         logger.debug(f"Tail of data_df: \n{data_df.tail()}")
         # Return an empty data frame
@@ -1174,7 +1170,7 @@ def perform_linear_regression(
 
     # Loop over each station we have data for
     for station in data_dfp[station_col].unique():
-        logger.info("Performing linear regression for station %s and pentad %s", station, forecast_pentad)
+        logger.info(f"Performing linear regression for station {station} and {horizon_flag} {forecast_horizon_int}")
         # filter for station and pentad. If the DataFrame is empty,
         # raise an error.
         try:
@@ -1188,14 +1184,14 @@ def perform_linear_regression(
 
         #if int(station) == 15030:
         #    logger.debug("DEBUG: forecasting:perform_linear_regression: station_data: \n%s",
-        #                  station_data[['date', pentad_col, station_col, predictor_col, discharge_avg_col]].tail(10))
+        #                  station_data[['date', horizon_col, station_col, predictor_col, discharge_avg_col]].tail(10))
 
         # Drop NaN values, i.e. keep only the time steps where both
         # discharge_sum and discharge_avg are not NaN. These correspond to the
         # time steps where we produce a forecast.
         station_data = station_data.dropna()
         if station_data.empty:
-            logger.info("No data for station {station} in pentad {forecast_pentad}")
+            logger.info(f"No data for station {station} in {horizon_flag} {forecast_horizon_int}")
             continue
 
         # Check if there is a point selection file for the current pentad and month
@@ -1212,23 +1208,24 @@ def perform_linear_regression(
                 os.getenv('ieasyforecast_linreg_point_selection', 'linreg_point_selection')
             )
             # Define the file name
-            logger.debug(f"forecast_pentad: {forecast_pentad}")
+            logger.debug(f"forecast_horizon_int: {forecast_horizon_int}")
             #logger.debug(f"columns of station_data: {station_data.columns}")
             #logger.debug(f"station_data: {station_data}")
-            forecast_date = tl.get_date_for_last_day_in_pentad(forecast_pentad)
+            first_day_of_forecast_horizon = pd.to_datetime(forecast_date).date() + pd.DateOffset(days=1)
             logger.debug(f"forecast_date: {forecast_date}")
             if horizon_flag == 'pentad':
-                pentad_in_month = tl.get_pentad(forecast_date)
-                logger.debug(f"pentad_in_month: {pentad_in_month}")
+                pentad_in_month = tl.get_pentad(first_day_of_forecast_horizon)
+                logger.debug(f"pentad_in_month: {first_day_of_forecast_horizon}")
             elif horizon_flag == 'decad':
-                pentad_in_month = tl.get_decad_in_month(forecast_date)
-                logger.debug(f"decad_in_month: {pentad_in_month}")
+                pentad_in_month = tl.get_decad_in_month(first_day_of_forecast_horizon)
+                logger.debug(f"decad_in_month: {first_day_of_forecast_horizon}")
             else:
                 raise ValueError(f"horizon_flag {horizon_flag} is not valid.")
-            title_month = tl.get_month_str_en(forecast_date)
+            title_month = tl.get_month_str_en(first_day_of_forecast_horizon)
             logger.debug(f"title_month: {title_month}")
             save_file_name = f"{station}_{pentad_in_month}_{horizon_flag}_of_{title_month}.csv"
             save_file_path = os.path.join(SAVE_DIRECTORY, save_file_name)
+            logger.debug(f"save_file_path: {save_file_path}")
 
             # Check if the file exists
             if os.path.exists(save_file_path):
@@ -1244,12 +1241,14 @@ def perform_linear_regression(
                 # Drop the 'visible' and 'year' columns
                 station_data.drop(columns=['visible', 'year'], inplace=True)
                 #logger.debug(f"station_data after point selection: {station_data}")
+            else: 
+                if station == '15013':
+                    logger.debug(f"No point selection file {save_file_path} available for site {station}. Skipping point selection.")
 
         #if int(station) == 15030:
         #    logger.debug("DEBUG: forecasting:perform_linear_regression: station_data: \n%s",
-        #                  station_data[['date', pentad_col, station_col, predictor_col, discharge_avg_col]].tail(10))
-
-
+        #                  station_data[['date', horizon_col, station_col, predictor_col, discharge_avg_col]].tail(10))
+        
         # Get the discharge_sum and discharge_avg columns
         discharge_sum = station_data[predictor_col].values.reshape(-1, 1)
         discharge_avg = station_data[discharge_avg_col].values.reshape(-1, 1)
@@ -1260,7 +1259,7 @@ def perform_linear_regression(
 
         # If we have more than 1 data point, perform the linear regression
         if len(discharge_sum) <= 2 or len(discharge_avg) <= 2:
-            logger.info(f"Skipping linear regression for station {station} in pentad {forecast_pentad} due to insufficient data points.")
+            logger.info(f"Skipping linear regression for station {station} in pentad {forecast_horizon_int} due to insufficient data points.")
             slope = np.nan
             intercept = np.nan
             q_mean = np.nan
@@ -1283,14 +1282,14 @@ def perform_linear_regression(
             rsquared = model.score(discharge_sum, discharge_avg)
 
             #if int(station) == 15030:
-            #    logger.debug(f'Station: {station}, pentad: {forecast_pentad}, q_mean: {q_mean}, q_std_sigma: {q_std_sigma}, delta: {delta}')
+            #    logger.debug(f'Station: {station}, pentad: {forecast_horizon_int}, q_mean: {q_mean}, q_std_sigma: {q_std_sigma}, delta: {delta}')
 
             # Get the slope and intercept
             slope = model.coef_[0][0]
             intercept = model.intercept_[0]
 
             # Print the slope and intercept
-            logger.debug(f'Station: {station}, pentad/decad: {forecast_pentad}, slope: {slope}, intercept: {intercept}')
+            logger.debug(f'Station: {station}, pentad/decad: {forecast_horizon_int}, slope: {slope}, intercept: {intercept}')
 
         # Store the slope and intercept in the data_df
         data_dfp.loc[(data_dfp[station_col] == station), 'slope'] = slope
@@ -1305,7 +1304,7 @@ def perform_linear_regression(
             raise ValueError(f"Station type {type(station)} does not match the type of data_dfp[station_col][0] {type(data_dfp[station_col][0])}")
 
 
-        # Calculate the forecasted discharge for the current station and forecast_pentad
+        # Calculate the forecasted discharge for the current station and forecast_horizon_int
         data_dfp.loc[(data_dfp[station_col] == station), 'forecasted_discharge'] = \
             slope * data_dfp.loc[(data_dfp[station_col] == station), predictor_col] + intercept
 
@@ -1313,7 +1312,7 @@ def perform_linear_regression(
         #if int(station) == 15030:
         #    #logger.debug("column names of data_dfp:\n%s", station_data.columns)
         #    logger.debug("DEBUG: forecasting:perform_linear_regression: data_dfp after linear regression: \n%s",
-        #      data_dfp.loc[data_dfp[station_col] == station, ['date', station_col, pentad_col, predictor_col, discharge_avg_col, 'slope', 'intercept', 'forecasted_discharge']].tail(10))
+        #      data_dfp.loc[data_dfp[station_col] == station, ['date', station_col, horizon_col, predictor_col, discharge_avg_col, 'slope', 'intercept', 'forecasted_discharge']].tail(10))
 
     return data_dfp
 
@@ -1739,6 +1738,10 @@ def calculate_skill_metrics_pentad(
         return f'EM'
 
     def filter_for_highly_skilled_forecasts(skill_stats):
+        """
+        Filter the skill_stats DataFrame for highly skilled forecasts based on
+        the thresholds set in the environment.
+        """
         # Get thresholds from environment
         threshold_sdivsigma = os.getenv('ieasyhydroforecast_efficiency_threshold', 0.6)
         threshold_accuracy = os.getenv('ieasyhydroforecast_accuracy_threshold', 0.8)
@@ -1854,9 +1857,11 @@ def calculate_skill_metrics_pentad(
             skill_metrics_df['code'].isin(skill_stats_ensemble['code']) &
             skill_metrics_df['model_long'].isin(skill_stats_ensemble['model_long']) &
             skill_metrics_df['model_short'].isin(skill_stats_ensemble['model_short'])].copy()
+        # Filter out rows where forecasted_discharge is NaN
+        skill_metrics_df_ensemble = skill_metrics_df_ensemble.dropna(subset=['forecasted_discharge']).copy()
         #print("DEBUG: skill_metrics_df_ensemble\n", skill_metrics_df_ensemble.columns)
         #print("DEBUG: skill_metrics_df_ensemble\n", skill_metrics_df_ensemble.head(20))
-
+        
         # Drop columns with model_short == NE (neural ensemble)
         skill_metrics_df_ensemble = skill_metrics_df_ensemble[skill_metrics_df_ensemble['model_short'] != 'NE'].copy()
         #print("DEBUG: skill_metrics_df_ensemble\n", skill_metrics_df_ensemble.head(20))
@@ -1990,6 +1995,9 @@ def calculate_skill_metrics_decade(
     if not all(column in simulated.columns for column in ['code', 'date', 'decad_in_year', 'forecasted_discharge', 'model_long', 'model_short']):
         raise ValueError(f'Simulated DataFrame is missing one or more required columns: {["code", "date", "decad_in_year", "forecasted_discharge", "model_long", "model_short"]}')
 
+    # Print column names of simulated
+    logger.debug(f"DEBUG: simulated.columns\n{simulated.columns}")
+
     # Local functions
     def test_for_tuples(df):
         # Identify tuples in each cell
@@ -2084,7 +2092,7 @@ def calculate_skill_metrics_decade(
         #logger.debug(f"DEBUG: skill_metrics_df.tail()\n{skill_metrics_df.tail(5)}")
         test_for_tuples(skill_metrics_df)
 
-    # Calculate the skill metrics for each group based on the 'pentad_in_year', 'code' and 'model' columns
+    # Calculate the skill metrics for each group based on the 'decad_in_year', 'code' and 'model' columns
     with timer(timing_stats, 'calculate_skill_metrics_decade - Calculate sdivsigma_nse'):
         skill_stats = skill_metrics_df. \
             groupby(['decad_in_year', 'code', 'model_long', 'model_short'])[skill_metrics_df.columns]. \
@@ -2216,11 +2224,11 @@ def calculate_skill_metrics_decade(
         skill_stats = pd.concat([skill_stats, ensemble_skill_stats], ignore_index=True)
 
         # Add ensemble mean forecasts to simulated dataframe
-        #logger.debug(f"DEBUG: simulated.columns\n{simulated.columns}")
-        #logger.debug(f"DEBUG: simulated.head()\n{simulated.head(5)}")
+        logger.debug(f"DEBUG: simulated.columns\n{simulated.columns}")
+        logger.debug(f"DEBUG: simulated.tail()\n{simulated.head(5)}")
         #logger.debug(f"DEBUG: unique models in simulated: {simulated['model_long'].unique()}")
-        #print(f"DEBUG: simulated.columns\n{ensemble_skill_metrics_df.columns}")
-        #print("DEBUG: head of ensemble_skill_metrics_df: \n", ensemble_skill_metrics_df.head(5))
+        print(f"DEBUG: simulated.columns\n{ensemble_skill_metrics_df.columns}")
+        print("DEBUG: head of ensemble_skill_metrics_df: \n", ensemble_skill_metrics_df.head(5))
         #print("DEBUG: unique models in ensemble_skill_metrics_df: ", ensemble_skill_metrics_df['model_long'].unique())
 
         # Calculate pentad in month (add 1 day to date)
@@ -2433,6 +2441,9 @@ def write_linreg_pentad_forecast_data(data: pd.DataFrame):
         print(os.getenv("ieasyforecast_intermediate_data_path"))
         print(os.getenv("ieasyforecast_analysis_pentad_file"))
         raise e
+    
+    # Get the path to the output file containing only the latest data
+    output_file_path_latest = str(output_file_path).replace('.csv', '_latest.csv')
 
     # Only proceed if data is not empty
     if data.empty:
@@ -2471,7 +2482,6 @@ def write_linreg_pentad_forecast_data(data: pd.DataFrame):
                 if date != most_common_date:
                     last_line.loc[(last_line['code'] == code) & (last_line['date'] == date), 'date'] = most_common_date
 
-
     # Handle existing file
     existing_data = None
     if os.path.exists(output_file_path):
@@ -2487,10 +2497,24 @@ def write_linreg_pentad_forecast_data(data: pd.DataFrame):
         # Remove duplicates, keeping last occurrence (which has been added last)
         combined_data = combined_data.drop_duplicates(subset=['date', 'code'], keep='last')
 
+        # Group by pentad and code, kepp the most recent entries 
+        # for each pentad and code. 
+        combined_data_latest = combined_data.copy()
+        combined_data_latest = combined_data_latest.groupby(['pentad_in_year', 'code']).tail(1)
+
         # Write back to file
         try:
             ret = combined_data.to_csv(output_file_path, index=False)
-            logger.info(f"Data written to {output_file_path}. Removed duplicates keeping most recent entries.")
+            if ret is None:
+                logger.info(f"Data written to {output_file_path}.")
+            else:
+                logger.error(f"Could not write the data to {output_file_path}.")
+            # Also write line to latest file
+            ret = combined_data_latest.to_csv(output_file_path_latest, index=False)
+            if ret is None:
+                logger.info(f"Data written to {output_file_path_latest}.")
+            else:
+                logger.error(f"Could not write the data to {output_file_path_latest}.")
         except Exception as e:
             logger.error(f"Could not write the data to {output_file_path}.")
             raise e
@@ -2502,6 +2526,9 @@ def write_linreg_pentad_forecast_data(data: pd.DataFrame):
                 logger.info(f"Data written to {output_file_path}.")
             else:
                 logger.error(f"Could not write the data to {output_file_path}.")
+            # Also write line to latest file
+            last_line.to_csv(output_file_path_latest, index=False)
+            logger.info(f"Data written to {output_file_path_latest}.")
         except Exception as e:
             logger.error(f"Could not write the data to {output_file_path}.")
             raise e
@@ -2632,6 +2659,9 @@ def write_linreg_decad_forecast_data(data: pd.DataFrame):
         print(os.getenv("ieasyforecast_intermediate_data_path"))
         print(os.getenv("ieasyforecast_analysis_decad_file"))
         raise e
+    
+    # Get the path to the output file containing only the latest data
+    output_file_path_latest = str(output_file_path).replace('.csv', '_latest.csv')
 
     # Only proceed if data is not empty
     if data.empty:
@@ -2684,10 +2714,20 @@ def write_linreg_decad_forecast_data(data: pd.DataFrame):
         # Sort by code and date for readability
         combined_data = combined_data.sort_values(['code', 'date'])
 
+        # Group by pentad and code, kepp the most recent entries 
+        # for each pentad and code. 
+        combined_data_latest = combined_data.copy()
+        combined_data_latest = combined_data_latest.groupby(['decad_in_year', 'code']).tail(1)
+
         # Write back to file
         try:
             ret = combined_data.to_csv(output_file_path, index=False)
-            logger.info(f"Data written to {output_file_path}. Removed duplicates keeping most recent entries.")
+            if ret is None:
+                logger.info(f"Data written to {output_file_path}. Removed duplicates keeping most recent entries.")
+            else:
+                logger.error(f"Could not write the data to {output_file_path}.")
+            # Also write line to latest file
+            combined_data_latest.to_csv(output_file_path_latest, index=False)
         except Exception as e:
             logger.error(f"Could not write the data to {output_file_path}.")
             raise e
@@ -2699,6 +2739,12 @@ def write_linreg_decad_forecast_data(data: pd.DataFrame):
                 logger.info(f"Data written to {output_file_path}.")
             else:
                 logger.error(f"Could not write the data to {output_file_path}.")
+            # Also write line to latest file
+            ret = last_line.to_csv(output_file_path_latest, index=False)
+            if ret is None: 
+                logger.info(f"Data written to {output_file_path_latest}.")
+            else:
+                logger.error(f"Could not write the data to {output_file_path_latest}.")
         except Exception as e:
             logger.error(f"Could not write the data to {output_file_path}.")
             raise e
@@ -3512,6 +3558,9 @@ def save_forecast_data_decade(simulated: pd.DataFrame):
 
     # Round all float values to 3 decimal places
     simulated = simulated.round(3)
+
+    # Rename the column decad_in_month to decad
+    simulated = simulated.rename(columns={'decad_in_month': 'decad'})
 
     # write the data to csv
     ret = simulated.to_csv(filename, index=False)

@@ -37,14 +37,14 @@ This document describes how to develop the application and how to add hydrologic
       - [Description of module](#description-of-module-1)
       - [Prerequisites](#prerequisites-2)
       - [How to run the tool](#how-to-run-the-tool-2)
-    - [Conceptual rainfall-runoff (conceptual...)](#conceptual-rainfall-runoff-conceptual)
+    - [2.2.5 Conceptual rainfall-runoff assimilation model (conceptual\_model)](#225-conceptual-rainfall-runoff-assimilation-model-conceptual_model)
       - [Description of the Conceptual Model Module](#description-of-the-conceptual-model-module)
-      - [Prerequisites](#prerequisites-4)
+      - [Prerequisites](#prerequisites-3)
       - [I/O](#io-2)
       - [How to run the tool](#how-to-run-the-tool-3)
-    - [Machine learning (machine\_learning)](#machine-learning-machine_learning)
+    - [2.2.6 Machine learning (machine\_learning)](#226-machine-learning-machine_learning)
       - [Description of module](#description-of-module-2)
-      - [Prerequisites](#prerequisites-5)
+      - [Prerequisites](#prerequisites-4)
       - [I/O](#io-3)
         - [Output Files](#output-files)
       - [How to run the tool](#how-to-run-the-tool-4)
@@ -52,9 +52,11 @@ This document describes how to develop the application and how to add hydrologic
     - [2.2.8 Manual triggering of the forecast pipeline](#228-manual-triggering-of-the-forecast-pipeline)
       - [How to re-run the forecast pipeline manually](#how-to-re-run-the-forecast-pipeline-manually)
     - [2.2.9 Forecast dashboard](#229-forecast-dashboard)
-      - [How to run the forecast dashboard locally](#how-to-run-the-forecast-dashboard-locally)
-  - [2.3 The backend (note: this module is deprecated)](#23-the-backend-note-this-module-is-deprecated)
       - [Prerequisites](#prerequisites-5)
+      - [How to run the forecast dashboard locally](#how-to-run-the-forecast-dashboard-locally)
+      - [How to test the dashboard containers locally](#how-to-test-the-dashboard-containers-locally)
+  - [2.3 The backend (note: this module is deprecated)](#23-the-backend-note-this-module-is-deprecated)
+      - [Prerequisites](#prerequisites-6)
       - [How to run the backend modules locally {#how-to-run-the-backend-modules-locally}](#how-to-run-the-backend-modules-locally-how-to-run-the-backend-modules-locally)
         - [Pre-processing of river runoff data {#pre-processing-of-river-runoff-data}](#pre-processing-of-river-runoff-data-pre-processing-of-river-runoff-data)
         - [Pre-processing of forcing data from the data gateway {#pre-processing-of-forcing-data-from-the-data-gateway}](#pre-processing-of-forcing-data-from-the-data-gateway-pre-processing-of-forcing-data-from-the-data-gateway)
@@ -306,8 +308,10 @@ The proprocessing_gateway module gets weather forecasts and re-analysis weather 
 - Operational workflow:
   - Downolading of operational weather forecasts and downscaling of weather forecasts (Quantile_Mapping_OP.py)
   - Updating of re-analysis weather data and downscaling of re-analysis weather data (extend_era5_reanalysis.py)
+  - Downloading the operational snow forecast(snow_data_operational.py).
 - Production of hindcasts:
   - Downloading of re-analysis weather data and downscaling of re-analysis weather data (get_era5_reanalysis_data.py)
+  - Downloading of the re-analysis snow data (snow_data_reanalysis.py)
 
 The Quantile_Mapping_OP.py script accesses the the SAPPHIRE Data Gateway and downloads the ERA5 ECMWF IFS control member and ensemble forecast. Afterwards, it can perform a downscaling using the quantile mapping  method using a set of previously fitted parameters. The fitting of the parameters for downscaling is performed with a parametric transformations where the new transformed value is obtained by the formula $y = a*x^b$ in the [fitQmap](#https://search.r-project.org/CRAN/refmans/qmap/html/fitqmapptf.html) package in R. As we use operational weather forecasts from ECMWF served through the SAPPHIRE Data Gateway, we do not expect to have any gaps in the weather forecast time series. However, in case there should be nan values in the forcing data, the preprocessing_gateway module fills them by taking the last available observation.
 
@@ -315,7 +319,11 @@ TODO: Sandro: the downscaling is optional as I understand. How can a user turn t
 
 The extend_era5_reanalysis.py file is used to maintain a set of past and current weather forcing data for each river basin. It is updated operationally by appending the latest ERA5 Land Reanalysis data to the hindcast forcing file. It reads in the hindcast file and the operational forcing data, combines them and removes dublicates.
 
+The snow_data_operational.py script accesses the SAPPHIRE Data Gateway and downloads the forecast from the TopoPyScale snow model. Additionally, it also gets the data for the past 365 days. This process is done for a set of user defined HRU's (ieasyhydroforecast_HRU_SNOW_DATA) (Note that the TopoPyScale snow model is not valid on glaciers, therefore it is suggested to upload shapefiles,where the glaciers were removed). There are three possible variables which can be downloaded (ieasyhydroforecast_SNOW_VARS). SWE (snow water equivalent (mm)), HS (snow water depth (m)) and RoF (runoff from snowmelt and precipitation (mm)). The new operational data is directly appended to the file which also contains the historical data.
+
 The get_era5_reanalysis_data.py is an initialization file. It also accesses the data-gateway and pulls the ERA5 Land Reanalysis data for a provided time window and a given HRU. It also performs the downscaling on this data. The reason behind this script is, to obtain a file where we have past forcing data saved to perform for example hindcasts.
+
+The snow_data_reanalysis.py script is an initialization file. It accesses the SAPPHIRE Data Gateway and downloads the snow data for the user specified HRU's (ieasyhydroforecast_HRU_SNOW_DATA) and variables (ieasyhydroforecast_SNOW_VARS) for the time period of 2000 to (today - 180 days). 
 
 #### Prerequisites
 
@@ -400,6 +408,15 @@ Here is the folder structure represented which interacts with the module preproc
 
             -   YOUR_HRU_T_reanalysis.csv
 
+        -   snow_data
+
+            -   SWE
+                -   YOUR_HRU_SWE.csv
+            -   HS
+                -   YOUR_HRU_HS.csv
+            -   RoF
+                -   YOUR_HRU_RoF.csv
+
 The only input file you need to provide, if you would like to make the downscaling, are the files in the params_quantile_mapping folder. This files should have the following structure:
 
 | code  | a                | b                | wet_day             |
@@ -424,7 +441,7 @@ When accessing the SAPPHIRE data gateway, the client downloads a csv file and sa
 
 The ensemble forecast files downloaded through the data gateway client have the following format (corresponding to the forcing data file format of the free hydrologic-hydraulic model [RS Minerve](https://crealp.ch/rs-minerve/) developed and maintained by the [CREALP](https://crealp.ch/) foundation):
 
-|                   | YOUR_NAME          |
+|                   | name               |
 |-------------------|--------------------|
 | **Sensor**        | T                  |
 | **Category**      | Temperature        |
@@ -437,8 +454,7 @@ The ensemble forecast files downloaded through the data gateway client have the 
 | **...**           | ...                |
 |
 
-TODO: Sandro: What is YOUR_NAME above? Is this defined in the shapefile that you upload to the data gateway?
-
+Here the name is defined in the shapefile (see "How to run the model")
 And for the control member it looks like this:
 
 | Station           | xxxx1              | xxxx2              | xxxx1.1            | xxxx2.1            |
@@ -468,9 +484,39 @@ These files are than transformed and, optionally, downscaled. The transformed (a
 | ...       | ...  | ...   | ...             |
 |
 
-**TODO:** if snow data like SWE and melt is added. Update the documentation.
-
 The files in the hindcast folder (YOUR_HRU_P_reanalysis.csv) have the exact same format as the control member file.
+
+The snow data comes in the following format from the SAPPHIRE Data-Gateway, for both the operational and re-analysis data.
+
+|                   | name               |
+|-------------------|--------------------|
+| **Sensor**        | snow               |
+| **Category**      | Height             |
+| **Unit**          | mm                 |
+| **Interpolation** | linear             |
+| **21.08.2024**    | 49.886254967534398 |
+| **22.08.2024**    | 46.874600198227881 |
+| **23.08.2024**    | 43.76900162280549  |
+| **24.08.2024**    | 45.889982012342898 |
+| **...**           | ...                |
+
+This data is then transformed into the same format as previously shown. The name of the SWE columns is replaced with the correspondign variable for HS and RoF.
+
+| date       | SWE    | code  |
+|------------|------|-------|
+| 2024-08-21 | 7.26 | xxxx1 | 
+| 2024-08-22 | 7.62 | xxxx1 | 
+| 2024-08-23 | 8.95 | xxxx1 |
+| ...       | ...  | ...   | 
+
+If the provided HRU contains multiple zones per basin (for example elevation bands), then the format looks slightly different. Here SWE_1 represents the first elevation band, SWE_2 the second and so on. Note that the elevation bands are infered from the name column of the shapefile of the shapefile. The name is expected to be {basin code}_{elevation band}.
+
+| date       | code  | SWE_1 | SWE_2 | SWE_x |
+|------------|-------| ------ | -----| ----- |
+| 2024-09-21 |  xxxx1 | 12.1 | 13.3 | 15.1 |
+| 2024-09-22 |  xxxx1 | 12.2 | 13.6 | 15.7 |
+| 2024-09-23 |  xxxx1 | 12.9 | 14.2 | 15.9 |
+| ...       |  ...   | 13.5  | 14.9 | 16.2 |
 
 #### How to run the tool
 As mentioned above, the preprocessing_gateway module requires access to operational data provided by the SAPPHIRE Data Gateway.
@@ -480,7 +526,7 @@ The first thing you need to ensure is that your HRU is on the SAPPHIRE data-gate
 |-----------|-----|----------|
 | YOUR_CODE | 1   | ...      |
 
-Ensure that you are consistent with the codes and name. If you have processed your HRU on the data-gateway you are ready to proceed.
+Ensure that you are consistent with the codes and name. If you have a HRU with multiple zones per basins set the name according to this scheme: {basin}_{zone}. If you have processed your HRU on the data-gateway you are ready to proceed.
 
 First you might want to download hindcast data from the SAPPHIRE Data Gateway so that you can produce hindcasts with your models to calculate forecast skill statistics over an extended time period (ensure that you have triggered the ERA5 land reanalysis on the data-gateway for this period). You can do this by running the following command in the terminal:
 
@@ -497,6 +543,8 @@ SAPPHIRE_OPDEV_ENV=True python Quantile_Mapping_OP.py
 You can specifiy the HRU for which you need the control member forecast and the HRU's for which you need the ensemble forecast in the config file (ieasyhydroforecast_HRU_CONTROL_MEMBER and ieasyhydroforecast_HRU_ENSEMBLE).
 
 In order to keep the hindcast data updated, you can run the extend_era5_reanalysis.py script. This only works if you have operational data and you should ensure that you don't have any gaps longer than 6 months between the end of the hindcast file, and the start of the operational forcing data, or else you will have some forcing gaps.
+
+You can set the HRU for which you need snow data (ieasyhydroforecast_HRU_SNOW_DATA) and which are the variables you are interested in (ieasyhydroforecast_SNOW_VARS).
 
 ### 2.2.4 Linear regression (linear_regression)
 
@@ -1147,9 +1195,10 @@ where <container_id> is the id of the container you want to inspect. You can fin
 
 ### 2.2.9 Forecast dashboard
 
-TODO: Bea \#### Prerequisites The forecast dashboard is implemented in python using the panel framework. As for the backend development, we recommend the use of a Python IDE and conda for managing the Python environment. Please refer to the instructions above should you require more information on how to install these tools.
+#### Prerequisites 
+The forecast dashboard is implemented in python using the panel framework. As for the backend development, we recommend the use of a Python IDE and conda for managing the Python environment. Please refer to the instructions above should you require more information on how to install these tools.
 
-If you have already set up a python environment for the backend, you can activate it by running the following command in the terminal and skipp the installation of python_requirements.txt:
+If you have already set up a python environment for the forecast dashboard, you can activate it by running the following command in the terminal and skipp the installation of python_requirements.txt:
 
 ``` bash
 conda activate my_environment
@@ -1160,10 +1209,23 @@ conda activate my_environment
 To run the forecast dashboard locally, navigate to the apps/forecast_dashboard folder and run the following command in the terminal:
 
 ``` bash
-panel serve pentad_dashboard.py --show --autoreload --port 5009
+ieasyhydroforecast_data_root_dir=/absolute/path/to ieasyhydroforecast_env_file_path=/absolute/path/to/sensitive_data_forecast_tools/config/.env_develop_kghm sapphire_forecast_horizon=pentad SAPPHIRE_OPDEV_ENV=True panel serve forecast_dashboard.py --show --autoreload --port <port number>
 ```
 
-The options --show, --autoreload, and --port 5009 are optional. The show and autoreload options open your devault browser window (we used chrome) at <http://localhost:5009/pentad_dashboard> and automatically reload the dashboard if you save changes in the file pentad_dashboard.py. The port option tells you on which port the dashboard is being displayed. Should port 5009 be already occupied on your computer, you can change the number. You can then select the station and view predictors and forecasts in the respective tabs.
+Currently available options for the `sapphire_forecast_horizon` are `pentad` and `decad` to display forecasts for pentadal and decadal forecast horizons. If you specify `sapphire_forecast_horizon=pentad`, the dashboard will display the pentadal forecast. If you specify `sapphire_forecast_horizon=decad`, the dashboard will display the decadal forecast.    
+
+The options --show, --autoreload, and --port <port number> are optional. Please replace <port number> with a number of your choice. The default port is 5006. If you do not specify a port number, the dashboard will be displayed on port 5006.
+
+The show and autoreload options open your devault browser window (we used chrome) at <http://localhost:<port number>/forecast_dashboard> and automatically reload the dashboard if you save changes in the file forecast_dashboard.py. The port option tells you on which port the dashboard is being displayed. Should your port of choice be already occupied on your computer, you can change the number. You can then select the station and view predictors and forecasts in the respective tabs.
+
+#### How to test the dashboard containers locally
+From the project root, run: 
+
+``` bash
+bash bin/daily_update_sapphire_frontend.sh <path/to/your>/.env_develop_kghm
+```
+
+This will download the latest image and run the conatiners for pentadal and decadal dashboards. 
 
 ## 2.3 The backend (note: this module is deprecated)
 
@@ -1287,7 +1349,15 @@ docker run -e "IN_DOCKER_CONTAINER=True" -v <full_path_to>/apps/config:/app/apps
 
 ### Forecast dashboard
 
-The forecast dashboard is dockerized using the Dockerfile in the apps/forecast_dashboard folder. To build the docker image locally, run the following command in the root directory of the repository:
+The most straight forward way to test the forecast dashboard locally is to run the following command in the root directory of the repository:
+
+``` bash
+ieasyhydroforecast_url_decad=0.0.0.0:5007 ieasyhydroforecast_url_pentad=0.0.0.0:5006 bash bin/daily_update_sapphire_frontend.sh <path/to/your/data>/config/.env
+```
+
+Given you have all data folders set up correctly, the dashboard will display the latest results produced by the forecast tools at 0.0.0.0:5006/forecast_dashboard (pentadal forecasts) and at 0.0.0.0:5007/forecast_dashboard (decadal dashboard). Note that these two urls need to be specified in your .env file under variable `ieasyhydroforecast_url`.  
+
+During development, you might perfer to go step-by-step with the following instructions: The forecast dashboard is dockerized using the Dockerfile in the apps/forecast_dashboard folder. To build the docker image locally, run the following command in the root directory of the repository:
 
 ``` bash
 docker build --no-cache -t forecast_dashboard -f ./apps/forecast_dashboard/Dockerfile .
@@ -1298,10 +1368,11 @@ Run the image locally for testing (not for deployment). Replace <full_path_to> w
 ``` bash
 docker run -e "IN_DOCKER_CONTAINER=True" -v <full_path_to>/data:/app/data -v <full_path_to>/apps/config:/app/apps/config -v <full_path_to>/apps/internal_data/:/app/apps/internal_data -p 5006:5006 --name fcboard forecast_dashboard
 ```
+You might have to add a few additional environment variables to the command above. Please refer to the file `bin/docker-compose-dashboards.yml` for an up-to-date list of the environment variables used to run the forecast dashboard.
 
 Make sure that the port 5006 is not occupied on your computer. You can change the port number in the command above if necessary but you'll have to edit the port exposed in the docker file and edit the panel serve command in the dockerfile to make sure panel renders the dashboards to your desired port.
 
-You can now access the dashboard in your browser at <http://localhost:5006/pentad_dashboard> and review it's functionality.
+You can now access the dashboard in your browser at <http://localhost:5006/forecast_dashboard> and review it's functionality.
 
 ## How to use private data
 

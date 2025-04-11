@@ -129,14 +129,15 @@ def calculate_new_forecast_date(last_successful_run_date):
     # Get the last day of the month previous to the last_successful_run_date
     last_day_previous_month = last_successful_run_date.replace(day=1) - datetime.timedelta(days=2)
     last_day_previous_month = last_day_previous_month.day
-    forecast_days = [last_day_previous_month, 24, 19, 14, 9, 4]
+    # We use decads here to be able to also re-run the last decadal forecast
+    forecast_days = [last_day_previous_month, 19, 9]
 
     # We need to find the largest day in forecast_days that is smaller than the day
     # of the last successful run date. If the day of the last successful run date is
     # smaller than 5, we need to find the last forecast date of the previous month.
     # We can do this by subtracting 1 from the month and then finding the largest
     # day in forecast_days.
-    if last_successful_run_date.day < 5:
+    if last_successful_run_date.day < 10:
         # Go back one month
         rerun_forecast_date = last_successful_run_date.replace(day=1) - datetime.timedelta(days=1)
         # Set the day to the largest day in forecast_days (26)

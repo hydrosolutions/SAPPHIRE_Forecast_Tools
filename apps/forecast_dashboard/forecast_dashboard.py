@@ -1,52 +1,29 @@
-# pentad_dashboard.py
+# forecast_dashboard.py
 #
 # This script creates a dashboard for the pentadal forecast.
 #
 # Run with the following command:
-# ieasyhydroforecast_data_root_dir=/absolute/path/to ieasyhydroforecast_env_file_path=/absolute/path/to/sensitive_data_forecast_tools/config/.env_develop_kghm SAPPHIRE_OPDEV_ENV=True panel serve pentad_dashboard.py --show --autoreload --port 5007
+# ieasyhydroforecast_data_root_dir=/absolute/path/to ieasyhydroforecast_env_file_path=/absolute/path/to/sensitive_data_forecast_tools/config/.env_develop_kghm sapphire_forecast_horizon=pentad SAPPHIRE_OPDEV_ENV=True panel serve forecast_dashboard.py --show --autoreload --port 5055
 #
 
 # region load_libraries
-from dotenv import load_dotenv
-import os
 import sys
-
-import gettext  # For translation
-import locale
-
 import panel as pn
-
-from bokeh.models import FixedTicker, CustomJSTickFormatter, LinearAxis, Range1d
-from bokeh.models.widgets.tables import NumberFormatter
-from holoviews import streams
-from holoviews import opts
-
-import numpy as np
 import pandas as pd
 import datetime as dt
-from datetime import datetime, timedelta
-import math
-import param
-from functools import partial
+from datetime import timedelta
 
 import logging
 from logging.handlers import TimedRotatingFileHandler
-import traceback
 
-#import hvplot.pandas  # Enable interactive
 import holoviews as hv
-from scipy import stats
 # Set the default extension
 pn.extension('tabulator')
-
-from ieasyreports.settings import ReportGeneratorSettings
 
 # Local sources
 from src.environment import load_configuration
 import src.gettext_config as localize
 import src.processing as processing
-import src.vizualization as viz
-#import src.multithreading as thread
 from src.site import SapphireSite as Site
 from src.bulletins import write_to_excel
 import src.layout as layout
@@ -54,9 +31,6 @@ from src.file_downloader import FileDownloader
 from src.auth_utils import *
 
 import calendar
-
-import csv
-from pathlib import Path
 
 from src.gettext_config import _
 
@@ -76,9 +50,7 @@ if not os.path.isdir(forecast_dir):
 # Add the forecast directory to the Python path
 sys.path.append(forecast_dir)
 # Import the modules from the forecast library
-import setup_library as sl
 import tag_library as tl
-import forecast_library as fl
 
 # endregion
 
@@ -173,13 +145,6 @@ os.makedirs(SAVE_DIRECTORY, exist_ok=True)
 
 BULLETIN_CSV_PATH = os.path.join(SAVE_DIRECTORY, 'bulletin.csv')  # Added for CSV storage
 
-# Initialize the downloader with a specific directory
-bulletin_folder = os.path.join(
-    os.getenv('ieasyreports_report_output_path'),
-    'bulletins', 'pentad')
-downloader = FileDownloader(bulletin_folder)
-bulletin_download_panel = downloader.panel()
-
 # Set time until user is logged out automatically
 minutes_inactive_until_logout = int(os.getenv('ieasyforecast_minutes_inactive_until_logout', 10))
 INACTIVITY_TIMEOUT = timedelta(minutes=minutes_inactive_until_logout)
@@ -202,6 +167,9 @@ print(f"INFO: Selected language: {selected_language}")
 
 # Localization, translation to different languages.
 localedir = os.getenv("ieasyforecast_locale_dir")
+print(f"DEBUG: Translation directory: {localedir}")
+print(f"DEBUG: Translation directory exists: {os.path.exists(localedir)}")
+print(f"DEBUG: Files in translation directory: {os.listdir(localedir)}")
 
 # Set the locale directory in the translation manager
 localize.translation_manager.set_locale_dir(locale_dir=localedir)
@@ -210,10 +178,35 @@ localize.translation_manager.set_locale_dir(locale_dir=localedir)
 localize.translation_manager.language = selected_language
 
 # Load translations globally
-localize.translation_manager.load_translation_pentad_dashboard()
+localize.translation_manager.load_translation_forecast_dashboard()
+print(f"DEBUG: Selected language: {selected_language}")
+print(f"DEBUG: Translation manager language: {localize.translation_manager.language}")
+
+print(f"DEBUG: Translation test - 'Hydropost:' translates to: {_('Hydropost:')}")
+print(f"DEBUG: Translation test - 'Forecast' translates to: {_('Forecast')}")
+
+# Check for cached translations
+if hasattr(pn.state, 'cache') and 'translations' in pn.state.cache:
+    print(f"DEBUG: Cached translations found.")
 
 # Import visualization module after setting up localization
 import src.vizualization as viz
+
+# Print forecast horizon variable from environment
+sapphire_forecast_horizon = os.getenv('sapphire_forecast_horizon')
+if sapphire_forecast_horizon:
+    print(f"INFO: Forecast horizon: {sapphire_forecast_horizon}")
+else:
+    print("WARNING: Forecast horizon not set. Assuming default 'decad'.")
+    sapphire_forecast_horizon = 'decad'
+
+# Initialize the downloader with a specific directory
+bulletin_folder = os.path.join(
+    os.getenv('ieasyreports_report_output_path'),
+    'bulletins', sapphire_forecast_horizon)
+downloader = FileDownloader(bulletin_folder)
+bulletin_download_panel = downloader.panel()
+
 
 # endregion
 
@@ -228,6 +221,7 @@ def get_directory_mtime(directory_path):
     # Combine mtimes into a single value, e.g., take the maximum
     combined_mtime = max(mtimes) if mtimes else 0
     return combined_mtime
+
 
 def load_data():
     global hydrograph_day_all, hydrograph_pentad_all, linreg_predictor, \
@@ -289,8 +283,8 @@ def load_data():
     hydrograph_day_all = processing.read_hydrograph_day_data_for_pentad_forecasting(
         stations_iehhf, hydrograph_day_file_mtime)
     # print head and tail of hydrograph_day_all where code == 15194
-    print(f"DEBUG: pentad_dashboard.py: hydrograph_day_all head:\n{hydrograph_day_all[hydrograph_day_all['code'] == '15194'].head()}")
-    print(f"DEBUG: pentad_dashboard.py: hydrograph_day_all tail:\n{hydrograph_day_all[hydrograph_day_all['code'] == '15194'].tail()}")
+    print(f"DEBUG: forecast_dashboard.py: hydrograph_day_all head:\n{hydrograph_day_all[hydrograph_day_all['code'] == '15194'].head()}")
+    print(f"DEBUG: forecast_dashboard.py: hydrograph_day_all tail:\n{hydrograph_day_all[hydrograph_day_all['code'] == '15194'].tail()}")
 
     hydrograph_pentad_all = processing.read_hydrograph_pentad_data_for_pentad_forecasting(
         stations_iehhf, hydrograph_pentad_file_mtime)
@@ -305,7 +299,7 @@ def load_data():
     linreg_predictor = processing.read_linreg_forecast_data(
         stations_iehhf, linreg_forecast_file_mtime)
     # Print tail of linreg_predictor where code == '15149'
-    #print(f"DEBUG: pentad_dashboard.py: linreg_predictor tail:\n{linreg_predictor[linreg_predictor['code'] == '15149'].tail()}")
+    #print(f"DEBUG: forecast_dashboard.py: linreg_predictor tail:\n{linreg_predictor[linreg_predictor['code'] == '15149'].tail()}")
     # - forecast results from all models
     forecasts_all = processing.read_forecast_results_file(
         stations_iehhf, forecast_results_file_mtime)
@@ -320,13 +314,13 @@ def load_data():
     #    hydrograph_day_all['code'].unique().tolist())
     if not station_list:
         raise ValueError("The station list is empty. Please check the data source and ensure it contains valid stations.")
-    #print("DEBUG: pentad_dashboard.py: Station list:\n", station_list)
-    #print("DEBUG: pentad_dashboard.py: All stations: \n", all_stations)
-    #logger.debug(f"DEBUG: pentad_dashboard.py: Station list:\n{station_list}")
+    #print("DEBUG: forecast_dashboard.py: Station list:\n", station_list)
+    #print("DEBUG: forecast_dashboard.py: All stations: \n", all_stations)
+    #logger.debug(f"DEBUG: forecast_dashboard.py: Station list:\n{station_list}")
     #print(f"DEBUG: columns of all_stations:\n{all_stations.columns}")
-    #logger.debug(f"DEBUG: pentad_dashboard.py: All stations:\n{all_stations}")
-    #print(f"DEBUG: pentad_dashboard.py: Station dataframe:\n{station_df}")
-    #print(f"DEBUG: pentad_dashboard.py: Station dictionary:\n{station_dict}")
+    #logger.debug(f"DEBUG: forecast_dashboard.py: All stations:\n{all_stations}")
+    #print(f"DEBUG: forecast_dashboard.py: Station dataframe:\n{station_df}")
+    #print(f"DEBUG: forecast_dashboard.py: Station dictionary:\n{station_dict}")
     #print(f"DEBUG: First dictionary entry: {next(iter(station_dict))}")
     #print(f"DEBUG: First station: {station_dict[next(iter(station_dict))][0]}")
 
@@ -345,9 +339,9 @@ def load_data():
     #print(f"DEBUG: linreg_predictor raw: {linreg_predictor.tail()}")
     linreg_predictor = processing.add_labels_to_forecast_pentad_df(linreg_predictor, all_stations)
     #print(f"DEBUG: linreg_predictor with labels: {linreg_predictor.tail()}")
-    print(f"DEBUG: pentad_dashboard.py: linreg_predictor tail:\n{linreg_predictor[linreg_predictor['code'] == '15149'].tail()}")
+    print(f"DEBUG: forecast_dashboard.py: linreg_predictor tail:\n{linreg_predictor[linreg_predictor['code'] == '15149'].tail()}")
     linreg_datatable = processing.shift_date_by_n_days(linreg_predictor, 1)
-    print(f"DEBUG: pentad_dashboard.py: linreg_predictor tail:\n{linreg_predictor[linreg_predictor['code'] == '15149'].tail()}")
+    print(f"DEBUG: forecast_dashboard.py: linreg_predictor tail:\n{linreg_predictor[linreg_predictor['code'] == '15149'].tail()}")
     #print(f"DEBUG: linreg_datatable.columns: {linreg_datatable.columns}")
     #print(f"DEBUG: linreg_datatable: {linreg_datatable.tail()}")
     #print(f"DEBUG: linreg_predictor.columns: {linreg_predictor.columns}")
@@ -360,15 +354,18 @@ def load_data():
     forecasts_all = processing.internationalize_forecast_model_names(_, forecasts_all)
     forecast_stats = processing.internationalize_forecast_model_names(_, forecast_stats)
 
+    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+    horizon_in_year = "pentad_in_year" if horizon == "pentad" else "decad_in_year"
+
     # Merge forecast stats with forecasts by code and pentad_in_year and model_short
     print(f'\n\nhead of forecasts_all:\n{forecasts_all.head()}')
     print(f'column names of forecasts_all:\n{forecasts_all.columns}')
-    print(f'type of forecasts_all[pentad_in_year]: {forecasts_all["pentad_in_year"].dtype}')
+    print(f'type of forecasts_all[pentad_in_year]: {forecasts_all[horizon_in_year].dtype}')
     print(f'\n\nhead of forecast_stats:\n{forecast_stats.head()}')
-    print(f'type of forecast_stats[pentad_in_year]: {forecast_stats["pentad_in_year"].dtype}')
+    print(f'type of forecast_stats[pentad_in_year]: {forecast_stats[horizon_in_year].dtype}')
     forecasts_all = forecasts_all.merge(
         forecast_stats,
-        on=['code', 'pentad_in_year', 'model_short', 'model_long'],
+        on=['code', horizon_in_year, 'model_short', 'model_long'],
         how='left',
         suffixes=('', '_stats'))
 
@@ -376,12 +373,6 @@ def load_data():
     rain = processing.read_rainfall_data(p_file_mtime)  # (max(hind_p_file_mtime, cf_p_file_mtime))
     temp = processing.read_temperature_data(t_file_mtime)  # max(hind_t_file_mtime, cf_t_file_mtime))
 
-# Get stations selected for pentadal forecasts
-# Not necessary as we write new config files in linear regression module.
-#if os.getenv('ieasyhydroforecast_connect_to_iEH') == 'False':
-#    stations_iehhf = processing.get_station_codes_selected_for_pentadal_forecasts()
-#else:
-#    stations_iehhf = None
 stations_iehhf = None
 
 load_data()
@@ -414,7 +405,7 @@ tabs_container = pn.Column()
 model_dict_all = forecasts_all[['model_short', 'model_long']] \
     .drop_duplicates() \
     .set_index('model_long')['model_short'].to_dict()
-#print(f"DEBUG: pentad_dashboard.py: station_dict: {station_dict}")
+#print(f"DEBUG: forecast_dashboard.py: station_dict: {station_dict}")
 
 pentads = [
     f"{i+1}{_('st pentad of')} {calendar.month_name[month]}" if i == 0 else
@@ -431,6 +422,14 @@ pentad_options = {f"{i+1}{_('st pentad of')} {calendar.month_name[month]}" if i 
                   f"{i+1}{_('th pentad of')} {calendar.month_name[month]}": i + (month-1)*6 + 1
                   for month in range(1, 13) for i in range(6)}
 
+# Create a dictionary mapping each decade description to its decad_in_year value
+decad_options = {
+    f"{i+1}{_('st decade of')} {calendar.month_name[month]}" if i == 0 else
+    f"{i+1}{_('nd decade of')} {calendar.month_name[month]}" if i == 1 else
+    f"{i+1}{_('rd decade of')} {calendar.month_name[month]}" if i == 2 else
+    f"{i+1}{_('th decade of')} {calendar.month_name[month]}": i + (month - 1) * 3 + 1
+    for month in range(1, 13) for i in range(3)
+}
 # endregion
 
 
@@ -449,16 +448,18 @@ last_date = linreg_predictor['date'].max() + dt.timedelta(days=1)
 
 # Determine the corresponding pentad
 current_pentad = tl.get_pentad_for_date(last_date)
-# The forecast is produced on the day before the first day of the forecast 
-# pentad, therefore we add 1 to the forecast pentad in linreg_predictor to get 
-# the pentad of the forecast period. 
-forecast_pentad_for_saving_bulletin = int(linreg_predictor['pentad_in_year'].tail(1).values[0]) + 1
+# The forecast is produced on the day before the first day of the forecast
+# pentad, therefore we add 1 to the forecast pentad in linreg_predictor to get
+# the pentad of the forecast period.
+horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+horizon_in_year = "pentad_in_year" if horizon == "pentad" else "decad_in_year"
+forecast_horizon_for_saving_bulletin = int(linreg_predictor[horizon_in_year].tail(1).values[0]) + 1
 forecast_year_for_saving_bulletin = last_date.year
 
 # Get information for bulletin headers into a dataframe that can be passed to
 # the bulletin writer.
-bulletin_header_info = processing.get_bulletin_header_info(last_date)
-#print(f"DEBUG: pentad_dashboard.py: bulletin_header_info:\n{bulletin_header_info}")
+bulletin_header_info = processing.get_bulletin_header_info(last_date, sapphire_forecast_horizon)
+#print(f"DEBUG: forecast_dashboard.py: bulletin_header_info:\n{bulletin_header_info}")
 
 # Create the dropdown widget for pentad selection
 pentad_selector = pn.widgets.Select(
@@ -468,8 +469,17 @@ pentad_selector = pn.widgets.Select(
     margin=(0, 0, 0, 0)
 )
 
+current_decad = tl.get_decad_for_date(last_date)
+# Create the dropdown widget for decad selection
+decad_selector = pn.widgets.Select(
+    name=_("Select Decad"),
+    options=decad_options,
+    value=current_decad,  # Default to the last available decad
+    margin=(0, 0, 0, 0)
+)
+
 # Widget for station selection, always visible
-#print(f"\n\nDEBUG: pentad_dashboard.py: station select name string: {_('Select discharge station:')}\n\n")
+#print(f"\n\nDEBUG: forecast_dashboard.py: station select name string: {_('Select discharge station:')}\n\n")
 #station = layout.create_station_selection_widget(station_dict)
 station = pn.widgets.Select(
     name=_("Select discharge station:"),
@@ -479,18 +489,22 @@ station = pn.widgets.Select(
     )
 
 # Print the station widget selection
-#print(f"DEBUG: pentad_dashboard.py: Station widget selection: {station.value}")
+#print(f"DEBUG: forecast_dashboard.py: Station widget selection: {station.value}")
 
 # Update the model_dict with the models we have results for for the selected
 # station
-print("DEBUG: pentad_dashboard.py: station.value: ", station.value)
+print("DEBUG: forecast_dashboard.py: station.value: ", station.value)
 model_dict = processing.update_model_dict_date(model_dict_all, forecasts_all, station.value, date_picker.value)
-#print(f"DEBUG: pentad_dashboard.py: model_dict: {model_dict}")
+#print(f"DEBUG: forecast_dashboard.py: model_dict: {model_dict}")
+
 
 #@pn.depends(station, pentad_selector, watch=True)
-def get_best_models_for_station_and_pentad(station_value, pentad_value):
-    return processing.get_best_models_for_station_and_pentad(forecasts_all, station_value, pentad_value)
-current_model_pre_selection = get_best_models_for_station_and_pentad(station.value, pentad_selector.value)
+def get_best_models_for_station_and_pentad(station_value, pentad_value, decad_value):
+    return processing.get_best_models_for_station_and_pentad(forecasts_all, station_value, pentad_value, decad_value)
+current_model_pre_selection = get_best_models_for_station_and_pentad(station.value, pentad_selector.value, decad_selector.value)
+
+#print(f"DEBUG: forecast_dashboard.py: model_dict: \n{model_dict}")
+#print(f"DEBUG: forecast_dashboard.py: current_model_pre_selection: \n{current_model_pre_selection}")
 
 # Widget for forecast model selection, only visible in forecast tab
 # a given hydropost/station.
@@ -521,6 +535,7 @@ manual_range = pn.widgets.IntSlider(
     margin=(20, 0, 0, 0)  # martin=(top, right, bottom, left)
 )
 manual_range.visible = False
+
 
 def draw_show_forecast_ranges_widget():
     return pn.widgets.RadioButtonGroup(
@@ -556,6 +571,7 @@ remove_bulletin_button = pn.widgets.Button(
     button_type='danger',
     margin=(10, 0, 0, 0)  # top, right, bottom, left
 )
+
 
 # Create language selection buttons as links that reload the page with the selected language
 def create_language_buttons():
@@ -708,10 +724,11 @@ bulletin_tabulator = pn.widgets.Tabulator(
 
 #endregion
 
+
 # region update_functions
-@pn.depends(pentad_selector, watch=True)
+@pn.depends(pentad_selector, decad_selector, watch=True)
 def update_site_attributes_with_hydrograph_statistics_for_selected_pentad(_,
-    sites=sites_list, df=hydrograph_pentad_all, pentad=pentad_selector.value):
+    sites=sites_list, df=hydrograph_pentad_all, pentad=pentad_selector.value, decad=decad_selector.value):
     """Update site attributes with hydrograph statistics for selected pentad"""
     #print(f"\n\n\nDEBUG update_site_attributes_with_hydrograph_statistics_for_selected_pentad: pentad: {pentad}")
     #print(f"column names: {df.columns}")
@@ -734,7 +751,14 @@ def update_site_attributes_with_hydrograph_statistics_for_selected_pentad(_,
                 raise ValueError("No column found for last year's Q.")
     #print(f"\n\nupdate site attributes hydrograph stats: dataframe: {df}")
     # Filter the df for the selected pentad
-    df = df[df['pentad_in_year'] == pentad].copy()
+    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+    if horizon == "pentad":
+        horizon_in_year = "pentad_in_year"
+        horizon_value = pentad
+    else:
+        horizon_in_year = "decad_in_year"
+        horizon_value = decad
+    df = df[df[horizon_in_year] == horizon_value].copy()
     # Add a column with the site code
     df['site_code'] = df['station_labels'].str.split(' - ').str[0]
     for site in sites:
@@ -755,13 +779,21 @@ def update_site_attributes_with_hydrograph_statistics_for_selected_pentad(_,
     #print(f"Updated sites with hydrograph statistics from DataFrame.")
     return sites
 
+
 @pn.depends(pentad_selector, watch=True)
-def update_site_attributes_with_linear_regression_predictor(_, sites=sites_list, df=linreg_predictor, pentad=pentad_selector.value):
+def update_site_attributes_with_linear_regression_predictor(_, sites=sites_list, df=linreg_predictor, pentad=pentad_selector.value, decad=decad_selector.value):
     """Update site attributes with linear regression predictor"""
     # Print pentad
     #print(f"\n\nDEBUGGING update_site_attributes_with_linear_regression_predictor: pentad: {pentad}")
+    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+    if horizon == "pentad":
+        horizon_in_year = "pentad_in_year"
+        horizon_value = pentad
+    else:
+        horizon_in_year = "decad_in_year"
+        horizon_value = decad
     # Get row in def for selected pentad
-    df = df[df['pentad_in_year'] == (pentad-1)].copy()
+    df = df[df[horizon_in_year] == (horizon_value - 1)].copy()
     #print("\n\nDEBUGGING update_site_attributes_with_linear_regression_predictor")
     #print(f"linreg_predictor: \n{df[df['code'] == '15149']}.tail()")
     # Only keep the last row for each site
@@ -781,9 +813,11 @@ def update_site_attributes_with_linear_regression_predictor(_, sites=sites_list,
     #print(f"Updated sites with linear regression predictor from DataFrame.")
     return sites
 
-sites_list = update_site_attributes_with_hydrograph_statistics_for_selected_pentad(_=_, sites=sites_list, df=hydrograph_pentad_all, pentad=pentad_selector.value)
-#print(f"DEBUG: pentad_dashboard.py before update: linreg_predictor tail:\n{linreg_predictor.loc[linreg_predictor['code'] == '15149', ['date', 'code', 'predictor', 'pentad_in_year', 'pentad_in_month']].tail()}")
-sites_list = update_site_attributes_with_linear_regression_predictor(_, sites=sites_list, df=linreg_predictor, pentad=pentad_selector.value)
+sites_list = update_site_attributes_with_hydrograph_statistics_for_selected_pentad(_=_, sites=sites_list, df=hydrograph_pentad_all, pentad=pentad_selector.value, decad=decad_selector.value)
+
+#print(f"DEBUG: forecast_dashboard.py before update: linreg_predictor tail:\n{linreg_predictor.loc[linreg_predictor['code'] == '15149', ['date', 'code', 'predictor', 'pentad_in_year', 'pentad_in_month']].tail()}")
+sites_list = update_site_attributes_with_linear_regression_predictor(_, sites=sites_list, df=linreg_predictor, pentad=pentad_selector.value, decad=decad_selector.value)
+
 
 # Adding the watcher logic for disabling the "Add to Bulletin" button
 def update_add_to_bulletin_button(event):
@@ -795,6 +829,7 @@ viz.app_state.param.watch(update_add_to_bulletin_button, 'pipeline_running')
 
 # Set the initial state of the button based on whether the pipeline is running
 add_to_bulletin_button.disabled = viz.app_state.pipeline_running
+
 
 # Function to update the model select widget based on the selected station
 # Create a callback that only updates the widget when data has actually changed
@@ -833,8 +868,9 @@ def create_widget_updater():
 
 widget_updater = create_widget_updater()
 
-@pn.depends(station, pentad_selector, watch=True)
-def update_model_select(station_value, selected_pentad):
+
+@pn.depends(station, pentad_selector, decad_selector, watch=True)
+def update_model_select(station_value, selected_pentad, selected_decad):
     print("\n=== Starting Model Select Update ===")
     print(f"Initial widget state:")
     print(f"  Options: {model_checkbox.options}")
@@ -848,7 +884,7 @@ def update_model_select(station_value, selected_pentad):
 
     # Get pre-selected models
     current_model_pre_selection = processing.get_best_models_for_station_and_pentad(
-        forecasts_all, station_value, selected_pentad
+        forecasts_all, station_value, selected_pentad, selected_decad
     )
 
     print("\nAfter get_best_models:")
@@ -901,49 +937,21 @@ def update_model_select(station_value, selected_pentad):
 
     return updated_model_dict
 
-'''@pn.depends(station, pentad_selector, watch=True)
-def update_model_select(station_value, selected_pentad):
-    # Update the model_dict with the models we have results for for the selected
-    # station
-    #print(f"DEBUG: pentad_dashboard.py: update_model_select: station_value: {station_value}")
-    updated_model_dict = processing.update_model_dict(model_dict_all, forecasts_all, station_value, selected_pentad)
-    model_checkbox.options = updated_model_dict
-    #print(f"DEBUG: pentad_dashboard.py: update_model_select: updated_model_dict: {updated_model_dict}")
-    # Update the selected models based on the new options
-    current_model_pre_selection = processing.get_best_models_for_station_and_pentad(forecasts_all, station_value, selected_pentad)
-    #print(f"DEBUG: pentad_dashboard.py: update_model_select: current_model_pre_selection: {current_model_pre_selection}")
-    #model_checkbox.value = [updated_model_dict[model] for model in current_model_pre_selection]
-    new_pre_selection = [
-        updated_model_dict[model] if "Ens. Mean" not in model else next(
-            (updated_model_dict[um] for um in updated_model_dict if "Ens. Mean" in um), None
-        )
-        for model in current_model_pre_selection if model in updated_model_dict or "Ens. Mean" in model
-    ]
-    model_checkbox.value = new_pre_selection
-    print(f"\n\n\n------\nDEBUG: MODEL: update_model_select: model_checkbox.value:\n   {model_checkbox.value}")
-    return updated_model_dict'''
-
 
 # Create the pop-up notification pane (initially hidden)
 add_to_bulletin_popup = pn.pane.Alert(_("Added to bulletin"), alert_type="success", visible=False)
 
-def get_bulletin_csv_path(year, pentad):
+
+def get_bulletin_csv_path(year, horizon_value):
     """Generate CSV path with pentad information"""
-    bulletin_filename = f'bulletin_pentad_{year}_{pentad}.csv'
+    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+    if horizon == "pentad":
+        horizon_string = f"{horizon_value:02d}"
+    else:
+        horizon_string = f"{horizon_value:02d}"
+    bulletin_filename = f'bulletin_{horizon}_{year}_{horizon_string}.csv'
     return os.path.join(SAVE_DIRECTORY, bulletin_filename)
 
-def cleanup_old_bulletin_files(current_pentad):
-    """Remove bulletin CSV files from previous pentads"""
-    try:
-        for file in os.listdir(SAVE_DIRECTORY):
-            if file.startswith('bulletin_pentad_') and file.endswith('.csv'):
-                file_pentad = int(file.replace('bulletin_pentad_', '').replace('.csv', ''))
-                if file_pentad != current_pentad:
-                    file_path = os.path.join(SAVE_DIRECTORY, file)
-                    os.remove(file_path)
-                    logger.info(f"Removed old bulletin file: {file}")
-    except Exception as e:
-        logger.error(f"Error cleaning up old bulletin files: {e}")
 
 # Function to load bulletin data from CSV
 def load_bulletin_from_csv():
@@ -955,13 +963,13 @@ def load_bulletin_from_csv():
     #current_year = current_date.year
     #current_pentad = tl.get_pentad_for_date(current_date)
     #current_bulletin_path = get_bulletin_csv_path(current_year, current_pentad)
-    current_bulletin_path = get_bulletin_csv_path(forecast_year_for_saving_bulletin, forecast_pentad_for_saving_bulletin)
+    current_bulletin_path = get_bulletin_csv_path(forecast_year_for_saving_bulletin, forecast_horizon_for_saving_bulletin)
     # Print bulletin path
-    print(f"DEBUG: pentad_dashboard.py: current_bulletin_path: {current_bulletin_path}")
+    print(f"DEBUG: forecast_dashboard.py: current_bulletin_path: {current_bulletin_path}")
 
     if os.path.exists(current_bulletin_path):
         # Print that bulletin path exists
-        print(f"DEBUG: pentad_dashboard.py: Bulletin path exists: {current_bulletin_path}")
+        print(f"DEBUG: forecast_dashboard.py: Bulletin path exists: {current_bulletin_path}")
         try:
             bulletin_df = pd.read_csv(current_bulletin_path, encoding='utf-8-sig')
 
@@ -990,17 +998,18 @@ def load_bulletin_from_csv():
                     site.get_forecast_attributes_for_site(_, site.forecasts)
                     bulletin_sites.append(site)
 
-            print(f"DEBUG: Loaded bulletin_sites from CSV for pentad {forecast_pentad_for_saving_bulletin}:")
+            print(f"DEBUG: Loaded bulletin_sites from CSV for pentad {forecast_horizon_for_saving_bulletin}:")
             for site in bulletin_sites:
                 print(f"Site '{site.code}' with forecasts: {site.forecasts}")
 
-            logger.info(f"Loaded bulletin data for pentad {forecast_pentad_for_saving_bulletin}")
+            logger.info(f"Loaded bulletin data for pentad {forecast_horizon_for_saving_bulletin}")
         except Exception as e:
             logger.error(f"Error loading bulletin CSV: {e}")
             bulletin_sites = []
     else:
-        logger.info(f"No bulletin data found for current pentad {forecast_pentad_for_saving_bulletin}")
+        logger.info(f"No bulletin data found for current pentad {forecast_horizon_for_saving_bulletin}")
         bulletin_sites = []
+
 
 # Function to save bulletin data to CSV
 def save_bulletin_to_csv():
@@ -1009,12 +1018,9 @@ def save_bulletin_to_csv():
     #current_year = current_date.year
     #current_pentad = tl.get_pentad_for_date(current_date)
 
-    # Clean up old bulletin files
-    # cleanup_old_bulletin_files(current_pentad)
-
     # Generate path for current pentad's bulletin
     #current_bulletin_path = get_bulletin_csv_path(current_year, current_pentad)
-    current_bulletin_path = get_bulletin_csv_path(forecast_year_for_saving_bulletin, forecast_pentad_for_saving_bulletin)
+    current_bulletin_path = get_bulletin_csv_path(forecast_year_for_saving_bulletin, forecast_horizon_for_saving_bulletin)
 
     data = []
     for site in bulletin_sites:
@@ -1045,8 +1051,8 @@ def save_bulletin_to_csv():
 
         try:
             bulletin_df.to_csv(current_bulletin_path, index=False, encoding='utf-8-sig')
-            print(f"Bulletin saved to CSV for pentad {forecast_pentad_for_saving_bulletin}")
-            logger.info(f"Bulletin saved to CSV for pentad {forecast_pentad_for_saving_bulletin}")
+            print(f"Bulletin saved to CSV for pentad {forecast_horizon_for_saving_bulletin}")
+            logger.info(f"Bulletin saved to CSV for pentad {forecast_horizon_for_saving_bulletin}")
         except Exception as e:
             logger.error(f"Error writing bulletin CSV: {e}")
     else:
@@ -1054,11 +1060,12 @@ def save_bulletin_to_csv():
         # If data is empty, remove the current pentad's CSV file
         if os.path.exists(current_bulletin_path):
             os.remove(current_bulletin_path)
-            print(f"Bulletin CSV file removed for pentad {forecast_pentad_for_saving_bulletin} because bulletin is empty")
-            logger.info(f"Bulletin CSV file removed for pentad {forecast_pentad_for_saving_bulletin} because bulletin is empty")
+            print(f"Bulletin CSV file removed for pentad {forecast_horizon_for_saving_bulletin} because bulletin is empty")
+            logger.info(f"Bulletin CSV file removed for pentad {forecast_horizon_for_saving_bulletin} because bulletin is empty")
 
 # Call the function to load the bulletin data
 load_bulletin_from_csv()
+
 
 # Function to handle adding the current selection to the bulletin
 def add_current_selection_to_bulletin(event=None):
@@ -1148,8 +1155,8 @@ def handle_bulletin_write(event):
             print(f"DEBUG: Writing site '{site.code}' with forecasts: {site.forecasts}")
 
         write_to_excel(
-            sites_list, filtered_bulletin_sites, bulletin_header_info, env_file_path
-        )
+            sites_list, filtered_bulletin_sites, bulletin_header_info,
+            env_file_path)
         print("DEBUG: Bulletin written to Excel successfully.")
 
         # Refresh the file downloader panel
@@ -1157,6 +1164,7 @@ def handle_bulletin_write(event):
 
     except Exception as e:
         logger.error(f"Error writing bulletin to Excel: {e}")
+
 
 # Function to create the bulletin table
 def create_bulletin_table():
@@ -1219,6 +1227,7 @@ select_basin_widget.param.watch(update_bulletin_table, 'value')
 
 add_to_bulletin_button.on_click(add_current_selection_to_bulletin)
 
+
 # Function to remove selected forecasts from the bulletin
 def remove_selected_from_bulletin(event=None):
     global bulletin_tabulator
@@ -1280,22 +1289,9 @@ pentad_selector.param.watch(update_callback, 'value')
 daily_hydrograph_plot = pn.pane.HoloViews(hv.Curve([]), sizing_mode="stretch_both")
 daily_rainfall_plot = pn.pane.HoloViews(hv.Curve([]), sizing_mode="stretch_both")
 daily_temperature_plot = pn.pane.HoloViews(hv.Curve([]), sizing_mode="stretch_both")
-'''
-daily_rel_to_norm_runoff = pn.panel(
-    pn.bind(
-        viz.plot_rel_to_norm_runoff,
-        _, hydrograph_day_all, linreg_predictor, station, date_picker
-    )
-)
-daily_rel_to_norm_rainfall = pn.panel(
-    pn.bind(
-        viz.plot_daily_rel_to_norm_rainfall,
-        _, rain, station, date_picker, linreg_predictor
-    )
-)
-'''
 
 forecast_data_and_plot = pn.Column(sizing_mode="stretch_both")
+
 
 def update_forecast_hydrograph(selected_option, _, hydrograph_day_all,
                                hydrograph_pentad_all, linreg_predictor,
@@ -1388,6 +1384,7 @@ skill_metrics_download_filename, skill_metrics_download_button = skill_table.dow
 #    embed=False, name="Right-click to download using 'Save as' dialog"
 #)
 
+
 # @pn.depends(station, model_checkbox, allowable_range_selection, manual_range, watch=True)
 def update_forecast_tabulator(station, model_checkbox, allowable_range_selection, manual_range):
     viz.create_forecast_summary_tabulator(
@@ -1402,42 +1399,53 @@ update_forecast_tabulator(station, model_checkbox, allowable_range_selection, ma
 
 def update_visualizations():
     # Re-bind the plots to use the updated data
-
+    #print('---   ---plot_pentad_forecast_hydrograph_data---   ---')
     viz.plot_pentad_forecast_hydrograph_data(
-        hydrograph_pentad_all,
-        forecasts_all,
-        station,
-        date_picker,
-        model_checkbox,
-        allowable_range_selection,
-        manual_range,
-        show_range_button
+        _,
+        hydrograph_pentad_all=hydrograph_pentad_all,
+        forecasts_all=forecasts_all,
+        station=station.value,
+        title_date=date_picker.value,
+        model_selection=model_checkbox.value,
+        range_type=allowable_range_selection.value,
+        range_slider=manual_range.value,
+        range_visibility=show_range_button.value
     )
+    #print('---   ---done with plot_pentad_forecast_hydrograph_data---   ---')
 
+    #print('---   ---plot_pentad_forecast_hydrograph_data_v2---   ---')
     viz.plot_pentad_forecast_hydrograph_data_v2(
-        hydrograph_day_all,
-        linreg_predictor,
-        forecasts_all,
-        station,
-        date_picker,
-        model_checkbox,
-        allowable_range_selection,
-        manual_range,
-        show_range_button,
-        rram_forecast,
-        ml_forecast
+        _,
+        hydrograph_day_all=hydrograph_day_all,
+        linreg_predictor=linreg_predictor,
+        forecasts_all=forecasts_all,
+        station=station.value,
+        title_date=date_picker.value,
+        model_selection=model_checkbox.value,
+        range_type=allowable_range_selection.value,
+        range_slider=manual_range.value,
+        range_visibility=show_range_button.value,
+        rram_forecast=rram_forecast,
+        ml_forecast=ml_forecast
     )
+    #print('---   ---done with plot_pentad_forecast_hydrograph_data_v2---   ---')
 
+    #print('---   ---update_forecast_tabulator---   ---')
     update_forecast_tabulator(station, model_checkbox, allowable_range_selection, manual_range)
+    #print('---   ---done with update_forecast_tabulator---   ---')
 
 
 def on_data_needs_reload_changed(event):
     if event.new:
         print("Triggered rerunning of forecasts.")
         try:
+            #print("---loading data---")
             load_data()
+            #print("---data loaded---")
+            #print("---updating viz---")
             update_visualizations()
-            print("Forecasts produced and visualizations updated successfully.")
+            #print("---viz updated---")
+            #print("Forecasts produced and visualizations updated successfully.")
         except Exception as e:
             print(f"Error during forecast rerun: {e}")
         finally:
@@ -1455,7 +1463,7 @@ forecast_summary_table = pn.panel(
 )
 
 # Update the site object based on site and forecast selection
-#print(f"DEBUG: pentad_dashboard.py: forecast_tabulator: {forecast_summary_tabulator}")
+#print(f"DEBUG: forecast_dashboard.py: forecast_tabulator: {forecast_summary_tabulator}")
 update_site_object = pn.bind(
     Site.get_site_attributes_from_selected_forecast,
     _=_,
@@ -1485,13 +1493,7 @@ update_site_object = pn.bind(
 #        write_to_excel(sites_list, bulletin_sites, bulletin_header_info, env_file_path)
 #    )
 #)
-'''def handle_bulletin_write(event):
-    # First write the bulletin
-    result = write_to_excel(sites_list, bulletin_sites, bulletin_header_info, env_file_path)
-    # Update the download container
-    setattr(download_container, 'object', result)
-    # Refresh the file list
-    downloader.refresh_file_list()'''
+
 
 # Use the new handler
 write_bulletin_button.on_click(handle_bulletin_write)
@@ -1515,9 +1517,9 @@ reload_card = viz.create_reload_button()
 # Custom authentication logic by Vjekoslav Večković
 
 # Create widgets for login
-username_input = pn.widgets.TextInput(name='Username', placeholder='Enter your username')
-password_input = pn.widgets.PasswordInput(name='Password', placeholder='Enter your password')
-login_submit_button = pn.widgets.Button(name='Login', button_type='primary')
+username_input = pn.widgets.TextInput(name=_('Username'), placeholder=_('Enter your username'))
+password_input = pn.widgets.PasswordInput(name=_('Password'), placeholder=_('Enter your password'))
+login_submit_button = pn.widgets.Button(name=_('Login'), button_type='primary')
 login_feedback = pn.pane.Markdown("", visible=False)
 dashboard_link = pn.pane.Markdown("", visible=False)
 
@@ -1532,6 +1534,7 @@ def update_last_activity():
     global last_activity_time
     last_activity_time = datetime.now()
 
+
 def check_inactivity():
     """Check if user has been inactive and logout if needed"""
     global last_activity_time
@@ -1541,6 +1544,7 @@ def check_inactivity():
         if datetime.now() - last_activity_time > INACTIVITY_TIMEOUT:
             print(f"User {current_user} logged out due to inactivity")
             handle_logout_confirm(None)  # Use existing logout function
+
 
 def logout_user(user):
     """Perform the logout actions: remove user CSV files, clear logs, show login form."""
@@ -1555,6 +1559,7 @@ def logout_user(user):
     hide_dashboard()
     show_login_form()
     print(f"User {user} logged out due to inactivity.")
+
 
 def handle_login(event):
     """Handle login attempts."""
@@ -1590,10 +1595,12 @@ def handle_login(event):
         login_feedback.object = "Invalid username or password."
         login_feedback.visible = True
 
+
 def on_user_interaction(event=None):
     """Update last activity time when user interacts with the dashboard"""
     global last_activity_time
     last_activity_time = datetime.now()
+
 
 # Add watchers to widgets:
 station.param.watch(on_user_interaction, 'value')
@@ -1615,12 +1622,12 @@ remove_bulletin_button.param.watch(on_user_interaction, 'clicks')
 forecast_tabulator.param.watch(on_user_interaction, 'selection')
 
 
-
 def handle_logout_request(event):
     """Show logout confirmation."""
     logout_confirm.visible = True
     logout_yes.visible = True
     logout_no.visible = True
+
 
 # Update handle_logout to clear activity logs
 def handle_logout_confirm(event):
@@ -1640,11 +1647,13 @@ def handle_logout_confirm(event):
         logout_yes.visible = False
         logout_no.visible = False
 
+
 def handle_logout_cancel(event):
     """Handle cancelled logout."""
     logout_confirm.visible = False
     logout_yes.visible = False
     logout_no.visible = False
+
 
 def show_dashboard():
     """Show the dashboard and hide login form."""
@@ -1665,6 +1674,7 @@ def hide_dashboard():
     language_buttons.visible = False
     login_form.visible = True
 
+
 def show_login_form():
     """Show login form and reset fields."""
     username_input.value = ''
@@ -1678,7 +1688,6 @@ def show_login_form():
     language_buttons.visible = False
 
 
-
 # Bind event handlers
 login_submit_button.on_click(handle_login)
 logout_button.on_click(handle_logout_request)
@@ -1686,10 +1695,9 @@ logout_yes.on_click(handle_logout_confirm)
 logout_no.on_click(handle_logout_cancel)
 
 
-
 # Create layout components
 login_form = pn.Column(
-    pn.pane.Markdown("# Login"),
+    pn.pane.Markdown(f"# {_('Login')}"),
     username_input,
     password_input,
     login_submit_button,
@@ -1728,7 +1736,7 @@ def update_active_tab(event):
         daily_temperature_plot.object = viz.plot_daily_temperature_data(_, temp, station.value, date_picker.value, linreg_predictor)
     elif active_tab == 1 and latest_forecast != station.value:
         latest_forecast = station.value
-        plot = viz.select_and_plot_data(_, linreg_predictor, station.value, pentad_selector.value, SAVE_DIRECTORY)
+        plot = viz.select_and_plot_data(_, linreg_predictor, station.value, pentad_selector.value, decad_selector.value, SAVE_DIRECTORY)
         forecast_data_and_plot[:] = plot.objects
         update_forecast_plots(None)
 
@@ -1764,9 +1772,14 @@ on_session_start()
 # ------------------END OF AUTHENTICATION---------------------
 # endregion
 
+# Define dashboard title
+if sapphire_forecast_horizon == 'pentad':
+    dashboard_title = _('SAPPHIRE Central Asia - Pentadal forecast dashboard')
+else:
+    dashboard_title = _('SAPPHIRE Central Asia - Decadal forecast dashboard')
 
 dashboard = pn.template.BootstrapTemplate(
-    title=_('SAPPHIRE Central Asia - Pentadal forecast dashboard'),
+    title=dashboard_title,
     logo=icon_path,
     header=[pn.Row(pn.layout.HSpacer(),language_buttons, logout_button, logout_panel)],
     sidebar=pn.Column(sidebar_content),
@@ -1785,6 +1798,4 @@ language_buttons.visible = False
 
 # Make the dashboard servable
 dashboard.servable()
-
-
 # endregion

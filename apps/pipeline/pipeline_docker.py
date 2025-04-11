@@ -981,7 +981,10 @@ class PostProcessingForecasts(pu.TimeoutMixin, luigi.Task):
             self.retry_delay = task_params['retry_delay']
 
     def requires(self):
-        return LinearRegression()
+        if ORGANIZATION=='demo':
+            return LinearRegression()
+        if ORGANIZATION=='kghm':
+            return [ConceptualModel(), RunAllMLModels(), LinearRegression()]
 
     def output(self):
         return luigi.LocalTarget(f'/app/log_postproc.txt')

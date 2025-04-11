@@ -1,7 +1,11 @@
 import os
 import shutil
 import unittest
+import datetime
+from unittest.mock import patch, MagicMock
 import pandas as pd
+import numpy as np
+import tempfile
 from iEasyHydroForecast import setup_library as sl
 from iEasyHydroForecast import tag_library as tl
 
@@ -75,6 +79,569 @@ class TestLoadConfiguration():
     assert ret == test_ieasyreports_report_output_path
 
 
+class TestReadDailyProbabilisticMlForecastsPentad(unittest.TestCase):
+    """Test the read_daily_probabilistic_ml_forecasts_pentad function."""
+    
+    def setUp(self):
+        """Set up test files and mocks."""
+        # Define test file paths
+        self.tide_test_file = os.path.join(
+            os.path.dirname(__file__),
+            "test_data/test_probabil_forecast.csv"
+        )
+        self.arima_test_file = os.path.join(
+            os.path.dirname(__file__),
+            "test_data/test_probabil_arima_forecast.csv"
+        )
+        # Print the paths for debugging
+        #print(f"Test file paths: \n{self.tide_test_file}, \n{self.arima_test_file}")
+        
+        # Test if files exist
+        self.assertTrue(os.path.exists(self.tide_test_file))
+        self.assertTrue(os.path.exists(self.arima_test_file))
+        
+    @patch('logging.getLogger')
+    def test_read_tide_forecast(self, mock_logger):
+        """Test reading a TIDE forecast file with probabilistic forecasts (Q5-Q95)."""
+        # Arrange
+        mock_logger_instance = MagicMock()
+        mock_logger.return_value = mock_logger_instance
+        
+        # Act    
+        result = sl.read_daily_probabilistic_ml_forecasts_pentad(
+            self.tide_test_file,
+            "TIDE",
+            "TIDE model (TIDE)",
+            "TIDE"
+        )
+        print(f"\n\nresult:\n{result}")
+        
+        # Assert
+        self.assertFalse(result.empty)
+        self.assertIn("forecasted_discharge", result.columns)
+        self.assertIn("model_short", result.columns)
+        self.assertEqual(result["model_short"].unique()[0], "TIDE")
+        self.assertEqual(result["model_long"].unique()[0], "TIDE model (TIDE)")
+        
+        # Verify the Q50 column was renamed correctly to forecasted_discharge
+        # We may have no forecasts for certain forecast dates
+        # self.assertTrue(all(~result["forecasted_discharge"].isna()))
+        
+        # Verify that pentad columns were calculated correctly
+        self.assertIn("pentad_in_month", result.columns)
+        self.assertIn("pentad_in_year", result.columns)
+        
+        # Basic shape verification
+        unique_codes = result["code"].nunique()
+        self.assertTrue(unique_codes > 0, "Expected multiple station codes in the result")
+        
+        # Verify all expected station codes are present
+        expected_codes = [16161, 16158, 16936, 16055, 14256]
+        for code in expected_codes[:5]:  # Check at least some of the expected codes
+            self.assertIn(code, result["code"].values, f"Station {code} missing from results")
+            
+    @patch('logging.getLogger')
+    def test_read_arima_forecast(self, mock_logger):
+        """Test reading an ARIMA forecast file with deterministic forecasts (Q column)."""
+        # Arrange
+        mock_logger_instance = MagicMock()
+        mock_logger.return_value = mock_logger_instance
+        
+        # Act
+        result = sl.read_daily_probabilistic_ml_forecasts_pentad(
+            self.arima_test_file,
+            "ARIMA",
+            "ARIMA Model (ARIMA)",
+            "ARIMA"
+        )
+        
+        # Assert
+        self.assertFalse(result.empty)
+        self.assertIn("forecasted_discharge", result.columns)
+        self.assertEqual(result["model_short"].unique()[0], "ARIMA")
+        
+        # Verify ARIMA-specific columns
+        self.assertNotIn("Q", result.columns)  # Renamed column should be gone
+        
+        # Verify grouping worked correctly - there should be one row per code and date
+        group_counts = result.groupby(["code", "date"]).size()
+        self.assertTrue(all(count == 1 for count in group_counts))
+
+
+class TestReadDailyProbabilisticMlForecastsPentad(unittest.TestCase):
+    
+    def setUp(self):
+        # Create some test data
+        self.create_test_data()
+    
+    def create_test_data(self):
+        """Create test data for different formats and cases"""
+        # Standard date format - Each forecast_date has 5 days of forecast
+        forecast_dates = pd.date_range(start='2025-03-01', periods=6)  # Include 5th, 10th, 15th, 20th, 25th, 31st
+        rows = []
+    
+        # Create data for pentad days (5, 10, 15, 20, 25, and end of month)
+        for forecast_date in forecast_dates:
+            if forecast_date.day in [5, 10, 15, 20, 25] or forecast_date.day == pd.Timestamp(forecast_date.year, forecast_date.month, 1).days_in_month:
+                # For each forecast date, create 5 daily forecasts
+                for i in range(1, 6):
+                    forecast_day = forecast_date + pd.Timedelta(days=i)
+                    rows.append({
+                        'date': forecast_day,
+                        'forecast_date': forecast_date,
+                        'code': 15149,
+                        'Q50': np.random.rand() * 100,  # Random discharge value
+                        'flag': 0
+                    })
+    
+        self.standard_data = pd.DataFrame(rows)
+    
+        # Time format (with hours, minutes, seconds)
+        time_rows = []
+        for forecast_date in forecast_dates:
+            if forecast_date.day in [5, 10, 15, 20, 25] or forecast_date.day == pd.Timestamp(forecast_date.year, forecast_date.month, 1).days_in_month:
+                # For each forecast date, create 5 daily forecasts
+                for i in range(1, 6):
+                    forecast_day = forecast_date + pd.Timedelta(days=i)
+                    time_rows.append({
+                        'date': forecast_day.strftime('%Y-%m-%d %H:%M:%S'),
+                        'forecast_date': forecast_date.strftime('%Y-%m-%d %H:%M:%S'),
+                        'code': 15149,
+                        'Q50': np.random.rand() * 100,
+                        'flag': 0
+                    })
+    
+        self.time_data = pd.DataFrame(time_rows)
+    
+        print(f"time_data:\n{self.time_data}")
+
+        # Multiple station codes
+        multi_station_rows = []
+        for code in [15149, 15083]:
+            for forecast_date in forecast_dates:
+                if forecast_date.day in [5, 10, 15, 20, 25] or forecast_date.day == pd.Timestamp(forecast_date.year, forecast_date.month, 1).days_in_month:
+                    # For each forecast date and code, create 5 daily forecasts
+                    for i in range(1, 6):
+                        forecast_day = forecast_date + pd.Timedelta(days=i)
+                        multi_station_rows.append({
+                            'date': forecast_day,
+                            'forecast_date': forecast_date,
+                            'code': code,
+                            'Q50': np.random.rand() * 100,
+                            'flag': 0
+                        })
+    
+        self.multi_station_data = pd.DataFrame(multi_station_rows)
+    
+        # ARIMA format (uses Q instead of Q50)
+        arima_rows = []
+        for forecast_date in forecast_dates:
+            if forecast_date.day in [5, 10, 15, 20, 25] or forecast_date.day == pd.Timestamp(forecast_date.year, forecast_date.month, 1).days_in_month:
+                # For each forecast date, create 5 daily forecasts
+                for i in range(1, 6):
+                    forecast_day = forecast_date + pd.Timedelta(days=i)
+                    arima_rows.append({
+                        'date': forecast_day,
+                        'forecast_date': forecast_date,
+                        'code': 15149,
+                        'Q': np.random.rand() * 100,
+                        'flag': 0
+                    })
+    
+        self.arima_data = pd.DataFrame(arima_rows)
+
+        # Print arima_data
+        #print(f"arima_data:\n{self.arima_data}")
+        
+        # Create data specifically for testing groupby functionality
+        groupby_rows = []
+        test_forecast_date = pd.Timestamp('2025-03-05')
+    
+        # Create multiple entries for the same code and forecast_date with different values
+        # The function should average these when grouping
+        for _ in range(3):
+            groupby_rows.append({
+                'date': test_forecast_date,
+                'forecast_date': test_forecast_date,
+                'code': 15149,
+                'Q50': 10.0,  # These values should average to 20.0
+                'flag': 0
+            })
+    
+        for _ in range(3):
+            groupby_rows.append({
+                'date': test_forecast_date,
+                'forecast_date': test_forecast_date,
+                'code': 15149,
+                'Q50': 30.0,  # These values should average to 20.0
+                'flag': 0
+            })
+    
+        self.groupby_test_data = pd.DataFrame(groupby_rows)
+    
+    def create_temp_csv(self, data):
+        """Create a temporary CSV file with the given data"""
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.csv')
+        data.to_csv(temp_file.name, index=False)
+        temp_file.close()
+        return temp_file.name
+    
+    @patch('logging.getLogger')
+    def test_standard_date_format(self, mock_logger):
+        """Test with standard date format YYYY-MM-DD"""
+        mock_logger_instance = MagicMock()
+        mock_logger.return_value = mock_logger_instance
+        
+        # Create a temporary CSV file
+        filepath = self.create_temp_csv(self.standard_data)
+
+        try: 
+            # Call the function
+            result = sl.read_daily_probabilistic_ml_forecasts_pentad(
+                filepath, 
+                model="TEST",                
+                model_long="Test Model", 
+                model_short="TM"
+            )
+                
+            # Check if result is a DataFrame
+            self.assertIsInstance(result, pd.DataFrame)
+
+            # Check if the required columns are present
+            required_columns = ['code', 'date', 'forecasted_discharge', 
+                                'model_long', 'model_short', 
+                           'pentad_in_month', 'pentad_in_year']
+            for col in required_columns:
+                self.assertIn(col, result.columns)
+                
+            # Check if model info is correctly added
+            self.assertEqual(result['model_long'].iloc[0], "Test Model")
+            self.assertEqual(result['model_short'].iloc[0], "TM")
+
+            # Verify that only forecast_date from pentad days (5, 10, 15, 20, 25, 31) are in the results
+            # The result 'date' column should only contain values from pentad forecast dates
+            result_dates = pd.DatetimeIndex(result['date']).day
+            expected_pentad_days = [5, 10, 15, 20, 25, 31]  # March has 31 days as end of month
+            for day in result_dates:
+                self.assertIn(day, expected_pentad_days, f"Date with day {day} shouldn't be in results")
+
+            # The standard_data has 5 days of forecasts for each pentad date
+            # Verify that we get the right number of results (one per forecast_date and code)
+            input_forecast_dates = self.standard_data['forecast_date'].unique()
+            pentad_forecast_dates = [d for d in input_forecast_dates if pd.to_datetime(d).day in expected_pentad_days]
+            expected_result_rows = len(pentad_forecast_dates)  # One row per pentad forecast date
+            self.assertEqual(len(result), expected_result_rows, 
+                             f"Expected {expected_result_rows} results (one per pentad date), got {len(result)}")
+
+            # Verify that the forecasted_discharge values are correct (mean of original values for each date)
+            for idx, row in result.iterrows():
+                date = row['date']
+                code = row['code']
+                
+                # Get all the rows from standard_data with this forecast_date and code
+                original_rows = self.standard_data[
+                    (self.standard_data['forecast_date'] == date) & 
+                    (self.standard_data['code'] == code)
+                ]
+                
+                # Calculate the expected mean of Q50 values for this date and code
+                expected_discharge = original_rows['Q50'].mean()
+                
+                # Check that the forecasted_discharge is the correct mean value
+                self.assertAlmostEqual(
+                    row['forecasted_discharge'], 
+                    expected_discharge,
+                    places=5,  # Higher precision to ensure exactness
+                    msg=f"Forecasted discharge for {date} code {code} doesn't match expected mean"
+                )
+
+            # Check if pentad calculations are correct
+            for _, row in result.iterrows():
+                self.assertEqual(
+                    row['pentad_in_month'], 
+                    tl.get_pentad(row['date'] + pd.Timedelta(days=1))
+                )
+        finally:
+            # Clean up
+            os.unlink(filepath) 
+    
+    @patch('logging.getLogger')
+    def test_datetime_format(self, mock_logger):
+        """Test with datetime format YYYY-MM-DD HH:MM:SS"""
+        mock_logger_instance = MagicMock()
+        mock_logger.return_value = mock_logger_instance
+        
+        # Create a temporary CSV file
+        filepath = self.create_temp_csv(self.time_data)
+        
+        try:
+            # Call the function
+            result = sl.read_daily_probabilistic_ml_forecasts_pentad(
+                filepath, 
+                model="TEST",
+                model_long="Test Model", 
+                model_short="TM"
+            )
+            print(f"\n\nresult:\n{result}")
+                
+            # Check that the result is not empty
+            #self.assertFalse(result.empty)
+            
+            # Check that date conversion worked correctly
+            self.assertIsInstance(result['date'].iloc[0], (pd.Timestamp, datetime.date))
+            
+            # Verify that only forecast_date from pentad days (5, 10, 15, 20, 25, 31) are in the results
+            result_dates = pd.DatetimeIndex(result['date']).day
+            expected_pentad_days = [5, 10, 15, 20, 25, 31]  # March has 31 days as end of month
+            for day in result_dates:
+                self.assertIn(day, expected_pentad_days, f"Date with day {day} shouldn't be in results")
+            
+            # The time_data has 5 days of forecasts for each pentad date
+            # Verify that we get the right number of results (one per forecast_date and code)
+            input_forecast_dates = pd.to_datetime(self.time_data['forecast_date']).unique()
+            pentad_forecast_dates = [d for d in input_forecast_dates if d.day in expected_pentad_days]
+            expected_result_rows = len(pentad_forecast_dates)  # One row per pentad forecast date
+            self.assertEqual(len(result), expected_result_rows, 
+                             f"Expected {expected_result_rows} results (one per pentad date), got {len(result)}")
+            
+            # Verify that the forecasted_discharge values are correct (mean of original values for each date)
+            for idx, row in result.iterrows():
+                date_str = pd.to_datetime(row['date']).strftime('%Y-%m-%d %H:%M:%S')
+                code = row['code']
+                
+                # Get all the rows from time_data with this forecast_date and code
+                original_rows = self.time_data[
+                    (self.time_data['forecast_date'] == date_str) & 
+                    (self.time_data['code'] == code)
+                ]
+                
+                # Only test if we have matching rows
+                if not original_rows.empty:
+                    # Calculate the expected mean of Q50 values for this date and code
+                    expected_discharge = original_rows['Q50'].mean()
+                    
+                    # Check that the forecasted_discharge is the correct mean value
+                    self.assertAlmostEqual(
+                        row['forecasted_discharge'], 
+                        expected_discharge,
+                        places=5,  # Higher precision to ensure exactness
+                        msg=f"Forecasted discharge for {date_str} code {code} doesn't match expected mean"
+                    )
+            
+            # Verify all required columns exist with correct types
+            self.assertIn('model_long', result.columns)
+            self.assertIn('model_short', result.columns)
+            self.assertIn('pentad_in_month', result.columns)
+            self.assertIn('pentad_in_year', result.columns)
+            
+            # Verify pentad calculations are correct
+            for _, row in result.iterrows():
+                date_with_timedelta = row['date'] + pd.Timedelta(days=1)
+                expected_pentad = tl.get_pentad(date_with_timedelta)
+                self.assertEqual(row['pentad_in_month'], expected_pentad,
+                                f"Pentad in month should be {expected_pentad} for date {row['date']}")
+                
+                expected_pentad_in_year = tl.get_pentad_in_year(date_with_timedelta)
+                self.assertEqual(row['pentad_in_year'], expected_pentad_in_year,
+                                f"Pentad in year should be {expected_pentad_in_year} for date {row['date']}")
+        finally:
+            # Clean up the temporary file
+            os.unlink(filepath)
+    
+    @patch('logging.getLogger')
+    def test_arima_format(self, mock_logger):
+        """Test with ARIMA format (Q instead of Q50)"""
+        mock_logger_instance = MagicMock()
+        mock_logger.return_value = mock_logger_instance
+        
+        # Create a temporary CSV file
+        filepath = self.create_temp_csv(self.arima_data)
+        
+        try:
+            # Call the function
+            result = sl.read_daily_probabilistic_ml_forecasts_pentad(
+                filepath, 
+                model="ARIMA",
+                model_long="ARIMA Model", 
+                model_short="AR"
+            )
+                
+            # Check that the result is not empty
+            self.assertFalse(result.empty)
+                
+            # Check that Q has been renamed to forecasted_discharge
+            self.assertIn('forecasted_discharge', result.columns)
+            self.assertNotIn('Q', result.columns)
+            
+            # Verify that only forecast_date from pentad days (5, 10, 15, 20, 25, 31) are in the results
+            result_dates = pd.DatetimeIndex(result['date']).day
+            expected_pentad_days = [5, 10, 15, 20, 25, 31]  # March has 31 days as end of month
+            for day in result_dates:
+                self.assertIn(day, expected_pentad_days, f"Date with day {day} shouldn't be in results")
+            
+            # The arima_data has 5 days of forecasts for each pentad date
+            # Verify that we get the right number of results (one per forecast_date and code)
+            input_forecast_dates = self.arima_data['forecast_date'].unique()
+            pentad_forecast_dates = [d for d in input_forecast_dates if pd.to_datetime(d).day in expected_pentad_days]
+            expected_result_rows = len(pentad_forecast_dates)  # One row per pentad forecast date
+            self.assertEqual(len(result), expected_result_rows, 
+                             f"Expected {expected_result_rows} results (one per pentad date), got {len(result)}")
+            
+            # Verify that the forecasted_discharge values are correct (mean of original values for each date)
+            for idx, row in result.iterrows():
+                date = row['date']
+                code = row['code']
+                
+                # Get all the rows from arima_data with this forecast_date and code
+                original_rows = self.arima_data[
+                    (self.arima_data['forecast_date'] == date) & 
+                    (self.arima_data['code'] == code)
+                ]
+                
+                # Only test if we have matching rows
+                if not original_rows.empty:
+                    # Calculate the expected mean of Q values for this date and code
+                    expected_discharge = original_rows['Q'].mean()
+                    
+                    # Check that the forecasted_discharge is the correct mean value
+                    self.assertAlmostEqual(
+                        row['forecasted_discharge'], 
+                        expected_discharge,
+                        places=5,  # Higher precision to ensure exactness
+                        msg=f"Forecasted discharge for {date} code {code} doesn't match expected mean"
+                    )
+            
+            # Check for required columns
+            required_columns = ['code', 'date', 'forecasted_discharge', 
+                                'model_long', 'model_short', 
+                                'pentad_in_month', 'pentad_in_year']
+            for col in required_columns:
+                self.assertIn(col, result.columns)
+            
+            # Check if model info is correctly added
+            self.assertEqual(result['model_long'].iloc[0], "ARIMA Model")
+            self.assertEqual(result['model_short'].iloc[0], "AR")
+            
+            # Verify pentad calculations are correct
+            for _, row in result.iterrows():
+                date_with_timedelta = row['date'] + pd.Timedelta(days=1)
+                expected_pentad = tl.get_pentad(date_with_timedelta)
+                self.assertEqual(row['pentad_in_month'], expected_pentad,
+                                f"Pentad in month should be {expected_pentad} for date {row['date']}")
+                
+                expected_pentad_in_year = tl.get_pentad_in_year(date_with_timedelta)
+                self.assertEqual(row['pentad_in_year'], expected_pentad_in_year,
+                                f"Pentad in year should be {expected_pentad_in_year} for date {row['date']}")
+        finally:
+            # Clean up the temporary file
+            os.unlink(filepath)
+    
+    @patch('logging.getLogger')
+    def test_multiple_stations(self, mock_logger):
+        """Test with multiple station codes"""
+        mock_logger_instance = MagicMock()
+        mock_logger.return_value = mock_logger_instance
+        
+        # Create a temporary CSV file
+        filepath = self.create_temp_csv(self.multi_station_data)
+        
+        try:
+            # Call the function
+            result = sl.read_daily_probabilistic_ml_forecasts_pentad(
+                filepath, 
+                model="TEST",
+                model_long="Test Model", 
+                model_short="TM"
+            )
+                
+            # Check that the result is not empty
+            self.assertFalse(result.empty)
+                
+            # Check that both station codes are present
+            self.assertGreaterEqual(len(result['code'].unique()), 2)
+            self.assertIn(15149, result['code'].values)
+            self.assertIn(15083, result['code'].values)
+            
+            # Verify that only forecast_date from pentad days (5, 10, 15, 20, 25, 31) are in the results
+            result_dates = pd.DatetimeIndex(result['date']).day
+            expected_pentad_days = [5, 10, 15, 20, 25, 31]  # March has 31 days as end of month
+            for day in result_dates:
+                self.assertIn(day, expected_pentad_days, f"Date with day {day} shouldn't be in results")
+            
+            # Verify we get the expected number of rows (one row per unique combination of code and pentad date)
+            # Get unique combinations of code and pentad dates in the input data
+            input_combinations = set()
+            for _, row in self.multi_station_data.iterrows():
+                code = row['code']
+                date = pd.to_datetime(row['forecast_date'])
+                if date.day in expected_pentad_days:
+                    input_combinations.add((code, date))
+            
+            expected_rows = len(input_combinations)
+            self.assertEqual(len(result), expected_rows, 
+                            f"Expected {expected_rows} results (one per code and pentad date), got {len(result)}")
+            
+            # Test that each station code is represented for each pentad date
+            # Create a DataFrame with all combinations of dates and codes
+            pentad_dates = [d for d in pd.to_datetime(self.multi_station_data['forecast_date'].unique()) 
+                           if d.day in expected_pentad_days]
+            station_codes = self.multi_station_data['code'].unique()
+            
+            expected_combinations = set()
+            for date in pentad_dates:
+                for code in station_codes:
+                    expected_combinations.add((code, date))
+            
+            actual_combinations = set()
+            for _, row in result.iterrows():
+                actual_combinations.add((row['code'], row['date']))
+            
+            # Verify all expected combinations exist in the result
+            for combo in expected_combinations:
+                code, date = combo
+                self.assertIn(combo, actual_combinations, 
+                             f"Missing result for code {code} and date {date}")
+            
+            # Check for required columns
+            required_columns = ['code', 'date', 'forecasted_discharge', 
+                               'model_long', 'model_short', 
+                               'pentad_in_month', 'pentad_in_year']
+            for col in required_columns:
+                self.assertIn(col, result.columns)
+            
+            # Check if model info is correctly added
+            self.assertEqual(result['model_long'].iloc[0], "Test Model")
+            self.assertEqual(result['model_short'].iloc[0], "TM")
+            
+            # Verify that each station's data is correctly aggregated
+            # For each station and date, verify the forecasted discharge
+            for code in station_codes:
+                code_results = result[result['code'] == code]
+                for _, row in code_results.iterrows():
+                    date = row['date']
+                    
+                    # Get all rows from the original data with this code and forecast_date
+                    original_rows = self.multi_station_data[
+                        (self.multi_station_data['code'] == code) & 
+                        (self.multi_station_data['forecast_date'] == date)
+                    ]
+                    
+                    if not original_rows.empty:
+                        # Calculate expected mean
+                        expected_discharge = original_rows['Q50'].mean()
+                        
+                        # Verify forecasted discharge
+                        self.assertAlmostEqual(
+                            row['forecasted_discharge'], 
+                            expected_discharge,
+                            places=5,
+                            msg=f"Incorrect discharge for code {code} and date {date}"
+                        )
+        finally:
+            # Clean up the temporary file
+            os.unlink(filepath)
+
+
 class TestReadDailyProbabilisticMLForecastsPentad(unittest.TestCase):
 
     def setUp(self):
@@ -88,7 +655,7 @@ class TestReadDailyProbabilisticMLForecastsPentad(unittest.TestCase):
         # Process using the function to test
         self.test_data = sl.read_daily_probabilistic_ml_forecasts_pentad(
             self.file_path, 'test', 't', 'test')
-
+        
     def test_columns_present(self):
         # Test if columns in val_data are present in test_data, except for the
         # column Q50, which is renamed to forecasted_discharge in the test_data
