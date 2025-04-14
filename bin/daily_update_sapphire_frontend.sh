@@ -61,7 +61,7 @@ docker container prune -f
 
 # Pullling the images with the tag $ieasyhydroforecast_frontend_docker_image_tag
 echo "| Pulling with TAG=$ieasyhydroforecast_frontend_docker_image_tag"
-docker pull mabesa/sapphire-configuration:$ieasyhydroforecast_frontend_docker_image_tag
+#docker pull mabesa/sapphire-configuration:$ieasyhydroforecast_frontend_docker_image_tag
 docker pull mabesa/sapphire-dashboard:$ieasyhydroforecast_frontend_docker_image_tag
 
 # Removing old images
@@ -69,7 +69,8 @@ echo "| Removing old images"
 docker image prune -f
 
 # Start the Docker Compose service for the dashboards
-start_docker_compose_dashboards
+echo "| Path to .ssh directory: $ieasyhydroforecast_container_data_ref_dir/bin/.ssh"
+ieasyhydroforecast_container_data_ref_dir=$ieasyhydroforecast_container_data_ref_dir start_docker_compose_dashboards
 
 # Wait for dashboards to finish
 wait $DOCKER_COMPOSE_DASHBOARD_PID
