@@ -1,5 +1,6 @@
 import os
 import pandas as pd
+import datetime as dt
 import pytest
 
 from preprocessing_runoff.src import src
@@ -212,3 +213,146 @@ def test_filter_roughly_for_outliers_with_outliers():
     assert result['Values'].isna().sum() == 0
     # Assert that the outlier has been replaced with the linear interpolation
     assert new['Values'].values[0] != old['Values'].values[0]
+
+
+class TestFromDailyTimeSeriestoHydrograph:
+    """Test class for the from_daily_time_series_to_hydrograph function."""
+    
+    def test_leap_year_handling(self):
+        """Test proper handling of leap years in hydrograph generation."""
+        # Create a DataFrame spanning multiple years, including a leap year
+        dates = []
+        values = []
+        
+        # Create test data with dates from 2019-2021 (2020 is a leap year)
+        for year in [2019, 2020, 2021]:
+            # Create full year of data
+            year_dates = pd.date_range(start=f'{year}-01-01', end=f'{year}-12-31')
+            dates.extend(year_dates)
+            
+            # Add some test values (just using day of year as the value)
+            values.extend([date.dayofyear for date in year_dates])
+        
+        # Create DataFrame
+        df = pd.DataFrame({
+            'date': dates,
+            'discharge': values,
+            'code': '15194',
+            'name': 'Test Site'
+        })
+        
+        # Run the function
+        result = src.from_daily_time_series_to_hydrograph(df)
+        
+        # Check for leap year handling
+        # We should have day_of_year values 1-365 (no 366 even though 2020 is a leap year)
+        assert set(result['day_of_year'].unique()) == set(range(1, 366))
+    
+        # The dates in the result should be in the current year
+        current_year = dt.date.today().year
+        assert all(d.year == current_year for d in result['date'])
+    
+    # Verify that date sequence is continuous (no gaps)
+        sorted_result = result.sort_values('date')
+        date_diffs = sorted_result['date'].diff().iloc[1:].dt.days
+        assert date_diffs.max() == 1
+        assert date_diffs.min() == 1
+    
+    def test_statistics_calculation(self):
+        """Test that statistics are correctly calculated for historical data."""
+        # Get current year for testing
+        current_year = dt.date.today().year
+        last_year = current_year - 1
+        
+        # Create 5 years of data for day 1-3 of January with known patterns
+        dates = []
+        values = []
+        
+        for year in range(current_year-4, current_year+1):
+            for day in range(1, 4):
+                dates.append(dt.datetime(year, 1, day))
+                if year == current_year:
+                    values.append(day * 10)  # Current year values: 10, 20, 30
+                elif year == last_year:
+                    values.append(day * 5)   # Last year values: 5, 10, 15
+                else:
+                    values.append(day)       # Earlier years values: 1, 2, 3
+        
+        # Create DataFrame
+        df = pd.DataFrame({
+            'date': dates,
+            'discharge': values,
+            'code': '15194',
+            'name': 'Test Site'
+        })
+        
+        # Run the function
+        result = src.from_daily_time_series_to_hydrograph(df)
+        
+        # Check statistics for each day
+        for day in range(1, 4):
+            day_result = result[result['date'].dt.day == day].iloc[0]
+            
+            # Check count is correct (5 years of data)
+            assert day_result['count'] == 5
+            
+            # Check mean (3 early years with value=day, last year with 5*day, current year with 10*day)
+            expected_mean = (day*3 + day*5 + day*10) / 5
+            assert abs(day_result['mean'] - expected_mean) < 0.0001
+            
+            # Check percentiles
+            assert day_result['min'] == day  # Minimum is just the day value
+            assert day_result['max'] == day * 10  # Maximum is current year value
+            
+            # Check current and previous year values
+            assert day_result[str(current_year)] == day * 10
+            assert day_result[str(last_year)] == day * 5
+    
+    def test_multiple_sites(self):
+        """Test processing of multiple sites within the same dataset."""
+        # Create test data for two sites
+        dates = pd.date_range(start='2021-01-01', periods=10, freq='D')
+        
+        data = []
+        for site_code in ['15194', '15212']:
+            for date in dates:
+                # Different pattern for each site
+                if site_code == '15194':
+                    value = date.day
+                else:
+                    value = date.day * 2
+                
+                data.append({
+                    'date': date,
+                    'discharge': value,
+                    'code': site_code,
+                    'name': f'Test Site {site_code}'
+                })
+        
+        df = pd.DataFrame(data)
+        
+        # Run the function
+        result = src.from_daily_time_series_to_hydrograph(df)
+        
+        # Verify each site is processed separately
+        site_groups = result.groupby('code')
+        assert len(site_groups) == 2
+        
+        # Check each site has the correct data
+        site1_data = site_groups.get_group('15194')
+        site2_data = site_groups.get_group('15212')
+        
+        # Both sites should have same number of days
+        assert len(site1_data) == len(dates)
+        assert len(site2_data) == len(dates)
+        
+        # Check that means reflect the different patterns
+        for day in range(1, 11):
+            site1_day = site1_data[site1_data['date'].dt.day == day]
+            site2_day = site2_data[site2_data['date'].dt.day == day]
+            
+            if not site1_day.empty and not site2_day.empty:
+                assert site1_day['mean'].iloc[0] == day
+                assert site2_day['mean'].iloc[0] == day * 2
+
+

@@ -1667,7 +1667,7 @@ def is_leap_year(year):
     else:
         return False
 
-def from_daily_time_series_to_hydrograph(data_df: pd.DataFrame,
+'''def from_daily_time_series_to_hydrograph(data_df: pd.DataFrame,
                                          date_col='date', discharge_col='discharge', code_col='code', name_col='name'):
     """
     Calculates daily runoff statistics and writes it to hydrograph format.
@@ -1748,6 +1748,169 @@ def from_daily_time_series_to_hydrograph(data_df: pd.DataFrame,
     print(f"DEBUG: hydrograph_data[hydrograph_data['code'] == '15194'].head(10)\n{hydrograph_data[hydrograph_data['code'] == '15194'].head(10)}")
     print(f"DEBUG: hydrograph_data[hydrograph_data['code'] == '15194'].tail(10)\n{hydrograph_data[hydrograph_data['code'] == '15194'].tail(10)}")
 
+    return hydrograph_data'''
+
+def inspect_site_data(hydrograph_data, site_code='15189'):
+    """Show data for specific site at beginning, around Feb 28, and end of year."""
+    # Filter for the specific site
+    site_data = hydrograph_data[hydrograph_data['code'] == site_code].sort_values('date')
+    
+    # First 5 days of the year
+    print("FIRST 5 DAYS:")
+    print(site_data.head(5))
+    print("\n")
+    
+    # Feb 28 and surrounding days (10 days before and after)
+    # Create a mask for February 28th
+    feb_28_mask = (site_data['date'].dt.month == 2) & (site_data['date'].dt.day == 28)
+    
+    # Check if February 28th exists in the data
+    if feb_28_mask.any():
+        # Get the date of February 28th
+        feb_28_date = site_data[feb_28_mask]['date'].iloc[0]
+        
+        # Find the dates 10 days before and 10 days after
+        start_date = feb_28_date - pd.Timedelta(days=10)
+        end_date = feb_28_date + pd.Timedelta(days=10)
+        
+        # Filter the data for the date range
+        date_range_data = site_data[(site_data['date'] >= start_date) & 
+                                    (site_data['date'] <= end_date)]
+        
+        print("DAYS AROUND FEB 28:")
+        print(date_range_data)
+    else:
+        print("DAYS AROUND FEB 28:")
+        print("February 28th not found in the data")
+    
+    print("\n")
+    
+    # Last 5 days of the year
+    print("LAST 5 DAYS:")
+    print(site_data.tail(5))
+
+def from_daily_time_series_to_hydrograph(data_df: pd.DataFrame,
+                                        date_col='date', discharge_col='discharge', code_col='code', name_col='name'):
+    """
+    Calculates daily runoff statistics and writes it to hydrograph format.
+    Properly handles leap years by creating a normalized day-of-year.
+    """
+    # Ensure the date column is in datetime format
+    data_df[date_col] = pd.to_datetime(data_df[date_col])
+
+    # Ensure the code column is of string type
+    data_df[code_col] = data_df[code_col].astype(str)
+
+    # Ensure the discharge column is numeric
+    data_df[discharge_col] = pd.to_numeric(data_df[discharge_col], errors='coerce')
+
+    # Create a copy of the dataframe to avoid modifying the original
+    working_df = data_df.copy()
+    
+    # Create a normalized day-of-year column that works for both leap and non-leap years
+    # First, add the regular day of year
+    working_df['day_of_year'] = working_df[date_col].dt.dayofyear
+    
+    # Create a normalized day that maps Feb 29 to Feb 28 in leap years
+    # and adjusts all subsequent days to maintain 365 days
+    working_df['normalized_day'] = working_df['day_of_year']
+    
+    # For leap years, adjust days after Feb 29 (day 60)
+    leap_year_mask = working_df[date_col].dt.is_leap_year
+    after_feb29_mask = (leap_year_mask) & (working_df['day_of_year'] > 60)
+    
+    # Reduce normalized_day by 1 for days after Feb 29 in leap years
+    working_df.loc[after_feb29_mask, 'normalized_day'] -= 1
+    
+    # Map Feb 29 to the same normalized_day as Feb 28 in leap years
+    feb29_mask = (working_df[date_col].dt.month == 2) & (working_df[date_col].dt.day == 29)
+    working_df.loc[feb29_mask, 'normalized_day'] = 59  # Feb 28's normalized day number
+    
+    # Get the current year
+    current_year = dt.date.today().year
+    
+    # Calculate statistics based on the normalized day column
+    hydrograph_data = working_df.groupby([code_col, 'normalized_day'])[discharge_col].describe(
+        percentiles=[0.05, 0.25, 0.5, 0.75, 0.95])
+    
+    # Get current year's data
+    current_year_data = working_df[working_df[date_col].dt.year == current_year]
+    current_year_data = current_year_data.drop(columns=[date_col, name_col])
+    current_year_data = current_year_data.rename(columns={discharge_col: f"{current_year}"})
+    
+    # Get last year's data
+    last_year = current_year - 1
+    last_year_data = working_df[working_df[date_col].dt.year == last_year]
+    last_year_data = last_year_data.drop(columns=[name_col])
+    last_year_data = last_year_data.rename(columns={discharge_col: f"{last_year}"})
+    
+    # Add current and last year's discharge to the hydrograph data
+    hydrograph_data = hydrograph_data.merge(
+        current_year_data.groupby([code_col, 'normalized_day'])[str(current_year)].mean().reset_index(),
+        on=[code_col, 'normalized_day'], how='left', suffixes=('', '_current'))
+    
+    hydrograph_data = hydrograph_data.merge(
+        last_year_data.groupby([code_col, 'normalized_day'])[str(last_year)].mean().reset_index(),
+        on=[code_col, 'normalized_day'], how='left', suffixes=('', '_last_year'))
+    
+    # Create date based on normalized day and current year
+    # But ensure we're creating valid dates (365 days for non-leap years, 366 for leap years)
+    if is_leap_year(current_year):
+        # Create regular mapping for days 1-59 (Jan 1 to Feb 28)
+        days_before_leap = pd.DataFrame({
+            'normalized_day': range(1, 60),  # Days 1-59
+            'actual_day': range(1, 60)       # Days 1-59
+        })
+    
+        # Create Feb 29 entry (maps from normalized day 59)
+        leap_day = pd.DataFrame({
+            'normalized_day': [59],  # Feb 28's normalized day
+            'actual_day': [60]       # Feb 29's actual day
+        })
+    
+        # Create mapping for days after Feb 29 with shifted actual_day
+        days_after_leap = pd.DataFrame({
+            'normalized_day': range(60, 366),  # Days 60-365
+            'actual_day': range(61, 367)       # Days 61-366 (shifted by 1)
+        })
+        
+        # Add extra entry for normalized_day 366 if it exists
+        if 366 in hydrograph_data['normalized_day'].values:
+            extra_day = pd.DataFrame({
+                'normalized_day': [366],
+                'actual_day': [367]
+            })
+            day_mapping = pd.concat([days_before_leap, leap_day, days_after_leap, extra_day])
+        else:
+            day_mapping = pd.concat([days_before_leap, leap_day, days_after_leap])
+    else:
+        # For non-leap years, normalized_day maps directly to actual_day
+        max_normalized_day = int(hydrograph_data['normalized_day'].max())
+        day_mapping = pd.DataFrame({
+            'normalized_day': range(1, max_normalized_day + 1),
+            'actual_day': range(1, max_normalized_day + 1)
+        })
+
+    # Print all_days for debugging
+    print(f"DEBUG: day_mapping:\n{day_mapping}")
+    
+    # Merge the hydrograph data with the day mapping
+    hydrograph_data = hydrograph_data.reset_index()
+    hydrograph_data = hydrograph_data.merge(day_mapping, on='normalized_day', how='left')
+
+    print(f"DEBUG: hydrograph_data after merge:\n{hydrograph_data.head(5)}")
+    print(hydrograph_data.head(70).tail(20))
+    print(hydrograph_data.tail(5))
+    
+    # Create date based on the actual day and current year
+    hydrograph_data['date'] = pd.Timestamp(str(current_year)) + pd.to_timedelta(hydrograph_data['actual_day'] - 1, unit='D')
+    
+    # Set day_of_year to actual_day
+    hydrograph_data['day_of_year'] = hydrograph_data['actual_day'].astype(int)
+    
+    # Drop the temporary columns
+    hydrograph_data = hydrograph_data.drop(columns=['normalized_day', 'actual_day'])
+    
     return hydrograph_data
 
 def add_dangerous_discharge_from_sites(hydrograph_data: pd.DataFrame,

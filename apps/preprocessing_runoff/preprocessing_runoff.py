@@ -60,7 +60,7 @@ import setup_library as sl
 
 
 # Configure the logging level and formatter
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 
 # Create the logs directory if it doesn't exist
@@ -217,6 +217,7 @@ def main():
         date_col='date',
         discharge_col='discharge',
         code_col='code')
+    src.inspect_site_data(hydrograph, '15189')
     end_time = time.time()
     time_from_daily_time_series_to_hydrograph = end_time - start_time
 
