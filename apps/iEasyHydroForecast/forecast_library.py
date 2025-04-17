@@ -4836,17 +4836,17 @@ class Site:
                 # Test if the site has pentadal forecasts enabled and skip if not
                 if row['enabled_forecasts'].values == None or \
                     (row['enabled_forecasts'].values[0]['pentad_forecast'] == False and row['enabled_forecasts'].values[0]['decadal_forecast'] == False):
-                    print(f'Skipping site {row["site_code"].values[0]} as neither pentadal nor decadal forecasts are not enabled.')
+                    logger.debug(f'Skipping site {row["site_code"].values[0]} as neither pentadal nor decadal forecasts are enabled.')
                     #print(f'enabled_forecasts: {row["enabled_forecasts"].values[0]}')
                     continue
                 elif (row['enabled_forecasts'].values[0]['decadal_forecast'] == True and row['enabled_forecasts'].values[0]['pentad_forecast'] == False):
                     # We need to create a pentadal forecast for the site as this is required to produce decadal forecasts as well.
-                    print(f'Creating a virtual pentadal forecast for site {row["site_code"].values[0]}, {row["official_name"].values[0]} as decadal forecasts are enabled.')
+                    logger.debug(f'Creating a virtual pentadal forecast for site {row["site_code"].values[0]}, {row["official_name"].values[0]} as decadal forecasts are enabled.')
                     # We try to split the name of the site into river and punkt
                     # First try to separate by ' - '. If this fails, try to separate by '-'
                     name_parts = split_name(row['official_name'].values[0])
                     name_nat_parts = split_name(row['national_name'].values[0])
-                    print(f"Name parts: {name_parts}, name_nat_parts: {name_nat_parts}")
+                    logger.debug(f"Name parts: {name_parts}, name_nat_parts: {name_nat_parts}")
 
                     site = site = cls(
                         code=row['site_code'].values[0],
@@ -4935,14 +4935,14 @@ class Site:
                 # Add the site to the ordered_sites_list
                 # Test if ordered_sits_list is 'NoneType'
                 if ordered_sites_list is None:
-                    print(f"ordered_sites_list is NoneType")
+                    logger.warning(f"ordered_sites_list is NoneType")
                     ordered_sites_list = [temp_site]
                 else: # ordered_sites_list is not 'NoneType'
                     ordered_sites_list.append(temp_site)
             #print(f"Ordered sites: {[site.code for site in ordered_sites_list]}")
             return ordered_sites_list
         except Exception as e:
-            print(f'Error creating Site objects from DataFrame: {e}')
+            logger.error(f'Error creating Site objects from DataFrame: {e}')
             return []
 
     @classmethod
@@ -5068,7 +5068,7 @@ class Site:
                 # Test if the site has pentadal forecasts enabled and skip if not
                 if row['enabled_forecasts'].values[0] == None or \
                     (row['enabled_forecasts'].values[0]['pentad_forecast'] == False and row['enabled_forecasts'].values[0]['decadal_forecast'] == False):
-                    print(f'Skipping site {row["site_code"].values[0]} as neither pentadal nor decadal forecasts are not enabled.')
+                    print(f'Skipping site {row["site_code"].values[0]} as neither pentadal nor decadal forecasts are enabled.')
                     #print(f'enabled_forecasts: {row["enabled_forecasts"].values[0]}')
                     continue
                 elif (row['enabled_forecasts'].values[0]['decadal_forecast'] == True and row['enabled_forecasts'].values[0]['pentad_forecast'] == False):

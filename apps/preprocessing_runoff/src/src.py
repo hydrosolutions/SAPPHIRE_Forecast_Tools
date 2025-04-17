@@ -773,6 +773,114 @@ def original_read_all_runoff_data_from_excel(date_col='date', discharge_col='dis
 
     return df
 
+def get_daily_average_discharge_from_iEH_HF_for_multiple_sites(
+        ieh_hf_sdk, sites_list, start_date, end_date=dt.date.today(),
+        date_col='date', discharge_col='discharge', name_col='name', code_col='code'):
+    """
+    Reads daily average discharge data from the iEasyHydro database for a given site.
+
+    The names of the dataframe columns can be customized.
+
+    Args:
+        ieh_hf_sdk (object): An object that provides a method to get data values for a site from a database.
+        sites_list (list): A list of strings denoting site codes.
+        start_date (datetime.date or str): The start date of the data to read.
+        end_date (datetime.date or str, optional): The end date of the data to read. Defaults to dt.date.today().
+        date_col (str, optional): The name of the column containing the date data. Default is 'date'.
+        discharge_col (str, optional): The name of the column containing the discharge data. Default is 'discharge'.
+        name_col (str, optional): The name of the column containing the site name. Default is 'name'.
+        code_col (str, optional): The name of the column containing the site code. Default is 'code'.
+
+    Returns:
+        pandas.DataFrame: A DataFrame containing the daily average discharge data.
+
+    Raises:
+        ValueError: If the site code is not a string or an integer.
+        ValueError: If the site name is not a string.
+    """
+    # Test is sites_list is a list
+    if not isinstance(sites_list, list):
+        raise ValueError("The sites_list must be a list of strings.")
+    # Test if sites_list is empty
+    if not sites_list:
+        raise ValueError("The sites_list must not be empty.")
+    # Convert site codes to strings
+    sites_list = [str(site) for site in sites_list]
+
+    # Convert start_date to dt.datetime
+    if isinstance(start_date, str):
+        start_date = dt.datetime.strptime(start_date, '%Y-%m-%d')
+    if isinstance(start_date, dt.date):
+        start_date = dt.datetime.combine(start_date, dt.datetime.min.time())
+
+    # Convert end_date to dt.datetime
+    if isinstance(end_date, str):
+        end_date = dt.datetime.strptime(end_date, '%Y-%m-%d')
+    if isinstance(end_date, dt.date):
+        end_date = dt.datetime.combine(end_date, dt.datetime.min.time())
+
+    logger.debug(f"Reading daily average discharge data for all sites in sites_list from {start_date} to {end_date}.")
+
+    filter = {
+        'site_codes': sites_list,
+        'variable_name': 'WLD',  # TODO: change to WDDA once it is available
+        'local_date_time__gte': start_date,
+        'local_date_time__lt': end_date,
+        'view_type': 'measurements',
+        'display_type': 'individual'
+    }
+
+    try:
+        # Get data for current site from the database
+        db_raw = ieh_hf_sdk.get_data_values_for_site(
+            "hydro", filters=filter
+        )
+        
+        all_data = []
+        for item in db_raw:  # response is a list of dictionaries
+            site_info = item['site']
+            site_code = site_info['site_code']
+        
+            for data_value in item['data_values']:
+                date_str = data_value['local_date_time']
+                value = data_value['data_value']
+                all_data.append({
+                    'site_code': site_code,
+                    'date': date_str,
+                    'value': value
+                })
+    
+        # Create final dataframe
+        db_df = pd.DataFrame(all_data)
+
+        #db_raw = db_raw['data_values']
+
+        # Create a DataFrame
+        #db_df = pd.DataFrame(db_raw)
+
+        # Rename the columns of df to match the columns of combined_data
+        # Currently, local_date_time returns utc time but is actually in local 
+        # date time. x
+        db_df = db_df.rename(columns={'local_date_time': date_col, 'data_value': discharge_col})
+
+        # Get UTC date time from local date time
+        #db_df['utc_date_time'] = pd.to_datetime(db_df['local_date_time'], format='%Y-%m-%d %H:%M:%S').dt.date
+
+        # Convert the Date column to datetime
+        db_df[date_col] = pd.to_datetime(db_df['date'], format='%Y-%m-%d %H:%M:%S').dt.date
+
+        # Add the name and code columns
+        db_df[name_col] = site_info
+        db_df[code_col] = site_code
+
+    except Exception as e:
+        logger.info(f"Error reading daily average discharge data: {e}")
+        logger.info(f"Returning empty data frame.")
+        # Return an empty dataframe with columns 'date', 'discharge', 'name', 'code'
+        db_df = pd.DataFrame(columns=[date_col, discharge_col, name_col, code_col])
+
+    return db_df
+
 def get_daily_average_discharge_from_iEH_per_site(
         ieh_sdk, site, name, start_date, end_date=dt.date.today(),
         date_col='date', discharge_col='discharge', name_col='name', code_col='code'):
@@ -1370,6 +1478,10 @@ def get_runoff_data_for_sites_HF(ieh_hf_sdk=None, date_col='date',
             Default is 'name'.
         code_col (str, optional): The name of the column containing the site code.
             Default is 'code'.
+
+    Details: 
+    - Read data from excel files if available and necessary
+    
     """
     # Test if there have been any changes in the daily_discharge directory
     if should_reprocess_input_files(): 
@@ -1495,7 +1607,7 @@ def get_runoff_data_for_sites_HF(ieh_hf_sdk=None, date_col='date',
 
             read_data = add_hydroposts(read_data, virtual_stations)
 
-    if ieh_sdk is None:
+    if ieh_hf_sdk in locals() and ieh_hf_sdk is None:
         # We do not have access to an iEasyHydro database
         logger.info("No data read from iEasyHydro Database.")
 
@@ -1506,16 +1618,23 @@ def get_runoff_data_for_sites_HF(ieh_hf_sdk=None, date_col='date',
         last_row = read_data.groupby(code_col).tail(1)
         #print("DEBUG: last_row: \n", last_row)
 
+        db_average_data = get_daily_average_discharge_from_iEH_HF_for_multiple_sites(
+            ieh_hf_sdk=ieh_hf_sdk, sites_list=code_list, 
+            start_date=last_row[date_col].min(),
+            date_col=date_col, discharge_col=discharge_col, name_col=name_col, code_col=code_col
+        )
+        exit()
+
         # For each code in last_row, get the daily average discharge data from the
         # iEasyHydro database using the function get_daily_average_discharge_from_iEH_per_site
         for index, row in last_row.iterrows():
-            db_average_data = get_daily_average_discharge_from_iEH_per_site(
-                ieh_sdk=ieh_sdk, site=row[code_col], name=row[name_col], 
-                start_date=row[date_col],
-                date_col=date_col, discharge_col=discharge_col, name_col=name_col, code_col=code_col
-            )
+            #db_average_data = get_daily_average_discharge_from_iEH_per_site(
+            #    ieh_sdk=ieh_hf_sdk, site=row[code_col], name=row[name_col], 
+            #    start_date=row[date_col],
+            #    date_col=date_col, discharge_col=discharge_col, name_col=name_col, code_col=code_col
+            #)
             db_morning_data = get_todays_morning_discharge_from_iEH_per_site(
-                ieh_sdk, row[code_col], row[name_col],
+                ieh_hf_sdk, row[code_col], row[name_col],
                 date_col=date_col, discharge_col=discharge_col, name_col=name_col, code_col=code_col)
             # Append db_data to read_data if db_data is not empty
             if not db_average_data.empty:
