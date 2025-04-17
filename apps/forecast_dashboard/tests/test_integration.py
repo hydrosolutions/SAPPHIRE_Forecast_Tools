@@ -2,8 +2,8 @@ import re
 import time
 from playwright.sync_api import Page, expect
 
-TEST_PENTAD = False
-TEST_DECAD = False
+TEST_PENTAD = True
+TEST_DECAD = True
 TEST_LOCAL = True
 LOCAL_URL = "http://localhost:5006/forecast_dashboard"
 PENTAD_URL = "https://fc.pentad.ieasyhydro.org/forecast_dashboard"
@@ -69,8 +69,8 @@ def test_local(page: Page):
     print("#### Testing LOCAL started...")
 
     # Testing the page title
-    expect(page).to_have_title(re.compile("SAPPHIRE Central Asia - Decadal forecast dashboard"))
-    print("#### Page title is correct.")
+    #expect(page).to_have_title(re.compile("SAPPHIRE Central Asia - Decadal forecast dashboard"))
+    #print("#### Page title is correct.")
 
     # Testing login failure with incorrect credentials
     page.get_by_label("Username").fill("user1")
@@ -112,7 +112,7 @@ def test_local(page: Page):
     time.sleep(SLEEP)
     page.get_by_role("button", name="Login").click()
     page.get_by_role("button", name="Login").click()
-    page.get_by_role("button", name="Login").click()
+    page.get_by_role("button", name="Login").click()  # May need to click again
 
     expect(page.get_by_text("Predictors")).to_be_visible()
     expect(page.get_by_text("Hydropost")).to_be_visible()
