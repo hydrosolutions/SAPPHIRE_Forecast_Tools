@@ -1,0 +1,163 @@
+import re
+import time
+from playwright.sync_api import Page, expect
+
+TEST_PENTAD = False
+TEST_DECAD = False
+TEST_LOCAL = True
+LOCAL_URL = "http://localhost:5006/forecast_dashboard"
+PENTAD_URL = "https://fc.pentad.ieasyhydro.org/forecast_dashboard"
+DECAD_URL = "https://fc.decad.ieasyhydro.org/forecast_dashboard"
+SLEEP = 2
+
+
+def test_pentad(page: Page):
+    if not TEST_PENTAD:
+        print("#### Skipping PENTAD test...")
+        return
+
+    page.goto(PENTAD_URL)
+
+    print("#### Testing PENTAD started...")
+
+    # Testing Pentad.png being loaded
+    content = page.content()
+    assert 'DINppRCxDAAEEalfg/wLZeXf9HTaUOAAAAABJRU5ErkJggg==' in content
+    print("#### Pentad.png is shown.")
+    time.sleep(SLEEP)
+
+    # # Testing the page is in Russian
+    # expect(page).to_have_title(re.compile("SAPPHIRE Central Asia - Панель управления пентадными прогнозами"))
+    # expect(page.get_by_text("Войти")).to_be_visible()
+    # expect(page.get_by_text("Имя пользователя")).to_be_visible()
+    # expect(page.get_by_text("Введите имя пользователя")).to_be_visible()
+    # print("#### Page is in Russian.")
+    # time.sleep(SLEEP)
+
+
+def test_decad(page: Page):
+    if not TEST_DECAD:
+        print("#### Skipping DECAD test...")
+        return
+
+    page.goto(DECAD_URL)
+
+    print("#### Testing DECAD started...")
+
+    # Testing Decad.png being loaded
+    content = page.content()
+    assert '8tYYd0q55fCZAgMBYAv8DTUYpzxgsaeEAAAAASUVORK5CYII=' in content
+    print("#### Decad.png is shown.")
+    time.sleep(SLEEP)
+
+    # # Testing the page is in Russian
+    # expect(page).to_have_title(re.compile("SAPPHIRE Central Asia - Панель управления декадными прогнозами"))
+    # expect(page.get_by_text("Войти")).to_be_visible()
+    # expect(page.get_by_text("Имя пользователя")).to_be_visible()
+    # expect(page.get_by_text("Введите имя пользователя")).to_be_visible()
+    # print("#### Page is in Russian.")
+    # time.sleep(SLEEP)
+
+
+def test_local(page: Page):
+    if not TEST_LOCAL:
+        print("#### Skipping LOCAL test...")
+        return
+
+    page.goto(LOCAL_URL)
+
+    print("#### Testing LOCAL started...")
+
+    # Testing the page title
+    expect(page).to_have_title(re.compile("SAPPHIRE Central Asia - Decadal forecast dashboard"))
+    print("#### Page title is correct.")
+
+    # Testing login failure with incorrect credentials
+    page.get_by_label("Username").fill("user1")
+    page.get_by_label("Password").fill("user111")
+
+    assert page.get_by_label("Username").input_value() == "user1"
+    assert page.get_by_label("Password").input_value() == "user111"
+
+    page.get_by_role("button", name="Login").click()
+    time.sleep(SLEEP)
+
+    expect(page.get_by_text("Invalid username or password")).to_be_visible()
+    expect(page.get_by_text("Predictors")).not_to_be_visible()
+    expect(page.get_by_text("Hydropost")).not_to_be_visible()
+    print("#### Login failed as expected.")
+
+    # Testing login success with correct credentials
+    page.get_by_label("Password").fill("user1")
+    page.get_by_role("button", name="Login").click()
+    page.get_by_role("button", name="Login").click()
+    time.sleep(SLEEP)
+
+    expect(page.get_by_text("Invalid username or password")).not_to_be_visible()
+    expect(page.get_by_text("Predictors")).to_be_visible()
+    expect(page.get_by_text("Hydropost")).to_be_visible()
+    print("#### Login successful.")
+
+    # Testing sign out
+    page.get_by_role("button", name="Logout").click()
+    time.sleep(SLEEP)
+    page.get_by_role("button", name="Yes").click()
+    time.sleep(SLEEP)
+    expect(page.get_by_text("Username")).to_be_visible()
+    print("#### Logout successful.")
+
+    # Testing login after logout
+    page.get_by_label("Username").fill("user1")
+    page.get_by_label("Password").fill("user1")
+    time.sleep(SLEEP)
+    page.get_by_role("button", name="Login").click()
+    page.get_by_role("button", name="Login").click()
+    page.get_by_role("button", name="Login").click()
+
+    expect(page.get_by_text("Predictors")).to_be_visible()
+    expect(page.get_by_text("Hydropost")).to_be_visible()
+    print("#### Login after logout successful.")
+
+    # Testing language switching
+    page.get_by_role("link", name="Русский").click()
+    page.get_by_label("Имя пользователя").fill("user1")
+    page.get_by_label("Пароль").fill("user1")
+
+    page.get_by_role("button", name="Войти").click()
+    time.sleep(SLEEP)
+    page.get_by_role("button", name="Войти").click()
+    expect(page.get_by_text("Предикторы")).to_be_visible()
+    expect(page.locator("div.bk-tab", has_text="Прогноз")).to_be_visible()
+    expect(page.get_by_text("Бюллетень")).to_be_visible()
+    expect(page.get_by_text("Информация об ответственности")).to_be_visible()
+
+    print("#### Login after language change successful.")
+
+    ### PREDICTORS TAB ###
+    page.select_option("select#input", value="16936 - Нарын  -  Приток в Токтогульское вдхр.**)")
+    print("#### Station 16936 selected")
+    time.sleep(SLEEP)
+
+    page.select_option("select#input", value="15194 - р.Ала-Арча-у.р.Кашка-Суу")
+    print("#### Station 15194 selected")
+    time.sleep(SLEEP)
+
+    ### FORECAST TAB ###
+    page.locator("div.bk-tab", has_text="Прогноз").click()
+    print("#### Switch to Forecast tab successful.")
+
+    page.select_option("select#input", value="15256 - Талас -  с.Ак-Таш")
+    print("#### Station 15256 selected")
+    time.sleep(SLEEP)
+
+    page.select_option("select#input", value="15013 - Джыргалан-с.Советское")
+    print("#### Station 15013 selected")
+    time.sleep(SLEEP)
+
+    ### BULLETIN TAB ###
+    page.locator("div.bk-tab", has_text="Бюллетень").click()
+    print("#### Switch to Bulletin tab successful.")
+
+    ### INFO TAB ###
+    page.locator("div.bk-tab", has_text="Информация об ответственности").click()
+    print("#### Switch to Info tab successful.")
