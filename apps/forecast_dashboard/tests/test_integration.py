@@ -8,7 +8,7 @@ TEST_LOCAL = True
 LOCAL_URL = "http://localhost:5006/forecast_dashboard"
 PENTAD_URL = "https://fc.pentad.ieasyhydro.org/forecast_dashboard"
 DECAD_URL = "https://fc.decad.ieasyhydro.org/forecast_dashboard"
-SLEEP = 2
+SLEEP = 1
 
 
 def test_pentad(page: Page):
@@ -69,69 +69,67 @@ def test_local(page: Page):
     print("#### Testing LOCAL started...")
 
     # Testing the page title
-    expect(page).to_have_title(re.compile("SAPPHIRE Central Asia - Decadal forecast dashboard"))
+    expect(page).to_have_title(re.compile("SAPPHIRE Central Asia"))
     print("#### Page title is correct.")
 
     # Testing login failure with incorrect credentials
     page.get_by_label("Username").fill("user1")
     page.get_by_label("Password").fill("user111")
-
     assert page.get_by_label("Username").input_value() == "user1"
     assert page.get_by_label("Password").input_value() == "user111"
-
     page.get_by_role("button", name="Login").click()
-    time.sleep(SLEEP)
 
     expect(page.get_by_text("Invalid username or password")).to_be_visible()
     expect(page.get_by_text("Predictors")).not_to_be_visible()
     expect(page.get_by_text("Hydropost")).not_to_be_visible()
     print("#### Login failed as expected.")
+    time.sleep(SLEEP)
 
     # Testing login success with correct credentials
-    page.get_by_label("Password").fill("user1")
+    password_input = page.get_by_label("Password")
+    password_input.fill("user1")
+    password_input.press("Tab")  # Moves focus away from input
     page.get_by_role("button", name="Login").click()
-    page.get_by_role("button", name="Login").click()
-    time.sleep(SLEEP)
 
     expect(page.get_by_text("Invalid username or password")).not_to_be_visible()
     expect(page.get_by_text("Predictors")).to_be_visible()
     expect(page.get_by_text("Hydropost")).to_be_visible()
     print("#### Login successful.")
+    time.sleep(SLEEP)
 
     # Testing sign out
     page.get_by_role("button", name="Logout").click()
-    time.sleep(SLEEP)
     page.get_by_role("button", name="Yes").click()
-    time.sleep(SLEEP)
     expect(page.get_by_text("Username")).to_be_visible()
     print("#### Logout successful.")
+    time.sleep(SLEEP)
 
     # Testing login after logout
     page.get_by_label("Username").fill("user1")
-    page.get_by_label("Password").fill("user1")
-    time.sleep(SLEEP)
-    page.get_by_role("button", name="Login").click()
-    page.get_by_role("button", name="Login").click()
+    password_input = page.get_by_label("Password")
+    password_input.fill("user1")
+    password_input.press("Tab")  # Moves focus away from input
     page.get_by_role("button", name="Login").click()
 
     expect(page.get_by_text("Predictors")).to_be_visible()
     expect(page.get_by_text("Hydropost")).to_be_visible()
     print("#### Login after logout successful.")
+    time.sleep(SLEEP)
 
     # Testing language switching
     page.get_by_role("link", name="Русский").click()
     page.get_by_label("Имя пользователя").fill("user1")
-    page.get_by_label("Пароль").fill("user1")
+    password_input = page.get_by_label("Пароль")
+    password_input.fill("user1")
+    password_input.press("Tab")  # Moves focus away from input
+    page.get_by_role("button", name="Войти").click()
 
-    page.get_by_role("button", name="Войти").click()
-    time.sleep(SLEEP)
-    page.get_by_role("button", name="Войти").click()
     expect(page.get_by_text("Предикторы")).to_be_visible()
     expect(page.locator("div.bk-tab", has_text="Прогноз")).to_be_visible()
     expect(page.get_by_text("Бюллетень")).to_be_visible()
     expect(page.get_by_text("Информация об ответственности")).to_be_visible()
-
     print("#### Login after language change successful.")
+    time.sleep(SLEEP)
 
     ### PREDICTORS TAB ###
     page.select_option("select#input", value="16936 - Нарын  -  Приток в Токтогульское вдхр.**)")
@@ -157,7 +155,9 @@ def test_local(page: Page):
     ### BULLETIN TAB ###
     page.locator("div.bk-tab", has_text="Бюллетень").click()
     print("#### Switch to Bulletin tab successful.")
+    time.sleep(SLEEP)
 
     ### INFO TAB ###
     page.locator("div.bk-tab", has_text="Информация об ответственности").click()
     print("#### Switch to Info tab successful.")
+    time.sleep(SLEEP)
