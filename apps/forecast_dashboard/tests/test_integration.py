@@ -132,17 +132,51 @@ def test_local(page: Page):
     time.sleep(SLEEP)
 
     ### PREDICTORS TAB ###
+    # Select station 16936
     page.select_option("select#input", value="16936 - Нарын  -  Приток в Токтогульское вдхр.**)")
     print("#### Station 16936 selected")
-    time.sleep(SLEEP)
-
-    page.select_option("select#input", value="15194 - р.Ала-Арча-у.р.Кашка-Суу")
-    print("#### Station 15194 selected")
     time.sleep(SLEEP)
 
     ### FORECAST TAB ###
     page.locator("div.bk-tab", has_text="Прогноз").click()
     print("#### Switch to Forecast tab successful.")
+    time.sleep(SLEEP)
+
+    def get_model_values():
+        """Find selected models in Summary table"""
+        selected_div = page.locator("div.tabulator-selected")
+        model_values = []
+        for div in ["Модель", "Прогн. расх. воды", "Прогн. нижн. гран.", "Прогн. верхн. гран.", "δ", "s/σ", "Средняя абсолютная ошибка", "Оправдываемость"]:
+            model_div = selected_div.locator(f'div[tabulator-field="{div}"]')
+            # print(model_div.inner_text())
+            model_values.append(model_div.inner_text())
+        return model_values
+    values = []
+
+    # Adding station 16936 to bulletins
+    values_16936 = get_model_values()
+    values_16936.insert(0, "16936")
+    del values_16936[-2]
+    values.append(values_16936)
+    page.get_by_role("button", name="Добавить в бюллетень").click()
+    print("#### 16936 - Нарын  -  Приток в Токтогульское вдхр.**) added to bulletin")
+    print(values_16936)
+    time.sleep(SLEEP)
+
+    # Select station 15194
+    page.select_option("select#input", value="15194 - р.Ала-Арча-у.р.Кашка-Суу")
+    print("#### Station 15194 selected")
+    time.sleep(SLEEP)
+
+    # Adding station 15194 to bulletins
+    values_15194 = get_model_values()
+    values_15194.insert(0, "15194")
+    del values_15194[-2]
+    values.append(values_15194)
+    page.get_by_role("button", name="Добавить в бюллетень").click()
+    print("#### 15194 - р.Ала-Арча-у.р.Кашка-Суу added to bulletin")
+    print(values_15194)
+    time.sleep(SLEEP)
 
     page.select_option("select#input", value="15256 - Талас -  с.Ак-Таш")
     print("#### Station 15256 selected")
@@ -156,6 +190,17 @@ def test_local(page: Page):
     page.locator("div.bk-tab", has_text="Бюллетень").click()
     print("#### Switch to Bulletin tab successful.")
     time.sleep(SLEEP)
+
+    # Extract bulletin table values
+    bulletin_values = []
+    selectable_divs = page.locator("div.tabulator-selectable")
+    for i in range(selectable_divs.count()):
+        div = selectable_divs.nth(i)
+        temp = div.inner_text().split("\n")
+        temp[0] = temp[0].split()[0]
+        del temp[2]
+        print(temp)
+        bulletin_values.append(temp)
 
     ### INFO TAB ###
     page.locator("div.bk-tab", has_text="Информация об ответственности").click()
