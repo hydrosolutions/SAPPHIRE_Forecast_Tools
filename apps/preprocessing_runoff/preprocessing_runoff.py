@@ -28,6 +28,7 @@
 # digits.
 #
 # Developed within the frame of the SAPPHIRE Central Asia project funded by SDC.
+# Beatrice Marti, hydrosolutions, 2025
 
 # I/O
 import os
