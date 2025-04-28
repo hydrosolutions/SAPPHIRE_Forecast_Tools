@@ -1,6 +1,11 @@
-import re
 import time
+import csv
+import re
+import pandas as pd
 from playwright.sync_api import Page, expect
+import tag_library as tl
+import datetime as dt
+
 
 TEST_PENTAD = False
 TEST_DECAD = False
@@ -9,6 +14,29 @@ LOCAL_URL = "http://localhost:5006/forecast_dashboard"
 PENTAD_URL = "https://fc.pentad.ieasyhydro.org/forecast_dashboard"
 DECAD_URL = "https://fc.decad.ieasyhydro.org/forecast_dashboard"
 SLEEP = 1
+sensitive_data_forecast_tools = "/SAPPHIRE_Central_Asia_Technical_Work/data/sensitive_data_forecast_tools/"
+horizon = "decad"  # pentad or decad
+
+today = dt.datetime.now()
+year = today.year
+date_str = today.strftime("%Y-%m-%d")
+month_str = today.strftime("%m") + "_" + tl.get_month_str_case1(date_str)
+if horizon == "pentad":
+    horizon_value = tl.get_pentad_for_date(today)
+    print("Pentad in year:", horizon_value)
+    horizon_value_in_month = tl.get_pentad(today)
+    print("Pentad in month:", horizon_value_in_month)
+    sheet_name = f"{horizon_value_in_month} пентада"
+else:
+    horizon_value = tl.get_decad_for_date(today)
+    print("Decad in year:", horizon_value)
+    horizon_value_in_month = tl.get_decad_in_month(today)
+    print("Decad in month:", horizon_value_in_month)
+    sheet_name = f"{horizon_value_in_month} декада"
+
+
+def normalize_spaces(s):
+    return re.sub(r'\s+', ' ', s).strip()
 
 
 def test_pentad(page: Page):
@@ -148,19 +176,17 @@ def test_local(page: Page):
         model_values = []
         for div in ["Модель", "Прогн. расх. воды", "Прогн. нижн. гран.", "Прогн. верхн. гран.", "δ", "s/σ", "Средняя абсолютная ошибка", "Оправдываемость"]:
             model_div = selected_div.locator(f'div[tabulator-field="{div}"]')
-            # print(model_div.inner_text())
             model_values.append(model_div.inner_text())
         return model_values
     values = []
+    summary_table_values = []
 
     # Adding station 16936 to bulletins
-    values_16936 = get_model_values()
-    values_16936.insert(0, "16936")
-    del values_16936[-2]
-    values.append(values_16936)
+    values = get_model_values()
+    values.insert(0, "16936")
+    summary_table_values.append(values)
     page.get_by_role("button", name="Добавить в бюллетень").click()
     print("#### 16936 - Нарын  -  Приток в Токтогульское вдхр.**) added to bulletin")
-    print(values_16936)
     time.sleep(SLEEP)
 
     # Select station 15194
@@ -169,21 +195,42 @@ def test_local(page: Page):
     time.sleep(SLEEP)
 
     # Adding station 15194 to bulletins
-    values_15194 = get_model_values()
-    values_15194.insert(0, "15194")
-    del values_15194[-2]
-    values.append(values_15194)
+    values = get_model_values()
+    values.insert(0, "15194")
+    summary_table_values.append(values)
     page.get_by_role("button", name="Добавить в бюллетень").click()
     print("#### 15194 - р.Ала-Арча-у.р.Кашка-Суу added to bulletin")
-    print(values_15194)
     time.sleep(SLEEP)
 
+    # Select station 15256
     page.select_option("select#input", value="15256 - Талас -  с.Ак-Таш")
     print("#### Station 15256 selected")
     time.sleep(SLEEP)
 
+    # Adding station 15256 to bulletins
+    values = get_model_values()
+    values.insert(0, "15256")
+    summary_table_values.append(values)
+    page.get_by_role("button", name="Добавить в бюллетень").click()
+    print("#### 15256 - Талас -  с.Ак-Таш")
+    time.sleep(SLEEP)
+
+    # Select station 15013
     page.select_option("select#input", value="15013 - Джыргалан-с.Советское")
     print("#### Station 15013 selected")
+    time.sleep(SLEEP)
+
+    # Adding station 15013 to bulletins
+    values = get_model_values()
+    values.insert(0, "15013")
+    summary_table_values.append(values)
+    page.get_by_role("button", name="Добавить в бюллетень").click()
+    print("#### 15013 - Джыргалан-с.Советское")
+    time.sleep(SLEEP)
+
+    print("#### Summary table values added to bulletins:")
+    for value in summary_table_values:
+        print(value)
     time.sleep(SLEEP)
 
     ### BULLETIN TAB ###
@@ -191,16 +238,156 @@ def test_local(page: Page):
     print("#### Switch to Bulletin tab successful.")
     time.sleep(SLEEP)
 
-    # Extract bulletin table values
-    bulletin_values = []
+    # Extract forecast bulletin table values
+    forecast_bulletin_values = []
     selectable_divs = page.locator("div.tabulator-selectable")
     for i in range(selectable_divs.count()):
         div = selectable_divs.nth(i)
-        temp = div.inner_text().split("\n")
-        temp[0] = temp[0].split()[0]
-        del temp[2]
-        print(temp)
-        bulletin_values.append(temp)
+        values = div.inner_text().split("\n")
+        forecast_bulletin_values.append(values)
+
+    print("#### Forecast bulletin values:")
+    for value in forecast_bulletin_values:
+        print(value)
+    time.sleep(SLEEP)
+
+    # Comparing summary table with forecast bulletin
+    print("Comparing summary table with forecast bulletin...")
+    count = 0
+    for s_value in summary_table_values:
+        for f_value in forecast_bulletin_values:
+            if s_value[0] in f_value[0] and s_value[1] == f_value[1]:
+                count += 1
+                assert s_value[2] == f_value[3]  # Forecasted discharge
+                assert s_value[3] == f_value[4]  # Forecast lower bound
+                assert s_value[4] == f_value[5]  # Forecast upper bound
+                assert s_value[5] == f_value[6]  # δ
+                assert s_value[6] == f_value[7]  # s/σ
+                assert s_value[8] == f_value[8]  # Accuracy
+    assert count == len(summary_table_values) == len(forecast_bulletin_values)
+    print("#### Summary table values are EQUAL to Forecast bulletin values")
+    time.sleep(SLEEP)
+
+    # Checking the top checkbox to select all bulletins
+    page.locator('input[type="checkbox"][aria-label="Select Row"]').first.check()
+    print("#### All bulletins selected")
+    time.sleep(SLEEP)
+
+    # Clicking Write bulletin button
+    page.get_by_role("button", name="Записать бюллетень").click()
+    print("#### Write bulletin button clicked")
+    time.sleep(SLEEP)
+
+    # Extract CSV values
+    csv_file_path = f"{sensitive_data_forecast_tools}config/linreg_point_selection/bulletin_{horizon}_{year}_{horizon_value}.csv"
+    with open(csv_file_path, mode='r', newline='') as file:
+        reader = csv.reader(file)
+        next(reader)  # Skip header
+        csv_data = [row for row in reader]
+
+    print("#### CSV values:")
+    for row in csv_data:
+        print(row)
+    time.sleep(SLEEP)
+
+    # Compare csv file with bulletin values
+    print("Comparing Forecast bulletin with CSV...")
+    count = 0
+    for row in csv_data:
+        for i, r in enumerate(row):
+            if r == '':
+                row[i] = '-'
+        row[-1] = normalize_spaces(row[-1])  # basin_ru
+        row[-2] = normalize_spaces(row[-2])  # station_label
+        for f_value in forecast_bulletin_values:
+            if row[-1] == f_value[2] and row[-2] == f_value[0]:
+                count += 1
+                assert row[0] == f_value[1]  # model_short
+                assert row[1] == f_value[3]  # forecasted_discharge
+                assert row[2] == f_value[4]  # fc_lower
+                assert row[3] == f_value[5]  # fc_upper
+                assert row[4] == f_value[6]  # delta
+                assert row[5] == f_value[7]  # sdivsigma
+                assert row[7] == f_value[8]  # accuracy
+    assert count == len(forecast_bulletin_values) == len(csv_data)
+    print("#### Forecast bulletin values are EQUAL to CSV file values")
+    time.sleep(SLEEP)
+
+    # Construct all excel paths
+    excel_file_paths = []
+    basins = set()
+    for f_value in forecast_bulletin_values:
+        basin = f_value[2]
+        if basin not in basins:
+            basins.add(basin)
+            path = f"{sensitive_data_forecast_tools}reports/bulletins/{horizon}/{year}/{year}_{month_str}_{basin}_short_term_forecast_bulletin.xlsx"
+            excel_file_paths.append(path)
+    excel_file_paths.append(f"{sensitive_data_forecast_tools}reports/bulletins/{horizon}/{year}/{year}_{month_str}_all_basins_short_term_forecast_bulletin.xlsx")
+
+    print("#### Excel file paths:")
+    for path in excel_file_paths:
+        print(path)
+    time.sleep(SLEEP)
+
+    # Extract Excel values
+    def get_float(value):
+        try:
+            if isinstance(value, str) and "," in value:
+                value = value.replace(",", ".")
+            return round(float(value))
+        except ValueError:
+            return "nan"
+
+    def compare(excel, csv, tolerance=0.05):
+        csv_value = get_float(csv)
+        if isinstance(excel, str):
+            excel_value = get_float(excel.strip())
+            assert excel_value == csv_value
+            # assert abs(excel_value - csv_value) <= tolerance * abs(excel_value)
+        elif pd.isna(excel):
+            assert "nan" == csv_value
+        else:
+            # assert excel == csv_value
+            assert abs(excel - csv_value) <= tolerance * abs(excel)
+        print(excel, "<=>", csv_value)
+
+    count = 0
+    for excel_file_path in excel_file_paths:
+        df = pd.read_excel(excel_file_path, sheet_name=sheet_name, skiprows=10)
+        print(f"Comparing CSV with: {excel_file_path}")
+        for row_index in range(len(df)):
+            if pd.isna(df.iloc[row_index, 0]) or df.iloc[row_index, 0] == "":
+                continue
+            for row in csv_data:
+                # print(df.iloc[row_index, 0], "#", df.iloc[row_index, 1], "#", row[-2])
+                # check if `река` and `пункт` of Excel are in station_label of CSV
+                if df.iloc[row_index, 0] in row[-2] and df.iloc[row_index, 1] in row[-2]:
+                    count += 1
+                    assert df.iloc[row_index, 2] == row[0]  # model_short
+                    compare(df.iloc[row_index, 4], row[1])  # forecasted_discharge
+                    compare(df.iloc[row_index, 15], row[2])  # fc_lower
+                    compare(df.iloc[row_index, 17], row[3])  # fc_upper
+                    assert df.iloc[row_index, 5].replace(',', '.') == row[4]  # delta
+                    assert df.iloc[row_index, 10].replace(',', '.') == row[5]  # sdivsigma
+        print("#### CSV values are EQUAL to Excel values")
+    assert count == len(csv_data) * 2
+
+    # Clicking Remove Selected button
+    page.get_by_role("button", name="Удалить выбранное").click()
+    selectable_divs = page.locator("div.tabulator-selectable")
+    assert selectable_divs.count() == 0
+    print("#### Remove Selected button clicked")
+    time.sleep(SLEEP)
+
+    # Clicking Download button
+    page.locator("h3", has_text="Скачать бюллетень").click()
+    options = page.locator('select#input.bk-input[multiple="true"][size="10"] option').all()
+    for option in options:
+        option.click(modifiers=["Meta"])  # Windows: "Control"
+
+    page.get_by_role("button", name="Подготовить загрузку выбранных файлов").click()
+    page.get_by_role("button", name="Download selected_files.zip").click()
+    time.sleep(SLEEP)
 
     ### INFO TAB ###
     page.locator("div.bk-tab", has_text="Информация об ответственности").click()
