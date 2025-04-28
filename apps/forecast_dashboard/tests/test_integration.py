@@ -178,55 +178,29 @@ def test_local(page: Page):
             model_div = selected_div.locator(f'div[tabulator-field="{div}"]')
             model_values.append(model_div.inner_text())
         return model_values
-    values = []
+
     summary_table_values = []
 
-    # Adding station 16936 to bulletins
-    values = get_model_values()
-    values.insert(0, "16936")
-    summary_table_values.append(values)
-    page.get_by_role("button", name="Добавить в бюллетень").click()
-    print("#### 16936 - Нарын  -  Приток в Токтогульское вдхр.**) added to bulletin")
-    time.sleep(SLEEP)
+    def select_station_and_add_to_bulletin(station):
+        page.select_option("select#input", value=station)
+        print(f"#### SELECTED station: {station}")
+        time.sleep(SLEEP)
 
-    # Select station 15194
-    page.select_option("select#input", value="15194 - р.Ала-Арча-у.р.Кашка-Суу")
-    print("#### Station 15194 selected")
-    time.sleep(SLEEP)
+        model_values = get_model_values()
+        model_values.insert(0, station.split()[0])
+        summary_table_values.append(model_values)
+        page.get_by_role("button", name="Добавить в бюллетень").click()
+        print(f"#### ADDED TO BULLETIN: {station}")
+        time.sleep(SLEEP)
 
-    # Adding station 15194 to bulletins
-    values = get_model_values()
-    values.insert(0, "15194")
-    summary_table_values.append(values)
-    page.get_by_role("button", name="Добавить в бюллетень").click()
-    print("#### 15194 - р.Ала-Арча-у.р.Кашка-Суу added to bulletin")
-    time.sleep(SLEEP)
-
-    # Select station 15256
-    page.select_option("select#input", value="15256 - Талас -  с.Ак-Таш")
-    print("#### Station 15256 selected")
-    time.sleep(SLEEP)
-
-    # Adding station 15256 to bulletins
-    values = get_model_values()
-    values.insert(0, "15256")
-    summary_table_values.append(values)
-    page.get_by_role("button", name="Добавить в бюллетень").click()
-    print("#### 15256 - Талас -  с.Ак-Таш")
-    time.sleep(SLEEP)
-
-    # Select station 15013
-    page.select_option("select#input", value="15013 - Джыргалан-с.Советское")
-    print("#### Station 15013 selected")
-    time.sleep(SLEEP)
-
-    # Adding station 15013 to bulletins
-    values = get_model_values()
-    values.insert(0, "15013")
-    summary_table_values.append(values)
-    page.get_by_role("button", name="Добавить в бюллетень").click()
-    print("#### 15013 - Джыргалан-с.Советское")
-    time.sleep(SLEEP)
+    stations = [
+        "15013 - Джыргалан-с.Советское",
+        "16936 - Нарын  -  Приток в Токтогульское вдхр.**)",
+        "15194 - р.Ала-Арча-у.р.Кашка-Суу",
+        "15256 - Талас -  с.Ак-Таш",
+    ]
+    for station in stations:
+        select_station_and_add_to_bulletin(station)
 
     print("#### Summary table values added to bulletins:")
     for value in summary_table_values:
