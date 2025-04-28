@@ -3587,6 +3587,7 @@ class Site:
 
     Attributes:
         code (str): The site code.
+        iehhf_site_id (int): The site ID in the iEH HF system, required for API requests.
         name (str): The site name (a combination of river_name and river_punkt).
         river_name (str): The name of the river that the site is located on.
         punkt_name (str): The name of the location within the river where the site is located.
@@ -3620,7 +3621,7 @@ class Site:
         - region (str): The region that the site is located in (typically oblast).
         - basin (str): The basin that the site is located in.
     """
-    def __init__(self, code: str, name="Name", name_nat="Name_nat",
+    def __init__(self, code: str, iehhf_site_id=-999, name="Name", name_nat="Name_nat",
                  river_name="River", river_name_nat="River_nat", punkt_name="Punkt",
                  punkt_name_nat="Punkt_nat", lat=0.0, lon=0.0,
                  region="Region", region_nat="Region_nat",
@@ -3641,6 +3642,7 @@ class Site:
 
         Args:
             code (str): The site code.
+            iehhf_site_id (int): The site ID in the iEH HF system, required for API requests.
             name (str): The site name (a combination of river_name and river_punkt).
             name_nat (str): The site name in national language.
             river_name (str): The name of the river that the site is located on.
@@ -3664,6 +3666,7 @@ class Site:
         """
         # Static attributes
         self.code = code
+        self.iehhf_site_id = iehhf_site_id if iehhf_site_id is not None else -999
         self.name = name if name is not None else "Name"
         self.name_nat = name if name is not None else "Name_nat"
         self.river_name = river_name if river_name is not None else "River"
@@ -3711,6 +3714,7 @@ class Site:
         """
         return (f"Site(\n"
             f"code={self.code},\n"
+            f"iehhf_site_id={self.iehhf_site_id},\n"
             f"name={self.name},\n"
             f"river_name={self.river_name},\n"
             f"punkt_name={self.punkt_name},\n"
@@ -4754,6 +4758,7 @@ class Site:
 
                     site = cls(
                         code=row['site_code'].values[0],
+                        iehhf_site_id=row['id'].values[0],
                         name=row['official_name'].values[0],
                         name_nat=row['national_name'].values[0],
                         river_name=name_parts[0],
@@ -4848,8 +4853,9 @@ class Site:
                     name_nat_parts = split_name(row['national_name'].values[0])
                     logger.debug(f"Name parts: {name_parts}, name_nat_parts: {name_nat_parts}")
 
-                    site = site = cls(
+                    site = cls(
                         code=row['site_code'].values[0],
+                        iehhf_site_id=row['id'].values[0],
                         name=row['official_name'].values[0],
                         name_nat=row['national_name'].values[0],
                         river_name=name_parts[0],
@@ -4883,6 +4889,7 @@ class Site:
 
                     site = cls(
                         code=row['site_code'].values[0],
+                        iehhf_site_id=row['id'].values[0],
                         name=row['official_name'].values[0],
                         name_nat=row['national_name'].values[0],
                         river_name=name_parts[0],
@@ -4984,6 +4991,7 @@ class Site:
                         name_nat_parts = [row['national_name'].values[0], '']
                     site = cls(
                         code=row['site_code'].values[0],
+                        iehhf_site_id=row['id'].values[0],
                         name=row['official_name'].values[0],
                         name_nat=row['national_name'].values[0],
                         river_name=name_parts[0],
@@ -5081,6 +5089,7 @@ class Site:
                         name_nat_parts = [row['national_name'].values[0], '']
                     site = cls(
                         code=row['site_code'].values[0],
+                        iehhf_site_id=row['id'].values[0],
                         name=row['official_name'].values[0],
                         name_nat=row['national_name'].values[0],
                         river_name=name_parts[0],
@@ -5114,6 +5123,7 @@ class Site:
                         name_nat_parts = [row['national_name'].values[0], '']
                     site = cls(
                         code=row['site_code'].values[0],
+                        iehhf_site_id=row['id'].values[0],
                         name=row['official_name'].values[0],
                         name_nat=row['national_name'].values[0],
                         river_name=name_parts[0],

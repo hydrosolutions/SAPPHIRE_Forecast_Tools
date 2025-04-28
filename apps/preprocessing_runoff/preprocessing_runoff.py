@@ -108,6 +108,10 @@ def main():
     end_time = time.time()
     time_load_environment = end_time - overall_start_time
 
+    # Get time zone of organization for which the Forecast Tools are deployed
+    target_time_zone = sl.get_local_timezone_from_env()
+    logger.info(f"Target time zone: {target_time_zone}")
+
     # Update configuration files for selected sites (only if iEH HF is used)
     # Test if we read from iEasyHydro or iEasyHydro HF for getting operational data
     start_time = time.time()
@@ -143,8 +147,8 @@ def main():
             has_access_to_db = sl.check_database_access(ieh_hf_sdk)
             if not has_access_to_db:
                 ieh_hf_sdk = None
-            fc_sites_pentad, site_codes_pentad = sl.get_pentadal_forecast_sites_from_HF_SDK(ieh_hf_sdk)
-            fc_sites_decad, site_codes_decad = sl.get_decadal_forecast_sites_from_HF_SDK(ieh_hf_sdk)
+            fc_sites_pentad, site_codes_pentad, site_ids_pentad = sl.get_pentadal_forecast_sites_from_HF_SDK(ieh_hf_sdk)
+            fc_sites_decad, site_codes_decad, site_ids_decad = sl.get_decadal_forecast_sites_from_HF_SDK(ieh_hf_sdk)
         except Exception as e:
             logger.error(f"Error while accessing iEasyHydro HF SDK: {e}")
             sys.exit(1)
@@ -152,6 +156,7 @@ def main():
     # Concatenate the two lists
     fc_sites = fc_sites_pentad + fc_sites_decad
     site_codes = site_codes_pentad + site_codes_decad
+    site_ids = site_ids_pentad + site_ids_decad
     end_time = time.time()
     time_get_forecast_sites = end_time - start_time
 
@@ -159,15 +164,15 @@ def main():
     # Reading data from various sources
     start_time = time.time()
     # Until end of April, we still get operational data from the old iEasyHydro
-    runoff_data = src.get_runoff_data_for_sites(
-        ieh_sdk,
-        date_col='date',
-        discharge_col='discharge',
-        name_col='name',
-        code_col='code',
-        site_list=fc_sites,
-        code_list=site_codes
-    )  
+    #runoff_data = src.get_runoff_data_for_sites(
+    #    ieh_sdk,
+    #    date_col='date',
+    #    discharge_col='discharge',
+    #    name_col='name',
+    #    code_col='code',
+    #    site_list=fc_sites,
+    #    code_list=site_codes
+    #)  
     if os.getenv('ieasyhydroforecast_connect_to_iEH') == 'True':
         # Deprecated
         #runoff_data = src.get_runoff_data_for_sites(
@@ -181,15 +186,16 @@ def main():
         #)  
         pass
     else: 
-        #runoff_data = src.get_runoff_data_for_sites_HF(
-        #        ieh_hf_sdk,
-        #        date_col='date',
-        #        discharge_col='discharge',
-        #        name_col='name',
-        #        code_col='code',
-        #        site_list=fc_sites,
-        #        code_list=site_codes
-        #)
+        runoff_data = src.get_runoff_data_for_sites_HF(
+                ieh_hf_sdk,
+                date_col='date',
+                discharge_col='discharge',
+                code_col='code',
+                site_list=fc_sites,
+                code_list=site_codes, 
+                id_list=site_ids,
+                target_timezone=target_time_zone,
+        )
         pass    
 
     end_time = time.time()

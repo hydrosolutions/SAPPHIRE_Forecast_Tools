@@ -2,6 +2,9 @@ import os
 import pandas as pd
 import numpy as np
 import datetime as dt
+from datetime import timedelta
+import time
+import pytz
 import json
 import concurrent.futures
 from typing import List, Tuple
@@ -14,6 +17,32 @@ from ieasyhydro_sdk.filters import BasicDataValueFilters
 import logging
 logger = logging.getLogger(__name__)
 
+
+def get_local_time_range_for_daily_average_runoff_request(target_timezone, window_size=50):
+    """
+    Calculates the local start and end times for the data request in the target time zone.
+
+    Parameters:
+    target_timezone (pytz.timezone): The target time zone for the data request.
+    window_size (int): The number of days to look back from the current date.
+    Default is 50 days.
+
+    Returns:
+    tuple: A tuple containing the start and end times in the target time zone.
+    """
+    if not target_timezone:
+        return None, None
+
+    # Get the current time in the target time zone
+    now_local = dt.datetime.now(target_timezone)
+
+    # Calculate the end time (today at 12:00 local time)
+    end_time_local = now_local.replace(hour=12, minute=0, second=0, microsecond=0)
+
+    # Calculate the start time (50 days prior at 00:01 local time)
+    start_time_local = (now_local - timedelta(days=window_size)).replace(hour=0, minute=1, second=0, microsecond=0)
+
+    return start_time_local, end_time_local
 
 def should_reprocess_input_files():
     """Check if any input files have been modified since the last run."""
@@ -773,9 +802,130 @@ def original_read_all_runoff_data_from_excel(date_col='date', discharge_col='dis
 
     return df
 
+def process_hydro_HF_data(data):
+    """
+    Processes the API response to extract hydro data into a Pandas DataFrame.
+
+    Args:
+        data (dict): The API response containing hydro data.
+
+    Returns:
+        pandas.DataFrame: A DataFrame containing the processed hydro data.
+    """
+    hydro_data = [site_data for site_data in data['results'] if site_data['station_type'] == 'hydro']
+    processed_data = []
+    for site in hydro_data:
+        station_code = site['station_code']
+        station_id = site['station_id']
+        station_name = site['station_name']
+        for data_item in site['data']:
+            variable_code = data_item['variable_code']
+            unit = data_item['unit']
+            for value_item in data_item['values']:
+                processed_data.append({
+                    'station_code': station_code,
+                    'station_id': station_id,
+                    'station_name': station_name,
+                    'variable_code': variable_code,
+                    'unit': unit,
+                    'local_datetime': value_item['timestamp_local'],
+                    'utc_datetime': value_item['timestamp_utc'],
+                    'value': value_item['value'],
+                    'value_code': value_item['value_code'],
+                    'value_type': value_item['value_type']
+                })
+    return pd.DataFrame(processed_data)
+
+def fetch_and_format_hydro_HF_data(sdk, initial_filters):
+    """
+    Fetch all pages of data from the API and format each page into a DataFrame immediately.
+    
+    Parameters:
+    ----------
+    sdk : IEasyHydroHFSDK
+        The SDK HF client instance for making API requests
+    initial_filters : dict
+        The initial filters to use for the request
+        
+    Returns:
+    -------
+    pandas.DataFrame
+        DataFrame with all hydro data in a long format with columns:
+        station_code, station_name, station_type, station_id, station_uuid, 
+        variable_code, unit, timestamp_local, timestamp_utc, value, value_type, value_code
+    """
+    # Copy filters
+    filters = initial_filters.copy()
+    
+    # Start with page 1
+    page = 1
+    all_data_frames = []
+    
+    while True:
+        # Fetch data for the current page
+        filters['page'] = page
+        response = sdk.get_data_values_for_site(filters=filters)
+        
+        # Check if we got an error
+        if isinstance(response, dict) and 'status_code' in response:
+            print(f"Error: {response}")
+            break
+        
+        # Extract the results and format immediately
+        if isinstance(response, dict) and 'results' in response:
+            # Extract the results
+            results = response['results']
+            
+            # Format this page's data immediately
+            if results:  # Only process if we have results
+                records = []
+                
+                page_df = process_hydro_HF_data(response)
+
+                # Convert timestamps to datetime if they're strings
+                for col in ['local_datetime', 'utc_datetime']:
+                    if col in page_df.columns and page_df[col].dtype == 'object':
+                        page_df[col] = pd.to_datetime(page_df[col])
+                
+                # Add this page's data to our collection
+                all_data_frames.append(page_df)
+                
+                print(f"Processed page {page}: {len(page_df)} records")
+                
+        else:
+            print(f"Warning: Expected 'results' key not found in response")
+            print(f"Response keys: {list(response.keys()) if isinstance(response, dict) else 'Not a dict'}")
+        
+        # Check if there are more pages
+        if isinstance(response, dict) and response.get('next'):
+            # Increment page number
+            page += 1
+            print(f"Fetching page {page}...")
+        else:
+            # No more pages
+            break
+    
+    # Combine all DataFrames
+    if all_data_frames:
+        # Drop columns that are not in the expected structure
+        all_data_frames.drop(
+            columns=['station_uuid', 'station_type', 'station_id', 
+                     'variable_code', 'unit', 'value_type', 'value_code', 
+                     'station_name'], 
+            inplace=True, errors='ignore')
+
+        return pd.concat(all_data_frames, ignore_index=True)
+    else:
+        # Return empty DataFrame with the expected structure
+        return pd.DataFrame(columns=[
+            'station_code', 'timestamp_local', 
+            'timestamp_utc', 'value'
+        ])
+
 def get_daily_average_discharge_from_iEH_HF_for_multiple_sites(
-        ieh_hf_sdk, sites_list, start_date, end_date=dt.date.today(),
-        date_col='date', discharge_col='discharge', name_col='name', code_col='code'):
+        ieh_hf_sdk, id_list, start_datetime=None, end_datetime=dt.date.today(),
+        target_timezone=None,  
+        date_col='date', discharge_col='discharge', code_col='code'):
     """
     Reads daily average discharge data from the iEasyHydro database for a given site.
 
@@ -783,12 +933,13 @@ def get_daily_average_discharge_from_iEH_HF_for_multiple_sites(
 
     Args:
         ieh_hf_sdk (object): An object that provides a method to get data values for a site from a database.
-        sites_list (list): A list of strings denoting site codes.
-        start_date (datetime.date or str): The start date of the data to read.
-        end_date (datetime.date or str, optional): The end date of the data to read. Defaults to dt.date.today().
+        id_list (list): A list of strings denoting site ids.
+        start_datetime (datetime, optional): The start datetime of the data to read. Defaults to None. 
+        end_datetime (datetime, optional): The end datetime of the data to read. Defaults to dt.datetime.today().
+        target_timezone (str, optional): The timezone to convert the date to. Defaults to None.
+        If None, local timezone is used.
         date_col (str, optional): The name of the column containing the date data. Default is 'date'.
         discharge_col (str, optional): The name of the column containing the discharge data. Default is 'discharge'.
-        name_col (str, optional): The name of the column containing the site name. Default is 'name'.
         code_col (str, optional): The name of the column containing the site code. Default is 'code'.
 
     Returns:
@@ -798,86 +949,58 @@ def get_daily_average_discharge_from_iEH_HF_for_multiple_sites(
         ValueError: If the site code is not a string or an integer.
         ValueError: If the site name is not a string.
     """
-    # Test is sites_list is a list
-    if not isinstance(sites_list, list):
+    # Test is id_list is a list
+    if not isinstance(id_list, list):
         raise ValueError("The sites_list must be a list of strings.")
-    # Test if sites_list is empty
-    if not sites_list:
-        raise ValueError("The sites_list must not be empty.")
-    # Convert site codes to strings
-    sites_list = [str(site) for site in sites_list]
+    # Test if id_list is empty
+    if not id_list:
+        raise ValueError("The id_list must not be empty.")
 
-    # Convert start_date to dt.datetime
-    if isinstance(start_date, str):
-        start_date = dt.datetime.strptime(start_date, '%Y-%m-%d')
-    if isinstance(start_date, dt.date):
-        start_date = dt.datetime.combine(start_date, dt.datetime.min.time())
+    # Test if target_timezone is None
+    if target_timezone is None:
+        # Get the local timezone
+        target_timezone = pytz.timezone(time.tzname[0])
+        logger.debug(f"Target timezone is None. Using local timezone: {target_timezone}")
+        
+    # If start_date is None, get it from get_local_time_range_for_daily_average_runoff_request
+    if start_datetime is None:
+        start_datetime, end_datetime = get_local_time_range_for_daily_average_runoff_request(target_timezone)
 
-    # Convert end_date to dt.datetime
-    if isinstance(end_date, str):
-        end_date = dt.datetime.strptime(end_date, '%Y-%m-%d')
-    if isinstance(end_date, dt.date):
-        end_date = dt.datetime.combine(end_date, dt.datetime.min.time())
+    # Raise an error if the date format is not a datetime with timezone info
+    if not isinstance(start_datetime, dt.datetime):
+        raise ValueError("The start_datetime must be a datetime object with timezone info.")
+    if not isinstance(end_datetime, dt.datetime):
+        raise ValueError("The end_datetime must be a datetime object with timezone info.")
 
-    logger.debug(f"Reading daily average discharge data for all sites in sites_list from {start_date} to {end_date}.")
+    logger.debug(f"Reading daily average discharge data for all sites in sites_list from {start_datetime} to {end_datetime}.")
 
-    filter = {
-        'site_codes': sites_list,
-        'variable_name': 'WLD',  # TODO: change to WDDA once it is available
-        'local_date_time__gte': start_date,
-        'local_date_time__lt': end_date,
-        'view_type': 'measurements',
-        'display_type': 'individual'
+    filters = {
+        "site_ids": id_list,
+        "variable_names": ["WDDA"],
+        "local_date_time__gte": start_datetime.isoformat(),
+        "local_date_time__lte": end_datetime.isoformat(),
+        "page": 1,
     }
 
     try:
-        # Get data for current site from the database
-        db_raw = ieh_hf_sdk.get_data_values_for_site(
-            "hydro", filters=filter
-        )
-        
-        all_data = []
-        for item in db_raw:  # response is a list of dictionaries
-            site_info = item['site']
-            site_code = site_info['site_code']
-        
-            for data_value in item['data_values']:
-                date_str = data_value['local_date_time']
-                value = data_value['data_value']
-                all_data.append({
-                    'site_code': site_code,
-                    'date': date_str,
-                    'value': value
-                })
-    
-        # Create final dataframe
-        db_df = pd.DataFrame(all_data)
-
-        #db_raw = db_raw['data_values']
-
-        # Create a DataFrame
-        #db_df = pd.DataFrame(db_raw)
-
+        # Get data for all sites from the database
+        db_df = fetch_and_format_hydro_HF_data(ieh_hf_sdk, filters)
+        # Drop the local datetime column as we will be working with utc datetime
+        db_df.drop(columns=['local_datetime'], inplace=True)
         # Rename the columns of df to match the columns of combined_data
-        # Currently, local_date_time returns utc time but is actually in local 
-        # date time. x
-        db_df = db_df.rename(columns={'local_date_time': date_col, 'data_value': discharge_col})
-
-        # Get UTC date time from local date time
-        #db_df['utc_date_time'] = pd.to_datetime(db_df['local_date_time'], format='%Y-%m-%d %H:%M:%S').dt.date
-
-        # Convert the Date column to datetime
-        db_df[date_col] = pd.to_datetime(db_df['date'], format='%Y-%m-%d %H:%M:%S').dt.date
-
-        # Add the name and code columns
-        db_df[name_col] = site_info
-        db_df[code_col] = site_code
+        db_df = db_df.rename(
+            columns={
+                'utc_datetime': date_col, 
+                'station_code': code_col,
+                'value': discharge_col}, 
+            inplace=True
+        )
 
     except Exception as e:
         logger.info(f"Error reading daily average discharge data: {e}")
         logger.info(f"Returning empty data frame.")
-        # Return an empty dataframe with columns 'date', 'discharge', 'name', 'code'
-        db_df = pd.DataFrame(columns=[date_col, discharge_col, name_col, code_col])
+        # Return an empty dataframe with columns 'date', 'discharge', 'code'
+        db_df = pd.DataFrame(columns=[date_col, discharge_col, code_col])
 
     return db_df
 
@@ -1458,9 +1581,11 @@ def get_runoff_data_for_sites(ieh_sdk=None, date_col='date',
 
         return read_data
     
-def get_runoff_data_for_sites_HF(ieh_hf_sdk=None, date_col='date',
-                              discharge_col='discharge', name_col='name',
-                              code_col='code', site_list=None, code_list=None):
+def get_runoff_data_for_sites_HF(ieh_hf_sdk=None, date_col='date', name_col='name',
+                              discharge_col='discharge',
+                              code_col='code', 
+                              site_list=None, code_list=None, id_list=None, 
+                              target_timezone=None):
     """
     Reads runoff data from excel and, if possible, from iEasyHydro database.
 
@@ -1478,11 +1603,19 @@ def get_runoff_data_for_sites_HF(ieh_hf_sdk=None, date_col='date',
             Default is 'name'.
         code_col (str, optional): The name of the column containing the site code.
             Default is 'code'.
+        site_list (list, optional): A list of site codes to read data for. Default is None.
+        code_list (list, optional): A list of site codes to read data for. Default is None.
+        id_list (list): A list of site IDs to read data for. Default is None.
+        target_timezone (str, optional): The timezone to convert the data to. Default is None.
 
     Details: 
     - Read data from excel files if available and necessary
     
     """
+    # Test if id_list is None or empty. Return error if it is.
+    if id_list is None or len(id_list) == 0:
+        raise ValueError("id_list is None or empty. Please provide a list of site IDs to read data for.")
+
     # Test if there have been any changes in the daily_discharge directory
     if should_reprocess_input_files(): 
         logger.info("Regime data has changed, reprocessing input files.")
@@ -1614,14 +1747,10 @@ def get_runoff_data_for_sites_HF(ieh_hf_sdk=None, date_col='date',
         return read_data
 
     else:
-        # Get the last row for each code in runoff_data
-        last_row = read_data.groupby(code_col).tail(1)
-        #print("DEBUG: last_row: \n", last_row)
-
+        # Update the last 50 days of the read_data with the data from the iEasyHydro HF database
         db_average_data = get_daily_average_discharge_from_iEH_HF_for_multiple_sites(
-            ieh_hf_sdk=ieh_hf_sdk, sites_list=code_list, 
-            start_date=last_row[date_col].min(),
-            date_col=date_col, discharge_col=discharge_col, name_col=name_col, code_col=code_col
+            ieh_hf_sdk=ieh_hf_sdk, id_list=id_list, 
+            date_col=date_col, discharge_col=discharge_col, code_col=code_col
         )
         exit()
 

@@ -9,6 +9,7 @@ import re
 import subprocess
 import socket
 import platform
+import pytz
 
 from dotenv import load_dotenv
 
@@ -286,6 +287,22 @@ def load_environment():
     if os.getenv("ieasyforecast_daily_discharge_path") is None:
         logger.error("config.load_environment(): Environment variable ieasyforecast_daily_discharge_path not set")
     return env_file_path
+
+def get_local_timezone_from_env(organization=None):
+    """
+    Gets the local time zone based on the IEASYHYDROFORECAST_ORGANIZATION environment variable.
+    """
+    if organization is None:
+        organization = os.environ.get("ieasyhydroforecast_organization")
+    if organization == "demo":
+        return pytz.timezone("Europe/Zurich")  # Switzerland
+    elif organization == "kghm":
+        return pytz.timezone("Asia/Bishkek")  # Kyrgyzstan
+    elif organization == "tjhm":
+        return pytz.timezone("Asia/Dushanbe")  # Tajikistan
+    else:
+        logger.warning(f"Unknown organization: {organization}. Defaulting to UTC.")
+        return pytz.utc  # Default to UTC if organization is unknown
 
 # endregion
 
@@ -664,6 +681,7 @@ def get_decadal_forecast_sites_from_HF_SDK(ieh_sdk):
     Returns:
         fc_sites_decad (list): A list of Site objects for which to produce forecasts.
         site_codes_decad (list): A list of strings for site IDs for which to produce forecasts.
+        site_ids_decad (list): A list of strings for iEH HF site IDs required for API requests.
 
     """
     # Get the list of discharge sites from the iEH HF SDK
@@ -689,6 +707,9 @@ def get_decadal_forecast_sites_from_HF_SDK(ieh_sdk):
 
     logger.info(f" {len(fc_sites)} Site object(s) created for decadal forecasting, namely:\n{[site.code for site in fc_sites]}")
 
+    # Get unique site IDs
+    site_ids = [site.iehhf_site_id for site in fc_sites]
+
     # Write the updated site selection to the config file
     json_file = os.path.join(
         os.getenv("ieasyforecast_configuration_path"),
@@ -703,7 +724,7 @@ def get_decadal_forecast_sites_from_HF_SDK(ieh_sdk):
     with open(json_file, 'w') as json_file:
         json.dump(data, json_file, indent=2)
 
-    return fc_sites, site_codes
+    return fc_sites, site_codes, site_ids
 
 def get_decadal_forecast_sites_from_pentadal_sites(fc_sites_pentad=None, site_list_decad=None):
     """
@@ -784,7 +805,9 @@ def get_pentadal_forecast_sites_from_HF_SDK(ieh_hf_sdk):
 
     Returns:
     fc_sites (list): A list of Site objects for which to produce forecasts.
-    site_codes (list): A list of strings for site IDs for which to produce forecasts.
+    site_codes (list): A list of strings for site CODEs for which to produce forecasts.
+    site_ids (list): A list of strings for iEH HF site IDs for which to produce 
+        forecasts. Required for iEH HF SDK. 
     """
     # Get the list of discharge sites from the iEH HF SDK
     discharge_sites = ieh_hf_sdk.get_discharge_sites()
@@ -811,6 +834,9 @@ def get_pentadal_forecast_sites_from_HF_SDK(ieh_hf_sdk):
     fc_sites = [site for site in fc_sites if site.code in site_codes]
     logger.info(f" {len(fc_sites)} Site object(s) created for pentadal forecasting, namely:\n{[site.code for site in fc_sites]}")
 
+    # Get the unique site IDs
+    site_ids = [site.iehhf_site_id for site in fc_sites]
+
     # Write the updated site selection to the config file
     json_file = os.path.join(
         os.getenv("ieasyforecast_configuration_path"),
@@ -825,7 +851,7 @@ def get_pentadal_forecast_sites_from_HF_SDK(ieh_hf_sdk):
     with open(json_file, 'w') as json_file:
         json.dump(data, json_file, indent=2)
 
-    return fc_sites, site_codes
+    return fc_sites, site_codes, site_ids
 
 
 # endregion
