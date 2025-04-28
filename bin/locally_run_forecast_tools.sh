@@ -187,7 +187,7 @@ source ~/anaconda3/etc/profile.d/conda.sh
 run_preprocessing_runoff
 
 # -- Preprocessing gateway data
-run_preprocessing_gateway
+#run_preprocessing_gateway
 
 # -- Run the forecast models --
 run_linear_regression
