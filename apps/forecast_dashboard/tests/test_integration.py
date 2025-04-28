@@ -7,8 +7,8 @@ import tag_library as tl
 import datetime as dt
 
 
-TEST_PENTAD = False
-TEST_DECAD = False
+TEST_PENTAD = True
+TEST_DECAD = True
 TEST_LOCAL = True
 LOCAL_URL = "http://localhost:5006/forecast_dashboard"
 PENTAD_URL = "https://fc.pentad.ieasyhydro.org/forecast_dashboard"
