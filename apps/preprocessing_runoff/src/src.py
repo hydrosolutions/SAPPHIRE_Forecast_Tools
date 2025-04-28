@@ -44,6 +44,30 @@ def get_local_time_range_for_daily_average_runoff_request(target_timezone, windo
 
     return start_time_local, end_time_local
 
+def get_local_time_range_for_todays_morning_runoff_request(target_timezone):
+    """
+    Calculates the local start and end times for the data request in the target time zone.
+
+    Parameters:
+    target_timezone (pytz.timezone): The target time zone for the data request.
+
+    Returns:
+    tuple: A tuple containing the start and end times in the target time zone.
+    """
+    if not target_timezone:
+        return None, None
+
+    # Get the current time in the target time zone
+    now_local = dt.datetime.now(target_timezone)
+
+    # Calculate the end time (today at 12:00 local time)
+    end_time_local = now_local.replace(hour=12, minute=0, second=0, microsecond=0)
+
+    # Calculate the start time (today at 00:01 local time)
+    start_time_local = now_local.replace(hour=0, minute=1, second=0, microsecond=0)
+
+    return start_time_local, end_time_local
+
 def should_reprocess_input_files():
     """Check if any input files have been modified since the last run."""
     # Get the path to the daily_discharge directory
@@ -907,20 +931,112 @@ def fetch_and_format_hydro_HF_data(sdk, initial_filters):
     
     # Combine all DataFrames
     if all_data_frames:
+        combined_df = pd.concat(all_data_frames, ignore_index=True)
+        # If the DataFrame is empty, return an empty DataFrame with the expected structure
+        if combined_df.empty:
+            return pd.DataFrame(columns=[
+                'station_code', 'timestamp_local', 
+                'timestamp_utc', 'value'
+            ])
         # Drop columns that are not in the expected structure
-        all_data_frames.drop(
+        combined_df.drop(
             columns=['station_uuid', 'station_type', 'station_id', 
                      'variable_code', 'unit', 'value_type', 'value_code', 
                      'station_name'], 
             inplace=True, errors='ignore')
-
-        return pd.concat(all_data_frames, ignore_index=True)
+        print(f"Combined DataFrame: \n{combined_df}")
+        return combined_df
     else:
         # Return empty DataFrame with the expected structure
         return pd.DataFrame(columns=[
             'station_code', 'timestamp_local', 
             'timestamp_utc', 'value'
         ])
+
+def get_todays_morning_discharge_from_iEH_HF_for_multiple_sites(
+        ieh_hf_sdk, id_list, start_datetime=None, end_datetime=dt.date.today(),
+        target_timezone=None,  
+        date_col='date', discharge_col='discharge', code_col='code'):
+    """
+    Reads todays morning discharge data from the iEasyHydro database for a given site.
+
+    The names of the dataframe columns can be customized.
+
+    Args:
+        ieh_hf_sdk (object): An object that provides a method to get data values for a site from a database.
+        id_list (list): A list of strings denoting site ids.
+        start_datetime (datetime, optional): The start datetime of the data to read. Defaults to None. 
+        end_datetime (datetime, optional): The end datetime of the data to read. Defaults to dt.datetime.today().
+        target_timezone (str, optional): The timezone to convert the date to. Defaults to None.
+        If None, local timezone is used.
+        date_col (str, optional): The name of the column containing the date data. Default is 'date'.
+        discharge_col (str, optional): The name of the column containing the discharge data. Default is 'discharge'.
+        code_col (str, optional): The name of the column containing the site code. Default is 'code'.
+
+    Returns:
+        pandas.DataFrame: A DataFrame containing the daily average discharge data.
+
+    Raises:
+        ValueError: If the site code is not a string or an integer.
+        ValueError: If the site name is not a string.
+    """
+    # Test is id_list is a list
+    if not isinstance(id_list, list):
+        raise ValueError("The sites_list must be a list of strings.")
+    # Test if id_list is empty
+    if not id_list:
+        raise ValueError("The id_list must not be empty.")
+
+    # Test if target_timezone is None
+    if target_timezone is None:
+        # Get the local timezone
+        target_timezone = pytz.timezone(time.tzname[0])
+        logger.debug(f"Target timezone is None. Using local timezone: {target_timezone}")
+        
+    # If start_date is None, get it from get_local_time_range_for_daily_average_runoff_request
+    if start_datetime is None:
+        start_datetime, end_datetime = get_local_time_range_for_todays_morning_runoff_request(target_timezone)
+
+    # Raise an error if the date format is not a datetime with timezone info
+    if not isinstance(start_datetime, dt.datetime):
+        raise ValueError("The start_datetime must be a datetime object with timezone info.")
+    if not isinstance(end_datetime, dt.datetime):
+        raise ValueError("The end_datetime must be a datetime object with timezone info.")
+
+    logger.debug(f"Reading daily average discharge data for all sites in sites_list from {start_datetime} to {end_datetime}.")
+
+    filters = {
+        "site_ids": id_list,
+        "variable_names": ["WDD"],
+        "local_date_time__gte": start_datetime.isoformat(),
+        "local_date_time__lte": end_datetime.isoformat(),
+        "page": 1,
+    }
+
+    try:
+        # Get data for all sites from the database
+        db_df = fetch_and_format_hydro_HF_data(ieh_hf_sdk, filters)
+        if db_df.empty:
+            logger.info("No data found for the given date range.")
+            return pd.DataFrame(columns=[date_col, discharge_col, code_col])
+        # Drop the local datetime column as we will be working with utc datetime
+        db_df.drop(columns=['local_datetime'], inplace=True)
+        # Rename the columns of df to match the columns of combined_data
+        db_df.rename(
+            columns={
+                'utc_datetime': date_col, 
+                'station_code': code_col,
+                'value': discharge_col}, 
+            inplace=True
+        )
+
+    except Exception as e:
+        logger.info(f"Error reading daily average discharge data: {e}")
+        logger.info(f"Returning empty data frame.")
+        # Return an empty dataframe with columns 'date', 'discharge', 'code'
+        db_df = pd.DataFrame(columns=[date_col, discharge_col, code_col])
+
+    return db_df
 
 def get_daily_average_discharge_from_iEH_HF_for_multiple_sites(
         ieh_hf_sdk, id_list, start_datetime=None, end_datetime=dt.date.today(),
@@ -985,10 +1101,13 @@ def get_daily_average_discharge_from_iEH_HF_for_multiple_sites(
     try:
         # Get data for all sites from the database
         db_df = fetch_and_format_hydro_HF_data(ieh_hf_sdk, filters)
+        if db_df.empty:
+            logger.info(f"No data found for the given date range.")
+            return db_df
         # Drop the local datetime column as we will be working with utc datetime
         db_df.drop(columns=['local_datetime'], inplace=True)
         # Rename the columns of df to match the columns of combined_data
-        db_df = db_df.rename(
+        db_df.rename(
             columns={
                 'utc_datetime': date_col, 
                 'station_code': code_col,
@@ -1581,6 +1700,27 @@ def get_runoff_data_for_sites(ieh_sdk=None, date_col='date',
 
         return read_data
     
+def _read_runoff_data_by_organization(organization, date_col, discharge_col, name_col, code_col, code_list):
+    """Reads runoff data based on the organization."""
+    if organization == 'kghm':
+        read_data = read_all_runoff_data_from_excel(
+            date_col=date_col,
+            discharge_col=discharge_col,
+            name_col=name_col,
+            code_col=code_col,
+            code_list=code_list)
+    elif organization == 'tjhm':
+        read_data = read_all_runoff_data_from_csv(
+            date_col=date_col,
+            discharge_col=discharge_col,
+            name_col=name_col,
+            code_col=code_col,
+            code_list=code_list)
+    else:
+        raise ValueError(f"Organization '{organization}' not recognized. "
+                         f"Please set the environment variable 'ieasyhydroforecast_organization' to 'kghm' or 'tjhm'.")
+    return read_data
+    
 def get_runoff_data_for_sites_HF(ieh_hf_sdk=None, date_col='date', name_col='name',
                               discharge_col='discharge',
                               code_col='code', 
@@ -1623,26 +1763,14 @@ def get_runoff_data_for_sites_HF(ieh_hf_sdk=None, date_col='date', name_col='nam
         # Get organization from environment variable
         organization = os.getenv('ieasyhydroforecast_organization')
 
-        if organization=='kghm': 
-            # Read data from excel files
-            read_data = read_all_runoff_data_from_excel(
-                date_col=date_col,
-                discharge_col=discharge_col,
-                name_col=name_col,
-                code_col=code_col,
-                code_list=code_list)
-        elif organization=='tjhm':
-            # Read data from csv files
-            read_data = read_all_runoff_data_from_csv(
-                date_col=date_col,
-                discharge_col=discharge_col,
-                name_col=name_col,
-                code_col=code_col,
-                code_list=code_list)
-        else:
-            # Raise an error if the organization is not recognized
-            raise ValueError(f"Organization '{organization}' not recognized. "
-                             f"Please set the environment variable 'ieasyhydroforecast_organization' to 'kghm' or 'tjhm'.")
+        read_data = _read_runoff_data_by_organization(
+            organization=organization,
+            date_col=date_col,
+            discharge_col=discharge_col,
+            name_col=name_col,
+            code_col=code_col,
+            code_list=code_list
+        )
     else:
         logger.info("No changes in the daily_discharge directory, using previous data.")
         intermediate_data_path = os.getenv('ieasyforecast_intermediate_data_path')
@@ -1664,26 +1792,14 @@ def get_runoff_data_for_sites_HF(ieh_hf_sdk=None, date_col='date', name_col='nam
                 logger.info("Cached data is older than 50 days, reprocessing input files.")
                 # Reprocess input files
                 organization = os.getenv('ieasyhydroforecast_organization')
-                if organization=='kghm': 
-                    # Read data from excel files
-                    read_data = read_all_runoff_data_from_excel(
-                        date_col=date_col,
-                        discharge_col=discharge_col,
-                        name_col=name_col,
-                        code_col=code_col,
-                        code_list=code_list)
-                elif organization=='tjhm':
-                    # Read data from csv files
-                    read_data = read_all_runoff_data_from_csv(
-                        date_col=date_col,
-                        discharge_col=discharge_col,
-                        name_col=name_col,
-                        code_col=code_col,
-                        code_list=code_list)
-                else:
-                    # Raise an error if the organization is not recognized
-                    raise ValueError(f"Organization '{organization}' not recognized. "
-                                     f"Please set the environment variable 'ieasyhydroforecast_organization' to 'kghm' or 'tjhm'.")
+                read_data = _read_runoff_data_by_organization(
+                    organization=organization,
+                    date_col=date_col,
+                    discharge_col=discharge_col,
+                    name_col=name_col,
+                    code_col=code_col,
+                    code_list=code_list
+                )
             else: 
                 logger.info("Cached data is newer than 50 days, using cached data.")
                 # Discard the last 50 days of previous operational data and update 
@@ -1692,26 +1808,15 @@ def get_runoff_data_for_sites_HF(ieh_hf_sdk=None, date_col='date', name_col='nam
         except Exception as e:
             logger.warning(f"Failed to read cached data: {e}, reprocessing input files")
             # Fall back to processing logic
-            if organization=='kghm': 
-                # Read data from excel files
-                read_data = read_all_runoff_data_from_excel(
-                    date_col=date_col,
-                    discharge_col=discharge_col,
-                    name_col=name_col,
-                    code_col=code_col,
-                    code_list=code_list)
-            elif organization=='tjhm':
-                # Read data from csv files
-                read_data = read_all_runoff_data_from_csv(
-                    date_col=date_col,
-                    discharge_col=discharge_col,
-                    name_col=name_col,
-                    code_col=code_col,
-                    code_list=code_list)
-            else:
-                # Raise an error if the organization is not recognized
-                raise ValueError(f"Organization '{organization}' not recognized. "
-                                 f"Please set the environment variable 'ieasyhydroforecast_organization' to 'kghm' or 'tjhm'.")
+            organization = os.getenv('ieasyhydroforecast_organization')
+            read_data = _read_runoff_data_by_organization(
+                organization=organization,
+                date_col=date_col,
+                discharge_col=discharge_col,
+                name_col=name_col,
+                code_col=code_col,
+                code_list=code_list
+            )
 
     # Initialize a flag for virtual stations
     virtual_stations_present = False
@@ -1752,25 +1857,21 @@ def get_runoff_data_for_sites_HF(ieh_hf_sdk=None, date_col='date', name_col='nam
             ieh_hf_sdk=ieh_hf_sdk, id_list=id_list, 
             date_col=date_col, discharge_col=discharge_col, code_col=code_col
         )
-        exit()
-
-        # For each code in last_row, get the daily average discharge data from the
-        # iEasyHydro database using the function get_daily_average_discharge_from_iEH_per_site
-        for index, row in last_row.iterrows():
-            #db_average_data = get_daily_average_discharge_from_iEH_per_site(
-            #    ieh_sdk=ieh_hf_sdk, site=row[code_col], name=row[name_col], 
-            #    start_date=row[date_col],
-            #    date_col=date_col, discharge_col=discharge_col, name_col=name_col, code_col=code_col
-            #)
-            db_morning_data = get_todays_morning_discharge_from_iEH_per_site(
-                ieh_hf_sdk, row[code_col], row[name_col],
-                date_col=date_col, discharge_col=discharge_col, name_col=name_col, code_col=code_col)
-            # Append db_data to read_data if db_data is not empty
-            if not db_average_data.empty:
-                read_data = pd.concat([read_data, db_average_data], ignore_index=True)
-            if not db_morning_data.empty:
-                read_data = pd.concat([read_data, db_morning_data], ignore_index=True)
-
+        # We are dealing with daily data, so we convert date_col to date
+        db_average_data[date_col] = pd.to_datetime(db_average_data[date_col]).dt.date
+        #print("DEBUG: db_average_data: \n", db_average_data)
+        db_morning_data = get_todays_morning_discharge_from_iEH_HF_for_multiple_sites(
+            ieh_hf_sdk=ieh_hf_sdk, id_list=id_list,
+            date_col=date_col, discharge_col=discharge_col, code_col=code_col
+        )
+        db_morning_data[date_col] = pd.to_datetime(db_morning_data[date_col]).dt.date
+        #print("DEBUG: db_morning_data: \n", db_morning_data)
+        # Append db_data to read_data if db_data is not empty
+        if not db_average_data.empty:
+            read_data = pd.concat([read_data, db_average_data], ignore_index=True)
+        if not db_morning_data.empty:
+            read_data = pd.concat([read_data, db_morning_data], ignore_index=True)
+        
         # Drop rows where 'code' is "NA"
         read_data = read_data[read_data[code_col] != 'NA']
 

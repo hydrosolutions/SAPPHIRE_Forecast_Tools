@@ -163,27 +163,9 @@ def main():
     ## Data processing
     # Reading data from various sources
     start_time = time.time()
-    # Until end of April, we still get operational data from the old iEasyHydro
-    #runoff_data = src.get_runoff_data_for_sites(
-    #    ieh_sdk,
-    #    date_col='date',
-    #    discharge_col='discharge',
-    #    name_col='name',
-    #    code_col='code',
-    #    site_list=fc_sites,
-    #    code_list=site_codes
-    #)  
     if os.getenv('ieasyhydroforecast_connect_to_iEH') == 'True':
         # Deprecated
-        #runoff_data = src.get_runoff_data_for_sites(
-        #    ieh_sdk,
-        #    date_col='date',
-        #    discharge_col='discharge',
-        #    name_col='name',
-        #    code_col='code',
-        #    site_list=fc_sites,
-        #    code_list=site_codes
-        #)  
+        
         pass
     else: 
         runoff_data = src.get_runoff_data_for_sites_HF(
@@ -196,8 +178,8 @@ def main():
                 id_list=site_ids,
                 target_timezone=target_time_zone,
         )
-        pass    
-
+    print(runoff_data.head(5))
+      
     end_time = time.time()
     time_get_runoff_data = end_time - start_time
 
