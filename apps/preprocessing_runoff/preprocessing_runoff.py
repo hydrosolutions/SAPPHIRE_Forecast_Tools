@@ -115,33 +115,21 @@ def main():
     # Update configuration files for selected sites (only if iEH HF is used)
     # Test if we read from iEasyHydro or iEasyHydro HF for getting operational data
     start_time = time.time()
-    # As temporary fix to preprocessing_runoff.py, we use the old iEasyHydro SDK
-    # Deprecating the old iEasyHydro SDK
-    ieh_sdk = IEasyHydroSDK()
-    has_access_to_db = sl.check_database_access(ieh_sdk)
-    if not has_access_to_db:
-        ieh_sdk = None
     # Get site information from iEH (no update of configuration files)
-    #fc_sites_pentad, site_codes_pentad = sl.get_pentadal_forecast_sites(ieh_sdk, backend_has_access_to_db=has_access_to_db)
-    #fc_sites_decad, site_codes_decad = sl.get_decadal_forecast_sites_from_pentadal_sites(
-    #    fc_sites_pentad, site_codes_pentad)
     if os.getenv('ieasyhydroforecast_connect_to_iEH') == 'True':
-        logger.warning("Reading from the old iEasyHydro is no longer supported.")
-        logger.warning("Please use the iEasyHydro HF SDK instead.")
-        logger.warning("The script will exit now.")
-        sys.exit(1)
-        # Deprecating the old iEasyHydro SDK
-        #ieh_sdk = IEasyHydroSDK()
-        #has_access_to_db = sl.check_database_access(ieh_sdk)
-        #if not has_access_to_db:
-        #    ieh_sdk = None
+        logger.info("Reading forecast sites from iEasyHydro SDK")
+        # Not recently used or tested, but kept for reference
+        ieh_sdk = IEasyHydroSDK()
+        has_access_to_db = sl.check_database_access(ieh_sdk)
+        if not has_access_to_db:
+            ieh_sdk = None
         # Get site information from iEH (no update of configuration files)
-        # Do nothing and exit the script directly
-        #fc_sites_pentad, site_codes_pentad = sl.get_pentadal_forecast_sites(ieh_sdk, backend_has_access_to_db=has_access_to_db)
-        #fc_sites_decad, site_codes_decad = sl.get_decadal_forecast_sites_from_pentadal_sites(
-        #    fc_sites_pentad, site_codes_pentad)
-        #pass
+        fc_sites_pentad, site_codes_pentad = sl.get_pentadal_forecast_sites(ieh_sdk, backend_has_access_to_db=has_access_to_db)
+        fc_sites_decad, site_codes_decad = sl.get_decadal_forecast_sites_from_pentadal_sites(
+            fc_sites_pentad, site_codes_pentad)
+        logger.info(f"... done reading forecast sites from iEasyHydro SDK")
     else:  # Get information from iEH HF, default behaviour
+        logger.info("Reading forecast sites from iEasyHydro HF SDK")
         try: 
             ieh_hf_sdk = IEasyHydroHFSDK()
             has_access_to_db = sl.check_database_access(ieh_hf_sdk)
@@ -149,6 +137,7 @@ def main():
                 ieh_hf_sdk = None
             fc_sites_pentad, site_codes_pentad, site_ids_pentad = sl.get_pentadal_forecast_sites_from_HF_SDK(ieh_hf_sdk)
             fc_sites_decad, site_codes_decad, site_ids_decad = sl.get_decadal_forecast_sites_from_HF_SDK(ieh_hf_sdk)
+            logger.info(f"... done reading forecast sites from iEasyHydro HF SDK")
         except Exception as e:
             logger.error(f"Error while accessing iEasyHydro HF SDK: {e}")
             sys.exit(1)
@@ -164,9 +153,17 @@ def main():
     # Reading data from various sources
     start_time = time.time()
     if os.getenv('ieasyhydroforecast_connect_to_iEH') == 'True':
-        # Deprecated
-        
-        pass
+        # Not recently used (or tested), but kept for reference
+        runoff_data = src.get_runoff_data_for_sites(
+                ieh_sdk,
+                date_col='date',
+                discharge_col='discharge',
+                name_col='name',
+                code_col='code',
+                site_list=fc_sites,
+                code_list=site_codes,
+        )
+
     else: 
         runoff_data = src.get_runoff_data_for_sites_HF(
                 ieh_hf_sdk,
