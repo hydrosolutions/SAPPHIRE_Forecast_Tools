@@ -342,6 +342,21 @@ def get_local_timezone_from_env(organization=None):
         print(f"Error running netstat: {e}")
         return []'''
 
+def check_if_ssh_tunnel_is_required(): 
+    """
+    Check if SSH tunnel is required based on the environment variable.
+    """
+    var = os.getenv("ieasyhydroforecast_ssh_to_iEH")
+    if var is None:
+        logger.info("Environment variable ieasyhydroforecast_ssh_to_iEH not set. \n      Assuming that no ssh tunnel is required for connection with iEH or iEH HF.")
+        return False
+    elif var.lower() == "true":
+        logger.debug("Environment variable ieasyhydroforecast_ssh_to_iEH is set to True. \n      Assuming that ssh tunnel is required for connection with iEH or iEH HF.")
+        return True
+    elif var.lower() == "false":
+        logger.debug("Environment variable ieasyhydroforecast_ssh_to_iEH is set to False. \n      Assuming that no ssh tunnel is required for connection with iEH or iEH HF.")
+        return False
+
 def check_local_ssh_tunnels():
     """
     Check for local SSH tunnels using pure Python socket connections.

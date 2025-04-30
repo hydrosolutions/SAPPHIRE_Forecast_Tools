@@ -8,6 +8,7 @@ import numpy as np
 import tempfile
 from iEasyHydroForecast import setup_library as sl
 from iEasyHydroForecast import tag_library as tl
+import logging
 
 class TestLoadConfiguration():
     # Temporary directory to store output
@@ -77,6 +78,41 @@ class TestLoadConfiguration():
     assert ret == test_ieasyforecast_intermediate_data_path
     ret=os.environ.pop("ieasyreports_report_output_path")
     assert ret == test_ieasyreports_report_output_path
+
+
+class TestCheckIfSshTunnelIsRequired(unittest.TestCase):
+
+    def setUp(self):
+        # Setup logging for tests
+        logging.basicConfig(level=logging.DEBUG)
+        self.logger = logging.getLogger(__name__)
+
+    def test_variable_not_set(self):
+        """Test when the environment variable is not set."""
+        with patch.dict(os.environ, clear=True):  # Clear any existing env vars
+            self.assertFalse(sl.check_if_ssh_tunnel_is_required())
+
+    def test_variable_set_to_true(self):
+        """Test when the environment variable is set to 'true'."""
+        with patch.dict(os.environ, {"ieasyhydroforecast_ssh_to_iEH": "true"}):
+            self.assertTrue(sl.check_if_ssh_tunnel_is_required())
+
+        with patch.dict(os.environ, {"ieasyhydroforecast_ssh_to_iEH": "True"}):
+            self.assertTrue(sl.check_if_ssh_tunnel_is_required())
+
+    def test_variable_set_to_false(self):
+        """Test when the environment variable is set to 'false'."""
+        with patch.dict(os.environ, {"ieasyhydroforecast_ssh_to_iEH": "false"}):
+            self.assertFalse(sl.check_if_ssh_tunnel_is_required())
+
+        with patch.dict(os.environ, {"ieasyhydroforecast_ssh_to_iEH": "False"}):
+            self.assertFalse(sl.check_if_ssh_tunnel_is_required())
+
+    def test_variable_set_to_other_value(self):
+        """Test when the environment variable is set to a value other than 'true' or 'false'."""
+        with patch.dict(os.environ, {"ieasyhydroforecast_ssh_to_iEH": "some_value"}):
+            # The function should return None if the value is not "true" or "false"
+            self.assertIsNone(sl.check_if_ssh_tunnel_is_required())
 
 
 class TestReadDailyProbabilisticMlForecastsPentad(unittest.TestCase):

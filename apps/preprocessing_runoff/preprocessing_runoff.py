@@ -118,6 +118,15 @@ def main():
     # Get site information from iEH (no update of configuration files)
     if os.getenv('ieasyhydroforecast_connect_to_iEH') == 'True':
         logger.info("Reading forecast sites from iEasyHydro SDK")
+        # Check environment to see if an ssh tunnel is required
+        # If so, check if the tunnel is running
+        needs_ssh_tunnel = sl.check_if_ssh_tunnel_is_required()
+        if needs_ssh_tunnel:
+            # Check if the SSH tunnel is running
+            ssh_tunnel_running = sl.check_local_ssh_tunnels()
+            if not ssh_tunnel_running:
+                logger.error("SSH tunnel is not running. Please start the SSH tunnel.")
+                sys.exit(1)
         # Not recently used or tested, but kept for reference
         ieh_sdk = IEasyHydroSDK()
         has_access_to_db = sl.check_database_access(ieh_sdk)
