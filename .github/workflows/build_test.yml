@@ -22,10 +22,10 @@ on:
   #push:
   #  branches-ignore:
   #    - main
-  # Also run on PRs targeting main
   push:
     branches:
       - maxat_integration_testing
+  # Also run on PRs targeting main
 #  pull_request:
 #    branches:
 #      - main
