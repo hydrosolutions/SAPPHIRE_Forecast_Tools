@@ -7,14 +7,14 @@ import tag_library as tl
 import datetime as dt
 
 
-TEST_PENTAD = True
-TEST_DECAD = True
+TEST_PENTAD = False
+TEST_DECAD = False
 TEST_LOCAL = True
 LOCAL_URL = "http://localhost:5006/forecast_dashboard"
 PENTAD_URL = "https://fc.pentad.ieasyhydro.org/forecast_dashboard"
 DECAD_URL = "https://fc.decad.ieasyhydro.org/forecast_dashboard"
 SLEEP = 1
-sensitive_data_forecast_tools = "/SAPPHIRE_Central_Asia_Technical_Work/data/sensitive_data_forecast_tools/"
+sensitive_data_forecast_tools = "/Users/maxat/hydrosolutions Dropbox/Maxat Pernebayev/SAPPHIRE_Central_Asia_Technical_Work/data/sensitive_data_forecast_tools/"
 horizon = "decad"  # pentad or decad
 
 today = dt.datetime.now()
@@ -48,6 +48,10 @@ def test_pentad(page: Page):
 
     print("#### Testing PENTAD started...")
 
+    # Testing the page title
+    expect(page).to_have_title(re.compile("SAPPHIRE Central Asia - Pentadal forecast dashboard"))
+    print("#### Page title is correct.")
+
     # Testing Pentad.png being loaded
     content = page.content()
     assert 'DINppRCxDAAEEalfg/wLZeXf9HTaUOAAAAABJRU5ErkJggg==' in content
@@ -71,6 +75,10 @@ def test_decad(page: Page):
     page.goto(DECAD_URL)
 
     print("#### Testing DECAD started...")
+
+    # Testing the page title
+    expect(page).to_have_title(re.compile("SAPPHIRE Central Asia - Decadal forecast dashboard"))
+    print("#### Page title is correct.")
 
     # Testing Decad.png being loaded
     content = page.content()
