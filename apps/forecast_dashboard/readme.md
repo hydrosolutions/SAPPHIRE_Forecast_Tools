@@ -26,6 +26,7 @@ pip install --force-reinstall playwright
 python -m playwright install
 `
 ## Running tests
+In the forecast_dashboard directory, run: 
 `bash
 pytest
 pytest --headed
