@@ -15,7 +15,7 @@ on:
   # Run on all branch pushes except main (which uses deploy_main.yml)
   push:
     branches:
-      - maxat_test_integration
+      - maxat_integration_testing
   #  branches-ignore:
   #    - main
   # Also run on PRs targeting main
