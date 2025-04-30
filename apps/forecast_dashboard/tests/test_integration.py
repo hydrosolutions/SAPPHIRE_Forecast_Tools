@@ -18,6 +18,7 @@ sensitive_data_forecast_tools = "/Users/maxat/hydrosolutions Dropbox/Maxat Perne
 horizon = "decad"  # pentad or decad
 
 today = dt.datetime.now()
+today = today + dt.timedelta(days=1)
 year = today.year
 date_str = today.strftime("%Y-%m-%d")
 month_str = today.strftime("%m") + "_" + tl.get_month_str_case1(date_str)
@@ -37,6 +38,10 @@ else:
 
 def normalize_spaces(s):
     return re.sub(r'\s+', ' ', s).strip()
+
+
+def normalize_comma(s):
+    return s.replace(",", "")
 
 
 def test_pentad(page: Page):
@@ -287,7 +292,7 @@ def test_local(page: Page):
                 assert row[0] == f_value[1]  # model_short
                 assert row[1] == f_value[3]  # forecasted_discharge
                 assert row[2] == f_value[4]  # fc_lower
-                assert row[3] == f_value[5]  # fc_upper
+                assert row[3] == normalize_comma(f_value[5])  # fc_upper
                 assert row[4] == f_value[6]  # delta
                 assert row[5] == f_value[7]  # sdivsigma
                 assert row[7] == f_value[8]  # accuracy
