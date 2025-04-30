@@ -892,7 +892,7 @@ def read_all_stations_metadata_from_iehhf(station_list):
     from ieasyhydro_sdk.sdk import IEasyHydroHFSDK
     iehhf = IEasyHydroHFSDK()
     # Get a list of site objects from iEH HF
-    all_stations, _ = sl.get_pentadal_forecast_sites_from_HF_SDK(iehhf)
+    all_stations, _, _ = sl.get_pentadal_forecast_sites_from_HF_SDK(iehhf)
     # Cast all stations attributes to a dataframe
     all_stations = sapphire_sites_to_dataframe(all_stations)
     # Cast all_stations['code'] to string
