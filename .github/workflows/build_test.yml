@@ -356,7 +356,7 @@ jobs:
         run: |
           # Currently no tests implemented. No tests to run for the moment
           #SAPPHIRE_TEST_ENV=True python -m pytest -s forecast_dashboard/tests/
-          pytest -s --slowmo 300
+          pytest forecast_dashboard/tests/test_implementation.py -s --slowmo 300
 
   # Build the forecast dashboard image
   build_dashboard:
