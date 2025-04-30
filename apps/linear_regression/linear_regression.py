@@ -2,7 +2,7 @@
 # Script to produce hydrological forecasts using linear regression.
 # The script is run daily and produces forecasts for the next 5 or 10 days.
 # The script is run with the following command:
-# python linear_regression.py
+# ieasyhydroforecast_env_file_path=/path/to/.env python linear_regression.py
 
 # I/O
 import os
@@ -86,15 +86,10 @@ def main():
         if not has_access_to_db:
             ieh_sdk = None
     else:
-        # During development of iEH HF, we get static data from iEH HF and
-        # operational data from iEH.
-        # TODO: Remove this when iEH HF is operational.
-        ieh_sdk = IEasyHydroSDK()
+        # Connect to iEasyHydro HF
         ieh_hf_sdk = IEasyHydroHFSDK()
-        logger.info("Testing connection to iEH SDK.")
-        has_access_to_db = sl.check_database_access(ieh_sdk)
-        logger.info("Testing connection to iEH HF SDK.")
         has_access_to_hf_db = sl.check_database_access(ieh_hf_sdk)
+        has_access_to_db = False
         if not has_access_to_db:
             ieh_sdk = None
         if not has_access_to_hf_db:
@@ -119,8 +114,8 @@ def main():
     # Gets us a list of site objects with the necessary information to write forecast outputs
     if has_access_to_hf_db:
         # Use the iEH HF SDK to get the sites
-        fc_sites_pentad, site_list_pentad = sl.get_pentadal_forecast_sites_from_HF_SDK(ieh_hf_sdk)
-        fc_sites_decad, site_list_decad = sl.get_decadal_forecast_sites_from_HF_SDK(ieh_hf_sdk)
+        fc_sites_pentad, site_list_pentad, _ = sl.get_pentadal_forecast_sites_from_HF_SDK(ieh_hf_sdk)
+        fc_sites_decad, site_list_decad, _ = sl.get_decadal_forecast_sites_from_HF_SDK(ieh_hf_sdk)
         #print("DEBUG site_list_pentad\n", site_list_pentad)
         #print("DEBUG site_list_decad\n", site_list_decad)
     else:

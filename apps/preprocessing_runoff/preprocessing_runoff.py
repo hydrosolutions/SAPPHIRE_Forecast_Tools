@@ -9,7 +9,7 @@
 #
 # How to run:
 # from apps/preprocessing_runoff call
-# SAPPHIRE_OPDEV_ENV=True python preprocessing_runoff.py
+# ieasyhydroforecast_env_file_path=<absolute/path/to/.env> python preprocessing_runoff.py
 #
 # Details:
 # The script performs the following steps:
@@ -28,6 +28,7 @@
 # digits.
 #
 # Developed within the frame of the SAPPHIRE Central Asia project funded by SDC.
+# Beatrice Marti, hydrosolutions, 2025
 
 # I/O
 import os
@@ -107,53 +108,75 @@ def main():
     end_time = time.time()
     time_load_environment = end_time - overall_start_time
 
-    # Set up the iEasyHydro SDK
-    start_time = time.time()
-    ieh_sdk = IEasyHydroSDK()
-    has_access_to_db = sl.check_database_access(ieh_sdk)
-    if not has_access_to_db:
-        ieh_sdk = None
-    end_time = time.time()
-    time_check_database_access = end_time - start_time
+    # Get time zone of organization for which the Forecast Tools are deployed
+    target_time_zone = sl.get_local_timezone_from_env()
+    logger.info(f"Target time zone: {target_time_zone}")
 
     # Update configuration files for selected sites (only if iEH HF is used)
-    # Test if we read from iEasyHydro or iEasyHydro HF
+    # Test if we read from iEasyHydro or iEasyHydro HF for getting operational data
     start_time = time.time()
+    # Get site information from iEH (no update of configuration files)
     if os.getenv('ieasyhydroforecast_connect_to_iEH') == 'True':
+        logger.info("Reading forecast sites from iEasyHydro SDK")
+        # Not recently used or tested, but kept for reference
+        ieh_sdk = IEasyHydroSDK()
+        has_access_to_db = sl.check_database_access(ieh_sdk)
+        if not has_access_to_db:
+            ieh_sdk = None
         # Get site information from iEH (no update of configuration files)
-        # Do nothing and exit the script directly
-        fc_sites_pentad, site_codes_pentad = sl.get_pentadal_forecast_sites(ieh_sdk)
+        fc_sites_pentad, site_codes_pentad = sl.get_pentadal_forecast_sites(ieh_sdk, backend_has_access_to_db=has_access_to_db)
         fc_sites_decad, site_codes_decad = sl.get_decadal_forecast_sites_from_pentadal_sites(
             fc_sites_pentad, site_codes_pentad)
-        pass
-    else:  # Get information from iEH HF
-        ieh_hf_sdk = IEasyHydroHFSDK()
-        fc_sites_pentad, site_codes_pentad = sl.get_pentadal_forecast_sites_from_HF_SDK(ieh_hf_sdk)
-        fc_sites_decad, site_codes_decad = sl.get_decadal_forecast_sites_from_HF_SDK(ieh_hf_sdk)
+        logger.info(f"... done reading forecast sites from iEasyHydro SDK")
+    else:  # Get information from iEH HF, default behaviour
+        logger.info("Reading forecast sites from iEasyHydro HF SDK")
+        try: 
+            ieh_hf_sdk = IEasyHydroHFSDK()
+            has_access_to_db = sl.check_database_access(ieh_hf_sdk)
+            if not has_access_to_db:
+                ieh_hf_sdk = None
+            fc_sites_pentad, site_codes_pentad, site_ids_pentad = sl.get_pentadal_forecast_sites_from_HF_SDK(ieh_hf_sdk)
+            fc_sites_decad, site_codes_decad, site_ids_decad = sl.get_decadal_forecast_sites_from_HF_SDK(ieh_hf_sdk)
+            logger.info(f"... done reading forecast sites from iEasyHydro HF SDK")
+        except Exception as e:
+            logger.error(f"Error while accessing iEasyHydro HF SDK: {e}")
+            sys.exit(1)
+
     # Concatenate the two lists
     fc_sites = fc_sites_pentad + fc_sites_decad
     site_codes = site_codes_pentad + site_codes_decad
+    site_ids = site_ids_pentad + site_ids_decad
     end_time = time.time()
     time_get_forecast_sites = end_time - start_time
 
     ## Data processing
     # Reading data from various sources
     start_time = time.time()
-    runoff_data = src.get_runoff_data_for_sites(
-        ieh_sdk,
-        date_col='date',
-        discharge_col='discharge',
-        name_col='name',
-        code_col='code',
-        site_list=fc_sites,
-        code_list=site_codes
-    )
-    #runoff_data = src.get_runoff_data(
-    #    ieh_sdk,
-    #    date_col='date',
-    #    discharge_col='discharge',
-    #    name_col='name',
-    #    code_col='code')
+    if os.getenv('ieasyhydroforecast_connect_to_iEH') == 'True':
+        # Not recently used (or tested), but kept for reference
+        runoff_data = src.get_runoff_data_for_sites(
+                ieh_sdk,
+                date_col='date',
+                discharge_col='discharge',
+                name_col='name',
+                code_col='code',
+                site_list=fc_sites,
+                code_list=site_codes,
+        )
+
+    else: 
+        runoff_data = src.get_runoff_data_for_sites_HF(
+                ieh_hf_sdk,
+                date_col='date',
+                discharge_col='discharge',
+                code_col='code',
+                site_list=fc_sites,
+                code_list=site_codes, 
+                id_list=site_ids,
+                target_timezone=target_time_zone,
+        )
+    print(runoff_data.head(5))
+      
     end_time = time.time()
     time_get_runoff_data = end_time - start_time
 
@@ -180,23 +203,29 @@ def main():
         date_col='date',
         discharge_col='discharge',
         code_col='code')
+    src.inspect_site_data(hydrograph, '15189')
     end_time = time.time()
     time_from_daily_time_series_to_hydrograph = end_time - start_time
 
     # Get dangerous discharge values from iEasyHydro DB
-    start_time = time.time()
-    if ieh_sdk is not None:
-        hydrograph = src.add_dangerous_discharge_from_sites(
-            hydrograph,
-            code_col='code',
-            site_list=fc_sites,
-            site_code_list=site_codes)
-        #hydrograph = src.add_dangerous_discharge(
-        #    ieh_sdk,
-        #    hydrograph,
-        #    code_col='code')
-    end_time = time.time()
-    time_add_dangerous_discharge = end_time - start_time
+    # Only required for iEasyHydro, not for iEasyHydro HF
+    if os.getenv('ieasyhydroforecast_connect_to_iEH') == 'True':
+        start_time = time.time()
+        if ieh_hf_sdk is not None:
+            hydrograph = src.add_dangerous_discharge_from_sites(
+                hydrograph,
+                code_col='code',
+                site_list=fc_sites,
+                site_code_list=site_codes)
+            #hydrograph = src.add_dangerous_discharge(
+            #    ieh_sdk,
+            #    hydrograph,
+            #    code_col='code')
+        end_time = time.time()
+        time_add_dangerous_discharge = end_time - start_time
+
+    # Debug print: 5 rows with latest date for site 15189
+    print(hydrograph[hydrograph['code'] == 15189].tail(5))
 
     ## Save the data
     # Daily time series data
@@ -219,12 +248,11 @@ def main():
     print("\n")
     logger.info(f"Overall time: {overall_end_time - overall_start_time:.2f} seconds")
     logger.info(f"Time to load environment: {time_load_environment:.2f} seconds")
-    logger.info(f"Time to check database access: {time_check_database_access:.2f} seconds")
     logger.info(f"Time to get forecast sites: {time_get_forecast_sites:.2f} seconds")
     logger.info(f"Time to get runoff data: {time_get_runoff_data:.2f} seconds")
     logger.info(f"Time to filter roughly for outliers: {time_filter_roughly_for_outliers:.2f} seconds")
     logger.info(f"Time to reformat to hydrograph data: {time_from_daily_time_series_to_hydrograph:.2f} seconds")
-    logger.info(f"Time to add dangerous discharge: {time_add_dangerous_discharge:.2f} seconds")
+    #logger.info(f"Time to add dangerous discharge: {time_add_dangerous_discharge:.2f} seconds")
     logger.info(f"Time to write daily time series data: {time_write_daily_time_series_data:.2f} seconds")
     logger.info(f"Time to write daily hydrograph data: {time_write_daily_hydrograph_data:.2f} seconds")
 

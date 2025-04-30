@@ -9,6 +9,7 @@ import re
 import subprocess
 import socket
 import platform
+import pytz
 
 from dotenv import load_dotenv
 
@@ -260,7 +261,7 @@ def load_environment():
         port = hostport.split(":")[2]
         # Set the environment variable IEASYHYDRO_PORT
         os.environ["IEASYHYDRO_PORT"] = port
-        logger.info(f"IEASYHYDRO_PORT: {os.getenv('IEASYHYDRO_PORT')}")
+        logger.debug(f"IEASYHYDRO_PORT: {os.getenv('IEASYHYDRO_PORT')}")
         # Make sure we have system-consistent host names. In a docker container,
         # the host name is 'host.docker.internal'. In a local environment, the host
         # name is 'localhost'.
@@ -278,14 +279,30 @@ def load_environment():
         else:
             logger.info("Running in a local environment.")
             os.environ["IEASYHYDRO_HOST"] = "http://localhost:" + port
-        logger.info(f"IEASYHYDRO_HOST: {os.getenv('IEASYHYDRO_HOST')}")
+        logger.debug(f"IEASYHYDRO_HOST: {os.getenv('IEASYHYDRO_HOST')}")
     else:
-        logger.info("IEASYHYDRO_HOST not set in the .env file")
+        logger.warning("IEASYHYDRO_HOST not set in the .env file")
 
     # Test if specific environment variables were loaded
     if os.getenv("ieasyforecast_daily_discharge_path") is None:
         logger.error("config.load_environment(): Environment variable ieasyforecast_daily_discharge_path not set")
     return env_file_path
+
+def get_local_timezone_from_env(organization=None):
+    """
+    Gets the local time zone based on the IEASYHYDROFORECAST_ORGANIZATION environment variable.
+    """
+    if organization is None:
+        organization = os.environ.get("ieasyhydroforecast_organization")
+    if organization == "demo":
+        return pytz.timezone("Europe/Zurich")  # Switzerland
+    elif organization == "kghm":
+        return pytz.timezone("Asia/Bishkek")  # Kyrgyzstan
+    elif organization == "tjhm":
+        return pytz.timezone("Asia/Dushanbe")  # Tajikistan
+    else:
+        logger.warning(f"Unknown organization: {organization}. Defaulting to UTC.")
+        return pytz.utc  # Default to UTC if organization is unknown
 
 # endregion
 
@@ -371,10 +388,11 @@ def check_local_ssh_tunnels():
 # region iEH_DB
 def check_database_access(ieh_sdk):
     """
-    Check if the backend has access to an iEasyHydro database.
+    Check if the backend has access to an iEasyHydro database. Also works for 
+    testing access to iEasyHydro HF database.
 
     Args:
-        ieh_sdk: The iEasyHydro SDK.
+        ieh_sdk: The iEasyHydro SDK object or iEasyHydro HF SDK object.
 
     Returns:
         bool: True if the backend has access to the database, False otherwise.
@@ -395,18 +413,6 @@ def check_database_access(ieh_sdk):
         return True
     except Exception as e:
         logger.debug(f"Met exception {e} when trying to access iEasyHydro database.")
-        #logger.debug(f"Trying with localhost.")
-        #try:
-        #    # Replace current host with localhost ("host.docker.internal" with "localhost")
-        #    os.environ["IEASYHYDRO_HOST"] = os.getenv("IEASYHYDRO_HOST").replace("host.docker.internal", "localhost")
-        #    # Test if this has worked:
-        #    logger.debug("IEASYHYDRO_HOST: " + os.getenv("IEASYHYDRO_HOST"))
-        #    test = ieh_sdk.get_discharge_sites()
-        #    #logger.debug(f"test[0]: {test[0]}")
-        #    logger.info(f"Access to iEasyHydro database.")
-        #except Exception as e:
-        #    logger.error(f"Error replacing host with localhost: {e}")
-        #    raise e
         # Test if there are any files in the data/daily_runoff directory
         if os.listdir(os.getenv("ieasyforecast_daily_discharge_path")):
             logger.info(f"No access to iEasyHydro database. "
@@ -579,21 +585,26 @@ def get_pentadal_forecast_sites_complicated_method(ieh_sdk, backend_has_access_t
     # Check if the environment variable is set to null
     if restrict_stations_file == "null":
         # If it is, we don't restrict the stations
-        restrict_stations = False
+        restrict_stations = []
     else:
         # Read the stations filter from the file
         config_restrict_station_file = os.path.join(
             os.getenv("ieasyforecast_configuration_path"),
             os.getenv("ieasyforecast_restrict_stations_file"))
-        with open(config_restrict_station_file, "r") as json_file:
-            restrict_stations_config = json.load(json_file)
-            restrict_stations = restrict_stations_config["stationsID"]
-            logger.warning(f"Station selection for pentadal forecasting restricted to: ...")
-            logger.warning(f"{restrict_stations}.")
-            logger.warning(f" To remove restriction set ieasyforecast_restrict_stations_file in your .env file to null.")
+        try: 
+            with open(config_restrict_station_file, "r") as json_file:
+                restrict_stations_config = json.load(json_file)
+                restrict_stations = restrict_stations_config["stationsID"]
+                logger.warning(f"Station selection for pentadal forecasting restricted to: ...")
+                logger.warning(f"{restrict_stations}.")
+                logger.warning(f" To remove restriction set ieasyforecast_restrict_stations_file in your .env file to null.")
+        except FileNotFoundError:
+            logger.warning(f"File {config_restrict_station_file} not found. No restriction on stations for forecasting.")
+            restrict_stations = []
 
     # Only keep stations that are in the file ieasyforecast_restrict_stations_file
-    stations = [station for station in stations if station in restrict_stations]
+    if restrict_stations != []:
+        stations = [station for station in stations if station in restrict_stations]
 
     logger.debug(f"   {len(stations)} station(s) selected for pentadal forecasting, namely: {stations}")
 
@@ -670,6 +681,7 @@ def get_decadal_forecast_sites_from_HF_SDK(ieh_sdk):
     Returns:
         fc_sites_decad (list): A list of Site objects for which to produce forecasts.
         site_codes_decad (list): A list of strings for site IDs for which to produce forecasts.
+        site_ids_decad (list): A list of strings for iEH HF site IDs required for API requests.
 
     """
     # Get the list of discharge sites from the iEH HF SDK
@@ -695,6 +707,9 @@ def get_decadal_forecast_sites_from_HF_SDK(ieh_sdk):
 
     logger.info(f" {len(fc_sites)} Site object(s) created for decadal forecasting, namely:\n{[site.code for site in fc_sites]}")
 
+    # Get unique site IDs
+    site_ids = [site.iehhf_site_id for site in fc_sites]
+
     # Write the updated site selection to the config file
     json_file = os.path.join(
         os.getenv("ieasyforecast_configuration_path"),
@@ -709,7 +724,7 @@ def get_decadal_forecast_sites_from_HF_SDK(ieh_sdk):
     with open(json_file, 'w') as json_file:
         json.dump(data, json_file, indent=2)
 
-    return fc_sites, site_codes
+    return fc_sites, site_codes, site_ids
 
 def get_decadal_forecast_sites_from_pentadal_sites(fc_sites_pentad=None, site_list_decad=None):
     """
@@ -740,21 +755,27 @@ def get_decadal_forecast_sites_from_pentadal_sites(fc_sites_pentad=None, site_li
     # Check if the environment variable is set to null
     if restrict_stations_file == "null":
         # If it is, we don't restrict the stations
-        restrict_stations = False
+        restrict_stations = []
     else:
         # Read the stations filter from the file
         config_restrict_station_file = os.path.join(
             os.getenv("ieasyforecast_configuration_path"),
             os.getenv("ieasyforecast_restrict_stations_decad_file"))
-        with open(config_restrict_station_file, "r") as json_file:
-            restrict_stations_config = json.load(json_file)
-            restrict_stations = restrict_stations_config["stationsID"]
-            logger.warning(f"Station selection for decadal forecasting restricted to: ...")
-            logger.warning(f"{restrict_stations}")
-            logger.warning(f"To remove restriction set ieasyforecast_restrict_stations_decad_file in your .env file to null.")
+        try: 
+            with open(config_restrict_station_file, "r") as json_file:
+                restrict_stations_config = json.load(json_file)
+                restrict_stations = restrict_stations_config["stationsID"]
+                logger.warning(f"Station selection for decadal forecasting restricted to: ...")
+                logger.warning(f"{restrict_stations}")
+                logger.warning(f"To remove restriction set ieasyforecast_restrict_stations_decad_file in your .env file to null.")
+        except FileNotFoundError:
+            logger.warning(f"File {config_restrict_station_file} not found. No restriction on stations for forecasting.")
+            restrict_stations = []
 
     # Only keep stations that are in the file ieasyforecast_restrict_stations_file
-    stations = [station for station in stations if station in restrict_stations]
+    if restrict_stations != []:
+        # Filter stations for decadal forecasting
+        stations = [station for station in stations if station in restrict_stations]
 
     # Make sure the stations for decadal forecasting are also present in the
     # stations lists for pentadal forecasting. Add them if they are not.
@@ -775,23 +796,31 @@ def get_decadal_forecast_sites_from_pentadal_sites(fc_sites_pentad=None, site_li
 
     return fc_sites_decad, stations_decad
 
-def get_pentadal_forecast_sites_from_HF_SDK(ieh_sdk):
+def get_pentadal_forecast_sites_from_HF_SDK(ieh_hf_sdk):
     """
     Gets site attributes from iEH HF and writes them to list of site objects.
 
+    Args:
+    ieh_hf_sdk: The iEasyHydro HF SDK object.
+
     Returns:
     fc_sites (list): A list of Site objects for which to produce forecasts.
-    site_codes (list): A list of strings for site IDs for which to produce forecasts.
+    site_codes (list): A list of strings for site CODEs for which to produce forecasts.
+    site_ids (list): A list of strings for iEH HF site IDs for which to produce 
+        forecasts. Required for iEH HF SDK. 
     """
     # Get the list of discharge sites from the iEH HF SDK
-    discharge_sites = ieh_sdk.get_discharge_sites()
+    discharge_sites = ieh_hf_sdk.get_discharge_sites()
     logger.debug(f" {len(discharge_sites)} discharge site(s) found in iEH HF SDK, namely:\n{[site['site_code'] for site in discharge_sites]}")
+    
     # Get the list of Site objects for pentadal or decadal forecasting
     # Note that this only returns manual stations
+    # Includes dangerous discharge
     fc_sites = fl.Site.pentad_forecast_sites_from_iEH_HF_SDK(discharge_sites)
-
+    logger.debug(f"  First fc_sites object: \n{fc_sites[0]}")
+    
     # Read virtual stations to the list
-    virtual_sites = ieh_sdk.get_virtual_sites()
+    virtual_sites = ieh_hf_sdk.get_virtual_sites()
     logger.debug(f"  {len(virtual_sites)} virtual site(s) found in iEH HF SDK, namely:\n{[site['site_code'] for site in virtual_sites]}")
     # Get list of virtual Site objects for pentadal or decadal forecasting
     virtual_sites = fl.Site.virtual_pentad_forecast_sites_from_iEH_HF_SDK(virtual_sites)
@@ -804,6 +833,9 @@ def get_pentadal_forecast_sites_from_HF_SDK(ieh_sdk):
     site_codes = list(set(site_codes))
     fc_sites = [site for site in fc_sites if site.code in site_codes]
     logger.info(f" {len(fc_sites)} Site object(s) created for pentadal forecasting, namely:\n{[site.code for site in fc_sites]}")
+
+    # Get the unique site IDs
+    site_ids = [site.iehhf_site_id for site in fc_sites]
 
     # Write the updated site selection to the config file
     json_file = os.path.join(
@@ -819,7 +851,7 @@ def get_pentadal_forecast_sites_from_HF_SDK(ieh_sdk):
     with open(json_file, 'w') as json_file:
         json.dump(data, json_file, indent=2)
 
-    return fc_sites, site_codes
+    return fc_sites, site_codes, site_ids
 
 
 # endregion

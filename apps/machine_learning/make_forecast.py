@@ -42,7 +42,7 @@
 # --------------------------------------------------------------------
 
 # Useage:
-# SAPPHIRE_OPDEV_ENV=True SAPPHIRE_MODEL_TO_USE=TFT SAPPHIRE_PREDICTION_MODE=PENTAD python make_forecast.py
+# ieasyhydroforecast_env_file_path=/path/to/.env SAPPHIRE_MODEL_TO_USE=TFT SAPPHIRE_PREDICTION_MODE=PENTAD python make_forecast.py
 # Possible values for MODEL_TO_USE: TFT, TIDE, TSMIXER
 # Possible values for MODEL_TO_USE: PENTAD, DECAD
 
