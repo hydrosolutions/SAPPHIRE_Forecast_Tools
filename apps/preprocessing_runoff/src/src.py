@@ -1716,6 +1716,14 @@ def _read_runoff_data_by_organization(organization, date_col, discharge_col, nam
             name_col=name_col,
             code_col=code_col,
             code_list=code_list)
+    elif organization == 'demo': 
+        read_data = read_all_runoff_data_from_excel(
+            date_col=date_col,
+            discharge_col=discharge_col,
+            name_col=name_col,
+            code_col=code_col,
+            code_list=code_list
+        )
     else:
         raise ValueError(f"Organization '{organization}' not recognized. "
                          f"Please set the environment variable 'ieasyhydroforecast_organization' to 'kghm' or 'tjhm'.")

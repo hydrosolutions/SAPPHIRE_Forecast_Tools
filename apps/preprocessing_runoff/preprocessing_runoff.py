@@ -84,6 +84,61 @@ logger.addHandler(file_handler)
 logger.addHandler(console_handler)
 
 
+def get_ieh_sdk():
+    """
+    Checks if an SSH tunnel is required and if it is running. Then checks if
+    access to the iEasyHydro database is available. If so, it returns the
+    iEasyHydro SDK object. If not, it returns None.
+
+    Returns:
+        IEasyHydroSDK or IEasyHydroHFSDK: The appropriate SDK object.
+        bool: True if the backend has access to the database, False otherwise.
+    """
+    # Check environment to see if an ssh tunnel is required
+    # If so, check if the tunnel is running
+    needs_ssh_tunnel = sl.check_if_ssh_tunnel_is_required()
+    if needs_ssh_tunnel:
+        # Check if the SSH tunnel is running
+        ssh_tunnel_running = sl.check_local_ssh_tunnels()
+        if not ssh_tunnel_running:
+            logger.error("SSH tunnel is not running. Please start the SSH tunnel.")
+            sys.exit(1)
+    # Check if we do have access to the database
+    if os.getenv('ieasyhydroforecast_connect_to_iEH') == 'True':
+        logger.info("Connecting to iEasyHydro SDK")
+        ieh_sdk = IEasyHydroSDK()
+        has_access_to_db = sl.check_database_access(ieh_sdk)
+        if not has_access_to_db:
+            ieh_sdk = None
+        return ieh_sdk, has_access_to_db
+    else:
+        if os.getenv('ieasyhydroforecast_organization') == 'demo': 
+            # Connection to the database is optional for demo organization
+            try: 
+                ieh_hf_sdk = IEasyHydroHFSDK()
+                has_access_to_db = sl.check_database_access(ieh_hf_sdk)
+                if not has_access_to_db:
+                    ieh_hf_sdk = None
+                return ieh_hf_sdk, has_access_to_db
+            except Exception as e:
+                logger.warning(f"Error while accessing iEasyHydro HF SDK: {e}")
+                logger.warning("Continuing without database access.")
+                ieh_hf_sdk = None
+                has_access_to_db = False
+                return ieh_hf_sdk, has_access_to_db
+        else:
+            logger.info("Connecting to iEasyHydro HF SDK")
+            try:
+                ieh_hf_sdk = IEasyHydroHFSDK()
+                has_access_to_db = sl.check_database_access(ieh_hf_sdk)
+                if not has_access_to_db:
+                    ieh_hf_sdk = None
+                return ieh_hf_sdk, has_access_to_db
+            except Exception as e:
+                logger.error(f"Error while accessing iEasyHydro HF SDK: {e}")
+                sys.exit(1)
+
+
 def main():
     """
     Pre-processing of discharge data for the SAPPHIRE forecast tools.
@@ -118,38 +173,28 @@ def main():
     # Get site information from iEH (no update of configuration files)
     if os.getenv('ieasyhydroforecast_connect_to_iEH') == 'True':
         logger.info("Reading forecast sites from iEasyHydro SDK")
-        # Check environment to see if an ssh tunnel is required
-        # If so, check if the tunnel is running
-        needs_ssh_tunnel = sl.check_if_ssh_tunnel_is_required()
-        if needs_ssh_tunnel:
-            # Check if the SSH tunnel is running
-            ssh_tunnel_running = sl.check_local_ssh_tunnels()
-            if not ssh_tunnel_running:
-                logger.error("SSH tunnel is not running. Please start the SSH tunnel.")
-                sys.exit(1)
-        # Not recently used or tested, but kept for reference
-        ieh_sdk = IEasyHydroSDK()
-        has_access_to_db = sl.check_database_access(ieh_sdk)
-        if not has_access_to_db:
-            ieh_sdk = None
-        # Get site information from iEH (no update of configuration files)
-        fc_sites_pentad, site_codes_pentad = sl.get_pentadal_forecast_sites(ieh_sdk, backend_has_access_to_db=has_access_to_db)
-        fc_sites_decad, site_codes_decad = sl.get_decadal_forecast_sites_from_pentadal_sites(
-            fc_sites_pentad, site_codes_pentad)
-        logger.info(f"... done reading forecast sites from iEasyHydro SDK")
+        try: 
+            # Get the iEasyHydro SDK object
+            ieh_sdk, has_access_to_db = get_ieh_sdk()
+            # Get site information from iEH (no update of configuration files)
+            fc_sites_pentad, site_codes_pentad = sl.get_pentadal_forecast_sites(ieh_sdk, backend_has_access_to_db=has_access_to_db)
+            fc_sites_decad, site_codes_decad = sl.get_decadal_forecast_sites_from_pentadal_sites(
+                fc_sites_pentad, site_codes_pentad)
+            logger.info(f"... done reading forecast sites from iEasyHydro SDK")
+        except Exception as e:
+            logger.error(f"Error while accessing iEasyHydro SDK: {e}")
+            raise e
     else:  # Get information from iEH HF, default behaviour
         logger.info("Reading forecast sites from iEasyHydro HF SDK")
         try: 
-            ieh_hf_sdk = IEasyHydroHFSDK()
-            has_access_to_db = sl.check_database_access(ieh_hf_sdk)
-            if not has_access_to_db:
-                ieh_hf_sdk = None
+            # Get the iEasyHydro HF SDK object
+            ieh_hf_sdk, has_access_to_db = get_ieh_sdk()
             fc_sites_pentad, site_codes_pentad, site_ids_pentad = sl.get_pentadal_forecast_sites_from_HF_SDK(ieh_hf_sdk)
             fc_sites_decad, site_codes_decad, site_ids_decad = sl.get_decadal_forecast_sites_from_HF_SDK(ieh_hf_sdk)
             logger.info(f"... done reading forecast sites from iEasyHydro HF SDK")
         except Exception as e:
             logger.error(f"Error while accessing iEasyHydro HF SDK: {e}")
-            sys.exit(1)
+            raise e
 
     # Concatenate the two lists
     fc_sites = fc_sites_pentad + fc_sites_decad

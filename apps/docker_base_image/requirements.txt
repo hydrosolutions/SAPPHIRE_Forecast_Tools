@@ -9,6 +9,7 @@ packaging>=23.0
 pandas>=2.2.2
 pytest>=8.2.0
 certifi>=2024.07.04
+pre_commit==4.2.0
 python-dateutil==2.9.0.post0
 python-dotenv==1.0.1
 pytz==2024.1
