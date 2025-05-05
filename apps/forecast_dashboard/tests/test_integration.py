@@ -14,6 +14,7 @@ LOCAL_URL = "http://localhost:5006/forecast_dashboard"
 PENTAD_URL = "https://fc.pentad.ieasyhydro.org/forecast_dashboard"
 DECAD_URL = "https://fc.decad.ieasyhydro.org/forecast_dashboard"
 SLEEP = 1
+# Needs full, absolute path
 sensitive_data_forecast_tools = "/Users/bea/hydrosolutions Dropbox/Bea martibeatrice@gmail.com/SAPPHIRE_Central_Asia_Technical_Work/data/sensitive_data_forecast_tools/"
 horizon = "decad"  # pentad or decad
 
