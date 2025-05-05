@@ -32,3 +32,27 @@ pytest
 pytest --headed
 pytest --headed -s  
 `  
+
+## Install pre-commit hooks
+Pre-commit hooks are used to automatically format code and run tests before committing changes. To install pre-commit hooks, run the following command:
+`bash
+pip install pre-commit
+`
+Then, run the following command to install the pre-commit hooks:
+`bash
+pre-commit install
+`
+
+## To run the integration tests for the dashboard: 
+Pre-commit hooks only work when the dashboard is running locally and make your commits from the terminal (not GitHub Desktop or VSCode). 
+1. Make sure the dashboard is running locally.
+2. Adapt test_integration.py to the local environment.
+3. git stash changes
+4. Commit changes
+The integration tests will run automatically before the commit is made. If any of the tests fail, the commit will be aborted and you will need to fix the issues before committing again.
+
+To commit changes without running the pre-commit hooks, use the following command:
+`bash
+git commit -m "your commit message" --no-verify
+`
+
