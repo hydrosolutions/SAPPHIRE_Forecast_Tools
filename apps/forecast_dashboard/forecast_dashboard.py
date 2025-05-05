@@ -222,6 +222,9 @@ def get_directory_mtime(directory_path):
     combined_mtime = max(mtimes) if mtimes else 0
     return combined_mtime
 
+def test_function(): 
+    print("This is a test function.")
+    return True  
 
 def load_data():
     global hydrograph_day_all, hydrograph_pentad_all, linreg_predictor, \
