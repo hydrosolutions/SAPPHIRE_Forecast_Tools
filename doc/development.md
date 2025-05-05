@@ -67,7 +67,12 @@ This document describes how to develop the application and how to add hydrologic
     - [Forecast dashboard](#forecast-dashboard)
   - [How to use private data](#how-to-use-private-data)
   - [Development workflow](#development-workflow)
-  - [Testing](#testing)
+    - [Testing](#testing)
+      - [Installing Playwright Pytest](#installing-playwright-pytest)
+      - [Running tests](#running-tests)
+      - [Install pre-commit hooks](#install-pre-commit-hooks)
+      - [To run the integration tests for the dashboard:](#to-run-the-integration-tests-for-the-dashboard)
+  - [Testing](#testing-1)
 - [Deployment](#deployment)
 
 # 1. Prerequisites
@@ -1381,6 +1386,51 @@ If you want to use private data for the development of the forecast tools, you c
 ## Development workflow
 
 Development takes place in a git branch created from the main branch. Once the development is finished, the branch is merged into the main branch. This merging requires the approval of a pull requrest by a main developer. The main branch is tested in deployment mode and then merged to the deploy branch. 3rd party users of the forecast tools are requested to pull the tested deploy branch. The deployment is done automatically using GitHub Actions. The workflow instructions can be found in .github/workflows/deploy\_\*.yml.
+
+### Testing 
+
+#### Installing Playwright Pytest
+Install the Pytest plugin:
+`bash
+conda config --add channels conda-forge
+conda config --add channels microsoft
+conda install pytest-playwright
+`
+Install the required browsers:
+`bash
+pip install --force-reinstall playwright
+python -m playwright install
+`
+#### Running tests
+In the forecast_dashboard directory, run: 
+`bash
+pytest
+pytest --headed
+pytest --headed -s  
+`  
+
+#### Install pre-commit hooks
+Pre-commit hooks are used to automatically format code and run tests before committing changes. To install pre-commit hooks, run the following command:
+`bash
+pip install pre-commit
+`
+Then, run the following command to install the pre-commit hooks:
+`bash
+pre-commit install
+`
+
+#### To run the integration tests for the dashboard: 
+Pre-commit hooks only work when the dashboard is running locally and make your commits from the terminal (not GitHub Desktop or VSCode). 
+1. Make sure the dashboard is running locally.
+2. Adapt test_integration.py to the local environment.
+3. git stash changes
+4. Commit changes
+The integration tests will run automatically before the commit is made. If any of the tests fail, the commit will be aborted and you will need to fix the issues before committing again.
+
+To commit changes without running the pre-commit hooks, use the following command:
+`bash
+git commit -m "your commit message" --no-verify
+`
 
 ## Testing
 

@@ -9,3 +9,5 @@ python-dotenv==1.0.0
 watchfiles>=0.22.0
 scipy==1.13.0
 docker==7.1.0
+playwright==1.51.0
+pytest-playwright==0.7.0

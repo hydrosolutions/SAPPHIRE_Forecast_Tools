@@ -218,4 +218,4 @@ apps/forecast_dashboard/auth_logs.csv
 apps/forecast_dashboard/current_user.csv
 apps/forecast_dashboard/user_activity.csv
 /apps/reset_forecast_run_date/tests/logs
-logs/log
+/logs
