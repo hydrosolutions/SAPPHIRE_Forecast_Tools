@@ -30,5 +30,5 @@ In the forecast_dashboard directory, run:
 `bash
 pytest
 pytest --headed
-pytest --headed -s
+pytest --headed -s  
 `  
