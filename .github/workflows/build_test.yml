@@ -347,11 +347,13 @@ jobs:
           python -m pip install git+https://github.com/hydrosolutions/ieasyhydro-python-sdk
           python -m pip install git+https://github.com/hydrosolutions/ieasyreports.git@main
           python -m pip install -e ./apps/iEasyHydroForecast
+          #pip install playwright && playwright install
       - name: Test with pytest
         working-directory: ./apps
         run: |
           # Currently no tests implemented. No tests to run for the moment
           #SAPPHIRE_TEST_ENV=True python -m pytest -s forecast_dashboard/tests/
+          #pytest forecast_dashboard/tests/test_integration.py -s --slowmo 300
 
   # Build the forecast dashboard image
   build_dashboard:
