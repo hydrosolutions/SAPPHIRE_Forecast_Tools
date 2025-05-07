@@ -29,6 +29,13 @@ from ieasyhydro_sdk.sdk import IEasyHydroSDK, IEasyHydroHFSDK
 # Configure logging (optional, but good practice)
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+# Add a file handler to log to a file
+log_file_path = os.path.join(script_dir, 'dataprep_test.log')
+file_handler = logging.FileHandler(log_file_path)
+file_handler.setLevel(logging.INFO)
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+file_handler.setFormatter(formatter)
+logger.addHandler(file_handler)
 
 def get_ieh_sdk():
     """
@@ -40,6 +47,10 @@ def get_ieh_sdk():
         IEasyHydroSDK or IEasyHydroHFSDK: The appropriate SDK object.
         bool: True if the backend has access to the database, False otherwise.
     """
+    # Add debug logging to verify which organization we're using
+    org = os.getenv('ieasyhydroforecast_organization')
+    logger.info(f"Getting SDK for organization: {org}")
+    
     # Check environment to see if an ssh tunnel is required
     # If so, check if the tunnel is running
     logger.info("Checking if SSH tunnel is required...")
@@ -61,7 +72,7 @@ def get_ieh_sdk():
             ieh_sdk = None
         return ieh_sdk, has_access_to_db
     else:
-        if os.getenv('ieasyhydroforecast_organization') == 'demo': 
+        if os.getenv('ieasyhydroforecast_organization') == 'demo' or os.getenv('ieasyhydroforecast_organization') == 'tjhm': 
             # Connection to the database is optional for demo organization
             try: 
                 ieh_hf_sdk = IEasyHydroHFSDK()
@@ -87,7 +98,6 @@ def get_ieh_sdk():
                 logger.error(f"Error while accessing iEasyHydro HF SDK: {e}")
                 raise e
     
-
 def compare_dataframes(df1, df2):
     """
     Compares two pandas DataFrames and returns True if they are equal, False otherwise.
@@ -125,7 +135,11 @@ def compare_lists(list1, list2):
     Check if list2 is a subset of list1.
     """
     # check if list 1 is empty
-    if not list1:
+    if hasattr(list1, 'size'):  # Check if it's a NumPy array
+        if list1.size == 0:
+            logger.error("List1 is empty")
+            return False
+    elif not list1:  # For regular Python lists
         logger.error("List1 is empty")
         return False
     # Check if all elements in list2 are present in list1
@@ -235,27 +249,65 @@ def test_data_retrieval(org, connect_to_ieh, expected_success):
         logger.exception(f"An error occurred during the test: {e}")
         return False
 
+def test_validation_of_env_variables(org, expected_success):
+    """
+    Tests the validation of environment variables.
+    """
+    try:
+        # Validate environment variables
+        validation = sl.validate_environment_variables()
+        if validation is not None:
+            logger.error("Environment variables validation failed.")
+            return False
+
+        # Check if the organization is set correctly
+        if os.getenv('ieasyhydroforecast_organization') != org:
+            logger.error(f"Expected organization: {org}, but got: {os.getenv('ieasyhydroforecast_organization')}")
+            return False
+
+        # Check if the connection to iEH is set correctly
+        if os.getenv('ieasyhydroforecast_connect_to_iEH') == 'True' and expected_success:
+            logger.info("Environment variables validation passed.")
+            return True
+        else:
+            logger.info("Environment variables validation passed, but connection to iEH is not expected.")
+            return True
+        
+    except EnvironmentError as e:
+        # For tjhm with iEH=True, this error is expected
+        if not expected_success:
+            logger.info(f"Expected validation failure: {e}")
+            return True  # Return true because this failure was expected
+        else:
+            logger.error(f"Unexpected validation error: {e}")
+            return False
+
+    except Exception as e:
+        logger.error(f"An error occurred during environment variable validation: {e}")
+        return False
+
 if __name__ == "__main__":
     
     # Configure the test environment
     # Add boolean values to indicate if we expect the test to be successful or not
     test_organizations = {
         'kghm': {'ieh': True, 'iehhf': True},
-        #'tjhm': {'ieh': False, 'iehhf': True},  # Only HF SDK is available
-        #'demo': {'ieh': False, 'iehhf': False}
+        'tjhm': {'ieh': False, 'iehhf': True},  # Only HF SDK is available
+        'demo': {'ieh': False, 'iehhf': False}
     }
     # EDIT PATHS TO ENV FILES
     # These paths should point to the .env files for each organization
     test_env_paths = {
         'kghm': os.path.expanduser('~/Documents/GitHub/sensitive_data_forecast_tools/config/.env_develop_kghm'), 
-        #'tjhm': os.path.expanduser('~/Documents/GitHub/taj_data_forecast_tools/config/.env_develop_tjhm'),
-        #'demo': os.path.expanduser('../../config/.env')
+        'tjhm': os.path.expanduser('~/Documents/GitHub/taj_data_forecast_tools/config/.env_develop_tjhm'),
+        'demo': os.path.expanduser('../../config/.env')
     }
 
     overall_test_result = True  # Initialize overall test result
     
     for org, expected_success in test_organizations.items():
-        logger.info(f"==========================")
+        logger.info("\n")
+        logger.info("="*60)
         logger.info(f"Testing data retrieval for organization: {org}")
         logger.info(f"environment file path: {test_env_paths[org]}")
         
@@ -279,9 +331,10 @@ if __name__ == "__main__":
             os.environ['ieasyforecast_daily_discharge_path'] = os.path.join(script_dir, '..', original_ieasyforecast_daily_discharge_path)
 
         # Run the test for iEH
-        logger.info(f"Test connecting to iEH")
+        logger.info(f"== Test connecting to iEH ==")
         os.environ['ieasyhydroforecast_connect_to_iEH'] = 'True'
-        validation = sl.validate_environment_variables()
+        os.environ['ieasyhydroforecast_ssh_to_iEH'] = 'True'
+        validation = test_validation_of_env_variables(org, expected_success['ieh'])
         if not validation:
             logger.error("Environment variables validation failed.")
             overall_test_result = False
@@ -292,9 +345,10 @@ if __name__ == "__main__":
             overall_test_result = False
 
         # Run the test for iEH HF
-        logger.info(f"Test connecting to iEH HF")
+        logger.info(f"== Test connecting to iEH HF ==")
         os.environ['ieasyhydroforecast_connect_to_iEH'] = 'False'
-        validation = sl.validate_environment_variables()
+        os.environ['ieasyhydroforecast_ssh_to_iEH'] = 'False'
+        validation = test_validation_of_env_variables(org, expected_success['iehhf'])
         if not validation:
             logger.error("Environment variables validation failed.")
             overall_test_result = False
@@ -304,27 +358,8 @@ if __name__ == "__main__":
             logger.error(f"iEH HF test failed for organization: {org}")
             overall_test_result = False
 
-        # Restore environment variables
-        if original_ieasyhydroforecast_organization is not None:
-            os.environ['ieasyhydroforecast_organization'] = original_ieasyhydroforecast_organization
-        else:
-            del os.environ['ieasyhydroforecast_organization']
-        if original_ieasyhydroforecast_env_file_path is not None:
-            os.environ['ieasyhydroforecast_env_file_path'] = original_ieasyhydroforecast_env_file_path
-        else:
-            del os.environ['ieasyhydroforecast_env_file_path']
-        if original_ieasyforecast_configuration_path is not None:
-            os.environ['ieasyforecast_configuration_path'] = original_ieasyforecast_configuration_path
-        else:
-            del os.environ['ieasyforecast_configuration_path']
-        if original_ieasyforecast_daily_discharge_path is not None:
-            os.environ['ieasyforecast_daily_discharge_path'] = original_ieasyforecast_daily_discharge_path
-        else:
-            del os.environ['ieasyforecast_daily_discharge_path']
-        if original_ieasyhydroforecast_connect_to_iEH is not None:
-            os.environ['ieasyhydroforecast_connect_to_iEH'] = original_ieasyhydroforecast_connect_to_iEH
-        else:
-            del os.environ['ieasyhydroforecast_connect_to_iEH']
+        # Clear the environment variables
+        os.environ.clear()
 
     if overall_test_result:
         logger.info("All tests passed!")

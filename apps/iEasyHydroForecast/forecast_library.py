@@ -1887,61 +1887,66 @@ def calculate_skill_metrics_pentad(
             skill_metrics_df_ensemble_avg,
             observed[['code', 'date', 'discharge_avg', 'delta']],
             on=['code', 'date'])
-        #print("DEBUG: ensemble_skill_metrics_df\n", ensemble_skill_metrics_df.columns)
-        #print("DEBUG: ensemble_skill_metrics_df\n", ensemble_skill_metrics_df.head(20))
+        print("DEBUG: ensemble_skill_metrics_df\n", ensemble_skill_metrics_df.columns)
+        print("DEBUG: ensemble_skill_metrics_df\n", ensemble_skill_metrics_df.head(20))
 
-        ensemble_skill_stats = ensemble_skill_metrics_df. \
-            groupby(['pentad_in_year', 'code', 'model_long', 'model_short'])[ensemble_skill_metrics_df.columns]. \
-            apply(
-                sdivsigma_nse,
-                observed_col='discharge_avg',
-                simulated_col='forecasted_discharge'). \
-            reset_index()
-        #print("DEBUG: ensemble_skill_stats\n", ensemble_skill_stats.columns)
-        #print("DEBUG: ensemble_skill_stats\n", ensemble_skill_stats.head(20))
+        number_of_models = ensemble_skill_metrics_df['model_long'].nunique()
+        print("DEBUG: number_of_models\n", number_of_models)
+        if number_of_models > 1:
+            ensemble_skill_stats = ensemble_skill_metrics_df. \
+                groupby(['pentad_in_year', 'code', 'model_long', 'model_short'])[ensemble_skill_metrics_df.columns]. \
+                apply(
+                    sdivsigma_nse,
+                    observed_col='discharge_avg',
+                    simulated_col='forecasted_discharge'). \
+                reset_index()
+            #print("DEBUG: ensemble_skill_stats\n", ensemble_skill_stats.columns)
+            #print("DEBUG: ensemble_skill_stats\n", ensemble_skill_stats.head(20))
+            
+            ensemble_mae_stats = ensemble_skill_metrics_df. \
+                groupby(['pentad_in_year', 'code', 'model_long', 'model_short'])[ensemble_skill_metrics_df.columns]. \
+                apply(
+                    mae,
+                    observed_col='discharge_avg',
+                    simulated_col='forecasted_discharge').\
+                reset_index()
 
-        ensemble_mae_stats = ensemble_skill_metrics_df. \
-            groupby(['pentad_in_year', 'code', 'model_long', 'model_short'])[ensemble_skill_metrics_df.columns]. \
-            apply(
-                mae,
-                observed_col='discharge_avg',
-                simulated_col='forecasted_discharge').\
-            reset_index()
+            ensemble_accuracy_stats = ensemble_skill_metrics_df. \
+                groupby(['pentad_in_year', 'code', 'model_long', 'model_short'])[ensemble_skill_metrics_df.columns]. \
+                apply(
+                    forecast_accuracy_hydromet,
+                    observed_col='discharge_avg',
+                    simulated_col='forecasted_discharge',
+                    delta_col='delta').\
+                reset_index()
 
-        ensemble_accuracy_stats = ensemble_skill_metrics_df. \
-            groupby(['pentad_in_year', 'code', 'model_long', 'model_short'])[ensemble_skill_metrics_df.columns]. \
-            apply(
-                forecast_accuracy_hydromet,
-                observed_col='discharge_avg',
-                simulated_col='forecasted_discharge',
-                delta_col='delta').\
-            reset_index()
+            ensemble_skill_stats = pd.merge(
+                ensemble_skill_stats, ensemble_mae_stats, on=['pentad_in_year', 'code', 'model_long', 'model_short'])
+            ensemble_skill_stats = pd.merge(
+                ensemble_skill_stats, ensemble_accuracy_stats, on=['pentad_in_year', 'code', 'model_long', 'model_short'])
 
-        ensemble_skill_stats = pd.merge(
-            ensemble_skill_stats, ensemble_mae_stats, on=['pentad_in_year', 'code', 'model_long', 'model_short'])
-        ensemble_skill_stats = pd.merge(
-            ensemble_skill_stats, ensemble_accuracy_stats, on=['pentad_in_year', 'code', 'model_long', 'model_short'])
+            # Append the ensemble skill metrics to the skill metrics
+            skill_stats = pd.concat([skill_stats, ensemble_skill_stats], ignore_index=True)
 
-        # Append the ensemble skill metrics to the skill metrics
-        skill_stats = pd.concat([skill_stats, ensemble_skill_stats], ignore_index=True)
+            # Add ensemble mean forecasts to simulated dataframe
+            #logger.debug(f"DEBUG: simulated.columns\n{simulated.columns}")
+            #logger.debug(f"DEBUG: simulated.head()\n{simulated.head(5)}")
+            #logger.debug(f"DEBUG: unique models in simulated: {simulated['model_long'].unique()}")
+            #print(f"DEBUG: simulated.columns\n{ensemble_skill_metrics_df.columns}")
+            #print("DEBUG: head of ensemble_skill_metrics_df: \n", ensemble_skill_metrics_df.head(5))
+            #print("DEBUG: unique models in ensemble_skill_metrics_df: ", ensemble_skill_metrics_df['model_long'].unique())
 
-        # Add ensemble mean forecasts to simulated dataframe
-        #logger.debug(f"DEBUG: simulated.columns\n{simulated.columns}")
-        #logger.debug(f"DEBUG: simulated.head()\n{simulated.head(5)}")
-        #logger.debug(f"DEBUG: unique models in simulated: {simulated['model_long'].unique()}")
-        #print(f"DEBUG: simulated.columns\n{ensemble_skill_metrics_df.columns}")
-        #print("DEBUG: head of ensemble_skill_metrics_df: \n", ensemble_skill_metrics_df.head(5))
-        #print("DEBUG: unique models in ensemble_skill_metrics_df: ", ensemble_skill_metrics_df['model_long'].unique())
+            # Calculate pentad in month (add 1 day to date)
+            ensemble_skill_metrics_df['pentad_in_month'] = (ensemble_skill_metrics_df['date']+dt.timedelta(days=1.0)).apply(tl.get_pentad)
 
-        # Calculate pentad in month (add 1 day to date)
-        ensemble_skill_metrics_df['pentad_in_month'] = (ensemble_skill_metrics_df['date']+dt.timedelta(days=1.0)).apply(tl.get_pentad)
-
-        # Join the two dataframes
-        joint_forecasts = pd.merge(
-            simulated,
-            ensemble_skill_metrics_df[['code', 'date', 'pentad_in_month', 'pentad_in_year', 'forecasted_discharge', 'model_long', 'model_short']],
-            on=['code', 'date', 'pentad_in_month', 'pentad_in_year', 'model_long', 'model_short', 'forecasted_discharge'],
-            how='outer')
+            # Join the two dataframes
+            joint_forecasts = pd.merge(
+                simulated,
+                ensemble_skill_metrics_df[['code', 'date', 'pentad_in_month', 'pentad_in_year', 'forecasted_discharge', 'model_long', 'model_short']],
+                on=['code', 'date', 'pentad_in_month', 'pentad_in_year', 'model_long', 'model_short', 'forecasted_discharge'],
+                how='outer')
+        else: 
+            joint_forecasts = simulated.copy()
 
         #print(f"DEBUG: joint_forecasts.columns\n{joint_forecasts.columns}")
         #print(f"DEBUG: joint_forecasts.head()\n{joint_forecasts.head(5)}")
@@ -2188,58 +2193,64 @@ def calculate_skill_metrics_decade(
         #print("DEBUG: ensemble_skill_metrics_df\n", ensemble_skill_metrics_df.columns)
         #print("DEBUG: ensemble_skill_metrics_df\n", ensemble_skill_metrics_df.head(20))
 
-        ensemble_skill_stats = ensemble_skill_metrics_df. \
-            groupby(['decad_in_year', 'code', 'model_long', 'model_short'])[ensemble_skill_metrics_df.columns]. \
-            apply(
-                sdivsigma_nse,
-                observed_col='discharge_avg',
-                simulated_col='forecasted_discharge'). \
-            reset_index()
-        #print("DEBUG: ensemble_skill_stats\n", ensemble_skill_stats.columns)
-        #print("DEBUG: ensemble_skill_stats\n", ensemble_skill_stats.head(20))
+        number_of_models = ensemble_skill_metrics_df['model_long'].nunique()
+        print("DEBUG: number_of_models\n", number_of_models)
+        if number_of_models > 1:
+            ensemble_skill_stats = ensemble_skill_metrics_df. \
+                groupby(['decad_in_year', 'code', 'model_long', 'model_short'])[ensemble_skill_metrics_df.columns]. \
+                apply(
+                    sdivsigma_nse,
+                    observed_col='discharge_avg',
+                    simulated_col='forecasted_discharge'). \
+                reset_index()
+            #print("DEBUG: ensemble_skill_stats\n", ensemble_skill_stats.columns)
+            #print("DEBUG: ensemble_skill_stats\n", ensemble_skill_stats.head(20))
 
-        ensemble_mae_stats = ensemble_skill_metrics_df. \
-            groupby(['decad_in_year', 'code', 'model_long', 'model_short'])[ensemble_skill_metrics_df.columns]. \
-            apply(
-                mae,
-                observed_col='discharge_avg',
-                simulated_col='forecasted_discharge').\
-            reset_index()
+            ensemble_mae_stats = ensemble_skill_metrics_df. \
+                groupby(['decad_in_year', 'code', 'model_long', 'model_short'])[ensemble_skill_metrics_df.columns]. \
+                apply(
+                    mae,
+                    observed_col='discharge_avg',
+                    simulated_col='forecasted_discharge').\
+                reset_index()
 
-        ensemble_accuracy_stats = ensemble_skill_metrics_df. \
-            groupby(['decad_in_year', 'code', 'model_long', 'model_short'])[ensemble_skill_metrics_df.columns]. \
-            apply(
-                forecast_accuracy_hydromet,
-                observed_col='discharge_avg',
-                simulated_col='forecasted_discharge',
-                delta_col='delta').\
-            reset_index()
+            ensemble_accuracy_stats = ensemble_skill_metrics_df. \
+                groupby(['decad_in_year', 'code', 'model_long', 'model_short'])[ensemble_skill_metrics_df.columns]. \
+                apply(
+                    forecast_accuracy_hydromet,
+                    observed_col='discharge_avg',
+                    simulated_col='forecasted_discharge',
+                    delta_col='delta').\
+                reset_index()
 
-        ensemble_skill_stats = pd.merge(
-            ensemble_skill_stats, ensemble_mae_stats, on=['decad_in_year', 'code', 'model_long', 'model_short'])
-        ensemble_skill_stats = pd.merge(
-            ensemble_skill_stats, ensemble_accuracy_stats, on=['decad_in_year', 'code', 'model_long', 'model_short'])
+            ensemble_skill_stats = pd.merge(
+                ensemble_skill_stats, ensemble_mae_stats, on=['decad_in_year', 'code', 'model_long', 'model_short'])
+            ensemble_skill_stats = pd.merge(
+                ensemble_skill_stats, ensemble_accuracy_stats, on=['decad_in_year', 'code', 'model_long', 'model_short'])
 
-        # Append the ensemble skill metrics to the skill metrics
-        skill_stats = pd.concat([skill_stats, ensemble_skill_stats], ignore_index=True)
+            # Append the ensemble skill metrics to the skill metrics
+            skill_stats = pd.concat([skill_stats, ensemble_skill_stats], ignore_index=True)
 
-        # Add ensemble mean forecasts to simulated dataframe
-        logger.debug(f"DEBUG: simulated.columns\n{simulated.columns}")
-        logger.debug(f"DEBUG: simulated.tail()\n{simulated.head(5)}")
-        #logger.debug(f"DEBUG: unique models in simulated: {simulated['model_long'].unique()}")
-        print(f"DEBUG: simulated.columns\n{ensemble_skill_metrics_df.columns}")
-        print("DEBUG: head of ensemble_skill_metrics_df: \n", ensemble_skill_metrics_df.head(5))
-        #print("DEBUG: unique models in ensemble_skill_metrics_df: ", ensemble_skill_metrics_df['model_long'].unique())
+            # Add ensemble mean forecasts to simulated dataframe
+            logger.debug(f"DEBUG: simulated.columns\n{simulated.columns}")
+            logger.debug(f"DEBUG: simulated.tail()\n{simulated.head(5)}")
+            #logger.debug(f"DEBUG: unique models in simulated: {simulated['model_long'].unique()}")
+            print(f"DEBUG: simulated.columns\n{ensemble_skill_metrics_df.columns}")
+            print("DEBUG: head of ensemble_skill_metrics_df: \n", ensemble_skill_metrics_df.head(5))
+            #print("DEBUG: unique models in ensemble_skill_metrics_df: ", ensemble_skill_metrics_df['model_long'].unique())
 
-        # Calculate pentad in month (add 1 day to date)
-        ensemble_skill_metrics_df['decad_in_month'] = (ensemble_skill_metrics_df['date']+dt.timedelta(days=1.0)).apply(tl.get_decad_in_month)
+            # Calculate pentad in month (add 1 day to date)
+            ensemble_skill_metrics_df['decad_in_month'] = (ensemble_skill_metrics_df['date']+dt.timedelta(days=1.0)).apply(tl.get_decad_in_month)
 
-        # Join the two dataframes
-        joint_forecasts = pd.merge(
-            simulated,
-            ensemble_skill_metrics_df[['code', 'date', 'decad_in_month', 'decad_in_year', 'forecasted_discharge', 'model_long', 'model_short']],
-            on=['code', 'date', 'decad_in_month', 'decad_in_year', 'model_long', 'model_short', 'forecasted_discharge'],
-            how='outer')
+            # Join the two dataframes
+            joint_forecasts = pd.merge(
+                simulated,
+                ensemble_skill_metrics_df[['code', 'date', 'decad_in_month', 'decad_in_year', 'forecasted_discharge', 'model_long', 'model_short']],
+                on=['code', 'date', 'decad_in_month', 'decad_in_year', 'model_long', 'model_short', 'forecasted_discharge'],
+                how='outer')
+
+        else:
+            joint_forecasts = simulated.copy()
 
         #print(f"DEBUG: joint_forecasts.columns\n{joint_forecasts.columns}")
         #print(f"DEBUG: joint_forecasts.head()\n{joint_forecasts.head(5)}")
