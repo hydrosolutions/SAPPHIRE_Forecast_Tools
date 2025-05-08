@@ -3253,8 +3253,8 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector, d
             print("In save_to_csv: Initializing Docker client...")
             try: 
                 print("DOCKER_HOST:", os.environ.get("DOCKER_HOST"))
-                #client = docker.from_env()
-                client = docker.DockerClient(base_url='unix:///var/run/docker.sock')
+                client = docker.from_env()
+                #client = docker.DockerClient(base_url='unix:///var/run/docker.sock')
                 print("#####################################")
                 print(client.ping())
                 print("Successfully connected to Docker daemon via Unix socket.")
@@ -3362,8 +3362,8 @@ def create_reload_button():
             print("In create_reload_button: Checking if containers are running...")
             try: 
                 print("DOCKER_HOST:", os.environ.get("DOCKER_HOST"))
-                #client = docker.from_env()
-                client = docker.DockerClient(base_url='unix:///var/run/docker.sock')
+                client = docker.from_env()
+                #client = docker.DockerClient(base_url='unix:///var/run/docker.sock')
                 print("#####################################")
                 print(client.ping())
                 print("Successfully connected to Docker daemon via Unix socket.")
@@ -3443,8 +3443,8 @@ def create_reload_button():
                 # Initialize Docker client
                 try: 
                     print("DOCKER_HOST:", os.environ.get("DOCKER_HOST"))
-                    #client = docker.from_env()
-                    client = docker.DockerClient(base_url='unix:///var/run/docker.sock')
+                    client = docker.from_env()
+                    #client = docker.DockerClient(base_url='unix:///var/run/docker.sock')
                     print("#####################################")
                     print(client.ping())
                     print("Successfully connected to Docker daemon via Unix socket.")
