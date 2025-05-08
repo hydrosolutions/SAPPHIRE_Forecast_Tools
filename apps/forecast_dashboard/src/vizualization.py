@@ -3250,7 +3250,10 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector, d
             bind_volume_path_bin = get_bind_path(env.get('ieasyhydroforecast_bin_path'))
 
             # Initialize Docker client
+            print("In save_to_csv: Initializing Docker client...")
             client = docker.from_env()
+            print("#####################################")
+            print(client.ping())
 
             # Define environment variables
             environment = [
@@ -3348,7 +3351,10 @@ def create_reload_button():
     # Function to check if any containers are running
     def check_containers_running():
         try:
+            print("In create_reload_button: Checking if containers are running...")
             client = docker.from_env()
+            print("#####################################")
+            print(client.ping())
             container_names = [
                 "preprunoff",
                 "reset_rundate",
@@ -3418,7 +3424,10 @@ def create_reload_button():
                 mode = horizon.upper()
 
                 # Initialize Docker client
+                print("In create_reload_button: Initializing Docker client...")
                 client = docker.from_env()
+                print("#####################################")
+                print(client.ping())
 
                 # Define environment variables
                 environment = [
