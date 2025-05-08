@@ -326,13 +326,16 @@ def read_hydrograph_day_data_for_pentad_forecasting(iahhf_selected_stations, fil
 
     # Read hydrograph data with daily values
     hydrograph_day_all = read_hydrograph_day_file(file_mtime)
+    #print(f"DEBUG: read_hydrograph_day_data_for_pentad_forecasting: hydrograph_day_all:\n{hydrograph_day_all.head()}")
 
     # if we get data from iEasyHydro, we do the following
     if iahhf_selected_stations is not None:
+        print(f"DEBUG: read_hydrograph_day_data_for_pentad_forecasting: iahhf_selected_stations: {iahhf_selected_stations}")    
         # Filter the data frame for the selected stations
         hydrograph_day_all = filter_dataframe_for_selected_stations(
             hydrograph_day_all, "code", iahhf_selected_stations)
     else:
+        print(f"DEBUG: read_hydrograph_day_data_for_pentad_forecasting: no iahhf_selected_stations")
         # Get station ids of stations selected for forecasting
         filepath = os.path.join(
             os.getenv("ieasyforecast_configuration_path"),
@@ -354,8 +357,8 @@ def read_hydrograph_day_data_for_pentad_forecasting(iahhf_selected_stations, fil
                 # Filter data for restricted stations
                 hydrograph_day_all = hydrograph_day_all[hydrograph_day_all["code"].isin(restricted_stations)]
 
-    # print(f"DEBUG: read_hydrograph_day_data_for_pentad_forecasting: selected_stations: {iahhf_selected_stations}")
-    # print(f"DEBUG: hydrograph_day_all:\n{hydrograph_day_all.head()}")
+    #print(f"DEBUG: read_hydrograph_day_data_for_pentad_forecasting: selected_stations: {iahhf_selected_stations}")
+    #print(f"DEBUG: hydrograph_day_all:\n{hydrograph_day_all.head()}")
 
     return hydrograph_day_all
 

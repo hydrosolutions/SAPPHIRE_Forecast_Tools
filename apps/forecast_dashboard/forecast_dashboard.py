@@ -212,6 +212,23 @@ bulletin_download_panel = downloader.panel()
 
 # region load_data
 
+# Find out which forecasts have to be displayed
+display_ML_forecasts = os.getenv('ieasyhydroforecast_run_ML_models', 'False')
+display_CM_forecasts = os.getenv('ieasyhydroforecast_run_CM_models', 'False')
+
+# If both display_ML_forecasts and display_CM_forecasts are False, we don't need 
+# to display data gateway results. 
+if not display_ML_forecasts and not display_CM_forecasts:
+    display_weather_data = False
+if display_ML_forecasts == 'False' and display_CM_forecasts == 'False':
+    display_weather_data = False
+else:
+    display_weather_data = True
+
+print(f"Display ML forecasts: {display_ML_forecasts}")
+print(f"Display CM forecasts: {display_CM_forecasts}")
+print(f"Display weather data: {display_weather_data}")
+
 def get_directory_mtime(directory_path):
     mtimes = []
     for root, dirs, files in os.walk(directory_path):
@@ -255,42 +272,47 @@ def load_data():
         os.getenv("ieasyforecast_pentadal_skill_metrics_file"))
     forecast_stats_file_mtime = os.path.getmtime(forecast_stats_file)
 
-    # For rram and ml forecasts, get the directory modification times
-    rram_file_path = os.getenv('ieasyhydroforecast_PATH_TO_RESULT')
-    rram_file_mtime = get_directory_mtime(rram_file_path)
+    if display_CM_forecasts == True:
+        # For rram and ml forecasts, get the directory modification times
+        rram_file_path = os.getenv('ieasyhydroforecast_PATH_TO_RESULT')
+        rram_file_mtime = get_directory_mtime(rram_file_path)
 
-    ml_forecast_dir = os.path.join(
-        os.getenv("ieasyforecast_intermediate_data_path"),
-        os.getenv("ieasyhydroforecast_OUTPUT_PATH_DISCHARGE"))
-    ml_forecast_mtime = get_directory_mtime(ml_forecast_dir)
+    if display_ML_forecasts == True:
+        ml_forecast_dir = os.path.join(
+            os.getenv("ieasyforecast_intermediate_data_path"),
+            os.getenv("ieasyhydroforecast_OUTPUT_PATH_DISCHARGE"))
+        ml_forecast_mtime = get_directory_mtime(ml_forecast_dir)
 
-    # Rainfall and temperature data files
-    p_file = os.path.join(
-        os.getenv('ieasyhydroforecast_PATH_TO_HIND'),
-        os.getenv('ieasyhydroforecast_FILE_CF_HIND_P'))
-    t_file = os.path.join(
-        os.getenv('ieasyhydroforecast_PATH_TO_HIND'),
-        os.getenv('ieasyhydroforecast_FILE_CF_HIND_T')
-    )
-    # replace .csv with _dashboard.csv
-    p_file = p_file.replace('.csv', '_dashboard.csv')
-    t_file = t_file.replace('.csv', '_dashboard.csv')
-    p_file_mtime = os.path.getmtime(p_file)
-    t_file_mtime = os.path.getmtime(t_file)
+    if display_weather_data == True:
+        # Rainfall and temperature data files
+        p_file = os.path.join(
+            os.getenv('ieasyhydroforecast_PATH_TO_HIND'),
+            os.getenv('ieasyhydroforecast_FILE_CF_HIND_P'))
+        t_file = os.path.join(
+            os.getenv('ieasyhydroforecast_PATH_TO_HIND'),
+            os.getenv('ieasyhydroforecast_FILE_CF_HIND_T')
+        )
+        # replace .csv with _dashboard.csv
+        p_file = p_file.replace('.csv', '_dashboard.csv')
+        t_file = t_file.replace('.csv', '_dashboard.csv')
+        p_file_mtime = os.path.getmtime(p_file)
+        t_file_mtime = os.path.getmtime(t_file)
 
     # Hydrograph day and pentad data
     hydrograph_day_all = processing.read_hydrograph_day_data_for_pentad_forecasting(
         stations_iehhf, hydrograph_day_file_mtime)
     # print head and tail of hydrograph_day_all where code == 15194
-    print(f"DEBUG: forecast_dashboard.py: hydrograph_day_all head:\n{hydrograph_day_all[hydrograph_day_all['code'] == '15194'].head()}")
-    print(f"DEBUG: forecast_dashboard.py: hydrograph_day_all tail:\n{hydrograph_day_all[hydrograph_day_all['code'] == '15194'].tail()}")
+    #print(f"DEBUG: forecast_dashboard.py: hydrograph_day_all head:\n{hydrograph_day_all[hydrograph_day_all['code'] == '15194'].head()}")
+    #print(f"DEBUG: forecast_dashboard.py: hydrograph_day_all tail:\n{hydrograph_day_all[hydrograph_day_all['code'] == '15194'].tail()}")
 
     hydrograph_pentad_all = processing.read_hydrograph_pentad_data_for_pentad_forecasting(
         stations_iehhf, hydrograph_pentad_file_mtime)
 
     # Daily forecasts from RRAM & ML models
-    rram_forecast = processing.read_rram_forecast_data(rram_file_mtime)
-    ml_forecast = processing.read_ml_forecast_data(ml_forecast_mtime)
+    if display_CM_forecasts == True:
+        rram_forecast = processing.read_rram_forecast_data(rram_file_mtime)
+    if display_ML_forecasts == True:
+        ml_forecast = processing.read_ml_forecast_data(ml_forecast_mtime)
 
     # Pentadal forecast data
     # - linreg_predictor: for displaying predictor in predictor tab
@@ -346,8 +368,14 @@ def load_data():
     #print(f"DEBUG: linreg_predictor.columns: {linreg_predictor.columns}")
     #print(f"DEBUG: linreg_predictor: {linreg_predictor.tail()}")
     forecasts_all = processing.add_labels_to_forecast_pentad_df(forecasts_all, all_stations)
-    rram_forecast = processing.add_labels_to_forecast_pentad_df(rram_forecast, all_stations)
-    ml_forecast = processing.add_labels_to_forecast_pentad_df(ml_forecast, all_stations)
+    if display_CM_forecasts == True: 
+        rram_forecast = processing.add_labels_to_forecast_pentad_df(rram_forecast, all_stations)
+    else: 
+        rram_forecast = None
+    if display_ML_forecasts == True:
+        ml_forecast = processing.add_labels_to_forecast_pentad_df(ml_forecast, all_stations)
+    else: 
+        ml_forecast = None
 
     # Replace model names with translation strings
     forecasts_all = processing.internationalize_forecast_model_names(_, forecasts_all)
@@ -368,9 +396,10 @@ def load_data():
         how='left',
         suffixes=('', '_stats'))
 
-    # Rainfall
-    rain = processing.read_rainfall_data(p_file_mtime)  # (max(hind_p_file_mtime, cf_p_file_mtime))
-    temp = processing.read_temperature_data(t_file_mtime)  # max(hind_t_file_mtime, cf_t_file_mtime))
+    # weather data
+    if display_weather_data == True:
+        rain = processing.read_rainfall_data(p_file_mtime)  # (max(hind_p_file_mtime, cf_p_file_mtime))
+        temp = processing.read_temperature_data(t_file_mtime)  # max(hind_t_file_mtime, cf_t_file_mtime))
 
 stations_iehhf = None
 
@@ -1731,8 +1760,9 @@ def update_active_tab(event):
     if active_tab == 0 and latest_predictors != station.value:
         latest_predictors = station.value
         daily_hydrograph_plot.object = viz.plot_daily_hydrograph_data(_, hydrograph_day_all, linreg_predictor, station.value, date_picker.value)
-        daily_rainfall_plot.object = viz.plot_daily_rainfall_data(_, rain, station.value, date_picker.value, linreg_predictor)
-        daily_temperature_plot.object = viz.plot_daily_temperature_data(_, temp, station.value, date_picker.value, linreg_predictor)
+        if display_weather_data == True: 
+            daily_rainfall_plot.object = viz.plot_daily_rainfall_data(_, rain, station.value, date_picker.value, linreg_predictor)
+            daily_temperature_plot.object = viz.plot_daily_temperature_data(_, temp, station.value, date_picker.value, linreg_predictor)
     elif active_tab == 1 and latest_forecast != station.value:
         latest_forecast = station.value
         plot = viz.select_and_plot_data(_, linreg_predictor, station.value, pentad_selector.value, decad_selector.value, SAVE_DIRECTORY)

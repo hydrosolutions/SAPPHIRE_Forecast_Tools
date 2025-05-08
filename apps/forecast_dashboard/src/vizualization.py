@@ -1996,42 +1996,44 @@ def plot_pentad_forecast_hydrograph_data_v2(_, hydrograph_day_all, linreg_predic
     forecasts_current = forecasts[forecasts['date'] == pd.to_datetime((title_date) + dt.timedelta(days=1))]
     forecasts_past = forecasts[forecasts['date'] <= pd.to_datetime((title_date) + dt.timedelta(days=1))]
 
-    # Filter for the current station (Only few stations have rram forecasts)
-    current_rram_forecasts = rram_forecast[rram_forecast['station_labels'] == station].copy()
-    # Filter for the latest forecast
-    latest_rram_forecast = current_rram_forecasts[
-        current_rram_forecasts['forecast_date'] == current_rram_forecasts['forecast_date'].max()]
-    # Rename columns in latest_rram_forecast to fit forecasts_current
-    latest_rram_forecast = latest_rram_forecast.rename(
-        columns={'Q25': 'Lower bound',
-                 'Q75': 'Upper bound',
-                 'Q50': 'E[Q]',
-                 'model_short': 'Model'})
-    # Add pentad_in_month and pentad_in_year to latest_rram_forecast
-    latest_rram_forecast[horizon_in_month] = forecasts_current[horizon_in_month].values[
-        0] if not forecasts_current.empty else None
-    latest_rram_forecast[horizon_in_year] = forecasts_current[horizon_in_year].values[
-        0] if not forecasts_current.empty else None
-    latest_rram_forecast['Model name'] = 'Rainfall runoff assimilation model (RRAM)'
+    if rram_forecast is not None:
+        # Filter for the current station (Only few stations have rram forecasts)
+        current_rram_forecasts = rram_forecast[rram_forecast['station_labels'] == station].copy()
+        # Filter for the latest forecast
+        latest_rram_forecast = current_rram_forecasts[
+            current_rram_forecasts['forecast_date'] == current_rram_forecasts['forecast_date'].max()]
+        # Rename columns in latest_rram_forecast to fit forecasts_current
+        latest_rram_forecast = latest_rram_forecast.rename(
+            columns={'Q25': 'Lower bound',
+                     'Q75': 'Upper bound',
+                     'Q50': 'E[Q]',
+                    'model_short': 'Model'})
+        # Add pentad_in_month and pentad_in_year to latest_rram_forecast
+        latest_rram_forecast[horizon_in_month] = forecasts_current[horizon_in_month].values[
+            0] if not forecasts_current.empty else None
+        latest_rram_forecast[horizon_in_year] = forecasts_current[horizon_in_year].values[
+            0] if not forecasts_current.empty else None
+        latest_rram_forecast['Model name'] = 'Rainfall runoff assimilation model (RRAM)'
 
-    # Filter for the current station
-    current_ml_forecasts = ml_forecast[ml_forecast['station_labels'] == station].copy()
-    # Filter for the latest forecast
-    latest_ml_forecast = current_ml_forecasts[
-        current_ml_forecasts['forecast_date'] == current_ml_forecasts['forecast_date'].max()]
-    # Rename columns in latest_ml_forecast to fit forecasts_current
-    latest_ml_forecast = latest_ml_forecast.rename(
-        columns={'Q25': 'Lower bound',
-                 'Q75': 'Upper bound',
-                 'forecasted_discharge': 'E[Q]',
-                 'model_short': 'Model'})
-    # Add pentad_in_month and pentad_in_year to latest_ml_forecast
-    latest_ml_forecast[horizon_in_month] = forecasts_current[horizon_in_month].values[
-        0] if not forecasts_current.empty else None
-    latest_ml_forecast[horizon_in_year] = forecasts_current[horizon_in_year].values[
-        0] if not forecasts_current.empty else None
-    # Filter for selected models
-    latest_ml_forecast = latest_ml_forecast[latest_ml_forecast['Model'].isin(model_selection)]
+    if ml_forecast is not None:
+        # Filter for the current station
+        current_ml_forecasts = ml_forecast[ml_forecast['station_labels'] == station].copy()
+        # Filter for the latest forecast
+        latest_ml_forecast = current_ml_forecasts[
+            current_ml_forecasts['forecast_date'] == current_ml_forecasts['forecast_date'].max()]
+        # Rename columns in latest_ml_forecast to fit forecasts_current
+        latest_ml_forecast = latest_ml_forecast.rename(
+            columns={'Q25': 'Lower bound',
+                     'Q75': 'Upper bound',
+                     'forecasted_discharge': 'E[Q]',
+                     'model_short': 'Model'})
+        # Add pentad_in_month and pentad_in_year to latest_ml_forecast
+        latest_ml_forecast[horizon_in_month] = forecasts_current[horizon_in_month].values[
+            0] if not forecasts_current.empty else None
+        latest_ml_forecast[horizon_in_year] = forecasts_current[horizon_in_year].values[
+            0] if not forecasts_current.empty else None
+        # Filter for selected models
+        latest_ml_forecast = latest_ml_forecast[latest_ml_forecast['Model'].isin(model_selection)]
 
     # Create a holoviews bokeh plots of the daily hydrograph
     hvspan_predictor = hv.VSpan(

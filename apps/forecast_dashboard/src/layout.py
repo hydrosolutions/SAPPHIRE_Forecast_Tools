@@ -106,9 +106,9 @@ def define_tabs(_,
                 ),
                 pn.Row(
                     pn.Card(rainfall_plot, title=_("Precipitation"))
-                ),
-                )
+                ) if not rainfall_plot.object.data.empty else pn.pane.Markdown(""),
             ),
+            ), 
             (_('Forecast'),
              pn.Column(
             #     pn.Row(
@@ -156,12 +156,12 @@ def define_tabs(_,
                      #pn.Card(daily_rel_to_norm_rainfall, title=_("Relative to norm rainfall")),
                      sizing_mode='stretch_width',
                      min_height=400,
-                 ),
+                 ) if not rainfall_plot.object.data.empty else pn.pane.Markdown(""),
                  pn.Row(
                      pn.Card(temperature_plot, title=_("Temperature")),
                      sizing_mode='stretch_width',
                      min_height=400,
-                 ),
+                 ) if not temperature_plot.object.data.empty else pn.pane.Markdown(""),
              ),
             ),
             (_('Forecast'),
