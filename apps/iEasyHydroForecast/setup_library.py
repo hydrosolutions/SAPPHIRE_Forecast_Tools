@@ -1289,7 +1289,7 @@ def read_daily_probabilistic_ml_forecasts_pentad(filepath, model, model_long, mo
 
         # Keep rows that have forecast_date equal to either 5, 10, 15, 20, 25 or last_day_of_month
         data = daily_data[(daily_data["day_of_month"].isin([5, 10, 15, 20, 25])) | \
-                        (daily_data["forecast_date"].dt.date == daily_data["last_day_of_month"])]
+                        (daily_data["forecast_date"].dt.date == daily_data["last_day_of_month"])].copy()
 
         # Check if we have any data after filtering
         if data.empty:
@@ -1297,7 +1297,7 @@ def read_daily_probabilistic_ml_forecasts_pentad(filepath, model, model_long, mo
             return pd.DataFrame()
 
         # Convert forecast_date back to date
-        data["forecast_date"] = data["forecast_date"].dt.date
+        data.loc[:, "forecast_date"] = data["forecast_date"].dt.date
 
         # Group by code and forecast_date and calculate the mean of all columns
         forecast = data \
@@ -2660,37 +2660,43 @@ def read_observed_and_modelled_data_pentade():
     elif read_ml_results == "True":
         logger.info("Environment variable ieasyhydroforecast_run_ML_models is set to True. Reading ML forecasts.")
         
-        # Read TIDE results
-        read_tide_results = os.getenv("ieasyhydroforecast_PATH_TO_SCALER_TIDE")
-        if read_tide_results is None:
+        # Read available ML models          
+        available_ml_models = os.getenv("ieasyhydroforecast_available_ML_models")
+        logger.debug(f"Available ML models: {available_ml_models}")
+        
+        if available_ml_models is None:
+            logger.info("Environment variable ieasyhydroforecast_available_ML_models is not set. Assuming no ML models are available.")
+            pass
+        else:
+            available_ml_models = available_ml_models.split(",")
+            logger.info(f"Available ML models: {available_ml_models}")
+        
+        # Read TIDE results if TIDE in available models
+        if not 'TIDE' in available_ml_models:        
             logger.debug("No TIDE results to be read. Skipping TIDE.")
         else: 
             tide = read_machine_learning_forecasts_pentad(model='TIDE')
         
         # Read TFT results
-        read_tft_results = os.getenv("ieasyhydroforecast_PATH_TO_SCALER_TFT")
-        if read_tft_results is None:
+        if not 'TFT' in available_ml_models:
             logger.debug("No TFT results to be read. Skipping TFT.")
         else:
             tft = read_machine_learning_forecasts_pentad(model='TFT')
         
         # Read TSMIXER results
-        read_tsmixer_results = os.getenv("ieasyhydroforecast_PATH_TO_SCALER_TSMIXER")
-        if read_tsmixer_results is None:
+        if not 'TSMIXER' in available_ml_models:
             logger.debug("No TSMIXER results to be read. Skipping TSMIXER.")
         else:
             tsmixer = read_machine_learning_forecasts_pentad(model='TSMIXER')
     
         # Read ARIMA results
-        read_arima_results = os.getenv("ieasyhydroforecast_PATH_TO_SCALER_ARIMA")
-        if read_arima_results is None:
+        if not 'ARIMA' in available_ml_models:
             logger.debug("No ARIMA results to be read. Skipping ARIMA.")
         else: 
             arima = read_machine_learning_forecasts_pentad(model='ARIMA')
         
         # Read RRMAMBA results
-        read_rrmamba_results = os.getenv("ieasyhydroforecast_PATH_TO_SCALER_RRMAMBA")
-        if read_rrmamba_results is None:
+        if not 'RRMAMBA' in available_ml_models:
             logger.debug("No RRMAMBA results to be read. Skipping RRMAMBA.")
         else: 
             rrmamba = read_machine_learning_forecasts_pentad(model='RRMAMBA')
@@ -2810,38 +2816,42 @@ def read_observed_and_modelled_data_decade():
         logger.info("Environment variable ieasyhydroforecast_run_ML_models is set to False. No ML forecasts to be read.")
     elif read_ml_results == "True":
         logger.info("Environment variable ieasyhydroforecast_run_ML_models is set to True. Reading ML forecasts.")
+
+        # Read available ML models          
+        available_ml_models = os.getenv("ieasyhydroforecast_available_ML_models")
+        if available_ml_models is None:
+            logger.info("Environment variable ieasyhydroforecast_available_ML_models is not set. Assuming no ML models are available.")
+            pass
+        else:
+            available_ml_models = available_ml_models.split(",")
+            logger.info(f"Available ML models: {available_ml_models}")
         
         # Read TIDE results
-        read_tide_results = os.getenv("ieasyhydroforecast_PATH_TO_SCALER_TIDE")
-        if read_tide_results is None:
+        if not 'TIDE' in available_ml_models:
             logger.debug("No TIDE results to be read. Skipping TIDE.")
         else: 
             tide = read_machine_learning_forecasts_decade(model='TIDE')
         
         # Read TFT results
-        read_tft_results = os.getenv("ieasyhydroforecast_PATH_TO_SCALER_TFT")
-        if read_tft_results is None:
+        if not 'TFT' in available_ml_models:
             logger.debug("No TFT results to be read. Skipping TFT.")
         else:
             tft = read_machine_learning_forecasts_decade(model='TFT')
         
         # Read TSMIXER results
-        read_tsmixer_results = os.getenv("ieasyhydroforecast_PATH_TO_SCALER_TSMIXER")
-        if read_tsmixer_results is None:
+        if not 'TSMIXER' in available_ml_models:
             logger.debug("No TSMIXER results to be read. Skipping TSMIXER.")
         else:
             tsmixer = read_machine_learning_forecasts_decade(model='TSMIXER')
     
         # Read ARIMA results
-        read_arima_results = os.getenv("ieasyhydroforecast_PATH_TO_SCALER_ARIMA")
-        if read_arima_results is None:
+        if not 'ARIMA' in available_ml_models:
             logger.debug("No ARIMA results to be read. Skipping ARIMA.")
         else: 
             arima = read_machine_learning_forecasts_decade(model='ARIMA')
         
         # Read RRMAMBA results
-        read_rrmamba_results = os.getenv("ieasyhydroforecast_PATH_TO_SCALER_RRMAMBA")
-        if read_rrmamba_results is None:
+        if not 'RRMAMBA' in available_ml_models:
             logger.debug("No RRMAMBA results to be read. Skipping RRMAMBA.")
         else: 
             rrmamba = read_machine_learning_forecasts_decade(model='RRMAMBA')

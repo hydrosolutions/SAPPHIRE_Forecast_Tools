@@ -1890,7 +1890,7 @@ def calculate_skill_metrics_pentad(
         print("DEBUG: ensemble_skill_metrics_df\n", ensemble_skill_metrics_df.columns)
         print("DEBUG: ensemble_skill_metrics_df\n", ensemble_skill_metrics_df.head(20))
 
-        number_of_models = ensemble_skill_metrics_df['model_long'].nunique()
+        number_of_models = simulated['model_long'].nunique()
         print("DEBUG: number_of_models\n", number_of_models)
         if number_of_models > 1:
             ensemble_skill_stats = ensemble_skill_metrics_df. \
@@ -2193,7 +2193,7 @@ def calculate_skill_metrics_decade(
         #print("DEBUG: ensemble_skill_metrics_df\n", ensemble_skill_metrics_df.columns)
         #print("DEBUG: ensemble_skill_metrics_df\n", ensemble_skill_metrics_df.head(20))
 
-        number_of_models = ensemble_skill_metrics_df['model_long'].nunique()
+        number_of_models = simulated['model_long'].nunique()
         print("DEBUG: number_of_models\n", number_of_models)
         if number_of_models > 1:
             ensemble_skill_stats = ensemble_skill_metrics_df. \
@@ -3496,13 +3496,13 @@ def get_latest_forecasts(simulated_df, horizon_column_name='pentad_in_year'):
     # Sort by date in descending order first
     sorted_df = simulated_df.sort_values('date', ascending=False)
     latest_forecasts = sorted_df.drop_duplicates(
-        subset=['code', horizon_column_name, 'model_short'], keep='first')
+        subset=['code', horizon_column_name, 'model_short'], keep='first').copy()
     
     # Only keep lines where year of date is equal to the maximum year
     # Here we take data from second to last and last year
     latest_year = simulated_df['date'].max().year
     # Write year into column, derived from date column
-    latest_forecasts['year'] = latest_forecasts['date'].dt.year
+    latest_forecasts.loc[:, 'year'] = latest_forecasts['date'].dt.year
     latest_forecasts = latest_forecasts[latest_forecasts['year'] >= (latest_year - 1)]
 
     # Drop the 'year' column

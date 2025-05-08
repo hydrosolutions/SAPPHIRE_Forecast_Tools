@@ -9,9 +9,9 @@ import numpy as np
 import tempfile
 from iEasyHydroForecast import setup_library as sl
 from iEasyHydroForecast import tag_library as tl
+from iEasyHydroForecast import forecast_library as fl
 import logging
 import json
-import forecast_library as fl
 
 class TestLoadConfiguration():
     # Temporary directory to store output
