@@ -56,6 +56,8 @@ import glob
 import pandas as pd
 import numpy as np
 import json
+from typing import List, Dict, Any
+
 import darts
 from darts import TimeSeries, concatenate
 from darts.utils.timeseries_generation import datetime_attribute_timeseries
@@ -303,25 +305,57 @@ def prepare_forecast_data(
     return discharge_df, 0
 
 
-
-# --------------------------------------------------------------------
-# MAIN FUNCTION
-# --------------------------------------------------------------------
-def make_ml_forecast():
-
-    logger.info(f'--------------------------------------------------------------------')
-    logger.info(f"Starting make_forecast.py")
-    print(f'--------------------------------------------------------------------')
-    print(f"Starting make_forecast.py")
-
-
-    # --------------------------------------------------------------------
-    # DEFINE WHICH MODEL TO USE
-    # --------------------------------------------------------------------
-    MODEL_TO_USE = os.getenv('SAPPHIRE_MODEL_TO_USE')
-    logger.debug('Model to use: %s', MODEL_TO_USE)
+def prepare_static_data(path_to_static_features : str):
+    """Load and prepare static features data."""
+    static_features = pd.read_csv(path_to_static_features)
     
-    if MODEL_TO_USE not in ['TFT', 'TIDE', 'TSMIXER', 'ARIMA']:
+    if 'cluster' in static_features.columns:
+        static_features = static_features.drop(columns=['cluster'])
+    if 'log_q' in static_features.columns:
+        static_features = static_features.drop(columns=['log_q'])
+    if 'CODE' in static_features.columns:
+        static_features = static_features.rename(columns={'CODE': 'code'})
+    
+    static_features.index = static_features['code']
+    
+    return static_features
+
+
+def load_control_member_data( path_to_qmapped_era5, hru_ml_models):
+    """Load and prepare ERA5 data."""
+
+    path_p = os.path.join(path_to_qmapped_era5, hru_ml_models + '_P_control_member.csv')
+    path_t = os.path.join(path_to_qmapped_era5, hru_ml_models + '_T_control_member.csv')
+    
+    p_qmapped_era5 = pd.read_csv(path_p, parse_dates=['date'])
+    t_qmapped_era5 = pd.read_csv(path_t, parse_dates=['date'])
+    qmapped_era5 = pd.merge(p_qmapped_era5, t_qmapped_era5, on=['code', 'date'])
+    
+    return qmapped_era5
+
+
+def prepare_forcing_data(
+        intermediate_data_path : str, 
+        path_to_qmapped_era5 : str, 
+        hru_ml_models : str, 
+        load_forcing_hindcast=False):
+    """ Prepares the forcing data for the model.
+     In this function ERA5 data gets loaded (operational file and on demand hindcast file) 
+     Additionally the snow data can be loaded aswell."""
+    
+    qmapped_era5  = load_control_member_data( path_to_qmapped_era5, hru_ml_models)
+    
+    
+    return qmapped_era5
+
+
+def get_predictor_class(
+        MODEL_TO_USE : str
+        ):
+    available_ML_models = os.getenv('ieasyhydroforecast_available_ML_models')
+    available_ML_models = available_ML_models.split(',')
+    
+    if MODEL_TO_USE not in available_ML_models:
         raise ValueError('Model %s is not supported.\nPlease choose one of the following models: TFT, TIDE, TSMIXER, ARIMA')
     else:
         logger.debug('Model to use: %s', MODEL_TO_USE)
@@ -334,6 +368,47 @@ def make_ml_forecast():
             predictor_class = TSMixerPredictor.TSMIXERPredictor
         elif MODEL_TO_USE == 'ARIMA':
             predictor_class = predictor_ARIMA.PREDICTOR
+
+    return predictor_class
+
+
+def get_rivers_to_predict(
+        MODEL_TO_USE : str,
+        ):
+    rivers_to_predict_pentad, rivers_to_predict_decad, hydroposts_available_for_ml_forecasting = utils_ml_forecast.get_hydroposts_for_pentadal_and_decadal_forecasts()
+    # Combine rivers_to_predict_pentad and rivers_to_predict_decad to get all rivers to predict, only keep unique values
+    rivers_to_predict = list(set(rivers_to_predict_pentad + rivers_to_predict_decad))
+    #select only codes which the model can predict.
+    mask_predictable = hydroposts_available_for_ml_forecasting[MODEL_TO_USE] == True
+    codes_model_can_predict = hydroposts_available_for_ml_forecasting[mask_predictable]['code'].tolist()
+    rivers_to_predict = list(set(rivers_to_predict) & set(codes_model_can_predict))
+    #convert to int
+    rivers_to_predict = [int(code) for code in rivers_to_predict]
+    logger.debug('Rivers to predict pentad: %s', rivers_to_predict_pentad)
+    logger.debug('Rivers to predict decad: %s', rivers_to_predict_decad)
+    logger.debug('Rivers to predict: %s', rivers_to_predict)
+    logger.debug('Hydroposts available for ML forecasting: \n%s', hydroposts_available_for_ml_forecasting)
+
+    return rivers_to_predict, hydroposts_available_for_ml_forecasting
+
+# --------------------------------------------------------------------
+# MAIN FUNCTION
+# --------------------------------------------------------------------
+def make_ml_forecast():
+
+    logger.info(f'--------------------------------------------------------------------')
+    logger.info(f"Starting make_forecast.py")
+    print(f'--------------------------------------------------------------------')
+    print(f"Starting make_forecast.py")
+    # Load the environment variables
+    sl.load_environment()
+
+    # --------------------------------------------------------------------
+    # DEFINE WHICH MODEL TO USE
+    # --------------------------------------------------------------------
+    MODEL_TO_USE = os.getenv('SAPPHIRE_MODEL_TO_USE')
+    logger.debug('Model to use: %s', MODEL_TO_USE)
+    predictor_class = get_predictor_class(MODEL_TO_USE)
 
 
     # --------------------------------------------------------------------
@@ -351,12 +426,8 @@ def make_ml_forecast():
             forecast_horizon = 11
 
     # --------------------------------------------------------------------
-    # INITIALIZE THE ENVIRONMENT
+    # INITIALIZE THE PATHS
     # --------------------------------------------------------------------
-
-    # Load the environment variables
-    sl.load_environment()
-
     # Access the environment variables
     intermediate_data_path = os.getenv('ieasyforecast_intermediate_data_path')
     MODELS_AND_SCALERS_PATH = os.getenv('ieasyhydroforecast_models_and_scalers_path')
@@ -408,22 +479,13 @@ def make_ml_forecast():
     logger.debug('joined output_path_discharge: %s' , OUTPUT_PATH_DISCHARGE)
     logger.debug('joined path_to_qmapped_era5: %s' , PATH_TO_QMAPPED_ERA5)
 
-    rivers_to_predict_pentad, rivers_to_predict_decad, hydroposts_available_for_ml_forecasting = utils_ml_forecast.get_hydroposts_for_pentadal_and_decadal_forecasts()
-    # Combine rivers_to_predict_pentad and rivers_to_predict_decad to get all rivers to predict, only keep unique values
-    rivers_to_predict = list(set(rivers_to_predict_pentad + rivers_to_predict_decad))
-    #select only codes which the model can predict.
-    mask_predictable = hydroposts_available_for_ml_forecasting[MODEL_TO_USE] == True
-    codes_model_can_predict = hydroposts_available_for_ml_forecasting[mask_predictable]['code'].tolist()
-    rivers_to_predict = list(set(rivers_to_predict) & set(codes_model_can_predict))
-    #convert to int
-    rivers_to_predict = [int(code) for code in rivers_to_predict]
-    logger.debug('Rivers to predict pentad: %s', rivers_to_predict_pentad)
-    logger.debug('Rivers to predict decad: %s', rivers_to_predict_decad)
-    logger.debug('Rivers to predict: %s', rivers_to_predict)
-    logger.debug('Hydroposts available for ML forecasting: \n%s', hydroposts_available_for_ml_forecasting)
 
     # --------------------------------------------------------------------
-    # LOAD DATA
+    # GET THE RIVERS TO PREDICT
+    rivers_to_predict, hydroposts_available_for_ml_forecasting = get_rivers_to_predict(MODEL_TO_USE)
+
+    # --------------------------------------------------------------------
+    # LOAD AND PREPARE DATA
     # --------------------------------------------------------------------
     PATH_TO_PAST_DISCHARGE = os.getenv('ieasyforecast_daily_discharge_file')
     PATH_TO_PAST_DISCHARGE = os.path.join(intermediate_data_path, PATH_TO_PAST_DISCHARGE)
@@ -431,25 +493,13 @@ def make_ml_forecast():
 
     past_discharge = pd.read_csv(PATH_TO_PAST_DISCHARGE, parse_dates=['date'])
 
-    path_P = os.path.join(PATH_TO_QMAPPED_ERA5, HRU_ML_MODELS +'_P_control_member.csv')
-    path_T = os.path.join(PATH_TO_QMAPPED_ERA5, HRU_ML_MODELS +'_T_control_member.csv')
+    qmapped_era5 = prepare_forcing_data(
+        intermediate_data_path = intermediate_data_path,
+        path_to_qmapped_era5 = PATH_TO_QMAPPED_ERA5,
+        hru_ml_models = HRU_ML_MODELS
+    )
 
-    P_qmapped_era5 = pd.read_csv(path_P, parse_dates=['date'])
-    T_qmapped_era5 = pd.read_csv(path_T, parse_dates=['date'])
-    qmapped_era5 = pd.merge(P_qmapped_era5, T_qmapped_era5, on=['code', 'date'])
-    static_features = pd.read_csv(PATH_TO_STATIC_FEATURES)
-
-    if 'cluster' in static_features.columns:
-        static_features = static_features.drop(columns=['cluster'])
-    if 'log_q' in static_features.columns:
-        static_features = static_features.drop(columns=['log_q'])
-    if 'CODE' in static_features.columns:
-        static_features = static_features.rename(columns={'CODE': 'code'})
-
-    
-    static_features.index = static_features['code']
-    #clear memory
-    del P_qmapped_era5, T_qmapped_era5
+    static_features = prepare_static_data(PATH_TO_STATIC_FEATURES)
 
     #get the codes to use
     codes_to_use = utils_ml_forecast.get_codes_to_use(past_discharge, qmapped_era5, static_features)
@@ -507,8 +557,7 @@ def make_ml_forecast():
             with open(os.path.join(model_dir, 'model_config.json'), 'r') as f:
                 model_config = json.load(f)
         except FileNotFoundError:
-            logger.debug('model_config.json not found, using default values')
-            model_config = None
+            raise FileNotFoundError('model_config.json not found, Please check the model directory')
 
         predictor = predictor_class(
             model=model,
