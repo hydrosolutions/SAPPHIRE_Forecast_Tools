@@ -25,6 +25,7 @@ import re
 import docker
 import threading
 import platform
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import logging
 from contextlib import contextmanager
@@ -3249,7 +3250,18 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector, d
             bind_volume_path_bin = get_bind_path(env.get('ieasyhydroforecast_bin_path'))
 
             # Initialize Docker client
-            client = docker.from_env()
+            print("In save_to_csv: Initializing Docker client...")
+            try: 
+                print("DOCKER_HOST:", os.environ.get("DOCKER_HOST"))
+                client = docker.from_env()
+                #client = docker.DockerClient(base_url='unix:///var/run/docker.sock')
+                print("#####################################")
+                print(client.ping())
+                print("Successfully connected to Docker daemon via Unix socket.")
+                containers = client.containers.list()
+                print("List of containers:", [c.name for c in containers])
+            except Exception as e:
+                print(f"Error initializing Docker client: {e}")
 
             # Define environment variables
             environment = [
@@ -3347,7 +3359,19 @@ def create_reload_button():
     # Function to check if any containers are running
     def check_containers_running():
         try:
-            client = docker.from_env()
+            print("In create_reload_button: Checking if containers are running...")
+            try: 
+                print("DOCKER_HOST:", os.environ.get("DOCKER_HOST"))
+                client = docker.from_env()
+                #client = docker.DockerClient(base_url='unix:///var/run/docker.sock')
+                print("#####################################")
+                print(client.ping())
+                print("Successfully connected to Docker daemon via Unix socket.")
+                containers = client.containers.list()
+                print("List of containers:", [c.name for c in containers])
+            except Exception as e:
+                print(f"Error initializing Docker client: {e}")
+
             container_names = [
                 "preprunoff",
                 "reset_rundate",
@@ -3413,8 +3437,21 @@ def create_reload_button():
 
         def run_docker_pipeline():
             try:
+                horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+                mode = horizon.upper()
+
                 # Initialize Docker client
-                client = docker.from_env()
+                try: 
+                    print("DOCKER_HOST:", os.environ.get("DOCKER_HOST"))
+                    client = docker.from_env()
+                    #client = docker.DockerClient(base_url='unix:///var/run/docker.sock')
+                    print("#####################################")
+                    print(client.ping())
+                    print("Successfully connected to Docker daemon via Unix socket.")
+                    containers = client.containers.list()
+                    print("List of containers:", [c.name for c in containers])
+                except Exception as e:
+                    print(f"Error initializing Docker client: {e}")
 
                 # Define environment variables
                 environment = [
@@ -3458,23 +3495,63 @@ def create_reload_button():
                 # Run the reset_rundate container
                 run_docker_container(client, "mabesa/sapphire-rerun:latest", volumes, environment, "reset_rundate")
 
+                # Define containers to run in parallel
+                parallel_containers = []
+
+                # Add linear_regression container
+                parallel_containers.append({
+                    "image": "mabesa/sapphire-linreg:latest",
+                    "name": "linreg",
+                    "env": environment
+                })
+
+                # Add ML models
+                ml_models = ["TFT", "TIDE", "TSMIXER", "ARIMA"]
+                for model in ml_models:
+                    container_name = f"ml_{model}_{mode}"
+                    env_vars = environment + [
+                        f"SAPPHIRE_MODEL_TO_USE={model}",
+                        f"SAPPHIRE_PREDICTION_MODE={mode}",
+                        "RUN_MODE=forecast"
+                    ]
+                    parallel_containers.append({
+                        "image": "mabesa/sapphire-ml:latest",
+                        "name": container_name,
+                        "env": env_vars
+                    })
+
+                # Run the containers in parallel
+                with ThreadPoolExecutor(max_workers=len(parallel_containers)) as executor:
+                    futures = []
+                    for c in parallel_containers:
+                        futures.append(
+                            executor.submit(run_docker_container, client, c["image"], volumes, c["env"], c["name"]))
+
+                    # Optionally handle completion or errors
+                    for future in as_completed(futures):
+                        try:
+                            future.result()  # Raises exception if the container errored
+                        except Exception as e:
+                            print(f"Container {c['name']} failed: {e}")
+                            progress_message.object = _(f"Container {c['name']} failed: {e}")
+
                 # Run the linear_regression container
-                run_docker_container(client, "mabesa/sapphire-linreg:latest", volumes, environment, "linreg")
+                # run_docker_container(client, "mabesa/sapphire-linreg:latest", volumes, environment, "linreg")
 
                 # Run the prepgateway container
-                run_docker_container(client, "mabesa/sapphire-prepgateway:latest", volumes, environment, "prepgateway")
+                # run_docker_container(client, "mabesa/sapphire-prepgateway:latest", volumes, environment, "prepgateway")
 
                 # Run all ML model containers
-                for model in ["TFT", "TIDE", "TSMIXER", "ARIMA"]:
-                    for mode in ["PENTAD", "DECAD"]:
-                        container_name = f"ml_{model}_{mode}"
-                        run_docker_container(client, f"mabesa/sapphire-ml:latest", volumes,
-                                             environment + [f"SAPPHIRE_MODEL_TO_USE={model}",
-                                                            f"SAPPHIRE_PREDICTION_MODE={mode}", f"RUN_MODE=forecast"],
-                                             container_name)
+                # for model in ["TFT", "TIDE", "TSMIXER", "ARIMA"]:
+                #     for mode in ["PENTAD", "DECAD"]:
+                #         container_name = f"ml_{model}_{mode}"
+                #         run_docker_container(client, f"mabesa/sapphire-ml:latest", volumes,
+                #                              environment + [f"SAPPHIRE_MODEL_TO_USE={model}",
+                #                                             f"SAPPHIRE_PREDICTION_MODE={mode}", f"RUN_MODE=forecast"],
+                #                              container_name)
 
                 # Run the conceptmod container
-                run_docker_container(client, "mabesa/sapphire-conceptmod:latest", volumes, environment, "conceptmod")
+                # run_docker_container(client, "mabesa/sapphire-conceptmod:latest", volumes, environment, "conceptmod")
 
                 # Run the postprocessing container
                 run_docker_container(client, "mabesa/sapphire-postprocessing:latest", volumes, environment,
