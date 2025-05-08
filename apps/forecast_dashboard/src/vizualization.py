@@ -3251,9 +3251,17 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector, d
 
             # Initialize Docker client
             print("In save_to_csv: Initializing Docker client...")
-            client = docker.from_env()
-            print("#####################################")
-            print(client.ping())
+            try: 
+                print("DOCKER_HOST:", os.environ.get("DOCKER_HOST"))
+                #client = docker.from_env()
+                client = docker.DockerClient(base_url='unix:///var/run/docker.sock')
+                print("#####################################")
+                print(client.ping())
+                print("Successfully connected to Docker daemon via Unix socket.")
+                containers = client.containers.list()
+                print("List of containers:", [c.name for c in containers])
+            except Exception as e:
+                print(f"Error initializing Docker client: {e}")
 
             # Define environment variables
             environment = [
@@ -3352,9 +3360,18 @@ def create_reload_button():
     def check_containers_running():
         try:
             print("In create_reload_button: Checking if containers are running...")
-            client = docker.from_env()
-            print("#####################################")
-            print(client.ping())
+            try: 
+                print("DOCKER_HOST:", os.environ.get("DOCKER_HOST"))
+                #client = docker.from_env()
+                client = docker.DockerClient(base_url='unix:///var/run/docker.sock')
+                print("#####################################")
+                print(client.ping())
+                print("Successfully connected to Docker daemon via Unix socket.")
+                containers = client.containers.list()
+                print("List of containers:", [c.name for c in containers])
+            except Exception as e:
+                print(f"Error initializing Docker client: {e}")
+
             container_names = [
                 "preprunoff",
                 "reset_rundate",
@@ -3424,10 +3441,17 @@ def create_reload_button():
                 mode = horizon.upper()
 
                 # Initialize Docker client
-                print("In create_reload_button: Initializing Docker client...")
-                client = docker.from_env()
-                print("#####################################")
-                print(client.ping())
+                try: 
+                    print("DOCKER_HOST:", os.environ.get("DOCKER_HOST"))
+                    #client = docker.from_env()
+                    client = docker.DockerClient(base_url='unix:///var/run/docker.sock')
+                    print("#####################################")
+                    print(client.ping())
+                    print("Successfully connected to Docker daemon via Unix socket.")
+                    containers = client.containers.list()
+                    print("List of containers:", [c.name for c in containers])
+                except Exception as e:
+                    print(f"Error initializing Docker client: {e}")
 
                 # Define environment variables
                 environment = [
