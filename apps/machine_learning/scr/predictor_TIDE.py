@@ -28,6 +28,20 @@ import warnings
 warnings.filterwarnings("ignore")
 logging.basicConfig(level=logging.WARNING)
 
+from darts.utils.likelihood_models import QuantileRegression
+from darts.utils.likelihood_models.base import LikelihoodType
+from torch.optim import Adam
+from torch.optim.lr_scheduler import ReduceLROnPlateau
+from torch.nn.modules.loss import MSELoss
+from torchmetrics.collections import MetricCollection
+
+
+torch.serialization.add_safe_globals([QuantileRegression, 
+                                      LikelihoodType,
+                                      Adam,
+                                      ReduceLROnPlateau,
+                                      MSELoss,
+                                      MetricCollection])
 
 
 # --------------------------------------------------------------------

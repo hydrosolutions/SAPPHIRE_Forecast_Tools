@@ -83,9 +83,24 @@ logger.addHandler(file_handler)
 import warnings
 warnings.filterwarnings("ignore")
 
+from darts.utils.likelihood_models import QuantileRegression
+from darts.utils.likelihood_models.base import LikelihoodType
+from torch.optim import Adam
+from torch.optim.lr_scheduler import ReduceLROnPlateau
+from torch.nn.modules.loss import MSELoss
+from torchmetrics.collections import MetricCollection
+
+
+torch.serialization.add_safe_globals([QuantileRegression, 
+                                    LikelihoodType,
+                                    Adam,
+                                    ReduceLROnPlateau,
+                                    MSELoss,
+                                    MetricCollection])
+
 #Custom Libraries
 from scr import utils_ml_forecast
-from scr import predictor_TFT
+from scr import TFTPredictor, TSMixerPredictor, TiDEPredictor, predictor_ARIMA
 
 # Local libraries, installed with pip install -e ./iEasyHydroForecast
 # Get the absolute path of the directory containing the current script
@@ -131,15 +146,14 @@ def main():
     if MODEL_TO_USE not in ['TFT', 'TIDE', 'TSMIXER', 'ARIMA']:
         raise ValueError('Model not supported')
     else:
-        print('Model to use: ', MODEL_TO_USE)
         if MODEL_TO_USE == 'TFT':
-            from scr import predictor_TFT as predictor_class
+            predictor_class = TFTPredictor.TFTPredictor
         elif MODEL_TO_USE == 'TIDE':
-            from scr import predictor_TIDE as predictor_class
+            predictor_class = TiDEPredictor.TiDEPredictor
         elif MODEL_TO_USE == 'TSMIXER':
-            from scr import predictor_TSMIXER as predictor_class
+            predictor_class = TSMixerPredictor.TSMIXERPredictor
         elif MODEL_TO_USE == 'ARIMA':
-            from scr import predictor_ARIMA as predictor_class
+            predictor_class = predictor_ARIMA.PREDICTOR
 
         # --------------------------------------------------------------------
     # DEFINE THE HINDCAST MODE
@@ -322,8 +336,15 @@ def main():
     # STATIC FEATURES
 
     static_features = pd.read_csv(PATH_TO_STATIC_FEATURES)
-    static_features = static_features.drop(columns=['cluster', 'log_q'])
-    static_features.index = static_features['CODE']
+
+    if 'cluster' in static_features.columns:
+        static_features = static_features.drop(columns=['cluster'])
+    if 'log_q' in static_features.columns:
+        static_features = static_features.drop(columns=['log_q'])
+    if 'CODE' in static_features.columns:
+        static_features = static_features.rename(columns={'CODE': 'code'})
+
+    static_features.index = static_features['code']
 
     if MODEL_TO_USE == 'ARIMA':
         scaler = None
@@ -369,11 +390,20 @@ def main():
 
 
     if MODEL_TO_USE == 'ARIMA':
-        predictor = predictor_class.PREDICTOR(PATH_TO_MODEL)
- 
+        predictor = predictor_class(PATH_TO_MODEL)
     else:
-        predictor = predictor_class.PREDICTOR(model, scaler_discharge, scaler_era5, scaler_static, static_features)
-
+        scalers = {
+            'scaler_discharge': scaler_discharge,
+            'scaler_covariates': scaler_era5,
+            'scaler_static': scaler_static
+        }
+        predictor = predictor_class(
+            model=model,
+            scalers=scalers,
+            static_features=static_features,
+            dl_config_params=None,
+            unique_id_col='code'
+        )
 
     # --------------------------------------------------------------------
     # HINDECAST
@@ -406,7 +436,7 @@ def main():
     hindecast_daily_df = pd.DataFrame()
 
     current_year = pred_date.year
-    print(f'Starting Hindcast for the dates: {start_date} to {end_date}')
+    logger.debug(f'Starting Hindcast for the dates: {start_date} to {end_date}')
     input_chunk_length = predictor.get_input_chunk_length()
 
     start_date_string = start_date
@@ -460,8 +490,7 @@ def main():
         # make hindcast 
         hindcast_code = predictor.hindcast(
             df_rivers_org = discharge,
-            df_era5 = era5,
-            df_swe = None,
+            df_covariates = era5,
             code = code,
             n = forecast_horizon,
         )

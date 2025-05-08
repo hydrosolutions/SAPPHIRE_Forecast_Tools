@@ -71,6 +71,21 @@ from pytorch_lightning import Trainer
 import torch
 import datetime
 
+from darts.utils.likelihood_models import QuantileRegression
+from darts.utils.likelihood_models.base import LikelihoodType
+from torch.optim import Adam
+from torch.optim.lr_scheduler import ReduceLROnPlateau
+from torch.nn.modules.loss import MSELoss
+from torchmetrics.collections import MetricCollection
+
+
+torch.serialization.add_safe_globals([QuantileRegression, 
+                                    LikelihoodType,
+                                    Adam,
+                                    ReduceLROnPlateau,
+                                    MSELoss,
+                                    MetricCollection])
+
 import logging
 from logging.handlers import TimedRotatingFileHandler
 logging.getLogger("pytorch_lightning.utilities.rank_zero").setLevel(logging.WARNING)
@@ -101,6 +116,7 @@ logger.debug('Debug message for logger level 10')
 
 #Custom Libraries
 from scr import utils_ml_forecast
+from scr import TFTPredictor, TSMixerPredictor, TiDEPredictor, predictor_ARIMA
 
 # Local libraries, installed with pip install -e ./iEasyHydroForecast
 # Get the absolute path of the directory containing the current script
@@ -130,7 +146,6 @@ class LossLogger(Callback):
 
     def on_validation_epoch_end(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule") -> None:
         self.val_loss.append(float(trainer.callback_metrics["val_loss"]))
-
 
 
 
@@ -267,7 +282,7 @@ def prepare_forecast_data(
                     counter += 1
                 logger.debug(f'Nans replaced with forecasted values 2nd method: {counter}')
             except Exception as e2:
-                loger.debug(f"Second method failed: {e2}")
+                logger.debug(f"Second method failed: {e2}")
                 pass  # Both methods failed, moving on
 
     #5: Interpolate missing values and ffill missing values at the end
@@ -305,20 +320,21 @@ def make_ml_forecast():
     # --------------------------------------------------------------------
     MODEL_TO_USE = os.getenv('SAPPHIRE_MODEL_TO_USE')
     logger.debug('Model to use: %s', MODEL_TO_USE)
-
+    
     if MODEL_TO_USE not in ['TFT', 'TIDE', 'TSMIXER', 'ARIMA']:
         raise ValueError('Model %s is not supported.\nPlease choose one of the following models: TFT, TIDE, TSMIXER, ARIMA')
     else:
         logger.debug('Model to use: %s', MODEL_TO_USE)
         #print('Model to use: ', MODEL_TO_USE)
         if MODEL_TO_USE == 'TFT':
-            from scr import predictor_TFT as predictor_class
+            predictor_class = TFTPredictor.TFTPredictor
         elif MODEL_TO_USE == 'TIDE':
-            from scr import predictor_TIDE as predictor_class
+            predictor_class = TiDEPredictor.TiDEPredictor
         elif MODEL_TO_USE == 'TSMIXER':
-            from scr import predictor_TSMIXER as predictor_class
+            predictor_class = TSMixerPredictor.TSMIXERPredictor
         elif MODEL_TO_USE == 'ARIMA':
-            from scr import predictor_ARIMA as predictor_class
+            predictor_class = predictor_ARIMA.PREDICTOR
+
 
     # --------------------------------------------------------------------
     # DEFINE THE PREDICTION MODE
@@ -423,8 +439,15 @@ def make_ml_forecast():
     qmapped_era5 = pd.merge(P_qmapped_era5, T_qmapped_era5, on=['code', 'date'])
     static_features = pd.read_csv(PATH_TO_STATIC_FEATURES)
 
-    static_features = static_features.drop(columns=['cluster', 'log_q'])
-    static_features.index = static_features['CODE']
+    if 'cluster' in static_features.columns:
+        static_features = static_features.drop(columns=['cluster'])
+    if 'log_q' in static_features.columns:
+        static_features = static_features.drop(columns=['log_q'])
+    if 'CODE' in static_features.columns:
+        static_features = static_features.rename(columns={'CODE': 'code'})
+
+    
+    static_features.index = static_features['code']
     #clear memory
     del P_qmapped_era5, T_qmapped_era5
 
@@ -437,8 +460,8 @@ def make_ml_forecast():
     # Calculate PET Oudin and Daylight Hours
     # --------------------------------------------------------------------
     for code in codes_to_use:
-        lat = static_features[static_features['CODE'] == code]['LAT'].values[0]
-        lon = static_features[static_features['CODE'] == code]['LON'].values[0]
+        lat = static_features[static_features['code'] == code]['LAT'].values[0]
+        lon = static_features[static_features['code'] == code]['LON'].values[0]
         pet_oudin = utils_ml_forecast.calculate_pet_oudin(qmapped_era5[qmapped_era5['code'] == code], lat)
         qmapped_era5.loc[qmapped_era5['code'] == code, 'PET'] = pet_oudin
         qmapped_era5.loc[qmapped_era5['code'] == code, 'daylight_hours'] = utils_ml_forecast.calculate_daylight_hours(lat, lon, qmapped_era5[qmapped_era5['code'] == code])
@@ -459,9 +482,7 @@ def make_ml_forecast():
     # --------------------------------------------------------------------
     # LOAD MODELS AND MAKE PREDICTORS
     # --------------------------------------------------------------------
-    # MODEL PREDICTOR
     # Load pre-trained model
-
     if MODEL_TO_USE == 'TFT':
         model = TFTModel.load(os.path.join(PATH_TO_MODEL), map_location=torch.device('cpu'))
     elif MODEL_TO_USE == 'TIDE':
@@ -472,10 +493,31 @@ def make_ml_forecast():
         model = None
 
     if MODEL_TO_USE == 'ARIMA':
-        predictor = predictor_class.PREDICTOR(PATH_TO_MODEL)
+        predictor = predictor_class(PATH_TO_MODEL)
     else:
-        predictor = predictor_class.PREDICTOR(model, scaler_discharge, scaler_era5, scaler_static, static_features)
+        scalers = {
+            'scaler_discharge': scaler_discharge,
+            'scaler_covariates': scaler_era5,
+            'scaler_static': scaler_static
+        }
 
+        # try the load the model_config.json file
+        try:
+            model_dir = os.path.dirname(PATH_TO_MODEL)
+            with open(os.path.join(model_dir, 'model_config.json'), 'r') as f:
+                model_config = json.load(f)
+        except FileNotFoundError:
+            logger.debug('model_config.json not found, using default values')
+            model_config = None
+
+        predictor = predictor_class(
+            model=model,
+            scalers=scalers,
+            static_features=static_features,
+            dl_config_params=model_config,
+            unique_id_col='code'
+        )
+            
 
     # --------------------------------------------------------------------
     # FORECAST
@@ -513,6 +555,8 @@ def make_ml_forecast():
         except FileNotFoundError:
             old_forecast = pd.DataFrame()
 
+    logger.debug('Predicting for %s rivers', len(rivers_to_predict))
+    logger.debug('Rivers to predict: %s', rivers_to_predict)
     for code in rivers_to_predict:
         # Cast code to int.
         code = int(code)
@@ -548,8 +592,13 @@ def make_ml_forecast():
             input_chunk_length = input_chunk_length
             )
 
-        predictions = predictor.predict(past_discharge_code, qmapped_era5_code, None , code, n=forecast_horizon, make_plot=False)
-
+        predictions = predictor.predict(
+            df_rivers_org = past_discharge_code, 
+            df_covariates = qmapped_era5_code,
+            code = code,
+            n = forecast_horizon
+            )
+            
         if len(predictions) == 0:
             #error in forecast - something else is wrong
             flag = 2

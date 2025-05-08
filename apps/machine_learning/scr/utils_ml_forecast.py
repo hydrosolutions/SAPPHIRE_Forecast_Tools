@@ -53,6 +53,8 @@ logger = logging.getLogger(__name__)
 #Custom Libraries
 from scr import predictor_TFT as predictor_class
 
+
+
 # --------------------------------------------------------------------
 # CALLBACKS
 # --------------------------------------------------------------------
@@ -185,7 +187,7 @@ def get_codes_to_use(past_discharge: pd.DataFrame, era5: pd.DataFrame, static_fe
     # Extract unique codes from each DataFrame column
     codes_rivers = set(past_discharge['code'].unique())
     codes_era5 = set(era5['code'].unique())
-    codes_static = set(static_features['CODE'].unique())
+    codes_static = set(static_features['code'].unique())
 
     # Find intersection of all three sets
     common_codes = codes_rivers & codes_era5 & codes_static
