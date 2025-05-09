@@ -79,7 +79,6 @@ def get_local_path(relative_path):
     return relative_path
 
 
-
 class PreprocessingRunoff(pu.TimeoutMixin, luigi.Task):
     # Set timeout to 15 minutes (900 seconds)
     timeout_seconds = luigi.IntParameter(default=None)
@@ -326,7 +325,7 @@ class PreprocessingGatewayQuantileMapping(pu.TimeoutMixin, luigi.Task):
 
             # Define environment variables
             environment = [
-                'SAPPHIRE_OPDEV_ENV=True',
+                f'ieasyhydroforecast_env_file_path={env_file_path}',
                 'SAPPHIRE_DG_HOST=' + SAPPHIRE_DG_HOST
             ]
 
@@ -501,7 +500,7 @@ class LinearRegression(pu.TimeoutMixin, luigi.Task):
 
             # Define environment variables
             environment = [
-                'SAPPHIRE_OPDEV_ENV=True',
+                f'ieasyhydroforecast_env_file_path={env_file_path}',
             ]
 
             # Define volumes
@@ -867,7 +866,7 @@ class RunMLModel(pu.TimeoutMixin, luigi.Task):
 
             # Define environment variables
             environment = [
-                'SAPPHIRE_OPDEV_ENV=True',
+                f'ieasyhydroforecast_env_file_path={env_file_path}',
                 'IN_DOCKER=True',
                 f'SAPPHIRE_MODEL_TO_USE={self.model_type}',  # TFT, TIDE, TSMIXER, ARIMA
                 f'SAPPHIRE_PREDICTION_MODE={self.prediction_mode}',  # PENTAD, DECAD
@@ -1031,7 +1030,7 @@ class PostProcessingForecasts(pu.TimeoutMixin, luigi.Task):
 
             # Define environment variables
             environment = [
-                'SAPPHIRE_OPDEV_ENV=True',
+                f'ieasyhydroforecast_env_file_path={env_file_path}',
             ]
 
             # Define volumes
