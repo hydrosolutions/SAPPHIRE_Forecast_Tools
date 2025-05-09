@@ -17,7 +17,7 @@ services:
   pipeline:
     depends_on:
       - luigid
-    cpus: 8
+    cpus: 4
     build:
       context: ../
       dockerfile: ./apps/pipeline/Dockerfile
