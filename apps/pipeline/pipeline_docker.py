@@ -150,7 +150,7 @@ class PreprocessingRunoff(pu.TimeoutMixin, luigi.Task):
 
             # Define environment variables
             environment = [
-                'SAPPHIRE_OPDEV_ENV=True',
+                f'ieasyhydroforecast_env_file_path={env_file_path}',
             ]
 
             # Define volumes
@@ -989,9 +989,19 @@ class PostProcessingForecasts(pu.TimeoutMixin, luigi.Task):
         if ORGANIZATION=='demo':
             return LinearRegression()
         if ORGANIZATION=='kghm':
-            return [ConceptualModel(), RunAllMLModels(), LinearRegression()]
+            if RUN_ML_MODELS == "True" and RUN_CM_MODELS == "True":
+               return [ConceptualModel(), RunAllMLModels(), LinearRegression()]
+            elif RUN_ML_MODELS == "True":
+                return [RunAllMLModels(), LinearRegression()]
+            elif RUN_CM_MODELS == "True":
+                return [ConceptualModel(), LinearRegression()]
+            else: 
+                return LinearRegression()
         if ORGANIZATION=='tjhm': 
-            return LinearRegression()
+            if RUN_ML_MODELS == "True": 
+                return [RunAllMLModels(), LinearRegression()]
+            else: 
+                return LinearRegression()
 
     def output(self):
         return luigi.LocalTarget(f'/app/log_postproc.txt')
