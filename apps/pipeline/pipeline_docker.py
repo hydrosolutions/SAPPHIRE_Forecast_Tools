@@ -948,7 +948,7 @@ class RunAllMLModels(luigi.WrapperTask):
         yield PreprocessingGatewayQuantileMapping()
 
         # Get the list of available ML models from .env file
-        models = env.get('ieasyforecast_ml_models').split(',')
+        models = env.get('ieasyhydroforecast_available_ML_models').split(',')
 
         #models = ['TFT', 'TIDE', 'TSMIXER', 'ARIMA']
         prediction_modes = ['PENTAD', 'DECAD']
