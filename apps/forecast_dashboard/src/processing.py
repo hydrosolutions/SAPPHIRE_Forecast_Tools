@@ -304,10 +304,10 @@ def read_hydrograph_day_file(file_mtime):
     hydrograph_day_all['date'] = pd.to_datetime(hydrograph_day_all['date'], format='%Y-%m-%d')
 
     # Print tail of hydrograph_day_all for code == 15194
-    print(
-        f"DEBUG: read_hydrograph_day_file: hydrograph_day_all:\n{hydrograph_day_all[hydrograph_day_all['code'] == '15194'].head()}")
-    print(
-        f"DEBUG: read_hydrograph_day_file: hydrograph_day_all:\n{hydrograph_day_all[hydrograph_day_all['code'] == '15194'].tail()}")
+    #print(
+    #    f"DEBUG: read_hydrograph_day_file: hydrograph_day_all:\n{hydrograph_day_all[hydrograph_day_all['code'] == '15194'].head()}")
+    #print(
+    #    f"DEBUG: read_hydrograph_day_file: hydrograph_day_all:\n{hydrograph_day_all[hydrograph_day_all['code'] == '15194'].tail()}")
 
     # Store in cache
     pn.state.cache[cache_key] = (file_mtime, hydrograph_day_all)
@@ -341,10 +341,14 @@ def read_hydrograph_day_data_for_pentad_forecasting(iahhf_selected_stations, fil
             os.getenv("ieasyforecast_configuration_path"),
             os.getenv("ieasyforecast_config_file_station_selection"))
         selected_stations = fl.load_selected_stations_from_json(filepath)
+        #print(f"\nDEBUG: read_hydrograph_day_data_for_pentad_forecasting: selected_stations: {selected_stations}")
 
         # Filter data for selected stations
         hydrograph_day_all = hydrograph_day_all[hydrograph_day_all["code"].isin(selected_stations)]
 
+        # print unique values of code column
+        #print(f"DEBUG: read_hydrograph_day_data_for_pentad_forecasting: unique values of code column:\n{hydrograph_day_all['code'].unique()}")
+        
         # Test if there is an environment variable ieasyforecast_restrict_stations_file
         if os.getenv("ieasyforecast_restrict_stations_file"):
             filepath = os.path.join(
@@ -1041,48 +1045,48 @@ def update_model_dict_date(model_dict, forecasts_all, selected_station, selected
 
     Note: This function may throw an error if processing of forecasts is not done yet.
     """
-    # print(f"DEBUG: update_model_dict_date for date: {selected_date}")
-    # print(f"Tail of forecasts_all:\n{forecasts_all.tail()}")
-    # print(f"Type of forecasts_all['date']: {forecasts_all['date'].dtype}")
-    # print(f"Type of selected_date: {type(selected_date)}")
+    #print(f"DEBUG: update_model_dict_date for date: {selected_date}")
+    #print(f"Tail of forecasts_all:\n{forecasts_all.tail()}")
+    #print(f"Type of forecasts_all['date']: {forecasts_all['date'].dtype}")
+    #print(f"Type of selected_date: {type(selected_date)}")
     if hasattr(selected_station, 'value'):
-        # print(f"selected_station has attribute value: {selected_station.value}")
+        #print(f"selected_station has attribute value: {selected_station.value}")
         if hasattr(selected_date, 'value'):
-            # print(f"selected_date has attribute value: {selected_date.value}")
+            #print(f"selected_date has attribute value: {selected_date.value}")
             filtered_forecasts = forecasts_all[
                 (forecasts_all['station_labels'] == selected_station.value) &
                 (forecasts_all['date'] == pd.Timestamp(selected_date.value))
                 ]
         else:
-            # print(f"selected_date does not have attribute value: {selected_date}")
+            #print(f"selected_date does not have attribute value: {selected_date}")
             filtered_forecasts = forecasts_all[
                 (forecasts_all['station_labels'] == selected_station.value) &
                 (forecasts_all['date'] == pd.Timestamp(selected_date))
                 ]
     else:
-        # print(f"selected_station does not have attribute value: {selected_station}")
+        #print(f"selected_station does not have attribute value: {selected_station}")
         if hasattr(selected_date, 'value'):
-            # print(f"selected_date has attribute value: {selected_date.value}")
+            #print(f"selected_date has attribute value: {selected_date.value}")
             filtered_forecasts = forecasts_all[
                 (forecasts_all['station_labels'] == selected_station) &
                 (forecasts_all['date'] == pd.Timestamp(selected_date.value))
                 ]
         else:
-            # print(f"selected_date does not have attribute value: {selected_date}")
+            #print(f"selected_date does not have attribute value: {selected_date}")
             filtered_forecasts = forecasts_all[
                 (forecasts_all['station_labels'] == selected_station) &
                 (forecasts_all['date'] == pd.Timestamp(selected_date))
                 ]
     # Print filtered_forecasts after station & date filtering
-    # print(f"--Filtered forecasts:\n{filtered_forecasts[['station_labels', 'date', 'model_long', 'model_short', 'forecasted_discharge']]}")
+    #print(f"--Filtered forecasts:\n{filtered_forecasts[['station_labels', 'date', 'model_long', 'model_short', 'forecasted_discharge']]}")
 
     # Remove duplicates in model_short
     filtered_forecasts = filtered_forecasts.drop_duplicates(subset=['model_short'], keep='last')
     model_dict = filtered_forecasts.set_index('model_long')['model_short'].to_dict()
 
-    # print(f"\nDEBUG: update_model_dict:")
-    # print(f"Filtered forecasts:\n{filtered_forecasts[['model_long', 'model_short', 'forecasted_discharge']]}")
-    # print(f"Resulting model_dict: {model_dict}")
+    #print(f"\nDEBUG: update_model_dict:")
+    #print(f"Filtered forecasts:\n{filtered_forecasts[['model_long', 'model_short', 'forecasted_discharge']]}")
+    #print(f"Resulting model_dict: {model_dict}")
 
     return model_dict
 
@@ -1097,6 +1101,7 @@ def get_best_models_for_station_and_pentad(forecasts_all, selected_station, sele
         horizon_in_year = "decad_in_year"
         horizon_value = selected_decad
     print(f"\n  dbg: get_best_models_for_station_and_pentad: selected_station: {selected_station}")
+    print(f"  dbg: get_best_models_for_station_and_pentad: selected_pentad: {horizon_value}")
     # Filter the forecast results for the selected station and pentad
     forecasts_local = forecasts_all[
         (forecasts_all['station_labels'] == selected_station) &

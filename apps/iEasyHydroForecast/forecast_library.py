@@ -3505,6 +3505,12 @@ def get_latest_forecasts(simulated_df, horizon_column_name='pentad_in_year'):
     latest_forecasts.loc[:, 'year'] = latest_forecasts['date'].dt.year
     latest_forecasts = latest_forecasts[latest_forecasts['year'] >= (latest_year - 1)]
 
+    # Debugging prints. In Taj hydromet, if operational data is missing, this can go wrong. 
+    print(f"latest_year: {latest_year}")
+    print(f"latest_forecasts['year'].unique(): {latest_forecasts['year'].unique()}")
+    # Print tail of latest_forecasts with code == '17082'
+    print(latest_forecasts[latest_forecasts['code'] == '17082'].tail(10))
+
     # Drop the 'year' column
     latest_forecasts = latest_forecasts.drop(columns=['year'])
 

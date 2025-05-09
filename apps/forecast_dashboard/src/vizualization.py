@@ -1322,9 +1322,9 @@ def create_cached_vlines(_, for_dates=True, y_text=1):
         for i in range(len(time_horizons)):
             if i % 2 == 0:
                 path_data.append((time_horizons[i], -100))  # Start at -100
-                path_data.append((time_horizons[i], 3000))  # Move to 3000
+                path_data.append((time_horizons[i], 6000))  # Move to 3000
             else:
-                path_data.append((time_horizons[i], 3000))  # Stay at 3000
+                path_data.append((time_horizons[i], 6000))  # Stay at 3000
                 path_data.append((time_horizons[i], -100))  # Move to -100
         vlines = hv.Path(path_data).opts(
             color='gray', line_width=1,
@@ -1903,14 +1903,18 @@ def plot_pentad_forecast_hydrograph_data_v2(_, hydrograph_day_all, linreg_predic
 
     # Calculate the forecast ranges depending on the values of range_type and range_slider
     if range_type == _('delta'):
-        # If we have values in columns 'Q25' and 'Q75', we calculate 'fc_lower'
-        # and 'fc_upper' as the 25th and 75th percentiles of the forecasted discharge
-        forecasts['fc_lower'] = forecasts['Q25'].where(
-            ~forecasts['Q25'].isna(),
-            forecasts['forecasted_discharge'] - forecasts['delta'])
-        forecasts['fc_upper'] = forecasts['Q75'].where(
-            ~forecasts['Q75'].isna(),
-            forecasts['forecasted_discharge'] + forecasts['delta'])
+        if 'Q25' in forecasts.columns and 'Q75' in forecasts.columns:
+            # If we have values in columns 'Q25' and 'Q75', we calculate 'fc_lower'
+            # and 'fc_upper' as the 25th and 75th percentiles of the forecasted discharge
+            forecasts['fc_lower'] = forecasts['Q25'].where(
+                ~forecasts['Q25'].isna(),
+                forecasts['forecasted_discharge'] - forecasts['delta'])
+            forecasts['fc_upper'] = forecasts['Q75'].where(
+                ~forecasts['Q75'].isna(),
+                forecasts['forecasted_discharge'] + forecasts['delta'])
+        else: 
+            forecasts['fc_lower'] = forecasts['forecasted_discharge'] - forecasts['delta']
+            forecasts['fc_upper'] = forecasts['forecasted_discharge'] + forecasts['delta']
         # forecasts.loc[:, 'fc_lower'] = forecasts.loc[:, 'forecasted_discharge'] - forecasts.loc[:, 'delta']
         # forecasts.loc[:, 'fc_upper'] = forecasts.loc[:, 'forecasted_discharge'] + forecasts.loc[:, 'delta']
     elif range_type == _("Manual range, select value below"):
@@ -3634,8 +3638,15 @@ def plot_forecast_skill(
     # Filter the forecasts for the selected station and models
     forecast_pentad = forecasts_all[forecasts_all['model_short'].isin(model_checkbox)].copy()
     forecast_pentad = forecast_pentad[forecast_pentad['station_labels'] == station_widget]
-    # We only need the values of the past 365 days (or the past year)
-    forecast_pentad = forecast_pentad[forecast_pentad['date'] >= selected_date - pd.Timedelta(days=365)]
+    ## We only need the values of the past 365 days (or the past year)
+    ##forecast_pentad = forecast_pentad[forecast_pentad['date'] >= selected_date - pd.Timedelta(days=365)]
+    # For each model and pentad/decad of year, get the most recent non-NaN value
+    forecast_pentad = (forecast_pentad
+                  .sort_values('date', ascending=False)  # Sort by date, most recent first
+                  .groupby(['model_short', horizon_in_year])  # Group by model and pentad/decad
+                  .apply(lambda x: x.dropna(subset=['sdivsigma', 'accuracy']).head(1))  # Get first non-NaN row
+                  .reset_index(drop=True))  # Reset index
+
     # Multiply accruacy by 100 to get percentage
     forecast_pentad['accuracy'] = forecast_pentad['accuracy'] * 100
     # Drop any duplicates in date and model_short
@@ -3676,11 +3687,10 @@ def plot_forecast_skill(
             remove_bokeh_logo,
             lambda p, e: add_custom_xticklabels_pentad(_, p, e)
         ],
-        # xticks=list(range(1,72,6)),
         title=title_effectiveness, shared_axes=False,
         # legend_position='bottom_left',  # 'right',
         xlabel=horizon_x_label, ylabel=_("Effectiveness [-]"),
-        show_grid=True,  # xlim=(1, 72),
+        show_grid=True,  
         ylim=(0, 1.4),
         fontsize={'legend': 8, 'title': 10}, fontscale=1.2
     )
@@ -3715,12 +3725,12 @@ def plot_forecast_skill(
             remove_bokeh_logo,
             lambda p, e: add_custom_xticklabels_pentad(_, p, e)
         ],
-        # xticks=list(range(1,72,6)),
         title=title_accuracy, shared_axes=False,
         # legend_position='bottom_left',  # 'right',
         xlabel=horizon_x_label, ylabel=_("Accuracy [%]"),
-        show_grid=True,  # xlim=(1, 72),
+        show_grid=True,  
         ylim=(0, 100),
+        xlim=(0, area_x_lim),
         fontsize={'legend': 8, 'title': 10}, fontscale=1.2
     )
 

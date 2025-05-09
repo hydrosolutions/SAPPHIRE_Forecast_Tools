@@ -213,14 +213,14 @@ bulletin_download_panel = downloader.panel()
 # region load_data
 
 # Find out which forecasts have to be displayed
-display_ML_forecasts = os.getenv('ieasyhydroforecast_run_ML_models', 'False')
-display_CM_forecasts = os.getenv('ieasyhydroforecast_run_CM_models', 'False')
+display_ML_forecasts = os.getenv('ieasyhydroforecast_run_ML_models', 'False').lower() in ('true', 'yes', '1', 't', 'y')
+display_CM_forecasts = os.getenv('ieasyhydroforecast_run_CM_models', 'False').lower() in ('true', 'yes', '1', 't', 'y')
 
 # If both display_ML_forecasts and display_CM_forecasts are False, we don't need 
 # to display data gateway results. 
 if not display_ML_forecasts and not display_CM_forecasts:
     display_weather_data = False
-if display_ML_forecasts == 'False' and display_CM_forecasts == 'False':
+if display_ML_forecasts == False and display_CM_forecasts == False:
     display_weather_data = False
 else:
     display_weather_data = True
@@ -282,7 +282,7 @@ def load_data():
             os.getenv("ieasyforecast_intermediate_data_path"),
             os.getenv("ieasyhydroforecast_OUTPUT_PATH_DISCHARGE"))
         ml_forecast_mtime = get_directory_mtime(ml_forecast_dir)
-
+        
     if display_weather_data == True:
         # Rainfall and temperature data files
         p_file = os.path.join(
@@ -313,7 +313,7 @@ def load_data():
         rram_forecast = processing.read_rram_forecast_data(rram_file_mtime)
     if display_ML_forecasts == True:
         ml_forecast = processing.read_ml_forecast_data(ml_forecast_mtime)
-
+        
     # Pentadal forecast data
     # - linreg_predictor: for displaying predictor in predictor tab
     # Set multi-index for faster lookups
@@ -322,6 +322,7 @@ def load_data():
     # Print tail of linreg_predictor where code == '15149'
     #print(f"DEBUG: forecast_dashboard.py: linreg_predictor tail:\n{linreg_predictor[linreg_predictor['code'] == '15149'].tail()}")
     # - forecast results from all models
+    # Reads in latest forecast results (_latest.csv) for all models
     forecasts_all = processing.read_forecast_results_file(
         stations_iehhf, forecast_results_file_mtime)
     # Forecast statistics
@@ -360,14 +361,62 @@ def load_data():
     #print(f"DEBUG: linreg_predictor raw: {linreg_predictor.tail()}")
     linreg_predictor = processing.add_labels_to_forecast_pentad_df(linreg_predictor, all_stations)
     #print(f"DEBUG: linreg_predictor with labels: {linreg_predictor.tail()}")
-    print(f"DEBUG: forecast_dashboard.py: linreg_predictor tail:\n{linreg_predictor[linreg_predictor['code'] == '15149'].tail()}")
+    #print(f"DEBUG: forecast_dashboard.py: linreg_predictor tail:\n{linreg_predictor[linreg_predictor['code'] == '15149'].tail()}")
     linreg_datatable = processing.shift_date_by_n_days(linreg_predictor, 1)
-    print(f"DEBUG: forecast_dashboard.py: linreg_predictor tail:\n{linreg_predictor[linreg_predictor['code'] == '15149'].tail()}")
+    #print(f"DEBUG: forecast_dashboard.py: linreg_predictor tail:\n{linreg_predictor[linreg_predictor['code'] == '15149'].tail()}")
     #print(f"DEBUG: linreg_datatable.columns: {linreg_datatable.columns}")
     #print(f"DEBUG: linreg_datatable: {linreg_datatable.tail()}")
     #print(f"DEBUG: linreg_predictor.columns: {linreg_predictor.columns}")
     #print(f"DEBUG: linreg_predictor: {linreg_predictor.tail()}")
     forecasts_all = processing.add_labels_to_forecast_pentad_df(forecasts_all, all_stations)
+    #print('column names of forecasts_all:\n', forecasts_all.columns)
+    #print('\n\nhead of forecasts_all:\n', forecasts_all.head(), '\n\n')
+    # Determine the horizon (pentad or decad)
+    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+    horizon_in_year = "pentad_in_year" if horizon == "pentad" else "decad_in_year"
+    #print('horizon_in_year_col:', horizon_in_year)
+
+    # Find the latest year in the data
+    latest_year = forecasts_all['date'].dt.year.max()
+    #print('latest_year:', latest_year)
+
+    # Filter the DataFrame to include only the latest year
+    forecasts_latest_year = forecasts_all[forecasts_all['date'].dt.year == latest_year]
+
+    # Find the maximum pentad_in_year or decad_in_year value in the latest year
+    latest_horizon_in_year = forecasts_latest_year[horizon_in_year].max()
+    #print('latest_horizon_in_year:', latest_horizon_in_year)
+
+    # Filter the DataFrame to include only the latest pentad/decad in the latest year
+    forecasts_current = forecasts_latest_year[forecasts_latest_year[horizon_in_year] == latest_horizon_in_year]
+    #print('forecasts_current:\n', forecasts_current)
+
+    # Get valid codes
+    valid_codes = forecasts_current['code'].unique().tolist()
+    #print('valid_codes:', valid_codes)
+
+    # Filter forecasts_all and station_list based on valid codes
+    forecasts_all = forecasts_all[forecasts_all['code'].isin(valid_codes)]
+    forecast_stats = forecast_stats[forecast_stats['code'].isin(valid_codes)]
+    #print('station_list prior: ', station_list)
+    # print forecasts_all filtered for code == '17082'
+    station_df = station_df[station_df['code'].isin(valid_codes)]
+    station_list = station_df['station_labels'].unique().tolist()
+    all_stations = all_stations[all_stations['code'].isin(valid_codes)]
+    print('station_dict prior: ', station_dict)
+    # Create a new station_dict that only includes stations in station_list
+    new_station_dict = {}
+    for basin, stations in station_dict.items():
+        new_stations = [s for s in stations if any(code in s for code in valid_codes)]  # Corrected line
+        if new_stations:  # Only add the basin if there are valid stations
+            new_station_dict[basin] = new_stations
+    station_dict = new_station_dict
+    print('station_dict after: ', station_dict)
+    #print('Updated data:')
+    #print('forecasts_all:\n', forecasts_all)
+    #print('station_list:', station_list)
+    #print('station_df:\n', station_df)
+    
     if display_CM_forecasts == True: 
         rram_forecast = processing.add_labels_to_forecast_pentad_df(rram_forecast, all_stations)
     else: 
@@ -381,15 +430,12 @@ def load_data():
     forecasts_all = processing.internationalize_forecast_model_names(_, forecasts_all)
     forecast_stats = processing.internationalize_forecast_model_names(_, forecast_stats)
 
-    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
-    horizon_in_year = "pentad_in_year" if horizon == "pentad" else "decad_in_year"
-
     # Merge forecast stats with forecasts by code and pentad_in_year and model_short
-    print(f'\n\nhead of forecasts_all:\n{forecasts_all.head()}')
-    print(f'column names of forecasts_all:\n{forecasts_all.columns}')
-    print(f'type of forecasts_all[pentad_in_year]: {forecasts_all[horizon_in_year].dtype}')
-    print(f'\n\nhead of forecast_stats:\n{forecast_stats.head()}')
-    print(f'type of forecast_stats[pentad_in_year]: {forecast_stats[horizon_in_year].dtype}')
+    #print(f'\n\nhead of forecasts_all:\n{forecasts_all.head()}')
+    #print(f'column names of forecasts_all:\n{forecasts_all.columns}')
+    #print(f'type of forecasts_all[pentad_in_year]: {forecasts_all[horizon_in_year].dtype}')
+    #print(f'\n\nhead of forecast_stats:\n{forecast_stats.head()}')
+    #print(f'type of forecast_stats[pentad_in_year]: {forecast_stats[horizon_in_year].dtype}')
     forecasts_all = forecasts_all.merge(
         forecast_stats,
         on=['code', horizon_in_year, 'model_short', 'model_long'],
@@ -400,6 +446,17 @@ def load_data():
     if display_weather_data == True:
         rain = processing.read_rainfall_data(p_file_mtime)  # (max(hind_p_file_mtime, cf_p_file_mtime))
         temp = processing.read_temperature_data(t_file_mtime)  # max(hind_t_file_mtime, cf_t_file_mtime))
+    else: 
+        rain = None
+        temp = None
+
+    # Debugging prints to see if we have read data correctly
+    print(f"--- display_weather_data: {display_weather_data}")
+    print(f"--- rain: {rain}")
+    print(f"--- display_ML_forecasts: {display_ML_forecasts}")
+    print(f"--- ml_forecast: {ml_forecast}")
+    print(f"--- display_CM_forecasts: {display_CM_forecasts}")
+    print(f"--- rram_forecast: {rram_forecast}")
 
 stations_iehhf = None
 
@@ -505,6 +562,8 @@ decad_selector = pn.widgets.Select(
     value=current_decad,  # Default to the last available decad
     margin=(0, 0, 0, 0)
 )
+print(f"   dbg: current_pentad: {current_pentad}")
+print(f"   dbg: current_decad: {current_decad}")
 
 # Widget for station selection, always visible
 #print(f"\n\nDEBUG: forecast_dashboard.py: station select name string: {_('Select discharge station:')}\n\n")
@@ -523,7 +582,8 @@ station = pn.widgets.Select(
 # station
 print("DEBUG: forecast_dashboard.py: station.value: ", station.value)
 model_dict = processing.update_model_dict_date(model_dict_all, forecasts_all, station.value, date_picker.value)
-#print(f"DEBUG: forecast_dashboard.py: model_dict: {model_dict}")
+print(f"DEBUG: forecast_dashboard.py: model_dict: {model_dict}")
+# Model dict can be empty if no forecasts at all are available for the selected station
 
 
 #@pn.depends(station, pentad_selector, watch=True)
@@ -531,8 +591,8 @@ def get_best_models_for_station_and_pentad(station_value, pentad_value, decad_va
     return processing.get_best_models_for_station_and_pentad(forecasts_all, station_value, pentad_value, decad_value)
 current_model_pre_selection = get_best_models_for_station_and_pentad(station.value, pentad_selector.value, decad_selector.value)
 
-#print(f"DEBUG: forecast_dashboard.py: model_dict: \n{model_dict}")
-#print(f"DEBUG: forecast_dashboard.py: current_model_pre_selection: \n{current_model_pre_selection}")
+print(f"DEBUG: forecast_dashboard.py: model_dict: \n{model_dict}")
+print(f"DEBUG: forecast_dashboard.py: current_model_pre_selection: \n{current_model_pre_selection}")
 
 # Widget for forecast model selection, only visible in forecast tab
 # a given hydropost/station.
@@ -1315,8 +1375,12 @@ pentad_selector.param.watch(update_callback, 'value')
 # Initial setup: populate the main area with the initial selection
 #update_callback(None)  # This does not seem to be needed
 daily_hydrograph_plot = pn.pane.HoloViews(hv.Curve([]), sizing_mode="stretch_both")
-daily_rainfall_plot = pn.pane.HoloViews(hv.Curve([]), sizing_mode="stretch_both")
-daily_temperature_plot = pn.pane.HoloViews(hv.Curve([]), sizing_mode="stretch_both")
+if rain is None: 
+    daily_rainfall_plot = pn.pane.Markdown(_("No precipitation data from SAPPHIRE Data Gateway available."))
+    daily_temperature_plot = pn.pane.Markdown(_("No temperature data from SAPPHIRE Data Gatway available."))
+else: 
+    daily_rainfall_plot = pn.pane.HoloViews(hv.Curve([]), sizing_mode="stretch_width") 
+    daily_temperature_plot = pn.pane.HoloViews(hv.Curve([]), sizing_mode="stretch_width") 
 
 forecast_data_and_plot = pn.Column(sizing_mode="stretch_both")
 
