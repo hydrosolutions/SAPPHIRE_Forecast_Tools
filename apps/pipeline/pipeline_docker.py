@@ -39,6 +39,8 @@ TAG = env.get('ieasyhydroforecast_backend_docker_image_tag')
 ORGANIZATION = env.get('ieasyhydroforecast_organization')
 # URL of the sapphire data gateway
 SAPPHIRE_DG_HOST = env.get('SAPPHIRE_DG_HOST')
+RUN_ML_MODELS = env.get('ieasyhydroforecast_run_ML_models')
+RUN_CM_MODELS = env.get('ieasyhydroforecast_run_CM_models')
 
 
 
@@ -945,7 +947,10 @@ class RunAllMLModels(luigi.WrapperTask):
         yield PreprocessingRunoff()
         yield PreprocessingGatewayQuantileMapping()
 
-        models = ['TFT', 'TIDE', 'TSMIXER', 'ARIMA']
+        # Get the list of available ML models from .env file
+        models = env.get('ieasyforecast_ml_models').split(',')
+
+        #models = ['TFT', 'TIDE', 'TSMIXER', 'ARIMA']
         prediction_modes = ['PENTAD', 'DECAD']
 
         for model in models:
@@ -1568,18 +1573,24 @@ class RunWorkflow(luigi.Task):
             
         elif ORGANIZATION=='tjhm': 
             print("Running TJHM workflow.")
-            base_tasks =  [
-                PostProcessingForecasts(),
-                RunAllMLModels(),
-                DeleteOldGatewayFiles(),
-                LogFileCleanup()
-            ]
+            if RUN_ML_MODELS == 'True':
+                base_tasks =  [
+                    PostProcessingForecasts(),
+                    RunAllMLModels(),
+                    DeleteOldGatewayFiles(),
+                    LogFileCleanup()
+                ]
+            else:
+                base_tasks =  [
+                    PostProcessingForecasts(),
+                    LogFileCleanup()
+                ]
         # You can add workflow definitions for other organizations here.
 
         # Default to demo workflow
         else:
             print("ORGANIZATION not specified.\n  -> Defaulting to demo workflow.")
-            base_task = [PostProcessingForecasts()]
+            base_tasks = [PostProcessingForecasts()]
 
         # If notifications are enabled, add the notification task
         if self.send_notifications:
