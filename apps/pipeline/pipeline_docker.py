@@ -991,7 +991,7 @@ class PostProcessingForecasts(pu.TimeoutMixin, luigi.Task):
         if ORGANIZATION=='kghm':
             return [ConceptualModel(), RunAllMLModels(), LinearRegression()]
         if ORGANIZATION=='tjhm': 
-            return RunAllMLModels()
+            return LinearRegression()
 
     def output(self):
         return luigi.LocalTarget(f'/app/log_postproc.txt')
