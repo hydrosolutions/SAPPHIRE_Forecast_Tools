@@ -257,7 +257,8 @@ def main():
         date_col='date',
         discharge_col='discharge',
         code_col='code')
-    src.inspect_site_data(hydrograph, '15189')
+    # A debug print to check the data
+    #src.inspect_site_data(hydrograph, '16006')
     end_time = time.time()
     time_from_daily_time_series_to_hydrograph = end_time - start_time
 
@@ -279,7 +280,7 @@ def main():
         time_add_dangerous_discharge = end_time - start_time
 
     # Debug print: 5 rows with latest date for site 15189
-    print(hydrograph[hydrograph['code'] == 15189].tail(5))
+    #print(hydrograph[hydrograph['code'] == 15189].tail(5))
 
     ## Save the data
     # Daily time series data

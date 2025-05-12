@@ -856,13 +856,18 @@ def get_predictors(data_df, start_date, fc_sites,
                    code_col='code', date_col='date', predictor_col=None):
 
     logger.debug("Getting predictor for pentadal forecasting ...")
+    if os.getenv("ieasyhydroforecast_organization") == 'kghm': 
+        debug_site = '15292'
+    elif os.getenv("ieasyhydroforecast_organization") == 'tjhm':
+        debug_site = '17050'
+
     # Iterate through sites in fc_sites and see if we can find the predictor
     # in result_df.
     # This is mostly relevant for the offline mode.
     for site in fc_sites:
         # Get the data for the site
         site_data = data_df[data_df[code_col] == site.code]
-        if int(site.code) == 15292:
+        if int(site.code) == debug_site:
             logger.debug("DEBUG: forecasting:get_predictor: site_data1: \n%s",
                           site_data[[date_col, code_col, 'issue_date', predictor_col]].tail(10))
             logger.debug("DEBUG: forecasting:get_predictor: [start_date]: %s", [start_date])
@@ -930,10 +935,15 @@ def get_pentadal_and_decadal_data(forecast_flags=None,
         forecast_flags=forecast_flags)
 
     # Print the first pentad and decad of the year 2023 and 2024
+    if os.getenv("ieasyhydroforecast_organization") == 'kghm':
+        debug_site = '15102'
+    elif os.getenv("ieasyhydroforecast_organization") == 'tjhm':
+        debug_site = '17050'     
+       
     print("DEBUG: forecasting:get_pentadal_and_decadal_data: data_pentad: \n",
-            data_pentad[(data_pentad['date'] < '2023-01-02') & (data_pentad['code'] == '15102')].tail(10))
+            data_pentad[(data_pentad['date'] < '2023-01-02') & (data_pentad['code'] == debug_site)].tail(10))
     print("DEBUG: forecasting:get_pentadal_and_decadal_data: data_pentad: \n",
-            data_pentad[(data_pentad['date'] < '2024-01-02') & (data_pentad['code'] == '15102')].tail(10))
+            data_pentad[(data_pentad['date'] < '2024-01-02') & (data_pentad['code'] == debug_site)].tail(10))
 
     # Only keep rows for sites in the site_lists
     data_pentad = filter_data(data_pentad, 'code', site_list_pentad)
@@ -1215,10 +1225,10 @@ def perform_linear_regression(
             logger.debug(f"forecast_date: {forecast_date}")
             if horizon_flag == 'pentad':
                 pentad_in_month = tl.get_pentad(first_day_of_forecast_horizon)
-                logger.debug(f"pentad_in_month: {first_day_of_forecast_horizon}")
+                logger.debug(f"pentad_in_month: {pentad_in_month}")
             elif horizon_flag == 'decad':
                 pentad_in_month = tl.get_decad_in_month(first_day_of_forecast_horizon)
-                logger.debug(f"decad_in_month: {first_day_of_forecast_horizon}")
+                logger.debug(f"decad_in_month: {pentad_in_month}")
             else:
                 raise ValueError(f"horizon_flag {horizon_flag} is not valid.")
             title_month = tl.get_month_str_en(first_day_of_forecast_horizon)
@@ -1289,7 +1299,7 @@ def perform_linear_regression(
             intercept = model.intercept_[0]
 
             # Print the slope and intercept
-            logger.debug(f'Station: {station}, pentad/decad: {forecast_horizon_int}, slope: {slope}, intercept: {intercept}')
+            logger.debug(f'Station: {station}, pentad/decad: {forecast_horizon_int}, slope: {round(slope,4)}, intercept: {round(intercept, 4)}')
 
         # Store the slope and intercept in the data_df
         data_dfp.loc[(data_dfp[station_col] == station), 'slope'] = slope
@@ -1328,6 +1338,7 @@ def perform_forecast(fc_sites, group_id=None, result_df=None,
 
     # For each site, calculate the forecasted discharge
     for site in fc_sites:
+        logger.debug(f'    calculating forecast for site {site.code} ...')
         Site.from_df_calculate_forecast(
             site, group_id=group_id, df=result_df,
             code_col=code_col, group_col=group_col)
@@ -3778,14 +3789,17 @@ class Site:
 
             # Convert group_id to float
             group_id = float(group_id)
+            logger.debug(f'group_id: {group_id}')
 
             # Get the slope and intercept for the site
             slope = df[(df[code_col] == site.code) & (df[group_col] == group_id)]['slope'].values[0]
             intercept = df[(df[code_col] == site.code) & (df[group_col] == group_id)]['intercept'].values[0]
+            logger.debug(f'slope: {slope}, intercept: {intercept}')
+            logger.debug(f'site.predictor: {site.predictor}')
 
             # Write slope and intercept to site
-            site.slope = round(slope, 5)
-            site.intercept = round(intercept, 5)
+            site.slope = round(slope, 6)
+            site.intercept = round(intercept, 6)
 
             # Calculate the expected discharge forecasted for the next pentad
             qpexpd = slope * float(site.predictor) + intercept
@@ -3796,6 +3810,7 @@ class Site:
 
             # Write the expected discharge forecasted for the next pentad to self.fc_qexp
             site.fc_qexp = round_discharge(qpexpd)
+            logger.debug(f'qpexpd: {qpexpd}')
 
             # Return the expected discharge forecasted for the next pentad
             return qpexpd
@@ -4059,6 +4074,11 @@ class Site:
                 raise ValueError(f'DataFrame is missing one or more required columns: {code_col}, {predictor_col}, {date_col}')
 
             # Get the predictor for the site
+            logger.debug(f'site.code: {site.code}, predictor_dates: {predictor_dates}')
+            logger.debug(f'column names of df_copy: {df_copy.columns}')
+            logger.debug(f'code_col: {code_col}, date_col: {date_col}, predictor_col: {predictor_col}')
+            logger.debug(f'df_copy[:, [code_col, date_col, predictor_col]]: {df_copy[[code_col, date_col, predictor_col]]}')
+            logger.debug(f'df_copy[(df_copy[code_col] == site.code) & (df_copy[date_col] == predictor_dates)][predictor_col]: {df_copy[(df_copy[code_col] == site.code) & (df_copy[date_col] == predictor_dates)][predictor_col]}')
             predictor = df_copy[(df_copy[code_col] == site.code) & (df_copy[date_col] == predictor_dates)][predictor_col].mean(skipna=True)
 
             # Note: Should the predictor be a negative number, we cannot make a
@@ -4066,6 +4086,7 @@ class Site:
 
             # Write the predictor value to self.predictor
             site.predictor = round_discharge_to_float(predictor)
+            logger.debug(f'site.predictor: {site.predictor}')
 
             # Return the predictor value
             return predictor
