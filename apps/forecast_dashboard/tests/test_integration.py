@@ -16,7 +16,7 @@ DECAD_URL = "https://fc.decad.ieasyhydro.org/forecast_dashboard"
 SLEEP = 1
 # Needs full, absolute path
 sensitive_data_forecast_tools = "/Users/bea/hydrosolutions Dropbox/Bea martibeatrice@gmail.com/SAPPHIRE_Central_Asia_Technical_Work/data/sensitive_data_forecast_tools/"
-horizon = "decad"  # pentad or decad
+horizon = "pentad"  # pentad or decad
 
 today = dt.datetime.now()
 today = today + dt.timedelta(days=1)
@@ -356,7 +356,7 @@ def test_local(page: Page):
                     compare(df.iloc[row_index, 15], row[2])  # fc_lower
                     compare(df.iloc[row_index, 17], row[3])  # fc_upper
                     assert df.iloc[row_index, 5].replace(',', '.') == row[4]  # delta
-                    assert df.iloc[row_index, 10].replace(',', '.') == row[5]  # sdivsigma
+                    compare(df.iloc[row_index, 10], row[5]) 
         print("#### CSV values are EQUAL to Excel values")
     assert count == len(csv_data) * 2
 
