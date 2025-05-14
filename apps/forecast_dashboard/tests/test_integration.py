@@ -1,3 +1,4 @@
+import os
 import time
 import csv
 import re
@@ -14,9 +15,10 @@ LOCAL_URL = "http://localhost:5006/forecast_dashboard"
 PENTAD_URL = "https://fc.pentad.ieasyhydro.org/forecast_dashboard"
 DECAD_URL = "https://fc.decad.ieasyhydro.org/forecast_dashboard"
 SLEEP = 1
-# Needs full, absolute path
-sensitive_data_forecast_tools = "/Users/beatricemarti/hydrosolutions Dropbox/Bea martibeatrice@gmail.com/SAPPHIRE_Central_Asia_Technical_Work/data/kyg_data_forecast_tools/"
-horizon = "pentad"  # pentad or decad
+# Needs full, absolute path with "/" at the end 
+sensitive_data_forecast_tools = os.getenv('ieasyhydroforecast_env_file_path')
+#sensitive_data_forecast_tools = "/Users/beatricemarti/hydrosolutions Dropbox/Bea martibeatrice@gmail.com/SAPPHIRE_Central_Asia_Technical_Work/data/kyg_data_forecast_tools/"
+horizon = "decad"  # pentad or decad
 
 today = dt.datetime.now()
 today = today + dt.timedelta(days=1)
