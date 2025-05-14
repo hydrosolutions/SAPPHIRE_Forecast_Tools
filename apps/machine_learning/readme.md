@@ -53,6 +53,50 @@ Flagging System:
 
     Output: {MODE}_{MODEL_TO_USE}_forecast.csv file.
 
-## Useage
+
+
+
+## Predictor Classes
+
+In order for a model to work in the ML-forecasting system it should Inherit fromt the BasePredictor class. Here the functions are definined which each model's PredictorClass should provide [get_input_chunk_length, get_max_forecast_horizon, predict, hindcast].
+The BaseDartsDLPredictor Class is a wrapper for Global Darts forecasting Models (TFT, TiDE, TSMixer...). 
+
+
+## Model Folder Setup
+
+Each model has it's own model folder (the path is configured in the .env file).
+
+### Setup Darts Deep Learning Models (TFT, TSMixer and TiDE)
+
+Folder Structure \
+- **model/**
+  - scaler_stats_discharge.csv
+  - scaler_stats_era5.csv
+  - scaler_stats_static.csv
+  - model.pt
+  - model.pt.ckpt
+  - model_config.json
+  - other_additional_information (description, train - val loss etc)
+
+the scaler files save the statistics to normalize the input data.
+
+#### model_config.json 
+```json
+{
+  "num_samples": 200, // Number of Samples to draw 
+  "quantiles": [0.1, 0.5, 0.9], // Quantiles to save (Note that these should cover ranges the model was trained on..)
+  "scaling_type": "standard",          // or "minmax"
+  "scaling_type_covariates": "minmax",
+  "scaling_type_static": "standard",
+  "exogene_covariates_cols": ["P", "T", "PET"], // exogene variables either from ERA5-Land or Snowmapper
+  "past_covariates_cols": ["moving_avr_dis_3", "moving_avr_dis_5", "moving_avr_dis_10"], // covariates to use which are known until the forecast date
+  "future_covariates_cols": ["P", "T", "PET", "daylight_hours"], // future covariates to use - here we have forecasted values
+  "window_sizes": [3, 5, 10], // window sizes over which the averages of the past discharge should be calculated
+  "trainer_config": {
+    "accelerator": "cpu",
+    "logger": false
+  } // trainer config for sampling through the data - generally you do not change this.
+}
+```
 
 

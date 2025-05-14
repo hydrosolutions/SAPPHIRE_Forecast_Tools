@@ -49,7 +49,7 @@
 
 # Useage
 # cd to the directory where the script is located (apps/preprocessing_gateway)
-# python Quantile_Mapping_OP.py
+# ieasyhydroforecast_env_file_path=/path/to/.env python Quantile_Mapping_OP.py
 
 # Author: Sandro Hunziker
 

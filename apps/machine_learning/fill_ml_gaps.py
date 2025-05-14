@@ -35,7 +35,7 @@ file_handler = TimedRotatingFileHandler('logs/log', when='midnight',
 file_handler.setFormatter(formatter)
 console_handler = logging.StreamHandler()
 console_handler.setFormatter(formatter)
-logger = logging.getLogger('make_ml_hindcast')
+logger = logging.getLogger('fill_ml_gaps')
 logger.setLevel(logging.DEBUG)
 logger.handlers = []
 logger.addHandler(file_handler)
@@ -216,13 +216,19 @@ def fill_ml_gaps():
             min_missing_date_current = missing_forecasts[0][0]
             max_missing_date_current = missing_forecasts[-1][1]
 
+            # call the hindcast script to fill in the missing forecasts
+            min_date = min_missing_date_current.strftime('%Y-%m-%d')
+            max_date = max_missing_date_current.strftime('%Y-%m-%d')
+            logger.info('Missing forecasts for code %s from %s to %s', code, min_date, max_date)
+            print('Missing forecasts for code', code, 'from', min_date, 'to', max_date)
+
             if min_missing_date is None:
                 min_missing_date = min_missing_date_current
                 max_missing_date = max_missing_date_current
             else:
                 min_missing_date = min(min_missing_date, min_missing_date_current)
                 max_missing_date = max(max_missing_date, max_missing_date_current)
-
+            
     # if there are no missing forecasts
     if len(missing_forecasts_dict) == 0:
         logger.info('No missing forecasts')

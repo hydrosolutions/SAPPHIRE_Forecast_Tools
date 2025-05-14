@@ -49,9 +49,7 @@ warnings.filterwarnings("ignore")
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
-#custom imports
-#Custom Libraries
-from scr import predictor_TFT as predictor_class
+
 
 # --------------------------------------------------------------------
 # CALLBACKS
@@ -185,7 +183,7 @@ def get_codes_to_use(past_discharge: pd.DataFrame, era5: pd.DataFrame, static_fe
     # Extract unique codes from each DataFrame column
     codes_rivers = set(past_discharge['code'].unique())
     codes_era5 = set(era5['code'].unique())
-    codes_static = set(static_features['CODE'].unique())
+    codes_static = set(static_features['code'].unique())
 
     # Find intersection of all three sets
     common_codes = codes_rivers & codes_era5 & codes_static
@@ -193,49 +191,11 @@ def get_codes_to_use(past_discharge: pd.DataFrame, era5: pd.DataFrame, static_fe
     # Convert the set back to a list
     return list(common_codes)
 
+ 
+
 #--------------------------------------------------------------------------------
 # MISSING DATA IMPUTATION
 #--------------------------------------------------------------------------------
-def recursive_imputation(df_discharge_org: pd.DataFrame, df_swe: pd.DataFrame, df_era5: pd.DataFrame, n: int, model_predictor: predictor_class.PREDICTOR, make_plot: bool = False) -> pd.DataFrame:
-    """
-    Recursive imputation of missing values in the discharge column of the dataframe, n steps ahead
-    This method can provide forecasts with n = 2x forecast horizon missing dates at the end. Altough it is questionable if the model can provide accurate forecasts for such a long period in a recursive manner.
-    Args:
-    df_discharge_org: pd.DataFrame, dataframe with discharge data and dates (contains n missing values at the end)
-    df_swe: pd.DataFrame, dataframe with SWE data and dates
-    df_era5: pd.DataFrame, dataframe with ERA5 data and dates
-    n: int, number of missing values to predict -> cannot be greater than 2x forecast horizon
-    model_predictor: PREDICTOR, model to predict the missing values
-    make_plot: bool, if True a plot of the predictions will be shown
-
-    Returns:
-    df_discharge_nan: pd.DataFrame, dataframe with imputed missing values
-    """
-    df_discharge_nan = df_discharge_org.copy()
-    if df_swe is not None:
-        df_swe = df_swe.copy()
-    df_era5 = df_era5.copy()
-    forecast_horizon = model_predictor.get_max_forecast_horizon()
-    if n > forecast_horizon:
-        possible_n = forecast_horizon
-        df_discharge_intermittent = df_discharge_nan.iloc[:-(n - possible_n)]
-        n = n - possible_n
-        df_discharge_partially = recursive_imputation(df_discharge_intermittent, df_swe, df_era5, possible_n, model_predictor, make_plot=make_plot)
-
-        df_discharge_nan.loc[df_discharge_nan.index[:len(df_discharge_partially)], 'discharge'] = df_discharge_partially['discharge'].values
-
-
-    df_discharge = df_discharge_nan.iloc[:-n]
-    code = df_discharge['code'].values[0]
-
-    #now we can predict the missing values
-    predictions = model_predictor.predict(df_discharge, df_era5, df_swe, code=code, n=n, make_plot=make_plot)
-
-    #replace the missing discharge data with the predictions['Q50'] data
-    df_discharge_nan.loc[df_discharge_nan.index[-n:], 'discharge'] = predictions['Q50'].values
-
-
-    return df_discharge_nan
 
 def gaps_imputation(df_discharge_org: pd.DataFrame) -> pd.DataFrame:
     """

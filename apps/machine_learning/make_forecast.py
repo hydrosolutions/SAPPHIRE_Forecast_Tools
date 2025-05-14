@@ -56,6 +56,8 @@ import glob
 import pandas as pd
 import numpy as np
 import json
+from typing import List, Dict, Any
+
 import darts
 from darts import TimeSeries, concatenate
 from darts.utils.timeseries_generation import datetime_attribute_timeseries
@@ -70,6 +72,21 @@ import pytorch_lightning as pl
 from pytorch_lightning import Trainer
 import torch
 import datetime
+
+from darts.utils.likelihood_models import QuantileRegression
+from darts.utils.likelihood_models.base import LikelihoodType
+from torch.optim import Adam
+from torch.optim.lr_scheduler import ReduceLROnPlateau
+from torch.nn.modules.loss import MSELoss
+from torchmetrics.collections import MetricCollection
+
+
+torch.serialization.add_safe_globals([QuantileRegression, 
+                                    LikelihoodType,
+                                    Adam,
+                                    ReduceLROnPlateau,
+                                    MSELoss,
+                                    MetricCollection])
 
 import logging
 from logging.handlers import TimedRotatingFileHandler
@@ -101,6 +118,7 @@ logger.debug('Debug message for logger level 10')
 
 #Custom Libraries
 from scr import utils_ml_forecast
+from scr import TFTPredictor, TSMixerPredictor, TiDEPredictor, predictor_ARIMA
 
 # Local libraries, installed with pip install -e ./iEasyHydroForecast
 # Get the absolute path of the directory containing the current script
@@ -130,7 +148,6 @@ class LossLogger(Callback):
 
     def on_validation_epoch_end(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule") -> None:
         self.val_loss.append(float(trainer.callback_metrics["val_loss"]))
-
 
 
 
@@ -267,7 +284,7 @@ def prepare_forecast_data(
                     counter += 1
                 logger.debug(f'Nans replaced with forecasted values 2nd method: {counter}')
             except Exception as e2:
-                loger.debug(f"Second method failed: {e2}")
+                logger.debug(f"Second method failed: {e2}")
                 pass  # Both methods failed, moving on
 
     #5: Interpolate missing values and ffill missing values at the end
@@ -288,6 +305,91 @@ def prepare_forecast_data(
     return discharge_df, 0
 
 
+def prepare_static_data(path_to_static_features : str):
+    """Load and prepare static features data."""
+    static_features = pd.read_csv(path_to_static_features)
+    
+    if 'cluster' in static_features.columns:
+        static_features = static_features.drop(columns=['cluster'])
+    if 'log_q' in static_features.columns:
+        static_features = static_features.drop(columns=['log_q'])
+    if 'CODE' in static_features.columns:
+        static_features = static_features.rename(columns={'CODE': 'code'})
+    
+    static_features.index = static_features['code']
+    
+    return static_features
+
+
+def load_control_member_data( path_to_qmapped_era5, hru_ml_models):
+    """Load and prepare ERA5 data."""
+
+    path_p = os.path.join(path_to_qmapped_era5, hru_ml_models + '_P_control_member.csv')
+    path_t = os.path.join(path_to_qmapped_era5, hru_ml_models + '_T_control_member.csv')
+    
+    p_qmapped_era5 = pd.read_csv(path_p, parse_dates=['date'])
+    t_qmapped_era5 = pd.read_csv(path_t, parse_dates=['date'])
+    qmapped_era5 = pd.merge(p_qmapped_era5, t_qmapped_era5, on=['code', 'date'])
+    
+    return qmapped_era5
+
+
+def prepare_forcing_data(
+        intermediate_data_path : str, 
+        path_to_qmapped_era5 : str, 
+        hru_ml_models : str, 
+        load_forcing_hindcast=False):
+    """ Prepares the forcing data for the model.
+     In this function ERA5 data gets loaded (operational file and on demand hindcast file) 
+     Additionally the snow data can be loaded aswell."""
+    
+    qmapped_era5  = load_control_member_data( path_to_qmapped_era5, hru_ml_models)
+    
+    
+    return qmapped_era5
+
+
+def get_predictor_class(
+        MODEL_TO_USE : str
+        ):
+    available_ML_models = os.getenv('ieasyhydroforecast_available_ML_models')
+    available_ML_models = available_ML_models.split(',')
+    
+    if MODEL_TO_USE not in available_ML_models:
+        raise ValueError('Model %s is not supported.\nPlease choose one of the following models: TFT, TIDE, TSMIXER, ARIMA')
+    else:
+        logger.debug('Model to use: %s', MODEL_TO_USE)
+        #print('Model to use: ', MODEL_TO_USE)
+        if MODEL_TO_USE == 'TFT':
+            predictor_class = TFTPredictor.TFTPredictor
+        elif MODEL_TO_USE == 'TIDE':
+            predictor_class = TiDEPredictor.TiDEPredictor
+        elif MODEL_TO_USE == 'TSMIXER':
+            predictor_class = TSMixerPredictor.TSMIXERPredictor
+        elif MODEL_TO_USE == 'ARIMA':
+            predictor_class = predictor_ARIMA.PREDICTOR
+
+    return predictor_class
+
+
+def get_rivers_to_predict(
+        MODEL_TO_USE : str,
+        ):
+    rivers_to_predict_pentad, rivers_to_predict_decad, hydroposts_available_for_ml_forecasting = utils_ml_forecast.get_hydroposts_for_pentadal_and_decadal_forecasts()
+    # Combine rivers_to_predict_pentad and rivers_to_predict_decad to get all rivers to predict, only keep unique values
+    rivers_to_predict = list(set(rivers_to_predict_pentad + rivers_to_predict_decad))
+    #select only codes which the model can predict.
+    mask_predictable = hydroposts_available_for_ml_forecasting[MODEL_TO_USE] == True
+    codes_model_can_predict = hydroposts_available_for_ml_forecasting[mask_predictable]['code'].tolist()
+    rivers_to_predict = list(set(rivers_to_predict) & set(codes_model_can_predict))
+    #convert to int
+    rivers_to_predict = [int(code) for code in rivers_to_predict]
+    logger.debug('Rivers to predict pentad: %s', rivers_to_predict_pentad)
+    logger.debug('Rivers to predict decad: %s', rivers_to_predict_decad)
+    logger.debug('Rivers to predict: %s', rivers_to_predict)
+    logger.debug('Hydroposts available for ML forecasting: \n%s', hydroposts_available_for_ml_forecasting)
+
+    return rivers_to_predict, hydroposts_available_for_ml_forecasting
 
 # --------------------------------------------------------------------
 # MAIN FUNCTION
@@ -298,27 +400,16 @@ def make_ml_forecast():
     logger.info(f"Starting make_forecast.py")
     print(f'--------------------------------------------------------------------')
     print(f"Starting make_forecast.py")
-
+    # Load the environment variables
+    sl.load_environment()
 
     # --------------------------------------------------------------------
     # DEFINE WHICH MODEL TO USE
     # --------------------------------------------------------------------
     MODEL_TO_USE = os.getenv('SAPPHIRE_MODEL_TO_USE')
     logger.debug('Model to use: %s', MODEL_TO_USE)
+    predictor_class = get_predictor_class(MODEL_TO_USE)
 
-    if MODEL_TO_USE not in ['TFT', 'TIDE', 'TSMIXER', 'ARIMA']:
-        raise ValueError('Model %s is not supported.\nPlease choose one of the following models: TFT, TIDE, TSMIXER, ARIMA')
-    else:
-        logger.debug('Model to use: %s', MODEL_TO_USE)
-        #print('Model to use: ', MODEL_TO_USE)
-        if MODEL_TO_USE == 'TFT':
-            from scr import predictor_TFT as predictor_class
-        elif MODEL_TO_USE == 'TIDE':
-            from scr import predictor_TIDE as predictor_class
-        elif MODEL_TO_USE == 'TSMIXER':
-            from scr import predictor_TSMIXER as predictor_class
-        elif MODEL_TO_USE == 'ARIMA':
-            from scr import predictor_ARIMA as predictor_class
 
     # --------------------------------------------------------------------
     # DEFINE THE PREDICTION MODE
@@ -335,12 +426,8 @@ def make_ml_forecast():
             forecast_horizon = 11
 
     # --------------------------------------------------------------------
-    # INITIALIZE THE ENVIRONMENT
+    # INITIALIZE THE PATHS
     # --------------------------------------------------------------------
-
-    # Load the environment variables
-    sl.load_environment()
-
     # Access the environment variables
     intermediate_data_path = os.getenv('ieasyforecast_intermediate_data_path')
     MODELS_AND_SCALERS_PATH = os.getenv('ieasyhydroforecast_models_and_scalers_path')
@@ -392,22 +479,13 @@ def make_ml_forecast():
     logger.debug('joined output_path_discharge: %s' , OUTPUT_PATH_DISCHARGE)
     logger.debug('joined path_to_qmapped_era5: %s' , PATH_TO_QMAPPED_ERA5)
 
-    rivers_to_predict_pentad, rivers_to_predict_decad, hydroposts_available_for_ml_forecasting = utils_ml_forecast.get_hydroposts_for_pentadal_and_decadal_forecasts()
-    # Combine rivers_to_predict_pentad and rivers_to_predict_decad to get all rivers to predict, only keep unique values
-    rivers_to_predict = list(set(rivers_to_predict_pentad + rivers_to_predict_decad))
-    #select only codes which the model can predict.
-    mask_predictable = hydroposts_available_for_ml_forecasting[MODEL_TO_USE] == True
-    codes_model_can_predict = hydroposts_available_for_ml_forecasting[mask_predictable]['code'].tolist()
-    rivers_to_predict = list(set(rivers_to_predict) & set(codes_model_can_predict))
-    #convert to int
-    rivers_to_predict = [int(code) for code in rivers_to_predict]
-    logger.debug('Rivers to predict pentad: %s', rivers_to_predict_pentad)
-    logger.debug('Rivers to predict decad: %s', rivers_to_predict_decad)
-    logger.debug('Rivers to predict: %s', rivers_to_predict)
-    logger.debug('Hydroposts available for ML forecasting: \n%s', hydroposts_available_for_ml_forecasting)
 
     # --------------------------------------------------------------------
-    # LOAD DATA
+    # GET THE RIVERS TO PREDICT
+    rivers_to_predict, hydroposts_available_for_ml_forecasting = get_rivers_to_predict(MODEL_TO_USE)
+
+    # --------------------------------------------------------------------
+    # LOAD AND PREPARE DATA
     # --------------------------------------------------------------------
     PATH_TO_PAST_DISCHARGE = os.getenv('ieasyforecast_daily_discharge_file')
     PATH_TO_PAST_DISCHARGE = os.path.join(intermediate_data_path, PATH_TO_PAST_DISCHARGE)
@@ -415,18 +493,13 @@ def make_ml_forecast():
 
     past_discharge = pd.read_csv(PATH_TO_PAST_DISCHARGE, parse_dates=['date'])
 
-    path_P = os.path.join(PATH_TO_QMAPPED_ERA5, HRU_ML_MODELS +'_P_control_member.csv')
-    path_T = os.path.join(PATH_TO_QMAPPED_ERA5, HRU_ML_MODELS +'_T_control_member.csv')
+    qmapped_era5 = prepare_forcing_data(
+        intermediate_data_path = intermediate_data_path,
+        path_to_qmapped_era5 = PATH_TO_QMAPPED_ERA5,
+        hru_ml_models = HRU_ML_MODELS
+    )
 
-    P_qmapped_era5 = pd.read_csv(path_P, parse_dates=['date'])
-    T_qmapped_era5 = pd.read_csv(path_T, parse_dates=['date'])
-    qmapped_era5 = pd.merge(P_qmapped_era5, T_qmapped_era5, on=['code', 'date'])
-    static_features = pd.read_csv(PATH_TO_STATIC_FEATURES)
-
-    static_features = static_features.drop(columns=['cluster', 'log_q'])
-    static_features.index = static_features['CODE']
-    #clear memory
-    del P_qmapped_era5, T_qmapped_era5
+    static_features = prepare_static_data(PATH_TO_STATIC_FEATURES)
 
     #get the codes to use
     codes_to_use = utils_ml_forecast.get_codes_to_use(past_discharge, qmapped_era5, static_features)
@@ -437,8 +510,8 @@ def make_ml_forecast():
     # Calculate PET Oudin and Daylight Hours
     # --------------------------------------------------------------------
     for code in codes_to_use:
-        lat = static_features[static_features['CODE'] == code]['LAT'].values[0]
-        lon = static_features[static_features['CODE'] == code]['LON'].values[0]
+        lat = static_features[static_features['code'] == code]['LAT'].values[0]
+        lon = static_features[static_features['code'] == code]['LON'].values[0]
         pet_oudin = utils_ml_forecast.calculate_pet_oudin(qmapped_era5[qmapped_era5['code'] == code], lat)
         qmapped_era5.loc[qmapped_era5['code'] == code, 'PET'] = pet_oudin
         qmapped_era5.loc[qmapped_era5['code'] == code, 'daylight_hours'] = utils_ml_forecast.calculate_daylight_hours(lat, lon, qmapped_era5[qmapped_era5['code'] == code])
@@ -459,9 +532,7 @@ def make_ml_forecast():
     # --------------------------------------------------------------------
     # LOAD MODELS AND MAKE PREDICTORS
     # --------------------------------------------------------------------
-    # MODEL PREDICTOR
     # Load pre-trained model
-
     if MODEL_TO_USE == 'TFT':
         model = TFTModel.load(os.path.join(PATH_TO_MODEL), map_location=torch.device('cpu'))
     elif MODEL_TO_USE == 'TIDE':
@@ -472,10 +543,30 @@ def make_ml_forecast():
         model = None
 
     if MODEL_TO_USE == 'ARIMA':
-        predictor = predictor_class.PREDICTOR(PATH_TO_MODEL)
+        predictor = predictor_class(PATH_TO_MODEL)
     else:
-        predictor = predictor_class.PREDICTOR(model, scaler_discharge, scaler_era5, scaler_static, static_features)
+        scalers = {
+            'scaler_discharge': scaler_discharge,
+            'scaler_covariates': scaler_era5,
+            'scaler_static': scaler_static
+        }
 
+        # try the load the model_config.json file
+        try:
+            model_dir = os.path.dirname(PATH_TO_MODEL)
+            with open(os.path.join(model_dir, 'model_config.json'), 'r') as f:
+                model_config = json.load(f)
+        except FileNotFoundError:
+            raise FileNotFoundError('model_config.json not found, Please check the model directory')
+
+        predictor = predictor_class(
+            model=model,
+            scalers=scalers,
+            static_features=static_features,
+            dl_config_params=model_config,
+            unique_id_col='code'
+        )
+            
 
     # --------------------------------------------------------------------
     # FORECAST
@@ -484,18 +575,6 @@ def make_ml_forecast():
 
     THRESHOLD_MISSING_DAYS = os.getenv('ieasyhydroforecast_THRESHOLD_MISSING_DAYS_' + MODEL_TO_USE)
     THRESHOLD_MISSING_DAYS_END = os.getenv('ieasyhydroforecast_THRESHOLD_MISSING_DAYS_END')
-
-    # Get a list of codes for recursie imputation, depending on the MODEL_TO_USE
-    if MODEL_TO_USE == 'TFT':
-        RECURSIVE_RIVERS = hydroposts_available_for_ml_forecasting.loc[hydroposts_available_for_ml_forecasting['recursive_imputation_tft'], 'code'].dropna().astype(int).tolist()
-    elif MODEL_TO_USE == 'TIDE':
-        RECURSIVE_RIVERS = hydroposts_available_for_ml_forecasting.loc[hydroposts_available_for_ml_forecasting['recursive_imputation_tide'], 'code'].dropna().astype(int).tolist()
-    elif MODEL_TO_USE == 'TSMIXER':
-        RECURSIVE_RIVERS = hydroposts_available_for_ml_forecasting.loc[hydroposts_available_for_ml_forecasting['recursive_imputation_tsmixer'], 'code'].dropna().astype(int).tolist()
-    elif MODEL_TO_USE == 'ARIMA':
-        RECURSIVE_RIVERS = hydroposts_available_for_ml_forecasting.loc[hydroposts_available_for_ml_forecasting['recursive_imputation_arima'], 'code'].dropna().astype(int).tolist()
-
-    logger.debug('Recursive rivers: %s', RECURSIVE_RIVERS)
 
     #thresholds to ints
     THRESHOLD_MISSING_DAYS = int(THRESHOLD_MISSING_DAYS)
@@ -513,6 +592,8 @@ def make_ml_forecast():
         except FileNotFoundError:
             old_forecast = pd.DataFrame()
 
+    logger.debug('Predicting for %s rivers', len(rivers_to_predict))
+    logger.debug('Rivers to predict: %s', rivers_to_predict)
     for code in rivers_to_predict:
         # Cast code to int.
         code = int(code)
@@ -548,8 +629,13 @@ def make_ml_forecast():
             input_chunk_length = input_chunk_length
             )
 
-        predictions = predictor.predict(past_discharge_code, qmapped_era5_code, None , code, n=forecast_horizon, make_plot=False)
-
+        predictions = predictor.predict(
+            df_rivers_org = past_discharge_code, 
+            df_covariates = qmapped_era5_code,
+            code = code,
+            n = forecast_horizon
+            )
+            
         if len(predictions) == 0:
             #error in forecast - something else is wrong
             flag = 2
