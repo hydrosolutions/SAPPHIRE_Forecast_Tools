@@ -80,7 +80,7 @@ console_handler.setFormatter(formatter)
 
 # Get the root logger and add the handlers to it
 logger.addHandler(file_handler)
-logger.addHandler(console_handler)
+logger.addHandler(console_handler) 
 
 # endregion
 
