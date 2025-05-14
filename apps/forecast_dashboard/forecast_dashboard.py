@@ -9,7 +9,7 @@
 # region load_libraries
 import sys
 import panel as pn
-import pandas as pd 
+import pandas as pd
 import datetime as dt
 from datetime import timedelta
 

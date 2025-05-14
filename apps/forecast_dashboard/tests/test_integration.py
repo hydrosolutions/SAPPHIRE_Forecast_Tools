@@ -15,7 +15,7 @@ PENTAD_URL = "https://fc.pentad.ieasyhydro.org/forecast_dashboard"
 DECAD_URL = "https://fc.decad.ieasyhydro.org/forecast_dashboard"
 SLEEP = 1
 # Needs full, absolute path
-sensitive_data_forecast_tools = "/Users/bea/hydrosolutions Dropbox/Bea martibeatrice@gmail.com/SAPPHIRE_Central_Asia_Technical_Work/data/kyg_data_forecast_tools/"
+sensitive_data_forecast_tools = "/Users/beatricemarti/hydrosolutions Dropbox/Bea martibeatrice@gmail.com/SAPPHIRE_Central_Asia_Technical_Work/data/kyg_data_forecast_tools/"
 horizon = "pentad"  # pentad or decad
 
 today = dt.datetime.now()
