@@ -17,7 +17,7 @@ env:
 
 on:
   push:
-    branches: [ "test_taj" ]
+    branches: [ "main" ]
   #pull_request:
   #  branches: [ "main" ]
 
