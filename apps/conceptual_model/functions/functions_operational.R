@@ -448,6 +448,14 @@ process_forecast_forcing <- function(member_id,
                                      Lat,
                                      Q_obs = NULL) {
 
+  # Test if file_path_Temp and file_path_Ptot exist
+  if (!file.exists(file_path_Temp)) {
+    stop(paste("File not found:", file_path_Temp))
+  }
+  if (!file.exists(file_path_Ptot)) {
+    stop(paste("File not found:", file_path_Ptot))
+  }
+
   if (member_id[1] == "cf") {
     P_cf <- read_csv(file_path_Ptot, show_col_types = FALSE) %>%
       dplyr::filter(code == Basin_code)
@@ -467,9 +475,19 @@ process_forecast_forcing <- function(member_id,
     
   } else {
     P_ens <- read_csv(file_path_Ptot, show_col_types = FALSE)
-    T_ens <- read_csv(file_path_Temp, show_col_types = FALSE)
-    basinObs <- list()
+    # Test if P_ens is empty
+    if (nrow(P_ens) == 0) {
+      stop("P_ens is empty")
+    }
     
+    T_ens <- read_csv(file_path_Temp, show_col_types = FALSE)
+    # Test if T_ens is empty
+    if (nrow(T_ens) == 0) {
+      stop("T_ens is empty")
+    }
+    
+    basinObs <- list()
+
 
     for (i in 1:length(member_id)) {
       P_member <- P_ens %>% dplyr::filter(ensemble_member == member_id[i])
