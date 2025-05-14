@@ -29,7 +29,7 @@ file_handler = TimedRotatingFileHandler('logs/log', when='midnight',
 file_handler.setFormatter(formatter)
 console_handler = logging.StreamHandler()
 console_handler.setFormatter(formatter)
-logger = logging.getLogger('make_ml_hindcast')
+logger = logging.getLogger('initialize_ml_tool')
 logger.setLevel(logging.DEBUG)
 logger.handlers = []
 logger.addHandler(file_handler)

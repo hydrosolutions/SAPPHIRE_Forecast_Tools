@@ -98,5 +98,5 @@ the scaler files save the statistics to normalize the input data.
   } // trainer config for sampling through the data - generally you do not change this.
 }
 ```
-### Setup for Arima Model
+
 

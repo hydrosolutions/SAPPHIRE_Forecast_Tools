@@ -576,18 +576,6 @@ def make_ml_forecast():
     THRESHOLD_MISSING_DAYS = os.getenv('ieasyhydroforecast_THRESHOLD_MISSING_DAYS_' + MODEL_TO_USE)
     THRESHOLD_MISSING_DAYS_END = os.getenv('ieasyhydroforecast_THRESHOLD_MISSING_DAYS_END')
 
-    # Get a list of codes for recursie imputation, depending on the MODEL_TO_USE
-    if MODEL_TO_USE == 'TFT':
-        RECURSIVE_RIVERS = hydroposts_available_for_ml_forecasting.loc[hydroposts_available_for_ml_forecasting['recursive_imputation_tft'], 'code'].dropna().astype(int).tolist()
-    elif MODEL_TO_USE == 'TIDE':
-        RECURSIVE_RIVERS = hydroposts_available_for_ml_forecasting.loc[hydroposts_available_for_ml_forecasting['recursive_imputation_tide'], 'code'].dropna().astype(int).tolist()
-    elif MODEL_TO_USE == 'TSMIXER':
-        RECURSIVE_RIVERS = hydroposts_available_for_ml_forecasting.loc[hydroposts_available_for_ml_forecasting['recursive_imputation_tsmixer'], 'code'].dropna().astype(int).tolist()
-    elif MODEL_TO_USE == 'ARIMA':
-        RECURSIVE_RIVERS = hydroposts_available_for_ml_forecasting.loc[hydroposts_available_for_ml_forecasting['recursive_imputation_arima'], 'code'].dropna().astype(int).tolist()
-
-    logger.debug('Recursive rivers: %s', RECURSIVE_RIVERS)
-
     #thresholds to ints
     THRESHOLD_MISSING_DAYS = int(THRESHOLD_MISSING_DAYS)
     THRESHOLD_MISSING_DAYS_END = int(THRESHOLD_MISSING_DAYS_END)
