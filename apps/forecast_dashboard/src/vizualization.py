@@ -3509,7 +3509,7 @@ def create_reload_button():
                 if run_ML_models == "True":
                     model_list = os.getenv("ieasyhydroforecast_available_ML_models", "TFT,TIDE,TSMIXER").split(",")
                     print(f"Available ML models: {model_list}")
-                    mode = os.getenv("sapphire_forecast_horizon", "pentad")
+                    mode = os.getenv("sapphire_forecast_horizon", "pentad").upper()
 
                     for model in model_list:
                         container_name = f"ml_{model}_{mode}"
