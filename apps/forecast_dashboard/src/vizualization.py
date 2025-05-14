@@ -3501,11 +3501,17 @@ def create_reload_button():
                 run_docker_container(client, "mabesa/sapphire-linreg:latest", volumes, environment, "linreg")
 
                 # Run the prepgateway container
-                run_docker_container(client, "mabesa/sapphire-prepgateway:latest", volumes, environment, "prepgateway")
+                # No need to re-run prepgateway as there is no new data
+                #run_docker_container(client, "mabesa/sapphire-prepgateway:latest", volumes, environment, "prepgateway")
 
-                # Run all ML model containers
-                for model in ["TFT", "TIDE", "TSMIXER", "ARIMA"]:
-                    for mode in ["PENTAD", "DECAD"]:
+                # Only run the ML models if required to run and for available models
+                run_ML_models = os.getenv("ieasyhydroforecast_run_ML_models", "True")
+                if run_ML_models == "True":
+                    model_list = os.getenv("ieasyhydroforecast_available_ML_models", "TFT,TIDE,TSMIXER").split(",")
+                    print(f"Available ML models: {model_list}")
+                    mode = os.getenv("sapphire_forecast_horizon", "pentad")
+
+                    for model in model_list:
                         container_name = f"ml_{model}_{mode}"
                         run_docker_container(client, f"mabesa/sapphire-ml:latest", volumes,
                                              environment + [f"SAPPHIRE_MODEL_TO_USE={model}",
@@ -3513,7 +3519,8 @@ def create_reload_button():
                                              container_name)
 
                 # Run the conceptmod container
-                run_docker_container(client, "mabesa/sapphire-conceptmod:latest", volumes, environment, "conceptmod")
+                # No need to re-run this one as it is very slow
+                #run_docker_container(client, "mabesa/sapphire-conceptmod:latest", volumes, environment, "conceptmod")
 
                 # Run the postprocessing container
                 run_docker_container(client, "mabesa/sapphire-postprocessing:latest", volumes, environment,
