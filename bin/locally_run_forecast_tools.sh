@@ -187,11 +187,11 @@ source ~/anaconda3/etc/profile.d/conda.sh
 run_preprocessing_runoff
 
 # -- Preprocessing gateway data
-#run_preprocessing_gateway
+run_preprocessing_gateway
 
 # -- Run the forecast models --
 run_linear_regression
-run_conceptual_model
+#run_conceptual_model
 run_machine_learning_models
 
 # -- Postprocessing --

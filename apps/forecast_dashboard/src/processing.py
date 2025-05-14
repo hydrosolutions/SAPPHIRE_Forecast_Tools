@@ -231,30 +231,50 @@ def read_ml_forecast_data(file_mtime):
         if cached_mtime == file_mtime:
             return ml_forecast
 
-    # tide = read_machine_learning_forecasts_pentad('TIDE', file_mtime)
-    # tft = read_machine_learning_forecasts_pentad('TFT', file_mtime)
-    # tsmixer = read_machine_learning_forecasts_pentad('TSMIXER', file_mtime)
-    # arima = read_machine_learning_forecasts_pentad('ARIMA', file_mtime)
+    available_models = os.getenv("ieasyhydroforecast_available_ML_models").split(",")
+    print(f"DEBUG: read_ml_forecast_data: available_models: {available_models}")
 
     with ThreadPoolExecutor() as executor:
-        # List of parameters for each forecast type
-        forecast_types = ['TIDE', 'TFT', 'TSMIXER', 'ARIMA']
-
+        # Get forecast types (available models) from environment variable
+        forecast_types = available_models
+    
         # Use executor.map to apply read_machine_learning_forecasts_pentad concurrently
-        results = executor.map(read_machine_learning_forecasts_pentad, forecast_types,
-                               [file_mtime] * len(forecast_types))
+        results = list(executor.map(read_machine_learning_forecasts_pentad, forecast_types,
+                                   [file_mtime] * len(forecast_types)))
 
-        # Map the results to their respective variables
-        tide, tft, tsmixer, arima = results
+    # Create a dictionary to store the results
+    model_results = {}
+    for i, model in enumerate(forecast_types):
+        model_results[model.lower()] = results[i]
 
     # Calculate the Neural Ensemble (NE) forecast as the average of the TFT,
     # TIDE, and TSMIXER forecasts
-    ne = pd.concat([tide, tft, tsmixer], ignore_index=True)
-    ne = ne.drop(columns=['model_long', 'model_short']).groupby(['code', 'date', 'forecast_date']).mean().reset_index()
-    ne['model_long'] = 'Neural Ensemble (NE)'
-    ne['model_short'] = 'NE'
+    # Filter out None values from model_results
+    valid_models = {k: v for k, v in model_results.items() if v is not None}
+
+    if valid_models:
+        ne_models = [valid_models[model] for model in ['tide', 'tft', 'tsmixer'] if model in valid_models]
+        if len(ne_models) > 1:
+            ne = pd.concat(ne_models, ignore_index=True)
+            ne = ne.drop(columns=['model_long', 'model_short']).groupby(['code', 'date', 'forecast_date']).mean().reset_index()
+            ne['model_long'] = 'Neural Ensemble (NE)'
+            ne['model_short'] = 'NE'
+            ml_forecast_list = ne_models + [ne]
+        else:
+            ml_forecast_list = ne_models
+    else:
+        ml_forecast_list = []
+
+    # Add ARIMA if available
+    if 'arima' in model_results and model_results['arima'] is not None:
+        ml_forecast_list.append(model_results['arima'])
+
     # Concatenate the data frames
-    ml_forecast = pd.concat([tide, tft, tsmixer, ne, arima], ignore_index=True)
+    if ml_forecast_list:
+        ml_forecast = pd.concat(ml_forecast_list, ignore_index=True)
+    else:
+        ml_forecast = pd.DataFrame()
+
     # print(f"Head of ml_forecast:\n{ml_forecast.head()}")
     # Cast forecast_date and date columns to datetime
     ml_forecast['forecast_date'] = ml_forecast['forecast_date'].apply(parse_dates)

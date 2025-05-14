@@ -34,7 +34,7 @@ get_timestamp() {
 }
 
 
-for model in TFT TIDE TSMIXER ARIMA; do
+for model in TFT TIDE TSMIXER; do
 #for model in TIDE; do
     for horizon in PENTAD DECAD; do
     #for horizon in PENTAD; do

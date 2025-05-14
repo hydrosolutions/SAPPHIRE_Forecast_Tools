@@ -44,7 +44,7 @@
 # Useage:
 # ieasyhydroforecast_env_file_path=/path/to/.env SAPPHIRE_MODEL_TO_USE=TFT SAPPHIRE_PREDICTION_MODE=PENTAD python make_forecast.py
 # Possible values for MODEL_TO_USE: TFT, TIDE, TSMIXER
-# Possible values for MODEL_TO_USE: PENTAD, DECAD
+# Possible values for PREDICTION_MODE: PENTAD, DECAD
 
 
 # --------------------------------------------------------------------
@@ -681,11 +681,18 @@ def make_ml_forecast():
     if PREDICTION_MODE == 'PENTAD':
         # first save the latest forecast
         forecast_today_path = os.path.join(OUTPUT_PATH_DISCHARGE, f'pentad_{MODEL_TO_USE}_forecast_latest.csv')
+        # Create the directory if it doesn't exist
+        if not os.path.exists(OUTPUT_PATH_DISCHARGE):
+            os.makedirs(OUTPUT_PATH_DISCHARGE)
         forecast.to_csv(forecast_today_path, index=False)
         # Append the new forecast to the existing forecast file
         write_pentad_forecast(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, forecast)
     else:
         forecast_today_path = os.path.join(OUTPUT_PATH_DISCHARGE, f'decad_{MODEL_TO_USE}_forecast_latest.csv')
+        # Create the directory if it doesn't exist
+        if not os.path.exists(OUTPUT_PATH_DISCHARGE):
+            os.makedirs(OUTPUT_PATH_DISCHARGE)
+        forecast.to_csv(forecast_today_path, index=False)
         forecast.to_csv(forecast_today_path, index=False)
         write_decad_forecast(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, forecast)
 
