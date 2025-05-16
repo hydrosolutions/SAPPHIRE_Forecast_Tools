@@ -1322,9 +1322,9 @@ def create_cached_vlines(_, for_dates=True, y_text=1):
         for i in range(len(time_horizons)):
             if i % 2 == 0:
                 path_data.append((time_horizons[i], -100))  # Start at -100
-                path_data.append((time_horizons[i], 3000))  # Move to 3000
+                path_data.append((time_horizons[i], 6000))  # Move to 3000
             else:
-                path_data.append((time_horizons[i], 3000))  # Stay at 3000
+                path_data.append((time_horizons[i], 6000))  # Stay at 3000
                 path_data.append((time_horizons[i], -100))  # Move to -100
         vlines = hv.Path(path_data).opts(
             color='gray', line_width=1,
@@ -1903,14 +1903,18 @@ def plot_pentad_forecast_hydrograph_data_v2(_, hydrograph_day_all, linreg_predic
 
     # Calculate the forecast ranges depending on the values of range_type and range_slider
     if range_type == _('delta'):
-        # If we have values in columns 'Q25' and 'Q75', we calculate 'fc_lower'
-        # and 'fc_upper' as the 25th and 75th percentiles of the forecasted discharge
-        forecasts['fc_lower'] = forecasts['Q25'].where(
-            ~forecasts['Q25'].isna(),
-            forecasts['forecasted_discharge'] - forecasts['delta'])
-        forecasts['fc_upper'] = forecasts['Q75'].where(
-            ~forecasts['Q75'].isna(),
-            forecasts['forecasted_discharge'] + forecasts['delta'])
+        if 'Q25' in forecasts.columns and 'Q75' in forecasts.columns:
+            # If we have values in columns 'Q25' and 'Q75', we calculate 'fc_lower'
+            # and 'fc_upper' as the 25th and 75th percentiles of the forecasted discharge
+            forecasts['fc_lower'] = forecasts['Q25'].where(
+                ~forecasts['Q25'].isna(),
+                forecasts['forecasted_discharge'] - forecasts['delta'])
+            forecasts['fc_upper'] = forecasts['Q75'].where(
+                ~forecasts['Q75'].isna(),
+                forecasts['forecasted_discharge'] + forecasts['delta'])
+        else: 
+            forecasts['fc_lower'] = forecasts['forecasted_discharge'] - forecasts['delta']
+            forecasts['fc_upper'] = forecasts['forecasted_discharge'] + forecasts['delta']
         # forecasts.loc[:, 'fc_lower'] = forecasts.loc[:, 'forecasted_discharge'] - forecasts.loc[:, 'delta']
         # forecasts.loc[:, 'fc_upper'] = forecasts.loc[:, 'forecasted_discharge'] + forecasts.loc[:, 'delta']
     elif range_type == _("Manual range, select value below"):
@@ -1996,42 +2000,44 @@ def plot_pentad_forecast_hydrograph_data_v2(_, hydrograph_day_all, linreg_predic
     forecasts_current = forecasts[forecasts['date'] == pd.to_datetime((title_date) + dt.timedelta(days=1))]
     forecasts_past = forecasts[forecasts['date'] <= pd.to_datetime((title_date) + dt.timedelta(days=1))]
 
-    # Filter for the current station (Only few stations have rram forecasts)
-    current_rram_forecasts = rram_forecast[rram_forecast['station_labels'] == station].copy()
-    # Filter for the latest forecast
-    latest_rram_forecast = current_rram_forecasts[
-        current_rram_forecasts['forecast_date'] == current_rram_forecasts['forecast_date'].max()]
-    # Rename columns in latest_rram_forecast to fit forecasts_current
-    latest_rram_forecast = latest_rram_forecast.rename(
-        columns={'Q25': 'Lower bound',
-                 'Q75': 'Upper bound',
-                 'Q50': 'E[Q]',
-                 'model_short': 'Model'})
-    # Add pentad_in_month and pentad_in_year to latest_rram_forecast
-    latest_rram_forecast[horizon_in_month] = forecasts_current[horizon_in_month].values[
-        0] if not forecasts_current.empty else None
-    latest_rram_forecast[horizon_in_year] = forecasts_current[horizon_in_year].values[
-        0] if not forecasts_current.empty else None
-    latest_rram_forecast['Model name'] = 'Rainfall runoff assimilation model (RRAM)'
+    if rram_forecast is not None:
+        # Filter for the current station (Only few stations have rram forecasts)
+        current_rram_forecasts = rram_forecast[rram_forecast['station_labels'] == station].copy()
+        # Filter for the latest forecast
+        latest_rram_forecast = current_rram_forecasts[
+            current_rram_forecasts['forecast_date'] == current_rram_forecasts['forecast_date'].max()]
+        # Rename columns in latest_rram_forecast to fit forecasts_current
+        latest_rram_forecast = latest_rram_forecast.rename(
+            columns={'Q25': 'Lower bound',
+                     'Q75': 'Upper bound',
+                     'Q50': 'E[Q]',
+                    'model_short': 'Model'})
+        # Add pentad_in_month and pentad_in_year to latest_rram_forecast
+        latest_rram_forecast[horizon_in_month] = forecasts_current[horizon_in_month].values[
+            0] if not forecasts_current.empty else None
+        latest_rram_forecast[horizon_in_year] = forecasts_current[horizon_in_year].values[
+            0] if not forecasts_current.empty else None
+        latest_rram_forecast['Model name'] = 'Rainfall runoff assimilation model (RRAM)'
 
-    # Filter for the current station
-    current_ml_forecasts = ml_forecast[ml_forecast['station_labels'] == station].copy()
-    # Filter for the latest forecast
-    latest_ml_forecast = current_ml_forecasts[
-        current_ml_forecasts['forecast_date'] == current_ml_forecasts['forecast_date'].max()]
-    # Rename columns in latest_ml_forecast to fit forecasts_current
-    latest_ml_forecast = latest_ml_forecast.rename(
-        columns={'Q25': 'Lower bound',
-                 'Q75': 'Upper bound',
-                 'forecasted_discharge': 'E[Q]',
-                 'model_short': 'Model'})
-    # Add pentad_in_month and pentad_in_year to latest_ml_forecast
-    latest_ml_forecast[horizon_in_month] = forecasts_current[horizon_in_month].values[
-        0] if not forecasts_current.empty else None
-    latest_ml_forecast[horizon_in_year] = forecasts_current[horizon_in_year].values[
-        0] if not forecasts_current.empty else None
-    # Filter for selected models
-    latest_ml_forecast = latest_ml_forecast[latest_ml_forecast['Model'].isin(model_selection)]
+    if ml_forecast is not None:
+        # Filter for the current station
+        current_ml_forecasts = ml_forecast[ml_forecast['station_labels'] == station].copy()
+        # Filter for the latest forecast
+        latest_ml_forecast = current_ml_forecasts[
+            current_ml_forecasts['forecast_date'] == current_ml_forecasts['forecast_date'].max()]
+        # Rename columns in latest_ml_forecast to fit forecasts_current
+        latest_ml_forecast = latest_ml_forecast.rename(
+            columns={'Q25': 'Lower bound',
+                     'Q75': 'Upper bound',
+                     'forecasted_discharge': 'E[Q]',
+                     'model_short': 'Model'})
+        # Add pentad_in_month and pentad_in_year to latest_ml_forecast
+        latest_ml_forecast[horizon_in_month] = forecasts_current[horizon_in_month].values[
+            0] if not forecasts_current.empty else None
+        latest_ml_forecast[horizon_in_year] = forecasts_current[horizon_in_year].values[
+            0] if not forecasts_current.empty else None
+        # Filter for selected models
+        latest_ml_forecast = latest_ml_forecast[latest_ml_forecast['Model'].isin(model_selection)]
 
     # Create a holoviews bokeh plots of the daily hydrograph
     hvspan_predictor = hv.VSpan(
@@ -3495,11 +3501,17 @@ def create_reload_button():
                 run_docker_container(client, "mabesa/sapphire-linreg:latest", volumes, environment, "linreg")
 
                 # Run the prepgateway container
-                run_docker_container(client, "mabesa/sapphire-prepgateway:latest", volumes, environment, "prepgateway")
+                # No need to re-run prepgateway as there is no new data
+                #run_docker_container(client, "mabesa/sapphire-prepgateway:latest", volumes, environment, "prepgateway")
 
-                # Run all ML model containers
-                for model in ["TFT", "TIDE", "TSMIXER", "ARIMA"]:
-                    for mode in ["PENTAD", "DECAD"]:
+                # Only run the ML models if required to run and for available models
+                run_ML_models = os.getenv("ieasyhydroforecast_run_ML_models", "True")
+                if run_ML_models == "True":
+                    model_list = os.getenv("ieasyhydroforecast_available_ML_models", "TFT,TIDE,TSMIXER").split(",")
+                    print(f"Available ML models: {model_list}")
+                    mode = os.getenv("sapphire_forecast_horizon", "pentad").upper()
+
+                    for model in model_list:
                         container_name = f"ml_{model}_{mode}"
                         run_docker_container(client, f"mabesa/sapphire-ml:latest", volumes,
                                              environment + [f"SAPPHIRE_MODEL_TO_USE={model}",
@@ -3507,7 +3519,8 @@ def create_reload_button():
                                              container_name)
 
                 # Run the conceptmod container
-                run_docker_container(client, "mabesa/sapphire-conceptmod:latest", volumes, environment, "conceptmod")
+                # No need to re-run this one as it is very slow
+                #run_docker_container(client, "mabesa/sapphire-conceptmod:latest", volumes, environment, "conceptmod")
 
                 # Run the postprocessing container
                 run_docker_container(client, "mabesa/sapphire-postprocessing:latest", volumes, environment,
@@ -3665,8 +3678,15 @@ def plot_forecast_skill(
     # Filter the forecasts for the selected station and models
     forecast_pentad = forecasts_all[forecasts_all['model_short'].isin(model_checkbox)].copy()
     forecast_pentad = forecast_pentad[forecast_pentad['station_labels'] == station_widget]
-    # We only need the values of the past 365 days (or the past year)
-    forecast_pentad = forecast_pentad[forecast_pentad['date'] >= selected_date - pd.Timedelta(days=365)]
+    ## We only need the values of the past 365 days (or the past year)
+    ##forecast_pentad = forecast_pentad[forecast_pentad['date'] >= selected_date - pd.Timedelta(days=365)]
+    # For each model and pentad/decad of year, get the most recent non-NaN value
+    forecast_pentad = (forecast_pentad
+                  .sort_values('date', ascending=False)  # Sort by date, most recent first
+                  .groupby(['model_short', horizon_in_year])  # Group by model and pentad/decad
+                  .apply(lambda x: x.dropna(subset=['sdivsigma', 'accuracy']).head(1))  # Get first non-NaN row
+                  .reset_index(drop=True))  # Reset index
+
     # Multiply accruacy by 100 to get percentage
     forecast_pentad['accuracy'] = forecast_pentad['accuracy'] * 100
     # Drop any duplicates in date and model_short
@@ -3707,11 +3727,10 @@ def plot_forecast_skill(
             remove_bokeh_logo,
             lambda p, e: add_custom_xticklabels_pentad(_, p, e)
         ],
-        # xticks=list(range(1,72,6)),
         title=title_effectiveness, shared_axes=False,
         # legend_position='bottom_left',  # 'right',
         xlabel=horizon_x_label, ylabel=_("Effectiveness [-]"),
-        show_grid=True,  # xlim=(1, 72),
+        show_grid=True,  
         ylim=(0, 1.4),
         fontsize={'legend': 8, 'title': 10}, fontscale=1.2
     )
@@ -3746,12 +3765,12 @@ def plot_forecast_skill(
             remove_bokeh_logo,
             lambda p, e: add_custom_xticklabels_pentad(_, p, e)
         ],
-        # xticks=list(range(1,72,6)),
         title=title_accuracy, shared_axes=False,
         # legend_position='bottom_left',  # 'right',
         xlabel=horizon_x_label, ylabel=_("Accuracy [%]"),
-        show_grid=True,  # xlim=(1, 72),
+        show_grid=True,  
         ylim=(0, 100),
+        xlim=(0, area_x_lim),
         fontsize={'legend': 8, 'title': 10}, fontscale=1.2
     )
 
