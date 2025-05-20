@@ -1716,6 +1716,14 @@ def _read_runoff_data_by_organization(organization, date_col, discharge_col, nam
             name_col=name_col,
             code_col=code_col,
             code_list=code_list)
+    elif organization == 'demo': 
+        read_data = read_all_runoff_data_from_excel(
+            date_col=date_col,
+            discharge_col=discharge_col,
+            name_col=name_col,
+            code_col=code_col,
+            code_list=code_list
+        )
     else:
         raise ValueError(f"Organization '{organization}' not recognized. "
                          f"Please set the environment variable 'ieasyhydroforecast_organization' to 'kghm' or 'tjhm'.")
@@ -1750,7 +1758,7 @@ def get_runoff_data_for_sites_HF(ieh_hf_sdk=None, date_col='date', name_col='nam
 
     Details: 
     - Read data from excel files if available and necessary
-    
+      
     """
     # Test if id_list is None or empty. Return error if it is.
     if id_list is None or len(id_list) == 0:

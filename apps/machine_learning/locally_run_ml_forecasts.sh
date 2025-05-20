@@ -34,7 +34,7 @@ get_timestamp() {
 }
 
 
-for model in TFT TIDE TSMIXER ARIMA; do
+for model in TFT TIDE TSMIXER; do
 #for model in TIDE; do
     for horizon in PENTAD DECAD; do
     #for horizon in PENTAD; do
@@ -47,7 +47,7 @@ for model in TFT TIDE TSMIXER ARIMA; do
         start_time=$(get_timestamp)
         echo "Start time: $(date)" >> "$log_file"
 
-        export ieasyhydroforecast_env_file_path=~/Documents/GitHub/sensitive_data_forecast_tools/config/.env_develop_kghm SAPPHIRE_MODEL_TO_USE=$model SAPPHIRE_PREDICTION_MODE=$horizon
+        export ieasyhydroforecast_env_file_path=~/Documents/GitHub/kyg_data_forecast_tools/config/.env_develop_kghm SAPPHIRE_MODEL_TO_USE=$model SAPPHIRE_PREDICTION_MODE=$horizon
 
         # Record the run times for nan dealing
         start_nan_time=$(get_timestamp)

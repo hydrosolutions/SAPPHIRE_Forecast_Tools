@@ -39,6 +39,8 @@ TAG = env.get('ieasyhydroforecast_backend_docker_image_tag')
 ORGANIZATION = env.get('ieasyhydroforecast_organization')
 # URL of the sapphire data gateway
 SAPPHIRE_DG_HOST = env.get('SAPPHIRE_DG_HOST')
+RUN_ML_MODELS = env.get('ieasyhydroforecast_run_ML_models')
+RUN_CM_MODELS = env.get('ieasyhydroforecast_run_CM_models')
 
 
 
@@ -75,7 +77,6 @@ def get_local_path(relative_path):
     relative_path = re.sub(f'\.\./\.\./', '', relative_path)
 
     return relative_path
-
 
 
 class PreprocessingRunoff(pu.TimeoutMixin, luigi.Task):
@@ -148,7 +149,7 @@ class PreprocessingRunoff(pu.TimeoutMixin, luigi.Task):
 
             # Define environment variables
             environment = [
-                'SAPPHIRE_OPDEV_ENV=True',
+                f'ieasyhydroforecast_env_file_path={env_file_path}',
             ]
 
             # Define volumes
@@ -324,7 +325,7 @@ class PreprocessingGatewayQuantileMapping(pu.TimeoutMixin, luigi.Task):
 
             # Define environment variables
             environment = [
-                'SAPPHIRE_OPDEV_ENV=True',
+                f'ieasyhydroforecast_env_file_path={env_file_path}',
                 'SAPPHIRE_DG_HOST=' + SAPPHIRE_DG_HOST
             ]
 
@@ -499,7 +500,7 @@ class LinearRegression(pu.TimeoutMixin, luigi.Task):
 
             # Define environment variables
             environment = [
-                'SAPPHIRE_OPDEV_ENV=True',
+                f'ieasyhydroforecast_env_file_path={env_file_path}',
             ]
 
             # Define volumes
@@ -865,7 +866,7 @@ class RunMLModel(pu.TimeoutMixin, luigi.Task):
 
             # Define environment variables
             environment = [
-                'SAPPHIRE_OPDEV_ENV=True',
+                f'ieasyhydroforecast_env_file_path={env_file_path}',
                 'IN_DOCKER=True',
                 f'SAPPHIRE_MODEL_TO_USE={self.model_type}',  # TFT, TIDE, TSMIXER, ARIMA
                 f'SAPPHIRE_PREDICTION_MODE={self.prediction_mode}',  # PENTAD, DECAD
@@ -945,7 +946,10 @@ class RunAllMLModels(luigi.WrapperTask):
         yield PreprocessingRunoff()
         yield PreprocessingGatewayQuantileMapping()
 
-        models = ['TFT', 'TIDE', 'TSMIXER', 'ARIMA']
+        # Get the list of available ML models from .env file
+        models = env.get('ieasyhydroforecast_available_ML_models').split(',')
+
+        #models = ['TFT', 'TIDE', 'TSMIXER', 'ARIMA']
         prediction_modes = ['PENTAD', 'DECAD']
 
         for model in models:
@@ -984,9 +988,19 @@ class PostProcessingForecasts(pu.TimeoutMixin, luigi.Task):
         if ORGANIZATION=='demo':
             return LinearRegression()
         if ORGANIZATION=='kghm':
-            return [ConceptualModel(), RunAllMLModels(), LinearRegression()]
+            if RUN_ML_MODELS == "True" and RUN_CM_MODELS == "True":
+               return [ConceptualModel(), RunAllMLModels(), LinearRegression()]
+            elif RUN_ML_MODELS == "True":
+                return [RunAllMLModels(), LinearRegression()]
+            elif RUN_CM_MODELS == "True":
+                return [ConceptualModel(), LinearRegression()]
+            else: 
+                return LinearRegression()
         if ORGANIZATION=='tjhm': 
-            return RunAllMLModels()
+            if RUN_ML_MODELS == "True": 
+                return [RunAllMLModels(), LinearRegression()]
+            else: 
+                return LinearRegression()
 
     def output(self):
         return luigi.LocalTarget(f'/app/log_postproc.txt')
@@ -1016,7 +1030,7 @@ class PostProcessingForecasts(pu.TimeoutMixin, luigi.Task):
 
             # Define environment variables
             environment = [
-                'SAPPHIRE_OPDEV_ENV=True',
+                f'ieasyhydroforecast_env_file_path={env_file_path}',
             ]
 
             # Define volumes
@@ -1568,18 +1582,24 @@ class RunWorkflow(luigi.Task):
             
         elif ORGANIZATION=='tjhm': 
             print("Running TJHM workflow.")
-            base_tasks =  [
-                PostProcessingForecasts(),
-                RunAllMLModels(),
-                DeleteOldGatewayFiles(),
-                LogFileCleanup()
-            ]
+            if RUN_ML_MODELS == 'True':
+                base_tasks =  [
+                    PostProcessingForecasts(),
+                    RunAllMLModels(),
+                    DeleteOldGatewayFiles(),
+                    LogFileCleanup()
+                ]
+            else:
+                base_tasks =  [
+                    PostProcessingForecasts(),
+                    LogFileCleanup()
+                ]
         # You can add workflow definitions for other organizations here.
 
         # Default to demo workflow
         else:
             print("ORGANIZATION not specified.\n  -> Defaulting to demo workflow.")
-            base_task = [PostProcessingForecasts()]
+            base_tasks = [PostProcessingForecasts()]
 
         # If notifications are enabled, add the notification task
         if self.send_notifications:

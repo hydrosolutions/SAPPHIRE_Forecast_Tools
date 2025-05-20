@@ -49,7 +49,7 @@
 
 # Useage
 # cd to the directory where the script is located (apps/preprocessing_gateway)
-# python Quantile_Mapping_OP.py
+# ieasyhydroforecast_env_file_path=/path/to/.env python Quantile_Mapping_OP.py
 
 # Author: Sandro Hunziker
 
@@ -68,6 +68,7 @@ from datetime import datetime, timedelta
 import logging
 from logging.handlers import TimedRotatingFileHandler
 import traceback
+import shutil
 
 import dg_utils
 
@@ -266,6 +267,21 @@ def main():
     # Test if the output path exists and create it if it doesn't
     if not os.path.exists(OUTPUT_PATH_DG):
         os.makedirs(OUTPUT_PATH_DG, exist_ok=True)
+
+    # Remove all files from OUTPUT_PATH_DG if not in debug mode
+    # print the logging level
+    logger.debug(f"Logging level: {logger.level}")
+    if logger.level > logging.DEBUG:  # Check if the logging level is higher than DEBUG
+        try:
+            for filename in os.listdir(OUTPUT_PATH_DG):
+                file_path = os.path.join(OUTPUT_PATH_DG, filename)
+                if os.path.isfile(file_path) or os.path.islink(file_path):
+                    os.unlink(file_path)
+                elif os.path.isdir(file_path):
+                    shutil.rmtree(file_path)
+            logger.info(f"All files removed from {OUTPUT_PATH_DG} as not in debug mode.")
+        except Exception as e:
+            logger.error(f"Failed to remove files from {OUTPUT_PATH_DG}: {e}")
 
     logger.debug(f"OUTPUT_PATH_CM: {OUTPUT_PATH_CM}")
     logger.debug(f"OUTPUT_PATH_ENS: {OUTPUT_PATH_ENS}")

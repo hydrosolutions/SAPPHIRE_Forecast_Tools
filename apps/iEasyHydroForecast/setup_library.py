@@ -8,6 +8,7 @@ import fnmatch
 import re
 import subprocess
 import socket
+import urllib.parse
 import platform
 import pytz
 
@@ -17,7 +18,18 @@ from dotenv import load_dotenv
 import forecast_library as fl
 import tag_library as tl
 
-logger = logging.getLogger(__name__)
+# Configure the logging level and formatter
+logging.basicConfig(level=logging.DEBUG)
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+
+# Create a stream handler to print logs to the console
+console_handler = logging.StreamHandler()
+console_handler.setFormatter(formatter)
+
+# Get the root logger and add the handlers to it
+logger = logging.getLogger()
+logger.handlers = []
+logger.addHandler(console_handler)
 
 # === Tools for the initialization of the linear regression forecast ===
 
@@ -203,6 +215,53 @@ def identify_host_system():
 
     return system_id
 
+def check_organization():
+    """
+    Check the organization for which the forecast is produced.
+    """
+    org = os.getenv("ieasyhydroforecast_organization")
+    if org is None:
+        logger.error("Environment variable ieasyhydroforecast_organization not set.")
+        raise EnvironmentError("Environment variable ieasyhydroforecast_organization not set.")
+    return None
+
+def check_connect_to_iEH_and_ssh():
+    """Currently connection to iEH is only possible for kghm and through ssh tunnel."""
+    # Check if the environment variable ieasyhydroforecast_connect_to_iEH is set
+    org = os.getenv("ieasyhydroforecast_organization")
+    connect_to_iEH = os.getenv("ieasyhydroforecast_connect_to_iEH")
+    require_ssh = os.getenv("ieasyhydroforecast_ssh_to_iEH")
+
+    if connect_to_iEH and connect_to_iEH.lower() == "true":
+        if org != "kghm":
+            logger.error("Connection to iEH is currently only possible for organization 'kghm'.\n    Please connect to iEH HF, to data files or select a different organization.")
+            raise EnvironmentError("Environment variable ieasyhydroforecast_connect_to_iEH is not consistent with ieasyhydroforecast_organization.")
+        if require_ssh and require_ssh.lower() == "false":
+            logger.error("SSH tunnel is required for connection to iEH.\n    Please set ieasyhydroforecast_ssh_to_iEH to True.")
+            raise EnvironmentError("Environment variable ieasyhydroforecast_ssh_to_iEH is not consistent with ieasyhydroforecast_connect_to_iEH.")
+
+    if require_ssh and require_ssh.lower() == "true":
+        if connect_to_iEH.lower() == "false":
+            logger.error("SSH tunnel is required for connection to iEH.\n    Please set ieasyhydroforecast_connect_to_iEH to True.")
+            raise EnvironmentError("Environment variable ieasyhydroforecast_ssh_to_iEH is not consistent with ieasyhydroforecast_connect_to_iEH.")
+
+    return None
+
+def validate_environment_variables(): 
+    """
+    Validate consistency of the environment variables.
+    """
+    try:
+        check_organization()
+    except EnvironmentError as e:
+        raise e
+    try:
+        check_connect_to_iEH_and_ssh()
+    except EnvironmentError as e:
+        raise e
+    
+    return None
+
 def load_environment():
     """
     Load environment variables from a .env file based on the context.
@@ -286,6 +345,14 @@ def load_environment():
     # Test if specific environment variables were loaded
     if os.getenv("ieasyforecast_daily_discharge_path") is None:
         logger.error("config.load_environment(): Environment variable ieasyforecast_daily_discharge_path not set")
+    
+    logger.debug("Validating environment variables ...")
+    validation = validate_environment_variables()
+    if validation is not None:
+        logger.error("Environment variables are not valid.")
+        raise EnvironmentError("Environment variables are not valid.")
+    logger.debug("Environment variables validated.")
+    
     return env_file_path
 
 def get_local_timezone_from_env(organization=None):
@@ -342,47 +409,83 @@ def get_local_timezone_from_env(organization=None):
         print(f"Error running netstat: {e}")
         return []'''
 
-def check_local_ssh_tunnels():
+def check_if_ssh_tunnel_is_required(): 
+    """
+    Check if SSH tunnel is required based on the environment variable.
+    """
+    var = os.getenv("ieasyhydroforecast_ssh_to_iEH")
+    if var is None:
+        logger.info("Environment variable ieasyhydroforecast_ssh_to_iEH not set. \n      Assuming that no ssh tunnel is required for connection with iEH or iEH HF.")
+        return False
+    elif var.lower() == "true":
+        logger.debug("Environment variable ieasyhydroforecast_ssh_to_iEH is set to True. \n      Assuming that ssh tunnel is required for connection with iEH or iEH HF.")
+        return True
+    elif var.lower() == "false":
+        logger.debug("Environment variable ieasyhydroforecast_ssh_to_iEH is set to False. \n      Assuming that no ssh tunnel is required for connection with iEH or iEH HF.")
+        return False
+
+def check_local_ssh_tunnels(addresses=None, port=None):
     """
     Check for local SSH tunnels using pure Python socket connections.
-    No additional system packages required.
+
+    Args:
+        addresses (list, optional): List of addresses to check.
+            Defaults to ['localhost', '127.0.0.1', 'host.docker.internal'].
+        port (int, optional): The port number to check. If None, attempts to
+            extract it from the IEASYHYDRO_HOST environment variable. Defaults to None.
+
+    Returns:
+        list: List of found local SSH tunnels with their details.
     """
+    tunnels = []
     try:
-        # Check the specific port we know the tunnel should be using
-        tunnel_port = 8881  # Your SSH tunnel port
+        # Determine the port to check
+        if port is None:
+            host = os.getenv("IEASYHYDRO_HOST")
+            if not host:
+                logger.error("Environment variable IEASYHYDRO_HOST not set.")
+                return []
+            try:
+                parsed_url = urllib.parse.urlparse(host)
+                if parsed_url.port:
+                    tunnel_port = parsed_url.port
+                else:
+                    # If no port is explicitly in the URL, assume default based on scheme
+                    tunnel_port = 443 if parsed_url.scheme == 'https' else 80 if parsed_url.scheme == 'http' else 8881
+            except Exception as e:
+                logger.error(f"Error parsing IEASYHYDRO_HOST: {e}")
+                return []
+        else:
+            tunnel_port = port
 
-        # Try to connect to localhost on the tunnel port
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(2)  # 2 second timeout
+        # Use default addresses if none are provided
+        if addresses is None:
+            addresses = ['localhost', '127.0.0.1', 'host.docker.internal']
 
-        try:
-            # Try localhost first
-            result = sock.connect_ex(('localhost', tunnel_port))
-            if result == 0:
-                return [{'port': tunnel_port, 'line': f'Port {tunnel_port} is listening on localhost'}]
+        for address in addresses:
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(2)  # 2 second timeout
+                result = sock.connect_ex((address, tunnel_port))
+                if result == 0:
+                    tunnels.append({'port': tunnel_port, 'line': f'Port {tunnel_port} is listening on {address}'})
+                    logger.info(f"SSH tunnel found on {address}:{tunnel_port}")
+                else:
+                    logger.debug(f"No SSH tunnel found on {address}:{tunnel_port}")
+            except socket.gaierror as e:
+                logger.warning(f"Address resolution error for {address}: {e}")
+            except socket.error as e:
+                logger.warning(f"Socket error while checking {address}:{tunnel_port}: {e}")
+            finally:
+                sock.close()
 
-            # If localhost fails, try 127.0.0.1 explicitly
-            result = sock.connect_ex(('127.0.0.1', tunnel_port))
-            if result == 0:
-                return [{'port': tunnel_port, 'line': f'Port {tunnel_port} is listening on 127.0.0.1'}]
-
-            # If both fail, try host.docker.internal (for macOS)
-            result = sock.connect_ex(('host.docker.internal', tunnel_port))
-            if result == 0:
-                return [{'port': tunnel_port, 'line': f'Port {tunnel_port} is listening on host.docker.internal'}]
-
-        except socket.error as e:
-            print(f"Socket error while checking port {tunnel_port}: {e}")
-        finally:
-            sock.close()
-
-        # If we get here, no tunnel was found
-        print(f"No listening service found on port {tunnel_port}")
-        return []
+        if not tunnels:
+            logger.info(f"No listening service found on any of the tested addresses for port {tunnel_port}")
 
     except Exception as e:
-        print(f"Error checking SSH tunnels: {e}")
-        return []
+        logger.error(f"Error checking SSH tunnels: {e}")
+
+    return tunnels
 
 
 # region iEH_DB
@@ -408,22 +511,29 @@ def check_database_access(ieh_sdk):
     # Test if the backand has access to an iEasyHydro database and set a flag accordingly.
     try:
         test = ieh_sdk.get_discharge_sites()
-        #logger.debug(f"test[0]: {test[0]}")
         logger.info(f"Access to iEasyHydro database.")
         return True
+    except (ConnectionError, TimeoutError) as e:
+        logger.error(f"Error connecting to DB: {e}")
+        if os.getenv("ieasyhydroforecast_organization") == "demo": 
+            logger.info(f"No access to iEasyHydro database but running forecast tools in demo mode.\n        Looking for runoff data files in the ieasyforecast_daily_discharge_path directory.")
+            discharge_path = os.getenv("ieasyforecast_daily_discharge_path")
+            try: 
+                if os.listdir(discharge_path):
+                    logger.info("No access to iEasyHydro database. Will use data from the ieasyforecast_daily_discharge_path for forecasting only.")
+                    return False
+                else: 
+                    logger.error(f"No data in the {discharge_path} directory.")
+                    return False
+            except FileNotFoundError:
+                logger.error(f"Directory {discharge_path} not found.")
+                return False
+        else: 
+            logger.error("SAPPHIRE tools do not have access to the iEasyHydro database.")
+            raise
     except Exception as e:
-        logger.debug(f"Met exception {e} when trying to access iEasyHydro database.")
-        # Test if there are any files in the data/daily_runoff directory
-        if os.listdir(os.getenv("ieasyforecast_daily_discharge_path")):
-            logger.info(f"No access to iEasyHydro database. "
-                        f"Will use data from the ieasyforecast_daily_discharge_path for forecasting only.")
-            return False
-        else:
-            logger.error(f"SAPPHIRE tools do not find any data in the ieasyforecast_daily_discharge_path directory "
-                         f"nor does it have access to the iEasyHydro database.")
-            logger.error(f"Please check the ieasyforecast_daily_discharge_path directory and/or the access to the iEasyHydro database.")
-            logger.error(f"Error connecting to DB: {e}")
-            raise e
+        logger.error(f"An unexpected error occurred: {e}")
+        raise
 
 # The functions below are required for the old iEasyHydro App.
 # For using the forecast tools with the new iEasyHydro HF App, we can read the
@@ -809,6 +919,11 @@ def get_pentadal_forecast_sites_from_HF_SDK(ieh_hf_sdk):
     site_ids (list): A list of strings for iEH HF site IDs for which to produce 
         forecasts. Required for iEH HF SDK. 
     """
+    # Check if the ieh_hf_sdk object is None
+    if ieh_hf_sdk is None:
+        # TODO implement get discharge sites from config yaml files
+        return None, None, None
+    
     # Get the list of discharge sites from the iEH HF SDK
     discharge_sites = ieh_hf_sdk.get_discharge_sites()
     logger.debug(f" {len(discharge_sites)} discharge site(s) found in iEH HF SDK, namely:\n{[site['site_code'] for site in discharge_sites]}")
@@ -1174,7 +1289,7 @@ def read_daily_probabilistic_ml_forecasts_pentad(filepath, model, model_long, mo
 
         # Keep rows that have forecast_date equal to either 5, 10, 15, 20, 25 or last_day_of_month
         data = daily_data[(daily_data["day_of_month"].isin([5, 10, 15, 20, 25])) | \
-                        (daily_data["forecast_date"].dt.date == daily_data["last_day_of_month"])]
+                        (daily_data["forecast_date"].dt.date == daily_data["last_day_of_month"])].copy()
 
         # Check if we have any data after filtering
         if data.empty:
@@ -1182,7 +1297,7 @@ def read_daily_probabilistic_ml_forecasts_pentad(filepath, model, model_long, mo
             return pd.DataFrame()
 
         # Convert forecast_date back to date
-        data["forecast_date"] = data["forecast_date"].dt.date
+        data.loc[:, "forecast_date"] = data["forecast_date"].dt.date
 
         # Group by code and forecast_date and calculate the mean of all columns
         forecast = data \
@@ -2317,6 +2432,11 @@ def calculate_virtual_stations_data(data_df: pd.DataFrame,
     """
 
     """
+    # Test if we have a virtual stations file configured
+    if os.getenv('ieasyforecast_virtual_stations') is None:
+        logger.warning("No virtual stations file configured. Skipping virtual stations.")
+        return data_df
+
     # Get configuration for virtual stations
     with open(os.path.join(os.getenv('ieasyforecast_configuration_path'),
                            os.getenv('ieasyforecast_virtual_stations')), 'r') as f:
@@ -2517,79 +2637,309 @@ def read_observed_and_modelled_data_pentade():
     # Read the observed data
     observed = read_observed_pentadal_data()
 
+    # Initialize all forecast DataFrames as empty
+    linreg = pd.DataFrame()
+    tide = pd.DataFrame()
+    tft = pd.DataFrame()
+    tsmixer = pd.DataFrame()
+    arima = pd.DataFrame()
+    rrmamba = pd.DataFrame()
+    cm = pd.DataFrame()
+    stats = pd.DataFrame()
+
     # Read the linear regression forecasts for the pentadal forecast horizon
     linreg, stats_linreg = read_linreg_forecasts_pentad()
+    stats = stats_linreg
 
-    # Read the forecasts from the other methods
-    tide = read_machine_learning_forecasts_pentad(model='TIDE')
-    tft = read_machine_learning_forecasts_pentad(model='TFT')
-    tsmixer = read_machine_learning_forecasts_pentad(model='TSMIXER')
-    arima = read_machine_learning_forecasts_pentad(model='ARIMA')
-    cm = read_all_conceptual_model_forecasts_pentad()
-
-    # Debug only dataframes that exist and have the 'code' column
-    if not linreg.empty and 'code' in linreg.columns:
-        logger.debug(f"type of code in linreg: {linreg['code'].dtype}")
+    # Learn which modules are activated
+    read_ml_results = os.getenv("ieasyhydroforecast_run_ML_models")
+    if read_ml_results is None:
+        logger.info("Environment variable ieasyhydroforecast_run_ML_models is not set. Assuming no ML forecasts to be read.")
+    elif read_ml_results == "False":
+        logger.info("Environment variable ieasyhydroforecast_run_ML_models is set to False. No ML forecasts to be read.")
+    elif read_ml_results == "True":
+        logger.info("Environment variable ieasyhydroforecast_run_ML_models is set to True. Reading ML forecasts.")
+        
+        # Read available ML models          
+        available_ml_models = os.getenv("ieasyhydroforecast_available_ML_models")
+        logger.debug(f"Available ML models: {available_ml_models}")
+        
+        if available_ml_models is None:
+            logger.info("Environment variable ieasyhydroforecast_available_ML_models is not set. Assuming no ML models are available.")
+            pass
+        else:
+            available_ml_models = available_ml_models.split(",")
+            logger.info(f"Available ML models: {available_ml_models}")
+        
+        # Read TIDE results if TIDE in available models
+        if not 'TIDE' in available_ml_models:        
+            logger.debug("No TIDE results to be read. Skipping TIDE.")
+        else: 
+            tide = read_machine_learning_forecasts_pentad(model='TIDE')
+        
+        # Read TFT results
+        if not 'TFT' in available_ml_models:
+            logger.debug("No TFT results to be read. Skipping TFT.")
+        else:
+            tft = read_machine_learning_forecasts_pentad(model='TFT')
+        
+        # Read TSMIXER results
+        if not 'TSMIXER' in available_ml_models:
+            logger.debug("No TSMIXER results to be read. Skipping TSMIXER.")
+        else:
+            tsmixer = read_machine_learning_forecasts_pentad(model='TSMIXER')
+    
+        # Read ARIMA results
+        if not 'ARIMA' in available_ml_models:
+            logger.debug("No ARIMA results to be read. Skipping ARIMA.")
+        else: 
+            arima = read_machine_learning_forecasts_pentad(model='ARIMA')
+        
+        # Read RRMAMBA results
+        if not 'RRMAMBA' in available_ml_models:
+            logger.debug("No RRMAMBA results to be read. Skipping RRMAMBA.")
+        else: 
+            rrmamba = read_machine_learning_forecasts_pentad(model='RRMAMBA')
+    
     else:
-        logger.warning("Linear regression data is empty or missing 'code' column")
-
-    if not tide.empty and 'code' in tide.columns:
-        logger.debug(f"type of code in tide: {tide['code'].dtype}")
-    else:
-        logger.warning("TIDE data is empty or missing 'code' column")
-
-    if not cm.empty and 'code' in cm.columns:
-        logger.debug(f"type of code in cm: {cm['code'].dtype}")
-    else:
-        logger.warning("Conceptual model data is empty or missing 'code' column")
+        logger.warning("Environment variable ieasyhydroforecast_run_ML_models is set to an invalid value. Assuming no ML forecasts to be read.")
+        
+    run_cm_models = os.getenv("ieasyhydroforecast_run_CM_models")
+    if run_cm_models is None:
+        logger.info("Environment variable ieasyhydroforecast_run_CM_models is not set. Assuming no CM forecasts to be read.")
+    elif run_cm_models == "False":
+        logger.info("Environment variable ieasyhydroforecast_run_CM_models is set to False. No CM forecasts to be read.")
+    elif run_cm_models == "True":
+        cm = read_all_conceptual_model_forecasts_pentad()
+    else: 
+        logger.warning("Environment variable ieasyhydroforecast_run_CM_models is set to an invalid value. Assuming no CM forecasts to be read.")
+    
+    # Only check for NaN values in the model_long column if the DataFrame is not empty
+    available_forecasts = []
 
     # Test if there are any nans in the model long column of either linreg, tide, tft, tsmixer, arima and cm
-    if linreg['model_long'].isnull().values.any():
-        logger.error("There are nans in the model_long column of linreg.")
-        exit()
-    if tide['model_long'].isnull().values.any():
-        logger.error("There are nans in the model_long column of tide.")
-        exit()
-    if tft['model_long'].isnull().values.any():
-        logger.error("There are nans in the model_long column of tft.")
-        exit()
-    if tsmixer['model_long'].isnull().values.any():
-        logger.error("There are nans in the model_long column of tsmixer.")
-        exit()
-    if arima['model_long'].isnull().values.any():
-        logger.error("There are nans in the model_long column of arima.")
-        exit()
-    if cm['model_long'].isnull().values.any():
-        logger.error("There are nans in the model_long column of cm.")
-        exit()
+    if not linreg.empty:
+        if 'model_long' in linreg.columns and linreg['model_long'].isnull().values.any():
+            logger.error("There are nans in the model_long column of linreg.")
+        else:
+            available_forecasts.append(linreg)
+            
+    if not tide.empty:
+        if 'model_long' in tide.columns and tide['model_long'].isnull().values.any():
+            logger.error("There are nans in the model_long column of tide.")
+        else:
+            available_forecasts.append(tide)
+            
+    if not tft.empty:
+        if 'model_long' in tft.columns and tft['model_long'].isnull().values.any():
+            logger.error("There are nans in the model_long column of tft.")
+        else:
+            available_forecasts.append(tft)
+            
+    if not tsmixer.empty:
+        if 'model_long' in tsmixer.columns and tsmixer['model_long'].isnull().values.any():
+            logger.error("There are nans in the model_long column of tsmixer.")
+        else:
+            available_forecasts.append(tsmixer)
+            
+    if not arima.empty:
+        if 'model_long' in arima.columns and arima['model_long'].isnull().values.any():
+            logger.error("There are nans in the model_long column of arima.")
+        else:
+            available_forecasts.append(arima)
+            
+    if not rrmamba.empty:
+        if 'model_long' in rrmamba.columns and rrmamba['model_long'].isnull().values.any():
+            logger.error("There are nans in the model_long column of rrmamba.")
+        else:
+            available_forecasts.append(rrmamba)
+            
+    if not cm.empty:
+        if 'model_long' in cm.columns and cm['model_long'].isnull().values.any():
+            logger.error("There are nans in the model_long column of cm.")
+        else:
+            available_forecasts.append(cm)
 
-    # Merge tide, tft, tsmixer and arima into linreg.
-    # same columns are: date, code, pentad_in_month, pentad_in_year,
-    # forecasted_discharge, model_long and model_short
-    forecasts = pd.concat([linreg, tide, tft, tsmixer, arima, cm])
-    logger.debug(f"columns of forecasts concatenated:\n{forecasts.columns}")
-    logger.debug(f"forecasts concatenated:\n{forecasts.loc[:, ['date', 'code', 'model_long']].head()}\n{forecasts.loc[:, ['date', 'code', 'model_long']].tail()}")
+    # Only concatenate if we have forecasts available
+    if available_forecasts:
+        forecasts = pd.concat(available_forecasts)
+        logger.debug(f"columns of forecasts concatenated:\n{forecasts.columns}")
+        logger.debug(f"forecasts concatenated:\n{forecasts.loc[:, ['date', 'code', 'model_long']].head()}\n{forecasts.loc[:, ['date', 'code', 'model_long']].tail()}")
 
-    # Calculate virtual stations forecasts if needed
-    forecasts = calculate_virtual_stations_data(forecasts)
-    # Test if we have any nans in the model_long column
-    if forecasts['model_long'].isnull().values.any():
-        logger.error("There are nans in the model_long column of forecasts.")
-        exit()
-
-    stats = stats_linreg
-    logger.debug(f"columns of stats concatenated:\n{stats.columns}")
-    logger.debug(f"stats concatenated:\n{stats.head()}\n{stats.tail()}")
-    logger.info(f"Concatenated forecast results from all methods for the pentadal forecast horizon.")
-
-    forecasts = calculate_neural_ensemble_forecast(forecasts)
+        # Calculate virtual stations forecasts if needed
+        forecasts = calculate_virtual_stations_data(forecasts)
+        
+        # Test if we have any nans in the model_long column
+        if 'model_long' in forecasts.columns and forecasts['model_long'].isnull().values.any():
+            logger.error("There are nans in the model_long column of forecasts.")
+            
+        forecasts = calculate_neural_ensemble_forecast(forecasts)
+    else: 
+        logger.warning("No forecasts available to concatenate. Skipping concatenation.")
+        forecasts = pd.DataFrame()
 
     # Merge the general runoff statistics to the observed DataFrame
-    observed = pd.merge(observed, stats, on=["date", "code"], how="left")
+    if not stats.empty and not observed.empty:
+        observed = pd.merge(observed, stats, on=["date", "code"], how="left")
 
     return observed, forecasts
 
 def read_observed_and_modelled_data_decade():
+    """
+    Reads results from all forecast methods into a dataframe.
+
+    Returns:
+    forecasts (pandas.DataFrame): The forecasts from all methods.
+    """
+    # Read the observed data
+    observed = read_observed_decadal_data()
+
+    # Initialize all forecast DataFrames as empty
+    linreg = pd.DataFrame()
+    tide = pd.DataFrame()
+    tft = pd.DataFrame()
+    tsmixer = pd.DataFrame()
+    arima = pd.DataFrame()
+    rrmamba = pd.DataFrame()
+    cm = pd.DataFrame()
+    stats = pd.DataFrame()
+
+    # Read the linear regression forecasts for the decadal forecast horizon
+    linreg, stats_linreg = read_linreg_forecasts_decade()
+    stats = stats_linreg
+
+    # Learn which modules are activated
+    read_ml_results = os.getenv("ieasyhydroforecast_run_ML_models")
+    if read_ml_results is None:
+        logger.info("Environment variable ieasyhydroforecast_run_ML_models is not set. Assuming no ML forecasts to be read.")
+    elif read_ml_results == "False":
+        logger.info("Environment variable ieasyhydroforecast_run_ML_models is set to False. No ML forecasts to be read.")
+    elif read_ml_results == "True":
+        logger.info("Environment variable ieasyhydroforecast_run_ML_models is set to True. Reading ML forecasts.")
+
+        # Read available ML models          
+        available_ml_models = os.getenv("ieasyhydroforecast_available_ML_models")
+        if available_ml_models is None:
+            logger.info("Environment variable ieasyhydroforecast_available_ML_models is not set. Assuming no ML models are available.")
+            pass
+        else:
+            available_ml_models = available_ml_models.split(",")
+            logger.info(f"Available ML models: {available_ml_models}")
+        
+        # Read TIDE results
+        if not 'TIDE' in available_ml_models:
+            logger.debug("No TIDE results to be read. Skipping TIDE.")
+        else: 
+            tide = read_machine_learning_forecasts_decade(model='TIDE')
+        
+        # Read TFT results
+        if not 'TFT' in available_ml_models:
+            logger.debug("No TFT results to be read. Skipping TFT.")
+        else:
+            tft = read_machine_learning_forecasts_decade(model='TFT')
+        
+        # Read TSMIXER results
+        if not 'TSMIXER' in available_ml_models:
+            logger.debug("No TSMIXER results to be read. Skipping TSMIXER.")
+        else:
+            tsmixer = read_machine_learning_forecasts_decade(model='TSMIXER')
+    
+        # Read ARIMA results
+        if not 'ARIMA' in available_ml_models:
+            logger.debug("No ARIMA results to be read. Skipping ARIMA.")
+        else: 
+            arima = read_machine_learning_forecasts_decade(model='ARIMA')
+        
+        # Read RRMAMBA results
+        if not 'RRMAMBA' in available_ml_models:
+            logger.debug("No RRMAMBA results to be read. Skipping RRMAMBA.")
+        else: 
+            rrmamba = read_machine_learning_forecasts_decade(model='RRMAMBA')
+    
+    else:
+        logger.warning("Environment variable ieasyhydroforecast_run_ML_models is set to an invalid value. Assuming no ML forecasts to be read.")
+        
+    run_cm_models = os.getenv("ieasyhydroforecast_run_CM_models")
+    if run_cm_models is None:
+        logger.info("Environment variable ieasyhydroforecast_run_CM_models is not set. Assuming no CM forecasts to be read.")
+    elif run_cm_models == "False":
+        logger.info("Environment variable ieasyhydroforecast_run_CM_models is set to False. No CM forecasts to be read.")
+    elif run_cm_models == "True":
+        cm = read_all_conceptual_model_forecasts_decade()
+    else: 
+        logger.warning("Environment variable ieasyhydroforecast_run_CM_models is set to an invalid value. Assuming no CM forecasts to be read.")
+    
+    # Only check for NaN values in the model_long column if the DataFrame is not empty
+    available_forecasts = []
+
+    # Test if there are any nans in the model long column of either linreg, tide, tft, tsmixer, arima and cm
+    if not linreg.empty:
+        if 'model_long' in linreg.columns and linreg['model_long'].isnull().values.any():
+            logger.error("There are nans in the model_long column of linreg.")
+        else:
+            available_forecasts.append(linreg)
+            
+    if not tide.empty:
+        if 'model_long' in tide.columns and tide['model_long'].isnull().values.any():
+            logger.error("There are nans in the model_long column of tide.")
+        else:
+            available_forecasts.append(tide)
+            
+    if not tft.empty:
+        if 'model_long' in tft.columns and tft['model_long'].isnull().values.any():
+            logger.error("There are nans in the model_long column of tft.")
+        else:
+            available_forecasts.append(tft)
+            
+    if not tsmixer.empty:
+        if 'model_long' in tsmixer.columns and tsmixer['model_long'].isnull().values.any():
+            logger.error("There are nans in the model_long column of tsmixer.")
+        else:
+            available_forecasts.append(tsmixer)
+            
+    if not arima.empty:
+        if 'model_long' in arima.columns and arima['model_long'].isnull().values.any():
+            logger.error("There are nans in the model_long column of arima.")
+        else:
+            available_forecasts.append(arima)
+            
+    if not rrmamba.empty:
+        if 'model_long' in rrmamba.columns and rrmamba['model_long'].isnull().values.any():
+            logger.error("There are nans in the model_long column of rrmamba.")
+        else:
+            available_forecasts.append(rrmamba)
+            
+    if not cm.empty:
+        if 'model_long' in cm.columns and cm['model_long'].isnull().values.any():
+            logger.error("There are nans in the model_long column of cm.")
+        else:
+            available_forecasts.append(cm)
+
+    # Only concatenate if we have forecasts available
+    if available_forecasts:
+        forecasts = pd.concat(available_forecasts)
+        logger.debug(f"columns of forecasts concatenated:\n{forecasts.columns}")
+        logger.debug(f"forecasts concatenated:\n{forecasts.loc[:, ['date', 'code', 'model_long']].head()}\n{forecasts.loc[:, ['date', 'code', 'model_long']].tail()}")
+
+        # Calculate virtual stations forecasts if needed
+        forecasts = calculate_virtual_stations_data(forecasts)
+        
+        # Test if we have any nans in the model_long column
+        if 'model_long' in forecasts.columns and forecasts['model_long'].isnull().values.any():
+            logger.error("There are nans in the model_long column of forecasts.")
+            
+        forecasts = calculate_neural_ensemble_forecast_decade(forecasts)
+    else: 
+        logger.warning("No forecasts available to concatenate. Skipping concatenation.")
+        forecasts = pd.DataFrame()
+
+    # Merge the general runoff statistics to the observed DataFrame
+    if not stats.empty and not observed.empty:
+        observed = pd.merge(observed, stats, on=["date", "code"], how="left")
+
+    return observed, forecasts
+
+'''def read_observed_and_modelled_data_decade():
     """
     Reads results from all forecast methods into a dataframe.
 
@@ -2657,7 +3007,7 @@ def read_observed_and_modelled_data_decade():
     # Merge the general runoff statistics to the observed DataFrame
     observed = pd.merge(observed, stats, on=["date", "code"], how="left")
 
-    return observed, forecasts
+    return observed, forecasts'''
 
 # endregion
 

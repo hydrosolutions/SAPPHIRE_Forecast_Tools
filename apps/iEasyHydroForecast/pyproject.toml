@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=64.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "iEasyHydroForecast"
+version = "0.1"
+description = "A package for hydrological forecasting"
+readme = "README.md"
+authors = [
+    {name = "Beatrice Marti", email = "marti@hydrosolutions.ch"}
+]
+dependencies = [
+    "pandas",
+    "scikit-learn"
+]
+
+[tool.setuptools]
+py-modules = ["forecast_library", "tag_library", "setup_library"]

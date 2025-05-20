@@ -856,13 +856,18 @@ def get_predictors(data_df, start_date, fc_sites,
                    code_col='code', date_col='date', predictor_col=None):
 
     logger.debug("Getting predictor for pentadal forecasting ...")
+    if os.getenv("ieasyhydroforecast_organization") == 'kghm': 
+        debug_site = '15292'
+    elif os.getenv("ieasyhydroforecast_organization") == 'tjhm':
+        debug_site = '17050'
+
     # Iterate through sites in fc_sites and see if we can find the predictor
     # in result_df.
     # This is mostly relevant for the offline mode.
     for site in fc_sites:
         # Get the data for the site
         site_data = data_df[data_df[code_col] == site.code]
-        if int(site.code) == 15292:
+        if int(site.code) == debug_site:
             logger.debug("DEBUG: forecasting:get_predictor: site_data1: \n%s",
                           site_data[[date_col, code_col, 'issue_date', predictor_col]].tail(10))
             logger.debug("DEBUG: forecasting:get_predictor: [start_date]: %s", [start_date])
@@ -930,10 +935,15 @@ def get_pentadal_and_decadal_data(forecast_flags=None,
         forecast_flags=forecast_flags)
 
     # Print the first pentad and decad of the year 2023 and 2024
+    if os.getenv("ieasyhydroforecast_organization") == 'kghm':
+        debug_site = '15102'
+    elif os.getenv("ieasyhydroforecast_organization") == 'tjhm':
+        debug_site = '17050'     
+       
     print("DEBUG: forecasting:get_pentadal_and_decadal_data: data_pentad: \n",
-            data_pentad[(data_pentad['date'] < '2023-01-02') & (data_pentad['code'] == '15102')].tail(10))
+            data_pentad[(data_pentad['date'] < '2023-01-02') & (data_pentad['code'] == debug_site)].tail(10))
     print("DEBUG: forecasting:get_pentadal_and_decadal_data: data_pentad: \n",
-            data_pentad[(data_pentad['date'] < '2024-01-02') & (data_pentad['code'] == '15102')].tail(10))
+            data_pentad[(data_pentad['date'] < '2024-01-02') & (data_pentad['code'] == debug_site)].tail(10))
 
     # Only keep rows for sites in the site_lists
     data_pentad = filter_data(data_pentad, 'code', site_list_pentad)
@@ -1215,10 +1225,10 @@ def perform_linear_regression(
             logger.debug(f"forecast_date: {forecast_date}")
             if horizon_flag == 'pentad':
                 pentad_in_month = tl.get_pentad(first_day_of_forecast_horizon)
-                logger.debug(f"pentad_in_month: {first_day_of_forecast_horizon}")
+                logger.debug(f"pentad_in_month: {pentad_in_month}")
             elif horizon_flag == 'decad':
                 pentad_in_month = tl.get_decad_in_month(first_day_of_forecast_horizon)
-                logger.debug(f"decad_in_month: {first_day_of_forecast_horizon}")
+                logger.debug(f"decad_in_month: {pentad_in_month}")
             else:
                 raise ValueError(f"horizon_flag {horizon_flag} is not valid.")
             title_month = tl.get_month_str_en(first_day_of_forecast_horizon)
@@ -1289,7 +1299,7 @@ def perform_linear_regression(
             intercept = model.intercept_[0]
 
             # Print the slope and intercept
-            logger.debug(f'Station: {station}, pentad/decad: {forecast_horizon_int}, slope: {slope}, intercept: {intercept}')
+            logger.debug(f'Station: {station}, pentad/decad: {forecast_horizon_int}, slope: {round(slope,4)}, intercept: {round(intercept, 4)}')
 
         # Store the slope and intercept in the data_df
         data_dfp.loc[(data_dfp[station_col] == station), 'slope'] = slope
@@ -1328,6 +1338,7 @@ def perform_forecast(fc_sites, group_id=None, result_df=None,
 
     # For each site, calculate the forecasted discharge
     for site in fc_sites:
+        logger.debug(f'    calculating forecast for site {site.code} ...')
         Site.from_df_calculate_forecast(
             site, group_id=group_id, df=result_df,
             code_col=code_col, group_col=group_col)
@@ -1887,61 +1898,66 @@ def calculate_skill_metrics_pentad(
             skill_metrics_df_ensemble_avg,
             observed[['code', 'date', 'discharge_avg', 'delta']],
             on=['code', 'date'])
-        #print("DEBUG: ensemble_skill_metrics_df\n", ensemble_skill_metrics_df.columns)
-        #print("DEBUG: ensemble_skill_metrics_df\n", ensemble_skill_metrics_df.head(20))
+        print("DEBUG: ensemble_skill_metrics_df\n", ensemble_skill_metrics_df.columns)
+        print("DEBUG: ensemble_skill_metrics_df\n", ensemble_skill_metrics_df.head(20))
 
-        ensemble_skill_stats = ensemble_skill_metrics_df. \
-            groupby(['pentad_in_year', 'code', 'model_long', 'model_short'])[ensemble_skill_metrics_df.columns]. \
-            apply(
-                sdivsigma_nse,
-                observed_col='discharge_avg',
-                simulated_col='forecasted_discharge'). \
-            reset_index()
-        #print("DEBUG: ensemble_skill_stats\n", ensemble_skill_stats.columns)
-        #print("DEBUG: ensemble_skill_stats\n", ensemble_skill_stats.head(20))
+        number_of_models = simulated['model_long'].nunique()
+        print("DEBUG: number_of_models\n", number_of_models)
+        if number_of_models > 1:
+            ensemble_skill_stats = ensemble_skill_metrics_df. \
+                groupby(['pentad_in_year', 'code', 'model_long', 'model_short'])[ensemble_skill_metrics_df.columns]. \
+                apply(
+                    sdivsigma_nse,
+                    observed_col='discharge_avg',
+                    simulated_col='forecasted_discharge'). \
+                reset_index()
+            #print("DEBUG: ensemble_skill_stats\n", ensemble_skill_stats.columns)
+            #print("DEBUG: ensemble_skill_stats\n", ensemble_skill_stats.head(20))
+            
+            ensemble_mae_stats = ensemble_skill_metrics_df. \
+                groupby(['pentad_in_year', 'code', 'model_long', 'model_short'])[ensemble_skill_metrics_df.columns]. \
+                apply(
+                    mae,
+                    observed_col='discharge_avg',
+                    simulated_col='forecasted_discharge').\
+                reset_index()
 
-        ensemble_mae_stats = ensemble_skill_metrics_df. \
-            groupby(['pentad_in_year', 'code', 'model_long', 'model_short'])[ensemble_skill_metrics_df.columns]. \
-            apply(
-                mae,
-                observed_col='discharge_avg',
-                simulated_col='forecasted_discharge').\
-            reset_index()
+            ensemble_accuracy_stats = ensemble_skill_metrics_df. \
+                groupby(['pentad_in_year', 'code', 'model_long', 'model_short'])[ensemble_skill_metrics_df.columns]. \
+                apply(
+                    forecast_accuracy_hydromet,
+                    observed_col='discharge_avg',
+                    simulated_col='forecasted_discharge',
+                    delta_col='delta').\
+                reset_index()
 
-        ensemble_accuracy_stats = ensemble_skill_metrics_df. \
-            groupby(['pentad_in_year', 'code', 'model_long', 'model_short'])[ensemble_skill_metrics_df.columns]. \
-            apply(
-                forecast_accuracy_hydromet,
-                observed_col='discharge_avg',
-                simulated_col='forecasted_discharge',
-                delta_col='delta').\
-            reset_index()
+            ensemble_skill_stats = pd.merge(
+                ensemble_skill_stats, ensemble_mae_stats, on=['pentad_in_year', 'code', 'model_long', 'model_short'])
+            ensemble_skill_stats = pd.merge(
+                ensemble_skill_stats, ensemble_accuracy_stats, on=['pentad_in_year', 'code', 'model_long', 'model_short'])
 
-        ensemble_skill_stats = pd.merge(
-            ensemble_skill_stats, ensemble_mae_stats, on=['pentad_in_year', 'code', 'model_long', 'model_short'])
-        ensemble_skill_stats = pd.merge(
-            ensemble_skill_stats, ensemble_accuracy_stats, on=['pentad_in_year', 'code', 'model_long', 'model_short'])
+            # Append the ensemble skill metrics to the skill metrics
+            skill_stats = pd.concat([skill_stats, ensemble_skill_stats], ignore_index=True)
 
-        # Append the ensemble skill metrics to the skill metrics
-        skill_stats = pd.concat([skill_stats, ensemble_skill_stats], ignore_index=True)
+            # Add ensemble mean forecasts to simulated dataframe
+            #logger.debug(f"DEBUG: simulated.columns\n{simulated.columns}")
+            #logger.debug(f"DEBUG: simulated.head()\n{simulated.head(5)}")
+            #logger.debug(f"DEBUG: unique models in simulated: {simulated['model_long'].unique()}")
+            #print(f"DEBUG: simulated.columns\n{ensemble_skill_metrics_df.columns}")
+            #print("DEBUG: head of ensemble_skill_metrics_df: \n", ensemble_skill_metrics_df.head(5))
+            #print("DEBUG: unique models in ensemble_skill_metrics_df: ", ensemble_skill_metrics_df['model_long'].unique())
 
-        # Add ensemble mean forecasts to simulated dataframe
-        #logger.debug(f"DEBUG: simulated.columns\n{simulated.columns}")
-        #logger.debug(f"DEBUG: simulated.head()\n{simulated.head(5)}")
-        #logger.debug(f"DEBUG: unique models in simulated: {simulated['model_long'].unique()}")
-        #print(f"DEBUG: simulated.columns\n{ensemble_skill_metrics_df.columns}")
-        #print("DEBUG: head of ensemble_skill_metrics_df: \n", ensemble_skill_metrics_df.head(5))
-        #print("DEBUG: unique models in ensemble_skill_metrics_df: ", ensemble_skill_metrics_df['model_long'].unique())
+            # Calculate pentad in month (add 1 day to date)
+            ensemble_skill_metrics_df['pentad_in_month'] = (ensemble_skill_metrics_df['date']+dt.timedelta(days=1.0)).apply(tl.get_pentad)
 
-        # Calculate pentad in month (add 1 day to date)
-        ensemble_skill_metrics_df['pentad_in_month'] = (ensemble_skill_metrics_df['date']+dt.timedelta(days=1.0)).apply(tl.get_pentad)
-
-        # Join the two dataframes
-        joint_forecasts = pd.merge(
-            simulated,
-            ensemble_skill_metrics_df[['code', 'date', 'pentad_in_month', 'pentad_in_year', 'forecasted_discharge', 'model_long', 'model_short']],
-            on=['code', 'date', 'pentad_in_month', 'pentad_in_year', 'model_long', 'model_short', 'forecasted_discharge'],
-            how='outer')
+            # Join the two dataframes
+            joint_forecasts = pd.merge(
+                simulated,
+                ensemble_skill_metrics_df[['code', 'date', 'pentad_in_month', 'pentad_in_year', 'forecasted_discharge', 'model_long', 'model_short']],
+                on=['code', 'date', 'pentad_in_month', 'pentad_in_year', 'model_long', 'model_short', 'forecasted_discharge'],
+                how='outer')
+        else: 
+            joint_forecasts = simulated.copy()
 
         #print(f"DEBUG: joint_forecasts.columns\n{joint_forecasts.columns}")
         #print(f"DEBUG: joint_forecasts.head()\n{joint_forecasts.head(5)}")
@@ -2188,58 +2204,64 @@ def calculate_skill_metrics_decade(
         #print("DEBUG: ensemble_skill_metrics_df\n", ensemble_skill_metrics_df.columns)
         #print("DEBUG: ensemble_skill_metrics_df\n", ensemble_skill_metrics_df.head(20))
 
-        ensemble_skill_stats = ensemble_skill_metrics_df. \
-            groupby(['decad_in_year', 'code', 'model_long', 'model_short'])[ensemble_skill_metrics_df.columns]. \
-            apply(
-                sdivsigma_nse,
-                observed_col='discharge_avg',
-                simulated_col='forecasted_discharge'). \
-            reset_index()
-        #print("DEBUG: ensemble_skill_stats\n", ensemble_skill_stats.columns)
-        #print("DEBUG: ensemble_skill_stats\n", ensemble_skill_stats.head(20))
+        number_of_models = simulated['model_long'].nunique()
+        print("DEBUG: number_of_models\n", number_of_models)
+        if number_of_models > 1:
+            ensemble_skill_stats = ensemble_skill_metrics_df. \
+                groupby(['decad_in_year', 'code', 'model_long', 'model_short'])[ensemble_skill_metrics_df.columns]. \
+                apply(
+                    sdivsigma_nse,
+                    observed_col='discharge_avg',
+                    simulated_col='forecasted_discharge'). \
+                reset_index()
+            #print("DEBUG: ensemble_skill_stats\n", ensemble_skill_stats.columns)
+            #print("DEBUG: ensemble_skill_stats\n", ensemble_skill_stats.head(20))
 
-        ensemble_mae_stats = ensemble_skill_metrics_df. \
-            groupby(['decad_in_year', 'code', 'model_long', 'model_short'])[ensemble_skill_metrics_df.columns]. \
-            apply(
-                mae,
-                observed_col='discharge_avg',
-                simulated_col='forecasted_discharge').\
-            reset_index()
+            ensemble_mae_stats = ensemble_skill_metrics_df. \
+                groupby(['decad_in_year', 'code', 'model_long', 'model_short'])[ensemble_skill_metrics_df.columns]. \
+                apply(
+                    mae,
+                    observed_col='discharge_avg',
+                    simulated_col='forecasted_discharge').\
+                reset_index()
 
-        ensemble_accuracy_stats = ensemble_skill_metrics_df. \
-            groupby(['decad_in_year', 'code', 'model_long', 'model_short'])[ensemble_skill_metrics_df.columns]. \
-            apply(
-                forecast_accuracy_hydromet,
-                observed_col='discharge_avg',
-                simulated_col='forecasted_discharge',
-                delta_col='delta').\
-            reset_index()
+            ensemble_accuracy_stats = ensemble_skill_metrics_df. \
+                groupby(['decad_in_year', 'code', 'model_long', 'model_short'])[ensemble_skill_metrics_df.columns]. \
+                apply(
+                    forecast_accuracy_hydromet,
+                    observed_col='discharge_avg',
+                    simulated_col='forecasted_discharge',
+                    delta_col='delta').\
+                reset_index()
 
-        ensemble_skill_stats = pd.merge(
-            ensemble_skill_stats, ensemble_mae_stats, on=['decad_in_year', 'code', 'model_long', 'model_short'])
-        ensemble_skill_stats = pd.merge(
-            ensemble_skill_stats, ensemble_accuracy_stats, on=['decad_in_year', 'code', 'model_long', 'model_short'])
+            ensemble_skill_stats = pd.merge(
+                ensemble_skill_stats, ensemble_mae_stats, on=['decad_in_year', 'code', 'model_long', 'model_short'])
+            ensemble_skill_stats = pd.merge(
+                ensemble_skill_stats, ensemble_accuracy_stats, on=['decad_in_year', 'code', 'model_long', 'model_short'])
 
-        # Append the ensemble skill metrics to the skill metrics
-        skill_stats = pd.concat([skill_stats, ensemble_skill_stats], ignore_index=True)
+            # Append the ensemble skill metrics to the skill metrics
+            skill_stats = pd.concat([skill_stats, ensemble_skill_stats], ignore_index=True)
 
-        # Add ensemble mean forecasts to simulated dataframe
-        logger.debug(f"DEBUG: simulated.columns\n{simulated.columns}")
-        logger.debug(f"DEBUG: simulated.tail()\n{simulated.head(5)}")
-        #logger.debug(f"DEBUG: unique models in simulated: {simulated['model_long'].unique()}")
-        print(f"DEBUG: simulated.columns\n{ensemble_skill_metrics_df.columns}")
-        print("DEBUG: head of ensemble_skill_metrics_df: \n", ensemble_skill_metrics_df.head(5))
-        #print("DEBUG: unique models in ensemble_skill_metrics_df: ", ensemble_skill_metrics_df['model_long'].unique())
+            # Add ensemble mean forecasts to simulated dataframe
+            logger.debug(f"DEBUG: simulated.columns\n{simulated.columns}")
+            logger.debug(f"DEBUG: simulated.tail()\n{simulated.head(5)}")
+            #logger.debug(f"DEBUG: unique models in simulated: {simulated['model_long'].unique()}")
+            print(f"DEBUG: simulated.columns\n{ensemble_skill_metrics_df.columns}")
+            print("DEBUG: head of ensemble_skill_metrics_df: \n", ensemble_skill_metrics_df.head(5))
+            #print("DEBUG: unique models in ensemble_skill_metrics_df: ", ensemble_skill_metrics_df['model_long'].unique())
 
-        # Calculate pentad in month (add 1 day to date)
-        ensemble_skill_metrics_df['decad_in_month'] = (ensemble_skill_metrics_df['date']+dt.timedelta(days=1.0)).apply(tl.get_decad_in_month)
+            # Calculate pentad in month (add 1 day to date)
+            ensemble_skill_metrics_df['decad_in_month'] = (ensemble_skill_metrics_df['date']+dt.timedelta(days=1.0)).apply(tl.get_decad_in_month)
 
-        # Join the two dataframes
-        joint_forecasts = pd.merge(
-            simulated,
-            ensemble_skill_metrics_df[['code', 'date', 'decad_in_month', 'decad_in_year', 'forecasted_discharge', 'model_long', 'model_short']],
-            on=['code', 'date', 'decad_in_month', 'decad_in_year', 'model_long', 'model_short', 'forecasted_discharge'],
-            how='outer')
+            # Join the two dataframes
+            joint_forecasts = pd.merge(
+                simulated,
+                ensemble_skill_metrics_df[['code', 'date', 'decad_in_month', 'decad_in_year', 'forecasted_discharge', 'model_long', 'model_short']],
+                on=['code', 'date', 'decad_in_month', 'decad_in_year', 'model_long', 'model_short', 'forecasted_discharge'],
+                how='outer')
+
+        else:
+            joint_forecasts = simulated.copy()
 
         #print(f"DEBUG: joint_forecasts.columns\n{joint_forecasts.columns}")
         #print(f"DEBUG: joint_forecasts.head()\n{joint_forecasts.head(5)}")
@@ -3485,14 +3507,20 @@ def get_latest_forecasts(simulated_df, horizon_column_name='pentad_in_year'):
     # Sort by date in descending order first
     sorted_df = simulated_df.sort_values('date', ascending=False)
     latest_forecasts = sorted_df.drop_duplicates(
-        subset=['code', horizon_column_name, 'model_short'], keep='first')
+        subset=['code', horizon_column_name, 'model_short'], keep='first').copy()
     
     # Only keep lines where year of date is equal to the maximum year
     # Here we take data from second to last and last year
     latest_year = simulated_df['date'].max().year
     # Write year into column, derived from date column
-    latest_forecasts['year'] = latest_forecasts['date'].dt.year
+    latest_forecasts.loc[:, 'year'] = latest_forecasts['date'].dt.year
     latest_forecasts = latest_forecasts[latest_forecasts['year'] >= (latest_year - 1)]
+
+    # Debugging prints. In Taj hydromet, if operational data is missing, this can go wrong. 
+    print(f"latest_year: {latest_year}")
+    print(f"latest_forecasts['year'].unique(): {latest_forecasts['year'].unique()}")
+    # Print tail of latest_forecasts with code == '17082'
+    print(latest_forecasts[latest_forecasts['code'] == '17082'].tail(10))
 
     # Drop the 'year' column
     latest_forecasts = latest_forecasts.drop(columns=['year'])
@@ -3761,14 +3789,17 @@ class Site:
 
             # Convert group_id to float
             group_id = float(group_id)
+            logger.debug(f'group_id: {group_id}')
 
             # Get the slope and intercept for the site
             slope = df[(df[code_col] == site.code) & (df[group_col] == group_id)]['slope'].values[0]
             intercept = df[(df[code_col] == site.code) & (df[group_col] == group_id)]['intercept'].values[0]
+            logger.debug(f'slope: {slope}, intercept: {intercept}')
+            logger.debug(f'site.predictor: {site.predictor}')
 
             # Write slope and intercept to site
-            site.slope = round(slope, 5)
-            site.intercept = round(intercept, 5)
+            site.slope = round(slope, 6)
+            site.intercept = round(intercept, 6)
 
             # Calculate the expected discharge forecasted for the next pentad
             qpexpd = slope * float(site.predictor) + intercept
@@ -3779,6 +3810,7 @@ class Site:
 
             # Write the expected discharge forecasted for the next pentad to self.fc_qexp
             site.fc_qexp = round_discharge(qpexpd)
+            logger.debug(f'qpexpd: {qpexpd}')
 
             # Return the expected discharge forecasted for the next pentad
             return qpexpd
@@ -4042,6 +4074,11 @@ class Site:
                 raise ValueError(f'DataFrame is missing one or more required columns: {code_col}, {predictor_col}, {date_col}')
 
             # Get the predictor for the site
+            logger.debug(f'site.code: {site.code}, predictor_dates: {predictor_dates}')
+            logger.debug(f'column names of df_copy: {df_copy.columns}')
+            logger.debug(f'code_col: {code_col}, date_col: {date_col}, predictor_col: {predictor_col}')
+            logger.debug(f'df_copy[:, [code_col, date_col, predictor_col]]: {df_copy[[code_col, date_col, predictor_col]]}')
+            logger.debug(f'df_copy[(df_copy[code_col] == site.code) & (df_copy[date_col] == predictor_dates)][predictor_col]: {df_copy[(df_copy[code_col] == site.code) & (df_copy[date_col] == predictor_dates)][predictor_col]}')
             predictor = df_copy[(df_copy[code_col] == site.code) & (df_copy[date_col] == predictor_dates)][predictor_col].mean(skipna=True)
 
             # Note: Should the predictor be a negative number, we cannot make a
@@ -4049,6 +4086,7 @@ class Site:
 
             # Write the predictor value to self.predictor
             site.predictor = round_discharge_to_float(predictor)
+            logger.debug(f'site.predictor: {site.predictor}')
 
             # Return the predictor value
             return predictor

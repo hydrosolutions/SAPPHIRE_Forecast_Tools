@@ -2,12 +2,16 @@ import os
 import shutil
 import unittest
 import datetime
+import socket
 from unittest.mock import patch, MagicMock
 import pandas as pd
 import numpy as np
 import tempfile
 from iEasyHydroForecast import setup_library as sl
 from iEasyHydroForecast import tag_library as tl
+from iEasyHydroForecast import forecast_library as fl
+import logging
+import json
 
 class TestLoadConfiguration():
     # Temporary directory to store output
@@ -77,6 +81,225 @@ class TestLoadConfiguration():
     assert ret == test_ieasyforecast_intermediate_data_path
     ret=os.environ.pop("ieasyreports_report_output_path")
     assert ret == test_ieasyreports_report_output_path
+
+
+class TestCheckIfSshTunnelIsRequired(unittest.TestCase):
+
+    def setUp(self):
+        # Setup logging for tests
+        logging.basicConfig(level=logging.DEBUG)
+        self.logger = logging.getLogger(__name__)
+
+    def test_variable_not_set(self):
+        """Test when the environment variable is not set."""
+        with patch.dict(os.environ, clear=True):  # Clear any existing env vars
+            self.assertFalse(sl.check_if_ssh_tunnel_is_required())
+
+    def test_variable_set_to_true(self):
+        """Test when the environment variable is set to 'true'."""
+        with patch.dict(os.environ, {"ieasyhydroforecast_ssh_to_iEH": "true"}):
+            self.assertTrue(sl.check_if_ssh_tunnel_is_required())
+
+        with patch.dict(os.environ, {"ieasyhydroforecast_ssh_to_iEH": "True"}):
+            self.assertTrue(sl.check_if_ssh_tunnel_is_required())
+
+    def test_variable_set_to_false(self):
+        """Test when the environment variable is set to 'false'."""
+        with patch.dict(os.environ, {"ieasyhydroforecast_ssh_to_iEH": "false"}):
+            self.assertFalse(sl.check_if_ssh_tunnel_is_required())
+
+        with patch.dict(os.environ, {"ieasyhydroforecast_ssh_to_iEH": "False"}):
+            self.assertFalse(sl.check_if_ssh_tunnel_is_required())
+
+    def test_variable_set_to_other_value(self):
+        """Test when the environment variable is set to a value other than 'true' or 'false'."""
+        with patch.dict(os.environ, {"ieasyhydroforecast_ssh_to_iEH": "some_value"}):
+            # The function should return None if the value is not "true" or "false"
+            self.assertIsNone(sl.check_if_ssh_tunnel_is_required())
+
+
+class TestCheckLocalSshTunnels(unittest.TestCase):
+
+    def setUp(self):
+        self.logger = logging.getLogger()
+        self.logger.setLevel(logging.CRITICAL)  # Suppress log messages during tests
+
+    def tearDown(self):
+        # Clean up any environment variables that might have been set
+        if 'IEASYHYDRO_HOST' in os.environ:
+            del os.environ['IEASYHYDRO_HOST']
+
+    @patch('os.getenv')
+    def test_no_ieasyhydro_host(self, mock_getenv):
+        mock_getenv.return_value = None
+        result = sl.check_local_ssh_tunnels()
+        self.assertEqual(result, [])
+
+    @patch('os.getenv')
+    @patch('socket.socket')
+    def test_successful_connection(self, mock_socket, mock_getenv):
+        mock_getenv.return_value = "http://localhost:8080"
+        mock_socket_instance = mock_socket.return_value
+        mock_socket_instance.connect_ex.return_value = 0  # Simulate successful connection
+
+        result = sl.check_local_ssh_tunnels()
+        self.assertEqual(len(result), 3)
+        self.assertEqual(result[0]['port'], 8080)
+        self.assertIn('localhost', result[0]['line'])
+
+    @patch('os.getenv')
+    @patch('socket.socket')
+    def test_connection_refused(self, mock_socket, mock_getenv):
+        mock_getenv.return_value = "http://localhost:8080"
+        mock_socket_instance = mock_socket.return_value
+        mock_socket_instance.connect_ex.return_value = 111  # Simulate connection refused
+
+        result = sl.check_local_ssh_tunnels()
+        self.assertEqual(result, [])
+
+    @patch('os.getenv')
+    @patch('socket.socket')
+    def test_address_resolution_error(self, mock_socket, mock_getenv):
+        mock_getenv.return_value = "http://invalid_address:8080"
+        mock_socket_instance = mock_socket.return_value
+        mock_socket_instance.connect_ex.side_effect = socket.gaierror("Address resolution error")
+
+        result = sl.check_local_ssh_tunnels()
+        self.assertEqual(result, [])
+
+    @patch('os.getenv')
+    @patch('socket.socket')
+    def test_socket_error(self, mock_socket, mock_getenv):
+        mock_getenv.return_value = "http://localhost:8080"
+        mock_socket_instance = mock_socket.return_value
+        mock_socket_instance.connect_ex.side_effect = socket.error("Socket error")
+
+        result = sl.check_local_ssh_tunnels()
+        self.assertEqual(result, [])
+
+    @patch('os.getenv')
+    @patch('socket.socket')
+    def test_custom_addresses(self, mock_socket, mock_getenv):
+        mock_getenv.return_value = "http://localhost:8080"
+        mock_socket_instance = mock_socket.return_value
+        mock_socket_instance.connect_ex.return_value = 0
+
+        addresses = ['127.0.0.1', 'host.docker.internal']
+        result = sl.check_local_ssh_tunnels(addresses=addresses)
+        self.assertEqual(len(result), 2)
+        self.assertIn('127.0.0.1', result[0]['line'])
+        self.assertIn('host.docker.internal', result[1]['line'])
+
+    @patch('os.getenv')
+    @patch('socket.socket')
+    def test_custom_port(self, mock_socket, mock_getenv):
+        mock_getenv.return_value = None
+        mock_socket_instance = mock_socket.return_value
+        mock_socket_instance.connect_ex.return_value = 0
+
+        result = sl.check_local_ssh_tunnels(port=9000)
+        self.assertEqual(len(result), 3)
+        self.assertEqual(result[0]['port'], 9000)
+
+    @patch('os.getenv')
+    @patch('socket.socket')
+    def test_https_scheme(self, mock_socket, mock_getenv):
+        mock_getenv.return_value = "https://localhost"
+        mock_socket_instance = mock_socket.return_value
+        mock_socket_instance.connect_ex.return_value = 0
+
+        result = sl.check_local_ssh_tunnels()
+        self.assertEqual(len(result), 3)
+        self.assertEqual(result[0]['port'], 443)
+
+    @patch('os.getenv')
+    @patch('socket.socket')
+    def test_http_scheme(self, mock_socket, mock_getenv):
+        mock_getenv.return_value = "http://localhost"
+        mock_socket_instance = mock_socket.return_value
+        mock_socket_instance.connect_ex.return_value = 0
+
+        result = sl.check_local_ssh_tunnels()
+        self.assertEqual(len(result), 3)
+        self.assertEqual(result[0]['port'], 80)
+
+    @patch('os.getenv')
+    @patch('socket.socket')
+    def test_default_port(self, mock_socket, mock_getenv):
+        mock_getenv.return_value = "localhost"
+        mock_socket_instance = mock_socket.return_value
+        mock_socket_instance.connect_ex.return_value = 0
+
+        result = sl.check_local_ssh_tunnels()
+        self.assertEqual(len(result), 3)
+        self.assertEqual(result[0]['port'], 8881)
+
+
+class TestCheckDatabaseAccess(unittest.TestCase):
+
+    def test_ieh_sdk_is_none(self):
+        with self.assertRaises(Exception) as context:
+            sl.check_database_access(None)
+        self.assertEqual(str(context.exception), "Invalid ieh_sdk object")
+
+    @patch('iEasyHydroForecast.setup_library.logger')
+    def test_successful_access(self, mock_logger):
+        ieh_sdk_mock = MagicMock()
+        ieh_sdk_mock.get_discharge_sites.return_value = []  # Simulate successful access
+        result = sl.check_database_access(ieh_sdk_mock)
+        self.assertTrue(result)
+        mock_logger.info.assert_called_with("Access to iEasyHydro database.")
+
+    @patch('iEasyHydroForecast.setup_library.logger')
+    @patch.dict(os.environ, {"ieasyhydroforecast_organization": "demo", "ieasyforecast_daily_discharge_path": "/path/to/discharge"})
+    @patch('os.listdir')
+    def test_demo_mode_with_discharge_data(self, mock_listdir, mock_logger):
+        ieh_sdk_mock = MagicMock()
+        ieh_sdk_mock.get_discharge_sites.side_effect = ConnectionError("Failed to connect")
+        mock_listdir.return_value = ['file1.txt', 'file2.txt']  # Simulate files in discharge path
+        result = sl.check_database_access(ieh_sdk_mock)
+        self.assertFalse(result)
+        mock_logger.info.assert_called_with("No access to iEasyHydro database. Will use data from the ieasyforecast_daily_discharge_path for forecasting only.")
+
+    @patch('iEasyHydroForecast.setup_library.logger')
+    @patch.dict(os.environ, {"ieasyhydroforecast_organization": "demo", "ieasyforecast_daily_discharge_path": "/path/to/discharge"})
+    @patch('os.listdir')
+    def test_demo_mode_no_discharge_data(self, mock_listdir, mock_logger):
+        ieh_sdk_mock = MagicMock()
+        ieh_sdk_mock.get_discharge_sites.side_effect = ConnectionError("Failed to connect")
+        mock_listdir.return_value = []  # Simulate no files in discharge path
+        result = sl.check_database_access(ieh_sdk_mock)
+        self.assertFalse(result)
+        mock_logger.error.assert_called_with("No data in the /path/to/discharge directory.")
+
+    @patch('iEasyHydroForecast.setup_library.logger')
+    @patch.dict(os.environ, {"ieasyhydroforecast_organization": "demo", "ieasyforecast_daily_discharge_path": "/path/to/discharge"})
+    @patch('os.listdir', side_effect=FileNotFoundError)
+    def test_demo_mode_filenotfound(self, mock_listdir, mock_logger):
+        ieh_sdk_mock = MagicMock()
+        ieh_sdk_mock.get_discharge_sites.side_effect = ConnectionError("Failed to connect")
+        result = sl.check_database_access(ieh_sdk_mock)
+        self.assertFalse(result)
+        mock_logger.error.assert_called_with("Directory /path/to/discharge not found.")
+
+    @patch('iEasyHydroForecast.setup_library.logger')
+    @patch.dict(os.environ, {"ieasyhydroforecast_organization": "kghm"})
+    def test_non_demo_mode_connection_error(self, mock_logger):
+        ieh_sdk_mock = MagicMock()
+        ieh_sdk_mock.get_discharge_sites.side_effect = ConnectionError("Failed to connect")
+        with self.assertRaises(ConnectionError) as context:
+            sl.check_database_access(ieh_sdk_mock)
+        self.assertEqual(str(context.exception), "Failed to connect")
+        mock_logger.error.assert_called_with("SAPPHIRE tools do not have access to the iEasyHydro database.")
+
+    @patch('iEasyHydroForecast.setup_library.logger')
+    def test_unexpected_error(self, mock_logger):
+        ieh_sdk_mock = MagicMock()
+        ieh_sdk_mock.get_discharge_sites.side_effect = ValueError("Something went wrong")
+        with self.assertRaises(ValueError) as context:
+            sl.check_database_access(ieh_sdk_mock)
+        self.assertEqual(str(context.exception), "Something went wrong")
+        mock_logger.error.assert_called_with("An unexpected error occurred: Something went wrong")
 
 
 class TestReadDailyProbabilisticMlForecastsPentad(unittest.TestCase):
@@ -767,4 +990,130 @@ class TestReadDailyProbabilisticMLForecastsDecade(unittest.TestCase):
                         self.assertAlmostEqual(mean[col], test_data_code['forecasted_discharge'].values[0], places=2)
                     else:
                         self.assertAlmostEqual(mean[col], test_data_code[col].values[0], places=2)
+
+
+class TestGetPentadalForecastSitesFromHFSdk(unittest.TestCase):
+
+    def setUp(self):
+        self.mock_ieh_hf_sdk = MagicMock()
+        self.mock_discharge_sites = [
+            {'site_code': '12345', 'site_name': 'Test Site 1', 'iehhf_site_id': 'ID1'},
+            {'site_code': '67890', 'site_name': 'Test Site 2', 'iehhf_site_id': 'ID2'}
+        ]
+        self.mock_virtual_sites = [
+            {'site_code': 'V123', 'site_name': 'Virtual Site 1', 'iehhf_site_id': 'VID1'}
+        ]
+        self.mock_ieh_hf_sdk.get_discharge_sites.return_value = self.mock_discharge_sites
+        self.mock_ieh_hf_sdk.get_virtual_sites.return_value = self.mock_virtual_sites
+
+        self.mock_fc_sites = [
+            MagicMock(code='12345', iehhf_site_id='ID1'),
+            MagicMock(code='67890', iehhf_site_id='ID2')
+        ]
+        self.mock_virtual_fc_sites = [
+            MagicMock(code='V123', iehhf_site_id='VID1')
+        ]   
+
+        # Patch fl.Site methods
+        self.patch_pentad_forecast_sites = patch('forecast_library.Site.pentad_forecast_sites_from_iEH_HF_SDK',
+                                                    return_value=self.mock_fc_sites)
+        self.patch_virtual_pentad_forecast_sites = patch('forecast_library.Site.virtual_pentad_forecast_sites_from_iEH_HF_SDK',
+                                                            return_value=self.mock_virtual_fc_sites)
+        self.patch_os_path_join = patch('os.path.join', return_value='/path/to/config.json')
+        self.patch_open = patch('builtins.open', new_callable=MagicMock)
+        self.patch_os_getenv = patch.dict(os.environ, {
+            'ieasyforecast_configuration_path': '/config',
+            'ieasyforecast_config_file_station_selection': 'config.json'
+        })
+        self.addCleanup(patch.stopall)
+
+        self.mock_pentad_forecast_sites = self.patch_pentad_forecast_sites.start()
+        self.mock_virtual_pentad_forecast_sites = self.patch_virtual_pentad_forecast_sites.start()
+        self.mock_os_path_join = self.patch_os_path_join.start()
+        self.mock_open = self.patch_open.start()
+        self.mock_os_getenv = self.patch_os_getenv.start()
+
+    def test_get_pentadal_forecast_sites_from_HF_SDK(self):
+        fc_sites, site_codes, site_ids = sl.get_pentadal_forecast_sites_from_HF_SDK(self.mock_ieh_hf_sdk)
+
+        # Assertions
+        self.assertEqual(len(fc_sites), 3)
+        self.assertEqual(len(site_codes), 3)
+        self.assertEqual(len(site_ids), 3)
+
+        self.assertCountEqual(site_codes, ['12345', '67890', 'V123'])
+        self.assertCountEqual(site_ids, ['ID1', 'ID2', 'VID1'])
+
+        self.mock_ieh_hf_sdk.get_discharge_sites.assert_called_once()
+        self.mock_ieh_hf_sdk.get_virtual_sites.assert_called_once()
+        self.mock_pentad_forecast_sites.assert_called_once_with(self.mock_discharge_sites)
+        self.mock_virtual_pentad_forecast_sites.assert_called_once_with(self.mock_virtual_sites)
+
+        self.mock_os_path_join.assert_called_with('/config', 'config.json')
+        self.mock_open.assert_called()
+
+        
+class TestGetDecadalForecastSitesFromHFSdk(unittest.TestCase):
+
+    def setUp(self):
+        self.mock_ieh_hf_sdk = MagicMock()
+        self.mock_discharge_sites = [
+            {'site_code': '12345', 'site_name': 'Test Site 1', 'iehhf_site_id': 'ID1'},
+            {'site_code': '67890', 'site_name': 'Test Site 2', 'iehhf_site_id': 'ID2'}
+        ]
+        self.mock_virtual_sites = [
+            {'site_code': 'V123', 'site_name': 'Virtual Site 1', 'iehhf_site_id': 'VID1'}
+        ]
+        self.mock_ieh_hf_sdk.get_discharge_sites.return_value = self.mock_discharge_sites
+        self.mock_ieh_hf_sdk.get_virtual_sites.return_value = self.mock_virtual_sites
+
+        self.mock_fc_sites = [
+            MagicMock(code='12345', iehhf_site_id='ID1'),
+            MagicMock(code='67890', iehhf_site_id='ID2')
+        ]
+        self.mock_virtual_fc_sites = [
+            MagicMock(code='V123', iehhf_site_id='VID1')
+        ]   
+
+        # Patch fl.Site methods
+        self.patch_decad_forecast_sites = patch('forecast_library.Site.decad_forecast_sites_from_iEH_HF_SDK',
+                                                    return_value=self.mock_fc_sites)
+        self.patch_virtual_decad_forecast_sites = patch('forecast_library.Site.virtual_decad_forecast_sites_from_iEH_HF_SDK',
+                                                            return_value=self.mock_virtual_fc_sites)
+        self.patch_os_path_join = patch('os.path.join', return_value='/path/to/config.json')
+        self.patch_open = patch('builtins.open', new_callable=MagicMock)
+        self.patch_os_getenv = patch.dict(os.environ, {
+            'ieasyforecast_configuration_path': '/config',
+            'ieasyforecast_config_file_station_selection_decad': 'config.json'
+        })
+        self.addCleanup(patch.stopall)
+
+        self.mock_decad_forecast_sites = self.patch_decad_forecast_sites.start()
+        self.mock_virtual_decad_forecast_sites = self.patch_virtual_decad_forecast_sites.start()
+        self.mock_os_path_join = self.patch_os_path_join.start()
+        self.mock_open = self.patch_open.start()
+        self.mock_os_getenv = self.patch_os_getenv.start()
+
+    def test_get_decadal_forecast_sites_from_HF_SDK(self):
+        fc_sites, site_codes, site_ids = sl.get_decadal_forecast_sites_from_HF_SDK(self.mock_ieh_hf_sdk)
+
+        # Assertions
+        self.assertEqual(len(fc_sites), 3)
+        self.assertEqual(len(site_codes), 3)
+        self.assertEqual(len(site_ids), 3)
+
+        self.assertCountEqual(site_codes, ['12345', '67890', 'V123'])
+        self.assertCountEqual(site_ids, ['ID1', 'ID2', 'VID1'])
+
+        self.mock_ieh_hf_sdk.get_discharge_sites.assert_called_once()
+        self.mock_ieh_hf_sdk.get_virtual_sites.assert_called_once()
+        self.mock_decad_forecast_sites.assert_called_once_with(self.mock_discharge_sites)
+        self.mock_virtual_decad_forecast_sites.assert_called_once_with(self.mock_virtual_sites)
+
+        self.mock_os_path_join.assert_called_with('/config', 'config.json')
+        self.mock_open.assert_called()
+
+
+
+
 

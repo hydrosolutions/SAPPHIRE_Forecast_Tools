@@ -236,7 +236,7 @@ def main():
             linreg_pentad.rename(
                 columns={'discharge_sum': 'predictor',
                          'pentad': 'pentad_in_month'}, inplace=True)
-            logger.debug(f"linreeg_pentad.tail (forecast): {linreg_pentad}")
+            #logger.debug(f"linreg_pentad.tail (forecast): {linreg_pentad}")
 
             # Write output files for the current forecast horizon
             fl.write_linreg_pentad_forecast_data(linreg_pentad)

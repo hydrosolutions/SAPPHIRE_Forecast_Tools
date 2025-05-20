@@ -1449,8 +1449,12 @@ class TestCalculateSkillMetricsPentad(unittest.TestCase):
 
     def test_ensemble_creation(self):
         """Test that ensemble forecasts are created correctly"""
+
         skill_stats, joint_forecasts, _ = fl.calculate_skill_metrics_pentad(self.observed, self.simulated)
 
+        print("\n\nDEBUG: test_ensemble_creation: joint_forecasts.columns: \n", joint_forecasts.columns)
+        print("\n\nDEBUG: test_ensemble_creation: joint_forecasts: \n", joint_forecasts)
+        
         # Check that ensemble model exists in results
         self.assertTrue(any(joint_forecasts['model_short'] == 'EM'))
 

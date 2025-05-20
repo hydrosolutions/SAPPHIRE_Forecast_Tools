@@ -106,9 +106,12 @@ def define_tabs(_,
                 ),
                 pn.Row(
                     pn.Card(rainfall_plot, title=_("Precipitation"))
-                ),
-                )
+                ),  
+                pn.Row(
+                    pn.Card(temperature_plot, title=_("Temperature"))
+                ), 
             ),
+            ), 
             (_('Forecast'),
              pn.Column(
             #     pn.Row(
@@ -155,13 +158,13 @@ def define_tabs(_,
                      pn.Card(rainfall_plot, title=_("Precipitation")),
                      #pn.Card(daily_rel_to_norm_rainfall, title=_("Relative to norm rainfall")),
                      sizing_mode='stretch_width',
-                     min_height=400,
-                 ),
+                     min_height=400 if not daily_hydrograph_plot.object.data.empty else 0,
+                 ),  
                  pn.Row(
                      pn.Card(temperature_plot, title=_("Temperature")),
                      sizing_mode='stretch_width',
-                     min_height=400,
-                 ),
+                     min_height=400 if not daily_hydrograph_plot.object.data.empty else 0,
+                 ), 
              ),
             ),
             (_('Forecast'),
@@ -184,7 +187,7 @@ def define_tabs(_,
                     forecast_summary_table,
                     title=_('Summary table'),
                     sizing_mode='stretch_both',
-                    min_height=500,
+                    min_height=500 if len(forecast_summary_table.value) > 1 else 240,
 
                 ),
                 pn.Card(
@@ -221,7 +224,7 @@ def define_tabs(_,
                         skill_metrics_download_button,
                     ),
                     title=_("Table of forecast skill metrics"),
-                    height=600,
+                    height=600 ,
                     collapsible=True,
                     #sizing_mode='stretch_width',
                 ),

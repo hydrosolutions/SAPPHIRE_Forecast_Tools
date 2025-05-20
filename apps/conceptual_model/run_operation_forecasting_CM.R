@@ -27,7 +27,11 @@ if (Sys.getenv("IN_DOCKER_CONTAINER")=="") {
   # setwd(here())
   # setwd("apps/conceptual_model")
   print(getwd())
-  if (Sys.getenv("SAPPHIRE_OPDEV_ENV")=="True") {
+  if (file.exists(Sys.getenv("ieasyhydroforecast_env_file_path"))) {
+    print("Loading environment variables from file ieasyhydroforecast_env_file_path")
+    print(Sys.getenv("ieasyhydroforecast_env_file_path"))
+    readRenviron(Sys.getenv("ieasyhydroforecast_env_file_path"))
+  } else if (Sys.getenv("SAPPHIRE_OPDEV_ENV")=="True") {
     if (!file.exists("../../../sensitive_data_forecast_tools/config/.env_develop_kghm")) {
       stop("File ../../../sensitive_data_forecast_tools/config/.env_develop_kghm not found. ")
     }
@@ -44,7 +48,11 @@ if (Sys.getenv("IN_DOCKER_CONTAINER")=="") {
   # Environment variable IN_DOCKER_CONTAINER is set. Run from docker container
   setwd("/app")
   print(getwd())
-  if (Sys.getenv("SAPPHIRE_OPDEV_ENV")=="True") {
+  if (file.exists(Sys.getenv("ieasyhydroforecast_env_file_path"))) {
+    print("Loading environment variables from file ieasyhydroforecast_env_file_path")
+    print(Sys.getenv("ieasyhydroforecast_env_file_path"))
+    readRenviron(Sys.getenv("ieasyhydroforecast_env_file_path"))
+  } else if (Sys.getenv("SAPPHIRE_OPDEV_ENV")=="True") {
     if (!file.exists("../sensitive_data_forecast_tools/config/.env_develop_kghm")) {
       stop("File ../sensitive_data_forecast_tools/config/.env_develop_kghm not found. ")
     }
@@ -155,6 +163,7 @@ for (Code in config$codes) {
   
   # If the last run is a long time ago (more than 185d, for example after triggering run_initial.R)
   if (min_basinObs_cf >  max(runResults_op$DatesR)) {
+    print("The last run was a long time ago, we need to hindcast")
     basinObs_hind <- process_forecast_forcing(member_id = "cf",
                                               Basin_code = Basin_Info$BasinCode,
                                               file_path_Ptot = file.path(dir_hindcast, P_hindcast_filename),
