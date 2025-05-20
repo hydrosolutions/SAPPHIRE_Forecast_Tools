@@ -3283,20 +3283,32 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector, d
             }
             print("volumes: ", volumes)
 
+            start_docker_runs = time.time()
+
             # Run the reset rundate module to update the rundate for the linear regression module
             run_docker_container(client, "mabesa/sapphire-rerun:latest", volumes, environment, "reset_rundate",
                                  progress_bar)
+            temp_docker_end = time.time()
+            print(f"Time taken to run reset_rundate: {temp_docker_end - start_docker_runs:.2f} seconds")
+            temp_docker_start = time.time()
 
             # Run the linear_regression container with a hardcoded full image name
             run_docker_container(client, "mabesa/sapphire-linreg:latest", volumes, environment, "linreg", progress_bar)
+            temp_docker_end = time.time()
+            print(f"Time taken to run linreg: {temp_docker_end - temp_docker_start:.2f} seconds")
+            temp_docker_start = time.time()
 
             # After linear_regression finishes, run the postprocessing container with a hardcoded full image name
             run_docker_container(client, "mabesa/sapphire-postprocessing:latest", volumes, environment,
                                  "postprocessing", progress_bar)
+            temp_docker_end = time.time()
+            print(f"Time taken to run postprocessing: {temp_docker_end - temp_docker_start:.2f} seconds")
+            overall_time = temp_docker_end - start_docker_runs
+            print(f"Overall time taken to run all containers: {overall_time:.2f} seconds")
 
             # When the container is finished, set progress to 100 and update message
             progress_bar.value = 100
-            progress_message.object = _("Processing finished")
+            progress_message.object = _("Processing finished in {overall_time:.2f} seconds").format(overall_time=overall_time)
 
             # Wait a moment before hiding the progress bar and message
             time.sleep(2)
@@ -3492,13 +3504,23 @@ def create_reload_button():
                 }
 
                 # Run the preprunoff container
+                start_docker_runs = time.time()
                 run_docker_container(client, "mabesa/sapphire-preprunoff:latest", volumes, environment, "preprunoff")
+                temp_docker_end = time.time()
+                print(f"Time taken to run preprunoff: {temp_docker_end - start_docker_runs:.2f} seconds")
+                temp_docker_start = time.time()
 
                 # Run the reset_rundate container
                 run_docker_container(client, "mabesa/sapphire-rerun:latest", volumes, environment, "reset_rundate")
+                temp_docker_end = time.time()
+                print(f"Time taken to run reset_rundate: {temp_docker_end - temp_docker_start:.2f} seconds")
+                temp_docker_start = time.time()
 
                 # Run the linear_regression container
                 run_docker_container(client, "mabesa/sapphire-linreg:latest", volumes, environment, "linreg")
+                temp_docker_end = time.time()
+                print(f"Time taken to run linreg: {temp_docker_end - temp_docker_start:.2f} seconds")
+                temp_docker_start = time.time()
 
                 # Run the prepgateway container
                 # No need to re-run prepgateway as there is no new data
@@ -3517,6 +3539,9 @@ def create_reload_button():
                                              environment + [f"SAPPHIRE_MODEL_TO_USE={model}",
                                                             f"SAPPHIRE_PREDICTION_MODE={mode}", f"RUN_MODE=forecast"],
                                              container_name)
+                temp_docker_end = time.time()
+                print(f"Time taken to run ML models: {temp_docker_end - temp_docker_start:.2f} seconds")
+                temp_docker_start = time.time()
 
                 # Run the conceptmod container
                 # No need to re-run this one as it is very slow
@@ -3525,9 +3550,14 @@ def create_reload_button():
                 # Run the postprocessing container
                 run_docker_container(client, "mabesa/sapphire-postprocessing:latest", volumes, environment,
                                      "postprocessing")
+                temp_docker_end = time.time()
+                print(f"Time taken to run postprocessing: {temp_docker_end - temp_docker_start:.2f} seconds")
+                overall_time = temp_docker_end - start_docker_runs
+                print(f"Overall time taken to run all containers: {overall_time:.2f} seconds")
 
                 # Update message after all containers have run
-                progress_message.object = _("Processing finished")
+                progress_message.object = _("Processing finished in {overall_time:.2f} seconds").format(
+                    overall_time=overall_time)
                 time.sleep(2)
             except docker.errors.ContainerError as ce:
                 progress_message.object = f"Container Error: {ce}"
@@ -3770,7 +3800,7 @@ def plot_forecast_skill(
         xlabel=horizon_x_label, ylabel=_("Accuracy [%]"),
         show_grid=True,  
         ylim=(0, 100),
-        xlim=(0, area_x_lim),
+        xlim=(1, area_x_lim),
         fontsize={'legend': 8, 'title': 10}, fontscale=1.2
     )
 
