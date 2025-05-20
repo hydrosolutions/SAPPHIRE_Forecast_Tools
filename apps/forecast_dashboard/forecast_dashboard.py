@@ -390,11 +390,11 @@ def load_data():
     # Filter the DataFrame to include only the latest pentad/decad in the latest year
     forecasts_current = forecasts_latest_year[forecasts_latest_year[horizon_in_year] == latest_horizon_in_year]
     #print('forecasts_current:\n', forecasts_current)
-
+    
     # Get valid codes
     valid_codes = forecasts_current['code'].unique().tolist()
     #print('valid_codes:', valid_codes)
-
+    
     # Filter forecasts_all and station_list based on valid codes
     forecasts_all = forecasts_all[forecasts_all['code'].isin(valid_codes)]
     forecast_stats = forecast_stats[forecast_stats['code'].isin(valid_codes)]
@@ -411,7 +411,7 @@ def load_data():
         if new_stations:  # Only add the basin if there are valid stations
             new_station_dict[basin] = new_stations
     station_dict = new_station_dict
-    print('station_dict after: ', station_dict)
+    #print('station_dict after: ', station_dict)
     #print('Updated data:')
     #print('forecasts_all:\n', forecasts_all)
     #print('station_list:', station_list)
@@ -451,12 +451,12 @@ def load_data():
         temp = None
 
     # Debugging prints to see if we have read data correctly
-    print(f"--- display_weather_data: {display_weather_data}")
-    print(f"--- rain: {rain}")
-    print(f"--- display_ML_forecasts: {display_ML_forecasts}")
-    print(f"--- ml_forecast: {ml_forecast}")
-    print(f"--- display_CM_forecasts: {display_CM_forecasts}")
-    print(f"--- rram_forecast: {rram_forecast}")
+    #print(f"--- display_weather_data: {display_weather_data}")
+    #print(f"--- rain: {rain}")
+    #print(f"--- display_ML_forecasts: {display_ML_forecasts}")
+    #print(f"--- ml_forecast: {ml_forecast}")
+    #print(f"--- display_CM_forecasts: {display_CM_forecasts}")
+    #print(f"--- rram_forecast: {rram_forecast}")
 
 stations_iehhf = None
 
