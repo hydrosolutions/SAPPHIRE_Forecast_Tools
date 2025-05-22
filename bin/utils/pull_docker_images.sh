@@ -17,11 +17,11 @@ docker pull mabesa/sapphire-postprocessing:$TAG
 docker pull mabesa/sapphire-rerun:$TAG
 
 # Pull images used in the KGHM version
-if ["$ieasyhydroforecast_organization" = "kghm"]; then
+if [ "$ieasyhydroforecast_organization" = "kghm" ]; then
       docker pull mabesa/sapphire-prepgateway:$TAG
       docker pull mabesa/sapphire-ml:$TAG
       docker pull mabesa/sapphire-conceptmod:$TAG
-elif ["$ieasyhydroforecast_organization" = "tjhm"]; then
+elif [ "$ieasyhydroforecast_organization" = "tjhm" ]; then
       docker pull mabesa/sapphire-prepgateway:$TAG
       docker pull mabesa/sapphire-ml:$TAG
 else
@@ -29,4 +29,4 @@ else
 fi
 
 # Build forecast pipeline locally
-docker compose -f bin/docker-compose-luigi.yml build --no-cache
+#docker compose -f bin/docker-compose-luigi.yml build --no-cache
