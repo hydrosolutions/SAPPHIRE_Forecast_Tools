@@ -950,7 +950,15 @@ class RunAllMLModels(luigi.WrapperTask):
         models = env.get('ieasyhydroforecast_available_ML_models').split(',')
 
         #models = ['TFT', 'TIDE', 'TSMIXER', 'ARIMA']
-        prediction_modes = ['PENTAD', 'DECAD']
+        # prediction_modes = ['PENTAD', 'DECAD']
+        prediction_mode = os.getenv('SAPPHIRE_PREDICTION_MODE', 'ALL')
+        print("SAPPHIRE_PREDICTION_MODE:", prediction_mode)
+
+        # Determine which prediction modes to run based on the parameter
+        if prediction_mode == 'ALL':
+            prediction_modes = ['PENTAD', 'DECAD']
+        else:
+            prediction_modes = [prediction_mode]
 
         for model in models:
             for mode in prediction_modes:
