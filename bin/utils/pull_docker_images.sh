@@ -21,6 +21,11 @@ if ["$ieasyhydroforecast_organization" = "kghm"]; then
       docker pull mabesa/sapphire-prepgateway:$TAG
       docker pull mabesa/sapphire-ml:$TAG
       docker pull mabesa/sapphire-conceptmod:$TAG
+elif ["$ieasyhydroforecast_organization" = "tjhm"]; then
+      docker pull mabesa/sapphire-prepgateway:$TAG
+      docker pull mabesa/sapphire-ml:$TAG
+else
+      echo "No further images to pull for this organization"
 fi
 
 # Build forecast pipeline locally
