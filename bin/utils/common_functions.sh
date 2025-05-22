@@ -227,6 +227,7 @@ start_docker_container_reset_run_date() {
 # Function to start the Docker Compose service for the backend pipeline
 start_docker_compose_luigi() {
     local service_name=$1
+    local sapphire_prediction_mode=$2
 
     echo "|      "
     echo "| ------"
@@ -234,18 +235,15 @@ start_docker_compose_luigi() {
     echo "| ------"
     echo "| Starting Docker Compose service for backend ..."
 
-    # Test if SAPPHIRE_PREDICTION_MODE is set
-    if [ -z "$SAPPHIRE_PREDICTION_MODE" ]; then
-        echo "| ERROR: SAPPHIRE_PREDICTION_MODE is not set. Please set it to PENTAD or DECAD."
-        exit 1
-    fi
-    
     if [ -n "$service_name" ]; then
+        if [ -n "$sapphire_prediction_mode" ]; then
+            export SAPPHIRE_PREDICTION_MODE="$sapphire_prediction_mode"
+        fi
         echo "| Starting Docker Compose service for backend: $service_name with prediction mode $SAPPHIRE_PREDICTION_MODE..."
         SAPPHIRE_PREDICTION_MODE="$SAPPHIRE_PREDICTION_MODE" docker compose -f bin/docker-compose-luigi.yml up -d "$service_name" &
     else
         echo "| Starting all Docker Compose services for backend ..."
-        SAPPHIRE_PREDICTION_MODE="$SAPPHIRE_PREDICTION_MODE" docker compose -f bin/docker-compose-luigi.yml up -d &
+        docker compose -f bin/docker-compose-luigi.yml up -d &
     fi
 
     DOCKER_COMPOSE_LUIGI_PID=$!
