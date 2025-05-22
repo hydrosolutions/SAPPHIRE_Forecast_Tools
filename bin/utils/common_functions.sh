@@ -226,12 +226,22 @@ start_docker_container_reset_run_date() {
 
 # Function to start the Docker Compose service for the backend pipeline
 start_docker_compose_luigi() {
+    local service_name=$1
+
     echo "|      "
     echo "| ------"
     echo "| Starting backend services"
     echo "| ------"
     echo "| Starting Docker Compose service for backend ..."
-    docker compose -f bin/docker-compose-luigi.yml up -d &
+    
+    if [ -n "$service_name" ]; then
+        echo "| Starting Docker Compose service for backend: $service_name ..."
+        docker compose -f bin/docker-compose-luigi.yml up -d "$service_name" &
+    else
+        echo "| Starting all Docker Compose services for backend ..."
+        docker compose -f bin/docker-compose-luigi.yml up -d &
+    fi
+
     DOCKER_COMPOSE_LUIGI_PID=$!
     echo "| Docker Compose service started with PID $DOCKER_COMPOSE_LUIGI_PID"
 }

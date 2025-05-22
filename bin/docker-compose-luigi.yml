@@ -23,6 +23,7 @@ services:
       dockerfile: ./apps/pipeline/Dockerfile
       args:
         TAG: ${ieasyhydroforecast_backend_docker_image_tag:-latest}
+    image: sapphire-backend:${ieasyhydroforecast_backend_docker_image_tag:-latest}  # Specify the image name and tag
     working_dir: /app
     environment:
       - PYTHONPATH=/app
@@ -36,7 +37,7 @@ services:
       - ${ieasyhydroforecast_data_ref_dir}/daily_runoff:${ieasyhydroforecast_container_data_ref_dir}/daily_runoff
       - ${ieasyhydroforecast_data_ref_dir}/intermediate_data:${ieasyhydroforecast_container_data_ref_dir}/intermediate_data
       - ${ieasyhydroforecast_data_ref_dir}/bin:${ieasyhydroforecast_container_data_ref_dir}/bin
-    container_name: sapphire-backend-pipeline
+    container_name: sapphire-backend-pipeline-${SAPPHIRE_PREDICTION_MODE}
     group_add:
       - ${DOCKER_GID:-988}  # Add host's Docker GID dynamically
 
