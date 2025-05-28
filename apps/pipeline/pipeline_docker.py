@@ -108,8 +108,8 @@ class PreprocessingRunoff(pu.TimeoutMixin, luigi.Task):
 
     def output(self):
         # Test if docker_logs is available and create it if its are not.
-        if not os.path.exists(f'self.intermediate_data_path/docker_logs'):
-            os.makedirs(f'self.intermediate_data_path/docker_logs')
+        if not os.path.exists(f'{self.intermediate_data_path}/docker_logs'):
+            os.makedirs(f'{self.intermediate_data_path}/docker_logs')
         return luigi.LocalTarget(f'/app/log_preprunoff.txt')
 
     def _run_container(self, attempt_number) -> tuple[Optional[str], int, str]:
@@ -295,8 +295,8 @@ class PreprocessingGatewayQuantileMapping(pu.TimeoutMixin, luigi.Task):
         # automatically disappears after the container is removed and does not
         # have to be cleaned up.
         # Test if docker_logs directory is available and create them if they are not.
-        if not os.path.exists(f'self.intermediate_data_path/docker_logs'):
-            os.makedirs(f'self.intermediate_data_path/docker_logs')
+        if not os.path.exists(f'{self.intermediate_data_path}/docker_logs'):
+            os.makedirs(f'{self.intermediate_data_path}/docker_logs')
 
         return luigi.LocalTarget(f'/app/log_pregateway.txt')
 
@@ -436,6 +436,55 @@ class PreprocessingGatewayQuantileMapping(pu.TimeoutMixin, luigi.Task):
                 status=final_status,
                 details=details
             )
+
+class RunPreprocessingGatewayWorkflow(luigi.Task):
+    """Workflow for gateway preprocessing that can run early (10:00)."""
+    
+    # Use the intermediate_data_path for log files
+    intermediate_data_path = get_bind_path(env.get('ieasyforecast_intermediate_data_path'))
+    docker_logs_file_path = f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/docker_logs/log_preprocessing_gateway_workflow_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+    
+    def requires(self):
+        # Only gateway preprocessing
+        return PreprocessingGatewayQuantileMapping()
+    
+    def output(self):
+        return luigi.LocalTarget(f'/app/log_preprocessing_gateway_complete.txt')
+    
+    def run(self):
+        print("Gateway preprocessing workflow completed.")
+        
+        # Create output file to mark completion
+        with open(self.docker_logs_file_path, 'w') as f:
+            f.write(f"Gateway preprocessing workflow completed at {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        
+        with self.output().open('w') as f:
+            f.write('Gateway preprocessing completed')
+
+
+class RunPreprocessingRunoffWorkflow(luigi.Task):
+    """Workflow for runoff preprocessing that must wait for data (11:00)."""
+    
+    # Use the intermediate_data_path for log files
+    intermediate_data_path = get_bind_path(env.get('ieasyforecast_intermediate_data_path'))
+    docker_logs_file_path = f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/docker_logs/log_preprocessing_runoff_workflow_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+    
+    def requires(self):
+        # Only runoff preprocessing
+        return PreprocessingRunoff()
+    
+    def output(self):
+        return luigi.LocalTarget(f'/app/log_preprocessing_runoff_complete.txt')
+    
+    def run(self):
+        print("Runoff preprocessing workflow completed.")
+        
+        # Create output file to mark completion
+        with open(self.docker_logs_file_path, 'w') as f:
+            f.write(f"Runoff preprocessing workflow completed at {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        
+        with self.output().open('w') as f:
+            f.write('Runoff preprocessing completed')
 
 
 class LinearRegression(pu.TimeoutMixin, luigi.Task):
@@ -1550,6 +1599,144 @@ class SendPipelineCompletionNotification(luigi.Task):
                 details=details
             )
 
+class RunPentadalWorkflow(luigi.Task):
+    """Workflow for pentadal forecasting."""
+    
+    # Parameters for notifications
+    custom_message = luigi.Parameter(default="")
+    send_notifications = luigi.BoolParameter(default=True)
+    check_processing = luigi.BoolParameter(default=True)
+    
+    # Use the intermediate_data_path for log files
+    intermediate_data_path = get_bind_path(env.get('ieasyforecast_intermediate_data_path'))
+    docker_logs_file_path = f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/docker_logs/log_pentadal_workflow_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+    
+    def requires(self):
+        # Ensure preprocessing is done first
+        if RUN_ML_MODELS == "True" or RUN_CM_MODELS == "True":
+            run_gateway_flag = True
+            preprocessing_done = PreprocessingRunoff() and PreprocessingGatewayQuantileMapping()
+        else:
+            run_gateway_flag = False
+            preprocessing_done = PreprocessingRunoff()
+        
+        # Base tasks for pentadal forecasting
+        base_tasks = []
+        
+        # Always include Linear Regression
+        base_tasks.append(LinearRegression())
+        
+        # Add ML models if enabled
+        if RUN_ML_MODELS == "True":
+            models = env.get('ieasyhydroforecast_available_ML_models').split(',')
+            for model in models:
+                base_tasks.append(RunMLModel(
+                    model_type=model, 
+                    prediction_mode='PENTAD', 
+                    run_mode='forecast'
+                ))
+        
+        # Add Conceptual Model if enabled
+        if RUN_CM_MODELS == "True":
+            base_tasks.append(ConceptualModel())
+        
+        # Add post-processing after all forecasts
+        base_tasks.append(PostProcessingForecasts())
+        
+        # Add cleanup tasks
+        base_tasks.append(LogFileCleanup())
+        if run_gateway_flag:
+            base_tasks.append(DeleteOldGatewayFiles())
+        
+        # If notifications are enabled, wrap with notification task
+        if self.send_notifications:
+            return SendPipelineCompletionNotification(
+                custom_message=f"PENTAD {self.custom_message}",
+                depends_on=base_tasks
+            )
+        else:
+            return base_tasks
+    
+    def output(self):
+        return luigi.LocalTarget(f'/app/log_pentadal_workflow_complete.txt')
+    
+    def run(self):
+        print("Pentadal workflow completed.")
+        
+        with open(self.docker_logs_file_path, 'w') as f:
+            f.write(f"Pentadal workflow for {ORGANIZATION} completed at {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        
+        with self.output().open('w') as f:
+            f.write('Pentadal workflow completed')
+
+class RunDecadalWorkflow(luigi.Task):
+    """Workflow for decadal forecasting."""
+    
+    # Parameters for notifications
+    custom_message = luigi.Parameter(default="")
+    send_notifications = luigi.BoolParameter(default=True)
+    
+    # Use the intermediate_data_path for log files
+    intermediate_data_path = get_bind_path(env.get('ieasyforecast_intermediate_data_path'))
+    docker_logs_file_path = f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/docker_logs/log_decadal_workflow_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+    
+    def requires(self):
+        # Ensure preprocessing is done first
+        if RUN_ML_MODELS == "True" or RUN_CM_MODELS == "True":
+            run_gateway_flag = True
+            preprocessing_done = PreprocessingRunoff() and PreprocessingGatewayQuantileMapping()
+        else: 
+            run_gateway_flag = False
+            preprocessing_done = PreprocessingRunoff()
+        
+        # Base tasks for decadal forecasting
+        base_tasks = []
+        
+        # Always include Linear Regression
+        base_tasks.append(LinearRegression())
+        
+        # Add ML models if enabled
+        if RUN_ML_MODELS == "True":
+            models = env.get('ieasyhydroforecast_available_ML_models').split(',')
+            for model in models:
+                base_tasks.append(RunMLModel(
+                    model_type=model, 
+                    prediction_mode='DECAD', 
+                    run_mode='forecast'
+                ))
+        
+        # Add Conceptual Model if enabled
+        if RUN_CM_MODELS == "True":
+            base_tasks.append(ConceptualModel())
+        
+        # Add post-processing after all forecasts
+        base_tasks.append(PostProcessingForecasts())
+        
+        # Add cleanup tasks
+        base_tasks.append(LogFileCleanup())
+        if run_gateway_flag:
+            base_tasks.append(DeleteOldGatewayFiles())
+        
+        # If notifications are enabled, wrap with notification task
+        if self.send_notifications:
+            return SendPipelineCompletionNotification(
+                custom_message=f"DECAD {self.custom_message}",
+                depends_on=base_tasks
+            )
+        else:
+            return base_tasks
+    
+    def output(self):
+        return luigi.LocalTarget(f'/app/log_decadal_workflow_complete.txt')
+    
+    def run(self):
+        print("Decadal workflow completed.")
+        
+        with open(self.docker_logs_file_path, 'w') as f:
+            f.write(f"Decadal workflow for {ORGANIZATION} completed at {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        
+        with self.output().open('w') as f:
+            f.write('Decadal workflow completed')
 
 class RunWorkflow(luigi.Task):
     """Main wrapper task that runs the entire forecast pipeline."""
@@ -1559,6 +1746,8 @@ class RunWorkflow(luigi.Task):
 
     # Flag to control whether to send notifications
     send_notifications = luigi.BoolParameter(default=True)
+
+    mode = luigi.Parameter(default="ALL")  # ALL, PENTAD, or DECAD
 
     # Use the intermediate_data_path for log files instead of /app/
     intermediate_data_path = get_bind_path(env.get('ieasyforecast_intermediate_data_path'))
@@ -1571,52 +1760,28 @@ class RunWorkflow(luigi.Task):
         # Test if directory of docker_logs_file_path exists and create it if not
         os.makedirs(os.path.dirname(self.docker_logs_file_path), exist_ok=True)
 
-        if ORGANIZATION=='demo':
-            print("Running demo workflow.")
-            base_tasks = [
-                PostProcessingForecasts(),
-                LogFileCleanup()
-            ]
-
-        elif ORGANIZATION=='kghm':
-            print("Running KGHM workflow.")
-            base_tasks =  [
-                PostProcessingForecasts(),
-                RunAllMLModels(),
-                ConceptualModel(),
-                DeleteOldGatewayFiles(),
-                LogFileCleanup()
-            ]
-            
-        elif ORGANIZATION=='tjhm': 
-            print("Running TJHM workflow.")
-            if RUN_ML_MODELS == 'True':
-                base_tasks =  [
-                    PostProcessingForecasts(),
-                    RunAllMLModels(),
-                    DeleteOldGatewayFiles(),
-                    LogFileCleanup()
-                ]
-            else:
-                base_tasks =  [
-                    PostProcessingForecasts(),
-                    LogFileCleanup()
-                ]
-        # You can add workflow definitions for other organizations here.
-
-        # Default to demo workflow
-        else:
-            print("ORGANIZATION not specified.\n  -> Defaulting to demo workflow.")
-            base_tasks = [PostProcessingForecasts()]
-
-        # If notifications are enabled, add the notification task
-        if self.send_notifications:
-            return SendPipelineCompletionNotification(
+        if self.mode == "PENTAD":
+            return RunPentadalWorkflow(
                 custom_message=self.custom_message,
-                depends_on=base_tasks  # Pass the base tasks as dependencies
+                send_notifications=self.send_notifications
             )
-        else:
-            return base_tasks
+        elif self.mode == "DECAD":
+            return RunDecadalWorkflow(
+                custom_message=self.custom_message,
+                send_notifications=self.send_notifications
+            )
+        else:  # ALL or default
+            # Run both workflows
+            return [
+                RunPentadalWorkflow(
+                    custom_message=self.custom_message,
+                    send_notifications=self.send_notifications
+                ),
+                RunDecadalWorkflow(
+                    custom_message=self.custom_message,
+                    send_notifications=self.send_notifications
+                )
+            ]
 
     def output(self):
         return luigi.LocalTarget(f'/app/log_workflow_complete.txt')

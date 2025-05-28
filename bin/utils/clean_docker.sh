@@ -1,10 +1,11 @@
 #!/bin/bash
 
-# clean_docker.sh is used to clean up Docker space by stopping and removing all containers and images,
-# except those related to Nginx.
+# clean_docker.sh is used to clean up Docker space by stopping and removing all 
+# containers and images, except those related to Nginx.
 
 # Usage: ./clean_docker.sh [--execute]
-# The --execute flag is optional. If provided, the script will actually perform the cleanup operations.
+# The --execute flag is optional. If provided, the script will actually perform 
+# the cleanup operations.
 
 # Default to dry-run mode
 DRY_RUN=true
@@ -51,7 +52,7 @@ else
 fi
 
 # Tear down the Docker Compose service for the backend pipeline
-run_command docker compose -f bin/docker-compose-luigi.yml down
+#run_command docker compose -f bin/docker-compose-luigi.yml down
 
 # Remove all stopped containers except Nginx-related ones
 stopped_containers=$(docker ps -a --filter "status=exited" --format '{{.ID}} {{.Image}}' | grep -iv 'nginx' | awk '{print $1}')
@@ -79,6 +80,9 @@ fi
 
 # Prune the build cache to free up disk space
 run_command docker builder prune -f
+
+# Cleaning the docker cache
+run_command docker system prune -a -f --volumes
 
 if $DRY_RUN; then
     echo "This was a dry run. To actually perform these operations, run the script with --execute"

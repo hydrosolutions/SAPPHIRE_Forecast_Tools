@@ -88,6 +88,18 @@ read_configuration(){
     export ieasyhydroforecast_data_ref_dir
     export ieasyhydroforecast_data_root_dir
 
+    # Export the docker image tag for the backend and frontend
+    if [ -z "$ieasyhydroforecast_backend_docker_image_tag" ]; then
+        echo "| WARNING: ieasyhydroforecast_backend_docker_image_tag is not set. Assuming 'local'"
+        ieasyhydroforecast_backend_docker_image_tag="local"
+    fi
+    if [ -z "$ieasyhydroforecast_frontend_docker_image_tag" ]; then
+        echo "| WARNING: ieasyhydroforecast_frontend_docker_image_tag is not set. Assuming 'local'"
+        ieasyhydroforecast_frontend_docker_image_tag="local"
+    fi
+    export ieasyhydroforecast_backend_docker_image_tag
+    export ieasyhydroforecast_frontend_docker_image_tag
+
     # Load environment variables from the specified .env file
     if [ -f "$env_file_path" ]; then
         source "$env_file_path"
@@ -296,4 +308,40 @@ cleanup_deployment() {
   echo "| "
 }
 
+cleanup_preprocessing_containers() {
+  echo "|      "
+  echo "| ------"
+  echo "| Cleaning up preprocessing containers"
+  echo "| ------"
+  stop_and_remove_container preprunoff
+  stop_and_remove_container prepgateway
+}
+
+cleanup_decadal_forecasting_containers() {
+  echo "|      "
+  echo "| ------"
+  echo "| Cleaning up decadal forecasting containers"
+  echo "| ------"
+  stop_and_remove_container ml_TIDE_DECAD
+  stop_and_remove_container ml_TFT_DECAD
+  stop_and_remove_container ml_TSMIXER_DECAD
+  stop_and_remove_container ml_ARIMA_DECAD
+  stop_and_remove_container linreg
+  stop_and_remove_container conceptmod
+  stop_and_remove_container postprocessing
+}
+
+cleanup_pentadal_forecasting_containers() {
+    echo "|      "
+    echo "| ------"
+    echo "| Cleaning up pentadal forecasting containers"
+    echo "| ------"
+    stop_and_remove_container ml_TIDE_PENTAD
+    stop_and_remove_container ml_TFT_PENTAD
+    stop_and_remove_container ml_TSMIXER_PENTAD
+    stop_and_remove_container ml_ARIMA_PENTAD
+    stop_and_remove_container linreg
+    stop_and_remove_container conceptmod
+    stop_and_remove_container postprocessing
+}
 

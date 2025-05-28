@@ -1,46 +1,90 @@
-# docker compose file for running the sapphire forecast tools
-# build: ieasyhydroforecast_data_root_dir=<path> docker-compose -f /path/to/docker-compose.yml build --no-cache
-# run: ieasyhydroforecast_data_root_dir=<path> docker-compose -f /path/to/docker-compose.yml up -d
-# stop: docker-compose -f /path/to/docker-compose.yml down
+# Docker compose file for SAPPHIRE forecast tools using system Luigi daemon
+# Prerequisites: Luigi daemon must be running on the host (see setup_luigi_daemon.sh)
+#
+# Usage examples:
+# - Preprocessing only: docker-compose -f docker-compose-luigi-separated.yml run preprocessing
+# - Pentadal forecast: docker-compose -f docker-compose-luigi-separated.yml run pentadal
+# - Decadal forecast: docker-compose -f docker-compose-luigi-separated.yml run decadal
+#
+# Assums the following environment variables are set:
+# - ieasyhydroforecast_data_root_dir: Path to the root directory for data
+# - ieasyhydroforecast_data_ref_dir: Path to the reference data directory
+# - ieasyhydroforecast_container_data_ref_dir: Path to the container data reference directory
+# - ieasyhydroforecast_env_file_path: Path to the environment file
+# - SAPPHIRE_PREDICTION_MODE: The prediction mode (e.g., 'pentadal', 'decadal')
 
 services:
 
-  luigid:
-    build:
-      context: ../
-      dockerfile: ./apps/pipeline/Dockerfile
-    ports:
-      - "8082:8082"
-    command: luigid
-    container_name: sapphire-backend-luigid
-
-  pipeline:
-    depends_on:
-      - luigid
+  # Base pipeline service configuration
+  pipeline-base:
     cpus: 4
     build:
       context: ../
       dockerfile: ./apps/pipeline/Dockerfile
       args:
-        TAG: ${ieasyhydroforecast_backend_docker_image_tag:-latest}
-    image: sapphire-backend:${ieasyhydroforecast_backend_docker_image_tag:-latest}  # Specify the image name and tag
+        TAG: ${ieasyhydroforecast_backend_docker_image_tag:-local}
+    image: mabesa/sapphire-pipeline:${ieasyhydroforecast_backend_docker_image_tag:-local}
     working_dir: /app
     environment:
       - PYTHONPATH=/app
       - ieasyhydroforecast_data_root_dir=${ieasyhydroforecast_data_root_dir}
       - ieasyhydroforecast_env_file_path=${ieasyhydroforecast_env_file_path}
-      - SAPPHIRE_PREDICTION_MODE=${SAPPHIRE_PREDICTION_MODE}
-    command: ['luigi', '--module', 'apps.pipeline.pipeline_docker', 'RunWorkflow']  # If run without luigid, '--local-scheduler']
+      - ieasyhydroforecast_backend_docker_image_tag=${ieasyhydroforecast_backend_docker_image_tag}
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock # Mount docker socket
+      - /var/run/docker.sock:/var/run/docker.sock
       - ${ieasyhydroforecast_data_ref_dir}/config:${ieasyhydroforecast_container_data_ref_dir}/config
       - ${ieasyhydroforecast_data_ref_dir}/daily_runoff:${ieasyhydroforecast_container_data_ref_dir}/daily_runoff
       - ${ieasyhydroforecast_data_ref_dir}/intermediate_data:${ieasyhydroforecast_container_data_ref_dir}/intermediate_data
       - ${ieasyhydroforecast_data_ref_dir}/bin:${ieasyhydroforecast_container_data_ref_dir}/bin
-    container_name: sapphire-backend-pipeline-${SAPPHIRE_PREDICTION_MODE}
     group_add:
-      - ${DOCKER_GID:-988}  # Add host's Docker GID dynamically
+      - ${DOCKER_GID:-988}
+    network_mode: host  # Use host network to connect to Luigi daemon
 
+  # Service for gateway preprocessing only 
+  # (jobs typically done by 9:30 UTC)
+  preprocessing-gateway:
+    extends: pipeline-base
+    environment:
+      - PYTHONPATH=/app
+      - ieasyhydroforecast_data_root_dir=${ieasyhydroforecast_data_root_dir}
+      - ieasyhydroforecast_env_file_path=${ieasyhydroforecast_env_file_path}
+      - ieasyhydroforecast_backend_docker_image_tag=${ieasyhydroforecast_backend_docker_image_tag}
+    command: ['luigi', '--module', 'apps.pipeline.pipeline_docker', 'RunPreprocessingGatewayWorkflow']
+    container_name: sapphire-pipeline-preprocessing-gateway
+  
+  # Service for runoff preprocessing only 
+  # (can be run when operational data is reviewed and added to iEH HF DB)
+  preprocessing-runoff:
+    extends: pipeline-base
+    environment:
+      - PYTHONPATH=/app
+      - ieasyhydroforecast_data_root_dir=${ieasyhydroforecast_data_root_dir}
+      - ieasyhydroforecast_env_file_path=${ieasyhydroforecast_env_file_path}
+      - ieasyhydroforecast_backend_docker_image_tag=${ieasyhydroforecast_backend_docker_image_tag}
+    command: ['luigi', '--module', 'apps.pipeline.pipeline_docker', 'RunPreprocessingRunoffWorkflow']
+    container_name: sapphire-pipeline-preprocessing-runoff
 
+  # Service for pentadal forecasting
+  # (requires preprocessing to be done first)
+  pentadal:
+    extends: pipeline-base
+    environment:
+      - PYTHONPATH=/app
+      - ieasyhydroforecast_data_root_dir=${ieasyhydroforecast_data_root_dir}
+      - ieasyhydroforecast_env_file_path=${ieasyhydroforecast_env_file_path}
+      - SAPPHIRE_PREDICTION_MODE=PENTAD
+    command: ['luigi', '--module', 'apps.pipeline.pipeline_docker', 'RunPentadalWorkflow']
+    container_name: sapphire-pipeline-pentadal
 
+  # Service for decadal forecasting
+  # (requires preprocessing to be done first)
+  decadal:
+    extends: pipeline-base
+    environment:
+      - PYTHONPATH=/app
+      - ieasyhydroforecast_data_root_dir=${ieasyhydroforecast_data_root_dir}
+      - ieasyhydroforecast_env_file_path=${ieasyhydroforecast_env_file_path}
+      - SAPPHIRE_PREDICTION_MODE=DECAD
+    command: ['luigi', '--module', 'apps.pipeline.pipeline_docker', 'RunDecadalWorkflow']
+    container_name: sapphire-pipeline-decadal
 
