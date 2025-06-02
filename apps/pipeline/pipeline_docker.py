@@ -78,6 +78,39 @@ def get_local_path(relative_path):
 
     return relative_path
 
+class ExternalPreprocessingGateway(luigi.ExternalTask):
+    """
+    External task that represents preprocessing gateway being done by a separate 
+    process. This task checks for a marker file that indicates preprocessing is 
+    complete.
+    """
+    # Define the date parameter to check for today's marker
+    date = luigi.DateParameter(default=datetime.date.today())
+    
+    # Define where the marker file will be created
+    intermediate_data_path = get_bind_path(env.get('ieasyforecast_intermediate_data_path'))
+    docker_logs_file_path = f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/docker_logs/log_preprocessing_gateway_workflow_{datetime.date.today()}.txt"
+    
+    def output(self):
+        # Look for a marker file that indicates preprocessing is complete
+        return luigi.LocalTarget(f"{self.docker_logs_file_path}")
+
+class ExternalPreprocessingRunoff(luigi.ExternalTask):
+    """
+    External task that represents preprocessing runoff being done by a separate 
+    process. This task checks for a marker file that indicates preprocessing is 
+    complete.
+    """
+    # Define the date parameter to check for today's marker
+    date = luigi.DateParameter(default=datetime.date.today())
+    
+    # Define where the marker file will be created
+    intermediate_data_path = get_bind_path(env.get('ieasyforecast_intermediate_data_path'))
+    docker_logs_file_path = f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/docker_logs/log_preprocessing_gateway_workflow_{datetime.date.today()}.txt"
+    
+    def output(self):
+        # Look for a marker file that indicates preprocessing is complete
+        return luigi.LocalTarget(f"{self.docker_logs_file_path}")
 
 class PreprocessingRunoff(pu.TimeoutMixin, luigi.Task):
     # Set timeout to 15 minutes (900 seconds)
@@ -437,12 +470,13 @@ class PreprocessingGatewayQuantileMapping(pu.TimeoutMixin, luigi.Task):
                 details=details
             )
 
+
 class RunPreprocessingGatewayWorkflow(luigi.Task):
     """Workflow for gateway preprocessing that can run early (10:00)."""
     
     # Use the intermediate_data_path for log files
     intermediate_data_path = get_bind_path(env.get('ieasyforecast_intermediate_data_path'))
-    docker_logs_file_path = f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/docker_logs/log_preprocessing_gateway_workflow_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+    docker_logs_file_path = f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/docker_logs/log_preprocessing_gateway_workflow_{datetime.date.today()}.txt"
     
     def requires(self):
         # Only gateway preprocessing
@@ -467,7 +501,7 @@ class RunPreprocessingRunoffWorkflow(luigi.Task):
     
     # Use the intermediate_data_path for log files
     intermediate_data_path = get_bind_path(env.get('ieasyforecast_intermediate_data_path'))
-    docker_logs_file_path = f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/docker_logs/log_preprocessing_runoff_workflow_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+    docker_logs_file_path = f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/docker_logs/log_preprocessing_runoff_workflow_{datetime.date.today()}.txt"
     
     def requires(self):
         # Only runoff preprocessing

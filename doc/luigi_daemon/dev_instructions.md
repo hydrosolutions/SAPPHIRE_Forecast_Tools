@@ -13,6 +13,9 @@ What this script does:
 
 # Usage Instructions
 
+## 0. Prerequisites
+Please ensure that you have the [prerequisites](../development.md) available and the .env file is set up correctly. 
+
 ## 1. Run the script
 ```bash
 # Navigate to the SAPPHIRE_forecast_tools root directory
@@ -28,10 +31,23 @@ bash dev/run_luigi_dev.sh
 - You should see the Luigi Task Visualiser interface  
 
 ## 3. Run your Luigi tasks
+Run one of the Luigi tasks defined in your pipeline. For example, to run `PreprocessingRunoff` task, you can use the following command:
+
 ```bash
 # Example: Run the workflow with the local scheduler
-PYTHONPATH='.' luigi --module apps.pipeline.pipeline_docker RunWorkflow --local-scheduler
+PYTHONPATH='.' luigi --module apps.pipeline.pipeline_docker PreprocessingRunoff --local-scheduler
 ```
+
+Alternatively, you can run a workflow using the shell scripts provided in the `bin` directory:
+
+```bash
+# Example: Run the PreprocessingRunoff workflow
+bash bin/run_preprocessing_runoff.sh <path/to/.env>
+```
+Please remember that the intended sequence of tasks is:  
+1. run_preprocessing_runoff.sh and run_preprocessing_gateway.sh
+2. run_pentadal_forecasts.sh and run_decadal_forecasts.sh
+
 ## 4. Monitor task execution 
 - Check the web interface at http://localhost:8082  
 - View logs in the logs directory

@@ -13,6 +13,15 @@ echo "| Running PENTADAL forecasting"
 # Read the configuration from the .env file
 read_configuration $1
 
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    export LUIGI_SCHEDULER_URL="http://host.docker.internal:8082"
+    DOCKER_GID=$(stat -f '%g' /var/run/docker.sock)
+else
+    export LUIGI_SCHEDULER_URL="http://localhost:8082"
+    DOCKER_GID=$(stat -c '%g' /var/run/docker.sock)
+fi
+echo "| Luigi scheduler URL set to: $LUIGI_SCHEDULER_URL"
+
 # Establish SSH tunnel (if required)
 establish_ssh_tunnel
 
@@ -23,7 +32,18 @@ trap cleanup_pentadal_forecasting_containers EXIT
 echo "| Starting pentadal forecasting workflow..."
 echo "| Luigi daemon will handle dependencies and ensure preprocessing is complete"
 
-docker compose -f bin/docker-compose-luigi.yml run --rm pentadal
+# Create a modified luigi.cfg file
+echo "[core]" > temp_luigi.cfg
+echo "default_scheduler_url = $LUIGI_SCHEDULER_URL" >> temp_luigi.cfg
+
+# Run the pentadal forecasting with proper configuration
+docker compose -f bin/docker-compose-luigi.yml run \
+    -v $(pwd)/temp_luigi.cfg:/app/luigi.cfg \
+    -e PYTHONPATH="/home/appuser/.local/lib/python3.11/site-packages:${PYTHONPATH}" \
+    -e SAPPHIRE_PREDICTION_MODE=PENTAD \
+    --user root \
+    --rm \
+    pentadal
 
 echo "| Pentadal forecasting task submitted to Luigi daemon"
-echo "| Check progress at: http://localhost:8082"
+echo "| Check progress at: $LUIGI_SCHEDULER_URL"
