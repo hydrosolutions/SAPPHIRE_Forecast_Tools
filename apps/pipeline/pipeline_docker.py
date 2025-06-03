@@ -18,7 +18,7 @@ import docker
 import datetime
 import re
 from dotenv import load_dotenv
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List, Dict, Any
 import signal
 from contextlib import contextmanager
 import threading
@@ -41,8 +41,6 @@ ORGANIZATION = env.get('ieasyhydroforecast_organization')
 SAPPHIRE_DG_HOST = env.get('SAPPHIRE_DG_HOST')
 RUN_ML_MODELS = env.get('ieasyhydroforecast_run_ML_models')
 RUN_CM_MODELS = env.get('ieasyhydroforecast_run_CM_models')
-
-
 
 # Function to convert a relative path to an absolute path
 def get_absolute_path(relative_path):
@@ -78,6 +76,18 @@ def get_local_path(relative_path):
 
     return relative_path
 
+# Define global paths for marker files
+MARKER_DIR = f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/marker_files"
+os.makedirs(MARKER_DIR, exist_ok=True)  # Ensure directory exists
+
+def get_marker_filepath(task_name, date=None):
+    """Generate consistent marker filepath for a given task and date"""
+    if date is None:
+        date = datetime.date.today()
+    return f"{MARKER_DIR}/{task_name}_{date}.marker"
+
+
+
 class ExternalPreprocessingGateway(luigi.ExternalTask):
     """
     External task that represents preprocessing gateway being done by a separate 
@@ -87,13 +97,10 @@ class ExternalPreprocessingGateway(luigi.ExternalTask):
     # Define the date parameter to check for today's marker
     date = luigi.DateParameter(default=datetime.date.today())
     
-    # Define where the marker file will be created
-    intermediate_data_path = get_bind_path(env.get('ieasyforecast_intermediate_data_path'))
-    docker_logs_file_path = f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/docker_logs/log_preprocessing_gateway_workflow_{datetime.date.today()}.txt"
-    
     def output(self):
         # Look for a marker file that indicates preprocessing is complete
-        return luigi.LocalTarget(f"{self.docker_logs_file_path}")
+        marker_file = get_marker_filepath('preprocessing_gateway', date=self.date)
+        return luigi.LocalTarget(f"{marker_file}")
 
 class ExternalPreprocessingRunoff(luigi.ExternalTask):
     """
@@ -104,13 +111,10 @@ class ExternalPreprocessingRunoff(luigi.ExternalTask):
     # Define the date parameter to check for today's marker
     date = luigi.DateParameter(default=datetime.date.today())
     
-    # Define where the marker file will be created
-    intermediate_data_path = get_bind_path(env.get('ieasyforecast_intermediate_data_path'))
-    docker_logs_file_path = f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/docker_logs/log_preprocessing_gateway_workflow_{datetime.date.today()}.txt"
-    
     def output(self):
         # Look for a marker file that indicates preprocessing is complete
-        return luigi.LocalTarget(f"{self.docker_logs_file_path}")
+        marker_file = get_marker_filepath('preprocessing_runoff', date=self.date)
+        return luigi.LocalTarget(marker_file)
 
 class PreprocessingRunoff(pu.TimeoutMixin, luigi.Task):
     # Set timeout to 15 minutes (900 seconds)
@@ -270,6 +274,12 @@ class PreprocessingRunoff(pu.TimeoutMixin, luigi.Task):
                     with self.output().open('w') as f:
                         f.write('Task completed')
 
+                    # Create the marker file that LinearRegression will check for
+                    today = datetime.date.today()
+                    marker_file = get_marker_filepath('preprocessing_runoff', date=today)
+                    with open(marker_file, 'w') as f:
+                        f.write(f"PreprocessingRunoff completed successfully at {datetime.datetime.now()}")
+
                     break
 
                 if exit_status == 124:  # Timeout
@@ -293,7 +303,6 @@ class PreprocessingRunoff(pu.TimeoutMixin, luigi.Task):
                 status=final_status,
                 details=details
             )
-
 
 class PreprocessingGatewayQuantileMapping(pu.TimeoutMixin, luigi.Task):
     # Set timeout to 30 minutes (1800 seconds)
@@ -446,6 +455,12 @@ class PreprocessingGatewayQuantileMapping(pu.TimeoutMixin, luigi.Task):
                     with self.output().open('w') as f:
                         f.write('Task completed')
 
+                    # Create the marker file that LinearRegression will check for
+                    today = datetime.date.today()
+                    marker_file = get_marker_filepath('preprocessing_gateway', date=today)
+                    with open(marker_file, 'w') as f:
+                        f.write(f"PreprocessingGateway completed successfully at {datetime.datetime.now()}")
+
                     break
 
                 if exit_status == 124:  # Timeout
@@ -469,7 +484,6 @@ class PreprocessingGatewayQuantileMapping(pu.TimeoutMixin, luigi.Task):
                 status=final_status,
                 details=details
             )
-
 
 class RunPreprocessingGatewayWorkflow(luigi.Task):
     """Workflow for gateway preprocessing that can run early (10:00)."""
@@ -495,7 +509,6 @@ class RunPreprocessingGatewayWorkflow(luigi.Task):
         with self.output().open('w') as f:
             f.write('Gateway preprocessing completed')
 
-
 class RunPreprocessingRunoffWorkflow(luigi.Task):
     """Workflow for runoff preprocessing that must wait for data (11:00)."""
     
@@ -519,7 +532,6 @@ class RunPreprocessingRunoffWorkflow(luigi.Task):
         
         with self.output().open('w') as f:
             f.write('Runoff preprocessing completed')
-
 
 class LinearRegression(pu.TimeoutMixin, luigi.Task):
     # Set timeout to 10 minutes (600 seconds)
@@ -549,7 +561,18 @@ class LinearRegression(pu.TimeoutMixin, luigi.Task):
             self.retry_delay = task_params['retry_delay']
 
     def requires(self):
-        return PreprocessingRunoff()
+        # Check if there's a marker file for today's preprocessing
+        today = datetime.date.today()
+        marker_file = get_marker_filepath('preprocessing_runoff', date=today)
+        
+        # If the marker exists, use the external task, otherwise use the regular task
+        print(f"Checking for preprocessing marker file: {marker_file}")
+        if os.path.exists(marker_file):
+            print(f"Using external preprocessing task for {today}")
+            return ExternalPreprocessingRunoff()
+        else:
+            print(f"No preprocessing marker found for {today}, running preprocessing task")
+            return PreprocessingRunoff()
 
     def output(self):
         return luigi.LocalTarget(f'/app/log_linreg.txt')
@@ -694,7 +717,6 @@ class LinearRegression(pu.TimeoutMixin, luigi.Task):
                 details=details
             )
 
-
 class ConceptualModel(pu.TimeoutMixin, luigi.Task):
     # Set timeout to 30 minutes (1800 seconds)
     timeout_seconds = luigi.IntParameter(default=None)
@@ -723,7 +745,16 @@ class ConceptualModel(pu.TimeoutMixin, luigi.Task):
             self.retry_delay = task_params['retry_delay']
 
     def requires(self):
-        return [PreprocessingRunoff(), PreprocessingGatewayQuantileMapping()]
+        # Check if there's a marker file for today's preprocessing
+        today = datetime.date.today()
+        marker_file_runoff = get_marker_filepath('preprocessing_runoff', date=today)
+        marker_file_gateway = get_marker_filepath('preprocessing_gateway', date=today)
+    
+        # If the marker exists, use the external task, otherwise use the regular task
+        if os.path.exists(marker_file_runoff) and os.path.exists(marker_file_gateway):
+            return [ExternalPreprocessingRunoff(), ExternalPreprocessingGateway()]
+        else:
+            return [PreprocessingRunoff(), PreprocessingGatewayQuantileMapping()]
 
     def output(self):
         return luigi.LocalTarget(f'/app/log_conceptmod.txt')
@@ -870,7 +901,6 @@ class ConceptualModel(pu.TimeoutMixin, luigi.Task):
                 details=details
             )
 
-
 class RunMLModel(pu.TimeoutMixin, luigi.Task):
     model_type = luigi.Parameter()
     prediction_mode = luigi.Parameter()
@@ -901,7 +931,16 @@ class RunMLModel(pu.TimeoutMixin, luigi.Task):
             self.retry_delay = task_params['retry_delay']
 
     def requires(self):
-        return [PreprocessingRunoff(), PreprocessingGatewayQuantileMapping()]
+        # Check if there's a marker file for today's preprocessing
+        today = datetime.date.today()
+        marker_file_runoff = get_marker_filepath('preprocessing_runoff', date=today)
+        marker_file_gateway = get_marker_filepath('preprocessing_gateway', date=today)
+    
+        # If the marker exists, use the external task, otherwise use the regular task
+        if os.path.exists(marker_file_runoff) and os.path.exists(marker_file_gateway):
+            return [ExternalPreprocessingRunoff(), ExternalPreprocessingGateway()]
+        else:
+            return [PreprocessingRunoff(), PreprocessingGatewayQuantileMapping()]
 
     def output(self):
         return luigi.LocalTarget(f'/app/log_ml_{self.model_type}_{self.prediction_mode}.txt')
@@ -1022,18 +1061,27 @@ class RunMLModel(pu.TimeoutMixin, luigi.Task):
                 except:
                     pass
 
-
 class RunAllMLModels(luigi.WrapperTask):
     def requires(self):
-        # Ensure preprocessing tasks are completed first
-        yield PreprocessingRunoff()
-        yield PreprocessingGatewayQuantileMapping()
+        # Check for marker files first
+        today = datetime.date.today()
+        marker_file_runoff = get_marker_filepath('preprocessing_runoff', date=today)
+        marker_file_gateway = get_marker_filepath('preprocessing_gateway', date=today)
+    
+        # Yield appropriate preprocessing tasks
+        if os.path.exists(marker_file_runoff):
+            yield ExternalPreprocessingRunoff()
+        else:
+            yield PreprocessingRunoff()
+        
+        if os.path.exists(marker_file_gateway):
+            yield ExternalPreprocessingGateway()
+        else:
+            yield PreprocessingGatewayQuantileMapping()
 
         # Get the list of available ML models from .env file
         models = env.get('ieasyhydroforecast_available_ML_models').split(',')
 
-        #models = ['TFT', 'TIDE', 'TSMIXER', 'ARIMA']
-        # prediction_modes = ['PENTAD', 'DECAD']
         prediction_mode = os.getenv('SAPPHIRE_PREDICTION_MODE', 'ALL')
         print("SAPPHIRE_PREDICTION_MODE:", prediction_mode)
 
@@ -1046,7 +1094,6 @@ class RunAllMLModels(luigi.WrapperTask):
         for model in models:
             for mode in prediction_modes:
                 yield RunMLModel(model_type=model, prediction_mode=mode, run_mode='forecast')
-
 
 class PostProcessingForecasts(pu.TimeoutMixin, luigi.Task):
     # Set timeout to 15 minutes (900 seconds)
@@ -1076,22 +1123,18 @@ class PostProcessingForecasts(pu.TimeoutMixin, luigi.Task):
             self.retry_delay = task_params['retry_delay']
 
     def requires(self):
-        if ORGANIZATION=='demo':
-            return LinearRegression()
-        if ORGANIZATION=='kghm':
-            if RUN_ML_MODELS == "True" and RUN_CM_MODELS == "True":
-               return [ConceptualModel(), RunAllMLModels(), LinearRegression()]
-            elif RUN_ML_MODELS == "True":
-                return [RunAllMLModels(), LinearRegression()]
-            elif RUN_CM_MODELS == "True":
-                return [ConceptualModel(), LinearRegression()]
-            else: 
-                return LinearRegression()
-        if ORGANIZATION=='tjhm': 
-            if RUN_ML_MODELS == "True": 
-                return [RunAllMLModels(), LinearRegression()]
-            else: 
-                return LinearRegression()
+        # Start with LinearRegression as the base requirement
+        dependencies = [LinearRegression()]
+    
+        # Add ML models if enabled
+        if RUN_ML_MODELS == "True":
+            dependencies.append(RunAllMLModels())
+    
+        # Add conceptual model if enabled
+        if RUN_CM_MODELS == "True":
+            dependencies.append(ConceptualModel())
+    
+        return dependencies
 
     def output(self):
         return luigi.LocalTarget(f'/app/log_postproc.txt')
@@ -1230,7 +1273,6 @@ class PostProcessingForecasts(pu.TimeoutMixin, luigi.Task):
                 status=final_status,
                 details=details
             )
-
 
 class DeleteOldGatewayFiles(pu.TimeoutMixin, luigi.Task):
     # Fix the typo in the class name (was "Gateywayy")
@@ -1400,7 +1442,6 @@ class DeleteOldGatewayFiles(pu.TimeoutMixin, luigi.Task):
                 details=details
             )
 
-
 class LogFileCleanup(pu.TimeoutMixin, luigi.Task):
 
     log_directory = f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/docker_logs"
@@ -1504,7 +1545,6 @@ class LogFileCleanup(pu.TimeoutMixin, luigi.Task):
                 status=status,
                 details=details
             )
-
 
 class SendPipelineCompletionNotification(luigi.Task):
     """Send notification when the entire pipeline is complete."""
@@ -1639,21 +1679,12 @@ class RunPentadalWorkflow(luigi.Task):
     # Parameters for notifications
     custom_message = luigi.Parameter(default="")
     send_notifications = luigi.BoolParameter(default=True)
-    check_processing = luigi.BoolParameter(default=True)
     
     # Use the intermediate_data_path for log files
     intermediate_data_path = get_bind_path(env.get('ieasyforecast_intermediate_data_path'))
     docker_logs_file_path = f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/docker_logs/log_pentadal_workflow_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
     
     def requires(self):
-        # Ensure preprocessing is done first
-        if RUN_ML_MODELS == "True" or RUN_CM_MODELS == "True":
-            run_gateway_flag = True
-            preprocessing_done = PreprocessingRunoff() and PreprocessingGatewayQuantileMapping()
-        else:
-            run_gateway_flag = False
-            preprocessing_done = PreprocessingRunoff()
-        
         # Base tasks for pentadal forecasting
         base_tasks = []
         
@@ -1679,7 +1710,7 @@ class RunPentadalWorkflow(luigi.Task):
         
         # Add cleanup tasks
         base_tasks.append(LogFileCleanup())
-        if run_gateway_flag:
+        if RUN_ML_MODELS == "True" or RUN_CM_MODELS == "True":
             base_tasks.append(DeleteOldGatewayFiles())
         
         # If notifications are enabled, wrap with notification task
@@ -1715,14 +1746,6 @@ class RunDecadalWorkflow(luigi.Task):
     docker_logs_file_path = f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/docker_logs/log_decadal_workflow_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
     
     def requires(self):
-        # Ensure preprocessing is done first
-        if RUN_ML_MODELS == "True" or RUN_CM_MODELS == "True":
-            run_gateway_flag = True
-            preprocessing_done = PreprocessingRunoff() and PreprocessingGatewayQuantileMapping()
-        else: 
-            run_gateway_flag = False
-            preprocessing_done = PreprocessingRunoff()
-        
         # Base tasks for decadal forecasting
         base_tasks = []
         
@@ -1748,7 +1771,7 @@ class RunDecadalWorkflow(luigi.Task):
         
         # Add cleanup tasks
         base_tasks.append(LogFileCleanup())
-        if run_gateway_flag:
+        if RUN_ML_MODELS == "True" or RUN_CM_MODELS == "True":
             base_tasks.append(DeleteOldGatewayFiles())
         
         # If notifications are enabled, wrap with notification task
