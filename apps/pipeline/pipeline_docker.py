@@ -311,7 +311,7 @@ class PreprocessingRunoff(DockerTaskBase):
         ] 
         
         # Execute with retries using the base class method
-        self.execute_with_retries(
+        status, details = self.execute_with_retries(
             lambda attempt: self.run_docker_container(
                 image_name='sapphire-linreg',
                 container_name='linreg',
@@ -320,6 +320,15 @@ class PreprocessingRunoff(DockerTaskBase):
                 attempt_number=attempt
             )
         )
+        
+        # Write marker file only if successful
+        if status == "Success":
+            # Create the marker file that dependent tasks will check for
+            today = datetime.date.today()
+            marker_file = get_marker_filepath('preprocessing_runoff', date=today)
+            print(f"Writing success marker file to: {marker_file}")
+            with open(marker_file, 'w') as f:
+                f.write(f"PreprocessingRunoff completed successfully at {datetime.datetime.now()}")
 
 class PreprocessingGatewayQuantileMapping(pu.TimeoutMixin, luigi.Task):
     # Set timeout to 30 minutes (1800 seconds)
