@@ -313,8 +313,8 @@ class PreprocessingRunoff(DockerTaskBase):
         # Execute with retries using the base class method
         status, details = self.execute_with_retries(
             lambda attempt: self.run_docker_container(
-                image_name='sapphire-linreg',
-                container_name='linreg',
+                image_name='sapphire-preprunoff',
+                container_name='preprunoff',
                 volumes=volumes,
                 environment=environment,
                 attempt_number=attempt
