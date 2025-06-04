@@ -547,7 +547,7 @@ class ConceptualModel(DockerTaskBase):
             else:
                 print(f"❌ Failed to create marker file at {marker_file}")
 
-class RunMLModel(pu.TimeoutMixin, luigi.Task):
+class RunMLModel(DockerTaskBase):
     model_type = luigi.Parameter()
     prediction_mode = luigi.Parameter()
     run_mode = luigi.Parameter(default='forecast')
@@ -635,7 +635,7 @@ class RunAllMLModels(luigi.WrapperTask):
             for mode in prediction_modes:
                 yield RunMLModel(model_type=model, prediction_mode=mode, run_mode='forecast')
 
-class PostProcessingForecasts(pu.TimeoutMixin, luigi.Task):
+class PostProcessingForecasts(DockerTaskBase):
     """Post-process forecasts from different models."""
     
     # Add prediction mode parameter for mode-specific processing
