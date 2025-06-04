@@ -335,7 +335,7 @@ class PreprocessingRunoff(DockerTaskBase):
             else:
                 print(f"❌ Failed to create marker file at {marker_file}")
 
-class PreprocessingGatewayQuantileMapping(pu.TimeoutMixin, luigi.Task):
+class PreprocessingGatewayQuantileMapping(DockerTaskBase):
     # Define the logging output of the task.
     docker_logs_file_path = f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/docker_logs/log_pregateway_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
     
@@ -429,7 +429,7 @@ class RunPreprocessingRunoffWorkflow(luigi.Task):
         with self.output().open('w') as f:
             f.write('Runoff preprocessing completed')
 
-class LinearRegression(pu.TimeoutMixin, luigi.Task):
+class LinearRegression(DockerTaskBase):
     docker_logs_file_path = f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/docker_logs/log_linreg_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
 
     def requires(self):
