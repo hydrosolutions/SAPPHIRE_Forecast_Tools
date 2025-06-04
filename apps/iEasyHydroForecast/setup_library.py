@@ -36,7 +36,7 @@ logger.addHandler(console_handler)
 # --- Load runtime environment ---------------------------------------------------
 # region environment
 
-def store_last_successful_run_date(date):
+def store_last_successful_run_date(date, prediction_mode='BOTH'):
     '''
     Store the last successful run date in a file.
 
@@ -65,9 +65,12 @@ def store_last_successful_run_date(date):
 
     # Path to the file
     last_run_file = os.path.join(
-        os.getenv("ieasyforecast_intermediate_data_path"),
-        os.getenv("ieasyforecast_last_successful_run_file")
+        intermediate_data_path,
+        last_successful_run_file
     )
+    # add _<prediction_mode> to the file name if prediction_mode is not BOTH
+    if prediction_mode not in ['BOTH']:
+        last_run_file = last_run_file.replace(".txt", f"_{prediction_mode}.txt")
 
     # Convert to datetime object if date is a string or a datetime object
     if isinstance(date, str):
@@ -90,7 +93,7 @@ def store_last_successful_run_date(date):
 
     return None
 
-def get_last_run_date():
+def get_last_run_date(prediction_mode='BOTH'):
     """
     Read the date of the last successful run of the linear regression forecast
     from the file ieasyforecast_last_successful_run_file. If the file is not
@@ -103,6 +106,9 @@ def get_last_run_date():
         os.getenv("ieasyforecast_intermediate_data_path"),
         os.getenv("ieasyforecast_last_successful_run_file")
         )
+    # add _<prediction_mode> to the file name if prediction_mode is not BOTH
+    if prediction_mode not in ['BOTH']:
+        last_run_file = last_run_file.replace(".txt", f"_{prediction_mode}.txt")
     try:
         with open(last_run_file, "r") as file:
             last_successful_run_date = file.read()
@@ -118,7 +124,7 @@ def get_last_run_date():
 
     return last_successful_run_date
 
-def define_run_dates():
+def define_run_dates(prediction_mode='BOTH'):
     """
     Identifies the start and end dates for the current call to the linear
     regression tool.
@@ -130,7 +136,7 @@ def define_run_dates():
     """
     # The last successful run date is the last time, the forecast tools were
     # run successfully. This is typically yesterday.
-    last_successful_run_date = get_last_run_date()
+    last_successful_run_date = get_last_run_date(prediction_mode=prediction_mode)
 
     # The day on which the forecast is produced. In operational mode, this is
     # day 0 or today. However, the tools can also be run in hindcast mode by

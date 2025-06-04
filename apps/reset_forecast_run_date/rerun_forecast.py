@@ -4,7 +4,7 @@
 # successful run date is stored in the file ieasyforecast_last_successful_run_file.
 
 # Useage:
-# python rerun_forecast.py
+# ieasyhydroforecast_env_file_path=/path/to/.env python rerun_forecast.py
 
 import datetime
 import os
@@ -52,7 +52,7 @@ logger.addHandler(file_handler)
 logger.addHandler(console_handler)
 
 
-def get_last_run_file():
+def get_last_run_file(prediction_mode='None'):
     '''
     Creates a path to the file ieasyforecast_last_successful_run_file in the
     ieasyforecast_intermediate_data_path which are stored in environment
@@ -78,6 +78,10 @@ def get_last_run_file():
 
     # Construct file path
     last_run_file = os.path.join(data_path, run_file)
+
+    # If prediction_mode is set, append it to the file name
+    if prediction_mode != 'None':
+        last_run_file = last_run_file.replace('.txt', f'_{prediction_mode}.txt')
 
     # Check if file exists
     if not os.path.isfile(last_run_file):
@@ -182,8 +186,15 @@ if __name__ == "__main__":
 
     # Load environment variables
     sl.load_environment()
+    # Get prediction mode from environment variable, either from 
+    # SAPPHIRE_PREDICTION_MODE (forecasting) or from sapphire_forecast_horizon (dashboard)
+    prediction_mode = os.getenv("SAPPHIRE_PREDICTION_MODE", "None")
+    if prediction_mode == "None":
+        prediction_mode = os.getenv("sapphire_forecast_horizon", "None")
+    print("INFO - Prediction mode: ", prediction_mode)
+
     # Get path to the last run file
-    last_run_file = get_last_run_file()
+    last_run_file = get_last_run_file(prediction_mode=prediction_mode)
     # Read last successful run date from file
     last_successful_run_date = parse_last_successful_run_date(last_run_file)
     # Calculate the new forecast date
@@ -191,7 +202,7 @@ if __name__ == "__main__":
     # Write the rerun_forecast_date to file
     write_date(rerun_forecast_date, last_run_file)
 
-    print("INFO - Triggered manual re-run of the pentadal forecast with following dates:")
+    print(f"INFO - Ready to trigger manual re-run of the {prediction_mode} forecast with following dates:")
     print("INFO - Previous last successful run date: ", last_successful_run_date)
     print("INFO - Re-run forecast date: ", rerun_forecast_date)
 
