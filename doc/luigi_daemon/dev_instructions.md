@@ -43,6 +43,7 @@ Please remember that the intended sequence of tasks is:
 
 ## 4. Monitor task execution 
 - Check the web interface at http://localhost:8082  
+- Check the docker desktop image and container logs 
 - View logs in the logs directory
 
 ## 5. Stop the Luigi daemon when done

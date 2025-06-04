@@ -650,7 +650,7 @@ class PostProcessingForecasts(DockerTaskBase):
     
         # Add ML models if enabled
         if RUN_ML_MODELS == "True":
-            dependencies.append(RunAllMLModels(prediction_mode=self.prediction_mode))
+            dependencies.append(RunMLModel(prediction_mode=self.prediction_mode))
     
         # Add conceptual model if enabled
         if RUN_CM_MODELS == "True":
