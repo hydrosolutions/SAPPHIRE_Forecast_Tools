@@ -261,6 +261,18 @@ class DockerTaskBase(pu.TimeoutMixin, luigi.Task):
             
         return final_status, details
 
+class ExternalConceptualModel(luigi.ExternalTask):
+    """
+    External task that represents conceptual model being run by a separate process.
+    This task checks for a marker file that indicates the model has been run.
+    """
+    # Define the date parameter to check for today's marker
+    date = luigi.DateParameter(default=datetime.date.today())
+    
+    def output(self):
+        # Look for a marker file that indicates the conceptual model has run
+        marker_file = get_marker_filepath('conceptual_model', date=self.date)
+        return luigi.LocalTarget(marker_file)
 
 class ExternalPreprocessingGateway(luigi.ExternalTask):
     """
@@ -430,6 +442,10 @@ class RunPreprocessingRunoffWorkflow(luigi.Task):
             f.write('Runoff preprocessing completed')
 
 class LinearRegression(DockerTaskBase):
+    """Run linear regression model in a Docker container."""
+    # Define parameters for the task
+    prediction_mode = luigi.Parameter(default='ALL')  # ALL, PENTAD, or DECAD
+    # Define the logging output of the task.
     docker_logs_file_path = f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/docker_logs/log_linreg_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
 
     def requires(self):
@@ -459,7 +475,8 @@ class LinearRegression(DockerTaskBase):
         
         # Define environment variables
         environment = [
-            f'ieasyhydroforecast_env_file_path={env_file_path}'
+            f'ieasyhydroforecast_env_file_path={env_file_path}', 
+            f'SAPPHIRE_PREDICTION_MODE={self.prediction_mode}' 
         ]
         
         # Execute with retries using the base class method
@@ -473,32 +490,8 @@ class LinearRegression(DockerTaskBase):
             )
         )
 
-class ConceptualModel(pu.TimeoutMixin, luigi.Task):
-    # Set timeout to 30 minutes (1800 seconds)
-    timeout_seconds = luigi.IntParameter(default=None)
-    max_retries = luigi.IntParameter(default=None)
-    retry_delay = luigi.IntParameter(default=None)
-
-    # Use the intermediate_data_path for log files instead of /app/
-    intermediate_data_path = get_bind_path(env.get('ieasyforecast_intermediate_data_path'))
-    # Define the logging output of the task.
+class ConceptualModel(DockerTaskBase):
     docker_logs_file_path = f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/docker_logs/log_conceptmod_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-        # Get parameters from timeout manager
-        task_name = self.__class__.__name__
-        task_params = get_task_parameters(task_name)
-
-        if self.timeout_seconds is None:
-            self.timeout_seconds = task_params['timeout_seconds']
-
-        if self.max_retries is None:
-            self.max_retries = task_params['max_retries']
-
-        if self.retry_delay is None:
-            self.retry_delay = task_params['retry_delay']
 
     def requires(self):
         # Check if there's a marker file for today's preprocessing
@@ -515,176 +508,54 @@ class ConceptualModel(pu.TimeoutMixin, luigi.Task):
     def output(self):
         return luigi.LocalTarget(f'/app/log_conceptmod.txt')
 
-    def _run_container(self, attempt_number) -> tuple[Optional[str], int, str]:
-        """
-        Run the docker container and return container ID, exit status, and logs
-        """
-        client = docker.from_env()
-        container = None
-
-        try:
-            # Construct the absolute volume paths to bind to the containers
-            absolute_volume_path_config = get_absolute_path(
-                env.get('ieasyforecast_configuration_path'))
-            absolute_volume_path_internal_data = get_absolute_path(
-                env.get('ieasyforecast_intermediate_data_path'))
-            absolute_volume_path_conceptmod = get_absolute_path(
-                env.get('ieasyhydroforecast_conceptual_model_path'))
-            bind_volume_path_config = get_bind_path(
-                env.get('ieasyforecast_configuration_path'))
-            bind_volume_path_internal_data = get_bind_path(
-                env.get('ieasyforecast_intermediate_data_path'))
-            bind_volume_path_conceptmod = get_bind_path(
-                env.get('ieasyhydroforecast_conceptual_model_path'))
-
-            # Pull the latest image if needed
-            if pu.there_is_a_newer_image_on_docker_hub(
-                client, repository='mabesa', image_name='sapphire-conceptmod', tag=TAG):
-                print("Pulling the latest image from Docker Hub.")
-                client.images.pull('mabesa/sapphire-conceptmod', tag=TAG)
-
-            # Define environment variables
-            environment = [
-                'SAPPHIRE_OPDEV_ENV=True',
-                'IN_DOCKER_CONTAINER=True'
-            ]
-
-            # Define volumes
-            volumes = {
-                absolute_volume_path_config: {'bind': bind_volume_path_config, 'mode': 'rw'},
-                absolute_volume_path_internal_data: {'bind': bind_volume_path_internal_data, 'mode': 'rw'},
-                absolute_volume_path_conceptmod: {'bind': bind_volume_path_conceptmod, 'mode': 'rw'}
-            }
-
-            # Run the container with unique name for each attempt
-            container = client.containers.run(
-                f"mabesa/sapphire-conceptmod:{TAG}",
-                detach=True,
-                environment=environment,
-                volumes=volumes,
-                name=f"conceptmod_attempt_{attempt_number}_{time.time()}",  # Unique name per attempt
-                network='host'
-            )
-
-            print(f"Container {container.id} is running.")
-
-            # Wait for container with timeout
-            try:
-                self.run_with_timeout(container.wait)
-                exit_status = 0
-            except TimeoutError:
-                print(f"Container {container.id} timed out after {self.timeout_seconds} seconds")
-                container.stop()
-                exit_status = 124
-            logs = container.logs().decode('utf-8')
-
-            print(f"Container {container.id} exited with status code {exit_status}")
-            print(f"Logs from container {container.id}:\n{logs}")
-
-            # Clean up container
-            try:
-                container.remove()
-            except Exception as e:
-                print(f"Warning: Could not remove container {container.id}: {str(e)}")
-
-            return container.id, exit_status, logs
-
-        except Exception as e:
-            print(f"Error running container: {str(e)}")
-            if container:
-                try:
-                    container.stop()
-                    container.remove()
-                except:
-                    pass
-            return None, 1, str(e)
-
     def run(self):
-        logger = pu.TaskLogger()
-        start_time = datetime.datetime.now()
-
-        print("------------------------------------")
-        print(" Running ConceptualModel task.")
-        print("------------------------------------")
-
-        attempts = 0
-        final_status = "Failed"
-        details = ""
-
-        try:
-            while attempts < self.max_retries:
-                attempts += 1
-                print(f"Attempt {attempts} of {self.max_retries}")
-
-                container_id, exit_status, logs = self._run_container(attempts)
-
-                if exit_status == 0:
-                    # Success - write output and exit
-                    with open(self.docker_logs_file_path, 'w') as f:
-                        f.write('Task completed successfully\n')
-                        f.write(f'Container ID: {container_id}\n')
-                        f.write(f'Timeout: {self.timeout_seconds}\n')
-                        f.write(f'Max retries: {self.max_retries}\n')
-                        f.write(f'Logs:\n{logs}')
-                    final_status = "Success"
-                    details = f"Completed on attempt {attempts}"
-
-                    # Create the output marker file
-                    with self.output().open('w') as f:
-                        f.write('Task completed')
-
-                    break
-
-                if exit_status == 124:  # Timeout
-                    final_status = "Timeout"
-                    details = f"Task timed out after {self.timeout_seconds} seconds"
-                    break
-
-                if attempts < self.max_retries:
-                    print(f"Container failed with status {exit_status}. Retrying in {self.retry_delay} seconds...")
-                    time.sleep(self.retry_delay)
-                else:
-                    print(f"Container failed after {self.max_retries} attempts.")
-                    raise RuntimeError(f"Task failed after {self.max_retries} attempts. Last exit status: {exit_status}\nLogs:\n{logs}")
-
-        finally:
-            end_time = datetime.datetime.now()
-            logger.log_task_timing(
-                task_name="ConceptualModel",
-                start_time=start_time,
-                end_time=end_time,
-                status=final_status,
-                details=details
+        # Set up volumes - following DockerTaskBase pattern
+        volumes = setup_docker_volumes(env, [
+            'ieasyforecast_configuration_path',
+            'ieasyforecast_intermediate_data_path',
+            'ieasyhydroforecast_conceptual_model_path'
+        ])
+        
+        # Define environment variables
+        environment = [
+            'SAPPHIRE_OPDEV_ENV=True',
+            'IN_DOCKER_CONTAINER=True'
+        ]
+        
+        # Execute with retries using the base class method
+        status, details = self.execute_with_retries(
+            lambda attempt: self.run_docker_container(
+                image_name='sapphire-conceptmod',
+                container_name='conceptmod',
+                volumes=volumes,
+                environment=environment,
+                attempt_number=attempt
             )
+        )
+        
+        # Write marker file only if successful
+        if status == "Success":
+            # Create the marker file that dependent tasks will check for
+            today = datetime.date.today()
+            marker_file = get_marker_filepath('conceptual_model', date=today)
+            print(f"Writing success marker file to: {marker_file}")
+            with open(marker_file, 'w') as f:
+                f.write(f"ConceptualModel completed successfully at {datetime.datetime.now()}")
+            # Verify file was created
+            if os.path.exists(marker_file):
+                print(f"✅ Marker file created successfully at {marker_file}")
+            else:
+                print(f"❌ Failed to create marker file at {marker_file}")
 
 class RunMLModel(pu.TimeoutMixin, luigi.Task):
     model_type = luigi.Parameter()
     prediction_mode = luigi.Parameter()
     run_mode = luigi.Parameter(default='forecast')
 
-    # Set timeout to 8 minutes (480 seconds)
-    timeout_seconds = luigi.IntParameter(default=None)
-    max_retries = luigi.IntParameter(default=None)
-    retry_delay = luigi.IntParameter(default=None)
-
-    # Use the intermediate_data_path for log files instead of /app/
-    intermediate_data_path = get_bind_path(env.get('ieasyforecast_intermediate_data_path'))
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-        # Get parameters from timeout manager
-        task_name = self.__class__.__name__
-        task_params = get_task_parameters(task_name)
-
-        if self.timeout_seconds is None:
-            self.timeout_seconds = task_params['timeout_seconds']
-
-        if self.max_retries is None:
-            self.max_retries = task_params['max_retries']
-
-        if self.retry_delay is None:
-            self.retry_delay = task_params['retry_delay']
+    # Define the logging output path dynamically
+    @property
+    def docker_logs_file_path(self):
+        return f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/docker_logs/log_ml_{self.model_type}_{self.prediction_mode}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
 
     def requires(self):
         # Check if there's a marker file for today's preprocessing
@@ -702,120 +573,32 @@ class RunMLModel(pu.TimeoutMixin, luigi.Task):
         return luigi.LocalTarget(f'/app/log_ml_{self.model_type}_{self.prediction_mode}.txt')
 
     def run(self):
-
-        # Define the logging output of the task.
-        docker_logs_file_path = f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/docker_logs/log_ml_{self.model_type}_{self.prediction_mode}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-
-        logger = pu.TaskLogger()
-        start_time = datetime.datetime.now()
-        container = None
-        final_status = "Failed"
-        details = ""
-
-        try:
-            print("------------------------------------")
-            print(" Running MachineLearning task.")
-            print("------------------------------------")
-
-            # Construct the absolute volume paths to bind to the containers
-            absolute_volume_path_config = get_absolute_path(
-                env.get('ieasyforecast_configuration_path'))
-            absolute_volume_path_internal_data = get_absolute_path(
-                env.get('ieasyforecast_intermediate_data_path'))
-            bind_volume_path_config = get_bind_path(
-                env.get('ieasyforecast_configuration_path'))
-            bind_volume_path_internal_data = get_bind_path(
-                env.get('ieasyforecast_intermediate_data_path'))
-
-            #print(f"env.get('ieasyforecast_configuration_path'): {env.get('ieasyforecast_configuration_path')}")
-            #print(f"absolute_volume_path_config: {absolute_volume_path_config}")
-            #print(f"absolute_volume_path_internal_data: {absolute_volume_path_internal_data}")
-            #print(f"bind_volume_path_config: {bind_volume_path_config}")
-            #print(f"bind_volume_path_internal_data: {bind_volume_path_internal_data}")
-
-            # Run the docker container to forecast using machine learning
-            client = docker.from_env()
-
-            # Pull the latest image
-            if pu.there_is_a_newer_image_on_docker_hub(
-                client, repository='mabesa', image_name='sapphire-ml', tag=TAG):
-                print("Pulling the latest image from Docker Hub.")
-                client.images.pull('mabesa/sapphire-ml', tag=TAG)
-
-            # Define environment variables
-            environment = [
-                f'ieasyhydroforecast_env_file_path={env_file_path}',
-                'IN_DOCKER=True',
-                f'SAPPHIRE_MODEL_TO_USE={self.model_type}',  # TFT, TIDE, TSMIXER, ARIMA
-                f'SAPPHIRE_PREDICTION_MODE={self.prediction_mode}',  # PENTAD, DECAD
-                f'RUN_MODE={self.run_mode}'  # only run make_forecast.py in operational mode
-            ]
-            print(f"Environment variables:\n{environment}")
-
-            # Define volumes
-            volumes = {
-                absolute_volume_path_config: {'bind': bind_volume_path_config, 'mode': 'rw'},
-                absolute_volume_path_internal_data: {'bind': bind_volume_path_internal_data, 'mode': 'rw'}
-            }
-            print(f"Volumes:\n{volumes}")
-
-
-            # Run the container
-            container = client.containers.run(
-                f"mabesa/sapphire-ml:{TAG}",
-                detach=True,
-                environment=environment,
+        # Set up volumes
+        volumes = setup_docker_volumes(env, [
+            'ieasyforecast_configuration_path',
+            'ieasyforecast_intermediate_data_path'
+        ])
+        
+        # Define environment variables
+        environment = [
+            f'ieasyhydroforecast_env_file_path={env_file_path}',
+            'IN_DOCKER=True',
+            f'SAPPHIRE_MODEL_TO_USE={self.model_type}',
+            f'SAPPHIRE_PREDICTION_MODE={self.prediction_mode}',
+            f'RUN_MODE={self.run_mode}'
+        ]
+        
+        # Execute with retries using the base class method
+        status, details = self.execute_with_retries(
+            lambda attempt: self.run_docker_container(
+                image_name='sapphire-ml',
+                container_name=f"ml_{self.model_type}_{self.prediction_mode}_{attempt}",
                 volumes=volumes,
-                name=f"ml_{self.model_type}_{self.prediction_mode}",
-                #labels=labels,
-                network='host'  # To test
+                environment=environment,
+                attempt_number=attempt,
+                network='host'
             )
-
-            print(f"Container {container.id} is running.")
-
-            try:
-                self.run_with_timeout(container.wait)
-                logs = container.logs().decode('utf-8')
-
-                with open(docker_logs_file_path, 'w') as f:
-                    f.write('Task completed\n')
-                    f.write(f'Container ID: {container.id}\n')
-                    f.write(f'Timeout: {self.timeout_seconds}\n')
-                    f.write(f'Max retries: {self.max_retries}\n')
-                    f.write(f'Logs:\n{logs}')
-
-                final_status = "Success"
-                details = "Task completed successfully"
-
-                # Create the output marker file
-                with self.output().open('w') as f:
-                    f.write('Task completed')
-
-            except TimeoutError:
-                container.stop()
-                final_status = "Timeout"
-                details = f"Task timed out after {self.timeout_seconds} seconds"
-                raise
-
-        except Exception as e:
-            details = str(e)
-            raise
-
-        finally:
-            end_time = datetime.datetime.now()
-            logger.log_task_timing(
-                task_name=f"RunMLModel_{self.model_type}_{self.prediction_mode}",
-                start_time=start_time,
-                end_time=end_time,
-                status=final_status,
-                details=details
-            )
-
-            if container:
-                try:
-                    container.remove()
-                except:
-                    pass
+        )
 
 class RunAllMLModels(luigi.WrapperTask):
     '''Wrapper task to run all ML models in parallel for specified prediction modes.'''
@@ -853,36 +636,17 @@ class RunAllMLModels(luigi.WrapperTask):
                 yield RunMLModel(model_type=model, prediction_mode=mode, run_mode='forecast')
 
 class PostProcessingForecasts(pu.TimeoutMixin, luigi.Task):
-    # Set timeout to 15 minutes (900 seconds)
-    timeout_seconds = luigi.IntParameter(default=None)
-    max_retries = luigi.IntParameter(default=None)
-    retry_delay = luigi.IntParameter(default=None)
-    prediction_mode = luigi.Parameter(default='ALL')
-
-    # Use the intermediate_data_path for log files instead of /app/
-    intermediate_data_path = get_bind_path(env.get('ieasyforecast_intermediate_data_path'))
-    # Define the logging output of the task.
+    """Post-process forecasts from different models."""
+    
+    # Add prediction mode parameter for mode-specific processing
+    prediction_mode = luigi.Parameter(default='PENTAD')  # PENTAD or DECAD
+    
+    # Define logging output file path
     docker_logs_file_path = f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/docker_logs/log_postproc_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-        # Get parameters from timeout manager
-        task_name = self.__class__.__name__
-        task_params = get_task_parameters(task_name)
-
-        if self.timeout_seconds is None:
-            self.timeout_seconds = task_params['timeout_seconds']
-
-        if self.max_retries is None:
-            self.max_retries = task_params['max_retries']
-
-        if self.retry_delay is None:
-            self.retry_delay = task_params['retry_delay']
 
     def requires(self):
         # Start with LinearRegression as the base requirement
-        dependencies = [LinearRegression()]
+        dependencies = [LinearRegression(prediction_mode=self.prediction_mode)]
     
         # Add ML models if enabled
         if RUN_ML_MODELS == "True":
@@ -890,147 +654,46 @@ class PostProcessingForecasts(pu.TimeoutMixin, luigi.Task):
     
         # Add conceptual model if enabled
         if RUN_CM_MODELS == "True":
-            dependencies.append(ConceptualModel())
+            # Check if the conceptual model has already run today
+            today = datetime.date.today()
+            marker_file = get_marker_filepath('conceptual_model', date=today)
+        
+            if os.path.exists(marker_file):
+                print(f"Using external conceptual model task (already run) for {today}")
+                dependencies.append(ExternalConceptualModel())
+            else:
+                print(f"No conceptual model marker found for {today}, adding to dependencies")
+                dependencies.append(ConceptualModel())
     
         return dependencies
 
     def output(self):
         return luigi.LocalTarget(f'/app/log_postproc.txt')
 
-    def _run_container(self, attempt_number) -> tuple[Optional[str], int, str]:
-        """
-        Run the docker container and return container ID, exit status, and logs
-        """
-        client = docker.from_env()
-
-        try:
-            # Construct the absolute volume paths to bind to the containers
-            absolute_volume_path_config = get_absolute_path(
-                env.get('ieasyforecast_configuration_path'))
-            absolute_volume_path_internal_data = get_absolute_path(
-                env.get('ieasyforecast_intermediate_data_path'))
-            bind_volume_path_config = get_bind_path(
-                env.get('ieasyforecast_configuration_path'))
-            bind_volume_path_internal_data = get_bind_path(
-                env.get('ieasyforecast_intermediate_data_path'))
-
-            # Pull the latest image if needed
-            if pu.there_is_a_newer_image_on_docker_hub(
-                client, repository='mabesa', image_name='sapphire-postprocessing', tag=TAG):
-                print("Pulling the latest image from Docker Hub.")
-                client.images.pull('mabesa/sapphire-postprocessing', tag=TAG)
-
-            # Define environment variables
-            environment = [
-                f'ieasyhydroforecast_env_file_path={env_file_path}',
-            ]
-
-            # Define volumes
-            volumes = {
-                absolute_volume_path_config: {'bind': bind_volume_path_config, 'mode': 'rw'},
-                absolute_volume_path_internal_data: {'bind': bind_volume_path_internal_data, 'mode': 'rw'},
-            }
-
-            # Run the container with unique name for each attempt
-            container = client.containers.run(
-                f"mabesa/sapphire-postprocessing:{TAG}",
-                detach=True,
-                environment=environment,
+    def run(self):
+        # Set up volumes
+        volumes = setup_docker_volumes(env, [
+            'ieasyforecast_configuration_path',
+            'ieasyforecast_intermediate_data_path'
+        ])
+        
+        # Define environment variables
+        environment = [
+            f'ieasyhydroforecast_env_file_path={env_file_path}',
+            f'SAPPHIRE_PREDICTION_MODE={self.prediction_mode}'  # Pass prediction mode to container
+        ]
+        
+        # Execute with retries using the base class method
+        status, details = self.execute_with_retries(
+            lambda attempt: self.run_docker_container(
+                image_name='sapphire-postprocessing',
+                container_name='postprocessing',
                 volumes=volumes,
-                name=f"postprocessing_attempt_{attempt_number}_{time.time()}",  # Unique name per attempt
+                environment=environment,
+                attempt_number=attempt,
                 network='host'
             )
-
-            print(f"Container {container.id} is running.")
-
-            # Wait for container with timeout
-            try:
-                self.run_with_timeout(container.wait)
-                exit_status = 0
-            except TimeoutError:
-                print(f"Container {container.id} timed out after {self.timeout_seconds} seconds")
-                container.stop()
-                exit_status = 124
-            logs = container.logs().decode('utf-8')
-
-            print(f"Container {container.id} exited with status code {exit_status}")
-            print(f"Logs from container {container.id}:\n{logs}")
-
-            # Clean up container
-            try:
-                container.remove()
-            except Exception as e:
-                print(f"Warning: Could not remove container {container.id}: {str(e)}")
-
-            return container.id, exit_status, logs
-
-        except Exception as e:
-            print(f"Error running container: {str(e)}")
-            if 'container' in locals() and container:
-                try:
-                    container.stop()
-                    container.remove()
-                except:
-                    pass
-            return None, 1, str(e)
-
-    def run(self):
-        logger = pu.TaskLogger()
-        start_time = datetime.datetime.now()
-
-        print("------------------------------------")
-        print(" Running PostprocessingForecasts task.")
-        print("------------------------------------")
-
-        attempts = 0
-        final_status = "Failed"
-        details = ""
-
-        try:
-            while attempts < self.max_retries:
-                attempts += 1
-                print(f"Attempt {attempts} of {self.max_retries}")
-
-                container_id, exit_status, logs = self._run_container(attempts)
-
-                if exit_status == 0:
-                    # Success - write output and exit
-                    with open(self.docker_logs_file_path, 'w') as f:
-                        f.write('Task completed successfully\n')
-                        f.write(f'Container ID: {container_id}\n')
-                        f.write(f'Timeout: {self.timeout_seconds}\n')
-                        f.write(f'Max retries: {self.max_retries}\n')
-                        f.write(f'Logs:\n{logs}')
-                    final_status = "Success"
-                    details = f"Completed on attempt {attempts}"
-
-                    # Create the output marker file
-                    with self.output().open('w') as f:
-                        f.write('Task completed')
-
-                    break
-
-                if exit_status == 124:  # Timeout
-                    final_status = "Timeout"
-                    details = f"Task timed out after {self.timeout_seconds} seconds"
-                    break
-
-                if attempts < self.max_retries:
-                    print(f"Container failed with status {exit_status}. Retrying in {self.retry_delay} seconds...")
-                    time.sleep(self.retry_delay)
-                else:
-                    print(f"Container failed after {self.max_retries} attempts.")
-                    raise RuntimeError(f"Task failed after {self.max_retries} attempts. Last exit status: {exit_status}\nLogs:\n{logs}")
-
-        finally:
-            end_time = datetime.datetime.now()
-            logger.log_task_timing(
-                task_name="PostProcessingForecasts",
-                start_time=start_time,
-                end_time=end_time,
-                status=final_status,
-                details=details
-            )
+        )
 
 class DeleteOldGatewayFiles(pu.TimeoutMixin, luigi.Task):
     # Fix the typo in the class name (was "Gateywayy")
@@ -1447,7 +1110,7 @@ class RunPentadalWorkflow(luigi.Task):
         base_tasks = []
         
         # Always include Linear Regression
-        base_tasks.append(LinearRegression())
+        base_tasks.append(LinearRegression(prediction_mode='PENTAD'))
         
         # Add ML models if enabled
         if RUN_ML_MODELS == "True":
@@ -1508,7 +1171,7 @@ class RunDecadalWorkflow(luigi.Task):
         base_tasks = []
         
         # Always include Linear Regression
-        base_tasks.append(LinearRegression())
+        base_tasks.append(LinearRegression(prediction_mode='DECAD'))
         
         # Add ML models if enabled
         if RUN_ML_MODELS == "True":
@@ -1555,6 +1218,7 @@ class RunDecadalWorkflow(luigi.Task):
 
 class RunWorkflow(luigi.Task):
     """Main wrapper task that runs the entire forecast pipeline."""
+    """This task is being deprecated in favor of RunPentadalWorkflow and RunDecadalWorkflow."""
 
     # Parameters for notifications
     custom_message = luigi.Parameter(default="")
