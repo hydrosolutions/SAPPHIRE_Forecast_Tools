@@ -3680,6 +3680,14 @@ def run_docker_container(client, full_image_name, volumes, environment, containe
             # Optionally log the error or add to a list of failed containers
         else:
             print(f"Container '{container_name}' has stopped successfully.")
+
+        # Remove the container after it has finished
+        try: 
+            container.remove(force=True)
+            print(f"Container '{container_name}' removed after completion.")
+        except docker.errors.APIError as e:
+            print(f"Error removing container '{container_name}': {e}")
+            
     except Exception as e:
         print(f"Error running container '{container_name}': {e}")
 
