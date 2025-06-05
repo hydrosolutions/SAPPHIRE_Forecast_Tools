@@ -3271,6 +3271,7 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector, d
             # Define environment variables
             environment = [
                 'IN_DOCKER_CONTAINER=True',
+                'SAPPHIRE_PREDICTION_MODE=' + horizon.upper(),
                 f'ieasyhydroforecast_env_file_path={bind_volume_path_config}/.env_develop_kghm'
             ]
 
@@ -3471,6 +3472,7 @@ def create_reload_button():
                 environment = [
                     'SAPPHIRE_OPDEV_ENV=True',
                     'IN_DOCKER_CONTAINER=True',
+                    f'SAPPHIRE_PREDICTION_MODE={os.getenv("sapphire_forecast_horizon", "pentad").upper()}',
                     f'ieasyhydroforecast_env_file_path={get_bind_path(env.get("ieasyforecast_configuration_path"))}/.env_develop_kghm'
                 ]
                 print("environment: \n", environment)

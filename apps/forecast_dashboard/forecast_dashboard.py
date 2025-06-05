@@ -599,13 +599,23 @@ print(f"DEBUG: forecast_dashboard.py: current_model_pre_selection: \n{current_mo
 model_checkbox = pn.widgets.CheckBoxGroup(
     name=_("Select forecast model:"),
     options=model_dict,
-    #value=[model_dict['Linear regression (LR)']],
-    value=[model_dict[model] for model in current_model_pre_selection],
+    value=[],
+    #value=[model_dict[model] for model in current_model_pre_selection],
     #width=200,  # 280
     margin=(0, 0, 0, 0),
     sizing_mode='stretch_width',
     css_classes=['checkbox-label']
 )
+# Add models to value list safely
+for model in current_model_pre_selection:
+    if model in model_dict:
+        model_checkbox.value.append(model_dict[model])
+    elif "Neural Ensemble" in model:
+        # Find any Neural Ensemble model in the dictionary
+        ensemble_key = next((k for k in model_dict.keys() if "Neural Ensemble" in k), None)
+        if ensemble_key:
+            model_checkbox.value.append(model_dict[ensemble_key])
+    # Skip models that can't be found
 print(f"\n\n\nmodel_checkbox: {model_checkbox.value}\n\n\n")
 
 allowable_range_selection = pn.widgets.Select(
