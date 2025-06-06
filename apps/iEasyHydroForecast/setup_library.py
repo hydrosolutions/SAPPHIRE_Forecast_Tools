@@ -19,7 +19,7 @@ import forecast_library as fl
 import tag_library as tl
 
 # Configure the logging level and formatter
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.WARNING)
 formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 
 # Create a stream handler to print logs to the console
@@ -134,9 +134,11 @@ def define_run_dates(prediction_mode='BOTH'):
     date_end (datetime.date): The end date for the forecast. In operational mode this is today.
     bulletin_date (datetime.date): The bulletin date is the first day of the period for which the forecast is produced. Typically tomorrow.
     """
+    print(f"... define_run_dates: prediction_mode: {prediction_mode}")
     # The last successful run date is the last time, the forecast tools were
     # run successfully. This is typically yesterday.
     last_successful_run_date = get_last_run_date(prediction_mode=prediction_mode)
+    print(f"... define_run_dates: Last successful run date: {last_successful_run_date}")
 
     # The day on which the forecast is produced. In operational mode, this is
     # day 0 or today. However, the tools can also be run in hindcast mode by
@@ -147,11 +149,12 @@ def define_run_dates(prediction_mode='BOTH'):
 
     # The last day for which a forecast is produced. This is always today.
     date_end = dt.date.today()
+    print(f"... define_run_dates: date_start: {date_start}, date_end: {date_end}")
 
     # Basic sanity check in case the script is run multiple times.
     if date_end == last_successful_run_date:
-        logger.info("The forecasts have allready been produced for today. "
-                       "No forecast will be produced."
+        logger.info("The forecasts have allready been produced for today.\n"
+                       "No forecast will be produced.\n"
                        "Please use the re-run forecast tool to re-run the forecast for today.")
         return None, None, None
 

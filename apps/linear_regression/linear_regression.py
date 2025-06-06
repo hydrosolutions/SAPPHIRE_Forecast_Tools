@@ -58,6 +58,7 @@ logger = logging.getLogger()
 logger.handlers = []
 logger.addHandler(file_handler)
 logger.addHandler(console_handler)
+logger.info = print
 
 def main():
 
@@ -173,19 +174,17 @@ def main():
         logger.info(f"\n\n------ Forecast on {current_day} --------------------")
 
         # Update the last run_date in the database
-        current_date, date_end, bulletin_date = sl.define_run_dates()
+        current_date, date_end, bulletin_date = sl.define_run_dates(prediction_mode=prediction_mode)
         # Make sure we have a valid forecast date
         if not forecast_date:
             print("No valid forecast date. Exiting.")
             exit()
         # Update the forecast flags
         forecast_flags = sl.ForecastFlags.from_forecast_date_get_flags(current_date)
-        # Modify forecast_flags based on prediction mode
-        if not run_pentad:
-            forecast_flags.pentad = False
-        if not run_decad:
-            forecast_flags.decad = False
         logger.debug(f"Forecast flags: {forecast_flags}")
+
+        # Get predictor dates for the current forecast
+        predictor_dates = fl.get_predictor_dates(current_day, forecast_flags)
 
         # Test if today is a forecast day for either pentadal and decadal forecasts
         # We only run through the rest of the code in the loop if current_date is a forecast day
@@ -209,7 +208,6 @@ def main():
             #logger.info(f"discharge_pentad[discharge_pentad['code'] == '15194'].tail(50): \n{discharge_pentad[discharge_pentad['code'] == '15194'].tail(50)}")
 
             # Write the predictor to the Site objects
-            predictor_dates = fl.get_predictor_dates(current_day, forecast_flags)
             logger.debug(f"Predictor dates: {predictor_dates.pentad}")
             fl.get_predictors(
                 data_df=discharge_pentad,

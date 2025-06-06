@@ -76,12 +76,16 @@ file_handler.setFormatter(formatter)
 # Create a stream handler to print logs to the console
 console_handler = logging.StreamHandler()
 console_handler.setFormatter(formatter)
+console_handler.setLevel(logging.INFO)
 
 # Get the root logger and add the handlers to it
 logger = logging.getLogger()
 logger.handlers = []
 logger.addHandler(file_handler)
 logger.addHandler(console_handler)
+logger.info = print
+
+
 
 
 def get_ieh_sdk():
@@ -208,6 +212,7 @@ def main():
     start_time = time.time()
     if os.getenv('ieasyhydroforecast_connect_to_iEH') == 'True':
         # Not recently used (or tested), but kept for reference
+        # Todo: Work in standardization of date column format. 
         runoff_data = src.get_runoff_data_for_sites(
                 ieh_sdk,
                 date_col='date',
@@ -217,6 +222,7 @@ def main():
                 site_list=fc_sites,
                 code_list=site_codes,
         )
+        logger.info("Runoff data read from iEasyHydro SDK")
 
     else: 
         runoff_data = src.get_runoff_data_for_sites_HF(
@@ -229,8 +235,27 @@ def main():
                 id_list=site_ids,
                 target_timezone=target_time_zone,
         )
-    print(runoff_data.head(5))
-      
+        logger.info("Runoff data read from iEasyHydro HF SDK")
+    print(f"head of runoff data:\n{runoff_data.head(5)}")
+    print(f"tail of runoff data:\n{runoff_data.tail(5)}")
+    print(f"columns of runoff data: {runoff_data.columns.tolist()}")
+    print(f"types of columns in runoff data: {runoff_data.dtypes.to_dict()}")
+    # Print whetehr or not the date column is in datetime format
+    if 'date' in runoff_data.columns:
+        import pandas as pd
+        if runoff_data['date'].dtype == 'datetime64[ns]':
+            logger.info("Date column is in datetime format.")
+        # Test if date is in pandas date format
+        elif pd.api.types.is_datetime64_any_dtype(runoff_data['date']):
+            logger.info("Date column is in pandas datetime format.")
+        else:
+            logger.warning("Date column is NOT in datetime format. "
+                           "This may cause issues later on.")
+    else: 
+        logger.warning("Date column is missing in runoff data. "
+                       "This will cause issues later on.")
+        exit()
+
     end_time = time.time()
     time_get_runoff_data = end_time - start_time
 
@@ -288,6 +313,11 @@ def main():
     ret = src.write_daily_time_series_data_to_csv(
         data=filtered_data,
         column_list=['code', 'date', 'discharge'])
+    if ret is None:
+        logger.info("Daily time series data written successfully.")
+    else:
+        logger.error("Failed to write daily time series data.")
+        sys.exit(1)
     end_time = time.time()
     time_write_daily_time_series_data = end_time - start_time
 
@@ -296,6 +326,11 @@ def main():
     ret = src.write_daily_hydrograph_data_to_csv(
         data=hydrograph,
         column_list=hydrograph.columns.tolist())
+    if ret is None:
+        logger.info("Daily hydrograph data written successfully.")
+    else:
+        logger.error("Failed to write daily hydrograph data.")
+        sys.exit(1)
     end_time = time.time()
     time_write_daily_hydrograph_data = end_time - start_time
 
@@ -310,6 +345,7 @@ def main():
     #logger.info(f"Time to add dangerous discharge: {time_add_dangerous_discharge:.2f} seconds")
     logger.info(f"Time to write daily time series data: {time_write_daily_time_series_data:.2f} seconds")
     logger.info(f"Time to write daily hydrograph data: {time_write_daily_hydrograph_data:.2f} seconds")
+    logger.info("Preprocessing of runoff data completed successfully.")
 
     if ret is None:
         sys.exit(0) # Success
