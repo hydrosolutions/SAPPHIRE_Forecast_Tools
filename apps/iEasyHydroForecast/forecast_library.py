@@ -2932,7 +2932,8 @@ def write_pentad_hydrograph_data(data: pd.DataFrame, iehhf_sdk = None):
             try:
                 temp_norm = iehhf_sdk.get_norm_for_site(code, "discharge", norm_period="p")
             except Exception as e:
-                logger.error(f"Could not get norm for site {code}.")
+                logger.warning(f"Could not get norm for site {code}.\nAssuming empty norm for this site.")
+                logger.warning(e)
                 temp_norm = []
             if len(temp_norm) == 72:
                 all_pentadal_norms[code] = temp_norm
@@ -3069,7 +3070,8 @@ def write_decad_hydrograph_data(data: pd.DataFrame, iehhf_sdk = None):
             try:
                 temp_norm = iehhf_sdk.get_norm_for_site(code, "discharge")
             except Exception as e:
-                logger.error(f"Could not get norm for site {code}.")
+                logger.error(f"Could not get norm for site {code}.\nAssuming empty norm for this site.")
+                logger.warning(e)
                 temp_norm = []
             if len(temp_norm) == 36:
                 all_pentadal_norms[code] = temp_norm
@@ -3200,7 +3202,8 @@ def write_decad_hydrograph_data_first_version(data: pd.DataFrame, iehhf_sdk = No
             try:
                 temp_norm = iehhf_sdk.get_norm_for_site(code, "discharge")
             except Exception as e:
-                logger.error(f"Could not get norm for site {code}.")
+                logger.warning(f"Could not get norm for site {code}.\nAssuming empty norm for this site.")
+                logger.warning(e)
                 temp_norm = []
             if len(temp_norm) == 36:
                 #print(f"code {code} len(temp_norm): {len(temp_norm)}\ntemp_norm: {temp_norm}")

@@ -688,7 +688,7 @@ def read_all_runoff_data_from_csv(date_col='date',
             )
         else:
             df = pd.concat([df, read_runoff_data_from_csv_files(
-                filename=file_path,
+                filename=file,
                 code_list=code_list,
                 date_col=date_col,
                 discharge_col=discharge_col,
