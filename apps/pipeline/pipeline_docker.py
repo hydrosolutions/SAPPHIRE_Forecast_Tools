@@ -132,6 +132,45 @@ class DockerTaskBase(pu.TimeoutMixin, luigi.Task):
         if self.docker_logs_file_path:
             os.makedirs(os.path.dirname(self.docker_logs_file_path), exist_ok=True)
     
+    def send_failure_notification(self, error_details, logs=None):
+        """Send failure notification with log file attachments"""
+        from apps.pipeline.src.notification_manager import NotificationManager
+    
+        # Get the task name
+        task_name = self.__class__.__name__
+    
+        # Collect any log files
+        log_file_paths = []
+        if self.docker_logs_file_path and os.path.exists(self.docker_logs_file_path):
+            log_file_paths.append(self.docker_logs_file_path)
+    
+        # If logs were provided, write them to a temporary file and attach
+        if logs:
+            temp_log_path = f"{os.path.dirname(self.docker_logs_file_path)}/failure_log_{int(time.time())}.txt"
+            try:
+                with open(temp_log_path, 'w') as f:
+                    f.write(logs)
+                log_file_paths.append(temp_log_path)
+            except Exception as e:
+                print(f"Failed to write logs to temp file: {str(e)}")
+    
+        # Additional info about the task
+        additional_info = {
+            "Task": task_name,
+            "Timeout (seconds)": self.timeout_seconds,
+            "Max retries": self.max_retries,
+            "Retry delay": self.retry_delay,
+            "Failure time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
+    
+        # Send the notification
+        return NotificationManager.send_failure_notification(
+            task_name=task_name,
+            error_details=error_details,
+            log_file_paths=log_file_paths,
+            additional_info=additional_info
+        )
+
     def run_docker_container(
         self, 
         image_name: str,
@@ -241,12 +280,24 @@ class DockerTaskBase(pu.TimeoutMixin, luigi.Task):
                     final_status = "Timeout"
                     details = f"Task timed out after {self.timeout_seconds} seconds"
                     break
+
+                    # Send failure notification for timeout
+                    self.send_failure_notification(
+                        f"Task timed out after {self.timeout_seconds} seconds", 
+                        logs
+                    )
+                    break
                 
                 if attempts < self.max_retries:
                     print(f"Container failed with status {exit_status}. Retrying in {self.retry_delay} seconds...")
                     time.sleep(self.retry_delay)
                 else:
                     print(f"Container failed after {self.max_retries} attempts.")
+                    error_msg = f"Task failed after {self.max_retries} attempts. Last exit status: {exit_status}"
+                
+                    # Send failure notification
+                    self.send_failure_notification(error_msg, logs)
+                
                     raise RuntimeError(f"Task failed after {self.max_retries} attempts. Last exit status: {exit_status}\nLogs:\n{logs}")
                     
         finally:
@@ -650,7 +701,16 @@ class PostProcessingForecasts(DockerTaskBase):
     
         # Add ML models if enabled
         if RUN_ML_MODELS == "True":
-            dependencies.append(RunMLModel(prediction_mode=self.prediction_mode))
+            # Get the list of available ML models from .env file
+            models = env.get('ieasyhydroforecast_available_ML_models').split(',')
+            for model in models: 
+                dependencies.append(
+                    RunMLModel(
+                        model_type=model, 
+                        prediction_mode=self.prediction_mode, 
+                        run_mode='forecast'
+                    )
+                )
     
         # Add conceptual model if enabled
         if RUN_CM_MODELS == "True":
