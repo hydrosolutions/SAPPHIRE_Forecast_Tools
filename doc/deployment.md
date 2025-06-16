@@ -100,6 +100,8 @@ You may have to open specific ports on your server to allow you to view the dash
 - 5007 for the forecast dashboard for displaying decadal forecasts
 - 8082 for the luigi task monitor (optional)
 
+For setting up the Luigi daemon (which runs on port 8082), please refer to the [Luigi daemon setup documentation](luigi_daemon/ubuntu_setup.md) for production environments or the [Luigi daemon development instructions](luigi_daemon/dev_instructions.md) for development environments.
+
 ### Copy your data to the repository
 We recommend that you follow the folder structure of the repository. Please review the example data in the data folder to understand the folder structure and the data formats. You can copy your data to the data folder in the SAPPHIRE_Forecast_Tools folder or to any other location on your server.
 
@@ -161,6 +163,8 @@ docker logs <container_name>
 ```
 
 You can also check the progress of the luigi tasks by opening a browser window and typing <your servers url>:8082 in the address bar. This will open the luigi task monitor and show you the status of the individual modules that are run by the forecast tools.
+
+For comprehensive monitoring of the SAPPHIRE Forecast Tools, including automated alerts and systemd services for monitoring Docker containers and logs, please refer to the [detailed monitoring documentation](monitoring/forecast_tools_monitoring.md).
 
 
 ## Set up cron job
