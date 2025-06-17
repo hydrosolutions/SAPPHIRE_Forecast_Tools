@@ -66,7 +66,9 @@ read_configuration(){
         echo "| Container path to .env derived: $ieasyhydroforecast_env_file_path"
         # Read the .env file
         if [ -f "$env_file_path" ]; then
+            set -a  # Automatically export all variables
             source "$env_file_path"
+            set +a  # Stop automatically exporting variables
         else
             echo "| .env file not found at $env_file_path!"
             exit 1
@@ -99,14 +101,6 @@ read_configuration(){
     fi
     export ieasyhydroforecast_backend_docker_image_tag
     export ieasyhydroforecast_frontend_docker_image_tag
-
-    # Load environment variables from the specified .env file
-    if [ -f "$env_file_path" ]; then
-        source "$env_file_path"
-    else
-        echo "| .env file not found at $env_file_path!"
-        exit 1
-    fi
 
     # Define subdomains for url, depending on the hm: 
     # 1. hm: "kyg" -> kyg.fc
