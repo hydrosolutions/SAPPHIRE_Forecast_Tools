@@ -65,6 +65,14 @@ print_banner
 # Read the configuration from the .env file
 read_configuration $1
 
+# Debug environment variables
+echo "| ----- Debugging environment variables -----"
+echo "| Checking for SAPPHIRE_PIPELINE_SENDER_EMAIL: ${SAPPHIRE_PIPELINE_SENDER_EMAIL:-(not set)}"
+# Print all SAPPHIRE_ environment variables
+echo "| All SAPPHIRE_ environment variables:"
+env | grep "^SAPPHIRE_" | sort
+echo "| ----- End debugging environment variables -----"
+
 # Clean up the Docker space (note: this will remove all containers and images)
 clean_out_docker_space
 
