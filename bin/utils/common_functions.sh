@@ -241,11 +241,6 @@ start_docker_compose_luigi() {
     echo "| ------"
     echo "| Starting Docker Compose service for backend ..."
 
-    echo "| ----- Docker Compose Environment Variables -----"
-    echo "| Print all SAPPHIRE_ environment variables:"
-    env | grep "^SAPPHIRE_" | sort
-    echo "| ----- End Docker Compose Environment Variables -----"
-
     if [ -n "$service_name" ]; then
         if [ -n "$sapphire_prediction_mode" ]; then
             export SAPPHIRE_PREDICTION_MODE="$sapphire_prediction_mode"

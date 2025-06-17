@@ -48,7 +48,7 @@ if [ -n "$running_containers" ]; then
         run_command docker stop $container
     done
 else
-    echo "No running containers to stop (excluding Nginx)."
+    echo "No running containers to stop (excluding Nginx, Watchtower)."
 fi
 
 # Tear down the Docker Compose service for the backend pipeline
@@ -58,24 +58,24 @@ fi
 stopped_containers=$(docker ps -a --filter "status=exited" --format '{{.ID}} {{.Image}}' | grep -iv 'nginx|watchtower' | awk '{print $1}')
 
 if [ -n "$stopped_containers" ]; then
-    echo "Removing stopped containers (excluding Nginx)..."
+    echo "Removing stopped containers (excluding Nginx, Watchtower)..."
     for container in $stopped_containers; do
         run_command docker rm $container
     done
 else
-    echo "No stopped containers to remove (excluding Nginx)."
+    echo "No stopped containers to remove (excluding Nginx, Watchtower)."
 fi
 
 # Remove all images except Nginx-related ones
 image_ids=$(docker images --format '{{.ID}} {{.Repository}}' | grep -iv 'nginx|watchtower' | awk '{print $1}')
 
 if [ -n "$image_ids" ]; then
-    echo "Removing images (excluding Nginx)..."
+    echo "Removing images (excluding Nginx, Watchtower)..."
     for image in $image_ids; do
         run_command docker rmi $image -f
     done
 else
-    echo "No Docker images to remove (excluding Nginx)."
+    echo "No Docker images to remove (excluding Nginx, Watchtower)."
 fi
 
 # Prune the build cache to free up disk space

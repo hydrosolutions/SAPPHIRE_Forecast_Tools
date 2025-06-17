@@ -74,6 +74,7 @@ def load_configuration(env_file_path: str=None) -> None:
         # Print ieasyreports_templates_directory_path from the environment
         # variables
     logger.debug("Configuration read from : %s", os.getenv("ieasyforecast_configuration_path"))
+    logger.info("ieasyhydroforecast_url: ", os.getenv("ieasyhydroforecast_url"), flush=True)
     print("Configuration read from : ", os.getenv("ieasyforecast_configuration_path"))
 
     # Test if the environment was loaded successfully
