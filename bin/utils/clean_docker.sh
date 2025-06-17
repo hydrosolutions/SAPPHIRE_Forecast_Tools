@@ -31,16 +31,16 @@ run_command() {
 
 # Function to get IDs of containers not related to Nginx
 get_non_nginx_containers() {
-    docker ps -a --format '{{.ID}} {{.Image}}' | grep -iv 'nginx' | awk '{print $1}'
+    docker ps -a --format '{{.ID}} {{.Image}}' | grep -iv 'nginx|watchtower' | awk '{print $1}'
 }
 
 # Function to get IDs of images not related to Nginx
 get_non_nginx_images() {
-    docker images --format '{{.ID}} {{.Repository}}' | grep -iv 'nginx' | awk '{print $1}'
+    docker images --format '{{.ID}} {{.Repository}}' | grep -iv 'nginx|watchtower' | awk '{print $1}'
 }
 
 # Stop all running containers except Nginx-related ones
-running_containers=$(docker ps --format '{{.ID}} {{.Image}}' | grep -iv 'nginx' | awk '{print $1}')
+running_containers=$(docker ps --format '{{.ID}} {{.Image}}' | grep -iv 'nginx|watchtower' | awk '{print $1}')
 
 if [ -n "$running_containers" ]; then
     echo "Stopping all running containers except Nginx..."
@@ -55,7 +55,7 @@ fi
 #run_command docker compose -f bin/docker-compose-luigi.yml down
 
 # Remove all stopped containers except Nginx-related ones
-stopped_containers=$(docker ps -a --filter "status=exited" --format '{{.ID}} {{.Image}}' | grep -iv 'nginx' | awk '{print $1}')
+stopped_containers=$(docker ps -a --filter "status=exited" --format '{{.ID}} {{.Image}}' | grep -iv 'nginx|watchtower' | awk '{print $1}')
 
 if [ -n "$stopped_containers" ]; then
     echo "Removing stopped containers (excluding Nginx)..."
@@ -67,7 +67,7 @@ else
 fi
 
 # Remove all images except Nginx-related ones
-image_ids=$(docker images --format '{{.ID}} {{.Repository}}' | grep -iv 'nginx' | awk '{print $1}')
+image_ids=$(docker images --format '{{.ID}} {{.Repository}}' | grep -iv 'nginx|watchtower' | awk '{print $1}')
 
 if [ -n "$image_ids" ]; then
     echo "Removing images (excluding Nginx)..."
