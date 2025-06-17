@@ -31,12 +31,12 @@ run_command() {
 
 # Function to get IDs of containers not related to Nginx
 get_non_nginx_containers() {
-    docker ps -a --format '{{.ID}} {{.Image}}' | grep -iv 'nginx|watchtower' | awk '{print $1}'
+    docker ps -a --format '{{.ID}} {{.Image}}' | grep -iv 'nginx|watchtower|nginx-proxy-manager' | awk '{print $1}'
 }
 
 # Function to get IDs of images not related to Nginx
 get_non_nginx_images() {
-    docker images --format '{{.ID}} {{.Repository}}' | grep -iv 'nginx|watchtower' | awk '{print $1}'
+    docker images --format '{{.ID}} {{.Repository}}' | grep -iv 'nginx|watchtower|nginx-proxy-manager' | awk '{print $1}'
 }
 
 # Stop all running containers except Nginx-related ones
@@ -82,7 +82,7 @@ fi
 run_command docker builder prune -f
 
 # Cleaning the docker cache
-run_command docker system prune -a -f --volumes
+run_command docker system prune -f --volumes
 
 if $DRY_RUN; then
     echo "This was a dry run. To actually perform these operations, run the script with --execute"
