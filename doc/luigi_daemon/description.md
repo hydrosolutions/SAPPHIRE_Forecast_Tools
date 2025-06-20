@@ -21,7 +21,7 @@ Looking at the SAPPHIRE pipeline code, the workflow contains numerous interdepen
 This orchestration is essential for reliability in forecasting workflows that might involve lengthy processing steps and complex dependencies between tasks.
 
 ## Operational Importance
-For production environments, the Luigi daemon is deployed as a systemd service to ensure it:
+For production environments, the Luigi daemon is deployed as a persistent service to ensure it:
 
 - Starts automatically on system boot  
 - Restarts if it crashes  
@@ -31,7 +31,11 @@ For production environments, the Luigi daemon is deployed as a systemd service t
 Without the daemon, managing task completion state and dependencies would need to be handled manually, making pipeline execution much less reliable.
 
 ## Production setup
-For production use, we set up the Luigi daemon as a systemd service using the script `bin/setup_luigi_daemon.sh`. This ensures that the daemon runs continuously in the background, automatically starting on system boot and restarting if it crashes. The service is configured to log output to a specified directory, allowing for easy monitoring and debugging. See [ubuntu_setup.md](ubuntu_setup.md) documentation for details on how to set up the systemd service.
+For production use, the recommended approach is to run the Luigi daemon as a persistent Docker container. This aligns with the rest of the SAPPHIRE application stack and simplifies deployment. The `bin/docker-compose-luigi.yml` file defines a `luigi-daemon` service with a `restart: unless-stopped` policy, which ensures the daemon runs continuously.
+
+See the main [deployment instructions](../deployment.md) for details on how to start the daemon container.
+
+For non-Docker deployments, an alternative is to set up the Luigi daemon as a `systemd` service using the script `bin/setup_luigi_daemon.sh`. See the [ubuntu_setup.md](ubuntu_setup.md) documentation for details on this method.
 
 ## Development setup
-For development purposes, we provide a script (`dev/run_luigi_dev.sh`) that allows you to run the Luigi daemon without needing to set up a full systemd service. This is useful for testing and development work, as it simplifies the process of starting and stopping the daemon. See the [dev_instructions.md](dev_instructions.md) documentation for details on how to use this script.
+For development purposes, we provide a script (`dev/run_luigi_dev.sh`) that allows you to run the Luigi daemon temporarily without needing to set up a full systemd service or a persistent Docker container. This is useful for testing and development work, as it simplifies the process of starting and stopping the daemon. See the [dev_instructions.md](dev_instructions.md) documentation for details on how to use this script.

@@ -1,12 +1,14 @@
-# Docker compose file for SAPPHIRE forecast tools using system Luigi daemon
-# Prerequisites: Luigi daemon must be running on the host (see setup_luigi_daemon.sh)
+# Docker compose file for SAPPHIRE forecast tools using a containerized Luigi daemon
 #
-# Usage examples:
-# - Preprocessing only: docker-compose -f docker-compose-luigi-separated.yml run preprocessing
-# - Pentadal forecast: docker-compose -f docker-compose-luigi-separated.yml run pentadal
-# - Decadal forecast: docker-compose -f docker-compose-luigi-separated.yml run decadal
+# Usage:
+# 1. Start the Luigi daemon in the background:
+#    docker-compose -f bin/docker-compose-luigi.yml up -d luigi-daemon
 #
-# Assums the following environment variables are set:
+# 2. Run a specific pipeline task (it will connect to the daemon):
+#    - Preprocessing: docker-compose -f bin/docker-compose-luigi.yml run --rm preprocessing-gateway
+#    - Pentadal:      docker-compose -f bin/docker-compose-luigi.yml run --rm pentadal
+#
+# Assumes the following environment variables are set:
 # - ieasyhydroforecast_data_root_dir: Path to the root directory for data
 # - ieasyhydroforecast_data_ref_dir: Path to the reference data directory
 # - ieasyhydroforecast_container_data_ref_dir: Path to the container data reference directory
@@ -88,3 +90,10 @@ services:
     command: ['luigi', '--module', 'apps.pipeline.pipeline_docker', 'RunDecadalWorkflow']
     container_name: sapphire-pipeline-decadal
 
+  # Luigi scheduler daemon
+  # This service should be running persistently in the background
+  luigi-daemon:
+    extends: pipeline-base
+    container_name: sapphire-luigi-daemon
+    command: ['luigid', '--port', '8082']
+    restart: unless-stopped
