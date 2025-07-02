@@ -420,7 +420,7 @@ def load_data():
     
     if not station_dict:
         template = pn.template.BootstrapTemplate(
-            tile=_(f"SAPPHIRE Forecast Dashboard for {horizon} forecasts"),
+            title=_(f"SAPPHIRE Forecast Dashboard for {horizon} forecasts"),
             logo=icon_path,
             favicon=icon_path,
         )
