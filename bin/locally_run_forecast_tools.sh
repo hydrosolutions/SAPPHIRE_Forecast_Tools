@@ -9,7 +9,12 @@
 # How to run
 # CD to project root SAPPHIRE_Forecast_Tools
 # Establish ssh conncetion to server
-# Run the script: ieasyhydroforecast_env_file_path=<path/to/.env> bash bin/locally_run_forecast_tools.sh
+# Run the script: SAPPHIRE_PREDICTION_MODE=PENTAD ieasyhydroforecast_env_file_path=<path/to/.env> bash bin/locally_run_forecast_tools.sh
+
+# Pass SAPPHIRE_PREDICTION_MODE to all subprocesses if set
+if [ ! -z "$SAPPHIRE_PREDICTION_MODE" ]; then
+    export SAPPHIRE_PREDICTION_MODE
+fi
 
 # Define a function to run the preprocessing-runoff module
 run_preprocessing_runoff() {
@@ -27,7 +32,7 @@ run_preprocessing_runoff() {
 
     # Run the script
     echo "pwd: $(pwd)" >> ../../summary.log
-    ieasyhydroforecast_env_file_path=$ieasyhydroforecast_env_file_path python preprocessing_runoff.py
+    SAPPHIRE_PREDICTION_MODE=$SAPPHIRE_PREDICTION_MODE ieasyhydroforecast_env_file_path=$ieasyhydroforecast_env_file_path python preprocessing_runoff.py
 
     # Deactivate the virtual environment
     conda deactivate
@@ -83,7 +88,7 @@ run_linear_regression() {
     cd ../../apps/linear_regression
 
     # Run the script
-    ieasyhydroforecast_env_file_path=$ieasyhydroforecast_env_file_path python linear_regression.py
+    SAPPHIRE_PREDICTION_MODE=$SAPPHIRE_PREDICTION_MODE ieasyhydroforecast_env_file_path=$ieasyhydroforecast_env_file_path python linear_regression.py
 
     # Deactivate the virtual environment
     conda deactivate
@@ -110,7 +115,7 @@ run_conceptual_model() {
     cd ../../apps/conceptual_model
 
     # Run the script
-    SAPPHIRE_OPDEV_ENV=True Rscript run_operation_forecasting_CM.R
+    ieasyhydroforecast_env_file_path=$ieasyhydroforecast_env_file_path Rscript run_operation_forecasting_CM.R
 
     # Deactivate the virtual environment
     conda deactivate
@@ -139,6 +144,7 @@ run_machine_learning_models() {
     # Run the script
     echo "pwd: $(pwd)" >> ../../summary.log
     export ieasyhydroforecast_env_file_path=$ieasyhydroforecast_env_file_path 
+    export SAPPHIRE_PREDICTION_MODE=$SAPPHIRE_PREDICTION_MODE 
     bash locally_run_ml_forecasts.sh
 
     # Deactivate the virtual environment
@@ -166,7 +172,7 @@ run_postprocessing() {
     cd ../../apps/postprocessing_forecasts
 
     # Run the script
-    ieasyhydroforecast_env_file_path=$ieasyhydroforecast_env_file_path python postprocessing_forecasts.py
+    SAPPHIRE_PREDICTION_MODE=$SAPPHIRE_PREDICTION_MODE ieasyhydroforecast_env_file_path=$ieasyhydroforecast_env_file_path python postprocessing_forecasts.py
 
     # Deactivate the virtual environment
     conda deactivate
@@ -191,7 +197,7 @@ run_preprocessing_gateway
 
 # -- Run the forecast models --
 run_linear_regression
-#run_conceptual_model
+run_conceptual_model
 run_machine_learning_models
 
 # -- Postprocessing --

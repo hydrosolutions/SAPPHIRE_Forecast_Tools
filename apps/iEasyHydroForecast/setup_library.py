@@ -1088,6 +1088,13 @@ def read_linreg_forecasts_pentad():
     )
     data = pd.read_csv(filepath, parse_dates=["date"])
 
+    # Debugging prints:
+    print(f"\n\n\n\n\n||||  DEBUGGING  -  read_csv  ||||")
+    # Print the latest date in the DataFrame
+    latest_date_temp = data['date'].max()
+    print(f"Latest date in simulated_df: {latest_date_temp}")
+    print(f"\n\n\n\n\n\n")
+
     # Drop duplicate rows in date and code if they exist, keeping the last row
     data.drop_duplicates(subset=["date", "code"], keep="last", inplace=True)
 
@@ -2659,6 +2666,19 @@ def read_observed_and_modelled_data_pentade():
     # Read the linear regression forecasts for the pentadal forecast horizon
     linreg, stats_linreg = read_linreg_forecasts_pentad()
     stats = stats_linreg
+
+    # Debugging prints:
+    print(f"\n\n\n\n\n||||  DEBUGGING  -  read_linreg_forecasts_pentad  ||||")
+    # Print the latest date in the DataFrame
+    latest_date_temp = linreg['date'].max()
+    print(f"Latest date in simulated_df: {latest_date_temp}")
+    # Print all unique forecast models (model_short) in the DataFrame
+    unique_models = linreg['model_short'].unique()
+    print(f"Unique forecast models in simulated_df: {unique_models}")
+    # Print unique forecast models available for latest date
+    latest_models = linreg[linreg['date'] == latest_date_temp]['model_short'].unique()
+    print(f"Unique forecast models available for latest date ({latest_date_temp}): {latest_models}")
+    print(f"\n\n\n\n\n\n")
 
     # Learn which modules are activated
     read_ml_results = os.getenv("ieasyhydroforecast_run_ML_models")

@@ -1041,9 +1041,12 @@ class SendPipelineCompletionNotification(luigi.Task):
     # Define the logging output of the task.
     docker_logs_file_path = f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/docker_logs/log_sendPipelineCompletionNotification_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
 
+    def __init__(self, *args, depends_on=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._depends_on = depends_on or []
 
     def requires(self):
-        return self.depends_on
+        return self._depends_on
 
     def output(self):
         return luigi.LocalTarget(f'/app/log_notification.txt')
