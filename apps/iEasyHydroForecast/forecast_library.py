@@ -2500,12 +2500,18 @@ def write_linreg_pentad_forecast_data(data: pd.DataFrame):
 
     # Get the max year of the last_line dates
     year = last_line['date'].dt.year.max()
-    logger.debug(f'mode of year: {year}')
+    logger.debug(f'current year: {year}')
+
+    # Print the last_line DataFrame for debugging
+    logger.debug(f'last_line before edits: \n{last_line}')
 
     # Standardize dates to the current year for consistency
     last_line.loc[last_line['date'].dt.year != year, 'predictor'] = np.nan
     last_line.loc[last_line['date'].dt.year != year, 'discharge_avg'] = np.nan
     last_line.loc[last_line['date'].dt.year != year, 'forecasted_discharge'] = np.nan
+
+    # intermediate debug prints
+    logger.debug(f'last_line after year edits: \n{last_line}')
 
     # Iterate over last_line dates. Determine the most frequently occuring date.
     # If the other dates are shifted by 1 day, set the date to the most frequently
@@ -2517,6 +2523,9 @@ def write_linreg_pentad_forecast_data(data: pd.DataFrame):
             for date in date_counts.index:
                 if date != most_common_date:
                     last_line.loc[(last_line['code'] == code) & (last_line['date'] == date), 'date'] = most_common_date
+
+    # Print the last_line DataFrame after date adjustments
+    logger.debug(f'last_line after date adjustments: \n{last_line}')
 
     # Handle existing file
     existing_data = None
@@ -2537,6 +2546,9 @@ def write_linreg_pentad_forecast_data(data: pd.DataFrame):
         # for each pentad and code. 
         combined_data_latest = combined_data.copy()
         combined_data_latest = combined_data_latest.groupby(['pentad_in_year', 'code']).tail(1)
+
+        # print last 50 lines of combined_data for debugging
+        logger.debug(f'combined_data after deduplication: \n{combined_data_latest}')
 
         # Write back to file
         try:

@@ -60,6 +60,12 @@ logger.addHandler(file_handler)
 logger.addHandler(console_handler)
 logger.info = print
 
+# Set the logging level to DEBUG
+logger.setLevel(logging.DEBUG)
+
+# Print location where we find the logs
+logger.info(f"Logs will be written to: {os.path.abspath('logs/log')}")
+
 def main():
 
     logger.info(f"\n\n====== LINEAR REGRESSION =========================")

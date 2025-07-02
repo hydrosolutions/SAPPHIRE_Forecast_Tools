@@ -37,10 +37,10 @@ if [ -z "$ieasyhydroforecast_run_ML_models" ]; then
   log_message "ERROR: ieasyhydroforecast_run_ML_models is not set in the environment. Exiting."
   exit 1
 fi
-# Check if the environment variable is set to true
-if [ "$ieasyhydroforecast_run_ML_models" != "true" ]; then
-  log_message "Skipping ML maintenance run as ieasyhydroforecast_run_ML_models is not set to true."
-  exit 0
+# Check if the environment variable is set to true or True
+if [[ "$ieasyhydroforecast_run_ML_models" != "true" && "$ieasyhydroforecast_run_ML_models" != "True" ]]; then
+  log_message "ERROR: ieasyhydroforecast_run_ML_models is not set to true. Exiting."
+  exit 1
 fi
 
 # Get model options from the environment variable ieasyhydroforecast_available_ML_models. 
