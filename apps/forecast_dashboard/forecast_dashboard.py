@@ -411,11 +411,34 @@ def load_data():
         if new_stations:  # Only add the basin if there are valid stations
             new_station_dict[basin] = new_stations
     station_dict = new_station_dict
+
     #print('station_dict after: ', station_dict)
     #print('Updated data:')
     #print('forecasts_all:\n', forecasts_all)
     #print('station_list:', station_list)
     #print('station_df:\n', station_df)
+    
+    if not station_dict:
+        template = pn.template.BootstrapTemplate(
+            tile=_(f"SAPPHIRE Forecast Dashboard for {horizon} forecasts"),
+            logo=icon_path,
+            favicon=icon_path,
+        )
+        main_content = [
+            pn.Row(
+                pn.layout.HSpacer(),
+                pn.pane.Markdown("## No current forecast data available", align='center'),
+                pn.layout.HSpacer()
+            ),
+            pn.Row(
+                pn.layout.HSpacer(),
+                pn.pane.Markdown("Please check back later or contact an administrator if the issue persists.", align='center'),
+                pn.layout.HSpacer()
+            )
+        ]
+        template.main.extend(main_content)
+        template.servable()
+        sys.exit()
     
     if display_CM_forecasts == True: 
         rram_forecast = processing.add_labels_to_forecast_pentad_df(rram_forecast, all_stations)
