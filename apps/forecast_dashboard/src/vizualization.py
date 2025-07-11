@@ -2936,7 +2936,17 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector, d
                 # Compute dynamic regression parameters
                 new_slope, new_intercept, new_r_value, new_p_value, new_std_err = stats.linregress(
                     visible_data['predictor'], visible_data['discharge_avg'])
-                new_rsquared = new_r_value ** 2
+                new_rsquared = new_r_value ** 2 
+                print(f"\n\n\n\n\n\nnew_slope: {new_slope}, new_intercept: {new_intercept}, new_rsquared: {new_rsquared}")
+                
+                # sklearn linear regression yields the same results
+                # as scipy.stats.linregress
+                # from sklearn.linear_model import LinearRegression
+                # new2_model = LinearRegression().fit(
+                #     visible_data['predictor'].values.reshape(-1, 1), visible_data['discharge_avg'])
+                # new2_slope = new2_model.coef_[0]
+                # new2_intercept = new2_model.intercept_
+                # print(f"new2_slope: {new2_slope}, new2_intercept: {new2_intercept}\n\n\n")
 
                 # Prepare x values for regression lines
                 x = np.linspace(x_min, x_max, 100)

@@ -17,7 +17,7 @@ env:
 
 on:
   push:
-    branches: [ "bea_debugging_linreg" ]
+    branches: [ "main" ]
   #pull_request:
   #  branches: [ "main" ]
 
