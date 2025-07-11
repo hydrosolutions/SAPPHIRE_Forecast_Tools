@@ -418,28 +418,6 @@ def load_data():
     #print('station_list:', station_list)
     #print('station_df:\n', station_df)
     
-    if not station_dict:
-        template = pn.template.BootstrapTemplate(
-            title=_(f"SAPPHIRE Forecast Dashboard for {horizon} forecasts"),
-            logo=icon_path,
-            favicon=icon_path,
-        )
-        main_content = [
-            pn.Row(
-                pn.layout.HSpacer(),
-                pn.pane.Markdown("## No current forecast data available", align='center'),
-                pn.layout.HSpacer()
-            ),
-            pn.Row(
-                pn.layout.HSpacer(),
-                pn.pane.Markdown("Please check back later or contact an administrator if the issue persists.", align='center'),
-                pn.layout.HSpacer()
-            )
-        ]
-        template.main.extend(main_content)
-        template.servable()
-        sys.exit()
-    
     if display_CM_forecasts == True: 
         rram_forecast = processing.add_labels_to_forecast_pentad_df(rram_forecast, all_stations)
     else: 
