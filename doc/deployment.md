@@ -11,6 +11,7 @@ This document describes the steps for the installation of the SAPPHIRE Forecast 
   - [Deployment of demo version on a local machine](#deployment-of-demo-version-on-a-local-machine)
   - [Deployment with private data on a server](#deployment-with-private-data-on-a-server)
     - [Configuring your server](#configuring-your-server)
+      - [Set up the Luigi Daemon (Production)](#set-up-the-luigi-daemon-production)
     - [Copy your data to the repository](#copy-your-data-to-the-repository)
     - [Adapt the configuration files](#adapt-the-configuration-files)
     - [Deploy the forecast tools](#deploy-the-forecast-tools)
@@ -98,7 +99,24 @@ You may have to open specific ports on your server to allow you to view the dash
 - 3647 for the configuration dashboard (optional)
 - 5006 for the forecast dashboard for displaying pentadal forecasts
 - 5007 for the forecast dashboard for displaying decadal forecasts
-- 8082 for the luigi task monitor (optional)
+- 8082 for the luigi task monitor 
+
+#### Set up the Luigi Daemon (Production)
+For a production environment, the Luigi scheduler daemon (`luigid`) must be running persistently to manage the pipeline tasks. Since the entire application stack runs in Docker, the recommended approach is to run the daemon as a persistent Docker container.
+
+1.  **Start the Luigi Daemon Container:**
+    Navigate to your `SAPPHIRE_forecast_tools` project root and use Docker Compose to start the daemon in the background. The `restart: unless-stopped` policy in the compose file ensures it will start on boot and restart if it fails.
+    ```bash
+    # Make sure you are in the SAPPHIRE_forecast_tools directory
+    docker compose -f bin/docker-compose-luigi.yml up -d luigi-daemon
+    ```
+
+2.  **Verify the Service:**
+    Check that the container is running correctly.
+    ```bash
+    docker ps | grep luigi-daemon
+    ```
+    You should see the `sapphire-luigi-daemon` container with a status of `Up`. You can access the Luigi web interface at `http://<your-server-ip>:8082`.
 
 ### Copy your data to the repository
 We recommend that you follow the folder structure of the repository. Please review the example data in the data folder to understand the folder structure and the data formats. You can copy your data to the data folder in the SAPPHIRE_Forecast_Tools folder or to any other location on your server.
@@ -162,27 +180,38 @@ docker logs <container_name>
 
 You can also check the progress of the luigi tasks by opening a browser window and typing <your servers url>:8082 in the address bar. This will open the luigi task monitor and show you the status of the individual modules that are run by the forecast tools.
 
+For comprehensive monitoring of the SAPPHIRE Forecast Tools, including automated alerts and systemd services for monitoring Docker containers and logs, please refer to the [detailed monitoring documentation](monitoring/forecast_tools_monitoring.md).
+
 
 ## Set up cron job
-We recommend setting up a cron job to restart the backend every day after you have checked the operational river discharge data and before you have to send out the forecast bulletin.
+Once the Luigi daemon is running as a system service, you can schedule the individual pipeline steps using `cron`. This approach decouples the tasks, allowing them to run at different times based on data availability. Luigi's scheduler will automatically handle dependencies between tasks.
 
 To edit the cron jobs, type the following command to the console:
 ```bash
 crontab -e
 ```
-Add the following line to the crontab file (skip the comment line, this is just for your information):
+Add the following line to the crontab file (assuming your server times corresponds to the required run times; if not, adjust the times accordingly):
 ```bash
 # m h  dom mon dow   command
-3 5 * * * cd /data/SAPPHIRE_Forecast_Tools && /bin/bash -c 'bash bin/run_sapphire_forecast_tools.sh /path/to/.env' >> /data/logs/daily_run_of_sapphire_forecast_tools.log 2>&1
-2 20 * * * cd /data/SAPPHIRE_Forecast_Tools && /bin/bash -c 'bash bin/daily_update_sapphire_frontend.sh /path/to/.env' >> /data/logs/restart_dashboards.log 2>&1
-0 10 * * * cd /data/SAPPHIRE_Forecast_Tools && /bin/bash -c 'bash bin/daily_ml_maintenance.sh /path/to/.env' >> /data/logs/ml_maintenance.log 2>&1
+# ---------------------------------------------------------------------------
+# SAPPHIRE Forecast Tools Schedule
+# ---------------------------------------------------------------------------
+# NOTE: The Luigi daemon (luigid) must be running as a service for these tasks to be scheduled correctly.
+#
+# (1) Run Gateway Preprocessing at 09:00. This is independent of daily data.
+0 9 * * * cd /data/SAPPHIRE_Forecast_Tools && /bin/bash -c 'bash bin/run_preprocessing_gateway.sh /data/kyg_data_forecast_tools/config/.env_develop_kghm' >> /home/ubuntu/logs/sapphire_gateway_preprocessing.log 2>&1
+#
+# (2) Run Pentadal Forecast pipeline at 10:00. Luigi will trigger runoff preprocessing.
+0 10 * * * cd /data/SAPPHIRE_Forecast_Tools && /bin/bash -c 'bash bin/run_pentadal_forecasts.sh /data/kyg_data_forecast_tools/config/.env_develop_kghm' >> /home/ubuntu/logs/sapphire_pentadal_forecast.log 2>&1
+#
+# (3) Run Decadal Forecast pipeline at 11:00. Luigi will use the already-running/completed runoff task.
+0 10 * * * cd /data/SAPPHIRE_Forecast_Tools && /bin/bash -c 'bash bin/run_decadal_forecasts.sh /data/kyg_data_forecast_tools/config/.env_develop_kghm' >> /home/ubuntu/logs/sapphire_decadal_forecast.log 2>&1
+#
+# (4) Maintenance jobs (frontend update, ML maintenance)
+2 20 * * * cd /data/SAPPHIRE_Forecast_Tools && /bin/bash -c 'bash bin/daily_update_sapphire_frontend.sh /data/kyg_data_forecast_tools/config/.env_develop_kghm' >> /home/ubuntu/logs/sapphire_operational_logs_frontend.log 2>&1
+0 10 * * * cd /data/SAPPHIRE_Forecast_Tools && /bin/bash -c 'bash bin/daily_ml_maintenance.sh /data/kyg_data_forecast_tools/config/.env_develop_kghm' >> /home/ubuntu/logs/sapphire_ml_maintenance.log 2>&1
 ```
-To run the forecast tools every day at 5:03 a.m (server time, check by typing `date` to the console). The log file will be stored in the logs folder in the data folder.
-
-To check if the cron job has been set up correctly, you can list the cron jobs with the following command:
-```bash
-crontab -l
-```
+To check if the cron jobs have been set up correctly, you can list them with `crontab -l`.
 
 
 ## Testing the deployment

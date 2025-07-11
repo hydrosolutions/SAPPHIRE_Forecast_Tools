@@ -64,6 +64,7 @@ logger = logging.getLogger()
 logger.handlers = []
 logger.addHandler(file_handler)
 logger.addHandler(console_handler)
+logger.setLevel(logging.INFO)
 
 def is_leap_year(year):
     if (year % 4 == 0 and year % 100 != 0) or (year % 400 == 0):
@@ -75,7 +76,6 @@ def main():
     #--------------------------------------------------------------------
     # SETUP ENVIRONMENT
     #--------------------------------------------------------------------
-
     logger.info(f'||||||||||||||||||||||||||||||||||||||||')
     logger.info(f'----------------------------------------')
     logger.info(f'extend_era5_reanalysis.py started       ')
@@ -216,7 +216,8 @@ def main():
     #--------------------------------------------------------------------
     # LOGGING
     #--------------------------------------------------------------------
-    logger.debug('Finished')
+    logger.info('Done')
+    logger.info(f'----------------------------------------')
 
 if __name__ == '__main__':
     main()

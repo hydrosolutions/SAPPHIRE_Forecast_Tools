@@ -610,10 +610,13 @@ def read_forecast_results_file(iehhf_selected_stations, file_mtime):
     # Get the pentad of the year. Refers to the pentad the forecast is produced for.
     if horizon == "pentad":
         forecast_pentad = tl.add_pentad_in_year_column(forecast_pentad)
+        forecast_pentad = forecast_pentad.dropna(subset=[horizon])
+    
     else:
         forecast_pentad = tl.add_decad_in_year_column(forecast_pentad)
+        forecast_pentad = forecast_pentad.dropna(subset=[horizon])
         forecast_pentad["decad_in_year"] = forecast_pentad["decad_in_year"].astype(int)
-    # Cast pentad column no number
+    # Cast pentad column to number 
     forecast_pentad[horizon] = forecast_pentad[horizon].astype(int)
     # Add a year column
     forecast_pentad['year'] = forecast_pentad['Date'].dt.year
@@ -873,12 +876,13 @@ def internationalize_forecast_model_names(_, forecasts_all,
     Returns:
         pd.DataFrame: The forecast results DataFrame with translated model names.
     """
-    forecasts_all[model_long_col] = forecasts_all[model_long_col].apply(lambda x: _(x))
-    forecasts_all[model_short_col] = forecasts_all[model_short_col].apply(lambda x: _(x))
+    result = forecasts_all.copy()
+    result[model_long_col] = forecasts_all[model_long_col].apply(lambda x: _(x))
+    result[model_short_col] = forecasts_all[model_short_col].apply(lambda x: _(x))
     # print("Inernationalized forecast model names:\n", forecasts_all[model_long_col].unique())
     # print(forecasts_all[model_short_col].unique())
 
-    return forecasts_all
+    return result
 
 
 def sapphire_sites_to_dataframe(sites_list):

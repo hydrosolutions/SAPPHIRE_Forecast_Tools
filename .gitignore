@@ -220,3 +220,4 @@ apps/forecast_dashboard/user_activity.csv
 /apps/reset_forecast_run_date/tests/logs
 /logs
 /apps/machine_learning_monthly/logs
+temp_luigi.cfg
