@@ -393,6 +393,8 @@ def load_data():
     
     # Get valid codes
     valid_codes = forecasts_current['code'].unique().tolist()
+    # Make sure the valid codes are int and then strings
+    valid_codes = [str(int(code)) for code in valid_codes]
     print('valid_codes:', valid_codes)
     
     # Filter forecasts_all and station_list based on valid codes
