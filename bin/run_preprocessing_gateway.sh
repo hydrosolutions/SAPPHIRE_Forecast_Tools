@@ -21,24 +21,29 @@ echo "| Docker image tag: ${ieasyhydroforecast_backend_docker_image_tag}"
 LUIGI_SCHEDULER_HOST="luigi-daemon"
 LUIGI_SCHEDULER_PORT="8082"
 echo "| Luigi scheduler URL set to: http://${LUIGI_SCHEDULER_HOST}:${LUIGI_SCHEDULER_PORT}"
-echo "| Luigi scheduler URL set to: $LUIGI_SCHEDULER_URL"
 
 # Establish SSH tunnel (if required)
 establish_ssh_tunnel
 
-# Start the Luigi daemon (idempotent)
-docker compose -f bin/docker-compose-luigi.yml up -d luigi-daemon
+# Ensure a stable Compose project so services share the same network
+export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-sapphire}"
 
-# Wait for the daemon to be ready (UI is mapped to host:8082)
-echo -n "| Waiting for Luigi daemon to be ready"
-for i in {1..30}; do
-  if curl -fsS "http://localhost:${LUIGI_SCHEDULER_PORT}/api/ping" >/dev/null; then
-    echo " - ready"
-    break
-  fi
-  echo -n "."
-  sleep 1
-done
+# Start the Luigi daemon only if not already reachable
+if curl -fsS "http://localhost:${LUIGI_SCHEDULER_PORT}/" >/dev/null; then
+  echo "| Luigi daemon already running; skipping start"
+else
+  docker compose -f bin/docker-compose-luigi.yml up -d luigi-daemon
+  # Wait for the daemon to be ready (use UI endpoint which returns 200)
+  echo -n "| Waiting for Luigi daemon to be ready"
+  for i in {1..60}; do
+    if curl -fsS "http://localhost:${LUIGI_SCHEDULER_PORT}/" >/dev/null; then
+      echo " - ready"
+      break
+    fi
+    echo -n "."
+    sleep 1
+  done
+fi
 
 # Set the trap to clean up processes on exit 
 trap cleanup_preprocessing_containers EXIT

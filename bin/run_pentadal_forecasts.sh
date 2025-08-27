@@ -13,14 +13,10 @@ echo "| Running PENTADAL forecasting"
 # Read the configuration from the .env file
 read_configuration $1
 
-if [[ "$OSTYPE" == "darwin"* ]]; then
-    export LUIGI_SCHEDULER_URL="http://host.docker.internal:8082"
-    DOCKER_GID=$(stat -f '%g' /var/run/docker.sock)
-else
-    export LUIGI_SCHEDULER_URL="http://localhost:8082"
-    DOCKER_GID=$(stat -c '%g' /var/run/docker.sock)
-fi
-echo "| Luigi scheduler URL set to: $LUIGI_SCHEDULER_URL"
+# Always talk to the daemon via its Docker DNS name (portable across macOS/Linux)
+LUIGI_SCHEDULER_HOST="luigi-daemon"
+LUIGI_SCHEDULER_PORT="8082"
+echo "| Luigi scheduler URL set to: http://${LUIGI_SCHEDULER_HOST}:${LUIGI_SCHEDULER_PORT}"
 
 # Establish SSH tunnel (if required)
 establish_ssh_tunnel
@@ -28,13 +24,36 @@ establish_ssh_tunnel
 # Set the trap to clean up processes on exit (closes SSH tunnel)
 trap cleanup_pentadal_forecasting_containers EXIT
 
+# Ensure a stable Compose project so services share the same network
+export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-sapphire}"
+
+# Start the Luigi daemon only if not already reachable
+if curl -fsS "http://localhost:${LUIGI_SCHEDULER_PORT}/" >/dev/null; then
+    echo "| Luigi daemon already running; skipping start"
+else
+    docker compose -f bin/docker-compose-luigi.yml up -d luigi-daemon
+    # Wait for the daemon to be ready (use UI endpoint which returns 200)
+    echo -n "| Waiting for Luigi daemon to be ready"
+    for i in {1..60}; do
+        if curl -fsS "http://localhost:${LUIGI_SCHEDULER_PORT}/" >/dev/null; then
+            echo " - ready"
+            break
+        fi
+        echo -n "."
+        sleep 1
+    done
+fi
+
 # Start the Docker Compose service for pentadal forecasting
 echo "| Starting pentadal forecasting workflow..."
 echo "| Luigi daemon will handle dependencies and ensure preprocessing is complete"
 
-# Create a modified luigi.cfg file
-echo "[core]" > temp_luigi.cfg
-echo "default_scheduler_url = $LUIGI_SCHEDULER_URL" >> temp_luigi.cfg
+# Create a luigi.cfg file with explicit scheduler host/port
+cat > temp_luigi.cfg <<EOF
+[core]
+scheduler_host = ${LUIGI_SCHEDULER_HOST}
+scheduler_port = ${LUIGI_SCHEDULER_PORT}
+EOF
 
 # Run the pentadal forecasting with proper configuration
 docker compose -f bin/docker-compose-luigi.yml run \
@@ -46,4 +65,4 @@ docker compose -f bin/docker-compose-luigi.yml run \
     pentadal
 
 echo "| Pentadal forecasting task submitted to Luigi daemon"
-echo "| Check progress at: $LUIGI_SCHEDULER_URL"
+echo "| Check progress at: http://localhost:${LUIGI_SCHEDULER_PORT}"
