@@ -393,12 +393,12 @@ def load_data():
     
     # Get valid codes
     valid_codes = forecasts_current['code'].unique().tolist()
-    #print('valid_codes:', valid_codes)
+    print('valid_codes:', valid_codes)
     
     # Filter forecasts_all and station_list based on valid codes
     forecasts_all = forecasts_all[forecasts_all['code'].isin(valid_codes)]
     forecast_stats = forecast_stats[forecast_stats['code'].isin(valid_codes)]
-    #print('station_list prior: ', station_list)
+    print('station_list prior: ', station_list)
     # print forecasts_all filtered for code == '17082'
     station_df = station_df[station_df['code'].isin(valid_codes)]
     station_list = station_df['station_labels'].unique().tolist()
@@ -412,7 +412,7 @@ def load_data():
             new_station_dict[basin] = new_stations
     station_dict = new_station_dict
 
-    #print('station_dict after: ', station_dict)
+    print('station_dict after: ', station_dict)
     #print('Updated data:')
     #print('forecasts_all:\n', forecasts_all)
     #print('station_list:', station_list)
