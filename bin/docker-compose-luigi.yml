@@ -40,7 +40,7 @@ services:
       - ${ieasyhydroforecast_data_ref_dir}/bin:${ieasyhydroforecast_container_data_ref_dir}/bin
     group_add:
       - ${DOCKER_GID:-988}
-    network_mode: host  # Use host network to connect to Luigi daemon
+    # network_mode: host  # Use host network to connect to Luigi daemon
 
   # Service for gateway preprocessing only 
   # (jobs typically done by 9:30 UTC)
@@ -51,7 +51,8 @@ services:
       - ieasyhydroforecast_data_root_dir=${ieasyhydroforecast_data_root_dir}
       - ieasyhydroforecast_env_file_path=${ieasyhydroforecast_env_file_path}
       - ieasyhydroforecast_backend_docker_image_tag=${ieasyhydroforecast_backend_docker_image_tag}
-    command: ['luigi', '--module', 'apps.pipeline.pipeline_docker', 'RunPreprocessingGatewayWorkflow']
+    #command: ['luigi', '--module', 'apps.pipeline.pipeline_docker', 'RunPreprocessingGatewayWorkflow']
+    command: ['luigi', '--scheduler-host', 'luigi-daemon', '--scheduler-port', '8082', '--module', 'apps.pipeline.pipeline_docker', 'RunPreprocessingGatewayWorkflow']
     container_name: sapphire-pipeline-preprocessing-gateway
   
   # Service for runoff preprocessing only 
@@ -63,7 +64,7 @@ services:
       - ieasyhydroforecast_data_root_dir=${ieasyhydroforecast_data_root_dir}
       - ieasyhydroforecast_env_file_path=${ieasyhydroforecast_env_file_path}
       - ieasyhydroforecast_backend_docker_image_tag=${ieasyhydroforecast_backend_docker_image_tag}
-    command: ['luigi', '--module', 'apps.pipeline.pipeline_docker', 'RunPreprocessingRunoffWorkflow']
+    command: ['luigi', '--scheduler-host', 'luigi-daemon', '--scheduler-port', '8082', '--module', 'apps.pipeline.pipeline_docker', 'RunPreprocessingRunoffWorkflow']
     container_name: sapphire-pipeline-preprocessing-runoff
 
   # Service for pentadal forecasting
@@ -75,7 +76,7 @@ services:
       - ieasyhydroforecast_data_root_dir=${ieasyhydroforecast_data_root_dir}
       - ieasyhydroforecast_env_file_path=${ieasyhydroforecast_env_file_path}
       - SAPPHIRE_PREDICTION_MODE=PENTAD
-    command: ['luigi', '--module', 'apps.pipeline.pipeline_docker', 'RunPentadalWorkflow']
+    command: ['luigi', '--scheduler-host', 'luigi-daemon', '--scheduler-port', '8082', '--module', 'apps.pipeline.pipeline_docker', 'RunPentadalWorkflow']
     container_name: sapphire-pipeline-pentadal
 
   # Service for decadal forecasting
@@ -87,13 +88,23 @@ services:
       - ieasyhydroforecast_data_root_dir=${ieasyhydroforecast_data_root_dir}
       - ieasyhydroforecast_env_file_path=${ieasyhydroforecast_env_file_path}
       - SAPPHIRE_PREDICTION_MODE=DECAD
-    command: ['luigi', '--module', 'apps.pipeline.pipeline_docker', 'RunDecadalWorkflow']
+    command: ['luigi', '--scheduler-host', 'luigi-daemon', '--scheduler-port', '8082', '--module', 'apps.pipeline.pipeline_docker', 'RunDecadalWorkflow']
     container_name: sapphire-pipeline-decadal
 
   # Luigi scheduler daemon
   # This service should be running persistently in the background
   luigi-daemon:
-    extends: pipeline-base
-    container_name: sapphire-luigi-daemon
-    command: ['luigid', '--port', '8082']
+    build:
+      context: ../
+      dockerfile: ./bin/luigi-daemon.Dockerfile
+    image: sapphire/luigi-daemon:${ieasyhydroforecast_backend_docker_image_tag:-local}
+    ports:
+      - "8082:8082"
     restart: unless-stopped
+
+#    extends: pipeline-base
+#    container_name: sapphire-luigi-daemon
+#    command: ['luigid', '--port', '8082']
+#    restart: unless-stopped
+#    ports:
+#      - "8082:8082"
