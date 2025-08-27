@@ -27,22 +27,25 @@ trap cleanup_pentadal_forecasting_containers EXIT
 # Ensure a stable Compose project so services share the same network
 export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-sapphire}"
 
-# Start the Luigi daemon only if not already reachable
-if curl -fsS "http://localhost:${LUIGI_SCHEDULER_PORT}/" >/dev/null; then
-    echo "| Luigi daemon already running; skipping start"
+# Ensure the Luigi daemon container exists and is running within this compose project
+DAEMON_CID=$(docker compose -f bin/docker-compose-luigi.yml ps -q luigi-daemon)
+if [ -n "$DAEMON_CID" ] && docker inspect -f '{{.State.Running}}' "$DAEMON_CID" 2>/dev/null | grep -q true; then
+    echo "| Luigi daemon (compose) already running; skipping start"
 else
+    echo "| Starting Luigi daemon via compose"
     docker compose -f bin/docker-compose-luigi.yml up -d luigi-daemon
-    # Wait for the daemon to be ready (use UI endpoint which returns 200)
-    echo -n "| Waiting for Luigi daemon to be ready"
-    for i in {1..60}; do
-        if curl -fsS "http://localhost:${LUIGI_SCHEDULER_PORT}/" >/dev/null; then
-            echo " - ready"
-            break
-        fi
-        echo -n "."
-        sleep 1
-    done
 fi
+
+# Wait for the daemon to be ready (use UI endpoint which returns 200)
+echo -n "| Waiting for Luigi daemon to be ready"
+for i in {1..60}; do
+    if curl -fsS "http://localhost:${LUIGI_SCHEDULER_PORT}/" >/dev/null; then
+        echo " - ready"
+        break
+    fi
+    echo -n "."
+    sleep 1
+done
 
 # Start the Docker Compose service for pentadal forecasting
 echo "| Starting pentadal forecasting workflow..."
