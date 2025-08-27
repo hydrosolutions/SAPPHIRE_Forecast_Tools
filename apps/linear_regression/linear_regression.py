@@ -58,6 +58,13 @@ logger = logging.getLogger()
 logger.handlers = []
 logger.addHandler(file_handler)
 logger.addHandler(console_handler)
+logger.info = print
+
+# Set the logging level to DEBUG
+logger.setLevel(logging.DEBUG)
+
+# Print location where we find the logs
+logger.info(f"Logs will be written to: {os.path.abspath('logs/log')}")
 
 def main():
 
@@ -68,6 +75,13 @@ def main():
     # Configuration
     sl.load_environment()
 
+    # Check the prediction mode from environment
+    prediction_mode = os.getenv('SAPPHIRE_PREDICTION_MODE', 'BOTH')
+    logger.info(f"Running in {prediction_mode} prediction mode")
+    
+    run_pentad = prediction_mode in ['PENTAD', 'BOTH']
+    run_decad = prediction_mode in ['DECAD', 'BOTH']
+    
     # Set up the iEasyHydro SDK
     # Test if we need to connect via ssh tunnel
     if os.getenv('ieasyhydroforecast_ssh_to_iEH') == 'True':
@@ -99,7 +113,7 @@ def main():
     # forecast_date: date for which the forecast is being run (typically today)
     # date_end: last date for which the forecast is being run (typically today)
     # bulletin_date: first date for which the forecast is valid (typically tomorrow)
-    forecast_date, date_end, bulletin_date = sl.define_run_dates()
+    forecast_date, date_end, bulletin_date = sl.define_run_dates(prediction_mode=prediction_mode)
 
     # Only perform the next steps if we have to produce a forecast.
     if not forecast_date:
@@ -108,20 +122,27 @@ def main():
 
     # Get forecast flags (identify which forecasts to run based on the forecast date)
     forecast_flags = sl.ForecastFlags.from_forecast_date_get_flags(forecast_date)
+    forecast_flags.pentad = run_pentad
+    forecast_flags.decad = run_decad
     logger.debug(f"Forecast flags: {forecast_flags}")
 
     # Identify sites for which to produce forecasts
     # Gets us a list of site objects with the necessary information to write forecast outputs
     if has_access_to_hf_db:
         # Use the iEH HF SDK to get the sites
-        fc_sites_pentad, site_list_pentad, _ = sl.get_pentadal_forecast_sites_from_HF_SDK(ieh_hf_sdk)
-        fc_sites_decad, site_list_decad, _ = sl.get_decadal_forecast_sites_from_HF_SDK(ieh_hf_sdk)
-        #print("DEBUG site_list_pentad\n", site_list_pentad)
-        #print("DEBUG site_list_decad\n", site_list_decad)
+        fc_sites_pentad, site_list_pentad, _ = sl.get_pentadal_forecast_sites_from_HF_SDK(ieh_hf_sdk) if run_pentad else ([], [], None)
+        fc_sites_decad, site_list_decad, _ = sl.get_decadal_forecast_sites_from_HF_SDK(ieh_hf_sdk) if run_decad else ([], [], None)
     else:
         # Use the iEH SDK to get the sites
-        fc_sites_pentad, site_list_pentad = sl.get_pentadal_forecast_sites(ieh_sdk, has_access_to_db)
-        fc_sites_decad, site_list_decad = sl.get_decadal_forecast_sites_from_pentadal_sites(fc_sites_pentad, site_list_pentad)
+        fc_sites_pentad, site_list_pentad = sl.get_pentadal_forecast_sites(ieh_sdk, has_access_to_db) if run_pentad else ([], [])
+        fc_sites_decad, site_list_decad = ([], [])
+        if run_decad:
+            if run_pentad:
+                fc_sites_decad, site_list_decad = sl.get_decadal_forecast_sites_from_pentadal_sites(fc_sites_pentad, site_list_pentad)
+            else:
+                # If only running decadal forecasts, we need to get pentadal sites first for reference
+                temp_fc_sites_pentad, temp_site_list_pentad = sl.get_pentadal_forecast_sites(ieh_sdk, has_access_to_db)
+                fc_sites_decad, site_list_decad = sl.get_decadal_forecast_sites_from_pentadal_sites(temp_fc_sites_pentad, temp_site_list_pentad)
 
     # Get pentadal and decadal data for forecasting. This is currently done for
     # pentad as well as for decad forecasts, function overwrites forecast_flags.
@@ -130,24 +151,25 @@ def main():
         site_list_pentad=site_list_pentad,
         site_list_decad=site_list_decad)
     # Test if either data_pentad or data_decad is empty
-    if data_pentad.empty:
+    if run_pentad and data_pentad.empty:
         logger.info("No pentadal data available. Exiting.")
         exit()
-    if forecast_flags.decad and data_decad.empty:
+    if run_decad and data_decad.empty:
         logger.info("No decad data available. Exiting.")
         exit()
 
-    logger.info(f"Tail of data pentad: {data_pentad.tail()}")
-    if forecast_flags.decad:
+    if run_pentad:
+        logger.info(f"Tail of data pentad: {data_pentad.tail()}")
+    if run_decad:
         logger.info(f"Tail of data decad: {data_decad.tail()}")
 
     # Save pentadal data
-    #print("DEBUG data_pentad\n", data_pentad.tail(10))
-    fl.write_pentad_hydrograph_data(data_pentad, iehhf_sdk=ieh_hf_sdk)
-    fl.write_pentad_time_series_data(data_pentad)
+    if run_pentad:
+        fl.write_pentad_hydrograph_data(data_pentad, iehhf_sdk=ieh_hf_sdk)
+        fl.write_pentad_time_series_data(data_pentad)
 
     # Save decadal data
-    if forecast_flags.decad:
+    if run_decad:
         fl.write_decad_hydrograph_data(data_decad, iehhf_sdk=ieh_hf_sdk)
         fl.write_decad_time_series_data(data_decad)
 
@@ -158,7 +180,7 @@ def main():
         logger.info(f"\n\n------ Forecast on {current_day} --------------------")
 
         # Update the last run_date in the database
-        current_date, date_end, bulletin_date = sl.define_run_dates()
+        current_date, date_end, bulletin_date = sl.define_run_dates(prediction_mode=prediction_mode)
         # Make sure we have a valid forecast date
         if not forecast_date:
             print("No valid forecast date. Exiting.")
@@ -167,9 +189,12 @@ def main():
         forecast_flags = sl.ForecastFlags.from_forecast_date_get_flags(current_date)
         logger.debug(f"Forecast flags: {forecast_flags}")
 
+        # Get predictor dates for the current forecast
+        predictor_dates = fl.get_predictor_dates(current_day, forecast_flags)
+
         # Test if today is a forecast day for either pentadal and decadal forecasts
         # We only run through the rest of the code in the loop if current_date is a forecast day
-        if forecast_flags.pentad:
+        if run_pentad and forecast_flags.pentad:
             logger.info(f"Starting pentadal forecast for {current_day}. End date: {date_end}. Bulletin date: {bulletin_date}.")
             #logger.debug(f'data_pentad.head(): \n{data_pentad.head()}')
             #logger.debug(f'data_pentad.tail(): \n{data_pentad.tail()}')
@@ -189,7 +214,6 @@ def main():
             #logger.info(f"discharge_pentad[discharge_pentad['code'] == '15194'].tail(50): \n{discharge_pentad[discharge_pentad['code'] == '15194'].tail(50)}")
 
             # Write the predictor to the Site objects
-            predictor_dates = fl.get_predictor_dates(current_day, forecast_flags)
             logger.debug(f"Predictor dates: {predictor_dates.pentad}")
             fl.get_predictors(
                 data_df=discharge_pentad,
@@ -244,7 +268,7 @@ def main():
         else:
             logger.info(f'No pentadal forecast for {current_day}.')
 
-        if forecast_flags.decad:
+        if run_decad and forecast_flags.decad:
             logger.info(f"Starting decadal forecast for {current_day}. End date: {date_end}. Bulletin date: {bulletin_date}.")
 
             # Filter the discharge data for the sites we need to produce forecasts
@@ -299,7 +323,7 @@ def main():
             logger.info(f'No decadal forecast for {current_day}.')
 
         # Store the last run date
-        ret = sl.store_last_successful_run_date(current_day)
+        ret = sl.store_last_successful_run_date(current_day, prediction_mode=prediction_mode)
 
         # Move to the next day
         logger.info(f"Iteration for {current_day} completed successfully.")

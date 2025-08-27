@@ -33,10 +33,26 @@ get_timestamp() {
     fi
 }
 
+# Get ieasyhydroforecast_env_file_path from env if set, otherwise use default
+if [ -z "$ieasyhydroforecast_env_file_path" ]; then
+    ieasyhydroforecast_env_file_path=~/Documents/GitHub/taj_data_forecast_tools/config/.env_develop_tjhm
+fi
+export ieasyhydroforecast_env_file_path
+
+# Get SAPPHIRE_PREDICTION_MODE from env if set, otherwise use default
+if [ -z "$SAPPHIRE_PREDICTION_MODE" ]; then
+    SAPPHIRE_PREDICTION_MODE=PENTAD
+fi
+export SAPPHIRE_PREDICTION_MODE
+
 
 for model in TFT TIDE TSMIXER; do
 #for model in TIDE; do
-    for horizon in PENTAD DECAD; do
+
+    # Export the model name to the environment
+    export SAPPHIRE_MODEL_TO_USE="$model"
+
+    for horizon in $SAPPHIRE_PREDICTION_MODE; do
     #for horizon in PENTAD; do
         echo "Running model $model for horizon $horizon"
 
@@ -46,8 +62,6 @@ for model in TFT TIDE TSMIXER; do
         # Get start time and save to log file
         start_time=$(get_timestamp)
         echo "Start time: $(date)" >> "$log_file"
-
-        export ieasyhydroforecast_env_file_path=~/Documents/GitHub/kyg_data_forecast_tools/config/.env_develop_kghm SAPPHIRE_MODEL_TO_USE=$model SAPPHIRE_PREDICTION_MODE=$horizon
 
         # Record the run times for nan dealing
         start_nan_time=$(get_timestamp)

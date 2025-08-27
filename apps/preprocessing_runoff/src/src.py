@@ -1,4 +1,6 @@
 import os
+import sys
+import io
 import pandas as pd
 import numpy as np
 import datetime as dt
@@ -8,6 +10,7 @@ import pytz
 import json
 import concurrent.futures
 from typing import List, Tuple
+from contextlib import contextmanager
 
 # To avoid printing of warning
 pd.set_option('future.no_silent_downcasting', True)
@@ -17,6 +20,55 @@ from ieasyhydro_sdk.filters import BasicDataValueFilters
 import logging
 logger = logging.getLogger(__name__)
 
+# Set the logging level for iEasyHydro SDK specifically
+logging.getLogger('ieasyhydro_sdk').setLevel(logging.WARNING)
+logging.getLogger("requests").setLevel(logging.WARNING)
+logging.getLogger("urllib3").setLevel(logging.WARNING)
+
+# Also set any potential sub-loggers
+for name in logging.root.manager.loggerDict:
+    if name.startswith('ieasyhydro_sdk'):
+        logging.getLogger(name).setLevel(logging.WARNING)
+
+
+@contextmanager
+def suppress_stdout():
+    """Context manager to suppress stdout temporarily."""
+    save_stdout = sys.stdout
+    sys.stdout = io.StringIO()
+    try:
+        yield
+    finally:
+        sys.stdout = save_stdout
+
+def standardize_date_column(df, date_col='date'):
+    """
+    Standardize a date column to normalized pandas Timestamps.
+    
+    This function converts the specified column to pandas Timestamp objects
+    with time components set to midnight (00:00:00). Using normalized Timestamps
+    ensures consistent behavior when:
+    - Merging dataframes on date columns
+    - Comparing dates
+    - Calculating date ranges
+    - Filtering by date
+    
+    Args:
+        df (pd.DataFrame): The dataframe containing the date column
+        date_col (str): The name of the date column to standardize
+        
+    Note: 
+        - The function modifies the dataframe in place, converting the specified
+          date column to pandas Timestamps with time set to midnight.
+        - Timezone information is removed to ensure uniformity across different 
+          time zones.
+
+    Returns:
+        pd.DataFrame: A copy of the dataframe with standardized date column
+    """
+    df = df.copy()
+    df[date_col] = pd.to_datetime(df[date_col]).dt.tz_localize(None).dt.normalize()
+    return df
 
 def get_local_time_range_for_daily_average_runoff_request(target_timezone, window_size=50):
     """
@@ -123,18 +175,21 @@ def filter_roughly_for_outliers(combined_data, group_by='Code',
     ValueError: If the group_by column is not found in the input DataFrame.
     """
     def filter_group(group, filter_col, date_col):
-        # Calculate Q1, Q3, and IQR
-        Q1 = group[filter_col].quantile(0.25)
-        Q3 = group[filter_col].quantile(0.75)
-        IQR = Q3 - Q1
 
-        # Calculate the upper and lower bounds for outliers
-        upper_bound = Q3 + 6.5 * IQR
-        lower_bound = Q1 - 1.5 * IQR
+        # Only apply IQR filtering if the group has more than 10 rows
+        if len(group) > 10:
+            # Calculate Q1, Q3, and IQR
+            Q1 = group[filter_col].quantile(0.25)
+            Q3 = group[filter_col].quantile(0.75)
+            IQR = Q3 - Q1
 
-        # Set Q_m3s which exceeds lower and upper bounds to NaN
-        group.loc[group[filter_col] > upper_bound, filter_col] = np.nan
-        group.loc[group[filter_col] < lower_bound, filter_col] = np.nan
+            # Calculate the upper and lower bounds for outliers
+            upper_bound = Q3 + 6.5 * IQR
+            lower_bound = Q1 - 2.0 * IQR
+
+            # Set Q_m3s which exceeds lower and upper bounds to NaN
+            group.loc[group[filter_col] > upper_bound, filter_col] = np.nan
+            group.loc[group[filter_col] < lower_bound, filter_col] = np.nan
 
         # Set the date column as the index
         group[date_col] = pd.to_datetime(group[date_col])
@@ -154,10 +209,10 @@ def filter_roughly_for_outliers(combined_data, group_by='Code',
         # Infer object types to address the FutureWarning
         group = group.infer_objects(copy=False)
 
-        # Filter out suspicious data characterized by changes of more than 200% from one time step to the next
+        # Filter out suspicious data characterized by changes of more than 300% from one time step to the next
         group['prev_value'] = group[filter_col].shift(1)
         group['change'] = (group[filter_col] - group['prev_value']).abs() / group['prev_value'].abs()
-        group.loc[group['change'] > 2, filter_col] = np.nan
+        group.loc[group['change'] > 3, filter_col] = np.nan
         group.drop(columns=['prev_value', 'change'], inplace=True)
 
         # Interpolate gaps of length of max 2 days linearly
@@ -165,6 +220,11 @@ def filter_roughly_for_outliers(combined_data, group_by='Code',
 
         # Reset the index
         group.reset_index(inplace=True)
+
+        # Print statistics of how many values were set to NaN
+        num_outliers = group[filter_col].isna().sum()
+        num_total = group[filter_col].notna().sum() + num_outliers
+        logger.info(f"filter_roughly_for_outliers:\n     from a total of {num_total}, {num_outliers} outliers set to NaN in group '{group[group_by].iloc[0]}'.")
 
         return group
 
@@ -217,6 +277,11 @@ def filter_roughly_for_outliers(combined_data, group_by='Code',
 
     # Remove rows with NaN in the group_by column
     combined_data = combined_data.dropna(subset=[group_by])
+
+    # Print the latest date available in combined_data
+    if not combined_data.empty:
+        latest_date = combined_data[date_col].max()
+        logger.info(f"filter_roughly_for_outliers: Latest date available in combined_data: {latest_date}")
 
     return combined_data
 
@@ -272,13 +337,13 @@ def read_runoff_data_from_csv_files(filename, code_list, date_col='date',
         logger.warning(f"File '{filename}' is empty. No data to read.")
         return pd.DataFrame()
     
-    # Convert the date column to datetime format
-    df[date_col] = pd.to_datetime(df[date_col], format='%Y-%m-%d').dt.date
+    # Convert the date column to nomralized pandas Timestamps
+    df[date_col] = pd.to_datetime(df[date_col], format='%Y-%m-%d').dt.normalize()
 
-    # convert discharge column to numeric format
+    # Convert discharge column to numeric format
     df[discharge_col] = pd.to_numeric(df[discharge_col], errors='coerce')
 
-    # make sure code_col is integer
+    # Make sure code_col is integer
     df[code_col] = df[code_col].astype(int)
 
     # Filter for codes in code_list
@@ -401,13 +466,17 @@ def read_runoff_data_from_multiple_rivers_xlsx(filename, code_list, date_col='da
         df_sheet[code_col] = code
         df = pd.concat([df, df_sheet], axis=0)
 
-    # convert date column to datetime format
-    df[date_col] = pd.to_datetime(df[date_col], format='%d.%m.%Y').dt.date
+    # Convert date column to normalized Timestamp format
+    # This ensures that the time component is set to midnight (00:00:00) for 
+    # consistency when merging dataframes on date columns, comparing dates, 
+    # calculating date ranges, etc.
+    df[date_col] = pd.to_datetime(df[date_col], format='%d.%m.%Y').dt.normalize()
 
-    # convert discharge column to numeric format
+    # Convert discharge column to numeric format
     df[discharge_col] = pd.to_numeric(df[discharge_col], errors='coerce')
 
-    # replace data in rows with missing values with NaN
+    # Replace data in rows with missing values (indicated in excel with `-`), 
+    # with NaN
     df[discharge_col] = df[discharge_col].replace('-', float('nan'))
 
     return df
@@ -485,16 +554,16 @@ def read_runoff_data_from_single_river_xlsx(filename, code_list, date_col='date'
         df_sheet[code_col] = river_code
         df = pd.concat([df, df_sheet], axis=0)
 
-    # convert date column to datetime format
-    df[date_col] = pd.to_datetime(df[date_col], format='%d.%m.%Y').dt.date
+    # Convert date column to normalized Timestamp format
+    df[date_col] = pd.to_datetime(df[date_col], format='%d.%m.%Y').dt.normalize()
 
-    # convert discharge column to numeric format
+    # Convert discharge column to numeric format
     df[discharge_col] = pd.to_numeric(df[discharge_col], errors='coerce')
 
-    # replace data in rows with missing values with NaN
+    # Replace data in rows with missing values with NaN
     df[discharge_col] = df[discharge_col].replace('-', float('nan'))
 
-    # make sure code_col is integer
+    # Make sure code_col is integer
     df[code_col] = df[code_col].astype(int)
 
     return df
@@ -619,7 +688,7 @@ def read_all_runoff_data_from_csv(date_col='date',
             )
         else:
             df = pd.concat([df, read_runoff_data_from_csv_files(
-                filename=file_path,
+                filename=file,
                 code_list=code_list,
                 date_col=date_col,
                 discharge_col=discharge_col,
@@ -914,17 +983,17 @@ def fetch_and_format_hydro_HF_data(sdk, initial_filters):
                 # Add this page's data to our collection
                 all_data_frames.append(page_df)
                 
-                print(f"Processed page {page}: {len(page_df)} records")
+                logger.info(f"Processed page {page}: {len(page_df)} records")
                 
         else:
-            print(f"Warning: Expected 'results' key not found in response")
-            print(f"Response keys: {list(response.keys()) if isinstance(response, dict) else 'Not a dict'}")
+            logger.warning(f"Expected 'results' key not found in response")
+            logger.info(f"Response keys: {list(response.keys()) if isinstance(response, dict) else 'Not a dict'}")
         
         # Check if there are more pages
         if isinstance(response, dict) and response.get('next'):
             # Increment page number
+            logger.info(f"Fetching page {page}...")
             page += 1
-            print(f"Fetching page {page}...")
         else:
             # No more pages
             break
@@ -944,7 +1013,7 @@ def fetch_and_format_hydro_HF_data(sdk, initial_filters):
                      'variable_code', 'unit', 'value_type', 'value_code', 
                      'station_name'], 
             inplace=True, errors='ignore')
-        print(f"Combined DataFrame: \n{combined_df}")
+        logger.debug(f"Combined DataFrame: \n{combined_df}")
         return combined_df
     else:
         # Return empty DataFrame with the expected structure
@@ -1003,7 +1072,7 @@ def get_todays_morning_discharge_from_iEH_HF_for_multiple_sites(
     if not isinstance(end_datetime, dt.datetime):
         raise ValueError("The end_datetime must be a datetime object with timezone info.")
 
-    logger.debug(f"Reading daily average discharge data for all sites in sites_list from {start_datetime} to {end_datetime}.")
+    logger.debug(f"Reading daily morning discharge data for all sites in sites_list from {start_datetime} to {end_datetime}.")
 
     filters = {
         "site_ids": id_list,
@@ -1312,8 +1381,14 @@ def add_hydroposts(combined_data, check_hydroposts):
     pd.DataFrame: The input DataFrame with the virtual hydroposts added.
 
     """
-    # Get the earliest date for which we have data in the combined_data
-    earliest_date = combined_data['date'].min()
+    # Make a copy to avoid modifying the original
+    data_df = combined_data.copy()
+    
+    # First remove any timezone information, then normalize
+    data_df['date'] = pd.to_datetime(data_df['date']).dt.tz_localize(None).dt.normalize()
+    
+    # Get the earliest date
+    earliest_date = pd.to_datetime(combined_data['date'].min())
 
     # Check if the virtual hydroposts are in the combined_data
     for hydropost in check_hydroposts:
@@ -1476,13 +1551,15 @@ def get_runoff_data(ieh_sdk=None, date_col='date', discharge_col='discharge', na
         # For each code in last_row, get the daily average discharge data from the
         # iEasyHydro database using the function get_daily_average_discharge_from_iEH_per_site
         for index, row in last_row.iterrows():
-            db_average_data = get_daily_average_discharge_from_iEH_per_site(
-                ieh_sdk, row[code_col], row[name_col], row[date_col],
-                date_col=date_col, discharge_col=discharge_col, name_col=name_col, code_col=code_col
-            )
-            db_morning_data = get_todays_morning_discharge_from_iEH_per_site(
-                ieh_sdk, row[code_col], row[name_col],
-                date_col=date_col, discharge_col=discharge_col, name_col=name_col, code_col=code_col)
+            with suppress_stdout(): 
+                db_average_data = get_daily_average_discharge_from_iEH_per_site(
+                    ieh_sdk, row[code_col], row[name_col], row[date_col],
+                    date_col=date_col, discharge_col=discharge_col, name_col=name_col, code_col=code_col
+                )
+            with suppress_stdout():
+                db_morning_data = get_todays_morning_discharge_from_iEH_per_site(
+                    ieh_sdk, row[code_col], row[name_col],
+                    date_col=date_col, discharge_col=discharge_col, name_col=name_col, code_col=code_col)
             # Append db_data to read_data if db_data is not empty
             if not db_average_data.empty:
                 read_data = pd.concat([read_data, db_average_data], ignore_index=True)
@@ -1729,7 +1806,7 @@ def _read_runoff_data_by_organization(organization, date_col, discharge_col, nam
                          f"Please set the environment variable 'ieasyhydroforecast_organization' to 'kghm' or 'tjhm'.")
     return read_data
     
-def get_runoff_data_for_sites_HF(ieh_hf_sdk=None, date_col='date', name_col='name',
+'''def get_runoff_data_for_sites_HF(ieh_hf_sdk=None, date_col='date', name_col='name',
                               discharge_col='discharge',
                               code_col='code', 
                               site_list=None, code_list=None, id_list=None, 
@@ -1896,6 +1973,207 @@ def get_runoff_data_for_sites_HF(ieh_hf_sdk=None, date_col='date', name_col='nam
 
         # For sanity sake, we round the data to a mac of 3 decimal places
         read_data[discharge_col] = read_data[discharge_col].round(3)
+
+        # Make sure the date column is in datetime format
+        read_data[date_col] = pd.to_datetime(read_data[date_col]).dt.normalize()
+
+        return read_data'''
+
+def get_runoff_data_for_sites_HF(ieh_hf_sdk=None, date_col='date', name_col='name',
+                              discharge_col='discharge',
+                              code_col='code', 
+                              site_list=None, code_list=None, id_list=None, 
+                              target_timezone=None):
+    """
+    Reads runoff data from excel and, if possible, from iEasyHydro database.
+
+    Note: This function will intelligently determine the date range to fetch from 
+    the iEasyHydro database based on the latest date in the existing data.
+
+    Args:
+        ieh_sdk (object): An object that provides a method to get data values
+            for a site from a database. None in case of no access to the database.
+        date_col (str, optional): The name of the column containing the date data.
+            Default is 'date'.
+        discharge_col (str, optional): The name of the column containing the discharge data.
+            Default is 'discharge'.
+        name_col (str, optional): The name of the column containing the site name.
+            Default is 'name'.
+        code_col (str, optional): The name of the column containing the site code.
+            Default is 'code'.
+        site_list (list, optional): A list of site codes to read data for. Default is None.
+        code_list (list, optional): A list of site codes to read data for. Default is None.
+        id_list (list): A list of site IDs to read data for. Default is None.
+        target_timezone (str, optional): The timezone to convert the data to. Default is None.
+    """
+    # Test if id_list is None or empty. Return error if it is.
+    if id_list is None or len(id_list) == 0:
+        raise ValueError("id_list is None or empty. Please provide a list of site IDs to read data for.")
+
+    # Test if there have been any changes in the daily_discharge directory
+    if should_reprocess_input_files(): 
+        logger.info("Regime data has changed, reprocessing input files.")
+    
+        # Get organization from environment variable
+        organization = os.getenv('ieasyhydroforecast_organization')
+
+        read_data = _read_runoff_data_by_organization(
+            organization=organization,
+            date_col=date_col,
+            discharge_col=discharge_col,
+            name_col=name_col,
+            code_col=code_col,
+            code_list=code_list
+        )
+    else:
+        logger.info("No changes in the daily_discharge directory, using previous data.")
+        intermediate_data_path = os.getenv('ieasyforecast_intermediate_data_path')
+        output_file_path = os.path.join(
+            intermediate_data_path,
+            os.getenv("ieasyforecast_daily_discharge_file"))
+        try:
+            read_data = pd.read_csv(output_file_path)
+            read_data[date_col] = pd.to_datetime(read_data[date_col]).dt.normalize()
+            read_data[code_col] = read_data[code_col].astype(str)
+            read_data[discharge_col] = read_data[discharge_col].astype(float)
+            # Get a dummy name column 
+            read_data[name_col] = read_data[code_col]
+            
+            # Check if data is valid
+            if read_data.empty:
+                logger.info("Cached data is empty, reprocessing input files.")
+                organization = os.getenv('ieasyhydroforecast_organization')
+                read_data = _read_runoff_data_by_organization(
+                    organization=organization,
+                    date_col=date_col,
+                    discharge_col=discharge_col,
+                    name_col=name_col,
+                    code_col=code_col,
+                    code_list=code_list
+                )
+        except Exception as e:
+            logger.warning(f"Failed to read cached data: {e}, reprocessing input files")
+            organization = os.getenv('ieasyhydroforecast_organization')
+            read_data = _read_runoff_data_by_organization(
+                organization=organization,
+                date_col=date_col,
+                discharge_col=discharge_col,
+                name_col=name_col,
+                code_col=code_col,
+                code_list=code_list
+            )
+
+    # Ensure date is a normalized timestamp object if read_data is not empty
+    if not read_data.empty:
+        read_data[date_col] = pd.to_datetime(read_data[date_col]).dt.normalize()
+
+    # Initialize a flag for virtual stations
+    virtual_stations_present = False
+    # Get virtual station codes from json (if file exists)
+    if os.getenv('ieasyforecast_virtual_stations') is not None:
+        virtual_stations_config_file_path = os.path.join(
+            os.getenv('ieasyforecast_configuration_path'),
+            os.getenv('ieasyforecast_virtual_stations'))
+        if os.path.exists(virtual_stations_config_file_path):
+            with open(virtual_stations_config_file_path, 'r') as f:
+                virtual_stations = json.load(f)['virtualStations'].keys()
+            virtual_stations_present = True
+            read_data = add_hydroposts(read_data, virtual_stations)
+            read_data = standardize_date_column(read_data, date_col=date_col)
+        else:
+            logger.warning(f"Virtual stations configuration file {virtual_stations_config_file_path} not found.")
+
+    if ieh_hf_sdk is None:
+        # We do not have access to an iEasyHydro database
+        logger.info("No data read from iEasyHydro Database.")
+        return read_data
+
+    else:
+        # Determine the latest date in the existing data to fetch only missing data
+        if not read_data.empty:
+            latest_date = pd.to_datetime(read_data[date_col]).max()
+            start_date = latest_date + pd.Timedelta(days=1)
+            logger.info(f"Latest date in existing data: {latest_date}. Fetching data from {start_date} onwards.")
+            
+            # Ensure start_date is not in the future
+            today = pd.Timestamp.now().normalize()
+            if start_date > today:
+                logger.info(f"Start date {start_date.date()} is in the future. Setting to today.")
+                start_date = pd.Timestamp(today)
+        else:
+            # For empty data, fetch data starting from January 1, 2024 or a reasonable time ago (e.g., 5 years)
+            start_date = pd.Timestamp('2024-01-01')
+            logger.info(f"No existing data. Fetching data from {start_date} onwards.")
+
+        # Make sure we have timezone-aware datetime objects for API calls
+        if target_timezone is None:
+            target_timezone = pytz.timezone(time.tzname[0])
+            logger.debug(f"Target timezone is None. Using local timezone: {target_timezone}")
+            
+        # Convert start_date to timezone-aware datetime
+        start_datetime = pd.Timestamp(start_date).replace(hour=0, minute=1)
+        start_datetime = start_datetime.tz_localize(target_timezone)
+        
+        # Set end datetime to current time
+        end_datetime = pd.Timestamp.now().tz_localize(target_timezone)
+
+        # Fetch data from iEH HF database for the calculated date range
+        logger.info(f"Fetching data from {start_datetime} to {end_datetime}")
+        db_average_data = get_daily_average_discharge_from_iEH_HF_for_multiple_sites(
+            ieh_hf_sdk=ieh_hf_sdk, 
+            id_list=id_list,
+            start_datetime=start_datetime,
+            end_datetime=end_datetime,
+            target_timezone=target_timezone,
+            date_col=date_col, 
+            discharge_col=discharge_col, 
+            code_col=code_col
+        )
+        
+        # We are dealing with daily data, so we convert date_col to date
+        if not db_average_data.empty:
+            db_average_data = standardize_date_column(db_average_data, date_col=date_col)
+            logger.info(f"Retrieved {len(db_average_data)} new records from {db_average_data[date_col].min()} to {db_average_data[date_col].max()}")
+            
+            # Append db_data to read_data if db_data is not empty
+            read_data = pd.concat([read_data, db_average_data], ignore_index=True)
+            
+        # Get today's morning data if necessary
+        db_morning_data = get_todays_morning_discharge_from_iEH_HF_for_multiple_sites(
+            ieh_hf_sdk=ieh_hf_sdk, 
+            id_list=id_list,
+            target_timezone=target_timezone,
+            date_col=date_col, 
+            discharge_col=discharge_col, 
+            code_col=code_col
+        )
+        
+        if not db_morning_data.empty:
+            db_morning_data = standardize_date_column(db_morning_data, date_col=date_col)
+            logger.info(f"Retrieved {len(db_morning_data)} morning records for {db_morning_data[date_col].min()}")
+            read_data = pd.concat([read_data, db_morning_data], ignore_index=True)
+        
+        # Drop rows where 'code' is "NA"
+        read_data = read_data[read_data[code_col] != 'NA']
+
+        # Cast the 'code' column to string
+        read_data[code_col] = read_data[code_col].astype(str)
+
+        # Calculate virtual hydropost data where necessary
+        if virtual_stations_present:
+            read_data = calculate_virtual_stations_data(read_data)
+
+        # For sanity sake, we round the data to a mac of 3 decimal places
+        read_data[discharge_col] = read_data[discharge_col].round(3)
+
+        # Make sure the date column is in datetime format
+        read_data[date_col] = pd.to_datetime(read_data[date_col]).dt.normalize()
+        
+        # Remove duplicate data (in case DB had overlapping data)
+        read_data = read_data.drop_duplicates(subset=[code_col, date_col], keep='last')
+        
+        # Sort data by code and date
+        read_data = read_data.sort_values([code_col, date_col])
 
         return read_data
 
@@ -2130,15 +2408,15 @@ def from_daily_time_series_to_hydrograph(data_df: pd.DataFrame,
         })
 
     # Print all_days for debugging
-    print(f"DEBUG: day_mapping:\n{day_mapping}")
+    logger.debug(f"day_mapping:\n{day_mapping}")
     
     # Merge the hydrograph data with the day mapping
     hydrograph_data = hydrograph_data.reset_index()
     hydrograph_data = hydrograph_data.merge(day_mapping, on='normalized_day', how='left')
 
-    print(f"DEBUG: hydrograph_data after merge:\n{hydrograph_data.head(5)}")
-    print(hydrograph_data.head(70).tail(20))
-    print(hydrograph_data.tail(5))
+    logger.debug(f"hydrograph_data after merge:\n{hydrograph_data.head(5)}")
+    logger.debug(hydrograph_data.head(70).tail(20))
+    logger.debug(hydrograph_data.tail(5))
     
     # Create date based on the actual day and current year
     hydrograph_data['date'] = pd.Timestamp(str(current_year)) + pd.to_timedelta(hydrograph_data['actual_day'] - 1, unit='D')
@@ -2261,7 +2539,7 @@ def write_daily_time_series_data_to_csv(data: pd.DataFrame, column_list=["code",
             raise ValueError(f"Column '{col}' not found in the DataFrame.")
 
     # Print head of data
-    print(f'DEBUG: write_daily_time_series_data_to_csv: data.head(10)\n{data.head(10)}')
+    logger.debug(f'write_daily_time_series_data_to_csv: data.head(10)\n{data.head(10)}')
 
     # Round all values to 3 decimal places
     data = data.round(3)
@@ -2272,15 +2550,19 @@ def write_daily_time_series_data_to_csv(data: pd.DataFrame, column_list=["code",
     # Write the data to a csv file. Raise an error if this does not work.
     # If the data is written to the csv file, log a message that the data
     # has been written.
+    print(f"DEBUG: Trying to write time series data to {output_file_path} with columns {column_list}")
     try:
         ret = data.reset_index(drop=True)[column_list].to_csv(output_file_path, index=False)
         if ret is None:
-            logger.info(f"Data written to {output_file_path}.")
+            print(f"Time seris data written to {output_file_path}.")
+            logger.info(f"Time series data written to {output_file_path}.")
             return ret
         else:
-            logger.error(f"Could not write the data to {output_file_path}.")
+            print(f"Could not write the time series data to {output_file_path}.")
+            logger.error(f"Could not write the time series data to {output_file_path}.")
     except Exception as e:
-        logger.error(f"Could not write the data to {output_file_path}.")
+        print(f"Could not write the time series data to {output_file_path}.")
+        logger.error(f"Could not write the time series data to {output_file_path}.")
         raise e
 
 def write_daily_hydrograph_data_to_csv(data: pd.DataFrame, column_list=["code", "date", "discharge"]):
@@ -2331,15 +2613,19 @@ def write_daily_hydrograph_data_to_csv(data: pd.DataFrame, column_list=["code", 
     # Write the data to a csv file. Raise an error if this does not work.
     # If the data is written to the csv file, log a message that the data
     # has been written.
+    print(f"DEBUG: Trying to write hydrograph data to {output_file_path} with columns {column_list}")
     try:
         ret = data.reset_index(drop=True)[column_list].to_csv(output_file_path, index=False)
         if ret is None:
-            logger.info(f"Data written to {output_file_path}.")
+            print(f"Hydrograph data written to {output_file_path}.")
+            logger.info(f"Hydrograph data written to {output_file_path}.")
             return ret
         else:
-            logger.error(f"Could not write the data to {output_file_path}.")
+            print(f"Could not write the hydrograph data to {output_file_path}.")
+            logger.error(f"Could not write the hydrograph data to {output_file_path}.")
     except Exception as e:
-        logger.error(f"Could not write the data to {output_file_path}.")
+        print(f"Could not write the hydrograph data to {output_file_path}.")
+        logger.error(f"Could not write the hydrograph data to {output_file_path}.")
         raise e
 
 

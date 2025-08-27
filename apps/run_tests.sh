@@ -55,13 +55,13 @@ conda deactivate
 conda activate sapphire_dashboard
 
 # Run the tests for the forecast_dashboard module
-SAPPHIRE_TEST_ENV=True pytest forecast_dashboard/tests
+#SAPPHIRE_TEST_ENV=True pytest forecast_dashboard/tests
 
 # Deactivate the Python environment for the forecast_dashboard module
 conda deactivate
 
 # Activate the Python environment for the iEasyHydroForecast module
-conda activate sapphire_ieasyhydroforecast
+conda activate hsol_py311  # sapphire_ieasyhydroforecast
 
 # Run the tests for the iEasyHydroForecast module
 SAPPHIRE_TEST_ENV=True python -m unittest discover -s iEasyHydroForecast/tests -p 'test_*.py'

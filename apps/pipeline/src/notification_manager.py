@@ -67,6 +67,66 @@ class NotificationManager:
             return False
 
     @staticmethod
+    def send_failure_notification(task_name, error_details, log_file_paths=None, additional_info=None):
+        """
+        Send a notification when a task fails
+        
+        Args:
+            task_name (str): Name of the failed task
+            error_details (str): Error message or details
+            log_file_paths (list, optional): List of log file paths to attach
+            additional_info (dict, optional): Additional information about the failure
+        
+        Returns:
+            bool: True if notification was sent successfully, False otherwise
+        """
+        # Get email recipients from environment variable
+        email_recipients_str = os.getenv('SAPPHIRE_PIPELINE_EMAIL_RECIPIENTS', '')
+        if email_recipients_str:
+            email_recipients = [email.strip() for email in email_recipients_str.split(',')]
+        else:
+            email_recipients = []
+            
+        if not email_recipients:
+            print("No email recipients configured for failure notifications")
+            return False
+            
+        # Get organization name
+        organization = os.getenv('ieasyhydroforecast_organization', 'unknown')
+            
+        # Create subject line
+        import datetime
+        current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        subject = f"❌ ERROR: {organization.upper()} Pipeline - {task_name} Failed - {current_time}"
+        
+        # Create message body
+        message = [
+            f"The {task_name} task in the Sapphire Forecast Pipeline has failed.",
+            f"\nTimestamp: {current_time}",
+            f"\nError Details:\n{error_details}",
+        ]
+        
+        # Add additional info if provided
+        if additional_info:
+            message.append("\nAdditional Information:")
+            for key, value in additional_info.items():
+                message.append(f"  {key}: {value}")
+                
+        # Add information about the log files
+        if log_file_paths:
+            message.append("\nLog files are attached to this email.")
+        
+        message.append("\nThis is an automated notification.")
+        
+        # Send the email
+        return NotificationManager.send_email(
+            recipients=email_recipients,
+            subject=subject,
+            message="\n".join(message),
+            attachment_paths=log_file_paths
+        )
+
+    @staticmethod
     def send_sms(phone_numbers, message):
         """
         Send SMS notification (implementation depends on your SMS provider)

@@ -10,6 +10,18 @@ We perform a rough filtering of the data to remove outliers. The filtering is ba
 ## Output
 - CSV file with daily river runoff data for each site. The file contains the columns 'code', 'date', and 'discharge' (in m3/s).
 
+## Date Handling
+While iEasyHydro HF stores date and time for each data point, this module only uses the date part for the daily river runoff data for producing daily and lower-resolution forecasts.  
+This module standardizes on normalized pandas Timestamp objects for all date values.
+This means:
+- All datetime objects have their time components set to midnight (00:00:00)
+- All date comparisons are consistent
+- Dataframe merging on date columns works reliably
+- Timezone information is preserved when relevant
+
+Never use Python native `datetime.date` objects for date comparisons or merges as 
+this causes incompatibilities with pandas Timestamp objects.
+
 ## Development
 ### Run locally
 From the directory preprocessing_runoff run the following command:

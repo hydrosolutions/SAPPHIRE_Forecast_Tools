@@ -30,7 +30,7 @@ def test_read_runoff_data_from_multiple_rivers_xlsx():
         'code': [17123, 17123, 17123, 17123, 17123,
                  17456, 17456, 17456, 17456, 17456]
     }).reset_index(drop=True)
-    expected_output['date'] = pd.to_datetime(expected_output['date']).dt.date
+    expected_output['date'] = pd.to_datetime(expected_output['date']).dt.normalize()
 
     output = src.read_runoff_data_from_multiple_rivers_xlsx(filename, code_list=['17123', '17456']).reset_index(drop=True)
 
@@ -48,7 +48,7 @@ def test_read_runoff_data_from_multiple_rivers_no_code():
                   's. n. wi - spec ch'],
         'code': [17123, 17123, 17123, 17123, 17123]
     }).reset_index(drop=True)
-    expected_output['date'] = pd.to_datetime(expected_output['date']).dt.date
+    expected_output['date'] = pd.to_datetime(expected_output['date']).dt.normalize()
 
     output = src.read_runoff_data_from_multiple_rivers_xlsx(filename, code_list=['17123']).reset_index(drop=True)
 
@@ -100,7 +100,7 @@ def test_read_all_runoff_data_from_excel():
                  12345, 12345, 12345, 12345, 12345,
                  12345, 12345, 12345, 12345, 12345]
     }).reset_index(drop=True)
-    expected_output['date'] = pd.to_datetime(expected_output['date']).dt.date
+    expected_output['date'] = pd.to_datetime(expected_output['date']).dt.normalize()
 
     os.environ['ieasyforecast_daily_discharge_path'] = 'preprocessing_runoff/test/test_files'
 

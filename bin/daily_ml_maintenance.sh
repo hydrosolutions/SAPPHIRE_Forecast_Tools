@@ -1,4 +1,5 @@
 #!/bin/bash
+# Runs on bash 4+ (not on MacOS bash 3)
 
 # Source the common functions
 source "$(dirname "$0")/utils/common_functions.sh"
@@ -31,8 +32,27 @@ log_message() {
   echo "[$(date +"%Y-%m-%d %H:%M:%S")] $1" | tee -a "$log_file"
 }
 
+# Check if ml modules are run from .env ieasyhydroforecast_run_ML_models
+if [ -z "$ieasyhydroforecast_run_ML_models" ]; then
+  log_message "ERROR: ieasyhydroforecast_run_ML_models is not set in the environment. Exiting."
+  exit 1
+fi
+# Check if the environment variable is set to true or True
+if [[ "$ieasyhydroforecast_run_ML_models" != "true" && "$ieasyhydroforecast_run_ML_models" != "True" ]]; then
+  log_message "ERROR: ieasyhydroforecast_run_ML_models is not set to true. Exiting."
+  exit 1
+fi
+
+# Get model options from the environment variable ieasyhydroforecast_available_ML_models. 
+# If not set, default to all available models
+if [ -z "$ieasyhydroforecast_available_ML_models" ]; then
+  log_message "ieasyhydroforecast_available_ML_models is not set. Defaulting to all available models."
+  ieasyhydroforecast_available_ML_models="TFT,TIDE,TSMIXER"
+fi
+# Convert the comma-separated string to ("A" "B" "C") array format
+IFS=',' read -r -a MODEL_OPTIONS <<< "$ieasyhydroforecast_available_ML_models"
+
 # Define your variable option sets
-MODEL_OPTIONS=("TFT" "TIDE" "TSMIXER" "ARIMA")
 HORIZON_OPTIONS=("PENTAD" "DECAD")
 
 log_message "Starting ML maintenance run on Mac M2 Max with 64GB RAM"
