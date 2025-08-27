@@ -1140,25 +1140,19 @@ def get_best_models_for_station_and_pentad(forecasts_all, selected_station, sele
     forecasts_filtered = forecasts_filtered.dropna(subset=['forecasted_discharge'])
     print(f"forecasts after dropping NaN forecasts:\n{forecasts_filtered[['model_short', 'forecasted_discharge']]}")
 
+    forecasts_LR = forecasts_filtered[forecasts_filtered['model_short'] == 'LR']
     forecasts_no_LR = forecasts_filtered[forecasts_filtered['model_short'] != 'LR']
     print(f"forecasts_no_LR:\n{forecasts_no_LR[['model_short', 'forecasted_discharge']]}")
     # Test if forecasts_no_LR is empty
     # Check if forecasts_no_LR is empty or contains only NaN accuracy
+    best_models = []
+    if not forecasts_LR.empty:
+        best_models.append('LR')
     if forecasts_no_LR.empty or forecasts_no_LR['accuracy'].isna().all():
-        print(f"No valid models found for the given station and {horizon}.")
-        return ['Linear regression (LR)']  # Return a fallback
-    best_model = forecasts_no_LR.loc[forecasts_no_LR['accuracy'].idxmax(), 'model_short']
-    print("best_model: ", best_model)
-    best_models = [best_model, 'LR']
-    # If length of best_models is 1, we only have the LR model
-    if len(best_models) == 1:
-        print(f"Only LR model available for the given station and {horizon}.")
-        return ['Linear regression (LR)']
-    # if forecasted_discharge of forecasts is NaN, we remove the model from best_models
-    best_models = [
-        model for model in best_models if not forecasts_filtered[
-            forecasts_filtered['model_short'] == model]['forecasted_discharge'].isna().all()
-    ]
+        print(f"No valid non-LR models found for the given station and {horizon}.")
+    else:
+        best_model = forecasts_no_LR.loc[forecasts_no_LR['accuracy'].idxmax(), 'model_short']
+        best_models.append(best_model)
     # Get long model name for short model names in best_models list into a list.
     # This should avoid issues with EM long names.
     best_models = [
