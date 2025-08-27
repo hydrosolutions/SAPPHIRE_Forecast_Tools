@@ -205,7 +205,9 @@ def recalculate_nan_forecasts():
             # Handle the case where both parsing methods fail
             logger.error('Error parsing date columns: %s', e)
             raise e
-
+        
+    # remove duplicates based on code and date and keep last
+    forecast = forecast.drop_duplicates(subset=['code', 'date', 'forecast_date'], keep='last')
 
     for code in unique_codes:
         #select the forecast for the specific code
@@ -283,8 +285,11 @@ def recalculate_nan_forecasts():
     for code in codes_with_nan:
         forecast_code = forecast[forecast['code'] == code].copy()
         hindcast_code = hindcast[hindcast['code'] == code].copy()
-        forecast[forecast['code'] == code] = update_forecast(forecast_code, hindcast_code)
-
+        try:
+            forecast[forecast['code'] == code] = update_forecast(forecast_code, hindcast_code)
+        except Exception as e:
+            logger.error('Error updating forecast for code %s: %s', code, e)
+            raise e
 
     # Save the updated forecast
     forecast['forecast_date'] = pd.to_datetime(forecast['forecast_date'])
