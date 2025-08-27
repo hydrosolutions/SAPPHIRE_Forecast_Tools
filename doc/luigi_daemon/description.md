@@ -1,5 +1,5 @@
-# Luigi Daemon 
-The Luigi daemon (luigid) is a critical component for managing complex workflows in SAPPHIRE_forecast_tools. Here's why it's needed:
+# Luigi Daemon
+The Luigi daemon (luigid) is a critical component for managing complex workflows in SAPPHIRE_Forecast_Tools. Here's why it's needed:
 
 ## Role in Pipeline Management
 The Luigi daemon serves as a central scheduler that:
@@ -30,12 +30,27 @@ For production environments, the Luigi daemon is deployed as a persistent servic
 
 Without the daemon, managing task completion state and dependencies would need to be handled manually, making pipeline execution much less reliable.
 
-## Production setup
-For production use, the recommended approach is to run the Luigi daemon as a persistent Docker container. This aligns with the rest of the SAPPHIRE application stack and simplifies deployment. The `bin/docker-compose-luigi.yml` file defines a `luigi-daemon` service with a `restart: unless-stopped` policy, which ensures the daemon runs continuously.
+## Production setup (recommended)
+Run the Luigi daemon as a persistent Docker container via Docker Compose. This matches the rest of the stack and is what the run scripts expect.
 
-See the main [deployment instructions](../deployment.md) for details on how to start the daemon container.
+- Compose file: `bin/docker-compose-luigi.yml`
+- Service name: `luigi-daemon` (tasks resolve this DNS name)
+- Policy: `restart: unless-stopped`
 
-For non-Docker deployments, an alternative is to set up the Luigi daemon as a `systemd` service using the script `bin/setup_luigi_daemon.sh`. See the [ubuntu_setup.md](ubuntu_setup.md) documentation for details on this method.
+Key notes:
+- Use a stable Compose project name so the daemon and tasks share one network (for example: `export COMPOSE_PROJECT_NAME=sapphire`).
+- Start the daemon once and keep it running:
+	- `docker compose -f bin/docker-compose-luigi.yml up -d luigi-daemon`
+- Access the web UI at: `http://localhost:8082`
+
+Complete Ubuntu instructions (including decommissioning legacy setups) are in [ubuntu_setup.md](ubuntu_setup.md).
+
+Networking reminder:
+- Tasks connect to the scheduler using `scheduler_host = luigi-daemon`, `scheduler_port = 8082` inside the Compose network.
+- Ensure daemon and task commands use the same Compose project/directory so they share one network.
 
 ## Development setup
-For development purposes, we provide a script (`dev/run_luigi_dev.sh`) that allows you to run the Luigi daemon temporarily without needing to set up a full systemd service or a persistent Docker container. This is useful for testing and development work, as it simplifies the process of starting and stopping the daemon. See the [dev_instructions.md](dev_instructions.md) documentation for details on how to use this script.
+For development, you can run a temporary Luigi daemon without Compose using `dev/run_luigi_dev.sh`. This is useful for quick, local testing. See [dev_instructions.md](dev_instructions.md).
+
+## Legacy (non-Docker) option
+If you must run luigid as a system service (`systemd`), see the legacy notes in [ubuntu_setup.md](ubuntu_setup.md). The Compose-based approach above is the primary and supported method.
