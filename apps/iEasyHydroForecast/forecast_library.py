@@ -1395,7 +1395,7 @@ def sdivsigma_nse(data: pd.DataFrame, observed_col: str, simulated_col: str):
     # Early return if not enough data points
     if len(observed) < 2:  # Need at least 2 points for std calculation
         logger.info(f"Not enough data points for sdivsigma_nse calculation.")
-        print(f"Not enough data points for sdivsigma_nse calculation.")
+        #print(f"Not enough data points for sdivsigma_nse calculation.")
         return pd.Series([np.nan, np.nan], index=['sdivsigma', 'nse'])
 
     # Calculate mean once for reuse
@@ -1779,6 +1779,20 @@ def calculate_skill_metrics_pentad(
         #print("DEBUG: skill_stats_ensemble\n", skill_stats_ensemble.head(20))
 
         return skill_stats_ensemble
+
+    # Debugging prints:
+    print(f"\n\n\n\n\n||||  DEBUGGING  - calculating skill metrics  ||||")
+    # Print the latest date in the DataFrame
+    latest_date_temp = simulated['date'].max()
+    print(f"Latest date in simulated_df: {latest_date_temp}")
+    # Print all unique forecast models (model_short) in the DataFrame
+    unique_models = simulated['model_short'].unique()
+    print(f"Unique forecast models in simulated_df: {unique_models}")
+    # Print unique forecast models available for latest date
+    latest_models = simulated[simulated['date'] == latest_date_temp]['model_short'].unique()
+    print(f"Unique forecast models available for latest date ({latest_date_temp}): {latest_models}")
+    print(f"\n\n\n\n\n\n")
+
 
     with timer(timing_stats, 'calculate_skill_metrics_pentad - Filter data'):
         # We calculate skill metrics only on forecasts after 2010
@@ -2486,12 +2500,18 @@ def write_linreg_pentad_forecast_data(data: pd.DataFrame):
 
     # Get the max year of the last_line dates
     year = last_line['date'].dt.year.max()
-    logger.debug(f'mode of year: {year}')
+    logger.debug(f'current year: {year}')
+
+    # Print the last_line DataFrame for debugging
+    logger.debug(f'last_line before edits: \n{last_line}')
 
     # Standardize dates to the current year for consistency
     last_line.loc[last_line['date'].dt.year != year, 'predictor'] = np.nan
     last_line.loc[last_line['date'].dt.year != year, 'discharge_avg'] = np.nan
     last_line.loc[last_line['date'].dt.year != year, 'forecasted_discharge'] = np.nan
+
+    # intermediate debug prints
+    logger.debug(f'last_line after year edits: \n{last_line}')
 
     # Iterate over last_line dates. Determine the most frequently occuring date.
     # If the other dates are shifted by 1 day, set the date to the most frequently
@@ -2503,6 +2523,9 @@ def write_linreg_pentad_forecast_data(data: pd.DataFrame):
             for date in date_counts.index:
                 if date != most_common_date:
                     last_line.loc[(last_line['code'] == code) & (last_line['date'] == date), 'date'] = most_common_date
+
+    # Print the last_line DataFrame after date adjustments
+    logger.debug(f'last_line after date adjustments: \n{last_line}')
 
     # Handle existing file
     existing_data = None
@@ -2523,6 +2546,9 @@ def write_linreg_pentad_forecast_data(data: pd.DataFrame):
         # for each pentad and code. 
         combined_data_latest = combined_data.copy()
         combined_data_latest = combined_data_latest.groupby(['pentad_in_year', 'code']).tail(1)
+
+        # print last 50 lines of combined_data for debugging
+        logger.debug(f'combined_data after deduplication: \n{combined_data_latest}')
 
         # Write back to file
         try:
@@ -2932,7 +2958,8 @@ def write_pentad_hydrograph_data(data: pd.DataFrame, iehhf_sdk = None):
             try:
                 temp_norm = iehhf_sdk.get_norm_for_site(code, "discharge", norm_period="p")
             except Exception as e:
-                logger.error(f"Could not get norm for site {code}.")
+                logger.warning(f"Could not get norm for site {code}.\nAssuming empty norm for this site.")
+                logger.warning(e)
                 temp_norm = []
             if len(temp_norm) == 72:
                 all_pentadal_norms[code] = temp_norm
@@ -3069,7 +3096,8 @@ def write_decad_hydrograph_data(data: pd.DataFrame, iehhf_sdk = None):
             try:
                 temp_norm = iehhf_sdk.get_norm_for_site(code, "discharge")
             except Exception as e:
-                logger.error(f"Could not get norm for site {code}.")
+                logger.error(f"Could not get norm for site {code}.\nAssuming empty norm for this site.")
+                logger.warning(e)
                 temp_norm = []
             if len(temp_norm) == 36:
                 all_pentadal_norms[code] = temp_norm
@@ -3200,7 +3228,8 @@ def write_decad_hydrograph_data_first_version(data: pd.DataFrame, iehhf_sdk = No
             try:
                 temp_norm = iehhf_sdk.get_norm_for_site(code, "discharge")
             except Exception as e:
-                logger.error(f"Could not get norm for site {code}.")
+                logger.warning(f"Could not get norm for site {code}.\nAssuming empty norm for this site.")
+                logger.warning(e)
                 temp_norm = []
             if len(temp_norm) == 36:
                 #print(f"code {code} len(temp_norm): {len(temp_norm)}\ntemp_norm: {temp_norm}")
@@ -3493,7 +3522,20 @@ def get_latest_forecasts(simulated_df, horizon_column_name='pentad_in_year'):
     """
     if simulated_df.empty:
         return pd.DataFrame()
-        
+    
+    # Debugging prints:
+    print(f"\n\n\n\n\n||||  DEBUGGING  -  getting latest forecasts  ||||")
+    # Print the latest date in the DataFrame
+    latest_date_temp = simulated_df['date'].max()
+    print(f"Latest date in simulated_df: {latest_date_temp}")
+    # Print all unique forecast models (model_short) in the DataFrame
+    unique_models = simulated_df['model_short'].unique()
+    print(f"Unique forecast models in simulated_df: {unique_models}")
+    # Print unique forecast models available for latest date
+    latest_models = simulated_df[simulated_df['date'] == latest_date_temp]['model_short'].unique()
+    print(f"Unique forecast models available for latest date ({latest_date_temp}): {latest_models}")
+    print(f"\n\n\n\n\n\n")
+
     # Ensure date is in datetime format
     if not pd.api.types.is_datetime64_any_dtype(simulated_df['date']):
         simulated_df = simulated_df.copy()
@@ -3520,7 +3562,7 @@ def get_latest_forecasts(simulated_df, horizon_column_name='pentad_in_year'):
     print(f"latest_year: {latest_year}")
     print(f"latest_forecasts['year'].unique(): {latest_forecasts['year'].unique()}")
     # Print tail of latest_forecasts with code == '17082'
-    print(latest_forecasts[latest_forecasts['code'] == '17082'].tail(10))
+    #print(latest_forecasts[latest_forecasts['code'] == '17082'].tail(10))
 
     # Drop the 'year' column
     latest_forecasts = latest_forecasts.drop(columns=['year'])
@@ -4352,7 +4394,7 @@ class Site:
                         'discharge_daily_average',
                         filters=filters)
                     counter += 1
-                    print(f'Note: Not enough data retrieved from DB. New date range from {filters["local_date_time__gte"]} to {filters["local_date_time__lte"]}.')
+                    logger.debug(f'Note: Not enough data retrieved from DB. New date range from {filters["local_date_time__gte"]} to {filters["local_date_time__lte"]}.')
 
                 # Test if we have data now
                 if not predictor_discharge:
@@ -4505,7 +4547,7 @@ class Site:
                         'discharge_daily_average',
                         filters=filters)
                     counter += 1
-                    print(f'Note: Not enough data retrieved from DB. New date range from {filters["local_date_time__gte"]} to {filters["local_date_time__lte"]}.')
+                    logger.debug(f'Note: Not enough data retrieved from DB. New date range from {filters["local_date_time__gte"]} to {filters["local_date_time__lte"]}.')
 
                 # Test if we have data now
                 if not predictor_discharge:
@@ -4659,7 +4701,7 @@ class Site:
                         'discharge_daily',
                         filters=filters)
                     counter += 1
-                    print(f'Note: Not enough data retrieved from DB. New date range from {filters["local_date_time__gte"]} to {filters["local_date_time__lte"]}.')
+                    logger.debug(f'Note: Not enough data retrieved from DB. New date range from {filters["local_date_time__gte"]} to {filters["local_date_time__lte"]}.')
 
                 # Test if we have data now
                 if not predictor_discharge:
@@ -4680,7 +4722,7 @@ class Site:
                         'discharge_daily',
                         filters=filters)
                     counter += 1
-                    print(f'Note: Not enough data retrieved from DB. New date range from {filters["local_date_time__gte"]} to {filters["local_date_time__lte"]}.')
+                    logger.debug(f'Note: Not enough data retrieved from DB. New date range from {filters["local_date_time__gte"]} to {filters["local_date_time__lte"]}.')
                     predictor_discharge = predictor_discharge['data_values']
 
             # Create a DataFrame from the predictor_discharge list

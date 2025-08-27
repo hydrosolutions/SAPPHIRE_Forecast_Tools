@@ -66,7 +66,9 @@ read_configuration(){
         echo "| Container path to .env derived: $ieasyhydroforecast_env_file_path"
         # Read the .env file
         if [ -f "$env_file_path" ]; then
+            set -a  # Automatically export all variables
             source "$env_file_path"
+            set +a  # Stop automatically exporting variables
         else
             echo "| .env file not found at $env_file_path!"
             exit 1
@@ -88,13 +90,17 @@ read_configuration(){
     export ieasyhydroforecast_data_ref_dir
     export ieasyhydroforecast_data_root_dir
 
-    # Load environment variables from the specified .env file
-    if [ -f "$env_file_path" ]; then
-        source "$env_file_path"
-    else
-        echo "| .env file not found at $env_file_path!"
-        exit 1
+    # Export the docker image tag for the backend and frontend
+    if [ -z "$ieasyhydroforecast_backend_docker_image_tag" ]; then
+        echo "| WARNING: ieasyhydroforecast_backend_docker_image_tag is not set. Assuming 'local'"
+        ieasyhydroforecast_backend_docker_image_tag="local"
     fi
+    if [ -z "$ieasyhydroforecast_frontend_docker_image_tag" ]; then
+        echo "| WARNING: ieasyhydroforecast_frontend_docker_image_tag is not set. Assuming 'local'"
+        ieasyhydroforecast_frontend_docker_image_tag="local"
+    fi
+    export ieasyhydroforecast_backend_docker_image_tag
+    export ieasyhydroforecast_frontend_docker_image_tag
 
     # Define subdomains for url, depending on the hm: 
     # 1. hm: "kyg" -> kyg.fc
@@ -226,12 +232,26 @@ start_docker_container_reset_run_date() {
 
 # Function to start the Docker Compose service for the backend pipeline
 start_docker_compose_luigi() {
+    local service_name=$1
+    local sapphire_prediction_mode=$2
+
     echo "|      "
     echo "| ------"
     echo "| Starting backend services"
     echo "| ------"
     echo "| Starting Docker Compose service for backend ..."
-    docker compose -f bin/docker-compose-luigi.yml up -d &
+
+    if [ -n "$service_name" ]; then
+        if [ -n "$sapphire_prediction_mode" ]; then
+            export SAPPHIRE_PREDICTION_MODE="$sapphire_prediction_mode"
+        fi
+        echo "| Starting Docker Compose service for backend: $service_name with prediction mode $SAPPHIRE_PREDICTION_MODE..."
+        SAPPHIRE_PREDICTION_MODE="$SAPPHIRE_PREDICTION_MODE" docker compose -f bin/docker-compose-luigi.yml up -d "$service_name" &
+    else
+        echo "| Starting all Docker Compose services for backend ..."
+        docker compose -f bin/docker-compose-luigi.yml up -d &
+    fi
+
     DOCKER_COMPOSE_LUIGI_PID=$!
     echo "| Docker Compose service started with PID $DOCKER_COMPOSE_LUIGI_PID"
 }
@@ -282,4 +302,40 @@ cleanup_deployment() {
   echo "| "
 }
 
+cleanup_preprocessing_containers() {
+  echo "|      "
+  echo "| ------"
+  echo "| Cleaning up preprocessing containers"
+  echo "| ------"
+  stop_and_remove_container preprunoff
+  stop_and_remove_container prepgateway
+}
+
+cleanup_decadal_forecasting_containers() {
+  echo "|      "
+  echo "| ------"
+  echo "| Cleaning up decadal forecasting containers"
+  echo "| ------"
+  stop_and_remove_container ml_TIDE_DECAD
+  stop_and_remove_container ml_TFT_DECAD
+  stop_and_remove_container ml_TSMIXER_DECAD
+  stop_and_remove_container ml_ARIMA_DECAD
+  stop_and_remove_container linreg
+  stop_and_remove_container conceptmod
+  stop_and_remove_container postprocessing
+}
+
+cleanup_pentadal_forecasting_containers() {
+    echo "|      "
+    echo "| ------"
+    echo "| Cleaning up pentadal forecasting containers"
+    echo "| ------"
+    stop_and_remove_container ml_TIDE_PENTAD
+    stop_and_remove_container ml_TFT_PENTAD
+    stop_and_remove_container ml_TSMIXER_PENTAD
+    stop_and_remove_container ml_ARIMA_PENTAD
+    stop_and_remove_container linreg
+    stop_and_remove_container conceptmod
+    stop_and_remove_container postprocessing
+}
 

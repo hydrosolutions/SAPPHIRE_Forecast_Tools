@@ -78,7 +78,16 @@ establish_ssh_tunnel
 trap cleanup_deployment EXIT
 
 # Start the Docker Compose service for the forecasting pipeline
-start_docker_compose_luigi
+# Start the luigi daemon
+start_docker_compose_luigi luigid
+
+# For pentadal forecasting, set the SAPPHIRE_PREDICTION_MODE to PENTAD
+export SAPPHIRE_PREDICTION_MODE="PENTAD"
+start_docker_compose_luigi pipeline PENTAD
+
+# For decadal forecasting, set the SAPPHIRE_PREDICTION_MODE to DECAD
+export SAPPHIRE_PREDICTION_MODE="DECAD"
+start_docker_compose_luigi pipeline DECAD
 
 # Start the Docker Compose service for the dashboards
 start_docker_compose_dashboards

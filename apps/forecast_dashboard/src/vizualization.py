@@ -2936,7 +2936,17 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector, d
                 # Compute dynamic regression parameters
                 new_slope, new_intercept, new_r_value, new_p_value, new_std_err = stats.linregress(
                     visible_data['predictor'], visible_data['discharge_avg'])
-                new_rsquared = new_r_value ** 2
+                new_rsquared = new_r_value ** 2 
+                print(f"\n\n\n\n\n\nnew_slope: {new_slope}, new_intercept: {new_intercept}, new_rsquared: {new_rsquared}")
+                
+                # sklearn linear regression yields the same results
+                # as scipy.stats.linregress
+                # from sklearn.linear_model import LinearRegression
+                # new2_model = LinearRegression().fit(
+                #     visible_data['predictor'].values.reshape(-1, 1), visible_data['discharge_avg'])
+                # new2_slope = new2_model.coef_[0]
+                # new2_intercept = new2_model.intercept_
+                # print(f"new2_slope: {new2_slope}, new2_intercept: {new2_intercept}\n\n\n")
 
                 # Prepare x values for regression lines
                 x = np.linspace(x_min, x_max, 100)
@@ -3271,6 +3281,7 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector, d
             # Define environment variables
             environment = [
                 'IN_DOCKER_CONTAINER=True',
+                'SAPPHIRE_PREDICTION_MODE=' + horizon.upper(),
                 f'ieasyhydroforecast_env_file_path={bind_volume_path_config}/.env_develop_kghm'
             ]
 
@@ -3471,6 +3482,7 @@ def create_reload_button():
                 environment = [
                     'SAPPHIRE_OPDEV_ENV=True',
                     'IN_DOCKER_CONTAINER=True',
+                    f'SAPPHIRE_PREDICTION_MODE={os.getenv("sapphire_forecast_horizon", "pentad").upper()}',
                     f'ieasyhydroforecast_env_file_path={get_bind_path(env.get("ieasyforecast_configuration_path"))}/.env_develop_kghm'
                 ]
                 print("environment: \n", environment)
@@ -3678,6 +3690,14 @@ def run_docker_container(client, full_image_name, volumes, environment, containe
             # Optionally log the error or add to a list of failed containers
         else:
             print(f"Container '{container_name}' has stopped successfully.")
+
+        # Remove the container after it has finished
+        try: 
+            container.remove(force=True)
+            print(f"Container '{container_name}' removed after completion.")
+        except docker.errors.APIError as e:
+            print(f"Error removing container '{container_name}': {e}")
+            
     except Exception as e:
         print(f"Error running container '{container_name}': {e}")
 

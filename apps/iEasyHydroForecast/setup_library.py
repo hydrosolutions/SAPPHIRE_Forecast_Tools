@@ -19,7 +19,7 @@ import forecast_library as fl
 import tag_library as tl
 
 # Configure the logging level and formatter
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.WARNING)
 formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 
 # Create a stream handler to print logs to the console
@@ -36,7 +36,7 @@ logger.addHandler(console_handler)
 # --- Load runtime environment ---------------------------------------------------
 # region environment
 
-def store_last_successful_run_date(date):
+def store_last_successful_run_date(date, prediction_mode='BOTH'):
     '''
     Store the last successful run date in a file.
 
@@ -65,9 +65,12 @@ def store_last_successful_run_date(date):
 
     # Path to the file
     last_run_file = os.path.join(
-        os.getenv("ieasyforecast_intermediate_data_path"),
-        os.getenv("ieasyforecast_last_successful_run_file")
+        intermediate_data_path,
+        last_successful_run_file
     )
+    # add _<prediction_mode> to the file name if prediction_mode is not BOTH
+    if prediction_mode not in ['BOTH']:
+        last_run_file = last_run_file.replace(".txt", f"_{prediction_mode}.txt")
 
     # Convert to datetime object if date is a string or a datetime object
     if isinstance(date, str):
@@ -90,7 +93,7 @@ def store_last_successful_run_date(date):
 
     return None
 
-def get_last_run_date():
+def get_last_run_date(prediction_mode='BOTH'):
     """
     Read the date of the last successful run of the linear regression forecast
     from the file ieasyforecast_last_successful_run_file. If the file is not
@@ -103,6 +106,9 @@ def get_last_run_date():
         os.getenv("ieasyforecast_intermediate_data_path"),
         os.getenv("ieasyforecast_last_successful_run_file")
         )
+    # add _<prediction_mode> to the file name if prediction_mode is not BOTH
+    if prediction_mode not in ['BOTH']:
+        last_run_file = last_run_file.replace(".txt", f"_{prediction_mode}.txt")
     try:
         with open(last_run_file, "r") as file:
             last_successful_run_date = file.read()
@@ -118,7 +124,7 @@ def get_last_run_date():
 
     return last_successful_run_date
 
-def define_run_dates():
+def define_run_dates(prediction_mode='BOTH'):
     """
     Identifies the start and end dates for the current call to the linear
     regression tool.
@@ -128,9 +134,11 @@ def define_run_dates():
     date_end (datetime.date): The end date for the forecast. In operational mode this is today.
     bulletin_date (datetime.date): The bulletin date is the first day of the period for which the forecast is produced. Typically tomorrow.
     """
+    print(f"... define_run_dates: prediction_mode: {prediction_mode}")
     # The last successful run date is the last time, the forecast tools were
     # run successfully. This is typically yesterday.
-    last_successful_run_date = get_last_run_date()
+    last_successful_run_date = get_last_run_date(prediction_mode=prediction_mode)
+    print(f"... define_run_dates: Last successful run date: {last_successful_run_date}")
 
     # The day on which the forecast is produced. In operational mode, this is
     # day 0 or today. However, the tools can also be run in hindcast mode by
@@ -141,11 +149,12 @@ def define_run_dates():
 
     # The last day for which a forecast is produced. This is always today.
     date_end = dt.date.today()
+    print(f"... define_run_dates: date_start: {date_start}, date_end: {date_end}")
 
     # Basic sanity check in case the script is run multiple times.
     if date_end == last_successful_run_date:
-        logger.info("The forecasts have allready been produced for today. "
-                       "No forecast will be produced."
+        logger.info("The forecasts have allready been produced for today.\n"
+                       "No forecast will be produced.\n"
                        "Please use the re-run forecast tool to re-run the forecast for today.")
         return None, None, None
 
@@ -1078,6 +1087,13 @@ def read_linreg_forecasts_pentad():
         os.getenv("ieasyforecast_analysis_pentad_file")
     )
     data = pd.read_csv(filepath, parse_dates=["date"])
+
+    # Debugging prints:
+    print(f"\n\n\n\n\n||||  DEBUGGING  -  read_csv  ||||")
+    # Print the latest date in the DataFrame
+    latest_date_temp = data['date'].max()
+    print(f"Latest date in simulated_df: {latest_date_temp}")
+    print(f"\n\n\n\n\n\n")
 
     # Drop duplicate rows in date and code if they exist, keeping the last row
     data.drop_duplicates(subset=["date", "code"], keep="last", inplace=True)
@@ -2650,6 +2666,19 @@ def read_observed_and_modelled_data_pentade():
     # Read the linear regression forecasts for the pentadal forecast horizon
     linreg, stats_linreg = read_linreg_forecasts_pentad()
     stats = stats_linreg
+
+    # Debugging prints:
+    print(f"\n\n\n\n\n||||  DEBUGGING  -  read_linreg_forecasts_pentad  ||||")
+    # Print the latest date in the DataFrame
+    latest_date_temp = linreg['date'].max()
+    print(f"Latest date in simulated_df: {latest_date_temp}")
+    # Print all unique forecast models (model_short) in the DataFrame
+    unique_models = linreg['model_short'].unique()
+    print(f"Unique forecast models in simulated_df: {unique_models}")
+    # Print unique forecast models available for latest date
+    latest_models = linreg[linreg['date'] == latest_date_temp]['model_short'].unique()
+    print(f"Unique forecast models available for latest date ({latest_date_temp}): {latest_models}")
+    print(f"\n\n\n\n\n\n")
 
     # Learn which modules are activated
     read_ml_results = os.getenv("ieasyhydroforecast_run_ML_models")

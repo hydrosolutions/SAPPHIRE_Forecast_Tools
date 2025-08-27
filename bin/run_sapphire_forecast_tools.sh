@@ -77,6 +77,7 @@ establish_ssh_tunnel
 # Set the trap to clean up processes on exit
 trap cleanup EXIT
 
+export SAPPHIRE_PREDICTION_MODE
 # Start the Docker Compose service for the forecasting pipeline
 start_docker_compose_luigi
 

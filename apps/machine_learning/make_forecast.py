@@ -661,9 +661,10 @@ def make_ml_forecast():
 
         forecast = pd.concat([forecast, predictions], axis=0, ignore_index=True)
 
-        # Check if for this code we have a twin vitrual gauge which is > 0
+        # Check if for this code we have a twin virtual gauge which is > 0
         test_value = hydroposts_available_for_ml_forecasting.loc[hydroposts_available_for_ml_forecasting['code'] == str(code), 'virtual_station_name_twin'].iloc[0]
-        if test_value is not False:
+        logger.debug('Twin virtual gauge test value: %s', test_value)
+        if test_value != False:
             logger.debug('Forecast for twin virtual gauge: %s', predictions)
 
             predictions['code'] = int(test_value)
@@ -671,8 +672,6 @@ def make_ml_forecast():
             forecast = pd.concat([forecast, predictions], axis=0)
 
             logger.debug('Copied data and appended: %s', predictions)
-
-
 
 
     # --------------------------------------------------------------------
