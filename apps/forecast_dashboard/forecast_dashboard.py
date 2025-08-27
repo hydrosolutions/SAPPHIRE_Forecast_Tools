@@ -391,25 +391,49 @@ def load_data():
     forecasts_current = forecasts_latest_year[forecasts_latest_year[horizon_in_year] == latest_horizon_in_year]
     #print('forecasts_current:\n', forecasts_current)
     
-    # Get valid codes
-    valid_codes = forecasts_current['code'].unique().tolist()
-    # Make sure the valid codes are int and then strings
-    valid_codes = [str(int(code)) for code in valid_codes]
+    # Get valid codes and normalize to string integers reliably
+    valid_codes = (
+        pd.to_numeric(forecasts_current['code'], errors='coerce')
+          .dropna()
+          .astype('int64')
+          .astype(str)
+          .tolist()
+    )
     print('valid_codes:', valid_codes)
-    
-    # Filter forecasts_all and station_list based on valid codes
-    forecasts_all = forecasts_all[forecasts_all['code'].isin(valid_codes)]
-    forecast_stats = forecast_stats[forecast_stats['code'].isin(valid_codes)]
+
+    # Normalize 'code' columns in related DataFrames so filtering is consistent
+    def _normalize_code_col(df):
+        if df is None or 'code' not in df.columns:
+            return df
+        df = df.copy()
+        df['code'] = pd.to_numeric(df['code'], errors='coerce')
+        df = df[df['code'].notna()].copy()
+        df['code'] = df['code'].astype('int64').astype(str)
+        return df
+
+    forecasts_all = _normalize_code_col(forecasts_all)
+    forecast_stats = _normalize_code_col(forecast_stats)
+    station_df = _normalize_code_col(station_df)
+    all_stations = _normalize_code_col(all_stations)
+
+    # Filter forecasts_all and station_list based on valid codes (if any)
+    if len(valid_codes) > 0:
+        forecasts_all = forecasts_all[forecasts_all['code'].isin(valid_codes)]
+        forecast_stats = forecast_stats[forecast_stats['code'].isin(valid_codes)]
+        station_df = station_df[station_df['code'].isin(valid_codes)]
+        all_stations = all_stations[all_stations['code'].isin(valid_codes)]
     print('station_list prior: ', station_list)
-    # print forecasts_all filtered for code == '17082'
-    station_df = station_df[station_df['code'].isin(valid_codes)]
+    # Update station_list after potential filtering
     station_list = station_df['station_labels'].unique().tolist()
-    all_stations = all_stations[all_stations['code'].isin(valid_codes)]
     print('station_dict prior: ', station_dict)
     # Create a new station_dict that only includes stations in station_list
     new_station_dict = {}
     for basin, stations in station_dict.items():
-        new_stations = [s for s in stations if any(code in s for code in valid_codes)]  # Corrected line
+        # Only filter if we have valid_codes; otherwise keep prior stations
+        if len(valid_codes) > 0:
+            new_stations = [s for s in stations if any(code in s for code in valid_codes)]  # Corrected line
+        else:
+            new_stations = stations
         if new_stations:  # Only add the basin if there are valid stations
             new_station_dict[basin] = new_stations
     station_dict = new_station_dict
@@ -571,10 +595,16 @@ print(f"   dbg: current_decad: {current_decad}")
 # Widget for station selection, always visible
 #print(f"\n\nDEBUG: forecast_dashboard.py: station select name string: {_('Select discharge station:')}\n\n")
 #station = layout.create_station_selection_widget(station_dict)
+_default_station_value = None
+if station_dict:
+    try:
+        _default_station_value = station_dict[next(iter(station_dict))][0]
+    except Exception:
+        _default_station_value = None
 station = pn.widgets.Select(
     name=_("Select discharge station:"),
-    groups=station_dict,
-    value=station_dict[next(iter(station_dict))][0],
+    groups=station_dict if station_dict else {_("No stations available"): []},
+    value=_default_station_value,
     margin=(0, 0, 0, 0)
     )
 
