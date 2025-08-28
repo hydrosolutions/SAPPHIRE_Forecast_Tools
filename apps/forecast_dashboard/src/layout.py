@@ -83,7 +83,7 @@ def define_disclaimer(_, in_docker_flag):
         pn.pane.Markdown(_("Last updated on ") + dt.datetime.now().strftime("%b %d, %Y") + ".")
     )
 
-def define_tabs(_,
+def define_tabs(_, predictors_warning, forecast_warning,
                 daily_hydrograph_plot, rainfall_plot, temperature_plot,
                 #daily_rel_norm_runoff, daily_rel_to_norm_rainfall,
                 forecast_data_and_plot,
@@ -148,6 +148,7 @@ def define_tabs(_,
             # Predictors tab
             (_('Predictors'),
             pn.Column(
+                predictors_warning,
                 pn.Row(
                      pn.Card(daily_hydrograph_plot, title=_("Hydrograph")),
                      #pn.Card(daily_rel_norm_runoff, title=_("Relative to norm runoff")),
@@ -169,6 +170,7 @@ def define_tabs(_,
             ),
             (_('Forecast'),
              pn.Column(
+                forecast_warning,
                 pn.Card(
                     pn.Row(
                         forecast_data_and_plot

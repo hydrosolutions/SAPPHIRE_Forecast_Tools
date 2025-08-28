@@ -1000,8 +1000,60 @@ def create_widget_updater():
 widget_updater = create_widget_updater()
 
 
+def get_pane_alert(msg):
+    return pn.pane.Alert(
+        "⚠️ Warning: " + msg,
+        alert_type="warning",
+        sizing_mode="stretch_width"
+    )
+
+
+def get_predictors_warning(station):
+    predictors_warning.objects = []  # clear old content
+    today_date = today.date()
+    filtered = hydrograph_day_all[
+        (hydrograph_day_all["station_labels"] == station.value) &
+        (hydrograph_day_all["date"] == pd.to_datetime(today_date))
+    ]
+
+    if not filtered.empty:
+        if pd.notna(filtered["2025"].iloc[0]):
+            print("2025 has a value:", filtered["2025"].iloc[0])
+        else:
+            print("2025 is NaN/empty")
+            predictors_warning.append(get_pane_alert(f"No discharge record available today for {station.value}"))
+    else:
+        print("No record for today and given station")
+        predictors_warning.append(get_pane_alert(f"No discharge record available today for {station.value}"))
+
+
+def get_forecast_warning(station):
+    forecast_warning.objects = []  # clear old content
+    filtered = forecasts_all[
+        (forecasts_all["station_labels"] == station.value) &
+        (forecasts_all["date"] == pd.to_datetime(date_picker.value))
+    ]
+    if not filtered.empty:
+        # filter rows where forecasted_discharge is NaN
+        missing_forecasts = filtered[filtered["forecasted_discharge"].isna()]
+
+        # collect the model_short values into a list
+        missing_models = missing_forecasts["model_short"].tolist()
+
+        if missing_models:
+            print("Missing forecasts for models:", missing_models)
+            forecast_warning.append(get_pane_alert(
+                f"No forecast data available for models {', '.join(missing_models)} at {station.value} on {date_picker.value}."))
+        else:
+            print("All models have forecast data.")
+    else:
+        forecast_warning.append(get_pane_alert(f"No forecast data available for {station.value} on {date_picker.value}."))
+
+
 @pn.depends(station, pentad_selector, decad_selector, watch=True)
 def update_model_select(station_value, selected_pentad, selected_decad):
+    get_predictors_warning(station)
+    get_forecast_warning(station)
     print("\n=== Starting Model Select Update ===")
     print(f"Initial widget state:")
     print(f"  Options: {model_checkbox.options}")
@@ -1843,9 +1895,13 @@ logout_panel = pn.Column(
     logout_confirm,
     pn.Row(logout_yes, logout_no)
 )
+predictors_warning = pn.Column()
+forecast_warning = pn.Column()
+get_predictors_warning(station)
+get_forecast_warning(station)
 
 # Create a placeholder for the dashboard content
-dashboard_content = layout.define_tabs(_,
+dashboard_content = layout.define_tabs(_, predictors_warning, forecast_warning,
     daily_hydrograph_plot, daily_rainfall_plot, daily_temperature_plot,
     forecast_data_and_plot,
     forecast_summary_table, pentad_forecast_plot, forecast_skill_plot,
