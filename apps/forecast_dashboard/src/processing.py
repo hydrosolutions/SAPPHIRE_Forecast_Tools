@@ -1005,10 +1005,25 @@ def add_labels_to_hydrograph(hydrograph, all_stations):
 
 
 def add_labels_to_forecast_pentad_df(forecast_pentad, all_stations):
+    # Ensure 'code' uses a consistent normalized string format on both sides
+    def _normalize_code_col(df):
+        df = df.copy()
+        if 'code' in df.columns:
+            df['code'] = pd.to_numeric(df['code'], errors='coerce')
+            df = df[df['code'].notna()].copy()
+            df['code'] = df['code'].astype('int64').astype(str)
+        return df
+
+    forecast_pentad = _normalize_code_col(forecast_pentad)
+    all_stations = _normalize_code_col(all_stations)
+
     forecast_pentad = forecast_pentad.merge(
         all_stations.loc[:, ['code', 'station_labels']],
         left_on='code', right_on='code', how='left').copy()
-    forecast_pentad['station_labels'] = forecast_pentad['code'] + ' - ' + forecast_pentad['station_labels']
+
+    # Build display label only when station label exists
+    if 'station_labels' in forecast_pentad.columns:
+        forecast_pentad['station_labels'] = forecast_pentad['code'] + ' - ' + forecast_pentad['station_labels'].fillna('')
 
     return forecast_pentad
 
