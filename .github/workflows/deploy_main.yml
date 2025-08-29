@@ -17,7 +17,7 @@ env:
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "bea_debugging_pentad_forecast_display_zrh_server" ]
   #pull_request:
   #  branches: [ "main" ]
 
