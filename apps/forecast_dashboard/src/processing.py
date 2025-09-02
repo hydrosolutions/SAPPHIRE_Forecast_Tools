@@ -941,6 +941,7 @@ def read_all_stations_metadata_from_iehhf(station_list):
     from ieasyhydro_sdk.sdk import IEasyHydroHFSDK
     try:
         iehhf = IEasyHydroHFSDK()
+        # Uncomment to test failure to connect to iEH HF
         # raise ConnectionError("Simulated iEHHF failure")
         print("iEHHF connected. Fetching station metadata...")
         iehhf_warning = None
