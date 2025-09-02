@@ -243,7 +243,7 @@ def load_data():
     global hydrograph_day_all, hydrograph_pentad_all, linreg_predictor, \
         forecasts_all, forecast_stats, all_stations, station_dict, station_df, \
         station_list, linreg_datatable, stations_iehhf, \
-        rram_forecast, ml_forecast, rain, temp, latest_data_is_current_year
+        rram_forecast, ml_forecast, rain, temp, latest_data_is_current_year, iehhf_warning
     # File modification times
     hydrograph_day_file = os.path.join(
         os.getenv("ieasyforecast_intermediate_data_path"),
@@ -330,7 +330,7 @@ def load_data():
         stations_iehhf, forecast_stats_file_mtime)
 
     # Hydroposts metadata
-    station_list, all_stations, station_df, station_dict = processing.read_all_stations_metadata_from_iehhf(
+    station_list, all_stations, station_df, station_dict, iehhf_warning = processing.read_all_stations_metadata_from_iehhf(
         hydrograph_day_all['code'].unique().tolist())
     #station_list, all_stations, station_df, station_dict = processing.read_all_stations_metadata_from_file(
     #    hydrograph_day_all['code'].unique().tolist())
@@ -1905,6 +1905,9 @@ predictors_warning = pn.Column()
 forecast_warning = pn.Column()
 get_predictors_warning(station)
 get_forecast_warning(station)
+if iehhf_warning is not None:
+    predictors_warning.append(get_pane_alert(iehhf_warning))
+    forecast_warning.append(get_pane_alert(iehhf_warning))
 
 # Create a placeholder for the dashboard content
 dashboard_content = layout.define_tabs(_, predictors_warning, forecast_warning,
