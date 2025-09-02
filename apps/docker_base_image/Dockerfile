@@ -71,7 +71,7 @@ RUN --mount=type=cache,target=/home/appuser/.cache/pip \
     --mount=type=bind,source=apps/docker_base_image/requirements.txt,target=/app/apps/docker_base_image/requirements.txt \
     pip install --no-cache-dir wheel tornado && \
     pip install --trusted-host pypi.python.org -r /app/apps/docker_base_image/requirements.txt && \
-    pip install --no-cache-dir --upgrade --force-reinstall "git+https://github.com/hydrosolutions/ieasyhydro-python-sdk@main" && \
+    pip install --no-cache-dir --upgrade --force-reinstall "git+https://github.com/hydrosolutions/ieasyhydro-python-sdk@master" && \
     sudo pip install --no-cache-dir /app/apps/iEasyHydroForecast
 
 # Switch to the non-root user
