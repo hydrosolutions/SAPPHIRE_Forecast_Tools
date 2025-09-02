@@ -548,7 +548,7 @@ decad_options = {
 # region widgets
 
 # Widget for date selection, always visible
-forecast_date = linreg_predictor['date'].max().date()  # Dates here refer to the forecast issue day, i.e. 1 day before the first day of the forecast pentad.
+forecast_date = forecasts_all['date'].max().date()  # Dates here refer to the forecast issue day, i.e. 1 day before the first day of the forecast pentad.
 date_picker = pn.widgets.DatePicker(name=_("Select date:"),
                                     start=dt.datetime((forecast_date.year-1), 1, 5).date(),
                                     end=forecast_date,
@@ -556,7 +556,7 @@ date_picker = pn.widgets.DatePicker(name=_("Select date:"),
 
 
 # Get the last available date in the data
-last_date = linreg_predictor['date'].max() + dt.timedelta(days=1)
+last_date = forecasts_all['date'].max() + dt.timedelta(days=1)
 
 # Determine the corresponding pentad
 current_pentad = tl.get_pentad_for_date(last_date)
