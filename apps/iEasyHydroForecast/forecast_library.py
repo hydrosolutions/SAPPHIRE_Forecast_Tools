@@ -2496,7 +2496,7 @@ def write_linreg_pentad_forecast_data(data: pd.DataFrame):
     data = data.round(3)
 
     # For each code, extract the last row (most recent data in current batch)
-    last_line = data.groupby('code').tail(1)
+    last_line = data.groupby('code', as_index=False).apply(lambda g: g.tail(1)).reset_index(drop=True)
 
     # Get the max year of the last_line dates
     year = last_line['date'].dt.year.max()
@@ -2542,23 +2542,35 @@ def write_linreg_pentad_forecast_data(data: pd.DataFrame):
         # Remove duplicates, keeping last occurrence (which has been added last)
         combined_data = combined_data.drop_duplicates(subset=['date', 'code'], keep='last')
 
-        # Group by pentad and code, kepp the most recent entries 
-        # for each pentad and code. 
-        combined_data_latest = combined_data.copy()
-        combined_data_latest = combined_data_latest.groupby(['pentad_in_year', 'code']).tail(1)
+        # Enforce keeping only current and previous year to avoid stale years lingering
+        try:
+            combined_year_max = int(pd.to_datetime(last_line['date']).dt.year.max())
+            min_year_allowed = combined_year_max - 1
+            combined_data = combined_data[pd.to_datetime(combined_data['date']).dt.year >= min_year_allowed]
+            logger.debug(f"write_linreg_pentad: filtered to years >= {min_year_allowed}")
+        except Exception as _e:
+            logger.warning(f"write_linreg_pentad: year filter skipped due to error: {_e}")
+
+        # Compute latest strictly by max(date) per (pentad_in_year, code)
+        combined_data['date'] = pd.to_datetime(combined_data['date'], errors='coerce')
+        idx_latest = combined_data.groupby(['pentad_in_year', 'code'])['date'].idxmax()
+        combined_data_latest = combined_data.loc[idx_latest].copy()
 
         # print last 50 lines of combined_data for debugging
-        logger.debug(f'combined_data after deduplication: \n{combined_data_latest}')
+        logger.debug(f'combined_data after deduplication (latest sample): \n{combined_data_latest.sort_values(["code","pentad_in_year"]).head(20)}')
 
         # Write back to file
         try:
-            ret = combined_data.to_csv(output_file_path, index=False)
+            # Sort full history by date then code for stable tails
+            combined_sorted = combined_data.sort_values(by=['date', 'code']).reset_index(drop=True)
+            ret = combined_sorted.to_csv(output_file_path, index=False)
             if ret is None:
                 logger.info(f"Data written to {output_file_path}.")
             else:
                 logger.error(f"Could not write the data to {output_file_path}.")
             # Also write line to latest file
-            ret = combined_data_latest.to_csv(output_file_path_latest, index=False)
+            latest_sorted = combined_data_latest.sort_values(by=['date', 'code']).reset_index(drop=True)
+            ret = latest_sorted.to_csv(output_file_path_latest, index=False)
             if ret is None:
                 logger.info(f"Data written to {output_file_path_latest}.")
             else:
@@ -2569,13 +2581,14 @@ def write_linreg_pentad_forecast_data(data: pd.DataFrame):
     else:
         # Write the data to a new file
         try:
-            ret = last_line.to_csv(output_file_path, index=False)
+            # Sort and write
+            ret = last_line.sort_values(by=['date', 'code']).to_csv(output_file_path, index=False)
             if ret is None:
                 logger.info(f"Data written to {output_file_path}.")
             else:
                 logger.error(f"Could not write the data to {output_file_path}.")
             # Also write line to latest file
-            last_line.to_csv(output_file_path_latest, index=False)
+            last_line.sort_values(by=['date', 'code']).to_csv(output_file_path_latest, index=False)
             logger.info(f"Data written to {output_file_path_latest}.")
         except Exception as e:
             logger.error(f"Could not write the data to {output_file_path}.")
