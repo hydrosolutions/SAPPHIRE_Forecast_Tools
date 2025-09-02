@@ -651,8 +651,12 @@ for model in current_model_pre_selection:
     # Skip models that can't be found
 print(f"\n\n\nmodel_checkbox: {model_checkbox.value}\n\n\n")
 
+allowable_range_label = pn.pane.Markdown(
+    _("Select forecast range (for both summary table and figures):"),
+    styles={"white-space": "normal"},  # force wrapping
+    margin=(0, 0, -5, 0)
+)
 allowable_range_selection = pn.widgets.Select(
-    name=_("Select forecast range for display:"),
     options=[_("delta"), _("Manual range, select value below"), _("min[delta, %]")],
     value=_("delta"),
     margin=(0, 0, 0, 0)
@@ -758,23 +762,25 @@ select_basin_widget = pn.widgets.Select(
 
 # region forecast_card
 
-update_forecast_button = pn.widgets.Button(name="Update Forecast", button_type="success")
+update_forecast_button = pn.widgets.Button(name="Apply changes", button_type="success")
 # Forecast card for sidepanel
 forecast_model_title = pn.pane.Markdown(
-    _("Select forecast model:"), margin=(0, 0, -15, 0))  # margin=(top, right, bottom, left)
+    _("Select forecast model (for figures only):"), margin=(0, 0, -15, 0))  # margin=(top, right, bottom, left)
 range_selection_title = pn.pane.Markdown(
-    _("Show ranges in figure:"), margin=(0, 0, -15, 0))
+    _("Show ranges (for figures only):"), margin=(0, 0, -15, 0))
 forecast_card = pn.Card(
     pn.Column(
-        forecast_model_title,
-        model_checkbox,
+        allowable_range_label,
         allowable_range_selection,
         manual_range,
+        pn.layout.Divider(),
+        forecast_model_title,
+        model_checkbox,
         range_selection_title,
         show_range_button,
         update_forecast_button
     ),
-    title=_('Select forecasts:'),
+    title=_('Forecast configuration:'),
     width_policy='fit', width=station.width,
     collapsed=False
 )
