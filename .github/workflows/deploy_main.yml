@@ -48,7 +48,7 @@ jobs:
         python -m pip install --upgrade pip
         python -m pip install flake8
         python -m pip install -r ./apps/iEasyHydroForecast/requirements.txt
-        python -m pip install --no-cache-dir --upgrade "git+https://github.com/hydrosolutions/ieasyhydro-python-sdk@v0.3.2" 
+        python -m pip install --no-cache-dir --upgrade --force-reinstall "git+https://github.com/hydrosolutions/ieasyhydro-python-sdk@main"
         python -m pip install -e ./apps/iEasyHydroForecast
     - name: Lint with flake8
       run: |
@@ -229,7 +229,7 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         python -m pip install -r preprocessing_runoff/requirements.txt
-        python -m pip install --no-cache-dir --upgrade "git+https://github.com/hydrosolutions/ieasyhydro-python-sdk@v0.3.2" 
+        python -m pip install --no-cache-dir --upgrade --force-reinstall "git+https://github.com/hydrosolutions/ieasyhydro-python-sdk@main"
         python -m pip install -e iEasyHydroForecast
     - name: Test
       working-directory: ./apps
@@ -402,7 +402,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install flake8
           python -m pip install -r reset_forecast_run_date/requirements.txt
-          python -m pip install --no-cache-dir --upgrade "git+https://github.com/hydrosolutions/ieasyhydro-python-sdk@v0.3.2" 
+          python -m pip install --no-cache-dir --upgrade --force-reinstall "git+https://github.com/hydrosolutions/ieasyhydro-python-sdk@main" 
           python -m pip install -e iEasyHydroForecast
       - name: Test
         working-directory: ./apps
@@ -468,7 +468,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r ./apps/forecast_dashboard/requirements.txt
-          python -m pip install --no-cache-dir --upgrade "git+https://github.com/hydrosolutions/ieasyhydro-python-sdk@v0.3.2" 
+          python -m pip install --no-cache-dir --upgrade --force-reinstall "git+https://github.com/hydrosolutions/ieasyhydro-python-sdk@main" 
           python -m pip install git+https://github.com/hydrosolutions/ieasyreports.git@main
           python -m pip install -e ./apps/iEasyHydroForecast
       - name: Test with pytest
@@ -565,7 +565,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r linear_regression/requirements.txt
-          python -m pip install --no-cache-dir --upgrade "git+https://github.com/hydrosolutions/ieasyhydro-python-sdk@v0.3.2" 
+          python -m pip install --no-cache-dir --upgrade --force-reinstall "git+https://github.com/hydrosolutions/ieasyhydro-python-sdk@main" 
           python -m pip install -e iEasyHydroForecast
       - name: Test
         working-directory: ./apps
