@@ -17,7 +17,7 @@ env:
 
 on:
   push:
-    branches: [ "bea_debugging_workflow" ]
+    branches: [ "main" ]
   #pull_request:
   #  branches: [ "main" ]
 
@@ -630,6 +630,10 @@ jobs:
           echo "- ${{ env.PIPELINE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" >> $GITHUB_STEP_SUMMARY
           echo "- ${{ env.CONCMOD_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" >> $GITHUB_STEP_SUMMARY
           echo "- ${{ env.PREPQ_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" >> $GITHUB_STEP_SUMMARY
+          echo "- ${{ env.LINREG_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" >> $GITHUB_STEP_SUMMARY
+          echo "- ${{ env.ML_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" >> $GITHUB_STEP_SUMMARY
+          echo "- ${{ env.DASHBOARD_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" >> $GITHUB_STEP_SUMMARY
+          echo "- ${{ env.POSTPQ_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" >> $GITHUB_STEP_SUMMARY
           # Add all other images here
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Note:** These images were built on Ubuntu:latest and pushed to DockerHub." >> $GITHUB_STEP_SUMMARY

@@ -1,4 +1,4 @@
-name: Test & deploy local branch to Dockerhub
+name: Test & push local branch to Dockerhub
 
 env:
   IMAGE_TAG: local
@@ -14,8 +14,6 @@ env:
   POSTPQ_IMAGE_NAME: mabesa/sapphire-postprocessing
   RERUN_IMAGE_NAME: mabesa/sapphire-rerun
   CONCMOD_IMAGE_NAME: mabesa/sapphire-conceptmod
-
-  # Test main
 
 on:
   push:
@@ -48,7 +46,7 @@ jobs:
         python -m pip install --upgrade pip
         python -m pip install flake8
         python -m pip install -r ./apps/iEasyHydroForecast/requirements.txt
-        python -m pip install git+https://github.com/hydrosolutions/ieasyhydro-python-sdk
+        python -m pip install --no-cache-dir --upgrade --force-reinstall "git+https://github.com/hydrosolutions/ieasyhydro-python-sdk@master"
         python -m pip install -e ./apps/iEasyHydroForecast
     - name: Lint with flake8
       run: |
@@ -73,7 +71,7 @@ jobs:
       # Run the dockerization & deployment script
       - name: Build Docker image
         run: |
-          DOCKER_BUILDKIT=1 docker build --no-cache \
+          DOCKER_BUILDKIT=1 docker build --pull --no-cache \
           -t "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
           -f ./apps/docker_base_image/Dockerfile .
 
@@ -114,7 +112,6 @@ jobs:
           docker push "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
 
 
-
   build_and_push_pipeline_image:
     needs: [build_and_push_python_311_base_image]
     runs-on: ubuntu-latest
@@ -127,7 +124,7 @@ jobs:
       # Run the dockerization & deployment script
       - name: Build Docker image
         run: |
-          docker build --no-cache \
+          docker build --pull --no-cache \
           -t "${{ env.PIPELINE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
           -f ./apps/pipeline/Dockerfile .
 
@@ -176,7 +173,6 @@ jobs:
 
 
   push_conceptual_model_to_Dckerhub:
-    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.merged == true)
     runs-on: ubuntu-latest
     name: Dockerize and push conceptual model module to Dockerhub
 
@@ -189,7 +185,7 @@ jobs:
     # Run the dockerization & deployment script
     - name: Build Docker image
       run: |
-        docker build --no-cache \
+        docker build --pull --no-cache \
         -t "${{ env.CONCMOD_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
         -f ./apps/conceptual_model/Dockerfile .
 
@@ -213,7 +209,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.12"]
+        python-version: ["3.11"]
 
     steps:
     - name: Check out the current branch
@@ -231,7 +227,7 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         python -m pip install -r preprocessing_runoff/requirements.txt
-        python -m pip install git+https://github.com/hydrosolutions/ieasyhydro-python-sdk
+        python -m pip install --no-cache-dir --upgrade --force-reinstall "git+https://github.com/hydrosolutions/ieasyhydro-python-sdk@master"
         python -m pip install -e iEasyHydroForecast
     - name: Test
       working-directory: ./apps
@@ -252,7 +248,7 @@ jobs:
       # Run the dockerization & deployment script
       - name: Build Docker image
         run: |
-          docker build --no-cache \
+          docker build --pull --no-cache \
           -t "${{ env.PREPQ_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
           -f ./apps/preprocessing_runoff/Dockerfile .
 
@@ -307,7 +303,7 @@ jobs:
       # Run the dockerization & deployment script
       - name: Build Docker image
         run: |
-          docker build --no-cache \
+          docker build --pull --no-cache \
           --build-arg SAPPHIRE_DG_HOST=${{ secrets.SAPPHIRE_DG_HOST }} \
           -t "${{ env.PREPG_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
           -f ./apps/preprocessing_gateway/Dockerfile .
@@ -361,7 +357,7 @@ jobs:
       # Run the dockerization & deployment script
       - name: Build Docker image
         run: |
-          docker build --no-cache \
+          docker build --pull --no-cache \
           -t "${{ env.ML_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
           -f ./apps/machine_learning/Dockerfile .
 
@@ -403,9 +399,9 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install flake8
-          pip install -r reset_forecast_run_date/requirements.txt
-          pip install git+https://github.com/hydrosolutions/ieasyhydro-python-sdk
-          pip install -e iEasyHydroForecast
+          python -m pip install -r reset_forecast_run_date/requirements.txt
+          python -m pip install --no-cache-dir --upgrade --force-reinstall "git+https://github.com/hydrosolutions/ieasyhydro-python-sdk@master" 
+          python -m pip install -e iEasyHydroForecast
       - name: Test
         working-directory: ./apps
         run: |
@@ -425,7 +421,7 @@ jobs:
       # Run the dockerization & deployment script
       - name: Build Docker image
         run: |
-          docker build --no-cache \
+          docker build --pull --no-cache \
           -t "${{ env.RERUN_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
           -f ./apps/reset_forecast_run_date/Dockerfile .
 
@@ -470,7 +466,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r ./apps/forecast_dashboard/requirements.txt
-          python -m pip install git+https://github.com/hydrosolutions/ieasyhydro-python-sdk
+          python -m pip install --no-cache-dir --upgrade --force-reinstall "git+https://github.com/hydrosolutions/ieasyhydro-python-sdk@master" 
           python -m pip install git+https://github.com/hydrosolutions/ieasyreports.git@main
           python -m pip install -e ./apps/iEasyHydroForecast
       - name: Test with pytest
@@ -493,7 +489,7 @@ jobs:
       # Run the dockerization & deployment script
       - name: Build Docker image
         run: |
-          docker build --no-cache \
+          docker build --pull --no-cache \
           -t "${{ env.DASHBOARD_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
           -f ./apps/forecast_dashboard/Dockerfile .
 
@@ -525,7 +521,7 @@ jobs:
       # Run the dockerization & deployment script
       - name: Build Docker image
         run: |
-          docker build --no-cache \
+          docker build --pull --no-cache \
           -t "${{ env.POSTPQ_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
           -f ./apps/postprocessing_forecasts/Dockerfile .
 
@@ -567,7 +563,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r linear_regression/requirements.txt
-          python -m pip install git+https://github.com/hydrosolutions/ieasyhydro-python-sdk
+          python -m pip install --no-cache-dir --upgrade --force-reinstall "git+https://github.com/hydrosolutions/ieasyhydro-python-sdk@master" 
           python -m pip install -e iEasyHydroForecast
       - name: Test
         working-directory: ./apps
@@ -589,7 +585,7 @@ jobs:
       # Run the dockerization & deployment script
       - name: Build Docker image
         run: |
-          docker build --no-cache \
+          docker build --pull --no-cache \
           -t "${{ env.LINREG_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
           -f ./apps/linear_regression/Dockerfile .
 
@@ -604,5 +600,40 @@ jobs:
       - name: Push the image to Dockerhub
         run: |
           docker push "${{ env.LINREG_IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
+
+  # Final job that summarizes all built images
+  summarize_builds:
+    needs: [
+      build_and_push_python_311_base_image,
+      build_and_push_pipeline_image,
+      push_conceptual_model_to_Dckerhub,
+      push_preprocessing_runoff_to_Dckerhub,
+      push_preprocessing_gateway_to_Dckerhub,
+      push_machine_learning_to_Dckerhub,
+      push_reset_forecast_to_Dckerhub,
+      push_dashboard_to_Dckerhub,
+      push_postprocessing_runoff_to_Dckerhub,
+      push_linreg_to_Dckerhub
+    ]
+    runs-on: ubuntu-latest
+    name: Summarize Docker image builds
+    steps:
+      - name: Generate summary
+        run: |
+          echo "# Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Successfully built the following Docker images:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- ${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" >> $GITHUB_STEP_SUMMARY
+          echo "- ${{ env.PIPELINE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" >> $GITHUB_STEP_SUMMARY
+          echo "- ${{ env.CONCMOD_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" >> $GITHUB_STEP_SUMMARY
+          echo "- ${{ env.PREPQ_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" >> $GITHUB_STEP_SUMMARY
+          echo "- ${{ env.LINREG_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" >> $GITHUB_STEP_SUMMARY
+          echo "- ${{ env.ML_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" >> $GITHUB_STEP_SUMMARY
+          echo "- ${{ env.DASHBOARD_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" >> $GITHUB_STEP_SUMMARY
+          echo "- ${{ env.POSTPQ_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" >> $GITHUB_STEP_SUMMARY
+          # Add all other images here
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Note:** These images were built on Ubuntu:latest and pushed to DockerHub." >> $GITHUB_STEP_SUMMARY
 
 
