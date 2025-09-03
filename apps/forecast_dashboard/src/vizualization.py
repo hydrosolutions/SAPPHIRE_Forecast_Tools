@@ -1577,6 +1577,37 @@ def plot_daily_hydrograph_data(_, hydrograph_day_all, linreg_predictor, station,
     return daily_hydrograph
 
 
+def get_copyright_text(data, station_data, column):
+    # Create copyright text using plot bounds for better "fixed" positioning
+    # Use the xlim and ylim values that you're setting in figure.opts()
+    plot_date_min = min(data['date'])
+    plot_date_max = max(data['date'])
+    plot_precip_max = max([station_data[column].max(), station_data[f'{column}_norm'].max()]) * 1.1  # Same as ylim
+
+    # Calculate position based on plot bounds (not just data bounds)
+    if hasattr(plot_date_min, 'to_pydatetime'):
+        date_range = (plot_date_max - plot_date_min).total_seconds()
+        copyright_x = plot_date_min + pd.Timedelta(seconds=date_range * 0.02)  # 2% from left
+    else:
+        date_range = (plot_date_max - plot_date_min).total_seconds()
+        copyright_x = plot_date_min + dt.timedelta(seconds=date_range * 0.02)  # 2% from left
+
+    # Position near top of the plot area
+    copyright_y = plot_precip_max - 5  # 5 units from top
+
+    copyright_text = hv.Text(
+        copyright_x,
+        copyright_y,
+        "ECMWF IFS HRES via Open Data"
+    ).opts(
+        text_font_size='10pt',
+        text_color='gray',
+        text_alpha=0.7,
+        text_align='left'
+    )
+    return copyright_text
+
+
 def plot_daily_rainfall_data(_, daily_rainfall, station, date_picker,
                              linreg_predictor):
     # Extract code from station
@@ -1680,6 +1711,7 @@ def plot_daily_rainfall_data(_, daily_rainfall, station, date_picker,
         interpolation='steps-mid',
         color=runoff_current_year_color,
         show_legend=True)
+    copyright_text = get_copyright_text(norm_rainfall, station_data, 'P')
     # A bar plot for the forecasted rainfall
     # if forecasts is not empty
     if not forecasts.empty:
@@ -1692,9 +1724,9 @@ def plot_daily_rainfall_data(_, daily_rainfall, station, date_picker,
             interpolation='steps-mid',
             color=runoff_forecast_color_list[3],
             show_legend=True)
-        figure = hvspan_predictor * hvspan_forecast * vlines * hv_norm_rainfall * hv_current_year * hv_forecast
+        figure = hvspan_predictor * hvspan_forecast * vlines * hv_norm_rainfall * hv_current_year * hv_forecast * copyright_text
     else:
-        figure = hvspan_predictor * hvspan_forecast * vlines * hv_norm_rainfall * hv_current_year
+        figure = hvspan_predictor * hvspan_forecast * vlines * hv_norm_rainfall * hv_current_year * copyright_text
 
     figure.opts(
         title=title_text,
@@ -1817,6 +1849,7 @@ def plot_daily_temperature_data(_, daily_rainfall, station, date_picker,
         interpolation='linear',
         color=runoff_current_year_color,
         show_legend=True)
+    copyright_text = get_copyright_text(norm_rainfall, station_data, 'T')
     # A bar plot for the forecasted rainfall
     # if forecasts is not empty
     if not forecasts.empty:
@@ -1829,9 +1862,9 @@ def plot_daily_temperature_data(_, daily_rainfall, station, date_picker,
             interpolation='linear',
             color=runoff_forecast_color_list[3],
             show_legend=True)
-        figure = hvspan_predictor * hvspan_forecast * vlines * hv_norm_rainfall * hv_current_year * hv_forecast
+        figure = hvspan_predictor * hvspan_forecast * vlines * hv_norm_rainfall * hv_current_year * hv_forecast * copyright_text
     else:
-        figure = hvspan_predictor * hvspan_forecast * vlines * hv_norm_rainfall * hv_current_year
+        figure = hvspan_predictor * hvspan_forecast * vlines * hv_norm_rainfall * hv_current_year * copyright_text
 
     figure.opts(
         title=title_text,

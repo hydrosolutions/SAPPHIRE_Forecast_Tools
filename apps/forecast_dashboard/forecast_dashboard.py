@@ -762,7 +762,7 @@ select_basin_widget = pn.widgets.Select(
 
 # region forecast_card
 
-update_forecast_button = pn.widgets.Button(name="Apply changes", button_type="success")
+update_forecast_button = pn.widgets.Button(name=_("Apply changes"), button_type="success")
 # Forecast card for sidepanel
 forecast_model_title = pn.pane.Markdown(
     _("Select forecast model (for figures only):"), margin=(0, 0, -15, 0))  # margin=(top, right, bottom, left)
