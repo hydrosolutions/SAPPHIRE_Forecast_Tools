@@ -263,6 +263,23 @@ def main():
             #logger.debug(f"linreg_pentad.tail (forecast): {linreg_pentad}")
 
             # Write output files for the current forecast horizon
+            try:
+                # Diagnostics: log env and date coverage about to be written
+                env_intermediate = os.getenv('ieasyforecast_intermediate_data_path')
+                env_last_success = os.getenv('ieasyforecast_last_successful_run_file')
+                logger.info(f"[linreg] intermediate_data_path={env_intermediate}, last_run_file={env_last_success}")
+
+                # Ensure date is datetime for diagnostics
+                if 'date' in linreg_pentad.columns:
+                    _dates = pd.to_datetime(linreg_pentad['date'], errors='coerce')
+                    _years = sorted(set([int(y) for y in _dates.dt.year.dropna().unique()])) if not _dates.empty else []
+                    logger.info(f"[linreg] pentad write rows={len(linreg_pentad)}, date_min={_dates.min()}, date_max={_dates.max()}, years={_years}")
+                else:
+                    logger.warning("[linreg] pentad write: 'date' column missing in output frame")
+
+            except Exception as _e:
+                logger.warning(f"[linreg] diagnostics before write failed: {_e}")
+
             fl.write_linreg_pentad_forecast_data(linreg_pentad)
 
         else:

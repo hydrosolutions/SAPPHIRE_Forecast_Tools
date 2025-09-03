@@ -4,7 +4,7 @@
 # If you need more help, visit the Dockerfile reference guide at
 # https://docs.docker.com/engine/reference/builder/
 
-#FROM ubuntu:latest as build
+#FROM ubuntu:latest as build 
 
 FROM mabesa/sapphire-pythonbaseimage:latest AS base
 

@@ -53,7 +53,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --upgrade pip setuptools wheel tornado && \
     pip install --trusted-host pypi.python.org -r /app/apps/backend/requirements.txt && \
     pip install git+https://github.com/hydrosolutions/ieasyreports.git@main && \
-    pip install git+https://github.com/hydrosolutions/ieasyhydro-python-sdk && \
+    pip install --no-cache-dir --upgrade --force-reinstall git+https://github.com/hydrosolutions/ieasyhydro-python-sdk@master && \
     pip install --no-cache-dir /app/apps/iEasyHydroForecast
 
 # Expose the port that the application listens on.
