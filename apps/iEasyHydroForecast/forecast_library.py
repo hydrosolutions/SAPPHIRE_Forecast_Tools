@@ -2539,7 +2539,7 @@ def write_linreg_pentad_forecast_data(data: pd.DataFrame):
     if os.path.exists(output_file_path):
         # Read existing data
         existing_data = pd.read_csv(output_file_path, parse_dates=['date'], 
-                                    dtype={'code': string})
+                                    dtype={'code': str})
 
         # Combine with new data
         combined_data = pd.concat([existing_data, last_line], ignore_index=True)
