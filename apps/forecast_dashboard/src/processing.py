@@ -951,7 +951,7 @@ def read_all_stations_metadata_from_iehhf(station_list):
         save_stations_to_file(all_stations, all_stations_file)
     except Exception as e:
         print(f"iEHHF not available, falling back to file. Error: {e}")
-        iehhf_warning = f"Warning: iEHHF not available, station metadata is read from file which might not be in sync with hf.ieasyhydro.org."
+        iehhf_warning = f"iEHHF not available, station metadata is read from file which might not be in sync with hf.ieasyhydro.org."
         all_stations = load_stations_from_file(all_stations_file)
         if all_stations is None:
             all_stations = []
