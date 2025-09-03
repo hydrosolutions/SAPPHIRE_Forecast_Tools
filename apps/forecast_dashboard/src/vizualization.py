@@ -13,8 +13,8 @@ from calendar import month_abbr
 import holoviews as hv
 from holoviews import streams
 import panel as pn
-from bokeh.models import Label, HoverTool, FixedTicker, FuncTickFormatter, CustomJSTickFormatter, LinearAxis, \
-    NumberFormatter, DateFormatter
+from bokeh.models import Label, Title, HoverTool, FixedTicker, FuncTickFormatter, CustomJSTickFormatter, LinearAxis, \
+    NumberFormatter, DateFormatter, CustomJS
 from bokeh.models.formatters import DatetimeTickFormatter
 from bokeh.models.widgets.tables import CheckboxEditor, BooleanFormatter
 from scipy import stats
@@ -150,7 +150,155 @@ def update_range_slider_visibility(_, range_slider, event):
 
 # Customization of the Bokeh plots
 def remove_bokeh_logo(plot, element):
-    plot.state.toolbar.logo = None
+    try:
+        if hasattr(plot.state, 'toolbar') and plot.state.toolbar is not None:
+            plot.state.toolbar.logo = None
+    except Exception:
+        # Non-fatal if toolbar structure differs
+        pass
+
+
+def make_frame_attribution_hook(text,
+                                corner='top_left',
+                                x_offset=8,
+                                y_offset=8,
+                                text_color='gray',
+                                text_font_size='10pt',
+                                text_alpha=0.7):
+    """Return a hook that pins a text label to the plot frame in screen units.
+
+    Args:
+        text: The attribution text to display.
+        corner: One of 'bottom_left' or 'top_left'.
+        x_offset, y_offset: Pixel offsets from the chosen corner.
+    """
+
+    def hook(plot, element):
+        fig = plot.state
+        # Hide logo (best-effort)
+        try:
+            fig.toolbar.logo = None
+        except Exception:
+            pass
+
+        # Determine anchor sides
+        top_anchor = 'top' in corner
+        left_anchor = 'left' in corner
+
+        # Data-anchored corner: use current ranges and pixel offsets to sit inside the grid
+        x_data = fig.x_range.start if left_anchor else fig.x_range.end
+        y_data = fig.y_range.end if top_anchor else fig.y_range.start
+
+        baseline = 'top' if top_anchor else 'bottom'
+        align = 'left' if left_anchor else 'right'
+        # For a top label, move a few pixels down into the grid (negative y offset)
+        y_off = -abs(y_offset) if top_anchor else abs(y_offset)
+        # For a right label, move a few pixels left into the grid (negative x offset)
+        x_off = abs(x_offset) if left_anchor else -abs(x_offset)
+
+        # Reuse existing label if present
+        try:
+            existing = list(fig.select(name='frame_attribution_label'))
+        except Exception:
+            existing = []
+        if existing:
+            lab = existing[0]
+            lab.text = text
+            lab.x = x_data
+            lab.y = y_data
+            lab.x_units = 'data'
+            lab.y_units = 'data'
+            lab.x_offset = x_off
+            lab.y_offset = y_off
+            lab.text_color = text_color
+            lab.text_font_size = text_font_size
+            lab.text_alpha = text_alpha
+            lab.text_align = align
+            lab.text_baseline = baseline
+        else:
+            lab = Label(
+                name='frame_attribution_label',
+                x=x_data,
+                y=y_data,
+                x_units='data',
+                y_units='data',
+                x_offset=x_off,
+                y_offset=y_off,
+                text=text,
+                text_color=text_color,
+                text_font_size=text_font_size,
+                text_alpha=text_alpha,
+                text_align=align,
+                text_baseline=baseline,
+                level='annotation',
+                background_fill_color='white',
+                background_fill_alpha=0.5,
+                border_line_alpha=0,
+            )
+            try:
+                fig.add_layout(lab)
+            except Exception:
+                pass
+
+        # Keep the label pinned to the grid corner across pan/zoom
+        try:
+            cb_code = (
+                'lbl.x = xr.start; lbl.y = yr.end;'
+                if (left_anchor and top_anchor) else
+                'lbl.x = xr.end; lbl.y = yr.end;'
+                if (not left_anchor and top_anchor) else
+                'lbl.x = xr.start; lbl.y = yr.start;'
+                if (left_anchor and not top_anchor) else
+                'lbl.x = xr.end; lbl.y = yr.start;'  # bottom_right
+            ) + ' lbl.change.emit();'
+
+            for attr in ('start', 'end'):
+                fig.x_range.js_on_change(attr, CustomJS(args=dict(lbl=lab, xr=fig.x_range, yr=fig.y_range), code=cb_code))
+                fig.y_range.js_on_change(attr, CustomJS(args=dict(lbl=lab, xr=fig.x_range, yr=fig.y_range), code=cb_code))
+        except Exception:
+            # If JS hooks fail, static placement still works
+            pass
+
+    return hook
+
+
+def make_side_attribution_hook(text,
+                               location='below',
+                               text_color='gray',
+                               text_font_size='8pt'):
+    """Return a hook that adds a small Title on a plot side (above/below/left/right).
+
+    This is very robust and always visible as part of the plot layout.
+    location: one of 'above', 'below', 'left', 'right'.
+    """
+
+    def hook(plot, element):
+        fig = plot.state
+        try:
+            fig.toolbar.logo = None
+        except Exception:
+            pass
+
+        # Update existing attribution if present
+        try:
+            existing = [t for t in fig.select({'type': Title}) if getattr(t, 'name', None) == f'side_attribution_{location}']
+        except Exception:
+            existing = []
+        if existing:
+            t = existing[0]
+            t.text = text
+            t.text_color = text_color
+            t.text_font_size = text_font_size
+            return
+
+        t = Title(name=f'side_attribution_{location}', text=text, text_color=text_color, text_font_size=text_font_size)
+        try:
+            fig.add_layout(t, location)
+        except Exception:
+            # Fallback to below if invalid location
+            fig.add_layout(t, 'below')
+
+    return hook
 
 
 def add_custom_xticklabels_pentad(_, plot, element):
@@ -1595,17 +1743,8 @@ def get_copyright_text(data, station_data, column):
     # Position near top of the plot area
     copyright_y = plot_precip_max - 5  # 5 units from top
 
-    copyright_text = hv.Text(
-        copyright_x,
-        copyright_y,
-        "ECMWF IFS HRES via Open Data"
-    ).opts(
-        text_font_size='10pt',
-        text_color='gray',
-        text_alpha=0.7,
-        text_align='left'
-    )
-    return copyright_text
+    # Keep returning an empty overlay; actual frame-pinned label is added via a hook
+    return hv.Overlay([])
 
 
 def plot_daily_rainfall_data(_, daily_rainfall, station, date_picker,
@@ -1711,7 +1850,16 @@ def plot_daily_rainfall_data(_, daily_rainfall, station, date_picker,
         interpolation='steps-mid',
         color=runoff_current_year_color,
         show_legend=True)
-    copyright_text = get_copyright_text(norm_rainfall, station_data, 'P')
+    # Build an attribution hook that pins the label to the plot frame
+    attribution_hook = make_frame_attribution_hook(
+        text="Data: ECMWF IFS HRES via Open Data",
+        corner='top_left',
+        x_offset=10,
+        y_offset=10,
+        text_color='gray',
+        text_font_size='10pt',
+        text_alpha=0.7
+    )
     # A bar plot for the forecasted rainfall
     # if forecasts is not empty
     if not forecasts.empty:
@@ -1724,9 +1872,9 @@ def plot_daily_rainfall_data(_, daily_rainfall, station, date_picker,
             interpolation='steps-mid',
             color=runoff_forecast_color_list[3],
             show_legend=True)
-        figure = hvspan_predictor * hvspan_forecast * vlines * hv_norm_rainfall * hv_current_year * hv_forecast * copyright_text
+        figure = hvspan_predictor * hvspan_forecast * vlines * hv_norm_rainfall * hv_current_year * hv_forecast
     else:
-        figure = hvspan_predictor * hvspan_forecast * vlines * hv_norm_rainfall * hv_current_year * copyright_text
+        figure = hvspan_predictor * hvspan_forecast * vlines * hv_norm_rainfall * hv_current_year
 
     figure.opts(
         title=title_text,
@@ -1735,8 +1883,8 @@ def plot_daily_rainfall_data(_, daily_rainfall, station, date_picker,
         height=400,
         responsive=True,
         show_grid=True,
-        show_legend=True,
-        hooks=[remove_bokeh_logo],
+    show_legend=True,
+    hooks=[remove_bokeh_logo, attribution_hook],
         xformatter=DatetimeTickFormatter(days="%b %d", months="%b %d"),
         ylim=(0, max([station_data['P'].max(), station_data['P_norm'].max()]) * 1.1),
         xlim=(min(norm_rainfall['date']), max(norm_rainfall['date'])),
@@ -1849,7 +1997,16 @@ def plot_daily_temperature_data(_, daily_rainfall, station, date_picker,
         interpolation='linear',
         color=runoff_current_year_color,
         show_legend=True)
-    copyright_text = get_copyright_text(norm_rainfall, station_data, 'T')
+    # Build an attribution hook that pins the label to the plot frame
+    attribution_hook = make_frame_attribution_hook(
+        text="Data: ECMWF IFS HRES via Open Data",
+        corner='top_left',
+        x_offset=10,
+        y_offset=10,
+        text_color='gray',
+        text_font_size='10pt',
+        text_alpha=0.7
+    )
     # A bar plot for the forecasted rainfall
     # if forecasts is not empty
     if not forecasts.empty:
@@ -1862,9 +2019,9 @@ def plot_daily_temperature_data(_, daily_rainfall, station, date_picker,
             interpolation='linear',
             color=runoff_forecast_color_list[3],
             show_legend=True)
-        figure = hvspan_predictor * hvspan_forecast * vlines * hv_norm_rainfall * hv_current_year * hv_forecast * copyright_text
+        figure = hvspan_predictor * hvspan_forecast * vlines * hv_norm_rainfall * hv_current_year * hv_forecast
     else:
-        figure = hvspan_predictor * hvspan_forecast * vlines * hv_norm_rainfall * hv_current_year * copyright_text
+        figure = hvspan_predictor * hvspan_forecast * vlines * hv_norm_rainfall * hv_current_year
 
     figure.opts(
         title=title_text,
@@ -1873,8 +2030,8 @@ def plot_daily_temperature_data(_, daily_rainfall, station, date_picker,
         height=400,
         responsive=True,
         show_grid=True,
-        show_legend=True,
-        hooks=[remove_bokeh_logo],
+    show_legend=True,
+    hooks=[remove_bokeh_logo, attribution_hook],
         xformatter=DatetimeTickFormatter(days="%b %d", months="%b %d"),
         ylim=(min([station_data['T'].min(), station_data['T_norm'].min()]) * 0.9,
               max([station_data['T'].max(), station_data['T_norm'].max()]) * 1.1),
