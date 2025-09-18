@@ -1037,6 +1037,10 @@ def add_labels_to_hydrograph(hydrograph, all_stations):
 
 
 def add_labels_to_forecast_pentad_df(forecast_pentad, all_stations):
+    # Format 'code' column to be without trailing zero ('15013.0' -> '15013')
+    forecast_pentad['code'] = forecast_pentad['code'].apply(
+        lambda x: str(x).split('.')[0] if isinstance(x, str) and '.' in x else x
+    )
     forecast_pentad = forecast_pentad.merge(
         all_stations.loc[:, ['code', 'station_labels']],
         left_on='code', right_on='code', how='left').copy()
