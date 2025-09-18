@@ -1,5 +1,7 @@
 #!/bin/bash
 
+# !! Deprecated !!
+
 # This script deploys the SAPPHIRE forecast tools
 # Working directory is the root of the repository, i.e. SAPPHIRE_forecast_tools
 #

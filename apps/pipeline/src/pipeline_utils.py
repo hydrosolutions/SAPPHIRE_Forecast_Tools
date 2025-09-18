@@ -20,7 +20,7 @@ def get_docker_hub_image_creation_date(namespace, image_name):
     response = requests.get(url)
     if response.status_code == 200:
         manifest_data = response.json()
-        return manifest_data['last_updated'][0]
+        return manifest_data['last_updated']  
     else:
         print(f"Failed to fetch image data from Docker Hub: {response.status_code}")
         return None
