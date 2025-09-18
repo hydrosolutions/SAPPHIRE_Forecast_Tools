@@ -14,6 +14,9 @@ Optional but recommended:
 If you ever set up a systemd luigi service, disable it so Docker can bind port 8082 and to avoid conflicts.
 
 ```bash
+# Check who is listening on 8082
+sudo lsof -i :8082
+
 sudo systemctl stop luigid || true
 sudo systemctl disable luigid || true
 sudo systemctl stop luigi || true

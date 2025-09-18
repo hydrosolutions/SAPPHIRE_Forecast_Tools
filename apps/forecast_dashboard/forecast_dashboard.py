@@ -243,7 +243,7 @@ def load_data():
     global hydrograph_day_all, hydrograph_pentad_all, linreg_predictor, \
         forecasts_all, forecast_stats, all_stations, station_dict, station_df, \
         station_list, linreg_datatable, stations_iehhf, \
-        rram_forecast, ml_forecast, rain, temp, latest_data_is_current_year
+        rram_forecast, ml_forecast, rain, temp, latest_data_is_current_year, iehhf_warning
     # File modification times
     hydrograph_day_file = os.path.join(
         os.getenv("ieasyforecast_intermediate_data_path"),
@@ -330,7 +330,7 @@ def load_data():
         stations_iehhf, forecast_stats_file_mtime)
 
     # Hydroposts metadata
-    station_list, all_stations, station_df, station_dict = processing.read_all_stations_metadata_from_iehhf(
+    station_list, all_stations, station_df, station_dict, iehhf_warning = processing.read_all_stations_metadata_from_iehhf(
         hydrograph_day_all['code'].unique().tolist())
     #station_list, all_stations, station_df, station_dict = processing.read_all_stations_metadata_from_file(
     #    hydrograph_day_all['code'].unique().tolist())
@@ -548,7 +548,7 @@ decad_options = {
 # region widgets
 
 # Widget for date selection, always visible
-forecast_date = linreg_predictor['date'].max().date()  # Dates here refer to the forecast issue day, i.e. 1 day before the first day of the forecast pentad.
+forecast_date = forecasts_all['date'].max().date()  # Dates here refer to the forecast issue day, i.e. 1 day before the first day of the forecast pentad.
 date_picker = pn.widgets.DatePicker(name=_("Select date:"),
                                     start=dt.datetime((forecast_date.year-1), 1, 5).date(),
                                     end=forecast_date,
@@ -556,7 +556,7 @@ date_picker = pn.widgets.DatePicker(name=_("Select date:"),
 
 
 # Get the last available date in the data
-last_date = linreg_predictor['date'].max() + dt.timedelta(days=1)
+last_date = forecasts_all['date'].max() + dt.timedelta(days=1)
 
 # Determine the corresponding pentad
 current_pentad = tl.get_pentad_for_date(last_date)
@@ -651,8 +651,12 @@ for model in current_model_pre_selection:
     # Skip models that can't be found
 print(f"\n\n\nmodel_checkbox: {model_checkbox.value}\n\n\n")
 
+allowable_range_label = pn.pane.Markdown(
+    _("Select forecast range (for both summary table and figures):"),
+    styles={"white-space": "normal"},  # force wrapping
+    margin=(0, 0, -5, 0)
+)
 allowable_range_selection = pn.widgets.Select(
-    name=_("Select forecast range for display:"),
     options=[_("delta"), _("Manual range, select value below"), _("min[delta, %]")],
     value=_("delta"),
     margin=(0, 0, 0, 0)
@@ -758,23 +762,25 @@ select_basin_widget = pn.widgets.Select(
 
 # region forecast_card
 
-update_forecast_button = pn.widgets.Button(name="Update Forecast", button_type="success")
+update_forecast_button = pn.widgets.Button(name=_("Apply changes"), button_type="success")
 # Forecast card for sidepanel
 forecast_model_title = pn.pane.Markdown(
-    _("Select forecast model:"), margin=(0, 0, -15, 0))  # margin=(top, right, bottom, left)
+    _("Select forecast model (for figures only):"), margin=(0, 0, -15, 0))  # margin=(top, right, bottom, left)
 range_selection_title = pn.pane.Markdown(
-    _("Show ranges in figure:"), margin=(0, 0, -15, 0))
+    _("Show ranges (for figures only):"), margin=(0, 0, -15, 0))
 forecast_card = pn.Card(
     pn.Column(
-        forecast_model_title,
-        model_checkbox,
+        allowable_range_label,
         allowable_range_selection,
         manual_range,
+        pn.layout.Divider(),
+        forecast_model_title,
+        model_checkbox,
         range_selection_title,
         show_range_button,
         update_forecast_button
     ),
-    title=_('Select forecasts:'),
+    title=_('Forecast configuration:'),
     width_policy='fit', width=station.width,
     collapsed=False
 )
@@ -1899,6 +1905,9 @@ predictors_warning = pn.Column()
 forecast_warning = pn.Column()
 get_predictors_warning(station)
 get_forecast_warning(station)
+if iehhf_warning is not None:
+    predictors_warning.append(get_pane_alert(iehhf_warning))
+    forecast_warning.append(get_pane_alert(iehhf_warning))
 
 # Create a placeholder for the dashboard content
 dashboard_content = layout.define_tabs(_, predictors_warning, forecast_warning,

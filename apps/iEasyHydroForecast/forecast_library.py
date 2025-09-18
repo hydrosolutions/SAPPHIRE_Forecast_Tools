@@ -2496,7 +2496,7 @@ def write_linreg_pentad_forecast_data(data: pd.DataFrame):
     data = data.round(3)
 
     # For each code, extract the last row (most recent data in current batch)
-    last_line = data.groupby('code').tail(1)
+    last_line = data.groupby('code', as_index=False).apply(lambda g: g.tail(1)).reset_index(drop=True)
 
     # Get the max year of the last_line dates
     year = last_line['date'].dt.year.max()
@@ -2505,10 +2505,14 @@ def write_linreg_pentad_forecast_data(data: pd.DataFrame):
     # Print the last_line DataFrame for debugging
     logger.debug(f'last_line before edits: \n{last_line}')
 
-    # Standardize dates to the current year for consistency
-    last_line.loc[last_line['date'].dt.year != year, 'predictor'] = np.nan
-    last_line.loc[last_line['date'].dt.year != year, 'discharge_avg'] = np.nan
-    last_line.loc[last_line['date'].dt.year != year, 'forecasted_discharge'] = np.nan
+    # Standardize to current batch year with a 5-day grace window before Jan 1
+    jan1  = pd.Timestamp(year=int(year), month=1, day=1)
+    allow_start = jan1 - pd.Timedelta(days=5)
+    prev_year_grace = (last_line['date'] >= allow_start) & (last_line['date'] < jan1)
+    out_of_year = (last_line['date'].dt.year != year) & (~prev_year_grace)
+    last_line.loc[out_of_year, 'predictor'] = np.nan
+    last_line.loc[out_of_year, 'discharge_avg'] = np.nan
+    last_line.loc[out_of_year, 'forecasted_discharge'] = np.nan
 
     # intermediate debug prints
     logger.debug(f'last_line after year edits: \n{last_line}')
@@ -2520,6 +2524,9 @@ def write_linreg_pentad_forecast_data(data: pd.DataFrame):
         date_counts = last_line[last_line['code'] == code]['date'].value_counts()
         if len(date_counts) > 1:
             most_common_date = date_counts.idxmax()
+            # Warn if we need to reconcile dates for this code
+            logger.warning(
+                f"Reconciling shifted dates for code {code}: candidates={list(date_counts.index.sort_values())}, chosen={most_common_date}")
             for date in date_counts.index:
                 if date != most_common_date:
                     last_line.loc[(last_line['code'] == code) & (last_line['date'] == date), 'date'] = most_common_date
@@ -2531,34 +2538,48 @@ def write_linreg_pentad_forecast_data(data: pd.DataFrame):
     existing_data = None
     if os.path.exists(output_file_path):
         # Read existing data
-        existing_data = pd.read_csv(output_file_path, parse_dates=['date'])
+        existing_data = pd.read_csv(output_file_path, parse_dates=['date'], 
+                                    dtype={'code': str})
 
         # Combine with new data
         combined_data = pd.concat([existing_data, last_line], ignore_index=True)
 
-        # Make sure 'code' column is treated as string (otherwise looking for duplicates will not work as expected)
-        combined_data['code'] = combined_data['code'].astype(str)
+        # Make sure 'code' column is treated as string (otherwise looking for 
+        # duplicates will not work as expected)
+        combined_data['code'] = combined_data['code'].astype(str).str.replace(r'\.0$', '', regex=True)
 
         # Remove duplicates, keeping last occurrence (which has been added last)
         combined_data = combined_data.drop_duplicates(subset=['date', 'code'], keep='last')
 
-        # Group by pentad and code, kepp the most recent entries 
-        # for each pentad and code. 
-        combined_data_latest = combined_data.copy()
-        combined_data_latest = combined_data_latest.groupby(['pentad_in_year', 'code']).tail(1)
+        # Compute latest strictly by max(date) per (pentad_in_year, code)
+        combined_data['date'] = pd.to_datetime(combined_data['date'], errors='coerce')
+        idx_latest = combined_data.groupby(['pentad_in_year', 'code'])['date'].idxmax()
+        combined_data_latest = combined_data.loc[idx_latest].copy()
+
+        # For the _latest view, keep only the last year (current and/or previous year logic)
+        try:
+            combined_year_max = int(pd.to_datetime(combined_data_latest['date']).dt.year.max())
+            min_year_allowed = combined_year_max - 1
+            combined_data_latest = combined_data_latest[pd.to_datetime(combined_data_latest['date']).dt.year >= min_year_allowed]
+            logger.debug(f"write_linreg_pentad: latest filtered to years >= {min_year_allowed}")
+        except Exception as _e:
+            logger.warning(f"write_linreg_pentad: latest year filter skipped due to error: {_e}")
 
         # print last 50 lines of combined_data for debugging
-        logger.debug(f'combined_data after deduplication: \n{combined_data_latest}')
+        # logger.debug(f'combined_data after deduplication (latest sample): \n{combined_data_latest.sort_values(["code","pentad_in_year"]).head(20)}')
 
         # Write back to file
         try:
-            ret = combined_data.to_csv(output_file_path, index=False)
+            # Sort full history by date then code for stable tails
+            combined_sorted = combined_data.sort_values(by=['date', 'code']).reset_index(drop=True)
+            ret = combined_sorted.to_csv(output_file_path, index=False)
             if ret is None:
                 logger.info(f"Data written to {output_file_path}.")
             else:
                 logger.error(f"Could not write the data to {output_file_path}.")
-            # Also write line to latest file
-            ret = combined_data_latest.to_csv(output_file_path_latest, index=False)
+            # Also write latest file (only last year), sorted
+            latest_sorted = combined_data_latest.sort_values(by=['date', 'code']).reset_index(drop=True)
+            ret = latest_sorted.to_csv(output_file_path_latest, index=False)
             if ret is None:
                 logger.info(f"Data written to {output_file_path_latest}.")
             else:
@@ -2569,13 +2590,14 @@ def write_linreg_pentad_forecast_data(data: pd.DataFrame):
     else:
         # Write the data to a new file
         try:
-            ret = last_line.to_csv(output_file_path, index=False)
+            # Sort and write
+            ret = last_line.sort_values(by=['date', 'code']).to_csv(output_file_path, index=False)
             if ret is None:
                 logger.info(f"Data written to {output_file_path}.")
             else:
                 logger.error(f"Could not write the data to {output_file_path}.")
             # Also write line to latest file
-            last_line.to_csv(output_file_path_latest, index=False)
+            last_line.sort_values(by=['date', 'code']).to_csv(output_file_path_latest, index=False)
             logger.info(f"Data written to {output_file_path_latest}.")
         except Exception as e:
             logger.error(f"Could not write the data to {output_file_path}.")
@@ -2637,12 +2659,14 @@ def write_linreg_pentad_forecast_data_deprecating(data: pd.DataFrame):
     logger.debug(f'mode of year: {year}')
     print(f"\n\nmode of year: {year}\n\n")
 
-    # If the year of one date of last_year is not equal to the majority year,
-    # set the year of the date to the majority year, set predictor to NaN,
-    # set discharge_avg to NaN, set forecasted_discharge to _nan.
-    last_line.loc[last_line['date'].dt.year != year, 'predictor'] = np.nan
-    last_line.loc[last_line['date'].dt.year != year, 'discharge_avg'] = np.nan
-    last_line.loc[last_line['date'].dt.year != year, 'forecasted_discharge'] = np.nan
+    # Standardize to current batch year with a 5-day grace window before Jan 1
+    jan1 = pd.Timestamp(year=int(year), month=1, day=1)
+    allow_start = jan1 - pd.Timedelta(days=5)
+    prev_year_grace = (last_line['date'] >= allow_start) & (last_line['date'] < jan1)
+    out_of_year = (last_line['date'].dt.year != year) & (~prev_year_grace)
+    last_line.loc[out_of_year, 'predictor'] = np.nan
+    last_line.loc[out_of_year, 'discharge_avg'] = np.nan
+    last_line.loc[out_of_year, 'forecasted_discharge'] = np.nan
 
     # Iterate over last_line dates. Determine the most frequently occuring date.
     # If the other dates are shifted by 1 day, set the date to the most frequently
@@ -2651,6 +2675,8 @@ def write_linreg_pentad_forecast_data_deprecating(data: pd.DataFrame):
         date_counts = last_line[last_line['code'] == code]['date'].value_counts()
         if len(date_counts) > 1:
             most_common_date = date_counts.idxmax()
+            logger.warning(
+                f"Reconciling shifted dates for code {code}: candidates={list(date_counts.index.sort_values())}, chosen={most_common_date}")
             for date in date_counts.index:
                 if date != most_common_date:
                     last_line.loc[(last_line['code'] == code) & (last_line['date'] == date), 'date'] = most_common_date
@@ -2732,10 +2758,14 @@ def write_linreg_decad_forecast_data(data: pd.DataFrame):
     year = last_line['date'].dt.year.max()
     logger.debug(f'mode of year: {year}')
 
-    # Standardize dates to the current year for consistency
-    last_line.loc[last_line['date'].dt.year != year, 'predictor'] = np.nan
-    last_line.loc[last_line['date'].dt.year != year, 'discharge_avg'] = np.nan
-    last_line.loc[last_line['date'].dt.year != year, 'forecasted_discharge'] = np.nan
+    # Standardize to current batch year with a 5-day grace window before Jan 1
+    jan1 = pd.Timestamp(year=int(year), month=1, day=1)
+    allow_start = jan1 - pd.Timedelta(days=5)
+    prev_year_grace = (last_line['date'] >= allow_start) & (last_line['date'] < jan1)
+    out_of_year = (last_line['date'].dt.year != year) & (~prev_year_grace)
+    last_line.loc[out_of_year, 'predictor'] = np.nan
+    last_line.loc[out_of_year, 'discharge_avg'] = np.nan
+    last_line.loc[out_of_year, 'forecasted_discharge'] = np.nan
 
     # Iterate over last_line dates. Determine the most frequently occuring date.
     # If the other dates are shifted by 1 day, set the date to the most frequently
@@ -2744,6 +2774,8 @@ def write_linreg_decad_forecast_data(data: pd.DataFrame):
         date_counts = last_line[last_line['code'] == code]['date'].value_counts()
         if len(date_counts) > 1:
             most_common_date = date_counts.idxmax()
+            logger.warning(
+                f"Reconciling shifted dates for code {code}: candidates={list(date_counts.index.sort_values())}, chosen={most_common_date}")
             for date in date_counts.index:
                 if date != most_common_date:
                     last_line.loc[(last_line['code'] == code) & (last_line['date'] == date), 'date'] = most_common_date

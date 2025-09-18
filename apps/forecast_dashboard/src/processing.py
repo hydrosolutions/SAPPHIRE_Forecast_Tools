@@ -4,6 +4,7 @@ import pandas as pd
 import numpy as np
 import param
 import re
+import pickle
 from concurrent.futures import ThreadPoolExecutor
 
 from .gettext_config import _
@@ -913,6 +914,19 @@ def sapphire_sites_to_dataframe(sites_list):
     return df
 
 
+def load_stations_from_file(filename):
+    try:
+        with open(filename, "rb") as f:
+            return pickle.load(f)
+    except (FileNotFoundError, pickle.PickleError):
+        return None
+
+
+def save_stations_to_file(stations, filename):
+    with open(filename, "wb") as f:
+        pickle.dump(stations, f)
+
+
 def read_all_stations_metadata_from_iehhf(station_list):
     cache_key = 'all_stations_metadata_iehhf'
     if cache_key in pn.state.cache:
@@ -920,10 +934,28 @@ def read_all_stations_metadata_from_iehhf(station_list):
         if station_list_cached == station_list:
             return station_list, all_stations, station_df, station_dict
 
+    all_stations_file = os.path.join(
+        os.getenv("ieasyforecast_intermediate_data_path"),
+        os.getenv("ieasyforecast_all_stations", "all_stations.pkl")
+    )
     from ieasyhydro_sdk.sdk import IEasyHydroHFSDK
-    iehhf = IEasyHydroHFSDK()
-    # Get a list of site objects from iEH HF
-    all_stations, _, _ = sl.get_pentadal_forecast_sites_from_HF_SDK(iehhf)
+    try:
+        iehhf = IEasyHydroHFSDK()
+        # Uncomment to test failure to connect to iEH HF
+        # raise ConnectionError("Simulated iEHHF failure")
+        print("iEHHF connected. Fetching station metadata...")
+        iehhf_warning = None
+        # Get a list of site objects from iEH HF
+        all_stations, _, _ = sl.get_pentadal_forecast_sites_from_HF_SDK(iehhf)
+        # Save to file for later use
+        save_stations_to_file(all_stations, all_stations_file)
+    except Exception as e:
+        print(f"iEHHF not available, falling back to file. Error: {e}")
+        iehhf_warning = f"iEHHF not available, station metadata is read from file which might not be in sync with hf.ieasyhydro.org."
+        all_stations = load_stations_from_file(all_stations_file)
+        if all_stations is None:
+            all_stations = []
+
     # Cast all stations attributes to a dataframe
     all_stations = sapphire_sites_to_dataframe(all_stations)
     # Cast all_stations['code'] to string
@@ -951,7 +983,7 @@ def read_all_stations_metadata_from_iehhf(station_list):
 
     # Store in cache
     pn.state.cache[cache_key] = (station_list, all_stations, station_df, station_dict)
-    return station_list, all_stations, station_df, station_dict
+    return station_list, all_stations, station_df, station_dict, iehhf_warning
 
 
 def read_all_stations_metadata_from_file(station_list):
@@ -1005,6 +1037,10 @@ def add_labels_to_hydrograph(hydrograph, all_stations):
 
 
 def add_labels_to_forecast_pentad_df(forecast_pentad, all_stations):
+    # Format 'code' column to be without trailing zero ('15013.0' -> '15013')
+    forecast_pentad['code'] = forecast_pentad['code'].apply(
+        lambda x: str(x).split('.')[0] if isinstance(x, str) and '.' in x else x
+    )
     forecast_pentad = forecast_pentad.merge(
         all_stations.loc[:, ['code', 'station_labels']],
         left_on='code', right_on='code', how='left').copy()
