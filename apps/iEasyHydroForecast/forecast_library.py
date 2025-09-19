@@ -2999,6 +2999,15 @@ def write_pentad_hydrograph_data(data: pd.DataFrame, iehhf_sdk = None):
                 all_pentadal_norms[code] = [None] * 72  # 72 pentads in a year
         # Melt to long format
         all_pentadal_norms = all_pentadal_norms.melt(id_vars=['pentad_in_year'], var_name='code', value_name='norm')
+        
+        # Ensure data types match for merge
+        all_pentadal_norms['pentad_in_year'] = all_pentadal_norms['pentad_in_year'].astype(str)
+        # Convert code to string and remove any .0 suffixes from float-to-string conversion
+        all_pentadal_norms['code'] = all_pentadal_norms['code'].astype(str).str.replace(r'\.0$', '', regex=True)
+        runoff_stats['pentad_in_year'] = runoff_stats['pentad_in_year'].astype(str)
+        # Convert code to string and remove any .0 suffixes from float-to-string conversion
+        runoff_stats['code'] = runoff_stats['code'].astype(str).str.replace(r'\.0$', '', regex=True)
+        
         # Merge with runoff_stats
         runoff_stats = pd.merge(runoff_stats, all_pentadal_norms, left_on=['pentad_in_year', 'code'], right_on=['pentad_in_year', 'code'], how='left')
     else:
@@ -3018,6 +3027,14 @@ def write_pentad_hydrograph_data(data: pd.DataFrame, iehhf_sdk = None):
     current_year_data = current_year_data.drop(columns=['date'])
     last_year_data = last_year_data.rename(columns={'discharge_avg': str(last_year)}).reset_index(drop=True)
     current_year_data = current_year_data.rename(columns={'discharge_avg': str(current_year)}).reset_index(drop=True)
+
+    # Ensure data types match for merge
+    last_year_data['pentad_in_year'] = last_year_data['pentad_in_year'].astype(str)
+    # Convert code to string and remove any .0 suffixes from float-to-string conversion
+    last_year_data['code'] = last_year_data['code'].astype(str).str.replace(r'\.0$', '', regex=True)
+    current_year_data['pentad_in_year'] = current_year_data['pentad_in_year'].astype(str)
+    # Convert code to string and remove any .0 suffixes from float-to-string conversion
+    current_year_data['code'] = current_year_data['code'].astype(str).str.replace(r'\.0$', '', regex=True)
 
     runoff_stats = pd.merge(runoff_stats, last_year_data, on=['code', 'pentad_in_year'], how='left')
     runoff_stats = pd.merge(runoff_stats, current_year_data[['code', 'pentad_in_year', str(current_year)]], on=['code', 'pentad_in_year'], how='left')
@@ -3075,9 +3092,43 @@ def write_decad_hydrograph_data(data: pd.DataFrame, iehhf_sdk = None):
     Returns:
     None
     """
+    
+    # Validate input data
+    if data is None or data.empty:
+        logger.error("Input data is None or empty")
+        raise ValueError("Cannot process empty or None input data")
+    
+    # Check for required columns in input data
+    required_input_columns = ['issue_date', 'discharge', 'date', 'discharge_avg', 'code']
+    missing_input_columns = [col for col in required_input_columns if col not in data.columns]
+    if missing_input_columns:
+        logger.error(f"Missing required input columns: {missing_input_columns}")
+        logger.error(f"Available columns: {list(data.columns)}")
+        raise ValueError(f"Missing required input columns: {missing_input_columns}")
+    
+    logger.debug(f"Input data shape: {data.shape}, columns: {list(data.columns)}")
+    logger.debug(f"Input data date range: {data['date'].min()} to {data['date'].max()}")
+    logger.debug(f"Input data stations: {data['code'].nunique()}")
 
     # Only keep rows where issue_date is True
     data = data[data['issue_date'] == True].copy()
+    
+    if data.empty:
+        logger.warning("No rows with issue_date=True found in input data")
+        # Create an empty DataFrame with the expected structure and return
+        logger.warning("Creating empty output file")
+        empty_df = pd.DataFrame(columns=['code', 'decad_in_year', 'mean', 'min', 'max', 'q05', 'q25', 'q75', 'q95', 'norm'])
+        
+        try:
+            output_file_path = os.path.join(
+                os.getenv("ieasyforecast_intermediate_data_path"),
+                os.getenv("ieasyforecast_hydrograph_decad_file"))
+            empty_df.to_csv(output_file_path, index=False)
+            logger.info(f"Empty CSV file created at {output_file_path}")
+            return None
+        except Exception as e:
+            logger.error(f"Could not create empty output file: {e}")
+            raise
 
     # Drop the issue_date column
     data = data.drop(columns=['issue_date', 'discharge'])
@@ -3103,17 +3154,48 @@ def write_decad_hydrograph_data(data: pd.DataFrame, iehhf_sdk = None):
         data = data[~((data['date'].dt.month == 2) & (data['date'].dt.day == 29))]
         data.loc[(data['date'].dt.month > 2), 'day_of_year'] -= 1
 
-    runoff_stats = data[data['date'].dt.year != current_year]. \
-        reset_index(drop=True). \
-        groupby(['code', 'decad_in_year']). \
-        agg(mean=pd.NamedAgg(column='discharge_avg', aggfunc='mean'),
-            min=pd.NamedAgg(column='discharge_avg', aggfunc='min'),
-            max=pd.NamedAgg(column='discharge_avg', aggfunc='max'),
-            q05=pd.NamedAgg(column='discharge_avg', aggfunc=lambda x: x.quantile(0.05)),
-            q25=pd.NamedAgg(column='discharge_avg', aggfunc=lambda x: x.quantile(0.25)),
-            q75=pd.NamedAgg(column='discharge_avg', aggfunc=lambda x: x.quantile(0.75)),
-            q95=pd.NamedAgg(column='discharge_avg', aggfunc=lambda x: x.quantile(0.95))). \
-        reset_index(drop=False)
+    # Filter to historical data only (excluding current year for statistics)
+    historical_data = data[data['date'].dt.year != current_year].copy()
+    
+    if historical_data.empty:
+        logger.warning(f"No historical data found (excluding current year {current_year})")
+        logger.warning("Cannot calculate historical statistics without historical data")
+        # Create empty stats DataFrame with expected structure
+        runoff_stats = pd.DataFrame(columns=['code', 'decad_in_year', 'mean', 'min', 'max', 'q05', 'q25', 'q75', 'q95'])
+    else:
+        logger.debug(f"Historical data shape: {historical_data.shape}")
+        logger.debug(f"Historical data years: {sorted(historical_data['date'].dt.year.unique())}")
+        
+        # Robust quantile function that handles edge cases
+        def safe_quantile(x, q):
+            try:
+                if len(x) == 0:
+                    return np.nan
+                elif len(x) == 1:
+                    return x.iloc[0]  # Single value case
+                else:
+                    return x.quantile(q)
+            except Exception as e:
+                logger.warning(f"Error calculating quantile {q} for data of length {len(x)}: {e}")
+                return np.nan
+        
+        # Calculate runoff statistics with robust aggregation
+        try:
+            runoff_stats = historical_data.reset_index(drop=True).groupby(['code', 'decad_in_year']).agg(
+                mean=pd.NamedAgg(column='discharge_avg', aggfunc='mean'),
+                min=pd.NamedAgg(column='discharge_avg', aggfunc='min'),
+                max=pd.NamedAgg(column='discharge_avg', aggfunc='max'),
+                q05=pd.NamedAgg(column='discharge_avg', aggfunc=lambda x: safe_quantile(x, 0.05)),
+                q25=pd.NamedAgg(column='discharge_avg', aggfunc=lambda x: safe_quantile(x, 0.25)),
+                q75=pd.NamedAgg(column='discharge_avg', aggfunc=lambda x: safe_quantile(x, 0.75)),
+                q95=pd.NamedAgg(column='discharge_avg', aggfunc=lambda x: safe_quantile(x, 0.95))
+            ).reset_index(drop=False)
+            
+            logger.debug(f"Calculated statistics for {len(runoff_stats)} code-decad combinations")
+            
+        except Exception as e:
+            logger.error(f"Error calculating runoff statistics: {e}")
+            raise
     # If the forecast tools are connected to iEH HF, we get the norm values from there.
     if os.getenv('ieasyhydroforecast_connect_to_iEH') == 'False':
         # Read the norm data from iEH HF
@@ -3121,82 +3203,238 @@ def write_decad_hydrograph_data(data: pd.DataFrame, iehhf_sdk = None):
         if iehhf_sdk is None:
             raise ValueError("ieasyhydroforecast_sdk object is required to read norms from iEH HF.")
         # Read the norms from iEH HF for each site
-        all_pentadal_norms = pd.DataFrame({'decad_in_year': range(1, 37)})
-        # Cast pentad in year to string
-        all_pentadal_norms['decad_in_year'] = all_pentadal_norms['decad_in_year'].astype(str)
+        all_decadal_norms = pd.DataFrame({'decad_in_year': range(1, 37)})
+        # Cast decad in year to string
+        all_decadal_norms['decad_in_year'] = all_decadal_norms['decad_in_year'].astype(str)
         for code in runoff_stats['code'].unique():
             try:
-                temp_norm = iehhf_sdk.get_norm_for_site(code, "discharge")
+                temp_norm = iehhf_sdk.get_norm_for_site(code, "discharge", norm_period="d")
             except Exception as e:
-                logger.error(f"Could not get norm for site {code}.\nAssuming empty norm for this site.")
+                logger.warning(f"Could not get norm for site {code}.\nAssuming empty norm for this site.")
                 logger.warning(e)
                 temp_norm = []
             if len(temp_norm) == 36:
-                all_pentadal_norms[code] = temp_norm
+                all_decadal_norms[code] = temp_norm
             else:
-                all_pentadal_norms[code] = [None] * 36  # 36 pentads in a year
+                all_decadal_norms[code] = [None] * 36  # 36 decads in a year
         # Melt to long format
-        all_pentadal_norms = all_pentadal_norms.melt(id_vars=['decad_in_year'], var_name='code', value_name='norm')
+        all_decadal_norms = all_decadal_norms.melt(id_vars=['decad_in_year'], var_name='code', value_name='norm')
+        
+        # Debug: Log norm data retrieval status
+        logger.debug(f"Retrieved norm data for {len(all_decadal_norms['code'].unique())} sites")
+        logger.debug(f"Norm data shape: {all_decadal_norms.shape}")
+        
+        # Ensure data types match for merge
+        all_decadal_norms['decad_in_year'] = all_decadal_norms['decad_in_year'].astype(str)
+        # Convert code to string and remove any .0 suffixes from float-to-string conversion
+        all_decadal_norms['code'] = all_decadal_norms['code'].astype(str).str.replace(r'\.0$', '', regex=True)
+        runoff_stats['decad_in_year'] = runoff_stats['decad_in_year'].astype(str)
+        # Convert code to string and remove any .0 suffixes from float-to-string conversion
+        runoff_stats['code'] = runoff_stats['code'].astype(str).str.replace(r'\.0$', '', regex=True)
+        
         # Merge with runoff_stats
-        runoff_stats = pd.merge(runoff_stats, all_pentadal_norms, left_on=['decad_in_year', 'code'], right_on=['decad_in_year', 'code'], how='left')
+        runoff_stats_before_norm_merge = runoff_stats.shape[0]
+        runoff_stats = pd.merge(runoff_stats, all_decadal_norms, left_on=['decad_in_year', 'code'], right_on=['decad_in_year', 'code'], how='left')
+        
+        # Validate merge didn't lose rows
+        if runoff_stats.shape[0] != runoff_stats_before_norm_merge:
+            logger.warning(f"Norm merge changed row count: {runoff_stats_before_norm_merge} -> {runoff_stats.shape[0]}")
+        
+        # Check for missing norms
+        missing_norms = runoff_stats['norm'].isna().sum()
+        if missing_norms > 0:
+            logger.warning(f"Missing norm values for {missing_norms} out of {len(runoff_stats)} records")
+            
     else:
         # Add a norm column to runoff_stats which is NaN
         runoff_stats['norm'] = np.nan
+        logger.debug("iEH connection disabled, adding NaN norm values")
 
-    # Get current and last years data for each station and pentad_in_year and
+    # Debug: Log runoff_stats state after norm processing
+    logger.debug(f"Runoff stats after norm processing: {runoff_stats.shape}, columns: {list(runoff_stats.columns)}")
+
+    # Get current and last years data for each station and decad_in_year and
     # merge to runoff_stats
     last_year = data['date'].dt.year.max() - 1
     current_year = data['date'].dt.year.max()
-    last_year_data = data[data['date'].dt.year == last_year]
-    current_year_data = data[data['date'].dt.year == current_year]
-    #last_year_data = last_year_data.drop(columns=['date'])
-    # Add 1 year to date of last_year_data
-    #last_year_data.loc[:, 'date'] = last_year_data.loc[:, 'date'] + pd.DateOffset(years=1)
-    last_year_data.loc[:, 'date'] = pd.Timestamp(str(current_year)) + pd.to_timedelta(last_year_data['day_of_year'] - 1, unit='D')
-    current_year_data = current_year_data.drop(columns=['date'])
-    last_year_data = last_year_data.rename(columns={'discharge_avg': str(last_year)}).reset_index(drop=True)
-    current_year_data = current_year_data.rename(columns={'discharge_avg': str(current_year)}).reset_index(drop=True)
+    logger.debug(f"Processing year data: last_year={last_year}, current_year={current_year}")
+    
+    last_year_data = data[data['date'].dt.year == last_year].copy()
+    current_year_data = data[data['date'].dt.year == current_year].copy()
+    
+    # Validate we have data for both years
+    if last_year_data.empty:
+        logger.warning(f"No data found for last year ({last_year})")
+    if current_year_data.empty:
+        logger.warning(f"No data found for current year ({current_year})")
+    
+    if not last_year_data.empty:
+        # Process last year data
+        last_year_data.loc[:, 'date'] = pd.Timestamp(str(current_year)) + pd.to_timedelta(last_year_data['day_of_year'] - 1, unit='D')
+        last_year_data = last_year_data.rename(columns={'discharge_avg': str(last_year)}).reset_index(drop=True)
+        
+        # Ensure data types match for merge
+        last_year_data['decad_in_year'] = last_year_data['decad_in_year'].astype(str)
+        # Convert code to string and remove any .0 suffixes from float-to-string conversion
+        last_year_data['code'] = last_year_data['code'].astype(str).str.replace(r'\.0$', '', regex=True)
+        
+        # Merge last year data
+        runoff_stats_before_last_year_merge = runoff_stats.shape[0]
+        runoff_stats = pd.merge(runoff_stats, last_year_data, on=['code', 'decad_in_year'], how='left')
+        
+        if runoff_stats.shape[0] != runoff_stats_before_last_year_merge:
+            logger.warning(f"Last year merge changed row count: {runoff_stats_before_last_year_merge} -> {runoff_stats.shape[0]}")
+    else:
+        # Add last year column with NaN values
+        runoff_stats[str(last_year)] = np.nan
+        logger.debug(f"Added NaN column for missing last year data: {str(last_year)}")
+        
+    if not current_year_data.empty:
+        # Process current year data
+        current_year_data = current_year_data.drop(columns=['date'])
+        current_year_data = current_year_data.rename(columns={'discharge_avg': str(current_year)}).reset_index(drop=True)
+        
+        # Ensure data types match for merge
+        current_year_data['decad_in_year'] = current_year_data['decad_in_year'].astype(str)
+        # Convert code to string and remove any .0 suffixes from float-to-string conversion
+        current_year_data['code'] = current_year_data['code'].astype(str).str.replace(r'\.0$', '', regex=True)
+        
+        # Merge current year data
+        runoff_stats_before_current_year_merge = runoff_stats.shape[0]
+        runoff_stats = pd.merge(runoff_stats, current_year_data[['code', 'decad_in_year', str(current_year)]], on=['code', 'decad_in_year'], how='left')
+        
+        if runoff_stats.shape[0] != runoff_stats_before_current_year_merge:
+            logger.warning(f"Current year merge changed row count: {runoff_stats_before_current_year_merge} -> {runoff_stats.shape[0]}")
+    else:
+        # Add current year column with NaN values
+        runoff_stats[str(current_year)] = np.nan
+        logger.debug(f"Added NaN column for missing current year data: {str(current_year)}")
 
-    runoff_stats = pd.merge(runoff_stats, last_year_data, on=['code', 'decad_in_year'], how='left')
-    runoff_stats = pd.merge(runoff_stats, current_year_data[['code', 'decad_in_year', str(current_year)]], on=['code', 'decad_in_year'], how='left')
+    # Debug: Log final merge state
+    logger.debug(f"Final runoff_stats after year merges: {runoff_stats.shape}, columns: {list(runoff_stats.columns)}")
 
     # Drop the column predictor if it is in runoff_stats
     if 'predictor' in runoff_stats.columns:
         runoff_stats = runoff_stats.drop(columns=['predictor'])
 
-    # Round all values to 3 decimal places
-    runoff_stats = runoff_stats.round(3)
+    # Validate DataFrame before processing
+    if runoff_stats.empty:
+        logger.error("runoff_stats DataFrame is empty before rounding and sorting")
+        raise ValueError("Cannot write empty runoff_stats DataFrame to CSV")
+    
+    # Check for required columns
+    required_columns = ['code', 'decad_in_year', 'mean', 'min', 'max', 'q05', 'q25', 'q75', 'q95', 'norm']
+    missing_columns = [col for col in required_columns if col not in runoff_stats.columns]
+    if missing_columns:
+        logger.error(f"Missing required columns in runoff_stats: {missing_columns}")
+        logger.error(f"Available columns: {list(runoff_stats.columns)}")
+        raise ValueError(f"Missing required columns: {missing_columns}")
 
-    # Sort the DataFrame by 'code' and 'pentad_in_year', using 'pentad_in_year'
+    # Round all values to 3 decimal places
+    numeric_columns = runoff_stats.select_dtypes(include=[np.number]).columns.tolist()
+    logger.debug(f"Rounding numeric columns: {numeric_columns}")
+    runoff_stats[numeric_columns] = runoff_stats[numeric_columns].round(3)
+
+    # Sort the DataFrame by 'code' and 'decad_in_year', using 'decad_in_year'
     # as numerical values
-    runoff_stats['decad_in_year'] = runoff_stats['decad_in_year'].astype(int)
-    runoff_stats = runoff_stats.sort_values(by=['code', 'decad_in_year'])
+    try:
+        runoff_stats['decad_in_year'] = runoff_stats['decad_in_year'].astype(int)
+        runoff_stats = runoff_stats.sort_values(by=['code', 'decad_in_year'])
+        logger.debug(f"Successfully sorted DataFrame by code and decad_in_year")
+    except Exception as e:
+        logger.error(f"Error converting decad_in_year to int or sorting: {e}")
+        logger.error(f"decad_in_year unique values: {runoff_stats['decad_in_year'].unique()}")
+        raise
+    
+    # Final validation before write
+    logger.info(f"Final DataFrame ready for write: shape={runoff_stats.shape}, "
+                f"codes={runoff_stats['code'].nunique()}, "
+                f"decads={runoff_stats['decad_in_year'].nunique()}")
+    
+    # Check for any infinite or NaN values that might cause issues
+    inf_count = np.isinf(runoff_stats.select_dtypes(include=[np.number])).sum().sum()
+    if inf_count > 0:
+        logger.warning(f"Found {inf_count} infinite values in DataFrame")
+        # Replace infinities with NaN
+        runoff_stats = runoff_stats.replace([np.inf, -np.inf], np.nan)
 
     # Get the path to the intermediate data folder from the environmental
-    # variables and the name of the ieasyforecast_hydrograph_pentad_file.
+    # variables and the name of the ieasyforecast_hydrograph_decad_file.
     # Concatenate them to the output file path.
     try:
-        output_file_path = os.path.join(
-            os.getenv("ieasyforecast_intermediate_data_path"),
-            os.getenv("ieasyforecast_hydrograph_decad_file"))
+        intermediate_path = os.getenv("ieasyforecast_intermediate_data_path")
+        decad_file = os.getenv("ieasyforecast_hydrograph_decad_file")
+        
+        if intermediate_path is None:
+            raise ValueError("Environment variable 'ieasyforecast_intermediate_data_path' is not set")
+        if decad_file is None:
+            raise ValueError("Environment variable 'ieasyforecast_hydrograph_decad_file' is not set")
+            
+        output_file_path = os.path.join(intermediate_path, decad_file)
+        logger.debug(f"Output file path constructed: {output_file_path}")
+        
+        # Validate the directory exists and is writable
+        output_dir = os.path.dirname(output_file_path)
+        if not os.path.exists(output_dir):
+            logger.error(f"Output directory does not exist: {output_dir}")
+            raise FileNotFoundError(f"Output directory does not exist: {output_dir}")
+        if not os.access(output_dir, os.W_OK):
+            logger.error(f"Output directory is not writable: {output_dir}")
+            raise PermissionError(f"Output directory is not writable: {output_dir}")
+            
     except Exception as e:
         logger.error("Could not get the output file path.")
-        print(os.getenv("ieasyforecast_intermediate_data_path"))
-        print(os.getenv("ieasyforecast_hydrograph_decad_file"))
+        logger.error(f"ieasyforecast_intermediate_data_path: {os.getenv('ieasyforecast_intermediate_data_path')}")
+        logger.error(f"ieasyforecast_hydrograph_decad_file: {os.getenv('ieasyforecast_hydrograph_decad_file')}")
         raise e
 
     # Overwrite the file if it already exists
     if os.path.exists(output_file_path):
-        os.remove(output_file_path)
+        try:
+            os.remove(output_file_path)
+            logger.debug(f"Removed existing file: {output_file_path}")
+        except Exception as e:
+            logger.error(f"Could not remove existing file {output_file_path}: {e}")
+            raise
 
     # Write the data to a csv file. Raise an error if this does not work.
     # If the data is written to the csv file, log a message that the data
     # has been written.
     try:
+        # Validate DataFrame one more time before writing
+        if runoff_stats.empty:
+            raise ValueError("DataFrame is empty, cannot write to CSV")
+        
+        # Log summary of data being written
+        logger.info(f"Writing {len(runoff_stats)} rows to {output_file_path}")
+        logger.info(f"Data covers {runoff_stats['code'].nunique()} stations and "
+                   f"{runoff_stats['decad_in_year'].nunique()} decads")
+        
         ret = runoff_stats.to_csv(output_file_path, index=False)
-        logger.info(f"Data written to {output_file_path}.")
+        
+        # Verify the file was actually written
+        if not os.path.exists(output_file_path):
+            raise FileNotFoundError(f"CSV file was not created at {output_file_path}")
+        
+        # Check file size
+        file_size = os.path.getsize(output_file_path)
+        if file_size == 0:
+            raise ValueError(f"CSV file was created but is empty: {output_file_path}")
+        
+        logger.info(f"Data successfully written to {output_file_path} (size: {file_size} bytes)")
+        
     except Exception as e:
-        logger.error(f"Could not write the data to {output_file_path}.")
+        logger.error(f"Could not write the data to {output_file_path}: {e}")
+        logger.error(f"DataFrame info: shape={runoff_stats.shape}, columns={list(runoff_stats.columns)}")
+        
+        # Try to save debug information
+        try:
+            debug_path = output_file_path.replace('.csv', '_debug.csv')
+            runoff_stats.head(10).to_csv(debug_path, index=False)
+            logger.error(f"Saved first 10 rows for debugging to: {debug_path}")
+        except:
+            logger.error("Could not save debug information")
+        
         raise e
 
     return ret
