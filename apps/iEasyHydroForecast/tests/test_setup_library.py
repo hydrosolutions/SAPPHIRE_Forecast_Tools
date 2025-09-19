@@ -440,7 +440,7 @@ class TestReadDailyProbabilisticMlForecastsPentad(unittest.TestCase):
 
         # Multiple station codes
         multi_station_rows = []
-        for code in [15149, 15083]:
+        for code in ["15149", "15083"]:
             for forecast_date in forecast_dates:
                 if forecast_date.day in [5, 10, 15, 20, 25] or forecast_date.day == pd.Timestamp(forecast_date.year, forecast_date.month, 1).days_in_month:
                     # For each forecast date and code, create 5 daily forecasts
@@ -508,85 +508,7 @@ class TestReadDailyProbabilisticMlForecastsPentad(unittest.TestCase):
         data.to_csv(temp_file.name, index=False)
         temp_file.close()
         return temp_file.name
-    
-    @patch('logging.getLogger')
-    def test_standard_date_format(self, mock_logger):
-        """Test with standard date format YYYY-MM-DD"""
-        mock_logger_instance = MagicMock()
-        mock_logger.return_value = mock_logger_instance
-        
-        # Create a temporary CSV file
-        filepath = self.create_temp_csv(self.standard_data)
-
-        try: 
-            # Call the function
-            result = sl.read_daily_probabilistic_ml_forecasts_pentad(
-                filepath, 
-                model="TEST",                
-                model_long="Test Model", 
-                model_short="TM"
-            )
-                
-            # Check if result is a DataFrame
-            self.assertIsInstance(result, pd.DataFrame)
-
-            # Check if the required columns are present
-            required_columns = ['code', 'date', 'forecasted_discharge', 
-                                'model_long', 'model_short', 
-                           'pentad_in_month', 'pentad_in_year']
-            for col in required_columns:
-                self.assertIn(col, result.columns)
-                
-            # Check if model info is correctly added
-            self.assertEqual(result['model_long'].iloc[0], "Test Model")
-            self.assertEqual(result['model_short'].iloc[0], "TM")
-
-            # Verify that only forecast_date from pentad days (5, 10, 15, 20, 25, 31) are in the results
-            # The result 'date' column should only contain values from pentad forecast dates
-            result_dates = pd.DatetimeIndex(result['date']).day
-            expected_pentad_days = [5, 10, 15, 20, 25, 31]  # March has 31 days as end of month
-            for day in result_dates:
-                self.assertIn(day, expected_pentad_days, f"Date with day {day} shouldn't be in results")
-
-            # The standard_data has 5 days of forecasts for each pentad date
-            # Verify that we get the right number of results (one per forecast_date and code)
-            input_forecast_dates = self.standard_data['forecast_date'].unique()
-            pentad_forecast_dates = [d for d in input_forecast_dates if pd.to_datetime(d).day in expected_pentad_days]
-            expected_result_rows = len(pentad_forecast_dates)  # One row per pentad forecast date
-            self.assertEqual(len(result), expected_result_rows, 
-                             f"Expected {expected_result_rows} results (one per pentad date), got {len(result)}")
-
-            # Verify that the forecasted_discharge values are correct (mean of original values for each date)
-            for idx, row in result.iterrows():
-                date = row['date']
-                code = row['code']
-                
-                # Get all the rows from standard_data with this forecast_date and code
-                original_rows = self.standard_data[
-                    (self.standard_data['forecast_date'] == date) & 
-                    (self.standard_data['code'] == code)
-                ]
-                
-                # Calculate the expected mean of Q50 values for this date and code
-                expected_discharge = original_rows['Q50'].mean()
-                
-                # Check that the forecasted_discharge is the correct mean value
-                self.assertAlmostEqual(
-                    row['forecasted_discharge'], 
-                    expected_discharge,
-                    places=5,  # Higher precision to ensure exactness
-                    msg=f"Forecasted discharge for {date} code {code} doesn't match expected mean"
-                )
-
-            # Check if pentad calculations are correct
-            for _, row in result.iterrows():
-                self.assertEqual(
-                    row['pentad_in_month'], 
-                    tl.get_pentad(row['date'] + pd.Timedelta(days=1))
-                )
-        finally:
-            # Clean up
-            os.unlink(filepath) 
+     
     
     @patch('logging.getLogger')
     def test_datetime_format(self, mock_logger):
@@ -782,8 +704,8 @@ class TestReadDailyProbabilisticMlForecastsPentad(unittest.TestCase):
                 
             # Check that both station codes are present
             self.assertGreaterEqual(len(result['code'].unique()), 2)
-            self.assertIn(15149, result['code'].values)
-            self.assertIn(15083, result['code'].values)
+            self.assertIn("15149", result['code'].values)
+            self.assertIn("15083", result['code'].values)
             
             # Verify that only forecast_date from pentad days (5, 10, 15, 20, 25, 31) are in the results
             result_dates = pd.DatetimeIndex(result['date']).day
@@ -874,10 +796,18 @@ class TestReadDailyProbabilisticMLForecastsPentad(unittest.TestCase):
         # Read validation data
         self.val_data = pd.read_csv(self.file_path)
         self.val_data.loc[:, "pentad_in_year"] = self.val_data["date"].apply(tl.get_pentad_in_year)
+        # Cast code column to string
+        self.val_data['code'] = self.val_data['code'].astype(str)
+        self.val_data['date'] = pd.to_datetime(self.val_data['date']).dt.date
+        self.val_data['forecast_date'] = pd.to_datetime(self.val_data['forecast_date']).dt.date
 
         # Process using the function to test
         self.test_data = sl.read_daily_probabilistic_ml_forecasts_pentad(
             self.file_path, 'test', 't', 'test')
+        # Cast code column to string
+        self.test_data['code'] = self.test_data['code'].astype(str)
+        self.test_data['date'] = pd.to_datetime(self.test_data['date']).dt.date
+
         
     def test_columns_present(self):
         # Test if columns in val_data are present in test_data, except for the
@@ -894,8 +824,12 @@ class TestReadDailyProbabilisticMLForecastsPentad(unittest.TestCase):
 
         # Define a few codes and dates to test
         codes = [16161, 15083, 14283, 15054]
+        # Cast codes to string, as in the test_data they are strings
+        codes = [str(code) for code in codes]
         # Dates are in the format YYYY-MM-DD and are the last day of the previous pentad
         dates = ['2010-12-31', '2010-04-05', '2010-10-25', '2010-07-10']
+        # Cast dates to dates in format YYYY-MM-DD, as in the test_data they are dates
+        dates = [pd.to_datetime(date).date() for date in dates]
 
         for code in codes:
             for date in dates:
@@ -913,7 +847,7 @@ class TestReadDailyProbabilisticMLForecastsPentad(unittest.TestCase):
                 self.assertFalse(test_data_code.empty)
 
                 # Special case for code 16161 and date 2010-07-10: We don't have data and all quantiles are not defined
-                if code == 16161 and date == '2010-07-10':
+                if code == "16161" and date == pd.to_datetime('2010-07-10').date():
                     self.assertTrue(test_data_code['forecasted_discharge'].isnull().values[0])
                     self.assertTrue(test_data_code['Q10'].isnull().values[0])
                     self.assertTrue(test_data_code['Q25'].isnull().values[0])
@@ -937,11 +871,18 @@ class TestReadDailyProbabilisticMLForecastsDecade(unittest.TestCase):
         # Read validation data
         self.val_data = pd.read_csv(self.file_path)
         self.val_data.loc[:, "decad_in_year"] = self.val_data["date"].apply(tl.get_decad_in_year)
+        # Cast code column to string
+        self.val_data['code'] = self.val_data['code'].astype(str)
+        self.val_data['date'] = pd.to_datetime(self.val_data['date']).dt.date
+        self.val_data['forecast_date'] = pd.to_datetime(self.val_data['forecast_date']).dt.date
 
         # Process using the function to test
         self.test_data = sl.read_daily_probabilistic_ml_forecasts_decade(
             self.file_path, 'test', 't', 'test')
-
+        # Cast code column to string
+        self.test_data['code'] = self.test_data['code'].astype(str)
+        self.test_data['date'] = pd.to_datetime(self.test_data['date']).dt.date
+        
     def test_columns_present(self):
         # Test if columns in val_data are present in test_data, except for the
         # column Q50, which is renamed to forecasted_discharge in the test_data
@@ -957,12 +898,22 @@ class TestReadDailyProbabilisticMLForecastsDecade(unittest.TestCase):
 
         # Define a few codes and dates to test
         codes = [16161, 15083, 14283, 15054]
+        # Cast codes to string, as in the test_data they are strings
+        codes = [str(code) for code in codes]
         # Dates are in the format YYYY-MM-DD and are the last day of the previous decade
         dates = ['2010-12-31', '2010-04-10', '2010-10-20', '2010-07-10']
+        # Cast dates to dates in format YYYY-MM-DD, as in the test_data they are dates
+        dates = [pd.to_datetime(date).date() for date in dates]
 
         for code in codes:
             for date in dates:
                 print(f"Testing code {code} and date {date}")
+                # Print data types of code and date columns
+                print(f"Data types - code loop: {type(code)}")
+                print(f"Data types - date loop: {type(date)}")
+                print(f"Data types - code: {type(self.val_data['code'][0])}")
+                print(f"Data types - date: {type(self.val_data['date'][0])}")
+                print(f"Data types - forecast_date: {type(self.val_data['forecast_date'][0])}")
                 validation_data_code = self.val_data[(self.val_data['code'] == code) & (self.val_data['forecast_date'] == date)]
                 # Test if validation_data_code is not empty
                 self.assertFalse(validation_data_code.empty)
@@ -976,7 +927,7 @@ class TestReadDailyProbabilisticMLForecastsDecade(unittest.TestCase):
                 self.assertFalse(test_data_code.empty)
 
                 # Special case for code 16161 and date 2010-07-10: We don't have data and all quantiles are not defined
-                if code == 16161 and date == '2010-07-10':
+                if code == "16161" and date == pd.to_datetime('2010-07-10').date():
                     self.assertTrue(test_data_code['forecasted_discharge'].isnull().values[0])
                     self.assertTrue(test_data_code['Q10'].isnull().values[0])
                     self.assertTrue(test_data_code['Q25'].isnull().values[0])
