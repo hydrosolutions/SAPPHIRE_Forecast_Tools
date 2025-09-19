@@ -496,6 +496,9 @@ def write_monthly_station_data_to_csv(data: pd.DataFrame):
     """
     Writes a data frame to a csv file.
     """
+    # Ensure code column is treated as string to avoid .0 suffixes
+    if 'code' in data.columns:
+        data['code'] = data['code'].astype(str).str.replace(r'\.0$', '', regex=True)
 
     filename = os.path.join(
         os.getenv('ieasyforecast_intermediate_data_path'),

@@ -2570,8 +2570,11 @@ def write_linreg_pentad_forecast_data(data: pd.DataFrame):
 
         # Write back to file
         try:
-            # Sort full history by date then code for stable tails
+            # Ensure date is formatted as YYYY-MM-DD before writing
             combined_sorted = combined_data.sort_values(by=['date', 'code']).reset_index(drop=True)
+            if 'date' in combined_sorted.columns:
+                combined_sorted['date'] = pd.to_datetime(combined_sorted['date'], errors='coerce').dt.strftime('%Y-%m-%d')
+            
             ret = combined_sorted.to_csv(output_file_path, index=False)
             if ret is None:
                 logger.info(f"Data written to {output_file_path}.")
@@ -2579,6 +2582,9 @@ def write_linreg_pentad_forecast_data(data: pd.DataFrame):
                 logger.error(f"Could not write the data to {output_file_path}.")
             # Also write latest file (only last year), sorted
             latest_sorted = combined_data_latest.sort_values(by=['date', 'code']).reset_index(drop=True)
+            if 'date' in latest_sorted.columns:
+                latest_sorted['date'] = pd.to_datetime(latest_sorted['date'], errors='coerce').dt.strftime('%Y-%m-%d')
+            
             ret = latest_sorted.to_csv(output_file_path_latest, index=False)
             if ret is None:
                 logger.info(f"Data written to {output_file_path_latest}.")
@@ -2590,6 +2596,13 @@ def write_linreg_pentad_forecast_data(data: pd.DataFrame):
     else:
         # Write the data to a new file
         try:
+            # Make sure 'code' column is treated as string to avoid .0 suffixes
+            last_line['code'] = last_line['code'].astype(str).str.replace(r'\.0$', '', regex=True)
+            
+            # Ensure date is formatted as YYYY-MM-DD before writing
+            if 'date' in last_line.columns:
+                last_line['date'] = pd.to_datetime(last_line['date'], errors='coerce').dt.strftime('%Y-%m-%d')
+            
             # Sort and write
             ret = last_line.sort_values(by=['date', 'code']).to_csv(output_file_path, index=False)
             if ret is None:
@@ -2788,6 +2801,10 @@ def write_linreg_decad_forecast_data(data: pd.DataFrame):
         # Combine with new data
         combined_data = pd.concat([existing_data, last_line])
 
+        # Make sure 'code' column is treated as string (otherwise looking for 
+        # duplicates will not work as expected)
+        combined_data['code'] = combined_data['code'].astype(str).str.replace(r'\.0$', '', regex=True)
+
         # Remove duplicates, keeping last occurrence (most recently added)
         combined_data = combined_data.drop_duplicates(subset=['date', 'code'], keep='last')
 
@@ -2801,6 +2818,12 @@ def write_linreg_decad_forecast_data(data: pd.DataFrame):
 
         # Write back to file
         try:
+            # Ensure date is formatted as YYYY-MM-DD before writing
+            if 'date' in combined_data.columns:
+                combined_data['date'] = pd.to_datetime(combined_data['date'], errors='coerce').dt.strftime('%Y-%m-%d')
+            if 'date' in combined_data_latest.columns:
+                combined_data_latest['date'] = pd.to_datetime(combined_data_latest['date'], errors='coerce').dt.strftime('%Y-%m-%d')
+            
             ret = combined_data.to_csv(output_file_path, index=False)
             if ret is None:
                 logger.info(f"Data written to {output_file_path}. Removed duplicates keeping most recent entries.")
@@ -2814,6 +2837,10 @@ def write_linreg_decad_forecast_data(data: pd.DataFrame):
     else:
         # Write the data to a new file
         try:
+            # Ensure date is formatted as YYYY-MM-DD before writing
+            if 'date' in last_line.columns:
+                last_line['date'] = pd.to_datetime(last_line['date'], errors='coerce').dt.strftime('%Y-%m-%d')
+            
             ret = last_line.to_csv(output_file_path, index=False)
             if ret is None:
                 logger.info(f"Data written to {output_file_path}.")
@@ -3587,6 +3614,10 @@ def write_pentad_time_series_data(data: pd.DataFrame):
     # Drop the issue_date column
     data = data.drop(columns=['issue_date', 'discharge'])
 
+    # Ensure code column is treated as string to avoid .0 suffixes
+    if 'code' in data.columns:
+        data['code'] = data['code'].astype(str).str.replace(r'\.0$', '', regex=True)
+
     # If there is a column called discharge_sum, rename it to predictor
     if 'discharge_sum' in data.columns:
         data = data.rename(columns={'discharge_sum': 'predictor'})
@@ -3624,6 +3655,10 @@ def write_pentad_time_series_data(data: pd.DataFrame):
     # If the data is written to the csv file, log a message that the data
     # has been written.
     try:
+        # Ensure date is formatted as YYYY-MM-DD before writing
+        if 'date' in data.columns:
+            data['date'] = pd.to_datetime(data['date'], errors='coerce').dt.strftime('%Y-%m-%d')
+        
         ret = data.to_csv(output_file_path, index=False)
         logger.info(f"Data written to {output_file_path}.")
     except Exception as e:
@@ -3647,6 +3682,10 @@ def write_decad_time_series_data(data: pd.DataFrame):
 
     # Drop the issue_date column
     data = data.drop(columns=['issue_date', 'discharge'])
+
+    # Ensure code column is treated as string to avoid .0 suffixes
+    if 'code' in data.columns:
+        data['code'] = data['code'].astype(str).str.replace(r'\.0$', '', regex=True)
 
     # If there is a column called discharge_sum, rename it to predictor
     if 'discharge_sum' in data.columns:
@@ -3686,6 +3725,10 @@ def write_decad_time_series_data(data: pd.DataFrame):
     # If the data is written to the csv file, log a message that the data
     # has been written.
     try:
+        # Ensure date is formatted as YYYY-MM-DD before writing
+        if 'date' in data.columns:
+            data['date'] = pd.to_datetime(data['date'], errors='coerce').dt.strftime('%Y-%m-%d')
+        
         ret = data.to_csv(output_file_path, index=False)
         logger.info(f"Data written to {output_file_path}.")
     except Exception as e:
