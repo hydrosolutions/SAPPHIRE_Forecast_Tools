@@ -1904,6 +1904,250 @@ class TestWritePentadHydrographData(unittest.TestCase):
         self.assertFalse(fl.is_leap_year(1900))  # Not a leap year (divisible by 100 but not 400)
 
 
+class TestWriteDecadHydrographData(unittest.TestCase):
+    """Test cases for the write_decad_hydrograph_data function to verify all columns are written correctly."""
+
+    def setUp(self):
+        """Set up test data and environment for each test."""
+        # Create test data with multiple years and stations for comprehensive testing
+        # Use years 2023, 2024, 2025 so that 2025 is current year, 2024 is last year
+        dates = pd.date_range(start='2023-01-01', end='2025-12-31', freq='10D')
+        codes = [15194, 16134, 12345]  # Multiple stations
+        
+        # Create a list of dictionaries for test data
+        data_list = []
+        for code in codes:
+            for date in dates:
+                # Create realistic discharge values with seasonal variation
+                seasonal_factor = 1 + 0.5 * np.sin((date.dayofyear - 60) * 2 * np.pi / 365)
+                base_discharge = 20.0 + (code % 1000) / 100  # Station-specific base flow
+                
+                data_list.append({
+                    'code': str(code),
+                    'date': date,
+                    'issue_date': True,
+                    'discharge': base_discharge * seasonal_factor,
+                    'discharge_sum': base_discharge * seasonal_factor * 10,
+                    'discharge_avg': base_discharge * seasonal_factor * 1.1
+                })
+        
+        # Convert to DataFrame
+        self.test_data = pd.DataFrame(data_list)
+        
+        # Create a temporary directory for output files
+        self.temp_dir = tempfile.TemporaryDirectory()
+        
+        # Setup the environment variables
+        self._old_env = os.environ.copy()
+        os.environ["ieasyforecast_intermediate_data_path"] = self.temp_dir.name
+        os.environ["ieasyforecast_hydrograph_decad_file"] = "hydrograph_decad_test.csv"
+        os.environ["ieasyhydroforecast_connect_to_iEH"] = "False"  # Enable norm retrieval from SDK iEH HF instead of legacy iEH
+        
+        # Expected column names in output (including columns after q95)
+        # Current year = 2025, Last year = 2024, Historical = 2023
+        self.expected_columns = ['code', 'decad_in_year', 'mean', 'min', 'max', 'q05', 'q25', 'q75', 'q95', 'norm', '2024', '2025']
+        
+        # Output file path
+        self.output_file_path = os.path.join(self.temp_dir.name, "hydrograph_decad_test.csv")
+
+    def tearDown(self):
+        """Clean up after each test."""
+        # Restore original environment variables
+        os.environ.clear()
+        os.environ.update(self._old_env)
+        
+        # Clean up temporary directory
+        self.temp_dir.cleanup()
+
+    def test_columns_after_q95_are_written(self):
+        """Test that columns after q95 (norm, year columns) are correctly written to CSV."""
+        # Mock SDK for norm retrieval
+        mock_sdk = Mock()
+        mock_sdk.get_norm_for_site.return_value = [5.0 + i * 0.5 for i in range(36)]  # 36 decadal norms
+        
+        # Call the function with mock SDK
+        result = fl.write_decad_hydrograph_data(self.test_data, mock_sdk)
+        
+        # Check that output file exists
+        self.assertTrue(os.path.exists(self.output_file_path), "Output file was not created")
+        
+        # Read the output file
+        output_data = pd.read_csv(self.output_file_path)
+        
+        # Check basic structure columns are present
+        basic_columns = ['code', 'decad_in_year', 'mean', 'min', 'max', 'q05', 'q25', 'q75', 'q95', 'norm']
+        for column in basic_columns:
+            self.assertIn(column, output_data.columns, f"Basic column '{column}' is missing from output")
+        
+        # Check that columns after q95 exist (norm and year columns)
+        self.assertIn('norm', output_data.columns, "Norm column (after q95) is missing")
+        
+        # Verify that norm column has values (not all NaN)
+        self.assertFalse(output_data['norm'].isna().all(), "Norm column contains only NaN values")
+        
+        # Check for year columns (at least one should exist)
+        year_columns = [col for col in output_data.columns if col.isdigit() and len(col) == 4]
+        self.assertGreater(len(year_columns), 0, "No year columns found after q95")
+        
+        # Should have at least current year and last year columns
+        self.assertGreaterEqual(len(year_columns), 2, "Expected at least 2 year columns (current and last year)")
+        
+        # Verify year columns have appropriate data
+        for year_col in year_columns:
+            year_column = output_data[year_col]
+            # Should have some non-NaN values (not all NaN)
+            non_nan_count = year_column.notna().sum()
+            self.assertGreater(non_nan_count, 0, f"Year column '{year_col}' contains no data")
+        
+        # Check data integrity
+        self.assertEqual(len(output_data['code'].unique()), 3, "Expected 3 unique station codes")
+        self.assertEqual(len(output_data['decad_in_year'].unique()), 36, "Expected 36 unique decads")
+        
+        # Verify statistical columns have reasonable values
+        for stat_col in ['mean', 'min', 'max', 'q05', 'q25', 'q75', 'q95']:
+            self.assertIn(stat_col, output_data.columns, f"Statistical column '{stat_col}' is missing")
+            # Allow for some NaN values in statistical columns (when insufficient historical data)
+            valid_values = output_data[stat_col].dropna()
+            if len(valid_values) > 0:
+                self.assertTrue((valid_values >= 0).all(), f"Column '{stat_col}' has negative values")
+
+    def test_columns_after_q95_without_norms(self):
+        """Test that year columns are still written when norms are disabled."""
+        # Disable norm retrieval - the function checks for 'False' string
+        os.environ["ieasyhydroforecast_connect_to_iEH"] = "True"  # Keep as True to avoid SDK requirement
+        
+        # Call the function without SDK (norms disabled by environment)
+        result = fl.write_decad_hydrograph_data(self.test_data)
+        
+        # Check that output file exists
+        self.assertTrue(os.path.exists(self.output_file_path), "Output file was not created")
+        
+        # Read the output file
+        output_data = pd.read_csv(self.output_file_path)
+        
+        # Check for year columns (should still be present)
+        year_columns = [col for col in output_data.columns if col.isdigit() and len(col) == 4]
+        self.assertGreater(len(year_columns), 0, "Year columns should exist even when norms are handled differently")
+        
+        # Check that norm column exists (may contain NaN values if retrieval failed)
+        self.assertIn('norm', output_data.columns, "Norm column should exist")
+
+    def test_empty_input_data_handling(self):
+        """Test that the function handles empty input data gracefully."""
+        empty_data = pd.DataFrame(columns=['code', 'date', 'issue_date', 'discharge', 'discharge_avg'])
+        
+        # The function should raise a ValueError for empty data
+        with self.assertRaises(ValueError) as context:
+            fl.write_decad_hydrograph_data(empty_data)
+        
+        self.assertIn("Cannot process empty or None input data", str(context.exception))
+
+    def test_single_year_data(self):
+        """Test that the function works with single year of data."""
+        # Create single year test data - use 2024 and 2025 to have some historical data
+        single_year_dates = pd.date_range(start='2024-01-01', end='2025-12-31', freq='10D')
+        single_year_data = []
+        
+        for date in single_year_dates:
+            single_year_data.append({
+                'code': '15194',
+                'date': date,
+                'issue_date': True,
+                'discharge': 20.0,
+                'discharge_avg': 22.0
+            })
+        
+        single_year_df = pd.DataFrame(single_year_data)
+        
+        # Mock SDK for norm retrieval  
+        mock_sdk = Mock()
+        mock_sdk.get_norm_for_site.return_value = [5.0 + i * 0.5 for i in range(36)]  # 36 decadal norms
+        
+        # Call function with mock SDK
+        result = fl.write_decad_hydrograph_data(single_year_df, mock_sdk)
+        
+        # Should create output file
+        self.assertTrue(os.path.exists(self.output_file_path))
+        
+        output_data = pd.read_csv(self.output_file_path)
+        
+        # Should have year columns
+        year_columns = [col for col in output_data.columns if col.isdigit() and len(col) == 4]
+        self.assertGreater(len(year_columns), 0, "Should have at least one year column")
+        
+        # Statistical columns should exist
+        for stat_col in ['mean', 'min', 'max', 'q05', 'q25', 'q75', 'q95']:
+            self.assertIn(stat_col, output_data.columns, f"Statistical column '{stat_col}' missing")
+
+    def test_data_type_consistency(self):
+        """Test that data types are consistent throughout the process."""
+        mock_sdk = Mock()
+        mock_sdk.get_norm_for_site.return_value = [5.0 + i * 0.5 for i in range(36)]
+        
+        # Call function
+        result = fl.write_decad_hydrograph_data(self.test_data, mock_sdk)
+        
+        # Read output
+        output_data = pd.read_csv(self.output_file_path)
+        
+        # Check that decad_in_year is integer
+        self.assertTrue(pd.api.types.is_integer_dtype(output_data['decad_in_year']), "decad_in_year should be integer")
+        
+        # Check that code column exists and is readable (string or numeric)
+        self.assertIn('code', output_data.columns, "code column should exist")
+        # Code can be either string or numeric after CSV round-trip, both are acceptable
+        code_dtype = output_data['code'].dtype
+        self.assertTrue(code_dtype == 'object' or pd.api.types.is_numeric_dtype(code_dtype), 
+                       f"code column has unexpected dtype: {code_dtype}")
+        
+        # Check that statistical columns are numeric
+        numeric_columns = ['mean', 'min', 'max', 'q05', 'q25', 'q75', 'q95', 'norm']
+        for col in numeric_columns:
+            if col in output_data.columns:
+                self.assertTrue(pd.api.types.is_numeric_dtype(output_data[col]), 
+                               f"Column '{col}' should be numeric")
+        
+        # Check year columns are numeric
+        year_columns = [col for col in output_data.columns if col.isdigit() and len(col) == 4]
+        for col in year_columns:
+            self.assertTrue(pd.api.types.is_numeric_dtype(output_data[col]), 
+                           f"Year column '{col}' should be numeric")
+
+    def test_file_permissions_and_path_validation(self):
+        """Test robust file handling and path validation."""
+        # Test with invalid path
+        os.environ["ieasyforecast_intermediate_data_path"] = "/invalid/path/that/does/not/exist"
+        
+        with self.assertRaises((FileNotFoundError, PermissionError, ValueError)):
+            fl.write_decad_hydrograph_data(self.test_data)
+        
+        # Restore valid path
+        os.environ["ieasyforecast_intermediate_data_path"] = self.temp_dir.name
+
+    def test_norm_retrieval_failure_handling(self):
+        """Test that the function handles norm retrieval failures gracefully."""
+        # Mock SDK that raises an exception
+        mock_sdk = Mock()
+        mock_sdk.get_norm_for_site.side_effect = Exception("API connection failed")
+        
+        # Should not crash, should handle the exception
+        result = fl.write_decad_hydrograph_data(self.test_data, mock_sdk)
+        
+        # Should still create output file
+        self.assertTrue(os.path.exists(self.output_file_path))
+        
+        output_data = pd.read_csv(self.output_file_path)
+        
+        # Norm column should exist but may be NaN due to failed retrieval
+        self.assertIn('norm', output_data.columns, "Norm column should exist even after retrieval failure")
+        
+        # Year columns should still be present and populated
+        year_columns = [col for col in output_data.columns if col.isdigit() and len(col) == 4]
+        self.assertGreater(len(year_columns), 0, "Year columns should exist after norm failure")
+        
+        for year_col in year_columns:
+            self.assertIn(year_col, output_data.columns, f"Year column '{year_col}' should exist after norm failure")
+
 
 if __name__ == '__main__':
     unittest.main()

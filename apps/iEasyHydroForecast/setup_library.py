@@ -996,12 +996,18 @@ def read_observed_pentadal_data():
     with the date of the hydrograph data. If the file has a column 'pentad', it
     is renamed to 'pentad_in_month'.
     """
-    # Read the pentadal hydrograph data
+    # Read the pentadal hydrograph data with robust date parsing
     filepath = os.path.join(
         os.getenv("ieasyforecast_intermediate_data_path"),
         os.getenv("ieasyforecast_pentad_discharge_file")
     )
-    data = pd.read_csv(filepath, parse_dates=["date"])
+    data = pd.read_csv(filepath)
+    
+    # Apply robust date parsing and ensure code is string without .0 suffixes
+    if 'date' in data.columns:
+        data['date'] = fl.parse_dates_robust(data['date'], 'date')
+    if 'code' in data.columns:
+        data['code'] = data['code'].astype(str).str.replace(r'\.0$', '', regex=True)
 
     # Add a column model to the dataframe
     data["model_long"] = "Observed (Obs)"
@@ -1026,12 +1032,18 @@ def read_observed_decadal_data():
     ieasyforecast_daily_discharge_file. It is expected to have a column 'date'
     with the date of the hydrograph data.
     """
-    # Read the pentadal hydrograph data
+    # Read the decadal hydrograph data with robust date parsing
     filepath = os.path.join(
         os.getenv("ieasyforecast_intermediate_data_path"),
         os.getenv("ieasyforecast_decad_discharge_file")
     )
-    data = pd.read_csv(filepath, parse_dates=["date"])
+    data = pd.read_csv(filepath)
+    
+    # Apply robust date parsing and ensure code is string without .0 suffixes
+    if 'date' in data.columns:
+        data['date'] = fl.parse_dates_robust(data['date'], 'date')
+    if 'code' in data.columns:
+        data['code'] = data['code'].astype(str).str.replace(r'\.0$', '', regex=True)
 
     # Add a column model to the dataframe
     data["model_long"] = "Observed (Obs)"
@@ -1081,12 +1093,18 @@ def read_linreg_forecasts_pentad():
     delta: The acceptable range for the forecast around the observed discharge.
         Calculated by the hydromet as 0.674 * q_std_sigma (assuming normal distribution of the pentadal discharge)
     """
-    # Read the linear regression forecasts for the pentadal forecast horizon
+    # Read the linear regression forecasts for the pentadal forecast horizon with robust date parsing
     filepath = os.path.join(
         os.getenv("ieasyforecast_intermediate_data_path"),
         os.getenv("ieasyforecast_analysis_pentad_file")
     )
-    data = pd.read_csv(filepath, parse_dates=["date"])
+    data = pd.read_csv(filepath)
+    
+    # Apply robust date parsing and ensure code is string without .0 suffixes
+    if 'date' in data.columns:
+        data['date'] = fl.parse_dates_robust(data['date'], 'date')
+    if 'code' in data.columns:
+        data['code'] = data['code'].astype(str).str.replace(r'\.0$', '', regex=True)
 
     # Debugging prints:
     print(f"\n\n\n\n\n||||  DEBUGGING  -  read_csv  ||||")
@@ -1173,12 +1191,18 @@ def read_linreg_forecasts_decade():
     delta: The acceptable range for the forecast around the observed discharge.
         Calculated by the hydromet as 0.674 * q_std_sigma (assuming normal distribution of the decadal discharge)
     """
-    # Read the linear regression forecasts for the pentadal forecast horizon
+    # Read the linear regression forecasts for the decadal forecast horizon with robust date parsing
     filepath = os.path.join(
         os.getenv("ieasyforecast_intermediate_data_path"),
         os.getenv("ieasyforecast_analysis_decad_file")
     )
-    data = pd.read_csv(filepath, parse_dates=["date"])
+    data = pd.read_csv(filepath)
+    
+    # Apply robust date parsing and ensure code is string without .0 suffixes
+    if 'date' in data.columns:
+        data['date'] = fl.parse_dates_robust(data['date'], 'date')
+    if 'code' in data.columns:
+        data['code'] = data['code'].astype(str).str.replace(r'\.0$', '', regex=True)
 
     # Drop duplicate rows in date and code if they exist, keeping the last row
     data.drop_duplicates(subset=["date", "code"], keep="last", inplace=True)
@@ -1235,6 +1259,13 @@ def read_daily_probabilistic_ml_forecasts_pentad(filepath, model, model_long, mo
             logger.warning(f"Error reading CSV file {filepath}: {e}")
             return pd.DataFrame()
         
+        # We read the 'code' column as string. Discard .0 suffixes if they exist
+        if 'code' in daily_data.columns:
+            daily_data['code'] = daily_data['code'].astype(str).str.replace(r'\.0$', '', regex=True)
+        else:
+            logger.warning(f"code column missing from {filepath}")
+            return pd.DataFrame()
+
         # Handle date columns flexibly without assuming format
         for col in ["date", "forecast_date"]:
             if col in daily_data.columns:
@@ -1373,8 +1404,16 @@ def read_daily_probabilistic_ml_forecasts_decade(filepath, model, model_long, mo
     logger = logging.getLogger(__name__)
 
     try:
-        # Read the forecast results
-        daily_data = pd.read_csv(filepath, parse_dates=["date", "forecast_date"])
+        # Read the forecast results with robust date parsing
+        daily_data = pd.read_csv(filepath)
+        
+        # Apply robust date parsing and ensure code is string without .0 suffixes
+        if 'date' in daily_data.columns:
+            daily_data['date'] = fl.parse_dates_robust(daily_data['date'], 'date')
+        if 'forecast_date' in daily_data.columns:
+            daily_data['forecast_date'] = fl.parse_dates_robust(daily_data['forecast_date'], 'forecast_date')
+        if 'code' in daily_data.columns:
+            daily_data['code'] = daily_data['code'].astype(str).str.replace(r'\.0$', '', regex=True)
 
         # Only keep the forecast rows for pentadal forecasts
         # Add a column last_day_of_month to daily_data
@@ -2257,12 +2296,18 @@ def deprecated_read_linreg_forecasts_pentad_dummy(model):
     else:
         raise ValueError("Invalid model")
 
-    # Read the linear regression forecasts for the pentadal forecast horizon
+    # Read the linear regression forecasts for the pentadal forecast horizon with robust date parsing
     filepath = os.path.join(
         os.getenv("ieasyforecast_intermediate_data_path"),
         filename
     )
-    data = pd.read_csv(filepath, parse_dates=["date"])
+    data = pd.read_csv(filepath)
+    
+    # Apply robust date parsing and ensure code is string without .0 suffixes
+    if 'date' in data.columns:
+        data['date'] = fl.parse_dates_robust(data['date'], 'date')
+    if 'code' in data.columns:
+        data['code'] = data['code'].astype(str).str.replace(r'\.0$', '', regex=True)
 
     # Drop duplicate rows in date and code if they exist, keeping the last row
     data.drop_duplicates(subset=["date", "code"], keep="last", inplace=True)
