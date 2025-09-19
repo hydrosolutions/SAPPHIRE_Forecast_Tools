@@ -2,7 +2,7 @@
 # Script to produce hydrological forecasts using linear regression.
 # The script is run daily and produces forecasts for the next 5 or 10 days.
 # The script is run with the following command:
-# ieasyhydroforecast_env_file_path=/path/to/.env python linear_regression.py
+# ieasyhydroforecast_env_file_path=/path/to/.env SAPPHIRE_PREDICTION_MODE=PENTAD python linear_regression.py
 
 # I/O
 import os
