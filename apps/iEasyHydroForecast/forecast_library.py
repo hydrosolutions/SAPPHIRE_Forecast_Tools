@@ -2970,6 +2970,10 @@ def write_pentad_hydrograph_data(data: pd.DataFrame, iehhf_sdk = None):
     # Drop the issue_date column
     data = data.drop(columns=['issue_date', 'discharge'])
 
+    # Ensure code column is treated as string to avoid .0 suffixes - do this early to prevent merge issues
+    if 'code' in data.columns:
+        data['code'] = data['code'].astype(str).str.replace(r'\.0$', '', regex=True)
+
     # If there is a column called discharge_sum, rename it to predictor
     if 'discharge_sum' in data.columns:
         data = data.rename(columns={'discharge_sum': 'predictor'})
@@ -3029,11 +3033,9 @@ def write_pentad_hydrograph_data(data: pd.DataFrame, iehhf_sdk = None):
         
         # Ensure data types match for merge
         all_pentadal_norms['pentad_in_year'] = all_pentadal_norms['pentad_in_year'].astype(str)
-        # Convert code to string and remove any .0 suffixes from float-to-string conversion
         all_pentadal_norms['code'] = all_pentadal_norms['code'].astype(str).str.replace(r'\.0$', '', regex=True)
         runoff_stats['pentad_in_year'] = runoff_stats['pentad_in_year'].astype(str)
-        # Convert code to string and remove any .0 suffixes from float-to-string conversion
-        runoff_stats['code'] = runoff_stats['code'].astype(str).str.replace(r'\.0$', '', regex=True)
+        # Note: code column already converted to string earlier
         
         # Merge with runoff_stats
         runoff_stats = pd.merge(runoff_stats, all_pentadal_norms, left_on=['pentad_in_year', 'code'], right_on=['pentad_in_year', 'code'], how='left')
