@@ -3842,8 +3842,16 @@ def save_pentadal_skill_metrics(data: pd.DataFrame):
 
     """
 
+
     # Round all values to 4 decimal places
     data = data.round(4)
+
+    # Ensure code is string without .0
+    if 'code' in data.columns:
+        data['code'] = data['code'].astype(str).str.replace(r'\.0$', '', regex=True)
+    # Ensure date is in %Y-%m-%d format
+    if 'date' in data.columns:
+        data['date'] = pd.to_datetime(data['date'], errors='coerce').dt.strftime('%Y-%m-%d')
 
     # convert pentad_in_year to int
     data['pentad_in_year'] = data['pentad_in_year'].astype(int)
@@ -3883,8 +3891,16 @@ def save_decadal_skill_metrics(data: pd.DataFrame):
 
     """
 
+
     # Round all values to 4 decimal places
     data = data.round(4)
+
+    # Ensure code is string without .0
+    if 'code' in data.columns:
+        data['code'] = data['code'].astype(str).str.replace(r'\.0$', '', regex=True)
+    # Ensure date is in %Y-%m-%d format
+    if 'date' in data.columns:
+        data['date'] = pd.to_datetime(data['date'], errors='coerce').dt.strftime('%Y-%m-%d')
 
     # convert decad_in_year to int
     data['decad_in_year'] = data['decad_in_year'].astype(int)
@@ -3997,8 +4013,16 @@ def save_forecast_data_pentad(simulated: pd.DataFrame):
     # Only keep relevant columns
     #simulated = simulated[['code', 'date', 'pentad_in_month', 'pentad_in_year', 'forecasted_discharge', 'model_long', 'model_short']]
 
+
     # Round all float values to 3 decimal places
     simulated = simulated.round(3)
+
+    # Ensure code is string without .0
+    if 'code' in simulated.columns:
+        simulated['code'] = simulated['code'].astype(str).str.replace(r'\.0$', '', regex=True)
+    # Ensure date is in %Y-%m-%d format
+    if 'date' in simulated.columns:
+        simulated['date'] = pd.to_datetime(simulated['date'], errors='coerce').dt.strftime('%Y-%m-%d')
 
     # write the data to csv
     ret = simulated.to_csv(filename, index=False)
@@ -4032,8 +4056,16 @@ def save_forecast_data_decade(simulated: pd.DataFrame):
     # Only keep relevant columns
     #simulated = simulated[['code', 'date', 'decad_in_month', 'decad_in_year', 'forecasted_discharge', 'model_long', 'model_short']]
 
+
     # Round all float values to 3 decimal places
     simulated = simulated.round(3)
+
+    # Ensure code is string without .0
+    if 'code' in simulated.columns:
+        simulated['code'] = simulated['code'].astype(str).str.replace(r'\.0$', '', regex=True)
+    # Ensure date is in %Y-%m-%d format
+    if 'date' in simulated.columns:
+        simulated['date'] = pd.to_datetime(simulated['date'], errors='coerce').dt.strftime('%Y-%m-%d')
 
     # Rename the column decad_in_month to decad
     simulated = simulated.rename(columns={'decad_in_month': 'decad'})
