@@ -269,9 +269,9 @@ def main():
                 env_last_success = os.getenv('ieasyforecast_last_successful_run_file')
                 logger.info(f"[linreg] intermediate_data_path={env_intermediate}, last_run_file={env_last_success}")
 
-                # Ensure date is datetime for diagnostics
+                # Ensure date is datetime for diagnostics using robust parsing
                 if 'date' in linreg_pentad.columns:
-                    _dates = pd.to_datetime(linreg_pentad['date'], errors='coerce')
+                    _dates = fl.parse_dates_robust(linreg_pentad['date'], 'date')
                     _years = sorted(set([int(y) for y in _dates.dt.year.dropna().unique()])) if not _dates.empty else []
                     logger.info(f"[linreg] pentad write rows={len(linreg_pentad)}, date_min={_dates.min()}, date_max={_dates.max()}, years={_years}")
                 else:

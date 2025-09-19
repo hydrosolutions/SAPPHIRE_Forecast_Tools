@@ -18,6 +18,94 @@ import tag_library as tl
 
 logger = logging.getLogger(__name__)
 
+def parse_dates_robust(date_series, column_name='date'):
+    """
+    Robustly parse dates from a pandas Series, trying multiple common formats.
+    
+    Parameters:
+        date_series (pd.Series): Series containing date strings or objects
+        column_name (str): Name of the column for logging purposes
+        
+    Returns:
+        pd.Series: Series with parsed datetime objects
+        
+    Raises:
+        ValueError: If no date format could be successfully parsed
+    """
+    # If already datetime, return as-is
+    if pd.api.types.is_datetime64_any_dtype(date_series):
+        return date_series
+    
+    # Common date formats to try, in order of preference
+    date_formats = [
+        '%Y-%m-%d',      # Expected format: 2023-01-15
+        '%Y/%m/%d',      # Alternative: 2023/01/15
+        '%d-%m-%Y',      # European: 15-01-2023
+        '%d/%m/%Y',      # European: 15/01/2023
+        '%m-%d-%Y',      # US: 01-15-2023
+        '%m/%d/%Y',      # US: 01/15/2023
+        '%Y-%m-%d %H:%M:%S',  # With time: 2023-01-15 12:00:00
+        '%Y/%m/%d %H:%M:%S',  # With time: 2023/01/15 12:00:00
+    ]
+    
+    # First try pandas' built-in inference (most flexible)
+    try:
+        parsed_dates = pd.to_datetime(date_series, errors='coerce')
+        # Check if most dates were successfully parsed (allow some failures)
+        success_rate = parsed_dates.notna().sum() / len(parsed_dates)
+        if success_rate > 0.8:  # 80% success rate threshold
+            if success_rate < 1.0:
+                failed_count = parsed_dates.isna().sum()
+                logger.warning(f"Date parsing for {column_name}: {failed_count} dates could not be parsed automatically")
+            else:
+                logger.debug(f"Date parsing for {column_name}: all dates parsed successfully using automatic inference")
+            return parsed_dates
+    except Exception as e:
+        logger.debug(f"Automatic date parsing failed for {column_name}: {e}")
+    
+    # If automatic parsing didn't work well, try specific formats
+    best_parsed = None
+    best_success_rate = 0
+    best_format = None
+    
+    for date_format in date_formats:
+        try:
+            parsed_dates = pd.to_datetime(date_series, format=date_format, errors='coerce')
+            success_rate = parsed_dates.notna().sum() / len(parsed_dates)
+            
+            if success_rate > best_success_rate:
+                best_parsed = parsed_dates
+                best_success_rate = success_rate
+                best_format = date_format
+                
+            # If we get perfect parsing, use it
+            if success_rate == 1.0:
+                logger.debug(f"Date parsing for {column_name}: all dates parsed successfully using format {date_format}")
+                return parsed_dates
+                
+        except Exception as e:
+            logger.debug(f"Date format {date_format} failed for {column_name}: {e}")
+            continue
+    
+    # Use the best result if it's reasonably good
+    if best_success_rate > 0.8:
+        failed_count = best_parsed.isna().sum()
+        if failed_count > 0:
+            logger.warning(f"Date parsing for {column_name}: {failed_count} dates could not be parsed using format {best_format}")
+        else:
+            logger.debug(f"Date parsing for {column_name}: all dates parsed successfully using format {best_format}")
+        return best_parsed
+    
+    # If all formats failed significantly, raise an error
+    error_msg = f"Could not parse dates in {column_name}. Tried formats: {date_formats}. Best success rate: {best_success_rate:.2%}"
+    logger.error(error_msg)
+    
+    # Show some examples of the problematic data
+    sample_values = date_series.dropna().head(5).tolist()
+    logger.error(f"Sample values from {column_name}: {sample_values}")
+    
+    raise ValueError(error_msg)
+
 # === Functions ===
 # --- Helper tools ---
 # region tools
@@ -381,11 +469,11 @@ def add_pentad_issue_date(data_df, datetime_col):
     # Check if the datetime_col is in the data_df columns
     if datetime_col not in data_df.columns:
         raise KeyError(f"The column {datetime_col} is not in the DataFrame.")
-    # Ensure the datetime_col is of datetime type
+    # Ensure the datetime_col is of datetime type using robust parsing
     try:
-        data_df[datetime_col] = pd.to_datetime(data_df[datetime_col], format = "%Y-%m-%d")
-    except:
-        raise TypeError(f"The column {datetime_col} cannot be converted to datetime type.")
+        data_df[datetime_col] = parse_dates_robust(data_df[datetime_col], datetime_col)
+    except Exception as e:
+        raise TypeError(f"The column {datetime_col} cannot be converted to datetime type: {e}")
 
     # Ensure the DataFrame is sorted by date
     data_df = data_df.sort_values(datetime_col)
@@ -422,11 +510,11 @@ def add_decad_issue_date(data_df, datetime_col):
     # Check if the datetime_col is in the data_df columns
     if datetime_col not in data_df.columns:
         raise KeyError(f"The column {datetime_col} is not in the DataFrame.")
-    # Ensure the datetime_col is of datetime type
+    # Ensure the datetime_col is of datetime type using robust parsing
     try:
-        data_df[datetime_col] = pd.to_datetime(data_df[datetime_col], format = "%Y-%m-%d")
-    except:
-        raise TypeError(f"The column {datetime_col} cannot be converted to datetime type.")
+        data_df[datetime_col] = parse_dates_robust(data_df[datetime_col], datetime_col)
+    except Exception as e:
+        raise TypeError(f"The column {datetime_col} cannot be converted to datetime type: {e}")
 
     # Ensure the DataFrame is sorted by date
     data_df = data_df.sort_values(datetime_col)
@@ -2441,8 +2529,8 @@ def read_daily_discharge_data_from_csv():
     if not all(column in discharge_data.columns for column in required_columns):
         raise ValueError(f"The DataFrame does not contain the required columns: {required_columns}")
 
-    # Convert the 'date' column to datetime
-    discharge_data['date'] = pd.to_datetime(discharge_data['date'])
+    # Convert the 'date' column to datetime using robust parsing
+    discharge_data['date'] = parse_dates_robust(discharge_data['date'], 'date')
 
     # Cast the 'code' column to string
     discharge_data['code'] = discharge_data['code'].astype(str)
@@ -2537,9 +2625,10 @@ def write_linreg_pentad_forecast_data(data: pd.DataFrame):
     # Handle existing file
     existing_data = None
     if os.path.exists(output_file_path):
-        # Read existing data
-        existing_data = pd.read_csv(output_file_path, parse_dates=['date'], 
-                                    dtype={'code': str})
+        # Read existing data with robust date parsing
+        existing_data = pd.read_csv(output_file_path, dtype={'code': str})
+        if 'date' in existing_data.columns:
+            existing_data['date'] = parse_dates_robust(existing_data['date'], 'date')
 
         # Combine with new data
         combined_data = pd.concat([existing_data, last_line], ignore_index=True)
@@ -2552,15 +2641,15 @@ def write_linreg_pentad_forecast_data(data: pd.DataFrame):
         combined_data = combined_data.drop_duplicates(subset=['date', 'code'], keep='last')
 
         # Compute latest strictly by max(date) per (pentad_in_year, code)
-        combined_data['date'] = pd.to_datetime(combined_data['date'], errors='coerce')
+        combined_data['date'] = parse_dates_robust(combined_data['date'], 'date')
         idx_latest = combined_data.groupby(['pentad_in_year', 'code'])['date'].idxmax()
         combined_data_latest = combined_data.loc[idx_latest].copy()
 
         # For the _latest view, keep only the last year (current and/or previous year logic)
         try:
-            combined_year_max = int(pd.to_datetime(combined_data_latest['date']).dt.year.max())
+            combined_year_max = int(combined_data_latest['date'].dt.year.max())
             min_year_allowed = combined_year_max - 1
-            combined_data_latest = combined_data_latest[pd.to_datetime(combined_data_latest['date']).dt.year >= min_year_allowed]
+            combined_data_latest = combined_data_latest[combined_data_latest['date'].dt.year >= min_year_allowed]
             logger.debug(f"write_linreg_pentad: latest filtered to years >= {min_year_allowed}")
         except Exception as _e:
             logger.warning(f"write_linreg_pentad: latest year filter skipped due to error: {_e}")
@@ -2570,10 +2659,10 @@ def write_linreg_pentad_forecast_data(data: pd.DataFrame):
 
         # Write back to file
         try:
-            # Ensure date is formatted as YYYY-MM-DD before writing
+            # Ensure date is formatted as YYYY-MM-DD before writing (dates already parsed)
             combined_sorted = combined_data.sort_values(by=['date', 'code']).reset_index(drop=True)
             if 'date' in combined_sorted.columns:
-                combined_sorted['date'] = pd.to_datetime(combined_sorted['date'], errors='coerce').dt.strftime('%Y-%m-%d')
+                combined_sorted['date'] = combined_sorted['date'].dt.strftime('%Y-%m-%d')
             
             ret = combined_sorted.to_csv(output_file_path, index=False)
             if ret is None:
@@ -2583,7 +2672,7 @@ def write_linreg_pentad_forecast_data(data: pd.DataFrame):
             # Also write latest file (only last year), sorted
             latest_sorted = combined_data_latest.sort_values(by=['date', 'code']).reset_index(drop=True)
             if 'date' in latest_sorted.columns:
-                latest_sorted['date'] = pd.to_datetime(latest_sorted['date'], errors='coerce').dt.strftime('%Y-%m-%d')
+                latest_sorted['date'] = latest_sorted['date'].dt.strftime('%Y-%m-%d')
             
             ret = latest_sorted.to_csv(output_file_path_latest, index=False)
             if ret is None:
@@ -2795,8 +2884,10 @@ def write_linreg_decad_forecast_data(data: pd.DataFrame):
 
     # Handle existing file
     if os.path.exists(output_file_path):
-        # Read existing data
-        existing_data = pd.read_csv(output_file_path, parse_dates=['date'])
+        # Read existing data with robust date parsing
+        existing_data = pd.read_csv(output_file_path)
+        if 'date' in existing_data.columns:
+            existing_data['date'] = parse_dates_robust(existing_data['date'], 'date')
 
         # Combine with new data
         combined_data = pd.concat([existing_data, last_line])
