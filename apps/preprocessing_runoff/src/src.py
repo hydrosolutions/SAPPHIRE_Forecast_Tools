@@ -13,7 +13,7 @@ from typing import List, Tuple
 from contextlib import contextmanager
 
 # To avoid printing of warning
-pd.set_option('future.no_silent_downcasting', True)
+# pd.set_option('future.no_silent_downcasting', True)  # Comment out - not available in current pandas version
 
 from ieasyhydro_sdk.filters import BasicDataValueFilters
 
@@ -2544,8 +2544,12 @@ def write_daily_time_series_data_to_csv(data: pd.DataFrame, column_list=["code",
     # Round all values to 3 decimal places
     data = data.round(3)
 
-    # Cast the 'code' column to int and then string
-    data = data.astype({'code': 'Float64'}).astype({'code': 'Int64'})
+    # Convert code to string without .0 suffixes from float-to-string conversion
+    data['code'] = data['code'].astype(str).str.replace(r'\.0$', '', regex=True)
+    
+    # Ensure date is in %Y-%m-%d format
+    if 'date' in data.columns:
+        data['date'] = pd.to_datetime(data['date'], errors='coerce').dt.strftime('%Y-%m-%d')
 
     # Write the data to a csv file. Raise an error if this does not work.
     # If the data is written to the csv file, log a message that the data
@@ -2604,8 +2608,12 @@ def write_daily_hydrograph_data_to_csv(data: pd.DataFrame, column_list=["code", 
     # Round all values to 3 decimal places
     data = data.round(3)
 
-    # Cast the 'code' column to int and then string
-    data = data.astype({'code': 'Float64'}).astype({'code': 'Int64'})
+    # Convert code to string without .0 suffixes from float-to-string conversion
+    data['code'] = data['code'].astype(str).str.replace(r'\.0$', '', regex=True)
+    
+    # Ensure date is in %Y-%m-%d format
+    if 'date' in data.columns:
+        data['date'] = pd.to_datetime(data['date'], errors='coerce').dt.strftime('%Y-%m-%d')
 
     # Test if we have rows where count is 0. If so, drop these rows.
     data = data[data['count'] != 0]
