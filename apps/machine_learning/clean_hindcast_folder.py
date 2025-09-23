@@ -95,24 +95,26 @@ def clean_hindcast_folder():
 
     PATH_HINDCAST = os.path.join(PATH_FORECAST, 'hindcast', MODEL_TO_USE)
 
+    # check if the path exists
+    if not os.path.exists(PATH_HINDCAST):
+        raise ValueError(f'Path to the hindcast folder does not exist: {PATH_HINDCAST}, Cannot clean it.')
+
     logger.info(f'Path to the hindcast folder: {PATH_HINDCAST}')
 
     # --------------------------------------------------------------------
     # check how many files are in the hindcast folder
     # --------------------------------------------------------------------
     files_in_hindcast = os.listdir(PATH_HINDCAST)
-    num_files_in_hindcast = len(files_in_hindcast)
-    logger.info(f'Number of files in the hindcast folder before cleaning: {num_files_in_hindcast}')
 
     # check if they are csv files
     csv_files_in_hindcast = [f for f in files_in_hindcast if f.endswith('.csv')]
     num_csv_files_in_hindcast = len(csv_files_in_hindcast)
-    logger.info(f'Number of csv files in the hindcast folder before cleaning: {num_csv_files_in_hindcast}')
+    logger.info(f'Number of csv files in the hindcast folder: {num_csv_files_in_hindcast}')
 
     # the files must contain "hindcast" in their name
     hindcast_files_in_hindcast = [f for f in csv_files_in_hindcast if 'hindcast' in f]
     num_hindcast_files_in_hindcast = len(hindcast_files_in_hindcast)
-    logger.info(f'Number of hindcast csv files in the hindcast folder before cleaning: {num_hindcast_files_in_hindcast}')
+    logger.info(f'Number of hindcast csv files in the hindcast folder with "hindcast" in name: {num_hindcast_files_in_hindcast}')
 
     # --------------------------------------------------------------------
     # Remove all files csv in the hindcast folder
