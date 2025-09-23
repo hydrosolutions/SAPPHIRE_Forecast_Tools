@@ -3543,6 +3543,7 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector, d
 
     # Set the initial state of the save_button
     save_button.disabled = app_state.pipeline_running
+    save_button.disabled = True
 
     # Adjust the layout to include the progress bar and message
     layout = pn.Column(
@@ -3566,7 +3567,7 @@ def update_forecast_data(_, linreg_predictor, station, pentad_selector):
 
 
 def create_reload_button():
-    reload_button = pn.widgets.Button(name=_("Trigger forecasts"), button_type="danger")
+    reload_button = pn.widgets.Button(name=_("Trigger forecasts"), button_type="danger", disabled=True)
 
     # Loading spinner and messages
     loading_spinner = pn.indicators.LoadingSpinner(value=True, width=50, height=50, color='success', visible=False)
@@ -3626,7 +3627,7 @@ def create_reload_button():
             warning_message.object = _("Please do not reload this page until processing is done!")
             warning_message.visible = True
         else:
-            reload_button.disabled = False
+            # reload_button.disabled = False
             loading_spinner.visible = False
             progress_message.visible = False
             warning_message.visible = False

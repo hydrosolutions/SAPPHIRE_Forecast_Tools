@@ -697,7 +697,8 @@ selected_indices = pn.widgets.CheckBoxGroup(
 write_bulletin_button = pn.widgets.Button(
     name=_("Write bulletin"),
     button_type='primary',
-    description=_("Write bulletin to Excel"))
+    description=_("Write bulletin to Excel"),
+    disabled=True)
 #indicator = pn.indicators.LoadingSpinner(value=False, size=25)
 
 # Button to remove selected forecasts from the bulletin
@@ -711,7 +712,7 @@ remove_bulletin_button = pn.widgets.Button(
 # Create language selection buttons as links that reload the page with the selected language
 def create_language_buttons():
     buttons = []
-    for lang_name, lang_code in {'English': 'en_CH', 'Русский': 'ru_KG', 'Кыргызча': 'ky_KG'}.items():
+    for lang_name, lang_code in {'English': 'en_CH', 'Русский': 'ru_KG'}.items():  #, 'Кыргызча': 'ky_KG'
         # Create a hyperlink styled as a button
         href = pn.state.location.pathname + f'?lang={lang_code}'
 
