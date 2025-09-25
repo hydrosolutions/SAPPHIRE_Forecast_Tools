@@ -1022,6 +1022,7 @@ def get_pentadal_and_decadal_data(forecast_flags=None,
         discharge_col='discharge',
         forecast_flags=forecast_flags)
 
+    '''
     # Print the first pentad and decad of the year 2023 and 2024
     if os.getenv("ieasyhydroforecast_organization") == 'kghm':
         debug_site = '15102'
@@ -1037,6 +1038,7 @@ def get_pentadal_and_decadal_data(forecast_flags=None,
     data_pentad = filter_data(data_pentad, 'code', site_list_pentad)
     if forecast_flags.decad:
         data_decad = filter_data(data_decad, 'code', site_list_decad)
+    '''
 
     return data_pentad, data_decad
 
@@ -3063,7 +3065,7 @@ def write_pentad_hydrograph_data(data: pd.DataFrame, iehhf_sdk = None):
 
     # Ensure code column is treated as string to avoid .0 suffixes - do this early to prevent merge issues
     if 'code' in data.columns:
-        data['code'] = data['code'].astype(str).str.replace(r'\.0$', '', regex=True)
+        data['code'] = data['code'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
 
     # If there is a column called discharge_sum, rename it to predictor
     if 'discharge_sum' in data.columns:
@@ -3073,9 +3075,9 @@ def write_pentad_hydrograph_data(data: pd.DataFrame, iehhf_sdk = None):
     # production. For the hydrograph output, we want the date to reflect the
     # pentad, the data is collected for. Therefore, we add 1 day to the 'date'
     # column and recalculate pentad and pentad_in_year.
-    # Calculate pentad and pentad_in_year
-    data.loc[:, 'pentad'] = (data['date'] + pd.Timedelta(days=1)).apply(tl.get_pentad)
-    data.loc[:, 'pentad_in_year'] = (data['date'] + pd.Timedelta(days=1)).apply(tl.get_pentad_in_year)
+    # Calculate pentad and pentad_in_year - ensure they are integers
+    data.loc[:, 'pentad'] = (data['date'] + pd.Timedelta(days=1)).apply(tl.get_pentad).astype(int)
+    data.loc[:, 'pentad_in_year'] = (data['date'] + pd.Timedelta(days=1)).apply(tl.get_pentad_in_year).astype(int)
     # Get year of the latest date in data
     current_year = data['date'].dt.year.max()
 
@@ -3106,13 +3108,12 @@ def write_pentad_hydrograph_data(data: pd.DataFrame, iehhf_sdk = None):
             raise ValueError("ieasyhydroforecast_sdk object is required to read norms from iEH HF.")
         # Read the norms from iEH HF for each site
         all_pentadal_norms = pd.DataFrame({'pentad_in_year': range(1, 73)})
-        # Cast pentad in year to string
-        all_pentadal_norms['pentad_in_year'] = all_pentadal_norms['pentad_in_year'].astype(str)
+        # Keep pentad_in_year as integer
         for code in runoff_stats['code'].unique():
             try:
                 temp_norm = iehhf_sdk.get_norm_for_site(code, "discharge", norm_period="p")
             except Exception as e:
-                logger.warning(f"Could not get norm for site {code}.\nAssuming empty norm for this site.")
+                logger.warning(f"Could not get norm for site {code}.\n                    Assuming empty norm for this site.")
                 logger.warning(e)
                 temp_norm = []
             if len(temp_norm) == 72:
@@ -3122,10 +3123,11 @@ def write_pentad_hydrograph_data(data: pd.DataFrame, iehhf_sdk = None):
         # Melt to long format
         all_pentadal_norms = all_pentadal_norms.melt(id_vars=['pentad_in_year'], var_name='code', value_name='norm')
         
-        # Ensure data types match for merge
-        all_pentadal_norms['pentad_in_year'] = all_pentadal_norms['pentad_in_year'].astype(str)
+        # Ensure data types match for merge - keep pentad_in_year as integer
+        all_pentadal_norms['pentad_in_year'] = all_pentadal_norms['pentad_in_year'].astype(int)
         all_pentadal_norms['code'] = all_pentadal_norms['code'].astype(str).str.replace(r'\.0$', '', regex=True)
-        runoff_stats['pentad_in_year'] = runoff_stats['pentad_in_year'].astype(str)
+        # runoff_stats['pentad_in_year'] should already be int from groupby
+        
         # Note: code column already converted to string earlier
         
         # Merge with runoff_stats
@@ -3143,33 +3145,128 @@ def write_pentad_hydrograph_data(data: pd.DataFrame, iehhf_sdk = None):
     #last_year_data = last_year_data.drop(columns=['date'])
     # Add 1 year to date of last_year_data
     #last_year_data.loc[:, 'date'] = last_year_data.loc[:, 'date'] + pd.DateOffset(years=1)
+    # Format dates as YYYY-MM-DD
     last_year_data.loc[:, 'date'] = pd.Timestamp(str(current_year)) + pd.to_timedelta(last_year_data['day_of_year'] - 1, unit='D')
+    last_year_data['date'] = last_year_data['date'].dt.strftime('%Y-%m-%d')
     current_year_data = current_year_data.drop(columns=['date'])
     last_year_data = last_year_data.rename(columns={'discharge_avg': str(last_year)}).reset_index(drop=True)
     current_year_data = current_year_data.rename(columns={'discharge_avg': str(current_year)}).reset_index(drop=True)
 
-    # Ensure data types match for merge
-    last_year_data['pentad_in_year'] = last_year_data['pentad_in_year'].astype(str)
+    # Ensure data types match for merge - keep pentad_in_year as integer
+    last_year_data['pentad_in_year'] = last_year_data['pentad_in_year'].astype(int)
     # Convert code to string and remove any .0 suffixes from float-to-string conversion
     last_year_data['code'] = last_year_data['code'].astype(str).str.replace(r'\.0$', '', regex=True)
-    current_year_data['pentad_in_year'] = current_year_data['pentad_in_year'].astype(str)
+    current_year_data['pentad_in_year'] = current_year_data['pentad_in_year'].astype(int)
     # Convert code to string and remove any .0 suffixes from float-to-string conversion
     current_year_data['code'] = current_year_data['code'].astype(str).str.replace(r'\.0$', '', regex=True)
 
     runoff_stats = pd.merge(runoff_stats, last_year_data, on=['code', 'pentad_in_year'], how='left')
     runoff_stats = pd.merge(runoff_stats, current_year_data[['code', 'pentad_in_year', str(current_year)]], on=['code', 'pentad_in_year'], how='left')
 
+    # Calculate date, pentad, and day_of_year for all rows based on pentad_in_year
+    # This ensures we have these values even when specific year data is missing
+    def calculate_pentad_date(pentad_in_year, year):
+        """Calculate the end date of a pentad given pentad_in_year and year
+        
+        Pentads follow post-Soviet hydrological convention:
+        - Pentads 1-5: days 1-5, 6-10, 11-15, 16-20, 21-25
+        - Pentad 6: day 26 to last day of month (variable length)
+        """
+        try:
+            # Calculate which month and pentad within that month
+            month = ((pentad_in_year - 1) // 6) + 1  # Months 1-12
+            pentad_in_month = ((pentad_in_year - 1) % 6) + 1  # Pentads 1-6
+            
+            if pentad_in_month <= 5:
+                # Regular pentads: 1-5, 6-10, 11-15, 16-20, 21-25
+                day_in_month = pentad_in_month * 5
+            else:
+                # 6th pentad: extends to last day of month
+                if month == 2:  # February
+                    day_in_month = 29 if is_leap_year(year) else 28
+                elif month in [4, 6, 9, 11]:  # April, June, September, November
+                    day_in_month = 30
+                else:  # January, March, May, July, August, October, December
+                    day_in_month = 31
+            
+            date = pd.Timestamp(year=year, month=month, day=day_in_month)
+            day_of_year = date.dayofyear
+            
+            return date, day_of_year
+        except Exception as e:
+            logger.warning(f"Error calculating pentad date for pentad_in_year={pentad_in_year}, year={year}: {e}")
+            return pd.NaT, np.nan
+
+    # Fill missing date, pentad, and day_of_year values
+    for idx, row in runoff_stats.iterrows():
+        pentad_in_year = row['pentad_in_year']
+        
+        # Always recalculate date to ensure consistency
+        # Calculate date as end of previous pentad (subtract 1 from pentad_in_year)
+        prev_pentad = pentad_in_year - 1 if pentad_in_year > 1 else 72  # Handle wrap-around for pentad 1
+        calc_date, calc_day_of_year = calculate_pentad_date(prev_pentad, current_year if pentad_in_year > 1 else current_year - 1)
+        runoff_stats.at[idx, 'date'] = calc_date.strftime('%Y-%m-%d') if not pd.isna(calc_date) else ''
+        runoff_stats.at[idx, 'day_of_year'] = calc_day_of_year
+        
+        # If pentad is missing, calculate pentad_in_month from pentad_in_year
+        if pd.isna(row.get('pentad', None)):
+            pentad_in_month = ((pentad_in_year - 1) % 6) + 1  # Pentads 1-6 within each month
+            runoff_stats.at[idx, 'pentad'] = pentad_in_month
+
     # Drop the column predictor if it is in runoff_stats
     if 'predictor' in runoff_stats.columns:
         runoff_stats = runoff_stats.drop(columns=['predictor'])
 
-    # Round all values to 3 decimal places
-    runoff_stats = runoff_stats.round(3)
+    # Round only numeric columns to 3 decimal places (preserve integer types)
+    numeric_cols = runoff_stats.select_dtypes(include=[np.number]).columns.difference(['pentad_in_year', 'pentad'])
+    runoff_stats[numeric_cols] = runoff_stats[numeric_cols].round(3)
 
-    # Sort the DataFrame by 'code' and 'pentad_in_year', using 'pentad_in_year'
-    # as numerical values
-    runoff_stats['pentad_in_year'] = runoff_stats['pentad_in_year'].astype(int)
+    # Sort the DataFrame by 'code' and 'pentad_in_year'
+    # pentad_in_year should already be int, no need to convert
     runoff_stats = runoff_stats.sort_values(by=['code', 'pentad_in_year'])
+
+    # Final data type validation and consistency
+    # Ensure code is string without .0 suffixes
+    runoff_stats['code'] = runoff_stats['code'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+    
+    # Ensure pentad columns are integers
+    if 'pentad_in_year' in runoff_stats.columns:
+        runoff_stats['pentad_in_year'] = runoff_stats['pentad_in_year'].astype(int)
+    if 'pentad' in runoff_stats.columns:
+        runoff_stats['pentad'] = runoff_stats['pentad'].astype(int)
+    
+    # Ensure day_of_year is integer (convert NaN to empty string for missing values)
+    if 'day_of_year' in runoff_stats.columns:
+        runoff_stats['day_of_year'] = runoff_stats['day_of_year'].apply(
+            lambda x: '' if pd.isna(x) else str(int(x))
+        )
+    
+    # Ensure date columns are formatted as YYYY-MM-DD strings
+    date_columns = [col for col in runoff_stats.columns if 'date' in col.lower()]
+    for date_col in date_columns:
+        if runoff_stats[date_col].dtype == 'object':
+            # Already string, ensure format
+            runoff_stats[date_col] = pd.to_datetime(runoff_stats[date_col], errors='coerce').dt.strftime('%Y-%m-%d')
+        else:
+            # Convert datetime to string
+            runoff_stats[date_col] = runoff_stats[date_col].dt.strftime('%Y-%m-%d')
+    
+    # Ensure statistical columns are float
+    stat_columns = ['mean', 'min', 'max', 'q05', 'q25', 'q75', 'q95', 'norm']
+    existing_stat_columns = [col for col in stat_columns if col in runoff_stats.columns]
+    for col in existing_stat_columns:
+        runoff_stats[col] = pd.to_numeric(runoff_stats[col], errors='coerce')
+    
+    # Also ensure year columns are integers
+    year_columns = [col for col in runoff_stats.columns if col.isdigit()]
+    for col in year_columns:
+        runoff_stats[col] = pd.to_numeric(runoff_stats[col], errors='coerce')
+
+    # Log final data types for debugging
+    logger.debug(f"Final runoff_stats data types: {runoff_stats.dtypes.to_dict()}")
+    logger.debug(f"Final runoff_stats shape: {runoff_stats.shape}")
+    if not runoff_stats.empty:
+        logger.debug(f"Sample data:\n{runoff_stats.head(3)}")
 
     # Get the path to the intermediate data folder from the environmental
     # variables and the name of the ieasyforecast_hydrograph_pentad_file.
@@ -3253,6 +3350,10 @@ def write_decad_hydrograph_data(data: pd.DataFrame, iehhf_sdk = None):
     # Drop the issue_date column
     data = data.drop(columns=['issue_date', 'discharge'])
 
+    # Ensure code column is treated as string to avoid .0 suffixes - do this early to prevent merge issues
+    if 'code' in data.columns:
+        data['code'] = data['code'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+
     # If there is a column called discharge_sum, rename it to predictor
     if 'discharge_sum' in data.columns:
         data = data.rename(columns={'discharge_sum': 'predictor'})
@@ -3261,8 +3362,9 @@ def write_decad_hydrograph_data(data: pd.DataFrame, iehhf_sdk = None):
     # production. For the hydrograph output, we want the date to reflect the
     # decade, the data is collected for. Therefore, we add 1 day to the 'date'
     # column and recalculate decad_in_month and decad_in_year.
-    data.loc[:, 'decad_in_month'] = (data['date'] + pd.Timedelta(days=1)).apply(tl.get_decad_in_month)
-    data.loc[:, 'decad_in_year'] = (data['date'] + pd.Timedelta(days=1)).apply(tl.get_decad_in_year)
+    # Calculate decad and decad_in_year - ensure they are integers
+    data.loc[:, 'decad_in_month'] = (data['date'] + pd.Timedelta(days=1)).apply(tl.get_decad_in_month).astype(int)
+    data.loc[:, 'decad_in_year'] = (data['date'] + pd.Timedelta(days=1)).apply(tl.get_decad_in_year).astype(int)
     # Get year of the latest date in data
     current_year = data['date'].dt.year.max()
 
@@ -3324,8 +3426,7 @@ def write_decad_hydrograph_data(data: pd.DataFrame, iehhf_sdk = None):
             raise ValueError("ieasyhydroforecast_sdk object is required to read norms from iEH HF.")
         # Read the norms from iEH HF for each site
         all_decadal_norms = pd.DataFrame({'decad_in_year': range(1, 37)})
-        # Cast decad in year to string
-        all_decadal_norms['decad_in_year'] = all_decadal_norms['decad_in_year'].astype(str)
+        # Keep decad_in_year as integer
         for code in runoff_stats['code'].unique():
             try:
                 temp_norm = iehhf_sdk.get_norm_for_site(code, "discharge", norm_period="d")
@@ -3344,13 +3445,10 @@ def write_decad_hydrograph_data(data: pd.DataFrame, iehhf_sdk = None):
         logger.debug(f"Retrieved norm data for {len(all_decadal_norms['code'].unique())} sites")
         logger.debug(f"Norm data shape: {all_decadal_norms.shape}")
         
-        # Ensure data types match for merge
-        all_decadal_norms['decad_in_year'] = all_decadal_norms['decad_in_year'].astype(str)
-        # Convert code to string and remove any .0 suffixes from float-to-string conversion
+        # Ensure data types match for merge - keep decad_in_year as integer
+        all_decadal_norms['decad_in_year'] = all_decadal_norms['decad_in_year'].astype(int)
         all_decadal_norms['code'] = all_decadal_norms['code'].astype(str).str.replace(r'\.0$', '', regex=True)
-        runoff_stats['decad_in_year'] = runoff_stats['decad_in_year'].astype(str)
-        # Convert code to string and remove any .0 suffixes from float-to-string conversion
-        runoff_stats['code'] = runoff_stats['code'].astype(str).str.replace(r'\.0$', '', regex=True)
+        # runoff_stats['decad_in_year'] should already be int from groupby
         
         # Merge with runoff_stats
         runoff_stats_before_norm_merge = runoff_stats.shape[0]
@@ -3389,12 +3487,15 @@ def write_decad_hydrograph_data(data: pd.DataFrame, iehhf_sdk = None):
         logger.warning(f"No data found for current year ({current_year})")
     
     if not last_year_data.empty:
-        # Process last year data
+        # Process last year data - create a proper copy to avoid SettingWithCopyWarning
+        last_year_data = last_year_data.copy()
+        # Format dates as YYYY-MM-DD
         last_year_data.loc[:, 'date'] = pd.Timestamp(str(current_year)) + pd.to_timedelta(last_year_data['day_of_year'] - 1, unit='D')
+        last_year_data.loc[:, 'date'] = last_year_data['date'].dt.strftime('%Y-%m-%d')
         last_year_data = last_year_data.rename(columns={'discharge_avg': str(last_year)}).reset_index(drop=True)
         
-        # Ensure data types match for merge
-        last_year_data['decad_in_year'] = last_year_data['decad_in_year'].astype(str)
+        # Ensure data types match for merge - keep decad_in_year as integer
+        last_year_data['decad_in_year'] = last_year_data['decad_in_year'].astype(int)
         # Convert code to string and remove any .0 suffixes from float-to-string conversion
         last_year_data['code'] = last_year_data['code'].astype(str).str.replace(r'\.0$', '', regex=True)
         
@@ -3414,8 +3515,8 @@ def write_decad_hydrograph_data(data: pd.DataFrame, iehhf_sdk = None):
         current_year_data = current_year_data.drop(columns=['date'])
         current_year_data = current_year_data.rename(columns={'discharge_avg': str(current_year)}).reset_index(drop=True)
         
-        # Ensure data types match for merge
-        current_year_data['decad_in_year'] = current_year_data['decad_in_year'].astype(str)
+        # Ensure data types match for merge - keep decad_in_year as integer
+        current_year_data['decad_in_year'] = current_year_data['decad_in_year'].astype(int)
         # Convert code to string and remove any .0 suffixes from float-to-string conversion
         current_year_data['code'] = current_year_data['code'].astype(str).str.replace(r'\.0$', '', regex=True)
         
@@ -3432,6 +3533,51 @@ def write_decad_hydrograph_data(data: pd.DataFrame, iehhf_sdk = None):
 
     # Debug: Log final merge state
     logger.debug(f"Final runoff_stats after year merges: {runoff_stats.shape}, columns: {list(runoff_stats.columns)}")
+
+    # Calculate date, decad_in_month, and day_of_year for all rows based on decad_in_year
+    # This ensures we have these values even when specific year data is missing
+    def calculate_decad_date(decad_in_year, year):
+        """Calculate the end date of a decad given decad_in_year and year
+        
+        Decads follow similar hydrological convention:
+        - Decads 1-2: days 1-10, 11-20
+        - Decad 3: day 21 to last day of month (variable length)
+        """
+        try:
+            # Calculate which month and decad within that month
+            month = ((decad_in_year - 1) // 3) + 1  # Months 1-12
+            decad_in_month = ((decad_in_year - 1) % 3) + 1  # Decads 1-3
+            
+            if decad_in_month <= 2:
+                # Regular decads: 1-10, 11-20
+                day_in_month = decad_in_month * 10
+            else:
+                # 3rd decad: extends to last day of month
+                if month == 2:  # February
+                    day_in_month = 29 if is_leap_year(year) else 28
+                elif month in [4, 6, 9, 11]:  # April, June, September, November
+                    day_in_month = 30
+                else:  # January, March, May, July, August, October, December
+                    day_in_month = 31
+            
+            date = pd.Timestamp(year=year, month=month, day=day_in_month)
+            day_of_year = date.dayofyear
+            
+            return date, day_of_year, decad_in_month
+        except Exception as e:
+            logger.warning(f"Error calculating decad date for decad_in_year={decad_in_year}, year={year}: {e}")
+            return pd.NaT, np.nan, np.nan
+
+    # Fill missing date, decad_in_month, and day_of_year values
+    for idx, row in runoff_stats.iterrows():
+        decad_in_year = row['decad_in_year']
+        
+        # If date is missing, calculate it
+        if pd.isna(row.get('date', None)) or row.get('date', '') == '':
+            calc_date, calc_day_of_year, calc_decad_in_month = calculate_decad_date(decad_in_year, current_year)
+            runoff_stats.at[idx, 'date'] = calc_date.strftime('%Y-%m-%d') if not pd.isna(calc_date) else ''
+            runoff_stats.at[idx, 'day_of_year'] = calc_day_of_year
+            runoff_stats.at[idx, 'decad_in_month'] = calc_decad_in_month
 
     # Drop the column predictor if it is in runoff_stats
     if 'predictor' in runoff_stats.columns:
@@ -3450,21 +3596,60 @@ def write_decad_hydrograph_data(data: pd.DataFrame, iehhf_sdk = None):
         logger.error(f"Available columns: {list(runoff_stats.columns)}")
         raise ValueError(f"Missing required columns: {missing_columns}")
 
-    # Round all values to 3 decimal places
-    numeric_columns = runoff_stats.select_dtypes(include=[np.number]).columns.tolist()
-    logger.debug(f"Rounding numeric columns: {numeric_columns}")
-    runoff_stats[numeric_columns] = runoff_stats[numeric_columns].round(3)
+    # Round only numeric columns to 3 decimal places (preserve integer types)
+    numeric_cols = runoff_stats.select_dtypes(include=[np.number]).columns.difference(['decad_in_year', 'decad_in_month'])
+    runoff_stats[numeric_cols] = runoff_stats[numeric_cols].round(3)
 
-    # Sort the DataFrame by 'code' and 'decad_in_year', using 'decad_in_year'
-    # as numerical values
+    # Sort the DataFrame by 'code' and 'decad_in_year'
+    # decad_in_year should already be int, no need to convert
     try:
-        runoff_stats['decad_in_year'] = runoff_stats['decad_in_year'].astype(int)
         runoff_stats = runoff_stats.sort_values(by=['code', 'decad_in_year'])
         logger.debug(f"Successfully sorted DataFrame by code and decad_in_year")
     except Exception as e:
-        logger.error(f"Error converting decad_in_year to int or sorting: {e}")
+        logger.error(f"Error sorting: {e}")
         logger.error(f"decad_in_year unique values: {runoff_stats['decad_in_year'].unique()}")
         raise
+
+    # Final data type validation and consistency
+    # Ensure code is string without .0 suffixes
+    runoff_stats['code'] = runoff_stats['code'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+    
+    # Ensure decad columns are integers
+    if 'decad_in_year' in runoff_stats.columns:
+        runoff_stats['decad_in_year'] = runoff_stats['decad_in_year'].astype(int)
+    if 'decad_in_month' in runoff_stats.columns:
+        runoff_stats['decad_in_month'] = runoff_stats['decad_in_month'].astype(int)
+    
+    # Format day_of_year as integer string without .0 suffix (like other integer columns)
+    if 'day_of_year' in runoff_stats.columns:
+        runoff_stats['day_of_year'] = runoff_stats['day_of_year'].apply(lambda x: '' if pd.isna(x) else str(int(x)))
+    
+    # Ensure date columns are formatted as YYYY-MM-DD strings
+    date_columns = [col for col in runoff_stats.columns if 'date' in col.lower()]
+    for date_col in date_columns:
+        if runoff_stats[date_col].dtype == 'object':
+            # Already string, ensure format
+            runoff_stats[date_col] = pd.to_datetime(runoff_stats[date_col], errors='coerce').dt.strftime('%Y-%m-%d')
+        else:
+            # Convert datetime to string
+            runoff_stats[date_col] = runoff_stats[date_col].dt.strftime('%Y-%m-%d')
+    
+    # Ensure statistical columns are float
+    stat_columns = ['mean', 'min', 'max', 'q05', 'q25', 'q75', 'q95', 'norm']
+    existing_stat_columns = [col for col in stat_columns if col in runoff_stats.columns]
+    for col in existing_stat_columns:
+        runoff_stats[col] = pd.to_numeric(runoff_stats[col], errors='coerce')
+    
+    # Also ensure year columns are float
+    year_columns = [col for col in runoff_stats.columns if col.isdigit()]
+    for col in year_columns:
+        runoff_stats[col] = pd.to_numeric(runoff_stats[col], errors='coerce')
+    
+    # Log final data types for debugging
+    logger.debug(f"Final runoff_stats data types: {runoff_stats.dtypes.to_dict()}")
+    logger.debug(f"Final runoff_stats shape: {runoff_stats.shape}")
+    if not runoff_stats.empty:
+        logger.debug(f"Sample data:\n{runoff_stats.head(3)}")
     
     # Final validation before write
     logger.info(f"Final DataFrame ready for write: shape={runoff_stats.shape}, "

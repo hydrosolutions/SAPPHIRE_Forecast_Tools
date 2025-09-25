@@ -79,8 +79,8 @@ def main():
     prediction_mode = os.getenv('SAPPHIRE_PREDICTION_MODE', 'BOTH')
     logger.info(f"Running in {prediction_mode} prediction mode")
     
-    run_pentad = prediction_mode in ['PENTAD', 'BOTH']
-    run_decad = prediction_mode in ['DECAD', 'BOTH']
+    run_pentad = prediction_mode.upper() in ['PENTAD', 'BOTH']
+    run_decad = prediction_mode.upper() in ['DECAD', 'BOTH']
     
     # Set up the iEasyHydro SDK
     # Test if we need to connect via ssh tunnel
@@ -179,18 +179,14 @@ def main():
 
         logger.info(f"\n\n------ Forecast on {current_day} --------------------")
 
-        # Update the last run_date in the database
-        current_date, date_end, bulletin_date = sl.define_run_dates(prediction_mode=prediction_mode)
-        # Make sure we have a valid forecast date
-        if not forecast_date:
-            print("No valid forecast date. Exiting.")
-            exit()
-        # Update the forecast flags
-        forecast_flags = sl.ForecastFlags.from_forecast_date_get_flags(current_date)
+        # Update the forecast flags for the current day
+        forecast_flags = sl.ForecastFlags.from_forecast_date_get_flags(current_day)
         logger.debug(f"Forecast flags: {forecast_flags}")
 
         # Get predictor dates for the current forecast
         predictor_dates = fl.get_predictor_dates(current_day, forecast_flags)
+        logger.debug(f"Predictor dates: {predictor_dates}")
+        exit()
 
         # Test if today is a forecast day for either pentadal and decadal forecasts
         # We only run through the rest of the code in the loop if current_date is a forecast day
@@ -313,8 +309,6 @@ def main():
                 code_col='code', group_col='decad_in_year', value_col='discharge_avg')
 
             # Perform linear regression for the current forecast horizon
-            # TODO: Once the decad forecast dashboard is finished, filter for
-            # selected points.
             linreg_decad = fl.perform_linear_regression(
                 data_df=discharge_decad,
                 station_col='code',
