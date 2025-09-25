@@ -254,8 +254,10 @@ def main():
     else: 
         logger.warning("Date column is missing in runoff data. "
                        "This will cause issues later on.")
-        exit()
+        sys.exit(1)
 
+    # Print the tail of runoff data for site 16059
+    print(runoff_data[runoff_data['code'] == 16059].tail(10))
     end_time = time.time()
     time_get_runoff_data = end_time - start_time
 

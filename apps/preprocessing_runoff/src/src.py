@@ -72,53 +72,66 @@ def standardize_date_column(df, date_col='date'):
 
 def get_local_time_range_for_daily_average_runoff_request(target_timezone, window_size=50):
     """
-    Calculates the local start and end times for the data request in the target time zone.
+    Calculates UTC datetime objects for the data request that represent local times.
+    
+    According to the SDK documentation, we should use UTC timezone but the backend
+    will interpret these as local times for filtering.
 
     Parameters:
-    target_timezone (pytz.timezone): The target time zone for the data request.
+    target_timezone (pytz.timezone): The target time zone (used only for calculating dates).
     window_size (int): The number of days to look back from the current date.
     Default is 50 days.
 
     Returns:
-    tuple: A tuple containing the start and end times in the target time zone.
+    tuple: A tuple containing the start and end times as UTC datetime objects
+           that represent local times (evening 20:00 for daily averages).
     """
     if not target_timezone:
         return None, None
 
-    # Get the current time in the target time zone
+    # Get the current date in the target time zone
     now_local = dt.datetime.now(target_timezone)
+    today = now_local.date()
 
-    # Calculate the end time (today at 12:00 local time)
-    end_time_local = now_local.replace(hour=12, minute=0, second=0, microsecond=0)
+    # Calculate the end time (today at 20:00 as UTC but interpreted as local time)
+    end_time_utc = dt.datetime(today.year, today.month, today.day, 20, 0, tzinfo=dt.timezone.utc)
 
-    # Calculate the start time (50 days prior at 00:01 local time)
-    start_time_local = (now_local - timedelta(days=window_size)).replace(hour=0, minute=1, second=0, microsecond=0)
+    # Calculate the start time (window_size days prior at 20:00 as UTC but interpreted as local time)
+    start_date = today - timedelta(days=window_size)
+    start_time_utc = dt.datetime(start_date.year, start_date.month, start_date.day, 20, 0, tzinfo=dt.timezone.utc)
 
-    return start_time_local, end_time_local
+    return start_time_utc, end_time_utc
 
 def get_local_time_range_for_todays_morning_runoff_request(target_timezone):
     """
-    Calculates the local start and end times for the data request in the target time zone.
+    Calculates UTC datetime objects for morning data request that represent local times.
+    
+    According to the SDK documentation, we should use UTC timezone but the backend
+    will interpret these as local times for filtering. For morning data, we filter
+    between 8:00 and the current hour.
 
     Parameters:
-    target_timezone (pytz.timezone): The target time zone for the data request.
+    target_timezone (pytz.timezone): The target time zone (used for calculating current time).
 
     Returns:
-    tuple: A tuple containing the start and end times in the target time zone.
+    tuple: A tuple containing the start and end times as UTC datetime objects
+           that represent local times (8:00 morning start, current hour end).
     """
     if not target_timezone:
         return None, None
 
     # Get the current time in the target time zone
     now_local = dt.datetime.now(target_timezone)
+    today = now_local.date()
 
-    # Calculate the end time (today at 12:00 local time)
-    end_time_local = now_local.replace(hour=12, minute=0, second=0, microsecond=0)
+    # Calculate the start time (today at 8:00 as UTC but interpreted as local time)
+    start_time_utc = dt.datetime(today.year, today.month, today.day, 8, 0, tzinfo=dt.timezone.utc)
 
-    # Calculate the start time (today at 00:01 local time)
-    start_time_local = now_local.replace(hour=0, minute=1, second=0, microsecond=0)
+    # Calculate the end time (current hour as UTC but interpreted as local time)
+    # Use current hour to get data up to now
+    end_time_utc = dt.datetime(today.year, today.month, today.day, now_local.hour, now_local.minute, tzinfo=dt.timezone.utc)
 
-    return start_time_local, end_time_local
+    return start_time_utc, end_time_utc
 
 def should_reprocess_input_files():
     """Check if any input files have been modified since the last run."""
@@ -1023,27 +1036,28 @@ def fetch_and_format_hydro_HF_data(sdk, initial_filters):
         ])
 
 def get_todays_morning_discharge_from_iEH_HF_for_multiple_sites(
-        ieh_hf_sdk, id_list, start_datetime=None, end_datetime=dt.date.today(),
+        ieh_hf_sdk, id_list, start_datetime=None, end_datetime=None,
         target_timezone=None,  
         date_col='date', discharge_col='discharge', code_col='code'):
     """
-    Reads todays morning discharge data from the iEasyHydro database for a given site.
-
-    The names of the dataframe columns can be customized.
+    Reads todays morning discharge data from the iEasyHydro database for multiple sites.
+    
+    Uses UTC datetime objects that represent local times (8:00 to current hour) for filtering.
+    According to SDK documentation, the backend ignores timezone and searches for local times.
 
     Args:
         ieh_hf_sdk (object): An object that provides a method to get data values for a site from a database.
         id_list (list): A list of strings denoting site ids.
-        start_datetime (datetime, optional): The start datetime of the data to read. Defaults to None. 
-        end_datetime (datetime, optional): The end datetime of the data to read. Defaults to dt.datetime.today().
-        target_timezone (str, optional): The timezone to convert the date to. Defaults to None.
-        If None, local timezone is used.
+        start_datetime (datetime, optional): The start datetime as UTC (interpreted as local time). Defaults to None. 
+        end_datetime (datetime, optional): The end datetime as UTC (interpreted as local time). Defaults to None.
+        target_timezone (str, optional): The timezone used for calculating current time. Defaults to None.
         date_col (str, optional): The name of the column containing the date data. Default is 'date'.
         discharge_col (str, optional): The name of the column containing the discharge data. Default is 'discharge'.
         code_col (str, optional): The name of the column containing the site code. Default is 'code'.
 
     Returns:
-        pandas.DataFrame: A DataFrame containing the daily average discharge data.
+        pandas.DataFrame: A DataFrame containing the morning discharge data. If multiple measurements
+                         are found for the current day, they are averaged.
 
     Raises:
         ValueError: If the site code is not a string or an integer.
@@ -1062,8 +1076,8 @@ def get_todays_morning_discharge_from_iEH_HF_for_multiple_sites(
         target_timezone = pytz.timezone(time.tzname[0])
         logger.debug(f"Target timezone is None. Using local timezone: {target_timezone}")
         
-    # If start_date is None, get it from get_local_time_range_for_daily_average_runoff_request
-    if start_datetime is None:
+    # If start_datetime is None, get it from get_local_time_range_for_todays_morning_runoff_request
+    if start_datetime is None or end_datetime is None:
         start_datetime, end_datetime = get_local_time_range_for_todays_morning_runoff_request(target_timezone)
 
     # Raise an error if the date format is not a datetime with timezone info
@@ -1072,7 +1086,7 @@ def get_todays_morning_discharge_from_iEH_HF_for_multiple_sites(
     if not isinstance(end_datetime, dt.datetime):
         raise ValueError("The end_datetime must be a datetime object with timezone info.")
 
-    logger.debug(f"Reading daily morning discharge data for all sites in sites_list from {start_datetime} to {end_datetime}.")
+    logger.debug(f"Reading morning discharge data for all sites from {start_datetime} to {end_datetime} (UTC as local time).")
 
     filters = {
         "site_ids": id_list,
@@ -1086,10 +1100,12 @@ def get_todays_morning_discharge_from_iEH_HF_for_multiple_sites(
         # Get data for all sites from the database
         db_df = fetch_and_format_hydro_HF_data(ieh_hf_sdk, filters)
         if db_df.empty:
-            logger.info("No data found for the given date range.")
+            logger.info("No morning data found for the given date range.")
             return pd.DataFrame(columns=[date_col, discharge_col, code_col])
+        
         # Drop the local datetime column as we will be working with utc datetime
         db_df.drop(columns=['local_datetime'], inplace=True)
+        
         # Rename the columns of df to match the columns of combined_data
         db_df.rename(
             columns={
@@ -1098,9 +1114,13 @@ def get_todays_morning_discharge_from_iEH_HF_for_multiple_sites(
                 'value': discharge_col}, 
             inplace=True
         )
+        
+        # If there are multiple measurements for the current day, take the average
+        db_df[date_col] = pd.to_datetime(db_df[date_col]).dt.date
+        db_df = db_df.groupby([code_col, date_col])[discharge_col].mean().reset_index()
 
     except Exception as e:
-        logger.info(f"Error reading daily average discharge data: {e}")
+        logger.info(f"Error reading morning discharge data: {e}")
         logger.info(f"Returning empty data frame.")
         # Return an empty dataframe with columns 'date', 'discharge', 'code'
         db_df = pd.DataFrame(columns=[date_col, discharge_col, code_col])
@@ -1108,21 +1128,21 @@ def get_todays_morning_discharge_from_iEH_HF_for_multiple_sites(
     return db_df
 
 def get_daily_average_discharge_from_iEH_HF_for_multiple_sites(
-        ieh_hf_sdk, id_list, start_datetime=None, end_datetime=dt.date.today(),
+        ieh_hf_sdk, id_list, start_datetime=None, end_datetime=None,
         target_timezone=None,  
         date_col='date', discharge_col='discharge', code_col='code'):
     """
-    Reads daily average discharge data from the iEasyHydro database for a given site.
-
-    The names of the dataframe columns can be customized.
+    Reads daily average discharge data from the iEasyHydro database for multiple sites.
+    
+    Uses UTC datetime objects that represent local times (20:00 evening) for filtering.
+    According to SDK documentation, the backend ignores timezone and searches for local times.
 
     Args:
         ieh_hf_sdk (object): An object that provides a method to get data values for a site from a database.
         id_list (list): A list of strings denoting site ids.
-        start_datetime (datetime, optional): The start datetime of the data to read. Defaults to None. 
-        end_datetime (datetime, optional): The end datetime of the data to read. Defaults to dt.datetime.today().
-        target_timezone (str, optional): The timezone to convert the date to. Defaults to None.
-        If None, local timezone is used.
+        start_datetime (datetime, optional): The start datetime as UTC (interpreted as local time). Defaults to None. 
+        end_datetime (datetime, optional): The end datetime as UTC (interpreted as local time). Defaults to None.
+        target_timezone (str, optional): The timezone used for calculating current time. Defaults to None.
         date_col (str, optional): The name of the column containing the date data. Default is 'date'.
         discharge_col (str, optional): The name of the column containing the discharge data. Default is 'discharge'.
         code_col (str, optional): The name of the column containing the site code. Default is 'code'.
@@ -1147,8 +1167,8 @@ def get_daily_average_discharge_from_iEH_HF_for_multiple_sites(
         target_timezone = pytz.timezone(time.tzname[0])
         logger.debug(f"Target timezone is None. Using local timezone: {target_timezone}")
         
-    # If start_date is None, get it from get_local_time_range_for_daily_average_runoff_request
-    if start_datetime is None:
+    # If start_datetime is None, get it from get_local_time_range_for_daily_average_runoff_request
+    if start_datetime is None or end_datetime is None:
         start_datetime, end_datetime = get_local_time_range_for_daily_average_runoff_request(target_timezone)
 
     # Raise an error if the date format is not a datetime with timezone info
@@ -1157,7 +1177,7 @@ def get_daily_average_discharge_from_iEH_HF_for_multiple_sites(
     if not isinstance(end_datetime, dt.datetime):
         raise ValueError("The end_datetime must be a datetime object with timezone info.")
 
-    logger.debug(f"Reading daily average discharge data for all sites in sites_list from {start_datetime} to {end_datetime}.")
+    logger.debug(f"Reading daily average discharge data for all sites from {start_datetime} to {end_datetime} (UTC as local time).")
 
     filters = {
         "site_ids": id_list,
@@ -1171,10 +1191,12 @@ def get_daily_average_discharge_from_iEH_HF_for_multiple_sites(
         # Get data for all sites from the database
         db_df = fetch_and_format_hydro_HF_data(ieh_hf_sdk, filters)
         if db_df.empty:
-            logger.info(f"No data found for the given date range.")
-            return db_df
+            logger.info(f"No daily average data found for the given date range.")
+            return pd.DataFrame(columns=[date_col, discharge_col, code_col])
+        
         # Drop the local datetime column as we will be working with utc datetime
         db_df.drop(columns=['local_datetime'], inplace=True)
+        
         # Rename the columns of df to match the columns of combined_data
         db_df.rename(
             columns={
