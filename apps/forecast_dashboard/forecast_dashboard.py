@@ -33,6 +33,7 @@ from src.auth_utils import *
 import calendar
 
 from src.gettext_config import _
+from src.processing import global_mapper
 
 # Get the absolute path of the directory containing the current script
 cwd = os.getcwd()
@@ -239,6 +240,8 @@ def get_directory_mtime(directory_path):
     combined_mtime = max(mtimes) if mtimes else 0
     return combined_mtime
 
+# Build a dictionary {old_code: new_code} from global_mapper
+code_mapper = {old: vals["code"] for old, vals in global_mapper.items()}
 def load_data():
     global hydrograph_day_all, hydrograph_pentad_all, linreg_predictor, \
         forecasts_all, forecast_stats, all_stations, station_dict, station_df, \
@@ -301,33 +304,40 @@ def load_data():
     # Hydrograph day and pentad data
     hydrograph_day_all = processing.read_hydrograph_day_data_for_pentad_forecasting(
         stations_iehhf, hydrograph_day_file_mtime)
+    hydrograph_day_all['code'] = hydrograph_day_all['code'].astype(str).replace(code_mapper)
     # print head and tail of hydrograph_day_all where code == 15194
     #print(f"DEBUG: forecast_dashboard.py: hydrograph_day_all head:\n{hydrograph_day_all[hydrograph_day_all['code'] == '15194'].head()}")
     #print(f"DEBUG: forecast_dashboard.py: hydrograph_day_all tail:\n{hydrograph_day_all[hydrograph_day_all['code'] == '15194'].tail()}")
 
     hydrograph_pentad_all = processing.read_hydrograph_pentad_data_for_pentad_forecasting(
         stations_iehhf, hydrograph_pentad_file_mtime)
+    hydrograph_pentad_all['code'] = hydrograph_pentad_all['code'].astype(str).replace(code_mapper)
 
     # Daily forecasts from RRAM & ML models
     if display_CM_forecasts == True:
         rram_forecast = processing.read_rram_forecast_data(rram_file_mtime)
+        rram_forecast['code'] = rram_forecast['code'].astype(str).replace(code_mapper)
     if display_ML_forecasts == True:
         ml_forecast = processing.read_ml_forecast_data(ml_forecast_mtime)
-        
+        ml_forecast['code'] = ml_forecast['code'].astype(str).replace(code_mapper)
+
     # Pentadal forecast data
     # - linreg_predictor: for displaying predictor in predictor tab
     # Set multi-index for faster lookups
     linreg_predictor = processing.read_linreg_forecast_data(
         stations_iehhf, linreg_forecast_file_mtime)
+    linreg_predictor['code'] = linreg_predictor['code'].astype(str).replace(code_mapper)
     # Print tail of linreg_predictor where code == '15149'
     #print(f"DEBUG: forecast_dashboard.py: linreg_predictor tail:\n{linreg_predictor[linreg_predictor['code'] == '15149'].tail()}")
     # - forecast results from all models
     # Reads in latest forecast results (_latest.csv) for all models
     forecasts_all = processing.read_forecast_results_file(
         stations_iehhf, forecast_results_file_mtime)
+    forecasts_all['code'] = forecasts_all['code'].astype(str).replace(code_mapper)
     # Forecast statistics
     forecast_stats = processing.read_forecast_stats_file(
         stations_iehhf, forecast_stats_file_mtime)
+    forecast_stats['code'] = forecast_stats['code'].astype(str).replace(code_mapper)
 
     # Hydroposts metadata
     station_list, all_stations, station_df, station_dict, iehhf_warning = processing.read_all_stations_metadata_from_iehhf(
@@ -390,7 +400,7 @@ def load_data():
     # Filter the DataFrame to include only the latest pentad/decad in the latest year
     forecasts_current = forecasts_latest_year[forecasts_latest_year[horizon_in_year] == latest_horizon_in_year]
     #print('forecasts_current:\n', forecasts_current)
-    
+
     # Get valid codes and normalize to string integers reliably
     valid_codes = (
         pd.to_numeric(forecasts_current['code'], errors='coerce')
@@ -473,7 +483,9 @@ def load_data():
     if display_weather_data == True:
         rain = processing.read_rainfall_data(p_file_mtime)  # (max(hind_p_file_mtime, cf_p_file_mtime))
         temp = processing.read_temperature_data(t_file_mtime)  # max(hind_t_file_mtime, cf_t_file_mtime))
-    else: 
+        rain['code'] = rain['code'].astype(str).replace(code_mapper)
+        temp['code'] = temp['code'].astype(str).replace(code_mapper)
+    else:
         rain = None
         temp = None
 
@@ -693,12 +705,17 @@ selected_indices = pn.widgets.CheckBoxGroup(
     margin=(0, 0, 0, 0)
 )
 
+demo_version_mode = os.getenv("demo_version_mode", "WORKSHOP")
+if demo_version_mode == "UZHM":
+    disabled = False
+else:
+    disabled = True
 # Write bulletin button
 write_bulletin_button = pn.widgets.Button(
     name=_("Write bulletin"),
     button_type='primary',
     description=_("Write bulletin to Excel"),
-    disabled=True)
+    disabled=disabled)
 #indicator = pn.indicators.LoadingSpinner(value=False, size=25)
 
 # Button to remove selected forecasts from the bulletin

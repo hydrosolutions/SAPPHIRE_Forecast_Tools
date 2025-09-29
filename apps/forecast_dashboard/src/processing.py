@@ -39,6 +39,48 @@ class DataReloader(param.Parameterized):
 data_reloader = DataReloader()
 
 
+global_mapper = {
+    "15013": {
+        "code": "10001",
+        "name": "Station 1",
+        "name_nat": "Станция 1",
+        "river_name": "River A",
+        "river_name_nat": "Река А",
+        "punkt_name": "Point A",
+        "punkt_name_nat": "Пункт А",
+        "region": "Region X",
+        "region_nat": "Регион X",
+        "basin": "Basin Alpha",
+        "basin_nat": "Бассейн Альфа"
+    },
+    "15016": {
+        "code": "10002",
+        "name": "Station 2",
+        "name_nat": "Станция 2",
+        "river_name": "River B",
+        "river_name_nat": "Река Б",
+        "punkt_name": "Point B",
+        "punkt_name_nat": "Пункт Б",
+        "region": "Region Y",
+        "region_nat": "Регион Y",
+        "basin": "Basin Beta",
+        "basin_nat": "Бассейн Бета"
+    },
+    "15034": {
+        "code": "10003",
+        "name": "Station 3",
+        "name_nat": "Станция 3",
+        "river_name": "River C",
+        "river_name_nat": "Река В",
+        "punkt_name": "Point C",
+        "punkt_name_nat": "Пункт В",
+        "region": "Region Z",
+        "region_nat": "Регион Z",
+        "basin": "Basin Gamma",
+        "basin_nat": "Бассейн Гамма"
+    }
+}
+
 # --- Configuration -----------------------------------------------------------
 def get_icon_path(in_docker_flag):
     # Icon
@@ -960,6 +1002,34 @@ def read_all_stations_metadata_from_iehhf(station_list):
     all_stations = sapphire_sites_to_dataframe(all_stations)
     # Cast all_stations['code'] to string
     all_stations['code'] = all_stations['code'].astype(str)
+
+    # Convert global_mapper into a DataFrame for easy merging
+    mapper_df = pd.DataFrame.from_dict(global_mapper, orient="index")
+
+    # Reset index so the original keys (old codes) become a column
+    mapper_df = mapper_df.reset_index().rename(columns={"index": "old_code"})
+
+    # Merge all_stations with mapper_df, matching by the 'code' column (which has old codes like 15013)
+    merged = all_stations.merge(
+        mapper_df,
+        left_on="code",
+        right_on="old_code",
+        how="left",
+        suffixes=("", "_map")
+    )
+
+    # Now, for rows where mapping exists, replace values with the mapped ones
+    for col in ["code", "name", "name_nat", "river_name", "river_name_nat",
+                "punkt_name", "punkt_name_nat", "region", "region_nat",
+                "basin", "basin_nat"]:
+        merged[col] = merged[col + "_map"].combine_first(merged[col])
+
+    # Drop helper columns
+    merged = merged.drop(columns=[c for c in merged.columns if c.endswith("_map") or c == "old_code"])
+
+    # merged is now updated all_stations
+    all_stations = merged
+
     # print column names of all_stations
     # print(f"all_stations columns: {all_stations.columns}")
     # print(f"head of all_stations: {all_stations[['code', 'name', 'river_name', 'punkt_name']].head(20)}")
