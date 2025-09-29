@@ -31,6 +31,7 @@ sys.path.append(forecast_dir)
 import setup_library as sl
 import forecast_library as fl
 import tag_library as tl
+import datetime_utils as du
 
 # Local methods
 #from src import src
@@ -114,6 +115,7 @@ def main():
     # date_end: last date for which the forecast is being run (typically today)
     # bulletin_date: first date for which the forecast is valid (typically tomorrow)
     forecast_date, date_end, bulletin_date = sl.define_run_dates(prediction_mode=prediction_mode)
+    logger.info(f"Forecast date: {forecast_date}, End date: {date_end}, Bulletin date: {bulletin_date}")
 
     # Only perform the next steps if we have to produce a forecast.
     if not forecast_date:
@@ -121,9 +123,12 @@ def main():
         exit()
 
     # Get forecast flags (identify which forecasts to run based on the forecast date)
+    # If forecast_date is the first day of a pentad, pentad forecast is set to True
+    # If forecast_date is the first day of a decad, decad forecast is set to True
     forecast_flags = sl.ForecastFlags.from_forecast_date_get_flags(forecast_date)
-    forecast_flags.pentad = run_pentad
-    forecast_flags.decad = run_decad
+    # Overwrites the forecast flags based on the prediction mode
+    forecast_flags.pentad = run_pentad  # Always True for pentad mode
+    forecast_flags.decad = run_decad  # Always True for decad mode
     logger.debug(f"Forecast flags: {forecast_flags}")
 
     # Identify sites for which to produce forecasts
@@ -180,16 +185,21 @@ def main():
         logger.info(f"\n\n------ Forecast on {current_day} --------------------")
 
         # Update the forecast flags for the current day
+        # This will set pentad and decad to True if current_day is the first day of a pentad or decad
         forecast_flags = sl.ForecastFlags.from_forecast_date_get_flags(current_day)
-        logger.debug(f"Forecast flags: {forecast_flags}")
+        logger.debug(f"Updated forecast flags for {current_day}:\n{forecast_flags}")
 
         # Get predictor dates for the current forecast
         predictor_dates = fl.get_predictor_dates(current_day, forecast_flags)
-        logger.debug(f"Predictor dates: {predictor_dates}")
-        exit()
+        logger.debug(f"Updated predictor dates for {current_day}:\n{predictor_dates}")
 
-        # Test if today is a forecast day for either pentadal and decadal forecasts
-        # We only run through the rest of the code in the loop if current_date is a forecast day
+        # Test if today is a forecast day for either pentadal and decadal 
+        # forecasts. 
+        # We only run through the rest of the code in the loop if current_date 
+        # is a forecast day (first day of a pentad or decad). 
+        # run_pentad is always true for precidtion mode pentad or both.
+        # forecast_flags.pentad is only true if current_day is the first day of a pentad.
+        
         if run_pentad and forecast_flags.pentad:
             logger.info(f"Starting pentadal forecast for {current_day}. End date: {date_end}. Bulletin date: {bulletin_date}.")
             #logger.debug(f'data_pentad.head(): \n{data_pentad.head()}')
@@ -267,7 +277,7 @@ def main():
 
                 # Ensure date is datetime for diagnostics using robust parsing
                 if 'date' in linreg_pentad.columns:
-                    _dates = fl.parse_dates_robust(linreg_pentad['date'], 'date')
+                    _dates = du.parse_dates_robust_pandas(linreg_pentad['date'], 'date')
                     _years = sorted(set([int(y) for y in _dates.dt.year.dropna().unique()])) if not _dates.empty else []
                     logger.info(f"[linreg] pentad write rows={len(linreg_pentad)}, date_min={_dates.min()}, date_max={_dates.max()}, years={_years}")
                 else:

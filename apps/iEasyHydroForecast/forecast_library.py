@@ -15,12 +15,14 @@ from ieasyhydro_sdk.filters import BasicDataValueFilters
 from sklearn.linear_model import LinearRegression
 
 import tag_library as tl
+import datetime_utils as du
 
 logger = logging.getLogger(__name__)
 
 def parse_dates_robust(date_series, column_name='date'):
     """
     Robustly parse dates from a pandas Series, trying multiple common formats.
+    Uses standardized datetime utilities to ensure consistent YYYY-MM-DD format.
     
     Parameters:
         date_series (pd.Series): Series containing date strings or objects
@@ -32,72 +34,7 @@ def parse_dates_robust(date_series, column_name='date'):
     Raises:
         ValueError: If no date format could be successfully parsed
     """
-    # If already datetime, return as-is
-    if pd.api.types.is_datetime64_any_dtype(date_series):
-        return date_series
-    
-    # Common date formats to try, in order of preference
-    date_formats = [
-        '%Y-%m-%d',      # Expected format: 2023-01-15
-        '%Y/%m/%d',      # Alternative: 2023/01/15
-        '%d-%m-%Y',      # European: 15-01-2023
-        '%d/%m/%Y',      # European: 15/01/2023
-        '%m-%d-%Y',      # US: 01-15-2023
-        '%m/%d/%Y',      # US: 01/15/2023
-        '%Y-%m-%d %H:%M:%S',  # With time: 2023-01-15 12:00:00
-        '%Y/%m/%d %H:%M:%S',  # With time: 2023/01/15 12:00:00
-    ]
-    
-    # First try pandas' built-in inference (most flexible)
-    try:
-        parsed_dates = pd.to_datetime(date_series, errors='coerce')
-        # Check if most dates were successfully parsed (allow some failures)
-        success_rate = parsed_dates.notna().sum() / len(parsed_dates)
-        if success_rate > 0.8:  # 80% success rate threshold
-            if success_rate < 1.0:
-                failed_count = parsed_dates.isna().sum()
-                logger.warning(f"Date parsing for {column_name}: {failed_count} dates could not be parsed automatically")
-            else:
-                logger.debug(f"Date parsing for {column_name}: all dates parsed successfully using automatic inference")
-            return parsed_dates
-    except Exception as e:
-        logger.debug(f"Automatic date parsing failed for {column_name}: {e}")
-    
-    # If automatic parsing didn't work well, try specific formats
-    best_parsed = None
-    best_success_rate = 0
-    best_format = None
-    
-    for date_format in date_formats:
-        try:
-            parsed_dates = pd.to_datetime(date_series, format=date_format, errors='coerce')
-            success_rate = parsed_dates.notna().sum() / len(parsed_dates)
-            
-            if success_rate > best_success_rate:
-                best_parsed = parsed_dates
-                best_success_rate = success_rate
-                best_format = date_format
-                
-            # If we get perfect parsing, use it
-            if success_rate == 1.0:
-                logger.debug(f"Date parsing for {column_name}: all dates parsed successfully using format {date_format}")
-                return parsed_dates
-                
-        except Exception as e:
-            logger.debug(f"Date format {date_format} failed for {column_name}: {e}")
-            continue
-    
-    # Use the best result if it's reasonably good
-    if best_success_rate > 0.8:
-        failed_count = best_parsed.isna().sum()
-        if failed_count > 0:
-            logger.warning(f"Date parsing for {column_name}: {failed_count} dates could not be parsed using format {best_format}")
-        else:
-            logger.debug(f"Date parsing for {column_name}: all dates parsed successfully using format {best_format}")
-        return best_parsed
-    
-    # If all formats failed significantly, raise an error
-    error_msg = f"Could not parse dates in {column_name}. Tried formats: {date_formats}. Best success rate: {best_success_rate:.2%}"
+    return du.parse_dates_robust_pandas(date_series, column_name)
     logger.error(error_msg)
     
     # Show some examples of the problematic data
@@ -200,7 +137,7 @@ def get_predictor_datetimes(input_date: str, n: int):
     Returns a list of datetimes from input_date - n 00:00 to input_date 12:00.
 
     Args:
-        input_date (strftime): The starting date with format %YYYY-%MM-%DD.
+        input_date (str): The starting date with format YYYY-MM-DD.
         n (int): The number of days to go back.
 
     Returns:
@@ -209,32 +146,30 @@ def get_predictor_datetimes(input_date: str, n: int):
             data in iEasyHydro DB).
 
     Raises:
-        TypeError: If input_date is not a datetime.date object.
-        ValueError: If n is not a positive integer.
+        TypeError: If input_date is not a valid date string.
+        ValueError: If n is not a positive integer or date cannot be parsed.
 
     Examples:
-        >>> get_predictor_dates('2021-05-15', 3)
-        [datetime.date(2021, 5, 15, 12, 0), datetime.date(2021, 5, 13, 0, 0)]
+        >>> get_predictor_datetimes('2021-05-15', 3)
+        [datetime.datetime(2021, 5, 12, 12, 0), datetime.datetime(2021, 5, 15, 12, 0)]
     '''
     try:
-        # Convert dates in dates_list to datetime.date objects
-        input_date = dt.datetime.strptime(input_date, '%Y-%m-%d')
-        #print("\n\nDEBUG get_predictor_datetimes: input_date=", input_date)
+        # Use standardized date parsing
+        input_date_obj = du.parse_date_string(input_date)
+        logger.debug(f"get_predictor_datetimes: parsed input_date={input_date_obj}")
 
         if not isinstance(n, int) or n <= 0:
             raise ValueError('n must be a positive integer')
 
-        end_datetime = dt.datetime(input_date.year, input_date.month, input_date.day, 12, 0)
+        end_datetime = dt.datetime.combine(input_date_obj, dt.time(12, 0))
         start_datetime = end_datetime - dt.timedelta(days=n, hours=12)
         date_list = [start_datetime, end_datetime]
 
+        logger.debug(f"get_predictor_datetimes: returning {date_list}")
         return date_list
 
-    except (TypeError, ValueError) as e:
-        print(f'Error in get_predictor_dates: {e}')
-        return None
-    except AttributeError as e:
-        print(f'Error in get_predictor_dates: {e}')
+    except Exception as e:
+        logger.error(f'Error in get_predictor_datetimes: {e}')
         return None
 
 def round_discharge_trad_bulletin(value: float) -> str:
@@ -449,8 +384,21 @@ def filter_discharge_data_for_code_and_date(
     #print(f'Type of date column in the DataFrame: {type(filtered_data[date_col].iloc[0])}')
     #print(f'Type of filter_date: {type(filter_date)}')
 
-    # Filter the data for dates smaller or equal the filter_dates
-    filtered_data = filtered_data[(filtered_data[date_col] <= pd.to_datetime(filter_date))]
+    # Filter the data for dates smaller or equal the filter_dates using safe comparison
+    try:
+        # Ensure both date columns and filter_date are in comparable format
+        filter_date_obj = du.ensure_datetime_object(filter_date)
+        
+        # If the date column isn't already datetime, parse it robustly
+        if not pd.api.types.is_datetime64_any_dtype(filtered_data[date_col]):
+            filtered_data[date_col] = du.parse_dates_robust_pandas(filtered_data[date_col], date_col)
+        
+        filtered_data = filtered_data[(filtered_data[date_col] <= filter_date_obj)]
+        
+    except Exception as e:
+        logger.error(f"Error in date filtering: {e}")
+        # Fallback to original method if standardized approach fails
+        filtered_data = filtered_data[(filtered_data[date_col] <= pd.to_datetime(filter_date))]
 
     return filtered_data
 
@@ -920,20 +868,27 @@ def get_predictor_dates(start_date, forecast_flags):
     """
     # Initialise the predictor_dates object
     predictor_dates = PredictorDates()
+    
+    # Ensure start_date is in standardized string format
+    try:
+        start_date_str = du.to_standard_date_string(start_date)
+    except Exception as e:
+        logger.error(f"Could not convert start_date to standard format: {e}")
+        raise ValueError(f"Invalid start_date format: {start_date}")
+    
     # Get the dates to get the predictor from
     if forecast_flags.pentad:
         # For pentadal forecasts, the hydromet uses the sum of the last 2 days discharge.
-        predictor_dates.pentad = get_predictor_datetimes(start_date.strftime('%Y-%m-%d'), 2)
+        predictor_dates.pentad = get_predictor_datetimes(start_date_str, 2)
         # if predictor_dates is None, raise an error
         if predictor_dates.pentad is None:
-            raise ValueError("The predictor dates are not valid.")
+            raise ValueError("The pentadal predictor dates are not valid.")
     if forecast_flags.decad:
         # For decad forecasts, the hydromet uses the average runoff of the previous decade.
-        #predictor_dates.decad = get_predictor_datetimes_for_decadal_forecasts(start_date)
-        predictor_dates.decad = get_predictor_datetimes(start_date.strftime('%Y-%m-%d'), 9)
+        predictor_dates.decad = get_predictor_datetimes(start_date_str, 9)
         # if predictor_dates is None, raise an error
         if predictor_dates.decad is None:
-            raise ValueError("The predictor dates are not valid.")
+            raise ValueError("The decadal predictor dates are not valid.")
 
     logger.debug(f"   Predictor dates for pentadal forecasts: {predictor_dates.pentad}")
     logger.debug(f"   Predictor dates for decad forecasts: {predictor_dates.decad}")
@@ -4659,7 +4614,8 @@ class Site:
             # Return the norm discharge value
             return qnorm
         except Exception as e:
-            print(f'Error {e}. Returning " ".')
+            logger.info(f'No historical data for site {site.code} and group {group_id}. Using default value.')
+            logger.debug(f'Error details: {e}')
             return " "
 
     @classmethod
@@ -4704,7 +4660,8 @@ class Site:
             # Return the norm discharge value
             return qnorm
         except Exception as e:
-            print(f'Error {e}. Returning " ".')
+            logger.info(f'No historical decadal data for site {site.code} and decad {decad_in_year}. Using default value.')
+            logger.debug(f'Error details: {e}')
             return " "
 
     @classmethod

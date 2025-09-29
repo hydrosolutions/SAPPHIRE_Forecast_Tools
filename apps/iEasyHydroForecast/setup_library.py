@@ -17,6 +17,7 @@ from dotenv import load_dotenv
 # Import iEasyHydroForecast libraries
 import forecast_library as fl
 import tag_library as tl
+import datetime_utils as du
 
 # Configure the logging level and formatter
 logging.basicConfig(level=logging.WARNING)
@@ -72,20 +73,19 @@ def store_last_successful_run_date(date, prediction_mode='BOTH'):
     if prediction_mode not in ['BOTH']:
         last_run_file = last_run_file.replace(".txt", f"_{prediction_mode}.txt")
 
-    # Convert to datetime object if date is a string or a datetime object
-    if isinstance(date, str):
-        date = dt.datetime.strptime(date, "%Y-%m-%d").date()
-    elif isinstance(date, dt.datetime):
-        date = date.date()
+    # Convert to date object using standardized utilities
+    try:
+        date = du.ensure_date_object(date)
+    except ValueError as e:
+        raise ValueError(f"Invalid date format: {date}. Expected YYYY-MM-DD format. Error: {e}")
 
-    # Test if the date is valid and throw an error if it is not
     # Test if the date is valid and throw an error if it is not
     if not tl.is_gregorian_date(date):
         raise ValueError(f"Invalid date: {date}")
 
-    # Overwrite the file with the current date
+    # Overwrite the file with the current date using standardized format
     with open(last_run_file, "w") as f1:
-        ret = f1.write(date.strftime('%Y-%m-%d'))
+        ret = f1.write(du.to_standard_date_string(date))
 
     # Check if the write was successful
     if ret is None:
@@ -111,13 +111,17 @@ def get_last_run_date(prediction_mode='BOTH'):
         last_run_file = last_run_file.replace(".txt", f"_{prediction_mode}.txt")
     try:
         with open(last_run_file, "r") as file:
-            last_successful_run_date = file.read()
+            last_successful_run_date_str = file.read().strip()
             # We expect the date to be in the format YYYY-MM-DD. Let's allow dates
             # in the format YYYY_MM_DD as well.
             # If the date is in the format YYYY_MM_DD, replace the _ with -
-            last_successful_run_date = last_successful_run_date.replace("_", "-")
-            last_successful_run_date = dt.datetime.strptime(last_successful_run_date, "%Y-%m-%d").date()
+            last_successful_run_date_str = last_successful_run_date_str.replace("_", "-")
+            # Use standardized date parsing
+            last_successful_run_date = du.parse_date_string(last_successful_run_date_str)
     except FileNotFoundError:
+        last_successful_run_date = dt.date.today() - dt.timedelta(days=1)
+    except ValueError as e:
+        logger.warning(f"Could not parse last run date '{last_successful_run_date_str}': {e}. Using yesterday as fallback.")
         last_successful_run_date = dt.date.today() - dt.timedelta(days=1)
 
     logger.debug(f"Last successful run date: {last_successful_run_date}")
@@ -1321,30 +1325,35 @@ def read_daily_probabilistic_ml_forecasts_pentad(filepath, model, model_long, mo
             # Drop rows with NaT values
             daily_data = daily_data.dropna(subset=["date"])
         
-        # Convert to date what needs to be date
-        daily_data["forecast_date"] = daily_data["forecast_date"].dt.date
+        # Convert to date what needs to be date for some operations
         daily_data["date"] = daily_data["date"].dt.date
 
         # Only keep the forecast rows for pentadal forecasts
-        # Add a column last_day_of_month to daily_data
-        daily_data["last_day_of_month"] = daily_data["forecast_date"].apply(fl.get_last_day_of_month)
+        # Add a column last_day_of_month to daily_data using vectorized function for better performance
+        # Keep forecast_date as datetime for vectorized operations
+        daily_data["last_day_of_month"] = du.get_last_day_of_month_vectorized(daily_data["forecast_date"])
         
-        # Convert forecast_date to datetime for access to dt accessor
+        # Convert forecast_date to datetime for access to dt accessor and extract day_of_month
         # This step ensures the column is a datetime we can extract day from
         daily_data["forecast_date"] = pd.to_datetime(daily_data["forecast_date"])
         daily_data["day_of_month"] = daily_data["forecast_date"].dt.day
+        
+        # Now convert forecast_date to date after we've used it for calculations
+        daily_data["forecast_date"] = daily_data["forecast_date"].dt.date
+        # Convert last_day_of_month to date for comparison
+        daily_data["last_day_of_month"] = daily_data["last_day_of_month"].dt.date
 
         # Keep rows that have forecast_date equal to either 5, 10, 15, 20, 25 or last_day_of_month
         data = daily_data[(daily_data["day_of_month"].isin([5, 10, 15, 20, 25])) | \
-                        (daily_data["forecast_date"].dt.date == daily_data["last_day_of_month"])].copy()
+                        (daily_data["forecast_date"] == daily_data["last_day_of_month"])].copy()
 
         # Check if we have any data after filtering
         if data.empty:
             logger.warning(f"No pentadal forecast data found for {model} after filtering")
             return pd.DataFrame()
 
-        # Convert forecast_date back to date
-        data.loc[:, "forecast_date"] = data["forecast_date"].dt.date
+        # forecast_date is already converted to date, no need to use .dt accessor
+        # data.loc[:, "forecast_date"] = data["forecast_date"].dt.date  # This line is not needed
 
         # Group by code and forecast_date and calculate the mean of all columns
         forecast = data \
@@ -1416,8 +1425,8 @@ def read_daily_probabilistic_ml_forecasts_decade(filepath, model, model_long, mo
             daily_data['code'] = daily_data['code'].astype(str).str.replace(r'\.0$', '', regex=True)
 
         # Only keep the forecast rows for pentadal forecasts
-        # Add a column last_day_of_month to daily_data
-        daily_data["last_day_of_month"] = daily_data["forecast_date"].apply(fl.get_last_day_of_month)
+        # Add a column last_day_of_month to daily_data using vectorized function for better performance
+        daily_data["last_day_of_month"] = du.get_last_day_of_month_vectorized(daily_data["forecast_date"])
         daily_data["day_of_month"] = daily_data["forecast_date"].dt.day
 
         # Keep rows that have forecast_date equal to either 10, 20, or last_day_of_month
@@ -1567,13 +1576,13 @@ def read_daily_probabilistic_conceptmod_forecasts_pentad(filepath, code, model_l
             return pd.DataFrame()
 
         # Only keep the forecast rows for pentadal forecasts
-        # Add a column last_day_of_month to daily_data
-        daily_data["last_day_of_month"] = daily_data["forecast_date"].apply(fl.get_last_day_of_month)
+        # Add a column last_day_of_month to daily_data using vectorized function for better performance
+        daily_data["last_day_of_month"] = du.get_last_day_of_month_vectorized(daily_data["forecast_date"])
         daily_data["day_of_month"] = daily_data["forecast_date"].dt.day
 
         # Keep rows that have forecast_date equal to either 5, 10, 15, 20, 25 or last_day_of_month
         data = daily_data[(daily_data["day_of_month"].isin([5, 10, 15, 20, 25])) | \
-                        (daily_data["forecast_date"] == daily_data["last_day_of_month"])].copy()
+            (daily_data["forecast_date"] == daily_data["last_day_of_month"])].copy()
 
         # If no data after filtering, return empty DataFrame
         if data.empty:
@@ -1672,13 +1681,13 @@ def read_daily_probabilistic_conceptmod_forecasts_decade(filepath, code, model_l
             return pd.DataFrame()
 
         # Only keep the forecast rows for pentadal forecasts
-        # Add a column last_day_of_month to daily_data
-        daily_data["last_day_of_month"] = daily_data["forecast_date"].apply(fl.get_last_day_of_month)
+        # Add a column last_day_of_month to daily_data using vectorized function for better performance
+        daily_data["last_day_of_month"] = du.get_last_day_of_month_vectorized(daily_data["forecast_date"])
         daily_data["day_of_month"] = daily_data["forecast_date"].dt.day
 
         # Keep rows that have forecast_date equal to either 10, 20 or last_day_of_month
         data = daily_data[(daily_data["day_of_month"].isin([10, 20])) | \
-                        (daily_data["forecast_date"] == daily_data["last_day_of_month"])].copy()
+            (daily_data["forecast_date"] == daily_data["last_day_of_month"])].copy()
 
         # If no data after filtering, return empty DataFrame
         if data.empty:
