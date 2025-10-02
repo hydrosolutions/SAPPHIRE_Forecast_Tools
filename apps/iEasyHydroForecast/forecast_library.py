@@ -4686,6 +4686,7 @@ class Site:
         try:
             # Convert predictor_dates to date sting
             predictor_dates = predictor_dates[0].strftime('%Y-%m-%d')
+            site_code_str = str(site.code)
 
             # Convert 'Date' column of df to datetime format
             df_copy = df.copy()
@@ -4701,7 +4702,7 @@ class Site:
             logger.debug(f'code_col: {code_col}, date_col: {date_col}, predictor_col: {predictor_col}')
             logger.debug(f'df_copy[:, [code_col, date_col, predictor_col]]: {df_copy[[code_col, date_col, predictor_col]]}')
             logger.debug(f'df_copy[(df_copy[code_col] == site.code) & (df_copy[date_col] == predictor_dates)][predictor_col]: {df_copy[(df_copy[code_col] == site.code) & (df_copy[date_col] == predictor_dates)][predictor_col]}')
-            predictor = df_copy[(df_copy[code_col] == site.code) & (df_copy[date_col] == predictor_dates)][predictor_col].mean(skipna=True)
+            predictor = df_copy[(df_copy[code_col].astype(str) == site_code_str) & (df_copy[date_col] == predictor_dates)][predictor_col].mean(skipna=True)
 
             # Note: Should the predictor be a negative number, we cannot make a
             # forecast. round_discharge will assign an empty string " ".
