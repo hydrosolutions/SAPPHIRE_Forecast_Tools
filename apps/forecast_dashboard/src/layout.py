@@ -72,12 +72,9 @@ def get_logos(in_docker_flag):
                 "www", "sdc.jpeg"),
                 width=150))
 
-def define_disclaimer(_, in_docker_flag, demo_version_mode):
+def define_disclaimer(_, in_docker_flag):
     logos = get_logos(in_docker_flag)
-    if demo_version_mode == "UZHM":
-        disclaimer_text = "The river runoff station data in this dashboard is synthetic. Weather data is shown for random locations in the High-Mountain Central Asia region. Gridded weather data is based on data and products of the European Centre for Medium-Range Weather Forecasts (ECMWF, www.ecmwf.int), provided under a Creative Commons Attribution 4.0 International (CC BY 4.0) and downscaled to the Central Asian region using the high-resolution CHELSA v2.1 data set. ECMWF and the project consortium do not accept any liability whatsoever for any error or omission in the data, their availability, or for any loss or damage arising from their use."
-    else:
-        disclaimer_text = _("disclaimer_waranty")
+    disclaimer_text = "The river runoff station data in this dashboard is synthetic. Weather data is shown for random locations in the High-Mountain Central Asia region. Gridded weather data is based on data and products of the European Centre for Medium-Range Weather Forecasts (ECMWF, www.ecmwf.int), provided under a Creative Commons Attribution 4.0 International (CC BY 4.0) and downscaled to the Central Asian region using the high-resolution CHELSA v2.1 data set. ECMWF and the project consortium do not accept any liability whatsoever for any error or omission in the data, their availability, or for any loss or damage arising from their use."
     return pn.Column(
         pn.pane.HTML(_('disclaimer_who')),
         pn.pane.HTML("<p> </p>"),
