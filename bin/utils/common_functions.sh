@@ -116,7 +116,7 @@ read_configuration(){
     else
         if [ "$env_ending" == "kghm" ]; then
             export ieasyhydroforecast_url_pentad=kyg.fc.pentad.$ieasyhydroforecast_url
-            export ieasyhydroforecast_url_decad=kyg.fc.decade.$ieasyhydroforecast_url
+            export ieasyhydroforecast_url_decad=demo.fc.decade.$ieasyhydroforecast_url
         elif [ "$env_ending" == "tjhm" ]; then
             export ieasyhydroforecast_url_pentad=taj.fc.pentad.$ieasyhydroforecast_url
             export ieasyhydroforecast_url_decad=taj.fc.decade.$ieasyhydroforecast_url
