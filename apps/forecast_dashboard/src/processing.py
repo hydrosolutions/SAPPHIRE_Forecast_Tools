@@ -88,10 +88,14 @@ def get_icon_path(in_docker_flag):
     #    icon_path = os.path.join("apps", "forecast_dashboard", "www", "Pentad.png")
     # else:
     horizon = os.getenv("sapphire_forecast_horizon", "pentad")
-    if horizon == "pentad":
-        icon_path = os.path.join("www", "Pentad.png")
+    demo_version_mode = os.getenv("demo_version_mode", "WORKSHOP")
+    if demo_version_mode == "UZHM":
+        icon_path = os.path.join("www", "logo.png")
     else:
-        icon_path = os.path.join("www", "Dekad.png")
+        if horizon == "pentad":
+            icon_path = os.path.join("www", "Pentad.png")
+        else:
+            icon_path = os.path.join("www", "Dekad.png")
 
     # Test if file exists and thorw an error if not
     if not os.path.isfile(icon_path):
