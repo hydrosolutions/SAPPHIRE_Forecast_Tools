@@ -1710,7 +1710,7 @@ update_site_object = pn.bind(
 write_bulletin_button.on_click(handle_bulletin_write)
 
 # Define the disclaimer of the dashboard
-disclaimer = layout.define_disclaimer(_, in_docker_flag)
+disclaimer = layout.define_disclaimer(_, in_docker_flag, demo_version_mode)
 
 
 # Update the layout

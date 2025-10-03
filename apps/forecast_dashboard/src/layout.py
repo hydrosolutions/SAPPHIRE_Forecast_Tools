@@ -46,14 +46,20 @@ def define_sidebar(_, station_card, forecast_card, basin_card, message_pane,
         #            width_policy='fit', width=station.width)),
     )
 
-def get_logos(in_docker_flag):
+def get_logos(in_docker_flag, demo_version_mode):
     # overwrite in_docker_flag
+    if demo_version_mode == "UZHM":
+        project_logo = "zarafshan_project_logo.jpeg"
+        width = 300
+    else:
+        project_logo = "sapphire_project_logo.jpg"
+        width = 70
     in_docker_flag = "False"
     if in_docker_flag == "True":
         return pn.Row(
             pn.pane.Image(os.path.join(
-                "apps", "forecast_dashboard", "www", "sapphire_project_logo.jpg"),
-                width=70),
+                "apps", "forecast_dashboard", "www", project_logo),
+                width=width),
             pn.pane.Image(os.path.join(
                 "apps", "forecast_dashboard", "www", "hydrosolutionsLogo.jpg"),
                 width=100),
@@ -63,8 +69,8 @@ def get_logos(in_docker_flag):
     else:
         return pn.Row(
             pn.pane.Image(os.path.join(
-                "www", "sapphire_project_logo.jpg"),
-                width=70),
+                "www", project_logo),
+                width=width),
             pn.pane.Image(os.path.join(
                 "www", "hydrosolutionsLogo.jpg"),
                 width=100),
@@ -72,11 +78,15 @@ def get_logos(in_docker_flag):
                 "www", "sdc.jpeg"),
                 width=150))
 
-def define_disclaimer(_, in_docker_flag):
-    logos = get_logos(in_docker_flag)
+def define_disclaimer(_, in_docker_flag, demo_version_mode):
+    logos = get_logos(in_docker_flag, demo_version_mode)
+    if demo_version_mode == "UZHM":
+        disclaimer_who = "The forecast dashboard was developed by hydrosolutions GmbH under the project CLIMATE RESILIENT INTEGRATED WATER RESOURCES MANAGEMENT IN THE ZARAFSHAN RIVER BASIN funded by the Swiss Agency for Development and Cooperation."
+    else:
+        disclaimer_who = _('disclaimer_who')
     disclaimer_text = "The river runoff station data in this dashboard is synthetic. Weather data is shown for random locations in the High-Mountain Central Asia region. Gridded weather data is based on data and products of the European Centre for Medium-Range Weather Forecasts (ECMWF, www.ecmwf.int), provided under a Creative Commons Attribution 4.0 International (CC BY 4.0) and downscaled to the Central Asian region using the high-resolution CHELSA v2.1 data set. ECMWF and the project consortium do not accept any liability whatsoever for any error or omission in the data, their availability, or for any loss or damage arising from their use."
     return pn.Column(
-        pn.pane.HTML(_('disclaimer_who')),
+        pn.pane.HTML(disclaimer_who),
         pn.pane.HTML("<p> </p>"),
         logos,
         pn.pane.HTML("<p> </p>"),
