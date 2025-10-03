@@ -31,7 +31,7 @@ ieasyhydroforecast_env_file_path=path/to/.env python preprocessing_runoff.py
 ### Run tests
 From the directory apps run the following command:
 ```
-SAPPHIRE_TESTDEV_ENV=TRUE python -m pytest
+SAPPHIRE_TESTDEV_ENV=TRUE python -m pytest preprocessing_runoff/test
 ```
 
 
