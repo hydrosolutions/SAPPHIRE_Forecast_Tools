@@ -1710,7 +1710,7 @@ update_site_object = pn.bind(
 write_bulletin_button.on_click(handle_bulletin_write)
 
 # Define the disclaimer of the dashboard
-disclaimer = layout.define_disclaimer(_, in_docker_flag)
+disclaimer = layout.define_disclaimer(_, in_docker_flag, demo_version_mode)
 
 
 # Update the layout
@@ -1993,9 +1993,15 @@ on_session_start()
 
 # Define dashboard title
 if sapphire_forecast_horizon == 'pentad':
-    dashboard_title = _('SAPPHIRE Central Asia - Pentadal forecast dashboard')
+    if demo_version_mode == "UZHM":
+        dashboard_title = _('Pentadal forecast dashboard')
+    else:
+        dashboard_title = _('SAPPHIRE Central Asia - Pentadal forecast dashboard')
 else:
-    dashboard_title = _('SAPPHIRE Central Asia - Decadal forecast dashboard')
+    if demo_version_mode == "UZHM":
+        dashboard_title = _('Decadal forecast dashboard')
+    else:
+        dashboard_title = _('SAPPHIRE Central Asia - Decadal forecast dashboard')
 
 dashboard = pn.template.BootstrapTemplate(
     title=dashboard_title,
