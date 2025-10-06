@@ -149,6 +149,15 @@ class DockerTaskBase(pu.TimeoutMixin, luigi.Task):
             temp_log_path = f"{os.path.dirname(self.docker_logs_file_path)}/failure_log_{int(time.time())}.txt"
             try:
                 with open(temp_log_path, 'w') as f:
+                    f.write(f"TASK FAILURE REPORT\n")
+                    f.write(f"==================\n")
+                    f.write(f"Task Name: {task_name}\n")
+                    f.write(f"Error: {error_details}\n")
+                    f.write(f"Timeout (seconds): {self.timeout_seconds}\n")
+                    f.write(f"Max retries: {self.max_retries}\n")
+                    f.write(f"Failure time: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                    f.write(f"\nCONTAINER LOGS:\n")
+                    f.write(f"===============\n")
                     f.write(logs)
                 log_file_paths.append(temp_log_path)
             except Exception as e:
@@ -278,12 +287,11 @@ class DockerTaskBase(pu.TimeoutMixin, luigi.Task):
                 
                 if exit_status == 124:  # Timeout
                     final_status = "Timeout"
-                    details = f"Task timed out after {self.timeout_seconds} seconds"
-                    break
-
+                    details = f"Task {self.__class__.__name__} timed out after {self.timeout_seconds} seconds"
+                    
                     # Send failure notification for timeout
                     self.send_failure_notification(
-                        f"Task timed out after {self.timeout_seconds} seconds", 
+                        f"Task {self.__class__.__name__} (Container {container_id}) timed out after {self.timeout_seconds} seconds", 
                         logs
                     )
                     break
@@ -293,7 +301,7 @@ class DockerTaskBase(pu.TimeoutMixin, luigi.Task):
                     time.sleep(self.retry_delay)
                 else:
                     print(f"Container failed after {self.max_retries} attempts.")
-                    error_msg = f"Task failed after {self.max_retries} attempts. Last exit status: {exit_status}"
+                    error_msg = f"Task {self.__class__.__name__} (Container {container_id}) failed after {self.max_retries} attempts. Last exit status: {exit_status}"
                 
                     # Send failure notification
                     self.send_failure_notification(error_msg, logs)
@@ -358,7 +366,10 @@ class PreprocessingRunoff(DockerTaskBase):
     docker_logs_file_path = f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/docker_logs/log_preprunoff_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
 
     def output(self):
-        return luigi.LocalTarget(f'/app/log_preprunoff.txt')
+        # Use marker file for output tracking
+        today = datetime.date.today()
+        marker_file = get_marker_filepath('preprocessing_runoff', date=today)
+        return luigi.LocalTarget(marker_file)
 
     def run(self):
         # Set up volumes
@@ -383,27 +394,16 @@ class PreprocessingRunoff(DockerTaskBase):
                 attempt_number=attempt
             )
         )
-        
-        # Write marker file only if successful
-        if status == "Success":
-            # Create the marker file that dependent tasks will check for
-            today = datetime.date.today()
-            marker_file = get_marker_filepath('preprocessing_runoff', date=today)
-            print(f"Writing success marker file to: {marker_file}")
-            with open(marker_file, 'w') as f:
-                f.write(f"PreprocessingRunoff completed successfully at {datetime.datetime.now()}")
-            # Verify file was created
-            if os.path.exists(marker_file):
-                print(f"✅ Marker file created successfully at {marker_file}")
-            else:
-                print(f"❌ Failed to create marker file at {marker_file}")
 
 class PreprocessingGatewayQuantileMapping(DockerTaskBase):
     # Define the logging output of the task.
     docker_logs_file_path = f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/docker_logs/log_pregateway_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
     
     def output(self):
-        return luigi.LocalTarget(f'/app/log_pregateway.txt')
+        # Use marker file for output tracking
+        today = datetime.date.today()
+        marker_file = get_marker_filepath('preprocessing_gateway', date=today)
+        return luigi.LocalTarget(marker_file)
 
     def run(self):
 
@@ -429,20 +429,6 @@ class PreprocessingGatewayQuantileMapping(DockerTaskBase):
                 attempt_number=attempt
             )
         )
-        
-        # Write marker file only if successful
-        if status == "Success":
-            # Create the marker file that dependent tasks will check for
-            today = datetime.date.today()
-            marker_file = get_marker_filepath('preprocessing_gateway', date=today)
-            print(f"Writing success marker file to: {marker_file}")
-            with open(marker_file, 'w') as f:
-                f.write(f"PreprocessingGateway completed successfully at {datetime.datetime.now()}")
-            # Verify file was created
-            if os.path.exists(marker_file):
-                print(f"✅ Marker file created successfully at {marker_file}")
-            else:
-                print(f"❌ Failed to create marker file at {marker_file}")
 
 class RunPreprocessingGatewayWorkflow(luigi.Task):
     """Workflow for gateway preprocessing that can run early (10:00)."""
@@ -514,7 +500,10 @@ class LinearRegression(DockerTaskBase):
             return PreprocessingRunoff()
 
     def output(self):
-        return luigi.LocalTarget(f'/app/log_linreg.txt')
+        # Use marker file for output tracking
+        today = datetime.date.today()
+        marker_file = get_marker_filepath('linear_regression', date=today)
+        return luigi.LocalTarget(marker_file)
 
     def run(self):
         # Set up volumes
@@ -557,7 +546,10 @@ class ConceptualModel(DockerTaskBase):
             return [PreprocessingRunoff(), PreprocessingGatewayQuantileMapping()]
 
     def output(self):
-        return luigi.LocalTarget(f'/app/log_conceptmod.txt')
+        # Use marker file for output tracking
+        today = datetime.date.today()
+        marker_file = get_marker_filepath('conceptual_model', date=today)
+        return luigi.LocalTarget(marker_file)
 
     def run(self):
         # Set up volumes - following DockerTaskBase pattern
@@ -621,7 +613,10 @@ class RunMLModel(DockerTaskBase):
             return [PreprocessingRunoff(), PreprocessingGatewayQuantileMapping()]
 
     def output(self):
-        return luigi.LocalTarget(f'/app/log_ml_{self.model_type}_{self.prediction_mode}.txt')
+        # Use marker file for output tracking
+        today = datetime.date.today()
+        marker_file = get_marker_filepath(f'ml_{self.model_type}_{self.prediction_mode}', date=today)
+        return luigi.LocalTarget(marker_file)
 
     def run(self):
         # Set up volumes
@@ -728,7 +723,10 @@ class PostProcessingForecasts(DockerTaskBase):
         return dependencies
 
     def output(self):
-        return luigi.LocalTarget(f'/app/log_postproc.txt')
+        # Use marker file for output tracking
+        today = datetime.date.today()
+        marker_file = get_marker_filepath(f'postprocessing_{self.prediction_mode.lower()}', date=today)
+        return luigi.LocalTarget(marker_file)
 
     def run(self):
         # Set up volumes
@@ -1027,6 +1025,116 @@ class LogFileCleanup(pu.TimeoutMixin, luigi.Task):
                 details=details
             )
 
+class MarkerFileCleanup(pu.TimeoutMixin, luigi.Task):
+    """Task to clean up old marker files older than specified days."""
+
+    marker_directory = f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/marker_files"
+    days_to_keep = luigi.IntParameter(default=10)
+    file_pattern = '*.marker'
+
+    # Use the intermediate_data_path for log files
+    intermediate_data_path = get_bind_path(env.get('ieasyforecast_intermediate_data_path'))
+    docker_logs_file_path = f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/docker_logs/log_markerFileCleanup_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+
+    timeout_seconds = luigi.IntParameter(default=None)
+    max_retries = luigi.IntParameter(default=None)
+    retry_delay = luigi.IntParameter(default=None)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        # Get parameters from timeout manager
+        task_name = self.__class__.__name__
+        task_params = get_task_parameters(task_name)
+
+        if self.timeout_seconds is None:
+            self.timeout_seconds = task_params['timeout_seconds']
+
+        if self.max_retries is None:
+            self.max_retries = task_params['max_retries']
+
+        if self.retry_delay is None:
+            self.retry_delay = task_params['retry_delay']
+
+    def output(self):
+        # Use marker file for output tracking
+        today = datetime.date.today()
+        marker_file = get_marker_filepath('marker_file_cleanup', date=today)
+        return luigi.LocalTarget(marker_file)
+
+    def run(self):
+        logger = pu.TaskLogger()
+        start_time = datetime.datetime.now()
+
+        try:
+            # Calculate cutoff date
+            cutoff_date = datetime.datetime.now() - datetime.timedelta(days=self.days_to_keep)
+
+            # Get list of marker files matching pattern
+            file_path_pattern = os.path.join(self.marker_directory, self.file_pattern)
+            marker_files = glob.glob(file_path_pattern)
+
+            # Track statistics
+            deleted_count = 0
+            failed_count = 0
+
+            for file_path in marker_files:
+                try:
+                    # Get file modification time
+                    file_mtime = os.path.getmtime(file_path)
+                    file_datetime = datetime.datetime.fromtimestamp(file_mtime)
+
+                    # Check if file is older than cutoff date
+                    if file_datetime < cutoff_date:
+                        # Delete the file
+                        os.remove(file_path)
+                        deleted_count += 1
+                        print(f"Deleted old marker file: {os.path.basename(file_path)}")
+                except Exception as e:
+                    failed_count += 1
+                    print(f"Failed to delete marker file {file_path}: {str(e)}")
+
+            # Write summary to log file
+            with open(self.docker_logs_file_path, 'w') as f:
+                summary = {
+                    'timestamp': datetime.datetime.now().isoformat(),
+                    'marker_directory': self.marker_directory,
+                    'file_pattern': self.file_pattern,
+                    'days_to_keep': self.days_to_keep,
+                    'cutoff_date': cutoff_date.isoformat(),
+                    'total_files_found': len(marker_files),
+                    'files_deleted': deleted_count,
+                    'failures': failed_count
+                }
+                for key, value in summary.items():
+                    f.write(f"{key}: {value}\n")
+
+            status = "Success"
+            details = f"Deleted {deleted_count} old marker files, {failed_count} failures"
+
+            # Create the output marker file
+            with self.output().open('w') as f:
+                f.write(f'MarkerFileCleanup completed: {details}')
+
+            print(f"MarkerFileCleanup completed: {details}")
+
+        except Exception as e:
+            print(f"Error in MarkerFileCleanup: {str(e)}")
+            status = "Failed"
+            details = str(e)
+            raise
+
+        finally:
+            end_time = datetime.datetime.now()
+
+            logger.log_task_timing(
+                task_name="MarkerFileCleanup",
+                start_time=start_time,
+                end_time=end_time,
+                status=status,
+                details=details
+            )
+
 class SendPipelineCompletionNotification(luigi.Task):
     """Send notification when the entire pipeline is complete."""
 
@@ -1194,6 +1302,7 @@ class RunPentadalWorkflow(luigi.Task):
         
         # Add cleanup tasks
         base_tasks.append(LogFileCleanup())
+        base_tasks.append(MarkerFileCleanup())
         if RUN_ML_MODELS == "True" or RUN_CM_MODELS == "True":
             base_tasks.append(DeleteOldGatewayFiles())
         
@@ -1255,6 +1364,7 @@ class RunDecadalWorkflow(luigi.Task):
         
         # Add cleanup tasks
         base_tasks.append(LogFileCleanup())
+        base_tasks.append(MarkerFileCleanup())
         if RUN_ML_MODELS == "True" or RUN_CM_MODELS == "True":
             base_tasks.append(DeleteOldGatewayFiles())
         

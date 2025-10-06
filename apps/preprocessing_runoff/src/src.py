@@ -124,8 +124,8 @@ def get_local_time_range_for_todays_morning_runoff_request(target_timezone):
     now_local = dt.datetime.now(target_timezone)
     today = now_local.date()
 
-    # Calculate the start time (today at 8:00 as UTC but interpreted as local time)
-    start_time_utc = dt.datetime(today.year, today.month, today.day, 8, 0, tzinfo=dt.timezone.utc)
+    # Calculate the start time (today at 14:00 as UTC but interpreted as local time)
+    start_time_utc = dt.datetime(today.year, today.month, today.day, 14, 0, tzinfo=dt.timezone.utc)
 
     # Calculate the end time (current hour as UTC but interpreted as local time)
     # Use current hour to get data up to now
@@ -273,8 +273,14 @@ def filter_roughly_for_outliers(combined_data, group_by='Code',
     combined_data = combined_data.reset_index(drop=True)
 
     # Apply the function to each group
-    combined_data = combined_data.groupby([group_by, 'month'], as_index=False).apply(
-        filter_group, filter_col, date_col)
+    # Use a warning filter to suppress the specific FutureWarning for groupby.apply
+    import warnings
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", 
+                              message=".*DataFrameGroupBy.apply operated on the grouping columns.*",
+                              category=FutureWarning)
+        combined_data = combined_data.groupby([group_by, 'month'], as_index=False).apply(
+            filter_group, filter_col, date_col)
 
     # Ungroup the DataFrame
     combined_data = combined_data.reset_index(drop=True)

@@ -39,7 +39,8 @@ class TimeoutManager:
         except Exception as e:
             print(f"Warning: Could not load timeout configuration from {config_path}: {str(e)}")
             print("Using default timeout values.")
-            self.config = {"environments": {}, "tasks": {}}
+            # Provide comprehensive default configuration
+            self.config = self._get_default_config()
 
         # Detect the current environment or use environment variable if set
         self.current_env = self._detect_environment()
@@ -84,6 +85,63 @@ class TimeoutManager:
         print(f"Warning: Could not detect environment from organization '{org}' and image tag '{image_tag}'")
         print("Falling back to demo_ch environment.")
         return 'demo_ch'
+
+    def _get_default_config(self) -> Dict[str, Any]:
+        """
+        Provide comprehensive default configuration when config file is missing.
+        
+        Returns:
+            Default configuration dictionary
+        """
+        return {
+            "environments": {
+                "development": {"base_timeout": 900},
+                "demo": {"base_timeout": 1800},
+                "production": {"base_timeout": 3600},
+                "kghm": {"base_timeout": 5400},
+                "demo_ch": {"base_timeout": 1800}
+            },
+            "tasks": {
+                "LinearRegression": {
+                    "relative_complexity": 2.0,
+                    "max_retries": 3,
+                    "retry_delay": 60,
+                    "development_override": 600,
+                    "demo_override": 1200,
+                    "production_override": 2400,
+                    "kghm_override": 3600,
+                    "demo_ch_override": 1200
+                },
+                "MachineLearning": {
+                    "relative_complexity": 4.0,
+                    "max_retries": 2,
+                    "retry_delay": 120,
+                    "development_override": 1200,
+                    "demo_override": 2400,
+                    "production_override": 7200,
+                    "kghm_override": 10800
+                },
+                "ConceptualModel": {
+                    "relative_complexity": 6.0,
+                    "max_retries": 2,
+                    "retry_delay": 300,
+                    "development_override": 1800,
+                    "demo_override": 3600,
+                    "production_override": 14400,
+                    "kghm_override": 21600
+                },
+                "PreprocessingRunoff": {
+                    "relative_complexity": 1.0,
+                    "max_retries": 2,
+                    "retry_delay": 30
+                },
+                "PreprocessingGateway": {
+                    "relative_complexity": 1.5,
+                    "max_retries": 2,
+                    "retry_delay": 30
+                }
+            }
+        }
 
     def get_task_parameters(self, task_name: str) -> Dict[str, Any]:
         """
