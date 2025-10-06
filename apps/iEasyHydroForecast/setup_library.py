@@ -1249,7 +1249,7 @@ def read_linreg_forecasts_decade():
 def read_daily_probabilistic_ml_forecasts_pentad(filepath, model, model_long, model_short):
     """
     Reads in forecast results from probabilistic machine learning models for the pentadal forecast.
-    Added robust error handling.
+    Added robust error handling and support for both headerless and header-based CSV formats.
     """
     import logging
     logger = logging.getLogger(__name__)
@@ -1257,8 +1257,46 @@ def read_daily_probabilistic_ml_forecasts_pentad(filepath, model, model_long, mo
     try:
         # First read the data without date parsing to avoid format conflicts
         try:
-            daily_data = pd.read_csv(filepath, on_bad_lines='skip', low_memory=False)
-            logger.info(f"Successfully read raw data from {filepath}")
+            # First, check if this is a headerless file by examining the first line
+            with open(filepath, 'r') as f:
+                first_line = f.readline().strip()
+            
+            # If first line starts with numbers (quantiles), it's likely headerless
+            is_headerless = False
+            if first_line:
+                first_values = first_line.split(',')
+                # Check if first few values are numeric (typical quantile values)
+                try:
+                    numeric_count = sum(1 for val in first_values[:5] if float(val.strip()) < 100)
+                    if numeric_count >= 4 and len(first_values) >= 22:
+                        is_headerless = True
+                        logger.info(f"Detected headerless ML output format based on first line analysis")
+                except:
+                    pass
+            
+            # Read the CSV with appropriate header setting
+            if is_headerless:
+                daily_data = pd.read_csv(filepath, header=None, on_bad_lines='skip', low_memory=False)
+                # Apply column names for headerless ML output
+                quantile_cols = [f'Q{q}' for q in [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95]]
+                new_columns = quantile_cols + ['date', 'code', 'forecast_date', 'flag']
+                
+                if len(daily_data.columns) == len(new_columns):
+                    daily_data.columns = new_columns
+                    logger.info(f"Applied column names for headerless file: {new_columns}")
+                else:
+                    logger.warning(f"Column count mismatch in headerless file: expected {len(new_columns)}, got {len(daily_data.columns)}")
+                    return pd.DataFrame()
+            else:
+                daily_data = pd.read_csv(filepath, on_bad_lines='skip', low_memory=False)
+                
+            logger.info(f"Successfully read data from {filepath}, shape: {daily_data.shape}")
+            
+            # Validate that we have the required columns
+            if 'forecast_date' not in daily_data.columns or 'date' not in daily_data.columns or 'code' not in daily_data.columns:
+                logger.warning(f"Missing required columns in {filepath}. Available: {daily_data.columns.tolist()}")
+                return pd.DataFrame()
+                
         except Exception as e:
             logger.warning(f"Error reading CSV file {filepath}: {e}")
             return pd.DataFrame()
@@ -1271,17 +1309,29 @@ def read_daily_probabilistic_ml_forecasts_pentad(filepath, model, model_long, mo
             return pd.DataFrame()
 
         # Handle date columns flexibly without assuming format
+        # Support both datetime and date formats, ensure final format is YYYY-MM-DD
         for col in ["date", "forecast_date"]:
             if col in daily_data.columns:
                 try:
-                    # Let pandas infer format for each value
-                    daily_data[col] = pd.to_datetime(daily_data[col], errors='coerce')
+                    # Handle multiple possible input formats
+                    if daily_data[col].dtype == 'object':
+                        # Try to convert string dates
+                        daily_data[col] = pd.to_datetime(daily_data[col], errors='coerce')
+                    elif pd.api.types.is_datetime64_any_dtype(daily_data[col]):
+                        # Already datetime, keep as is for now
+                        pass
+                    else:
+                        # Try to convert other formats
+                        daily_data[col] = pd.to_datetime(daily_data[col], errors='coerce')
                     
                     # Check for conversion issues
                     if daily_data[col].isna().any():
                         logger.warning(f"Some values in {col} couldn't be converted to dates")
                         # Drop rows with NaT values
                         daily_data = daily_data.dropna(subset=[col])
+                        
+                    logger.debug(f"Successfully converted {col} to datetime format")
+                    
                 except Exception as e:
                     logger.warning(f"Error converting {col} to datetime: {e}")
                     return pd.DataFrame()
@@ -1325,26 +1375,43 @@ def read_daily_probabilistic_ml_forecasts_pentad(filepath, model, model_long, mo
             # Drop rows with NaT values
             daily_data = daily_data.dropna(subset=["date"])
         
-        # Convert to date what needs to be date for some operations
+        # Convert both date columns to date format (YYYY-MM-DD) for consistency
+        # Keep forecast_date as datetime temporarily for last_day_of_month calculation
         daily_data["date"] = daily_data["date"].dt.date
 
         # Only keep the forecast rows for pentadal forecasts
         # Add a column last_day_of_month to daily_data using vectorized function for better performance
         # Keep forecast_date as datetime for vectorized operations
-        daily_data["last_day_of_month"] = du.get_last_day_of_month_vectorized(daily_data["forecast_date"])
+        try:
+            if du is not None:
+                daily_data["last_day_of_month"] = du.get_last_day_of_month_vectorized(daily_data["forecast_date"])
+            else:
+                raise NameError("datetime_utils not available")
+        except (NameError, AttributeError):
+            # Fallback if datetime_utils import failed
+            logger.warning("datetime_utils not available, using pandas built-in functionality")
+            daily_data["last_day_of_month"] = daily_data["forecast_date"].dt.to_period('M').dt.end_time.dt.date
         
-        # Convert forecast_date to datetime for access to dt accessor and extract day_of_month
-        # This step ensures the column is a datetime we can extract day from
-        daily_data["forecast_date"] = pd.to_datetime(daily_data["forecast_date"])
+        # Extract day_of_month from forecast_date while it's still datetime
         daily_data["day_of_month"] = daily_data["forecast_date"].dt.day
         
-        # Now convert forecast_date to date after we've used it for calculations
+        # Now convert both forecast_date and last_day_of_month to date format (YYYY-MM-DD)
         daily_data["forecast_date"] = daily_data["forecast_date"].dt.date
-        # Convert last_day_of_month to date for comparison
-        daily_data["last_day_of_month"] = daily_data["last_day_of_month"].dt.date
+        # Convert last_day_of_month to date for comparison if it's still datetime
+        if pd.api.types.is_datetime64_any_dtype(daily_data["last_day_of_month"]):
+            daily_data["last_day_of_month"] = daily_data["last_day_of_month"].dt.date
+            
+        # Log final date formats for debugging
+        logger.debug(f"Final date column type: {type(daily_data['date'].iloc[0]) if len(daily_data) > 0 else 'empty'}")
+        logger.debug(f"Final forecast_date column type: {type(daily_data['forecast_date'].iloc[0]) if len(daily_data) > 0 else 'empty'}")
+        if len(daily_data) > 0:
+            logger.debug(f"Sample date values: {daily_data['date'].head().tolist()}")
+            logger.debug(f"Sample forecast_date values: {daily_data['forecast_date'].head().tolist()}")
 
         # Keep rows that have forecast_date equal to either 5, 10, 15, 20, 25 or last_day_of_month
-        data = daily_data[(daily_data["day_of_month"].isin([5, 10, 15, 20, 25])) | \
+        # Since forecast_date is now a date object, we need to extract day differently
+        forecast_date_days = pd.Series([fd.day for fd in daily_data["forecast_date"]])
+        data = daily_data[(forecast_date_days.isin([5, 10, 15, 20, 25])) | \
                         (daily_data["forecast_date"] == daily_data["last_day_of_month"])].copy()
 
         # Check if we have any data after filtering
@@ -1357,7 +1424,7 @@ def read_daily_probabilistic_ml_forecasts_pentad(filepath, model, model_long, mo
 
         # Group by code and forecast_date and calculate the mean of all columns
         forecast = data \
-            .drop(columns=["date", "day_of_month", "last_day_of_month"], errors='ignore') \
+            .drop(columns=["date", "last_day_of_month"], errors='ignore') \
             .groupby(["code", "forecast_date"]) \
             .mean() \
             .reset_index()
@@ -1384,6 +1451,8 @@ def read_daily_probabilistic_ml_forecasts_pentad(filepath, model, model_long, mo
             forecast["date"] = pd.to_datetime(forecast["date"])
             forecast["pentad_in_month"] = (forecast["date"] + pd.Timedelta(days=1)).apply(tl.get_pentad)
             forecast["pentad_in_year"] = (forecast["date"] + pd.Timedelta(days=1)).apply(tl.get_pentad_in_year)
+            
+            # Keep date as datetime object for consistency with the rest of the system
 
         logger.info(f"Read {len(forecast)} rows of {model} forecasts for the pentadal forecast horizon.")
         logger.debug(f"Columns in the {model} forecast data: {forecast.columns}")
@@ -1413,24 +1482,104 @@ def read_daily_probabilistic_ml_forecasts_decade(filepath, model, model_long, mo
     logger = logging.getLogger(__name__)
 
     try:
-        # Read the forecast results with robust date parsing
-        daily_data = pd.read_csv(filepath)
+        # First, check if this is a headerless file by examining the first line
+        with open(filepath, 'r') as f:
+            first_line = f.readline().strip()
+        
+        # If first line starts with numbers (quantiles), it's likely headerless
+        is_headerless = False
+        if first_line:
+            first_values = first_line.split(',')
+            # Check if first few values are numeric (typical quantile values)
+            try:
+                numeric_count = sum(1 for val in first_values[:5] if float(val.strip()) < 100)
+                if numeric_count >= 4 and len(first_values) >= 22:
+                    is_headerless = True
+                    logger.info(f"Detected headerless ML output format based on first line analysis")
+            except:
+                pass
+        
+        # Read the CSV with appropriate header setting
+        if is_headerless:
+            daily_data = pd.read_csv(filepath, header=None, on_bad_lines='skip', low_memory=False)
+            # Apply column names for headerless ML output
+            quantile_cols = [f'Q{q}' for q in [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95]]
+            new_columns = quantile_cols + ['date', 'code', 'forecast_date', 'flag']
+            
+            if len(daily_data.columns) == len(new_columns):
+                daily_data.columns = new_columns
+                logger.info(f"Applied column names for headerless file: {new_columns}")
+            else:
+                logger.warning(f"Column count mismatch in headerless file: expected {len(new_columns)}, got {len(daily_data.columns)}")
+                return pd.DataFrame()
+        else:
+            # Read the forecast results with robust date parsing
+            daily_data = pd.read_csv(filepath)
         
         # Apply robust date parsing and ensure code is string without .0 suffixes
-        if 'date' in daily_data.columns:
-            daily_data['date'] = fl.parse_dates_robust(daily_data['date'], 'date')
-        if 'forecast_date' in daily_data.columns:
-            daily_data['forecast_date'] = fl.parse_dates_robust(daily_data['forecast_date'], 'forecast_date')
+        if not is_headerless:
+            # Only apply fl.parse_dates_robust for files with headers
+            if 'date' in daily_data.columns:
+                daily_data['date'] = fl.parse_dates_robust(daily_data['date'], 'date')
+            if 'forecast_date' in daily_data.columns:
+                daily_data['forecast_date'] = fl.parse_dates_robust(daily_data['forecast_date'], 'forecast_date')
+        else:
+            # For headerless files, apply date conversion similar to pentad function
+            for col in ["date", "forecast_date"]:
+                if col in daily_data.columns:
+                    try:
+                        # Handle multiple possible input formats
+                        if daily_data[col].dtype == 'object':
+                            # Try to convert string dates
+                            daily_data[col] = pd.to_datetime(daily_data[col], errors='coerce')
+                        elif pd.api.types.is_datetime64_any_dtype(daily_data[col]):
+                            # Already datetime, keep as is for now
+                            pass
+                        else:
+                            # Try to convert other formats
+                            daily_data[col] = pd.to_datetime(daily_data[col], errors='coerce')
+                        
+                        # Check for conversion issues
+                        if daily_data[col].isna().any():
+                            logger.warning(f"Some values in {col} couldn't be converted to dates")
+                            # Drop rows with NaT values
+                            daily_data = daily_data.dropna(subset=[col])
+                            
+                    except Exception as e:
+                        logger.warning(f"Error processing {col} column: {e}")
+                        return pd.DataFrame()
+                        
         if 'code' in daily_data.columns:
             daily_data['code'] = daily_data['code'].astype(str).str.replace(r'\.0$', '', regex=True)
 
-        # Only keep the forecast rows for pentadal forecasts
+        # Convert date to date format (YYYY-MM-DD) for consistency
+        daily_data["date"] = daily_data["date"].dt.date
+
+        # Only keep the forecast rows for decadal forecasts
         # Add a column last_day_of_month to daily_data using vectorized function for better performance
-        daily_data["last_day_of_month"] = du.get_last_day_of_month_vectorized(daily_data["forecast_date"])
+        try:
+            if du is not None:
+                daily_data["last_day_of_month"] = du.get_last_day_of_month_vectorized(daily_data["forecast_date"])
+            else:
+                raise NameError("datetime_utils not available")
+        except (NameError, AttributeError):
+            # Fallback if datetime_utils import failed
+            logger.warning("datetime_utils not available, using pandas built-in functionality")
+            daily_data["last_day_of_month"] = daily_data["forecast_date"].dt.to_period('M').dt.end_time.dt.date
+        
+        # Extract day_of_month from forecast_date while it's still datetime
         daily_data["day_of_month"] = daily_data["forecast_date"].dt.day
+        
+        # Now convert forecast_date to date format (YYYY-MM-DD)
+        daily_data["forecast_date"] = daily_data["forecast_date"].dt.date
+        # Convert last_day_of_month to date for comparison if it's still datetime
+        if pd.api.types.is_datetime64_any_dtype(daily_data["last_day_of_month"]):
+            daily_data["last_day_of_month"] = daily_data["last_day_of_month"].dt.date
 
         # Keep rows that have forecast_date equal to either 10, 20, or last_day_of_month
-        data = daily_data[(daily_data["day_of_month"].isin([10, 20])) | \
+        # Since forecast_date is now a date object, we need to extract day differently
+        forecast_date_days = pd.Series([fd.day for fd in daily_data["forecast_date"]])
+        data = daily_data[(forecast_date_days.isin([10, 20])) | \
                         (daily_data["forecast_date"] == daily_data["last_day_of_month"])]
 
         # Check if we have any data after filtering
@@ -1440,7 +1589,7 @@ def read_daily_probabilistic_ml_forecasts_decade(filepath, model, model_long, mo
 
         # Group by code and forecast_date and calculate the mean of all columns
         forecast = data \
-            .drop(columns=["date", "day_of_month", "last_day_of_month"], errors='ignore') \
+            .drop(columns=["date", "last_day_of_month"], errors='ignore') \
             .groupby(["code", "forecast_date"]) \
             .mean() \
             .reset_index()
@@ -1463,8 +1612,14 @@ def read_daily_probabilistic_ml_forecasts_decade(filepath, model, model_long, mo
 
         # Recalculate pentad in month and pentad in year if date column exists
         if "date" in forecast.columns:
+            # Convert to datetime for Timedelta operation if not already datetime
+            if forecast["date"].dtype != 'datetime64[ns]':
+                forecast["date"] = pd.to_datetime(forecast["date"])
+            
             forecast["decad_in_month"] = (forecast["date"] + pd.Timedelta(days=1)).apply(tl.get_decad_in_month)
             forecast["decad_in_year"] = (forecast["date"] + pd.Timedelta(days=1)).apply(tl.get_decad_in_year)
+            
+            # Keep date as datetime object for consistency with the rest of the system
 
         logger.info(f"Read {len(forecast)} rows of {model} forecasts for the decadal forecast horizon.")
         logger.debug(f"Columns in the {model} forecast data: {forecast.columns}")
@@ -1577,7 +1732,15 @@ def read_daily_probabilistic_conceptmod_forecasts_pentad(filepath, code, model_l
 
         # Only keep the forecast rows for pentadal forecasts
         # Add a column last_day_of_month to daily_data using vectorized function for better performance
-        daily_data["last_day_of_month"] = du.get_last_day_of_month_vectorized(daily_data["forecast_date"])
+        try:
+            if du is not None:
+                daily_data["last_day_of_month"] = du.get_last_day_of_month_vectorized(daily_data["forecast_date"])
+            else:
+                raise NameError("datetime_utils not available")
+        except (NameError, AttributeError):
+            # Fallback if datetime_utils import failed
+            logger.warning("datetime_utils not available, using pandas built-in functionality")
+            daily_data["last_day_of_month"] = daily_data["forecast_date"].dt.to_period('M').dt.end_time.dt.date
         daily_data["day_of_month"] = daily_data["forecast_date"].dt.day
 
         # Keep rows that have forecast_date equal to either 5, 10, 15, 20, 25 or last_day_of_month
@@ -1682,7 +1845,15 @@ def read_daily_probabilistic_conceptmod_forecasts_decade(filepath, code, model_l
 
         # Only keep the forecast rows for pentadal forecasts
         # Add a column last_day_of_month to daily_data using vectorized function for better performance
-        daily_data["last_day_of_month"] = du.get_last_day_of_month_vectorized(daily_data["forecast_date"])
+        try:
+            if du is not None:
+                daily_data["last_day_of_month"] = du.get_last_day_of_month_vectorized(daily_data["forecast_date"])
+            else:
+                raise NameError("datetime_utils not available")
+        except (NameError, AttributeError):
+            # Fallback if datetime_utils import failed
+            logger.warning("datetime_utils not available, using pandas built-in functionality")
+            daily_data["last_day_of_month"] = daily_data["forecast_date"].dt.to_period('M').dt.end_time.dt.date
         daily_data["day_of_month"] = daily_data["forecast_date"].dt.day
 
         # Keep rows that have forecast_date equal to either 10, 20 or last_day_of_month
@@ -2478,6 +2649,12 @@ def add_hydroposts(combined_data, check_hydroposts):
     pd.DataFrame: The input DataFrame with the virtual hydroposts added.
 
     """
+    # Ensure the date column is consistently datetime for operations
+    if 'date' in combined_data.columns:
+        # Convert string dates to datetime if needed
+        if combined_data['date'].dtype == 'object':
+            combined_data['date'] = pd.to_datetime(combined_data['date'], errors='coerce')
+    
     # Get the earliest date for which we have data in the combined_data
     earliest_date = combined_data['date'].min()
 

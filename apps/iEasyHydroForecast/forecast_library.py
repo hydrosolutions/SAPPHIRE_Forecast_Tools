@@ -922,6 +922,22 @@ def get_predictors(data_df, start_date, fc_sites,
 
     logger.debug(f'   {len(fc_sites)} Predictor discharge gotten from df, namely:\n'
                 f'{[[site.code, site.predictor] for site in fc_sites]}')
+    
+    # Check for nan predictor values and warn/fail early
+    nan_sites = [site for site in fc_sites if pd.isna(site.predictor)]
+    if nan_sites:
+        nan_site_codes = [site.code for site in nan_sites]
+        logger.warning(f'WARNING: {len(nan_sites)} sites have NaN predictor values: {nan_site_codes}')
+        logger.warning('This indicates missing or invalid discharge data for the forecast period.')
+        logger.warning('Cannot proceed with linear regression forecasting. Check data preprocessing and availability.')
+        
+        # If all sites have nan predictors, raise an exception to prevent infinite loops
+        if len(nan_sites) == len(fc_sites):
+            raise ValueError(f'All {len(fc_sites)} forecast sites have NaN predictor values. '
+                           f'Cannot proceed with linear regression. Check data preprocessing.')
+        else:
+            logger.warning(f'Proceeding with {len(fc_sites) - len(nan_sites)} sites that have valid predictors.')
+    
     #print("DEBUG: forecasting:get_predictor: fc_sites: ", fc_sites)
     logger.debug("   ... done")
 
@@ -1380,6 +1396,19 @@ def perform_forecast(fc_sites, group_id=None, result_df=None,
     if result_df is None or result_df.empty:
         logger.warning("No regression results available for forecasting. Skipping forecast calculation.")
         return
+    
+    # Early validation: Check for sites with nan predictors before attempting forecast calculation
+    nan_predictor_sites = [site for site in fc_sites if pd.isna(site.predictor)]
+    if nan_predictor_sites:
+        nan_site_codes = [site.code for site in nan_predictor_sites]
+        logger.warning(f'WARNING: {len(nan_predictor_sites)} sites have NaN predictor values during forecast: {nan_site_codes}')
+        
+        # If all sites have nan predictors, fail fast to prevent hanging
+        if len(nan_predictor_sites) == len(fc_sites):
+            logger.error('All forecast sites have NaN predictors. Cannot compute any forecasts.')
+            raise ValueError(f'All {len(fc_sites)} forecast sites have NaN predictor values. Cannot proceed with forecasting.')
+        else:
+            logger.warning(f'Skipping {len(nan_predictor_sites)} sites with NaN predictors. Proceeding with {len(fc_sites) - len(nan_predictor_sites)} valid sites.')
 
     # For each site, calculate the forecasted discharge
     for site in fc_sites:
@@ -4420,6 +4449,12 @@ class Site:
             # Write slope and intercept to site
             site.slope = round(slope, 6)
             site.intercept = round(intercept, 6)
+
+            # Check for nan predictor before calculation
+            if pd.isna(site.predictor):
+                logger.error(f'Cannot calculate forecast for site {site.code}: predictor is NaN')
+                site.fc_qexp = " "  # Set to empty string as per existing convention
+                return None
 
             # Calculate the expected discharge forecasted for the next pentad
             qpexpd = slope * float(site.predictor) + intercept
