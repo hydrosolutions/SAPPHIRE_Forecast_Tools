@@ -17,7 +17,7 @@ env:
 
 on:
   push:
-    branches: [ "bea_debugging_workflow" ]
+    branches: [ "main" ]
   #pull_request:
   #  branches: [ "main" ]
 
