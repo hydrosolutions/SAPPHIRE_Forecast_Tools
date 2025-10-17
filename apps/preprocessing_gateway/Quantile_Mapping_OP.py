@@ -361,7 +361,7 @@ def main():
                 date=start_date,
                 directory=OUTPUT_PATH_DG
                 )
-
+ 
         except Exception as e:
             if "Operational data for HRU" in str(e):
                 logger.error(f"Exiting the program due to error: {e}")
