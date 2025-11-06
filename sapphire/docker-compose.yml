@@ -1,15 +1,15 @@
 services:
-  db:
+  task-db:
     image: postgres:15
-    container_name: taskdb
+    container_name: sapphire-task-db
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: password
-      POSTGRES_DB: taskdb
+      POSTGRES_DB: task_db
     ports:
       - "5432:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - task-data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 10s
@@ -19,19 +19,39 @@ services:
       - sapphire-network
     restart: unless-stopped
 
-  api:
+  preprocessing-db:
+    image: postgres:15
+    container_name: sapphire-preprocessing-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: preprocessing_db
+    ports:
+      - "5433:5432"
+    volumes:
+      - preprocessing-data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - sapphire-network
+    restart: unless-stopped
+
+  task-api:
     build:
       context: .
       dockerfile: ./services/task-service/Dockerfile
-    container_name: task-api
+    container_name: sapphire-task-api
     ports:
       - "8001:8001"
     depends_on:
-      db:
+      task-db:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql://postgres:password@db:5432/taskdb
-      TEST_DATABASE_URL: postgresql://postgres:password@db:5432/taskdb_test
+      DATABASE_URL: postgresql://postgres:password@task-db:5432/task_db
+      TEST_DATABASE_URL: postgresql://postgres:password@task-db:5432/task_db_test
       PYTHONPATH: /code
       LOG_LEVEL: INFO
     networks:
@@ -41,8 +61,31 @@ services:
     volumes:
       - ./services/task-service:/code
 
+  preprocessing-api:
+    build:
+      context: .
+      dockerfile: ./services/preprocessing/Dockerfile
+    container_name: sapphire-preprocessing-api
+    ports:
+      - "8002:8002"
+    depends_on:
+      preprocessing-db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://postgres:password@preprocessing-db:5432/preprocessing_db
+#      TEST_DATABASE_URL: postgresql://postgres:password@db:5432/taskdb_test
+      PYTHONPATH: /code
+      LOG_LEVEL: INFO
+    networks:
+      - sapphire-network
+    restart: unless-stopped
+    # For development: mount code as volume
+    volumes:
+      - ./services/preprocessing:/code
+
 volumes:
-  postgres_data:
+  task-data:
+  preprocessing-data:
 
 networks:
   sapphire-network:

@@ -1,0 +1,168 @@
+from fastapi import FastAPI, Depends, HTTPException, status
+from sqlalchemy import text
+from sqlalchemy.orm import Session
+from sqlalchemy.exc import SQLAlchemyError
+from datetime import date
+from typing import List, Optional
+
+from app import crud
+from app.models import Runoff
+from app.schemas import RunoffCreate, RunoffUpdate, RunoffResponse, RunoffBulkCreate
+from app.database import engine, Base, get_db
+from app.logger import logger
+from app.config import settings
+
+# Create tables
+Base.metadata.create_all(bind=engine)
+
+app = FastAPI(
+    title=settings.app_name,
+    version=settings.version,
+    description="API for preprocessing runoff, precipitation, and temperature data for SAPPHIRE Forecast Tools",
+    docs_url="/docs",
+    redoc_url="/redoc"
+)
+
+
+@app.get("/", tags=["Root"])
+def root():
+    return {
+        "message": "Welcome to the Preprocessing Service API",
+        "docs": "/docs",
+        "health": "/health"
+    }
+
+
+@app.get("/health", tags=["Health"])
+def health_check():
+    """Basic health check"""
+    return {"status": "healthy", "service": "Preprocessing Service API"}
+
+
+@app.get("/health/ready", tags=["Health"])
+def readiness_check(db: Session = Depends(get_db)):
+    """Check if service is ready (including database)"""
+    try:
+        # Try to execute a simple query
+        db.execute(text("SELECT 1"))
+        return {
+            "status": "ready",
+            "service": "Preprocessing Service API",
+            "database": "connected"
+        }
+    except Exception as e:
+        logger.error(f"Readiness check failed: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Service not ready"
+        )
+
+
+@app.post(
+    "/runoff/",
+    response_model=RunoffResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["Runoff"]
+)
+def create_runoff(runoff: RunoffCreate, db: Session = Depends(get_db)):
+    """Create a new runoff"""
+    try:
+        return crud.create_runoff(db=db, runoff=runoff)
+    except SQLAlchemyError:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create runoff"
+        )
+
+
+@app.post("/runoff/bulk/",
+          response_model=List[RunoffResponse],
+          status_code=status.HTTP_201_CREATED,
+          tags=["Runoff"])
+def create_runoff_bulk(bulk_data: RunoffBulkCreate, db: Session = Depends(get_db)):
+    """Create or update multiple runoffs in bulk"""
+    try:
+        return crud.create_runoffs_bulk(db=db, bulk_data=bulk_data)
+    except SQLAlchemyError:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create or update runoffs in bulk"
+        )
+
+
+@app.get("/runoff/", response_model=List[RunoffResponse], tags=["Runoff"])
+def read_runoffs(
+        horizon: Optional[str] = None,
+        code: Optional[str] = None,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None,
+        skip: int = 0,
+        limit: int = 100,
+        db: Session = Depends(get_db)
+):
+    """Get runoffs with optional filtering and pagination"""
+    try:
+        return crud.get_runoffs(
+            db=db,
+            horizon=horizon,
+            code=code,
+            start_date=start_date,
+            end_date=end_date,
+            skip=skip,
+            limit=limit
+        )
+    except SQLAlchemyError:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch runoffs"
+        )
+
+
+@app.get("/runoff/{runoff_id}", response_model=RunoffResponse, tags=["Runoff"])
+def read_runoff(runoff_id: int, db: Session = Depends(get_db)):
+    """Get a specific runoff by ID"""
+    db_runoff = crud.get_runoff(db, runoff_id=runoff_id)
+    if not db_runoff:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="Runoff record not found")
+    return db_runoff
+
+
+@app.put("/runoff/{runoff_id}", response_model=RunoffResponse, tags=["Runoff"])
+def update_runoff(
+        runoff_id: int,
+        runoff: RunoffUpdate,
+        db: Session = Depends(get_db)
+):
+    """Update a runoff"""
+    try:
+        db_runoff = crud.update_runoff(db=db, runoff_id=runoff_id, runoff=runoff)
+        if not db_runoff:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Runoff with ID {runoff_id} not found"
+            )
+        return db_runoff
+    except SQLAlchemyError:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update runoff"
+        )
+
+
+@app.delete("/runoff/{runoff_id}", tags=["Runoff"])
+def delete_runoff(runoff_id: int, db: Session = Depends(get_db)):
+    """Delete a runoff"""
+    try:
+        db_runoff = crud.delete_runoff(db=db, runoff_id=runoff_id)
+        if not db_runoff:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Runoff with ID {runoff_id} not found"
+            )
+        return {"message": f"Runoff with ID {runoff_id} deleted successfully"}
+    except SQLAlchemyError:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to delete runoff"
+        )
