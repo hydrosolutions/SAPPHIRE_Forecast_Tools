@@ -29,6 +29,45 @@ class Runoff(Base):
 
     # Composite index for filtering and ordering, plust unique constraint
     __table_args__ = (
-        Index('ix_horizon_code_date', 'horizon_type', 'code', 'date'),
-        UniqueConstraint('horizon_type', 'code', 'date', name='uq_horizon_code_date')
+        Index('ix_runoffs_horizon_code_date', 'horizon_type', 'code', 'date'),
+        UniqueConstraint('horizon_type', 'code', 'date', name='uq_runoffs_horizon_code_date')
+    )
+
+
+class Hydrograph(Base):
+    __tablename__ = "hydrographs"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    code = Column(String(10), nullable=False)
+    date = Column(Date, nullable=False)
+
+    # Horizon types and period identification
+    horizon_type = Column(SQLEnum(HorizonType), nullable=False)
+    horizon_value = Column(Integer, nullable=False)
+    horizon_in_year = Column(Integer, nullable=False)
+    day_of_year = Column(Integer, nullable=False)
+
+    # Statistical measures
+    count = Column(Integer)
+    mean = Column(Float, nullable=False)
+    std = Column(Float, nullable=False)
+    min = Column(Float, nullable=False)
+    max = Column(Float, nullable=False)
+
+    # Percentiles
+    q05 = Column(Float, nullable=False)
+    q25 = Column(Float, nullable=False)
+    q50 = Column(Float, nullable=False)
+    q75 = Column(Float, nullable=False)
+    q95 = Column(Float, nullable=False)
+
+    # Norm and comparison values
+    norm = Column(Float, nullable=False)
+    previous = Column(Float)
+    current = Column(Float)
+
+    # Composite index for filtering and ordering, plus unique constraint
+    __table_args__ = (
+        Index('ix_hydrographs_horizon_code_date', 'horizon_type', 'code', 'date'),
+        UniqueConstraint('horizon_type', 'code', 'date', name='uq_hydrographs_horizon_code_date')
     )

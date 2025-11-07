@@ -7,7 +7,7 @@ from typing import List, Optional
 
 from app import crud
 from app.models import Runoff
-from app.schemas import RunoffCreate, RunoffUpdate, RunoffResponse, RunoffBulkCreate
+from app.schemas import RunoffCreate, RunoffUpdate, RunoffResponse, RunoffBulkCreate, HydrographResponse, HydrographBulkCreate
 from app.database import engine, Base, get_db
 from app.logger import logger
 from app.config import settings
@@ -165,4 +165,47 @@ def delete_runoff(runoff_id: int, db: Session = Depends(get_db)):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to delete runoff"
+        )
+
+
+@app.post("/hydrograph/",
+          response_model=List[HydrographResponse],
+          status_code=status.HTTP_201_CREATED,
+          tags=["Hydrograph"])
+def create_hydrographs_bulk(bulk_data: HydrographBulkCreate, db: Session = Depends(get_db)):
+    """Create or update multiple hydrographs in bulk"""
+    try:
+        return crud.create_hydrographs_bulk(db=db, bulk_data=bulk_data)
+    except SQLAlchemyError:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create or update hydrographs in bulk"
+        )
+
+
+@app.get("/hydrograph/", response_model=List[HydrographResponse], tags=["Hydrograph"])
+def read_hydrographs(
+        horizon: Optional[str] = None,
+        code: Optional[str] = None,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None,
+        skip: int = 0,
+        limit: int = 100,
+        db: Session = Depends(get_db)
+):
+    """Get hydrographs with optional filtering and pagination"""
+    try:
+        return crud.get_hydrographs(
+            db=db,
+            horizon=horizon,
+            code=code,
+            start_date=start_date,
+            end_date=end_date,
+            skip=skip,
+            limit=limit
+        )
+    except SQLAlchemyError:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch hydrographs"
         )
