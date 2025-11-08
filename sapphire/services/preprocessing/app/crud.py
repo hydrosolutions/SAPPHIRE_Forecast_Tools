@@ -2,8 +2,8 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from typing import Optional
 
-from app.models import Runoff, Hydrograph
-from app.schemas import RunoffCreate, RunoffUpdate, HydrographCreate, HydrographBulkCreate
+from app.models import Runoff, Hydrograph, Meteo
+from app.schemas import RunoffCreate, RunoffUpdate, HydrographCreate, HydrographBulkCreate, MeteoBulkCreate
 from typing import List
 from app.logger import logger
 
@@ -207,4 +207,67 @@ def get_hydrographs(db: Session, horizon: Optional[str] = None, code: Optional[s
         return results
     except SQLAlchemyError as e:
         logger.error(f"Error fetching hydrographs: {str(e)}", exc_info=True)
+        raise
+
+
+def create_meteo_bulk(db: Session, bulk_data: MeteoBulkCreate) -> List[Meteo]:
+    """Create or update multiple meteo records in bulk (upsert based on meteo_type, code, date)"""
+    try:
+        db_meteos = []
+
+        for item in bulk_data.data:
+            # Check if a record with the same (meteo_type, code, date) exists
+            existing_meteo = db.query(Meteo).filter(
+                Meteo.meteo_type == item.meteo_type,
+                Meteo.code == item.code,
+                Meteo.date == item.date
+            ).first()
+
+            if existing_meteo:
+                # Update existing record
+                for key, value in item.model_dump().items():
+                    setattr(existing_meteo, key, value)
+                db_meteos.append(existing_meteo)
+                logger.info(f"Updated meteo: {item.meteo_type}, {item.code}, {item.date}")
+            else:
+                # Create new record
+                new_meteo = Meteo(**item.model_dump())
+                db.add(new_meteo)
+                db_meteos.append(new_meteo)
+                logger.info(f"Created meteo: {item.meteo_type}, {item.code}, {item.date}")
+
+        db.commit()
+
+        # Refresh all meteo records to get updated state
+        for meteo in db_meteos:
+            db.refresh(meteo)
+
+        logger.info(f"Processed {len(db_meteos)} meteo records in bulk")
+        return db_meteos
+
+    except SQLAlchemyError as e:
+        db.rollback()
+        logger.error(f"Error creating meteo records in bulk: {str(e)}", exc_info=True)
+        raise
+
+
+def get_meteo(db: Session, meteo_type: Optional[str] = None, code: Optional[str] = None,
+               start_date: Optional[str] = None, end_date: Optional[str] = None,
+               skip: int = 0, limit: int = 100) -> List[Meteo]:
+    """Get meteorological records with optional filtering and pagination"""
+    try:
+        query = db.query(Meteo)
+        if meteo_type:
+            query = query.filter(Meteo.meteo_type == meteo_type)
+        if code:
+            query = query.filter(Meteo.code == code)
+        if start_date:
+            query = query.filter(Meteo.date >= start_date)
+        if end_date:
+            query = query.filter(Meteo.date <= end_date)
+        results = query.offset(skip).limit(limit).all()
+        logger.info(f"Fetched {len(results)} meteo records (code={code}, skip={skip}, limit={limit})")
+        return results
+    except SQLAlchemyError as e:
+        logger.error(f"Error fetching meteo records: {str(e)}", exc_info=True)
         raise

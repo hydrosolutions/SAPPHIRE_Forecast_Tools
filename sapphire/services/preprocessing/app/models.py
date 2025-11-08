@@ -71,3 +71,29 @@ class Hydrograph(Base):
         Index('ix_hydrographs_horizon_code_date', 'horizon_type', 'code', 'date'),
         UniqueConstraint('horizon_type', 'code', 'date', name='uq_hydrographs_horizon_code_date')
     )
+
+
+class MeteoType(str, Enum):
+    """Enumeration of meteorological variable types"""
+    TEMPERATURE = "T"
+    PRECIPITATION = "P"
+
+
+class Meteo(Base):
+    __tablename__ = "meteo"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    code = Column(String(10), nullable=False)
+    date = Column(Date, nullable=False)
+
+    meteo_type = Column(SQLEnum(MeteoType), nullable=False)
+    value = Column(Float, nullable=False)
+    norm = Column(Float)
+    day_of_year = Column(Integer)
+
+
+    # Composite index for filtering and ordering, plus unique constraint
+    __table_args__ = (
+        Index('ix_meteo_type_code_date', 'meteo_type', 'code', 'date'),
+        UniqueConstraint('meteo_type', 'code', 'date', name='uq_meteo_type_code_date')
+    )

@@ -7,7 +7,7 @@ from typing import List, Optional
 
 from app import crud
 from app.models import Runoff
-from app.schemas import RunoffCreate, RunoffUpdate, RunoffResponse, RunoffBulkCreate, HydrographResponse, HydrographBulkCreate
+from app.schemas import RunoffCreate, RunoffUpdate, RunoffResponse, RunoffBulkCreate, HydrographResponse, MeteoResponse, HydrographBulkCreate, MeteoBulkCreate
 from app.database import engine, Base, get_db
 from app.logger import logger
 from app.config import settings
@@ -208,4 +208,47 @@ def read_hydrographs(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to fetch hydrographs"
+        )
+
+
+@app.post("/meteo/",
+          response_model=List[MeteoResponse],
+          status_code=status.HTTP_201_CREATED,
+          tags=["Meteorological Data"])
+def create_meteo_bulk(bulk_data: MeteoBulkCreate, db: Session = Depends(get_db)):
+    """Create or update multiple meteorological data records in bulk"""
+    try:
+        return crud.create_meteo_bulk(db=db, bulk_data=bulk_data)
+    except SQLAlchemyError:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create or update meteorological data in bulk"
+        )
+
+
+@app.get("/meteo/", response_model=List[MeteoResponse], tags=["Meteorological Data"])
+def read_meteo(
+        meteo_type: Optional[str] = None,
+        code: Optional[str] = None,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None,
+        skip: int = 0,
+        limit: int = 100,
+        db: Session = Depends(get_db)
+):
+    """Get meteorological data with optional filtering and pagination"""
+    try:
+        return crud.get_meteo(
+            db=db,
+            meteo_type=meteo_type,
+            code=code,
+            start_date=start_date,
+            end_date=end_date,
+            skip=skip,
+            limit=limit
+        )
+    except SQLAlchemyError:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch meteorological data"
         )

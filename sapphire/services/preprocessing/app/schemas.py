@@ -1,7 +1,7 @@
 from pydantic import BaseModel, Field
 from datetime import date as DateType
 from typing import List, Optional
-from app.models import HorizonType
+from app.models import HorizonType, MeteoType
 
 
 class RunoffBase(BaseModel):
@@ -74,3 +74,27 @@ class HydrographResponse(HydrographBase):
 
 class HydrographBulkCreate(BaseModel):
     data: List[HydrographCreate]
+
+
+class MeteoBase(BaseModel):
+    code: str = Field(..., max_length=10)
+    date: DateType
+    meteo_type: MeteoType
+    value: float
+    norm: Optional[float] = None
+    day_of_year: Optional[int] = None
+
+
+class MeteoCreate(MeteoBase):
+    pass
+
+
+class MeteoResponse(MeteoBase):
+    id: int
+
+    class Config:
+        from_attributes = True
+
+
+class MeteoBulkCreate(BaseModel):
+    data: List[MeteoCreate]
