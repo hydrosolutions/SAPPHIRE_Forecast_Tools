@@ -58,31 +58,14 @@ def readiness_check(db: Session = Depends(get_db)):
         )
 
 
-@app.post(
-    "/runoff/",
-    response_model=RunoffResponse,
-    status_code=status.HTTP_201_CREATED,
-    tags=["Runoff"]
-)
-def create_runoff(runoff: RunoffCreate, db: Session = Depends(get_db)):
-    """Create a new runoff"""
-    try:
-        return crud.create_runoff(db=db, runoff=runoff)
-    except SQLAlchemyError:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to create runoff"
-        )
-
-
-@app.post("/runoff/bulk/",
+@app.post("/runoff/",
           response_model=List[RunoffResponse],
           status_code=status.HTTP_201_CREATED,
           tags=["Runoff"])
-def create_runoff_bulk(bulk_data: RunoffBulkCreate, db: Session = Depends(get_db)):
+def create_runoff(bulk_data: RunoffBulkCreate, db: Session = Depends(get_db)):
     """Create or update multiple runoffs in bulk"""
     try:
-        return crud.create_runoffs_bulk(db=db, bulk_data=bulk_data)
+        return crud.create_runoff(db=db, bulk_data=bulk_data)
     except SQLAlchemyError:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -91,7 +74,7 @@ def create_runoff_bulk(bulk_data: RunoffBulkCreate, db: Session = Depends(get_db
 
 
 @app.get("/runoff/", response_model=List[RunoffResponse], tags=["Runoff"])
-def read_runoffs(
+def read_runoff(
         horizon: Optional[str] = None,
         code: Optional[str] = None,
         start_date: Optional[date] = None,
@@ -102,7 +85,7 @@ def read_runoffs(
 ):
     """Get runoffs with optional filtering and pagination"""
     try:
-        return crud.get_runoffs(
+        return crud.get_runoff(
             db=db,
             horizon=horizon,
             code=code,
@@ -118,64 +101,14 @@ def read_runoffs(
         )
 
 
-@app.get("/runoff/{runoff_id}", response_model=RunoffResponse, tags=["Runoff"])
-def read_runoff(runoff_id: int, db: Session = Depends(get_db)):
-    """Get a specific runoff by ID"""
-    db_runoff = crud.get_runoff(db, runoff_id=runoff_id)
-    if not db_runoff:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
-                            detail="Runoff record not found")
-    return db_runoff
-
-
-@app.put("/runoff/{runoff_id}", response_model=RunoffResponse, tags=["Runoff"])
-def update_runoff(
-        runoff_id: int,
-        runoff: RunoffUpdate,
-        db: Session = Depends(get_db)
-):
-    """Update a runoff"""
-    try:
-        db_runoff = crud.update_runoff(db=db, runoff_id=runoff_id, runoff=runoff)
-        if not db_runoff:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Runoff with ID {runoff_id} not found"
-            )
-        return db_runoff
-    except SQLAlchemyError:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to update runoff"
-        )
-
-
-@app.delete("/runoff/{runoff_id}", tags=["Runoff"])
-def delete_runoff(runoff_id: int, db: Session = Depends(get_db)):
-    """Delete a runoff"""
-    try:
-        db_runoff = crud.delete_runoff(db=db, runoff_id=runoff_id)
-        if not db_runoff:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Runoff with ID {runoff_id} not found"
-            )
-        return {"message": f"Runoff with ID {runoff_id} deleted successfully"}
-    except SQLAlchemyError:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to delete runoff"
-        )
-
-
 @app.post("/hydrograph/",
           response_model=List[HydrographResponse],
           status_code=status.HTTP_201_CREATED,
           tags=["Hydrograph"])
-def create_hydrographs_bulk(bulk_data: HydrographBulkCreate, db: Session = Depends(get_db)):
+def create_hydrograph(bulk_data: HydrographBulkCreate, db: Session = Depends(get_db)):
     """Create or update multiple hydrographs in bulk"""
     try:
-        return crud.create_hydrographs_bulk(db=db, bulk_data=bulk_data)
+        return crud.create_hydrograph(db=db, bulk_data=bulk_data)
     except SQLAlchemyError:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -195,7 +128,7 @@ def read_hydrographs(
 ):
     """Get hydrographs with optional filtering and pagination"""
     try:
-        return crud.get_hydrographs(
+        return crud.get_hydrograph(
             db=db,
             horizon=horizon,
             code=code,
@@ -215,10 +148,10 @@ def read_hydrographs(
           response_model=List[MeteoResponse],
           status_code=status.HTTP_201_CREATED,
           tags=["Meteorological Data"])
-def create_meteo_bulk(bulk_data: MeteoBulkCreate, db: Session = Depends(get_db)):
+def create_meteo(bulk_data: MeteoBulkCreate, db: Session = Depends(get_db)):
     """Create or update multiple meteorological data records in bulk"""
     try:
-        return crud.create_meteo_bulk(db=db, bulk_data=bulk_data)
+        return crud.create_meteo(db=db, bulk_data=bulk_data)
     except SQLAlchemyError:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

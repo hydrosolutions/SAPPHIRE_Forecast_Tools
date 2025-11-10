@@ -8,39 +8,7 @@ from typing import List
 from app.logger import logger
 
 
-def create_runoff(db: Session, runoff: RunoffCreate) -> Runoff:
-    """Create a new runoff or update if already exists based on unique constraint"""
-    try:
-        # Try to find existing runoff based on unique constraint (horizon_type, code, date)
-        existing_runoff = db.query(Runoff).filter(
-            Runoff.horizon_type == runoff.horizon_type,
-            Runoff.code == runoff.code,
-            Runoff.date == runoff.date
-        ).first()
-
-        if existing_runoff:
-            # Update existing runoff
-            for key, value in runoff.dict().items():
-                setattr(existing_runoff, key, value)
-            db.commit()
-            db.refresh(existing_runoff)
-            logger.info(f"Updated existing runoff with ID: {existing_runoff.id}")
-            return existing_runoff
-        else:
-            # Create new runoff
-            db_runoff = Runoff(**runoff.dict())
-            db.add(db_runoff)
-            db.commit()
-            db.refresh(db_runoff)
-            logger.info(f"Created runoff with ID: {db_runoff.id}")
-            return db_runoff
-    except SQLAlchemyError as e:
-        db.rollback()
-        logger.error(f"Error creating runoff: {str(e)}")
-        raise
-
-
-def create_runoffs_bulk(db: Session, bulk_data) -> list[Runoff]:
+def create_runoff(db: Session, bulk_data) -> list[Runoff]:
     """Create or update multiple runoffs in bulk (upsert based on horizon_type, code, date)"""
     try:
         db_runoffs = []
@@ -80,7 +48,7 @@ def create_runoffs_bulk(db: Session, bulk_data) -> list[Runoff]:
         raise
 
 
-def get_runoffs(db: Session, horizon: Optional[str] = None, code: Optional[str] = None, start_date: Optional[str] = None,
+def get_runoff(db: Session, horizon: Optional[str] = None, code: Optional[str] = None, start_date: Optional[str] = None,
                 end_date: Optional[str] = None, skip: int = 0, limit: int = 100) -> list[Runoff]:
     """Get runoffs with optional filtering and pagination"""
     try:
@@ -101,54 +69,7 @@ def get_runoffs(db: Session, horizon: Optional[str] = None, code: Optional[str] 
         raise
 
 
-def get_runoff(db: Session, runoff_id: int) -> Optional[Runoff]:
-    """Get a single runoff by ID"""
-    try:
-        return db.query(Runoff).filter(Runoff.id == runoff_id).first()
-    except SQLAlchemyError as e:
-        logger.error(f"Error fetching runoff {runoff_id}: {str(e)}")
-        raise
-
-
-def update_runoff(
-    db: Session,
-    runoff_id: int,
-    runoff: RunoffUpdate
-) -> Optional[Runoff]:
-    """Update an existing runoff"""
-    try:
-        db_runoff = get_runoff(db, runoff_id)
-        if db_runoff:
-            update_data = runoff.dict(exclude_unset=True)
-            for key, value in update_data.items():
-                setattr(db_runoff, key, value)
-            db.commit()
-            db.refresh(db_runoff)
-            logger.info(f"Updated runoff with ID: {runoff_id}")
-            return db_runoff
-        return None
-    except SQLAlchemyError as e:
-        db.rollback()
-        logger.error(f"Error updating runoff {runoff_id}: {str(e)}")
-        raise
-
-
-def delete_runoff(db: Session, runoff_id: int) -> Optional[Runoff]:
-    """Delete a runoff"""
-    try:
-        db_runoff = get_runoff(db, runoff_id)
-        if db_runoff:
-            db.delete(db_runoff)
-            db.commit()
-            logger.info(f"Deleted runoff with ID: {runoff_id}")
-        return db_runoff
-    except SQLAlchemyError as e:
-        db.rollback()
-        logger.error(f"Error deleting runoff {runoff_id}: {str(e)}")
-        raise
-
-
-def create_hydrographs_bulk(db: Session, bulk_data: HydrographBulkCreate) -> List[Hydrograph]:
+def create_hydrograph(db: Session, bulk_data: HydrographBulkCreate) -> List[Hydrograph]:
     """Create or update multiple hydrographs in bulk (upsert based on horizon_type, code, date)"""
     try:
         db_hydrographs = []
@@ -188,7 +109,7 @@ def create_hydrographs_bulk(db: Session, bulk_data: HydrographBulkCreate) -> Lis
         raise
 
 
-def get_hydrographs(db: Session, horizon: Optional[str] = None, code: Optional[str] = None,
+def get_hydrograph(db: Session, horizon: Optional[str] = None, code: Optional[str] = None,
                     start_date: Optional[str] = None, end_date: Optional[str] = None,
                     skip: int = 0, limit: int = 100) -> List[Hydrograph]:
     """Get hydrographs with optional filtering and pagination"""
@@ -210,7 +131,7 @@ def get_hydrographs(db: Session, horizon: Optional[str] = None, code: Optional[s
         raise
 
 
-def create_meteo_bulk(db: Session, bulk_data: MeteoBulkCreate) -> List[Meteo]:
+def create_meteo(db: Session, bulk_data: MeteoBulkCreate) -> List[Meteo]:
     """Create or update multiple meteo records in bulk (upsert based on meteo_type, code, date)"""
     try:
         db_meteos = []
