@@ -17,13 +17,17 @@ class Runoff(Base):
     __tablename__ = "runoffs"
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+
+    # Metadata fields
+    horizon_type = Column(SQLEnum(HorizonType), nullable=False)
     code = Column(String(10), nullable=False)
     date = Column(Date, nullable=False)
+
+    # Runoff values
     discharge = Column(Float, nullable=False)
     predictor = Column(Float)
 
-    # Horizon type and values
-    horizon_type = Column(SQLEnum(HorizonType), nullable=False)
+    # Horizon values
     horizon_value = Column(Integer, nullable=False)
     horizon_in_year = Column(Integer, nullable=False)
 
@@ -38,31 +42,33 @@ class Hydrograph(Base):
     __tablename__ = "hydrographs"
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+
+    # Metadata fields
+    horizon_type = Column(SQLEnum(HorizonType), nullable=False)
     code = Column(String(10), nullable=False)
     date = Column(Date, nullable=False)
 
-    # Horizon types and period identification
-    horizon_type = Column(SQLEnum(HorizonType), nullable=False)
+    # Horizon values
     horizon_value = Column(Integer, nullable=False)
     horizon_in_year = Column(Integer, nullable=False)
     day_of_year = Column(Integer, nullable=False)
 
     # Statistical measures
     count = Column(Integer)
-    mean = Column(Float, nullable=False)
-    std = Column(Float, nullable=False)
-    min = Column(Float, nullable=False)
-    max = Column(Float, nullable=False)
+    mean = Column(Float)
+    std = Column(Float)
+    min = Column(Float)
+    max = Column(Float)
 
     # Percentiles
-    q05 = Column(Float, nullable=False)
-    q25 = Column(Float, nullable=False)
-    q50 = Column(Float, nullable=False)
-    q75 = Column(Float, nullable=False)
-    q95 = Column(Float, nullable=False)
+    q05 = Column(Float)
+    q25 = Column(Float)
+    q50 = Column(Float)
+    q75 = Column(Float)
+    q95 = Column(Float)
 
     # Norm and comparison values
-    norm = Column(Float, nullable=False)
+    norm = Column(Float)
     previous = Column(Float)
     current = Column(Float)
 
@@ -83,13 +89,15 @@ class Meteo(Base):
     __tablename__ = "meteo"
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+
+    # Metadata fields
+    meteo_type = Column(SQLEnum(MeteoType), nullable=False)
     code = Column(String(10), nullable=False)
     date = Column(Date, nullable=False)
 
-    meteo_type = Column(SQLEnum(MeteoType), nullable=False)
     value = Column(Float, nullable=False)
     norm = Column(Float)
-    day_of_year = Column(Integer)
+    day_of_year = Column(Integer, nullable=False)
 
 
     # Composite index for filtering and ordering, plus unique constraint
