@@ -221,3 +221,4 @@ apps/forecast_dashboard/user_activity.csv
 /logs
 /apps/machine_learning_monthly/logs
 temp_luigi.cfg
+/apps/long_term_forecasting/logs
