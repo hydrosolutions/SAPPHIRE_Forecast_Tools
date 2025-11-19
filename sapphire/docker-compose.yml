@@ -39,6 +39,26 @@ services:
       - sapphire-network
     restart: unless-stopped
 
+  postprocessing-db:
+    image: postgres:15
+    container_name: sapphire-postprocessing-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: postprocessing_db
+    ports:
+      - "5434:5432"
+    volumes:
+      - postprocessing-data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - sapphire-network
+    restart: unless-stopped
+
   task-api:
     build:
       context: .
@@ -73,7 +93,7 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: postgresql://postgres:password@preprocessing-db:5432/preprocessing_db
-#      TEST_DATABASE_URL: postgresql://postgres:password@db:5432/taskdb_test
+#      TEST_DATABASE_URL: postgresql://postgres:password@db:5432/preprocessing_db_test
       PYTHONPATH: /code
       LOG_LEVEL: INFO
     networks:
@@ -83,9 +103,32 @@ services:
     volumes:
       - ./services/preprocessing:/code
 
+  postprocessing-api:
+    build:
+      context: .
+      dockerfile: ./services/postprocessing/Dockerfile
+    container_name: sapphire-postprocessing-api
+    ports:
+      - "8003:8003"
+    depends_on:
+      postprocessing-db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://postgres:password@postprocessing-db:5432/postprocessing_db
+#      TEST_DATABASE_URL: postgresql://postgres:password@db:5432/postprocessing_db_test
+      PYTHONPATH: /code
+      LOG_LEVEL: INFO
+    networks:
+      - sapphire-network
+    restart: unless-stopped
+    # For development: mount code as volume
+    volumes:
+      - ./services/postprocessing:/code
+
 volumes:
   task-data:
   preprocessing-data:
+  postprocessing-data:
 
 networks:
   sapphire-network:

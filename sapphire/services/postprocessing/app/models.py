@@ -13,19 +13,29 @@ class HorizonType(str, Enum):
     YEAR = "year"
 
 
-class ModelType(Enum):
+class ModelType(str, Enum):
     """Enum for different model types"""
-    TSMIXER = ("TSMixer", "Time-Series Mixer (TSMixer)")
-    TIDE = ("TIDE", "Time-Series Dense Encoder (TIDE)")
-    TFT = ("TFT", "Temporal Fusion Transformer (TFT)")
-    ENSEMBLE_MEAN = ("EM", "Ens. Mean with LR, TFT, TIDE (EM)")
-    NEURAL_ENSEMBLE = ("NE", "Neural Ensemble with TIDE, TFT, TSMixer (NE)")
-    RRAM = ("RRAM", "Rainfall runoff assimilation model")
-    LINEAR_REGRESSION = ("LR", "Linear Regression")
+    TSMIXER = "TSMixer"
+    TIDE = "TIDE"
+    TFT = "TFT"
+    ENSEMBLE_MEAN = "EM"
+    NEURAL_ENSEMBLE = "NE"
+    RRAM = "RRAM"
+    LINEAR_REGRESSION = "LR"
 
-    def __init__(self, short_name, long_name):
-        self.short_name = short_name
-        self.long_name = long_name
+    @property
+    def description(self) -> str:
+        """Get the long description for the model type"""
+        descriptions = {
+            "TSMixer": "Time-Series Mixer (TSMixer)",
+            "TIDE": "Time-Series Dense Encoder (TIDE)",
+            "TFT": "Temporal Fusion Transformer (TFT)",
+            "EM": "Ens. Mean with LR, TFT, TIDE (EM)",
+            "NE": "Neural Ensemble with TIDE, TFT, TSMixer (NE)",
+            "RRAM": "Rainfall runoff assimilation model",
+            "LR": "Linear Regression"
+        }
+        return descriptions.get(self.value, self.value)
 
 
 class Forecast(Base):

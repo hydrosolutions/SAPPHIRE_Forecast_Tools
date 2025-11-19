@@ -1,10 +1,9 @@
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
-from typing import Optional
+from typing import List, Optional
 
 from app.models import Runoff, Hydrograph, Meteo
 from app.schemas import RunoffCreate, RunoffUpdate, HydrographCreate, HydrographBulkCreate, MeteoBulkCreate
-from typing import List
 from app.logger import logger
 
 
@@ -44,7 +43,7 @@ def create_runoff(db: Session, bulk_data) -> list[Runoff]:
         return db_runoffs
     except SQLAlchemyError as e:
         db.rollback()
-        logger.error(f"Error creating runoffs in bulk: {str(e)}", exc_info=True)
+        logger.error(f"Error creating/updating runoffs in bulk: {str(e)}", exc_info=True)
         raise
 
 

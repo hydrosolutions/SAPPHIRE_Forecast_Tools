@@ -18,7 +18,7 @@ Base.metadata.create_all(bind=engine)
 app = FastAPI(
     title=settings.app_name,
     version=settings.version,
-    description="API for preprocessing runoff, precipitation, and temperature data for SAPPHIRE Forecast Tools",
+    description="API for preprocessing runoff, hydrograph, precipitation, and temperature data for SAPPHIRE Forecast Tools",
     docs_url="/docs",
     redoc_url="/redoc"
 )

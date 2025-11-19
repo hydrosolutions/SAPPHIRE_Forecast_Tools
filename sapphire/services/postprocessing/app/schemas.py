@@ -9,18 +9,18 @@ class ForecastBase(BaseModel):
     code: str
     model_type: ModelType
     date: DateType
-    target: Optional[DateType]
-    flag: Optional[int]
+    target: Optional[DateType] = None
+    flag: Optional[int] = None
     horizon_value: int
     horizon_in_year: int
 
-    q05: Optional[float]
-    q25: Optional[float]
-    q50: Optional[float]
-    q75: Optional[float]
-    q95: Optional[float]
+    q05: Optional[float] = None
+    q25: Optional[float] = None
+    q50: Optional[float] = None
+    q75: Optional[float] = None
+    q95: Optional[float] = None
 
-    forecasted_discharge: Optional[float]
+    forecasted_discharge: Optional[float] = None
 
 
 class ForecastCreate(ForecastBase):
@@ -43,20 +43,20 @@ class LRForecastBase(BaseModel):
     code: str
     date: DateType
 
-    discharge: Optional[float]
-    predictor: Optional[float]
+    discharge: Optional[float] = None
+    predictor: Optional[float] = None
     horizon_value: int
     horizon_in_year: int
 
-    slope: Optional[float]
-    intercept: Optional[float]
+    slope: Optional[float] = None
+    intercept: Optional[float] = None
 
-    forecasted_discharge: Optional[float]
+    forecasted_discharge: Optional[float] = None
 
-    q_mean: Optional[float]
-    q_std_sigma: Optional[float]
-    delta: Optional[float]
-    rsquared: Optional[float]
+    q_mean: Optional[float] = None
+    q_std_sigma: Optional[float] = None
+    delta: Optional[float] = None
+    rsquared: Optional[float] = None
 
 
 class LRForecastCreate(LRForecastBase):
@@ -81,12 +81,12 @@ class SkillMetricBase(BaseModel):
     date: DateType
     horizon_in_year: int
 
-    sdivsigma: Optional[float]
-    nse: Optional[float]
-    delta: Optional[float]
-    accuracy: Optional[float]
-    mae: Optional[float]
-    n_pairs: Optional[float]
+    sdivsigma: Optional[float] = None
+    nse: Optional[float] = None
+    delta: Optional[float] = None
+    accuracy: Optional[float] = None
+    mae: Optional[float] = None
+    n_pairs: Optional[float] = None
 
 
 class SkillMetricCreate(SkillMetricBase):
