@@ -31,6 +31,7 @@ from lt_forecasting.forecast_models.deep_models.uncertainty_mixture import (
     UncertaintyMixtureModel,
 )
 
+
 from __init__ import logger 
 from data_interface import DataInterface
 from config_forecast import ForecastConfig
@@ -123,9 +124,9 @@ def investigate():
             if all_forecasts is None:
                 all_forecasts = df_forecast
             else:
-                Q_cols = [col for col in df_forecast.columns if 'Q_' in col]
-                df_forecast = df_forecast[['forecast_date', 'code'] + Q_cols]
-                all_forecasts = pd.merge(all_forecasts, df_forecast, on=['forecast_date', 'code'], suffixes=('', f'_{model_name}'))
+                Q_cols = [col for col in df_forecast.columns if 'Q' in col]
+                df_forecast = df_forecast[['date', 'code'] + Q_cols]
+                all_forecasts = pd.merge(all_forecasts, df_forecast, on=['date', 'code'], suffixes=('', f'_{model_name}'))
 
     if all_forecasts is None:
         print("No forecasts found to investigate.")
@@ -135,7 +136,7 @@ def investigate():
 
     for code in codes_to_investigate:
         forecast_code = all_forecasts[all_forecasts['code'] == code].copy()
-        forecast_code['forecast_date'] = pd.to_datetime(forecast_code['forecast_date'])
+        forecast_code['date'] = pd.to_datetime(forecast_code['date'])
         temporal_data_code = temporal_data[temporal_data['code'] == code].copy()
         valid_from = forecast_code['valid_from'].iloc[0]
         valid_to = forecast_code['valid_to'].iloc[0]
@@ -155,17 +156,39 @@ def investigate():
 
         # plot the long term mean as a horizontal line and all the forecasts as dots
         plt.figure(figsize=(10, 6))
-        x_values = [0, 1, 2, 3, 4]
+        x_values = [0.5, 1, 2, 2.5]
         plt.axhline(y=long_term_mean, color='r', linestyle='--', label='Long Term Mean')
         # fill between q10 and q90
         plt.fill_between(x_values, long_term_q10, long_term_q90, color='gray', alpha=0.3, label='Long Term Q10-Q90')
         # fill between mean +/- std
         plt.fill_between(x_values, long_term_mean - long_term_std, long_term_mean + long_term_std, color='gray', alpha=0.5, label='Long Term Mean ±1 Std Dev')
-        Q_cols = [col for col in forecast_code.columns if 'Q_' in col]
+        Q_cols = [col for col in forecast_code.columns if 'Q_' in col and col != 'Q_loc']
+        # get a nice palette of redish colors
+        palette = plt.get_cmap('Reds')
+        num_colors = len(Q_cols)
+        colors = [palette(i / num_colors) for i in range(num_colors)]
         for col in Q_cols:
-            plt.scatter(2, forecast_code[col], label=col)
+            plt.scatter(1, forecast_code[col], color=colors[Q_cols.index(col)], alpha=0.6, edgecolors='k')
+
+        Q_prob_cols = ['Q5', 'Q10', 'Q25', 'Q50', 'Q75', 'Q90', 'Q95']
+        # plot a nice error bars for the probabilistic forecasts
+        if all(col in forecast_code.columns for col in Q_prob_cols):
+            q5 = forecast_code['Q5'].values[0]
+            q10 = forecast_code['Q10'].values[0]
+            q25 = forecast_code['Q25'].values[0]
+            q50 = forecast_code['Q50'].values[0]
+            q75 = forecast_code['Q75'].values[0]
+            q90 = forecast_code['Q90'].values[0]
+            q95 = forecast_code['Q95'].values[0]
+            plt.errorbar(2, q50, yerr=[[q50 - q25], [q75 - q50]], fmt='o', color='blue', label='Interquartile Range (25th-75th Percentile)', capsize=5)
+            plt.errorbar(2, q50, yerr=[[q50 - q10], [q90 - q50]], fmt='o', color='blue', label='10th-90th Percentile', capsize=5, alpha=0.7)
+            plt.errorbar(2, q50, yerr=[[q50 - q5], [q95 - q50]], fmt='o', color='blue', label='5th-95th Percentile', capsize=5, alpha=0.5)
+        
+        # set the x ticks - 1 for deterministic, 2 for probabilistic
+        plt.xticks([1, 2], ['Ensemble', 'MC ALD'], rotation=45)
+
         plt.title(f'Forecasts for Code {code} with Long Term Mean')
-        plt.xlabel('Date')
+        plt.xlabel('Output Models')
         plt.ylabel('Discharge Forecast')
         plt.legend()
         plt.show()

@@ -5,7 +5,7 @@
 ## How to run this script:
 # Set the environment variable ieasyhydroforecast_env_file_path to point to your .env file
 # Then run the script with:
-# ieasyhydroforecast_env_file_path="../../../kyg_data_forecast_tools/config/.env_develop_kghm" lt_forecast_mode=monthly python run_forecast.py
+# ieasyhydroforecast_env_file_path="path_to_env" lt_forecast_mode=monthly python run_forecast.py
 
 
 from datetime import datetime
@@ -18,6 +18,7 @@ import os
 import sys
 import time
 import glob
+import traceback
 import pandas as pd
 import numpy as np
 import json
@@ -33,6 +34,7 @@ from lt_forecasting.forecast_models.deep_models.uncertainty_mixture import (
 from __init__ import logger 
 from data_interface import DataInterface
 from config_forecast import ForecastConfig
+from lt_utils import create_model_instance
 
 
 # set lt_forecasting logger level
@@ -51,69 +53,6 @@ sys.path.append(forecast_dir)
 
 # Import the setup_library module from the iEasyHydroForecast package
 import setup_library as sl
-
-
-
-def create_model_instance(
-    model_type: str,
-    model_name: str,
-    configs: Dict[str, Any],
-    data: pd.DataFrame,
-    static_data: pd.DataFrame,
-):
-    """
-    Create the appropriate model instance based on the model type.
-
-    Args:
-        model_type: 'LR' or 'SciRegressor'
-        model_name: Name of the model configuration
-        configs: All configuration dictionaries
-        data: Time series data
-        static_data: Static basin characteristics
-
-    Returns:
-        Model instance
-    """
-    general_config = configs["general_config"]
-    model_config = configs["model_config"]
-    feature_config = configs["feature_config"]
-    path_config = configs["path_config"]
-
-    # Set model name in general config
-    general_config["model_name"] = model_name
-
-    # Create model instance based on type
-    if model_type == "linear_regression":
-        model = LinearRegressionModel(
-            data=data,
-            static_data=static_data,
-            general_config=general_config,
-            model_config=model_config,
-            feature_config=feature_config,
-            path_config=path_config,
-        )
-    elif model_type == "sciregressor":
-        model = SciRegressor(
-            data=data,
-            static_data=static_data,
-            general_config=general_config,
-            model_config=model_config,
-            feature_config=feature_config,
-            path_config=path_config,
-        )
-    elif model_type == "UncertaintyMixture":
-        model = UncertaintyMixtureModel(
-            data=data,
-            static_data=static_data,
-            general_config=general_config,
-            model_config=model_config,
-            feature_config=feature_config,
-            path_config=path_config,
-        )
-    else:
-        raise ValueError(f"Unknown model type: {model_type}")
-
-    return model
 
 
 def run_single_model(data_interface: DataInterface,
@@ -142,18 +81,27 @@ def run_single_model(data_interface: DataInterface,
     # This part will be replaced by a database query in future [DATABASE INTEGRATION]
     #################################################
     model_dependencies = forecast_configs.get_model_dependencies()
-    all_dependencies_paths = []
+    all_dependencies_forecast_paths = []
+    all_dependencies_hindcast_paths = []
     for dep in model_dependencies.get(model_name, []):
         dep_path = forecast_configs.get_output_path(model_name=dep)
-        dep_file = os.path.join(dep_path, f"{dep}_forecast.csv")
-        if not os.path.exists(dep_file):
-            logger.error(f"Dependency file {dep_file} for model {model_name} not found.")
-        all_dependencies_paths.append(dep_file)
-
-    configs["path_config"]["path_to_lr_predictors"] = all_dependencies_paths
-    configs["path_config"]["path_to_base_predictors"] = all_dependencies_paths
+        dep_file_forecast = os.path.join(dep_path, f"{dep}_forecast.csv")
+        dep_file_hindcast = os.path.join(dep_path, f"{dep}_hindcast.csv")
+        if not os.path.exists(dep_file_forecast):
+            logger.error(f"Dependency file {dep_file_forecast} for model {model_name} not found.")
+        if not os.path.exists(dep_file_hindcast):
+            logger.error(f"Dependency file {dep_file_hindcast} for model {model_name} not found.")
 
         
+        all_dependencies_forecast_paths.append(dep_file_forecast)
+        all_dependencies_hindcast_paths.append(dep_file_hindcast)
+
+    # Used by the GBT LR models which take the predictions of other models as input features
+    configs["path_config"]["path_to_lr_predictors"] = all_dependencies_forecast_paths
+    # Used by the Uncertainty Mixture models which take the hindcast of other models as input features
+    # This is needed to compute the uncertainty based on past model errors
+    configs["path_config"]["path_to_base_predictors"] = all_dependencies_hindcast_paths
+
     logger.info(f"Running model: {model_name} of type {model_type}")
 
     data_dependencies = forecast_configs.get_data_dependencies(model_name=model_name)
@@ -201,6 +149,7 @@ def run_single_model(data_interface: DataInterface,
 
         # Run forecast
         forecast = model_instance.predict_operational(today=today)
+        forecast = forecast.round(2)
         forecast['flag'] = 0
         success = True
 
@@ -234,10 +183,17 @@ def run_single_model(data_interface: DataInterface,
     # Return success
     return success
 
-def run_forecast():
+def run_forecast(
+        forecast_all: bool = True,
+        models_to_run: List[str] = []
+):
 
     # Setup Environment
     sl.load_environment()
+
+    if forecast_all:
+        if len(models_to_run) > 0:
+            raise ValueError("If forecast_all is True, models_to_run should be empty.")
 
     # Now we setup the configurations
     forecast_config = ForecastConfig()
@@ -259,6 +215,13 @@ def run_forecast():
     execution_is_success = {}
     model_dependencies = forecast_config.get_model_dependencies()
 
+    if not forecast_all:
+        # Filter ordered_models to only include those in models_to_run
+        ordered_models = [m for m in ordered_models if m in models_to_run]
+        # we check dependencies again in the run_single_model function
+        ignore_initial_dependencies = True
+    else:
+        ignore_initial_dependencies = False
 
     for model_name in ordered_models:
         # Wait 5 seconds between model runs to avoid potential file access conflicts
@@ -266,7 +229,7 @@ def run_forecast():
         dependencies = model_dependencies.get(model_name, [])
         # Check if dependencies were successful
         deps_success = all(execution_is_success.get(dep, False) for dep in dependencies)
-        if not deps_success:
+        if not deps_success and not ignore_initial_dependencies:
             logger.error(f"Skipping model {model_name} due to failed dependencies: {dependencies}")
             execution_is_success[model_name] = False
             continue
@@ -284,11 +247,63 @@ def run_forecast():
             execution_is_success[model_name] = sucess
         except Exception as e:
             logger.error(f"Error running model {model_name}: {e}")
+            # get the full traceback
+            traceback_str = traceback.format_exc()
+            logger.error(f"Traceback: {traceback_str}")
+            execution_is_success[model_name] = False
 
+    # Print summary
+    logger.info("\n" + "="*50)
+    logger.info("FORECAST SUMMARY")
+    logger.info("="*50)
+    for model_name, success in execution_is_success.items():
+        status = "SUCCESS" if success else "FAILED"
+        logger.info(f"{model_name}: {status}")
+    logger.info("="*50 + "\n")
 
     logger.info("Forecast run completed.")
 
 
 
 if __name__ == "__main__":
-    run_forecast()
+
+    import argparse
+    
+    parser = argparse.ArgumentParser(
+        description="Run forecasts for long-term models",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Run forecasts for all models
+  python run_forecast.py --all
+  
+  # Run forecasts for specific models
+  python run_forecast.py --models LinearRegressionModel SciRegressor
+  
+  # With environment variables
+  ieasyhydroforecast_env_file_path="path/to/.env" lt_forecast_mode=monthly python run_forecast.py --all
+        """
+    )
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument(
+        '--all',
+        action='store_true',
+        help='Run forecasts for all models'
+    )
+    group.add_argument(
+        '--models',
+        nargs='+',
+        metavar='MODEL_NAME',
+        help='List of model names to forecast'
+    )
+    
+    args = parser.parse_args()
+    
+    # Determine recalibrate_all flag and models to run
+    recalibrate_all = args.all
+    models_to_run = args.models if args.models else []
+    
+    run_forecast(
+        forecast_all=recalibrate_all,
+        models_to_run=models_to_run
+    )

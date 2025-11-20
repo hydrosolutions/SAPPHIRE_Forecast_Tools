@@ -59,12 +59,11 @@ class ForecastConfig:
         
         self.forecast_mode = forecast_mode
 
-        config_path = os.path.join(self.LT_forecast_configs, f"config_{forecast_mode}"+".json")
-        with open(config_path, 'r') as f:
+        self.config_path = os.path.join(self.LT_forecast_configs, f"config_{forecast_mode}"+".json")
+        with open(self.config_path, 'r') as f:
             config = json.load(f)
         
         self.forecast_config = config
-
 
         # Get all model paths:
         self.model_folder = self.forecast_config["model_folder"]
@@ -176,8 +175,19 @@ class ForecastConfig:
                         model_name : str) -> str:
         
         return os.path.join(self.LT_output_path, self.forecast_mode, model_name)
+    
+    def get_calibration_status(self,
+                               model_name : str) -> bool:
+        return self.forecast_config["is_calibrated"].get(model_name, False)
 
+    def update_calibration_status(self,
+                                  model_name : str,
+                                  status : bool):
+        self.forecast_config["is_calibrated"][model_name] = status
 
+    def write_updated_config(self):
+        with open(self.config_path, 'w') as f:
+            json.dump(self.forecast_config, f, indent=4)
 
 
 def order_models_by_dependencies(all_models: List[str], 
