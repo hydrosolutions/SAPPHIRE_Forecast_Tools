@@ -4,7 +4,8 @@
 
 ## How to run this script:
 # Set the environment variable ieasyhydroforecast_env_file_path to point to your .env file
-# Then run the script with ieasyhydroforecast_env_file_path="../../../kyg_data_forecast_tools/config/.env_develop_kghm" lt_forecast_mode=monthly python run_forecast.py
+# Then run the script with:
+# ieasyhydroforecast_env_file_path="../../../kyg_data_forecast_tools/config/.env_develop_kghm" lt_forecast_mode=monthly python run_forecast.py
 
 
 from datetime import datetime
@@ -36,7 +37,7 @@ from config_forecast import ForecastConfig
 
 # set lt_forecasting logger level
 logger_lt = logging.getLogger("lt_forecasting")
-logger_lt.setLevel(logging.WARNING)
+logger_lt.setLevel(logging.DEBUG)
 
 # Local libraries, installed with pip install -e ./iEasyHydroForecast
 # Get the absolute path of the directory containing the current script
@@ -114,6 +115,7 @@ def create_model_instance(
 
     return model
 
+
 def run_single_model(data_interface: DataInterface,
                      forecast_configs: ForecastConfig,
                      model_name: str,
@@ -136,6 +138,22 @@ def run_single_model(data_interface: DataInterface,
     model_home_path = os.path.dirname(model_path)
     configs["path_config"]["model_home_path"] = model_home_path
 
+    #################################################
+    # This part will be replaced by a database query in future [DATABASE INTEGRATION]
+    #################################################
+    model_dependencies = forecast_configs.get_model_dependencies()
+    all_dependencies_paths = []
+    for dep in model_dependencies.get(model_name, []):
+        dep_path = forecast_configs.get_output_path(model_name=dep)
+        dep_file = os.path.join(dep_path, f"{dep}_forecast.csv")
+        if not os.path.exists(dep_file):
+            logger.error(f"Dependency file {dep_file} for model {model_name} not found.")
+        all_dependencies_paths.append(dep_file)
+
+    configs["path_config"]["path_to_lr_predictors"] = all_dependencies_paths
+    configs["path_config"]["path_to_base_predictors"] = all_dependencies_paths
+
+        
     logger.info(f"Running model: {model_name} of type {model_type}")
 
     data_dependencies = forecast_configs.get_data_dependencies(model_name=model_name)
@@ -144,8 +162,8 @@ def run_single_model(data_interface: DataInterface,
     for input_type, offset in data_dependencies.items():
         if input_type == "SnowMapper":
             # Extend base data with snow data
-            snow_HRUs = configs["data_config"].get("snow_HRUs", [])
-            snow_variables = configs["data_config"].get("snow_variables", [])
+            snow_HRUs = configs["path_config"].get("snow_HRUs", [])
+            snow_variables = configs["path_config"].get("snow_variables", [])
             snow_result = data_interface.extend_base_data_with_snow(
                 base_data=temporal_data,
                 HRUs_snow=snow_HRUs,
@@ -192,12 +210,26 @@ def run_single_model(data_interface: DataInterface,
         forecast['flag'] = 2
         success = False
     
+
+    #################################################
+    # This part will be replaced by a database query in future [DATABASE INTEGRATION]
+    #################################################
     # Save Forecast
     output_path = forecast_configs.get_output_path(model_name=model_name)
     os.makedirs(output_path, exist_ok=True)
     output_file = os.path.join(output_path, f"{model_name}_forecast.csv")
     forecast.to_csv(output_file, index=False)
     logger.info(f"Forecast for model {model_name} saved to {output_file}")
+
+    # Append the forecast to the hindcast files
+    hindcast_file = os.path.join(output_path, f"{model_name}_hindcast.csv")
+    if os.path.exists(hindcast_file):
+        df_hindcast = pd.read_csv(hindcast_file)
+        df_hindcast['date'] = pd.to_datetime(df_hindcast['date'])
+        df_hindcast['code'] = df_hindcast['code'].astype(int)
+        df_combined = pd.concat([df_hindcast, forecast], ignore_index=True)
+    else:
+        logger.info(f"Hindcast file {hindcast_file} does not exist. Can not append forecast.")
 
     # Return success
     return success
@@ -227,6 +259,7 @@ def run_forecast():
     execution_is_success = {}
     model_dependencies = forecast_config.get_model_dependencies()
 
+
     for model_name in ordered_models:
         # Wait 5 seconds between model runs to avoid potential file access conflicts
         time.sleep(5)
@@ -243,7 +276,7 @@ def run_forecast():
                 data_interface=data_interface,
                 forecast_configs=forecast_config,
                 model_name=model_name,
-                temporal_data=temporal_data,
+                temporal_data=temporal_data.copy(),
                 static_data=static_data,
                 offset_base=offset_base,
                 offset_discharge=offset_discharge

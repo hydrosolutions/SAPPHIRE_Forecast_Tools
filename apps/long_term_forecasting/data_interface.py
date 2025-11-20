@@ -137,6 +137,9 @@ class DataInterface:
         # Combine hindcast and operational data
         combined_df = pd.concat([hindcast_merged, operational_merged], ignore_index=True)
 
+        # Drop duplicates based on date and code
+        combined_df = combined_df.drop_duplicates(subset=["date", "code"], keep='last').reset_index(drop=True)
+
         # drop columns if "day_of_year" in columns
         cols_to_drop = [col for col in combined_df.columns if "dayofyear" in col]
         combined_df.drop(columns=cols_to_drop, inplace=True)
@@ -161,7 +164,8 @@ class DataInterface:
 
         forcing_data = self._load_forcing_data(HRU=forcing_HRU)
 
-        temporal_data  = pd.merge(discharge, forcing_data, on=["date", "code"], how="left")
+        # Use outer merge to ensure all dates from both datasets are included
+        temporal_data  = pd.merge(discharge, forcing_data, on=["date", "code"], how="outer")
 
         static_data = self._prepare_static_data()
 
@@ -253,8 +257,18 @@ class DataInterface:
         data = data.drop_duplicates(subset=["code", "date"], keep='last').reset_index(drop=True)
 
         # Step three - ensure time series is continuous - reindex
+        # We expect that the data has EMCWF IFS Forecasts up to 15 days ahead
+        emcwf_forecast_days_ahead = int(os.getenv('ieasyhydroforecast_ECMWF_IFS_lead_time'))
+        today = pd.Timestamp.now().normalize()
+        end_date = today + pd.Timedelta(days=emcwf_forecast_days_ahead)
+        max_date_data = data["date"].max()
+        if end_date > max_date_data:
+            logger.warning(f"Data ends at {max_date_data}, but with EMCWF forecasts we expect data up to {end_date}. This indicates some missing data.")
+        
+        full_end_date = max(end_date, max_date_data)
+                
         all_codes = data["code"].unique()
-        full_date_range = pd.date_range(start=data["date"].min(), end=data["date"].max(), freq='D')
+        full_date_range = pd.date_range(start=data["date"].min(), end=full_end_date, freq='D')
 
         full_index = pd.MultiIndex.from_product([all_codes, full_date_range], names=["code", "date"])
         data = data.set_index(["code", "date"]).reindex(full_index).reset_index()
