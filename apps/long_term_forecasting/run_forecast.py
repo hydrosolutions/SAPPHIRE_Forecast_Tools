@@ -191,16 +191,21 @@ def run_forecast(
     # Setup Environment
     sl.load_environment()
 
-    if forecast_all:
-        if len(models_to_run) > 0:
-            raise ValueError("If forecast_all is True, models_to_run should be empty.")
-
     # Now we setup the configurations
     forecast_config = ForecastConfig()
 
     forecast_mode = os.getenv('lt_forecast_mode')
     forecast_config.load_forecast_config(forecast_mode=forecast_mode)
     forcing_HRU = forecast_config.get_forcing_HRU()
+
+
+    if forecast_all:
+        if len(models_to_run) > 0:
+            raise ValueError("If forecast_all is True, models_to_run should be empty.")
+
+        models_to_run = forecast_config.get_models_to_run()
+    
+    logger.info(f"Starting forecast run. Forecast all: {forecast_all}. Models to run: {models_to_run}")
 
     # Data Interface
     data_interface = DataInterface()
@@ -223,12 +228,16 @@ def run_forecast(
     else:
         ignore_initial_dependencies = False
 
+    
+
+
     for model_name in ordered_models:
         # Wait 5 seconds between model runs to avoid potential file access conflicts
         time.sleep(5)
         dependencies = model_dependencies.get(model_name, [])
         # Check if dependencies were successful
         deps_success = all(execution_is_success.get(dep, False) for dep in dependencies)
+        
         if not deps_success and not ignore_initial_dependencies:
             logger.error(f"Skipping model {model_name} due to failed dependencies: {dependencies}")
             execution_is_success[model_name] = False

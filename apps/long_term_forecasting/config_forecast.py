@@ -185,9 +185,22 @@ class ForecastConfig:
                                   status : bool):
         self.forecast_config["is_calibrated"][model_name] = status
 
+    def get_hyperparameter_tuning_status(self,
+                                         model_name : str) -> bool:
+        return self.forecast_config["is_hyperparameter_tuned"].get(model_name, False)
+    
+    def update_hyperparameter_tuning_status(self,
+                                            model_name : str,
+                                            status : bool):
+        self.forecast_config["is_hyperparameter_tuned"][model_name] = status
+
+    def get_start_date(self) -> str:
+        return self.forecast_config.get("start_date", None)
+
     def write_updated_config(self):
         with open(self.config_path, 'w') as f:
             json.dump(self.forecast_config, f, indent=4)
+
 
 
 def order_models_by_dependencies(all_models: List[str], 

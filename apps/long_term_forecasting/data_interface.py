@@ -9,7 +9,7 @@ import glob
 import pandas as pd
 import numpy as np
 import json
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Optional, Tuple
 
 from __init__ import logger 
 
@@ -148,7 +148,8 @@ class DataInterface:
 
 
     def get_base_data(self,
-                      forcing_HRU: str) -> dict[str, Any]:
+                      forcing_HRU: str,
+                      start_date: Optional[str]) -> dict[str, Any]:
         """
         Retrieve the base dataset for long-term forecasting.
 
@@ -167,6 +168,10 @@ class DataInterface:
         # Use outer merge to ensure all dates from both datasets are included
         temporal_data  = pd.merge(discharge, forcing_data, on=["date", "code"], how="outer")
 
+        if start_date is not None:
+            start_date_pd = pd.to_datetime(start_date, format="%Y-%m-%d")
+            temporal_data = temporal_data[temporal_data["date"] >= start_date_pd].reset_index(drop=True)
+
         static_data = self._prepare_static_data()
 
         # Calculate Time Offsets
@@ -177,6 +182,7 @@ class DataInterface:
         offset_discharge = (today - max_date_discharge).days # we expect max_date_discharge to be in the past as we do not have todays discharge yet
 
         temporal_data = self._clean_data(temporal_data)
+
 
         return {"temporal_data": temporal_data, "static_data": static_data, 
                 "offset_date_base": offset_base, "offset_date_discharge": offset_discharge}
