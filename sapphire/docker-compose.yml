@@ -59,6 +59,23 @@ services:
       - sapphire-network
     restart: unless-stopped
 
+  api-gateway:
+    build:
+      context: .
+      dockerfile: ./services/api-gateway/Dockerfile
+    container_name: sapphire-api-gateway
+    ports:
+      - "8000:8000"
+    depends_on:
+      - preprocessing-api
+      - postprocessing-api
+    networks:
+      - sapphire-network
+    restart: unless-stopped
+    # For development: mount code as volume
+    volumes:
+      - ./services/api-gateway:/code
+
   task-api:
     build:
       context: .
