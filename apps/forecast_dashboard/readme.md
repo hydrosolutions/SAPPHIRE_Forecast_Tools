@@ -47,7 +47,7 @@ pre-commit install
 Pre-commit hooks only work when the dashboard is running locally and make your commits from the terminal (not GitHub Desktop or VSCode). 
 1. Make sure the dashboard is running locally.
 2. Adapt test_integration.py to the local environment.
-3. git stash changes
+3. git add changes
 4. Commit changes  with ieasyhydroforecast_data_dir=/full/absolute/path/to/data/ git commit -m "your message"
    (note the / at the end of the path)
 The integration tests will run automatically before the commit is made. If any of the tests fail, the commit will be aborted and you will need to fix the issues before committing again.

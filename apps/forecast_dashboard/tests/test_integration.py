@@ -107,6 +107,10 @@ def test_local(page: Page):
         print("#### Skipping LOCAL test...")
         return
 
+    # Set default timeouts at the start of the test
+    page.set_default_timeout(60000)  # 60 seconds for all actions
+    page.set_default_navigation_timeout(60000)  # 60 seconds for navigation
+
     page.goto(LOCAL_URL)
 
     print("#### Testing LOCAL started...")
@@ -176,7 +180,7 @@ def test_local(page: Page):
 
     ### PREDICTORS TAB ###
     # Select station 16936
-    page.select_option("select#input", value="16936 - Нарын  -  Приток в Токтогульское вдхр.**)")
+    page.select_option("select#input", value="16936 - Нарын  -  Приток в Токтогульское вдхр.**)", timeout=60000)
     print("#### Station 16936 selected")
     time.sleep(SLEEP)
 
@@ -197,7 +201,7 @@ def test_local(page: Page):
     summary_table_values = []
 
     def select_station_and_add_to_bulletin(station):
-        page.select_option("select#input", value=station)
+        page.select_option("select#input", value=station, timeout=60000)
         print(f"#### SELECTED station: {station}")
         time.sleep(SLEEP)
 
