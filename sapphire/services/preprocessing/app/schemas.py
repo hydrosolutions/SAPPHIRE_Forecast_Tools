@@ -5,11 +5,11 @@ from app.models import HorizonType, MeteoType
 
 
 class RunoffBase(BaseModel):
+    horizon_type: HorizonType
     code: str = Field(..., max_length=10, example="12345", description="Unique station code")
     date: DateType = Field(..., example="2000-01-01")
-    discharge: float = Field(..., ge=0, description="Discharge value (must be >= 0)")
+    discharge: Optional[float] = Field(None, ge=0, description="Discharge value (must be >= 0)")
     predictor: Optional[float] = Field(None, ge=0)
-    horizon_type: HorizonType
     horizon_value: int = Field(..., ge=1)
     horizon_in_year: int = Field(..., ge=1, le=366)
 

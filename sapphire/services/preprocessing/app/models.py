@@ -24,7 +24,7 @@ class Runoff(Base):
     date = Column(Date, nullable=False)
 
     # Runoff values
-    discharge = Column(Float, nullable=False)
+    discharge = Column(Float)
     predictor = Column(Float)
 
     # Horizon values

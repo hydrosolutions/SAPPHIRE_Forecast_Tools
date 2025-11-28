@@ -1,23 +1,23 @@
 services:
-  task-db:
-    image: postgres:15
-    container_name: sapphire-task-db
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: task_db
-    ports:
-      - "5432:5432"
-    volumes:
-      - task-data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - sapphire-network
-    restart: unless-stopped
+#  task-db:
+#    image: postgres:15
+#    container_name: sapphire-task-db
+#    environment:
+#      POSTGRES_USER: postgres
+#      POSTGRES_PASSWORD: password
+#      POSTGRES_DB: task_db
+#    ports:
+#      - "5432:5432"
+#    volumes:
+#      - task-data:/var/lib/postgresql/data
+#    healthcheck:
+#      test: ["CMD-SHELL", "pg_isready -U postgres"]
+#      interval: 10s
+#      timeout: 5s
+#      retries: 5
+#    networks:
+#      - sapphire-network
+#    restart: unless-stopped
 
   preprocessing-db:
     image: postgres:15
@@ -76,27 +76,27 @@ services:
     volumes:
       - ./services/api-gateway:/code
 
-  task-api:
-    build:
-      context: .
-      dockerfile: ./services/task-service/Dockerfile
-    container_name: sapphire-task-api
-    ports:
-      - "8001:8001"
-    depends_on:
-      task-db:
-        condition: service_healthy
-    environment:
-      DATABASE_URL: postgresql://postgres:password@task-db:5432/task_db
-      TEST_DATABASE_URL: postgresql://postgres:password@task-db:5432/task_db_test
-      PYTHONPATH: /code
-      LOG_LEVEL: INFO
-    networks:
-      - sapphire-network
-    restart: unless-stopped
-    # For development: mount code as volume
-    volumes:
-      - ./services/task-service:/code
+#  task-api:
+#    build:
+#      context: .
+#      dockerfile: ./services/task-service/Dockerfile
+#    container_name: sapphire-task-api
+#    ports:
+#      - "8001:8001"
+#    depends_on:
+#      task-db:
+#        condition: service_healthy
+#    environment:
+#      DATABASE_URL: postgresql://postgres:password@task-db:5432/task_db
+#      TEST_DATABASE_URL: postgresql://postgres:password@task-db:5432/task_db_test
+#      PYTHONPATH: /code
+#      LOG_LEVEL: INFO
+#    networks:
+#      - sapphire-network
+#    restart: unless-stopped
+#    # For development: mount code as volume
+#    volumes:
+#      - ./services/task-service:/code
 
   preprocessing-api:
     build:
@@ -119,6 +119,7 @@ services:
     # For development: mount code as volume
     volumes:
       - ./services/preprocessing:/code
+      - /Users/maxat/data/kyg_data_forecast_tools/intermediate_data:/intermediate_data
 
   postprocessing-api:
     build:
