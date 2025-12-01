@@ -55,20 +55,18 @@ RUN DOCKER_GRP=$(getent group 999 | cut -d: -f1 || echo "") && \
 WORKDIR /app
 RUN chown -R appuser:appgroup /app
 
-# Copy iEasyHydroForecast source code
+# Copy iEasyHydroForecast source code (includes pyproject.toml and uv.lock)
 COPY --chown=appuser:appgroup apps/iEasyHydroForecast /app/apps/iEasyHydroForecast
 
-# Copy base image requirements for initial installation
-COPY --chown=appuser:appgroup apps/docker_base_image/requirements.txt /app/apps/docker_base_image/requirements.txt
-
-# Install dependencies using uv
-# Phase 0: Use requirements.txt until iEasyHydroForecast is migrated to uv (Phase 1)
-# After Phase 1: This will use `uv sync --frozen` with pyproject.toml + uv.lock
+# Install dependencies using uv sync with the lock file
+# Using --system to install into system Python (not a venv) for base image compatibility
+# This ensures reproducible builds with exact pinned versions from uv.lock
 WORKDIR /app/apps/iEasyHydroForecast
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv pip install --system -r /app/apps/docker_base_image/requirements.txt && \
-    uv pip install --system "git+https://github.com/hydrosolutions/ieasyhydro-python-sdk@master" && \
-    uv pip install --system -e /app/apps/iEasyHydroForecast
+    uv export --frozen --no-dev > /tmp/requirements.txt && \
+    uv pip install --system -r /tmp/requirements.txt && \
+    uv pip install --system -e . && \
+    rm /tmp/requirements.txt
 
 # Reset working directory
 WORKDIR /app
