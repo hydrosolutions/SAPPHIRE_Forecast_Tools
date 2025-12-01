@@ -299,8 +299,8 @@ jobs:
         python-version: ${{ matrix.python-version }}
     - name: Set PYTHONPATH
       run: |
-        # Adding the iEasyHydroForecast folder to the PYTHONPATH
-        echo "PYTHONPATH=${GITHUB_WORKSPACE}/apps/iEasyHydroForecast" >> $GITHUB_ENV
+        # Adding apps and iEasyHydroForecast folders to PYTHONPATH
+        echo "PYTHONPATH=${GITHUB_WORKSPACE}/apps:${GITHUB_WORKSPACE}/apps/iEasyHydroForecast" >> $GITHUB_ENV
     - name: Install dependencies for pre-processing of runoff
       working-directory: ./apps
       run: |
@@ -329,6 +329,10 @@ jobs:
 
     - name: Set up Python 3.12 with uv
       run: uv python install 3.12
+
+    - name: Set PYTHONPATH
+      run: |
+        echo "PYTHONPATH=${GITHUB_WORKSPACE}/apps:${GITHUB_WORKSPACE}/apps/iEasyHydroForecast" >> $GITHUB_ENV
 
     - name: Install dependencies with uv
       working-directory: ./apps/preprocessing_runoff
