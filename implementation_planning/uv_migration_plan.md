@@ -1357,7 +1357,7 @@ If AGPL packages are found:
 | Pre | Create v0.2.0 release | ✅ Completed | `:latest` | — | Python 3.11 baseline |
 | 0 | Create `:py312` base image | ✅ Completed | `:py312` | B | Minimal OS packages, uv |
 | 1 | iEasyHydroForecast | ✅ Completed | `:py312` | B | pyproject.toml + uv.lock, 173 tests pass |
-| 2 | preprocessing_runoff | Not started | `:py312` | B | Pilot module |
+| 2 | preprocessing_runoff | ✅ Completed | `:py312` | B | pyproject.toml + uv.lock, 13 tests pass |
 | 3a | preprocessing_gateway | Not started | `:py312` | B | |
 | 3b | preprocessing_station_forcing | Not started | `:py312` | B | |
 | 4a | linear_regression | Not started | `:py312` | B | |
@@ -1379,8 +1379,11 @@ Both GitHub Actions workflows have been updated to test Python 3.12 + uv in para
 |-----|--------|-----------------|-------------|---------|
 | `test_ieasyhydroforecast` | 3.11 | pip | unittest | Production tests |
 | `test_ieasyhydroforecast_py312` | 3.12 | uv | pytest | Migration tests |
+| `test_preprocessing_runoff` | 3.11 | pip | pytest | Production tests |
+| `test_preprocessing_runoff_py312` | 3.12 | uv | pytest | Migration tests |
 | `build_and_push_python_311_base_image` | 3.11 | pip | — | Build `:latest` tag |
 | `build_and_push_python_312_base_image` | 3.12 | uv | — | Build `:py312` tag (SLSA attestation) |
+| `push_preprocessing_runoff_py312_to_Dockerhub` | 3.12 | uv | — | Build `:py312` tag (SLSA attestation) |
 
 ### build_test.yml (push to feature branches, PRs to main)
 
@@ -1388,8 +1391,11 @@ Both GitHub Actions workflows have been updated to test Python 3.12 + uv in para
 |-----|--------|-----------------|-------------|---------|
 | `test_ieasyhydroforecast` | 3.11 | pip | unittest | Production tests |
 | `test_ieasyhydroforecast_py312` | 3.12 | uv | pytest | Migration tests |
+| `test_preprocessing_runoff` | 3.12 | pip | pytest | Production tests |
+| `test_preprocessing_runoff_py312` | 3.12 | uv | pytest | Migration tests |
 | `build_python_311_base_image` | 3.11 | pip | — | Build test (no push) |
 | `build_python_312_base_image` | 3.12 | uv | — | Build test (no push) |
+| `build_preprocessing_runoff_py312` | 3.12 | uv | — | Build test (no push) |
 
 ### Key Implementation Details
 
