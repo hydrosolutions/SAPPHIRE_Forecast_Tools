@@ -19,9 +19,9 @@ env:
 
 on:
   # Run on all branch pushes except main (which uses deploy_main.yml)
-  #push:
-  #  branches-ignore:
-  #    - main
+  push:
+    branches-ignore:
+      - main
   # Also run on PRs targeting main
   pull_request:
     branches:
@@ -59,6 +59,33 @@ jobs:
       run: |
         SAPPHIRE_TEST_ENV=True python -m unittest discover -s iEasyHydroForecast/tests -p 'test_*.py'
 
+  # Test iEasyHydroForecast with Python 3.12 + uv + pytest
+  test_ieasyhydroforecast_py312:
+    runs-on: ubuntu-latest
+    name: Test iEasyHydroForecast (Python 3.12 + uv)
+
+    steps:
+    - name: Checkout the commit that triggered the workflow
+      uses: actions/checkout@v4
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v5
+      with:
+        version: "latest"
+
+    - name: Set up Python 3.12 with uv
+      run: uv python install 3.12
+
+    - name: Install dependencies with uv
+      working-directory: ./apps/iEasyHydroForecast
+      run: |
+        uv sync --all-extras
+
+    - name: Test with pytest
+      working-directory: ./apps
+      run: |
+        SAPPHIRE_TEST_ENV=True iEasyHydroForecast/.venv/bin/python -m pytest iEasyHydroForecast/tests/ -v
+
   # Build but don't push the base image
   build_python_311_base_image:
     needs: [test_ieasyhydroforecast]
@@ -87,6 +114,29 @@ jobs:
       - name: Test Base Image
         run: |
           docker run --rm "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" python -c "print('Base image build successful!')"
+
+  # Build but don't push the Python 3.12 + uv base image
+  build_python_312_base_image:
+    needs: [test_ieasyhydroforecast, test_ieasyhydroforecast_py312]
+    runs-on: ubuntu-latest
+    name: Build Python 3.12 + uv base image
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Build Docker image
+        run: |
+          DOCKER_BUILDKIT=1 docker build \
+          -t "${{ env.BASE_IMAGE_NAME }}:py312-test" \
+          -f ./apps/docker_base_image/Dockerfile.py312 .
+      - name: Test Base Image
+        run: |
+          echo "Verifying Python version..."
+          docker run --rm "${{ env.BASE_IMAGE_NAME }}:py312-test" python --version
+          echo "Verifying uv is available..."
+          docker run --rm "${{ env.BASE_IMAGE_NAME }}:py312-test" uv --version
+          echo "Verifying key packages..."
+          docker run --rm "${{ env.BASE_IMAGE_NAME }}:py312-test" \
+            python -c "import pandas; import numpy; import sklearn; print('All imports OK')"
 
   # Build but don't push the pipeline image
   build_pipeline_image:
@@ -452,6 +502,7 @@ jobs:
   summarize_builds:
     needs: [
       build_python_311_base_image,
+      build_python_312_base_image,
       build_pipeline_image,
       build_conceptual_model,
       build_preprocessing_runoff,
@@ -471,10 +522,13 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Successfully built the following Docker images:" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Python 3.11 + pip (production)" >> $GITHUB_STEP_SUMMARY
           echo "- ${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" >> $GITHUB_STEP_SUMMARY
           echo "- ${{ env.PIPELINE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" >> $GITHUB_STEP_SUMMARY
           echo "- ${{ env.CONCMOD_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" >> $GITHUB_STEP_SUMMARY
           echo "- ${{ env.PREPQ_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" >> $GITHUB_STEP_SUMMARY
-          # Add all other images here
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Python 3.12 + uv (migration testing)" >> $GITHUB_STEP_SUMMARY
+          echo "- ${{ env.BASE_IMAGE_NAME }}:py312-test" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Note:** These images were built for testing only and not pushed to DockerHub." >> $GITHUB_STEP_SUMMARY

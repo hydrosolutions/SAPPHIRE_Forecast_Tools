@@ -62,6 +62,34 @@ jobs:
       run: |
         SAPPHIRE_TEST_ENV=True python -m unittest discover -s iEasyHydroForecast/tests -p 'test_*.py'
 
+  # NEW: Test iEasyHydroForecast with Python 3.12 + uv + pytest
+  # This runs in parallel with the Python 3.11 tests during migration
+  test_ieasyhydroforecast_py312:
+    runs-on: ubuntu-latest
+    name: Test iEasyHydroForecast (Python 3.12 + uv)
+
+    steps:
+    - name: Checkout the commit that triggered the workflow
+      uses: actions/checkout@v4
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v5
+      with:
+        version: "latest"
+
+    - name: Set up Python 3.12 with uv
+      run: uv python install 3.12
+
+    - name: Install dependencies with uv
+      working-directory: ./apps/iEasyHydroForecast
+      run: |
+        uv sync --all-extras
+
+    - name: Test with pytest
+      working-directory: ./apps
+      run: |
+        SAPPHIRE_TEST_ENV=True iEasyHydroForecast/.venv/bin/python -m pytest iEasyHydroForecast/tests/ -v
+
   build_and_push_python_311_base_image:
     needs: [test_ieasyhydroforecast]
     runs-on: ubuntu-latest
@@ -119,7 +147,7 @@ jobs:
   # This job builds the :py312 tag for testing during the migration
   # See: implementation_planning/uv_migration_plan.md
   build_and_push_python_312_base_image:
-    needs: [test_ieasyhydroforecast]
+    needs: [test_ieasyhydroforecast, test_ieasyhydroforecast_py312]
     runs-on: ubuntu-latest
     name: Build and push Python 3.12 + uv base image
 

@@ -1355,7 +1355,7 @@ If AGPL packages are found:
 | Phase | Module | Status | Image Tag | Health Target | Notes |
 |-------|--------|--------|-----------|---------------|-------|
 | Pre | Create v0.2.0 release | ✅ Completed | `:latest` | — | Python 3.11 baseline |
-| 0 | Create `:py312` base image | ✅ Completed | `:py312` | B | Minimal OS packages, uv 0.9.13 |
+| 0 | Create `:py312` base image | ✅ Completed | `:py312` | B | Minimal OS packages, uv |
 | 1 | iEasyHydroForecast | ✅ Completed | `:py312` | B | pyproject.toml + uv.lock, 173 tests pass |
 | 2 | preprocessing_runoff | Not started | `:py312` | B | Pilot module |
 | 3a | preprocessing_gateway | Not started | `:py312` | B | |
@@ -1366,6 +1366,47 @@ If AGPL packages are found:
 | 5a | forecast_dashboard | Not started | `:py312` | B | |
 | 5b | pipeline | Not started | `:py312` | B | |
 | 6 | Flip `:latest` to py312 | Not started | `:latest` | B avg | Final transition |
+
+---
+
+## CI/CD Integration
+
+Both GitHub Actions workflows have been updated to test Python 3.12 + uv in parallel with Python 3.11 + pip:
+
+### deploy_main.yml (push to main)
+
+| Job | Python | Package Manager | Test Runner | Purpose |
+|-----|--------|-----------------|-------------|---------|
+| `test_ieasyhydroforecast` | 3.11 | pip | unittest | Production tests |
+| `test_ieasyhydroforecast_py312` | 3.12 | uv | pytest | Migration tests |
+| `build_and_push_python_311_base_image` | 3.11 | pip | — | Build `:latest` tag |
+| `build_and_push_python_312_base_image` | 3.12 | uv | — | Build `:py312` tag (SLSA attestation) |
+
+### build_test.yml (push to feature branches, PRs to main)
+
+| Job | Python | Package Manager | Test Runner | Purpose |
+|-----|--------|-----------------|-------------|---------|
+| `test_ieasyhydroforecast` | 3.11 | pip | unittest | Production tests |
+| `test_ieasyhydroforecast_py312` | 3.12 | uv | pytest | Migration tests |
+| `build_python_311_base_image` | 3.11 | pip | — | Build test (no push) |
+| `build_python_312_base_image` | 3.12 | uv | — | Build test (no push) |
+
+### Key Implementation Details
+
+1. **uv Installation**: Uses `astral-sh/setup-uv@v5` GitHub Action
+2. **Python Setup**: `uv python install 3.12` (managed by uv)
+3. **Dependency Install**: `uv sync --all-extras` in `apps/iEasyHydroForecast`
+4. **Test Execution**: From `apps/` directory using venv Python:
+   ```bash
+   SAPPHIRE_TEST_ENV=True iEasyHydroForecast/.venv/bin/python -m pytest iEasyHydroForecast/tests/ -v
+   ```
+
+5. **pytest Configuration**: Added to `pyproject.toml`:
+   ```toml
+   [tool.pytest.ini_options]
+   pythonpath = [".."]
+   testpaths = ["tests"]
+   ```
 
 ---
 

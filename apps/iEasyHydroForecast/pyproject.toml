@@ -13,8 +13,8 @@ authors = [
     {name = "Sandro Hunziker", url = "https://github.com/sandrohuni"},
     {name = "Maxat Pernebaev", url = "https://github.com/maxatp"},
     {name = "Adrian Kreiner", url = "https://github.com/adriankreiner"},
-    {name = "Vjekoslav Večković", url = "https://github.com/vjekoslavveckovic"},
     {name = "Aidar Zhumabaev", url = "https://github.com/LagmanEater"},
+    {name = "Vjekoslav Večković", url = "https://github.com/vjekoslavveckovic"},
 ]
 dependencies = [
     # Core data processing
@@ -41,4 +41,18 @@ dev = [
 allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
-packages = ["forecast_library.py", "tag_library.py", "setup_library.py"]
+include = [
+    "__init__.py",
+    "forecast_library.py",
+    "setup_library.py",
+    "tag_library.py",
+]
+
+[tool.pytest.ini_options]
+# Tests must be run from the apps/ directory for correct imports
+# Use: cd apps && SAPPHIRE_TEST_ENV=True uv run --directory iEasyHydroForecast pytest iEasyHydroForecast/tests/
+pythonpath = [".."]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
