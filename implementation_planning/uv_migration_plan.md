@@ -82,14 +82,16 @@ Phase 6: Flip :latest to Python 3.12 + uv, archive :py311
 
 ---
 
-## Pre-Migration: Create v1.0.0 Release (Python 3.11 Baseline)
+## Pre-Migration: Create Release (Python 3.11 Baseline)
 
-**Goal**: Tag the current `main` branch as v1.0.0 before starting migration. This provides a stable rollback point and reference for users who need to stay on Python 3.11.
+**Goal**: Tag the current `main` branch before starting migration. This provides a stable rollback point and reference for users who need to stay on Python 3.11.
+
+**Status**: ✅ Completed — Release `v0.2.0` created.
 
 ### Branch Situation
 
 ```
-main ────────────────────────────── (tested, will be tagged as v1.0.0)
+main ────────────────────────────── (tested, will be tagged as v0.2.0)
   │
   ├── local ─────────────────────── (deployed at Kyrgyz/Tajik, behind main)
   │
@@ -110,76 +112,27 @@ Check that CI is passing on GitHub for `main` branch.
 
 ### Step -1.2: Create Release Tag
 
-```bash
-git tag -a v1.0.0 -m "Release v1.0.0 - Python 3.11 baseline
-
-Last stable release before Python 3.12 + uv migration.
-
-Features:
-- Python 3.11 with pip
-- All forecast modules (linear regression, ML, conceptual)
-- Forecast dashboard and configuration dashboard
-- Pipeline orchestration with Luigi
-- Production-ready for Central Asia deployments
-
-Use this release if you need to stay on Python 3.11."
-
-git push origin v1.0.0
-```
+✅ **Completed**: Release `v0.2.0` created and pushed.
 
 ### Step -1.3: Create GitHub Release
 
-1. Go to: https://github.com/hydrosolutions/SAPPHIRE_Forecast_Tools/releases/new
-2. Select tag: `v1.0.0`
-3. Title: `v1.0.0 - Python 3.11 Baseline`
-4. Description:
-
-```markdown
-## Release v1.0.0 - Python 3.11 Baseline
-
-This is the last stable release using Python 3.11 and pip for dependency management.
-
-### What's Included
-- All forecast modules (linear regression, machine learning, conceptual models)
-- Forecast dashboard
-- Pipeline orchestration
-- Configuration dashboard
-
-### Docker Images
-All images at this point use Python 3.11. After this release, we will begin
-migrating to Python 3.12 + uv package manager.
-
-### For Users Needing Python 3.11
-If you need to stay on Python 3.11, you can:
-- Use this tagged release: `git checkout v1.0.0`
-- Or after migration, use the `:py311` Docker image tags
-
-### What's Next
-The next release will migrate to Python 3.12 and uv package manager for
-improved performance and modern dependency management.
-```
-
-5. Click "Publish release"
+✅ **Completed**: GitHub release `v0.2.0` published.
 
 ### Step -1.4: Create Migration Branch
 
-```bash
-git checkout main
-git checkout -b feature/python312-uv
-git push -u origin feature/python312-uv
-```
+✅ **Completed**: Migration branch created and active.
 
 All migration work (Phases 0-6) will be done on this branch.
 
 ### Step -1.5: (Optional) Tag Docker Images with Version
 
-Manually tag current Docker images with v1.0.0:
+Manually tag current Docker images with version tag:
 
 ```bash
 # For each image (run once per image)
 docker pull mabesa/sapphire-pythonbaseimage:latest
-docker tag mabesa/sapphire-pythonbaseimage:latest mabesa/sapphire-pythonbaseimage:v1.0.0
-docker push mabesa/sapphire-pythonbaseimage:v1.0.0
+docker tag mabesa/sapphire-pythonbaseimage:latest mabesa/sapphire-pythonbaseimage:v0.2.0
+docker push mabesa/sapphire-pythonbaseimage:v0.2.0
 
 # Repeat for other images as needed
 ```
@@ -978,7 +931,7 @@ During migration, align versions across modules:
 
 | Phase | Module | Status | Image Tag | Notes |
 |-------|--------|--------|-----------|-------|
-| Pre | Create v1.0.0 release | Not started | `:latest` | Python 3.11 baseline |
+| Pre | Create v0.2.0 release | ✅ Completed | `:latest` | Python 3.11 baseline |
 | 0 | Create `:py312` base image | Not started | `:py312` | Parallel to `:latest` |
 | 1 | iEasyHydroForecast | Not started | `:py312` | Shared library + uv |
 | 2 | preprocessing_runoff | Not started | `:py312` | Pilot module |
@@ -998,6 +951,7 @@ During migration, align versions across modules:
 - [uv documentation](https://docs.astral.sh/uv/)
 - [uv with Docker](https://docs.astral.sh/uv/guides/integration/docker/)
 - [uv workspaces](https://docs.astral.sh/uv/concepts/projects/workspaces/)
+- [Docker Security Maintenance](../doc/maintenance/docker-security-maintenance.md) - Quarterly rebuild process and vulnerability management
 
 ---
 

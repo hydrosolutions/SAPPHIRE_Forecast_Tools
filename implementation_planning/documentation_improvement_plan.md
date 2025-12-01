@@ -141,14 +141,33 @@ Proposed new README structure:
 - [ ] Document versioning strategy
 - [ ] Add release checklist
 
+#### Step 5.4: Maintenance Documentation
+- [x] Create `doc/maintenance/docker-security-maintenance.md` ✅ (2025-12-01)
+- [ ] Document update procedures for deployed systems
+- [ ] Create runbook for common operational tasks
+- [ ] Document backup and recovery procedures
+
 ---
 
 ### Phase 6: Documentation Infrastructure
 
-#### Step 6.1: Documentation Site (Optional)
-- [ ] Consider setting up GitHub Pages or ReadTheDocs
-- [ ] Organize documentation for web navigation
-- [ ] Add search functionality
+#### Step 6.1: Documentation Site (MkDocs + GitHub Pages)
+- [x] Set up MkDocs with Material theme ✅ (2025-12-01)
+- [x] Create `mkdocs.yml` configuration ✅ (2025-12-01)
+- [x] Create `doc/index.md` homepage ✅ (2025-12-01)
+- [x] Create `.github/workflows/deploy_docs.yml` ✅ (2025-12-01)
+- [ ] Enable GitHub Pages in repository settings:
+  1. Go to https://github.com/hydrosolutions/SAPPHIRE_forecast_tools/settings/pages
+  2. Under "Build and deployment" → Source: select **GitHub Actions**
+  3. Save
+- [ ] Test deployment with manual workflow trigger:
+  1. Go to https://github.com/hydrosolutions/SAPPHIRE_forecast_tools/actions
+  2. Select "Deploy Documentation" workflow
+  3. Click "Run workflow" → select branch → "Run workflow"
+  4. Wait for build to complete
+  5. Visit https://hydrosolutions.github.io/SAPPHIRE_forecast_tools/
+- [ ] (Optional) Enable auto-deploy: Uncomment the `push` trigger in `.github/workflows/deploy_docs.yml`
+- [ ] Add documentation badge to README
 
 #### Step 6.2: Automated Documentation
 - [ ] Add docstring extraction for Python code
@@ -206,6 +225,8 @@ The documentation improvement is complete when:
 | 1.4 | In progress | Partial - new structure partially implemented with Step 1.1 |
 | 2.1 | Not started | |
 | 2.2 | Not started | |
+| 5.4 | In progress | 2025-12-01 - Created docker-security-maintenance.md |
+| 6.1 | In progress | 2025-12-01 - MkDocs setup complete, pending GitHub Pages enablement |
 | ... | ... | |
 
 ---
