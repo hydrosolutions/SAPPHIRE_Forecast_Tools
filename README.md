@@ -16,7 +16,7 @@ A modular toolkit for operational hydrological forecasting that works at two lev
 
 ## Key Features
 
-- **Multiple forecast models** — Linear regression (period-wise aggregated auto-regressive), deep learning models (TIDE, TSMixer, TFT) for short-term forecasting, and airGR model suite with added glacier melt functionality
+- **Multiple forecast models** — Linear regression (temporally aggregated auto-regressive model with a direct forecasting framework), deep learning models (TIDE, TSMixer, TFT) for short-term forecasting, and airGR model suite with added glacier melt functionality
 - **Flexible data sources** — Optimized to link with [iEasyHydro High Frequency](https://hf.ieasyhydro.org) but also operational as standalone
 - **Forecast dashboard** — Interactive web interface for forecast analysis and production of forecast bulletins
 - **Smart workflow orchestration** — Luigi-based pipeline management for automated, scheduled forecasts

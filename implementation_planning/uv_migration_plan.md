@@ -1356,7 +1356,7 @@ If AGPL packages are found:
 |-------|--------|--------|-----------|---------------|-------|
 | Pre | Create v0.2.0 release | ✅ Completed | `:latest` | — | Python 3.11 baseline |
 | 0 | Create `:py312` base image | ✅ Completed | `:py312` | B | Minimal OS packages, uv 0.9.13 |
-| 1 | iEasyHydroForecast | Not started | `:py312` | B | Shared library + uv |
+| 1 | iEasyHydroForecast | ✅ Completed | `:py312` | B | pyproject.toml + uv.lock, 173 tests pass |
 | 2 | preprocessing_runoff | Not started | `:py312` | B | Pilot module |
 | 3a | preprocessing_gateway | Not started | `:py312` | B | |
 | 3b | preprocessing_station_forcing | Not started | `:py312` | B | |

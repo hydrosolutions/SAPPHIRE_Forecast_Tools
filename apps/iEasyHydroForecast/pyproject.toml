@@ -1,19 +1,44 @@
 [build-system]
-requires = ["setuptools>=64.0.0", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
 [project]
 name = "iEasyHydroForecast"
-version = "0.1"
+version = "0.1.0"
 description = "A package for hydrological forecasting"
 readme = "README.md"
+requires-python = ">=3.12"
 authors = [
-    {name = "Beatrice Marti", email = "marti@hydrosolutions.ch"}
+    {name = "Beatrice Marti", url = "https://github.com/mabesa"},
+    {name = "Sandro Hunziker", url = "https://github.com/sandrohuni"},
+    {name = "Maxat Pernebaev", url = "https://github.com/maxatp"},
+    {name = "Adrian Kreiner", url = "https://github.com/adriankreiner"},
+    {name = "Vjekoslav Večković", url = "https://github.com/vjekoslavveckovic"},
+    {name = "Aidar Zhumabaev", url = "https://github.com/LagmanEater"},
 ]
 dependencies = [
-    "pandas",
-    "scikit-learn"
+    # Core data processing
+    "pandas>=2.2.2",
+    "numpy>=1.26.4",
+    "scikit-learn>=1.5.0",
+    # Excel support (required by pandas for .xlsx files)
+    "openpyxl>=3.1.2",
+    # Configuration
+    "python-dotenv>=1.0.1",
+    # Timezone handling
+    "pytz>=2024.1",
+    # External SDK (brings in requests as transitive dependency)
+    "ieasyhydro-sdk @ git+https://github.com/hydrosolutions/ieasyhydro-python-sdk@master",
 ]
 
-[tool.setuptools]
-py-modules = ["forecast_library", "tag_library", "setup_library"]
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2.0",
+    "pre-commit>=3.7.0",
+]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["forecast_library.py", "tag_library.py", "setup_library.py"]
