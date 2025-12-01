@@ -1,0 +1,270 @@
+name: Quarterly Security Rebuild
+
+# Rebuilds all Docker images from fresh upstream to pick up security fixes
+# Runs quarterly or on-demand via manual trigger
+
+on:
+  schedule:
+    # Run at 00:00 UTC on first day of Jan, Apr, Jul, Oct
+    - cron: '0 0 1 1,4,7,10 *'
+  workflow_dispatch:
+    inputs:
+      skip_module_rebuild:
+        description: 'Rebuild only base image (skip module images)'
+        type: boolean
+        default: false
+
+env:
+  # Image names (same as deploy_main.yml)
+  BASE_IMAGE_NAME: mabesa/sapphire-pythonbaseimage
+  PIPELINE_IMAGE_NAME: mabesa/sapphire-pipeline
+  DASHBOARD_IMAGE_NAME: mabesa/sapphire-dashboard
+  PREPQ_IMAGE_NAME: mabesa/sapphire-preprunoff
+  PREPG_IMAGE_NAME: mabesa/sapphire-prepgateway
+  LINREG_IMAGE_NAME: mabesa/sapphire-linreg
+  ML_IMAGE_NAME: mabesa/sapphire-ml
+  POSTPQ_IMAGE_NAME: mabesa/sapphire-postprocessing
+  RERUN_IMAGE_NAME: mabesa/sapphire-rerun
+  CONCMOD_IMAGE_NAME: mabesa/sapphire-conceptmod
+
+jobs:
+  # Calculate quarterly tag (e.g., 2025-Q1)
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      quarterly_tag: ${{ steps.calc.outputs.quarterly_tag }}
+    steps:
+      - name: Calculate quarterly tag
+        id: calc
+        run: |
+          QUARTER=$(( ($(date +%-m) - 1) / 3 + 1 ))
+          QUARTERLY_TAG="$(date +%Y)-Q${QUARTER}"
+          echo "quarterly_tag=${QUARTERLY_TAG}" >> $GITHUB_OUTPUT
+          echo "Quarterly tag: ${QUARTERLY_TAG}"
+
+  # Build base image from fresh upstream
+  rebuild-base-image:
+    needs: setup
+    runs-on: ubuntu-latest
+    name: Rebuild base image from fresh upstream
+    outputs:
+      image_built: ${{ steps.build.outputs.image_built }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build base image
+        id: build
+        run: |
+          DOCKER_BUILDKIT=1 docker build --pull --no-cache \
+            -t "${{ env.BASE_IMAGE_NAME }}:rebuild-test" \
+            -f ./apps/docker_base_image/Dockerfile .
+          echo "image_built=true" >> $GITHUB_OUTPUT
+
+      - name: Save image for testing
+        run: |
+          docker save "${{ env.BASE_IMAGE_NAME }}:rebuild-test" > /tmp/base-image.tar
+
+      - name: Upload image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: base-image
+          path: /tmp/base-image.tar
+          retention-days: 1
+
+  # Run tests against rebuilt base image
+  test-base-image:
+    needs: [setup, rebuild-base-image]
+    runs-on: ubuntu-latest
+    name: Test rebuilt base image
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Set PYTHONPATH
+        run: |
+          echo "PYTHONPATH=${GITHUB_WORKSPACE}/apps/iEasyHydroForecast" >> $GITHUB_ENV
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r ./apps/iEasyHydroForecast/requirements.txt
+          python -m pip install --no-cache-dir --upgrade --force-reinstall "git+https://github.com/hydrosolutions/ieasyhydro-python-sdk@master"
+          python -m pip install -e ./apps/iEasyHydroForecast
+
+      - name: Run iEasyHydroForecast tests
+        working-directory: ./apps
+        run: |
+          SAPPHIRE_TEST_ENV=True python -m unittest discover -s iEasyHydroForecast/tests -p 'test_*.py'
+
+      - name: Download base image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: base-image
+          path: /tmp
+
+      - name: Load and verify base image
+        run: |
+          docker load < /tmp/base-image.tar
+          echo "Verifying key imports in container..."
+          docker run --rm "${{ env.BASE_IMAGE_NAME }}:rebuild-test" \
+            python -c "import pandas; import numpy; import sklearn; print('All imports OK')"
+
+  # Push base image after tests pass
+  push-base-image:
+    needs: [setup, test-base-image]
+    runs-on: ubuntu-latest
+    name: Push base image with quarterly tag
+    steps:
+      - name: Download base image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: base-image
+          path: /tmp
+
+      - name: Load base image
+        run: docker load < /tmp/base-image.tar
+
+      - name: Log in to Docker registry
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Tag and push base image
+        run: |
+          # Tag with :latest
+          docker tag "${{ env.BASE_IMAGE_NAME }}:rebuild-test" "${{ env.BASE_IMAGE_NAME }}:latest"
+          docker push "${{ env.BASE_IMAGE_NAME }}:latest"
+
+          # Tag with quarterly tag (e.g., :2025-Q1)
+          docker tag "${{ env.BASE_IMAGE_NAME }}:rebuild-test" "${{ env.BASE_IMAGE_NAME }}:${{ needs.setup.outputs.quarterly_tag }}"
+          docker push "${{ env.BASE_IMAGE_NAME }}:${{ needs.setup.outputs.quarterly_tag }}"
+
+          echo "Pushed ${{ env.BASE_IMAGE_NAME }}:latest"
+          echo "Pushed ${{ env.BASE_IMAGE_NAME }}:${{ needs.setup.outputs.quarterly_tag }}"
+
+  # Rebuild all module images (only if not skipped)
+  rebuild-module-images:
+    needs: [setup, push-base-image]
+    if: ${{ github.event.inputs.skip_module_rebuild != 'true' }}
+    runs-on: ubuntu-latest
+    name: Rebuild ${{ matrix.module.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          - name: pipeline
+            image_env: PIPELINE_IMAGE_NAME
+            dockerfile: ./apps/pipeline/Dockerfile
+          - name: dashboard
+            image_env: DASHBOARD_IMAGE_NAME
+            dockerfile: ./apps/forecast_dashboard/Dockerfile
+          - name: preprunoff
+            image_env: PREPQ_IMAGE_NAME
+            dockerfile: ./apps/preprocessing_runoff/Dockerfile
+          - name: prepgateway
+            image_env: PREPG_IMAGE_NAME
+            dockerfile: ./apps/preprocessing_gateway/Dockerfile
+          - name: linreg
+            image_env: LINREG_IMAGE_NAME
+            dockerfile: ./apps/linear_regression/Dockerfile
+          - name: ml
+            image_env: ML_IMAGE_NAME
+            dockerfile: ./apps/machine_learning/Dockerfile
+          - name: postprocessing
+            image_env: POSTPQ_IMAGE_NAME
+            dockerfile: ./apps/postprocessing_forecasts/Dockerfile
+          - name: rerun
+            image_env: RERUN_IMAGE_NAME
+            dockerfile: ./apps/reset_forecast_run_date/Dockerfile
+          - name: conceptmod
+            image_env: CONCMOD_IMAGE_NAME
+            dockerfile: ./apps/conceptual_model/Dockerfile
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Log in to Docker registry
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Get image name
+        id: image
+        run: |
+          case "${{ matrix.module.image_env }}" in
+            PIPELINE_IMAGE_NAME) IMAGE="${{ env.PIPELINE_IMAGE_NAME }}" ;;
+            DASHBOARD_IMAGE_NAME) IMAGE="${{ env.DASHBOARD_IMAGE_NAME }}" ;;
+            PREPQ_IMAGE_NAME) IMAGE="${{ env.PREPQ_IMAGE_NAME }}" ;;
+            PREPG_IMAGE_NAME) IMAGE="${{ env.PREPG_IMAGE_NAME }}" ;;
+            LINREG_IMAGE_NAME) IMAGE="${{ env.LINREG_IMAGE_NAME }}" ;;
+            ML_IMAGE_NAME) IMAGE="${{ env.ML_IMAGE_NAME }}" ;;
+            POSTPQ_IMAGE_NAME) IMAGE="${{ env.POSTPQ_IMAGE_NAME }}" ;;
+            RERUN_IMAGE_NAME) IMAGE="${{ env.RERUN_IMAGE_NAME }}" ;;
+            CONCMOD_IMAGE_NAME) IMAGE="${{ env.CONCMOD_IMAGE_NAME }}" ;;
+          esac
+          echo "image_name=${IMAGE}" >> $GITHUB_OUTPUT
+
+      - name: Build module image
+        run: |
+          docker build --pull --no-cache \
+            -t "${{ steps.image.outputs.image_name }}:latest" \
+            -f ${{ matrix.module.dockerfile }} .
+
+      - name: Push with latest and quarterly tags
+        run: |
+          # Push :latest
+          docker push "${{ steps.image.outputs.image_name }}:latest"
+
+          # Tag and push quarterly
+          docker tag "${{ steps.image.outputs.image_name }}:latest" \
+            "${{ steps.image.outputs.image_name }}:${{ needs.setup.outputs.quarterly_tag }}"
+          docker push "${{ steps.image.outputs.image_name }}:${{ needs.setup.outputs.quarterly_tag }}"
+
+  # Generate summary
+  summarize:
+    needs: [setup, push-base-image, rebuild-module-images]
+    if: always()
+    runs-on: ubuntu-latest
+    name: Generate rebuild summary
+    steps:
+      - name: Generate summary
+        run: |
+          echo "# Quarterly Security Rebuild Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Quarterly Tag:** ${{ needs.setup.outputs.quarterly_tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Images Rebuilt" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Image | :latest | :${{ needs.setup.outputs.quarterly_tag }} |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|---------|------|" >> $GITHUB_STEP_SUMMARY
+          echo "| ${{ env.BASE_IMAGE_NAME }} | ✅ | ✅ |" >> $GITHUB_STEP_SUMMARY
+          if [[ "${{ github.event.inputs.skip_module_rebuild }}" != "true" ]]; then
+            echo "| ${{ env.PIPELINE_IMAGE_NAME }} | ✅ | ✅ |" >> $GITHUB_STEP_SUMMARY
+            echo "| ${{ env.DASHBOARD_IMAGE_NAME }} | ✅ | ✅ |" >> $GITHUB_STEP_SUMMARY
+            echo "| ${{ env.PREPQ_IMAGE_NAME }} | ✅ | ✅ |" >> $GITHUB_STEP_SUMMARY
+            echo "| ${{ env.PREPG_IMAGE_NAME }} | ✅ | ✅ |" >> $GITHUB_STEP_SUMMARY
+            echo "| ${{ env.LINREG_IMAGE_NAME }} | ✅ | ✅ |" >> $GITHUB_STEP_SUMMARY
+            echo "| ${{ env.ML_IMAGE_NAME }} | ✅ | ✅ |" >> $GITHUB_STEP_SUMMARY
+            echo "| ${{ env.POSTPQ_IMAGE_NAME }} | ✅ | ✅ |" >> $GITHUB_STEP_SUMMARY
+            echo "| ${{ env.RERUN_IMAGE_NAME }} | ✅ | ✅ |" >> $GITHUB_STEP_SUMMARY
+            echo "| ${{ env.CONCMOD_IMAGE_NAME }} | ✅ | ✅ |" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Reproducibility" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "To pin to this quarter's images, use:" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`dockerfile" >> $GITHUB_STEP_SUMMARY
+          echo "FROM mabesa/sapphire-pythonbaseimage:${{ needs.setup.outputs.quarterly_tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
