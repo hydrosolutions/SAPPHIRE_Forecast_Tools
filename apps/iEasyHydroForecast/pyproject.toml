@@ -7,7 +7,7 @@ name = "iEasyHydroForecast"
 version = "0.1.0"
 description = "A package for hydrological forecasting"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.11"
 authors = [
     {name = "Beatrice Marti", url = "https://github.com/mabesa"},
     {name = "Sandro Hunziker", url = "https://github.com/sandrohuni"},
