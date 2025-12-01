@@ -1,5 +1,8 @@
 ![test and deploy](https://github.com/hydrosolutions/SAPPHIRE_Forecast_Tools/actions/workflows/test_deploy_main.yml/badge.svg)
 ![status: active development](https://img.shields.io/badge/status-active%20development-yellow)
+![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
+![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)
+![Docker](https://img.shields.io/badge/docker-ready-blue.svg?logo=docker)
 
 # 💎 SAPPHIRE Forecast Tools
 
