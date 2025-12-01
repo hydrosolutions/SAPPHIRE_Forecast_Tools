@@ -313,6 +313,33 @@ jobs:
       run: |
         SAPPHIRE_TEST_ENV=True pytest preprocessing_runoff/test
 
+  # Test preprocessing runoff with Python 3.12 + uv
+  test_preprocessing_runoff_py312:
+    runs-on: ubuntu-latest
+    name: Test pre-processing of runoff (Python 3.12 + uv)
+
+    steps:
+    - name: Checkout the commit that triggered the workflow
+      uses: actions/checkout@v4
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v5
+      with:
+        version: "latest"
+
+    - name: Set up Python 3.12 with uv
+      run: uv python install 3.12
+
+    - name: Install dependencies with uv
+      working-directory: ./apps/preprocessing_runoff
+      run: |
+        uv sync --all-extras
+
+    - name: Test with pytest
+      working-directory: ./apps
+      run: |
+        SAPPHIRE_TEST_ENV=True preprocessing_runoff/.venv/bin/python -m pytest preprocessing_runoff/test/ -v
+
   push_preprocessing_runoff_to_Dckerhub:
     needs: [test_preprocessing_runoff, test_ieasyhydroforecast]
     runs-on: ubuntu-latest
@@ -342,6 +369,37 @@ jobs:
       - name: Push the image to Dockerhub
         run: |
           docker push "${{ env.PREPQ_IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
+
+  # Build and push preprocessing runoff Python 3.12 + uv image
+  push_preprocessing_runoff_py312_to_Dockerhub:
+    needs: [test_preprocessing_runoff_py312, test_ieasyhydroforecast_py312, build_and_push_python_312_base_image]
+    runs-on: ubuntu-latest
+    name: Build and push preprocessing runoff (Python 3.12 + uv)
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to the Docker registry
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build and push Docker image with attestation
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./apps/preprocessing_runoff/Dockerfile.py312
+          push: true
+          tags: ${{ env.PREPQ_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}
+          provenance: true
+          sbom: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
 
   set_up_preprocessing_gateway:
@@ -688,6 +746,7 @@ jobs:
       build_and_push_pipeline_image,
       push_conceptual_model_to_Dckerhub,
       push_preprocessing_runoff_to_Dckerhub,
+      push_preprocessing_runoff_py312_to_Dockerhub,
       push_preprocessing_gateway_to_Dckerhub,
       push_machine_learning_to_Dckerhub,
       push_reset_forecast_to_Dckerhub,
@@ -714,7 +773,8 @@ jobs:
           echo "- ${{ env.DASHBOARD_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" >> $GITHUB_STEP_SUMMARY
           echo "- ${{ env.POSTPQ_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "## Migration Testing Image (:py312 - Python 3.12 + uv)" >> $GITHUB_STEP_SUMMARY
+          echo "## Migration Testing Images (:py312 - Python 3.12 + uv)" >> $GITHUB_STEP_SUMMARY
           echo "- ${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" >> $GITHUB_STEP_SUMMARY
+          echo "- ${{ env.PREPQ_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Note:** Production images use Python 3.11 + pip. The :py312 image is for migration testing only." >> $GITHUB_STEP_SUMMARY
+          echo "**Note:** Production images use Python 3.11 + pip. The :py312 images are for migration testing only." >> $GITHUB_STEP_SUMMARY
