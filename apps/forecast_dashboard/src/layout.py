@@ -80,7 +80,26 @@ def define_disclaimer(_, in_docker_flag):
         logos,
         pn.pane.HTML("<p> </p>"),
         pn.pane.Markdown(_("disclaimer_waranty")),
-        pn.pane.Markdown(_("Last updated on ") + dt.datetime.now().strftime("%b %d, %Y") + ".")
+        pn.pane.Markdown(_("Last updated on ") + dt.datetime.now().strftime("%b %d, %Y") + "."),
+        pn.pane.HTML('''
+            <div style="font-size: 11px; color: #666; padding: 10px; border-top: 1px solid #ddd; margin-top: 20px;">
+                <strong>Open Source Attribution</strong><br>
+                SAPPHIRE Forecast Tools is open-source software licensed under the 
+                <a href="https://github.com/hydrosolutions/SAPPHIRE_forecast_tools/blob/main/LICENSE" target="_blank">MIT License</a>.<br><br>
+                Built with: 
+                <a href="https://panel.holoviz.org/" target="_blank">Panel</a>, 
+                <a href="https://bokeh.org/" target="_blank">Bokeh</a>, 
+                <a href="https://holoviews.org/" target="_blank">HoloViews</a> (BSD-3-Clause) · 
+                <a href="https://luigi.readthedocs.io/" target="_blank">Luigi</a> (Apache 2.0) · 
+                <a href="https://unit8co.github.io/darts/" target="_blank">Darts</a> (Apache 2.0) · 
+                <a href="https://pytorch.org/" target="_blank">PyTorch</a> (BSD) · 
+                <a href="https://numpy.org/" target="_blank">NumPy</a>, 
+                <a href="https://pandas.pydata.org/" target="_blank">Pandas</a>, 
+                <a href="https://scikit-learn.org/" target="_blank">scikit-learn</a> (BSD)<br>
+                <a href="https://github.com/hydrosolutions/SAPPHIRE_forecast_tools" target="_blank">Source Code</a> · 
+                <a href="https://hydrosolutions.github.io/SAPPHIRE_forecast_tools/" target="_blank">Documentation</a>
+            </div>
+        ''')
     )
 
 def define_tabs(_, predictors_warning, forecast_warning,

@@ -143,6 +143,8 @@ Proposed new README structure:
 
 #### Step 5.4: Maintenance Documentation
 - [x] Create `doc/maintenance/docker-security-maintenance.md` ✅ (2025-12-01)
+- [x] Add security disclaimer and liability section ✅ (2025-12-01)
+- [x] Add template response for security inquiries ✅ (2025-12-01)
 - [ ] Document update procedures for deployed systems
 - [ ] Create runbook for common operational tasks
 - [ ] Document backup and recovery procedures
@@ -225,7 +227,7 @@ The documentation improvement is complete when:
 | 1.4 | In progress | Partial - new structure partially implemented with Step 1.1 |
 | 2.1 | Not started | |
 | 2.2 | Not started | |
-| 5.4 | In progress | 2025-12-01 - Created docker-security-maintenance.md |
+| 5.4 | ✅ Completed | 2025-12-01 - Created docker-security-maintenance.md + security disclaimer + template response |
 | 6.1 | In progress | 2025-12-01 - MkDocs setup complete, pending GitHub Pages enablement |
 | ... | ... | |
 
