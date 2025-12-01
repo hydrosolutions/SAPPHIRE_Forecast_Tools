@@ -3,6 +3,7 @@ name: Test Build Docker Images
 env:
   # Use a test tag to avoid conflicts with production images
   IMAGE_TAG: build-test
+  IMAGE_TAG_PY312: py312
 
   # Define image names (same as in deploy_main.yml)
   BASE_IMAGE_NAME: mabesa/sapphire-pythonbaseimage
@@ -126,16 +127,16 @@ jobs:
       - name: Build Docker image
         run: |
           DOCKER_BUILDKIT=1 docker build \
-          -t "${{ env.BASE_IMAGE_NAME }}:py312-test" \
+          -t "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" \
           -f ./apps/docker_base_image/Dockerfile.py312 .
       - name: Test Base Image
         run: |
           echo "Verifying Python version..."
-          docker run --rm "${{ env.BASE_IMAGE_NAME }}:py312-test" python --version
+          docker run --rm "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" python --version
           echo "Verifying uv is available..."
-          docker run --rm "${{ env.BASE_IMAGE_NAME }}:py312-test" uv --version
+          docker run --rm "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" uv --version
           echo "Verifying key packages..."
-          docker run --rm "${{ env.BASE_IMAGE_NAME }}:py312-test" \
+          docker run --rm "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" \
             python -c "import pandas; import numpy; import sklearn; print('All imports OK')"
 
   # Build but don't push the pipeline image
@@ -261,10 +262,15 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Build Docker image
+      - name: Build base image first (required as dependency)
+        run: |
+          DOCKER_BUILDKIT=1 docker build \
+          -t "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" \
+          -f ./apps/docker_base_image/Dockerfile.py312 .
+      - name: Build preprocessing runoff py312 image
         run: |
           docker build \
-          -t "${{ env.PREPQ_IMAGE_NAME }}:py312-test" \
+          -t "${{ env.PREPQ_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" \
           -f ./apps/preprocessing_runoff/Dockerfile.py312 .
 
   # Set up the preprocessing gateway environment
@@ -571,7 +577,7 @@ jobs:
           echo "- ${{ env.PREPQ_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "## Python 3.12 + uv (migration testing)" >> $GITHUB_STEP_SUMMARY
-          echo "- ${{ env.BASE_IMAGE_NAME }}:py312-test" >> $GITHUB_STEP_SUMMARY
-          echo "- ${{ env.PREPQ_IMAGE_NAME }}:py312-test" >> $GITHUB_STEP_SUMMARY
+          echo "- ${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" >> $GITHUB_STEP_SUMMARY
+          echo "- ${{ env.PREPQ_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Note:** These images were built for testing only and not pushed to DockerHub." >> $GITHUB_STEP_SUMMARY
