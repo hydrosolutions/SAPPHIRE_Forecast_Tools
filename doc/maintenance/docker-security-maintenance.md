@@ -175,3 +175,57 @@ If you need stability over newest security fixes:
 For questions about security maintenance:
 - Check existing [GitHub Issues](https://github.com/hydrosolutions/SAPPHIRE_forecast_tools/issues)
 - Open a new issue if needed
+
+---
+
+## Security Disclaimer and Liability
+
+### Software Provided "As-Is"
+
+SAPPHIRE Forecast Tools is provided under the MIT License on an "as-is" basis. While we make reasonable efforts to maintain security through quarterly rebuilds and dependency updates, **hydrosolutions GmbH and contributors cannot guarantee the absence of security vulnerabilities** in the software or its dependencies.
+
+### Deploying Organization Responsibilities
+
+Organizations deploying SAPPHIRE Forecast Tools are responsible for:
+
+1. **Security assessment** - Evaluating whether the software meets their security requirements
+2. **Infrastructure security** - Securing the host systems, networks, and access controls
+3. **Monitoring** - Monitoring for security issues in their deployment
+4. **Updates** - Keeping deployments updated with latest images
+5. **Data protection** - Protecting sensitive data processed by the system
+6. **Compliance** - Ensuring deployment meets their regulatory requirements
+
+### Non-Root Container Mode
+
+Our default images run as root for cross-platform compatibility. For organizations requiring non-root containers:
+
+- We provide documented runtime override options in the [UV Migration Plan](../../implementation_planning/uv_migration_plan.md#2-non-root-user-strategy)
+- The deploying organization assumes responsibility for host permission management
+- Permission issues from non-root mode are outside our support scope
+
+### Template Response for Security Inquiries
+
+When partners raise security concerns, use this response:
+
+> SAPPHIRE Forecast Tools is open-source software provided under the MIT License. Our images run as root by default for cross-platform compatibility across development (macOS) and production (Ubuntu) environments.
+>
+> For organizations requiring non-root containers, we provide documented runtime override options. The deploying organization assumes responsibility for:
+> - Host permission management when enabling non-root mode
+> - Security assessment of the deployment
+> - Infrastructure and network security
+> - Compliance with their regulatory requirements
+>
+> We maintain the software through quarterly security rebuilds and welcome security issue reports via GitHub. However, as stated in our MIT License, the software is provided "as-is" without warranty.
+
+### Reporting Security Issues
+
+If you discover a security vulnerability:
+
+1. **Do not** open a public GitHub issue
+2. Contact hydrosolutions directly via email
+3. Provide details of the vulnerability
+4. Allow reasonable time for a fix before public disclosure
+
+### License
+
+This software is licensed under the [MIT License](../../LICENSE).

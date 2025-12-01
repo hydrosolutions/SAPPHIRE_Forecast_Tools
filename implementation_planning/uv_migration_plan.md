@@ -6,6 +6,34 @@ This plan outlines the migration from `pip` + `requirements.txt` to `uv` for dep
 
 **Combined with Python 3.12 upgrade** — The migration will also upgrade from Python 3.11 to Python 3.12 for improved performance, better error messages, and extended security support (EOL: Oct 2028).
 
+**Combined with Docker image health improvement** — The migration will address DockerHub Scout security grades by using fresh base images, updated dependencies, and minimal image layers.
+
+---
+
+## Docker Image Health Status (Pre-Migration)
+
+| Image | Current Grade | Primary Issues |
+|-------|---------------|----------------|
+| sapphire-pythonbaseimage | C | OS packages, Python deps |
+| sapphire-ml | E/F | torch, darts dependencies |
+| sapphire-dashboard | C | Panel/Bokeh dependencies |
+| sapphire-preprunoff | C | Base image inheritance |
+| sapphire-prepgateway | C | Base image inheritance |
+| sapphire-linreg | C | Base image inheritance |
+| sapphire-postprocessing | D | Base image inheritance |
+| sapphire-conceptmod | C | R packages |
+| sapphire-pipeline | C | Base image inheritance |
+| sapphire-rerun | C | Base image inheritance |
+
+### Health Grade Targets
+
+| Grade | Meaning | Target |
+|-------|---------|--------|
+| A | No vulnerabilities | Ideal, may not be achievable |
+| B | Low severity only | **Target for most images** |
+| C | Medium severity | Acceptable minimum |
+| D/E/F | High/Critical | **Must improve** |
+
 ---
 
 ## Current State Analysis
@@ -927,22 +955,397 @@ During migration, align versions across modules:
 
 ---
 
+## Docker Image Health Improvement Strategy
+
+The migration to Python 3.12 + uv provides an opportunity to significantly improve DockerHub Scout health grades.
+
+### Key Strategies
+
+#### 1. Use Fresh Base Images with `--pull`
+
+Always pull the latest upstream base image:
+
+```dockerfile
+# In Dockerfile
+FROM python:3.12-slim-bookworm
+
+# In build command
+docker build --pull --no-cache ...
+```
+
+This ensures OS-level security patches are included.
+
+#### 2. Minimize OS Packages
+
+Current base image installs many OS packages. Review and remove unnecessary ones:
+
+```dockerfile
+# Before (many packages)
+RUN apt-get install -y gcc git libkrb5-dev libtasn1-6 libpcre2-dev \
+    openssl libssl-dev libncurses-dev binutils openssh-server \
+    libtiff5-dev libpcre3-dev gnutls-bin libc6 sudo
+
+# After (minimal - only what's needed for pip/build)
+RUN apt-get install -y --no-install-recommends \
+    gcc \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+```
+
+#### 3. Use Multi-Stage Builds
+
+Separate build dependencies from runtime:
+
+```dockerfile
+# Build stage - has compilers
+FROM python:3.12-slim-bookworm AS builder
+RUN apt-get update && apt-get install -y gcc
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/
+COPY . /app
+WORKDIR /app
+RUN uv sync --frozen --no-dev
+
+# Runtime stage - minimal
+FROM python:3.12-slim-bookworm AS runtime
+COPY --from=builder /app/.venv /app/.venv
+ENV PATH="/app/.venv/bin:$PATH"
+# No gcc, no build tools in final image
+```
+
+#### 4. Pin and Update Dependencies
+
+Use uv lock files to ensure consistent, auditable dependencies:
+
+```bash
+# Update all dependencies to latest compatible versions
+uv lock --upgrade
+
+# Update specific package
+uv lock --upgrade-package requests
+```
+
+#### 5. Address Known CVEs
+
+For packages with known CVEs:
+
+| Package | Issue | Solution |
+|---------|-------|----------|
+| setuptools | CVE in older versions | Use `>=70.0.0` |
+| requests | Various CVEs | Use `>=2.32.0` |
+| urllib3 | CVE-2023-45803 | Use `>=2.0.7` |
+| certifi | Certificate issues | Use latest |
+
+#### 6. Special Case: ML Image (E/F Grade)
+
+The ML image has the worst grade due to torch/darts. This is a structural challenge inherent to deep learning dependencies.
+
+##### Why torch/darts Creates Unavoidable Vulnerability Accumulation
+
+**PyTorch's Massive Footprint:**
+- ~2GB package with CUDA binaries, C++ runtime libraries, and 150+ transitive dependencies
+- Bundles compiled components (libtorch, libcuda stubs, NCCL) that contain C/C++ code with potential CVEs
+- Many dependencies are maintained by different organizations with varying security practices
+
+**Darts' Dependency Chain:**
+- Darts is a time series forecasting library that depends on PyTorch, TensorFlow (optional), statsmodels, and many scientific computing packages
+- Each major dependency brings its own transitive dependencies
+- A typical darts installation resolves to 300-500 packages
+
+**CVE Accumulation Example:**
+```
+darts → torch → libtorch → libcuda → (CVEs in NVIDIA libraries)
+      → numpy → (CVEs in C extensions)
+      → scipy → (CVEs in Fortran/C code)
+      → pandas → (CVEs in cython extensions)
+      → pytorch-lightning → (transitive CVEs)
+```
+
+**Quantified Impact:**
+- Simple modules (e.g., preprocessing): 50-80 packages → 7-15 CVEs typical
+- ML module with darts+torch: 400-500 packages → 35-55 CVEs typical
+- Most CVEs are in low-level libraries we don't directly use but cannot remove
+
+##### Why We Accept C/D Grade for ML Image
+
+1. **Industry reality** - PyTorch/TensorFlow images from major organizations (Google, Meta, NVIDIA) also show similar grades on DockerHub Scout
+2. **Isolated execution** - ML containers run forecasts and exit; no persistent network exposure
+3. **Unused code paths** - Many CVEs are in CUDA/GPU code we don't use (CPU-only inference)
+4. **No practical alternative** - Cannot remove torch without losing ML capability
+
+##### Mitigation Strategies
+
+1. **Accept higher risk** - ML dependencies are large and complex (current approach)
+2. **Use official PyTorch image** - Better maintained base:
+   ```dockerfile
+   FROM pytorch/pytorch:2.8.0-py3.12-cuda12.1-cudnn9-runtime
+   ```
+3. **Pin to specific versions** - Known-good combinations:
+   ```toml
+   torch = "==2.8.0"
+   darts = "==0.35.0"
+   ```
+4. **CPU-only build** - Smaller attack surface:
+   ```bash
+   pip install torch --index-url https://download.pytorch.org/whl/cpu
+   ```
+5. **Quarterly rebuilds** - Pick up security patches in upstream dependencies
+
+### Per-Phase Health Checks
+
+Add health grade verification to each migration phase:
+
+| Phase | Action | Health Target |
+|-------|--------|---------------|
+| 0 | Base image with minimal OS packages | B or better |
+| 1-5 | Module images inherit improved base | C or better |
+| 4b | ML image - document known issues | D acceptable |
+| 6 | Final verification before flip | All C or better |
+
+### Monitoring Health After Migration
+
+1. Check DockerHub Scout after each phase
+2. Document any CVEs that cannot be fixed (no upstream fix)
+3. Quarterly rebuilds (via `scheduled_security_rebuild.yml`) keep images fresh
+
+---
+
+## DockerHub Scout Compliance
+
+DockerHub Scout checks several security and best-practice criteria. Here's our strategy for each:
+
+### Scout Check Summary
+
+| Check | Current Status | Priority | Strategy |
+|-------|---------------|----------|----------|
+| High-profile vulnerabilities | Flagged | High | Fresh base images + updated deps |
+| Fixable critical/high CVEs | Flagged | High | `uv lock --upgrade` during migration |
+| Unapproved base images | N/A | Skip | DockerHub org policy (not relevant for open source) |
+| Missing supply chain attestation | Failing | Medium | Add SLSA provenance to builds |
+| Outdated base images | Flagged | High | `--pull --no-cache` in builds |
+| AGPL v3 licenses found | Flagged | Low | Review and document |
+| No default non-root user | Failing | Medium | Careful implementation (see below) |
+
+### 1. Supply Chain Attestation (SLSA Provenance)
+
+Add attestation to prove where images were built. This helps customers verify image authenticity.
+
+**Implementation**: Update `.github/workflows/deploy_main.yml` to use `docker/build-push-action` with attestation:
+
+```yaml
+- name: Build and push with attestation
+  uses: docker/build-push-action@v6
+  with:
+    context: .
+    file: ./apps/docker_base_image/Dockerfile
+    push: true
+    tags: ${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+    # Enable SLSA provenance attestation
+    provenance: true
+    sbom: true
+```
+
+**Requirements**:
+- Uses `docker/build-push-action@v6` (already standard)
+- Docker Buildx (included in GitHub Actions runners)
+- Attestations stored alongside image on DockerHub
+
+**Add to Phase 0**: Include attestation when building the new `:py312` base image.
+
+### 2. Non-Root User Strategy
+
+**Current State Analysis**:
+- Base image creates `appuser` (UID 1000) and switches to it at the end
+- Dashboard explicitly runs as `root` (required for Docker socket)
+- Pipeline uses `group_add` for Docker socket access
+- Volume mounts from host can have permission mismatches
+
+**The Permission Problem**:
+```
+Host filesystem        Container
+--------------        ---------
+/data (owned by       /app/data (appuser sees
+ host user 1001)       permission denied)
+```
+
+When host directories are mounted into containers, the container user (`appuser` UID 1000) may not have read/write access if the host files are owned by a different UID.
+
+**Cross-Platform UID Mismatch**:
+
+| Platform | Default UID | Default GID |
+|----------|-------------|-------------|
+| Ubuntu | 1000 | 1000 |
+| macOS | 501 | 20 (staff) |
+| Some servers | 1001+ | varies |
+
+This mismatch causes permission errors when developing on macOS and deploying on Ubuntu, or vice versa.
+
+#### Default Strategy: Keep Root for Volume-Writing Containers
+
+**Decision**: To avoid permission hassles across different platforms, we keep root as the runtime user for containers that write to mounted volumes. This is a pragmatic trade-off:
+
+| Image Category | User | Rationale |
+|----------------|------|-----------|
+| `sapphire-pythonbaseimage` | `appuser` | No mounted volume writes |
+| `preprocessing_*` | `root` | Writes to data volumes |
+| `linear_regression` | `root` | Writes to data volumes |
+| `machine_learning` | `root` | Writes to data volumes |
+| `postprocessing_*` | `root` | Writes to data volumes |
+| `conceptual_model` | `root` | Writes to data volumes |
+| `forecast_dashboard` | `root` | Docker socket + volume writes |
+| `pipeline` | `root` | Docker socket + orchestration |
+
+**Security Context**:
+- These containers run internal forecasting workloads, not public-facing services
+- Containers are ephemeral (run forecast, exit) with no persistent network exposure
+- Host volume isolation limits blast radius of any container compromise
+- Root inside container ≠ root on host (Docker's user namespace provides isolation)
+
+**DockerHub Scout**: This approach will fail the "non-root user" check. We accept this trade-off and document the rationale.
+
+#### Alternative Strategy: Non-Root for Security-Conscious Organizations
+
+If a partner organization requires non-root containers for compliance, they can enable non-root mode using runtime user override. **This requires the organization to manage host permissions.**
+
+##### Option A: Runtime User Override (Recommended for Partners)
+
+Override the user at runtime via docker-compose without rebuilding images:
+
+**Step 1**: Create `.env` file with host UID/GID:
+```bash
+# .env file - run this once on deployment machine
+echo "HOST_UID=$(id -u)" >> .env
+echo "HOST_GID=$(id -g)" >> .env
+```
+
+**Step 2**: Update `docker-compose.yml` services:
+```yaml
+services:
+  preprocessing-runoff:
+    image: mabesa/sapphire-preprunoff:latest
+    user: "${HOST_UID:-0}:${HOST_GID:-0}"  # 0 = root (default)
+    volumes:
+      - ./data:/app/data
+    environment:
+      - HOST_UID=${HOST_UID:-0}
+      - HOST_GID=${HOST_GID:-0}
+```
+
+**Step 3**: Ensure host directories match the UID:
+```bash
+# On deployment machine
+sudo chown -R $(id -u):$(id -g) /path/to/data
+```
+
+**Pros**:
+- Works on any platform (macOS UID 501, Ubuntu UID 1000, etc.)
+- No image rebuilds required
+- Organization controls their own security posture
+
+**Cons**:
+- Requires host permission management
+- More complex deployment documentation
+
+##### Option B: Build-Time UID Matching
+
+For organizations that build their own images:
+
+```dockerfile
+# In module Dockerfile
+ARG USER_ID=1000
+ARG GROUP_ID=1000
+
+# Create user with matching UID/GID
+RUN groupadd --gid $GROUP_ID appgroup || true && \
+    useradd --uid $USER_ID --gid $GROUP_ID --create-home appuser || true
+
+# ... copy files with --chown=appuser:appgroup ...
+
+USER appuser
+```
+
+Build with host UID:
+```bash
+docker build \
+  --build-arg USER_ID=$(id -u) \
+  --build-arg GROUP_ID=$(id -g) \
+  -t my-org/sapphire-preprunoff:latest .
+```
+
+##### Security Documentation for Partners
+
+Partners requiring non-root containers should:
+
+1. **Assess their threat model** - Internal forecasting has different risks than public APIs
+2. **Choose their approach** - Runtime override (Option A) or custom builds (Option B)
+3. **Manage host permissions** - Ensure data directories match container UID
+4. **Test thoroughly** - Verify on their specific platform (Ubuntu, RHEL, etc.)
+5. **Accept responsibility** - Permission issues from non-root mode are outside our support scope
+
+**Template response for security inquiries**:
+> Our default images run as root for cross-platform compatibility. For organizations requiring non-root containers, we provide documented runtime override options. The deploying organization assumes responsibility for host permission management when enabling non-root mode.
+
+#### Implementation Plan
+
+**Phase 0**:
+1. Verify base image USER directive is at end of Dockerfile ✅ (already correct)
+2. Keep module Dockerfiles running as root (no USER directive or explicit `USER root`)
+3. Document non-root alternative in deployment guide for security-conscious partners
+4. Add security rationale to customer-facing documentation
+
+### 3. AGPL v3 License Review
+
+**What it means**: AGPL requires that if you run AGPL-licensed software as a network service, you must provide source code to users of that service.
+
+**Impact for SAPPHIRE**:
+- Customers run forecasts internally (not public service) → likely no impact
+- If dashboard is exposed publicly → may need to provide source links
+
+**Action**: Identify which packages trigger AGPL flag:
+
+```bash
+# Run inside container to check licenses
+pip-licenses --format=csv | grep -i agpl
+```
+
+**Common AGPL packages in scientific Python**:
+- Some database connectors
+- Certain geospatial libraries
+- Some ML frameworks
+
+**Strategy**:
+1. Document AGPL packages in release notes
+2. Ensure source code repository remains public (it is - MIT licensed)
+3. Add license attribution file if needed
+
+**Add to Phase 1**: Run license audit on iEasyHydroForecast dependencies.
+
+### Scout Compliance Checklist per Phase
+
+| Phase | Attestation | Non-Root | License Audit |
+|-------|-------------|----------|---------------|
+| 0 | ✅ Add to base image build | Base image only (appuser) | — |
+| 1 | ✅ Add to iEasyHydroForecast | N/A (library) | ✅ Run pip-licenses |
+| 2-5 | Inherited from base | Keep root (document rationale) | Inherited |
+| 6 | Verify all images | Document partner alternatives | Final review |
+
+---
+
 ## Timeline Tracking
 
-| Phase | Module | Status | Image Tag | Notes |
-|-------|--------|--------|-----------|-------|
-| Pre | Create v0.2.0 release | ✅ Completed | `:latest` | Python 3.11 baseline |
-| 0 | Create `:py312` base image | Not started | `:py312` | Parallel to `:latest` |
-| 1 | iEasyHydroForecast | Not started | `:py312` | Shared library + uv |
-| 2 | preprocessing_runoff | Not started | `:py312` | Pilot module |
-| 3a | preprocessing_gateway | Not started | `:py312` | |
-| 3b | preprocessing_station_forcing | Not started | `:py312` | |
-| 4a | linear_regression | Not started | `:py312` | |
-| 4b | machine_learning | Not started | `:py312` | Heavy deps |
-| 4c | conceptual_model | N/A | N/A | R-based, skip |
-| 5a | forecast_dashboard | Not started | `:py312` | |
-| 5b | pipeline | Not started | `:py312` | |
-| 6 | Flip `:latest` to py312 | Not started | `:latest` | Final transition |
+| Phase | Module | Status | Image Tag | Health Target | Notes |
+|-------|--------|--------|-----------|---------------|-------|
+| Pre | Create v0.2.0 release | ✅ Completed | `:latest` | — | Python 3.11 baseline |
+| 0 | Create `:py312` base image | Not started | `:py312` | B | Minimal OS packages |
+| 1 | iEasyHydroForecast | Not started | `:py312` | B | Shared library + uv |
+| 2 | preprocessing_runoff | Not started | `:py312` | B | Pilot module |
+| 3a | preprocessing_gateway | Not started | `:py312` | B | |
+| 3b | preprocessing_station_forcing | Not started | `:py312` | B | |
+| 4a | linear_regression | Not started | `:py312` | B | |
+| 4b | machine_learning | Not started | `:py312` | C/D | Heavy deps, torch/darts |
+| 4c | conceptual_model | N/A | N/A | — | R-based, skip |
+| 5a | forecast_dashboard | Not started | `:py312` | B | |
+| 5b | pipeline | Not started | `:py312` | B | |
+| 6 | Flip `:latest` to py312 | Not started | `:latest` | B avg | Final transition |
 
 ---
 
