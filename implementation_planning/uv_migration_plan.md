@@ -4,6 +4,8 @@
 
 This plan outlines the migration from `pip` + `requirements.txt` to `uv` for dependency management across the SAPPHIRE Forecast Tools project.
 
+**Combined with Python 3.12 upgrade** — The migration will also upgrade from Python 3.11 to Python 3.12 for improved performance, better error messages, and extended security support (EOL: Oct 2028).
+
 ---
 
 ## Current State Analysis
@@ -36,27 +38,311 @@ This plan outlines the migration from `pip` + `requirements.txt` to `uv` for dep
 
 ## Migration Strategy
 
-### Approach: Module-by-Module with Shared Library
+### Approach: Parallel Images + Gradual Module Migration
+
+To minimize risk to colleagues and production, we run Python 3.11 and 3.12 images in parallel during migration:
 
 ```
-Phase 1: iEasyHydroForecast (shared library)
+                              :latest (Python 3.11 + pip)
+                             ╱
+Current: sapphire-baseimage ─
+                             ╲
+                              :py312 (Python 3.12 + uv) ← NEW
+
+Phase 0: Create :py312 base image (parallel to :latest)
     ↓
-Phase 2: preprocessing_runoff (pilot module)
+Phase 1: iEasyHydroForecast (migrate to uv, test with :py312)
     ↓
-Phase 3: Other preprocessing modules
+Phase 2: preprocessing_runoff (pilot module with :py312)
     ↓
-Phase 4: Forecasting modules
+Phase 3: Other preprocessing modules (migrate to :py312)
     ↓
-Phase 5: Dashboard & pipeline
+Phase 4: Forecasting modules (migrate to :py312)
     ↓
-Phase 6: Base image consolidation
+Phase 5: Dashboard & pipeline (migrate to :py312)
+    ↓
+Phase 6: Flip :latest to Python 3.12 + uv, archive :py311
+```
+
+### Docker Image Tag Strategy
+
+| Tag | Python | Package Manager | Status |
+|-----|--------|-----------------|--------|
+| `:latest` | 3.11 | pip | **Current production** (unchanged during migration) |
+| `:py312` | 3.12 | uv | **Testing/migration** (new) |
+| `:py311` | 3.11 | pip | **Archive** (created at end of migration) |
+
+### Benefits of Parallel Approach
+
+1. **Zero disruption** — Colleagues continue using `:latest` unchanged
+2. **Safe testing** — Validate Python 3.12 + uv on `:py312` tag first
+3. **Easy rollback** — Just switch back to `:latest` if issues arise
+4. **Gradual adoption** — Migrate modules one-by-one to `:py312`
+5. **Clear transition** — Flip `:latest` to 3.12 only after all modules validated
+
+---
+
+## Pre-Migration: Create v1.0.0 Release (Python 3.11 Baseline)
+
+**Goal**: Tag the current `main` branch as v1.0.0 before starting migration. This provides a stable rollback point and reference for users who need to stay on Python 3.11.
+
+### Branch Situation
+
+```
+main ────────────────────────────── (tested, will be tagged as v1.0.0)
+  │
+  ├── local ─────────────────────── (deployed at Kyrgyz/Tajik, behind main)
+  │
+  ├── colleague branches ─────────── (can rebase later)
+  │
+  └── feature/python312-uv ──────── (migration work, created after tagging)
+```
+
+### Step -1.1: Verify Main Branch is Ready
+
+```bash
+git checkout main
+git pull origin main
+git status  # Should be clean
+```
+
+Check that CI is passing on GitHub for `main` branch.
+
+### Step -1.2: Create Release Tag
+
+```bash
+git tag -a v1.0.0 -m "Release v1.0.0 - Python 3.11 baseline
+
+Last stable release before Python 3.12 + uv migration.
+
+Features:
+- Python 3.11 with pip
+- All forecast modules (linear regression, ML, conceptual)
+- Forecast dashboard and configuration dashboard
+- Pipeline orchestration with Luigi
+- Production-ready for Central Asia deployments
+
+Use this release if you need to stay on Python 3.11."
+
+git push origin v1.0.0
+```
+
+### Step -1.3: Create GitHub Release
+
+1. Go to: https://github.com/hydrosolutions/SAPPHIRE_Forecast_Tools/releases/new
+2. Select tag: `v1.0.0`
+3. Title: `v1.0.0 - Python 3.11 Baseline`
+4. Description:
+
+```markdown
+## Release v1.0.0 - Python 3.11 Baseline
+
+This is the last stable release using Python 3.11 and pip for dependency management.
+
+### What's Included
+- All forecast modules (linear regression, machine learning, conceptual models)
+- Forecast dashboard
+- Pipeline orchestration
+- Configuration dashboard
+
+### Docker Images
+All images at this point use Python 3.11. After this release, we will begin
+migrating to Python 3.12 + uv package manager.
+
+### For Users Needing Python 3.11
+If you need to stay on Python 3.11, you can:
+- Use this tagged release: `git checkout v1.0.0`
+- Or after migration, use the `:py311` Docker image tags
+
+### What's Next
+The next release will migrate to Python 3.12 and uv package manager for
+improved performance and modern dependency management.
+```
+
+5. Click "Publish release"
+
+### Step -1.4: Create Migration Branch
+
+```bash
+git checkout main
+git checkout -b feature/python312-uv
+git push -u origin feature/python312-uv
+```
+
+All migration work (Phases 0-6) will be done on this branch.
+
+### Step -1.5: (Optional) Tag Docker Images with Version
+
+Manually tag current Docker images with v1.0.0:
+
+```bash
+# For each image (run once per image)
+docker pull mabesa/sapphire-pythonbaseimage:latest
+docker tag mabesa/sapphire-pythonbaseimage:latest mabesa/sapphire-pythonbaseimage:v1.0.0
+docker push mabesa/sapphire-pythonbaseimage:v1.0.0
+
+# Repeat for other images as needed
 ```
 
 ---
 
-## Phase 1: Migrate iEasyHydroForecast
+## Phase 0: Create Python 3.12 + uv Base Image (`:py312` tag)
+
+**Goal**: Create a new `:py312` tagged base image with Python 3.12 and uv, while keeping `:latest` unchanged for production stability.
+
+### Step 0.1: Create New Dockerfile for py312
+
+Create `apps/docker_base_image/Dockerfile.py312` (or use build args):
+
+```dockerfile
+# syntax=docker/dockerfile:1
+
+ARG PYTHON_VERSION=3.12
+FROM python:${PYTHON_VERSION}-slim-bookworm AS base
+
+# Install system dependencies
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        gcc \
+        git \
+        libkrb5-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
+
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV SAPPHIRE_OPDEV_ENV=True
+ENV UV_COMPILE_BYTECODE=1
+ENV UV_LINK_MODE=copy
+
+# Create non-root user (same as existing base image)
+ARG USER_ID=1000
+ARG GROUP_ID=1000
+RUN groupadd --gid $GROUP_ID appgroup && \
+    useradd --uid $USER_ID --gid $GROUP_ID --create-home appuser
+
+WORKDIR /app
+RUN chown -R appuser:appgroup /app
+
+# Copy and install iEasyHydroForecast
+COPY --chown=appuser:appgroup apps/iEasyHydroForecast /app/apps/iEasyHydroForecast
+
+# Install base dependencies using uv
+WORKDIR /app/apps/iEasyHydroForecast
+RUN uv sync --frozen
+
+USER appuser
+WORKDIR /app
+```
+
+### Step 0.2: Update GitHub Actions to Build Both Tags
+
+Update `.github/workflows/deploy_main.yml` to build `:py312` in parallel:
+
+```yaml
+env:
+  IMAGE_TAG: latest
+  IMAGE_TAG_PY312: py312
+
+jobs:
+  # Existing job - unchanged
+  build_and_push_python_311_base_image:
+    # ... keeps building :latest with Python 3.11
+
+  # NEW job - builds :py312 in parallel
+  build_and_push_python_312_base_image:
+    needs: [test_ieasyhydroforecast]
+    runs-on: ubuntu-latest
+    name: Build and push Python 3.12 + uv base image
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build Docker image with Python 3.12 + uv
+        run: |
+          DOCKER_BUILDKIT=1 docker build --pull --no-cache \
+          --build-arg PYTHON_VERSION=3.12 \
+          -t "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" \
+          -f ./apps/docker_base_image/Dockerfile.py312 .
+
+      - name: Log in to Docker registry
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Push :py312 image to Dockerhub
+        run: |
+          docker push "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}"
+```
+
+### Step 0.3: Validate Critical Dependencies
+
+Test that heavy dependencies work with Python 3.12 + uv:
+
+| Package | Version | Python 3.12 + uv Support |
+|---------|---------|--------------------------|
+| darts | 0.35.0 | ✅ Confirmed |
+| torch | 2.8.0 | ✅ Confirmed |
+| pandas | >=2.2.2 | ✅ Confirmed |
+| numpy | >=1.26.4 | ✅ Confirmed |
+| scikit-learn | >=1.5.0 | ✅ Confirmed |
+| luigi | >=3.5.0 | ✅ Confirmed |
+
+### Step 0.4: Build and Test Locally
+
+```bash
+# Build the :py312 image locally
+cd apps/docker_base_image
+docker build -f Dockerfile.py312 -t sapphire-baseimage:py312-test ..
+
+# Verify Python version
+docker run --rm sapphire-baseimage:py312-test python --version
+# Expected: Python 3.12.x
+
+# Verify uv is available
+docker run --rm sapphire-baseimage:py312-test uv --version
+
+# Verify key packages
+docker run --rm sapphire-baseimage:py312-test \
+  python -c "import pandas; import numpy; import sklearn; print('All imports OK')"
+```
+
+### Step 0.5: Team Communication
+
+Notify team that `:py312` tag is now available for testing:
+
+```
+📢 Python 3.12 + uv Image Available for Testing
+
+A new base image tag is now available:
+  mabesa/sapphire-pythonbaseimage:py312
+
+This image uses Python 3.12 and uv package manager.
+
+**For testing only** — Production continues using :latest (Python 3.11)
+
+To test a module with the new image, update your Dockerfile:
+  FROM mabesa/sapphire-pythonbaseimage:py312
+
+Please report any issues to @[your-handle]
+```
+
+### Step 0.6: Update README Badge (after Phase 6 completion)
+
+**Note**: Keep badge as `Python 3.10+` until `:latest` is switched to Python 3.12 in Phase 6.
+
+---
+
+## Phase 1: Migrate iEasyHydroForecast (with `:py312`)
 
 **Why first?** It's a dependency for other modules and already has `pyproject.toml`.
+
+**Uses**: `mabesa/sapphire-pythonbaseimage:py312` (not `:latest`)
 
 ### Step 1.1: Update pyproject.toml
 
@@ -86,9 +372,14 @@ name = "iEasyHydroForecast"
 version = "0.1.0"
 description = "A package for hydrological forecasting"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 authors = [
-    {name = "Beatrice Marti", email = "marti@hydrosolutions.ch"}
+    {name = "Beatrice Marti", url = "https://github.com/mabesa"},
+    {name = "Sandro Hunziker", url = "https://github.com/sandrohuni"},
+    {name = "Maxat Pernebaev", url = "https://github.com/maxatp"},
+    {name = "Adrian Kreiner", url = "https://github.com/adriankreiner"},
+    {name = "Vjekoslav Večković", url = "https://github.com/vjekoslavveckovic"},
+    {name = "Aidar Zhumabaev", url = "https://github.com/LagmanEater"},
 ]
 dependencies = [
     "pandas>=2.2.2",
@@ -128,7 +419,7 @@ uv run pytest tests/
 
 ---
 
-## Phase 2: Migrate preprocessing_runoff (Pilot)
+## Phase 2: Migrate preprocessing_runoff (Pilot with `:py312`)
 
 ### Step 2.1: Create pyproject.toml
 
@@ -143,7 +434,7 @@ build-backend = "hatchling.build"
 name = "preprocessing-runoff"
 version = "0.1.0"
 description = "Preprocessing module for runoff data in SAPPHIRE Forecast Tools"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     # Core data processing
     "pandas>=2.2.2",
@@ -209,7 +500,7 @@ New Dockerfile with uv:
 ```dockerfile
 # syntax=docker/dockerfile:1
 
-FROM python:3.11-slim-bookworm AS base
+FROM python:3.12-slim-bookworm AS base
 
 # Install system dependencies
 RUN apt-get update && \
@@ -321,15 +612,81 @@ These share similar dependency profiles with preprocessing_runoff.
 
 ---
 
-## Phase 6: Base Image Consolidation
+## Phase 6: Flip `:latest` to Python 3.12 + uv
 
-### Option A: Keep base image, add uv
-Update `docker_base_image/Dockerfile` to use uv but maintain shared dependencies.
+**Goal**: After all modules are validated with `:py312`, switch `:latest` to Python 3.12 + uv and archive the old Python 3.11 image.
 
-### Option B: Eliminate base image
-Each module becomes fully self-contained with its own dependencies.
+### Prerequisites
 
-**Recommendation**: Option B for cleaner separation, but evaluate build times first.
+Before starting Phase 6, ensure:
+- [ ] All modules tested and working with `:py312`
+- [ ] No open issues related to Python 3.12 compatibility
+- [ ] Team notified and agreed on transition date
+
+### Step 6.1: Create Archive Tag for Python 3.11
+
+```bash
+# Tag current :latest as :py311 for archive
+docker pull mabesa/sapphire-pythonbaseimage:latest
+docker tag mabesa/sapphire-pythonbaseimage:latest mabesa/sapphire-pythonbaseimage:py311
+docker push mabesa/sapphire-pythonbaseimage:py311
+```
+
+### Step 6.2: Update deploy_main.yml
+
+Change the `:latest` build job to use Python 3.12 + uv:
+
+```yaml
+build_and_push_base_image:
+  # Now builds Python 3.12 + uv as :latest
+  steps:
+    - name: Build Docker image
+      run: |
+        DOCKER_BUILDKIT=1 docker build --pull --no-cache \
+        -t "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
+        -f ./apps/docker_base_image/Dockerfile.py312 .
+```
+
+### Step 6.3: Update All Module Dockerfiles
+
+Change modules back to `:latest` (now Python 3.12):
+
+```dockerfile
+# All modules can now use :latest again
+FROM mabesa/sapphire-pythonbaseimage:latest
+```
+
+### Step 6.4: Update README Badge
+
+```markdown
+![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)
+```
+
+### Step 6.5: Team Communication
+
+```
+📢 Migration Complete: Python 3.12 + uv Now Default
+
+The :latest tag now uses Python 3.12 and uv package manager.
+
+**What changed**:
+- mabesa/sapphire-pythonbaseimage:latest → Python 3.12 + uv
+- mabesa/sapphire-pythonbaseimage:py311 → Archived Python 3.11 (if needed)
+
+**Action required**:
+- Run `docker pull` to get new images
+- No Dockerfile changes needed if using :latest
+
+**Rollback** (if needed):
+  FROM mabesa/sapphire-pythonbaseimage:py311
+```
+
+### Step 6.6: Cleanup (Optional)
+
+After 2-4 weeks of stable operation:
+- [ ] Remove `:py312` tag (redundant with `:latest`)
+- [ ] Consider removing `:py311` tag if no longer needed
+- [ ] Remove `Dockerfile.py312` if consolidated into main Dockerfile
 
 ---
 
@@ -388,29 +745,200 @@ members = [
 - [ ] Run `uv sync` and test locally
 - [ ] Update Dockerfile to use uv
 - [ ] Test Docker build
-- [ ] Update CI/CD workflows if needed
+- [ ] Add module path to `test_modules.yml` workflow
+- [ ] Ensure `tests/` directory exists with at least one test
+- [ ] Verify CI passes before merging migration PR
 - [ ] Remove old `requirements.txt` (or keep for reference)
 - [ ] Update documentation
 
 ---
 
-## CI/CD Considerations
+## CI/CD Testing Strategy
 
-### GitHub Actions Update
+### Phased Approach to CI Testing
 
-Add uv to workflows:
+Adding automated tests to GitHub Actions provides a safety net during migration. We recommend a phased approach:
+
+| Phase | CI Testing Scope | Purpose |
+|-------|------------------|---------|
+| Phase 0 | Verify base image builds | Validate Python 3.12 compatibility |
+| Phase 1 | Add tests for iEasyHydroForecast | First real test automation |
+| Phase 2+ | Expand tests per module | Incremental coverage |
+
+### Phase 0: Base Image Validation Workflow
+
+Create `.github/workflows/test_python312.yml` (temporary, can be removed after Phase 0):
+
 ```yaml
-- name: Install uv
-  uses: astral-sh/setup-uv@v4
-  with:
-    version: "latest"
+name: Validate Python 3.12 Base Image
 
-- name: Install dependencies
-  run: uv sync --frozen
+on:
+  pull_request:
+    paths:
+      - 'apps/docker_base_image/**'
 
-- name: Run tests
-  run: uv run pytest
+jobs:
+  build-base-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build base image with Python 3.12
+        run: |
+          docker build -t sapphire-baseimage:py312-test \
+            apps/docker_base_image/
+
+      - name: Verify Python version
+        run: |
+          docker run --rm sapphire-baseimage:py312-test \
+            python --version | grep "3.12"
+
+      - name: Verify key packages import
+        run: |
+          docker run --rm sapphire-baseimage:py312-test \
+            python -c "import pandas; import numpy; import sklearn; print('All imports OK')"
 ```
+
+### Phase 1: iEasyHydroForecast Test Workflow
+
+Add to existing workflow or create `.github/workflows/test_modules.yml`:
+
+```yaml
+name: Test Python Modules
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - 'apps/iEasyHydroForecast/**'
+      - 'apps/preprocessing_runoff/**'
+      # Add paths as modules are migrated
+
+jobs:
+  test-iEasyHydroForecast:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Install dependencies and run tests
+        working-directory: apps/iEasyHydroForecast
+        run: |
+          uv sync --frozen
+          uv run pytest tests/ -v --tb=short
+
+  # Add more jobs as modules are migrated
+  test-preprocessing-runoff:
+    runs-on: ubuntu-latest
+    needs: test-iEasyHydroForecast  # Depends on shared library
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install and test
+        working-directory: apps/preprocessing_runoff
+        run: |
+          uv sync --frozen
+          uv run pytest tests/ -v --tb=short
+```
+
+### Benefits of This Approach
+
+1. **Catch regressions early** — PRs are tested before merge
+2. **Validate Python 3.12** — Automated verification of compatibility
+3. **Incremental adoption** — Add tests per module as they're migrated
+4. **Fast feedback** — Path filters ensure only relevant tests run
+5. **Documentation as code** — Workflows document how to test each module
+
+### Optional: Matrix Testing
+
+For critical modules, test across Python versions:
+
+```yaml
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.12', '3.13']  # Future-proofing
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      # ... rest of steps
+```
+
+### Migration Checklist Addition
+
+Add to each module's migration checklist:
+- [ ] Add module path to `test_modules.yml` workflow
+- [ ] Ensure `tests/` directory exists with at least one test
+- [ ] Verify CI passes before merging migration PR
+
+---
+
+## Team Coordination
+
+### Impact on Colleagues During Migration
+
+The parallel image strategy minimizes disruption:
+
+| What | Impact | Who's Affected |
+|------|--------|----------------|
+| `:latest` tag | **Unchanged** during Phases 0-5 | Nobody (production safe) |
+| `:py312` tag | New, for testing only | Only those opting in |
+| Module Dockerfiles | Optional switch to `:py312` | Per-module basis |
+
+### What Colleagues Can Safely Do During Migration
+
+- ✅ Continue using `:latest` for all work
+- ✅ Merge PRs to `main` (won't affect `:latest`)
+- ✅ Deploy to production (uses `:latest`)
+- ✅ Create new branches and features
+
+### Communication Checkpoints
+
+| Phase | Communication |
+|-------|---------------|
+| Phase 0 | "`:py312` tag available for testing" |
+| Phase 1-5 | "Module X now supports `:py312`" (optional updates) |
+| Phase 6 (before) | "Migration to Python 3.12 scheduled for [DATE]" |
+| Phase 6 (after) | "`:latest` now uses Python 3.12 + uv" |
+
+### Rollback During Migration (Phases 0-5)
+
+If issues with `:py312`:
+1. Module can switch back to `:latest` immediately
+2. No impact on other modules or production
+3. Debug and fix before retrying
+
+### Rollback After Phase 6
+
+If issues after `:latest` is switched to Python 3.12:
+
+```dockerfile
+# Quick fix: Use archived Python 3.11 image
+FROM mabesa/sapphire-pythonbaseimage:py311
+```
+
+Or revert the deploy_main.yml change to rebuild `:latest` with Python 3.11.
 
 ---
 
@@ -423,6 +951,8 @@ If issues arise:
    RUN pip install -r requirements.txt
    ```
 3. Lock files can be regenerated: `uv lock --upgrade`
+4. **During Phases 0-5**: Simply switch module back to `:latest`
+5. **After Phase 6**: Use `:py311` archive tag as fallback
 
 ---
 
@@ -446,18 +976,20 @@ During migration, align versions across modules:
 
 ## Timeline Tracking
 
-| Phase | Module | Status | Notes |
-|-------|--------|--------|-------|
-| 1 | iEasyHydroForecast | Not started | Shared library |
-| 2 | preprocessing_runoff | Not started | Pilot |
-| 3a | preprocessing_gateway | Not started | |
-| 3b | preprocessing_station_forcing | Not started | |
-| 4a | linear_regression | Not started | |
-| 4b | machine_learning | Not started | Heavy deps |
-| 4c | conceptual_model | N/A | R-based |
-| 5a | forecast_dashboard | Not started | |
-| 5b | pipeline | Not started | |
-| 6 | docker_base_image | Not started | Consolidation |
+| Phase | Module | Status | Image Tag | Notes |
+|-------|--------|--------|-----------|-------|
+| Pre | Create v1.0.0 release | Not started | `:latest` | Python 3.11 baseline |
+| 0 | Create `:py312` base image | Not started | `:py312` | Parallel to `:latest` |
+| 1 | iEasyHydroForecast | Not started | `:py312` | Shared library + uv |
+| 2 | preprocessing_runoff | Not started | `:py312` | Pilot module |
+| 3a | preprocessing_gateway | Not started | `:py312` | |
+| 3b | preprocessing_station_forcing | Not started | `:py312` | |
+| 4a | linear_regression | Not started | `:py312` | |
+| 4b | machine_learning | Not started | `:py312` | Heavy deps |
+| 4c | conceptual_model | N/A | N/A | R-based, skip |
+| 5a | forecast_dashboard | Not started | `:py312` | |
+| 5b | pipeline | Not started | `:py312` | |
+| 6 | Flip `:latest` to py312 | Not started | `:latest` | Final transition |
 
 ---
 
