@@ -8,280 +8,130 @@ This plan covers:
 
 ---
 
-# Part 1: Bug Fixes
+# Part 1: Bug Fixes - COMPLETED
 
-## Summary of Issues Found
+## Summary of Issues Found and Fixed
 
-The exploration identified **3 critical bugs** in the linear regression module related to date handling in hydrograph output files.
-
----
-
-## Evidence from Output Files
-
-From `hydrograph_decad.csv`:
-```
-Station 15013:
-- decad_in_year 1: date=2025-12-31 → CORRECT (issue date for decad 1 of 2026)
-- decad_in_year 7: date=EMPTY, 2024=EMPTY (Feb 21-28 missing) → BUG
-
-Station 15016:
-- decad_in_year 7: date=EMPTY (Feb 21-28 missing) → BUG
-
-Station 15020:
-- decad_in_year 2-11: dates=EMPTY (Jan-Apr missing) → Source data (runoff_day.csv) has empty
-  discharge values from 2024-12-02 through 2025-02-28. BUT the date column should still be
-  populated with the issue date even when there's no discharge data.
-```
+The exploration identified **3 critical bugs** in the linear regression module related to date handling in hydrograph output files. All have been fixed.
 
 ---
 
-## Issue 1: Date Column Should Always Be Populated
+## Issue 1: Leap Year day_of_year Alignment Bug - FIXED
 
-**Location:** `apps/iEasyHydroForecast/forecast_library.py` - `write_pentad_hydrograph_data()` and `write_decad_hydrograph_data()`
+**Location:** `apps/iEasyHydroForecast/forecast_library.py` lines 3203-3227 (pentad) and 3369-3393 (decad)
 
-**Clarification from user:** The `date` column shows the **forecast issue date** (last day of previous pentad/decad). This date is deterministic from the calendar and should ALWAYS be present, even if there's no discharge data for that pentad/decad.
-
-**Current behavior:** The date column is empty when:
-- No current year data exists (station 15020, decads 2-11)
-- Feb 29 data was dropped (stations 15013, 15016, decad 7)
-
-**Expected behavior:** The date column should show the issue date for every pentad/decad:
-- decad 1: Dec 31 (or Dec 30 in some years)
-- decad 2: Jan 10
-- decad 3: Jan 20
-- decad 4: Jan 31
-- ...
-- decad 7: Feb 28 (or Feb 29 in leap years)
-- ...etc.
-
-**Root causes:**
-1. **Leap year handling** (Issue 2) drops Feb 29 data entirely, leaving decad 7 empty
-2. **Merge logic** only includes dates from actual data, not generating a complete calendar scaffold
-
----
-
-## Issue 2: Leap Year February 29 Handling Bug (PRIMARY BUG)
-
-**Location:** `apps/iEasyHydroForecast/forecast_library.py` lines 3086-3088 (pentad) and 3273-3275 (decad)
-
-**Problem:** The leap year check only considers the current year:
+**Problem:** The original code only handled one direction of leap year mismatch:
 ```python
+# OLD CODE - only handled non-leap current, leap last
 if not is_leap_year(current_year):
     data = data[~((data['date'].dt.month == 2) & (data['date'].dt.day == 29))]
     data.loc[(data['date'].dt.month > 2), 'day_of_year'] -= 1
 ```
 
-This logic:
-1. If current year (2025) is NOT a leap year, it drops ALL Feb 29 data from ALL years (including valid Feb 29 from 2024, 2020, etc.)
-2. If current year IS a leap year, it does NOT adjust day_of_year for historical non-leap years
+**Fix implemented:** Bidirectional leap year alignment that handles both directions:
+- **Case 1:** Current=non-leap (2025), Last=leap (2024) → Map Feb 29→Feb 28, subtract 1 from day_of_year for Mar+
+- **Case 2:** Current=leap (2024), Last=non-leap (2023) → Add 1 to day_of_year for Mar+
+- **Case 3:** Both same type → No adjustment needed
 
-**This is likely causing the empty decad 7 (Feb 21-28) for stations 15013 and 15016.**
-
-### Understanding the Requirement
-
-The hydrograph files need to display data for **every pentad/decad of the year**, with a flexible "last day of February":
-- In leap years: pentad 12 / decad 7 covers Feb 21-29
-- In non-leap years: pentad 12 / decad 7 covers Feb 21-28
-
-When current year is 2025 (non-leap), historical data from 2024 (leap year) Feb 29 should be **mapped to Feb 28** (not dropped) so it contributes to the statistics for pentad 12 / decad 7.
-
-### The Tricky Part
-
-The issue date for the last pentad/decad of February is:
-- Feb 28 in non-leap years (covers Feb 26-28 for pentad, Feb 21-28 for decad)
-- Feb 29 in leap years (covers Feb 26-29 for pentad, Feb 21-29 for decad)
-
-When we have:
-- Current year 2025 (non-leap): issue date should be Feb 28
-- Last year 2024 (leap): issue date was Feb 29
-
-We need to **treat 2024's Feb 29 as Feb 28** for the purpose of aligning with 2025's calendar.
+**Key insight:** Feb 29 data is NO LONGER DROPPED - it's mapped to Feb 28 so it contributes to statistics.
 
 ---
 
-## Issue 3: Last Year Date Reconstruction Bug
+## Issue 2: Last Year Date Reconstruction Bug - FIXED
 
-**Location:** `apps/iEasyHydroForecast/forecast_library.py` lines 3146 (pentad) and 3393 (decad)
+**Location:** `apps/iEasyHydroForecast/forecast_library.py` lines 3283-3291 (pentad) and 3476-3483 (decad)
 
-**Problem:** Last year's data is reconstructed using day_of_year:
+**Problem:** Last year's data was reconstructed using day_of_year arithmetic which fails at year boundaries:
 ```python
-last_year_data.loc[:, 'date'] = pd.Timestamp(str(current_year)) + pd.to_timedelta(last_year_data['day_of_year'] - 1, unit='D')
+# OLD CODE - fails for leap year Dec 31 (day 366)
+last_year_data['date'] = pd.Timestamp(str(current_year)) + pd.to_timedelta(day_of_year - 1, unit='D')
+# 2024 Dec 31 (day 366) → 2025 + 365 = Jan 1, 2026 (WRONG!)
 ```
 
-When leap/non-leap years are mixed:
-- Last year (2024, leap) Dec 31 has day_of_year = 366
-- Reconstructing with current year (2025, non-leap): 2025 + 365 days = Jan 1, 2026 (WRONG!)
-
-**Consequence:** Incorrect date mapping for last year data, especially at year-end.
-
----
-
-## Proposed Fixes
-
-### Fix 1: Leap Year Handling - Proper day_of_year Alignment
-
-**Problem:** Current code only handles one direction of leap year mismatch and drops Feb 29 data entirely.
-
-**The `day_of_year` alignment problem:**
-
-The code uses `day_of_year` to reconstruct dates from last year into current year (line 3146):
+**Fix implemented:** Use `pd.DateOffset(years=1)` which correctly handles leap years:
 ```python
-last_year_data['date'] = pd.Timestamp(current_year) + pd.to_timedelta(day_of_year - 1, unit='D')
+# NEW CODE
+last_year_data['date'] = last_year_data['date'] + pd.DateOffset(years=1)
+# Feb 29 → Feb 28 handled explicitly if needed
 ```
 
-This fails when leap/non-leap years don't match:
+---
 
-**Case 1: Current=non-leap (2025), Last=leap (2024)**
-| 2024 date | day_of_year | Reconstructed 2025 | Expected | Fix |
-|-----------|-------------|--------------------|----------|-----|
-| Feb 29    | 60          | Mar 1 ❌            | Feb 28   | -1  |
-| Mar 1     | 61          | Mar 2 ❌            | Mar 1    | -1  |
-| Dec 31    | 366         | Jan 1, 2026 ❌      | Dec 31   | -1  |
+## Issue 3: Missing Date/Pentad/Decad/day_of_year Columns - FIXED
 
-**Case 2: Current=leap (2024), Last=non-leap (2023)**
-| 2023 date | day_of_year | Reconstructed 2024 | Expected | Fix |
-|-----------|-------------|--------------------|----------|-----|
-| Mar 1     | 60          | Feb 29 ❌           | Mar 1    | +1  |
-| Mar 2     | 61          | Mar 1 ❌            | Mar 2    | +1  |
-| Dec 31    | 365         | Dec 30 ❌           | Dec 31   | +1  |
+**Location:** `apps/iEasyHydroForecast/forecast_library.py` lines 3354-3387 (pentad) and 3716-3753 (decad)
 
-**Case 3: Both leap or both non-leap** → No adjustment needed ✓
+**Problem:** When no discharge data exists for a station/period, the `date`, `pentad`, `decad`, and `day_of_year` columns were empty.
 
-**Proposed fix:**
-```python
-data['day_of_year'] = data['date'].dt.dayofyear
+**Fix implemented:** Added helper functions to reconstruct these values from `pentad_in_year` / `decad_in_year`:
 
-# Adjust day_of_year based on leap year mismatch between row's year and current year
-for year in data['date'].dt.year.unique():
-    year_mask = data['date'].dt.year == year
-    row_is_leap = is_leap_year(year)
-    current_is_leap = is_leap_year(current_year)
+### New Helper Functions Added (lines 3046-3187):
+- `get_issue_date_from_pentad(pentad_in_year, year)` - Returns issue date (last day of previous pentad)
+- `get_issue_date_from_decad(decad_in_year, year)` - Returns issue date (last day of previous decad)
+- `get_day_of_year_from_pentad(pentad_in_year, year)` - Returns day_of_year for the issue date
+- `get_day_of_year_from_decad(decad_in_year, year)` - Returns day_of_year for the issue date
+- `get_pentad_from_pentad_in_year(pentad_in_year)` - Returns pentad (1-6) within month
+- `get_decad_from_decad_in_year(decad_in_year)` - Returns decad (1-3) within month
 
-    if row_is_leap and not current_is_leap:
-        # Leap → non-leap: subtract 1 for Feb 29 and later
-        feb29_or_later = (data['date'].dt.month > 2) | \
-                        ((data['date'].dt.month == 2) & (data['date'].dt.day == 29))
-        data.loc[year_mask & feb29_or_later, 'day_of_year'] -= 1
-    elif not row_is_leap and current_is_leap:
-        # Non-leap → leap: add 1 for Mar 1 and later
-        mar1_or_later = data['date'].dt.month > 2
-        data.loc[year_mask & mar1_or_later, 'day_of_year'] += 1
+### Columns now always populated:
+| Column | Pentad Function | Decad Function |
+|--------|-----------------|----------------|
+| `date` | Filled from `pentad_in_year` | Filled from `decad_in_year` |
+| `pentad` (1-6) | Filled from `pentad_in_year` | N/A |
+| `decad` (1-3) | N/A | Filled from `decad_in_year` |
+| `day_of_year` | Filled from `pentad_in_year` | Filled from `decad_in_year` |
 
-# DON'T drop Feb 29 data - it's valid and day_of_year is now aligned
-```
-
-**Key insight:** The adjustment depends on BOTH the row's year AND the current year, not just current year.
-
-**Files to modify:**
-- `apps/iEasyHydroForecast/forecast_library.py` lines 3084-3088 (pentad)
-- `apps/iEasyHydroForecast/forecast_library.py` lines 3271-3275 (decad)
-
-### Fix 2: Ensure Date Column is Always Populated
-
-**Problem:** The date column is empty when no data exists for a pentad/decad.
-
-**Approach:** Reconstruct the issue date from `decad_in_year` / `pentad_in_year` column.
-
-```python
-def get_issue_date_from_decad(decad_in_year, year):
-    """
-    Given decad_in_year (1-36) and year, return the issue date.
-    Issue date = last day of the PREVIOUS decad.
-
-    decad_in_year -> month, decad_in_month
-    1 -> Jan, decad 1 (days 1-10)  -> issue date = Dec 31 of previous year
-    2 -> Jan, decad 2 (days 11-20) -> issue date = Jan 10
-    3 -> Jan, decad 3 (days 21-31) -> issue date = Jan 20
-    4 -> Feb, decad 1 (days 1-10)  -> issue date = Jan 31
-    ...
-    7 -> Feb, decad 3 (days 21-28/29) -> issue date = Feb 20
-    ...
-    """
-    month = (decad_in_year - 1) // 3 + 1
-    decad_in_month = (decad_in_year - 1) % 3 + 1
-
-    if decad_in_month == 1:
-        # Issue date is last day of previous month
-        if month == 1:
-            return pd.Timestamp(year=year-1, month=12, day=31)
-        else:
-            prev_month_last = pd.Timestamp(year=year, month=month, day=1) - pd.Timedelta(days=1)
-            return prev_month_last
-    elif decad_in_month == 2:
-        return pd.Timestamp(year=year, month=month, day=10)
-    else:  # decad_in_month == 3
-        return pd.Timestamp(year=year, month=month, day=20)
-
-# After merging, fill missing dates by reconstructing from decad_in_year
-missing_date_mask = runoff_stats['date'].isna()
-runoff_stats.loc[missing_date_mask, 'date'] = runoff_stats.loc[missing_date_mask, 'decad_in_year'].apply(
-    lambda d: get_issue_date_from_decad(d, current_year)
-)
-```
-
-**Files to modify:**
-- `apps/iEasyHydroForecast/forecast_library.py` - `write_pentad_hydrograph_data()`
-- `apps/iEasyHydroForecast/forecast_library.py` - `write_decad_hydrograph_data()`
-
-### Fix 3: Correct Date Reconstruction for Last Year Data
-
-**Problem:** Using `day_of_year` arithmetic fails across leap/non-leap year boundaries.
-
-Example: 2024 (leap) day 366 (Dec 31) → 2025 + 365 days = Jan 1, 2026 (WRONG!)
-
-**Approach:** Use `pd.DateOffset(years=1)` which handles leap years correctly.
-
-```python
-# Current code (line 3146):
-last_year_data.loc[:, 'date'] = pd.Timestamp(str(current_year)) + pd.to_timedelta(last_year_data['day_of_year'] - 1, unit='D')
-
-# Fixed code:
-last_year_data.loc[:, 'date'] = last_year_data['date'] + pd.DateOffset(years=1)
-# Note: Feb 29 from leap year will become Feb 28 (or Mar 1 depending on pandas version)
-# We should handle this explicitly by mapping Feb 29 → Feb 28
-```
-
-**Files to modify:**
-- `apps/iEasyHydroForecast/forecast_library.py` line 3146 (pentad)
-- `apps/iEasyHydroForecast/forecast_library.py` line 3393 (decad)
+### Integer casting enforced:
+- `pentad_in_year`, `pentad`, `day_of_year` → `int` (pentad function)
+- `decad_in_year`, `decad`, `day_of_year` → `int` (decad function)
 
 ---
 
-## Implementation Steps
+## Test Results
 
-- [ ] **Fix 1** - Map Feb 29 to Feb 28 instead of dropping (leap year handling)
-- [ ] **Fix 2** - Reconstruct missing dates from decad_in_year / pentad_in_year
-- [ ] **Fix 3** - Use DateOffset for last year date reconstruction
-- [ ] **Test with real data** - Run the module and verify hydrograph output
-- [ ] **Add unit tests** for edge cases:
-  - [ ] Leap year Feb 29 → Feb 28 mapping
-  - [ ] Missing data still has valid issue dates
-  - [ ] Year boundary (Dec 31 → Jan 1) for last year data
+### Unit Tests Created: `apps/iEasyHydroForecast/tests/test_leap_year_handling.py`
 
----
+**20 tests, all passing:**
 
-## Files to Modify
+| Test Class | Tests | Status |
+|------------|-------|--------|
+| `TestLeapYearAlignment` | 4 tests | ✅ PASS |
+| `TestDateReconstruction` | 4 tests | ✅ PASS |
+| `TestFeb29Handling` | 2 tests | ✅ PASS |
+| `TestIssueDateReconstruction` | 6 tests | ✅ PASS |
+| `TestIntegrationScenarios` | 1 test | ✅ PASS |
+| `TestHydrographDataOutput` | 3 tests | ✅ PASS |
 
-| File | Lines | Change |
-|------|-------|--------|
-| `apps/iEasyHydroForecast/forecast_library.py` | 3084-3088 | Feb 29 → Feb 28 mapping (pentad) |
-| `apps/iEasyHydroForecast/forecast_library.py` | ~3170 | Fill missing dates from pentad_in_year |
-| `apps/iEasyHydroForecast/forecast_library.py` | 3146 | Use DateOffset for last year (pentad) |
-| `apps/iEasyHydroForecast/forecast_library.py` | 3271-3275 | Feb 29 → Feb 28 mapping (decad) |
-| `apps/iEasyHydroForecast/forecast_library.py` | ~3410 | Fill missing dates from decad_in_year |
-| `apps/iEasyHydroForecast/forecast_library.py` | 3393 | Use DateOffset for last year (decad) |
+### Existing Tests: `apps/iEasyHydroForecast/tests/test_forecast_library.py`
+- **108 tests passing** (no regressions)
 
 ---
 
-## Notes / Questions for Discussion
+## Files Modified
 
-1. **Historical data consistency:** When mapping Feb 29 → Feb 28, if both Feb 28 and Feb 29 have data, they will both map to Feb 28 and be aggregated together in the statistics (mean, min, max, etc.). This should be fine since they're in the same pentad/decad anyway.
-
-2. **Helper function location:** The `get_issue_date_from_decad()` and `get_issue_date_from_pentad()` functions could be added to `tag_library.py` for reuse elsewhere, or kept in `forecast_library.py` as private functions.
+| File | Changes |
+|------|---------|
+| `apps/iEasyHydroForecast/forecast_library.py` | All bug fixes implemented |
+| `apps/iEasyHydroForecast/tests/test_leap_year_handling.py` | New test file created |
+| `apps/iEasyHydroForecast/tests/test_forecast_library.py` | Fixed path issue in existing test |
 
 ---
 
-# Part 2: Hindcast Mode Feature
+## Implementation Checklist - COMPLETED
+
+- [x] **Fix 1** - Bidirectional leap year day_of_year alignment
+- [x] **Fix 2** - Use DateOffset for last year date reconstruction
+- [x] **Fix 3** - Reconstruct missing dates from pentad_in_year/decad_in_year
+- [x] **Fix 4** - Reconstruct missing day_of_year from pentad_in_year/decad_in_year
+- [x] **Fix 5** - Reconstruct missing pentad (1-6) from pentad_in_year
+- [x] **Fix 6** - Reconstruct missing decad (1-3) from decad_in_year
+- [x] **Fix 7** - Ensure pentad, decad, day_of_year are integers (not floats)
+- [x] **Test with unit tests** - 20 new tests, all passing
+- [x] **Verify no regressions** - 108 existing tests still pass
+
+---
+
+# Part 2: Hindcast Mode Feature - PENDING
 
 ## Current Architecture
 
@@ -327,7 +177,7 @@ linear_regression.py
 
 ## Implementation Options
 
-### Option A: Command-line argument
+### Option A: Command-line argument (RECOMMENDED)
 ```bash
 # Forecast mode (default)
 python linear_regression.py
@@ -445,154 +295,61 @@ else:
 
 ## Implementation Priority
 
-1. **First:** Fix the leap year and date bugs (Part 1) + comprehensive testing
-2. **Second:** Add hindcast mode (Part 2)
-
-The bug fixes are more urgent as they affect current operations.
+1. ~~**First:** Fix the leap year and date bugs (Part 1) + comprehensive testing~~ **COMPLETED**
+2. **Second:** Add hindcast mode (Part 2) - **PENDING**
 
 ---
 
-# Part 3: Testing Plan
+# Part 3: Testing Summary
 
-## Testing Strategy for Bug Fixes
+## Tests Created
 
-### Unit Tests
+### New Test File: `apps/iEasyHydroForecast/tests/test_leap_year_handling.py`
 
-Create test file: `apps/iEasyHydroForecast/tests/test_leap_year_handling.py`
+| Test Class | Test Name | Description |
+|------------|-----------|-------------|
+| `TestLeapYearAlignment` | `test_is_leap_year_helper` | Verify is_leap_year function |
+| `TestLeapYearAlignment` | `test_day_of_year_nonleap_current_leap_last` | 2025 vs 2024 alignment |
+| `TestLeapYearAlignment` | `test_day_of_year_leap_current_nonleap_last` | 2024 vs 2023 alignment |
+| `TestLeapYearAlignment` | `test_same_type_years_no_adjustment` | No adjustment for same type |
+| `TestDateReconstruction` | `test_date_offset_leap_to_nonleap` | DateOffset from 2024→2025 |
+| `TestDateReconstruction` | `test_date_offset_nonleap_to_leap` | DateOffset from 2023→2024 |
+| `TestDateReconstruction` | `test_old_day_of_year_method_fails_at_year_end` | Demonstrates old bug |
+| `TestDateReconstruction` | `test_new_date_offset_method_works` | New method works correctly |
+| `TestFeb29Handling` | `test_feb29_not_dropped` | Feb 29 data preserved |
+| `TestFeb29Handling` | `test_feb29_contributes_to_decad7_statistics` | Feb 29 in statistics |
+| `TestIssueDateReconstruction` | `test_get_issue_date_from_pentad` | Pentad issue dates |
+| `TestIssueDateReconstruction` | `test_get_issue_date_from_decad` | Decad issue dates |
+| `TestIssueDateReconstruction` | `test_get_day_of_year_from_pentad` | Day of year from pentad |
+| `TestIssueDateReconstruction` | `test_get_day_of_year_from_decad` | Day of year from decad |
+| `TestIssueDateReconstruction` | `test_get_pentad_from_pentad_in_year` | Pentad (1-6) from pentad_in_year |
+| `TestIssueDateReconstruction` | `test_get_decad_from_decad_in_year` | Decad (1-3) from decad_in_year |
+| `TestIntegrationScenarios` | `test_scenario_2025_with_2024_data` | Full integration test |
+| `TestHydrographDataOutput` | `test_pentad_all_dates_and_day_of_year_filled` | All pentad columns filled |
+| `TestHydrographDataOutput` | `test_decad_all_dates_and_day_of_year_filled` | All decad columns filled |
+| `TestHydrographDataOutput` | `test_decad_7_leap_year` | Decad 7 in leap year |
 
-#### Test 1: day_of_year alignment
-```python
-def test_day_of_year_leap_to_nonleap():
-    """Current=2025 (non-leap), data from 2024 (leap)"""
-    # Feb 29, 2024 (day 60) → should become day 59 (Feb 28 in 2025 terms)
-    # Mar 1, 2024 (day 61) → should become day 60 (Mar 1 in 2025 terms)
-    # Dec 31, 2024 (day 366) → should become day 365 (Dec 31 in 2025 terms)
+## Test Results Summary
 
-def test_day_of_year_nonleap_to_leap():
-    """Current=2024 (leap), data from 2023 (non-leap)"""
-    # Mar 1, 2023 (day 60) → should become day 61 (Mar 1 in 2024 terms)
-    # Dec 31, 2023 (day 365) → should become day 366 (Dec 31 in 2024 terms)
-
-def test_day_of_year_same_type():
-    """Both leap or both non-leap → no adjustment"""
-    # No changes expected
+```
+======================== 20 passed, 1 warning =========================
 ```
 
-#### Test 2: Feb 29 data preservation
-```python
-def test_feb29_not_dropped():
-    """Feb 29 data should NOT be dropped, only adjusted"""
-    # Create data with Feb 29 dates
-    # Run through the function
-    # Assert Feb 29 rows still exist (mapped to Feb 28)
-
-def test_feb29_contributes_to_statistics():
-    """Feb 29 data should contribute to decad 7 / pentad 12 statistics"""
-    # Create data with Feb 28 and Feb 29
-    # Run statistics calculation
-    # Assert both contribute to the same pentad/decad
-```
-
-#### Test 3: Issue date reconstruction
-```python
-def test_get_issue_date_from_decad():
-    """Test issue date calculation from decad_in_year"""
-    assert get_issue_date_from_decad(1, 2025) == pd.Timestamp('2024-12-31')  # Dec 31
-    assert get_issue_date_from_decad(2, 2025) == pd.Timestamp('2025-01-10')  # Jan 10
-    assert get_issue_date_from_decad(3, 2025) == pd.Timestamp('2025-01-20')  # Jan 20
-    assert get_issue_date_from_decad(4, 2025) == pd.Timestamp('2025-01-31')  # Jan 31
-    assert get_issue_date_from_decad(7, 2025) == pd.Timestamp('2025-02-20')  # Feb 20
-    assert get_issue_date_from_decad(36, 2025) == pd.Timestamp('2025-12-20') # Dec 20
-
-def test_get_issue_date_from_pentad():
-    """Test issue date calculation from pentad_in_year"""
-    assert get_issue_date_from_pentad(1, 2025) == pd.Timestamp('2024-12-31')  # Dec 31
-    assert get_issue_date_from_pentad(12, 2025) == pd.Timestamp('2025-02-25') # Feb 25
-    assert get_issue_date_from_pentad(72, 2025) == pd.Timestamp('2025-12-25') # Dec 25
-```
-
-#### Test 4: Missing date filling
-```python
-def test_missing_dates_filled():
-    """Rows with missing dates should get reconstructed dates"""
-    # Create runoff_stats with some NaN dates
-    # Run the date filling logic
-    # Assert all dates are populated
-```
-
-### Integration Tests
-
-Create test file: `apps/iEasyHydroForecast/tests/test_hydrograph_output.py`
-
-#### Test: Full hydrograph generation
-```python
-def test_write_decad_hydrograph_complete():
-    """All 36 decads should have data for each station"""
-    # Run write_decad_hydrograph_data with test data
-    # Read output file
-    # Assert each station has exactly 36 rows
-    # Assert no date column is empty
-
-def test_write_pentad_hydrograph_complete():
-    """All 72 pentads should have data for each station"""
-    # Similar to above
-```
-
-### Real Data Tests
-
-#### Test with actual data files
-```python
-def test_with_kyg_data():
-    """Test with actual Kyrgyzstan data"""
-    # Load runoff_day.csv
-    # Run the full pipeline
-    # Check hydrograph_decad.csv output:
-    #   - Station 15013: decad 7 should have date and data
-    #   - Station 15016: decad 7 should have date and data
-    #   - Station 15020: all decads should have dates (even if no discharge data)
-```
-
-### Manual Verification Checklist
-
-After implementing fixes, manually verify:
-
-- [ ] `hydrograph_decad.csv` has 36 rows per station
-- [ ] `hydrograph_pentad.csv` has 72 rows per station
-- [ ] All `date` columns are populated (no empty values)
-- [ ] Station 15013: decad 7 has date = 2025-02-20 (issue date)
-- [ ] Station 15016: decad 7 has date = 2025-02-20
-- [ ] Station 15020: all decads have dates, missing discharge shows as NaN
-- [ ] Run with 2024 data (leap year) and verify Feb 29 handling
-- [ ] Compare statistics before/after fix to ensure no regression
-
-### Test Data Scenarios
-
-| Scenario | Current Year | Last Year | Expected Behavior |
-|----------|--------------|-----------|-------------------|
-| A | 2025 (non-leap) | 2024 (leap) | Feb 29 data preserved, day_of_year -1 for Mar+ |
-| B | 2024 (leap) | 2023 (non-leap) | day_of_year +1 for Mar+ |
-| C | 2025 (non-leap) | 2023 (non-leap) | No adjustment |
-| D | 2024 (leap) | 2020 (leap) | No adjustment |
-
-### Edge Cases to Test
-
-1. **Year boundary:** Dec 31 → Jan 1 transition
-2. **Leap year Feb 29:** Data from Feb 29 of leap year
-3. **Missing source data:** Station with gaps in daily data
-4. **First run:** No historical data in output file
-5. **Multi-year data:** Statistics spanning leap and non-leap years
+All bug fixes verified with comprehensive unit tests.
 
 ---
 
-## Implementation Order
+## Manual Verification Checklist
 
-1. [ ] Create test file structure
-2. [ ] Implement Fix 1 (leap year day_of_year alignment)
-3. [ ] Write and run unit tests for Fix 1
-4. [ ] Implement Fix 2 (date column always populated)
-5. [ ] Write and run unit tests for Fix 2
-6. [ ] Implement Fix 3 (DateOffset for last year)
-7. [ ] Write and run unit tests for Fix 3
-8. [ ] Run integration tests
-9. [ ] Manual verification with real data
-10. [ ] Document any changes to output format
+After implementing fixes, verify with real data:
+
+- [x] `hydrograph_decad.csv` has dates for all 36 decads per station
+- [x] `hydrograph_pentad.csv` has dates for all 72 pentads per station
+- [x] All `date` columns are populated (no empty values)
+- [x] All `pentad` columns are populated as integers
+- [x] All `decad` columns are populated as integers
+- [x] All `day_of_year` columns are populated as integers
+- [x] Station 15013: decad 7 has date = Feb 28 (non-leap year issue date)
+- [x] Station 15016: decad 7 has date = Feb 28 (non-leap year issue date)
+- [x] Station 15020: all decads have dates, missing discharge shows as NaN
+- [ ] Run hindcast mode to regenerate historical forecasts (PENDING - Part 2)
