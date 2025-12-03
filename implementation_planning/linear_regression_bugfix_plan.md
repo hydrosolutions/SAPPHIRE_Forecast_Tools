@@ -330,3 +330,165 @@ After implementing fixes, verify with real data:
 - [x] Station 15016: decad 7 has date = Feb 28 (non-leap year issue date)
 - [x] Station 15020: all decads have dates, missing discharge shows as NaN
 - [x] Run hindcast mode to regenerate historical forecasts (COMPLETED - Part 2)
+
+---
+
+# Part 4: Nightly Maintenance Script - COMPLETED
+
+## Overview
+
+Created `bin/daily_linreg_maintenance.sh` script for nightly hindcast execution to catch up on any missed forecasts.
+
+## Usage
+
+```bash
+# Run directly
+bash bin/daily_linreg_maintenance.sh /path/to/config/.env
+
+# Run in background (for cron jobs)
+nohup bash bin/daily_linreg_maintenance.sh /path/to/config/.env > /dev/null 2>&1 &
+```
+
+## Cron Job Example
+
+```bash
+# Run nightly at 2 AM after forecast workflow
+0 2 * * * cd /path/to/SAPPHIRE_forecast_tools && bash bin/daily_linreg_maintenance.sh /path/to/config/.env
+```
+
+## Features
+
+| Feature | Description |
+|---------|-------------|
+| Sources `common_functions.sh` | Uses shared utilities (banner, config, SSH tunnel, cleanup) |
+| Logging | Creates timestamped logs in `${ieasyhydroforecast_data_root_dir}/logs/linreg_maintenance/` |
+| Docker image handling | Checks for `mabesa/sapphire-linreg` image, pulls if not found |
+| Both prediction modes | Runs PENTAD and DECAD hindcast sequentially |
+| Auto-detection | Uses `--hindcast` flag for automatic start date detection from output files |
+| Memory limits | 4GB RAM with 6GB swap per container |
+| Log cleanup | Removes logs older than 15 days |
+
+## Docker Command
+
+The script runs:
+```bash
+sh -c "PYTHONPATH=/app/apps/iEasyHydroForecast python apps/linear_regression/linear_regression.py --hindcast"
+```
+
+This replicates the Dockerfile's `CMD` structure while adding the `--hindcast` flag.
+
+## Files Created
+
+| File | Description |
+|------|-------------|
+| `bin/daily_linreg_maintenance.sh` | Nightly hindcast maintenance script |
+
+---
+
+# Part 5: Future Optimization - Parallelization (PLANNED)
+
+## Overview
+
+Future enhancement to improve hindcast performance by processing gauges in parallel.
+
+## Current Limitation
+
+The current implementation processes gauges sequentially within each date iteration:
+```python
+for date in date_range:
+    for gauge in gauges:
+        process(gauge, date)  # Sequential
+```
+
+## Staged Implementation Plan
+
+### Stage 1: Parallelize Inner Gauge Loop (Quick Win)
+
+**Goal:** Parallelize gauge processing within each date iteration.
+
+**Approach:**
+```python
+from concurrent.futures import ProcessPoolExecutor
+
+for date in date_range:
+    with ProcessPoolExecutor(max_workers=num_cores) as executor:
+        futures = [executor.submit(process_gauge, gauge, date) for gauge in gauges]
+        results = [f.result() for f in futures]
+```
+
+**Benefits:**
+- Minimal code changes to existing structure
+- Immediate speedup: ~N cores for gauge processing
+- No output file locking issues (each date writes once)
+
+**Considerations:**
+- Still iterates through all dates even if some gauges are up-to-date
+- Good for nightly catch-up (few dates, many gauges)
+
+### Stage 2: Per-Gauge Date Ranges (Full Optimization)
+
+**Goal:** Each gauge only processes its missing dates.
+
+**Approach:**
+1. Return per-gauge start dates from `get_hindcast_start_date_from_output()`
+2. Restructure to gauge-first iteration
+3. Each gauge runs only for its missing date range
+4. Full parallelization at gauge level
+
+```python
+gauge_date_ranges = {
+    '15013': (date(2025, 12, 2), end_date),   # Up to date - skip
+    '15016': (date(2025, 11, 16), end_date),  # 2 weeks behind
+    '99999': (date(2020, 1, 1), end_date),    # New gauge - full hindcast
+}
+
+with ProcessPoolExecutor(max_workers=num_cores) as executor:
+    futures = {
+        executor.submit(process_gauge_date_range, code, start, end): code
+        for code, (start, end) in gauge_date_ranges.items()
+        if start <= end  # Skip up-to-date gauges
+    }
+```
+
+**Benefits:**
+- Maximum efficiency - only run what's missing
+- True parallelization across gauges
+- New gauges get full hindcast while others skip entirely
+
+**Considerations:**
+- Requires output file locking for concurrent writes
+- More significant refactoring
+- Best for scenarios with many gauges at different states
+
+## Implementation Checklist
+
+### Stage 1 (Quick Win)
+- [ ] Add `--parallel` flag to argparse
+- [ ] Add `--workers N` optional argument (default: CPU count)
+- [ ] Wrap inner gauge loop with `ProcessPoolExecutor`
+- [ ] Add progress logging for parallel execution
+- [ ] Test with small dataset
+
+### Stage 2 (Full Optimization)
+- [ ] Modify `get_hindcast_start_date_from_output()` to return per-gauge dict
+- [ ] Refactor main loop to gauge-first iteration
+- [ ] Implement file locking for concurrent CSV writes
+- [ ] Add `--skip-existing` flag to check output before processing
+- [ ] Comprehensive testing with concurrent writes
+
+## Performance Estimates
+
+| Scenario | Sequential | Stage 1 (8 cores) | Stage 2 (8 cores) |
+|----------|------------|-------------------|-------------------|
+| 40 gauges, 1 date | 40 iterations | ~5 iterations | ~5 iterations |
+| 40 gauges, 72 dates | 2880 iterations | ~360 iterations | ~5-360 iterations* |
+| New gauge added | Full year ALL | Full year ALL | Full year for 1 only |
+
+*Stage 2 depends on how many gauges actually need processing
+
+## Notes
+
+- TODO comment added to `linear_regression.py` at line 447
+- Stage 1 is recommended as first implementation - simpler and good ROI
+- Stage 2 can be added later when needed
+- Consider memory constraints when setting worker count

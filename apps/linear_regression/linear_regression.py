@@ -309,11 +309,13 @@ def get_last_forecast_dates_per_gauge(prediction_mode='BOTH'):
                 df = pd.read_csv(pentad_file)
                 if 'date' in df.columns and 'code' in df.columns and len(df) > 0:
                     df['date'] = pd.to_datetime(df['date'], errors='coerce')
-                    df['code'] = df['code'].astype(str)
+                    # Convert code to string, handling float values like 15013.0 -> "15013"
+                    df['code'] = df['code'].apply(lambda x: str(int(x)) if pd.notna(x) and float(x) == int(float(x)) else str(x))
                     for code, group in df.groupby('code'):
                         max_date = group['date'].max()
                         if pd.notna(max_date):
-                            if code not in gauge_dates or max_date.date() < gauge_dates[code]:
+                            # Keep the latest date - start hindcast from there + 1 day
+                            if code not in gauge_dates or max_date.date() > gauge_dates[code]:
                                 gauge_dates[code] = max_date.date()
             except Exception as e:
                 logger.warning(f"Could not read pentad forecast file: {e}")
@@ -326,11 +328,13 @@ def get_last_forecast_dates_per_gauge(prediction_mode='BOTH'):
                 df = pd.read_csv(decad_file)
                 if 'date' in df.columns and 'code' in df.columns and len(df) > 0:
                     df['date'] = pd.to_datetime(df['date'], errors='coerce')
-                    df['code'] = df['code'].astype(str)
+                    # Convert code to string, handling float values like 15013.0 -> "15013"
+                    df['code'] = df['code'].apply(lambda x: str(int(x)) if pd.notna(x) and float(x) == int(float(x)) else str(x))
                     for code, group in df.groupby('code'):
                         max_date = group['date'].max()
                         if pd.notna(max_date):
-                            if code not in gauge_dates or max_date.date() < gauge_dates[code]:
+                            # Keep the latest date - start hindcast from there + 1 day
+                            if code not in gauge_dates or max_date.date() > gauge_dates[code]:
                                 gauge_dates[code] = max_date.date()
             except Exception as e:
                 logger.warning(f"Could not read decad forecast file: {e}")
@@ -437,27 +441,63 @@ def get_hindcast_start_date_from_output(prediction_mode='BOTH', site_list=None):
         site_codes = set(str(s) for s in site_list)
         existing_codes = set(gauge_dates.keys())
         new_gauges = list(site_codes - existing_codes)
+        # DEBUG: Log comparison details
+        logger.info(f"DEBUG: site_codes from iEH HF: {sorted(site_codes)}")
+        logger.info(f"DEBUG: existing_codes from output files: {sorted(existing_codes)}")
+        logger.info(f"DEBUG: new_gauges (in iEH but not in output): {sorted(new_gauges)}")
         if new_gauges:
             logger.info(f"Found {len(new_gauges)} new gauges without forecast history: {new_gauges}")
 
-    # Determine start date
+    # Determine start date per gauge, then take the earliest
+    # - Existing gauges: last forecast date + 1 day
+    # - New gauges: ieasyhydroforecast_START_DATE
+    #
+    # TODO: Future optimization - per-gauge date ranges and parallelization
+    # Currently we use a single global start date (earliest across all gauges), which means
+    # gauges that are already up-to-date will unnecessarily re-run for dates they already have.
+    # A more efficient approach would be:
+    # 1. Store per-gauge start dates (gauge_dates dict already has this info)
+    # 2. Restructure the main loop to iterate gauge-first, then dates
+    # 3. Each gauge runs only for its missing date range
+    # 4. Since gauge forecasts are independent, this enables parallelization:
+    #    - Use multiprocessing.Pool or concurrent.futures.ProcessPoolExecutor
+    #    - Each worker processes one gauge's full date range
+    #    - Could significantly speed up hindcast for many gauges
+    # This would be especially beneficial when:
+    # - Adding new gauges (new gauge gets full hindcast, existing gauges skip)
+    # - Gauges have different data availability periods
+    # - Running on multi-core machines
+    start_dates = []
+
+    # Add start dates for existing gauges (last date + 1)
+    if gauge_dates:
+        for code, last_date in gauge_dates.items():
+            gauge_start = last_date + dt.timedelta(days=1)
+            start_dates.append(gauge_start)
+            logger.debug(f"  Gauge {code}: start from {gauge_start}")
+
+    # Add start date for new gauges (from env var)
     if new_gauges:
-        # New gauges need historical hindcast - use the default start date from env
         if default_start_date:
-            logger.info(f"New gauges detected. Using ieasyhydroforecast_START_DATE: {default_start_date}")
-            return default_start_date
+            logger.info(f"New gauges {new_gauges} will use ieasyhydroforecast_START_DATE: {default_start_date}")
+            start_dates.append(default_start_date)
         else:
             logger.error("New gauges detected but ieasyhydroforecast_START_DATE is not set.")
             logger.error("Please set ieasyhydroforecast_START_DATE=YYYY-MM-DD in your .env file")
             return None
-    elif gauge_dates:
-        # Use the earliest of the last dates (to ensure all gauges are covered)
-        earliest_last = min(gauge_dates.values())
-        start_date = earliest_last + dt.timedelta(days=1)
-        logger.info(f"Auto-detected hindcast start date: {start_date}")
-        return start_date
+
+    # Return the earliest start date (to cover all gauges)
+    if start_dates:
+        earliest_start = min(start_dates)
+        logger.info(f"Auto-detected hindcast start date: {earliest_start} (earliest across all gauges)")
+        # DEBUG: Log all start dates and exit early
+        logger.info(f"DEBUG: All start_dates list: {sorted(start_dates)}")
+        logger.info(f"DEBUG: Minimum (earliest) start date: {earliest_start}")
+        logger.info("DEBUG: Exiting early for debugging. Remove this block when done.")
+        sys.exit(0)
+        return earliest_start
     else:
-        # No existing forecasts - use default if available
+        # No existing forecasts and no new gauges - use default if available
         if default_start_date:
             logger.info(f"No existing forecasts. Using ieasyhydroforecast_START_DATE: {default_start_date}")
             return default_start_date
