@@ -95,7 +95,7 @@ class Meteo(Base):
     code = Column(String(10), nullable=False)
     date = Column(Date, nullable=False)
 
-    value = Column(Float, nullable=False)
+    value = Column(Float)
     norm = Column(Float)
     day_of_year = Column(Integer, nullable=False)
 

@@ -40,22 +40,22 @@ class RunoffResponse(RunoffBase):
 
 
 class HydrographBase(BaseModel):
+    horizon_type: HorizonType
     code: str = Field(..., max_length=10)
     date: DateType
-    horizon_type: HorizonType
     horizon_value: int = Field(..., ge=1)
     horizon_in_year: int = Field(..., ge=1, le=366)
     day_of_year: int = Field(..., ge=1, le=366)
     count: Optional[int] = None
-    mean: float
-    std: float
-    min: float
-    max: float
-    q05: float
-    q25: float
-    q50: float
-    q75: float
-    q95: float
+    mean: Optional[float] = None
+    std: Optional[float] = None
+    min: Optional[float] = None
+    max: Optional[float] = None
+    q05: Optional[float] = None
+    q25: Optional[float] = None
+    q50: Optional[float] = None
+    q75: Optional[float] = None
+    q95: Optional[float] = None
     norm: Optional[float] = None
     previous: Optional[float] = None
     current: Optional[float] = None
@@ -77,10 +77,10 @@ class HydrographBulkCreate(BaseModel):
 
 
 class MeteoBase(BaseModel):
+    meteo_type: MeteoType
     code: str = Field(..., max_length=10)
     date: DateType
-    meteo_type: MeteoType
-    value: float
+    value: Optional[float] = None
     norm: Optional[float] = None
     day_of_year: Optional[int] = None
 
