@@ -390,6 +390,51 @@ This replicates the Dockerfile's `CMD` structure while adding the `--hindcast` f
 |------|-------------|
 | `bin/daily_linreg_maintenance.sh` | Nightly hindcast maintenance script |
 
+## Local Docker Testing
+
+To test the maintenance script locally, you need to build a local Docker image with your changes:
+
+### 1. Build the Docker image locally
+
+```bash
+# From repo root
+docker build -f apps/linear_regression/Dockerfile -t mabesa/sapphire-linreg:latest .
+```
+
+This builds the image with the `latest` tag, which is what the maintenance script uses by default (via `ieasyhydroforecast_backend_docker_image_tag` in `.env`).
+
+### 2. Set up SSH tunnel (if required)
+
+If your hydromet uses a local iEasyHydro HF installation (configured with `IEASYHYDROHF_HOST` pointing to `localhost`), you need to establish an SSH tunnel first. Keep the tunnel terminal open while running the maintenance script.
+
+### 3. Run the maintenance script
+
+```bash
+bash bin/daily_linreg_maintenance.sh /path/to/config/.env
+```
+
+### macOS Note
+
+On macOS, Docker containers cannot access `localhost` on the host machine directly. The maintenance script automatically detects macOS and replaces `localhost` with `host.docker.internal` in `IEASYHYDROHF_HOST` for the container. You should see this in the logs:
+
+```
+macOS detected: overriding IEASYHYDROHF_HOST for Docker container
+  Original: http://localhost:5555/api/v1/
+  Docker:   http://host.docker.internal:5555/api/v1/
+```
+
+### Alternative: Use a different tag
+
+If you don't want to overwrite the production `latest` image:
+
+```bash
+# Build with custom tag
+docker build -f apps/linear_regression/Dockerfile -t mabesa/sapphire-linreg:local .
+
+# Update .env file
+ieasyhydroforecast_backend_docker_image_tag=local
+```
+
 ## Bug Fixes Applied During Testing
 
 ### Bug 1: Date Comparison Direction (Fixed)
