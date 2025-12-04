@@ -333,11 +333,18 @@ After implementing fixes, verify with real data:
 
 ---
 
-# Part 4: Nightly Maintenance Script - COMPLETED
+# Part 4: Nightly Maintenance Script - IN PROGRESS
 
 ## Overview
 
 Created `bin/daily_linreg_maintenance.sh` script for nightly hindcast execution to catch up on any missed forecasts.
+
+## Status
+
+- [x] Script created with Docker run commands
+- [x] Linear regression hindcast mode working correctly
+- [ ] Test maintenance script with Docker container
+- [ ] Verify end-to-end workflow
 
 ## Usage
 
@@ -382,6 +389,23 @@ This replicates the Dockerfile's `CMD` structure while adding the `--hindcast` f
 | File | Description |
 |------|-------------|
 | `bin/daily_linreg_maintenance.sh` | Nightly hindcast maintenance script |
+
+## Bug Fixes Applied During Testing
+
+### Bug 1: Date Comparison Direction (Fixed)
+- **Issue:** `get_last_forecast_dates_per_gauge()` used `<` instead of `>` when comparing dates
+- **Effect:** Kept the earliest (oldest) date instead of latest date per gauge
+- **Fix:** Changed comparison to `>` to keep the latest forecast date
+
+### Bug 2: Float-to-String Code Conversion (Fixed)
+- **Issue:** Gauge codes read from CSV as floats (e.g., `15013.0`) didn't match iEH HF codes (`15013`)
+- **Effect:** All gauges appeared as "new" even when they had forecast history
+- **Fix:** Added lambda to convert `15013.0` → `int(15013.0)` → `str(15013)` → `"15013"`
+
+### Bug 3: Outlier Gauge Start Dates (Fixed)
+- **Issue:** One gauge with very old last forecast date (2000-01-01) dragged entire hindcast back 25 years
+- **Effect:** Maintenance runs would take hours instead of seconds
+- **Fix:** Use **second earliest** start date instead of minimum to skip outliers
 
 ---
 
