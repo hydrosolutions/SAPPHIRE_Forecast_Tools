@@ -843,6 +843,31 @@ This provides a unified interface (`make forecast-pentad`) while keeping backwar
 
 ---
 
+## Pending Integration Tasks
+
+### Linear Regression Maintenance Script
+
+**Status**: Created, needs Docker testing and integration with deployment
+
+A nightly maintenance script for linear regression hindcast has been created:
+- **Script**: `bin/daily_linreg_maintenance.sh`
+- **Purpose**: Catch up on missed forecasts by running hindcast mode nightly
+- **Planning doc**: `implementation_planning/linear_regression_bugfix_plan.md` (Part 4)
+
+**Remaining tasks**:
+1. Test maintenance script with Docker container
+2. Verify end-to-end workflow
+3. Add to cron schedule (after `daily_ml_maintenance.sh`)
+4. Add Makefile target: `make linreg-maintenance`
+
+**Suggested cron entry**:
+```cron
+# Run after ML maintenance completes
+30 21 * * * /path/to/bin/daily_linreg_maintenance.sh /path/to/.env
+```
+
+---
+
 ## Critical Files Reference
 
 | Purpose | File Path |
@@ -853,4 +878,5 @@ This provides a unified interface (`make forecast-pentad`) while keeping backwar
 | Luigi compose | `bin/docker-compose-luigi.yml` |
 | Dashboard compose | `bin/docker-compose-dashboards.yml` |
 | Pipeline Dockerfile | `apps/pipeline/Dockerfile` |
+| Linear regression maintenance | `bin/daily_linreg_maintenance.sh` |
 | Current .env example | `config/.env_develop_kghm` |
