@@ -8,7 +8,7 @@ logs_dir = 'logs'
 if not os.path.exists(logs_dir):
     os.makedirs(logs_dir)
 
-formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(filename)s:%(lineno)d - %(levelname)s - %(message)s')
 file_handler = TimedRotatingFileHandler('logs/log', when='midnight',
                                         interval=1, backupCount=30)
 file_handler.setFormatter(formatter)

@@ -149,7 +149,7 @@ class DataInterface:
 
     def get_base_data(self,
                       forcing_HRU: str,
-                      start_date: Optional[str]) -> dict[str, Any]:
+                      start_date: Optional[str]=None) -> dict[str, Any]:
         """
         Retrieve the base dataset for long-term forecasting.
 

@@ -30,14 +30,13 @@ from lt_forecasting.forecast_models.deep_models.uncertainty_mixture import (
     UncertaintyMixtureModel,
 )
 
-from __init__ import logger 
 from data_interface import DataInterface
 from config_forecast import ForecastConfig
 from lt_utils import create_model_instance
 
 # set lt_forecasting logger level
 logger_lt = logging.getLogger("lt_forecasting")
-logger_lt.setLevel(logging.DEBUG)
+logger_lt.setLevel(logging.INFO)
 
 # Local libraries, installed with pip install -e ./iEasyHydroForecast
 # Get the absolute path of the directory containing the current script
@@ -51,6 +50,8 @@ sys.path.append(forecast_dir)
 
 # Import the setup_library module from the iEasyHydroForecast package
 import setup_library as sl
+
+from __init__ import logger 
 
 def tune_hyperparameters_model(
         model_name: str,
@@ -211,8 +212,6 @@ def calibrate_model(data_interface: DataInterface,
 
 
 
-
-
 def calibrate_and_hindcast(
         recalibrate_all: bool,
         models_to_run: List[str],
@@ -223,8 +222,8 @@ def calibrate_and_hindcast(
     Args:
         models_to_run (List[str]): List of model names to run.
     """
-    if recalibrate_all and len(models_to_run) == 0:
-        raise ValueError("If recalibrate_all is True, models_to_run must be specified.")
+    if not recalibrate_all and len(models_to_run) == 0:
+        raise ValueError("If recalibrate_all is False, models_to_run must be specified.")
     
     # Setup Environment
     sl.load_environment()

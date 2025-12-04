@@ -15,6 +15,8 @@ Change the version accordingly
 
 Functions here act more like an interface.
 
+For more detailed implementation specifics refer to the [Long-Term-Forecasting](https://github.com/hydrosolutions/long-term-forecasting) Documentation and code base.
+
 ## Data Interface
 
 The `data_interface.py` module provides the `DataInterface` class for loading and managing forecast data. It retrieves forcing data (precipitation and temperature), discharge observations, static features, and optional snow data from the data gateway.
@@ -50,14 +52,15 @@ Each forecast mode (e.g., "monthly") requires a configuration folder containing:
 **Example configuration (`config_monthly.json`):**
 ```json
 {
+    "prediction_horizon" : 30,
+    "offset" : 30,
+    "forecast_days" :[ 10, 20, 25, "end"],
     "model_folder" : "models_and_scalers/long_term_forecasting/monthly/",
     "models_to_use" : {
         "Base" : ["LR_Base", "GBT_Base"],
         "SnowMapper" : ["LR_SM", "SM_GBT_LR"]
     },
     "model_order" : ["Base", "SnowMapper"],
-    "forecast_horizon" : 30,
-    "offset" : null,
     "model_dependencies" : {
         "SM_GBT_LR" : ["LR_Base", "LR_SM"]
     },
@@ -67,7 +70,41 @@ Each forecast mode (e.g., "monthly") requires a configuration folder containing:
     "forcing_HRU" : "00003"
 }
 ```
+The prediction_horizon and offset variable control what the model tries to predict. As in the code we compute features with:
+```python
+future_avg = (
+    basin_data.rolling(
+        window=self.prediction_horizon, min_periods=min_periods
+    )
+    .mean()
+    .shift(-self.offset)
+)
+```
+The rolling window is always backward-looking so we need to shift the value forward in time. So if we want to predict the next 30 days from today: t+1 -> t+30 and t is today. This means that our target value is located 30 days later in our dataset, so we need to shift it by 30 days to make a proper target.
+
+In mathematical notation for accessing the target is:
+$$
+[t+k-H + 1, t+k]
+$$ 
+where $t$ is today, $k$ is the offset and $H$ is the prediction Horizon. If $k=null$ it is set to $k=H$. If we want to issue a forecast which is only valid in 5 days (Issue date 10th, valid from 15th for the next 30 days) we can set: 
+$$
+prediction\,\,horizon = 30 \\
+offset = 34 \\
+[t+34 -30 + 1, t+34] = [t+5, t+34]
+$$
+
+or if we want to predict the period from April - September and issue the forecast in the beginning of March (we assume that all months have 30 days as for such long periods single days have very little influence even if we have a perfect model) it is:
+$$
+prediction\,\,horizon = 180 \\
+offset = 210 \\
+[t+210 -180 + 1, t+210] = [t+31, t+210]
+$$
+In this example the first day of April is at t+31.
+
+
 The data dependency checks the difference of the max date with the current date (here of the SnowMapper data (today - max_SM)). If the SnowMapper is up to date this value is -10 (10 days lead time), with values greater than -5 we say that we don't continue with forecasts because the information is not recent enough (As an example).
+
+The forecast days indicates on which date a forecast should be issued during calibration. Note that here we can have more forecast days than in the operational setting. This increases robustness in our ML models. 
 
 **Key methods:**
 - `load_forecast_config(forecast_mode)`: Loads configuration for a specific forecast mode
@@ -113,7 +150,7 @@ The script supports two modes of operation via command-line arguments:
 ```bash
 # Set environment variables and run
 ieasyhydroforecast_env_file_path="path/to/.env" lt_forecast_mode=monthly \
-python calibrate_and_hindcast.py --all
+python calibrate_and_hindcast.py --all 
 ```
 
 #### Calibrate Specific Models
@@ -121,6 +158,13 @@ python calibrate_and_hindcast.py --all
 # Calibrate only selected models
 ieasyhydroforecast_env_file_path="path/to/.env" lt_forecast_mode=monthly \
 python calibrate_and_hindcast.py --models LR_Base GBT_Base LR_SM
+```
+
+### Calibrate and Tune Hyperparameters
+```bash
+# Set environment variables and run
+ieasyhydroforecast_env_file_path="path/to/.env" lt_forecast_mode=monthly \
+python calibrate_and_hindcast.py --all --tune_hyperparameters
 ```
 
 **Required Environment Variables:**
@@ -133,6 +177,7 @@ python calibrate_and_hindcast.py --models LR_Base GBT_Base LR_SM
 
 Note: The two options are mutually exclusive - use either `--all` or `--models`, not both.
 
+
 ### Outputs
 
 The script generates the following outputs:
@@ -142,7 +187,7 @@ For each successfully calibrated model, a CSV file is saved to:
 ```
 {output_path}/{model_name}_hindcast.csv
 ```
-
+ 
 **File structure:**
 - Columns contain hindcast predictions with associated metadata
 - Includes a `flag` column set to `1` (indicating hindcast/calibration data)
@@ -205,6 +250,7 @@ The script includes robust error handling:
 - **Calibration Failures**: Individual model failures are logged but don't stop the entire workflow
 - **Data Issues**: Missing data or configuration errors are caught and reported
 - **Full Error Traces**: Complete stack traces are logged for debugging
+
 
 ## Operational Forecasting
 

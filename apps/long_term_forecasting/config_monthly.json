@@ -1,0 +1,15 @@
+{
+    "model_folder" : "models_and_scalers/long_term_forecasting/monthly/",
+    "models_to_use" : {
+        "Base" : ["LR_Base", "GBT_Base"]
+    },
+    "forecast_horizon" : 30,
+    "offset" : null,
+    "model_dependencies" : {
+        "SM_GBT_LR" : ["LR_Base", "LR_SM"]
+    },
+    "data_dependencies" : {
+        "SM_GBT_LR" : {"SnowMapper": -5} 
+    },
+    "forcing_HRU" :"00003"
+}

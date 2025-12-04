@@ -59,7 +59,7 @@ class ForecastConfig:
         
         self.forecast_mode = forecast_mode
 
-        self.config_path = os.path.join(self.LT_forecast_configs, f"config_{forecast_mode}"+".json")
+        self.config_path = os.path.join(self.LT_forecast_configs, f"{forecast_mode}"+".json")
         with open(self.config_path, 'r') as f:
             config = json.load(f)
         
@@ -108,6 +108,10 @@ class ForecastConfig:
             raise
 
 
+        # Synchronize forecast horizon and offset across models
+        self.synchronize_forecast_settings()
+
+
     def get_model_specific_config(self,
                                   model_name : str):
         
@@ -145,7 +149,27 @@ class ForecastConfig:
             "feature_config": feature_config,
             "path_config": path_config
         }
+    
+    def synchronize_forecast_settings(self):
 
+        # this is the number of days to forecast into the future, eg: 30 days
+        self.forecast_horizon = self.forecast_config["prediction_horizon"]
+        # this is the offset from the "today"  to start forecasting
+        # [t+k, t+k+H-1], where k is the offset and H is the horizon
+        self.offset = self.forecast_config["offset"]
+
+        self.forecast_days = self.forecast_config['forecast_days']
+
+        # now add these to each model's general config
+        for model_name in self.all_models:
+            model_specific_config = self.get_model_specific_config(model_name)
+            model_specific_config["general_config"]["prediction_horizon"] = self.forecast_horizon
+            model_specific_config["general_config"]["offset"] = self.offset
+            model_specific_config["general_config"]["forecast_days"] = self.forecast_days
+            # Optionally, write back the updated config if needed
+            config_file = os.path.join(self.all_paths[model_name], "general_config.json")
+            with open(config_file, 'w') as f:
+                json.dump(model_specific_config["general_config"], f, indent=4)
 
     def get_models_to_run(self) -> List[str]:
         return self.all_models
@@ -163,7 +187,7 @@ class ForecastConfig:
         return self.forecast_config["data_dependencies"].get(model_name, {})
 
     def get_forecast_horizons(self) -> int:
-        return self.forecast_config["forecast_horizon"]
+        return self.forecast_config["prediction_horizon"]
 
     def get_forecast_offsets(self) -> int:
         return self.forecast_config["offset"]

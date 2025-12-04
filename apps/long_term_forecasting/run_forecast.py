@@ -39,7 +39,7 @@ from lt_utils import create_model_instance
 
 # set lt_forecasting logger level
 logger_lt = logging.getLogger("lt_forecasting")
-logger_lt.setLevel(logging.DEBUG)
+logger_lt.setLevel(logging.INFO)
 
 # Local libraries, installed with pip install -e ./iEasyHydroForecast
 # Get the absolute path of the directory containing the current script
@@ -159,7 +159,6 @@ def run_single_model(data_interface: DataInterface,
         forecast['flag'] = 2
         success = False
     
-
     #################################################
     # This part will be replaced by a database query in future [DATABASE INTEGRATION]
     #################################################
@@ -174,9 +173,17 @@ def run_single_model(data_interface: DataInterface,
     hindcast_file = os.path.join(output_path, f"{model_name}_hindcast.csv")
     if os.path.exists(hindcast_file):
         df_hindcast = pd.read_csv(hindcast_file)
-        df_hindcast['date'] = pd.to_datetime(df_hindcast['date'])
+        df_hindcast['date'] = pd.to_datetime(df_hindcast['date'], format='mixed')
         df_hindcast['code'] = df_hindcast['code'].astype(int)
+        forecast['date'] = pd.to_datetime(forecast['date'], format='mixed')
+        forecast['code'] = forecast['code'].astype(int) 
         df_combined = pd.concat([df_hindcast, forecast], ignore_index=True)
+        # remove duplicates based on date and code, keep the last (most recent forecast)
+        df_combined = df_combined.drop_duplicates(subset=['date', 'code'], keep='last')
+        # strf date to yyyy-mm-dd format
+        df_combined['date'] = df_combined['date'].dt.strftime('%Y-%m-%d')
+        df_combined.to_csv(hindcast_file, index=False)
+        logger.info(f"Appended forecast to hindcast file {hindcast_file}")
     else:
         logger.info(f"Hindcast file {hindcast_file} does not exist. Can not append forecast.")
 
@@ -209,7 +216,8 @@ def run_forecast(
 
     # Data Interface
     data_interface = DataInterface()
-    base_data_dict = data_interface.get_base_data(forcing_HRU=forcing_HRU)
+    base_data_dict = data_interface.get_base_data(
+        forcing_HRU=forcing_HRU)
 
     temporal_data = base_data_dict["temporal_data"]
     static_data = base_data_dict["static_data"]
