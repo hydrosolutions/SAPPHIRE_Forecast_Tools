@@ -1427,7 +1427,7 @@ If AGPL packages are found:
 | 2 | preprocessing_runoff | ✅ Completed | `:py312` | B | pyproject.toml + uv.lock, 13 tests pass; local Py3.12 venv test OK; Docker test OK |
 | 3a | preprocessing_gateway | 🔄 In Progress | `:py312` | B | Steps 1-5 done; local test OK; Docker test OK (all 3 scripts). **TODO @Sandro:** Test extend_era5_reanalysis.py and snow_data_reanalysis.py locally with Python 3.12 venv. Server testing pending. |
 | 3b | preprocessing_station_forcing | ✅ Completed | `:py312` | B | pyproject.toml + uv.lock + Dockerfile.py312; local Py3.12 test OK; Docker test OK (fails at DB connection as expected - uses old ieasyhydro SDK). No unit tests. No CI/CD (future development). |
-| 4a | linear_regression | Not started | `:py312` | B | |
+| 4a | linear_regression | ✅ Completed | `:py312` | B | pyproject.toml + uv.lock + Dockerfile.py312; local Py3.12 test OK; Docker test OK. CI/CD workflows updated. |
 | 4b | machine_learning | Not started | `:py312` | C/D | Heavy deps, torch/darts |
 | 4c | conceptual_model | N/A | N/A | — | R-based, skip |
 | 5a | forecast_dashboard | Not started | `:py312` | B | |

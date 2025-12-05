@@ -597,6 +597,51 @@ jobs:
           -t "${{ env.LINREG_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
           -f ./apps/linear_regression/Dockerfile .
 
+  # Test linear regression with Python 3.12 + uv
+  test_linear_regression_py312:
+    runs-on: ubuntu-latest
+    name: Test linear regression (Python 3.12 + uv)
+    steps:
+      - name: Check out the current branch
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install Python 3.12
+        run: uv python install 3.12
+
+      - name: Install linear_regression dependencies
+        working-directory: ./apps/linear_regression
+        run: uv sync --all-extras
+
+      - name: Verify imports
+        working-directory: ./apps
+        run: |
+          linear_regression/.venv/bin/python -c "import pandas; import numpy; import docker; from ieasyhydro_sdk.sdk import IEasyHydroSDK, IEasyHydroHFSDK; print('All imports successful!')"
+
+  # Build linear regression Python 3.12 + uv image
+  build_linreg_py312:
+    needs: [test_linear_regression_py312, build_python_312_base_image]
+    runs-on: ubuntu-latest
+    name: Build linear regression (Python 3.12 + uv)
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build base image first (required as dependency)
+        run: |
+          DOCKER_BUILDKIT=1 docker build \
+          -t "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" \
+          -f ./apps/docker_base_image/Dockerfile.py312 .
+
+      - name: Build Docker image
+        run: |
+          docker build \
+          -t "${{ env.LINREG_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" \
+          -f ./apps/linear_regression/Dockerfile.py312 .
+
 
   # Final job that summarizes all built images
   summarize_builds:
@@ -613,7 +658,8 @@ jobs:
       build_reset_forecast,
       build_dashboard,
       build_postprocessing_runoff,
-      build_linreg
+      build_linreg,
+      build_linreg_py312
     ]
     runs-on: ubuntu-latest
     name: Summarize Docker image builds

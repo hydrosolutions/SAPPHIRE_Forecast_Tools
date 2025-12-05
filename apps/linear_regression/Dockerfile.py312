@@ -1,0 +1,36 @@
+# syntax=docker/dockerfile:1
+
+# Python 3.12 + uv image for linear_regression module
+# This image runs in parallel with the :latest (Python 3.11 + pip) version during migration
+# See: implementation_planning/uv_migration_plan.md
+
+FROM mabesa/sapphire-pythonbaseimage:py312 AS base
+
+# Set environment variable for runtime detection
+ENV SAPPHIRE_OPDEV_ENV=True
+
+# Switch to root for installation and runtime
+# This module writes to shared volumes, requiring root access
+USER root
+
+# Set working directory
+WORKDIR /app
+
+# Copy linear_regression source code (includes pyproject.toml and uv.lock)
+COPY apps/linear_regression /app/apps/linear_regression
+
+# Install linear_regression dependencies using uv
+# The base image already has iEasyHydroForecast installed
+# We only need to install additional dependencies specific to this module
+WORKDIR /app/apps/linear_regression
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv export --frozen --no-dev > /tmp/requirements.txt && \
+    uv pip install --system -r /tmp/requirements.txt && \
+    rm /tmp/requirements.txt
+
+# Reset working directory
+WORKDIR /app
+
+# Run the application as root (required for shared volume access)
+# Note: PYTHONPATH includes iEasyHydroForecast for local imports
+CMD ["sh", "-c", "PYTHONPATH=/app/apps/iEasyHydroForecast python apps/linear_regression/linear_regression.py"]
