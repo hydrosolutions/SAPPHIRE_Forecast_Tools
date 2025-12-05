@@ -321,6 +321,49 @@ jobs:
           -t "${{ env.PREPG_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
           -f ./apps/preprocessing_gateway/Dockerfile .
 
+  # Test preprocessing gateway with Python 3.12 + uv
+  test_preprocessing_gateway_py312:
+    runs-on: ubuntu-latest
+    name: Test preprocessing gateway (Python 3.12 + uv)
+
+    steps:
+    - name: Checkout the commit that triggered the workflow
+      uses: actions/checkout@v4
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v5
+      with:
+        version: "latest"
+
+    - name: Set up Python 3.12 with uv
+      run: uv python install 3.12
+
+    - name: Install dependencies with uv
+      working-directory: ./apps/preprocessing_gateway
+      run: |
+        uv sync --all-extras
+
+    - name: Verify imports
+      working-directory: ./apps
+      run: |
+        preprocessing_gateway/.venv/bin/python -c "import pandas; import numpy; import scipy; import sklearn; import luigi; import sapphire_dg_client; print('All imports successful!')"
+
+  # Build preprocessing gateway Python 3.12 + uv image
+  build_preprocessing_gateway_py312:
+    needs: [test_preprocessing_gateway_py312, build_python_312_base_image]
+    runs-on: ubuntu-latest
+    name: Build preprocessing gateway (Python 3.12 + uv)
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: |
+          docker build \
+          -t "${{ env.PREPG_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" \
+          -f ./apps/preprocessing_gateway/Dockerfile.py312 .
+
   # Set up the machine learning environment
   set_up_machine_learning:
     needs: [build_python_311_base_image, test_ieasyhydroforecast]
@@ -559,6 +602,7 @@ jobs:
       build_preprocessing_runoff,
       build_preprocessing_runoff_py312,
       build_preprocessing_gateway,
+      build_preprocessing_gateway_py312,
       build_machine_learning_image,
       build_reset_forecast,
       build_dashboard,
@@ -579,9 +623,11 @@ jobs:
           echo "- ${{ env.PIPELINE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" >> $GITHUB_STEP_SUMMARY
           echo "- ${{ env.CONCMOD_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" >> $GITHUB_STEP_SUMMARY
           echo "- ${{ env.PREPQ_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" >> $GITHUB_STEP_SUMMARY
+          echo "- ${{ env.PREPG_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "## Python 3.12 + uv (migration testing)" >> $GITHUB_STEP_SUMMARY
           echo "- ${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" >> $GITHUB_STEP_SUMMARY
           echo "- ${{ env.PREPQ_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" >> $GITHUB_STEP_SUMMARY
+          echo "- ${{ env.PREPG_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Note:** These images were built for testing only and not pushed to DockerHub." >> $GITHUB_STEP_SUMMARY

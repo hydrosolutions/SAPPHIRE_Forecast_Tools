@@ -343,8 +343,9 @@ Created `bin/daily_linreg_maintenance.sh` script for nightly hindcast execution 
 
 - [x] Script created with Docker run commands
 - [x] Linear regression hindcast mode working correctly
-- [ ] Test maintenance script with Docker container
-- [ ] Verify end-to-end workflow
+- [x] Test maintenance script with Docker container locally (macOS) ✅ (2025-12-05)
+- [ ] Test maintenance script on production server
+- [ ] Verify end-to-end workflow on server
 
 ## Usage
 

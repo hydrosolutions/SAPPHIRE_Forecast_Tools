@@ -1,0 +1,37 @@
+# syntax=docker/dockerfile:1
+
+# Python 3.12 + uv image for preprocessing_gateway module
+# This image runs in parallel with the :latest (Python 3.11 + pip) version during migration
+# See: implementation_planning/uv_migration_plan.md
+
+FROM mabesa/sapphire-pythonbaseimage:py312 AS base
+
+# Set environment variable for runtime detection
+ENV SAPPHIRE_OPDEV_ENV=True
+
+# Switch to root for installation and runtime
+# This module writes to shared volumes, requiring root access
+USER root
+
+# Set working directory
+WORKDIR /app
+
+# Copy preprocessing_gateway source code (includes pyproject.toml and uv.lock)
+COPY apps/preprocessing_gateway /app/apps/preprocessing_gateway
+
+# Install preprocessing_gateway dependencies using uv
+# The base image already has iEasyHydroForecast installed
+# We only need to install additional dependencies specific to this module
+WORKDIR /app/apps/preprocessing_gateway
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv export --frozen --no-dev > /tmp/requirements.txt && \
+    uv pip install --system -r /tmp/requirements.txt && \
+    rm /tmp/requirements.txt
+
+# Reset working directory
+WORKDIR /app
+
+# Run the application as root (required for shared volume access)
+# Note: PYTHONPATH includes iEasyHydroForecast for local imports
+# Runs three scripts sequentially: quantile mapping, ERA5 extension, and snow data processing
+CMD ["sh", "-c", "PYTHONPATH=/app/apps/iEasyHydroForecast python apps/preprocessing_gateway/Quantile_Mapping_OP.py && python apps/preprocessing_gateway/extend_era5_reanalysis.py && python apps/preprocessing_gateway/snow_data_operational.py"]
