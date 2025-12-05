@@ -149,6 +149,14 @@ Proposed new README structure:
 - [ ] Create runbook for common operational tasks
 - [ ] Document backup and recovery procedures
 
+#### Step 5.5: Development Environment Documentation
+- [ ] Document macOS Docker development workflow
+  - Using `host.docker.internal` for SSH tunnels to iEasyHydro HF
+  - Server configuration requirements for Docker development
+  - Reference: `implementation_planning/linear_regression_bugfix_plan.md` (macOS Docker Compatibility section)
+- [ ] Document local Docker testing procedures for each module
+- [ ] Create troubleshooting guide for common development issues
+
 ---
 
 ### Phase 6: Documentation Infrastructure

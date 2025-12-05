@@ -413,15 +413,21 @@ If your hydromet uses a local iEasyHydro HF installation (configured with `IEASY
 bash bin/daily_linreg_maintenance.sh /path/to/config/.env
 ```
 
-### macOS Note
+### macOS Docker Compatibility
 
-On macOS, Docker containers cannot access `localhost` on the host machine directly. The maintenance script automatically detects macOS and replaces `localhost` with `host.docker.internal` in `IEASYHYDROHF_HOST` for the container. You should see this in the logs:
+On macOS, Docker Desktop runs containers in a Linux VM. The maintenance script automatically detects macOS and replaces `localhost` with `host.docker.internal` in `IEASYHYDROHF_HOST`.
 
-```
-macOS detected: overriding IEASYHYDROHF_HOST for Docker container
-  Original: http://localhost:5555/api/v1/
-  Docker:   http://host.docker.internal:5555/api/v1/
-```
+**For developers on macOS accessing iEasyHydro HF via SSH tunnel:**
+
+When running Docker containers locally that need to connect to iEasyHydro HF through an SSH tunnel (e.g., for development/testing), the container cannot reach `localhost` directly. The script handles this by:
+
+1. Detecting macOS (`uname == "Darwin"`)
+2. Replacing `localhost` with `host.docker.internal` in the API URL
+3. The iEasyHydro HF server must be configured to accept connections from `host.docker.internal`
+
+If you encounter `DisallowedHost` errors when testing Docker containers on macOS, contact your iEasyHydro HF administrator to ensure the server configuration supports Docker development workflows.
+
+**On Linux production servers**, `--network host` works correctly and containers can reach `localhost` directly.
 
 ### Alternative: Use a different tag
 

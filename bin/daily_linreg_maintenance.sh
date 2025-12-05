@@ -85,7 +85,8 @@ MEMORY_LIMIT="4g"
 MEMORY_SWAP="6g"
 
 # macOS Docker compatibility: localhost inside container doesn't reach host's localhost
-# On macOS, we need to use host.docker.internal instead of localhost
+# On macOS, we need to use host.docker.internal instead of localhost.
+# The iEasyHydro HF server must be configured to accept connections from host.docker.internal.
 DOCKER_HOST_OVERRIDE=""
 if [[ "$(uname)" == "Darwin" ]]; then
     # Check if IEASYHYDROHF_HOST uses localhost - if so, we need to override it
