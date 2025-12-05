@@ -569,6 +569,51 @@ jobs:
           -t "${{ env.DASHBOARD_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
           -f ./apps/forecast_dashboard/Dockerfile .
 
+  # Test forecast dashboard with Python 3.12 + uv
+  test_dashboard_py312:
+    runs-on: ubuntu-latest
+    name: Test forecast dashboard (Python 3.12 + uv)
+    steps:
+      - name: Check out the current branch
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install Python 3.12
+        run: uv python install 3.12
+
+      - name: Install forecast_dashboard dependencies
+        working-directory: ./apps/forecast_dashboard
+        run: uv sync --all-extras
+
+      - name: Verify imports
+        working-directory: ./apps
+        run: |
+          forecast_dashboard/.venv/bin/python -c "import panel; import holoviews; import bokeh; import pandas; import numpy; import scipy; import sklearn; import docker; print('All imports successful!'); print(f'panel: {panel.__version__}'); print(f'bokeh: {bokeh.__version__}')"
+
+  # Build forecast dashboard Python 3.12 + uv image
+  build_dashboard_py312:
+    needs: [test_dashboard_py312, build_python_312_base_image]
+    runs-on: ubuntu-latest
+    name: Build forecast dashboard (Python 3.12 + uv)
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build base image first (required as dependency)
+        run: |
+          DOCKER_BUILDKIT=1 docker build \
+          -t "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" \
+          -f ./apps/docker_base_image/Dockerfile.py312 .
+
+      - name: Build Docker image
+        run: |
+          docker build \
+          -t "${{ env.DASHBOARD_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" \
+          -f ./apps/forecast_dashboard/Dockerfile.py312 .
+
   # Build postprocessing image
   build_postprocessing_runoff:
     # Same requirements as preprocessing_runoff module
@@ -703,6 +748,7 @@ jobs:
       build_machine_learning_py312,
       build_reset_forecast,
       build_dashboard,
+      build_dashboard_py312,
       build_postprocessing_runoff,
       build_linreg,
       build_linreg_py312
