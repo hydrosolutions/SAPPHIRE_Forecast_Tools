@@ -156,18 +156,79 @@ Proposed new README structure:
   - Reference: `implementation_planning/linear_regression_bugfix_plan.md` (macOS Docker Compatibility section)
 - [ ] Document local Docker testing procedures for each module
 - [ ] Create troubleshooting guide for common development issues
-- [ ] Document MCP server setup for Claude Code
-  - **context7**: Provides up-to-date library documentation for AI assistants
-    - HTTP server, no installation required
-    - Add via: `claude mcp add context7 --transport http https://mcp.context7.com/mcp`
-    - Usage: Ask Claude to look up documentation (e.g., "use context7 to find pandas DataFrame docs")
-  - **serena**: Provides semantic code analysis for AI assistants
-    - Requires `uvx` (install via `curl -LsSf https://astral.sh/uv/install.sh | sh`)
-    - Add via: `claude mcp add serena -- uvx --from git+https://github.com/oraios/serena serena start-mcp-server --context ide-assistant --project "$(pwd)"`
-    - Usage: Provides code understanding capabilities to Claude
-  - Configuration stored in `~/.claude.json` (per-project settings)
-  - Verify with: `claude mcp list`
-  - Remove with: `claude mcp remove <server-name>`
+- [x] Document MCP server setup for Claude Code ✅ (2025-12-05)
+
+##### MCP Server Setup for Claude Code (VS Code)
+
+These instructions help you set up **Context7** and **Serena** MCP servers to enhance Claude Code's capabilities in VS Code.
+
+**Prerequisites:**
+- Claude Code extension installed in VS Code
+- `uv` installed (for Serena): `curl -LsSf https://astral.sh/uv/install.sh | sh`
+
+**1. Context7 - Library Documentation Lookup**
+
+Context7 provides up-to-date documentation for libraries directly to Claude.
+
+```bash
+# Installation (one-time, in any terminal):
+claude mcp add context7 --transport http https://mcp.context7.com/mcp
+```
+
+Usage examples:
+- "Use context7 to find pandas DataFrame docs"
+- "Look up the luigi Task API with context7"
+
+**2. Serena - Semantic Code Analysis**
+
+Serena provides intelligent code understanding, symbol navigation, and semantic search.
+
+```bash
+# Installation (run from project root directory):
+cd /path/to/SAPPHIRE_forecast_tools
+claude mcp add serena -- uvx --from git+https://github.com/oraios/serena serena start-mcp-server --context ide-assistant --project "$(pwd)"
+```
+
+Project configuration: A `.serena/project.yml` file already exists in the repository with:
+- Python language server enabled
+- UTF-8 encoding
+- Gitignore integration
+- Project memories for code conventions and suggested commands
+
+Serena automatically enhances Claude's ability to:
+- Navigate symbols and find references
+- Understand code structure without reading entire files
+- Search for patterns across the codebase
+- Remember project-specific conventions
+
+**Verification:**
+
+```bash
+claude mcp list
+```
+
+Expected output:
+```
+context7: https://mcp.context7.com/mcp (http)
+serena: uvx --from git+https://github.com/oraios/serena serena start-mcp-server ...
+```
+
+**Removal (if needed):**
+
+```bash
+claude mcp remove context7
+claude mcp remove serena
+```
+
+**Configuration storage:**
+- MCP settings are stored in `~/.claude.json`
+- Project-specific Serena config is in `.serena/project.yml` (already in repo)
+- Serena memories are in `.serena/memories/` (project-specific, gitignored)
+
+**Tips:**
+- Context7 is useful when you need to look up external library APIs
+- Serena shines when navigating complex code - it reads symbols intelligently without loading entire files
+- Both tools work together: Serena for internal code, Context7 for external libraries
 
 ---
 
@@ -198,6 +259,157 @@ Proposed new README structure:
 
 ---
 
+### Phase 7: Module-Level Documentation
+
+#### Documentation Location Strategy: Hybrid Approach
+
+Each module in `/apps/` should have documentation in two places:
+
+1. **Module README.md** (in `apps/<module>/README.md`)
+   - Quick overview (1-2 paragraphs)
+   - Usage example
+   - Link to full documentation
+   - Visible when browsing GitHub
+
+2. **Detailed Documentation** (in `doc/modules/<module>.md`)
+   - Comprehensive documentation
+   - Environment variables
+   - Data formats
+   - Architecture details
+   - Troubleshooting
+   - Accessible via MkDocs site
+
+**Rationale:** MkDocs is configured with `docs_dir: doc`, so detailed docs must live in `doc/`. Module READMEs provide quick context for developers browsing the codebase.
+
+#### Step 7.0: Create Module Documentation Structure
+- [ ] Create `doc/modules/` directory
+- [ ] Update `mkdocs.yml` to include modules section in navigation:
+  ```yaml
+  nav:
+    - Modules:
+        - Overview: modules/index.md
+        - preprocessing_gateway: modules/preprocessing_gateway.md
+        - preprocessing_runoff: modules/preprocessing_runoff.md
+        - preprocessing_station_forcing: modules/preprocessing_station_forcing.md
+        - linear_regression: modules/linear_regression.md
+        - machine_learning: modules/machine_learning.md
+        - forecast_dashboard: modules/forecast_dashboard.md
+        - pipeline: modules/pipeline.md
+  ```
+- [ ] Create `doc/modules/index.md` with module overview and links
+
+#### Step 7.1: preprocessing_gateway Module
+
+**Current State Assessment (2025-12-05):**
+- ❌ No README.md (pyproject.toml references it but file doesn't exist)
+- ⚠️ Partial docstrings - good in Quantile_Mapping_OP.py and dg_utils.py, minimal in extend_era5_reanalysis.py
+- ⚠️ 16+ environment variables used but poorly documented
+- ❌ No architecture diagram showing script dependencies
+- ❌ No test suite (pyproject.toml references tests/ but none exist)
+- ⚠️ Incomplete TODOs in doc/configuration.md (lines 140, 161, 195)
+
+**Tasks:**
+
+- [ ] **Create `apps/preprocessing_gateway/README.md`** (concise)
+  ```markdown
+  # Preprocessing Gateway Module
+
+  Downloads and processes weather data from the SAPPHIRE Data Gateway,
+  performs quantile mapping on ERA5/ECMWF data, and prepares forcing data
+  for forecast models.
+
+  ## Scripts
+  - `Quantile_Mapping_OP.py` - Downloads and bias-corrects operational forecasts
+  - `extend_era5_reanalysis.py` - Extends historical reanalysis data
+  - `snow_data_operational.py` - Processes operational snow data
+
+  ## Quick Start
+  ```bash
+  ieasyhydroforecast_env_file_path=/path/to/.env python Quantile_Mapping_OP.py
+  ```
+
+  ## Full Documentation
+  See [preprocessing_gateway module documentation](../../doc/modules/preprocessing_gateway.md)
+  ```
+
+- [ ] **Create `doc/modules/preprocessing_gateway.md`** (comprehensive)
+  - Module overview and purpose
+  - Architecture diagram (Mermaid) showing script execution order
+  - All 16+ environment variables with descriptions:
+    - `ieasyhydroforecast_API_KEY_GATEAWAY` (note: typo in var name)
+    - `ieasyhydroforecast_HRU_CONTROL_MEMBER`
+    - `ieasyhydroforecast_HRU_ENSEMBLE`
+    - `ieasyhydroforecast_HRU_SNOW_DATA`
+    - `ieasyhydroforecast_OUTPUT_PATH_CM` / `_ENS` / `_DG` / `_REANALYSIS` / `_SNOW`
+    - `ieasyhydroforecast_Q_MAP_PARAM_PATH`
+    - `ieasyhydroforecast_SNOW_VARS`
+    - `ieasyhydroforecast_config_file_data_gateway_name_twins`
+    - `ieasyhydroforecast_models_and_scalers_path`
+    - `ieasyhydroforecast_reanalysis_START_DATE` / `_END_DATE`
+    - `ieasyforecast_intermediate_data_path`
+  - Input/output data format specifications:
+    - Control member CSV: `['date', 'P/T', 'code']`
+    - Ensemble CSV: `['date', 'P/T', 'code', 'ensemble_member']`
+    - Quantile mapping parameter files format
+  - Data Gateway integration:
+    - How to obtain API key access
+    - sapphire-dg-client private repo access requirements
+  - Quantile mapping explanation (formula: y_fit = a * y_era_5^b)
+  - Troubleshooting guide
+
+- [ ] **Complete TODOs in doc/configuration.md**
+  - Line ~140: Link to data gateway chapter
+  - Line ~161: Document output folder purposes
+  - Line ~195: Complete machine learning configuration section
+
+- [ ] **Improve function docstrings**
+  - extend_era5_reanalysis.py - add comprehensive docstrings
+  - get_era5_reanalysis_data.py - add comprehensive docstrings
+  - Document magic numbers (195 days, 5-year batches)
+
+#### Step 7.2: preprocessing_runoff Module
+- [ ] Assess documentation status
+- [ ] Create `apps/preprocessing_runoff/README.md` (concise)
+- [ ] Create `doc/modules/preprocessing_runoff.md` (comprehensive)
+- [ ] Document iEasyHydro HF SDK integration
+- [ ] Document output formats (runoff_day.csv, hydrograph_day.csv)
+
+#### Step 7.3: preprocessing_station_forcing Module
+- [ ] Assess documentation status
+- [ ] Create README.md and doc/modules/ entry
+
+#### Step 7.4: linear_regression Module
+- [ ] Assess documentation status
+- [ ] Create README.md and doc/modules/ entry
+- [ ] Document hindcast mode (`--hindcast` flag)
+- [ ] Document output formats
+
+#### Step 7.5: machine_learning Module
+- [ ] Assess documentation status
+- [ ] Create README.md and doc/modules/ entry
+- [ ] Document Darts/PyTorch dependencies
+- [ ] Document model training vs inference modes
+
+#### Step 7.6: forecast_dashboard Module
+- [ ] Assess documentation status
+- [ ] Create README.md and doc/modules/ entry
+- [ ] Document Panel/Bokeh stack
+- [ ] Include screenshots
+
+#### Step 7.7: pipeline Module
+- [ ] Assess documentation status
+- [ ] Create README.md and doc/modules/ entry
+- [ ] Document Luigi task dependencies
+- [ ] Document Docker orchestration
+
+#### Step 7.8: iEasyHydroForecast Library
+- [ ] Review existing documentation
+- [ ] Create `doc/modules/iEasyHydroForecast.md`
+- [ ] Document public API
+- [ ] Add usage examples
+
+---
+
 ## Priority Order
 
 | Priority | Task | Effort | Impact |
@@ -212,6 +424,11 @@ Proposed new README structure:
 | 8 | Step 4.1 - User guide improvements | Medium | Medium |
 | 9 | Step 3.3 - Configuration reference | High | Medium |
 | 10 | Step 5.3 - Changelog/versioning | Low | Low |
+| 11 | Step 7.0 - Module documentation structure | Low | High |
+| 12 | Step 7.1 - preprocessing_gateway docs | Medium | High |
+| 13 | Step 7.2 - preprocessing_runoff docs | Medium | Medium |
+| 14 | Step 7.4 - linear_regression docs | Medium | Medium |
+| 15 | Step 7.5-7.8 - Other module docs | High | Medium |
 
 ---
 
@@ -248,10 +465,16 @@ The documentation improvement is complete when:
 | 2.1 | Not started | |
 | 2.2 | Not started | |
 | 5.4 | ✅ Completed | 2025-12-01 - Created docker-security-maintenance.md + security disclaimer + template response |
+| 5.5 | ✅ Completed | 2025-12-05 - MCP server setup instructions for Context7 and Serena |
 | 6.1 | In progress | 2025-12-01 - MkDocs setup complete, pending GitHub Pages enablement |
-| ... | ... | |
+| 7.0 | Not started | Module documentation structure |
+| 7.1 | Not started | 2025-12-05 - Assessment complete, tasks defined |
+| 7.2 | Not started | preprocessing_runoff |
+| 7.3 | Not started | preprocessing_station_forcing |
+| 7.4 | Not started | linear_regression |
+| 7.5-7.8 | Not started | Other modules |
 
 ---
 
 *Document created: 2025-12-01*
-*Last updated: 2025-12-01*
+*Last updated: 2025-12-05*

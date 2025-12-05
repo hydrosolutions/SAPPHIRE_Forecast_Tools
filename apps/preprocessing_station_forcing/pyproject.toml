@@ -1,0 +1,48 @@
+[project]
+name = "preprocessing-station-forcing"
+version = "0.1.0"
+description = "Preprocessing module for weather station forcing data in SAPPHIRE forecast tools"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [
+    {name = "Beatrice Marti", url = "https://github.com/mabesa"},
+]
+dependencies = [
+    # Core data processing
+    "pandas>=2.2.2",
+    "numpy>=1.26.4",
+    # Excel support (required by pandas for .xlsx files)
+    "openpyxl>=3.1.2",
+    # Date/time handling
+    "DateTime>=5.5",
+    "python-dateutil>=2.9.0",
+    "pytz>=2024.1",
+    # Configuration
+    "python-dotenv>=1.0.1",
+    # HTTP requests
+    "requests>=2.32.0",
+    # External SDK (brings in requests as transitive dependency)
+    "ieasyhydro-sdk @ git+https://github.com/hydrosolutions/ieasyhydro-python-sdk@master",
+    # Local library dependency
+    "iEasyHydroForecast @ file:///${PROJECT_ROOT}/../iEasyHydroForecast",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2.0",
+]
+
+[tool.uv]
+# Allow git and local path dependencies
+allow-insecure-host = []
+
+[tool.uv.sources]
+# Use local iEasyHydroForecast from sibling directory
+iEasyHydroForecast = { path = "../iEasyHydroForecast", editable = true }
+
+[tool.pytest.ini_options]
+# Tests are in the test/ directory (when added)
+testpaths = ["test"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]

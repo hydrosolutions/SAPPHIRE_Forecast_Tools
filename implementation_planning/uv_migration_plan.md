@@ -720,15 +720,82 @@ members = [
 
 ## Migration Checklist for Each Module
 
+### Step 1: Create uv Configuration
 - [ ] Create `pyproject.toml` with dependencies from `requirements.txt`
 - [ ] Add `[tool.uv.sources]` for iEasyHydroForecast
 - [ ] Run `uv lock` to generate lock file
-- [ ] Run `uv sync` and test locally
-- [ ] Update Dockerfile to use uv
-- [ ] Test Docker build
-- [ ] Add module path to `test_modules.yml` workflow
-- [ ] Ensure `tests/` directory exists with at least one test
-- [ ] Verify CI passes before merging migration PR
+- [ ] Run `uv sync --python 3.12` to create venv with Python 3.12 and verify imports work
+  ```bash
+  cd apps/<module_name>
+  uv sync --python 3.12
+  .venv/bin/python --version  # Should show Python 3.12.x
+  ```
+
+### Step 2: Local Testing (without Docker)
+- [ ] Run module script directly with uv venv:
+  ```bash
+  cd apps/<module_name>
+  ieasyhydroforecast_env_file_path=/path/to/config/.env .venv/bin/python <script>.py
+  ```
+- [ ] Verify output files are created correctly
+- [ ] Run pytest if tests exist: `.venv/bin/python -m pytest`
+
+### Step 3: Docker Configuration
+- [ ] Create `Dockerfile.py312` using uv
+- [ ] Build base image locally (if not already built):
+  ```bash
+  # From repository root
+  docker build -f apps/docker_base_image/Dockerfile.py312 -t mabesa/sapphire-pythonbaseimage:py312 .
+  ```
+- [ ] Build module Docker image locally:
+  ```bash
+  # From repository root
+  docker build -f apps/<module_name>/Dockerfile.py312 -t mabesa/sapphire-<module>:py312-test .
+  ```
+- [ ] Verify image works (quick test):
+  ```bash
+  # Check Python version
+  docker run --rm mabesa/sapphire-<module>:py312-test python --version
+
+  # Verify all imports work
+  docker run --rm mabesa/sapphire-<module>:py312-test python -c "import pandas; import numpy; print('OK')"
+  ```
+- [ ] Run Docker container locally with production-like setup:
+  ```bash
+  # Adjust paths to your local data directory
+  docker run --rm \
+      --network host \
+      -e ieasyhydroforecast_data_root_dir=/kyg_data_forecast_tools \
+      -e ieasyhydroforecast_env_file_path=/kyg_data_forecast_tools/config/.env_develop_kghm \
+      -e SAPPHIRE_OPDEV_ENV=True \
+      -e IN_DOCKER=True \
+      -v /path/to/kyg_data_forecast_tools/config:/kyg_data_forecast_tools/config \
+      -v /path/to/kyg_data_forecast_tools/daily_runoff:/kyg_data_forecast_tools/daily_runoff \
+      -v /path/to/kyg_data_forecast_tools/intermediate_data:/kyg_data_forecast_tools/intermediate_data \
+      -v /path/to/kyg_data_forecast_tools/bin:/kyg_data_forecast_tools/bin \
+      mabesa/sapphire-<module>:py312-test
+  ```
+
+  **For modules connecting to iEasyHydro HF** (e.g., linear_regression, preprocessing_runoff):
+  ```bash
+  # Add these environment variables:
+  -e IEASYHYDROHF_HOST=http://host.docker.internal:5556/api/v1/
+
+  # Note: Requires SSH tunnel to iEasyHydro HF server running on host
+  # Start tunnel with: ssh -L 5556:localhost:5556 <server>
+  ```
+
+### Step 4: CI/CD Integration
+- [ ] Add py312 test job to `build_test.yml`
+- [ ] Add py312 build/push job to `deploy_main.yml`
+- [ ] Update summary job dependencies in both workflows
+- [ ] Verify CI passes before merging
+
+### Step 5: Server Testing
+- [ ] Test module on production server
+- [ ] Verify end-to-end workflow on server
+
+### Step 6: Cleanup
 - [ ] Remove old `requirements.txt` (or keep for reference)
 - [ ] Update documentation
 
@@ -1357,9 +1424,9 @@ If AGPL packages are found:
 | Pre | Create v0.2.0 release | ✅ Completed | `:latest` | — | Python 3.11 baseline |
 | 0 | Create `:py312` base image | ✅ Completed | `:py312` | B | Minimal OS packages, uv |
 | 1 | iEasyHydroForecast | ✅ Completed | `:py312` | B | pyproject.toml + uv.lock, 173 tests pass |
-| 2 | preprocessing_runoff | ✅ Completed | `:py312` | B | pyproject.toml + uv.lock, 13 tests pass |
-| 3a | preprocessing_gateway | Not started | `:py312` | B | |
-| 3b | preprocessing_station_forcing | Not started | `:py312` | B | |
+| 2 | preprocessing_runoff | ✅ Completed | `:py312` | B | pyproject.toml + uv.lock, 13 tests pass; local Py3.12 venv test OK; Docker test OK |
+| 3a | preprocessing_gateway | 🔄 In Progress | `:py312` | B | Steps 1-5 done; local test OK; Docker test OK (all 3 scripts). **TODO @Sandro:** Test extend_era5_reanalysis.py and snow_data_reanalysis.py locally with Python 3.12 venv. Server testing pending. |
+| 3b | preprocessing_station_forcing | ✅ Completed | `:py312` | B | pyproject.toml + uv.lock + Dockerfile.py312; local Py3.12 test OK; Docker test OK (fails at DB connection as expected - uses old ieasyhydro SDK). No unit tests. No CI/CD (future development). |
 | 4a | linear_regression | Not started | `:py312` | B | |
 | 4b | machine_learning | Not started | `:py312` | C/D | Heavy deps, torch/darts |
 | 4c | conceptual_model | N/A | N/A | — | R-based, skip |
