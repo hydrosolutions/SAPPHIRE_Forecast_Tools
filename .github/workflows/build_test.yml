@@ -358,6 +358,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Build base image first (required as dependency)
+        run: |
+          DOCKER_BUILDKIT=1 docker build \
+          -t "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" \
+          -f ./apps/docker_base_image/Dockerfile.py312 .
+
       - name: Build Docker image
         run: |
           docker build \
