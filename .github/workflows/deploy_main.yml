@@ -572,6 +572,54 @@ jobs:
         run: |
           docker push "${{ env.ML_IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
 
+  # Test machine learning with Python 3.12 + uv
+  test_machine_learning_py312:
+    runs-on: ubuntu-latest
+    name: Test machine learning (Python 3.12 + uv)
+    steps:
+      - name: Check out the current branch
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install Python 3.12
+        run: uv python install 3.12
+
+      - name: Install machine_learning dependencies
+        working-directory: ./apps/machine_learning
+        run: uv sync --all-extras
+
+      - name: Verify imports
+        working-directory: ./apps
+        run: |
+          machine_learning/.venv/bin/python -c "import torch; import darts; import pandas; import numpy; print('All imports successful!'); print(f'torch: {torch.__version__}'); print(f'darts: {darts.__version__}')"
+
+  # Build and push machine learning Python 3.12 + uv image
+  push_machine_learning_py312_to_Dockerhub:
+    needs: [test_machine_learning_py312, test_ieasyhydroforecast_py312, build_and_push_python_312_base_image]
+    runs-on: ubuntu-latest
+    name: Build and push machine learning (Python 3.12 + uv)
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: |
+          docker build --pull --no-cache \
+          -t "${{ env.ML_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" \
+          -f ./apps/machine_learning/Dockerfile.py312 .
+
+      - name: Log in to the Docker registry
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Push the image to Dockerhub
+        run: |
+          docker push "${{ env.ML_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}"
 
   test_reset_forecast_run_date:
     needs: [test_ieasyhydroforecast]
@@ -861,6 +909,7 @@ jobs:
       push_preprocessing_gateway_to_Dckerhub,
       push_preprocessing_gateway_py312_to_Dockerhub,
       push_machine_learning_to_Dckerhub,
+      push_machine_learning_py312_to_Dockerhub,
       push_reset_forecast_to_Dckerhub,
       push_dashboard_to_Dckerhub,
       push_postprocessing_runoff_to_Dckerhub,

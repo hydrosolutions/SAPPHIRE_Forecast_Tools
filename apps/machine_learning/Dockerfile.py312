@@ -1,0 +1,44 @@
+# syntax=docker/dockerfile:1
+
+# Python 3.12 + uv image for machine_learning module
+# This image runs in parallel with the :latest (Python 3.11 + pip) version during migration
+# See: implementation_planning/uv_migration_plan.md
+#
+# NOTE: This image has a larger footprint due to torch/darts dependencies.
+# Expected DockerHub Scout health grade: C/D (acceptable for ML workloads)
+
+FROM mabesa/sapphire-pythonbaseimage:py312 AS base
+
+# Set environment variables for runtime detection
+ENV SAPPHIRE_OPDEV_ENV=True
+ENV IN_DOCKER=True
+
+# Switch to root for installation and runtime
+# This module writes to shared volumes, requiring root access
+USER root
+
+# Set working directory
+WORKDIR /app
+
+# Copy machine_learning source code (includes pyproject.toml and uv.lock)
+COPY apps/machine_learning /app/apps/machine_learning
+
+# Install machine_learning dependencies using uv
+# The base image already has iEasyHydroForecast installed
+# We only need to install additional dependencies specific to this module
+# Note: torch and darts are large packages, this step may take a while
+WORKDIR /app/apps/machine_learning
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv export --frozen --no-dev > /tmp/requirements.txt && \
+    uv pip install --system -r /tmp/requirements.txt && \
+    rm /tmp/requirements.txt
+
+# Reset working directory
+WORKDIR /app
+
+# Run the application as root (required for shared volume access)
+# Note: PYTHONPATH includes iEasyHydroForecast for local imports
+# RUN_MODE can be "forecast", "maintenance", or empty (runs all)
+# SAPPHIRE_MODEL_TO_USE can be "TFT", "TIDE", or "TSMIXER"
+# SAPPHIRE_PREDICTION_MODE can be "PENTAD" or "DECAD"
+CMD ["sh", "-c", "echo \"Environment Variables:\" && echo \"RUN_MODE=$RUN_MODE\" && echo \"SAPPHIRE_MODEL_TO_USE=$SAPPHIRE_MODEL_TO_USE\" && echo \"SAPPHIRE_PREDICTION_MODE=$SAPPHIRE_PREDICTION_MODE\" && export PYTHONPATH=/app/apps/iEasyHydroForecast && if [ \"$RUN_MODE\" = \"forecast\" ]; then python apps/machine_learning/make_forecast.py; elif [ \"$RUN_MODE\" = \"maintenance\" ]; then python apps/machine_learning/recalculate_nan_forecasts.py && python apps/machine_learning/fill_ml_gaps.py && python apps/machine_learning/add_new_station.py; else python apps/machine_learning/recalculate_nan_forecasts.py && python apps/machine_learning/make_forecast.py && python apps/machine_learning/fill_ml_gaps.py && python apps/machine_learning/add_new_station.py; fi"]
