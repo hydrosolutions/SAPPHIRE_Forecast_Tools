@@ -156,6 +156,18 @@ Proposed new README structure:
   - Reference: `implementation_planning/linear_regression_bugfix_plan.md` (macOS Docker Compatibility section)
 - [ ] Document local Docker testing procedures for each module
 - [ ] Create troubleshooting guide for common development issues
+- [ ] Document MCP server setup for Claude Code
+  - **context7**: Provides up-to-date library documentation for AI assistants
+    - HTTP server, no installation required
+    - Add via: `claude mcp add context7 --transport http https://mcp.context7.com/mcp`
+    - Usage: Ask Claude to look up documentation (e.g., "use context7 to find pandas DataFrame docs")
+  - **serena**: Provides semantic code analysis for AI assistants
+    - Requires `uvx` (install via `curl -LsSf https://astral.sh/uv/install.sh | sh`)
+    - Add via: `claude mcp add serena -- uvx --from git+https://github.com/oraios/serena serena start-mcp-server --context ide-assistant --project "$(pwd)"`
+    - Usage: Provides code understanding capabilities to Claude
+  - Configuration stored in `~/.claude.json` (per-project settings)
+  - Verify with: `claude mcp list`
+  - Remove with: `claude mcp remove <server-name>`
 
 ---
 
