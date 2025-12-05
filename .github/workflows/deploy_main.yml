@@ -800,6 +800,55 @@ jobs:
         run: |
           docker push "${{ env.LINREG_IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
 
+  # Test linear regression with Python 3.12 + uv
+  test_linear_regression_py312:
+    runs-on: ubuntu-latest
+    name: Test linear regression (Python 3.12 + uv)
+    steps:
+      - name: Check out the current branch
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install Python 3.12
+        run: uv python install 3.12
+
+      - name: Install linear_regression dependencies
+        working-directory: ./apps/linear_regression
+        run: uv sync --all-extras
+
+      - name: Verify imports
+        working-directory: ./apps
+        run: |
+          linear_regression/.venv/bin/python -c "import pandas; import numpy; import docker; from ieasyhydro_sdk.sdk import IEasyHydroSDK, IEasyHydroHFSDK; print('All imports successful!')"
+
+  # Build and push linear regression Python 3.12 + uv image
+  push_linreg_py312_to_Dockerhub:
+    needs: [test_linear_regression_py312, test_ieasyhydroforecast_py312, build_and_push_python_312_base_image]
+    runs-on: ubuntu-latest
+    name: Build and push linear regression (Python 3.12 + uv)
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: |
+          docker build --pull --no-cache \
+          -t "${{ env.LINREG_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" \
+          -f ./apps/linear_regression/Dockerfile.py312 .
+
+      - name: Log in to the Docker registry
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Push the image to Dockerhub
+        run: |
+          docker push "${{ env.LINREG_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}"
+
   # Final job that summarizes all built images
   summarize_builds:
     needs: [
@@ -815,7 +864,8 @@ jobs:
       push_reset_forecast_to_Dckerhub,
       push_dashboard_to_Dckerhub,
       push_postprocessing_runoff_to_Dckerhub,
-      push_linreg_to_Dckerhub
+      push_linreg_to_Dckerhub,
+      push_linreg_py312_to_Dockerhub
     ]
     runs-on: ubuntu-latest
     name: Summarize Docker image builds
