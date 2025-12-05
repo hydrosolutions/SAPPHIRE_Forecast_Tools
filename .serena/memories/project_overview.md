@@ -70,7 +70,8 @@ SAPPHIRE_forecast_tools/
 │   ├── reset_forecast_run_date/   # Manual re-run utility
 │   ├── pipeline/                  # Luigi orchestration
 │   ├── config/                    # Configuration files
-│   └── internal_data/             # Runtime data storage
+│   ├── internal_data/             # Runtime data storage
+│   └── backend/                   # ⚠️ DEPRECATED - see note below
 ├── data/                          # Input data (daily runoff, GIS, templates)
 ├── doc/                           # Documentation
 ├── .github/workflows/             # CI/CD pipelines
@@ -91,6 +92,27 @@ SAPPHIRE_forecast_tools/
 - `configuration_dashboard/` — Russian language, CIS station formats
 - `forecast_dashboard/` — Bulletin templates for CIS reporting
 - `conceptual_model/` — Site-specific calibration required
+
+## Deprecated Modules
+
+### `backend/` — DEPRECATED
+
+The `backend/` module is deprecated and should not be used for new development. Its functionality has been split into dedicated modules:
+
+| Old (backend) | New Module | Status |
+|---------------|------------|--------|
+| Data preprocessing | `preprocessing_runoff/` | ✅ Active |
+| Linear regression | `linear_regression/` | ✅ Active |
+| Output generation | `postprocessing_forecasts/` | ✅ Active |
+| Forecasting logic | `iEasyHydroForecast/` | ✅ Active |
+
+**What remains in `backend/`:**
+- `tests/testspecial_*.ipynb` and `tests/testspecial_*.py` — Utility notebooks and scripts for visualization, debugging, and data exploration. These are kept for developer convenience but are not part of the production pipeline.
+
+**Do not use:**
+- `backend/src/` — Deprecated code
+- `backend/forecast_script.py` — Use `linear_regression/` instead
+- `backend/Dockerfile` — Not maintained
 
 ## Main Branches
 
