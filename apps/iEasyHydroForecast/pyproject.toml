@@ -10,11 +10,6 @@ readme = "README.md"
 requires-python = ">=3.11"
 authors = [
     {name = "Beatrice Marti", url = "https://github.com/mabesa"},
-    {name = "Sandro Hunziker", url = "https://github.com/sandrohuni"},
-    {name = "Maxat Pernebaev", url = "https://github.com/maxatp"},
-    {name = "Adrian Kreiner", url = "https://github.com/adriankreiner"},
-    {name = "Aidar Zhumabaev", url = "https://github.com/LagmanEater"},
-    {name = "Vjekoslav Večković", url = "https://github.com/vjekoslavveckovic"},
 ]
 dependencies = [
     # Core data processing
