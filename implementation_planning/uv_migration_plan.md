@@ -575,9 +575,15 @@ These share similar dependency profiles with preprocessing_runoff.
 - Consider keeping separate base image for ML
 - Lock file will be large (~500+ packages)
 
-### conceptual_model
+### conceptual_model ⚠️ MAINTENANCE-ONLY
+
 - **R-based**: Not applicable for uv migration
-- Keep current approach
+- **Status (2025-12-06)**: This module is now in **maintenance-only mode**
+- **Deprecation planned**: Resources will focus on machine_learning module going forward
+- **Reason**: Upstream GitHub dependencies (`hydrosolutions/airGR_GM`, `hydrosolutions/airgrdatassim`) are no longer actively maintained
+- **Action**: Keep current approach (rocker/tidyverse base image) with periodic security updates only
+- **Customer support**: Existing customers will continue to be supported, but no new features
+- See `documentation_improvement_plan.md` Step 7.5b for full details
 
 ---
 
@@ -1432,6 +1438,7 @@ If AGPL packages are found:
 | 4c | conceptual_model | N/A | N/A | — | R-based, skip |
 | 5a | forecast_dashboard | ✅ Completed | `:py312` | B | pyproject.toml + uv.lock (67 packages) + Dockerfile.py312; Panel 1.4.5, Bokeh 3.4.3 (pinned <3.5 for FuncTickFormatter compatibility), HoloViews 1.19.1; local Py3.12 test OK; Docker operational test OK. CI/CD workflows updated. |
 | 5b | pipeline | ✅ Completed | `:py312` | B | pyproject.toml + uv.lock (35 packages) + Dockerfile.py312; Luigi 3.6.0; local Py3.12 test OK; Docker operational test OK (Docker socket access verified). CI/CD workflows updated. |
+| 5c | postprocessing_forecasts | ✅ Completed | `:py312` | B | pyproject.toml + uv.lock (29 packages) + Dockerfile.py312; local Py3.12 test OK (script runs successfully with pentad/decadal forecasts). |
 | 6 | Flip `:latest` to py312 | Not started | `:latest` | B avg | Final transition |
 
 ---

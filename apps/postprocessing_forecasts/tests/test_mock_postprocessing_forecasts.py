@@ -524,16 +524,26 @@ def test_combined_forecast_consistency(setup_test_paths, sample_data, tmp_path):
     # Import the postprocessing function
     from postprocessing_forecasts.postprocessing_forecasts import postprocessing_forecasts
 
-    # Mock the processing functions
+    # Mock the processing functions - need to mock both pentad and decade functions
     with patch("postprocessing_forecasts.postprocessing_forecasts.sl.load_environment"), \
          patch("postprocessing_forecasts.postprocessing_forecasts.sl.read_observed_and_modelled_data_pentade") as mock_read, \
+         patch("postprocessing_forecasts.postprocessing_forecasts.sl.read_observed_and_modelled_data_decade") as mock_read_decade, \
          patch("postprocessing_forecasts.postprocessing_forecasts.fl.calculate_skill_metrics_pentad") as mock_calc, \
+         patch("postprocessing_forecasts.postprocessing_forecasts.fl.calculate_skill_metrics_decade") as mock_calc_decade, \
          patch("postprocessing_forecasts.postprocessing_forecasts.fl.save_forecast_data_pentad") as mock_save, \
-         patch("postprocessing_forecasts.postprocessing_forecasts.fl.save_pentadal_skill_metrics"):
+         patch("postprocessing_forecasts.postprocessing_forecasts.fl.save_forecast_data_decade") as mock_save_decade, \
+         patch("postprocessing_forecasts.postprocessing_forecasts.fl.save_pentadal_skill_metrics"), \
+         patch("postprocessing_forecasts.postprocessing_forecasts.fl.save_decadal_skill_metrics"), \
+         patch("postprocessing_forecasts.postprocessing_forecasts.pt.log_most_recent_forecasts_pentad"), \
+         patch("postprocessing_forecasts.postprocessing_forecasts.pt.log_most_recent_forecasts_decade"):
 
-        # Configure mocks
+        # Configure mocks for pentad
         mock_read.return_value = (observed_data, pd.concat([lr_data, tft_data, tide_data, tsmixer_data, arima_data]))
         mock_calc.return_value = (pd.DataFrame(), expected_df, None)
+
+        # Configure mocks for decade (return empty data to skip decade processing)
+        mock_read_decade.return_value = (pd.DataFrame(), pd.DataFrame())
+        mock_calc_decade.return_value = (pd.DataFrame(), pd.DataFrame(), None)
 
         # Create a simple implementation of save_forecast_data_pentad
         def side_effect_save(df):
