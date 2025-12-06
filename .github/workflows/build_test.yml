@@ -155,6 +155,51 @@ jobs:
           -t "${{ env.PIPELINE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
           -f ./apps/pipeline/Dockerfile .
 
+  # Test pipeline with Python 3.12 + uv
+  test_pipeline_py312:
+    runs-on: ubuntu-latest
+    name: Test pipeline (Python 3.12 + uv)
+    steps:
+      - name: Check out the current branch
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install Python 3.12
+        run: uv python install 3.12
+
+      - name: Install pipeline dependencies
+        working-directory: ./apps/pipeline
+        run: uv sync --all-extras
+
+      - name: Verify imports
+        working-directory: ./apps
+        run: |
+          pipeline/.venv/bin/python -c "import luigi; import docker; import yaml; import requests; import tenacity; from dotenv import load_dotenv; print('All imports successful!'); print(f'luigi: {luigi.__version__}'); print(f'docker: {docker.__version__}')"
+
+  # Build pipeline Python 3.12 + uv image
+  build_pipeline_py312:
+    needs: [test_pipeline_py312, build_python_312_base_image]
+    runs-on: ubuntu-latest
+    name: Build pipeline (Python 3.12 + uv)
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build base image first (required as dependency)
+        run: |
+          DOCKER_BUILDKIT=1 docker build \
+          -t "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" \
+          -f ./apps/docker_base_image/Dockerfile.py312 .
+
+      - name: Build Docker image
+        run: |
+          docker build \
+          -t "${{ env.PIPELINE_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" \
+          -f ./apps/pipeline/Dockerfile.py312 .
+
   # Build but don't push the conceptual model image
   build_conceptual_model:
     runs-on: ubuntu-latest
@@ -739,6 +784,7 @@ jobs:
       build_python_311_base_image,
       build_python_312_base_image,
       build_pipeline_image,
+      build_pipeline_py312,
       build_conceptual_model,
       build_preprocessing_runoff,
       build_preprocessing_runoff_py312,

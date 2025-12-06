@@ -18,7 +18,9 @@ env:
 
 on:
   push:
-    branches: [ "main" ]  
+    # TEMPORARY: Deploy from implementation_planning branch to test py312 images on AWS server
+    # TODO: Revert to "main" after server testing is complete
+    branches: [ "implementation_planning" ]
   #pull_request:
   #  branches: [ "main" ]
 
@@ -219,7 +221,54 @@ jobs:
         run: |
           docker push "${{ env.PIPELINE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
 
+  # Test pipeline with Python 3.12 + uv
+  test_pipeline_py312:
+    runs-on: ubuntu-latest
+    name: Test pipeline (Python 3.12 + uv)
+    steps:
+      - name: Check out the current branch
+        uses: actions/checkout@v4
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install Python 3.12
+        run: uv python install 3.12
+
+      - name: Install pipeline dependencies
+        working-directory: ./apps/pipeline
+        run: uv sync --all-extras
+
+      - name: Verify imports
+        working-directory: ./apps
+        run: |
+          pipeline/.venv/bin/python -c "import luigi; import docker; import yaml; import requests; import tenacity; from dotenv import load_dotenv; print('All imports successful!'); print(f'luigi: {luigi.__version__}'); print(f'docker: {docker.__version__}')"
+
+  # Build and push pipeline Python 3.12 + uv image
+  push_pipeline_py312_to_Dockerhub:
+    needs: [test_pipeline_py312, test_ieasyhydroforecast_py312, build_and_push_python_312_base_image]
+    runs-on: ubuntu-latest
+    name: Build and push pipeline (Python 3.12 + uv)
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: |
+          docker build --pull --no-cache \
+          -t "${{ env.PIPELINE_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" \
+          -f ./apps/pipeline/Dockerfile.py312 .
+
+      - name: Log in to the Docker registry
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Push the image to Dockerhub
+        run: |
+          docker push "${{ env.PIPELINE_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}"
 
   #push_config_to_Dckerhub:
   #  runs-on: ubuntu-latest
@@ -951,6 +1000,7 @@ jobs:
       build_and_push_python_311_base_image,
       build_and_push_python_312_base_image,
       build_and_push_pipeline_image,
+      push_pipeline_py312_to_Dockerhub,
       push_conceptual_model_to_Dckerhub,
       push_preprocessing_runoff_to_Dckerhub,
       push_preprocessing_runoff_py312_to_Dockerhub,
@@ -986,6 +1036,7 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "## Migration Testing Images (:py312 - Python 3.12 + uv)" >> $GITHUB_STEP_SUMMARY
           echo "- ${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" >> $GITHUB_STEP_SUMMARY
+          echo "- ${{ env.PIPELINE_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" >> $GITHUB_STEP_SUMMARY
           echo "- ${{ env.PREPQ_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" >> $GITHUB_STEP_SUMMARY
           echo "- ${{ env.PREPG_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" >> $GITHUB_STEP_SUMMARY
           echo "- ${{ env.LINREG_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" >> $GITHUB_STEP_SUMMARY
