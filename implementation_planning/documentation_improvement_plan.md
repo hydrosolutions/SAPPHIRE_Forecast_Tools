@@ -158,6 +158,33 @@ Proposed new README structure:
 - [ ] Create troubleshooting guide for common development issues
 - [x] Document MCP server setup for Claude Code ✅ (2025-12-05)
 
+#### Step 5.6: Server Testing Workflow Documentation
+- [x] Document server testing procedure ✅ (2025-12-06)
+  - Added to `implementation_planning/uv_migration_plan.md` under "Server Testing Procedure" section
+- [ ] Create standalone `doc/development/server-testing.md` guide covering:
+  - How to temporarily deploy from feature branches
+  - How to configure server to use different image tags (`:py312` vs `:latest`)
+  - End-to-end testing checklist
+  - Rollback procedures
+  - Troubleshooting common issues (permissions, connections, etc.)
+- [ ] Add cross-reference from CONTRIBUTING.md (when created)
+- [ ] Document the image tag strategy:
+  - `:latest` - production (Python 3.11 + pip, until Phase 6)
+  - `:py312` - testing/migration (Python 3.12 + uv)
+  - `:py311` - archive (created at end of migration)
+
+##### Server Testing Workflow Summary
+
+When testing new Docker images on the AWS server:
+
+1. **Temporarily modify CI/CD** - Change `.github/workflows/deploy_main.yml` branch trigger from `main` to feature branch
+2. **Push to trigger build** - CI/CD builds and pushes `:py312` tagged images to DockerHub
+3. **Configure server** - Update server `.env` to use `:py312` tag instead of `:latest`
+4. **Test end-to-end** - Run complete forecast cycle and verify all modules work
+5. **Revert CI/CD** - Change branch trigger back to `main` after testing
+
+Full procedure documented in: `implementation_planning/uv_migration_plan.md` → "Server Testing Procedure"
+
 ##### MCP Server Setup for Claude Code (VS Code)
 
 These instructions help you set up **Context7** and **Serena** MCP servers to enhance Claude Code's capabilities in VS Code.
@@ -466,6 +493,7 @@ The documentation improvement is complete when:
 | 2.2 | Not started | |
 | 5.4 | ✅ Completed | 2025-12-01 - Created docker-security-maintenance.md + security disclaimer + template response |
 | 5.5 | ✅ Completed | 2025-12-05 - MCP server setup instructions for Context7 and Serena |
+| 5.6 | In progress | 2025-12-06 - Server testing procedure documented in uv_migration_plan.md; standalone guide pending |
 | 6.1 | In progress | 2025-12-01 - MkDocs setup complete, pending GitHub Pages enablement |
 | 7.0 | Not started | Module documentation structure |
 | 7.1 | Not started | 2025-12-05 - Assessment complete, tasks defined |
@@ -477,4 +505,4 @@ The documentation improvement is complete when:
 ---
 
 *Document created: 2025-12-01*
-*Last updated: 2025-12-05*
+*Last updated: 2025-12-06*

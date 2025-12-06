@@ -1431,7 +1431,7 @@ If AGPL packages are found:
 | 4b | machine_learning | ✅ Completed | `:py312` | C/D | pyproject.toml + uv.lock (~500KB, 77 packages) + Dockerfile.py312; torch 2.8.0, darts 0.35.0; local Py3.12 test OK (TFT model predictions working); Docker test OK. CI/CD workflows updated. |
 | 4c | conceptual_model | N/A | N/A | — | R-based, skip |
 | 5a | forecast_dashboard | ✅ Completed | `:py312` | B | pyproject.toml + uv.lock (67 packages) + Dockerfile.py312; Panel 1.4.5, Bokeh 3.4.3 (pinned <3.5 for FuncTickFormatter compatibility), HoloViews 1.19.1; local Py3.12 test OK; Docker operational test OK. CI/CD workflows updated. |
-| 5b | pipeline | Not started | `:py312` | B | |
+| 5b | pipeline | ✅ Completed | `:py312` | B | pyproject.toml + uv.lock (35 packages) + Dockerfile.py312; Luigi 3.6.0; local Py3.12 test OK; Docker operational test OK (Docker socket access verified). CI/CD workflows updated. |
 | 6 | Flip `:latest` to py312 | Not started | `:latest` | B avg | Final transition |
 
 ---
@@ -1483,6 +1483,109 @@ Both GitHub Actions workflows have been updated to test Python 3.12 + uv in para
 
 ---
 
+## Server Testing Procedure
+
+After CI/CD builds and pushes `:py312` images to DockerHub, test them on the AWS production server before flipping `:latest`.
+
+### Step 1: Temporarily Deploy from Feature Branch
+
+To push `:py312` images from a feature branch (e.g., `implementation_planning`):
+
+1. **Edit `.github/workflows/deploy_main.yml`** - Change the branch trigger:
+   ```yaml
+   on:
+     push:
+       # TEMPORARY: Deploy from implementation_planning branch to test py312 images on AWS server
+       # TODO: Revert to "main" after server testing is complete
+       branches: [ "implementation_planning" ]
+   ```
+
+2. **Push to trigger the workflow**:
+   ```bash
+   git add .github/workflows/deploy_main.yml
+   git commit -m "chore: temporarily deploy from implementation_planning for server testing"
+   git push origin implementation_planning
+   ```
+
+3. **Monitor the GitHub Actions workflow** to ensure images are built and pushed successfully.
+
+### Step 2: Configure Server to Use `:py312` Tag
+
+On the AWS server, update the `.env` file to use the `:py312` tag instead of `:latest`:
+
+```bash
+# SSH into the server
+ssh user@aws-server
+
+# Edit the .env file
+cd /path/to/deployment
+nano .env
+
+# Change image tags from :latest to :py312
+# Example:
+#   IMAGE_TAG=latest  →  IMAGE_TAG=py312
+# Or for specific images:
+#   BASEIMAGE_TAG=py312
+#   PREPRUNOFF_TAG=py312
+#   LINREG_TAG=py312
+#   etc.
+```
+
+### Step 3: Pull and Test Images
+
+```bash
+# Pull the new images
+docker compose pull
+
+# Run a test forecast cycle
+docker compose up preprocessing-runoff
+docker compose up linear-regression
+# ... test other modules as needed
+
+# Check logs for errors
+docker compose logs --tail=100 preprocessing-runoff
+```
+
+### Step 4: Verify End-to-End Workflow
+
+Run a complete forecast cycle and verify:
+- [ ] All modules start successfully
+- [ ] Data is read correctly from mounted volumes
+- [ ] Forecasts are generated without errors
+- [ ] Output files are written with correct permissions
+- [ ] Dashboard displays results correctly (if applicable)
+
+### Step 5: Revert After Testing
+
+After successful server testing:
+
+1. **Revert `.github/workflows/deploy_main.yml`** back to `main` branch:
+   ```yaml
+   on:
+     push:
+       branches: [ "main" ]
+   ```
+
+2. **On the server**, either:
+   - Keep using `:py312` if proceeding to Phase 6, or
+   - Revert to `:latest` if more testing is needed
+
+### Troubleshooting
+
+**Permission errors on mounted volumes**:
+- Check that container user matches host file ownership
+- See [Non-Root User Strategy](#2-non-root-user-strategy) for options
+
+**Module fails to start**:
+- Check Python version: `docker run --rm <image>:py312 python --version`
+- Verify dependencies: `docker run --rm <image>:py312 python -c "import <package>"`
+
+**iEasyHydro HF connection issues**:
+- Ensure SSH tunnel is running on server
+- Verify `IEASYHYDROHF_HOST` environment variable is set correctly
+
+---
+
 ## Resources
 
 - [uv documentation](https://docs.astral.sh/uv/)
@@ -1493,4 +1596,4 @@ Both GitHub Actions workflows have been updated to test Python 3.12 + uv in para
 ---
 
 *Document created: 2025-12-01*
-*Last updated: 2025-12-01*
+*Last updated: 2025-12-06*

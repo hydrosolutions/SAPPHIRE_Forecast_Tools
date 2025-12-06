@@ -1,0 +1,42 @@
+# syntax=docker/dockerfile:1
+
+# Python 3.12 + uv image for pipeline module
+# This image runs in parallel with the :latest (Python 3.11 + pip) version during migration
+# See: implementation_planning/uv_migration_plan.md
+
+FROM mabesa/sapphire-pythonbaseimage:py312 AS base
+
+# Set environment variables
+ENV SAPPHIRE_OPDEV_ENV=True
+ENV PATH="/home/appuser/.local/bin:${PATH}"
+
+# Switch to root for installation
+USER root
+
+# Set working directory
+WORKDIR /app
+
+# Copy pipeline source code (includes pyproject.toml and uv.lock)
+COPY apps/pipeline /app/apps/pipeline
+COPY apps/pipeline/luigi.cfg /app/luigi.cfg
+
+# Install pipeline dependencies using uv
+# The base image already has iEasyHydroForecast installed
+# We only need to install additional dependencies specific to this module
+WORKDIR /app/apps/pipeline
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv export --frozen --no-dev > /tmp/requirements.txt && \
+    uv pip install --system -r /tmp/requirements.txt && \
+    rm /tmp/requirements.txt && \
+    which luigi && \
+    echo $PATH
+
+# Reset working directory
+WORKDIR /app
+
+# Set PYTHONPATH to include /app
+ENV PYTHONPATH="${PYTHONPATH}:/app"
+
+# Run as root (required for Docker socket access)
+# The command to run when the container starts up
+CMD ["luigi", "--module", "apps.pipeline.pipeline_docker", "PreprocessingRunoff", "--local-scheduler"]
