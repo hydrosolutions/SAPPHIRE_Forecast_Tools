@@ -329,6 +329,14 @@ jobs:
       run: |
         docker push "${{ env.CONCMOD_IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
 
+    # Also tag and push as :py312 for server compatibility
+    # Note: conceptual_model is R-based, not Python, but we use py312 tag
+    # for consistency with server deployment configuration
+    - name: Tag and push as py312
+      run: |
+        docker tag "${{ env.CONCMOD_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" "${{ env.CONCMOD_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}"
+        docker push "${{ env.CONCMOD_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}"
+
 
   test_preprocessing_runoff:
     needs: [build_and_push_python_311_base_image]
@@ -1037,6 +1045,7 @@ jobs:
           echo "## Migration Testing Images (:py312 - Python 3.12 + uv)" >> $GITHUB_STEP_SUMMARY
           echo "- ${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" >> $GITHUB_STEP_SUMMARY
           echo "- ${{ env.PIPELINE_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" >> $GITHUB_STEP_SUMMARY
+          echo "- ${{ env.CONCMOD_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }} (R-based, same as :latest)" >> $GITHUB_STEP_SUMMARY
           echo "- ${{ env.PREPQ_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" >> $GITHUB_STEP_SUMMARY
           echo "- ${{ env.PREPG_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" >> $GITHUB_STEP_SUMMARY
           echo "- ${{ env.LINREG_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" >> $GITHUB_STEP_SUMMARY
@@ -1044,3 +1053,4 @@ jobs:
           echo "- ${{ env.DASHBOARD_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Note:** Production images use Python 3.11 + pip. The :py312 images are for migration testing only." >> $GITHUB_STEP_SUMMARY
+          echo "The conceptual_model :py312 tag is identical to :latest (R-based module, not Python)." >> $GITHUB_STEP_SUMMARY

@@ -416,6 +416,32 @@ Each module in `/apps/` should have documentation in two places:
 - [ ] Create README.md and doc/modules/ entry
 - [ ] Document Darts/PyTorch dependencies
 - [ ] Document model training vs inference modes
+- **NOTE:** This module is the strategic priority for forecasting development going forward
+
+#### Step 7.5b: conceptual_model Module ⚠️ MAINTENANCE-ONLY
+
+**Status:** This module is being phased out and is in **maintenance-only mode**.
+
+**Background:**
+- The conceptual_model module is an R-based hydrological modeling module using the GR family of models
+- It depends heavily on upstream GitHub packages that are **no longer actively maintained**:
+  - `hydrosolutions/airGR_GM` - custom GR model fork
+  - `hydrosolutions/airgrdatassim` - data assimilation for GR models
+- These packages are installed from `master` branch without version pinning
+- The module triggers security warnings on DockerHub due to older dependencies
+
+**Decision (2025-12-06):**
+- We will **phase out support** for this module over time
+- Resources will be focused on the **machine_learning module** instead
+- Existing customers who rely on this module will continue to be supported in maintenance mode
+- No new features will be added to this module
+- Security updates to the base image (rocker/tidyverse) will be applied when feasible
+
+**Documentation Tasks:**
+- [x] Add deprecation notice to `apps/conceptual_model/README.md` (2025-12-06)
+- [x] Document that upstream dependencies (airGR_GM, airgrdatassim) are unmaintained (2025-12-06)
+- [x] Add migration guidance pointing users to machine_learning module (2025-12-06)
+- [ ] Note in `doc/modules/conceptual_model.md` (when created) that this is legacy code
 
 #### Step 7.6: forecast_dashboard Module
 - [ ] Assess documentation status
@@ -505,4 +531,4 @@ The documentation improvement is complete when:
 ---
 
 *Document created: 2025-12-01*
-*Last updated: 2025-12-06*
+*Last updated: 2025-12-06 - Added conceptual_model deprecation notice (Step 7.5b)*
