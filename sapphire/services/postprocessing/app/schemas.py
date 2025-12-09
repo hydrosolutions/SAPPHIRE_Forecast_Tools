@@ -42,11 +42,11 @@ class LRForecastBase(BaseModel):
     horizon_type: HorizonType
     code: str
     date: DateType
-
-    discharge: Optional[float] = None
-    predictor: Optional[float] = None
     horizon_value: int
     horizon_in_year: int
+
+    discharge_avg: Optional[float] = None
+    predictor: Optional[float] = None
 
     slope: Optional[float] = None
     intercept: Optional[float] = None

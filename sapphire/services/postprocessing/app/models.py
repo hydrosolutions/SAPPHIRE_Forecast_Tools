@@ -16,7 +16,7 @@ class HorizonType(str, Enum):
 class ModelType(str, Enum):
     """Enum for different model types"""
     TSMIXER = "TSMixer"
-    TIDE = "TIDE"
+    TIDE = "TiDE"
     TFT = "TFT"
     ENSEMBLE_MEAN = "EM"
     NEURAL_ENSEMBLE = "NE"
@@ -28,7 +28,7 @@ class ModelType(str, Enum):
         """Get the long description for the model type"""
         descriptions = {
             "TSMixer": "Time-Series Mixer (TSMixer)",
-            "TIDE": "Time-Series Dense Encoder (TIDE)",
+            "TiDE": "Time-Series Dense Encoder (TIDE)",
             "TFT": "Temporal Fusion Transformer (TFT)",
             "EM": "Ens. Mean with LR, TFT, TIDE (EM)",
             "NE": "Neural Ensemble with TIDE, TFT, TSMixer (NE)",
@@ -79,12 +79,12 @@ class LRForecast(Base):
     horizon_type = Column(SQLEnum(HorizonType), nullable=False)
     code = Column(String(10), nullable=False)
     date = Column(Date, nullable=False)
-
-    # Regression parameters
-    discharge = Column(Float)
-    predictor = Column(Float)
     horizon_value = Column(Integer, nullable=False)
     horizon_in_year = Column(Integer, nullable=False)
+
+    # Regression parameters
+    discharge_avg = Column(Float)
+    predictor = Column(Float)
 
     # Model coefficients
     slope = Column(Float)
