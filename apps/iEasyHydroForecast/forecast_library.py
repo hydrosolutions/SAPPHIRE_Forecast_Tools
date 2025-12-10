@@ -3042,6 +3042,151 @@ def is_leap_year(year):
     else:
         return False
 
+
+def get_issue_date_from_pentad(pentad_in_year, year):
+    """
+    Given pentad_in_year (1-72) and year, return the issue date.
+    Issue date = last day of the PREVIOUS pentad.
+
+    Pentads are 5-day periods, 6 per month (last one extends to month end).
+    pentad_in_year 1 = Jan 1-5, issue date = Dec 31 of previous year
+    pentad_in_year 2 = Jan 6-10, issue date = Jan 5
+    ...
+    pentad_in_year 72 = Dec 26-31, issue date = Dec 25
+
+    Args:
+        pentad_in_year: int, 1-72
+        year: int, the year for which the pentad is calculated
+
+    Returns:
+        pd.Timestamp: the issue date
+    """
+    pentad_in_year = int(pentad_in_year)
+    year = int(year)
+
+    # Calculate month (1-12) and pentad within month (1-6)
+    month = (pentad_in_year - 1) // 6 + 1
+    pentad_in_month = (pentad_in_year - 1) % 6 + 1
+
+    if pentad_in_month == 1:
+        # Issue date is last day of previous month
+        if month == 1:
+            return pd.Timestamp(year=year-1, month=12, day=31)
+        else:
+            # Get last day of previous month
+            prev_month_last = pd.Timestamp(year=year, month=month, day=1) - pd.Timedelta(days=1)
+            return prev_month_last
+    else:
+        # Issue date is the last day of the previous pentad in the same month
+        # Pentad 2: days 6-10, issue = day 5
+        # Pentad 3: days 11-15, issue = day 10
+        # Pentad 4: days 16-20, issue = day 15
+        # Pentad 5: days 21-25, issue = day 20
+        # Pentad 6: days 26-end, issue = day 25
+        issue_day = (pentad_in_month - 1) * 5
+        return pd.Timestamp(year=year, month=month, day=issue_day)
+
+
+def get_issue_date_from_decad(decad_in_year, year):
+    """
+    Given decad_in_year (1-36) and year, return the issue date.
+    Issue date = last day of the PREVIOUS decad.
+
+    Decads are 10-day periods, 3 per month (last one extends to month end).
+    decad_in_year 1 = Jan 1-10, issue date = Dec 31 of previous year
+    decad_in_year 2 = Jan 11-20, issue date = Jan 10
+    decad_in_year 3 = Jan 21-31, issue date = Jan 20
+    decad_in_year 4 = Feb 1-10, issue date = Jan 31
+    ...
+    decad_in_year 7 = Feb 21-28/29, issue date = Feb 20
+
+    Args:
+        decad_in_year: int, 1-36
+        year: int, the year for which the decad is calculated
+
+    Returns:
+        pd.Timestamp: the issue date
+    """
+    decad_in_year = int(decad_in_year)
+    year = int(year)
+
+    # Calculate month (1-12) and decad within month (1-3)
+    month = (decad_in_year - 1) // 3 + 1
+    decad_in_month = (decad_in_year - 1) % 3 + 1
+
+    if decad_in_month == 1:
+        # Issue date is last day of previous month
+        if month == 1:
+            return pd.Timestamp(year=year-1, month=12, day=31)
+        else:
+            prev_month_last = pd.Timestamp(year=year, month=month, day=1) - pd.Timedelta(days=1)
+            return prev_month_last
+    elif decad_in_month == 2:
+        return pd.Timestamp(year=year, month=month, day=10)
+    else:  # decad_in_month == 3
+        return pd.Timestamp(year=year, month=month, day=20)
+
+
+def get_day_of_year_from_pentad(pentad_in_year, year):
+    """
+    Calculate day_of_year from pentad_in_year and year.
+
+    The day_of_year corresponds to the issue date (last day of previous pentad).
+
+    Args:
+        pentad_in_year: int, 1-72
+        year: int, the year for which to calculate
+
+    Returns:
+        int: day_of_year (1-366)
+    """
+    issue_date = get_issue_date_from_pentad(pentad_in_year, year)
+    return issue_date.dayofyear
+
+
+def get_day_of_year_from_decad(decad_in_year, year):
+    """
+    Calculate day_of_year from decad_in_year and year.
+
+    The day_of_year corresponds to the issue date (last day of previous decad).
+
+    Args:
+        decad_in_year: int, 1-36
+        year: int, the year for which to calculate
+
+    Returns:
+        int: day_of_year (1-366)
+    """
+    issue_date = get_issue_date_from_decad(decad_in_year, year)
+    return issue_date.dayofyear
+
+
+def get_pentad_from_pentad_in_year(pentad_in_year):
+    """
+    Calculate pentad (1-6 within month) from pentad_in_year (1-72).
+
+    Args:
+        pentad_in_year: int, 1-72
+
+    Returns:
+        int: pentad within month (1-6)
+    """
+    return ((int(pentad_in_year) - 1) % 6) + 1
+
+
+def get_decad_from_decad_in_year(decad_in_year):
+    """
+    Calculate decad (1-3 within month) from decad_in_year (1-36).
+
+    Args:
+        decad_in_year: int, 1-36
+
+    Returns:
+        int: decad within month (1-3)
+    """
+    return ((int(decad_in_year) - 1) % 3) + 1
+
+
 def write_pentad_hydrograph_data(data: pd.DataFrame, iehhf_sdk = None):
     """
     Calculates statistics of the pentadal hydrograph and saves it to a csv file.
@@ -3081,11 +3226,32 @@ def write_pentad_hydrograph_data(data: pd.DataFrame, iehhf_sdk = None):
 
     logger.debug(f"Calculating pentadal runoff statistics with data from {data['date'].min()} to {data['date'].max()}")
 
-    # If we are not in a leap year, drop the 29th of February and adjust the day_of_year
+    # Align day_of_year across leap/non-leap year boundaries
+    # The goal is to make day_of_year values comparable between current year and historical years
     data['day_of_year'] = data['date'].dt.dayofyear
-    if not is_leap_year(current_year):
-        data = data[~((data['date'].dt.month == 2) & (data['date'].dt.day == 29))]
-        data.loc[(data['date'].dt.month > 2), 'day_of_year'] -= 1
+    last_year = current_year - 1
+    current_is_leap = is_leap_year(current_year)
+    last_is_leap = is_leap_year(last_year)
+
+    # Case 1: Current=non-leap, Last=leap (e.g., 2025 vs 2024)
+    # Feb 29 data from leap years should be mapped to Feb 28, and day_of_year adjusted for Mar+
+    if not current_is_leap and last_is_leap:
+        # Map Feb 29 from leap years to Feb 28 (don't drop the data!)
+        feb29_mask = (data['date'].dt.month == 2) & (data['date'].dt.day == 29)
+        data.loc[feb29_mask, 'date'] = data.loc[feb29_mask, 'date'] - pd.Timedelta(days=1)
+        # Recalculate day_of_year after date adjustment
+        data['day_of_year'] = data['date'].dt.dayofyear
+        # Subtract 1 from day_of_year for dates after Feb 28 in last year's data
+        last_year_after_feb = (data['date'].dt.year == last_year) & (data['date'].dt.month > 2)
+        data.loc[last_year_after_feb, 'day_of_year'] -= 1
+
+    # Case 2: Current=leap, Last=non-leap (e.g., 2024 vs 2023)
+    # Add 1 to day_of_year for dates after Feb 28 in last year's data
+    elif current_is_leap and not last_is_leap:
+        last_year_after_feb = (data['date'].dt.year == last_year) & (data['date'].dt.month > 2)
+        data.loc[last_year_after_feb, 'day_of_year'] += 1
+
+    # Case 3: Both same type (leap-leap or non-leap-non-leap) - no adjustment needed
 
     runoff_stats = data[data['date'].dt.year != current_year]. \
         reset_index(drop=True). \
@@ -3138,12 +3304,16 @@ def write_pentad_hydrograph_data(data: pd.DataFrame, iehhf_sdk = None):
     # merge to runoff_stats
     last_year = data['date'].dt.year.max() - 1
     current_year = data['date'].dt.year.max()
-    last_year_data = data[data['date'].dt.year == last_year]
+    last_year_data = data[data['date'].dt.year == last_year].copy()
     current_year_data = data[data['date'].dt.year == current_year]
-    #last_year_data = last_year_data.drop(columns=['date'])
-    # Add 1 year to date of last_year_data
-    #last_year_data.loc[:, 'date'] = last_year_data.loc[:, 'date'] + pd.DateOffset(years=1)
-    last_year_data.loc[:, 'date'] = pd.Timestamp(str(current_year)) + pd.to_timedelta(last_year_data['day_of_year'] - 1, unit='D')
+    # Add 1 year to date of last_year_data using DateOffset (handles leap years correctly)
+    last_year_data.loc[:, 'date'] = last_year_data['date'] + pd.DateOffset(years=1)
+    # Handle Feb 29 → Feb 28 mapping explicitly if DateOffset created Feb 29 in non-leap year
+    # (This can happen if last year was leap and current is non-leap)
+    if not is_leap_year(current_year):
+        feb29_mask = (last_year_data['date'].dt.month == 2) & (last_year_data['date'].dt.day == 29)
+        if feb29_mask.any():
+            last_year_data.loc[feb29_mask, 'date'] = last_year_data.loc[feb29_mask, 'date'] - pd.Timedelta(days=1)
     current_year_data = current_year_data.drop(columns=['date'])
     last_year_data = last_year_data.rename(columns={'discharge_avg': str(last_year)}).reset_index(drop=True)
     current_year_data = current_year_data.rename(columns={'discharge_avg': str(current_year)}).reset_index(drop=True)
@@ -3170,6 +3340,51 @@ def write_pentad_hydrograph_data(data: pd.DataFrame, iehhf_sdk = None):
     # as numerical values
     runoff_stats['pentad_in_year'] = runoff_stats['pentad_in_year'].astype(int)
     runoff_stats = runoff_stats.sort_values(by=['code', 'pentad_in_year'])
+
+    # Fill missing dates by reconstructing from pentad_in_year
+    # The date column should ALWAYS be populated with the issue date, even when
+    # there's no discharge data for that pentad
+    if 'date' in runoff_stats.columns:
+        missing_date_mask = runoff_stats['date'].isna()
+        if missing_date_mask.any():
+            logger.debug(f"Filling {missing_date_mask.sum()} missing dates from pentad_in_year")
+            runoff_stats.loc[missing_date_mask, 'date'] = runoff_stats.loc[missing_date_mask, 'pentad_in_year'].apply(
+                lambda p: get_issue_date_from_pentad(p, current_year)
+            )
+
+    # Fill missing day_of_year by reconstructing from pentad_in_year
+    # The day_of_year should ALWAYS be populated, even when there's no discharge data
+    if 'day_of_year' not in runoff_stats.columns:
+        # Create day_of_year column from pentad_in_year
+        logger.debug("Creating day_of_year column from pentad_in_year")
+        runoff_stats['day_of_year'] = runoff_stats['pentad_in_year'].apply(
+            lambda p: get_day_of_year_from_pentad(p, current_year)
+        )
+    else:
+        # Fill any missing values
+        missing_doy_mask = runoff_stats['day_of_year'].isna()
+        if missing_doy_mask.any():
+            logger.debug(f"Filling {missing_doy_mask.sum()} missing day_of_year values from pentad_in_year")
+            runoff_stats.loc[missing_doy_mask, 'day_of_year'] = runoff_stats.loc[missing_doy_mask, 'pentad_in_year'].apply(
+                lambda p: get_day_of_year_from_pentad(p, current_year)
+            )
+
+    # Fill missing pentad (1-6 within month) by reconstructing from pentad_in_year
+    if 'pentad' not in runoff_stats.columns:
+        logger.debug("Creating pentad column from pentad_in_year")
+        runoff_stats['pentad'] = runoff_stats['pentad_in_year'].apply(get_pentad_from_pentad_in_year)
+    else:
+        missing_pentad_mask = runoff_stats['pentad'].isna()
+        if missing_pentad_mask.any():
+            logger.debug(f"Filling {missing_pentad_mask.sum()} missing pentad values from pentad_in_year")
+            runoff_stats.loc[missing_pentad_mask, 'pentad'] = runoff_stats.loc[missing_pentad_mask, 'pentad_in_year'].apply(
+                get_pentad_from_pentad_in_year
+            )
+
+    # Ensure pentad_in_year, pentad, and day_of_year are integers
+    runoff_stats['pentad_in_year'] = runoff_stats['pentad_in_year'].astype(int)
+    runoff_stats['pentad'] = runoff_stats['pentad'].astype(int)
+    runoff_stats['day_of_year'] = runoff_stats['day_of_year'].astype(int)
 
     # Get the path to the intermediate data folder from the environmental
     # variables and the name of the ieasyforecast_hydrograph_pentad_file.
@@ -3268,11 +3483,32 @@ def write_decad_hydrograph_data(data: pd.DataFrame, iehhf_sdk = None):
 
     logger.debug(f"Calculating decadal runoff statistics with data from {data['date'].min()} to {data['date'].max()}")
 
-    # If we are not in a leap year, drop the 29th of February and adjust the day_of_year
+    # Align day_of_year across leap/non-leap year boundaries
+    # The goal is to make day_of_year values comparable between current year and historical years
     data['day_of_year'] = data['date'].dt.dayofyear
-    if not is_leap_year(current_year):
-        data = data[~((data['date'].dt.month == 2) & (data['date'].dt.day == 29))]
-        data.loc[(data['date'].dt.month > 2), 'day_of_year'] -= 1
+    last_year = current_year - 1
+    current_is_leap = is_leap_year(current_year)
+    last_is_leap = is_leap_year(last_year)
+
+    # Case 1: Current=non-leap, Last=leap (e.g., 2025 vs 2024)
+    # Feb 29 data from leap years should be mapped to Feb 28, and day_of_year adjusted for Mar+
+    if not current_is_leap and last_is_leap:
+        # Map Feb 29 from leap years to Feb 28 (don't drop the data!)
+        feb29_mask = (data['date'].dt.month == 2) & (data['date'].dt.day == 29)
+        data.loc[feb29_mask, 'date'] = data.loc[feb29_mask, 'date'] - pd.Timedelta(days=1)
+        # Recalculate day_of_year after date adjustment
+        data['day_of_year'] = data['date'].dt.dayofyear
+        # Subtract 1 from day_of_year for dates after Feb 28 in last year's data
+        last_year_after_feb = (data['date'].dt.year == last_year) & (data['date'].dt.month > 2)
+        data.loc[last_year_after_feb, 'day_of_year'] -= 1
+
+    # Case 2: Current=leap, Last=non-leap (e.g., 2024 vs 2023)
+    # Add 1 to day_of_year for dates after Feb 28 in last year's data
+    elif current_is_leap and not last_is_leap:
+        last_year_after_feb = (data['date'].dt.year == last_year) & (data['date'].dt.month > 2)
+        data.loc[last_year_after_feb, 'day_of_year'] += 1
+
+    # Case 3: Both same type (leap-leap or non-leap-non-leap) - no adjustment needed
 
     # Filter to historical data only (excluding current year for statistics)
     historical_data = data[data['date'].dt.year != current_year].copy()
@@ -3389,8 +3625,13 @@ def write_decad_hydrograph_data(data: pd.DataFrame, iehhf_sdk = None):
         logger.warning(f"No data found for current year ({current_year})")
     
     if not last_year_data.empty:
-        # Process last year data
-        last_year_data.loc[:, 'date'] = pd.Timestamp(str(current_year)) + pd.to_timedelta(last_year_data['day_of_year'] - 1, unit='D')
+        # Process last year data - use DateOffset (handles leap years correctly)
+        last_year_data.loc[:, 'date'] = last_year_data['date'] + pd.DateOffset(years=1)
+        # Handle Feb 29 → Feb 28 mapping explicitly if DateOffset created Feb 29 in non-leap year
+        if not is_leap_year(current_year):
+            feb29_mask = (last_year_data['date'].dt.month == 2) & (last_year_data['date'].dt.day == 29)
+            if feb29_mask.any():
+                last_year_data.loc[feb29_mask, 'date'] = last_year_data.loc[feb29_mask, 'date'] - pd.Timedelta(days=1)
         last_year_data = last_year_data.rename(columns={'discharge_avg': str(last_year)}).reset_index(drop=True)
         
         # Ensure data types match for merge
@@ -3466,11 +3707,56 @@ def write_decad_hydrograph_data(data: pd.DataFrame, iehhf_sdk = None):
         logger.error(f"decad_in_year unique values: {runoff_stats['decad_in_year'].unique()}")
         raise
     
+    # Fill missing dates by reconstructing from decad_in_year
+    # The date column should ALWAYS be populated with the issue date, even when
+    # there's no discharge data for that decad
+    if 'date' in runoff_stats.columns:
+        missing_date_mask = runoff_stats['date'].isna()
+        if missing_date_mask.any():
+            logger.debug(f"Filling {missing_date_mask.sum()} missing dates from decad_in_year")
+            runoff_stats.loc[missing_date_mask, 'date'] = runoff_stats.loc[missing_date_mask, 'decad_in_year'].apply(
+                lambda d: get_issue_date_from_decad(d, current_year)
+            )
+
+    # Fill missing day_of_year by reconstructing from decad_in_year
+    # The day_of_year should ALWAYS be populated, even when there's no discharge data
+    if 'day_of_year' not in runoff_stats.columns:
+        # Create day_of_year column from decad_in_year
+        logger.debug("Creating day_of_year column from decad_in_year")
+        runoff_stats['day_of_year'] = runoff_stats['decad_in_year'].apply(
+            lambda d: get_day_of_year_from_decad(d, current_year)
+        )
+    else:
+        # Fill any missing values
+        missing_doy_mask = runoff_stats['day_of_year'].isna()
+        if missing_doy_mask.any():
+            logger.debug(f"Filling {missing_doy_mask.sum()} missing day_of_year values from decad_in_year")
+            runoff_stats.loc[missing_doy_mask, 'day_of_year'] = runoff_stats.loc[missing_doy_mask, 'decad_in_year'].apply(
+                lambda d: get_day_of_year_from_decad(d, current_year)
+            )
+
+    # Fill missing decad (1-3 within month) by reconstructing from decad_in_year
+    if 'decad' not in runoff_stats.columns:
+        logger.debug("Creating decad column from decad_in_year")
+        runoff_stats['decad'] = runoff_stats['decad_in_year'].apply(get_decad_from_decad_in_year)
+    else:
+        missing_decad_mask = runoff_stats['decad'].isna()
+        if missing_decad_mask.any():
+            logger.debug(f"Filling {missing_decad_mask.sum()} missing decad values from decad_in_year")
+            runoff_stats.loc[missing_decad_mask, 'decad'] = runoff_stats.loc[missing_decad_mask, 'decad_in_year'].apply(
+                get_decad_from_decad_in_year
+            )
+
+    # Ensure decad_in_year, decad, and day_of_year are integers
+    runoff_stats['decad_in_year'] = runoff_stats['decad_in_year'].astype(int)
+    runoff_stats['decad'] = runoff_stats['decad'].astype(int)
+    runoff_stats['day_of_year'] = runoff_stats['day_of_year'].astype(int)
+
     # Final validation before write
     logger.info(f"Final DataFrame ready for write: shape={runoff_stats.shape}, "
                 f"codes={runoff_stats['code'].nunique()}, "
                 f"decads={runoff_stats['decad_in_year'].nunique()}")
-    
+
     # Check for any infinite or NaN values that might cause issues
     inf_count = np.isinf(runoff_stats.select_dtypes(include=[np.number])).sum().sum()
     if inf_count > 0:
