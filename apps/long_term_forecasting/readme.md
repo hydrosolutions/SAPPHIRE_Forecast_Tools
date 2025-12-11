@@ -17,6 +17,25 @@ Functions here act more like an interface.
 
 For more detailed implementation specifics refer to the [Long-Term-Forecasting](https://github.com/hydrosolutions/long-term-forecasting) Documentation and code base.
 
+## How to setup the Environment
+
+1. Create local python environment
+ ```bash  
+python3.11 -m venv myenv
+# activate your environment (here macos)
+source myenv/bin/activate
+```
+2. Download Custom Github packages
+```bash  
+# iEasy Hydro SDK library
+pip install git+https://github.com/hydrosolutions/ieasyhydro-python-sdk
+# long term forecasting library (use latest version)
+pip install git+https://github.com/hydrosolutions/long-term-forecasting.git@v1.0.0
+
+# During Development - make changes directly in the codebase.
+pip install -e "path/to/lt_forecasting/dir"
+```
+If you work on macOS you might need to install lightgbm via homebrew. Or use conda to install the lightgbm package this should also handle the installation. On Windows and Linux system this should not be required.
 ## Data Interface
 
 The `data_interface.py` module provides the `DataInterface` class for loading and managing forecast data. It retrieves forcing data (precipitation and temperature), discharge observations, static features, and optional snow data from the data gateway.

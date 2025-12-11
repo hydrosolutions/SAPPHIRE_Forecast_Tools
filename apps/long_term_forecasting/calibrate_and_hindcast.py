@@ -58,6 +58,7 @@ def tune_hyperparameters_model(
         forecast_configs: ForecastConfig,
         temporal_data: pd.DataFrame,
         static_data: pd.DataFrame,
+        data_interface: DataInterface,
 ) -> Tuple[bool, str]:
     """
     Tune hyperparameters for a given model instance.
@@ -66,6 +67,7 @@ def tune_hyperparameters_model(
         forecast_configs (ForecastConfig): The forecast configuration object.
         temporal_data (pd.DataFrame): The temporal data for the model.
         static_data (pd.DataFrame): The static data for the model.
+        data_interface (DataInterface): The data interface object.
     Returns:
         Tuple[bool, str]: A tuple containing a boolean indicating success and a message.
     """
@@ -101,6 +103,20 @@ def tune_hyperparameters_model(
 
     configs["path_config"]["path_to_lr_predictors"] = all_dependencies_paths
     configs["path_config"]["path_to_base_predictors"] = all_dependencies_paths
+
+    data_dependencies = forecast_configs.get_data_dependencies(model_name=model_name)
+    
+    for input_type, offset in data_dependencies.items():
+        if input_type == "SnowMapper":
+            # Extend base data with snow data
+            snow_HRUs = configs["path_config"].get("snow_HRUs", [])
+            snow_variables = configs["path_config"].get("snow_variables", [])
+            snow_result = data_interface.extend_base_data_with_snow(
+                base_data=temporal_data,
+                HRUs_snow=snow_HRUs,
+                snow_variables=snow_variables
+            )
+            temporal_data = snow_result["temporal_data"]
 
 
     # Create model instance
@@ -301,6 +317,7 @@ def calibrate_and_hindcast(
                     forecast_configs=forecast_config,
                     temporal_data=temporal_data,
                     static_data=static_data,
+                    data_interface=data_interface,
                 )
                 if success:
                     logger.info(f"Hyperparameter tuning for model {model_name} completed successfully.")
