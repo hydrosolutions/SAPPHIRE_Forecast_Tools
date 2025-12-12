@@ -229,6 +229,15 @@ print(f"Display ML forecasts: {display_ML_forecasts}")
 print(f"Display CM forecasts: {display_CM_forecasts}")
 print(f"Display weather data: {display_weather_data}")
 
+# Find out if snow data is configured and can be displayed
+display_snow_data = os.getenv('ieasyhydroforecast_HRU_SNOW_DATA_DASHBOARD', 'False')
+
+# If display_snow_data is not null or empty, and display_weather_data is True, we display snow data
+if display_snow_data and display_weather_data:
+    display_snow_data = True
+else:
+    display_snow_data = False
+
 def get_directory_mtime(directory_path):
     mtimes = []
     for root, dirs, files in os.walk(directory_path):
@@ -243,7 +252,8 @@ def load_data():
     global hydrograph_day_all, hydrograph_pentad_all, linreg_predictor, \
         forecasts_all, forecast_stats, all_stations, station_dict, station_df, \
         station_list, linreg_datatable, stations_iehhf, \
-        rram_forecast, ml_forecast, rain, temp, latest_data_is_current_year, iehhf_warning
+        rram_forecast, ml_forecast, rain, temp, latest_data_is_current_year, \
+        iehhf_warning, snow_data
     # File modification times
     hydrograph_day_file = os.path.join(
         os.getenv("ieasyforecast_intermediate_data_path"),
@@ -292,11 +302,39 @@ def load_data():
             os.getenv('ieasyhydroforecast_PATH_TO_HIND'),
             os.getenv('ieasyhydroforecast_FILE_CF_HIND_T')
         )
+
         # replace .csv with _dashboard.csv
         p_file = p_file.replace('.csv', '_dashboard.csv')
         t_file = t_file.replace('.csv', '_dashboard.csv')
         p_file_mtime = os.path.getmtime(p_file)
         t_file_mtime = os.path.getmtime(t_file)
+
+    if display_snow_data == True:
+        # Define hs_file, swe_file and rof_file here
+        snow_data_path = os.path.join(
+            os.getenv('ieasyforecast_intermediate_data_path'),
+            os.getenv('ieasyhydroforecast_OUTPUT_PATH_SNOW'))
+
+        hru_snow = os.getenv('ieasyhydroforecast_HRU_SNOW_DATA_DASHBOARD')
+        snow_vars_env = os.getenv('ieasyhydroforecast_SNOW_VARS').split(',')  # e.g., ['SWE', 'HS', 'RoF']
+
+        if snow_vars_env and hru_snow:
+            # Create a dict of snow files
+            snow_files = {
+                var: os.path.join(snow_data_path, var, f"{hru_snow}_{var}.csv")
+                for var in snow_vars_env
+            }
+            # Only get mtime for files that exist
+            snow_files_mtime = {
+                var: os.path.getmtime(path) if os.path.exists(path) else None
+                for var, path in snow_files.items()
+            }
+        else:
+            snow_files = {}
+            snow_files_mtime = {}
+    else: 
+        snow_files = {}
+        snow_files_mtime = {}
 
     # Hydrograph day and pentad data
     hydrograph_day_all = processing.read_hydrograph_day_data_for_pentad_forecasting(
@@ -476,6 +514,17 @@ def load_data():
     else: 
         rain = None
         temp = None
+
+    if display_snow_data == True:
+        snow_data = {}
+        for var, path in snow_files.items():
+            mtime = snow_files_mtime.get(var)
+            if mtime is not None:
+                snow_data[var] = processing.read_snow_data(var, path, mtime)
+            else:
+                snow_data[var] = None
+    else: 
+        snow_data = None
 
     # Debugging prints to see if we have read data correctly
     #print(f"--- display_weather_data: {display_weather_data}")
@@ -1482,6 +1531,14 @@ if rain is None:
 else: 
     daily_rainfall_plot = pn.pane.HoloViews(hv.Curve([]), sizing_mode="stretch_width") 
     daily_temperature_plot = pn.pane.HoloViews(hv.Curve([]), sizing_mode="stretch_width") 
+if snow_data is None:
+    snow_plot_panes = pn.pane.Markdown(_("No snow data from SAPPHIRE Data Gateway available."))
+else:
+    snow_plot_panes = {
+        'SWE': pn.pane.HoloViews(hv.Curve([]), sizing_mode="stretch_width"),
+        'HS': pn.pane.HoloViews(hv.Curve([]), sizing_mode="stretch_width"),
+        'RoF': pn.pane.HoloViews(hv.Curve([]), sizing_mode="stretch_width")
+    }
 
 forecast_data_and_plot = pn.Column(sizing_mode="stretch_both")
 
@@ -1911,8 +1968,8 @@ if iehhf_warning is not None:
 
 # Create a placeholder for the dashboard content
 dashboard_content = layout.define_tabs(_, predictors_warning, forecast_warning,
-    daily_hydrograph_plot, daily_rainfall_plot, daily_temperature_plot,
-    forecast_data_and_plot,
+    daily_hydrograph_plot, daily_rainfall_plot, daily_temperature_plot, snow_plot_panes,
+    forecast_data_and_plot,  
     forecast_summary_table, pentad_forecast_plot, forecast_skill_plot,
     bulletin_table, write_bulletin_button, bulletin_download_panel, disclaimer,
     station_card, forecast_card, add_to_bulletin_button, basin_card,
@@ -1935,6 +1992,12 @@ def update_active_tab(event):
         if display_weather_data == True: 
             daily_rainfall_plot.object = viz.plot_daily_rainfall_data(_, rain, station.value, date_picker.value, linreg_predictor)
             daily_temperature_plot.object = viz.plot_daily_temperature_data(_, temp, station.value, date_picker.value, linreg_predictor)
+        if display_snow_data == True:
+            for var in snow_data.keys():
+                if snow_data[var] is not None:
+                    snow_plot_panes[var].object = viz.plot_daily_snow_data(_, snow_data, var, station.value, date_picker.value, linreg_predictor)
+                else: 
+                    snow_plot_panes[var].object = pn.pane.Markdown(_("No snow data from SAPPHIRE Data Gateway available."))
     elif active_tab == 1 and latest_forecast != station.value:
         latest_forecast = station.value
         plot = viz.select_and_plot_data(_, linreg_predictor, station.value, pentad_selector.value, decad_selector.value, SAVE_DIRECTORY)
