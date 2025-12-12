@@ -29,6 +29,9 @@ RUN apt-get update && \
 # Install uv from the official image
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 
+# Upgrade pip to fix CVE vulnerability (pip 25.0.1 -> 25.3+)
+RUN pip install --no-cache-dir --upgrade "pip>=25.3"
+
 # Create the non-root user with specific UID/GID
 # Check the UID/GID of the host user and group with `id -u` and `id -g`
 # For Ubuntu servers this is usually 1000:1000
