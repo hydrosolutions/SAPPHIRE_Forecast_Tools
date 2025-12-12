@@ -679,6 +679,45 @@ jobs:
           -t "${{ env.POSTPQ_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
           -f ./apps/postprocessing_forecasts/Dockerfile .
 
+  # Test postprocessing with Python 3.12 + uv
+  test_postprocessing_py312:
+    runs-on: ubuntu-latest
+    name: Test postprocessing (Python 3.12 + uv)
+    steps:
+      - name: Check out the current branch
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install Python 3.12
+        run: uv python install 3.12
+
+      - name: Install postprocessing_forecasts dependencies
+        working-directory: ./apps/postprocessing_forecasts
+        run: uv sync --all-extras
+
+      - name: Verify imports
+        working-directory: ./apps
+        run: |
+          postprocessing_forecasts/.venv/bin/python -c "import pandas; import numpy; import openpyxl; print('All imports successful!')"
+
+  # Build postprocessing Python 3.12 + uv image
+  build_postprocessing_py312:
+    needs: [test_postprocessing_py312, test_ieasyhydroforecast_py312, build_python_312_base_image]
+    runs-on: ubuntu-latest
+    name: Build postprocessing (Python 3.12 + uv)
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: |
+          docker build \
+          -t "${{ env.POSTPQ_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" \
+          -f ./apps/postprocessing_forecasts/Dockerfile.py312 .
+
   # Test linear regression
   test_linear_regression:
     needs: [build_python_311_base_image]
@@ -796,6 +835,7 @@ jobs:
       build_dashboard,
       build_dashboard_py312,
       build_postprocessing_runoff,
+      build_postprocessing_py312,
       build_linreg,
       build_linreg_py312
     ]

@@ -889,6 +889,54 @@ jobs:
         run: |
           docker push "${{ env.POSTPQ_IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
 
+  # Test postprocessing with Python 3.12 + uv
+  test_postprocessing_py312:
+    runs-on: ubuntu-latest
+    name: Test postprocessing (Python 3.12 + uv)
+    steps:
+      - name: Check out the current branch
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install Python 3.12
+        run: uv python install 3.12
+
+      - name: Install postprocessing_forecasts dependencies
+        working-directory: ./apps/postprocessing_forecasts
+        run: uv sync --all-extras
+
+      - name: Verify imports
+        working-directory: ./apps
+        run: |
+          postprocessing_forecasts/.venv/bin/python -c "import pandas; import numpy; import openpyxl; print('All imports successful!')"
+
+  # Build and push postprocessing Python 3.12 + uv image
+  push_postprocessing_py312_to_Dockerhub:
+    needs: [test_postprocessing_py312, test_ieasyhydroforecast_py312, build_and_push_python_312_base_image]
+    runs-on: ubuntu-latest
+    name: Build and push postprocessing (Python 3.12 + uv)
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: |
+          docker build --pull --no-cache \
+          -t "${{ env.POSTPQ_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" \
+          -f ./apps/postprocessing_forecasts/Dockerfile.py312 .
+
+      - name: Log in to the Docker registry
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Push the image to Dockerhub
+        run: |
+          docker push "${{ env.POSTPQ_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}"
 
   test_linear_regression:
     needs: [build_and_push_python_311_base_image]
@@ -1020,6 +1068,7 @@ jobs:
       push_dashboard_to_Dckerhub,
       push_dashboard_py312_to_Dockerhub,
       push_postprocessing_runoff_to_Dckerhub,
+      push_postprocessing_py312_to_Dockerhub,
       push_linreg_to_Dckerhub,
       push_linreg_py312_to_Dockerhub
     ]
@@ -1051,6 +1100,7 @@ jobs:
           echo "- ${{ env.LINREG_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" >> $GITHUB_STEP_SUMMARY
           echo "- ${{ env.ML_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" >> $GITHUB_STEP_SUMMARY
           echo "- ${{ env.DASHBOARD_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" >> $GITHUB_STEP_SUMMARY
+          echo "- ${{ env.POSTPQ_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Note:** Production images use Python 3.11 + pip. The :py312 images are for migration testing only." >> $GITHUB_STEP_SUMMARY
           echo "The conceptual_model :py312 tag is identical to :latest (R-based module, not Python)." >> $GITHUB_STEP_SUMMARY
