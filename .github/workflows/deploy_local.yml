@@ -97,7 +97,7 @@ jobs:
         run: |
           DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}")
           echo "DIGEST=$DIGEST" >> $GITHUB_ENV  # Explicitly set as env var
-          cosign sign --key env://COSIGN_PRIVATE_KEY --tlog-upload=false --yes "$DIGEST"
+          cosign sign --key env://COSIGN_PRIVATE_KEY --yes "$DIGEST"
         env:
           COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
           COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
