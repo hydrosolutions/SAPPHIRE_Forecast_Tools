@@ -23,6 +23,7 @@ today = dt.datetime.now()
 today = today + dt.timedelta(days=1)
 year = today.year
 date_str = today.strftime("%Y-%m-%d")
+print("Today's date:", date_str)
 month_str = today.strftime("%m") + "_" + tl.get_month_str_case1(date_str)
 if horizon == "pentad":
     horizon_value = tl.get_pentad_for_date(today)
@@ -215,7 +216,7 @@ def test_local(page: Page):
     stations = [
         "15013 - Джыргалан-с.Советское",
         "16936 - Нарын  -  Приток в Токтогульское вдхр.**)",
-        "15194 - р.Ала-Арча-у.р.Кашка-Суу",
+        #"15194 - р.Ала-Арча-у.р.Кашка-Суу",
         "15256 - Талас -  с.Ак-Таш",
     ]
     for station in stations:

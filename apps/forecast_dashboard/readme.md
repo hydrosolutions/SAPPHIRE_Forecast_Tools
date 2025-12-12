@@ -45,6 +45,7 @@ pre-commit install
 
 ## To run the integration tests for the dashboard: 
 Pre-commit hooks only work when the dashboard is running locally and make your commits from the terminal (not GitHub Desktop or VSCode). 
+0. If you need access to iEH HF via ssh, make sure the ssh tunnel is running.
 1. Make sure the dashboard is running locally.
 2. Adapt test_integration.py to the local environment.
 3. git add changes
