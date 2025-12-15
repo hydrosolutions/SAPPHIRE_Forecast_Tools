@@ -1266,6 +1266,43 @@ def read_temperature_data(file_mtime):
     pn.state.cache[cache_key] = (file_mtime, forcing)
     return forcing
 
+def read_snow_data(variable: str, file_path: str, file_mtime):
+    """
+    Read snow data for a specific variable (SWE, HS, or RoF).
+    
+    Args:
+        variable: The snow variable name ('SWE', 'HS', or 'RoF')
+        file_path: Full path to the CSV file
+        file_mtime: File modification time for cache invalidation
+    
+    Returns:
+        DataFrame with snow data, or None if file doesn't exist
+    """
+    cache_key = f'snow_data_{variable}'
+    if cache_key in pn.state.cache:
+        cached_mtime, data = pn.state.cache[cache_key]
+        if cached_mtime == file_mtime:
+            return data
+
+    if not os.path.isfile(file_path):
+        return None  # Or raise Exception if you prefer
+
+    # Read snow data
+    data = pd.read_csv(file_path)
+
+    # Convert the date column to datetime
+    data['date'] = pd.to_datetime(data['date'], format='%Y-%m-%d', errors='coerce')
+
+    # Convert the code column to string
+    data['code'] = data['code'].astype(str)
+
+    # Sort by code and date
+    data = data.sort_values(by=['code', 'date'])
+
+    # Store in cache
+    pn.state.cache[cache_key] = (file_mtime, data)
+    return data
+
 
 # --- Bulletin preparation --------------------------------------------------------
 def get_bulletin_header_info(date, sapphire_forecast_horizon):
