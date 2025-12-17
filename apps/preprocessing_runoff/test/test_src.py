@@ -1,9 +1,12 @@
 import os
+import sys
 import pandas as pd
 import datetime as dt
 import pytest
 
-from preprocessing_runoff.src import src
+# Add src directory to path for imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+import src
 
 def test_get_runoff_data_no_data_available():
 
