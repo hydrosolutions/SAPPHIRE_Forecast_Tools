@@ -1224,6 +1224,46 @@ Add attestation to prove where images were built. This helps customers verify im
 
 **Add to Phase 0**: Include attestation when building the new `:py312` base image.
 
+#### Attestation Status for py312 Images
+
+| py312 Image | Has Attestation | Status | Action Required |
+|-------------|-----------------|--------|-----------------|
+| `sapphire-pythonbaseimage:py312` | ✅ Yes | `build-push-action` with provenance | None |
+| `sapphire-preprunoff:py312` | ✅ Yes | `build-push-action` with provenance | None |
+| `sapphire-prepgateway:py312` | ✅ Yes | `build-push-action` with provenance | None |
+| `sapphire-pipeline:py312` | ✅ Yes | `build-push-action` with provenance | Updated 2025-12-17 |
+| `sapphire-ml:py312` | ✅ Yes | `build-push-action` with provenance | Updated 2025-12-17 |
+| `sapphire-dashboard:py312` | ✅ Yes | `build-push-action` with provenance | Updated 2025-12-17 |
+| `sapphire-postprocessing:py312` | ✅ Yes | `build-push-action` with provenance | Updated 2025-12-17 |
+| `sapphire-linreg:py312` | ✅ Yes | `build-push-action` with provenance | Updated 2025-12-17 |
+
+**✅ COMPLETED (2025-12-17)**: All py312 images now use `docker/build-push-action@v6` with `provenance: true` and `sbom: true`.
+
+**Template for adding attestation** (replace manual docker build/push):
+
+```yaml
+- name: Set up Docker Buildx
+  uses: docker/setup-buildx-action@v3
+
+- name: Log in to the Docker registry
+  uses: docker/login-action@v3
+  with:
+    username: ${{ secrets.DOCKER_USERNAME }}
+    password: ${{ secrets.DOCKER_PASSWORD }}
+
+- name: Build and push Docker image with attestation
+  uses: docker/build-push-action@v6
+  with:
+    context: .
+    file: ./apps/<module>/Dockerfile.py312
+    push: true
+    tags: ${{ env.<IMAGE_NAME> }}:${{ env.IMAGE_TAG_PY312 }}
+    provenance: true
+    sbom: true
+    cache-from: type=gha
+    cache-to: type=gha,mode=max
+```
+
 ### 2. Non-Root User Strategy
 
 **Current State Analysis**:
@@ -1439,7 +1479,62 @@ If AGPL packages are found:
 | 5a | forecast_dashboard | ✅ Completed | `:py312` | B | pyproject.toml + uv.lock (67 packages) + Dockerfile.py312; Panel 1.4.5, Bokeh 3.4.3 (pinned <3.5 for FuncTickFormatter compatibility), HoloViews 1.19.1; local Py3.12 test OK; Docker operational test OK. CI/CD workflows updated. |
 | 5b | pipeline | ✅ Completed | `:py312` | B | pyproject.toml + uv.lock (35 packages) + Dockerfile.py312; Luigi 3.6.0; local Py3.12 test OK; Docker operational test OK (Docker socket access verified). CI/CD workflows updated. |
 | 5c | postprocessing_forecasts | ✅ Completed | `:py312` | B | pyproject.toml + uv.lock (29 packages) + Dockerfile.py312; local Py3.12 test OK (script runs successfully with pentad/decadal forecasts). |
-| 6 | Flip `:latest` to py312 | 🔄 Server testing in progress | `:latest` | B avg | Full forecast workflow running on server with py312 images (2025-12-17) |
+| 6 | Flip `:latest` to py312 | ⏸️ Blocked - waiting for imomo server | `:latest` | B avg | Server testing paused - imomo data server is down (2025-12-17). Pipeline bugfix (Docker Hub API) and test improvements ready. **Pre-req**: Add attestation to all py312 images (see Scout Compliance section). |
+| 7 | Full package upgrade | Not started | `:py312` | B | Upgrade all packages to latest versions after py312 migration complete. |
+
+---
+
+## Phase 7: Full Package Upgrade (Post-Migration)
+
+**Goal**: Update all packages to latest secure versions after Python 3.12 migration is stable.
+
+**When**: After Phase 6 is complete and `:latest` points to py312.
+
+### Steps
+
+1. **Update iEasyHydroForecast (base)**
+   ```bash
+   cd apps/iEasyHydroForecast
+   uv lock --upgrade
+   uv sync
+   uv run pytest tests/ -v
+   ```
+
+2. **Update each dependent module**
+   ```bash
+   # For each module:
+   cd apps/<module>
+   uv lock --upgrade
+   uv sync
+   # Run tests if available
+   ```
+
+   Modules to update:
+   - [ ] preprocessing_runoff
+   - [ ] preprocessing_gateway
+   - [ ] preprocessing_station_forcing
+   - [ ] linear_regression
+   - [ ] machine_learning
+   - [ ] postprocessing_forecasts
+   - [ ] forecast_dashboard
+   - [ ] pipeline
+
+3. **Rebuild and push all images**
+   - Push changes to trigger CI/CD rebuild of all py312 images
+
+4. **Full server validation**
+   - Re-test complete forecast workflow with updated packages
+
+### Known Package Updates Available (as of 2025-12-17)
+
+| Package | Current | Latest | Priority |
+|---------|---------|--------|----------|
+| scikit-learn | 1.7.2 | 1.8.0 | Medium |
+| urllib3 | 2.6.0 | 2.6.2 | High (security) |
+| pytest | 9.0.1 | 9.0.2 | Low |
+| filelock | 3.20.0 | 3.20.1 | Low |
+| pre-commit | 4.5.0 | 4.5.1 | Low |
+| tzdata | 2025.2 | 2025.3 | Low |
 
 ---
 
