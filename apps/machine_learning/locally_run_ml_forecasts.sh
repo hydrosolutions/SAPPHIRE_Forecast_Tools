@@ -35,13 +35,13 @@ get_timestamp() {
 
 # Get ieasyhydroforecast_env_file_path from env if set, otherwise use default
 if [ -z "$ieasyhydroforecast_env_file_path" ]; then
-    ieasyhydroforecast_env_file_path=~/Documents/GitHub/taj_data_forecast_tools/config/.env_develop_tjhm
+    ieasyhydroforecast_env_file_path=~/Documents/GitHub/taj_data_forecast_tools/config/.env_develop_kghm
 fi
 export ieasyhydroforecast_env_file_path
 
 # Get SAPPHIRE_PREDICTION_MODE from env if set, otherwise use default
 if [ -z "$SAPPHIRE_PREDICTION_MODE" ]; then
-    SAPPHIRE_PREDICTION_MODE=PENTAD
+    SAPPHIRE_PREDICTION_MODE=DECAD
 fi
 export SAPPHIRE_PREDICTION_MODE
 
