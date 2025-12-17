@@ -1431,7 +1431,7 @@ If AGPL packages are found:
 | 0 | Create `:py312` base image | ✅ Completed | `:py312` | B | Minimal OS packages, uv |
 | 1 | iEasyHydroForecast | ✅ Completed | `:py312` | B | pyproject.toml + uv.lock, 173 tests pass |
 | 2 | preprocessing_runoff | ✅ Completed | `:py312` | B | pyproject.toml + uv.lock, 13 tests pass; local Py3.12 venv test OK; Docker test OK |
-| 3a | preprocessing_gateway | ✅ Completed | `:py312` | B | pyproject.toml + uv.lock + Dockerfile.py312; local test OK; Docker test OK (all 3 scripts). CI/CD workflows fixed. **TODO @Sandro:** Server testing pending. |
+| 3a | preprocessing_gateway | ✅ Completed | `:py312` | B | pyproject.toml + uv.lock + Dockerfile.py312; local test OK; Docker test OK (all 3 scripts). CI/CD workflows fixed. |
 | 3b | preprocessing_station_forcing | ✅ Completed | `:py312` | B | pyproject.toml + uv.lock + Dockerfile.py312; local Py3.12 test OK; Docker test OK (fails at DB connection as expected - uses old ieasyhydro SDK). No unit tests. No CI/CD (future development). |
 | 4a | linear_regression | ✅ Completed | `:py312` | B | pyproject.toml + uv.lock + Dockerfile.py312; local Py3.12 test OK; Docker test OK. CI/CD workflows updated. |
 | 4b | machine_learning | ✅ Completed | `:py312` | C/D | pyproject.toml + uv.lock (~500KB, 77 packages) + Dockerfile.py312; torch 2.8.0, darts 0.35.0; local Py3.12 test OK (TFT model predictions working); Docker test OK. CI/CD workflows updated. |
@@ -1439,7 +1439,7 @@ If AGPL packages are found:
 | 5a | forecast_dashboard | ✅ Completed | `:py312` | B | pyproject.toml + uv.lock (67 packages) + Dockerfile.py312; Panel 1.4.5, Bokeh 3.4.3 (pinned <3.5 for FuncTickFormatter compatibility), HoloViews 1.19.1; local Py3.12 test OK; Docker operational test OK. CI/CD workflows updated. |
 | 5b | pipeline | ✅ Completed | `:py312` | B | pyproject.toml + uv.lock (35 packages) + Dockerfile.py312; Luigi 3.6.0; local Py3.12 test OK; Docker operational test OK (Docker socket access verified). CI/CD workflows updated. |
 | 5c | postprocessing_forecasts | ✅ Completed | `:py312` | B | pyproject.toml + uv.lock (29 packages) + Dockerfile.py312; local Py3.12 test OK (script runs successfully with pentad/decadal forecasts). |
-| 6 | Flip `:latest` to py312 | Not started | `:latest` | B avg | Final transition |
+| 6 | Flip `:latest` to py312 | 🔄 Server testing in progress | `:latest` | B avg | Full forecast workflow running on server with py312 images (2025-12-17) |
 
 ---
 
@@ -1603,4 +1603,4 @@ After successful server testing:
 ---
 
 *Document created: 2025-12-01*
-*Last updated: 2025-12-06*
+*Last updated: 2025-12-17*

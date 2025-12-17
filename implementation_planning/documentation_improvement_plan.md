@@ -102,6 +102,14 @@ Proposed new README structure:
 - [ ] Document all environment variables
 - [ ] Explain each JSON config file's purpose and schema
 
+#### Step 3.4: Deployment Infrastructure Requirements
+- [ ] Document SSH tunnel requirements for iEasyHydro HF connectivity
+  - If the forecast tools do not run on the same network as the iEasyHydro High Frequency software, an SSH tunnel must be established and kept open
+  - Document autossh + systemd setup for persistent SSH tunnels
+  - Include ssh-keyscan, key-based authentication setup, and systemd service configuration
+  - Reference: conversation notes on robust SSH tunnel automation (2025-12-17)
+- [ ] Document network topology options (same network vs. remote deployment)
+
 ---
 
 ### Phase 4: User-Facing Documentation
@@ -161,6 +169,18 @@ Proposed new README structure:
 #### Step 5.6: Server Testing Workflow Documentation
 - [x] Document server testing procedure ✅ (2025-12-06)
   - Added to `implementation_planning/uv_migration_plan.md` under "Server Testing Procedure" section
+
+#### Step 5.7: UV Migration Documentation
+- [x] Create temporary `doc/uv-migration-guide.md` ✅ (2025-12-17)
+  - Quick comparison table (conda/pip vs uv)
+  - uv installation instructions
+  - Module-specific run examples for all Python modules
+  - Docker image tag strategy (`:latest`, `:py312`, `:py311`)
+  - Troubleshooting section
+- [ ] After successful server testing: Update `doc/development.md` to replace conda/pip with uv
+- [ ] After Phase 6 complete: Remove `doc/uv-migration-guide.md` (content merged into development.md)
+
+#### Step 5.8: Server Testing Guide (standalone)
 - [ ] Create standalone `doc/development/server-testing.md` guide covering:
   - How to temporarily deploy from feature branches
   - How to configure server to use different image tags (`:py312` vs `:latest`)
@@ -168,10 +188,6 @@ Proposed new README structure:
   - Rollback procedures
   - Troubleshooting common issues (permissions, connections, etc.)
 - [ ] Add cross-reference from CONTRIBUTING.md (when created)
-- [ ] Document the image tag strategy:
-  - `:latest` - production (Python 3.11 + pip, until Phase 6)
-  - `:py312` - testing/migration (Python 3.12 + uv)
-  - `:py311` - archive (created at end of migration)
 
 ##### Server Testing Workflow Summary
 
@@ -519,7 +535,9 @@ The documentation improvement is complete when:
 | 2.2 | Not started | |
 | 5.4 | ✅ Completed | 2025-12-01 - Created docker-security-maintenance.md + security disclaimer + template response |
 | 5.5 | ✅ Completed | 2025-12-05 - MCP server setup instructions for Context7 and Serena |
-| 5.6 | In progress | 2025-12-06 - Server testing procedure documented in uv_migration_plan.md; standalone guide pending |
+| 5.6 | ✅ Completed | 2025-12-06 - Server testing procedure documented in uv_migration_plan.md |
+| 5.7 | ✅ Completed | 2025-12-17 - Created `doc/uv-migration-guide.md` (temporary guide for team) |
+| 5.8 | Not started | Standalone server testing guide |
 | 6.1 | In progress | 2025-12-01 - MkDocs setup complete, pending GitHub Pages enablement |
 | 7.0 | Not started | Module documentation structure |
 | 7.1 | Not started | 2025-12-05 - Assessment complete, tasks defined |
@@ -531,4 +549,4 @@ The documentation improvement is complete when:
 ---
 
 *Document created: 2025-12-01*
-*Last updated: 2025-12-06 - Added conceptual_model deprecation notice (Step 7.5b)*
+*Last updated: 2025-12-17 - Added Step 5.7 UV Migration Documentation*
