@@ -1,7 +1,7 @@
 from pydantic import BaseModel, Field
 from datetime import date as DateType
 from typing import List, Optional
-from app.models import HorizonType, MeteoType
+from app.models import HorizonType, MeteoType, SnowType
 
 
 class RunoffBase(BaseModel):
@@ -98,3 +98,36 @@ class MeteoResponse(MeteoBase):
 
 class MeteoBulkCreate(BaseModel):
     data: List[MeteoCreate]
+
+
+class SnowBase(BaseModel):
+    snow_type: SnowType
+    code: str = Field(..., max_length=10)
+    date: DateType
+    value: Optional[float] = None
+    value1: Optional[float] = None
+    value2: Optional[float] = None
+    value3: Optional[float] = None
+    value4: Optional[float] = None
+    value5: Optional[float] = None
+    value6: Optional[float] = None
+    value7: Optional[float] = None
+    value8: Optional[float] = None
+    value9: Optional[float] = None
+    value10: Optional[float] = None
+    value11: Optional[float] = None
+    value12: Optional[float] = None
+    value13: Optional[float] = None
+    value14: Optional[float] = None
+
+class SnowCreate(SnowBase):
+    pass
+
+class SnowResponse(SnowBase):
+    id: int
+
+    class Config:
+        from_attributes = True
+
+class SnowBulkCreate(BaseModel):
+    data: List[SnowCreate]

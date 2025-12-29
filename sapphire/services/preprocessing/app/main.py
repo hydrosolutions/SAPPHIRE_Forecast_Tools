@@ -7,7 +7,7 @@ from typing import List, Optional
 
 from app import crud
 from app.models import Runoff
-from app.schemas import RunoffCreate, RunoffUpdate, RunoffResponse, RunoffBulkCreate, HydrographResponse, MeteoResponse, HydrographBulkCreate, MeteoBulkCreate
+from app.schemas import RunoffCreate, RunoffUpdate, RunoffResponse, RunoffBulkCreate, HydrographResponse, MeteoResponse, HydrographBulkCreate, MeteoBulkCreate, SnowResponse, SnowBulkCreate
 from app.database import engine, Base, get_db
 from app.logger import logger
 from app.config import settings
@@ -184,4 +184,47 @@ def read_meteo(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to fetch meteorological data"
+        )
+
+
+@app.post("/snow/",
+          response_model=List[SnowResponse],
+          status_code=status.HTTP_201_CREATED,
+          tags=["Snow Data"])
+def create_snow(bulk_data: SnowBulkCreate, db: Session = Depends(get_db)):
+    """Create or update multiple snow data records in bulk"""
+    try:
+        return crud.create_snow(db=db, bulk_data=bulk_data)
+    except SQLAlchemyError:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create or update snow data in bulk"
+        )
+
+
+@app.get("/snow/", response_model=List[SnowResponse], tags=["Snow Data"])
+def read_snow(
+        snow_type: Optional[str] = None,
+        code: Optional[str] = None,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None,
+        skip: int = 0,
+        limit: int = 100,
+        db: Session = Depends(get_db)
+):
+    """Get snow data with optional filtering and pagination"""
+    try:
+        return crud.get_snow(
+            db=db,
+            snow_type=snow_type,
+            code=code,
+            start_date=start_date,
+            end_date=end_date,
+            skip=skip,
+            limit=limit
+        )
+    except SQLAlchemyError:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch snow data"
         )

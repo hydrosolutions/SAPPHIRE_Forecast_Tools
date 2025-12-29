@@ -509,6 +509,193 @@ class MeteoDataMigrator(DataMigrator):
         return all_stats
 
 
+class SnowDataMigrator(DataMigrator):
+    """Handles migration of snow data from CSV to API"""
+
+    def __init__(self, api_base_url: str = "http://localhost:8000", batch_size: int = 1000, snow_type: str = "HS"):
+        """
+        Args:
+            api_base_url: Base URL of the API
+            batch_size: Number of records per batch
+            snow_type: 'HS', 'ROF', or 'SWE'
+        """
+        self.snow_type = snow_type  # Must be set before calling super().__init__
+        super().__init__(api_base_url, batch_size)
+
+    def get_data_type(self) -> str:
+        return "snow"
+
+    def prepare_day_data(self, df: pd.DataFrame) -> List[Dict]:
+        """Prepare daily snow data for API"""
+        records = []
+        for _, row in df.iterrows():
+            record = {
+                "snow_type": self.snow_type.upper(),
+                "code": str(row['code']),
+                "date": row['date'],
+                "value": float(row['value']) if pd.notna(row['value']) else None,
+                "value1": float(row['value1']) if pd.notna(row['value1']) else None,
+                "value2": float(row['value2']) if pd.notna(row['value2']) else None,
+                "value3": float(row['value3']) if pd.notna(row['value3']) else None,
+                "value4": float(row['value4']) if pd.notna(row['value4']) else None,
+                "value5": float(row['value5']) if pd.notna(row['value5']) else None,
+                "value6": float(row['value6']) if pd.notna(row['value6']) else None,
+                "value7": float(row['value7']) if pd.notna(row['value7']) else None,
+                "value8": float(row['value8']) if pd.notna(row['value8']) else None,
+                "value9": float(row['value9']) if pd.notna(row['value9']) else None,
+                "value10": float(row['value10']) if pd.notna(row['value10']) else None,
+                "value11": float(row['value11']) if pd.notna(row['value11']) else None,
+                "value12": float(row['value12']) if pd.notna(row['value12']) else None,
+                "value13": float(row['value13']) if pd.notna(row['value13']) else None,
+                "value14": float(row['value14']) if pd.notna(row['value14']) else None,
+            }
+            records.append(record)
+        return records
+
+    def prepare_pentad_data(self, df: pd.DataFrame) -> List[Dict]:
+        """Snow data typically doesn't have pentad aggregation"""
+        raise NotImplementedError("Snow data doesn't support pentad horizon")
+
+    def prepare_decade_data(self, df: pd.DataFrame) -> List[Dict]:
+        """Snow data typically doesn't have decade aggregation"""
+        raise NotImplementedError("Snow data doesn't support decade horizon")
+
+    def load_and_merge_data(self, main_path: Path, secondary_path: Path) -> pd.DataFrame:
+        """Load value data and merge with value1..value14 from secondary file
+
+        Args:
+            main_path: Path to 00003_HS.csv, 00003_ROF.csv, or 00003_SWE.csv
+            secondary_path: Path to KGZ500m_HS.csv, KGZ500m_ROF.csv, or KGZ500m_SWE.csv
+
+        Returns:
+            Merged DataFrame with main value and secondary values
+        """
+        # Load main value data
+        print(f"Loading main value data from: {main_path.name}")
+        df_main = pd.read_csv(main_path)
+        df_main.rename(columns={self.snow_type: 'value'}, inplace=True)
+        # print("df_main", df_main)
+        print(f"Loaded {len(df_main):,} records from main value file")
+
+        # Try to load secondary value data
+        if secondary_path.exists():
+            print(f"Loading secondary values from: {secondary_path.name}")
+            df_secondary = pd.read_csv(secondary_path)
+            # print("df_secondary", df_secondary)
+            print(f"Loaded {len(df_secondary):,} records from secondary file")
+
+            rename_map = {f"{self.snow_type}_{i}": f"value{i}" for i in range(1, 15)}
+            # print("rename_map:", rename_map)
+
+            df_secondary.rename(columns=rename_map, inplace=True)
+            # print("df_secondary after rename:", df_secondary)
+
+            # Merge main with secondary values
+            df_merged = pd.merge(
+                df_main,
+                df_secondary,
+                on=['code', 'date'],
+                how='outer'  # create rows when missing in either DF
+            )
+            print(f"Merged data: {len(df_merged):,} records")
+            # print("df_merged:", df_merged)
+
+            return df_merged
+        else:
+            print(f"Secondary file not found: {secondary_path}")
+            for i in range(1, 15):
+                df_main[f'value{i}'] = None
+            return df_main
+
+    def migrate_csv(self, main_path: Path, horizon_type: str) -> MigrationStats:
+        """Migrate CSV files
+
+        Args:
+            main_path: Path to main CSV file
+            horizon_type: 'day' (only day is supported for snow)
+        """
+        print(f"Starting migration for {main_path.name} ({horizon_type})")
+        start_time = time.time()
+
+        # Construct secondary file path
+        # e.g., 00003_HS.csv -> KGZ500m_HS.csv
+        secondary_path = main_path.parent / main_path.name.replace('00003', 'KGZ500m')
+
+        # Load and merge data from reanalysis and dashboard
+        df = self.load_and_merge_data(main_path, secondary_path)
+        # print("df", df)
+        total_records = len(df)
+        print(f"Total records to migrate: {total_records:,}")
+
+        # Prepare data based on horizon type
+        if horizon_type == "day":
+            records = self.prepare_day_data(df)
+        elif horizon_type == "pentad":
+            records = self.prepare_pentad_data(df)
+        elif horizon_type == "decade":
+            records = self.prepare_decade_data(df)
+        else:
+            raise ValueError(f"Unknown horizon type: {horizon_type}")
+
+        # Send in batches
+        successful = 0
+        failed = 0
+        batch_count = 0
+
+        for i in range(0, len(records), self.batch_size):
+            batch = records[i:i + self.batch_size]
+            batch_count += 1
+
+            success, count = self.send_batch(batch)
+            if success:
+                successful += count
+                print(f"Batch {batch_count}: {count} records uploaded successfully")
+            else:
+                failed += len(batch)
+                print(f"Batch {batch_count}: Failed to upload {len(batch)} records")
+
+        # Calculate statistics
+        duration = time.time() - start_time
+        rps = successful / duration if duration > 0 else 0
+
+        stats = MigrationStats(
+            data_type=self.data_type,
+            horizon_type=horizon_type,
+            total_records=total_records,
+            successful=successful,
+            failed=failed,
+            duration_seconds=duration,
+            records_per_second=rps,
+            batch_count=batch_count
+        )
+
+        print(str(stats))
+        return stats
+
+    def migrate_all_horizons(self, csv_folder: str) -> List[MigrationStats]:
+        """Migrate only daily snow data from reanalysis files
+
+        Looks for files matching pattern: 00003_HS.csv or 00003_ROF.csv or 00003_SWE.csv
+        And merges with: KGZ500m_HS.csv or KGZ500m_ROF.csv or KGZ500m_SWE.csv
+        """
+        all_stats = []
+
+        filename = f"snow_data/{self.snow_type}/00003_{self.snow_type}.csv"
+        csv_path = Path(csv_folder) / filename
+
+        if not csv_path.exists():
+            print(f"No snow files found for type '{self.snow_type}' in {csv_folder}")
+        else:
+            print(f"Processing: {csv_path.name}")
+            try:
+                stats = self.migrate_csv(csv_path, "day")
+                all_stats.append(stats)
+            except Exception as e:
+                print(f"Migration failed for {csv_path.name}: {str(e)}")
+
+        return all_stats
+
+
 def parse_arguments():
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(
@@ -525,7 +712,10 @@ Examples:
   # Migrate only meteo data
   python data_migrator.py --type meteo
 
-  # Migrate all runoff, hydrograph and meteo data
+  # Migrate only snow data
+  python data_migrator.py --type snow
+
+  # Migrate all runoff, hydrograph, meteo, and snow data
   python data_migrator.py --type all
 
   # Use custom batch size
@@ -535,7 +725,7 @@ Examples:
 
     parser.add_argument(
         '--type',
-        choices=['runoff', 'hydrograph', 'meteo', 'all'],
+        choices=['runoff', 'hydrograph', 'meteo', 'snow', 'all'],
         default='all',
         help='Type of data to migrate (default: all)'
     )
@@ -586,6 +776,11 @@ def main():
         # Migrate both temperature and precipitation
         migrators_to_run.append(('meteo_temperature', MeteoDataMigrator(API_URL, BATCH_SIZE, meteo_type='T')))
         migrators_to_run.append(('meteo_precipitation', MeteoDataMigrator(API_URL, BATCH_SIZE, meteo_type='P')))
+
+    if args.type in ['snow', 'all']:
+        migrators_to_run.append(('snow_hs', SnowDataMigrator(API_URL, BATCH_SIZE, snow_type='HS')))
+        migrators_to_run.append(('snow_rof', SnowDataMigrator(API_URL, BATCH_SIZE, snow_type='RoF')))
+        migrators_to_run.append(('snow_swe', SnowDataMigrator(API_URL, BATCH_SIZE, snow_type='SWE')))
 
     # Run migrations
     for data_type, migrator in migrators_to_run:

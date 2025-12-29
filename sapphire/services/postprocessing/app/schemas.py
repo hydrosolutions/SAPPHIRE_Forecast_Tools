@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, computed_field
 from datetime import date as DateType
 from typing import Optional, List
 from app.models import HorizonType, ModelType
@@ -99,6 +99,11 @@ class SkillMetricBulkCreate(BaseModel):
 
 class SkillMetricResponse(SkillMetricBase):
     id: int
+
+    @computed_field
+    @property
+    def model_type_description(self) -> str:
+        return self.model_type.description
 
     class Config:
         from_attributes = True

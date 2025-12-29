@@ -2,8 +2,8 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from typing import List, Optional
 
-from app.models import Runoff, Hydrograph, Meteo
-from app.schemas import RunoffCreate, RunoffUpdate, HydrographCreate, HydrographBulkCreate, MeteoBulkCreate
+from app.models import Runoff, Hydrograph, Meteo, Snow
+from app.schemas import RunoffCreate, RunoffUpdate, HydrographCreate, HydrographBulkCreate, MeteoBulkCreate, SnowBulkCreate
 from app.logger import logger
 
 
@@ -190,4 +190,67 @@ def get_meteo(db: Session, meteo_type: Optional[str] = None, code: Optional[str]
         return results
     except SQLAlchemyError as e:
         logger.error(f"Error fetching meteo records: {str(e)}", exc_info=True)
+        raise
+
+
+def create_snow(db: Session, bulk_data: SnowBulkCreate) -> List[Snow]:
+    """Create or update multiple snow records in bulk (upsert based on snow_type, code, date)"""
+    try:
+        db_snows = []
+
+        for item in bulk_data.data:
+            # Check if a record with the same (snow_type, code, date) exists
+            existing_snow = db.query(Snow).filter(
+                Snow.snow_type == item.snow_type,
+                Snow.code == item.code,
+                Snow.date == item.date
+            ).first()
+
+            if existing_snow:
+                # Update existing record
+                for key, value in item.model_dump().items():
+                    setattr(existing_snow, key, value)
+                db_snows.append(existing_snow)
+                logger.info(f"Updated snow: {item.snow_type}, {item.code}, {item.date}")
+            else:
+                # Create new record
+                new_snow = Snow(**item.model_dump())
+                db.add(new_snow)
+                db_snows.append(new_snow)
+                logger.info(f"Created snow: {item.snow_type}, {item.code}, {item.date}")
+
+        db.commit()
+
+        # Refresh all snow records to get updated state
+        for snow in db_snows:
+            db.refresh(snow)
+
+        logger.info(f"Processed {len(db_snows)} snow records in bulk")
+        return db_snows
+
+    except SQLAlchemyError as e:
+        db.rollback()
+        logger.error(f"Error creating snow records in bulk: {str(e)}", exc_info=True)
+        raise
+
+
+def get_snow(db: Session, snow_type: Optional[str] = None, code: Optional[str] = None,
+               start_date: Optional[str] = None, end_date: Optional[str] = None,
+               skip: int = 0, limit: int = 100) -> List[Snow]:
+    """Get snow records with optional filtering and pagination"""
+    try:
+        query = db.query(Snow)
+        if snow_type:
+            query = query.filter(Snow.snow_type == snow_type)
+        if code:
+            query = query.filter(Snow.code == code)
+        if start_date:
+            query = query.filter(Snow.date >= start_date)
+        if end_date:
+            query = query.filter(Snow.date <= end_date)
+        results = query.offset(skip).limit(limit).all()
+        logger.info(f"Fetched {len(results)} snow records (code={code}, skip={skip}, limit={limit})")
+        return results
+    except SQLAlchemyError as e:
+        logger.error(f"Error fetching snow records: {str(e)}", exc_info=True)
         raise

@@ -81,8 +81,8 @@ class Hydrograph(Base):
 
 class MeteoType(str, Enum):
     """Enumeration of meteorological variable types"""
-    TEMPERATURE = "T"
-    PRECIPITATION = "P"
+    T = "T"  # Temperature
+    P = "P"  # Precipitation
 
 
 class Meteo(Base):
@@ -104,4 +104,44 @@ class Meteo(Base):
     __table_args__ = (
         Index('ix_meteo_type_code_date', 'meteo_type', 'code', 'date'),
         UniqueConstraint('meteo_type', 'code', 'date', name='uq_meteo_type_code_date')
+    )
+
+
+class SnowType(str, Enum):
+    """Enumeration of snow variable types"""
+    HS = "HS"  # Snow height
+    ROF = "ROF"  # Snow melt plus rainfall runoff
+    SWE = "SWE"  # Snow water equivalent
+
+
+class Snow(Base):
+    __tablename__ = "snow"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+
+    # Metadata fields
+    snow_type = Column(SQLEnum(SnowType), nullable=False)
+    code = Column(String(10), nullable=False)
+    date = Column(Date, nullable=False)
+
+    value = Column(Float)
+    value1 = Column(Float)
+    value2 = Column(Float)
+    value3 = Column(Float)
+    value4 = Column(Float)
+    value5 = Column(Float)
+    value6 = Column(Float)
+    value7 = Column(Float)
+    value8 = Column(Float)
+    value9 = Column(Float)
+    value10 = Column(Float)
+    value11 = Column(Float)
+    value12 = Column(Float)
+    value13 = Column(Float)
+    value14 = Column(Float)
+
+    # Composite index for filtering and ordering, plus unique constraint
+    __table_args__ = (
+        Index('ix_snow_type_code_date', 'snow_type', 'code', 'date'),
+        UniqueConstraint('snow_type', 'code', 'date', name='uq_snow_type_code_date')
     )
