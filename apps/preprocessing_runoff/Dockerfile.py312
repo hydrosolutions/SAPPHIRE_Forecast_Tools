@@ -16,24 +16,21 @@ USER root
 # Set working directory
 WORKDIR /app
 
+# Copy iEasyHydroForecast (local dependency referenced in pyproject.toml)
+COPY apps/iEasyHydroForecast /app/apps/iEasyHydroForecast
+
 # Copy preprocessing_runoff source code (includes pyproject.toml and uv.lock)
 COPY apps/preprocessing_runoff /app/apps/preprocessing_runoff
 
-# Install preprocessing_runoff dependencies using uv
-# The base image already has iEasyHydroForecast installed
-# We only need to install additional dependencies specific to this module
+# Install all dependencies using uv sync (includes iEasyHydroForecast from local path)
+# This creates a virtual environment and installs from uv.lock for reproducibility
 WORKDIR /app/apps/preprocessing_runoff
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv export --frozen --no-dev > /tmp/requirements.txt && \
-    uv pip install --system -r /tmp/requirements.txt && \
-    rm /tmp/requirements.txt
-
-# Reset working directory
-WORKDIR /app
+    uv sync --frozen --no-dev
 
 # Expose the port that the application listens on
 EXPOSE 8881
 
-# Run the application as root (required for shared volume access)
-# Note: PYTHONPATH includes iEasyHydroForecast for local imports
-CMD ["sh", "-c", "PYTHONPATH=/app/apps/iEasyHydroForecast python apps/preprocessing_runoff/preprocessing_runoff.py"]
+# Run the application using uv run (activates the virtual environment automatically)
+# Default is operational mode; use PREPROCESSING_MODE=maintenance for maintenance mode
+CMD ["uv", "run", "preprocessing_runoff.py"]

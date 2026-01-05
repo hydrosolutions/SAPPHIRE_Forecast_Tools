@@ -224,3 +224,8 @@ temp_luigi.cfg
 
 # Serena MCP server local files
 .serena/
+
+# Claude Code local settings
+.claude/
+
+/apps/logs

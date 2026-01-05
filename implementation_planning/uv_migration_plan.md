@@ -668,7 +668,37 @@ The :latest tag now uses Python 3.12 and uv package manager.
   FROM mabesa/sapphire-pythonbaseimage:py311
 ```
 
-### Step 6.6: Cleanup (Optional)
+### Step 6.6: Migrate Dockerfiles from `uv export` to `uv sync` (Optional)
+
+The `preprocessing_runoff` module has been updated to use `uv sync` instead of `uv export` in its Dockerfile. This pattern is cleaner and doesn't require pip at runtime. Other modules should be migrated for consistency.
+
+**Current state:**
+- [x] `preprocessing_runoff` - uses `uv sync`
+- [x] `forecast_dashboard` - uses `uv sync`
+- [x] `linear_regression` - uses `uv sync`
+- [x] `machine_learning` - uses `uv sync`
+- [x] `pipeline` - uses `uv sync`
+- [x] `postprocessing_forecasts` - uses `uv sync`
+- [x] `preprocessing_gateway` - uses `uv sync`
+- [x] `preprocessing_station_forcing` - uses `uv sync`
+
+**Pattern change:**
+```dockerfile
+# OLD: uv export + pip install
+RUN uv export --frozen --no-dev > /tmp/requirements.txt && \
+    pip install --no-cache-dir -r /tmp/requirements.txt
+
+# NEW: uv sync (cleaner, no pip needed at runtime)
+RUN uv sync --frozen --no-dev
+```
+
+**Benefits:**
+- Simpler Dockerfile (no intermediate requirements.txt)
+- No pip needed at runtime
+- Better alignment with uv's intended workflow
+- Consistent pattern across all modules
+
+### Step 6.7: Cleanup (Optional)
 
 After 2-4 weeks of stable operation:
 - [ ] Remove `:py312` tag (redundant with `:latest`)

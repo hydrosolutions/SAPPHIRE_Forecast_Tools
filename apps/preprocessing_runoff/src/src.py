@@ -12,6 +12,19 @@ import concurrent.futures
 from typing import List, Tuple
 from contextlib import contextmanager
 
+# Profiling utilities for performance analysis
+# Handle different import contexts (package vs direct module import)
+import importlib.util
+import os as _os
+_profiling_path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'profiling.py')
+_spec = importlib.util.spec_from_file_location("profiling", _profiling_path)
+_profiling_module = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_profiling_module)
+ProfileTimer = _profiling_module.ProfileTimer
+profile_section = _profiling_module.profile_section
+log_profiling_report = _profiling_module.log_profiling_report
+profiling_enabled = _profiling_module.profiling_enabled
+
 # To avoid printing of warning
 # pd.set_option('future.no_silent_downcasting', True)  # Comment out - not available in current pandas version
 
@@ -970,23 +983,25 @@ def fetch_and_format_hydro_HF_data(sdk, initial_filters):
     while True:
         # Fetch data for the current page
         filters['page'] = page
-        response = sdk.get_data_values_for_site(filters=filters)
-        
+        with ProfileTimer(f"sdk_api_call_page_{page}", log_immediately=True):
+            response = sdk.get_data_values_for_site(filters=filters)
+
         # Check if we got an error
         if isinstance(response, dict) and 'status_code' in response:
             print(f"Error: {response}")
             break
-        
+
         # Extract the results and format immediately
         if isinstance(response, dict) and 'results' in response:
             # Extract the results
             results = response['results']
-            
+
             # Format this page's data immediately
             if results:  # Only process if we have results
                 records = []
-                
-                page_df = process_hydro_HF_data(response)
+
+                with ProfileTimer(f"process_page_{page}_data"):
+                    page_df = process_hydro_HF_data(response)
 
                 # Convert timestamps to datetime if they're strings
                 for col in ['local_datetime', 'utc_datetime']:
@@ -1088,33 +1103,38 @@ def get_todays_morning_discharge_from_iEH_HF_for_multiple_sites(
 
     logger.debug(f"Reading morning discharge data for all sites from {start_datetime} to {end_datetime} (UTC as local time).")
 
+    from .config import get_api_page_size
+    page_size = get_api_page_size()
+
     filters = {
         "site_ids": id_list,
         "variable_names": ["WDD"],
         "local_date_time__gte": start_datetime.isoformat(),
         "local_date_time__lte": end_datetime.isoformat(),
         "page": 1,
+        "page_size": page_size,
     }
 
     try:
         # Get data for all sites from the database
-        db_df = fetch_and_format_hydro_HF_data(ieh_hf_sdk, filters)
+        with ProfileTimer("fetch_WDD_morning_discharge", log_immediately=True):
+            db_df = fetch_and_format_hydro_HF_data(ieh_hf_sdk, filters)
         if db_df.empty:
             logger.info("No morning data found for the given date range.")
             return pd.DataFrame(columns=[date_col, discharge_col, code_col])
-        
+
         # Drop the local datetime column as we will be working with utc datetime
         db_df.drop(columns=['local_datetime'], inplace=True)
-        
+
         # Rename the columns of df to match the columns of combined_data
         db_df.rename(
             columns={
-                'utc_datetime': date_col, 
+                'utc_datetime': date_col,
                 'station_code': code_col,
-                'value': discharge_col}, 
+                'value': discharge_col},
             inplace=True
         )
-        
+
         # If there are multiple measurements for the current day, take the average
         db_df[date_col] = pd.to_datetime(db_df[date_col]).dt.date
         db_df = db_df.groupby([code_col, date_col])[discharge_col].mean().reset_index()
@@ -1179,30 +1199,36 @@ def get_daily_average_discharge_from_iEH_HF_for_multiple_sites(
 
     logger.debug(f"Reading daily average discharge data for all sites from {start_datetime} to {end_datetime} (UTC as local time).")
 
+    from .config import get_api_page_size
+    page_size = get_api_page_size()
+    logger.info(f"Using API page_size: {page_size}")
+
     filters = {
         "site_ids": id_list,
         "variable_names": ["WDDA"],
         "local_date_time__gte": start_datetime.isoformat(),
         "local_date_time__lte": end_datetime.isoformat(),
         "page": 1,
+        "page_size": page_size,
     }
 
     try:
         # Get data for all sites from the database
-        db_df = fetch_and_format_hydro_HF_data(ieh_hf_sdk, filters)
+        with ProfileTimer("fetch_WDDA_daily_average", log_immediately=True):
+            db_df = fetch_and_format_hydro_HF_data(ieh_hf_sdk, filters)
         if db_df.empty:
             logger.info(f"No daily average data found for the given date range.")
             return pd.DataFrame(columns=[date_col, discharge_col, code_col])
-        
+
         # Drop the local datetime column as we will be working with utc datetime
         db_df.drop(columns=['local_datetime'], inplace=True)
-        
+
         # Rename the columns of df to match the columns of combined_data
         db_df.rename(
             columns={
-                'utc_datetime': date_col, 
+                'utc_datetime': date_col,
                 'station_code': code_col,
-                'value': discharge_col}, 
+                'value': discharge_col},
             inplace=True
         )
 
@@ -1213,6 +1239,7 @@ def get_daily_average_discharge_from_iEH_HF_for_multiple_sites(
         db_df = pd.DataFrame(columns=[date_col, discharge_col, code_col])
 
     return db_df
+
 
 def get_daily_average_discharge_from_iEH_per_site(
         ieh_sdk, site, name, start_date, end_date=dt.date.today(),
@@ -1799,6 +1826,107 @@ def get_runoff_data_for_sites(ieh_sdk=None, date_col='date',
 
         return read_data
     
+
+def _load_cached_data(date_col: str, discharge_col: str, name_col: str, 
+                      code_col: str, code_list: list) -> pd.DataFrame:
+    """
+    Load cached discharge data from the intermediate output file.
+    
+    Falls back to reading from organization-specific input files if cached data
+    is unavailable or empty.
+    
+    Args:
+        date_col: Name of the date column.
+        discharge_col: Name of the discharge column.
+        name_col: Name of the name column.
+        code_col: Name of the code column.
+        code_list: List of site codes to read data for.
+        
+    Returns:
+        pd.DataFrame: Cached discharge data.
+    """
+    intermediate_data_path = os.getenv('ieasyforecast_intermediate_data_path')
+    output_file_path = os.path.join(
+        intermediate_data_path,
+        os.getenv("ieasyforecast_daily_discharge_file"))
+    try:
+        read_data = pd.read_csv(output_file_path)
+        read_data[date_col] = pd.to_datetime(read_data[date_col]).dt.normalize()
+        read_data[code_col] = read_data[code_col].astype(str)
+        read_data[discharge_col] = read_data[discharge_col].astype(float)
+        # Get a dummy name column 
+        read_data[name_col] = read_data[code_col]
+        
+        # Check if data is valid
+        if read_data.empty:
+            logger.info("Cached data is empty, reprocessing input files.")
+            organization = os.getenv('ieasyhydroforecast_organization')
+            read_data = _read_runoff_data_by_organization(
+                organization=organization,
+                date_col=date_col,
+                discharge_col=discharge_col,
+                name_col=name_col,
+                code_col=code_col,
+                code_list=code_list
+            )
+        return read_data
+    except Exception as e:
+        logger.warning(f"Failed to read cached data: {e}, reprocessing input files")
+        organization = os.getenv('ieasyhydroforecast_organization')
+        return _read_runoff_data_by_organization(
+            organization=organization,
+            date_col=date_col,
+            discharge_col=discharge_col,
+            name_col=name_col,
+            code_col=code_col,
+            code_list=code_list
+        )
+
+
+def _merge_with_update(existing_data: pd.DataFrame, new_data: pd.DataFrame,
+                       code_col: str, date_col: str, discharge_col: str) -> pd.DataFrame:
+    """
+    Merge new data into existing data, updating values where they differ.
+    
+    This is used in maintenance mode to update/correct historical values from
+    the database while preserving data that hasn't changed.
+    
+    Args:
+        existing_data: The existing cached data.
+        new_data: New data from the database.
+        code_col: Name of the site code column.
+        date_col: Name of the date column.
+        discharge_col: Name of the discharge column.
+        
+    Returns:
+        pd.DataFrame: Merged data with updates applied.
+    """
+    if existing_data.empty:
+        return new_data
+    if new_data.empty:
+        return existing_data
+    
+    # Create a copy to avoid modifying the original
+    result = existing_data.copy()
+    
+    # Set index for efficient lookup
+    result_indexed = result.set_index([code_col, date_col])
+    new_indexed = new_data.set_index([code_col, date_col])
+    
+    # Update existing values with new values where they exist
+    result_indexed.update(new_indexed)
+    
+    # Add any new rows that weren't in the existing data
+    new_rows = new_indexed[~new_indexed.index.isin(result_indexed.index)]
+    if not new_rows.empty:
+        result_indexed = pd.concat([result_indexed, new_rows])
+    
+    # Reset index and return
+    result = result_indexed.reset_index()
+    
+    return result
+
+
 def _read_runoff_data_by_organization(organization, date_col, discharge_col, name_col, code_col, code_list):
     """Reads runoff data based on the organization."""
     if organization == 'kghm':
@@ -2005,12 +2133,16 @@ def get_runoff_data_for_sites_HF(ieh_hf_sdk=None, date_col='date', name_col='nam
                               discharge_col='discharge',
                               code_col='code', 
                               site_list=None, code_list=None, id_list=None, 
-                              target_timezone=None):
+                              target_timezone=None,
+                              mode: str = 'operational'):
     """
     Reads runoff data from excel and, if possible, from iEasyHydro database.
 
-    Note: This function will intelligently determine the date range to fetch from 
-    the iEasyHydro database based on the latest date in the existing data.
+    Supports two operating modes:
+    - operational (default): Fast daily updates, fetch only yesterday's daily average
+      and today's morning discharge. Skips Excel file checks.
+    - maintenance: Full lookback window (configurable), checks for Excel file changes,
+      fills gaps in data.
 
     Args:
         ieh_sdk (object): An object that provides a method to get data values
@@ -2027,55 +2159,31 @@ def get_runoff_data_for_sites_HF(ieh_hf_sdk=None, date_col='date', name_col='nam
         code_list (list, optional): A list of site codes to read data for. Default is None.
         id_list (list): A list of site IDs to read data for. Default is None.
         target_timezone (str, optional): The timezone to convert the data to. Default is None.
+        mode (str, optional): Operating mode - 'operational' or 'maintenance'. Default is 'operational'.
     """
+    from .config import get_maintenance_lookback_days
+    
     # Test if id_list is None or empty. Return error if it is.
     if id_list is None or len(id_list) == 0:
         raise ValueError("id_list is None or empty. Please provide a list of site IDs to read data for.")
 
-    # Test if there have been any changes in the daily_discharge directory
-    if should_reprocess_input_files(): 
-        logger.info("Regime data has changed, reprocessing input files.")
+    # Validate mode parameter
+    mode = mode.lower()
+    if mode not in ('operational', 'maintenance'):
+        logger.warning(f"Unknown mode '{mode}', defaulting to 'operational'")
+        mode = 'operational'
     
-        # Get organization from environment variable
-        organization = os.getenv('ieasyhydroforecast_organization')
-
-        read_data = _read_runoff_data_by_organization(
-            organization=organization,
-            date_col=date_col,
-            discharge_col=discharge_col,
-            name_col=name_col,
-            code_col=code_col,
-            code_list=code_list
-        )
-    else:
-        logger.info("No changes in the daily_discharge directory, using previous data.")
-        intermediate_data_path = os.getenv('ieasyforecast_intermediate_data_path')
-        output_file_path = os.path.join(
-            intermediate_data_path,
-            os.getenv("ieasyforecast_daily_discharge_file"))
-        try:
-            read_data = pd.read_csv(output_file_path)
-            read_data[date_col] = pd.to_datetime(read_data[date_col]).dt.normalize()
-            read_data[code_col] = read_data[code_col].astype(str)
-            read_data[discharge_col] = read_data[discharge_col].astype(float)
-            # Get a dummy name column 
-            read_data[name_col] = read_data[code_col]
-            
-            # Check if data is valid
-            if read_data.empty:
-                logger.info("Cached data is empty, reprocessing input files.")
-                organization = os.getenv('ieasyhydroforecast_organization')
-                read_data = _read_runoff_data_by_organization(
-                    organization=organization,
-                    date_col=date_col,
-                    discharge_col=discharge_col,
-                    name_col=name_col,
-                    code_col=code_col,
-                    code_list=code_list
-                )
-        except Exception as e:
-            logger.warning(f"Failed to read cached data: {e}, reprocessing input files")
+    logger.info(f"Running in {mode.upper()} mode")
+    
+    # Determine whether to reprocess input files based on mode
+    if mode == 'maintenance':
+        # In maintenance mode, check if input files have changed
+        if should_reprocess_input_files(): 
+            logger.info("Regime data has changed, reprocessing input files.")
+        
+            # Get organization from environment variable
             organization = os.getenv('ieasyhydroforecast_organization')
+
             read_data = _read_runoff_data_by_organization(
                 organization=organization,
                 date_col=date_col,
@@ -2084,6 +2192,13 @@ def get_runoff_data_for_sites_HF(ieh_hf_sdk=None, date_col='date', name_col='nam
                 code_col=code_col,
                 code_list=code_list
             )
+        else:
+            logger.info("No changes in the daily_discharge directory, using previous data.")
+            read_data = _load_cached_data(date_col, discharge_col, name_col, code_col, code_list)
+    else:
+        # In operational mode, always use cached data (skip file checks)
+        logger.info("Operational mode: using cached data, fetching only latest from database.")
+        read_data = _load_cached_data(date_col, discharge_col, name_col, code_col, code_list)
 
     # Ensure date is a normalized timestamp object if read_data is not empty
     if not read_data.empty:
@@ -2111,33 +2226,28 @@ def get_runoff_data_for_sites_HF(ieh_hf_sdk=None, date_col='date', name_col='nam
         return read_data
 
     else:
-        # Determine the latest date in the existing data to fetch only missing data
-        if not read_data.empty:
-            latest_date = pd.to_datetime(read_data[date_col]).max()
-            start_date = latest_date + pd.Timedelta(days=1)
-            logger.info(f"Latest date in existing data: {latest_date}. Fetching data from {start_date} onwards.")
-            
-            # Ensure start_date is not in the future
-            today = pd.Timestamp.now().normalize()
-            if start_date > today:
-                logger.info(f"Start date {start_date.date()} is in the future. Setting to today.")
-                start_date = pd.Timestamp(today)
-        else:
-            # For empty data, fetch data starting from January 1, 2024 or a reasonable time ago (e.g., 5 years)
-            start_date = pd.Timestamp('2024-01-01')
-            logger.info(f"No existing data. Fetching data from {start_date} onwards.")
-
         # Make sure we have timezone-aware datetime objects for API calls
         if target_timezone is None:
             target_timezone = pytz.timezone(time.tzname[0])
             logger.debug(f"Target timezone is None. Using local timezone: {target_timezone}")
+        
+        # Set end datetime to current time
+        end_datetime = pd.Timestamp.now().tz_localize(target_timezone)
+        
+        # Determine the date range based on mode
+        if mode == 'operational':
+            # Operational mode: fetch only yesterday's data
+            start_date = pd.Timestamp.now().normalize() - pd.Timedelta(days=1)
+            logger.info(f"Operational mode: fetching data from {start_date.date()} onwards.")
+        else:
+            # Maintenance mode: use configurable lookback window
+            lookback_days = get_maintenance_lookback_days()
+            start_date = pd.Timestamp.now().normalize() - pd.Timedelta(days=lookback_days)
+            logger.info(f"Maintenance mode: fetching {lookback_days} days of data from {start_date.date()} onwards.")
             
         # Convert start_date to timezone-aware datetime
         start_datetime = pd.Timestamp(start_date).replace(hour=0, minute=1)
         start_datetime = start_datetime.tz_localize(target_timezone)
-        
-        # Set end datetime to current time
-        end_datetime = pd.Timestamp.now().tz_localize(target_timezone)
 
         # Fetch data from iEH HF database for the calculated date range
         logger.info(f"Fetching data from {start_datetime} to {end_datetime}")
@@ -2157,8 +2267,12 @@ def get_runoff_data_for_sites_HF(ieh_hf_sdk=None, date_col='date', name_col='nam
             db_average_data = standardize_date_column(db_average_data, date_col=date_col)
             logger.info(f"Retrieved {len(db_average_data)} new records from {db_average_data[date_col].min()} to {db_average_data[date_col].max()}")
             
-            # Append db_data to read_data if db_data is not empty
-            read_data = pd.concat([read_data, db_average_data], ignore_index=True)
+            if mode == 'maintenance':
+                # In maintenance mode, update existing values if they differ
+                read_data = _merge_with_update(read_data, db_average_data, code_col, date_col, discharge_col)
+            else:
+                # In operational mode, simply append new data
+                read_data = pd.concat([read_data, db_average_data], ignore_index=True)
             
         # Get today's morning data if necessary
         db_morning_data = get_todays_morning_discharge_from_iEH_HF_for_multiple_sites(

@@ -31,6 +31,7 @@
 # Beatrice Marti, hydrosolutions, 2025
 
 # I/O
+import argparse
 import os
 import sys
 import time
@@ -43,6 +44,8 @@ from ieasyhydro_sdk.sdk import IEasyHydroSDK, IEasyHydroHFSDK
 
 # Local methods
 from src import src
+# Import profiling from src module to use the same instance that collects timing data
+# (direct import from src.profiling would create a separate module instance)
 
 # Local libraries, installed with pip install -e ./iEasyHydroForecast
 # Get the absolute path of the directory containing the current script
@@ -143,6 +146,34 @@ def get_ieh_sdk():
                 sys.exit(1)
 
 
+def parse_args():
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(
+        description='Preprocess runoff data for SAPPHIRE forecast tools.'
+    )
+    parser.add_argument(
+        '--maintenance',
+        action='store_true',
+        help='Run in maintenance mode (fetch lookback window, fill gaps). '
+             'Default is operational mode (fetch only latest data).'
+    )
+    return parser.parse_args()
+
+
+def get_mode(args) -> str:
+    """
+    Determine operating mode from CLI args and environment.
+
+    Priority: CLI argument > environment variable > default (operational)
+
+    Returns:
+        str: 'operational' or 'maintenance'
+    """
+    if args.maintenance:
+        return 'maintenance'
+    return os.getenv('PREPROCESSING_MODE', 'operational').lower()
+
+
 def main():
     """
     Pre-processing of discharge data for the SAPPHIRE forecast tools.
@@ -158,12 +189,28 @@ def main():
 
     The names of the columns to be written to the csv file are: 'code', 'date',
     and 'discharge'.
+
+    Supports two operating modes:
+    - operational (default): Fast daily updates, fetch only latest data
+    - maintenance (--maintenance flag): Full lookback window, gap filling
     """
+    # Parse command line arguments
+    args = parse_args()
+    mode = get_mode(args)
 
     ## Configuration
     # Loads the environment variables from the .env file
     overall_start_time = time.time()
+
+    # Debug: Check profiling status
+    profiling_status = os.getenv('PREPROCESSING_PROFILING', 'not set')
+    print(f"[DEBUG] PREPROCESSING_PROFILING env var = '{profiling_status}'")
+    print(f"[DEBUG] profiling_enabled() = {src.profiling_enabled()}")
+
     sl.load_environment()
+
+    # Log the operating mode
+    logger.info(f"Running in {mode.upper()} mode")
     end_time = time.time()
     time_load_environment = end_time - overall_start_time
 
@@ -224,16 +271,17 @@ def main():
         )
         logger.info("Runoff data read from iEasyHydro SDK")
 
-    else: 
+    else:
         runoff_data = src.get_runoff_data_for_sites_HF(
                 ieh_hf_sdk,
                 date_col='date',
                 discharge_col='discharge',
                 code_col='code',
                 site_list=fc_sites,
-                code_list=site_codes, 
+                code_list=site_codes,
                 id_list=site_ids,
                 target_timezone=target_time_zone,
+                mode=mode,
         )
         logger.info("Runoff data read from iEasyHydro HF SDK")
     print(f"head of runoff data:\n{runoff_data.head(5)}")
@@ -347,6 +395,11 @@ def main():
     #logger.info(f"Time to add dangerous discharge: {time_add_dangerous_discharge:.2f} seconds")
     logger.info(f"Time to write daily time series data: {time_write_daily_time_series_data:.2f} seconds")
     logger.info(f"Time to write daily hydrograph data: {time_write_daily_hydrograph_data:.2f} seconds")
+
+    # Output profiling report if enabled (PREPROCESSING_PROFILING=true)
+    if src.profiling_enabled():
+        src.log_profiling_report()
+
     logger.info("Preprocessing of runoff data completed successfully.")
 
     if ret is None:

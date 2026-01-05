@@ -264,7 +264,7 @@ claude mcp remove serena
 ```
 
 **Configuration storage:**
-- MCP settings are stored in `~/.claude.json`
+- MCP settings are stored in `~/settings.local.json`
 - Project-specific Serena config is in `.serena/project.yml` (already in repo)
 - Serena memories are in `.serena/memories/` (project-specific, gitignored)
 

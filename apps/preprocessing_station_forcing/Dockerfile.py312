@@ -16,21 +16,17 @@ USER root
 # Set working directory
 WORKDIR /app
 
+# Copy iEasyHydroForecast (local dependency referenced in pyproject.toml)
+COPY apps/iEasyHydroForecast /app/apps/iEasyHydroForecast
+
 # Copy preprocessing_station_forcing source code (includes pyproject.toml and uv.lock)
 COPY apps/preprocessing_station_forcing /app/apps/preprocessing_station_forcing
 
-# Install preprocessing_station_forcing dependencies using uv
-# The base image already has iEasyHydroForecast installed
-# We only need to install additional dependencies specific to this module
+# Install all dependencies using uv sync (includes iEasyHydroForecast from local path)
+# This creates a virtual environment and installs from uv.lock for reproducibility
 WORKDIR /app/apps/preprocessing_station_forcing
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv export --frozen --no-dev > /tmp/requirements.txt && \
-    uv pip install --system -r /tmp/requirements.txt && \
-    rm /tmp/requirements.txt
+    uv sync --frozen --no-dev
 
-# Reset working directory
-WORKDIR /app
-
-# Run the application as root (required for shared volume access)
-# Note: PYTHONPATH includes iEasyHydroForecast for local imports
-CMD ["sh", "-c", "PYTHONPATH=/app/apps/iEasyHydroForecast python apps/preprocessing_station_forcing/preprocessing_station_forcing.py"]
+# Run the application using uv run (activates the virtual environment automatically)
+CMD ["uv", "run", "preprocessing_station_forcing.py"]

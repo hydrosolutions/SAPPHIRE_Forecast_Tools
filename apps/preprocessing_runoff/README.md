@@ -27,27 +27,74 @@ Key functions:
 # Set the path to your environment configuration file
 export ieasyhydroforecast_env_file_path=/path/to/config/.env
 
-# Run the preprocessing script
-python preprocessing_runoff.py
+# Run in operational mode (default) - fast daily updates
+uv run preprocessing_runoff.py
+
+# Run in maintenance mode - full lookback window, gap filling
+uv run preprocessing_runoff.py --maintenance
 ```
 
 ## Docker Usage
 
-```bash
-# Build the image (from repository root)
-docker build -f apps/preprocessing_runoff/Dockerfile.py312 -t mabesa/sapphire-preprunoff:py312-test .
+### Building the Images
 
-# Run the container (requires SSH tunnel to iEasyHydro HF)
-docker run --rm \
-    --network host \
-    -e ieasyhydroforecast_data_root_dir=/data \
-    -e ieasyhydroforecast_env_file_path=/data/config/.env \
-    -e IEASYHYDROHF_HOST=http://host.docker.internal:5555/api/v1/ \
-    -v /path/to/data:/data \
-    mabesa/sapphire-preprunoff:py312-test
+From the repository root:
+
+```bash
+# 1. Build the base image (if not already available)
+docker build -f apps/docker_base_image/Dockerfile.py312 -t mabesa/sapphire-pythonbaseimage-local:py312 .
+
+# 2. Temporarily change the Dockerfile to use the local base image
+# Edit the first line of apps/preprocessing_runoff/Dockerfile.py312 to:
+FROM mabesa/sapphire-pythonbaseimage-local:py312 AS base
+
+# 3. Build the preprocessing_runoff image
+docker build -f apps/preprocessing_runoff/Dockerfile.py312 -t mabesa/sapphire-preprunoff:py312-test .
 ```
 
-**Note:** On macOS, use `host.docker.internal` to connect to an SSH tunnel running on the host.
+### Running Locally (macOS)
+
+**Prerequisites:**
+- SSH tunnel to iEasyHydro HF server running on the host machine
+- Start tunnel with: `ssh -L 5555:localhost:5555 <server>`
+
+**Operational mode** (default - fast daily updates):
+
+```bash
+docker run --rm --network host \
+  -e ieasyhydroforecast_data_root_dir=/kyg_data_forecast_tools \
+  -e ieasyhydroforecast_env_file_path=/kyg_data_forecast_tools/config/.env_develop_kghm \
+  -e SAPPHIRE_OPDEV_ENV=True \
+  -e IN_DOCKER=True \
+  -e IEASYHYDROHF_HOST=http://host.docker.internal:5555/api/v1/ \
+  -v /path/to/kyg_data_forecast_tools/config:/kyg_data_forecast_tools/config \
+  -v /path/to/kyg_data_forecast_tools/daily_runoff:/kyg_data_forecast_tools/daily_runoff \
+  -v /path/to/kyg_data_forecast_tools/intermediate_data:/kyg_data_forecast_tools/intermediate_data \
+  -v /path/to/kyg_data_forecast_tools/bin:/kyg_data_forecast_tools/bin \
+  mabesa/sapphire-preprunoff:py312-test
+```
+
+**Maintenance mode** (full lookback window, gap filling):
+
+```bash
+docker run --rm --network host \
+  -e ieasyhydroforecast_data_root_dir=/kyg_data_forecast_tools \
+  -e ieasyhydroforecast_env_file_path=/kyg_data_forecast_tools/config/.env_develop_kghm \
+  -e SAPPHIRE_OPDEV_ENV=True \
+  -e IN_DOCKER=True \
+  -e IEASYHYDROHF_HOST=http://host.docker.internal:5555/api/v1/ \
+  -e PREPROCESSING_MODE=maintenance \
+  -v /path/to/kyg_data_forecast_tools/config:/kyg_data_forecast_tools/config \
+  -v /path/to/kyg_data_forecast_tools/daily_runoff:/kyg_data_forecast_tools/daily_runoff \
+  -v /path/to/kyg_data_forecast_tools/intermediate_data:/kyg_data_forecast_tools/intermediate_data \
+  -v /path/to/kyg_data_forecast_tools/bin:/kyg_data_forecast_tools/bin \
+  mabesa/sapphire-preprunoff:py312-test
+```
+
+**Important notes:**
+- Replace `/path/to/kyg_data_forecast_tools` with your actual data directory path
+- On macOS, `host.docker.internal` resolves to the host machine, allowing the container to reach the SSH tunnel
+- The `IEASYHYDROHF_HOST` environment variable overrides the value in the .env file
 
 ## Data Flow
 
@@ -124,30 +171,73 @@ This module standardizes on normalized pandas Timestamp objects for all date val
 
 **Important:** Never use Python native `datetime.date` objects for date comparisons or merges as this causes incompatibilities with pandas Timestamp objects.
 
+## Operating Modes
+
+The module supports two operating modes:
+
+### Operational Mode (Default)
+- **Purpose:** Fast daily updates for operational forecasting
+- **Behavior:** Uses cached data, fetches only yesterday's daily average + today's morning discharge
+- **When to use:** Daily automated pipeline runs
+
+```bash
+uv run preprocessing_runoff.py
+```
+
+### Maintenance Mode
+- **Purpose:** Gap filling and data quality updates
+- **Behavior:** Checks for Excel file changes, fetches configurable lookback window (default 30 days), updates differing values
+- **When to use:** Weekly scheduled maintenance, after data corrections, or when data issues are suspected
+
+```bash
+uv run preprocessing_runoff.py --maintenance
+# Or via environment variable
+PREPROCESSING_MODE=maintenance uv run preprocessing_runoff.py
+```
+
+### Configuration
+
+Module configuration is in `config.yaml`:
+```yaml
+maintenance:
+  lookback_days: 30  # Override with PREPROCESSING_MAINTENANCE_LOOKBACK_DAYS env var
+
+operational:
+  fetch_yesterday: true
+  fetch_morning: true
+```
+
 ## Development
 
 ### Run Locally
 
 From the `preprocessing_runoff` directory:
 ```bash
-ieasyhydroforecast_env_file_path=/path/to/.env python preprocessing_runoff.py
+ieasyhydroforecast_env_file_path=/path/to/.env uv run preprocessing_runoff.py
 ```
 
 ### Run Tests
 
 From the `apps` directory:
 ```bash
-SAPPHIRE_TEST_ENV=True python -m pytest preprocessing_runoff/tests -v
+uv run --project preprocessing_runoff pytest preprocessing_runoff/test/ -v
+```
+
+From the `preprocessing_runoff` directory:
+```bash
+uv run pytest test/ -v
 ```
 
 ## Key Environment Variables
 
-| Variable | Description |
-|----------|-------------|
-| `ieasyhydroforecast_env_file_path` | Path to the .env configuration file |
-| `IEASYHYDROHF_HOST` | iEasyHydro HF API endpoint URL |
-| `IEASYHYDROHF_USERNAME` | API username |
-| `IEASYHYDROHF_PASSWORD` | API password |
+| Variable | Description | Note |
+|----------|-------------|------------|
+| `ieasyhydroforecast_env_file_path` | Path to the .env configuration file | Required |
+| `IEASYHYDROHF_HOST` | iEasyHydro HF API endpoint URL | .env file |
+| `IEASYHYDROHF_USERNAME` | API username | .env file |
+| `IEASYHYDROHF_PASSWORD` | API password | .env file |
+| `PREPROCESSING_MODE` | Operating mode: `operational` (default) or `maintenance` | optional |
+| `PREPROCESSING_MAINTENANCE_LOOKBACK_DAYS` | Number of days to fetch in maintenance mode (default: 30) | optional |
 
 See [doc/configuration.md](../../doc/configuration.md) for the complete list.
 

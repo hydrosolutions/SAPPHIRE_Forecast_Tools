@@ -1,6 +1,7 @@
 import os
 import sys
 import pandas as pd
+import numpy as np
 import datetime as dt
 import pytest
 
@@ -8,9 +9,14 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 import src
 
+# Helper to get absolute paths to test files
+TEST_DIR = os.path.dirname(os.path.abspath(__file__))
+TEST_FILES_DIR = os.path.join(TEST_DIR, 'test_files')
+
+
 def test_get_runoff_data_no_data_available():
 
-    os.environ['ieasyforecast_daily_discharge_path'] = 'preprocessing_runoff/test/test_files/test_config'
+    os.environ['ieasyforecast_daily_discharge_path'] = os.path.join(TEST_FILES_DIR, 'test_config')
 
     output = src.get_runoff_data()
     print("Output: ")
@@ -19,7 +25,7 @@ def test_get_runoff_data_no_data_available():
     os.environ.pop('ieasyforecast_daily_discharge_path')
 
 def test_read_runoff_data_from_multiple_rivers_xlsx():
-    filename = 'preprocessing_runoff/test/test_files/test_runoff_file.xlsx'
+    filename = os.path.join(TEST_FILES_DIR, 'test_runoff_file.xlsx')
     expected_output = pd.DataFrame({
         'date': ['2000-01-01', '2000-01-02', '2000-01-03', '2000-01-04', '2000-01-05',
                  '2000-01-01', '2000-01-02', '2000-01-03', '2000-01-04', '2000-01-05'],
@@ -41,7 +47,7 @@ def test_read_runoff_data_from_multiple_rivers_xlsx():
 
 def test_read_runoff_data_from_multiple_rivers_no_code():
 
-    filename = 'preprocessing_runoff/test/test_files/files_with_errors/test_runoff_file_no_code.xlsx'
+    filename = os.path.join(TEST_FILES_DIR, 'files_with_errors', 'test_runoff_file_no_code.xlsx')
 
     expected_output = pd.DataFrame({
         'date': ['2000-01-01', '2000-01-02', '2000-01-03', '2000-01-04', '2000-01-05'],
@@ -60,7 +66,7 @@ def test_read_runoff_data_from_multiple_rivers_no_code():
 
 def test_read_runoff_data_from_multiple_rivers_without_data_in_xls():
 
-    filename = 'preprocessing_runoff/test/test_files/files_with_errors/test_runoff_file_no_data.xlsx'
+    filename = os.path.join(TEST_FILES_DIR, 'files_with_errors', 'test_runoff_file_no_data.xlsx')
 
     output = src.read_runoff_data_from_multiple_rivers_xlsx(filename, code_list=['17123']).reset_index(drop=True)
 
@@ -69,7 +75,7 @@ def test_read_runoff_data_from_multiple_rivers_without_data_in_xls():
 
 def test_read_runoff_data_from_multiple_rivers_no_file():
 
-    filename = 'preprocessing_runoff/test/test_files/files_with_errors/this_file_does_not_exist.xlsx'
+    filename = os.path.join(TEST_FILES_DIR, 'files_with_errors', 'this_file_does_not_exist.xlsx')
 
     # Assert FileNotFoundError is raised
     with pytest.raises(FileNotFoundError):
@@ -77,7 +83,7 @@ def test_read_runoff_data_from_multiple_rivers_no_file():
 
 def test_read_runoff_data_from_multiple_rivers_no_station_header():
 
-    filename = 'preprocessing_runoff/test/test_files/files_with_errors/test_runoff_file_no_station_header.xlsx'
+    filename = os.path.join(TEST_FILES_DIR, 'files_with_errors', 'test_runoff_file_no_station_header.xlsx')
 
     with pytest.raises(ValueError):
         src.read_runoff_data_from_multiple_rivers_xlsx(filename, code_list=[123])
@@ -105,7 +111,7 @@ def test_read_all_runoff_data_from_excel():
     }).reset_index(drop=True)
     expected_output['date'] = pd.to_datetime(expected_output['date']).dt.normalize()
 
-    os.environ['ieasyforecast_daily_discharge_path'] = 'preprocessing_runoff/test/test_files'
+    os.environ['ieasyforecast_daily_discharge_path'] = TEST_FILES_DIR
 
     output = src.read_all_runoff_data_from_excel(code_list=['17123', '17456', '12345']).reset_index(drop=True)
 
@@ -122,14 +128,15 @@ def test_write_data_to_csv():
         'code': [1, 1, 1, 1, 1]})
 
     # Define environment variables
-    os.environ['ieasyforecast_intermediate_data_path'] = 'preprocessing_runoff/test/test_files'
+    os.environ['ieasyforecast_intermediate_data_path'] = TEST_FILES_DIR
     os.environ['ieasyforecast_daily_discharge_file'] = 'test_runoff_file.csv'
 
     # Write the output file
     src.write_daily_time_series_data_to_csv(runoff_data)
 
     # Read the output file
-    output = pd.read_csv('preprocessing_runoff/test/test_files/test_runoff_file.csv')
+    output_file = os.path.join(TEST_FILES_DIR, 'test_runoff_file.csv')
+    output = pd.read_csv(output_file)
 
     # The data in columns date, discharge and code should be the same
     assert output['date'].equals(runoff_data['date'])
@@ -141,7 +148,7 @@ def test_write_data_to_csv():
     os.environ.pop('ieasyforecast_daily_discharge_file')
 
     # Remove the output file
-    os.remove('preprocessing_runoff/test/test_files/test_runoff_file.csv')
+    os.remove(output_file)
 
 
 def test_filter_roughly_for_outliers_no_outliers():
@@ -357,5 +364,118 @@ class TestFromDailyTimeSeriestoHydrograph:
             if not site1_day.empty and not site2_day.empty:
                 assert site1_day['mean'].iloc[0] == day
                 assert site2_day['mean'].iloc[0] == day * 2
+
+
+class TestMergeWithUpdate:
+    """Tests for the _merge_with_update helper function."""
+
+    def test_merge_empty_existing_data(self):
+        """Test merging when existing data is empty."""
+        existing = pd.DataFrame(columns=['code', 'date', 'discharge'])
+        new_data = pd.DataFrame({
+            'code': ['A', 'A'],
+            'date': pd.to_datetime(['2024-01-01', '2024-01-02']),
+            'discharge': [10.0, 20.0]
+        })
+
+        result = src._merge_with_update(existing, new_data, 'code', 'date', 'discharge')
+
+        assert len(result) == 2
+        assert result['discharge'].tolist() == [10.0, 20.0]
+
+    def test_merge_empty_new_data(self):
+        """Test merging when new data is empty."""
+        existing = pd.DataFrame({
+            'code': ['A', 'A'],
+            'date': pd.to_datetime(['2024-01-01', '2024-01-02']),
+            'discharge': [10.0, 20.0]
+        })
+        new_data = pd.DataFrame(columns=['code', 'date', 'discharge'])
+
+        result = src._merge_with_update(existing, new_data, 'code', 'date', 'discharge')
+
+        assert len(result) == 2
+        assert result['discharge'].tolist() == [10.0, 20.0]
+
+    def test_merge_updates_existing_values(self):
+        """Test that existing values are updated with new values."""
+        existing = pd.DataFrame({
+            'code': ['A', 'A', 'B'],
+            'date': pd.to_datetime(['2024-01-01', '2024-01-02', '2024-01-01']),
+            'discharge': [10.0, 20.0, 30.0]
+        })
+        new_data = pd.DataFrame({
+            'code': ['A'],
+            'date': pd.to_datetime(['2024-01-02']),
+            'discharge': [25.0]  # Updated value
+        })
+
+        result = src._merge_with_update(existing, new_data, 'code', 'date', 'discharge')
+
+        # Find the updated row
+        updated_row = result[(result['code'] == 'A') &
+                            (result['date'] == pd.Timestamp('2024-01-02'))]
+        assert updated_row['discharge'].values[0] == 25.0
+
+    def test_merge_adds_new_rows(self):
+        """Test that new rows are added to the result."""
+        existing = pd.DataFrame({
+            'code': ['A'],
+            'date': pd.to_datetime(['2024-01-01']),
+            'discharge': [10.0]
+        })
+        new_data = pd.DataFrame({
+            'code': ['A', 'B'],
+            'date': pd.to_datetime(['2024-01-02', '2024-01-01']),
+            'discharge': [20.0, 30.0]
+        })
+
+        result = src._merge_with_update(existing, new_data, 'code', 'date', 'discharge')
+
+        assert len(result) == 3  # 1 original + 2 new
+
+
+class TestLoadCachedData:
+    """Tests for the _load_cached_data helper function."""
+
+    def test_loads_existing_csv(self, tmp_path):
+        """Test loading data from an existing CSV file."""
+        # Create a test CSV file
+        test_data = pd.DataFrame({
+            'code': ['15194', '15194'],
+            'date': ['2024-01-01', '2024-01-02'],
+            'discharge': [10.0, 20.0]
+        })
+        csv_path = tmp_path / 'daily_discharge.csv'
+        test_data.to_csv(csv_path, index=False)
+
+        # Set environment variables
+        original_path = os.environ.get('ieasyforecast_intermediate_data_path')
+        original_file = os.environ.get('ieasyforecast_daily_discharge_file')
+
+        try:
+            os.environ['ieasyforecast_intermediate_data_path'] = str(tmp_path)
+            os.environ['ieasyforecast_daily_discharge_file'] = 'daily_discharge.csv'
+
+            result = src._load_cached_data(
+                date_col='date',
+                discharge_col='discharge',
+                name_col='name',
+                code_col='code',
+                code_list=['15194']
+            )
+
+            assert len(result) == 2
+            assert result['code'].tolist() == ['15194', '15194']
+        finally:
+            # Restore environment
+            if original_path is None:
+                os.environ.pop('ieasyforecast_intermediate_data_path', None)
+            else:
+                os.environ['ieasyforecast_intermediate_data_path'] = original_path
+            if original_file is None:
+                os.environ.pop('ieasyforecast_daily_discharge_file', None)
+            else:
+                os.environ['ieasyforecast_daily_discharge_file'] = original_file
 
 
