@@ -121,8 +121,7 @@ SAPPHIRE_OPDEV_ENV=True ieasyhydroforecast_env_file_path=/path/to/config/.env \
   uv run python snow_data_operational.py
 
 # Download ERA5 reanalysis for hindcasts (one-time initialization)
-SAPPHIRE_OPDEV_ENV=True ieasyhydroforecast_reanalysis_START_DATE=2009-01-01 \
-  ieasyhydroforecast_reanalysis_END_DATE=2023-12-31 \
+SAPPHIRE_OPDEV_ENV=True \
   ieasyhydroforecast_env_file_path=/path/to/config/.env \
   uv run python get_era5_reanalysis_data.py
 ```

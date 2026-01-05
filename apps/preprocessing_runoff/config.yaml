@@ -1,0 +1,23 @@
+# Configuration for the preprocessing_runoff module
+#
+# This file controls behavior for operational and maintenance modes.
+# Values can be overridden via environment variables.
+
+maintenance:
+  # Number of days to fetch during maintenance mode
+  # Override with: PREPROCESSING_MAINTENANCE_LOOKBACK_DAYS
+  lookback_days: 30
+
+operational:
+  # Fetch yesterday's daily average discharge (WDDA)
+  fetch_yesterday: true
+  # Fetch today's morning discharge (WDD)
+  fetch_morning: true
+
+# API settings for iEasyHydro HF SDK
+api:
+  # Number of records per page when fetching data from iEasyHydro HF
+  # Higher values = fewer API calls but larger responses
+  # Override with: PREPROCESSING_API_PAGE_SIZE
+  # Default SDK value is ~100, we use 1000 to reduce round-trips
+  page_size: 1000

@@ -18,20 +18,17 @@ ENV PYTHONUNBUFFERED=1
 # Set working directory
 WORKDIR /app
 
+# Copy iEasyHydroForecast (local dependency referenced in pyproject.toml)
+COPY apps/iEasyHydroForecast /app/apps/iEasyHydroForecast
+
 # Copy forecast_dashboard source code (includes pyproject.toml and uv.lock)
 COPY apps/forecast_dashboard /app/apps/forecast_dashboard
 
-# Install forecast_dashboard dependencies using uv
-# The base image already has iEasyHydroForecast installed
-# We only need to install additional dependencies specific to this module
+# Install all dependencies using uv sync (includes iEasyHydroForecast from local path)
+# This creates a virtual environment and installs from uv.lock for reproducibility
 WORKDIR /app/apps/forecast_dashboard
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv export --frozen --no-dev > /tmp/requirements.txt && \
-    uv pip install --system -r /tmp/requirements.txt && \
-    rm /tmp/requirements.txt
-
-# Reset working directory
-WORKDIR /app/apps/forecast_dashboard
+    uv sync --frozen --no-dev
 
 # Expose the ports that the application listens on.
 # Port 5006 for the pentad dashboard
@@ -39,8 +36,7 @@ WORKDIR /app/apps/forecast_dashboard
 EXPOSE 5006
 EXPOSE 5007
 
-# Run the application as root (required for Docker socket access)
-# Note: PYTHONPATH includes iEasyHydroForecast for local imports
+# Run the application using uv run (activates the virtual environment automatically)
 # The CMD is typically overridden by docker-compose or deployment scripts
 # Default: serve dashboard on port 5006
-CMD ["sh", "-c", "PYTHONPATH=/app/apps/iEasyHydroForecast panel serve forecast_dashboard.py --address 0.0.0.0 --port 5006 --allow-websocket-origin=${ieasyhydroforecast_url:-localhost:5006}"]
+CMD ["sh", "-c", "uv run panel serve forecast_dashboard.py --address 0.0.0.0 --port 5006 --allow-websocket-origin=${ieasyhydroforecast_url:-localhost:5006}"]
