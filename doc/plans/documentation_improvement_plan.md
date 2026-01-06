@@ -161,7 +161,7 @@ Proposed new README structure:
 - [ ] Document macOS Docker development workflow
   - Using `host.docker.internal` for SSH tunnels to iEasyHydro HF
   - Server configuration requirements for Docker development
-  - Reference: `implementation_planning/linear_regression_bugfix_plan.md` (macOS Docker Compatibility section)
+  - Reference: `doc/plans/issues/gi_draft_linreg_bugfix.md` (macOS Docker Compatibility section)
 - [ ] Document local Docker testing procedures for each module
 - [ ] Create troubleshooting guide for common development issues
 - [x] Document MCP server setup for Claude Code ✅ (2025-12-05)
@@ -199,7 +199,7 @@ When testing new Docker images on the AWS server:
 4. **Test end-to-end** - Run complete forecast cycle and verify all modules work
 5. **Revert CI/CD** - Change branch trigger back to `main` after testing
 
-Full procedure documented in: `implementation_planning/uv_migration_plan.md` → "Server Testing Procedure"
+Full procedure documented in: `doc/plans/uv_migration_plan.md` → "Server Testing Procedure"
 
 ##### MCP Server Setup for Claude Code (VS Code)
 

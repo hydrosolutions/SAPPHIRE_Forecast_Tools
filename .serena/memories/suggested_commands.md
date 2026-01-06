@@ -1,246 +1,168 @@
-# SAPPHIRE Forecast Tools - Suggested Commands
+# SAPPHIRE Forecast Tools - Suggested Commands (Bea's Local Setup)
 
-## Environment Variables (Required for Most Modules)
-
-Most modules require the path to the `.env` configuration file. Set this before running any module:
+## My Local Paths
 
 ```bash
-# Required: Path to environment configuration file
-export ieasyhydroforecast_env_file_path=/path/to/config/.env
+# Environment file
+ENV_FILE=~/Documents/GitHub/kyg_data_forecast_tools/config/.env_develop_kghm
 
-# Example paths:
-# Local development (from repo root)
-export ieasyhydroforecast_env_file_path=$(pwd)/apps/config/.env_develop
+# Data directory
+DATA_DIR=~/Documents/GitHub/kyg_data_forecast_tools
 
-# Production-like setup
-export ieasyhydroforecast_env_file_path=/kyg_data_forecast_tools/config/.env
-```
-
-### Other Common Environment Variables
-
-```bash
-# Enable test mode (required for running tests)
-export SAPPHIRE_TEST_ENV=True
-
-# Enable operational development mode
-export SAPPHIRE_OPDEV_ENV=True
-
-# Data root directory (used by some modules)
-export ieasyhydroforecast_data_root_dir=/path/to/data
-
-# Set Python path for imports
-export PYTHONPATH=./apps:./apps/iEasyHydroForecast
-
-# For Docker containers
-export IN_DOCKER=True
+# Repo root
+REPO=~/Documents/GitHub/SAPPHIRE_forecast_tools
 ```
 
 ---
 
-## Running the Full System
+## Quick Commands (Copy-Paste Ready)
+
+### Preprocessing Runoff
 
 ```bash
-# Run the demo version from project root
-source bin/run_sapphire_forecast_tools.sh /path/to/data/root/folder
+# Operational mode (fast daily updates)
+cd ~/Documents/GitHub/SAPPHIRE_forecast_tools/apps/preprocessing_runoff
+ieasyhydroforecast_env_file_path=~/Documents/GitHub/kyg_data_forecast_tools/config/.env_develop_kghm uv run preprocessing_runoff.py
+
+# Maintenance mode (full lookback, gap filling)
+cd ~/Documents/GitHub/SAPPHIRE_forecast_tools/apps/preprocessing_runoff
+ieasyhydroforecast_env_file_path=~/Documents/GitHub/kyg_data_forecast_tools/config/.env_develop_kghm uv run preprocessing_runoff.py --maintenance
+```
+
+### Linear Regression
+
+```bash
+cd ~/Documents/GitHub/SAPPHIRE_forecast_tools/apps/linear_regression
+ieasyhydroforecast_env_file_path=~/Documents/GitHub/kyg_data_forecast_tools/config/.env_develop_kghm uv run linear_regression.py
+```
+
+### SDK Data Retrieval Test
+
+```bash
+cd ~/Documents/GitHub/SAPPHIRE_forecast_tools/apps/preprocessing_runoff
+
+# Test single site (default: 17462)
+ieasyhydroforecast_env_file_path=~/Documents/GitHub/kyg_data_forecast_tools/config/.env_develop_kghm uv run python test/testspecial_sdk_data_retrieval.py
+
+# Check all sites for recent data
+CHECK_ALL_SITES=1 ieasyhydroforecast_env_file_path=~/Documents/GitHub/kyg_data_forecast_tools/config/.env_develop_kghm uv run python test/testspecial_sdk_data_retrieval.py
+
+# Test specific site
+TEST_SITE_CODE=15013 ieasyhydroforecast_env_file_path=~/Documents/GitHub/kyg_data_forecast_tools/config/.env_develop_kghm uv run python test/testspecial_sdk_data_retrieval.py
+```
+
+### Add/Restore Fake Test Data
+
+```bash
+cd ~/Documents/GitHub/SAPPHIRE_forecast_tools/apps/preprocessing_runoff
+
+# Add fake recent data for testing
+python test/add_fake_recent_data.py ~/Documents/GitHub/kyg_data_forecast_tools/intermediate_data
+
+# Restore original files
+python test/add_fake_recent_data.py ~/Documents/GitHub/kyg_data_forecast_tools/intermediate_data --restore
 ```
 
 ---
 
-## Running Individual Modules Locally
-
-### With uv (Python 3.12 - migrated modules)
+## Running Tests
 
 ```bash
-# General pattern
-cd apps/<module_name>
-uv sync --python 3.12
-ieasyhydroforecast_env_file_path=/path/to/.env .venv/bin/python <script>.py
+# iEasyHydroForecast tests
+cd ~/Documents/GitHub/SAPPHIRE_forecast_tools/apps
+SAPPHIRE_TEST_ENV=True uv run --directory iEasyHydroForecast pytest iEasyHydroForecast/tests/ -v
 
-# Example: preprocessing_runoff
-cd apps/preprocessing_runoff
-uv sync --python 3.12
-ieasyhydroforecast_env_file_path=../config/.env_develop .venv/bin/python preprocessing_runoff.py
+# Preprocessing runoff tests
+cd ~/Documents/GitHub/SAPPHIRE_forecast_tools/apps/preprocessing_runoff
+uv run pytest test/ -v
 
-# Example: iEasyHydroForecast (library - typically imported, not run directly)
-cd apps/iEasyHydroForecast
-uv sync --python 3.12
-.venv/bin/python -c "from iEasyHydroForecast import forecast_library; print('OK')"
-```
+# Forecast dashboard tests
+cd ~/Documents/GitHub/SAPPHIRE_forecast_tools/apps/forecast_dashboard
+uv run pytest tests/ -v
 
-### With pip/conda (Python 3.11 - legacy modules)
-
-```bash
-# General pattern
-cd apps/<module_name>
-pip install -r requirements.txt
-ieasyhydroforecast_env_file_path=/path/to/.env python <script>.py
-
-# Example: linear_regression
-cd apps/linear_regression
-ieasyhydroforecast_env_file_path=../config/.env_develop python linear_regression.py
-```
-
----
-
-## Package Installation
-
-### Using uv (modern approach - for modules with pyproject.toml)
-
-```bash
-cd apps/iEasyHydroForecast
-uv sync --all-extras
-
-cd apps/preprocessing_runoff
-uv sync --all-extras
-
-cd apps/preprocessing_gateway
-uv sync --all-extras
-```
-
-### Using pip (traditional approach)
-
-```bash
-cd apps/<module_name>
-pip install -r requirements.txt
-```
-
-### Installing iEasyHydroForecast as editable package
-
-```bash
-pip install -e ./apps/iEasyHydroForecast
-```
-
----
-
-## Testing
-
-### Run all tests (from apps directory)
-
-```bash
-cd apps
-bash run_tests.sh  # Note: requires conda environments to be configured
-```
-
-### Run specific module tests with uv
-
-```bash
-# iEasyHydroForecast
-cd apps/iEasyHydroForecast
-SAPPHIRE_TEST_ENV=True .venv/bin/python -m pytest tests/ -v
-
-# Preprocessing runoff
-cd apps/preprocessing_runoff
-SAPPHIRE_TEST_ENV=True .venv/bin/python -m pytest test/ -v
-
-# Preprocessing gateway
-cd apps/preprocessing_gateway
-SAPPHIRE_TEST_ENV=True .venv/bin/python -m pytest tests/ -v
-```
-
-### Run specific module tests with pip/conda
-
-```bash
-cd apps
-SAPPHIRE_TEST_ENV=True pytest preprocessing_runoff/test
-SAPPHIRE_TEST_ENV=True pytest linear_regression/test
-SAPPHIRE_TEST_ENV=True pytest reset_forecast_run_date/tests
-```
-
-### Run unittest-style tests
-
-```bash
-cd apps
-SAPPHIRE_TEST_ENV=True python -m unittest discover -s iEasyHydroForecast/tests -p 'test_*.py'
+# Pipeline tests
+cd ~/Documents/GitHub/SAPPHIRE_forecast_tools/apps/pipeline
+uv run pytest tests/ -v
 ```
 
 ---
 
 ## Docker Commands
 
-### Build individual images
+### Build Images (py312)
 
 ```bash
-# Base image (Python 3.11)
-docker build -f ./apps/docker_base_image/Dockerfile -t mabesa/sapphire-pythonbaseimage:latest .
+cd ~/Documents/GitHub/SAPPHIRE_forecast_tools
 
-# Base image (Python 3.12 + uv)
-docker build -f ./apps/docker_base_image/Dockerfile.py312 -t mabesa/sapphire-pythonbaseimage:py312 .
-
-# Preprocessing runoff (py312)
-docker build -f ./apps/preprocessing_runoff/Dockerfile.py312 -t mabesa/sapphire-preprunoff:py312 .
-
-# Preprocessing runoff (legacy)
-docker build -f ./apps/preprocessing_runoff/Dockerfile -t mabesa/sapphire-preprunoff:latest .
+# Preprocessing runoff
+DOCKER_BUILDKIT=0 docker build -f apps/preprocessing_runoff/Dockerfile.py312 -t mabesa/sapphire-preprocessing-runoff:py312 .
 
 # Linear regression
-docker build -f ./apps/linear_regression/Dockerfile -t mabesa/sapphire-linreg:latest .
+DOCKER_BUILDKIT=0 docker build -f apps/linear_regression/Dockerfile.py312 -t mabesa/sapphire-linear_regression:py312 .
 
-# Forecast dashboard
-docker build -f ./apps/forecast_dashboard/Dockerfile -t mabesa/sapphire-dashboard:latest .
+# Machine learning
+DOCKER_BUILDKIT=0 docker build -f apps/machine_learning/Dockerfile.py312 -t mabesa/sapphire-machine_learning:py312 .
+
+# Postprocessing
+DOCKER_BUILDKIT=0 docker build -f apps/postprocessing_forecasts/Dockerfile.py312 -t mabesa/sapphire-postprocessing_forecasts:py312 .
+
+# Pipeline
+DOCKER_BUILDKIT=0 docker build -f apps/pipeline/Dockerfile.py312 -t mabesa/sapphire-pipeline:py312 .
 ```
 
-### Run Docker containers locally
+### Run Docker Containers Locally
 
 ```bash
-# Quick test - verify image works
-docker run --rm mabesa/sapphire-preprunoff:py312 python --version
+DATA_DIR=~/Documents/GitHub/kyg_data_forecast_tools
 
-# Run with environment variables and volume mounts
+# Preprocessing runoff in Docker
 docker run --rm \
-    --network host \
-    -e ieasyhydroforecast_env_file_path=/kyg_data_forecast_tools/config/.env_develop \
-    -e ieasyhydroforecast_data_root_dir=/kyg_data_forecast_tools \
-    -e SAPPHIRE_OPDEV_ENV=True \
-    -e IN_DOCKER=True \
-    -v /path/to/local/config:/kyg_data_forecast_tools/config \
-    -v /path/to/local/data:/kyg_data_forecast_tools/daily_runoff \
-    -v /path/to/local/intermediate:/kyg_data_forecast_tools/intermediate_data \
-    mabesa/sapphire-preprunoff:py312
+    -e ieasyhydroforecast_data_root_dir=/sapphire_data \
+    -e ieasyhydroforecast_env_file_path=/sapphire_data/config/.env_develop_kghm \
+    -e IEASYHYDROHF_HOST=http://host.docker.internal:5555/api/v1/ \
+    -v $DATA_DIR/config:/sapphire_data/config \
+    -v $DATA_DIR/daily_runoff:/sapphire_data/daily_runoff \
+    -v $DATA_DIR/intermediate_data:/sapphire_data/intermediate_data \
+    mabesa/sapphire-preprocessing-runoff:py312
+
+# Linear regression in Docker
+docker run --rm \
+    -e ieasyhydroforecast_data_root_dir=/sapphire_data \
+    -e ieasyhydroforecast_env_file_path=/sapphire_data/config/.env_develop_kghm \
+    -e IEASYHYDROHF_HOST=http://host.docker.internal:5555/api/v1/ \
+    -v $DATA_DIR/config:/sapphire_data/config \
+    -v $DATA_DIR/daily_runoff:/sapphire_data/daily_runoff \
+    -v $DATA_DIR/intermediate_data:/sapphire_data/intermediate_data \
+    mabesa/sapphire-linear_regression:py312
 ```
 
-### For modules connecting to iEasyHydro HF (requires SSH tunnel)
+### SSH Tunnel (if needed for iEasyHydro HF)
 
 ```bash
-# First, start SSH tunnel on host machine
-ssh -L 5556:localhost:5556 <server>
-
-# Then run container with HF host variable
-docker run --rm \
-    --network host \
-    -e ieasyhydroforecast_env_file_path=/kyg_data_forecast_tools/config/.env_develop \
-    -e IEASYHYDROHF_HOST=http://host.docker.internal:5556/api/v1/ \
-    -e SAPPHIRE_OPDEV_ENV=True \
-    -e IN_DOCKER=True \
-    -v /path/to/config:/kyg_data_forecast_tools/config \
-    mabesa/sapphire-linreg:latest
+# Start tunnel before running containers that need HF access
+ssh -L 5555:localhost:5555 <server>
 ```
 
 ---
 
-## Git Commands (Darwin/macOS)
+## Environment Variables Reference
+
+| Variable | Value | Purpose |
+|----------|-------|---------|
+| `ieasyhydroforecast_env_file_path` | `~/Documents/GitHub/kyg_data_forecast_tools/config/.env_develop_kghm` | Main config |
+| `IEASYHYDROHF_HOST` | `http://localhost:5555/api/v1/` | HF API endpoint |
+| `SAPPHIRE_TEST_ENV` | `True` | Enable test mode |
+| `SAPPHIRE_OPDEV_ENV` | `True` | Operational dev mode |
+
+---
+
+## Git Commands
 
 ```bash
 git status
 git log --oneline -10
 git diff
-git diff <branch>...HEAD
+git diff main...HEAD
 git checkout <branch>
 git pull origin main
-```
-
----
-
-## Useful File Operations (Darwin/macOS)
-
-```bash
-ls -la                    # List files with details
-pwd                       # Print working directory
-find . -name "*.py"       # Find Python files
-grep -r "pattern" .       # Search in files
-```
-
----
-
-## Pre-commit Hooks
-
 ```

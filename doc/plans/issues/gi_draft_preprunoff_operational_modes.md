@@ -152,6 +152,6 @@ Actual performance is significantly slower than expected due to iEasyHydro HF AP
 
 ## References
 
-- Issue tracking: `implementation_planning/module_issues.md` (PR-001, PR-002)
-- Related: py312 migration plan in `implementation_planning/uv_migration_plan.md`
+- Issue tracking: `doc/plans/module_issues.md` (PR-001, PR-002)
+- Related: py312 migration plan in `doc/plans/uv_migration_plan.md`
 - Maintenance script pattern: `bin/daily_linreg_maintenance.sh`

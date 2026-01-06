@@ -74,9 +74,11 @@ SAPPHIRE_forecast_tools/
 │   └── backend/                   # ⚠️ DEPRECATED - see note below
 ├── data/                          # Input data (daily runoff, GIS, templates)
 ├── doc/                           # Documentation
+│   └── plans/                     # Planning docs and issue tracking
+│       ├── issues/                # Detailed issue implementation plans (gi_*.md)
+│       └── module_issues.md       # Issue index
 ├── .github/workflows/             # CI/CD pipelines
-├── bin/                           # Shell scripts
-└── implementation_planning/       # Planning documents
+└── bin/                           # Shell scripts
 ```
 
 ## Module Categories

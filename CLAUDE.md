@@ -31,7 +31,7 @@ mcp__serena__read_memory(memory_file_name="task_completion_checklist")
 - `apps/` - Main modules (each has `src/`, `tests/`, `pyproject.toml`)
 - `apps/iEasyHydroForecast/` - Core library used by all other modules
 - `apps/pipeline/` - Luigi orchestration for Docker containers
-- `implementation_planning/` - Migration plans and issue tracking
+- `doc/plans/` - Planning documents and issue tracking
 
 ### Tech Stack
 - Python 3.12, uv package manager
@@ -40,10 +40,10 @@ mcp__serena__read_memory(memory_file_name="task_completion_checklist")
 - GitHub Actions CI/CD
 
 ### Current Migration
-Python 3.11 → 3.12 with uv. See `implementation_planning/uv_migration_plan.md`
+Python 3.11 → 3.12 with uv. See `doc/plans/uv_migration_plan.md`
 
 ### Known Issues
-See `implementation_planning/module_issues.md` for active issues.
+See `doc/plans/module_issues.md` for issue index, `doc/plans/issues/` for detailed plans.
 
 ## Module-Specific Notes
 

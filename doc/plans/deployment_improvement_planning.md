@@ -21,7 +21,7 @@ The SAPPHIRE Forecast Tools uses a **containerized pipeline architecture** orche
 └─────────────────────────────────────┬───────────────────────────┘
                                       │
 ┌─────────────────────────────────────▼───────────────────────────┐
-│              Luigi Daemon (Port 8082) - Task Scheduler           │
+│              Luigi Daemon (Port <port>) - Task Scheduler         │
 │              docker-compose-luigi.yml                            │
 └─────────────────────────────────────┬───────────────────────────┘
                                       │
@@ -268,7 +268,7 @@ status:  ## Show status of SAPPHIRE services
 	@docker ps --filter "name=sapphire" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
 	@echo ""
 	@echo -e "$(BLUE)Luigi daemon:$(NC)"
-	@curl -s http://localhost:8082/ > /dev/null && echo "✓ Running at http://localhost:8082" || echo "✗ Not running"
+	@curl -s http://localhost:<port>/ > /dev/null && echo "✓ Running at http://localhost:<port>" || echo "✗ Not running"
 
 help:  ## Show this help message
 	@echo -e "$(BLUE)SAPPHIRE Forecast Tools$(NC)"
