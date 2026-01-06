@@ -1,42 +1,87 @@
 # Module Issues Index
 
-This file tracks planned issues across SAPPHIRE modules.
+This file is an **index** of known issues. For detailed implementation plans, see the corresponding file in `issues/`.
+
+For the full workflow, see [README.md](README.md).
 
 ---
 
-## preprocessing_gateway (prepg)
+## Issue Statuses
 
-### Issue PREPG-001: Yearly Norm Recalculation for Snow and Meteo Data
-**Status**: Draft
+| Status | Meaning |
+|--------|---------|
+| Open | Known issue, not yet planned |
+| Draft | Detailed plan in progress |
+| Ready | Plan complete, ready for GitHub publication |
+| In Progress | Being implemented |
+| Complete | Resolved and closed |
+
+---
+
+## Pipeline Module (`p`)
+
+### P-001: Marker files owned by root not cleaned up
+**Status**: Open
 **Priority**: Medium
-**File**: `issues/gi_draft_prepg_yearly_norm_recalculation.md`
-**GitHub**: (not yet published)
+**Discovered**: 2025-12-18
+**File**: —
 
-Extract norm calculation from daily processing and implement yearly maintenance task for snow (SWE, HS, RoF) and meteo (T, P) norms with configurable averaging window.
+Marker files written by the Docker pipeline are owned by root and accumulate over time without cleanup.
 
 ---
 
-## postprocessing_forecasts (pp)
+## Preprocessing Runoff Module (`prepq`)
 
-### Plan: Postprocessing Module Improvement
+### PREPQ-001: Runoff data not updated in Docker container
+**Status**: In Progress
+**Priority**: High
+**Discovered**: 2025-12-18
+**File**: [`issues/gi_draft_preprunoff_operational_modes.md`](issues/gi_draft_preprunoff_operational_modes.md)
+**GitHub**: —
+
+Module doesn't update runoff data in Docker due to file timestamp check. Solution: add operational/maintenance modes.
+
+---
+
+### PREPQ-002: Slow data retrieval from iEasyHydro HF
+**Status**: Complete
+**Priority**: Medium
+**Discovered**: 2025-01-05
+**Resolved**: 2025-01-05
+
+SDK default page_size caused excessive pagination. Fixed by setting `page_size=1000` in config.
+
+---
+
+## Linear Regression Module (`lr`)
+
+### LR-001: [Title TBD]
 **Status**: Draft
-**Priority**: High
-**File**: `postprocessing_forecasts_improvement_plan.md`
-**GitHub**: (not yet published)
+**Priority**: TBD
+**File**: [`issues/gi_draft_linreg_bugfix.md`](issues/gi_draft_linreg_bugfix.md)
+**GitHub**: —
 
-Comprehensive refactoring plan covering:
-- 5 critical bug fixes (return value tracking, uninitialized variables, unsafe array access, non-atomic writes, silent API failures)
-- Performance improvements (batch upsert, vectorized operations, client reuse)
-- Module separation into operational (real-time) and maintenance (overnight) components
-- Complete testing strategy with 60+ unit and integration tests
-
-### Issue PP-001: Duplicate Skill Metrics for Ensemble Mean
-**Status**: Draft (superseded by improvement plan)
-**Priority**: High
-**File**: `issues/gi_duplicate_skill_metrics_ensemble_composition.md`
-**GitHub**: (not yet published)
-
-Fix duplicate skill metrics entries for ENSEMBLE_MEAN by tracking ensemble model composition.
-Note: This issue is addressed as part of the comprehensive improvement plan.
+See detailed plan file for description.
 
 ---
+
+## Module Abbreviations
+
+| Module | Abbreviation |
+|--------|--------------|
+| preprocessing_runoff | `prepq` |
+| preprocessing_gateway | `prepg` |
+| preprocessing_station_forcing | `prepf` |
+| linear_regression | `lr` |
+| machine_learning | `ml` |
+| postprocessing_forecasts | `pp` |
+| forecast_dashboard | `fd` |
+| configuration_dashboard | `cd` |
+| pipeline | `p` |
+| iEasyHydroForecast | `iEHF` |
+| reset_forecast_run_date | `r` |
+| cross-module/infrastructure | `infra` |
+
+---
+
+*Last updated: 2025-01-06*
