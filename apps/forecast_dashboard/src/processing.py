@@ -927,12 +927,12 @@ def save_stations_to_file(stations, filename):
         pickle.dump(stations, f)
 
 
-def read_all_stations_metadata_from_iehhf(station_list):
-    cache_key = 'all_stations_metadata_iehhf'
-    if cache_key in pn.state.cache:
-        station_list_cached, all_stations, station_df, station_dict = pn.state.cache[cache_key]
-        if station_list_cached == station_list:
-            return station_list, all_stations, station_df, station_dict
+def read_all_stations_metadata_from_iehhf():#station_list):
+    # cache_key = 'all_stations_metadata_iehhf'
+    # if cache_key in pn.state.cache:
+    #     station_list_cached, all_stations, station_df, station_dict = pn.state.cache[cache_key]
+    #     if station_list_cached == station_list:
+    #         return station_list, all_stations, station_df, station_dict
 
     all_stations_file = os.path.join(
         os.getenv("ieasyforecast_intermediate_data_path"),
@@ -969,6 +969,7 @@ def read_all_stations_metadata_from_iehhf(station_list):
     # print(f"all_stations columns: {all_stations.columns}")
 
     # Left-join
+    station_list = all_stations['code'].sort_values().unique().tolist()
     station_df = pd.DataFrame(station_list, columns=['code'])
     station_df = station_df.merge(
         all_stations.loc[:, ['code', 'station_labels', 'basin']],
@@ -982,7 +983,7 @@ def read_all_stations_metadata_from_iehhf(station_list):
     station_dict = station_df.groupby('basin')['station_labels'].apply(list).to_dict()
 
     # Store in cache
-    pn.state.cache[cache_key] = (station_list, all_stations, station_df, station_dict)
+    # pn.state.cache[cache_key] = (station_list, all_stations, station_df, station_dict)
     return station_list, all_stations, station_df, station_dict, iehhf_warning
 
 

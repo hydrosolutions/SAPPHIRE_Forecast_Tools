@@ -572,15 +572,15 @@ def main():
 
     if args.type in ['combinedforecast', 'all']:
         horizons = {
-            "pentad": "combined_forecasts_pentad.csv",
-            "decade": "combined_forecasts_decad.csv"
+            "pentad": "combined_forecasts_pentad_latest.csv",
+            "decade": "combined_forecasts_decad_latest.csv"
         }
         migrators_to_run.append(CombinedForecastDataMigrator(API_URL, BATCH_SIZE, horizons, sub_url="forecast"))
 
     if args.type in ['lrforecast', 'all']:
         horizons = {
-            "pentad": "forecast_pentad_linreg.csv",
-            "decade": "forecast_decad_linreg.csv"
+            "pentad": "forecast_pentad_linreg_latest.csv",
+            "decade": "forecast_decad_linreg_latest.csv"
         }
         migrators_to_run.append(LRForecastDataMigrator(API_URL, BATCH_SIZE, horizons, sub_url="lr-forecast"))
 
@@ -588,13 +588,13 @@ def main():
         horizons = {
             "pentad": {
                 "TFT": "predictions/TFT/pentad_TFT_forecast.csv",
-                "TIDE": "predictions/TIDE/pentad_TIDE_forecast.csv",
-                "TSMIXER": "predictions/TSMIXER/pentad_TSMIXER_forecast.csv"
+                "TiDE": "predictions/TIDE/pentad_TIDE_forecast.csv",
+                "TSMixer": "predictions/TSMIXER/pentad_TSMIXER_forecast.csv"
             },
             "decade": {
-                "TFT": "predictions/TFT/decad_TFT_forecast.csv",
-                "TIDE": "predictions/TIDE/decad_TIDE_forecast.csv",
-                "TSMIXER": "predictions/TSMIXER/decad_TSMIXER_forecast.csv"
+                "TFT": "predictions/TFT/decad_TFT_forecast_latest.csv",
+                "TiDE": "predictions/TIDE/decad_TIDE_forecast_latest.csv",
+                "TSMixer": "predictions/TSMIXER/decad_TSMIXER_forecast_latest.csv"
             }
         }
         migrators_to_run.append(ForecastDataMigrator(API_URL, BATCH_SIZE, horizons, sub_url="forecast"))

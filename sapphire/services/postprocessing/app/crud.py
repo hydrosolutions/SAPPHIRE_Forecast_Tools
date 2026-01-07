@@ -57,6 +57,7 @@ def get_forecast(
     end_date: Optional[str] = None,
     start_target: Optional[str] = None,
     end_target: Optional[str] = None,
+    target: Optional[str] = None,
     skip: int = 0,
     limit: int = 100
 ) -> List[Forecast]:
@@ -77,6 +78,8 @@ def get_forecast(
             query = query.filter(Forecast.target >= start_target)
         if end_target:
             query = query.filter(Forecast.target <= end_target)
+        if target and target == "null":
+            query = query.filter(Forecast.target.is_(None))
 
         results = query.offset(skip).limit(limit).all()
         logger.info(f"Fetched {len(results)} forecasts (code={code}, skip={skip}, limit={limit})")

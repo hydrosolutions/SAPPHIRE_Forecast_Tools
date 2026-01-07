@@ -1279,6 +1279,10 @@ def plot_current_runoff_forecast_range_date_format_v2(
 
         lower_bound = fl.round_discharge(model_data[min_col].iloc[-1])
         upper_bound = fl.round_discharge(model_data[max_col].iloc[-1])
+        if lower_bound is None:
+            lower_bound = "N/A"
+        if upper_bound is None:
+            upper_bound = "N/A"
         range_legend_entry = model + " " + _("range") + ": " + lower_bound + "-" + upper_bound + " " + unit_string
         # print(f"Debug: model_data\n{model_data}")
         # print("MODEL: ", model)
@@ -2040,8 +2044,8 @@ def plot_daily_temperature_data(_, daily_rainfall, station, date_picker,
 
     # Plot the daily rainfall data using holoviews
     title_text = f"{_('Daily average temperature for basin of')} {station} {_('on')} {date_picker.strftime('%Y-%m-%d')}"
-    current_year_text = f"{_('Current year')}, {current_period}: {predictor_rainfall['T'].mean().round()} °C"
-    forecast_text = f"{_('Forecast')}, {forecast_period}: {forecasts['T'].mean().round()} °C"
+    current_year_text = f"{_('Current year')}, {current_period}: {predictor_rainfall['T'].mean()} °C"
+    forecast_text = f"{_('Forecast')}, {forecast_period}: {forecasts['T'].mean()} °C"
 
     hvspan_predictor = hv.VSpan(
         linreg_predictor['predictor_start_date'].values[0],

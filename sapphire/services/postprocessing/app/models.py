@@ -15,7 +15,7 @@ class HorizonType(str, Enum):
 
 class ModelType(str, Enum):
     """Enum for different model types"""
-    TSMIXER = "TSMixer"
+    TSMIXER = "TSMixer" # TSMIXER(how it is stored in PostgreSQL), TSMixer(how it is passed in API)
     TIDE = "TiDE"
     TFT = "TFT"
     ENSEMBLE_MEAN = "EM"

@@ -34,6 +34,11 @@ class ForecastBulkCreate(BaseModel):
 class ForecastResponse(ForecastBase):
     id: int
 
+    @computed_field
+    @property
+    def model_type_description(self) -> str:
+        return self.model_type.description
+
     class Config:
         from_attributes = True
 

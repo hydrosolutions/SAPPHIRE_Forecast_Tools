@@ -80,6 +80,7 @@ def read_forecast(
     end_date: str = None,
     start_target: str = None,
     end_target: str = None,
+    target: str = None,
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db)
@@ -95,6 +96,7 @@ def read_forecast(
             end_date=end_date,
             start_target=start_target,
             end_target=end_target,
+            target=target,
             skip=skip,
             limit=limit
         )
