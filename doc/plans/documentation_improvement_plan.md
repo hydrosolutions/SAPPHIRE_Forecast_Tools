@@ -110,6 +110,14 @@ Proposed new README structure:
   - Reference: conversation notes on robust SSH tunnel automation (2025-12-17)
 - [ ] Document network topology options (same network vs. remote deployment)
 
+#### Step 3.5: Server Resource Requirements
+- [ ] Document minimum server requirements for different deployment scenarios:
+  - Minimal (2 CPU, 4GB RAM): preprocessing and linear regression only
+  - Standard (4 CPU, 8GB RAM): full pipeline including ML inference
+  - ML training (8+ CPU, 16GB RAM): model retraining workloads
+- [ ] Add guidance on monitoring resource usage during forecast runs
+- [ ] Document memory requirements for different numbers of forecast stations
+
 ---
 
 ### Phase 4: User-Facing Documentation
@@ -532,26 +540,71 @@ Each module in `/apps/` should have documentation in two places:
 
 ---
 
-## Priority Order
+## Priority Order (Revised 2026-01-07)
 
-| Priority | Task | Effort | Impact |
-|----------|------|--------|--------|
-| 1 | Step 1.1 - Universal introduction | Low | High |
-| 2 | Step 1.4 - Reorganize README structure | Medium | High |
-| 3 | Step 1.2 - Quick Start section | Low | High |
-| 4 | Step 2.1 - Regional adaptation guide | Medium | High |
-| 5 | Step 5.3b - Security & supply chain docs | Medium | High |
-| 6 | Step 3.1 - Architecture documentation | Medium | Medium |
-| 7 | Step 1.3 - Visual overview/diagrams | Medium | Medium |
-| 8 | Step 5.1 - Contributing guide | Low | Medium |
-| 9 | Step 4.1 - User guide improvements | Medium | Medium |
-| 10 | Step 3.3 - Configuration reference | High | Medium |
-| 11 | Step 5.3 - Changelog/versioning | Low | Low |
-| 12 | Step 7.0 - Module documentation structure | Low | High |
-| 13 | Step 7.1 - preprocessing_gateway docs | Medium | High |
-| 14 | Step 7.2 - preprocessing_runoff docs | Medium | Medium |
-| 15 | Step 7.4 - linear_regression docs | Medium | Medium |
-| 16 | Step 7.5-7.8 - Other module docs | High | Medium |
+Reordered to reflect operational needs. GitHub Pages enablement deferred until core documentation is polished.
+
+| Priority | Task | Effort | Impact | Status |
+|----------|------|--------|--------|--------|
+| 1 | Step 1.2 - Quick Start section | Low | High | Not started |
+| 2 | Configuration.md - Fix TODOs | Low | High | Identified |
+| 3 | Step 7.0 - Module docs structure | Low | High | Not started |
+| 4 | Step 5.3b - Security docs | Medium | High | Not started |
+| 5 | Step 2.1 - Regional adaptation guide | Medium | High | Not started |
+| 6 | Step 3.1 - Architecture diagram | Medium | Medium | Not started |
+| 7 | Step 7.7 - Pipeline module docs | Medium | Medium | Not started |
+| 8 | Step 4.1 - User guide update | Medium | Medium | Not started |
+| 9 | Step 5.1 - CONTRIBUTING.md | Low | Medium | Not started |
+| 10 | **Step 6.1 - Enable GitHub Pages** | Very Low | High | **After priorities 1-5 complete** |
+| 11 | Step 7.1 - preprocessing_gateway docs | Medium | High | Not started |
+| 12 | Step 7.2 - preprocessing_runoff docs | Medium | Medium | Not started |
+| 13 | Step 7.4 - linear_regression docs | Medium | Medium | Not started |
+| 14 | Step 7.5-7.8 - Other module docs | High | Medium | Not started |
+| 15 | Step 5.3 - Changelog/versioning | Low | Low | Not started |
+
+**Note:** Step 1.1 (Universal introduction) and Step 1.4 (README restructure) are already completed/in-progress.
+
+---
+
+## Immediate Action Items (< 1 hour each)
+
+These quick wins unblock other work or fix user-facing issues:
+
+- [ ] **Create doc/modules/ directory** — `mkdir doc/modules && touch doc/modules/index.md`
+- [ ] **Fix configuration.md line 5** — Update or remove outdated "TODO: UPDATE FIGURE"
+- [ ] **Fix configuration.md line ~140** — Add data gateway chapter link
+- [ ] **Fix configuration.md line ~161** — Document output folder purposes
+- [ ] **Fix configuration.md line ~195** — Complete ML configuration section
+- [ ] **Add Quick Start to README** — 5 steps: clone, copy example .env, docker compose up, access dashboard, run first forecast
+- [ ] **Update mkdocs.yml** — Add modules section to navigation
+
+---
+
+## Documentation Audit (2026-01-07)
+
+### Current State Summary
+
+| Category | Status | Notes |
+|----------|--------|-------|
+| Main README | ✅ Improved | Universal intro done, needs Quick Start |
+| User Guide | ⚠️ Stale | References deprecated "backend", missing screenshots |
+| Deployment Guide | ✅ Decent | Good structure, needs resource limits docs |
+| Configuration | ⚠️ Incomplete | Multiple TODOs unfixed |
+| MkDocs Site | ⚠️ Setup done | Waiting for content polish before enabling |
+| Module Docs | ❌ Missing | `doc/modules/` directory doesn't exist |
+
+### Module README Status
+
+| Module | Has README | Quality |
+|--------|------------|---------|
+| machine_learning | ✅ | Good - detailed flagging system |
+| preprocessing_gateway | ✅ | Minimal |
+| preprocessing_runoff | ✅ | Needs review |
+| iEasyHydroForecast | ✅ | Needs review |
+| pipeline | ❌ | **Missing - critical** |
+| linear_regression | ❌ | Missing |
+| forecast_dashboard | ❌ | Missing |
+| postprocessing_forecasts | ✅ | Needs review |
 
 ---
 
@@ -582,26 +635,28 @@ The documentation improvement is complete when:
 | Step | Status | Notes |
 |------|--------|-------|
 | 1.1 | ✅ Completed | 2025-12-01 - Added universal intro, Key Features, Project Origins, active development badge |
-| 1.2 | Not started | |
-| 1.3 | Not started | |
+| 1.2 | Not started | Quick Start section - **Priority 1** |
+| 1.3 | Not started | Visual overview/diagrams |
 | 1.4 | In progress | Partial - new structure partially implemented with Step 1.1 |
-| 2.1 | Not started | |
-| 2.2 | Not started | |
-| 5.3b | Not started | Security & supply chain documentation - high priority for hydromet trust |
+| 2.1 | Not started | Regional adaptation guide - **Priority 5** |
+| 2.2 | Not started | Regional examples |
+| 3.5 | Not started | Server resource requirements - added 2026-01-07 |
+| 5.3b | Not started | Security & supply chain documentation - **Priority 4** |
 | 5.4 | ✅ Completed | 2025-12-01 - Created docker-security-maintenance.md + security disclaimer + template response |
 | 5.5 | ✅ Completed | 2025-12-05 - MCP server setup instructions for Context7 and Serena |
 | 5.6 | ✅ Completed | 2025-12-06 - Server testing procedure documented in uv_migration_plan.md |
 | 5.7 | ✅ Completed | 2025-12-17 - Created `doc/uv-migration-guide.md` (temporary guide for team) |
 | 5.8 | Not started | Standalone server testing guide |
-| 6.1 | In progress | 2025-12-01 - MkDocs setup complete, pending GitHub Pages enablement |
-| 7.0 | Not started | Module documentation structure |
+| 6.1 | In progress | 2025-12-01 - MkDocs setup complete, **enable after priorities 1-5** |
+| 7.0 | Not started | Module documentation structure - **Priority 3** |
 | 7.1 | Not started | 2025-12-05 - Assessment complete, tasks defined |
 | 7.2 | Not started | preprocessing_runoff |
 | 7.3 | Not started | preprocessing_station_forcing |
 | 7.4 | Not started | linear_regression |
 | 7.5-7.8 | Not started | Other modules |
+| config.md | Identified | 2026-01-07 - TODOs on lines 5, ~140, ~161, ~195 need fixing - **Priority 2** |
 
 ---
 
 *Document created: 2025-12-01*
-*Last updated: 2026-01-07 - Added Step 5.3b Security & Supply Chain Documentation for hydromet trust*
+*Last updated: 2026-01-07 - Documentation audit, reprioritized tasks, added immediate action items, added Step 3.5 resource requirements*
