@@ -32,7 +32,7 @@ Before running modules locally, set the path to your organization-specific confi
 export ieasyhydroforecast_env_file_path=/path/to/config/.env_develop
 ```
 
-See `apps/config/` for available configuration files.
+See `apps/config/` for available configuration files. For detailed environment documentation, Claude can read the Serena memory `suggested_commands`.
 
 ---
 

@@ -237,7 +237,10 @@ temp_luigi.cfg
 .serena/memories/suggested_commands.md
 .serena/memories/module_testing_procedure.md
 
-# Claude Code local settings
-.claude/
+# Claude Code
+# Tracked (shared with team):
+#   - .claude/skills/ (project-specific workflows)
+# Ignored (personal):
+.claude/settings.local.json
 
 /apps/logs
