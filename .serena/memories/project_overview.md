@@ -116,8 +116,23 @@ The `backend/` module is deprecated and should not be used for new development. 
 - `backend/forecast_script.py` — Use `linear_regression/` instead
 - `backend/Dockerfile` — Not maintained
 
+## Mid-Term Development Plans (SAPPHIRE v2)
+
+### Architecture Changes
+- **Database Backend** — Replace CSV file-based data storage with a proper database
+- **API Layer** — Introduce an API for data access and integration
+- **Multi-User Access** — Enable multiple users to access the dashboard simultaneously
+
+### Extended Forecast Horizons
+- **Long-Term Forecasts** — Monthly, quarterly, and seasonal forecast capabilities
+- **Sub-Daily Forecasts** — Higher temporal resolution forecasting for flood warning applications
+
+### Current Version (v1)
+The current version uses CSV files for data storage and supports pentadal (5-day) and decadal (10-day) forecast horizons with single-user dashboard access.
+
 ## Main Branches
 
 - `main`: Production branch for deployments
 - `implementation_planning`: Feature development and planning
 - `local`: Deployed versions at partner organizations (may lag behind main)
+- `maxat-sapphire-2`: Development for SAPPHIRE v2 architecture changes

@@ -316,6 +316,16 @@ make clean-docker                            # Stop all containers
 
 ## Simplification Priorities (Re-ordered based on user feedback)
 
+### Priority 0: WORKING DEMO VERSION
+
+**Status:** Will be implemented in SAPPHIRE v2
+
+The working demo (Swiss stations, linear regression, automated updates) will be implemented in the SAPPHIRE v2 codebase.
+
+See **[sapphire_v2_planning.md](sapphire_v2_planning.md)** for detailed milestones and requirements.
+
+---
+
 ### Priority 1: LOCAL TESTING INFRASTRUCTURE (Highest impact on workflow)
 **Problem**: Current testing cycle is painful: debug prints → push → GitHub Actions → test on server
 **Goal**: Test locally on Mac before pushing, with fast iteration
@@ -880,3 +890,18 @@ A nightly maintenance script for linear regression hindcast has been created:
 | Pipeline Dockerfile | `apps/pipeline/Dockerfile` |
 | Linear regression maintenance | `bin/daily_linreg_maintenance.sh` |
 | Current .env example | `config/.env_develop_kghm` |
+| Demo config | `apps/config/.env_develop` |
+| Demo station library | `apps/config/config_all_stations_library.json` |
+| Demo runoff data | `data/daily_runoff/*.xlsx` |
+
+## External Dependencies
+
+| Purpose | Repository | Notes |
+|---------|------------|-------|
+| Operational data scraping | [hydro_data_scraper](https://github.com/hydrosolutions/hydro_data_scraper) | Fetches runoff data from BAFU (Swiss) and other sources |
+| iEasyHydro SDK | [ieasyhydro-python-sdk](https://github.com/hydrosolutions/ieasyhydro-python-sdk) | For iEasyHydro HF integration |
+| Data Gateway client | sapphire-dg-client (private) | For ECMWF/ERA5 data access |
+
+---
+
+*Last updated: 2026-01-07 - Added Priority 0 (Working Demo) with hydro_data_scraper integration*
