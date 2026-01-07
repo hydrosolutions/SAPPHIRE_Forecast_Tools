@@ -149,6 +149,59 @@ Proposed new README structure:
 - [ ] Document versioning strategy
 - [ ] Add release checklist
 
+#### Step 5.3b: Security & Supply Chain Documentation
+
+**Purpose:** Hydrometeorological services are critical infrastructure. Organizations deploying SAPPHIRE need confidence that the software is secure, professionally maintained, and safe to run on their systems.
+
+**Current Security Measures (implemented):**
+- ✅ SLSA Provenance attestation on all py312 Docker images
+- ✅ Software Bill of Materials (SBOM) generated for all py312 images
+- ✅ Cosign signing for py311 Docker images
+- ✅ GitHub Actions CI/CD with no manual artifact handling
+- ✅ Dependabot enabled for security vulnerability alerts
+- ✅ Scheduled security rebuild workflow (quarterly base image updates)
+- ✅ Non-root user in Docker containers (`appuser`)
+- ✅ Minimal base images (slim-bookworm)
+
+**Documentation Tasks:**
+
+- [ ] **Create `doc/security.md`** covering:
+  - Security philosophy and commitment statement
+  - Supply chain security measures (SLSA, SBOM, signing)
+  - How to verify image signatures and attestations
+  - Dependency management approach
+  - Vulnerability disclosure process
+  - Security update policy
+
+- [ ] **Create `doc/for-hydromets.md`** (or section in README) covering:
+  - Why hydromets can trust this software
+  - Professional development practices used
+  - How organizations can audit the codebase
+  - Data privacy considerations (no telemetry, local data processing)
+  - Network security considerations (iEasyHydro HF connectivity)
+  - Deployment security checklist
+
+- [ ] **Add security badge to README**
+  - Link to security.md
+  - Consider OpenSSF Scorecard integration
+
+**Verification Commands for Users:**
+```bash
+# Verify SLSA provenance attestation
+docker buildx imagetools inspect hydrosolutions/sapphire-<module>:py312 --format '{{json .Provenance}}'
+
+# Verify SBOM
+docker buildx imagetools inspect hydrosolutions/sapphire-<module>:py312 --format '{{json .SBOM}}'
+
+# Verify Cosign signature (py311)
+cosign verify --key cosign.pub hydrosolutions/sapphire-pythonbaseimage:latest
+```
+
+**Future Considerations:**
+- [ ] Consider creating a `code-quality` skill for Claude Code to enforce security best practices
+- [ ] OpenSSF Best Practices badge
+- [ ] Regular security audits documentation
+
 #### Step 5.4: Maintenance Documentation
 - [x] Create `doc/maintenance/docker-security-maintenance.md` ✅ (2025-12-01)
 - [x] Add security disclaimer and liability section ✅ (2025-12-01)
@@ -487,17 +540,18 @@ Each module in `/apps/` should have documentation in two places:
 | 2 | Step 1.4 - Reorganize README structure | Medium | High |
 | 3 | Step 1.2 - Quick Start section | Low | High |
 | 4 | Step 2.1 - Regional adaptation guide | Medium | High |
-| 5 | Step 3.1 - Architecture documentation | Medium | Medium |
-| 6 | Step 1.3 - Visual overview/diagrams | Medium | Medium |
-| 7 | Step 5.1 - Contributing guide | Low | Medium |
-| 8 | Step 4.1 - User guide improvements | Medium | Medium |
-| 9 | Step 3.3 - Configuration reference | High | Medium |
-| 10 | Step 5.3 - Changelog/versioning | Low | Low |
-| 11 | Step 7.0 - Module documentation structure | Low | High |
-| 12 | Step 7.1 - preprocessing_gateway docs | Medium | High |
-| 13 | Step 7.2 - preprocessing_runoff docs | Medium | Medium |
-| 14 | Step 7.4 - linear_regression docs | Medium | Medium |
-| 15 | Step 7.5-7.8 - Other module docs | High | Medium |
+| 5 | Step 5.3b - Security & supply chain docs | Medium | High |
+| 6 | Step 3.1 - Architecture documentation | Medium | Medium |
+| 7 | Step 1.3 - Visual overview/diagrams | Medium | Medium |
+| 8 | Step 5.1 - Contributing guide | Low | Medium |
+| 9 | Step 4.1 - User guide improvements | Medium | Medium |
+| 10 | Step 3.3 - Configuration reference | High | Medium |
+| 11 | Step 5.3 - Changelog/versioning | Low | Low |
+| 12 | Step 7.0 - Module documentation structure | Low | High |
+| 13 | Step 7.1 - preprocessing_gateway docs | Medium | High |
+| 14 | Step 7.2 - preprocessing_runoff docs | Medium | Medium |
+| 15 | Step 7.4 - linear_regression docs | Medium | Medium |
+| 16 | Step 7.5-7.8 - Other module docs | High | Medium |
 
 ---
 
@@ -533,6 +587,7 @@ The documentation improvement is complete when:
 | 1.4 | In progress | Partial - new structure partially implemented with Step 1.1 |
 | 2.1 | Not started | |
 | 2.2 | Not started | |
+| 5.3b | Not started | Security & supply chain documentation - high priority for hydromet trust |
 | 5.4 | ✅ Completed | 2025-12-01 - Created docker-security-maintenance.md + security disclaimer + template response |
 | 5.5 | ✅ Completed | 2025-12-05 - MCP server setup instructions for Context7 and Serena |
 | 5.6 | ✅ Completed | 2025-12-06 - Server testing procedure documented in uv_migration_plan.md |
@@ -549,4 +604,4 @@ The documentation improvement is complete when:
 ---
 
 *Document created: 2025-12-01*
-*Last updated: 2025-12-17 - Added Step 5.7 UV Migration Documentation*
+*Last updated: 2026-01-07 - Added Step 5.3b Security & Supply Chain Documentation for hydromet trust*
