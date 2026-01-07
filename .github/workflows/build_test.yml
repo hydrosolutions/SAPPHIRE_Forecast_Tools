@@ -437,12 +437,25 @@ jobs:
         python -m pip install -r machine_learning/requirements.txt
 
   # Build the machine learning image
+  # Note: ML image is very large (~3-4GB) due to PyTorch/Darts, needs extra disk space
   build_machine_learning_image:
     needs: [set_up_machine_learning]
     runs-on: ubuntu-latest
+    timeout-minutes: 60  # Fail after 1 hour instead of default 6 hours
     name: Dockerize and push machine learning module to Dockerhub
 
     steps:
+      - name: Free disk space
+        run: |
+          echo "Disk space before cleanup:"
+          df -h
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/share/boost
+          sudo rm -rf /usr/local/lib/android
+          echo "Disk space after cleanup:"
+          df -h
+
       # To use this repository's private action, you must check out the
       # repository.
       - name: Checkout
@@ -479,12 +492,25 @@ jobs:
           machine_learning/.venv/bin/python -c "import torch; import darts; import pandas; import numpy; print('All imports successful!'); print(f'torch: {torch.__version__}'); print(f'darts: {darts.__version__}')"
 
   # Build machine learning Python 3.12 + uv image
+  # Note: ML image is very large (~3-4GB) due to PyTorch/Darts, needs extra disk space
   build_machine_learning_py312:
     needs: [test_machine_learning_py312, build_python_312_base_image]
     runs-on: ubuntu-latest
+    timeout-minutes: 60  # Fail after 1 hour instead of default 6 hours
     name: Build machine learning (Python 3.12 + uv)
 
     steps:
+      - name: Free disk space
+        run: |
+          echo "Disk space before cleanup:"
+          df -h
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/share/boost
+          sudo rm -rf /usr/local/lib/android
+          echo "Disk space after cleanup:"
+          df -h
+
       - name: Checkout
         uses: actions/checkout@v4
 
