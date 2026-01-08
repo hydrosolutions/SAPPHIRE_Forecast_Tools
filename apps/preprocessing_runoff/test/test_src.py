@@ -479,3 +479,148 @@ class TestLoadCachedData:
                 os.environ['ieasyforecast_daily_discharge_file'] = original_file
 
 
+class TestMaintenanceModeGapFilling:
+    """Tests for maintenance mode gap filling behavior.
+    
+    These tests verify that the data merging logic correctly fills gaps
+    in cached data. The full integration of get_runoff_data_for_sites_HF
+    requires SDK and environment setup, so we test the underlying
+    merge functionality directly.
+    """
+
+    def test_merge_with_update_fills_missing_rows(self):
+        """Test that _merge_with_update correctly fills missing rows.
+        
+        This tests the underlying merge mechanism used to fill gaps
+        from database data.
+        """
+        # Existing data with gaps (missing Jan 3-4)
+        existing = pd.DataFrame({
+            'code': ['15194', '15194', '15194'],
+            'date': pd.to_datetime(['2024-01-01', '2024-01-02', '2024-01-05']),
+            'discharge': [10.0, 20.0, 50.0]
+        })
+        
+        # New data from DB that has the missing dates
+        new_data = pd.DataFrame({
+            'code': ['15194', '15194'],
+            'date': pd.to_datetime(['2024-01-03', '2024-01-04']),
+            'discharge': [30.0, 40.0]
+        })
+        
+        result = src._merge_with_update(existing, new_data, 'code', 'date', 'discharge')
+        
+        # Should have all 5 rows now
+        assert len(result) == 5, f"Expected 5 rows, got {len(result)}"
+        
+        # Verify the previously missing rows are now present
+        jan3 = result[(result['code'] == '15194') & 
+                      (result['date'] == pd.Timestamp('2024-01-03'))]
+        jan4 = result[(result['code'] == '15194') & 
+                      (result['date'] == pd.Timestamp('2024-01-04'))]
+        
+        assert len(jan3) == 1, "Jan 3 data should be present"
+        assert len(jan4) == 1, "Jan 4 data should be present"
+        assert jan3['discharge'].values[0] == 30.0
+        assert jan4['discharge'].values[0] == 40.0
+
+    def test_merge_with_update_fills_multiple_site_gaps(self):
+        """Test gap filling works correctly for multiple sites."""
+        # Existing data with gaps for multiple sites
+        existing = pd.DataFrame({
+            'code': ['15194', '15194', '16059', '16059'],
+            'date': pd.to_datetime(['2024-01-01', '2024-01-03', 
+                                    '2024-01-01', '2024-01-03']),
+            'discharge': [10.0, 30.0, 100.0, 300.0]
+        })
+        
+        # New data fills gaps for both sites
+        new_data = pd.DataFrame({
+            'code': ['15194', '16059'],
+            'date': pd.to_datetime(['2024-01-02', '2024-01-02']),
+            'discharge': [20.0, 200.0]
+        })
+        
+        result = src._merge_with_update(existing, new_data, 'code', 'date', 'discharge')
+        
+        # Should have 6 rows total (3 per site)
+        assert len(result) == 6, f"Expected 6 rows, got {len(result)}"
+        
+        # Verify gaps are filled for site 15194
+        site_15194 = result[result['code'] == '15194'].sort_values('date')
+        assert len(site_15194) == 3
+        assert site_15194['discharge'].tolist() == [10.0, 20.0, 30.0]
+        
+        # Verify gaps are filled for site 16059
+        site_16059 = result[result['code'] == '16059'].sort_values('date')
+        assert len(site_16059) == 3
+        assert site_16059['discharge'].tolist() == [100.0, 200.0, 300.0]
+
+    def test_merge_updates_and_adds_simultaneously(self):
+        """Test that merge can update existing values AND add new rows."""
+        existing = pd.DataFrame({
+            'code': ['15194', '15194'],
+            'date': pd.to_datetime(['2024-01-01', '2024-01-02']),
+            'discharge': [10.0, 20.0]  # Jan 2 will be updated
+        })
+        
+        new_data = pd.DataFrame({
+            'code': ['15194', '15194'],
+            'date': pd.to_datetime(['2024-01-02', '2024-01-03']),
+            'discharge': [25.0, 30.0]  # Updated value for Jan 2, new for Jan 3
+        })
+        
+        result = src._merge_with_update(existing, new_data, 'code', 'date', 'discharge')
+        
+        assert len(result) == 3, f"Expected 3 rows, got {len(result)}"
+        
+        # Check Jan 2 was updated
+        jan2 = result[result['date'] == pd.Timestamp('2024-01-02')]
+        assert jan2['discharge'].values[0] == 25.0, "Jan 2 should be updated to 25.0"
+        
+        # Check Jan 3 was added
+        jan3 = result[result['date'] == pd.Timestamp('2024-01-03')]
+        assert len(jan3) == 1, "Jan 3 should be added"
+        assert jan3['discharge'].values[0] == 30.0
+
+    def test_should_reprocess_input_files_returns_true_when_no_output(self, tmp_path):
+        """Test that should_reprocess_input_files returns True when output doesn't exist."""
+        # Set up temp directories
+        daily_dir = tmp_path / "daily_discharge"
+        daily_dir.mkdir()
+        intermediate_dir = tmp_path / "intermediate"
+        intermediate_dir.mkdir()
+        
+        # Create an input file
+        input_file = daily_dir / "test.xlsx"
+        input_file.write_text("dummy")
+        
+        # Save original env vars
+        orig_daily = os.environ.get('ieasyforecast_daily_discharge_path')
+        orig_intermediate = os.environ.get('ieasyforecast_intermediate_data_path')
+        orig_file = os.environ.get('ieasyforecast_daily_discharge_file')
+        
+        try:
+            os.environ['ieasyforecast_daily_discharge_path'] = str(daily_dir)
+            os.environ['ieasyforecast_intermediate_data_path'] = str(intermediate_dir)
+            os.environ['ieasyforecast_daily_discharge_file'] = 'output.csv'
+            
+            # Output file doesn't exist, should return True
+            result = src.should_reprocess_input_files()
+            assert result is True, "Should return True when output file doesn't exist"
+        finally:
+            # Restore original env vars
+            if orig_daily is None:
+                os.environ.pop('ieasyforecast_daily_discharge_path', None)
+            else:
+                os.environ['ieasyforecast_daily_discharge_path'] = orig_daily
+            if orig_intermediate is None:
+                os.environ.pop('ieasyforecast_intermediate_data_path', None)
+            else:
+                os.environ['ieasyforecast_intermediate_data_path'] = orig_intermediate
+            if orig_file is None:
+                os.environ.pop('ieasyforecast_daily_discharge_file', None)
+            else:
+                os.environ['ieasyforecast_daily_discharge_file'] = orig_file
+
+
