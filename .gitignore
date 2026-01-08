@@ -225,3 +225,4 @@ temp_luigi.cfg
 
 # Serena MCP server local files
 .serena/
+/apps/logs

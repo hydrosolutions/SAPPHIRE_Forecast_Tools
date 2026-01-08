@@ -587,9 +587,9 @@ def main():
     if args.type in ['forecast', 'all']:
         horizons = {
             "pentad": {
-                "TFT": "predictions/TFT/pentad_TFT_forecast.csv",
-                "TiDE": "predictions/TIDE/pentad_TIDE_forecast.csv",
-                "TSMixer": "predictions/TSMIXER/pentad_TSMIXER_forecast.csv"
+                "TFT": "predictions/TFT/pentad_TFT_forecast_latest.csv",
+                "TiDE": "predictions/TIDE/pentad_TIDE_forecast_latest.csv",
+                "TSMixer": "predictions/TSMIXER/pentad_TSMIXER_forecast_latest.csv"
             },
             "decade": {
                 "TFT": "predictions/TFT/decad_TFT_forecast_latest.csv",

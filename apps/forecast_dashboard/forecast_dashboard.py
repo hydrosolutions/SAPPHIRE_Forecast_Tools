@@ -549,28 +549,28 @@ load_data()
 horizon = os.getenv("sapphire_forecast_horizon", "pentad")
 horizon_in_year = "pentad_in_year" if horizon == "pentad" else "decad_in_year"
 
-hydrograph_day_all = db.get_hydrograph_day_all('15013')
-hydrograph_pentad_all = db.get_hydrograph_pentad_all('15013')
+hydrograph_day_all = db.get_hydrograph_day_all('15189')
+hydrograph_pentad_all = db.get_hydrograph_pentad_all('15189')
 hydrograph_day_all = processing.add_labels_to_hydrograph(hydrograph_day_all, all_stations)
 hydrograph_pentad_all = processing.add_labels_to_hydrograph(hydrograph_pentad_all, all_stations)
 
-rain = db.get_rain('15013')
-temp = db.get_temp('15013')
+rain = db.get_rain('15189')
+temp = db.get_temp('15189')
 
-snow_data = db.get_snow_data('15013')
+snow_data = db.get_snow_data('15189')
 
-ml_forecast = db.get_ml_forecast('15013')
+ml_forecast = db.get_ml_forecast('15189')
 ml_forecast = processing.add_labels_to_hydrograph(ml_forecast, all_stations)
 
-linreg_predictor = db.get_linreg_predictor('15013')
+linreg_predictor = db.get_linreg_predictor('15189')
 linreg_predictor = processing.add_labels_to_hydrograph(linreg_predictor, all_stations)
 linreg_datatable = processing.shift_date_by_n_days(linreg_predictor, 1)
 
-forecasts_all = db.get_forecasts_all('15013')
+forecasts_all = db.get_forecasts_all('15189')
 forecasts_all = processing.add_labels_to_hydrograph(forecasts_all, all_stations)
 forecasts_all = processing.internationalize_forecast_model_names(_, forecasts_all)
 
-forecast_stats = db.get_forecast_stats('15013')
+forecast_stats = db.get_forecast_stats('15189')
 forecast_stats = processing.internationalize_forecast_model_names(_, forecast_stats)
 
 forecasts_all = forecasts_all.merge(
@@ -688,7 +688,7 @@ print(f"   dbg: current_decad: {current_decad}")
 _default_station_value = None
 if station_dict:
     try:
-        _default_station_value = station_dict[next(iter(station_dict))][0]
+        _default_station_value = '15189 - Аламедин  -  у.р.Чункурчак'  # station_dict[next(iter(station_dict))][0]
     except Exception:
         _default_station_value = None
 station = pn.widgets.Select(

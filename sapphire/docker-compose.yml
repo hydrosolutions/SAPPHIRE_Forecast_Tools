@@ -119,7 +119,7 @@ services:
     # For development: mount code as volume
     volumes:
       - ./services/preprocessing:/code
-      - /Users/maxat/data/kyg_data_forecast_tools/intermediate_data:/intermediate_data
+      - /Users/bea/Documents/GitHub/kyg_data_forecast_tools/intermediate_data:/intermediate_data
 
   postprocessing-api:
     build:
@@ -142,7 +142,7 @@ services:
     # For development: mount code as volume
     volumes:
       - ./services/postprocessing:/code
-      - /Users/maxat/data/kyg_data_forecast_tools/intermediate_data:/intermediate_data
+      - /Users/bea/Documents/GitHub/kyg_data_forecast_tools/intermediate_data:/intermediate_data
 
 volumes:
   task-data:

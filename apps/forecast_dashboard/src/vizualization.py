@@ -1670,7 +1670,9 @@ def create_date_picker_with_pentad_text(date_picker, _):
 
 # region predictor_tab
 def plot_daily_hydrograph_data(_, hydrograph_day_all, linreg_predictor, station, title_date):
-    # print(f"\n\nDEBUG: plot_daily_hydrograph_data")
+    print(f"\n\nDEBUG: plot_daily_hydrograph_data")
+    print(f"station: {station}")
+    print(f"hydrograph_day_all head:\n{hydrograph_day_all.head()}")
     # print(f"title_date: {title_date}")
 
     # Custom hover tool tip for the daily hydrograph
@@ -1695,9 +1697,13 @@ def plot_daily_hydrograph_data(_, hydrograph_day_all, linreg_predictor, station,
     # filter hydrograph_day_all & linreg_predictor by station
     linreg_predictor = processing.add_predictor_dates(linreg_predictor, station, title_date)
 
+    print("hydrograph_day_all head before data assign: ", hydrograph_day_all.head())
+    print("station: ", station)
+    print("hydrgraph_day_all station_labels unique values: ", hydrograph_day_all['station_labels'].unique())
+
     data = hydrograph_day_all[hydrograph_day_all['station_labels'] == station].copy()
-    # print("\n\n\ncolumns of data: ", data.columns)
-    # print("head and tail of data: \n", data.head(), "\n", data.tail())
+    print("\n\n\ncolumns of data: ", data.columns)
+    print("head and tail of data: \n", data.head(), "\n", data.tail())
     current_year = int(data['date'].dt.year.max())
     last_year = current_year - 1
 
