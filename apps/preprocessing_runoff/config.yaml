@@ -6,7 +6,7 @@
 maintenance:
   # Number of days to fetch during maintenance mode
   # Override with: PREPROCESSING_MAINTENANCE_LOOKBACK_DAYS
-  lookback_days: 30
+  lookback_days: 120
 
 operational:
   # Fetch yesterday's daily average discharge (WDDA)
