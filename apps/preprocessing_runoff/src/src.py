@@ -2177,24 +2177,27 @@ def get_runoff_data_for_sites_HF(ieh_hf_sdk=None, date_col='date', name_col='nam
     
     # Determine whether to reprocess input files based on mode
     if mode == 'maintenance':
-        # In maintenance mode, check if input files have changed
-        if should_reprocess_input_files(): 
-            logger.info("Regime data has changed, reprocessing input files.")
-        
-            # Get organization from environment variable
-            organization = os.getenv('ieasyhydroforecast_organization')
+        # In maintenance mode, ALWAYS reread input files to ensure data completeness.
+        # This is necessary to fill gaps that may exist in the cached output file
+        # (e.g., if rows were deleted or data was corrupted).
+        # The DB fetch that follows will update/add any newer data on top of this baseline.
+        logger.info("Maintenance mode: rereading input files to ensure data completeness.")
 
-            read_data = _read_runoff_data_by_organization(
-                organization=organization,
-                date_col=date_col,
-                discharge_col=discharge_col,
-                name_col=name_col,
-                code_col=code_col,
-                code_list=code_list
-            )
-        else:
-            logger.info("No changes in the daily_discharge directory, using previous data.")
-            read_data = _load_cached_data(date_col, discharge_col, name_col, code_col, code_list)
+        # Log whether input files have also changed (informational only)
+        if should_reprocess_input_files():
+            logger.info("Note: Input files have also changed since last processing.")
+
+        # Get organization from environment variable
+        organization = os.getenv('ieasyhydroforecast_organization')
+
+        read_data = _read_runoff_data_by_organization(
+            organization=organization,
+            date_col=date_col,
+            discharge_col=discharge_col,
+            name_col=name_col,
+            code_col=code_col,
+            code_list=code_list
+        )
     else:
         # In operational mode, always use cached data (skip file checks)
         logger.info("Operational mode: using cached data, fetching only latest from database.")
