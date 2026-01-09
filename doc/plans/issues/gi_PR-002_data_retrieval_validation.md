@@ -536,8 +536,8 @@ apps/preprocessing_runoff/src/
 - [x] Add limitations section to documentation improvement plan
 
 ### Phase 1: Count Validation
-- [ ] Record counts logged at each stage (API → DataFrame → Merge → Output)
-- [ ] Warning logged when >20% of sites return no data
+- [x] Record counts logged at each stage (API → DataFrame → Merge → Output)
+- [x] Warning logged when >20% of sites return no data
 
 ### Phase 2: Improved Logging
 - [ ] Structured logging at key points (request, response, processing, merge, output)
