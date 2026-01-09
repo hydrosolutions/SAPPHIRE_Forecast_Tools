@@ -4,7 +4,7 @@
 
 **Labels**: `enhancement`, `preprocessing`, `py312-migration`
 
-**Status**: Implementation Complete (pending server verification with recent data)
+**Status**: Complete
 
 ---
 
@@ -106,7 +106,7 @@ bash bin/daily_preprunoff_maintenance.sh /path/to/config/.env
 - [x] Test maintenance mode in Docker - working
 - [x] Create `bin/daily_preprunoff_maintenance.sh` orchestration script
 - [x] Update README with Docker usage documentation
-- [ ] Re-test with recent data on server (pending data availability)
+- [x] Re-test with recent data on server
 
 ## Out of Scope
 
@@ -128,7 +128,7 @@ bash bin/daily_preprunoff_maintenance.sh /path/to/config/.env
 - [x] Both modes work correctly in Docker containers
 - [x] Existing tests continue to pass (27 tests passing)
 - [x] New tests cover both modes
-- [ ] Verified with recent data on server
+- [x] Verified with recent data on server
 
 ## Test Results
 
@@ -152,6 +152,22 @@ Actual performance is significantly slower than expected due to iEasyHydro HF AP
 
 ## References
 
-- Issue tracking: `doc/plans/module_issues.md` (PR-001, PR-002)
+- Issue tracking: `doc/plans/module_issues.md` (PREPQ-001)
 - Related: py312 migration plan in `doc/plans/uv_migration_plan.md`
 - Maintenance script pattern: `bin/daily_linreg_maintenance.sh`
+
+---
+
+## Closure Note
+
+**Closed**: 2025-01-09
+
+This issue is complete. The operational/maintenance mode feature is implemented and working.
+
+During testing, we discovered SDK limitations and performance issues that require additional work:
+- iEasyHydro HF API page_size hard limit of 10 (undocumented)
+- Need for parallel pagination
+- Duplicate site code handling (manual vs automatic stations)
+- Data validation requirements
+
+These are tracked in **[PR-002: iEasyHydro HF Data Retrieval Validation](gi_PR-002_data_retrieval_validation.md)**.

@@ -33,23 +33,38 @@ Marker files written by the Docker pipeline are owned by root and accumulate ove
 ## Preprocessing Runoff Module (`prepq`)
 
 ### PREPQ-001: Runoff data not updated in Docker container
-**Status**: In Progress
+**Status**: Complete
 **Priority**: High
 **Discovered**: 2025-12-18
+**Resolved**: 2025-01-09
 **File**: [`issues/gi_draft_preprunoff_operational_modes.md`](issues/gi_draft_preprunoff_operational_modes.md)
-**GitHub**: —
 
-Module doesn't update runoff data in Docker due to file timestamp check. Solution: add operational/maintenance modes.
+Module didn't update runoff data in Docker due to file timestamp check. Fixed by adding operational/maintenance modes. SDK limitations discovered during testing are tracked in PREPQ-003.
 
 ---
 
 ### PREPQ-002: Slow data retrieval from iEasyHydro HF
-**Status**: Complete
+**Status**: Superseded by PREPQ-003
 **Priority**: Medium
 **Discovered**: 2025-01-05
-**Resolved**: 2025-01-05
 
-SDK default page_size caused excessive pagination. Fixed by setting `page_size=1000` in config.
+Initial diagnosis was incorrect (page_size=1000 is not valid - API limit is 10). Comprehensive fix tracked in PREPQ-003.
+
+---
+
+### PREPQ-003: iEasyHydro HF Data Retrieval Validation
+**Status**: In Progress
+**Priority**: High
+**Discovered**: 2025-01-09
+**File**: [`issues/gi_PR-002_data_retrieval_validation.md`](issues/gi_PR-002_data_retrieval_validation.md)
+**GitHub**: —
+
+Comprehensive data retrieval improvements including:
+- SDK best practices (page_size=10 hard limit, use site_codes filter)
+- Parallel pagination for performance
+- Duplicate site code handling (prefer manual over automatic)
+- Data validation and logging
+- Site caching for operational mode
 
 ---
 
@@ -84,4 +99,4 @@ See detailed plan file for description.
 
 ---
 
-*Last updated: 2025-01-06*
+*Last updated: 2025-01-09*

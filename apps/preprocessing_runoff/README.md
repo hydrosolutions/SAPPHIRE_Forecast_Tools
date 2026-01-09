@@ -135,6 +135,27 @@ Excel files with daily river runoff data, one file per measurement site:
 ### CSV Files (Alternative)
 CSV files following the same format as the output.
 
+## Limitations
+
+### iEasyHydro HF Integration
+
+When using iEasyHydro HF as the data source, the following limitations apply:
+
+**Supported Station Types:**
+- **Manual stations only** - Forecasts are generated only for stations marked as `site_type: manual` in iEasyHydro HF
+- Automatic stations with the same site code are filtered out to avoid duplicates
+- This is by design, as manual stations contain quality-controlled data suitable for forecasting
+
+**API Constraints:**
+- **Page size limit:** The iEasyHydro HF API has a hard limit of 10 records per page (undocumented)
+- The module handles pagination automatically with parallel fetching for performance
+- Records with null/missing values are automatically filtered out
+
+**Data Availability:**
+- Data must be available in iEasyHydro HF before the preprocessing run (typically 11:00 local time)
+- Yesterday's daily average (`WDDA` variable) and today's morning discharge (`WDD` variable) are fetched
+- Older data gaps can only be filled in maintenance mode within the configured lookback window
+
 ## Output
 
 ### runoff_day.csv
@@ -213,11 +234,6 @@ operational:
   # Fetch today's morning discharge (WDD variable)
   fetch_morning: true
 
-api:
-  # Number of records per page when fetching from iEasyHydro HF API.
-  # Higher values = fewer API calls but larger responses.
-  # Override with: PREPROCESSING_API_PAGE_SIZE
-  page_size: 1000
 ```
 
 **Key parameters:**
@@ -227,7 +243,6 @@ api:
 | `maintenance.lookback_days` | 120 | `PREPROCESSING_MAINTENANCE_LOOKBACK_DAYS` | Days of historical data to fetch in maintenance mode. Gaps older than this cannot be filled from the database. |
 | `operational.fetch_yesterday` | true | - | Whether to fetch yesterday's daily average discharge |
 | `operational.fetch_morning` | true | - | Whether to fetch today's morning discharge |
-| `api.page_size` | 1000 | `PREPROCESSING_API_PAGE_SIZE` | Records per API page (reduces round-trips) |
 
 **Note:** In maintenance mode, the module always rereads input Excel/CSV files to ensure data completeness before merging with database data. This ensures that gaps in the output file (e.g., accidentally deleted rows) are restored from the original source data.
 
@@ -262,7 +277,6 @@ uv run pytest test/ -v
 | `IEASYHYDROHF_PASSWORD` | API password | .env file |
 | `PREPROCESSING_MODE` | Operating mode: `operational` (default) or `maintenance` | optional |
 | `PREPROCESSING_MAINTENANCE_LOOKBACK_DAYS` | Number of days to fetch in maintenance mode (default: 120) | optional |
-| `PREPROCESSING_API_PAGE_SIZE` | Records per API page for iEasyHydro HF (default: 1000) | optional |
 
 See [doc/configuration.md](../../doc/configuration.md) for the complete list.
 
