@@ -1133,6 +1133,9 @@ def plot_current_runoff_forecast_range_date_format(
     # Convert jitter width to timedelta
     jitter_timedelta = pd.to_timedelta(np.linspace(-jitter_width, jitter_width, len(data)), unit='h')
 
+    # Convert date_col to datetime if not already
+    data.loc[:, date_col] = pd.to_datetime(data[date_col])
+
     # Apply jitter to the datetime column
     data.loc[:, date_col] = data[date_col] + jitter_timedelta
 

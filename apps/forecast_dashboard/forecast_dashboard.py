@@ -953,7 +953,7 @@ bulletin_tabulator = pn.widgets.Tabulator(
 
 
 # region update_functions
-@pn.depends(pentad_selector, decad_selector, watch=True)
+#@pn.depends(pentad_selector, decad_selector, watch=True)
 def update_site_attributes_with_hydrograph_statistics_for_selected_pentad(_,
     sites=sites_list, df=hydrograph_pentad_all, pentad=pentad_selector.value, decad=decad_selector.value):
     """Update site attributes with hydrograph statistics for selected pentad"""
@@ -1177,6 +1177,8 @@ def update_model_select(station_value, selected_pentad, selected_decad):
         on=['code', horizon_in_year, 'model_short', 'model_long'],
         how='left',
         suffixes=('', '_stats'))
+
+    update_site_attributes_with_hydrograph_statistics_for_selected_pentad(_=_, sites=sites_list, df=hydrograph_pentad_all, pentad=pentad_selector.value, decad=decad_selector.value)
 
     get_predictors_warning(station)
     get_forecast_warning(station)
