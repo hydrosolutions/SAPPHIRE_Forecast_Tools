@@ -6,7 +6,7 @@
 maintenance:
   # Number of days to fetch during maintenance mode
   # Override with: PREPROCESSING_MAINTENANCE_LOOKBACK_DAYS
-  lookback_days: 120
+  lookback_days: 50
 
 operational:
   # Fetch yesterday's daily average discharge (WDDA)
@@ -14,10 +14,5 @@ operational:
   # Fetch today's morning discharge (WDD)
   fetch_morning: true
 
-# API settings for iEasyHydro HF SDK
-api:
-  # Number of records per page when fetching data from iEasyHydro HF
-  # Higher values = fewer API calls but larger responses
-  # Override with: PREPROCESSING_API_PAGE_SIZE
-  # Default SDK value is ~100, we use 1000 to reduce round-trips
-  page_size: 1000
+# Note: iEasyHydro HF API has a hard limit of page_size=10 (undocumented).
+# This is handled automatically by the module - no configuration needed.

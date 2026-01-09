@@ -472,11 +472,18 @@ Each module in `/apps/` should have documentation in two places:
   - Document magic numbers (195 days, 5-year batches)
 
 #### Step 7.2: preprocessing_runoff Module
-- [ ] Assess documentation status
-- [ ] Create `apps/preprocessing_runoff/README.md` (concise)
+- [x] Assess documentation status (2025-01-09)
+- [x] Create `apps/preprocessing_runoff/README.md` (comprehensive - already exists)
 - [ ] Create `doc/modules/preprocessing_runoff.md` (comprehensive)
-- [ ] Document iEasyHydro HF SDK integration
-- [ ] Document output formats (runoff_day.csv, hydrograph_day.csv)
+- [x] Document iEasyHydro HF SDK integration (2025-01-09 - added to README)
+- [x] Document output formats (runoff_day.csv, hydrograph_day.csv) - already in README
+- [x] Document limitations section (2025-01-09 - added to README)
+
+##### iEasyHydro HF Coupling - Known Limitations (2025-01-09)
+
+**Documented in `apps/preprocessing_runoff/README.md` → Limitations section:**
+
+- **Manual stations only** - Forecasts are generated only for stations marked as `site_type: manual` in iEasyHydro HF. This is by design, as manual stations contain quality-controlled data suitable for forecasting. Automatic stations with the same site code are filtered out.
 
 #### Step 7.3: preprocessing_station_forcing Module
 - [ ] Assess documentation status

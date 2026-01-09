@@ -15,6 +15,96 @@ The preprocessing_runoff module fetches data from iEasyHydro HF database, but we
 
 ## Implementation Plan
 
+### Phase 0: SDK Data Retrieval Best Practices
+
+**Goal**: Implement proven best practices for iEasyHydro HF SDK data retrieval based on testing.
+
+**Findings from SDK Testing** (January 2025):
+
+1. **Filter Parameters are Equivalent**:
+   - `site_codes` and `station__station_code__in` produce identical results
+   - Use `site_codes` as the canonical parameter (cleaner, documented)
+
+2. **Page Size Limit**:
+   - API has an undocumented hard limit of `page_size=10`
+   - Larger values result in 422 errors
+   - Always use `page_size=10` in production code
+
+3. **Duplicate Site Codes in `get_discharge_sites()`**:
+   - API returns both `manual` and `automatic` stations with the same site code
+   - Example: 60 unique codes → 72 site records (3 duplicates: 15194, 16169, 16681)
+   - **Resolution**: When duplicates exist, choose `manual` site type
+
+4. **Manual Sites Only for Forecasts**:
+   - Current implementation provides forecasts for manual sites only
+   - This is a known limitation that must be documented
+   - Automatic stations may be supported in future versions
+
+5. **Pagination with Parallelization**:
+   - Fetch page 1 to get total count
+   - Calculate total pages: `(count + 9) // 10`
+   - Fetch pages 2-N in parallel using `ThreadPoolExecutor`
+   - Significant performance improvement over sequential pagination
+
+6. **Handle Empty Records**:
+   - Skip records where `data_value` is None or N/A
+   - API returns records for dates without data (null values)
+
+7. **API Returns Both Hydro AND Meteo Records** (discovered January 2025):
+   - When requesting discharge data (WDDA/WDD), the API returns BOTH:
+     - `station_type='hydro'` records (actual discharge data)
+     - `station_type='meteo'` records (temperature, precipitation, etc.) for the same sites
+   - The `count` field in API response is total station-result objects, NOT unique sites
+   - Example: Requesting 62 sites returns `count=100` (some sites appear twice - once hydro, once meteo)
+   - **Filtering by `station_type='hydro'` is correct** - this extracts only discharge data
+   - Sites that return ONLY meteo records have **no discharge data in the database**
+   - These are data quality issues to report to iEasyHydro HF administrators
+
+8. **Sites Without Discharge Data** (example from KGHM, January 2025):
+   - 9 of 62 discharge sites returned no WDDA data over 120 days:
+     `['15020', '15025', '15194', '15213', '15217', '15954', '15960', '16936', '22222']`
+   - These sites are registered as discharge sites but have no data entered
+   - **Action**: Report to iEasyHydro HF administrators for investigation
+
+**Implementation Requirements**:
+
+```python
+# Pagination helper pattern
+def fetch_all_with_pagination(sdk, filters, parallel=True, max_workers=10):
+    PAGE_SIZE = 10  # API limit - cannot be changed
+
+    # Step 1: Fetch first page for count
+    response = sdk.get_data_values_for_site(filters={**filters, "page": 1, "page_size": PAGE_SIZE})
+    total_count = response.get('count', 0)
+    total_pages = (total_count + PAGE_SIZE - 1) // PAGE_SIZE
+
+    # Step 2: Fetch remaining pages in parallel
+    if parallel and total_pages > 1:
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # ... fetch pages 2-N in parallel
+```
+
+**Documentation Updates Required**:
+
+1. **Module README** (`apps/preprocessing_runoff/README.md`):
+   - Add section: "Supported Site Types"
+   - Document that forecasts are generated for manual sites only
+   - Explain the distinction between manual and automatic stations
+
+2. **Documentation Improvement Plan** (`doc/documentation_improvement_plan.md`):
+   - Add under "Coupling with iEasyHydro HF" → "Limitations" section:
+     - Manual sites only (automatic station support TBD)
+     - Page size limit of 10
+     - Duplicate code handling (prefer manual)
+
+**Files to modify**:
+- `apps/preprocessing_runoff/src/src.py` (implement pagination helper)
+- `apps/preprocessing_runoff/preprocessing_runoff.py` (use helper, deduplicate codes)
+- `apps/preprocessing_runoff/README.md` (document limitations)
+- `doc/documentation_improvement_plan.md` (add limitations section)
+
+---
+
 ### Phase 1: Count Validation
 
 **Goal**: Track record counts at each stage and flag discrepancies.
@@ -434,6 +524,16 @@ apps/preprocessing_runoff/src/
 ---
 
 ## Acceptance Criteria
+
+### Phase 0: SDK Data Retrieval Best Practices
+- [x] Use `site_codes` filter parameter (not `station__station_code__in`)
+- [x] Deduplicate site codes before API requests (already implemented in preprocessing_runoff.py)
+- [x] When duplicate codes exist, prefer `manual` site type over `automatic` (already implemented in forecast_library.py)
+- [x] Implement pagination with `page_size=10` (API hard limit)
+- [x] Parallelize page fetching for performance
+- [x] Skip records with null/empty `data_value`
+- [x] Document "manual sites only" limitation in module README
+- [x] Add limitations section to documentation improvement plan
 
 ### Phase 1: Count Validation
 - [ ] Record counts logged at each stage (API → DataFrame → Merge → Output)

@@ -22,9 +22,6 @@ DEFAULTS = {
         'fetch_yesterday': True,
         'fetch_morning': True,
     },
-    'api': {
-        'page_size': 1000,  # Records per page for iEasyHydro HF API
-    },
 }
 
 
@@ -50,18 +47,6 @@ def _apply_env_overrides(config: dict) -> dict:
                 f"using default: {config['maintenance']['lookback_days']}"
             )
 
-    # API page size
-    env_page_size = os.getenv('PREPROCESSING_API_PAGE_SIZE')
-    if env_page_size is not None:
-        try:
-            config['api']['page_size'] = int(env_page_size)
-            logger.debug(f"Override api.page_size from env: {env_page_size}")
-        except ValueError:
-            logger.warning(
-                f"Invalid PREPROCESSING_API_PAGE_SIZE value: {env_page_size}, "
-                f"using default: {config['api']['page_size']}"
-            )
-
     return config
 
 
@@ -75,12 +60,11 @@ def load_config() -> dict:
     3. Default values
 
     Returns:
-        dict: Configuration dictionary with 'maintenance', 'operational', and 'api' keys.
+        dict: Configuration dictionary with 'maintenance' and 'operational' keys.
     """
     config = DEFAULTS.copy()
     config['maintenance'] = DEFAULTS['maintenance'].copy()
     config['operational'] = DEFAULTS['operational'].copy()
-    config['api'] = DEFAULTS['api'].copy()
 
     config_path = _get_config_path()
 
@@ -95,8 +79,6 @@ def load_config() -> dict:
                     config['maintenance'].update(file_config['maintenance'])
                 if 'operational' in file_config:
                     config['operational'].update(file_config['operational'])
-                if 'api' in file_config:
-                    config['api'].update(file_config['api'])
 
             logger.debug(f"Loaded config from {config_path}")
         except Exception as e:
@@ -120,12 +102,6 @@ def get_operational_settings() -> dict:
     """Get operational mode settings."""
     config = load_config()
     return config['operational']
-
-
-def get_api_page_size() -> int:
-    """Get the page size for iEasyHydro HF API requests."""
-    config = load_config()
-    return config['api']['page_size']
 
 
 # Module-level config instance (lazy loaded)

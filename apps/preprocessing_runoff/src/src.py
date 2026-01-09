@@ -931,17 +931,57 @@ def process_hydro_HF_data(data):
 
     Returns:
         pandas.DataFrame: A DataFrame containing the processed hydro data.
+
+    Note:
+        Records with null/None values are filtered out as they represent
+        dates without actual measurements.
     """
-    hydro_data = [site_data for site_data in data['results'] if site_data['station_type'] == 'hydro']
+    results = data.get('results', [])
+
+    # Debug: Categorize results by station_type and collect site codes
+    hydro_sites = set()
+    meteo_sites = set()
+
+    for site_data in results:
+        st = site_data.get('station_type', 'unknown')
+        code = site_data.get('station_code', '?')
+        if st == 'hydro':
+            hydro_sites.add(code)
+        elif st == 'meteo':
+            meteo_sites.add(code)
+
+    print(f"[DEBUG process_hydro_HF_data] Total results: {len(results)}")
+    print(f"[DEBUG process_hydro_HF_data] Sites with hydro data: {len(hydro_sites)}")
+    print(f"[DEBUG process_hydro_HF_data] Sites with ONLY meteo data: {len(meteo_sites - hydro_sites)}")
+
+    # Sites that have meteo but not hydro data
+    meteo_only = meteo_sites - hydro_sites
+    if meteo_only:
+        print(f"[DEBUG process_hydro_HF_data] Meteo-only site codes: {sorted(meteo_only)}")
+
+    hydro_data = [
+        site_data for site_data in results
+        if site_data.get('station_type') == 'hydro'
+    ]
+
     processed_data = []
+    skipped_null_count = 0
+
     for site in hydro_data:
         station_code = site['station_code']
         station_id = site['station_id']
         station_name = site['station_name']
+
         for data_item in site['data']:
             variable_code = data_item['variable_code']
             unit = data_item['unit']
+
             for value_item in data_item['values']:
+                # Skip records with null values (no actual measurement)
+                if value_item['value'] is None:
+                    skipped_null_count += 1
+                    continue
+
                 processed_data.append({
                     'station_code': station_code,
                     'station_id': station_id,
@@ -954,7 +994,75 @@ def process_hydro_HF_data(data):
                     'value_code': value_item['value_code'],
                     'value_type': value_item['value_type']
                 })
+
+    if skipped_null_count > 0:
+        print(f"[DEBUG process_hydro_HF_data] Skipped {skipped_null_count} records with null values")
+        logger.debug(f"Skipped {skipped_null_count} records with null values")
+
+    print(f"[DEBUG process_hydro_HF_data] Final processed records: {len(processed_data)}")
+
     return pd.DataFrame(processed_data)
+
+
+def print_data_retrieval_summary(
+    variable_name: str,
+    requested_sites: list,
+    sites_with_data: set,
+    total_records: int,
+    date_range: tuple = None
+):
+    """
+    Print a formatted summary report of the data retrieval results.
+
+    Parameters:
+    ----------
+    variable_name : str
+        The variable being fetched (e.g., 'WDDA', 'WDD')
+    requested_sites : list
+        List of site codes that were requested
+    sites_with_data : set
+        Set of site codes that returned data
+    total_records : int
+        Total number of records retrieved
+    date_range : tuple, optional
+        (start_date, end_date) tuple for the query
+    """
+    missing_sites = set(requested_sites) - sites_with_data
+    coverage_pct = (len(sites_with_data) / len(requested_sites) * 100) if requested_sites else 0
+
+    print("\n" + "=" * 70)
+    print(f"DATA RETRIEVAL SUMMARY - {variable_name}")
+    print("=" * 70)
+
+    if date_range:
+        print(f"Date range: {date_range[0]} to {date_range[1]}")
+
+    print(f"Sites requested:    {len(requested_sites)}")
+    print(f"Sites with data:    {len(sites_with_data)} ({coverage_pct:.1f}%)")
+    print(f"Sites without data: {len(missing_sites)}")
+    print(f"Total records:      {total_records}")
+
+    if missing_sites:
+        print("\nSITES WITHOUT DISCHARGE DATA:")
+        print("-" * 70)
+        print("The following sites are registered as discharge sites but returned")
+        print("no hydro data. This may be a data quality issue in iEasyHydro HF.")
+        print(f"\nMissing site codes ({len(missing_sites)}):")
+        # Print in sorted order, multiple per line
+        sorted_missing = sorted(missing_sites)
+        for i in range(0, len(sorted_missing), 8):
+            chunk = sorted_missing[i:i + 8]
+            print(f"  {', '.join(chunk)}")
+        print("\nACTION: Report these sites to iEasyHydro HF administrators.")
+
+    print("=" * 70 + "\n")
+
+    # Also log for persistence
+    logger.info(f"Data retrieval summary for {variable_name}: "
+                f"{len(sites_with_data)}/{len(requested_sites)} sites, "
+                f"{total_records} records")
+    if missing_sites:
+        logger.warning(f"Sites without {variable_name} data: {sorted(missing_sites)}")
 
 
 def fetch_hydro_HF_data_robust(sdk, filters, site_codes, batch_size=10, max_workers=5):
@@ -988,6 +1096,10 @@ def fetch_hydro_HF_data_robust(sdk, filters, site_codes, batch_size=10, max_work
     -------
     pandas.DataFrame
         Combined DataFrame with all fetched data
+        
+    Raises:
+    -------
+    RuntimeError: If API returns 422 or other error (DEBUG MODE - fail loudly)
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -1006,6 +1118,10 @@ def fetch_hydro_HF_data_robust(sdk, filters, site_codes, batch_size=10, max_work
         logger.warning(f"site_codes contains non-string values: {non_string_codes[:5]}... Converting to strings.")
         site_codes = [str(c) for c in site_codes]
 
+    print(f"\n[COUNT VALIDATION] ========== fetch_hydro_HF_data_robust ==========")
+    print(f"[COUNT VALIDATION] site_codes count: {len(site_codes)}")
+    print(f"[COUNT VALIDATION] site_codes (first 10): {site_codes[:10]}")
+    print(f"[COUNT VALIDATION] filters: {filters}")
     logger.info(f"fetch_hydro_HF_data_robust: {len(site_codes)} site codes, filters: {filters}")
 
     # Remove page_size from filters - let API use default (10) which is most reliable
@@ -1020,16 +1136,17 @@ def fetch_hydro_HF_data_robust(sdk, filters, site_codes, batch_size=10, max_work
         try:
             return fetch_and_format_hydro_HF_data(sdk, single_filters)
         except Exception as e:
-            logger.warning(f"Failed to fetch data for site {site_code}: {e}")
-            return pd.DataFrame()
+            logger.error(f"Failed to fetch data for site {site_code}: {e}")
+            raise  # Re-raise for debugging
 
     def fetch_batch(batch_codes):
         """Fetch data for a batch of sites."""
         batch_filters = safe_filters.copy()
-        batch_filters['site_codes'] = batch_codes
+        batch_filters['site_codes'] = batch_codes  # Use site_codes (canonical filter parameter)
         return fetch_and_format_hydro_HF_data(sdk, batch_filters)
 
     # Strategy 1: Try bulk request with all site codes
+    print(f"[COUNT VALIDATION] Attempting bulk request for {len(site_codes)} sites...")
     logger.info(f"Attempting bulk request for {len(site_codes)} sites...")
     logger.info(f"Site codes (first 10): {site_codes[:10]}")
     logger.info(f"Filters: {safe_filters}")
@@ -1041,43 +1158,95 @@ def fetch_hydro_HF_data_robust(sdk, filters, site_codes, batch_size=10, max_work
     # Log the response type and key info for debugging
     if isinstance(response, dict):
         if 'status_code' in response:
-            logger.info(f"Bulk request failed with status: {response.get('status_code')}")
-            logger.info(f"Error text: {response.get('text', 'No text')[:200]}")
+            status_code = response.get('status_code')
+            error_text = response.get('text', 'No text')[:500]
+            print(f"[COUNT VALIDATION] ERROR: Bulk request failed with status {status_code}")
+            print(f"[COUNT VALIDATION] Error text: {error_text}")
+            logger.error(f"Bulk request failed with status: {status_code}")
+            logger.error(f"Error text: {error_text}")
+            # DEBUG MODE: Fail loudly on 422 errors
+            raise RuntimeError(f"Bulk request failed with status {status_code}: {error_text}")
         else:
+            total_count = response.get('count', 'N/A')
+            results_count = len(response.get('results', []))
+            print(f"[COUNT VALIDATION] Bulk response: count={total_count}, results_in_first_page={results_count}")
             logger.info(f"Bulk response keys: {list(response.keys())}")
-            logger.info(f"Bulk response count: {response.get('count', 'N/A')}")
-            results = response.get('results', [])
-            logger.info(f"Bulk response results count: {len(results)}")
+            logger.info(f"Bulk response count: {total_count}")
+            logger.info(f"Bulk response results count: {results_count}")
     else:
+        print(f"[COUNT VALIDATION] Unexpected response type: {type(response)}")
         logger.info(f"Unexpected response type: {type(response)}")
 
     if not (isinstance(response, dict) and 'status_code' in response):
         # Bulk request succeeded - use the standard fetch function
+        print(f"[COUNT VALIDATION] Bulk request succeeded, fetching all pages...")
         logger.info("Bulk request succeeded, fetching all pages...")
-        return fetch_and_format_hydro_HF_data(sdk, bulk_filters)
+        result_df = fetch_and_format_hydro_HF_data(sdk, bulk_filters)
 
-    # Strategy 2: Bulk failed - try batching
+        # Extract info for summary report
+        variable_name = filters.get('variable_names', ['unknown'])[0] if filters.get('variable_names') else 'unknown'
+        date_start = filters.get('local_date_time__gte', 'N/A')
+        date_end = filters.get('local_date_time__lte', 'N/A')
+
+        # Get sites with data
+        if not result_df.empty and 'station_code' in result_df.columns:
+            sites_with_data = set(result_df['station_code'].unique())
+        else:
+            sites_with_data = set()
+
+        # Print summary report
+        print_data_retrieval_summary(
+            variable_name=variable_name,
+            requested_sites=site_codes,
+            sites_with_data=sites_with_data,
+            total_records=len(result_df) if not result_df.empty else 0,
+            date_range=(date_start, date_end)
+        )
+
+        return result_df
+
+    # Strategy 2: Bulk failed - try batching (should not reach here in debug mode)
+    print(f"[COUNT VALIDATION] Bulk request failed. Trying batched requests with batch_size={batch_size}...")
     logger.info(f"Bulk request failed (422). Trying batched requests with batch_size={batch_size}...")
 
     batches = [site_codes[i:i + batch_size] for i in range(0, len(site_codes), batch_size)]
     batch_failed = False
 
     for i, batch in enumerate(batches):
+        print(f"[COUNT VALIDATION] Fetching batch {i+1}/{len(batches)} ({len(batch)} sites)...")
         logger.debug(f"Fetching batch {i+1}/{len(batches)} ({len(batch)} sites)...")
         try:
             batch_df = fetch_batch(batch)
             if not batch_df.empty:
                 all_dataframes.append(batch_df)
+                print(f"[COUNT VALIDATION] Batch {i+1}: {len(batch_df)} records")
         except Exception as e:
-            logger.warning(f"Batch {i+1} failed: {e}")
-            batch_failed = True
-            break
+            print(f"[COUNT VALIDATION] ERROR: Batch {i+1} failed: {e}")
+            logger.error(f"Batch {i+1} failed: {e}")
+            raise  # Re-raise for debugging
 
     if not batch_failed and all_dataframes:
+        result_df = pd.concat(all_dataframes, ignore_index=True) if all_dataframes else pd.DataFrame()
+        print(f"[COUNT VALIDATION] Batched requests succeeded: {len(result_df)} total records")
         logger.info(f"Batched requests succeeded: {len(all_dataframes)} batches")
-        return pd.concat(all_dataframes, ignore_index=True) if all_dataframes else pd.DataFrame()
+
+        # Print summary report
+        variable_name = filters.get('variable_names', ['unknown'])[0] if filters.get('variable_names') else 'unknown'
+        date_start = filters.get('local_date_time__gte', 'N/A')
+        date_end = filters.get('local_date_time__lte', 'N/A')
+        sites_with_data = set(result_df['station_code'].unique()) if not result_df.empty and 'station_code' in result_df.columns else set()
+        print_data_retrieval_summary(
+            variable_name=variable_name,
+            requested_sites=site_codes,
+            sites_with_data=sites_with_data,
+            total_records=len(result_df) if not result_df.empty else 0,
+            date_range=(date_start, date_end)
+        )
+
+        return result_df
 
     # Strategy 3: Batches failed - fall back to parallel individual requests
+    print(f"[COUNT VALIDATION] Batched requests failed. Falling back to individual requests...")
     logger.info(f"Batched requests failed. Falling back to parallel individual requests ({max_workers} workers)...")
     all_dataframes = []  # Reset
 
@@ -1087,24 +1256,49 @@ def fetch_hydro_HF_data_robust(sdk, filters, site_codes, batch_size=10, max_work
         for future in as_completed(futures):
             completed += 1
             if completed % 20 == 0:
+                print(f"[COUNT VALIDATION] Progress: {completed}/{len(site_codes)} sites...")
                 logger.info(f"Progress: {completed}/{len(site_codes)} sites...")
             try:
                 df = future.result()
                 if not df.empty:
                     all_dataframes.append(df)
             except Exception as e:
-                logger.warning(f"Error fetching {futures[future]}: {e}")
+                print(f"[COUNT VALIDATION] ERROR: Failed to fetch {futures[future]}: {e}")
+                logger.error(f"Error fetching {futures[future]}: {e}")
+                raise  # Re-raise for debugging
 
+    print(f"[COUNT VALIDATION] Individual requests completed: got data from {len(all_dataframes)} sites")
     logger.info(f"Individual requests completed: got data from {len(all_dataframes)} sites")
 
     if all_dataframes:
-        return pd.concat(all_dataframes, ignore_index=True)
-    return pd.DataFrame()
+        result_df = pd.concat(all_dataframes, ignore_index=True)
+    else:
+        result_df = pd.DataFrame()
+
+    # Print summary report
+    variable_name = filters.get('variable_names', ['unknown'])[0] if filters.get('variable_names') else 'unknown'
+    date_start = filters.get('local_date_time__gte', 'N/A')
+    date_end = filters.get('local_date_time__lte', 'N/A')
+    sites_with_data = set(result_df['station_code'].unique()) if not result_df.empty and 'station_code' in result_df.columns else set()
+    print_data_retrieval_summary(
+        variable_name=variable_name,
+        requested_sites=site_codes,
+        sites_with_data=sites_with_data,
+        total_records=len(result_df) if not result_df.empty else 0,
+        date_range=(date_start, date_end)
+    )
+
+    return result_df
 
 
 def fetch_and_format_hydro_HF_data(sdk, initial_filters):
     """
-    Fetch all pages of data from the API and format each page into a DataFrame immediately.
+    Fetch all pages of data from the API and format each page into a DataFrame.
+    
+    Uses parallel fetching for improved performance:
+    1. Fetch page 1 to get total count
+    2. Calculate total pages (page_size=10 is API hard limit)
+    3. Fetch remaining pages in parallel
     
     Parameters:
     ----------
@@ -1117,85 +1311,146 @@ def fetch_and_format_hydro_HF_data(sdk, initial_filters):
     -------
     pandas.DataFrame
         DataFrame with all hydro data in a long format with columns:
-        station_code, station_name, station_type, station_id, station_uuid, 
-        variable_code, unit, timestamp_local, timestamp_utc, value, value_type, value_code
-    """
-    # Copy filters
-    filters = initial_filters.copy()
-    
-    # Start with page 1
-    page = 1
-    all_data_frames = []
-    
-    while True:
-        # Fetch data for the current page
-        filters['page'] = page
-        with ProfileTimer(f"sdk_api_call_page_{page}", log_immediately=True):
-            response = sdk.get_data_values_for_site(filters=filters)
-
-        # Check if we got an error
-        if isinstance(response, dict) and 'status_code' in response:
-            print(f"Error: {response}")
-            break
-
-        # Extract the results and format immediately
-        if isinstance(response, dict) and 'results' in response:
-            # Extract the results
-            results = response['results']
-
-            # Format this page's data immediately
-            if results:  # Only process if we have results
-                records = []
-
-                with ProfileTimer(f"process_page_{page}_data"):
-                    page_df = process_hydro_HF_data(response)
-
-                # Convert timestamps to datetime if they're strings
-                for col in ['local_datetime', 'utc_datetime']:
-                    if col in page_df.columns and page_df[col].dtype == 'object':
-                        page_df[col] = pd.to_datetime(page_df[col])
-                
-                # Add this page's data to our collection
-                all_data_frames.append(page_df)
-                
-                logger.info(f"Processed page {page}: {len(page_df)} records")
-                
-        else:
-            logger.warning(f"Expected 'results' key not found in response")
-            logger.info(f"Response keys: {list(response.keys()) if isinstance(response, dict) else 'Not a dict'}")
+        station_code, timestamp_local, timestamp_utc, value
         
-        # Check if there are more pages
-        if isinstance(response, dict) and response.get('next'):
-            # Increment page number
-            logger.info(f"Fetching page {page}...")
-            page += 1
-        else:
-            # No more pages
-            break
+    Raises:
+    -------
+    RuntimeError: If API returns 422 or other error status codes
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    
+    PAGE_SIZE = 10  # API hard limit - cannot be changed
+    
+    # Copy filters and set page size
+    filters = initial_filters.copy()
+    filters['page_size'] = PAGE_SIZE
+    
+    all_data_frames = []
+    failed_pages = []
+    
+    def fetch_page(page_num):
+        """Fetch and process a single page."""
+        page_filters = filters.copy()
+        page_filters['page'] = page_num
+        
+        with ProfileTimer(f"sdk_api_call_page_{page_num}", log_immediately=False):
+            response = sdk.get_data_values_for_site(filters=page_filters)
+        
+        # Check for error - raise exception instead of silently continuing
+        if isinstance(response, dict) and 'status_code' in response:
+            status_code = response.get('status_code')
+            error_text = response.get('text', 'No error text')[:500]
+            error_msg = f"Page {page_num} failed with status {status_code}: {error_text}"
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
+        
+        # Process results
+        if isinstance(response, dict) and 'results' in response and response['results']:
+            page_df = process_hydro_HF_data(response)
+            
+            # Convert timestamps to datetime if they're strings
+            for col in ['local_datetime', 'utc_datetime']:
+                if col in page_df.columns and page_df[col].dtype == 'object':
+                    page_df[col] = pd.to_datetime(page_df[col])
+            
+            return page_df
+        return None
+    
+    # Step 1: Fetch first page to get total count
+    print(f"[COUNT VALIDATION] Fetching page 1 to determine total count...")
+    print(f"[COUNT VALIDATION] Filters: {filters}")
+    filters['page'] = 1
+    
+    with ProfileTimer("sdk_api_call_page_1", log_immediately=True):
+        first_response = sdk.get_data_values_for_site(filters=filters)
+    
+    # Check for error on first page - RAISE EXCEPTION
+    if isinstance(first_response, dict) and 'status_code' in first_response:
+        status_code = first_response.get('status_code')
+        error_text = first_response.get('text', 'No error text')[:500]
+        error_msg = f"First page request failed with status {status_code}: {error_text}"
+        logger.error(error_msg)
+        print(f"[COUNT VALIDATION] ERROR: {error_msg}")
+        raise RuntimeError(error_msg)
+    
+    # Get total count and calculate pages
+    total_count = first_response.get('count', 0) if isinstance(first_response, dict) else 0
+    total_pages = (total_count + PAGE_SIZE - 1) // PAGE_SIZE
+    
+    print(f"[COUNT VALIDATION] API reports total_count={total_count}, total_pages={total_pages}")
+    logger.info(f"Total records: {total_count}, Total pages: {total_pages}")
+    
+    # Process first page
+    records_from_page_1 = 0
+    if isinstance(first_response, dict) and 'results' in first_response and first_response['results']:
+        first_df = process_hydro_HF_data(first_response)
+        for col in ['local_datetime', 'utc_datetime']:
+            if col in first_df.columns and first_df[col].dtype == 'object':
+                first_df[col] = pd.to_datetime(first_df[col])
+        all_data_frames.append(first_df)
+        records_from_page_1 = len(first_df)
+        print(f"[COUNT VALIDATION] Page 1: {records_from_page_1} records processed")
+        logger.info(f"Processed page 1: {records_from_page_1} records")
+    
+    # Step 2: Fetch remaining pages in parallel
+    if total_pages > 1:
+        pages_to_fetch = list(range(2, total_pages + 1))
+        print(f"[COUNT VALIDATION] Fetching pages 2-{total_pages} in parallel...")
+        logger.info(f"Fetching pages 2-{total_pages} in parallel...")
+        
+        with ProfileTimer(f"parallel_fetch_pages_2_to_{total_pages}", log_immediately=True):
+            with ThreadPoolExecutor(max_workers=10) as executor:
+                futures = {executor.submit(fetch_page, p): p for p in pages_to_fetch}
+                
+                for future in as_completed(futures):
+                    page_num = futures[future]
+                    try:
+                        page_df = future.result()
+                        if page_df is not None and not page_df.empty:
+                            all_data_frames.append(page_df)
+                    except Exception as e:
+                        failed_pages.append(page_num)
+                        logger.error(f"Error fetching page {page_num}: {e}")
+                        # Re-raise to stop execution
+                        raise
+        
+        print(f"[COUNT VALIDATION] Parallel fetch complete: {len(all_data_frames)} pages with data")
+        logger.info(f"Parallel fetch complete: {len(all_data_frames)} pages with data")
+    
+    # Count validation
+    total_records_fetched = sum(len(df) for df in all_data_frames)
+    print(f"[COUNT VALIDATION] Total records fetched: {total_records_fetched}")
+    print(f"[COUNT VALIDATION] Expected from API: {total_count}")
+    
+    if total_records_fetched != total_count:
+        print(f"[COUNT VALIDATION] WARNING: Record count mismatch! Fetched {total_records_fetched}, expected {total_count}")
+        logger.warning(f"Record count mismatch: fetched {total_records_fetched}, API reported {total_count}")
+    
+    if failed_pages:
+        print(f"[COUNT VALIDATION] ERROR: Failed pages: {failed_pages}")
+        raise RuntimeError(f"Failed to fetch pages: {failed_pages}")
     
     # Combine all DataFrames
     if all_data_frames:
         combined_df = pd.concat(all_data_frames, ignore_index=True)
-        # If the DataFrame is empty, return an empty DataFrame with the expected structure
         if combined_df.empty:
-            return pd.DataFrame(columns=[
-                'station_code', 'timestamp_local', 
-                'timestamp_utc', 'value'
-            ])
+            return pd.DataFrame(columns=['station_code', 'timestamp_local', 'timestamp_utc', 'value'])
+        
         # Drop columns that are not in the expected structure
         combined_df.drop(
             columns=['station_uuid', 'station_type', 'station_id', 
                      'variable_code', 'unit', 'value_type', 'value_code', 
                      'station_name'], 
             inplace=True, errors='ignore')
-        logger.debug(f"Combined DataFrame: \n{combined_df}")
+        
+        # Final count validation
+        unique_sites = combined_df['station_code'].nunique() if 'station_code' in combined_df.columns else 0
+        print(f"[COUNT VALIDATION] Final DataFrame: {len(combined_df)} records from {unique_sites} unique sites")
+        logger.info(f"Total records fetched: {len(combined_df)} from {unique_sites} sites")
         return combined_df
     else:
-        # Return empty DataFrame with the expected structure
-        return pd.DataFrame(columns=[
-            'station_code', 'timestamp_local', 
-            'timestamp_utc', 'value'
-        ])
+        print(f"[COUNT VALIDATION] No data frames to combine - returning empty DataFrame")
+        return pd.DataFrame(columns=['station_code', 'timestamp_local', 'timestamp_utc', 'value'])
 
 def get_todays_morning_discharge_from_iEH_HF_for_multiple_sites(
         ieh_hf_sdk, id_list, start_datetime=None, end_datetime=None,
@@ -2105,7 +2360,131 @@ def _read_runoff_data_by_organization(organization, date_col, discharge_col, nam
         raise ValueError(f"Organization '{organization}' not recognized. "
                          f"Please set the environment variable 'ieasyhydroforecast_organization' to 'kghm' or 'tjhm'.")
     return read_data
-    
+
+
+def get_latest_date_per_site(
+    df: pd.DataFrame,
+    date_col: str,
+    code_col: str
+) -> dict[str, pd.Timestamp]:
+    """
+    Extract the latest date per site from a DataFrame.
+
+    Args:
+        df: DataFrame containing the data.
+        date_col: Name of the date column.
+        code_col: Name of the site code column.
+
+    Returns:
+        dict: Mapping of site_code -> latest_date. Empty dict if df is empty.
+    """
+    if df is None or df.empty:
+        return {}
+
+    df = df.copy()
+    df[date_col] = pd.to_datetime(df[date_col])
+    df[code_col] = df[code_col].astype(str)
+
+    return df.groupby(code_col)[date_col].max().to_dict()
+
+
+def calculate_fetch_ranges(
+    code_list: list,
+    coverage_per_site: dict[str, pd.Timestamp],
+    default_lookback_days: int,
+    end_date: pd.Timestamp = None
+) -> list[tuple[pd.Timestamp, list[str]]]:
+    """
+    Group sites by their required fetch start date for efficient API calls.
+
+    Sites are grouped by month of their coverage end date to minimize API calls
+    while being efficient (not fetching redundant data).
+
+    Args:
+        code_list: List of all site codes to fetch.
+        coverage_per_site: Dict of site_code -> coverage_end_date.
+        default_lookback_days: Fallback lookback for sites with no coverage.
+        end_date: End date for fetching (default: today).
+
+    Returns:
+        list of (start_date, [site_codes]) tuples, sorted by start_date.
+    """
+    if end_date is None:
+        end_date = pd.Timestamp.now().normalize()
+
+    # Calculate fetch start date for each site
+    fetch_start_per_site = {}
+    for site in code_list:
+        site_str = str(site)
+        if site_str in coverage_per_site:
+            # Start from day after last coverage
+            fetch_start = coverage_per_site[site_str] + pd.Timedelta(days=1)
+            # Don't fetch if coverage is already up to date
+            if fetch_start > end_date:
+                fetch_start = end_date
+        else:
+            # No coverage data - use default lookback
+            fetch_start = end_date - pd.Timedelta(days=default_lookback_days)
+        fetch_start_per_site[site_str] = fetch_start
+
+    # Group by month (YYYY-MM) to batch similar date ranges
+    groups = {}
+    for site, start_date in fetch_start_per_site.items():
+        month_key = start_date.replace(day=1).strftime('%Y-%m')
+        if month_key not in groups:
+            groups[month_key] = {'start_date': start_date, 'sites': []}
+        groups[month_key]['sites'].append(site)
+        # Use the earliest start date in the group
+        if start_date < groups[month_key]['start_date']:
+            groups[month_key]['start_date'] = start_date
+
+    # Convert to list of tuples, sorted by start date (oldest first)
+    result = [(g['start_date'], g['sites']) for g in groups.values()]
+    result.sort(key=lambda x: x[0])
+
+    return result
+
+
+def print_smart_lookback_summary(
+    code_list: list,
+    coverage_per_site: dict[str, pd.Timestamp],
+    fetch_groups: list[tuple[pd.Timestamp, list[str]]]
+):
+    """Print a summary of the smart lookback analysis."""
+    now = pd.Timestamp.now().normalize()
+
+    print("\n" + "=" * 70)
+    print("SMART LOOKBACK ANALYSIS")
+    print("=" * 70)
+
+    # Categorize sites by coverage
+    recent = [s for s, d in coverage_per_site.items() if (now - d).days <= 7]
+    older = [s for s, d in coverage_per_site.items() if (now - d).days > 7]
+    no_coverage = [str(s) for s in code_list if str(s) not in coverage_per_site]
+
+    print(f"Total sites: {len(code_list)}")
+    print(f"  With recent data (<=7 days old): {len(recent)}")
+    print(f"  With older data (>7 days old):   {len(older)}")
+    print(f"  With no existing data:           {len(no_coverage)}")
+
+    print(f"\nFetch plan ({len(fetch_groups)} batches):")
+    print("-" * 70)
+    for start_date, sites in fetch_groups:
+        days = (now - start_date).days
+        print(f"  From {start_date.date()} ({days:>4} days to fetch): {len(sites):>3} sites")
+
+    if older:
+        print(f"\nSites with oldest coverage (top 5):")
+        oldest = sorted([(s, coverage_per_site[s]) for s in older], key=lambda x: x[1])[:5]
+        for site, date in oldest:
+            print(f"  {site}: last data {date.date()} ({(now - date).days} days ago)")
+
+    print("=" * 70 + "\n")
+
+    # Also log
+    logger.info(f"Smart lookback: {len(code_list)} sites in {len(fetch_groups)} batches")
+
+
 '''def get_runoff_data_for_sites_HF(ieh_hf_sdk=None, date_col='date', name_col='name',
                               discharge_col='discharge',
                               code_col='code', 
@@ -2390,31 +2769,70 @@ def get_runoff_data_for_sites_HF(ieh_hf_sdk=None, date_col='date', name_col='nam
         
         # Determine the date range based on mode
         if mode == 'operational':
-            # Operational mode: fetch only yesterday's data
+            # Operational mode: fetch only yesterday's data for all sites
             start_date = pd.Timestamp.now().normalize() - pd.Timedelta(days=1)
             logger.info(f"Operational mode: fetching data from {start_date.date()} onwards.")
-        else:
-            # Maintenance mode: use configurable lookback window
-            lookback_days = get_maintenance_lookback_days()
-            start_date = pd.Timestamp.now().normalize() - pd.Timedelta(days=lookback_days)
-            logger.info(f"Maintenance mode: fetching {lookback_days} days of data from {start_date.date()} onwards.")
-            
-        # Convert start_date to timezone-aware datetime
-        start_datetime = pd.Timestamp(start_date).replace(hour=0, minute=1)
-        start_datetime = start_datetime.tz_localize(target_timezone)
 
-        # Fetch data from iEH HF database for the calculated date range
-        logger.info(f"Fetching data from {start_datetime} to {end_datetime}")
-        db_average_data = get_daily_average_discharge_from_iEH_HF_for_multiple_sites(
-            ieh_hf_sdk=ieh_hf_sdk,
-            id_list=code_list,  # Use code_list (string codes) - API requires site_codes, not site_ids
-            start_datetime=start_datetime,
-            end_datetime=end_datetime,
-            target_timezone=target_timezone,
-            date_col=date_col,
-            discharge_col=discharge_col,
-            code_col=code_col
-        )
+            # Convert start_date to timezone-aware datetime
+            start_datetime = pd.Timestamp(start_date).replace(hour=0, minute=1)
+            start_datetime = start_datetime.tz_localize(target_timezone)
+
+            # Fetch data from iEH HF database
+            logger.info(f"Fetching data from {start_datetime} to {end_datetime}")
+            db_average_data = get_daily_average_discharge_from_iEH_HF_for_multiple_sites(
+                ieh_hf_sdk=ieh_hf_sdk,
+                id_list=code_list,
+                start_datetime=start_datetime,
+                end_datetime=end_datetime,
+                target_timezone=target_timezone,
+                date_col=date_col,
+                discharge_col=discharge_col,
+                code_col=code_col
+            )
+        else:
+            # Maintenance mode: use smart lookback per site
+            lookback_days = get_maintenance_lookback_days()
+
+            # Extract coverage from already-loaded data
+            coverage_per_site = get_latest_date_per_site(read_data, date_col, code_col)
+
+            # Calculate efficient fetch ranges
+            fetch_groups = calculate_fetch_ranges(
+                code_list=code_list,
+                coverage_per_site=coverage_per_site,
+                default_lookback_days=lookback_days,
+                end_date=pd.Timestamp.now().normalize()
+            )
+
+            # Print summary
+            print_smart_lookback_summary(code_list, coverage_per_site, fetch_groups)
+
+            # Fetch data in batches, grouped by start date
+            all_batch_data = []
+            for batch_start_date, batch_sites in fetch_groups:
+                # Convert to timezone-aware datetime
+                batch_start_datetime = pd.Timestamp(batch_start_date).replace(hour=0, minute=1)
+                batch_start_datetime = batch_start_datetime.tz_localize(target_timezone)
+
+                logger.info(f"Fetching {len(batch_sites)} sites from {batch_start_date.date()}")
+                batch_data = get_daily_average_discharge_from_iEH_HF_for_multiple_sites(
+                    ieh_hf_sdk=ieh_hf_sdk,
+                    id_list=batch_sites,
+                    start_datetime=batch_start_datetime,
+                    end_datetime=end_datetime,
+                    target_timezone=target_timezone,
+                    date_col=date_col,
+                    discharge_col=discharge_col,
+                    code_col=code_col
+                )
+                if not batch_data.empty:
+                    all_batch_data.append(batch_data)
+
+            # Combine all batch results
+            if all_batch_data:
+                db_average_data = pd.concat(all_batch_data, ignore_index=True)
+            else:
+                db_average_data = pd.DataFrame()
         
         # We are dealing with daily data, so we convert date_col to date
         if not db_average_data.empty:
