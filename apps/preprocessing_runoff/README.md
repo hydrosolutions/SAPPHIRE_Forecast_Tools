@@ -186,8 +186,8 @@ uv run preprocessing_runoff.py
 
 ### Maintenance Mode
 - **Purpose:** Gap filling and data quality updates
-- **Behavior:** Checks for Excel file changes, fetches configurable lookback window (default 30 days), updates differing values
-- **When to use:** Weekly scheduled maintenance, after data corrections, or when data issues are suspected
+- **Behavior:** Always rereads input Excel/CSV files, fetches configurable lookback window from database (default 120 days), merges and updates values
+- **When to use:** Weekly scheduled maintenance, after data corrections, when data issues are suspected, or when rows were accidentally deleted from output files
 
 ```bash
 uv run preprocessing_runoff.py --maintenance
@@ -197,15 +197,39 @@ PREPROCESSING_MODE=maintenance uv run preprocessing_runoff.py
 
 ### Configuration
 
-Module configuration is in `config.yaml`:
+Module behavior is controlled by `config.yaml`. This is particularly important for the **lookback window** which determines how far back maintenance mode fetches data to fill gaps.
+
 ```yaml
+# config.yaml
 maintenance:
-  lookback_days: 30  # Override with PREPROCESSING_MAINTENANCE_LOOKBACK_DAYS env var
+  # Number of days to look back when fetching data in maintenance mode.
+  # This determines how old a gap can be and still get filled from the database.
+  # Default: 120 days. Override with: PREPROCESSING_MAINTENANCE_LOOKBACK_DAYS
+  lookback_days: 120
 
 operational:
+  # Fetch yesterday's daily average discharge (WDDA variable)
   fetch_yesterday: true
+  # Fetch today's morning discharge (WDD variable)
   fetch_morning: true
+
+api:
+  # Number of records per page when fetching from iEasyHydro HF API.
+  # Higher values = fewer API calls but larger responses.
+  # Override with: PREPROCESSING_API_PAGE_SIZE
+  page_size: 1000
 ```
+
+**Key parameters:**
+
+| Parameter | Default | Env Override | Description |
+|-----------|---------|--------------|-------------|
+| `maintenance.lookback_days` | 120 | `PREPROCESSING_MAINTENANCE_LOOKBACK_DAYS` | Days of historical data to fetch in maintenance mode. Gaps older than this cannot be filled from the database. |
+| `operational.fetch_yesterday` | true | - | Whether to fetch yesterday's daily average discharge |
+| `operational.fetch_morning` | true | - | Whether to fetch today's morning discharge |
+| `api.page_size` | 1000 | `PREPROCESSING_API_PAGE_SIZE` | Records per API page (reduces round-trips) |
+
+**Note:** In maintenance mode, the module always rereads input Excel/CSV files to ensure data completeness before merging with database data. This ensures that gaps in the output file (e.g., accidentally deleted rows) are restored from the original source data.
 
 ## Development
 
@@ -237,7 +261,8 @@ uv run pytest test/ -v
 | `IEASYHYDROHF_USERNAME` | API username | .env file |
 | `IEASYHYDROHF_PASSWORD` | API password | .env file |
 | `PREPROCESSING_MODE` | Operating mode: `operational` (default) or `maintenance` | optional |
-| `PREPROCESSING_MAINTENANCE_LOOKBACK_DAYS` | Number of days to fetch in maintenance mode (default: 30) | optional |
+| `PREPROCESSING_MAINTENANCE_LOOKBACK_DAYS` | Number of days to fetch in maintenance mode (default: 120) | optional |
+| `PREPROCESSING_API_PAGE_SIZE` | Records per API page for iEasyHydro HF (default: 1000) | optional |
 
 See [doc/configuration.md](../../doc/configuration.md) for the complete list.
 
