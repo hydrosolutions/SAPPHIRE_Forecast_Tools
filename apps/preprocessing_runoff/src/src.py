@@ -263,7 +263,8 @@ def filter_roughly_for_outliers(combined_data, group_by='Code',
         raise ValueError(f"Column '{filter_col}' not found in the DataFrame.")
 
     # Drop rows with NaN in the group_by column
-    combined_data = combined_data.dropna(subset=[group_by])
+    # Use .copy() to avoid SettingWithCopyWarning when modifying the DataFrame later
+    combined_data = combined_data.dropna(subset=[group_by]).copy()
 
     # Replace empty places in the filter_col column with NaN
     combined_data[filter_col] = combined_data[filter_col].replace('', np.nan)
@@ -955,6 +956,152 @@ def process_hydro_HF_data(data):
                 })
     return pd.DataFrame(processed_data)
 
+
+def fetch_hydro_HF_data_robust(sdk, filters, site_codes, batch_size=10, max_workers=5):
+    """
+    Robustly fetch data from iEasyHydro HF API with automatic batching and fallback.
+
+    The API has complex limits based on combination of:
+    - Number of site codes
+    - Date range length
+    - Page size
+
+    This function handles these limits by:
+    1. Trying bulk request first (all site codes at once)
+    2. If that fails, batching site codes into smaller groups
+    3. If batches still fail, falling back to individual requests
+
+    Parameters:
+    ----------
+    sdk : IEasyHydroHFSDK
+        The SDK HF client instance
+    filters : dict
+        Base filters (variable_names, date range, etc.) - without site_codes
+    site_codes : list
+        List of site code strings to fetch data for
+    batch_size : int
+        Number of site codes per batch (default 10, which is API's safe limit)
+    max_workers : int
+        Max parallel workers for individual fallback requests
+
+    Returns:
+    -------
+    pandas.DataFrame
+        Combined DataFrame with all fetched data
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    # Validate inputs
+    if not site_codes:
+        logger.warning("fetch_hydro_HF_data_robust called with empty site_codes list!")
+        return pd.DataFrame()
+
+    if not isinstance(site_codes, list):
+        logger.warning(f"site_codes is not a list, got: {type(site_codes)}")
+        site_codes = list(site_codes) if site_codes else []
+
+    # Check if site_codes contains strings
+    non_string_codes = [c for c in site_codes if not isinstance(c, str)]
+    if non_string_codes:
+        logger.warning(f"site_codes contains non-string values: {non_string_codes[:5]}... Converting to strings.")
+        site_codes = [str(c) for c in site_codes]
+
+    logger.info(f"fetch_hydro_HF_data_robust: {len(site_codes)} site codes, filters: {filters}")
+
+    # Remove page_size from filters - let API use default (10) which is most reliable
+    safe_filters = {k: v for k, v in filters.items() if k != 'page_size'}
+
+    all_dataframes = []
+
+    def fetch_single_site(site_code):
+        """Fetch data for a single site."""
+        single_filters = safe_filters.copy()
+        single_filters['site_codes'] = [site_code]
+        try:
+            return fetch_and_format_hydro_HF_data(sdk, single_filters)
+        except Exception as e:
+            logger.warning(f"Failed to fetch data for site {site_code}: {e}")
+            return pd.DataFrame()
+
+    def fetch_batch(batch_codes):
+        """Fetch data for a batch of sites."""
+        batch_filters = safe_filters.copy()
+        batch_filters['site_codes'] = batch_codes
+        return fetch_and_format_hydro_HF_data(sdk, batch_filters)
+
+    # Strategy 1: Try bulk request with all site codes
+    logger.info(f"Attempting bulk request for {len(site_codes)} sites...")
+    logger.info(f"Site codes (first 10): {site_codes[:10]}")
+    logger.info(f"Filters: {safe_filters}")
+    bulk_filters = safe_filters.copy()
+    bulk_filters['site_codes'] = site_codes
+
+    response = sdk.get_data_values_for_site(filters=bulk_filters)
+
+    # Log the response type and key info for debugging
+    if isinstance(response, dict):
+        if 'status_code' in response:
+            logger.info(f"Bulk request failed with status: {response.get('status_code')}")
+            logger.info(f"Error text: {response.get('text', 'No text')[:200]}")
+        else:
+            logger.info(f"Bulk response keys: {list(response.keys())}")
+            logger.info(f"Bulk response count: {response.get('count', 'N/A')}")
+            results = response.get('results', [])
+            logger.info(f"Bulk response results count: {len(results)}")
+    else:
+        logger.info(f"Unexpected response type: {type(response)}")
+
+    if not (isinstance(response, dict) and 'status_code' in response):
+        # Bulk request succeeded - use the standard fetch function
+        logger.info("Bulk request succeeded, fetching all pages...")
+        return fetch_and_format_hydro_HF_data(sdk, bulk_filters)
+
+    # Strategy 2: Bulk failed - try batching
+    logger.info(f"Bulk request failed (422). Trying batched requests with batch_size={batch_size}...")
+
+    batches = [site_codes[i:i + batch_size] for i in range(0, len(site_codes), batch_size)]
+    batch_failed = False
+
+    for i, batch in enumerate(batches):
+        logger.debug(f"Fetching batch {i+1}/{len(batches)} ({len(batch)} sites)...")
+        try:
+            batch_df = fetch_batch(batch)
+            if not batch_df.empty:
+                all_dataframes.append(batch_df)
+        except Exception as e:
+            logger.warning(f"Batch {i+1} failed: {e}")
+            batch_failed = True
+            break
+
+    if not batch_failed and all_dataframes:
+        logger.info(f"Batched requests succeeded: {len(all_dataframes)} batches")
+        return pd.concat(all_dataframes, ignore_index=True) if all_dataframes else pd.DataFrame()
+
+    # Strategy 3: Batches failed - fall back to parallel individual requests
+    logger.info(f"Batched requests failed. Falling back to parallel individual requests ({max_workers} workers)...")
+    all_dataframes = []  # Reset
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(fetch_single_site, code): code for code in site_codes}
+        completed = 0
+        for future in as_completed(futures):
+            completed += 1
+            if completed % 20 == 0:
+                logger.info(f"Progress: {completed}/{len(site_codes)} sites...")
+            try:
+                df = future.result()
+                if not df.empty:
+                    all_dataframes.append(df)
+            except Exception as e:
+                logger.warning(f"Error fetching {futures[future]}: {e}")
+
+    logger.info(f"Individual requests completed: got data from {len(all_dataframes)} sites")
+
+    if all_dataframes:
+        return pd.concat(all_dataframes, ignore_index=True)
+    return pd.DataFrame()
+
+
 def fetch_and_format_hydro_HF_data(sdk, initial_filters):
     """
     Fetch all pages of data from the API and format each page into a DataFrame immediately.
@@ -1103,22 +1250,17 @@ def get_todays_morning_discharge_from_iEH_HF_for_multiple_sites(
 
     logger.debug(f"Reading morning discharge data for all sites from {start_datetime} to {end_datetime} (UTC as local time).")
 
-    from .config import get_api_page_size
-    page_size = get_api_page_size()
-
+    # Build base filters (without site_codes - those are passed separately to robust function)
     filters = {
-        "site_ids": id_list,
         "variable_names": ["WDD"],
         "local_date_time__gte": start_datetime.isoformat(),
-        "local_date_time__lte": end_datetime.isoformat(),
-        "page": 1,
-        "page_size": page_size,
+        "local_date_time__lte": end_datetime.isoformat(),  # Use __lte to include end date
     }
 
     try:
-        # Get data for all sites from the database
+        # Get data for all sites using robust fetching with automatic batching/fallback
         with ProfileTimer("fetch_WDD_morning_discharge", log_immediately=True):
-            db_df = fetch_and_format_hydro_HF_data(ieh_hf_sdk, filters)
+            db_df = fetch_hydro_HF_data_robust(ieh_hf_sdk, filters, site_codes=id_list)
         if db_df.empty:
             logger.info("No morning data found for the given date range.")
             return pd.DataFrame(columns=[date_col, discharge_col, code_col])
@@ -1199,23 +1341,29 @@ def get_daily_average_discharge_from_iEH_HF_for_multiple_sites(
 
     logger.debug(f"Reading daily average discharge data for all sites from {start_datetime} to {end_datetime} (UTC as local time).")
 
-    from .config import get_api_page_size
-    page_size = get_api_page_size()
-    logger.info(f"Using API page_size: {page_size}")
-
+    # Build base filters (without site_codes - those are passed separately to robust function)
     filters = {
-        "site_ids": id_list,
         "variable_names": ["WDDA"],
         "local_date_time__gte": start_datetime.isoformat(),
-        "local_date_time__lte": end_datetime.isoformat(),
-        "page": 1,
-        "page_size": page_size,
+        "local_date_time__lte": end_datetime.isoformat(),  # Use __lte to include end date
     }
 
+    # Debug: Log what we're about to fetch
+    print(f"[DEBUG] get_daily_average_discharge_from_iEH_HF_for_multiple_sites:")
+    print(f"[DEBUG]   id_list type: {type(id_list)}, length: {len(id_list) if id_list else 'None'}")
+    print(f"[DEBUG]   id_list first 5: {id_list[:5] if id_list else 'None'}")
+    print(f"[DEBUG]   date range: {start_datetime} to {end_datetime}")
+
     try:
-        # Get data for all sites from the database
+        # Get data for all sites using robust fetching with automatic batching/fallback
         with ProfileTimer("fetch_WDDA_daily_average", log_immediately=True):
-            db_df = fetch_and_format_hydro_HF_data(ieh_hf_sdk, filters)
+            db_df = fetch_hydro_HF_data_robust(ieh_hf_sdk, filters, site_codes=id_list)
+
+        print(f"[DEBUG]   db_df shape: {db_df.shape if not db_df.empty else 'empty'}")
+        if not db_df.empty:
+            print(f"[DEBUG]   db_df columns: {db_df.columns.tolist()}")
+            print(f"[DEBUG]   db_df head:\n{db_df.head()}")
+
         if db_df.empty:
             logger.info(f"No daily average data found for the given date range.")
             return pd.DataFrame(columns=[date_col, discharge_col, code_col])
@@ -1616,7 +1764,8 @@ def get_runoff_data(ieh_sdk=None, date_col='date', discharge_col='discharge', na
                 read_data = pd.concat([read_data, db_morning_data], ignore_index=True)
 
         # Drop rows where 'code' is "NA"
-        read_data = read_data[read_data[code_col] != 'NA']
+        # Use .copy() to avoid SettingWithCopyWarning when modifying columns
+        read_data = read_data[read_data[code_col] != 'NA'].copy()
 
         # Cast the 'code' column to string
         read_data[code_col] = read_data[code_col].astype(str)
@@ -1808,7 +1957,8 @@ def get_runoff_data_for_sites(ieh_sdk=None, date_col='date',
                 read_data = pd.concat([read_data, db_morning_data], ignore_index=True)
 
         # Drop rows where 'code' is "NA"
-        read_data = read_data[read_data[code_col] != 'NA']
+        # Use .copy() to avoid SettingWithCopyWarning when modifying columns
+        read_data = read_data[read_data[code_col] != 'NA'].copy()
 
         # Cast the 'code' column to string
         read_data[code_col] = read_data[code_col].astype(str)
@@ -1825,7 +1975,7 @@ def get_runoff_data_for_sites(ieh_sdk=None, date_col='date',
         read_data[discharge_col] = read_data[discharge_col].round(3)
 
         return read_data
-    
+
 
 def _load_cached_data(date_col: str, discharge_col: str, name_col: str, 
                       code_col: str, code_list: list) -> pd.DataFrame:
@@ -2106,9 +2256,10 @@ def _read_runoff_data_by_organization(organization, date_col, discharge_col, nam
             read_data = pd.concat([read_data, db_average_data], ignore_index=True)
         if not db_morning_data.empty:
             read_data = pd.concat([read_data, db_morning_data], ignore_index=True)
-        
+
         # Drop rows where 'code' is "NA"
-        read_data = read_data[read_data[code_col] != 'NA']
+        # Use .copy() to avoid SettingWithCopyWarning when modifying columns
+        read_data = read_data[read_data[code_col] != 'NA'].copy()
 
         # Cast the 'code' column to string
         read_data[code_col] = read_data[code_col].astype(str)
@@ -2255,13 +2406,13 @@ def get_runoff_data_for_sites_HF(ieh_hf_sdk=None, date_col='date', name_col='nam
         # Fetch data from iEH HF database for the calculated date range
         logger.info(f"Fetching data from {start_datetime} to {end_datetime}")
         db_average_data = get_daily_average_discharge_from_iEH_HF_for_multiple_sites(
-            ieh_hf_sdk=ieh_hf_sdk, 
-            id_list=id_list,
+            ieh_hf_sdk=ieh_hf_sdk,
+            id_list=code_list,  # Use code_list (string codes) - API requires site_codes, not site_ids
             start_datetime=start_datetime,
             end_datetime=end_datetime,
             target_timezone=target_timezone,
-            date_col=date_col, 
-            discharge_col=discharge_col, 
+            date_col=date_col,
+            discharge_col=discharge_col,
             code_col=code_col
         )
         
@@ -2279,11 +2430,11 @@ def get_runoff_data_for_sites_HF(ieh_hf_sdk=None, date_col='date', name_col='nam
             
         # Get today's morning data if necessary
         db_morning_data = get_todays_morning_discharge_from_iEH_HF_for_multiple_sites(
-            ieh_hf_sdk=ieh_hf_sdk, 
-            id_list=id_list,
+            ieh_hf_sdk=ieh_hf_sdk,
+            id_list=code_list,  # Use code_list (string codes) - API requires site_codes, not site_ids
             target_timezone=target_timezone,
-            date_col=date_col, 
-            discharge_col=discharge_col, 
+            date_col=date_col,
+            discharge_col=discharge_col,
             code_col=code_col
         )
         
@@ -2291,9 +2442,10 @@ def get_runoff_data_for_sites_HF(ieh_hf_sdk=None, date_col='date', name_col='nam
             db_morning_data = standardize_date_column(db_morning_data, date_col=date_col)
             logger.info(f"Retrieved {len(db_morning_data)} morning records for {db_morning_data[date_col].min()}")
             read_data = pd.concat([read_data, db_morning_data], ignore_index=True)
-        
+
         # Drop rows where 'code' is "NA"
-        read_data = read_data[read_data[code_col] != 'NA']
+        # Use .copy() to avoid SettingWithCopyWarning when modifying columns
+        read_data = read_data[read_data[code_col] != 'NA'].copy()
 
         # Cast the 'code' column to string
         read_data[code_col] = read_data[code_col].astype(str)

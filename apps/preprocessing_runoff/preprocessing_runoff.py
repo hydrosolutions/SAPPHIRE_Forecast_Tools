@@ -247,10 +247,30 @@ def main():
             logger.error(f"Error while accessing iEasyHydro HF SDK: {e}")
             raise e
 
-    # Concatenate the two lists
-    fc_sites = fc_sites_pentad + fc_sites_decad
-    site_codes = site_codes_pentad + site_codes_decad
-    site_ids = site_ids_pentad + site_ids_decad
+    # Concatenate and deduplicate site codes
+    # Many sites appear in both pentad and decad lists, so we deduplicate to avoid
+    # redundant API requests (halves ~124 → ~60 unique codes)
+    combined_codes = site_codes_pentad + site_codes_decad
+    unique_codes = list(dict.fromkeys(combined_codes))  # Preserves order, removes duplicates
+
+    # Build deduplicated fc_sites and site_ids lists
+    # Use a dict to keep only the first occurrence of each site code
+    seen_codes = set()
+    fc_sites = []
+    site_codes = []
+    site_ids = []
+    for site, code, site_id in zip(
+        fc_sites_pentad + fc_sites_decad,
+        site_codes_pentad + site_codes_decad,
+        site_ids_pentad + site_ids_decad
+    ):
+        if code not in seen_codes:
+            seen_codes.add(code)
+            fc_sites.append(site)
+            site_codes.append(code)
+            site_ids.append(site_id)
+
+    logger.info(f"Deduplicated site codes: {len(combined_codes)} → {len(site_codes)} unique sites")
     end_time = time.time()
     time_get_forecast_sites = end_time - start_time
 
