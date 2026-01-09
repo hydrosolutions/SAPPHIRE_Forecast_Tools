@@ -1029,6 +1029,7 @@ def print_data_retrieval_summary(
     """
     missing_sites = set(requested_sites) - sites_with_data
     coverage_pct = (len(sites_with_data) / len(requested_sites) * 100) if requested_sites else 0
+    missing_pct = 100 - coverage_pct
 
     print("\n" + "=" * 70)
     print(f"DATA RETRIEVAL SUMMARY - {variable_name}")
@@ -1041,6 +1042,16 @@ def print_data_retrieval_summary(
     print(f"Sites with data:    {len(sites_with_data)} ({coverage_pct:.1f}%)")
     print(f"Sites without data: {len(missing_sites)}")
     print(f"Total records:      {total_records}")
+
+    # Phase 1 requirement: Warning when >20% of sites return no data
+    if missing_pct > 20:
+        print("\n" + "!" * 70)
+        print(f"WARNING: {missing_pct:.1f}% of sites returned no data (threshold: 20%)")
+        print("!" * 70)
+        logger.warning(
+            f"High data loss for {variable_name}: {missing_pct:.1f}% of sites "
+            f"({len(missing_sites)}/{len(requested_sites)}) returned no data"
+        )
 
     if missing_sites:
         print("\nSITES WITHOUT DISCHARGE DATA:")
@@ -2307,28 +2318,41 @@ def _merge_with_update(existing_data: pd.DataFrame, new_data: pd.DataFrame,
         pd.DataFrame: Merged data with updates applied.
     """
     if existing_data.empty:
+        print(f"[MERGE] Existing data empty, returning {len(new_data)} new records")
         return new_data
     if new_data.empty:
+        print(f"[MERGE] New data empty, returning {len(existing_data)} existing records")
         return existing_data
-    
+
+    print(f"[MERGE] Existing records: {len(existing_data)}")
+    print(f"[MERGE] New records:      {len(new_data)}")
+
     # Create a copy to avoid modifying the original
     result = existing_data.copy()
-    
+
     # Set index for efficient lookup
     result_indexed = result.set_index([code_col, date_col])
     new_indexed = new_data.set_index([code_col, date_col])
-    
+
+    # Count overlapping keys (potential updates)
+    overlapping_keys = result_indexed.index.intersection(new_indexed.index)
+    print(f"[MERGE] Overlapping keys (potential updates): {len(overlapping_keys)}")
+
     # Update existing values with new values where they exist
     result_indexed.update(new_indexed)
-    
+
     # Add any new rows that weren't in the existing data
     new_rows = new_indexed[~new_indexed.index.isin(result_indexed.index)]
+    print(f"[MERGE] New rows added:   {len(new_rows)}")
     if not new_rows.empty:
         result_indexed = pd.concat([result_indexed, new_rows])
-    
+
     # Reset index and return
     result = result_indexed.reset_index()
-    
+
+    print(f"[MERGE] Final records:    {len(result)}")
+    logger.info(f"Merge complete: {len(existing_data)} existing + {len(new_rows)} new = {len(result)} total")
+
     return result
 
 
@@ -2880,9 +2904,19 @@ def get_runoff_data_for_sites_HF(ieh_hf_sdk=None, date_col='date', name_col='nam
         
         # Remove duplicate data (in case DB had overlapping data)
         read_data = read_data.drop_duplicates(subset=[code_col, date_col], keep='last')
-        
+
         # Sort data by code and date
         read_data = read_data.sort_values([code_col, date_col])
+
+        # Final output summary
+        print("\n" + "=" * 70)
+        print("FINAL OUTPUT SUMMARY")
+        print("=" * 70)
+        print(f"Total records:  {len(read_data)}")
+        print(f"Unique sites:   {read_data[code_col].nunique()}")
+        print(f"Date range:     {read_data[date_col].min().date()} to {read_data[date_col].max().date()}")
+        print("=" * 70 + "\n")
+        logger.info(f"Final output: {len(read_data)} records, {read_data[code_col].nunique()} sites")
 
         return read_data
 
