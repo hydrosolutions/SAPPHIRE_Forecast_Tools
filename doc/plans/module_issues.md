@@ -53,7 +53,7 @@ Initial diagnosis was incorrect (page_size=1000 is not valid - API limit is 10).
 ---
 
 ### PREPQ-003: iEasyHydro HF Data Retrieval Validation
-**Status**: In Progress
+**Status**: Ready for Server Testing
 **Priority**: High
 **Discovered**: 2025-01-09
 **File**: [`issues/gi_PR-002_data_retrieval_validation.md`](issues/gi_PR-002_data_retrieval_validation.md)
@@ -65,6 +65,26 @@ Comprehensive data retrieval improvements including:
 - Duplicate site code handling (prefer manual over automatic)
 - Data validation and logging
 - Site caching for operational mode
+- Reliability fixes (empty DataFrame check, undefined variable, stale cache warning)
+
+All phases complete. Needs server deployment testing before archiving.
+
+---
+
+### PREPQ-004: Swiss Data Source Integration & Module Refactoring
+**Status**: Not Started
+**Priority**: Medium
+**Discovered**: 2025-01-12
+**File**: [`issues/gi_PR-003_swiss_data_source_refactor.md`](issues/gi_PR-003_swiss_data_source_refactor.md)
+**GitHub**: —
+
+Add Swiss demo data as a data source while refactoring `src/src.py` (~4037 lines) into logical modules:
+- Remove legacy iEasyHydro code (only HF supported going forward)
+- Extract API clients, processing, I/O into separate modules
+- Create abstract DataSource interface for multiple backends
+- Establish pattern for future data sources (Nepal)
+
+Blocked by: Swiss data source API documentation/access
 
 ---
 

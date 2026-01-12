@@ -285,7 +285,11 @@ def main():
                 # Note: fc_sites objects are not cached, but we don't need them for data fetching
                 fc_sites = []  # Empty - not needed for HF data fetching
                 cache_used = True
-                logger.info(f"[CONFIG] Loaded {len(site_codes)} sites from cache")
+                # Warn if cache is stale (still usable but may be outdated)
+                if cached_data.get('is_stale', False):
+                    logger.warning(f"[CONFIG] Using STALE cache ({len(site_codes)} sites) - consider running maintenance mode")
+                else:
+                    logger.info(f"[CONFIG] Loaded {len(site_codes)} sites from cache")
             else:
                 logger.warning("[CONFIG] Site cache missing or expired - fetching from SDK (slow)")
 
@@ -343,11 +347,19 @@ def main():
                 mode=mode,
         )
         logger.info("Runoff data read from iEasyHydro HF SDK")
+
+    # Check if we got any data before accessing DataFrame methods
+    if runoff_data is None or (hasattr(runoff_data, 'empty') and runoff_data.empty):
+        logger.error(f"No river runoff data found.\n"
+                     f"No forecasts can be produced.\n"
+                     f"Please check your configuration.\n")
+        sys.exit(1)
+
     logger.debug(f"[DATA] head of runoff data:\n{runoff_data.head(5)}")
     logger.debug(f"[DATA] tail of runoff data:\n{runoff_data.tail(5)}")
     logger.debug(f"[DATA] columns of runoff data: {runoff_data.columns.tolist()}")
     logger.debug(f"[DATA] types of columns in runoff data: {runoff_data.dtypes.to_dict()}")
-    # Print whetehr or not the date column is in datetime format
+    # Print whether or not the date column is in datetime format
     if 'date' in runoff_data.columns:
         import pandas as pd
         if runoff_data['date'].dtype == 'datetime64[ns]':
@@ -367,13 +379,6 @@ def main():
     logger.debug(f"[DATA] runoff data for site 16059:\n{runoff_data[runoff_data['code'] == 16059].tail(10)}")
     end_time = time.time()
     time_get_runoff_data = end_time - start_time
-
-    # Test if there is any data
-    if runoff_data is None:
-        logger.error(f"No river runoff data found.\n"
-                     f"No forecasts can be produced.\n"
-                     f"Please check your configuration.\n")
-        sys.exit(1)
 
     # Filtering for outliers
     start_time = time.time()
@@ -400,7 +405,7 @@ def main():
     # Only required for iEasyHydro, not for iEasyHydro HF
     if os.getenv('ieasyhydroforecast_connect_to_iEH') == 'True':
         start_time = time.time()
-        if ieh_hf_sdk is not None:
+        if ieh_sdk is not None:
             hydrograph = src.add_dangerous_discharge_from_sites(
                 hydrograph,
                 code_col='code',
