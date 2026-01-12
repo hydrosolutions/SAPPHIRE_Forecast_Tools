@@ -287,8 +287,13 @@ def filter_roughly_for_outliers(combined_data, group_by='Code',
     combined_data = combined_data.reset_index(drop=True)
 
     # Apply the function to each group
-    combined_data = combined_data.groupby([group_by, 'month'], as_index=False).apply(
-        filter_group, filter_col, date_col)
+    # Note: FutureWarning about include_groups is expected - the filter_group function
+    # needs access to group_by column for logging. Full fix deferred to Phase 8.
+    import warnings
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="DataFrameGroupBy.apply operated on the grouping columns")
+        combined_data = combined_data.groupby([group_by, 'month'], as_index=False).apply(
+            filter_group, filter_col, date_col)
 
     # Ungroup the DataFrame
     combined_data = combined_data.reset_index(drop=True)
@@ -351,7 +356,7 @@ def read_runoff_data_from_csv_files(filename, code_list, date_col='date',
     try:
         df = pd.read_csv(filename, header=0, usecols=[0, 1, 2, 3],
                          names=[date_col, code_col, discharge_col, name_col])
-        print(f"read_runoff_data_from_csv_files: raw df.head(): \n{df.head()}")
+        logger.debug(f"[DATA] read_runoff_data_from_csv_files: raw df.head():\n{df.head()}")
     except FileNotFoundError:
         raise FileNotFoundError(f"File '{filename}' not found.")
     except pd.errors.ParserError:
@@ -377,7 +382,7 @@ def read_runoff_data_from_csv_files(filename, code_list, date_col='date',
     if code_list is not None:
         df = df[df[code_col].astype(str).isin(code_list)]
 
-    print(f"read_runoff_data_from_csv_files: final df.head: \n{df.head()}")
+    logger.debug(f"[DATA] read_runoff_data_from_csv_files: final df.head:\n{df.head()}")
 
     return df
 
@@ -950,14 +955,14 @@ def process_hydro_HF_data(data):
         elif st == 'meteo':
             meteo_sites.add(code)
 
-    print(f"[DEBUG process_hydro_HF_data] Total results: {len(results)}")
-    print(f"[DEBUG process_hydro_HF_data] Sites with hydro data: {len(hydro_sites)}")
-    print(f"[DEBUG process_hydro_HF_data] Sites with ONLY meteo data: {len(meteo_sites - hydro_sites)}")
+    logger.debug(f"[DATA] process_hydro_HF_data: Total results: {len(results)}")
+    logger.debug(f"[DATA] process_hydro_HF_data: Sites with hydro data: {len(hydro_sites)}")
+    logger.debug(f"[DATA] process_hydro_HF_data: Sites with ONLY meteo data: {len(meteo_sites - hydro_sites)}")
 
     # Sites that have meteo but not hydro data
     meteo_only = meteo_sites - hydro_sites
     if meteo_only:
-        print(f"[DEBUG process_hydro_HF_data] Meteo-only site codes: {sorted(meteo_only)}")
+        logger.debug(f"[DATA] process_hydro_HF_data: Meteo-only site codes: {sorted(meteo_only)}")
 
     hydro_data = [
         site_data for site_data in results
@@ -996,15 +1001,14 @@ def process_hydro_HF_data(data):
                 })
 
     if skipped_null_count > 0:
-        print(f"[DEBUG process_hydro_HF_data] Skipped {skipped_null_count} records with null values")
-        logger.debug(f"Skipped {skipped_null_count} records with null values")
+        logger.debug(f"[DATA] process_hydro_HF_data: Skipped {skipped_null_count} records with null values")
 
-    print(f"[DEBUG process_hydro_HF_data] Final processed records: {len(processed_data)}")
+    logger.debug(f"[DATA] process_hydro_HF_data: Final processed records: {len(processed_data)}")
 
     return pd.DataFrame(processed_data)
 
 
-def print_data_retrieval_summary(
+def log_data_retrieval_summary(
     variable_name: str,
     requested_sites: list,
     sites_with_data: set,
@@ -1012,7 +1016,7 @@ def print_data_retrieval_summary(
     date_range: tuple = None
 ):
     """
-    Print a formatted summary report of the data retrieval results.
+    Log a summary of data retrieval results with appropriate log levels.
 
     Parameters:
     ----------
@@ -1031,49 +1035,30 @@ def print_data_retrieval_summary(
     coverage_pct = (len(sites_with_data) / len(requested_sites) * 100) if requested_sites else 0
     missing_pct = 100 - coverage_pct
 
-    print("\n" + "=" * 70)
-    print(f"DATA RETRIEVAL SUMMARY - {variable_name}")
-    print("=" * 70)
+    # Build date range string if provided
+    date_str = f" ({date_range[0]} to {date_range[1]})" if date_range else ""
 
-    if date_range:
-        print(f"Date range: {date_range[0]} to {date_range[1]}")
+    # Main summary line (INFO)
+    logger.info(
+        f"[API] Response {variable_name}{date_str}: "
+        f"{total_records} records from {len(sites_with_data)}/{len(requested_sites)} sites ({coverage_pct:.1f}%)"
+    )
 
-    print(f"Sites requested:    {len(requested_sites)}")
-    print(f"Sites with data:    {len(sites_with_data)} ({coverage_pct:.1f}%)")
-    print(f"Sites without data: {len(missing_sites)}")
-    print(f"Total records:      {total_records}")
-
-    # Phase 1 requirement: Warning when >20% of sites return no data
+    # Warning when >20% of sites return no data
     if missing_pct > 20:
-        print("\n" + "!" * 70)
-        print(f"WARNING: {missing_pct:.1f}% of sites returned no data (threshold: 20%)")
-        print("!" * 70)
         logger.warning(
-            f"High data loss for {variable_name}: {missing_pct:.1f}% of sites "
+            f"[API] High data loss for {variable_name}: {missing_pct:.1f}% of sites "
             f"({len(missing_sites)}/{len(requested_sites)}) returned no data"
         )
 
+    # Log missing sites (WARNING level if any missing)
     if missing_sites:
-        print("\nSITES WITHOUT DISCHARGE DATA:")
-        print("-" * 70)
-        print("The following sites are registered as discharge sites but returned")
-        print("no hydro data. This may be a data quality issue in iEasyHydro HF.")
-        print(f"\nMissing site codes ({len(missing_sites)}):")
-        # Print in sorted order, multiple per line
         sorted_missing = sorted(missing_sites)
-        for i in range(0, len(sorted_missing), 8):
-            chunk = sorted_missing[i:i + 8]
-            print(f"  {', '.join(chunk)}")
-        print("\nACTION: Report these sites to iEasyHydro HF administrators.")
+        logger.warning(f"[API] Sites without {variable_name} data: {sorted_missing}")
 
-    print("=" * 70 + "\n")
 
-    # Also log for persistence
-    logger.info(f"Data retrieval summary for {variable_name}: "
-                f"{len(sites_with_data)}/{len(requested_sites)} sites, "
-                f"{total_records} records")
-    if missing_sites:
-        logger.warning(f"Sites without {variable_name} data: {sorted(missing_sites)}")
+# Backwards compatibility alias
+print_data_retrieval_summary = log_data_retrieval_summary
 
 
 def fetch_hydro_HF_data_robust(sdk, filters, site_codes, batch_size=10, max_workers=5):
@@ -1129,11 +1114,14 @@ def fetch_hydro_HF_data_robust(sdk, filters, site_codes, batch_size=10, max_work
         logger.warning(f"site_codes contains non-string values: {non_string_codes[:5]}... Converting to strings.")
         site_codes = [str(c) for c in site_codes]
 
-    print(f"\n[COUNT VALIDATION] ========== fetch_hydro_HF_data_robust ==========")
-    print(f"[COUNT VALIDATION] site_codes count: {len(site_codes)}")
-    print(f"[COUNT VALIDATION] site_codes (first 10): {site_codes[:10]}")
-    print(f"[COUNT VALIDATION] filters: {filters}")
-    logger.info(f"fetch_hydro_HF_data_robust: {len(site_codes)} site codes, filters: {filters}")
+    # Extract request details for logging
+    variable_names = filters.get('variable_names', ['unknown'])
+    var_str = variable_names[0] if variable_names else 'unknown'
+    date_start = filters.get('local_date_time__gte', 'N/A')
+    date_end = filters.get('local_date_time__lte', 'N/A')
+
+    logger.info(f"[API] Request: {len(site_codes)} sites, {var_str}, {date_start} to {date_end}")
+    logger.debug(f"[API] Site codes: {site_codes[:10]}{'...' if len(site_codes) > 10 else ''}")
 
     # Remove page_size from filters - let API use default (10) which is most reliable
     safe_filters = {k: v for k, v in filters.items() if k != 'page_size'}
@@ -1157,10 +1145,7 @@ def fetch_hydro_HF_data_robust(sdk, filters, site_codes, batch_size=10, max_work
         return fetch_and_format_hydro_HF_data(sdk, batch_filters)
 
     # Strategy 1: Try bulk request with all site codes
-    print(f"[COUNT VALIDATION] Attempting bulk request for {len(site_codes)} sites...")
-    logger.info(f"Attempting bulk request for {len(site_codes)} sites...")
-    logger.info(f"Site codes (first 10): {site_codes[:10]}")
-    logger.info(f"Filters: {safe_filters}")
+    logger.debug(f"[API] Attempting bulk request for {len(site_codes)} sites...")
     bulk_filters = safe_filters.copy()
     bulk_filters['site_codes'] = site_codes
 
@@ -1171,27 +1156,18 @@ def fetch_hydro_HF_data_robust(sdk, filters, site_codes, batch_size=10, max_work
         if 'status_code' in response:
             status_code = response.get('status_code')
             error_text = response.get('text', 'No text')[:500]
-            print(f"[COUNT VALIDATION] ERROR: Bulk request failed with status {status_code}")
-            print(f"[COUNT VALIDATION] Error text: {error_text}")
-            logger.error(f"Bulk request failed with status: {status_code}")
-            logger.error(f"Error text: {error_text}")
-            # DEBUG MODE: Fail loudly on 422 errors
+            logger.error(f"[API] Bulk request failed with status {status_code}: {error_text}")
             raise RuntimeError(f"Bulk request failed with status {status_code}: {error_text}")
         else:
             total_count = response.get('count', 'N/A')
             results_count = len(response.get('results', []))
-            print(f"[COUNT VALIDATION] Bulk response: count={total_count}, results_in_first_page={results_count}")
-            logger.info(f"Bulk response keys: {list(response.keys())}")
-            logger.info(f"Bulk response count: {total_count}")
-            logger.info(f"Bulk response results count: {results_count}")
+            logger.debug(f"[API] Bulk response: count={total_count}, first_page={results_count} records")
     else:
-        print(f"[COUNT VALIDATION] Unexpected response type: {type(response)}")
-        logger.info(f"Unexpected response type: {type(response)}")
+        logger.warning(f"[API] Unexpected response type: {type(response)}")
 
     if not (isinstance(response, dict) and 'status_code' in response):
         # Bulk request succeeded - use the standard fetch function
-        print(f"[COUNT VALIDATION] Bulk request succeeded, fetching all pages...")
-        logger.info("Bulk request succeeded, fetching all pages...")
+        logger.debug("[API] Bulk request succeeded, fetching all pages...")
         result_df = fetch_and_format_hydro_HF_data(sdk, bulk_filters)
 
         # Extract info for summary report
@@ -1217,29 +1193,25 @@ def fetch_hydro_HF_data_robust(sdk, filters, site_codes, batch_size=10, max_work
         return result_df
 
     # Strategy 2: Bulk failed - try batching (should not reach here in debug mode)
-    print(f"[COUNT VALIDATION] Bulk request failed. Trying batched requests with batch_size={batch_size}...")
-    logger.info(f"Bulk request failed (422). Trying batched requests with batch_size={batch_size}...")
+    logger.info(f"[API] Bulk failed, trying batched requests (batch_size={batch_size})...")
 
     batches = [site_codes[i:i + batch_size] for i in range(0, len(site_codes), batch_size)]
     batch_failed = False
 
     for i, batch in enumerate(batches):
-        print(f"[COUNT VALIDATION] Fetching batch {i+1}/{len(batches)} ({len(batch)} sites)...")
-        logger.debug(f"Fetching batch {i+1}/{len(batches)} ({len(batch)} sites)...")
+        logger.debug(f"[API] Fetching batch {i+1}/{len(batches)} ({len(batch)} sites)...")
         try:
             batch_df = fetch_batch(batch)
             if not batch_df.empty:
                 all_dataframes.append(batch_df)
-                print(f"[COUNT VALIDATION] Batch {i+1}: {len(batch_df)} records")
+                logger.debug(f"[API] Batch {i+1}: {len(batch_df)} records")
         except Exception as e:
-            print(f"[COUNT VALIDATION] ERROR: Batch {i+1} failed: {e}")
-            logger.error(f"Batch {i+1} failed: {e}")
+            logger.error(f"[API] Batch {i+1} failed: {e}")
             raise  # Re-raise for debugging
 
     if not batch_failed and all_dataframes:
         result_df = pd.concat(all_dataframes, ignore_index=True) if all_dataframes else pd.DataFrame()
-        print(f"[COUNT VALIDATION] Batched requests succeeded: {len(result_df)} total records")
-        logger.info(f"Batched requests succeeded: {len(all_dataframes)} batches")
+        logger.debug(f"[API] Batched requests succeeded: {len(result_df)} total records")
 
         # Print summary report
         variable_name = filters.get('variable_names', ['unknown'])[0] if filters.get('variable_names') else 'unknown'
@@ -1257,8 +1229,7 @@ def fetch_hydro_HF_data_robust(sdk, filters, site_codes, batch_size=10, max_work
         return result_df
 
     # Strategy 3: Batches failed - fall back to parallel individual requests
-    print(f"[COUNT VALIDATION] Batched requests failed. Falling back to individual requests...")
-    logger.info(f"Batched requests failed. Falling back to parallel individual requests ({max_workers} workers)...")
+    logger.info(f"[API] Batches failed, falling back to individual requests ({max_workers} workers)...")
     all_dataframes = []  # Reset
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -1267,19 +1238,16 @@ def fetch_hydro_HF_data_robust(sdk, filters, site_codes, batch_size=10, max_work
         for future in as_completed(futures):
             completed += 1
             if completed % 20 == 0:
-                print(f"[COUNT VALIDATION] Progress: {completed}/{len(site_codes)} sites...")
-                logger.info(f"Progress: {completed}/{len(site_codes)} sites...")
+                logger.info(f"[API] Progress: {completed}/{len(site_codes)} sites...")
             try:
                 df = future.result()
                 if not df.empty:
                     all_dataframes.append(df)
             except Exception as e:
-                print(f"[COUNT VALIDATION] ERROR: Failed to fetch {futures[future]}: {e}")
-                logger.error(f"Error fetching {futures[future]}: {e}")
+                logger.error(f"[API] Error fetching {futures[future]}: {e}")
                 raise  # Re-raise for debugging
 
-    print(f"[COUNT VALIDATION] Individual requests completed: got data from {len(all_dataframes)} sites")
-    logger.info(f"Individual requests completed: got data from {len(all_dataframes)} sites")
+    logger.debug(f"[API] Individual requests completed: data from {len(all_dataframes)} sites")
 
     if all_dataframes:
         result_df = pd.concat(all_dataframes, ignore_index=True)
@@ -1368,8 +1336,8 @@ def fetch_and_format_hydro_HF_data(sdk, initial_filters):
         return None
     
     # Step 1: Fetch first page to get total count
-    print(f"[COUNT VALIDATION] Fetching page 1 to determine total count...")
-    print(f"[COUNT VALIDATION] Filters: {filters}")
+    logger.debug(f"[API] COUNT VALIDATION: Fetching page 1 to determine total count...")
+    logger.debug(f"[API] COUNT VALIDATION: Filters: {filters}")
     filters['page'] = 1
     
     with ProfileTimer("sdk_api_call_page_1", log_immediately=True):
@@ -1380,16 +1348,15 @@ def fetch_and_format_hydro_HF_data(sdk, initial_filters):
         status_code = first_response.get('status_code')
         error_text = first_response.get('text', 'No error text')[:500]
         error_msg = f"First page request failed with status {status_code}: {error_text}"
-        logger.error(error_msg)
-        print(f"[COUNT VALIDATION] ERROR: {error_msg}")
+        logger.error(f"[API] COUNT VALIDATION ERROR: {error_msg}")
         raise RuntimeError(error_msg)
     
     # Get total count and calculate pages
     total_count = first_response.get('count', 0) if isinstance(first_response, dict) else 0
     total_pages = (total_count + PAGE_SIZE - 1) // PAGE_SIZE
     
-    print(f"[COUNT VALIDATION] API reports total_count={total_count}, total_pages={total_pages}")
-    logger.info(f"Total records: {total_count}, Total pages: {total_pages}")
+    logger.debug(f"[API] COUNT VALIDATION: API reports total_count={total_count}, total_pages={total_pages}")
+    logger.info(f"[API] Total records: {total_count}, Total pages: {total_pages}")
     
     # Process first page
     records_from_page_1 = 0
@@ -1400,14 +1367,12 @@ def fetch_and_format_hydro_HF_data(sdk, initial_filters):
                 first_df[col] = pd.to_datetime(first_df[col])
         all_data_frames.append(first_df)
         records_from_page_1 = len(first_df)
-        print(f"[COUNT VALIDATION] Page 1: {records_from_page_1} records processed")
-        logger.info(f"Processed page 1: {records_from_page_1} records")
+        logger.debug(f"[API] COUNT VALIDATION: Page 1: {records_from_page_1} records processed")
     
     # Step 2: Fetch remaining pages in parallel
     if total_pages > 1:
         pages_to_fetch = list(range(2, total_pages + 1))
-        print(f"[COUNT VALIDATION] Fetching pages 2-{total_pages} in parallel...")
-        logger.info(f"Fetching pages 2-{total_pages} in parallel...")
+        logger.debug(f"[API] COUNT VALIDATION: Fetching pages 2-{total_pages} in parallel...")
         
         with ProfileTimer(f"parallel_fetch_pages_2_to_{total_pages}", log_immediately=True):
             with ThreadPoolExecutor(max_workers=10) as executor:
@@ -1425,20 +1390,18 @@ def fetch_and_format_hydro_HF_data(sdk, initial_filters):
                         # Re-raise to stop execution
                         raise
         
-        print(f"[COUNT VALIDATION] Parallel fetch complete: {len(all_data_frames)} pages with data")
-        logger.info(f"Parallel fetch complete: {len(all_data_frames)} pages with data")
-    
+        logger.debug(f"[API] COUNT VALIDATION: Parallel fetch complete: {len(all_data_frames)} pages with data")
+
     # Count validation
     total_records_fetched = sum(len(df) for df in all_data_frames)
-    print(f"[COUNT VALIDATION] Total records fetched: {total_records_fetched}")
-    print(f"[COUNT VALIDATION] Expected from API: {total_count}")
-    
+    logger.debug(f"[API] COUNT VALIDATION: Total records fetched: {total_records_fetched}")
+    logger.debug(f"[API] COUNT VALIDATION: Expected from API: {total_count}")
+
     if total_records_fetched != total_count:
-        print(f"[COUNT VALIDATION] WARNING: Record count mismatch! Fetched {total_records_fetched}, expected {total_count}")
-        logger.warning(f"Record count mismatch: fetched {total_records_fetched}, API reported {total_count}")
-    
+        logger.warning(f"[API] COUNT VALIDATION: Record count mismatch! Fetched {total_records_fetched}, expected {total_count}")
+
     if failed_pages:
-        print(f"[COUNT VALIDATION] ERROR: Failed pages: {failed_pages}")
+        logger.error(f"[API] COUNT VALIDATION ERROR: Failed pages: {failed_pages}")
         raise RuntimeError(f"Failed to fetch pages: {failed_pages}")
     
     # Combine all DataFrames
@@ -1456,11 +1419,11 @@ def fetch_and_format_hydro_HF_data(sdk, initial_filters):
         
         # Final count validation
         unique_sites = combined_df['station_code'].nunique() if 'station_code' in combined_df.columns else 0
-        print(f"[COUNT VALIDATION] Final DataFrame: {len(combined_df)} records from {unique_sites} unique sites")
-        logger.info(f"Total records fetched: {len(combined_df)} from {unique_sites} sites")
+        logger.debug(f"[API] COUNT VALIDATION: Final DataFrame: {len(combined_df)} records from {unique_sites} unique sites")
+        logger.info(f"[API] Total records fetched: {len(combined_df)} from {unique_sites} sites")
         return combined_df
     else:
-        print(f"[COUNT VALIDATION] No data frames to combine - returning empty DataFrame")
+        logger.debug(f"[API] COUNT VALIDATION: No data frames to combine - returning empty DataFrame")
         return pd.DataFrame(columns=['station_code', 'timestamp_local', 'timestamp_utc', 'value'])
 
 def get_todays_morning_discharge_from_iEH_HF_for_multiple_sites(
@@ -1615,20 +1578,20 @@ def get_daily_average_discharge_from_iEH_HF_for_multiple_sites(
     }
 
     # Debug: Log what we're about to fetch
-    print(f"[DEBUG] get_daily_average_discharge_from_iEH_HF_for_multiple_sites:")
-    print(f"[DEBUG]   id_list type: {type(id_list)}, length: {len(id_list) if id_list else 'None'}")
-    print(f"[DEBUG]   id_list first 5: {id_list[:5] if id_list else 'None'}")
-    print(f"[DEBUG]   date range: {start_datetime} to {end_datetime}")
+    logger.debug(f"[API] get_daily_average_discharge_from_iEH_HF_for_multiple_sites:")
+    logger.debug(f"[API]   id_list type: {type(id_list)}, length: {len(id_list) if id_list else 'None'}")
+    logger.debug(f"[API]   id_list first 5: {id_list[:5] if id_list else 'None'}")
+    logger.debug(f"[API]   date range: {start_datetime} to {end_datetime}")
 
     try:
         # Get data for all sites using robust fetching with automatic batching/fallback
         with ProfileTimer("fetch_WDDA_daily_average", log_immediately=True):
             db_df = fetch_hydro_HF_data_robust(ieh_hf_sdk, filters, site_codes=id_list)
 
-        print(f"[DEBUG]   db_df shape: {db_df.shape if not db_df.empty else 'empty'}")
+        logger.debug(f"[API]   db_df shape: {db_df.shape if not db_df.empty else 'empty'}")
         if not db_df.empty:
-            print(f"[DEBUG]   db_df columns: {db_df.columns.tolist()}")
-            print(f"[DEBUG]   db_df head:\n{db_df.head()}")
+            logger.debug(f"[API]   db_df columns: {db_df.columns.tolist()}")
+            logger.debug(f"[API]   db_df head:\n{db_df.head()}")
 
         if db_df.empty:
             logger.info(f"No daily average data found for the given date range.")
@@ -2318,14 +2281,13 @@ def _merge_with_update(existing_data: pd.DataFrame, new_data: pd.DataFrame,
         pd.DataFrame: Merged data with updates applied.
     """
     if existing_data.empty:
-        print(f"[MERGE] Existing data empty, returning {len(new_data)} new records")
+        logger.debug(f"[MERGE] Existing data empty, returning {len(new_data)} new records")
         return new_data
     if new_data.empty:
-        print(f"[MERGE] New data empty, returning {len(existing_data)} existing records")
+        logger.debug(f"[MERGE] New data empty, returning {len(existing_data)} existing records")
         return existing_data
 
-    print(f"[MERGE] Existing records: {len(existing_data)}")
-    print(f"[MERGE] New records:      {len(new_data)}")
+    logger.debug(f"[MERGE] Existing: {len(existing_data)}, New: {len(new_data)}")
 
     # Create a copy to avoid modifying the original
     result = existing_data.copy()
@@ -2336,22 +2298,20 @@ def _merge_with_update(existing_data: pd.DataFrame, new_data: pd.DataFrame,
 
     # Count overlapping keys (potential updates)
     overlapping_keys = result_indexed.index.intersection(new_indexed.index)
-    print(f"[MERGE] Overlapping keys (potential updates): {len(overlapping_keys)}")
+    logger.debug(f"[MERGE] Overlapping keys (updates): {len(overlapping_keys)}")
 
     # Update existing values with new values where they exist
     result_indexed.update(new_indexed)
 
     # Add any new rows that weren't in the existing data
     new_rows = new_indexed[~new_indexed.index.isin(result_indexed.index)]
-    print(f"[MERGE] New rows added:   {len(new_rows)}")
     if not new_rows.empty:
         result_indexed = pd.concat([result_indexed, new_rows])
 
     # Reset index and return
     result = result_indexed.reset_index()
 
-    print(f"[MERGE] Final records:    {len(result)}")
-    logger.info(f"Merge complete: {len(existing_data)} existing + {len(new_rows)} new = {len(result)} total")
+    logger.info(f"[MERGE] Complete: {len(existing_data)} existing + {len(new_rows)} new = {len(result)} total")
 
     return result
 
@@ -2474,39 +2434,39 @@ def print_smart_lookback_summary(
     coverage_per_site: dict[str, pd.Timestamp],
     fetch_groups: list[tuple[pd.Timestamp, list[str]]]
 ):
-    """Print a summary of the smart lookback analysis."""
+    """Log a summary of the smart lookback analysis."""
     now = pd.Timestamp.now().normalize()
 
-    print("\n" + "=" * 70)
-    print("SMART LOOKBACK ANALYSIS")
-    print("=" * 70)
+    logger.debug("[DATA] " + "=" * 70)
+    logger.debug("[DATA] SMART LOOKBACK ANALYSIS")
+    logger.debug("[DATA] " + "=" * 70)
 
     # Categorize sites by coverage
     recent = [s for s, d in coverage_per_site.items() if (now - d).days <= 7]
     older = [s for s, d in coverage_per_site.items() if (now - d).days > 7]
     no_coverage = [str(s) for s in code_list if str(s) not in coverage_per_site]
 
-    print(f"Total sites: {len(code_list)}")
-    print(f"  With recent data (<=7 days old): {len(recent)}")
-    print(f"  With older data (>7 days old):   {len(older)}")
-    print(f"  With no existing data:           {len(no_coverage)}")
+    logger.debug(f"[DATA] Total sites: {len(code_list)}")
+    logger.debug(f"[DATA]   With recent data (<=7 days old): {len(recent)}")
+    logger.debug(f"[DATA]   With older data (>7 days old):   {len(older)}")
+    logger.debug(f"[DATA]   With no existing data:           {len(no_coverage)}")
 
-    print(f"\nFetch plan ({len(fetch_groups)} batches):")
-    print("-" * 70)
+    logger.debug(f"[DATA] Fetch plan ({len(fetch_groups)} batches):")
+    logger.debug("[DATA] " + "-" * 70)
     for start_date, sites in fetch_groups:
         days = (now - start_date).days
-        print(f"  From {start_date.date()} ({days:>4} days to fetch): {len(sites):>3} sites")
+        logger.debug(f"[DATA]   From {start_date.date()} ({days:>4} days to fetch): {len(sites):>3} sites")
 
     if older:
-        print(f"\nSites with oldest coverage (top 5):")
+        logger.debug(f"[DATA] Sites with oldest coverage (top 5):")
         oldest = sorted([(s, coverage_per_site[s]) for s in older], key=lambda x: x[1])[:5]
         for site, date in oldest:
-            print(f"  {site}: last data {date.date()} ({(now - date).days} days ago)")
+            logger.debug(f"[DATA]   {site}: last data {date.date()} ({(now - date).days} days ago)")
 
-    print("=" * 70 + "\n")
+    logger.debug("[DATA] " + "=" * 70)
 
-    # Also log
-    logger.info(f"Smart lookback: {len(code_list)} sites in {len(fetch_groups)} batches")
+    # Also log at INFO level for summary
+    logger.info(f"[DATA] Smart lookback: {len(code_list)} sites in {len(fetch_groups)} batches")
 
 
 '''def get_runoff_data_for_sites_HF(ieh_hf_sdk=None, date_col='date', name_col='name',
@@ -2909,14 +2869,13 @@ def get_runoff_data_for_sites_HF(ieh_hf_sdk=None, date_col='date', name_col='nam
         read_data = read_data.sort_values([code_col, date_col])
 
         # Final output summary
-        print("\n" + "=" * 70)
-        print("FINAL OUTPUT SUMMARY")
-        print("=" * 70)
-        print(f"Total records:  {len(read_data)}")
-        print(f"Unique sites:   {read_data[code_col].nunique()}")
-        print(f"Date range:     {read_data[date_col].min().date()} to {read_data[date_col].max().date()}")
-        print("=" * 70 + "\n")
-        logger.info(f"Final output: {len(read_data)} records, {read_data[code_col].nunique()} sites")
+        date_min = read_data[date_col].min().date()
+        date_max = read_data[date_col].max().date()
+        site_count = read_data[code_col].nunique()
+        logger.info(
+            f"[OUTPUT] Final: {len(read_data)} records, {site_count} sites, "
+            f"{date_min} to {date_max}"
+        )
 
         return read_data
 
@@ -3013,40 +2972,33 @@ def inspect_site_data(hydrograph_data, site_code='15189'):
     """Show data for specific site at beginning, around Feb 28, and end of year."""
     # Filter for the specific site
     site_data = hydrograph_data[hydrograph_data['code'] == site_code].sort_values('date')
-    
+
     # First 5 days of the year
-    print("FIRST 5 DAYS:")
-    print(site_data.head(5))
-    print("\n")
-    
+    logger.debug(f"[DATA] FIRST 5 DAYS:\n{site_data.head(5)}")
+
     # Feb 28 and surrounding days (10 days before and after)
     # Create a mask for February 28th
     feb_28_mask = (site_data['date'].dt.month == 2) & (site_data['date'].dt.day == 28)
-    
+
     # Check if February 28th exists in the data
     if feb_28_mask.any():
         # Get the date of February 28th
         feb_28_date = site_data[feb_28_mask]['date'].iloc[0]
-        
+
         # Find the dates 10 days before and 10 days after
         start_date = feb_28_date - pd.Timedelta(days=10)
         end_date = feb_28_date + pd.Timedelta(days=10)
-        
+
         # Filter the data for the date range
-        date_range_data = site_data[(site_data['date'] >= start_date) & 
+        date_range_data = site_data[(site_data['date'] >= start_date) &
                                     (site_data['date'] <= end_date)]
-        
-        print("DAYS AROUND FEB 28:")
-        print(date_range_data)
+
+        logger.debug(f"[DATA] DAYS AROUND FEB 28:\n{date_range_data}")
     else:
-        print("DAYS AROUND FEB 28:")
-        print("February 28th not found in the data")
-    
-    print("\n")
-    
+        logger.debug("[DATA] DAYS AROUND FEB 28: February 28th not found in the data")
+
     # Last 5 days of the year
-    print("LAST 5 DAYS:")
-    print(site_data.tail(5))
+    logger.debug(f"[DATA] LAST 5 DAYS:\n{site_data.tail(5)}")
 
 def from_daily_time_series_to_hydrograph(data_df: pd.DataFrame,
                                         date_col='date', discharge_col='discharge', code_col='code', name_col='name'):
@@ -3188,7 +3140,7 @@ def add_dangerous_discharge_from_sites(hydrograph_data: pd.DataFrame,
 
     # For each unique code, get the dangerous discharge value from the iEasyHydro database
     for site in site_list:
-        print(f"\n\n\n\nsite: {site.code}: {site.qdanger}")
+        logger.debug(f"[DATA] site: {site.code}: qdanger={site.qdanger}")
         try:
             dangerous_discharge = site.qdanger
 
@@ -3260,8 +3212,7 @@ def write_daily_time_series_data_to_csv(data: pd.DataFrame, column_list=["code",
     # Test if the intermediate data path exists. If not, create it.
     if not os.path.exists(intermediate_data_path):
         os.makedirs(intermediate_data_path)
-        logger.info(f"Created directory {intermediate_data_path}.")
-        print(f"Created directory {intermediate_data_path}.")
+        logger.info(f"[OUTPUT] Created directory {intermediate_data_path}.")
 
     # Get the path to the intermediate data folder from the environmental
     # variables and the name of the ieasyforecast_analysis_daily_file.
@@ -3271,9 +3222,9 @@ def write_daily_time_series_data_to_csv(data: pd.DataFrame, column_list=["code",
             intermediate_data_path,
             os.getenv("ieasyforecast_daily_discharge_file"))
     except Exception as e:
-        logger.error("Could not get the output file path.")
-        print(intermediate_data_path)
-        print(os.getenv("ieasyforecast_daily_discharge_file"))
+        logger.error("[OUTPUT] Could not get the output file path.")
+        logger.error(f"[OUTPUT] intermediate_data_path: {intermediate_data_path}")
+        logger.error(f"[OUTPUT] ieasyforecast_daily_discharge_file: {os.getenv('ieasyforecast_daily_discharge_file')}")
         raise e
 
     # Test if the columns in column list are available in the dataframe
@@ -3295,21 +3246,17 @@ def write_daily_time_series_data_to_csv(data: pd.DataFrame, column_list=["code",
         data['date'] = pd.to_datetime(data['date'], errors='coerce').dt.strftime('%Y-%m-%d')
 
     # Write the data to a csv file. Raise an error if this does not work.
-    # If the data is written to the csv file, log a message that the data
-    # has been written.
-    print(f"DEBUG: Trying to write time series data to {output_file_path} with columns {column_list}")
+    # Write data to CSV file
+    logger.debug(f"[OUTPUT] Writing time series to {output_file_path}")
     try:
         ret = data.reset_index(drop=True)[column_list].to_csv(output_file_path, index=False)
         if ret is None:
-            print(f"Time seris data written to {output_file_path}.")
-            logger.info(f"Time series data written to {output_file_path}.")
+            logger.info(f"[OUTPUT] Time series written: {output_file_path}")
             return ret
         else:
-            print(f"Could not write the time series data to {output_file_path}.")
-            logger.error(f"Could not write the time series data to {output_file_path}.")
+            logger.error(f"[OUTPUT] Failed to write time series: {output_file_path}")
     except Exception as e:
-        print(f"Could not write the time series data to {output_file_path}.")
-        logger.error(f"Could not write the time series data to {output_file_path}.")
+        logger.error(f"[OUTPUT] Failed to write time series: {output_file_path} - {e}")
         raise e
 
 def write_daily_hydrograph_data_to_csv(data: pd.DataFrame, column_list=["code", "date", "discharge"]):
@@ -3338,9 +3285,9 @@ def write_daily_hydrograph_data_to_csv(data: pd.DataFrame, column_list=["code", 
             os.getenv("ieasyforecast_intermediate_data_path"),
             os.getenv("ieasyforecast_hydrograph_day_file"))
     except Exception as e:
-        logger.error("Could not get the output file path.")
-        print(os.getenv("ieasyforecast_intermediate_data_path"))
-        print(os.getenv("ieasyforecast_hydrograph_day_file"))
+        logger.error("[OUTPUT] Could not get the output file path.")
+        logger.error(f"[OUTPUT] ieasyforecast_intermediate_data_path: {os.getenv('ieasyforecast_intermediate_data_path')}")
+        logger.error(f"[OUTPUT] ieasyforecast_hydrograph_day_file: {os.getenv('ieasyforecast_hydrograph_day_file')}")
         raise e
 
     # Test if the columns in column list are available in the dataframe
@@ -3361,23 +3308,730 @@ def write_daily_hydrograph_data_to_csv(data: pd.DataFrame, column_list=["code", 
     # Test if we have rows where count is 0. If so, drop these rows.
     data = data[data['count'] != 0]
 
-    # Write the data to a csv file. Raise an error if this does not work.
-    # If the data is written to the csv file, log a message that the data
-    # has been written.
-    print(f"DEBUG: Trying to write hydrograph data to {output_file_path} with columns {column_list}")
+    # Write data to CSV file
+    logger.debug(f"[OUTPUT] Writing hydrograph to {output_file_path}")
     try:
         ret = data.reset_index(drop=True)[column_list].to_csv(output_file_path, index=False)
         if ret is None:
-            print(f"Hydrograph data written to {output_file_path}.")
-            logger.info(f"Hydrograph data written to {output_file_path}.")
+            logger.info(f"[OUTPUT] Hydrograph written: {output_file_path}")
             return ret
         else:
-            print(f"Could not write the hydrograph data to {output_file_path}.")
-            logger.error(f"Could not write the hydrograph data to {output_file_path}.")
+            logger.error(f"[OUTPUT] Failed to write hydrograph: {output_file_path}")
     except Exception as e:
-        print(f"Could not write the hydrograph data to {output_file_path}.")
-        logger.error(f"Could not write the hydrograph data to {output_file_path}.")
+        logger.error(f"[OUTPUT] Failed to write hydrograph: {output_file_path} - {e}")
         raise e
 
 
+# =============================================================================
+# Post-Write Validation Functions (Phase 3)
+# =============================================================================
+
+def validate_recent_data(
+    output_df: pd.DataFrame,
+    expected_sites: list,
+    date_col: str = 'date',
+    code_col: str = 'code',
+    max_age_days: int = 3
+) -> dict:
+    """
+    Validate that each site has data within the specified number of days.
+
+    Forecasts require recent data (typically last 3 days). This function
+    identifies sites missing recent data that may cause forecast failures.
+
+    Args:
+        output_df: DataFrame with discharge data (must have date and code columns)
+        expected_sites: List of site codes that should have data
+        date_col: Name of the date column
+        code_col: Name of the site code column
+        max_age_days: Maximum age of data in days (default: 3)
+
+    Returns:
+        dict with:
+        - sites_with_recent_data: list of sites with data within max_age_days
+        - sites_missing_recent_data: list of sites WITHOUT recent data
+        - latest_date_per_site: dict of site_code -> latest date (as string)
+        - reference_date: the date used as "today" for comparison
+        - max_age_days: the threshold used
+    """
+    if output_df.empty:
+        return {
+            'sites_with_recent_data': [],
+            'sites_missing_recent_data': list(expected_sites),
+            'latest_date_per_site': {},
+            'reference_date': pd.Timestamp.now().normalize().strftime('%Y-%m-%d'),
+            'max_age_days': max_age_days
+        }
+
+    # Ensure date column is datetime
+    df = output_df.copy()
+    df[date_col] = pd.to_datetime(df[date_col])
+
+    # Ensure code column is string for consistent comparison
+    df[code_col] = df[code_col].astype(str)
+    expected_sites_str = [str(s) for s in expected_sites]
+
+    # Reference date (today at midnight)
+    reference_date = pd.Timestamp.now().normalize()
+    cutoff_date = reference_date - pd.Timedelta(days=max_age_days)
+
+    # Get latest date per site
+    latest_dates = df.groupby(code_col)[date_col].max().to_dict()
+
+    sites_with_recent = []
+    sites_missing_recent = []
+
+    for site in expected_sites_str:
+        if site in latest_dates:
+            latest = latest_dates[site]
+            if latest >= cutoff_date:
+                sites_with_recent.append(site)
+            else:
+                sites_missing_recent.append(site)
+        else:
+            # Site not in data at all
+            sites_missing_recent.append(site)
+
+    # Convert dates to strings for JSON serialization
+    latest_date_strings = {
+        site: date.strftime('%Y-%m-%d') if pd.notna(date) else None
+        for site, date in latest_dates.items()
+    }
+
+    return {
+        'sites_with_recent_data': sites_with_recent,
+        'sites_missing_recent_data': sites_missing_recent,
+        'latest_date_per_site': latest_date_strings,
+        'reference_date': reference_date.strftime('%Y-%m-%d'),
+        'max_age_days': max_age_days
+    }
+
+
+def load_reliability_stats(stats_file: str) -> dict:
+    """
+    Load site reliability statistics from JSON file.
+
+    Args:
+        stats_file: Path to the reliability stats JSON file
+
+    Returns:
+        dict with site_code -> stats mapping, or empty dict if file doesn't exist
+    """
+    if not os.path.exists(stats_file):
+        logger.debug(f"[DATA] Reliability stats file not found: {stats_file}")
+        return {}
+
+    try:
+        with open(stats_file, 'r') as f:
+            stats = json.load(f)
+        logger.debug(f"[DATA] Loaded reliability stats for {len(stats)} sites")
+        return stats
+    except Exception as e:
+        logger.warning(f"[DATA] Failed to load reliability stats: {e}")
+        return {}
+
+
+def save_reliability_stats(stats_file: str, stats: dict) -> bool:
+    """
+    Save site reliability statistics to JSON file.
+
+    Args:
+        stats_file: Path to the reliability stats JSON file
+        stats: dict with site_code -> stats mapping
+
+    Returns:
+        True if saved successfully, False otherwise
+    """
+    try:
+        # Ensure directory exists
+        os.makedirs(os.path.dirname(stats_file), exist_ok=True)
+
+        with open(stats_file, 'w') as f:
+            json.dump(stats, f, indent=2)
+        logger.debug(f"[DATA] Saved reliability stats for {len(stats)} sites")
+        return True
+    except Exception as e:
+        logger.error(f"[DATA] Failed to save reliability stats: {e}")
+        return False
+
+
+def update_reliability_stats(
+    stats: dict,
+    validation_result: dict,
+    reference_date: str
+) -> dict:
+    """
+    Update reliability statistics based on validation results.
+
+    Args:
+        stats: Current reliability stats dict (site_code -> stats)
+        validation_result: Result from validate_recent_data()
+        reference_date: Date of this validation run (YYYY-MM-DD)
+
+    Returns:
+        Updated stats dict
+    """
+    sites_with_data = set(validation_result['sites_with_recent_data'])
+    sites_missing_data = set(validation_result['sites_missing_recent_data'])
+    all_sites = sites_with_data | sites_missing_data
+
+    for site in all_sites:
+        if site not in stats:
+            stats[site] = {
+                'checks': 0,
+                'recent_data_present': 0,
+                'reliability_pct': 0.0,
+                'last_gap_date': None
+            }
+
+        stats[site]['checks'] += 1
+
+        if site in sites_with_data:
+            stats[site]['recent_data_present'] += 1
+        else:
+            stats[site]['last_gap_date'] = reference_date
+
+        # Recalculate reliability percentage
+        checks = stats[site]['checks']
+        present = stats[site]['recent_data_present']
+        stats[site]['reliability_pct'] = round(100 * present / checks, 1) if checks > 0 else 0.0
+
+    return stats
+
+
+def log_validation_summary(
+    validation_result: dict,
+    stats: dict,
+    reliability_threshold: float = 80.0
+) -> None:
+    """
+    Log a summary of the validation results.
+
+    Args:
+        validation_result: Result from validate_recent_data()
+        stats: Reliability stats dict
+        reliability_threshold: Percentage below which sites are flagged (default: 80%)
+    """
+    sites_with = validation_result['sites_with_recent_data']
+    sites_missing = validation_result['sites_missing_recent_data']
+    latest_dates = validation_result['latest_date_per_site']
+    max_age = validation_result['max_age_days']
+    total = len(sites_with) + len(sites_missing)
+
+    if total == 0:
+        logger.warning("[DATA] No sites to validate")
+        return
+
+    pct_with_data = 100 * len(sites_with) / total
+
+    logger.info(f"[DATA] === Recent Data Validation ===")
+    logger.info(f"[DATA] Sites checked: {total}")
+    logger.info(f"[DATA] Sites with data in last {max_age} days: {len(sites_with)} ({pct_with_data:.1f}%)")
+    logger.info(f"[DATA] Sites missing recent data: {len(sites_missing)}")
+
+    if sites_missing:
+        logger.warning(f"[DATA] MISSING RECENT DATA (forecast may fail):")
+        for site in sorted(sites_missing):
+            latest = latest_dates.get(site, 'never')
+            reliability = stats.get(site, {}).get('reliability_pct', 'N/A')
+            if isinstance(reliability, float):
+                reliability = f"{reliability:.0f}%"
+            logger.warning(f"[DATA]   - {site}: Last data {latest} (reliability: {reliability})")
+
+    # Find low reliability sites
+    low_reliability = [
+        (site, s['reliability_pct'])
+        for site, s in stats.items()
+        if s['checks'] >= 5 and s['reliability_pct'] < reliability_threshold
+    ]
+
+    if low_reliability:
+        logger.warning(f"[DATA] LOW RELIABILITY SITES (< {reliability_threshold:.0f}% over recent checks):")
+        for site, pct in sorted(low_reliability, key=lambda x: x[1]):
+            logger.warning(f"[DATA]   - {site}: {pct:.0f}% reliability")
+
+
+def run_post_write_validation(
+    output_df: pd.DataFrame,
+    expected_sites: list,
+    stats_file: str,
+    date_col: str = 'date',
+    code_col: str = 'code',
+    max_age_days: int = 3,
+    reliability_threshold: float = 80.0
+) -> dict:
+    """
+    Run full post-write validation: check recent data and update reliability stats.
+
+    This is the main entry point for Phase 3 validation.
+
+    Args:
+        output_df: DataFrame with discharge data
+        expected_sites: List of site codes that should have data
+        stats_file: Path to reliability stats JSON file
+        date_col: Name of the date column
+        code_col: Name of the site code column
+        max_age_days: Maximum age of data in days (default: 3)
+        reliability_threshold: Percentage below which sites are flagged (default: 80%)
+
+    Returns:
+        Validation result dict (same as validate_recent_data output)
+    """
+    # Validate recent data
+    validation_result = validate_recent_data(
+        output_df, expected_sites, date_col, code_col, max_age_days
+    )
+
+    # Load existing stats
+    stats = load_reliability_stats(stats_file)
+
+    # Update stats
+    stats = update_reliability_stats(
+        stats, validation_result, validation_result['reference_date']
+    )
+
+    # Save updated stats
+    save_reliability_stats(stats_file, stats)
+
+    # Log summary
+    log_validation_summary(validation_result, stats, reliability_threshold)
+
+    return validation_result
+
+
+# =============================================================================
+# Spot-Check Validation Functions (Phase 4)
+# =============================================================================
+
+def get_spot_check_sites() -> list:
+    """
+    Get list of spot-check site codes from environment variable.
+
+    Environment variable:
+    - IEASYHYDRO_SPOTCHECK_SITES (comma-separated site codes)
+
+    Returns:
+        list of site codes (strings), or empty list if not configured
+    """
+    sites_str = os.getenv('IEASYHYDRO_SPOTCHECK_SITES')
+    if sites_str:
+        sites = [s.strip() for s in sites_str.split(',') if s.strip()]
+        if sites:
+            logger.debug(f"[DATA] Spot-check sites from IEASYHYDRO_SPOTCHECK_SITES: {sites}")
+            return sites
+
+    logger.debug("[DATA] No spot-check sites configured")
+    return []
+
+
+def spot_check_sites(
+    sdk,
+    site_codes: list,
+    output_df: pd.DataFrame,
+    date_col: str = 'date',
+    code_col: str = 'code',
+    value_col: str = 'discharge',
+    target_timezone=None
+) -> dict:
+    """
+    Verify data for spot-check sites by comparing output values against API.
+
+    For each spot-check site:
+    1. Get the latest date and value from output_df
+    2. Fetch the latest available value from API
+    3. Compare the dates and values
+
+    Args:
+        sdk: iEasyHydro HF SDK instance
+        site_codes: List of site codes to spot-check
+        output_df: DataFrame with discharge data
+        date_col: Name of the date column
+        code_col: Name of the site code column
+        value_col: Name of the value column
+        target_timezone: Timezone for API queries (not used, kept for compatibility)
+
+    Returns:
+        dict with:
+        - results: dict of site_code -> {output_date, output_value, api_date, api_value, match, error}
+        - summary: {checked, matched, mismatched, errors}
+    """
+    if not site_codes:
+        return {'results': {}, 'summary': {'checked': 0, 'matched': 0, 'mismatched': 0, 'errors': 0}}
+
+    if output_df.empty:
+        logger.warning("[DATA] Spot-check: output DataFrame is empty")
+        return {'results': {}, 'summary': {'checked': 0, 'matched': 0, 'mismatched': 0, 'errors': 0}}
+
+    # Ensure proper types
+    df = output_df.copy()
+    df[date_col] = pd.to_datetime(df[date_col])
+    df[code_col] = df[code_col].astype(str)
+
+    results = {}
+    matched = 0
+    mismatched = 0
+    errors = 0
+
+    for site_code in site_codes:
+        site_code_str = str(site_code)
+        result = {
+            'output_date': None,
+            'output_value': None,
+            'api_date': None,
+            'api_value': None,
+            'match': None,
+            'error': None
+        }
+
+        # Get latest value from output
+        site_data = df[df[code_col] == site_code_str]
+        if site_data.empty:
+            result['error'] = 'Site not in output data'
+            errors += 1
+            results[site_code_str] = result
+            continue
+
+        # Get latest non-null value
+        site_data_with_values = site_data[site_data[value_col].notna()]
+        if site_data_with_values.empty:
+            result['error'] = 'Site has no values in output data'
+            errors += 1
+            results[site_code_str] = result
+            continue
+
+        latest_row = site_data_with_values.loc[site_data_with_values[date_col].idxmax()]
+        output_date = latest_row[date_col]
+        output_value = latest_row[value_col]
+
+        result['output_date'] = output_date.strftime('%Y-%m-%d')
+        result['output_value'] = float(output_value)
+
+        # Fetch latest available data from API (last 30 days to find most recent)
+        try:
+            end_date = dt.datetime.now()
+            start_date = end_date - dt.timedelta(days=30)
+
+            filters = {
+                "site_codes": [site_code_str],  # Must be a list
+                "variable_names": ["WDDA"],  # Daily average discharge
+                "local_date_time__gte": start_date.strftime('%Y-%m-%dT00:00:00'),
+                "local_date_time__lte": end_date.strftime('%Y-%m-%dT23:59:59'),
+                "page": 1,
+                "page_size": 10,  # API limit
+            }
+
+            logger.debug(f"[DATA] Spot-check {site_code_str}: Querying API with filters: {filters}")
+            response = sdk.get_data_values_for_site(filters=filters)
+
+            if isinstance(response, dict) and 'status_code' in response:
+                # Log full response for debugging
+                logger.warning(f"[DATA] Spot-check {site_code_str}: Full API error response: {response}")
+                result['error'] = f"API error: {response.get('status_code')} - {response.get('detail', response.get('message', 'unknown'))}"
+                errors += 1
+            elif isinstance(response, dict) and 'results' in response:
+                api_results = response.get('results', [])
+
+                # Extract all data points and find the latest
+                all_values = []
+                for item in api_results:
+                    if item.get('station_type') == 'hydro':
+                        data_list = item.get('data', [])
+                        for data_item in data_list:
+                            values = data_item.get('values', [])
+                            for v in values:
+                                if v.get('value') is not None and v.get('timestamp_local'):
+                                    try:
+                                        # Parse the date from API
+                                        date_str = v['timestamp_local']
+                                        # Handle various date formats
+                                        if 'T' in date_str:
+                                            api_dt = dt.datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+                                        else:
+                                            api_dt = dt.datetime.strptime(date_str, '%Y-%m-%d')
+                                        all_values.append({
+                                            'date': api_dt.date(),
+                                            'value': float(v['value'])
+                                        })
+                                    except (ValueError, KeyError) as e:
+                                        logger.debug(f"[DATA] Spot-check {site_code_str}: Could not parse date: {e}")
+
+                if not all_values:
+                    result['error'] = 'No data from API in last 30 days'
+                    errors += 1
+                else:
+                    # Find the latest value
+                    latest_api = max(all_values, key=lambda x: x['date'])
+                    result['api_date'] = latest_api['date'].strftime('%Y-%m-%d')
+                    result['api_value'] = latest_api['value']
+
+                    # Compare: dates should match and values should be close
+                    output_date_only = output_date.date() if hasattr(output_date, 'date') else output_date
+
+                    if output_date_only == latest_api['date']:
+                        # Same date - compare values
+                        tolerance = 0.001
+                        diff = abs(result['output_value'] - result['api_value'])
+                        result['match'] = diff < tolerance
+                        if result['match']:
+                            matched += 1
+                        else:
+                            mismatched += 1
+                    else:
+                        # Different dates - this is a mismatch (data sync issue)
+                        result['match'] = False
+                        result['error'] = f"Date mismatch: output={result['output_date']}, api={result['api_date']}"
+                        mismatched += 1
+            else:
+                result['error'] = 'Unexpected API response format'
+                errors += 1
+
+        except Exception as e:
+            import traceback
+            logger.error(f"[DATA] Spot-check {site_code_str}: Exception during API call: {e}")
+            logger.debug(f"[DATA] Spot-check {site_code_str}: Stack trace:\n{traceback.format_exc()}")
+            result['error'] = str(e)
+            errors += 1
+
+        results[site_code_str] = result
+
+    return {
+        'results': results,
+        'summary': {
+            'checked': len(site_codes),
+            'matched': matched,
+            'mismatched': mismatched,
+            'errors': errors
+        }
+    }
+
+
+def log_spot_check_summary(spot_check_result: dict) -> None:
+    """
+    Log a summary of the spot-check validation results.
+
+    Args:
+        spot_check_result: Result from spot_check_sites()
+    """
+    results = spot_check_result.get('results', {})
+    summary = spot_check_result.get('summary', {})
+
+    if summary.get('checked', 0) == 0:
+        logger.debug("[DATA] Spot-check: No sites configured")
+        return
+
+    logger.info(f"[DATA] === Spot-Check Validation ===")
+    logger.info(f"[DATA] Sites checked: {summary['checked']}")
+    logger.info(f"[DATA] Matched: {summary['matched']}, Mismatched: {summary['mismatched']}, Errors: {summary['errors']}")
+
+    # Report details for mismatches and errors
+    for site, result in results.items():
+        if result.get('error'):
+            logger.warning(f"[DATA] Spot-check {site}: ERROR - {result['error']}")
+        elif result.get('match') is False:
+            logger.warning(
+                f"[DATA] Spot-check {site}: MISMATCH - "
+                f"output={result['output_value']} ({result['output_date']}), "
+                f"api={result['api_value']} ({result.get('api_date', 'N/A')})"
+            )
+        else:
+            logger.debug(
+                f"[DATA] Spot-check {site}: OK - value={result['output_value']} "
+                f"(date: {result['output_date']})"
+            )
+
+
+def run_spot_check_validation(
+    sdk,
+    output_df: pd.DataFrame,
+    target_timezone=None,
+    date_col: str = 'date',
+    code_col: str = 'code',
+    value_col: str = 'discharge'
+) -> dict:
+    """
+    Run spot-check validation if sites are configured.
+
+    This is the main entry point for Phase 4 spot-check validation.
+
+    Args:
+        sdk: iEasyHydro HF SDK instance
+        output_df: DataFrame with discharge data
+        target_timezone: Timezone for API queries
+        date_col: Name of the date column
+        code_col: Name of the site code column
+        value_col: Name of the value column
+
+    Returns:
+        Spot-check result dict (same as spot_check_sites output)
+    """
+    site_codes = get_spot_check_sites()
+
+    if not site_codes:
+        logger.info("[DATA] Spot-check validation skipped (no sites configured)")
+        return {'results': {}, 'summary': {'checked': 0, 'matched': 0, 'mismatched': 0, 'errors': 0}}
+
+    logger.info(f"[DATA] Running spot-check validation for {len(site_codes)} sites...")
+
+    result = spot_check_sites(
+        sdk=sdk,
+        site_codes=site_codes,
+        output_df=output_df,
+        date_col=date_col,
+        code_col=code_col,
+        value_col=value_col,
+        target_timezone=target_timezone
+    )
+
+    log_spot_check_summary(result)
+
+    return result
+
+
+# =============================================================================
+# SITE CACHING (Phase 6)
+# =============================================================================
+
+def load_site_cache(cache_file: str, max_age_days: int = 7) -> dict | None:
+    """
+    Load cached site data from JSON file.
+
+    Supports both cache versions:
+    - Version 1: pentad/decad split (legacy)
+    - Version 2: unified site list (current)
+
+    Args:
+        cache_file: Path to the cache file
+        max_age_days: Maximum age in days before cache is considered stale
+
+    Returns:
+        dict with 'site_codes' and 'site_ids' if valid, None if missing or expired
+    """
+    import json
+
+    if not os.path.exists(cache_file):
+        logger.debug(f"[CONFIG] Site cache not found: {cache_file}")
+        return None
+
+    try:
+        with open(cache_file, 'r') as f:
+            cache = json.load(f)
+
+        version = cache.get('cache_version', 0)
+
+        # Check cache age
+        cached_at = cache.get('cached_at')
+        is_stale = False
+        if cached_at:
+            cache_time = dt.datetime.fromisoformat(cached_at)
+            age_days = (dt.datetime.now(cache_time.tzinfo) - cache_time).days
+            if age_days > max_age_days:
+                logger.warning(f"[CONFIG] Site cache is {age_days} days old (max: {max_age_days}), cache is stale")
+                is_stale = True
+            else:
+                logger.debug(f"[CONFIG] Site cache loaded, {age_days} days old")
+
+        # Handle different versions
+        if version == 2:
+            # Version 2: unified format
+            result = {
+                'site_codes': cache.get('site_codes', []),
+                'site_ids': cache.get('site_ids', []),
+                'is_stale': is_stale
+            }
+        elif version == 1:
+            # Version 1: pentad/decad split - convert to unified format
+            pentad_codes = cache.get('pentad', {}).get('site_codes', [])
+            decad_codes = cache.get('decad', {}).get('site_codes', [])
+            pentad_ids = cache.get('pentad', {}).get('site_ids', [])
+            decad_ids = cache.get('decad', {}).get('site_ids', [])
+
+            # Combine and deduplicate
+            seen = set()
+            site_codes = []
+            site_ids = []
+            for code, site_id in zip(pentad_codes + decad_codes, pentad_ids + decad_ids):
+                if code not in seen:
+                    seen.add(code)
+                    site_codes.append(code)
+                    site_ids.append(site_id)
+
+            result = {
+                'site_codes': site_codes,
+                'site_ids': site_ids,
+                'is_stale': is_stale
+            }
+            logger.debug(f"[CONFIG] Converted v1 cache: {len(site_codes)} unique sites")
+        else:
+            logger.warning(f"[CONFIG] Unknown cache version {version}, ignoring cache")
+            return None
+
+        return result
+
+    except Exception as e:
+        logger.warning(f"[CONFIG] Failed to load site cache: {e}")
+        return None
+
+
+def save_site_cache(
+    cache_file: str,
+    site_codes: list,
+    site_ids: list = None
+) -> bool:
+    """
+    Save site codes to cache file with timestamp.
+
+    Args:
+        cache_file: Path to the cache file
+        site_codes: List of all forecast site codes (already deduplicated)
+        site_ids: Optional list of site IDs (same order as site_codes)
+
+    Returns:
+        True if saved successfully, False otherwise
+    """
+    import json
+
+    cache = {
+        "cached_at": dt.datetime.now().astimezone().isoformat(),
+        "cache_version": 2,  # Version 2 uses unified site list
+        "site_codes": site_codes,
+        "site_ids": site_ids or [],
+        "site_count": len(site_codes)
+    }
+
+    try:
+        # Ensure directory exists
+        cache_dir = os.path.dirname(cache_file)
+        if cache_dir and not os.path.exists(cache_dir):
+            os.makedirs(cache_dir, exist_ok=True)
+
+        with open(cache_file, 'w') as f:
+            json.dump(cache, f, indent=2)
+
+        logger.info(f"[CONFIG] Site cache saved: {len(site_codes)} sites")
+        return True
+
+    except Exception as e:
+        logger.warning(f"[CONFIG] Failed to save site cache: {e}")
+        return False
+
+
+def get_unique_site_codes(pentad_codes: list, decad_codes: list) -> list:
+    """
+    Combine and deduplicate site codes from pentad and decad lists.
+
+    Args:
+        pentad_codes: List of pentadal forecast site codes
+        decad_codes: List of decadal forecast site codes
+
+    Returns:
+        List of unique site codes (preserving order, pentad first)
+    """
+    # Use dict.fromkeys to preserve order while removing duplicates
+    combined = list(dict.fromkeys(pentad_codes + decad_codes))
+    
+    if len(pentad_codes) + len(decad_codes) != len(combined):
+        duplicates = len(pentad_codes) + len(decad_codes) - len(combined)
+        logger.debug(f"[CONFIG] Deduplicated site codes: {len(pentad_codes)} + {len(decad_codes)} -> {len(combined)} unique ({duplicates} duplicates removed)")
+    
+    return combined
 

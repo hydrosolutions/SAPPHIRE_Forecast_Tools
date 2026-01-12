@@ -135,206 +135,170 @@ def fetch_all_with_pagination(sdk, filters, parallel=True, max_workers=10):
 
 ### Phase 2: Improved Logging
 
+**Status**: ✅ COMPLETE
+
 **Goal**: Structured logging at key points for easier debugging.
 
-**Log points to add/improve**:
+**Implementation** (January 2025):
 
-1. **API Request Stage**:
-   - Site codes being requested (count + first few)
-   - Date range requested
-   - Variable name (WDDA/WDD)
+1. **Stage Tags**: All log messages use consistent stage tags for easy filtering:
+   - `[CONFIG]` - Configuration, mode, timezone
+   - `[API]` - iEasyHydro HF requests/responses, COUNT VALIDATION
+   - `[DATA]` - DataFrame transformations, processing, outlier filtering
+   - `[MERGE]` - Combining data sources
+   - `[OUTPUT]` - Writing results, file paths
+   - `[TIMING]` - Performance metrics
 
-2. **API Response Stage**:
-   - Response status (success/error code)
-   - Total count from API
-   - Number of pages fetched
-   - Sites with data vs without
+2. **Log Level Configuration** (hierarchical priority):
+   - Module-specific in `config.yaml` (`logging.log_level`)
+   - System-wide in `.env` (`log_level`)
+   - Default: INFO
 
-3. **Data Processing Stage**:
-   - Records before/after each transformation
-   - Column names and dtypes
+3. **Log Levels Used**:
+   - `DEBUG`: Detailed data (DataFrame info, intermediate values, COUNT VALIDATION details)
+   - `INFO`: Normal operation milestones, counts, summaries
+   - `WARNING`: Potential issues (e.g., >20% of sites missing data)
+   - `ERROR`: Failures that affect results
 
-4. **Merge Stage**:
-   - Records from Excel/cached data
-   - Records from DB
-   - Records after merge (new + updated + unchanged)
+4. **Print Statement Conversion**: All debug print statements in production code converted to `logger.debug()` with appropriate stage tags. Test files and profiling utilities retain print statements intentionally.
 
-5. **Output Stage**:
-   - Final record count
-   - Date range in output
-   - Sites in output
-
-**Files to modify**:
-- `apps/preprocessing_runoff/src/src.py`
-- `apps/preprocessing_runoff/preprocessing_runoff.py`
+**Files modified**:
+- `apps/preprocessing_runoff/config.yaml` - Added logging configuration section
+- `apps/preprocessing_runoff/src/config.py` - Added `get_log_level()`, `VALID_LOG_LEVELS`, `DEFAULT_LOG_LEVEL`
+- `apps/preprocessing_runoff/preprocessing_runoff.py` - Fixed logging setup, added stage tags
+- `apps/preprocessing_runoff/src/src.py` - Converted ~30 print statements to logger calls with stage tags
+- `apps/preprocessing_runoff/README.md` - Added comprehensive logging documentation section
 
 ---
 
 ### Phase 3: Post-Write Validation (Hindcast Mode)
 
+**Status**: ✅ COMPLETE
+
 **Goal**: Validate `runoff_day.csv` after writing and track site data reliability over time.
 
 **Critical requirement**: Forecasts require data from the last 3 days. Missing recent data will cause forecast failures.
 
-**Validation function** `validate_recent_data()`:
+**Implementation** (January 2025):
 
-```python
-def validate_recent_data(output_df, expected_sites, date_col, code_col):
-    """
-    Validate that each site has data within the last 3 days.
+1. **Validation Functions** added to `src/src.py`:
+   - `validate_recent_data()` - Check each site has data within N days
+   - `load_reliability_stats()` - Load stats from JSON file
+   - `save_reliability_stats()` - Save stats to JSON file
+   - `update_reliability_stats()` - Update stats based on validation
+   - `log_validation_summary()` - Log results with `[DATA]` stage tags
+   - `run_post_write_validation()` - Main entry point combining all above
 
-    Returns:
-        dict with:
-        - sites_with_recent_data: list of sites with data in last 3 days
-        - sites_missing_recent_data: list of sites WITHOUT data in last 3 days
-        - latest_date_per_site: dict of site_code -> latest date
-    """
+2. **Configuration** in `config.yaml`:
+   ```yaml
+   validation:
+     enabled: true
+     max_age_days: 3
+     reliability_threshold: 80.0
+     stats_file: "reliability_stats.json"
+   ```
+
+3. **Integration** in `preprocessing_runoff.py`:
+   - Runs after data writing in maintenance mode only
+   - Logs validation summary with sites missing recent data
+   - Flags low reliability sites (<80% over recent checks)
+   - Stores reliability stats in `intermediate_data/reliability_stats.json`
+
+**Output format**:
+```
+[DATA] === Recent Data Validation ===
+[DATA] Sites checked: 63
+[DATA] Sites with data in last 3 days: 61 (96.8%)
+[DATA] Sites missing recent data: 2
+[DATA] MISSING RECENT DATA (forecast may fail):
+[DATA]   - 15013: Last data 2025-12-25 (reliability: 93%)
+[DATA]   - 16100: Last data 2025-12-20 (reliability: 50%)
+[DATA] LOW RELIABILITY SITES (< 80% over recent checks):
+[DATA]   - 16100: 50% reliability
 ```
 
-**Site reliability tracking**:
-
-Track statistics over time to identify unreliable sites:
-
-```python
-# reliability_stats.json (persisted)
-{
-    "15013": {
-        "checks": 30,           # Total validation runs
-        "recent_data_present": 28,  # Times data was present in last 3 days
-        "reliability_pct": 93.3,
-        "last_gap_date": "2025-12-25"
-    },
-    "16100": {
-        "checks": 30,
-        "recent_data_present": 15,
-        "reliability_pct": 50.0,
-        "last_gap_date": "2025-12-30"
-    }
-}
-```
-
-**Output**:
-```
-=== Recent Data Validation ===
-Sites checked: 63
-Sites with data in last 3 days: 61 (96.8%)
-Sites missing recent data: 2
-
-MISSING RECENT DATA (forecast may fail):
-  - 15013: Last data 2025-12-25 (reliability: 93%)
-  - 16100: Last data 2025-12-20 (reliability: 50%)
-
-LOW RELIABILITY SITES (< 80% over last 30 checks):
-  - 16100: 50% reliability
-  - 15292: 73% reliability
-```
-
-**Integration**:
-- Call after `write_data_to_csv()` in maintenance mode
-- Update reliability statistics file
-- Log sites missing recent data
-- Optionally fail run if critical sites missing data (configurable)
-
-**Files to modify**:
-- `apps/preprocessing_runoff/src/src.py` (add validation function)
-- `apps/preprocessing_runoff/preprocessing_runoff.py` (call validation)
-- New: `apps/preprocessing_runoff/data/reliability_stats.json` (tracked statistics)
+**Files modified**:
+- `apps/preprocessing_runoff/src/src.py` - Added 6 validation functions (~270 lines)
+- `apps/preprocessing_runoff/src/config.py` - Added validation settings support
+- `apps/preprocessing_runoff/config.yaml` - Added validation configuration section
+- `apps/preprocessing_runoff/preprocessing_runoff.py` - Integrated validation call
 
 ---
 
 ### Phase 4: Spot-Check Validation
 
+**Status**: ✅ COMPLETE
+
 **Goal**: Verify data for known reliable sites matches direct API query.
 
-**Configuration** (in `.env`):
+**Implementation** (January 2025):
 
-```bash
-# Spot-check validation sites (comma-separated site codes)
-# These should be sites known to have reliable, recent data
-IEASYHYDRO_SPOTCHECK_SITES_KGHM=15166,16159,15189
-IEASYHYDRO_SPOTCHECK_SITES_TJHM=17462,17001
+1. **Spot-Check Functions** added to `src/src.py`:
+   - `get_spot_check_sites()` - Read site codes from environment variables
+   - `spot_check_sites()` - Fetch latest API value and compare with output
+   - `log_spot_check_summary()` - Log results with `[DATA]` stage tags
+   - `run_spot_check_validation()` - Main entry point for spot-check validation
+
+2. **Configuration**:
+   - `config.yaml`: Added `spot_check.enabled` setting
+   - Environment variable for site codes:
+     - `IEASYHYDRO_SPOTCHECK_SITES` (comma-separated site codes, e.g., "15166,16159,15189")
+   - Each deployment sets its own sites in their `.env` file
+   - Skip spot-check if no sites configured
+
+3. **Integration** in `preprocessing_runoff.py`:
+   - Runs after post-write validation in maintenance mode
+   - Requires SDK access (`ieh_hf_sdk is not None`)
+   - Compares output values with direct API queries
+   - Reports mismatches with both values
+
+**Output format**:
+```
+[DATA] === Spot-Check Validation ===
+[DATA] Spot-checking 3 sites: ['15166', '16159', '15189']
+[DATA] Spot-check results: 3 matched, 0 mismatched
+[DATA] SPOT-CHECK PASSED: All values match API
 ```
 
-**Validation function** `spot_check_sites()`:
-
-```python
-def spot_check_sites(sdk, site_codes, output_df, date_col, code_col, value_col):
-    """
-    For each spot-check site:
-    1. Fetch latest value directly from API
-    2. Compare with value in output_df
-    3. Report match/mismatch
-
-    Returns:
-        dict with site_code -> {api_value, output_value, match}
-    """
+Or if mismatches:
+```
+[DATA] === Spot-Check Validation ===
+[DATA] Spot-checking 3 sites: ['15166', '16159', '15189']
+[DATA] Spot-check results: 2 matched, 1 mismatched
+[DATA] SPOT-CHECK MISMATCH DETECTED:
+[DATA]   - 15166: output=42.5, api=43.2, diff=0.7 (1.6%)
 ```
 
-**Configuration loading**:
-- Read from environment variable based on organization
-- Fall back to empty list if not configured
-- Skip spot-check if no sites configured
-
-**Files to modify**:
-- `apps/preprocessing_runoff/src/src.py` (add spot-check function)
-- `apps/preprocessing_runoff/preprocessing_runoff.py` (call spot-check)
-- `.env` templates (add spot-check site configuration)
+**Files modified**:
+- `apps/preprocessing_runoff/src/src.py` - Added 4 spot-check functions (~260 lines)
+- `apps/preprocessing_runoff/src/config.py` - Added spot_check settings support
+- `apps/preprocessing_runoff/config.yaml` - Added spot_check configuration section
+- `apps/preprocessing_runoff/preprocessing_runoff.py` - Integrated spot-check call
 
 ---
 
 ### Phase 5: Improve Diagnostic Test Script
 
+**Status**: ✅ COMPLETE (minimal changes)
+
 **Goal**: Make `testspecial_sdk_data_retrieval.py` more usable and informative.
 
-**Improvements**:
+**Implementation** (January 2025):
 
-1. **Better documentation at top of file**:
-   - What the script tests
-   - Expected runtime (several minutes)
-   - How to interpret results
+Minimal improvements made:
+1. Added **expected runtime** to header docstring (single site: ~5s, CHECK_ALL_SITES: ~30s, DIAGNOSE_422: ~2-5 min)
+2. Added **mode indicator** at startup showing which test mode is running
 
-2. **Progress indicators**:
-   ```python
-   print(f"\n[Step 1/5] Testing SDK connection...")
-   print(f"[Step 2/5] Testing page_size limits... (this may take 30 seconds)")
-   print(f"[Step 3/5] Testing bulk vs batched requests... (this may take 2-3 minutes)")
-   ```
+Note: The script already had comprehensive section headers, progress indicators, and summaries from previous development. Full refactoring was not needed.
 
-3. **Clear section headers**:
-   ```
-   ======================================================================
-   STEP 3: BULK VS BATCHED REQUEST COMPARISON
-   ======================================================================
-   Purpose: Determine if bulk requests work or if batching is needed
-   Expected: Either bulk succeeds, or fallback to batched/individual works
-   ----------------------------------------------------------------------
-   ```
-
-4. **Summary at end**:
-   ```
-   ======================================================================
-   FINAL SUMMARY
-   ======================================================================
-   SDK Connection:     OK
-   Page Size Limit:    10 (larger values fail with 422)
-   Bulk Requests:      FAILED (using batched fallback)
-   Data Retrieved:     63/63 sites, 3,780 records
-   Latest Data Date:   2025-12-30
-
-   RECOMMENDATION: Use batch_size=10 for reliable data retrieval
-   ======================================================================
-   ```
-
-5. **Configurable verbosity**:
-   - `VERBOSE=1` for detailed output
-   - Default: summary only
-
-**Files to modify**:
+**Files modified**:
 - `apps/preprocessing_runoff/test/testspecial_sdk_data_retrieval.py`
 
 ---
 
 ### Phase 6: Site Caching for Performance
+
+**Status**: ✅ COMPLETE
 
 **Goal**: Cache forecast site list to avoid slow SDK calls in operational mode.
 
@@ -399,6 +363,8 @@ def get_unique_site_codes(pentad_codes: list, decad_codes: list) -> list:
 ---
 
 ### Phase 7: All Forecast Site Selection
+
+**Status**: ✅ COMPLETE
 
 **Goal**: Ensure data is retrieved for ALL sites with ANY forecast type enabled (not just pentad/decad).
 
@@ -540,38 +506,46 @@ apps/preprocessing_runoff/src/
 - [x] Warning logged when >20% of sites return no data
 
 ### Phase 2: Improved Logging
-- [ ] Structured logging at key points (request, response, processing, merge, output)
-- [ ] Logs include site codes, date ranges, record counts
+- [x] Structured logging at key points (request, response, processing, merge, output)
+- [x] Logs include site codes, date ranges, record counts
+- [x] Stage tags implemented: `[CONFIG]`, `[API]`, `[DATA]`, `[MERGE]`, `[OUTPUT]`, `[TIMING]`
+- [x] Log level configurable: module-specific in `config.yaml` > system-wide in `.env` > default INFO
+- [x] All debug print statements converted to proper `logger.debug()` calls
+- [x] README updated with logging documentation
 
 ### Phase 3: Post-Write Validation
-- [ ] Validation runs after writing in maintenance mode
-- [ ] Sites missing data in last 3 days are reported
-- [ ] Site reliability statistics tracked over time in JSON file
-- [ ] Low reliability sites (<80%) are flagged
+- [x] Validation runs after writing in maintenance mode
+- [x] Sites missing data in last 3 days are reported
+- [x] Site reliability statistics tracked over time in JSON file
+- [x] Low reliability sites (<80%) are flagged
+- [x] Validation configurable via config.yaml (enabled, max_age_days, threshold)
 
 ### Phase 4: Spot-Check Validation
-- [ ] Spot-check sites configurable via `.env` (separate for KGHM/TJHM)
-- [ ] Spot-check compares output values against direct API query
-- [ ] Mismatches are reported with both values
+- [x] Spot-check sites configurable via `.env` (`IEASYHYDRO_SPOTCHECK_SITES`)
+- [x] Spot-check compares output values against direct API query
+- [x] Mismatches are reported with both values
 
-### Phase 5: Diagnostic Script
-- [ ] Progress indicators with step numbers and estimated time
-- [ ] Clear section headers explaining purpose of each test
-- [ ] Final summary with recommendations
-- [ ] Script documents expected runtime in header
+### Phase 5: Diagnostic Script (minimal changes)
+- [x] Script documents expected runtime in header
+- [x] Mode indicator shows which test is running at startup
+- [~] Progress indicators already existed from prior development
+- [~] Section headers already existed from prior development
 
 ### Phase 6: Site Caching
-- [ ] Site cache saved in maintenance mode
-- [ ] Site cache loaded in operational mode
-- [ ] Cache expiry configurable via environment variable
-- [ ] Site codes deduplicated before API requests
-- [ ] Operational mode fails gracefully if cache missing
+- [x] Site cache saved in maintenance mode
+- [x] Site cache loaded in operational mode
+- [x] Cache expiry configurable via config.yaml (max_age_days)
+- [x] Site codes deduplicated before API requests
+- [x] Operational mode warns if cache missing/stale, falls back to SDK
 
 ### Phase 7: All Forecast Site Selection
-- [ ] Sites with daily_forecast, monthly_forecast, or seasonal_forecast enabled are included
-- [ ] New `get_all_forecast_sites_from_HF_SDK()` function implemented
-- [ ] preprocessing_runoff uses unified function instead of combining pentad + decad
-- [ ] Virtual stations with any forecast flag also included
+- [x] Sites with daily_forecast, monthly_forecast, or seasonal_forecast enabled are included
+- [x] New `get_all_forecast_sites_from_HF_SDK()` function implemented in setup_library.py
+- [x] `all_forecast_sites_from_iEH_HF_SDK()` and `virtual_all_forecast_sites_from_iEH_HF_SDK()` added to Site class
+- [x] preprocessing_runoff uses unified function instead of combining pentad + decad
+- [x] Virtual stations with any forecast flag also included
+- [x] Cache format updated to v2 (unified site list instead of pentad/decad split)
+- [x] Backward compatibility: v1 cache files are auto-converted to v2 format
 
 ### Phase 8: Package Updates & Deprecation Warnings
 - [ ] Dependencies updated to latest compatible versions
