@@ -35,8 +35,8 @@ def get_hydrograph_day_all(station):
     params = {
         "horizon": "day", 
         "code": station, 
-        "start_date": "2025-01-01", 
-        "end_date": "2025-12-31",
+        "start_date": "2026-01-01",
+        "end_date": "2026-12-31",
         "limit": 1000
     }
     start_time = time.time()
@@ -45,7 +45,7 @@ def get_hydrograph_day_all(station):
     print("??????????????????????: Time taken to read hydrograph_day_all data:", round(end_time - start_time, 3))
     # hydrograph_day_all.rename(columns={"q05": "5th percentile", "q25": "25th percentile", "q75": "75th percentile", "q95": "95th percentile"}, inplace=True)
     hydrograph_day_all.rename(columns={"q05": "5%", "q25": "25%", "q50": "50%", "q75": "75%", "q95": "95%"}, inplace=True)
-    hydrograph_day_all.rename(columns={"previous": "2024", "current": "2025"}, inplace=True)
+    hydrograph_day_all.rename(columns={"previous": "2025", "current": "2026"}, inplace=True)
     hydrograph_day_all = hydrograph_day_all.drop(['horizon_type', 'horizon_value', 'horizon_in_year', 'norm', 'id'], axis=1)
     # print("??????????????????????: hydrograph_day_all", hydrograph_day_all)
     # print("??????????????????????: hydrograph_day_all.columns", hydrograph_day_all.columns)
@@ -58,8 +58,8 @@ def get_hydrograph_pentad_all(station):
     params = {
         "horizon": horizon, 
         "code": station, 
-        "start_date": "2024-12-25", 
-        "end_date": "2025-12-25",
+        "start_date": "2025-12-25",
+        "end_date": "2026-12-25",
         "limit": 1000
     }
     start_time = time.time()
@@ -67,9 +67,9 @@ def get_hydrograph_pentad_all(station):
     end_time = time.time()
     print("??????????????????????: Time taken to read hydrograph_pentad_all data:", round(end_time - start_time, 3))
     if horizon == "decade":
-        hydrograph_pentad_all.rename(columns={"previous": "2024", "current": "2025", "horizon_in_year": "decad_in_year"}, inplace=True)
+        hydrograph_pentad_all.rename(columns={"previous": "2025", "current": "2026", "horizon_in_year": "decad_in_year"}, inplace=True)
     else:
-        hydrograph_pentad_all.rename(columns={"previous": "2024", "current": "2025", "horizon_in_year": "pentad_in_year"}, inplace=True)
+        hydrograph_pentad_all.rename(columns={"previous": "2025", "current": "2026", "horizon_in_year": "pentad_in_year"}, inplace=True)
     hydrograph_pentad_all = hydrograph_pentad_all.drop(['horizon_type', 'horizon_value', 'count', 'std', 'q50', 'id'], axis=1)
     # print("??????????????????????: hydrograph_pentad_all", hydrograph_pentad_all)
     # print("??????????????????????: hydrograph_pentad_all.columns", hydrograph_pentad_all.columns)
@@ -81,8 +81,8 @@ def get_rain(station):
     params = {
         "meteo_type": "P",
         "code": station, 
-        "start_date": "2025-01-01", 
-        "end_date": "2025-12-31",
+        "start_date": "2026-01-01",
+        "end_date": "2026-12-31",
         "limit": 1000
     }
     start_time = time.time()
@@ -103,8 +103,8 @@ def get_temp(station):
     params = {
         "meteo_type": "T",
         "code": station, 
-        "start_date": "2025-01-01", 
-        "end_date": "2025-12-31",
+        "start_date": "2026-01-01",
+        "end_date": "2026-12-31",
         "limit": 1000
     }
     start_time = time.time()
@@ -130,7 +130,7 @@ def get_snow_data(station):
         "snow_type": "HS",
         "code": station, 
         "start_date": "2000-01-01", 
-        "end_date": "2025-12-31",
+        "end_date": "2026-12-31",
         "limit": 10000
     }
     start_time = time.time()
@@ -173,7 +173,7 @@ def get_ml_forecast(station):
         "code": station, 
         # "model_type": "TSMixer",
         "start_date": "2025-12-01", 
-        "end_date": "2025-12-31",
+        "end_date": "2026-12-31",
         "limit": 1000
     }
     start_time = time.time()
@@ -182,7 +182,8 @@ def get_ml_forecast(station):
     print("??????????????????????: Time taken to read ml_forecast data:", round(end_time - start_time, 3))
     ml_forecast.rename(columns={"date": "forecast_date"}, inplace=True)
     ml_forecast.rename(columns={"target": "date", "model_type": "model_short", "model_type_description": "model_long"}, inplace=True)
-    ml_forecast = ml_forecast.drop(['horizon_type', 'horizon_value', 'horizon_in_year', 'q50', 'forecasted_discharge', 'id'], axis=1)
+    ml_forecast.rename(columns={"q05": "Q5", "q25": "Q25", "q75": "Q75", "q95": "Q95", 'forecasted_discharge': 'E[Q]'}, inplace=True)
+    ml_forecast = ml_forecast.drop(['horizon_type', 'horizon_value', 'horizon_in_year', 'q50', 'id'], axis=1)
     
     # Only keep the rows where forecast_date is equal to the most recent forecast date for each station
     latest_forecast_date = ml_forecast['forecast_date'].max()
@@ -190,7 +191,7 @@ def get_ml_forecast(station):
 
     # Calculate the Neural Ensemble (NE) forecast as the average of the TFT, TIDE, and TSMIXER forecasts
     models_for_ne = ["TFT", "TiDE", "TSMixer"]
-    quant_cols = ["q05", "q25", "q75", "q95"]
+    quant_cols = ["Q5", "Q25", "Q75", "Q95", "E[Q]"]
     group_cols = ["code", "date", "forecast_date"]
 
     # keep only the 3 base models
@@ -219,7 +220,7 @@ def get_linreg_predictor(station):
         "horizon": horizon, 
         "code": station, 
         "start_date": "2000-01-01", 
-        "end_date": "2025-12-31",
+        "end_date": "2026-12-31",
         "limit": 1000
     }
     start_time = time.time()
@@ -242,8 +243,8 @@ def get_forecasts_all(station):
     params = {
         "horizon": horizon, 
         "code": station, 
-        "start_date": "2024-12-20", 
-        "end_date": "2025-12-31",
+        "start_date": "2025-12-20",
+        "end_date": "2026-12-31",
         "target": "null",
         "limit": 1000
     }
@@ -255,6 +256,7 @@ def get_forecasts_all(station):
         forecasts_all.rename(columns={"horizon_value": "decad", "horizon_in_year": "decad_in_year", "model_type": "model_short", "model_type_description": "model_long"}, inplace=True)
     else:
         forecasts_all.rename(columns={"horizon_value": "pentad_in_month", "horizon_in_year": "pentad_in_year", "model_type": "model_short", "model_type_description": "model_long"}, inplace=True)
+    forecasts_all.rename(columns={"q05": "Q5", "q25": "Q25", "q75": "Q75", "q95": "Q95"}, inplace=True)
     forecasts_all = forecasts_all.drop(['horizon_type', 'target', 'id'], axis=1)
     forecasts_all['Date'] = forecasts_all['date'] + pd.Timedelta(days=1)
     forecasts_all['year'] = forecasts_all['Date'].dt.year
@@ -290,8 +292,8 @@ def get_forecast_stats(station):
     params = {
         "horizon": horizon, 
         "code": station, 
-        "start_date": "2024-12-31", 
-        "end_date": "2025-12-31",
+        "start_date": "2025-12-31",
+        "end_date": "2026-12-31",
         "limit": 1000
     }
     start_time = time.time()
