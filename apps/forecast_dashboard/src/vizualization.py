@@ -1137,6 +1137,7 @@ def plot_current_runoff_forecast_range_date_format(
     data.loc[:, date_col] = pd.to_datetime(data[date_col])
 
     # Apply jitter to the datetime column
+    data[date_col] = pd.to_datetime(data[date_col], errors="coerce")
     data.loc[:, date_col] = data[date_col] + jitter_timedelta
 
     # Create the overlay

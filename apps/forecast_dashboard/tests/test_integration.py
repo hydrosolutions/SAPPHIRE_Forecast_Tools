@@ -38,6 +38,8 @@ else:
     print("Decad in month:", horizon_value_in_month)
     sheet_name = f"{horizon_value_in_month} декада"
 
+if len(str(horizon_value)) == 1:
+    horizon_value = "0" + str(horizon_value)
 
 def normalize_spaces(s):
     return re.sub(r'\s+', ' ', s).strip()
@@ -217,6 +219,7 @@ def test_local(page: Page):
         "15013 - Джыргалан-с.Советское",
         "16936 - Нарын  -  Приток в Токтогульское вдхр.**)",
         #"15194 - р.Ала-Арча-у.р.Кашка-Суу",
+        "15212 - Ак-Суу - с.Чон-Арык",
         "15256 - Талас -  с.Ак-Таш",
     ]
     for station in stations:

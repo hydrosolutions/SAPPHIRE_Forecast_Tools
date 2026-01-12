@@ -688,7 +688,7 @@ print(f"   dbg: current_decad: {current_decad}")
 _default_station_value = None
 if station_dict:
     try:
-        _default_station_value = '15189 - Аламедин  -  у.р.Чункурчак'  # station_dict[next(iter(station_dict))][0]
+        _default_station_value = "15189 - Аламедин  -  у.р.Чункурчак" #station_dict[next(iter(station_dict))][0]
     except Exception:
         _default_station_value = None
 station = pn.widgets.Select(
@@ -953,7 +953,7 @@ bulletin_tabulator = pn.widgets.Tabulator(
 
 
 # region update_functions
-#@pn.depends(pentad_selector, decad_selector, watch=True)
+# @pn.depends(pentad_selector, decad_selector, watch=True)
 def update_site_attributes_with_hydrograph_statistics_for_selected_pentad(_,
     sites=sites_list, df=hydrograph_pentad_all, pentad=pentad_selector.value, decad=decad_selector.value):
     """Update site attributes with hydrograph statistics for selected pentad"""
