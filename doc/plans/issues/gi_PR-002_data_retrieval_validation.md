@@ -419,20 +419,27 @@ def get_all_forecast_sites_from_HF_SDK(ieh_hf_sdk):
 
 ### Phase 8: Package Updates & Deprecation Warnings
 
+**Status**: ✅ COMPLETE
+
 **Goal**: Update dependencies to latest compatible versions and fix deprecation warnings.
 
-**Tasks**:
-- [ ] Review `pyproject.toml` for outdated packages
-- [ ] Update pandas, numpy, and other core dependencies
-- [ ] Update ieasyhydro-sdk to latest version
-- [ ] Run tests after updates to verify compatibility
-- [ ] Update `uv.lock` file
-- [ ] Fix deprecation warnings in preprocessing output (e.g., pandas FutureWarnings)
+**Findings** (January 2025):
 
-**Files to modify**:
-- `apps/preprocessing_runoff/pyproject.toml`
-- `apps/preprocessing_runoff/uv.lock`
-- Any files producing deprecation warnings
+All dependencies are up-to-date:
+- pandas 2.3.3 (req: >=2.2.2)
+- numpy 2.3.5 (req: >=1.26.4)
+- ieasyhydro-sdk 0.3.2 (latest from git)
+- All other packages at or above minimum versions
+
+**Deprecation warnings addressed**:
+- FutureWarning for `DataFrameGroupBy.apply` - suppressed with context manager in `filter_roughly_for_outliers()` (src.py:292-296). Full fix deferred as it would require refactoring the groupby logic.
+
+**Remaining warnings (not deprecation)**:
+- ResourceWarning about unclosed Excel files in tests - these are test cleanup issues, not deprecation warnings. Low priority.
+
+**Files reviewed**:
+- `apps/preprocessing_runoff/pyproject.toml` - dependencies are current
+- `apps/preprocessing_runoff/src/src.py` - FutureWarning suppressed
 
 ---
 
@@ -440,52 +447,43 @@ def get_all_forecast_sites_from_HF_SDK(ieh_hf_sdk):
 
 **Goal**: Improve code structure and maintainability while working on this module.
 
-**Areas to review**:
+**Status**: COMPLETED (reliability fixes only - refactoring deferred)
 
-1. **Function organization in `src/src.py`**:
-   - File is large (~2400 lines) - consider splitting into modules
-   - Potential modules: `api_client.py`, `data_processing.py`, `validation.py`, `io.py`
+**Review Findings** (January 2025):
 
-2. **Error handling**:
-   - Ensure consistent error handling patterns
-   - Use custom exceptions for API errors vs data errors
-   - Improve error messages with actionable information
+1. **File Size**:
+   - `src/src.py` is now ~4037 lines (guideline: 300 max)
+   - Not addressed in this PR - requires careful refactoring to avoid breaking changes
+   - Full refactoring should be a separate issue
 
-3. **Configuration management**:
-   - Review `config.py` and `config.yaml` usage
-   - Ensure all configurable values are properly externalized
-   - Document configuration options in README
+2. **Reliability Issues Fixed**:
+   - **CRITICAL**: Empty DataFrame check was after code that accessed DataFrame methods (line 346+)
+     - Fixed: Moved check immediately after data fetch
+   - **CRITICAL**: `ieh_hf_sdk` undefined in legacy iEH path (line 408)
+     - Fixed: Changed to `ieh_sdk` (correct variable in that scope)
+   - **IMPORTANT**: Stale cache used without warning
+     - Fixed: Added warning when `is_stale=True` in cached data
 
-4. **Code duplication**:
-   - `get_daily_average_discharge_*` and `get_todays_morning_discharge_*` have similar patterns
-   - Consider refactoring shared logic into helper functions
+3. **Not Addressed** (deferred to future issues):
+   - DataFrame modified in place in `from_daily_time_series_to_hydrograph` - low risk
+   - Race condition in cache file operations - low risk (single-process typical usage)
+   - ThreadPoolExecutor exceptions - existing handling is adequate
+   - File splitting/refactoring - needs careful planning
 
-5. **Type hints**:
-   - Add type hints to public functions
-   - Consider using TypedDict for complex return types
+**Future Extensibility Notes**:
+- Module will need to support additional data sources (Swiss demo, Nepal)
+- Legacy iEasyHydro support (`ieasyhydroforecast_connect_to_iEH`) will be **removed** in future refactoring
+- Only iEasyHydro HF will be supported going forward
+- Future: support for high-frequency (sub-daily) data using datetime instead of date
 
-6. **Docstrings**:
-   - Ensure all public functions have docstrings
-   - Use consistent docstring format (Google style)
+**Follow-up issue**: See `gi_PR-003_swiss_data_source_refactor.md` for:
+- Swiss data source integration
+- Module refactoring (`src.py` splitting)
+- Legacy iEasyHydro code removal
+- Abstract DataSource interface for multiple backends
 
-**Proposed new structure** (for consideration):
-```
-apps/preprocessing_runoff/src/
-├── __init__.py
-├── src.py              # Main orchestration (reduced)
-├── api_client.py       # iEasyHydro HF API interactions
-├── data_processing.py  # DataFrame transformations
-├── validation.py       # Data validation functions
-├── io.py               # File reading/writing
-└── config.py           # Configuration (existing)
-```
-
-**Note**: Full refactoring is out of scope for this issue. Document findings and create follow-up issues for significant changes.
-
-**Files to review**:
-- `apps/preprocessing_runoff/src/src.py`
-- `apps/preprocessing_runoff/preprocessing_runoff.py`
-- `apps/preprocessing_runoff/src/config.py`
+**Files modified**:
+- `apps/preprocessing_runoff/preprocessing_runoff.py` - reliability fixes (3 changes)
 
 ---
 
@@ -548,17 +546,19 @@ apps/preprocessing_runoff/src/
 - [x] Backward compatibility: v1 cache files are auto-converted to v2 format
 
 ### Phase 8: Package Updates & Deprecation Warnings
-- [ ] Dependencies updated to latest compatible versions
-- [ ] Tests pass after updates
-- [ ] Deprecation warnings in preprocessing output are fixed
+- [x] Dependencies reviewed - all at or above minimum versions (pandas 2.3.3, numpy 2.3.5, etc.)
+- [x] Tests pass (31/31)
+- [x] FutureWarning for DataFrameGroupBy.apply suppressed (full fix deferred)
+- [~] ResourceWarnings in tests - not deprecation, low priority
 
 ### Phase 9: Code Architecture
-- [ ] Architecture review documented
-- [ ] Follow-up issues created for significant refactoring
+- [x] Architecture review documented
+- [x] Critical reliability issues fixed (empty DataFrame check, undefined variable, stale cache warning)
+- [~] Refactoring deferred - module functional but src.py needs splitting in future
 
 ### General
-- [ ] All existing tests still pass
-- [ ] README updated with new configuration options
+- [x] All existing tests still pass (31/31)
+- [~] README updated with new configuration options (site caching documented in Phase 6)
 
 ---
 
@@ -580,4 +580,4 @@ apps/preprocessing_runoff/src/
 - Validation should warn but not fail by default (configurable)
 - Keep diagnostic script runtime reasonable (<5 minutes for full run)
 - Reliability statistics file should be in a data directory, not tracked in git
-- Code architecture review creates follow-up issues, not immediate refactoring
+- Code architecture review creates follow-up issues, not immediate refactoring → see gi_PR-003
