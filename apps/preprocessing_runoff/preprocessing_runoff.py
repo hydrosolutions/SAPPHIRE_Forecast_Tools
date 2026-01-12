@@ -9,7 +9,7 @@
 #
 # How to run:
 # from apps/preprocessing_runoff call
-# ieasyhydroforecast_env_file_path=<absolute/path/to/.env> python preprocessing_runoff.py
+# ieasyhydroforecast_env_file_path=<absolute/path/to/.env> uv run python preprocessing_runoff.py
 #
 # Details:
 # The script performs the following steps:
@@ -44,6 +44,7 @@ from ieasyhydro_sdk.sdk import IEasyHydroSDK, IEasyHydroHFSDK
 
 # Local methods
 from src import src
+from src.config import get_log_level, get_validation_settings, get_spot_check_settings, get_site_cache_settings
 # Import profiling from src module to use the same instance that collects timing data
 # (direct import from src.profiling would create a separate module instance)
 
@@ -63,8 +64,9 @@ sys.path.append(forecast_dir)
 import setup_library as sl
 
 
-# Configure the logging level and formatter
-logging.basicConfig(level=logging.INFO)
+# Configure logging
+# Log level priority: config.yaml > env 'log_level' > default INFO
+log_level = get_log_level()
 formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 
 # Create the logs directory if it doesn't exist
@@ -75,18 +77,19 @@ if not os.path.exists('logs'):
 # A new log file is created every <interval> day at <when>. It is kept for <backupCount> days.
 file_handler = TimedRotatingFileHandler('logs/log', when='midnight', interval=1, backupCount=30)
 file_handler.setFormatter(formatter)
+file_handler.setLevel(logging.DEBUG)  # File captures all levels
 
 # Create a stream handler to print logs to the console
 console_handler = logging.StreamHandler()
 console_handler.setFormatter(formatter)
-console_handler.setLevel(logging.INFO)
+console_handler.setLevel(log_level)  # Console respects configured level
 
 # Get the root logger and add the handlers to it
 logger = logging.getLogger()
+logger.setLevel(logging.DEBUG)  # Allow all levels, handlers will filter
 logger.handlers = []
 logger.addHandler(file_handler)
 logger.addHandler(console_handler)
-logger.info = print
 
 
 
@@ -134,7 +137,7 @@ def get_ieh_sdk():
                 has_access_to_db = False
                 return ieh_hf_sdk, has_access_to_db
         else:
-            logger.info("Connecting to iEasyHydro HF SDK")
+            logger.info("[CONFIG] Connecting to iEasyHydro HF SDK")
             try:
                 ieh_hf_sdk = IEasyHydroHFSDK()
                 has_access_to_db = sl.check_database_access(ieh_hf_sdk)
@@ -142,7 +145,12 @@ def get_ieh_sdk():
                     ieh_hf_sdk = None
                 return ieh_hf_sdk, has_access_to_db
             except Exception as e:
-                logger.error(f"Error while accessing iEasyHydro HF SDK: {e}")
+                host = os.getenv('IEASYHYDROHF_HOST', 'not set')
+                if 'Connection refused' in str(e):
+                    logger.error(f"[CONFIG] Cannot connect to iEasyHydro HF API at {host}")
+                    logger.error("[CONFIG] Check: (1) SSH tunnel running, (2) IEASYHYDROHF_HOST in .env is correct")
+                else:
+                    logger.error(f"[CONFIG] iEasyHydro HF SDK error: {e}")
                 sys.exit(1)
 
 
@@ -204,73 +212,104 @@ def main():
 
     # Debug: Check profiling status
     profiling_status = os.getenv('PREPROCESSING_PROFILING', 'not set')
-    print(f"[DEBUG] PREPROCESSING_PROFILING env var = '{profiling_status}'")
-    print(f"[DEBUG] profiling_enabled() = {src.profiling_enabled()}")
+    logger.debug(f"[CONFIG] PREPROCESSING_PROFILING = '{profiling_status}'")
+    logger.debug(f"[CONFIG] profiling_enabled() = {src.profiling_enabled()}")
 
     sl.load_environment()
 
     # Log the operating mode
-    logger.info(f"Running in {mode.upper()} mode")
+    logger.info(f"[CONFIG] Mode: {mode.upper()}")
     end_time = time.time()
     time_load_environment = end_time - overall_start_time
 
     # Get time zone of organization for which the Forecast Tools are deployed
     target_time_zone = sl.get_local_timezone_from_env()
-    logger.info(f"Target time zone: {target_time_zone}")
+    logger.info(f"[CONFIG] Timezone: {target_time_zone}")
 
     # Update configuration files for selected sites (only if iEH HF is used)
     # Test if we read from iEasyHydro or iEasyHydro HF for getting operational data
     start_time = time.time()
     # Get site information from iEH (no update of configuration files)
     if os.getenv('ieasyhydroforecast_connect_to_iEH') == 'True':
-        logger.info("Reading forecast sites from iEasyHydro SDK")
-        try: 
+        logger.info("[CONFIG] Reading forecast sites from iEasyHydro SDK")
+        try:
             # Get the iEasyHydro SDK object
             ieh_sdk, has_access_to_db = get_ieh_sdk()
             # Get site information from iEH (no update of configuration files)
             fc_sites_pentad, site_codes_pentad = sl.get_pentadal_forecast_sites(ieh_sdk, backend_has_access_to_db=has_access_to_db)
             fc_sites_decad, site_codes_decad = sl.get_decadal_forecast_sites_from_pentadal_sites(
                 fc_sites_pentad, site_codes_pentad)
-            logger.info(f"... done reading forecast sites from iEasyHydro SDK")
+            logger.debug("[CONFIG] Forecast sites loaded from iEasyHydro SDK")
+
+            # Combine and deduplicate for unified format (iEH doesn't have site_ids)
+            seen = set()
+            fc_sites = []
+            site_codes = []
+            for site, code in zip(fc_sites_pentad + fc_sites_decad, site_codes_pentad + site_codes_decad):
+                if code not in seen:
+                    seen.add(code)
+                    fc_sites.append(site)
+                    site_codes.append(code)
+            site_ids = []  # iEH doesn't use site IDs
         except Exception as e:
-            logger.error(f"Error while accessing iEasyHydro SDK: {e}")
+            logger.error(f"[CONFIG] Error accessing iEasyHydro SDK: {e}")
             raise e
     else:  # Get information from iEH HF, default behaviour
-        logger.info("Reading forecast sites from iEasyHydro HF SDK")
-        try: 
-            # Get the iEasyHydro HF SDK object
+        logger.info("[CONFIG] Reading forecast sites from iEasyHydro HF SDK")
+
+        # Check cache settings (Phase 6)
+        cache_config = get_site_cache_settings()
+        cache_enabled = cache_config.get('enabled', True)
+        intermediate_data_path = os.getenv("ieasyforecast_intermediate_data_path", ".")
+        cache_file = os.path.join(
+            intermediate_data_path,
+            cache_config.get('cache_file', 'forecast_sites_cache.json')
+        )
+        max_age_days = cache_config.get('max_age_days', 7)
+
+        # Always initialize SDK (needed for data fetching later)
+        try:
             ieh_hf_sdk, has_access_to_db = get_ieh_sdk()
-            fc_sites_pentad, site_codes_pentad, site_ids_pentad = sl.get_pentadal_forecast_sites_from_HF_SDK(ieh_hf_sdk)
-            fc_sites_decad, site_codes_decad, site_ids_decad = sl.get_decadal_forecast_sites_from_HF_SDK(ieh_hf_sdk)
-            logger.info(f"... done reading forecast sites from iEasyHydro HF SDK")
         except Exception as e:
-            logger.error(f"Error while accessing iEasyHydro HF SDK: {e}")
+            logger.error(f"[CONFIG] Error accessing iEasyHydro HF SDK: {e}")
             raise e
 
-    # Concatenate and deduplicate site codes
-    # Many sites appear in both pentad and decad lists, so we deduplicate to avoid
-    # redundant API requests (halves ~124 → ~60 unique codes)
-    combined_codes = site_codes_pentad + site_codes_decad
-    unique_codes = list(dict.fromkeys(combined_codes))  # Preserves order, removes duplicates
+        # Try to use cache in operational mode (skips slow site-listing calls)
+        cache_used = False
+        if cache_enabled and mode == 'operational':
+            cached_data = src.load_site_cache(cache_file, max_age_days)
+            if cached_data is not None:
+                # Use cached data (unified format: site_codes, site_ids)
+                site_codes = cached_data['site_codes']
+                site_ids = cached_data['site_ids']
+                # Note: fc_sites objects are not cached, but we don't need them for data fetching
+                fc_sites = []  # Empty - not needed for HF data fetching
+                cache_used = True
+                logger.info(f"[CONFIG] Loaded {len(site_codes)} sites from cache")
+            else:
+                logger.warning("[CONFIG] Site cache missing or expired - fetching from SDK (slow)")
 
-    # Build deduplicated fc_sites and site_ids lists
-    # Use a dict to keep only the first occurrence of each site code
-    seen_codes = set()
-    fc_sites = []
-    site_codes = []
-    site_ids = []
-    for site, code, site_id in zip(
-        fc_sites_pentad + fc_sites_decad,
-        site_codes_pentad + site_codes_decad,
-        site_ids_pentad + site_ids_decad
-    ):
-        if code not in seen_codes:
-            seen_codes.add(code)
-            fc_sites.append(site)
-            site_codes.append(code)
-            site_ids.append(site_id)
+        # Fetch all forecast sites from SDK if cache not used (Phase 7: unified function)
+        if not cache_used:
+            try:
+                # Use unified function that gets ALL sites with ANY forecast type enabled
+                fc_sites, site_codes, site_ids = sl.get_all_forecast_sites_from_HF_SDK(ieh_hf_sdk)
+                logger.debug("[CONFIG] Forecast sites loaded from iEasyHydro HF SDK")
 
-    logger.info(f"Deduplicated site codes: {len(combined_codes)} → {len(site_codes)} unique sites")
+                # Save to cache in maintenance mode
+                if mode == 'maintenance' and cache_enabled:
+                    src.save_site_cache(cache_file, site_codes, site_ids)
+                    logger.info(f"[CONFIG] Site cache updated: {cache_file}")
+            except Exception as e:
+                logger.error(f"[CONFIG] Error fetching site lists from SDK: {e}")
+                raise e
+
+        # For backward compatibility with validation (which uses fc_sites_pentad/decad)
+        # Note: These are only used in maintenance mode for expected_sites calculation
+        fc_sites_pentad = fc_sites if fc_sites else []
+        fc_sites_decad = []  # All sites are now in fc_sites_pentad
+
+    logger.info(f"[CONFIG] Total forecast sites: {len(site_codes)}")
     end_time = time.time()
     time_get_forecast_sites = end_time - start_time
 
@@ -304,10 +343,10 @@ def main():
                 mode=mode,
         )
         logger.info("Runoff data read from iEasyHydro HF SDK")
-    print(f"head of runoff data:\n{runoff_data.head(5)}")
-    print(f"tail of runoff data:\n{runoff_data.tail(5)}")
-    print(f"columns of runoff data: {runoff_data.columns.tolist()}")
-    print(f"types of columns in runoff data: {runoff_data.dtypes.to_dict()}")
+    logger.debug(f"[DATA] head of runoff data:\n{runoff_data.head(5)}")
+    logger.debug(f"[DATA] tail of runoff data:\n{runoff_data.tail(5)}")
+    logger.debug(f"[DATA] columns of runoff data: {runoff_data.columns.tolist()}")
+    logger.debug(f"[DATA] types of columns in runoff data: {runoff_data.dtypes.to_dict()}")
     # Print whetehr or not the date column is in datetime format
     if 'date' in runoff_data.columns:
         import pandas as pd
@@ -324,8 +363,8 @@ def main():
                        "This will cause issues later on.")
         sys.exit(1)
 
-    # Print the tail of runoff data for site 16059
-    print(runoff_data[runoff_data['code'] == 16059].tail(10))
+    # Log the tail of runoff data for site 16059
+    logger.debug(f"[DATA] runoff data for site 16059:\n{runoff_data[runoff_data['code'] == 16059].tail(10)}")
     end_time = time.time()
     time_get_runoff_data = end_time - start_time
 
@@ -404,23 +443,48 @@ def main():
     end_time = time.time()
     time_write_daily_hydrograph_data = end_time - start_time
 
+    # Post-write validation (Phase 3) - only in maintenance mode
+    if mode == "maintenance":
+        validation_config = get_validation_settings()
+        if validation_config.get('enabled', True):
+            logger.info("[DATA] Running post-write validation...")
+            intermediate_data_path = os.getenv("ieasyforecast_intermediate_data_path")
+            stats_file = os.path.join(
+                intermediate_data_path,
+                validation_config.get('stats_file', 'reliability_stats.json')
+            )
+            # Get unique site codes from the forecast sites
+            expected_sites = list(set(str(s.code) for s in fc_sites_pentad + fc_sites_decad))
+            src.run_post_write_validation(
+                output_df=filtered_data,
+                expected_sites=expected_sites,
+                stats_file=stats_file,
+                max_age_days=validation_config.get('max_age_days', 3),
+                reliability_threshold=validation_config.get('reliability_threshold', 80.0)
+            )
+
+        # Spot-check validation (Phase 4) - requires SDK access
+        spot_check_config = get_spot_check_settings()
+        if spot_check_config.get('enabled', True) and ieh_hf_sdk is not None:
+            logger.info("[DATA] Running spot-check validation...")
+            src.run_spot_check_validation(
+                sdk=ieh_hf_sdk,
+                output_df=filtered_data,
+                target_timezone=None  # Uses UTC in SDK responses
+            )
+
     overall_end_time = time.time()
-    print("\n")
-    logger.info(f"Overall time: {overall_end_time - overall_start_time:.2f} seconds")
-    logger.info(f"Time to load environment: {time_load_environment:.2f} seconds")
-    logger.info(f"Time to get forecast sites: {time_get_forecast_sites:.2f} seconds")
-    logger.info(f"Time to get runoff data: {time_get_runoff_data:.2f} seconds")
-    logger.info(f"Time to filter roughly for outliers: {time_filter_roughly_for_outliers:.2f} seconds")
-    logger.info(f"Time to reformat to hydrograph data: {time_from_daily_time_series_to_hydrograph:.2f} seconds")
-    #logger.info(f"Time to add dangerous discharge: {time_add_dangerous_discharge:.2f} seconds")
-    logger.info(f"Time to write daily time series data: {time_write_daily_time_series_data:.2f} seconds")
-    logger.info(f"Time to write daily hydrograph data: {time_write_daily_hydrograph_data:.2f} seconds")
+    total_time = overall_end_time - overall_start_time
+    logger.info(f"[TIMING] Total: {total_time:.1f}s (config: {time_load_environment:.1f}s, "
+                f"sites: {time_get_forecast_sites:.1f}s, data: {time_get_runoff_data:.1f}s, "
+                f"process: {time_filter_roughly_for_outliers + time_from_daily_time_series_to_hydrograph:.1f}s, "
+                f"write: {time_write_daily_time_series_data + time_write_daily_hydrograph_data:.1f}s)")
 
     # Output profiling report if enabled (PREPROCESSING_PROFILING=true)
     if src.profiling_enabled():
         src.log_profiling_report()
 
-    logger.info("Preprocessing of runoff data completed successfully.")
+    logger.info("[OUTPUT] Preprocessing completed successfully")
 
     if ret is None:
         sys.exit(0) # Success

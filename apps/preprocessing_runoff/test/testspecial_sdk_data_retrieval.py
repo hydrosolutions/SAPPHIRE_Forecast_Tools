@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
 """
-Quick test script to verify iEasyHydro HF SDK data retrieval.
+Diagnostic test script to verify iEasyHydro HF SDK data retrieval.
 
 Tests that we can retrieve the latest N days of data for a gauge,
 or scan all available sites to check data freshness.
+
+Expected Runtime:
+-----------------
+    Single site test:       ~5 seconds
+    CHECK_ALL_SITES=1:      ~30 seconds
+    DIAGNOSE_422=1:         ~2-5 minutes (tests each site individually)
 
 Required Environment Variables (in .env file):
 ----------------------------------------------
@@ -848,11 +854,17 @@ def test_bulk_vs_individual(sdk, site_ids):
 
 def main():
     print("=" * 70)
-    print("iEasyHydro HF SDK Test - Using station__station_code__in filter")
+    print("iEasyHydro HF SDK Diagnostic Test")
     print("=" * 70)
     print(f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
-    print(f"\nThis test uses 'station__station_code__in' instead of 'site_codes'")
-    print(f"to test an alternative API filter parameter.")
+
+    # Show what mode we're running in
+    if os.getenv('DIAGNOSE_422', '').lower() in ('1', 'true', 'yes'):
+        print("\nMode: DIAGNOSE_422 - Testing each site individually (~2-5 min)")
+    elif os.getenv('CHECK_ALL_SITES', '').lower() in ('1', 'true', 'yes'):
+        print("\nMode: CHECK_ALL_SITES - Scanning all sites for recent data (~30 sec)")
+    else:
+        print("\nMode: Single site test (~5 sec)")
 
     sdk = test_sdk_connection()
 

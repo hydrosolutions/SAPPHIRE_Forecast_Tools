@@ -382,8 +382,67 @@ uv run pytest test/ -v
 | `IEASYHYDROHF_PASSWORD` | API password | .env file |
 | `PREPROCESSING_MODE` | Operating mode: `operational` (default) or `maintenance` | optional |
 | `PREPROCESSING_MAINTENANCE_LOOKBACK_DAYS` | Number of days to fetch in maintenance mode (default: 120) | optional |
+| `log_level` | System-wide log level: `DEBUG`, `INFO`, `WARNING`, `ERROR` | optional, default: INFO |
 
 See [doc/configuration.md](../../doc/configuration.md) for the complete list.
+
+## Logging
+
+The module uses structured logging with stage tags for easy filtering and debugging.
+
+### Log Levels
+
+| Level | Use Case |
+|-------|----------|
+| **DEBUG** | Detailed data for debugging (DataFrame info, intermediate values) |
+| **INFO** | Normal operation milestones, counts, summaries |
+| **WARNING** | Potential issues (e.g., >20% of sites missing data) |
+| **ERROR** | Failures that affect results |
+
+### Stage Tags
+
+Log messages are prefixed with stage tags for filtering:
+
+- `[CONFIG]` - Configuration loading, mode, timezone
+- `[API]` - iEasyHydro HF requests and responses
+- `[DATA]` - DataFrame transformations, outlier filtering
+- `[MERGE]` - Combining data sources
+- `[OUTPUT]` - Writing results, final summaries
+- `[TIMING]` - Performance metrics
+
+### Configuration
+
+Log level can be configured at two levels (higher priority first):
+
+1. **Module-specific** (`config.yaml`):
+   ```yaml
+   logging:
+     log_level: DEBUG  # Override for this module only
+   ```
+
+2. **System-wide** (`.env` file):
+   ```bash
+   log_level=INFO  # Default for all modules
+   ```
+
+If neither is set, defaults to `INFO`.
+
+### Example Output
+
+```
+2025-01-12 08:00:01 - INFO - [CONFIG] Mode: MAINTENANCE
+2025-01-12 08:00:01 - INFO - [CONFIG] Timezone: Asia/Bishkek
+2025-01-12 08:00:02 - INFO - [API] Request: 62 sites, WDDA, 2024-09-14 to 2025-01-12
+2025-01-12 08:00:15 - INFO - [API] Response WDDA: 3780 records from 53/62 sites (85.5%)
+2025-01-12 08:00:15 - WARNING - [API] Sites without WDDA data: ['15020', '15025']
+2025-01-12 08:00:16 - INFO - [MERGE] Complete: 50000 existing + 1200 new = 51200 total
+2025-01-12 08:00:17 - INFO - [OUTPUT] Final: 51200 records, 62 sites, 2020-01-01 to 2025-01-12
+2025-01-12 08:00:17 - INFO - [TIMING] Total: 16.2s (config: 0.1s, sites: 2.0s, data: 13.1s, process: 0.8s, write: 0.2s)
+```
+
+### Log Files
+
+Logs are written to `logs/log` with daily rotation (kept for 30 days).
 
 ## Related Documentation
 

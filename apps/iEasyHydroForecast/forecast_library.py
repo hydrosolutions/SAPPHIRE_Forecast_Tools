@@ -7860,6 +7860,109 @@ class Site:
             return []
 
     @classmethod
+    def all_forecast_sites_from_iEH_HF_SDK(cls, sites: list) -> list:
+        """
+        Creates a list of site objects for ALL sites with ANY forecast type enabled.
+
+        Includes sites where any of these flags are True:
+        - daily_forecast
+        - pentad_forecast
+        - decadal_forecast
+        - monthly_forecast
+        - seasonal_forecast
+
+        Args:
+            sites (list): The object containing the site data from
+                ieasyhydro_hf_sdk.get_discharge_sites()
+
+        Returns:
+            list: A list of Site objects for all forecast-enabled sites.
+        """
+        try:
+            df = pd.DataFrame(sites)
+            site_list = []
+
+            for index, row in df.iterrows():
+                row = pd.DataFrame(row).T
+                enabled = row['enabled_forecasts'].values[0]
+
+                # Skip if enabled_forecasts is None
+                if enabled is None:
+                    logger.debug(f'Skipping site {row["site_code"].values[0]} - no forecast flags set.')
+                    continue
+
+                # Check if ANY forecast flag is enabled
+                has_any_forecast = (
+                    enabled.get('daily_forecast', False) or
+                    enabled.get('pentad_forecast', False) or
+                    enabled.get('decadal_forecast', False) or
+                    enabled.get('monthly_forecast', False) or
+                    enabled.get('seasonal_forecast', False)
+                )
+
+                if not has_any_forecast:
+                    logger.debug(f'Skipping site {row["site_code"].values[0]} - no forecast types enabled.')
+                    continue
+
+                # Create Site object
+                name_parts = split_name(row['official_name'].values[0])
+                name_nat_parts = split_name(row['national_name'].values[0])
+
+                site = cls(
+                    code=row['site_code'].values[0],
+                    iehhf_site_id=row['id'].values[0],
+                    name=row['official_name'].values[0],
+                    name_nat=row['national_name'].values[0],
+                    river_name=name_parts[0],
+                    river_name_nat=name_nat_parts[0],
+                    punkt_name=name_parts[1],
+                    punkt_name_nat=name_nat_parts[1],
+                    lat=row['latitude'].values[0],
+                    lon=row['longitude'].values[0],
+                    region=row['region'].values[0]['official_name'],
+                    region_nat=row['region'].values[0]['national_name'],
+                    basin=row['basin'].values[0]['official_name'],
+                    basin_nat=row['basin'].values[0]['national_name'],
+                    qdanger=row['dangerous_discharge'].values[0],
+                    histqmin=row['historical_discharge_minimum'].values[0],
+                    histqmax=row['historical_discharge_maximum'].values[0],
+                    bulletin_order=row['bulletin_order'].values[0],
+                    daily_forecast=enabled.get('daily_forecast', False),
+                    pentadal_forecast=enabled.get('pentad_forecast', False),
+                    decadal_forecast=enabled.get('decadal_forecast', False),
+                    monthly_forecast=enabled.get('monthly_forecast', False),
+                    seasonal_forecast=enabled.get('seasonal_forecast', False),
+                    site_type=row['site_type'].values[0],
+                )
+                site_list.append(site)
+
+            # Filter for manual stations only (avoid duplicates from automatic stations)
+            site_list = [site for site in site_list if site.site_type == 'manual']
+
+            # Sort by basin and bulletin order
+            if site_list:
+                df_sort = pd.DataFrame({
+                    'codes': [site.code for site in site_list],
+                    'basins': [site.basin for site in site_list],
+                    'bulletin_order': [site.bulletin_order for site in site_list]
+                })
+                df_sort = df_sort.sort_values(by=['basins', 'bulletin_order'])
+                ordered_codes = df_sort['codes'].tolist()
+
+                ordered_sites = []
+                for code in ordered_codes:
+                    site = next((s for s in site_list if s.code == code), None)
+                    if site:
+                        ordered_sites.append(site)
+                return ordered_sites
+
+            return site_list
+
+        except Exception as e:
+            logger.error(f'Error creating Site objects from DataFrame: {e}')
+            return []
+
+    @classmethod
     def virtual_decad_forecast_sites_from_iEH_HF_SDK(cls, sites: list) -> list:
         """
         Creates a list of site objects with attributes read from the sites object.
@@ -8086,6 +8189,110 @@ class Site:
             return ordered_sites_list
         except Exception as e:
             print(f'Error creating Site objects from DataFrame: {e}')
+            return []
+
+    @classmethod
+    def virtual_all_forecast_sites_from_iEH_HF_SDK(cls, sites: list) -> list:
+        """
+        Creates a list of virtual site objects for ALL sites with ANY forecast type enabled.
+
+        Includes virtual sites where any of these flags are True:
+        - daily_forecast
+        - pentad_forecast
+        - decadal_forecast
+        - monthly_forecast
+        - seasonal_forecast
+
+        Args:
+            sites (list): The object containing the virtual site data from
+                ieasyhydro_hf_sdk.get_virtual_sites()
+
+        Returns:
+            list: A list of Site objects for all forecast-enabled virtual sites.
+        """
+        logger.debug('Creating virtual sites (all forecasts) from iEH HF SDK.')
+        try:
+            df = pd.DataFrame(sites)
+            site_list = []
+
+            for index, row in df.iterrows():
+                row = pd.DataFrame(row).T
+                enabled = row['enabled_forecasts'].values[0]
+
+                # Skip if enabled_forecasts is None
+                if enabled is None:
+                    logger.debug(f'Skipping virtual site {row["site_code"].values[0]} - no forecast flags set.')
+                    continue
+
+                # Check if ANY forecast flag is enabled
+                has_any_forecast = (
+                    enabled.get('daily_forecast', False) or
+                    enabled.get('pentad_forecast', False) or
+                    enabled.get('decadal_forecast', False) or
+                    enabled.get('monthly_forecast', False) or
+                    enabled.get('seasonal_forecast', False)
+                )
+
+                if not has_any_forecast:
+                    logger.debug(f'Skipping virtual site {row["site_code"].values[0]} - no forecast types enabled.')
+                    continue
+
+                # Create Site object for virtual site
+                name_parts = row['official_name'].values[0].split(' - ')
+                name_nat_parts = row['national_name'].values[0].split(' - ')
+                if len(name_parts) == 1:
+                    name_parts = [row['official_name'].values[0], '']
+                if len(name_nat_parts) == 1:
+                    name_nat_parts = [row['national_name'].values[0], '']
+
+                site = cls(
+                    code=row['site_code'].values[0],
+                    iehhf_site_id=row['id'].values[0],
+                    name=row['official_name'].values[0],
+                    name_nat=row['national_name'].values[0],
+                    river_name=name_parts[0],
+                    river_name_nat=name_nat_parts[0],
+                    punkt_name=name_parts[1],
+                    punkt_name_nat=name_nat_parts[1],
+                    lat=row['latitude'].values[0],
+                    lon=row['longitude'].values[0],
+                    region=row['region'].values[0]['official_name'],
+                    region_nat=row['region'].values[0]['national_name'],
+                    basin=row['basin'].values[0]['official_name'],
+                    basin_nat=row['basin'].values[0]['national_name'],
+                    qdanger=row['dangerous_discharge'].values[0],
+                    histqmin=row['historical_discharge_minimum'].values[0],
+                    histqmax=row['historical_discharge_maximum'].values[0],
+                    bulletin_order=row['bulletin_order'].values[0],
+                    daily_forecast=enabled.get('daily_forecast', False),
+                    pentadal_forecast=enabled.get('pentad_forecast', False),
+                    decadal_forecast=enabled.get('decadal_forecast', False),
+                    monthly_forecast=enabled.get('monthly_forecast', False),
+                    seasonal_forecast=enabled.get('seasonal_forecast', False),
+                )
+                site_list.append(site)
+
+            # Sort by basin and bulletin order
+            if site_list:
+                df_sort = pd.DataFrame({
+                    'codes': [site.code for site in site_list],
+                    'basins': [site.basin for site in site_list],
+                    'bulletin_order': [site.bulletin_order for site in site_list]
+                })
+                df_sort = df_sort.sort_values(by=['basins', 'bulletin_order'])
+                ordered_codes = df_sort['codes'].tolist()
+
+                ordered_sites = []
+                for code in ordered_codes:
+                    site = next((s for s in site_list if s.code == code), None)
+                    if site:
+                        ordered_sites.append(site)
+                return ordered_sites
+
+            return site_list
+
+        except Exception as e:
+            logger.error(f'Error creating virtual Site objects from DataFrame: {e}')
             return []
 
     @classmethod

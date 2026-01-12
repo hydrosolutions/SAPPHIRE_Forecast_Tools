@@ -992,6 +992,72 @@ def get_pentadal_forecast_sites_from_HF_SDK(ieh_hf_sdk):
     return fc_sites, site_codes, site_ids
 
 
+def get_all_forecast_sites_from_HF_SDK(ieh_hf_sdk):
+    """
+    Gets ALL sites with ANY forecast type enabled from iEH HF API.
+
+    Returns sites where any of these flags are True:
+    - daily_forecast
+    - pentad_forecast
+    - decadal_forecast
+    - monthly_forecast
+    - seasonal_forecast
+
+    Args:
+        ieh_hf_sdk: The iEasyHydro HF SDK object.
+
+    Returns:
+        fc_sites (list): Site objects for all forecast-enabled sites.
+        site_codes (list): Site codes (strings) for API queries.
+        site_ids (list): iEH HF site IDs.
+    """
+    if ieh_hf_sdk is None:
+        return None, None, None
+
+    # Get discharge sites from SDK
+    discharge_sites = ieh_hf_sdk.get_discharge_sites()
+    logger.debug(f" {len(discharge_sites)} discharge site(s) found in iEH HF SDK")
+
+    # Get Site objects for ALL forecast-enabled sites (any forecast type)
+    fc_sites = fl.Site.all_forecast_sites_from_iEH_HF_SDK(discharge_sites)
+    logger.debug(f" {len(fc_sites)} Site object(s) created for forecasting (any type)")
+
+    # Get virtual sites with any forecast enabled
+    virtual_sites = ieh_hf_sdk.get_virtual_sites()
+    logger.debug(f" {len(virtual_sites)} virtual site(s) found in iEH HF SDK")
+    virtual_fc_sites = fl.Site.virtual_all_forecast_sites_from_iEH_HF_SDK(virtual_sites)
+    fc_sites.extend(virtual_fc_sites)
+
+    # Get unique site codes and IDs
+    site_codes = [site.code for site in fc_sites]
+    site_ids = [site.iehhf_site_id for site in fc_sites]
+
+    # Remove duplicates while preserving order
+    seen = set()
+    unique_fc_sites = []
+    unique_codes = []
+    unique_ids = []
+    for site, code, site_id in zip(fc_sites, site_codes, site_ids):
+        if code not in seen:
+            seen.add(code)
+            unique_fc_sites.append(site)
+            unique_codes.append(code)
+            unique_ids.append(site_id)
+
+    logger.info(f" {len(unique_fc_sites)} unique Site object(s) for all forecasts: {[s.code for s in unique_fc_sites]}")
+
+    # Write the updated site selection to the config file
+    json_file = os.path.join(
+        os.getenv("ieasyforecast_configuration_path"),
+        os.getenv("ieasyforecast_config_file_station_selection")
+    )
+    data = {"stationsID": unique_codes}
+    with open(json_file, 'w') as f:
+        json.dump(data, f, indent=2)
+
+    return unique_fc_sites, unique_codes, unique_ids
+
+
 # endregion
 
 # --- Reading of forecast results ------------------------------------------------
