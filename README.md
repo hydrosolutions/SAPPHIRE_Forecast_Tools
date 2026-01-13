@@ -1,7 +1,6 @@
 ![test and deploy](https://github.com/hydrosolutions/SAPPHIRE_Forecast_Tools/actions/workflows/test_deploy_main.yml/badge.svg)
-![status: active development](https://img.shields.io/badge/status-active%20development-yellow)
 ![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
-![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)
+![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)
 ![Docker](https://img.shields.io/badge/docker-ready-blue.svg?logo=docker)
 
 # 💎 SAPPHIRE Forecast Tools
@@ -202,3 +201,9 @@ This is a collaboraion  project where each contributor profited from input of al
 - Vjekoslav Večković [@vjekoslavveckovic](https://github.com/vjekoslavveckovic): Implementation of custom functions and complex interactivity for the forecast dashboard (module forecast_dashboard).
 - Davor Škalec [@skalecdavor](https://github.com/skalecdavor) and Vatroslav Čelan [@vatrocelan](https://github.com/vatrocelan): Support with the integration of the ieasyreports and ieasyhydro-python-sdk libraries.
 - Beatrice Marti [@mabesa](https://github.com/mabesa): Design and implementation of the forecast tools and all modules not named above and coordination of the project.
+
+# Maintenance Status
+
+🟢 **Active Development**
+
+This repository is part of an ongoing project and is actively maintained.

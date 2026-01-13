@@ -1509,7 +1509,7 @@ If AGPL packages are found:
 | 5a | forecast_dashboard | ✅ Completed | `:py312` | B | pyproject.toml + uv.lock (67 packages) + Dockerfile.py312; Panel 1.4.5, Bokeh 3.4.3 (pinned <3.5 for FuncTickFormatter compatibility), HoloViews 1.19.1; local Py3.12 test OK; Docker operational test OK. CI/CD workflows updated. |
 | 5b | pipeline | ✅ Completed | `:py312` | B | pyproject.toml + uv.lock (35 packages) + Dockerfile.py312; Luigi 3.6.0; local Py3.12 test OK; Docker operational test OK (Docker socket access verified). CI/CD workflows updated. |
 | 5c | postprocessing_forecasts | ✅ Completed | `:py312` | B | pyproject.toml + uv.lock (29 packages) + Dockerfile.py312; local Py3.12 test OK (script runs successfully with pentad/decadal forecasts). |
-| 6 | Flip `:latest` to py312 | ⏸️ Blocked - waiting for imomo server | `:latest` | B avg | Server testing paused - imomo data server is down (2025-12-17). Pipeline bugfix (Docker Hub API) and test improvements ready. **Pre-req**: Add attestation to all py312 images (see Scout Compliance section). |
+| 6 | Flip `:latest` to py312 | ⏸️ Blocked - server unavailable | `:latest` | B avg | Server testing scheduled for 2025-01-14. Pipeline bugfix (Docker Hub API) and test improvements ready. **Pre-req**: Add attestation to all py312 images (see Scout Compliance section). |
 | 7 | Full package upgrade | Not started | `:py312` | B | Upgrade all packages to latest versions after py312 migration complete. |
 
 ---
@@ -1728,4 +1728,4 @@ After successful server testing:
 ---
 
 *Document created: 2025-12-01*
-*Last updated: 2025-12-17*
+*Last updated: 2025-01-13*
