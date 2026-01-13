@@ -125,6 +125,7 @@ class Snow(Base):
     date = Column(Date, nullable=False)
 
     value = Column(Float)
+    norm = Column(Float)
     value1 = Column(Float)
     value2 = Column(Float)
     value3 = Column(Float)

@@ -105,6 +105,7 @@ class SnowBase(BaseModel):
     code: str = Field(..., max_length=10)
     date: DateType
     value: Optional[float] = None
+    norm: Optional[float] = None
     value1: Optional[float] = None
     value2: Optional[float] = None
     value3: Optional[float] = None
