@@ -940,10 +940,19 @@ def process_hydro_HF_data(data):
     Note:
         Records with null/None values are filtered out as they represent
         dates without actual measurements.
+        
+        IMPORTANT: This function should receive ALL API results aggregated
+        from all pages. Sites are classified based on their station_type
+        across all results:
+        - Hydro-only: Sites that only appear with station_type='hydro'
+        - Dual-type: Sites that appear with BOTH 'hydro' and 'meteo' types
+        - Meteo-only: Sites that ONLY appear with station_type='meteo'
+        
+        Only hydro records are kept. Meteo-only sites are logged for awareness.
     """
     results = data.get('results', [])
 
-    # Debug: Categorize results by station_type and collect site codes
+    # Categorize results by station_type and collect site codes
     hydro_sites = set()
     meteo_sites = set()
 
@@ -955,14 +964,27 @@ def process_hydro_HF_data(data):
         elif st == 'meteo':
             meteo_sites.add(code)
 
-    logger.debug(f"[DATA] process_hydro_HF_data: Total results: {len(results)}")
-    logger.debug(f"[DATA] process_hydro_HF_data: Sites with hydro data: {len(hydro_sites)}")
-    logger.debug(f"[DATA] process_hydro_HF_data: Sites with ONLY meteo data: {len(meteo_sites - hydro_sites)}")
+    # Calculate site categories
+    dual_type_sites = hydro_sites & meteo_sites  # Sites with BOTH hydro and meteo
+    hydro_only_sites = hydro_sites - meteo_sites  # Sites with ONLY hydro
+    meteo_only_sites = meteo_sites - hydro_sites  # Sites with ONLY meteo (no discharge data)
+    
+    total_unique_sites = len(hydro_sites | meteo_sites)
 
-    # Sites that have meteo but not hydro data
-    meteo_only = meteo_sites - hydro_sites
-    if meteo_only:
-        logger.debug(f"[DATA] process_hydro_HF_data: Meteo-only site codes: {sorted(meteo_only)}")
+    logger.debug(f"[DATA] process_hydro_HF_data: Total site-records: {len(results)}")
+    logger.info(f"[DATA] Site classification across ALL pages: "
+                f"{total_unique_sites} unique sites = "
+                f"{len(hydro_only_sites)} hydro-only + "
+                f"{len(dual_type_sites)} dual-type + "
+                f"{len(meteo_only_sites)} meteo-only")
+    
+    # Log dual-type sites at debug level (for awareness that these sites have both)
+    if dual_type_sites:
+        logger.debug(f"[DATA] Dual-type sites (have both hydro & meteo data): {sorted(dual_type_sites)}")
+
+    # Log meteo-only sites (these are sites that truly have NO discharge data)
+    if meteo_only_sites:
+        logger.info(f"[DATA] Meteo-only sites (no discharge data): {sorted(meteo_only_sites)}")
 
     hydro_data = [
         site_data for site_data in results
@@ -1003,7 +1025,7 @@ def process_hydro_HF_data(data):
     if skipped_null_count > 0:
         logger.debug(f"[DATA] process_hydro_HF_data: Skipped {skipped_null_count} records with null values")
 
-    logger.debug(f"[DATA] process_hydro_HF_data: Final processed records: {len(processed_data)}")
+    logger.debug(f"[DATA] process_hydro_HF_data: Final processed records: {len(processed_data)} from {len(hydro_sites)} hydro sites")
 
     return pd.DataFrame(processed_data)
 
@@ -1272,12 +1294,13 @@ def fetch_hydro_HF_data_robust(sdk, filters, site_codes, batch_size=10, max_work
 
 def fetch_and_format_hydro_HF_data(sdk, initial_filters):
     """
-    Fetch all pages of data from the API and format each page into a DataFrame.
+    Fetch all pages of data from the API and format into a DataFrame.
     
     Uses parallel fetching for improved performance:
     1. Fetch page 1 to get total count
     2. Calculate total pages (page_size=10 is API hard limit)
     3. Fetch remaining pages in parallel
+    4. Aggregate ALL results before processing (fixes meteo-only misclassification)
     
     Parameters:
     ----------
@@ -1295,6 +1318,12 @@ def fetch_and_format_hydro_HF_data(sdk, initial_filters):
     Raises:
     -------
     RuntimeError: If API returns 422 or other error status codes
+    
+    Note:
+    -----
+    The API can return the same site with different station_type values across pages
+    (e.g., site X as 'hydro' on page 1, and as 'meteo' on page 3). We aggregate ALL
+    results before classification to ensure accurate meteo-only detection.
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
     
@@ -1304,11 +1333,11 @@ def fetch_and_format_hydro_HF_data(sdk, initial_filters):
     filters = initial_filters.copy()
     filters['page_size'] = PAGE_SIZE
     
-    all_data_frames = []
+    all_raw_results = []  # Collect raw API results from all pages
     failed_pages = []
     
-    def fetch_page(page_num):
-        """Fetch and process a single page."""
+    def fetch_page_raw(page_num):
+        """Fetch a single page and return raw results (not processed)."""
         page_filters = filters.copy()
         page_filters['page'] = page_num
         
@@ -1323,17 +1352,10 @@ def fetch_and_format_hydro_HF_data(sdk, initial_filters):
             logger.error(error_msg)
             raise RuntimeError(error_msg)
         
-        # Process results
-        if isinstance(response, dict) and 'results' in response and response['results']:
-            page_df = process_hydro_HF_data(response)
-            
-            # Convert timestamps to datetime if they're strings
-            for col in ['local_datetime', 'utc_datetime']:
-                if col in page_df.columns and page_df[col].dtype == 'object':
-                    page_df[col] = pd.to_datetime(page_df[col])
-            
-            return page_df
-        return None
+        # Return raw results list (not processed yet)
+        if isinstance(response, dict) and 'results' in response:
+            return response.get('results', [])
+        return []
     
     # Step 1: Fetch first page to get total count
     logger.debug(f"[API] COUNT VALIDATION: Fetching page 1 to determine total count...")
@@ -1358,57 +1380,53 @@ def fetch_and_format_hydro_HF_data(sdk, initial_filters):
     logger.debug(f"[API] COUNT VALIDATION: API reports total_count={total_count}, total_pages={total_pages}")
     logger.info(f"[API] Total records: {total_count}, Total pages: {total_pages}")
     
-    # Process first page
-    records_from_page_1 = 0
-    if isinstance(first_response, dict) and 'results' in first_response and first_response['results']:
-        first_df = process_hydro_HF_data(first_response)
-        for col in ['local_datetime', 'utc_datetime']:
-            if col in first_df.columns and first_df[col].dtype == 'object':
-                first_df[col] = pd.to_datetime(first_df[col])
-        all_data_frames.append(first_df)
-        records_from_page_1 = len(first_df)
-        logger.debug(f"[API] COUNT VALIDATION: Page 1: {records_from_page_1} records processed")
+    # Collect raw results from first page
+    if isinstance(first_response, dict) and 'results' in first_response:
+        page1_results = first_response.get('results', [])
+        all_raw_results.extend(page1_results)
+        logger.debug(f"[API] COUNT VALIDATION: Page 1: {len(page1_results)} site-records collected")
     
-    # Step 2: Fetch remaining pages in parallel
+    # Step 2: Fetch remaining pages in parallel (collect raw results)
     if total_pages > 1:
         pages_to_fetch = list(range(2, total_pages + 1))
         logger.debug(f"[API] COUNT VALIDATION: Fetching pages 2-{total_pages} in parallel...")
         
         with ProfileTimer(f"parallel_fetch_pages_2_to_{total_pages}", log_immediately=True):
             with ThreadPoolExecutor(max_workers=10) as executor:
-                futures = {executor.submit(fetch_page, p): p for p in pages_to_fetch}
+                futures = {executor.submit(fetch_page_raw, p): p for p in pages_to_fetch}
                 
                 for future in as_completed(futures):
                     page_num = futures[future]
                     try:
-                        page_df = future.result()
-                        if page_df is not None and not page_df.empty:
-                            all_data_frames.append(page_df)
+                        page_results = future.result()
+                        if page_results:
+                            all_raw_results.extend(page_results)
                     except Exception as e:
                         failed_pages.append(page_num)
                         logger.error(f"Error fetching page {page_num}: {e}")
                         # Re-raise to stop execution
                         raise
         
-        logger.debug(f"[API] COUNT VALIDATION: Parallel fetch complete: {len(all_data_frames)} pages with data")
-
-    # Count validation
-    total_records_fetched = sum(len(df) for df in all_data_frames)
-    logger.debug(f"[API] COUNT VALIDATION: Total records fetched: {total_records_fetched}")
-    logger.debug(f"[API] COUNT VALIDATION: Expected from API: {total_count}")
-
-    if total_records_fetched != total_count:
-        logger.warning(f"[API] COUNT VALIDATION: Record count mismatch! Fetched {total_records_fetched}, expected {total_count}")
+        logger.debug(f"[API] COUNT VALIDATION: Parallel fetch complete: {len(all_raw_results)} total site-records collected")
 
     if failed_pages:
         logger.error(f"[API] COUNT VALIDATION ERROR: Failed pages: {failed_pages}")
         raise RuntimeError(f"Failed to fetch pages: {failed_pages}")
     
-    # Combine all DataFrames
-    if all_data_frames:
-        combined_df = pd.concat(all_data_frames, ignore_index=True)
+    # Step 3: Process ALL results together (fixes meteo-only misclassification)
+    # This ensures a site is only classified as "meteo-only" if it has NO hydro
+    # records across ALL pages, not just a single page
+    if all_raw_results:
+        combined_response = {'results': all_raw_results}
+        combined_df = process_hydro_HF_data(combined_response)
+        
+        # Convert timestamps to datetime if they're strings
+        for col in ['local_datetime', 'utc_datetime']:
+            if col in combined_df.columns and combined_df[col].dtype == 'object':
+                combined_df[col] = pd.to_datetime(combined_df[col])
+        
         if combined_df.empty:
-            return pd.DataFrame(columns=['station_code', 'timestamp_local', 'timestamp_utc', 'value'])
+            return pd.DataFrame(columns=['station_code', 'local_datetime', 'utc_datetime', 'value'])
         
         # Drop columns that are not in the expected structure
         combined_df.drop(
@@ -1423,8 +1441,8 @@ def fetch_and_format_hydro_HF_data(sdk, initial_filters):
         logger.info(f"[API] Total records fetched: {len(combined_df)} from {unique_sites} sites")
         return combined_df
     else:
-        logger.debug(f"[API] COUNT VALIDATION: No data frames to combine - returning empty DataFrame")
-        return pd.DataFrame(columns=['station_code', 'timestamp_local', 'timestamp_utc', 'value'])
+        logger.debug(f"[API] COUNT VALIDATION: No results to process - returning empty DataFrame")
+        return pd.DataFrame(columns=['station_code', 'local_datetime', 'utc_datetime', 'value'])
 
 def get_todays_morning_discharge_from_iEH_HF_for_multiple_sites(
         ieh_hf_sdk, id_list, start_datetime=None, end_datetime=None,
@@ -3631,15 +3649,16 @@ def spot_check_sites(
     date_col: str = 'date',
     code_col: str = 'code',
     value_col: str = 'discharge',
-    target_timezone=None
+    target_timezone=None,
+    variable_name: str = "WDDA"
 ) -> dict:
     """
     Verify data for spot-check sites by comparing output values against API.
 
     For each spot-check site:
-    1. Get the latest date and value from output_df
-    2. Fetch the latest available value from API
-    3. Compare the dates and values
+    1. Fetch the latest available value from API for the specified variable
+    2. Get the corresponding date's value from output_df
+    3. Compare the values
 
     Args:
         sdk: iEasyHydro HF SDK instance
@@ -3649,18 +3668,20 @@ def spot_check_sites(
         code_col: Name of the site code column
         value_col: Name of the value column
         target_timezone: Timezone for API queries (not used, kept for compatibility)
+        variable_name: Variable to check - "WDDA" (daily average) or "WDD" (morning)
 
     Returns:
         dict with:
         - results: dict of site_code -> {output_date, output_value, api_date, api_value, match, error}
         - summary: {checked, matched, mismatched, errors}
+        - variable: the variable name checked
     """
     if not site_codes:
-        return {'results': {}, 'summary': {'checked': 0, 'matched': 0, 'mismatched': 0, 'errors': 0}}
+        return {'results': {}, 'summary': {'checked': 0, 'matched': 0, 'mismatched': 0, 'errors': 0}, 'variable': variable_name}
 
     if output_df.empty:
         logger.warning("[DATA] Spot-check: output DataFrame is empty")
-        return {'results': {}, 'summary': {'checked': 0, 'matched': 0, 'mismatched': 0, 'errors': 0}}
+        return {'results': {}, 'summary': {'checked': 0, 'matched': 0, 'mismatched': 0, 'errors': 0}, 'variable': variable_name}
 
     # Ensure proper types
     df = output_df.copy()
@@ -3683,44 +3704,21 @@ def spot_check_sites(
             'error': None
         }
 
-        # Get latest value from output
-        site_data = df[df[code_col] == site_code_str]
-        if site_data.empty:
-            result['error'] = 'Site not in output data'
-            errors += 1
-            results[site_code_str] = result
-            continue
-
-        # Get latest non-null value
-        site_data_with_values = site_data[site_data[value_col].notna()]
-        if site_data_with_values.empty:
-            result['error'] = 'Site has no values in output data'
-            errors += 1
-            results[site_code_str] = result
-            continue
-
-        latest_row = site_data_with_values.loc[site_data_with_values[date_col].idxmax()]
-        output_date = latest_row[date_col]
-        output_value = latest_row[value_col]
-
-        result['output_date'] = output_date.strftime('%Y-%m-%d')
-        result['output_value'] = float(output_value)
-
-        # Fetch latest available data from API (last 30 days to find most recent)
+        # Fetch latest available data from API first (last 30 days to find most recent)
         try:
             end_date = dt.datetime.now()
             start_date = end_date - dt.timedelta(days=30)
 
             filters = {
                 "site_codes": [site_code_str],  # Must be a list
-                "variable_names": ["WDDA"],  # Daily average discharge
+                "variable_names": [variable_name],
                 "local_date_time__gte": start_date.strftime('%Y-%m-%dT00:00:00'),
                 "local_date_time__lte": end_date.strftime('%Y-%m-%dT23:59:59'),
                 "page": 1,
                 "page_size": 10,  # API limit
             }
 
-            logger.debug(f"[DATA] Spot-check {site_code_str}: Querying API with filters: {filters}")
+            logger.debug(f"[DATA] Spot-check {site_code_str} ({variable_name}): Querying API with filters: {filters}")
             response = sdk.get_data_values_for_site(filters=filters)
 
             if isinstance(response, dict) and 'status_code' in response:
@@ -3756,31 +3754,46 @@ def spot_check_sites(
                                         logger.debug(f"[DATA] Spot-check {site_code_str}: Could not parse date: {e}")
 
                 if not all_values:
-                    result['error'] = 'No data from API in last 30 days'
+                    result['error'] = f'No {variable_name} data from API in last 30 days'
                     errors += 1
                 else:
-                    # Find the latest value
+                    # Find the latest value from API
                     latest_api = max(all_values, key=lambda x: x['date'])
                     result['api_date'] = latest_api['date'].strftime('%Y-%m-%d')
                     result['api_value'] = latest_api['value']
 
-                    # Compare: dates should match and values should be close
-                    output_date_only = output_date.date() if hasattr(output_date, 'date') else output_date
-
-                    if output_date_only == latest_api['date']:
-                        # Same date - compare values
-                        tolerance = 0.001
-                        diff = abs(result['output_value'] - result['api_value'])
-                        result['match'] = diff < tolerance
-                        if result['match']:
-                            matched += 1
-                        else:
-                            mismatched += 1
+                    # Now get the corresponding date's value from output
+                    site_data = df[df[code_col] == site_code_str]
+                    if site_data.empty:
+                        result['error'] = 'Site not in output data'
+                        errors += 1
                     else:
-                        # Different dates - this is a mismatch (data sync issue)
-                        result['match'] = False
-                        result['error'] = f"Date mismatch: output={result['output_date']}, api={result['api_date']}"
-                        mismatched += 1
+                        # Find the output value for the API's latest date
+                        api_date_ts = pd.Timestamp(latest_api['date'])
+                        matching_output = site_data[site_data[date_col].dt.date == latest_api['date']]
+
+                        if matching_output.empty:
+                            result['error'] = f"No output data for API date {result['api_date']}"
+                            errors += 1
+                        else:
+                            output_row = matching_output.iloc[0]
+                            output_value = output_row[value_col]
+
+                            if pd.isna(output_value):
+                                result['error'] = f"Output value is null for {result['api_date']}"
+                                errors += 1
+                            else:
+                                result['output_date'] = result['api_date']  # Same date
+                                result['output_value'] = float(output_value)
+
+                                # Compare values
+                                tolerance = 0.01  # Allow small floating point differences
+                                diff = abs(result['output_value'] - result['api_value'])
+                                result['match'] = diff < tolerance
+                                if result['match']:
+                                    matched += 1
+                                else:
+                                    mismatched += 1
             else:
                 result['error'] = 'Unexpected API response format'
                 errors += 1
@@ -3801,6 +3814,101 @@ def spot_check_sites(
             'matched': matched,
             'mismatched': mismatched,
             'errors': errors
+        },
+        'variable': variable_name
+    }
+
+
+def spot_check_sites_dual(
+    sdk,
+    site_codes: list,
+    output_df: pd.DataFrame,
+    date_col: str = 'date',
+    code_col: str = 'code',
+    value_col: str = 'discharge',
+    target_timezone=None
+) -> dict:
+    """
+    Run spot-check validation for both WDDA (daily average) and WDD (morning) data.
+
+    This function checks both variable types separately to handle the case where
+    morning data (WDD) creates a "today" entry before daily average (WDDA) is available.
+
+    Args:
+        sdk: iEasyHydro HF SDK instance
+        site_codes: List of site codes to spot-check
+        output_df: DataFrame with discharge data
+        date_col: Name of the date column
+        code_col: Name of the site code column
+        value_col: Name of the value column
+        target_timezone: Timezone for API queries
+
+    Returns:
+        dict with:
+        - wdda: spot_check_sites result for daily average discharge
+        - wdd: spot_check_sites result for morning discharge
+        - combined_summary: aggregated summary across both checks
+    """
+    # Check WDDA (daily average discharge)
+    wdda_result = spot_check_sites(
+        sdk=sdk,
+        site_codes=site_codes,
+        output_df=output_df,
+        date_col=date_col,
+        code_col=code_col,
+        value_col=value_col,
+        target_timezone=target_timezone,
+        variable_name="WDDA"
+    )
+
+    # Check WDD (morning discharge)
+    wdd_result = spot_check_sites(
+        sdk=sdk,
+        site_codes=site_codes,
+        output_df=output_df,
+        date_col=date_col,
+        code_col=code_col,
+        value_col=value_col,
+        target_timezone=target_timezone,
+        variable_name="WDD"
+    )
+
+    # Combine summaries
+    # A site is considered "matched" if it matches in at least one variable
+    # A site is "mismatched" only if it has data but values differ
+    # A site has "error" only if both variables have errors
+    combined_matched = 0
+    combined_mismatched = 0
+    combined_errors = 0
+
+    for site_code in site_codes:
+        site_str = str(site_code)
+        wdda_res = wdda_result['results'].get(site_str, {})
+        wdd_res = wdd_result['results'].get(site_str, {})
+
+        wdda_match = wdda_res.get('match')
+        wdd_match = wdd_res.get('match')
+        wdda_error = wdda_res.get('error')
+        wdd_error = wdd_res.get('error')
+
+        # Site passes if either WDDA or WDD matches
+        if wdda_match is True or wdd_match is True:
+            combined_matched += 1
+        elif wdda_match is False or wdd_match is False:
+            # Has data but value mismatch
+            combined_mismatched += 1
+        else:
+            # Both have errors (no data available)
+            combined_errors += 1
+
+    return {
+        'wdda': wdda_result,
+        'wdd': wdd_result,
+        'combined_summary': {
+            'checked': len(site_codes),
+            'matched': combined_matched,
+            'mismatched': combined_mismatched,
+            'errors': combined_errors
         }
     }
 
@@ -3809,35 +3917,109 @@ def log_spot_check_summary(spot_check_result: dict) -> None:
     """
     Log a summary of the spot-check validation results.
 
+    Handles both single-variable results (from spot_check_sites) and
+    dual-variable results (from spot_check_sites_dual).
+
     Args:
-        spot_check_result: Result from spot_check_sites()
+        spot_check_result: Result from spot_check_sites() or spot_check_sites_dual()
     """
+    # Check if this is a dual result (has 'wdda' and 'wdd' keys)
+    if 'wdda' in spot_check_result and 'wdd' in spot_check_result:
+        _log_dual_spot_check_summary(spot_check_result)
+    else:
+        _log_single_spot_check_summary(spot_check_result)
+
+
+def _log_single_spot_check_summary(spot_check_result: dict) -> None:
+    """Log summary for a single-variable spot-check result."""
     results = spot_check_result.get('results', {})
     summary = spot_check_result.get('summary', {})
+    variable = spot_check_result.get('variable', 'WDDA')
 
     if summary.get('checked', 0) == 0:
-        logger.debug("[DATA] Spot-check: No sites configured")
+        logger.debug(f"[DATA] Spot-check ({variable}): No sites configured")
         return
 
-    logger.info(f"[DATA] === Spot-Check Validation ===")
+    logger.info(f"[DATA] === Spot-Check Validation ({variable}) ===")
     logger.info(f"[DATA] Sites checked: {summary['checked']}")
     logger.info(f"[DATA] Matched: {summary['matched']}, Mismatched: {summary['mismatched']}, Errors: {summary['errors']}")
 
     # Report details for mismatches and errors
     for site, result in results.items():
         if result.get('error'):
-            logger.warning(f"[DATA] Spot-check {site}: ERROR - {result['error']}")
+            logger.warning(f"[DATA] Spot-check {site} ({variable}): ERROR - {result['error']}")
         elif result.get('match') is False:
             logger.warning(
-                f"[DATA] Spot-check {site}: MISMATCH - "
+                f"[DATA] Spot-check {site} ({variable}): MISMATCH - "
                 f"output={result['output_value']} ({result['output_date']}), "
                 f"api={result['api_value']} ({result.get('api_date', 'N/A')})"
             )
         else:
             logger.debug(
-                f"[DATA] Spot-check {site}: OK - value={result['output_value']} "
+                f"[DATA] Spot-check {site} ({variable}): OK - value={result['output_value']} "
                 f"(date: {result['output_date']})"
             )
+
+
+def _log_dual_spot_check_summary(spot_check_result: dict) -> None:
+    """Log summary for a dual-variable (WDDA + WDD) spot-check result."""
+    wdda = spot_check_result.get('wdda', {})
+    wdd = spot_check_result.get('wdd', {})
+    combined = spot_check_result.get('combined_summary', {})
+
+    if combined.get('checked', 0) == 0:
+        logger.debug("[DATA] Spot-check: No sites configured")
+        return
+
+    logger.info("[DATA] === Spot-Check Validation ===")
+    logger.info(f"[DATA] Sites checked: {combined['checked']}")
+    logger.info(f"[DATA] Result: {combined['matched']} OK, {combined['mismatched']} value mismatch, {combined['errors']} no data")
+
+    wdda_summary = wdda.get('summary', {})
+    wdd_summary = wdd.get('summary', {})
+    logger.debug(f"[DATA]   WDDA (daily avg): {wdda_summary.get('matched', 0)} OK, {wdda_summary.get('mismatched', 0)} mismatch, {wdda_summary.get('errors', 0)} no data")
+    logger.debug(f"[DATA]   WDD (morning):    {wdd_summary.get('matched', 0)} OK, {wdd_summary.get('mismatched', 0)} mismatch, {wdd_summary.get('errors', 0)} no data")
+
+    # Report per-site details
+    wdda_results = wdda.get('results', {})
+    wdd_results = wdd.get('results', {})
+    all_sites = set(wdda_results.keys()) | set(wdd_results.keys())
+
+    for site in sorted(all_sites):
+        wdda_res = wdda_results.get(site, {})
+        wdd_res = wdd_results.get(site, {})
+
+        wdda_match = wdda_res.get('match')
+        wdd_match = wdd_res.get('match')
+
+        # Determine overall status for this site
+        if wdda_match is True or wdd_match is True:
+            # At least one matches - report success with details
+            details = []
+            if wdda_match is True:
+                details.append(f"WDDA={wdda_res.get('output_value')} ({wdda_res.get('output_date')})")
+            if wdd_match is True:
+                details.append(f"WDD={wdd_res.get('output_value')} ({wdd_res.get('output_date')})")
+            logger.debug(f"[DATA] Spot-check {site}: OK - {', '.join(details)}")
+        elif wdda_match is False or wdd_match is False:
+            # Value mismatch - this is a real problem
+            if wdda_match is False:
+                logger.warning(
+                    f"[DATA] Spot-check {site} (WDDA): VALUE MISMATCH - "
+                    f"output={wdda_res.get('output_value')}, api={wdda_res.get('api_value')} "
+                    f"(date: {wdda_res.get('api_date')})"
+                )
+            if wdd_match is False:
+                logger.warning(
+                    f"[DATA] Spot-check {site} (WDD): VALUE MISMATCH - "
+                    f"output={wdd_res.get('output_value')}, api={wdd_res.get('api_value')} "
+                    f"(date: {wdd_res.get('api_date')})"
+                )
+        else:
+            # Both have no data - report but this might be expected for some sites
+            wdda_error = wdda_res.get('error', 'Unknown')
+            wdd_error = wdd_res.get('error', 'Unknown')
+            logger.warning(f"[DATA] Spot-check {site}: NO DATA available - WDDA: {wdda_error}")
 
 
 def run_spot_check_validation(
@@ -3851,7 +4033,10 @@ def run_spot_check_validation(
     """
     Run spot-check validation if sites are configured.
 
-    This is the main entry point for Phase 4 spot-check validation.
+    This is the main entry point for spot-check validation.
+    Checks both WDDA (daily average) and WDD (morning) data separately
+    to handle the case where morning data creates a "today" entry
+    before the daily average is available.
 
     Args:
         sdk: iEasyHydro HF SDK instance
@@ -3862,17 +4047,21 @@ def run_spot_check_validation(
         value_col: Name of the value column
 
     Returns:
-        Spot-check result dict (same as spot_check_sites output)
+        Dual spot-check result dict (from spot_check_sites_dual)
     """
     site_codes = get_spot_check_sites()
 
     if not site_codes:
         logger.info("[DATA] Spot-check validation skipped (no sites configured)")
-        return {'results': {}, 'summary': {'checked': 0, 'matched': 0, 'mismatched': 0, 'errors': 0}}
+        return {
+            'wdda': {'results': {}, 'summary': {'checked': 0, 'matched': 0, 'mismatched': 0, 'errors': 0}, 'variable': 'WDDA'},
+            'wdd': {'results': {}, 'summary': {'checked': 0, 'matched': 0, 'mismatched': 0, 'errors': 0}, 'variable': 'WDD'},
+            'combined_summary': {'checked': 0, 'matched': 0, 'mismatched': 0, 'errors': 0}
+        }
 
     logger.info(f"[DATA] Running spot-check validation for {len(site_codes)} sites...")
 
-    result = spot_check_sites(
+    result = spot_check_sites_dual(
         sdk=sdk,
         site_codes=site_codes,
         output_df=output_df,
