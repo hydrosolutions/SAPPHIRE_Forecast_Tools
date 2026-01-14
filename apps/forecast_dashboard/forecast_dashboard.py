@@ -256,59 +256,62 @@ def load_data():
         rram_forecast, ml_forecast, rain, temp, latest_data_is_current_year, \
         iehhf_warning, snow_data
     # File modification times
-    hydrograph_day_file = os.path.join(
-        os.getenv("ieasyforecast_intermediate_data_path"),
-        os.getenv("ieasyforecast_hydrograph_day_file"))
-    hydrograph_day_file_mtime = os.path.getmtime(hydrograph_day_file)
+    # hydrograph_day_file = os.path.join(
+    #     os.getenv("ieasyforecast_intermediate_data_path"),
+    #     os.getenv("ieasyforecast_hydrograph_day_file"))
+    # hydrograph_day_file_mtime = os.path.getmtime(hydrograph_day_file)
 
-    hydrograph_pentad_file = os.path.join(
-        os.getenv("ieasyforecast_intermediate_data_path"),
-        os.getenv("ieasyforecast_hydrograph_pentad_file"))
-    hydrograph_pentad_file_mtime = os.path.getmtime(hydrograph_pentad_file)
+    # hydrograph_pentad_file = os.path.join(
+    #     os.getenv("ieasyforecast_intermediate_data_path"),
+    #     os.getenv("ieasyforecast_hydrograph_pentad_file"))
+    # hydrograph_pentad_file_mtime = os.path.getmtime(hydrograph_pentad_file)
 
-    linreg_forecast_file = os.path.join(
-        os.getenv("ieasyforecast_intermediate_data_path"),
-        os.getenv("ieasyforecast_analysis_pentad_file"))
-    linreg_forecast_file_mtime = os.path.getmtime(linreg_forecast_file)
+    # linreg_forecast_file = os.path.join(
+    #     os.getenv("ieasyforecast_intermediate_data_path"),
+    #     os.getenv("ieasyforecast_analysis_pentad_file"))
+    # linreg_forecast_file_mtime = os.path.getmtime(linreg_forecast_file)
 
-    forecast_results_file = os.path.join(
-        os.getenv("ieasyforecast_intermediate_data_path"),
-        os.getenv("ieasyforecast_combined_forecast_pentad_file"))
+    # forecast_results_file = os.path.join(
+    #     os.getenv("ieasyforecast_intermediate_data_path"),
+    #     os.getenv("ieasyforecast_combined_forecast_pentad_file"))
     # Append _latest to the filename to get the latest file
-    forecast_results_file = forecast_results_file.replace('.csv', '_latest.csv')
-    forecast_results_file_mtime = os.path.getmtime(forecast_results_file)
+    # forecast_results_file = forecast_results_file.replace('.csv', '_latest.csv')
+    # forecast_results_file_mtime = os.path.getmtime(forecast_results_file)
 
-    forecast_stats_file = os.path.join(
-        os.getenv("ieasyforecast_intermediate_data_path"),
-        os.getenv("ieasyforecast_pentadal_skill_metrics_file"))
-    forecast_stats_file_mtime = os.path.getmtime(forecast_stats_file)
+    # forecast_stats_file = os.path.join(
+    #     os.getenv("ieasyforecast_intermediate_data_path"),
+    #     os.getenv("ieasyforecast_pentadal_skill_metrics_file"))
+    # forecast_stats_file_mtime = os.path.getmtime(forecast_stats_file)
 
     if display_CM_forecasts == True:
         # For rram and ml forecasts, get the directory modification times
-        rram_file_path = os.getenv('ieasyhydroforecast_PATH_TO_RESULT')
-        rram_file_mtime = get_directory_mtime(rram_file_path)
+        # rram_file_path = os.getenv('ieasyhydroforecast_PATH_TO_RESULT')
+        # rram_file_mtime = get_directory_mtime(rram_file_path)
+        pass
 
     if display_ML_forecasts == True:
-        ml_forecast_dir = os.path.join(
-            os.getenv("ieasyforecast_intermediate_data_path"),
-            os.getenv("ieasyhydroforecast_OUTPUT_PATH_DISCHARGE"))
-        ml_forecast_mtime = get_directory_mtime(ml_forecast_dir)
+        # ml_forecast_dir = os.path.join(
+        #     os.getenv("ieasyforecast_intermediate_data_path"),
+        #     os.getenv("ieasyhydroforecast_OUTPUT_PATH_DISCHARGE"))
+        # ml_forecast_mtime = get_directory_mtime(ml_forecast_dir)
+        pass
         
     if display_weather_data == True:
         # Rainfall and temperature data files
-        p_file = os.path.join(
-            os.getenv('ieasyhydroforecast_PATH_TO_HIND'),
-            os.getenv('ieasyhydroforecast_FILE_CF_HIND_P'))
-        t_file = os.path.join(
-            os.getenv('ieasyhydroforecast_PATH_TO_HIND'),
-            os.getenv('ieasyhydroforecast_FILE_CF_HIND_T')
-        )
+        # p_file = os.path.join(
+        #     os.getenv('ieasyhydroforecast_PATH_TO_HIND'),
+        #     os.getenv('ieasyhydroforecast_FILE_CF_HIND_P'))
+        # t_file = os.path.join(
+        #     os.getenv('ieasyhydroforecast_PATH_TO_HIND'),
+        #     os.getenv('ieasyhydroforecast_FILE_CF_HIND_T')
+        # )
 
         # replace .csv with _dashboard.csv
-        p_file = p_file.replace('.csv', '_dashboard.csv')
-        t_file = t_file.replace('.csv', '_dashboard.csv')
-        p_file_mtime = os.path.getmtime(p_file)
-        t_file_mtime = os.path.getmtime(t_file)
+        # p_file = p_file.replace('.csv', '_dashboard.csv')
+        # t_file = t_file.replace('.csv', '_dashboard.csv')
+        # p_file_mtime = os.path.getmtime(p_file)
+        # t_file_mtime = os.path.getmtime(t_file)
+        pass
 
     if display_snow_data == True:
         # Define hs_file, swe_file and rof_file here
@@ -412,8 +415,8 @@ def load_data():
     #print('column names of forecasts_all:\n', forecasts_all.columns)
     #print('\n\nhead of forecasts_all:\n', forecasts_all.head(), '\n\n')
     # Determine the horizon (pentad or decad)
-    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
-    horizon_in_year = "pentad_in_year" if horizon == "pentad" else "decad_in_year"
+    # horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+    # horizon_in_year = "pentad_in_year" if horizon == "pentad" else "decad_in_year"
     #print('horizon_in_year_col:', horizon_in_year)
 
     # Find the latest year in the data
