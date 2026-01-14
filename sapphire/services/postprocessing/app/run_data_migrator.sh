@@ -21,7 +21,7 @@ run() {
 run "$SCRIPT"
 
 # Runs by type
-run "$SCRIPT --type skillmetric"
+run "$SCRIPT --type skillmetric --batch-size 1"
 run "$SCRIPT --type lrforecast"
 run "$SCRIPT --type combinedforecast"
 run "$SCRIPT --type forecast"

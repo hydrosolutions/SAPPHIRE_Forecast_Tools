@@ -65,6 +65,7 @@ class Forecast(Base):
 
     # Composite index for filtering and ordering, plus unique constraint
     __table_args__ = (
+        Index('ix_forecasts_horizon_code_date_target', 'horizon_type', 'code', 'date', 'target'),
         Index('ix_forecasts_horizon_code_model_date_target', 'horizon_type', 'code', 'model_type', 'date', 'target'),
         UniqueConstraint('horizon_type', 'code', 'model_type', 'date', 'target', name='uq_forecasts_horizon_code_model_date_target')
     )
