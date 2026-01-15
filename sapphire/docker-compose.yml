@@ -1,4 +1,5 @@
 services:
+  # ============== DATABASES ==============
 #  task-db:
 #    image: postgres:15
 #    container_name: sapphire-task-db
@@ -59,6 +60,27 @@ services:
       - sapphire-network
     restart: unless-stopped
 
+  user-db:
+    image: postgres:15
+    container_name: sapphire-user-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: user_db
+    ports:
+      - "5435:5432"
+    volumes:
+      - user-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - sapphire-network
+    restart: unless-stopped
+
+  # ============== SERVICES ==============
   api-gateway:
     build:
       context: .
@@ -69,6 +91,7 @@ services:
     depends_on:
       - preprocessing-api
       - postprocessing-api
+      - user-api
     networks:
       - sapphire-network
     restart: unless-stopped
@@ -144,10 +167,27 @@ services:
       - ./services/postprocessing:/code
       - /Users/maxat/data/kyg_data_forecast_tools/intermediate_data:/intermediate_data
 
+  user-api:
+    build:
+      context: .
+      dockerfile: ./services/user/Dockerfile
+    container_name: sapphire-user-api
+    ports:
+      - "8004:8004"
+    depends_on:
+      user-db:
+        condition: service_healthy
+    networks:
+      - sapphire-network
+    restart: unless-stopped
+    volumes:
+      - ./services/user:/code
+
 volumes:
   task-data:
   preprocessing-data:
   postprocessing-data:
+  user-data:
 
 networks:
   sapphire-network:
