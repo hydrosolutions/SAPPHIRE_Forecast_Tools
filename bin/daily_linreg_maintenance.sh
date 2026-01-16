@@ -116,9 +116,8 @@ for MODE in "${PREDICTION_MODES[@]}"; do
         docker rm -f $CONTAINER_NAME
     fi
 
-    # Run the linear regression container in hindcast mode
-    # The --hindcast flag triggers automatic start date detection from output files
-    # Note: We override the CMD to add --hindcast, but must replicate the PYTHONPATH setup
+    # Run the linear regression container in maintenance (hindcast) mode
+    # RUN_MODE=maintenance triggers --hindcast flag via the container's CMD
     # DOCKER_HOST_OVERRIDE is set on macOS to replace localhost with host.docker.internal
     docker run \
         --name $CONTAINER_NAME \
@@ -128,6 +127,7 @@ for MODE in "${PREDICTION_MODES[@]}"; do
         -e SAPPHIRE_OPDEV_ENV=True \
         -e IN_DOCKER=True \
         -e SAPPHIRE_PREDICTION_MODE=${MODE} \
+        -e RUN_MODE=maintenance \
         ${DOCKER_HOST_OVERRIDE} \
         -v ${ieasyhydroforecast_data_ref_dir}/config:${ieasyhydroforecast_container_data_ref_dir}/config \
         -v ${ieasyhydroforecast_data_ref_dir}/daily_runoff:${ieasyhydroforecast_container_data_ref_dir}/daily_runoff \
@@ -136,7 +136,6 @@ for MODE in "${PREDICTION_MODES[@]}"; do
         --memory=${MEMORY_LIMIT} \
         --memory-swap=${MEMORY_SWAP} \
         ${IMAGE_ID} \
-        sh -c "PYTHONPATH=/app/apps/iEasyHydroForecast python apps/linear_regression/linear_regression.py --hindcast" \
         2>&1 | tee "$SERVICE_LOG"
 
     EXIT_CODE=$?

@@ -29,4 +29,6 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev
 
 # Run the application using uv run (activates the virtual environment automatically)
-CMD ["uv", "run", "linear_regression.py"]
+# RUN_MODE can be "forecast", "maintenance", or empty (runs forecast by default)
+# SAPPHIRE_PREDICTION_MODE can be "PENTAD" or "DECAD"
+CMD ["sh", "-c", "if [ \"$RUN_MODE\" = \"maintenance\" ]; then uv run linear_regression.py --hindcast; else uv run linear_regression.py; fi"]
