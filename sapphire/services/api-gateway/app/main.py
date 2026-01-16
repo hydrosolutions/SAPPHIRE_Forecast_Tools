@@ -183,12 +183,24 @@ async def postprocessing_proxy(
     )
 
 
+# User service routes
+@app.api_route("/api/user/{path:path}", methods=["GET", "POST", "PUT", "DELETE"], tags=["Users"])
+async def users_proxy(path: str, request: Request, api_key: str = Depends(verify_api_key)):
+    return await proxy_request(SERVICES["user"], f"/{path}", request, request.method)
+
+
+# Auth service routes (no API key required for auth endpoints)
+@app.api_route("/api/auth/{path:path}", methods=["GET", "POST", "PUT", "DELETE"], tags=["Authentication"])
+async def auth_proxy(path: str, request: Request):
+    return await proxy_request(SERVICES["auth"], f"/{path}", request, request.method)
+
+
 # Root endpoint
 @app.get("/", tags=["Root"])
 async def root():
     return {
         "message": "Welcome to the SAPPHIRE API Gateway",
-        "version": "1.0.0",
+        "version": settings.gateway_version,
         "services": list(SERVICES.keys()),
         "timestamp": datetime.utcnow().isoformat(),
     }
