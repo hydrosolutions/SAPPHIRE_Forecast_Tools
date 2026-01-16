@@ -72,7 +72,7 @@ def get_bind_path(relative_path):
 
 def get_local_path(relative_path):
     # Strip 2 ../ of the relative path
-    relative_path = re.sub(f'\.\./\.\./', '', relative_path)
+    relative_path = re.sub(r'\.\./\.\./', '', relative_path)
 
     return relative_path
 
