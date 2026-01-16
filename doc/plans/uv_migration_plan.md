@@ -1509,7 +1509,7 @@ If AGPL packages are found:
 | 5a | forecast_dashboard | ✅ Completed | `:py312` | B | pyproject.toml + uv.lock (67 packages) + Dockerfile.py312; Panel 1.4.5, Bokeh 3.4.3 (pinned <3.5 for FuncTickFormatter compatibility), HoloViews 1.19.1; local Py3.12 test OK; Docker operational test OK. CI/CD workflows updated. |
 | 5b | pipeline | ✅ Completed | `:py312` | B | pyproject.toml + uv.lock (35 packages) + Dockerfile.py312; Luigi 3.6.0; local Py3.12 test OK; Docker operational test OK (Docker socket access verified). CI/CD workflows updated. |
 | 5c | postprocessing_forecasts | ✅ Completed | `:py312` | B | pyproject.toml + uv.lock (29 packages) + Dockerfile.py312; local Py3.12 test OK (script runs successfully with pentad/decadal forecasts). |
-| 6 | Flip `:latest` to py312 | 🔄 In Progress | `:latest` | B avg | **2026-01-16**: Shell script fixes for py312 compatibility (see below). Local testing passed. Server testing in progress. **Pre-req**: Add attestation to all py312 images (see Scout Compliance section). |
+| 6 | Flip `:latest` to py312 | 🔄 Ready for Flip | `:latest` | B avg | **2026-01-16**: All development complete. Shell script fixes for py312 compatibility (see below). Local testing passed. Server testing via cronjobs in progress (weekend). **After weekend review**: Execute flip steps 6.1-6.5. |
 | 7 | Full package upgrade | Not started | `:py312` | B | Upgrade all packages to latest versions after py312 migration complete. |
 
 ### Shell Script Fixes for py312 (2026-01-16)
@@ -1547,6 +1547,39 @@ The maintenance script was overriding CMD with a relative path that got resolved
 **Issue 4: pipeline Dockerfile WORKDIR/CMD mismatch**
 
 **Fixed**: `apps/pipeline/Dockerfile.py312` - CMD now uses `cd /app/apps/pipeline && uv run luigi ...` to ensure venv is found
+
+### Phase 6 Flip Procedure (After Weekend Testing)
+
+**Prerequisites** (all completed ✅):
+- [x] All modules have pyproject.toml + uv.lock
+- [x] All modules have Dockerfile.py312
+- [x] All py312 images building in CI/CD with SLSA attestation
+- [x] Shell scripts fixed for py312 compatibility
+- [x] Local testing passed
+- [ ] Weekend cronjob testing successful (in progress)
+
+**Flip Steps (execute after Monday review)**:
+
+1. **Create `:py311` archive tags** (for rollback capability):
+   ```bash
+   for img in pythonbaseimage pipeline preprunoff prepgateway linreg ml dashboard postprocessing; do
+     docker pull mabesa/sapphire-$img:latest
+     docker tag mabesa/sapphire-$img:latest mabesa/sapphire-$img:py311
+     docker push mabesa/sapphire-$img:py311
+   done
+   ```
+
+2. **Update deploy_main.yml**:
+   - Revert branch trigger: `branches: ["main"]`
+   - Update `:latest` build jobs to use `Dockerfile.py312`
+   - Remove `:py312` jobs (now redundant with `:latest`)
+   - Keep `:py311` as archived reference
+
+3. **Update README.md badge**: `Python 3.12+`
+
+4. **Merge to main**: Create PR from `implementation_planning` → `main`
+
+5. **Team communication**: Announce the flip
 
 ---
 
