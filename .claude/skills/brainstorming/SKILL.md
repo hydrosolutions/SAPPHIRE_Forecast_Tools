@@ -40,7 +40,8 @@ Start by understanding the current project context, then ask questions one at a 
 
 **Implementation (if continuing):**
 - Ask: "Ready to set up for implementation?"
-- Use `issue-planning` skill to create detailed issue plan in `doc/plans/issues/`
+- Use `/issue-planning` skill to create detailed issue plan in `doc/plans/issues/`
+- **Note:** If the design spans multiple discrete tasks, create separate `gi_*.md` files for each. Large architectural changes may need `/executing-plans` instead.
 
 ## Key Principles
 

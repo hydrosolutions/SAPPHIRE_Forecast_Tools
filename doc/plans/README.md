@@ -109,8 +109,23 @@ See the `issue-planning` skill for the full template and guidance.
 For plans: `Not started` → `In progress` → `Complete`
 For issues: `Draft` → `Ready` → `In progress` → `Implementation complete` → `Verified` → `Closed`
 
+## Skill-Assisted Workflow
+
+Use these Claude Code skills to guide the planning process:
+
+| Phase | Skill | Command | Purpose |
+|-------|-------|---------|---------|
+| Exploration | brainstorming | `/brainstorming` | Clarify requirements, explore approaches |
+| Planning | issue-planning | `/issue-planning` | Create detailed `gi_*.md` plan files |
+| Implementation | executing-issues | `/executing-issues` | Execute discrete issues with plans |
+| Large Plans | executing-plans | `/executing-plans` | Execute multi-issue architecture work |
+| Deployment | pre-deploy-validation | `/pre-deploy-validation` | Verify before pushing to production |
+
+**Start with `/use-skills`** if unsure which skill applies — it includes a workflow decision tree.
+
 ## Related Resources
 
+- **Skills**: `.claude/skills/use-skills/` - Workflow guidance and skill selection
 - **Skills**: `.claude/skills/issue-planning/` - Guides structured issue analysis
 - **Skills**: `.claude/skills/executing-issues/` - Guides issue implementation
 - **Serena memories**: `.serena/memories/` - Project context and conventions
