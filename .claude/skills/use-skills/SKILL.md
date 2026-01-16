@@ -85,3 +85,181 @@ The skill itself tells you which.
 ## User Instructions
 
 Instructions say WHAT, not HOW. "Add X" or "Fix Y" doesn't mean skip workflows.
+
+---
+
+## Planning & Implementation Workflow
+
+When starting work that involves creating or changing functionality, follow this workflow:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    STARTING NEW WORK?                           │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+              ┌───────────────────────────────┐
+              │ Are requirements clear?       │
+              └───────────────────────────────┘
+                     │              │
+                    NO             YES
+                     │              │
+                     ▼              ▼
+         ┌─────────────────┐   ┌─────────────────┐
+         │ /brainstorming  │   │ Does a plan     │
+         │                 │   │ file exist?     │
+         │ Explore intent, │   │ (gi_*.md)       │
+         │ design approach │   └─────────────────┘
+         └─────────────────┘          │       │
+                  │                  NO      YES
+                  ▼                   │       │
+         ┌─────────────────┐         │       │
+         │ Outputs design  │         │       │
+         │ to doc/plans/   │         │       │
+         └─────────────────┘         │       │
+                  │                  │       │
+                  ▼                  ▼       │
+         ┌─────────────────────────────┐    │
+         │      /issue-planning        │    │
+         │                             │    │
+         │ Create detailed plan in     │    │
+         │ doc/plans/issues/gi_*.md    │    │
+         └─────────────────────────────┘    │
+                        │                   │
+                        └─────────┬─────────┘
+                                  ▼
+         ┌─────────────────────────────────────┐
+         │  Is it a discrete issue (gi_*.md)  │
+         │  or a larger plan?                  │
+         └─────────────────────────────────────┘
+                     │              │
+             gi_*.md issue    larger plan
+                     │              │
+                     ▼              ▼
+         ┌─────────────────┐  ┌─────────────────┐
+         │/executing-issues│  │ /executing-plans│
+         └─────────────────┘  └─────────────────┘
+                     │              │
+                     └──────┬───────┘
+                            ▼
+         ┌─────────────────────────────────────┐
+         │       /pre-deploy-validation        │
+         │                                     │
+         │ Before pushing to production        │
+         └─────────────────────────────────────┘
+```
+
+### Quick Reference
+
+| Situation | Skill |
+|-----------|-------|
+| Unclear requirements, exploring ideas | `/brainstorming` |
+| Need to create detailed implementation plan | `/issue-planning` |
+| Implementing a discrete issue with `gi_*.md` file | `/executing-issues` |
+| Executing a larger architecture plan | `/executing-plans` |
+| Ready to deploy | `/pre-deploy-validation` |
+
+### Workflow Tips
+
+- **Always start with `/brainstorming`** if requirements are fuzzy or you're exploring options
+- **Skip to `/issue-planning`** if you already know what to build
+- **Skip to `/executing-issues`** if a plan file already exists
+- **Use `/executing-plans`** for multi-issue architecture work (e.g., migrations, refactors)
+
+---
+
+## Complete Skill Catalog
+
+### Planning & Execution (Sequential Workflow)
+
+| Skill | When to Use | Trigger Phrases |
+|-------|-------------|-----------------|
+| `/brainstorming` | Requirements unclear, exploring approaches, new feature design | "Let's build...", "How should we...", "I want to add..." |
+| `/issue-planning` | Create detailed implementation plan for discrete task | "Plan this feature", "Create an issue for...", after brainstorming |
+| `/executing-issues` | Implement a task with existing `gi_*.md` plan file | "Implement PREPQ-001", "Execute the issue plan" |
+| `/executing-plans` | Execute large multi-step plans (migrations, refactors) | "Execute the migration plan", "Implement the architecture" |
+| `/pre-deploy-validation` | Verify changes before pushing to production | "Ready to deploy", "Check if this is deployment-ready" |
+
+### Implementation Process (Use During Coding)
+
+| Skill | When to Use | Trigger Phrases |
+|-------|-------------|-----------------|
+| `/software-architecture` | Reference for code patterns, naming, structure | "What's the convention for...", "How should I structure...", while writing code |
+| `/test-driven-development` | Writing any new code (features, bugfixes) | "Implement...", "Fix bug...", "Add feature..." |
+
+**Note:** `software-architecture` is a **reference skill** — consult it while coding. `test-driven-development` is a **process skill** — follow it strictly.
+
+### Code Review (After Implementation)
+
+| Skill | When to Use | Trigger Phrases |
+|-------|-------------|-----------------|
+| `/requesting-code-review` | After completing work, before merge | "Review my changes", "Check this before merge" |
+| `/receiving-code-review` | When you receive feedback on your code | "Here's review feedback...", PR comments received |
+
+### Domain Expert Reviewers (Validation)
+
+These skills activate **read-only reviewers** who provide feedback without making edits. Use them to validate work from different perspectives.
+
+| Skill | Expertise | When to Use |
+|-------|-----------|-------------|
+| `/hydrological-modeller` | Scientific validity, model correctness, skill metrics | Reviewing model implementations, forecast quality, documentation for modellers |
+| `/operational-hydrologist` | End-user workflows, dashboard UX, forecast interpretation | **Any UI changes**, frontend changes, user-facing documentation, visualization decisions |
+| `/hydromet-sysadmin` | Server operations, deployment, security, troubleshooting | Deployment docs, maintenance procedures, server-related changes |
+
+**Mandatory reviews:**
+- **UI/Frontend changes** → Always invoke `/operational-hydrologist` (they are the end users)
+- **Model/forecast changes** → Always invoke `/hydrological-modeller`
+- **Deployment/server changes** → Always invoke `/hydromet-sysadmin`
+
+**Typical workflow:** After implementation, invoke the relevant reviewer(s) for domain-specific feedback before deployment.
+
+### Technical Reference (Domain-Specific Guidance)
+
+| Skill | When to Use | Trigger Phrases |
+|-------|-------------|-----------------|
+| `/ieasyhydro-sdk` | Working with iEasyHydro HF API, SDK errors, data retrieval | "SDK error", "get_data_values", "422 error", working in `preprocessing_runoff` |
+| `/cicd-master` | GitHub Actions, deployment scripts, Docker pipelines, cron jobs | Editing `.github/workflows/`, `bin/` scripts, Docker builds |
+| `/documentation` | Writing/updating docs, documentation audits, identifying gaps | "Update the docs", "Write documentation for...", working in `doc/` |
+
+### Meta Skills
+
+| Skill | When to Use |
+|-------|-------------|
+| `/use-skills` | Unsure which skill applies, starting a conversation |
+| `/skill-creator` | Creating or updating a skill |
+
+---
+
+## Skill Combinations
+
+Common skill sequences for different work types:
+
+**New Feature:**
+```
+/brainstorming → /issue-planning → /test-driven-development → /executing-issues → /requesting-code-review → /pre-deploy-validation
+```
+
+**Bug Fix:**
+```
+/test-driven-development → /requesting-code-review → /pre-deploy-validation
+```
+
+**Documentation:**
+```
+/documentation → /hydrological-modeller (for technical review)
+```
+
+**Model Changes:**
+```
+/brainstorming → /issue-planning → /test-driven-development → /hydrological-modeller (review) → /pre-deploy-validation
+```
+
+**UI/Frontend Changes (dashboard, visualizations):**
+```
+/brainstorming → /issue-planning → /test-driven-development → /operational-hydrologist (REQUIRED) → /pre-deploy-validation
+```
+
+**Deployment/CI Changes:**
+```
+/cicd-master → /hydromet-sysadmin (review) → /pre-deploy-validation
+```
