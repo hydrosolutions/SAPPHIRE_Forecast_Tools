@@ -38,9 +38,9 @@ echo "[core]" > temp_luigi.cfg
 echo "default_scheduler_url = $LUIGI_SCHEDULER_URL" >> temp_luigi.cfg
 
 # Regular command
+# Note: PYTHONPATH=/app is set in docker-compose-luigi.yml for Luigi module resolution
 docker compose -f bin/docker-compose-luigi.yml run \
     -v $(pwd)/temp_luigi.cfg:/app/luigi.cfg \
-    -e PYTHONPATH="/home/appuser/.local/lib/python3.11/site-packages:${PYTHONPATH}" \
     --user root \
     --rm \
     preprocessing-runoff
