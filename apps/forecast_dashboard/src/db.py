@@ -3,10 +3,34 @@ import pandas as pd
 import numpy as np
 import time
 import os
+# from cachetools import TTLCache # pip install cachetools
+# from typing import Optional, Dict, Any, Tuple
 
 horizon = os.getenv("sapphire_forecast_horizon", "pentad")
 if horizon == "decad":
     horizon = "decade"
+
+# # cache up to 512 unique requests, each valid for 5 minutes
+# _api_cache = TTLCache(maxsize=512, ttl=300)
+
+# def _freeze_params(params: Optional[Dict[str, Any]]) -> Tuple[Tuple[str, str], ...]:
+#     """
+#     Turn params dict into a stable, hashable key.
+#     - Sort keys
+#     - Convert values to strings (handles dates, numpy types, etc.)
+#     - Supports list/tuple values by repeating keys in sorted order
+#     """
+#     if not params:
+#         return ()
+#     items = []
+#     for k in sorted(params.keys()):
+#         v = params[k]
+#         if isinstance(v, (list, tuple)):
+#             for vv in v:
+#                 items.append((k, str(vv)))
+#         else:
+#             items.append((k, str(v)))
+#     return tuple(items)
 
 def read_data(service_type:str, data_type: str, params: dict = None):
     """Read data from the API
@@ -16,18 +40,26 @@ def read_data(service_type:str, data_type: str, params: dict = None):
         data_type: 'runoff', 'hydrograph', 'meteo', 'forecast', 'lr-forecast', 'skill-metric'
         params: Query parameters (filters like horizon, code, model, start_date, end_date)
     """
+    # key = (service_type, data_type, _freeze_params(params))
+
+    # if key in _api_cache:
+    #     # return a copy so callers don't accidentally mutate cached df
+    #     return _api_cache[key].copy()
+
     response = requests.get(
         f"http://localhost:8000/api/{service_type}/{data_type}/",
         params=params,
         timeout=30
     )
     response.raise_for_status()
-    response_data = response.json()
-    response_df = pd.DataFrame(response_data)
-    print(f"?????????? response_df columns for {data_type}: ", response_df.columns)
-    response_df['date'] = pd.to_datetime(response_df['date'])
-    response_df = response_df.convert_dtypes()
-    return response_df
+
+    # response_data = response.json()
+    df = pd.DataFrame(response.json())
+    df['date'] = pd.to_datetime(df['date'])
+    df = df.convert_dtypes()
+
+    # _api_cache[key] = df
+    return df.copy()
 
 
 def get_hydrograph_day_all(station):
@@ -130,7 +162,7 @@ def get_snow_data(station):
     params = {
         "snow_type": "HS",
         "code": station, 
-        "start_date": "2000-01-01", 
+        "start_date": "2026-01-01",
         "end_date": "2026-12-31",
         "limit": 10000
     }

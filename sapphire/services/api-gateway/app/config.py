@@ -33,6 +33,8 @@ class Settings(BaseSettings):
         return {
             "preprocessing": "http://preprocessing-api:8002",
             "postprocessing": "http://postprocessing-api:8003",
+            "user": "http://user-api:8004",
+            "auth": "http://auth-api:8005",
         }
 
     def get_service_url(self, service_name: str) -> str:

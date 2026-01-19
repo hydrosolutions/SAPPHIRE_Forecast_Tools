@@ -2183,19 +2183,21 @@ def plot_daily_snow_data(_, snow_data, variable, station, date_picker, linreg_pr
     # Get current year data
     current_year = station_data[station_data['year'] == date_picker.year].copy()
     current_year = current_year.sort_values('date')
+    norm_snow = current_year[['doy', 'norm', 'date']].copy()
+    norm_snow.rename(columns={"norm": variable}, inplace=True)
 
     # Get the forecasts for the selected date
     forecasts = current_year[current_year['date'] >= date_picker].copy()
 
     # Calculate norm: mean by day-of-year, excluding current year
     historical_data = station_data[station_data['year'] != date_picker.year]
-    norm_snow = historical_data.groupby('doy')[variable].mean().reset_index()
+    # norm_snow = historical_data.groupby('doy')[variable].mean().reset_index()
     
     # Map doy back to dates in the current year for plotting
     current_year_value = date_picker.year
-    norm_snow['date'] = norm_snow['doy'].apply(
-        lambda x: pd.Timestamp(current_year_value, 1, 1) + pd.Timedelta(days=x - 1))
-    norm_snow = norm_snow.sort_values('date')
+    # norm_snow['date'] = norm_snow['doy'].apply(
+    #     lambda x: pd.Timestamp(current_year_value, 1, 1) + pd.Timedelta(days=x - 1))
+    # norm_snow = norm_snow.sort_values('date')
 
     # Get predictor period data
     linreg_predictor = processing.add_predictor_dates(linreg_predictor, station, date_picker)
