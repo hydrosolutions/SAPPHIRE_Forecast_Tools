@@ -129,6 +129,36 @@ async def health_check():
     }
 
 
+# Readiness check - verifies gateway and preprocessing service are ready
+@app.get("/health/ready", tags=["Health"])
+async def readiness_check():
+    """
+    Readiness check for the API.
+    Verifies the gateway can reach the preprocessing service.
+    Used by clients before attempting writes.
+    """
+    async with httpx.AsyncClient(timeout=settings.health_check_timeout) as client:
+        try:
+            # Check preprocessing service readiness
+            response = await client.get(f"{SERVICES['preprocessing']}/health/ready")
+            if response.status_code == 200:
+                return {
+                    "status": "ready",
+                    "service": "API Gateway",
+                    "preprocessing": "ready"
+                }
+            else:
+                return JSONResponse(
+                    status_code=503,
+                    content={"status": "not ready", "preprocessing": "unhealthy"}
+                )
+        except Exception as e:
+            return JSONResponse(
+                status_code=503,
+                content={"status": "not ready", "error": str(e)}
+            )
+
+
 # Service health checks
 @app.get("/health/services", tags=["Health"])
 async def check_services_health():
