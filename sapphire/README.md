@@ -57,6 +57,45 @@ docker-compose logs -f preprocessing-api
 docker-compose down
 ```
 
+## Developer Database Access
+
+The SAPPHIRE services use PostgreSQL databases running in Docker containers. You can connect directly to these databases for debugging, data exploration, and development.
+
+### Connecting to Preprocessing Database
+
+```bash
+docker exec -it sapphire-preprocessing-db psql -U postgres -d preprocessing_db
+```
+
+Once connected, useful commands:
+
+```sql
+-- List all tables
+\dt
+
+-- Describe a table structure
+\d runoffs
+
+-- Exit psql
+\q
+```
+
+### Connecting to Postprocessing Database
+
+```bash
+docker exec -it sapphire-postprocessing-db psql -U postgres -d postprocessing_db
+```
+
+### Connecting to User/Auth Databases
+
+```bash
+# User database
+docker exec -it sapphire-user-db psql -U postgres -d user_db
+
+# Auth database
+docker exec -it sapphire-auth-db psql -U postgres -d auth_db
+```
+
 ## Running Tests
 
 ### Preprocessing Service
@@ -125,7 +164,7 @@ from sapphire_api_client import SapphirePreprocessingClient
 client = SapphirePreprocessingClient(base_url="http://localhost:8000")
 
 # Prepare records from DataFrame
-records = client.prepare_runoff_records(df, horizon_type="day", code="12345")
+records = client.prepare_runoff_records(df, horizon_type="day", code="15013")
 
 # Write to API
 client.write_runoff(records)
@@ -134,11 +173,17 @@ client.write_runoff(records)
 ### Example: Read data via curl
 
 ```bash
-# Get runoff data
-curl "http://localhost:8000/runoff/?code=12345&horizon=day"
+# Get runoff data (via API gateway)
+curl "http://localhost:8000/api/preprocessing/runoff/?code=15013&horizon=day&limit=5"
 
 # Get hydrograph data
-curl "http://localhost:8000/hydrograph/?code=12345"
+curl "http://localhost:8000/api/preprocessing/hydrograph/?code=15013&horizon=day&limit=5"
+
+# Get meteo data
+curl "http://localhost:8000/api/preprocessing/meteo/?code=38457&meteo_type=T&limit=5"
+
+# Get snow data
+curl "http://localhost:8000/api/preprocessing/snow/?code=15013&snow_type=SWE&limit=5"
 ```
 
 ## Development
@@ -151,14 +196,306 @@ curl "http://localhost:8000/hydrograph/?code=12345"
 4. Create endpoint in `app/main.py`
 5. Write tests in `tests/`
 
-### Database migrations
 
-Using Alembic (when schema changes):
+## Database Schema Reference
 
-```bash
-cd services/preprocessing
-alembic revision --autogenerate -m "Description"
-alembic upgrade head
+### Enum Types
+
+The databases use several enumeration types for categorization:
+
+#### HorizonType
+Forecast time horizon granularity.
+
+| Value | Description |
+|-------|-------------|
+| `DAY` | Daily forecasts |
+| `PENTAD` | 5-day period forecasts |
+| `DECADE` | 10-day period forecasts |
+| `MONTH` | Monthly forecasts |
+| `SEASON` | Seasonal forecasts |
+| `YEAR` | Annual forecasts |
+
+#### MeteoType
+Meteorological variable types.
+
+| Value | Description |
+|-------|-------------|
+| `T` | Temperature |
+| `P` | Precipitation |
+
+#### SnowType
+Snow measurement types.
+
+| Value | Description |
+|-------|-------------|
+| `HS` | Snow height |
+| `ROF` | Snow melt plus rainfall runoff |
+| `SWE` | Snow water equivalent |
+
+#### ModelType
+Forecast model types (postprocessing database).
+
+| Value | Description |
+|-------|-------------|
+| `TSMixer` | Time-Series Mixer |
+| `TiDE` | Time-Series Dense Encoder |
+| `TFT` | Temporal Fusion Transformer |
+| `EM` | Ensemble Mean with LR, TFT, TIDE |
+| `NE` | Neural Ensemble with TIDE, TFT, TSMixer |
+| `RRAM` | Rainfall runoff assimilation model |
+| `LR` | Linear Regression |
+
+---
+
+### Preprocessing Database Tables
+
+#### `runoffs`
+Historical runoff/discharge observations used as input for forecasting models.
+
+| Column | Type | Nullable | Description |
+|--------|------|----------|-------------|
+| `id` | INTEGER | NO | Primary key (auto-increment) |
+| `horizon_type` | ENUM(HorizonType) | NO | Time horizon granularity |
+| `code` | VARCHAR(10) | NO | Station/catchment identifier |
+| `date` | DATE | NO | Observation date |
+| `discharge` | FLOAT | YES | Measured discharge value (m³/s) |
+| `predictor` | FLOAT | YES | Predictor variable for regression models |
+| `horizon_value` | INTEGER | NO | Horizon number (e.g., pentad 1-6) |
+| `horizon_in_year` | INTEGER | NO | Absolute horizon within year (e.g., pentad 1-73) |
+
+**Unique constraint:** `(horizon_type, code, date)`
+
+---
+
+#### `hydrographs`
+Statistical hydrograph data showing historical flow patterns and percentiles.
+
+| Column | Type | Nullable | Description |
+|--------|------|----------|-------------|
+| `id` | INTEGER | NO | Primary key (auto-increment) |
+| `horizon_type` | ENUM(HorizonType) | NO | Time horizon granularity |
+| `code` | VARCHAR(10) | NO | Station/catchment identifier |
+| `date` | DATE | NO | Reference date |
+| `horizon_value` | INTEGER | NO | Horizon number |
+| `horizon_in_year` | INTEGER | NO | Absolute horizon within year |
+| `day_of_year` | INTEGER | NO | Day of year (1-366) |
+| `count` | INTEGER | YES | Number of observations in statistics |
+| `mean` | FLOAT | YES | Mean discharge |
+| `std` | FLOAT | YES | Standard deviation |
+| `min` | FLOAT | YES | Minimum observed value |
+| `max` | FLOAT | YES | Maximum observed value |
+| `q05` | FLOAT | YES | 5th percentile |
+| `q25` | FLOAT | YES | 25th percentile |
+| `q50` | FLOAT | YES | 50th percentile (median) |
+| `q75` | FLOAT | YES | 75th percentile |
+| `q95` | FLOAT | YES | 95th percentile |
+| `norm` | FLOAT | YES | Long-term normal value |
+| `previous` | FLOAT | YES | Previous period's value |
+| `current` | FLOAT | YES | Current period's value |
+
+**Unique constraint:** `(horizon_type, code, date)`
+
+---
+
+#### `meteo`
+Meteorological observations (temperature, precipitation).
+
+| Column | Type | Nullable | Description |
+|--------|------|----------|-------------|
+| `id` | INTEGER | NO | Primary key (auto-increment) |
+| `meteo_type` | ENUM(MeteoType) | NO | Variable type (T=temperature, P=precipitation) |
+| `code` | VARCHAR(10) | NO | Station identifier |
+| `date` | DATE | NO | Observation date |
+| `value` | FLOAT | YES | Measured value |
+| `norm` | FLOAT | YES | Long-term normal for this date |
+| `day_of_year` | INTEGER | NO | Day of year (1-366) |
+
+**Unique constraint:** `(meteo_type, code, date)`
+
+---
+
+#### `snow`
+Snow measurements from multiple elevation zones.
+
+| Column | Type | Nullable | Description |
+|--------|------|----------|-------------|
+| `id` | INTEGER | NO | Primary key (auto-increment) |
+| `snow_type` | ENUM(SnowType) | NO | Measurement type (HS/ROF/SWE) |
+| `code` | VARCHAR(10) | NO | Station/catchment identifier |
+| `date` | DATE | NO | Observation date |
+| `value` | FLOAT | YES | Aggregated/main value |
+| `norm` | FLOAT | YES | Long-term normal |
+| `value1` - `value14` | FLOAT | YES | Values for elevation zones 1-14 |
+
+**Unique constraint:** `(snow_type, code, date)`
+
+---
+
+### Postprocessing Database Tables
+
+#### `forecasts`
+Model forecast outputs with uncertainty quantiles.
+
+| Column | Type | Nullable | Description |
+|--------|------|----------|-------------|
+| `id` | INTEGER | NO | Primary key (auto-increment) |
+| `horizon_type` | ENUM(HorizonType) | NO | Time horizon granularity |
+| `code` | VARCHAR(10) | NO | Station/catchment identifier |
+| `model_type` | ENUM(ModelType) | NO | Forecasting model used |
+| `date` | DATE | NO | Date when forecast was made |
+| `target` | DATE | YES | Forecast target date |
+| `flag` | INTEGER | YES | Quality/status flag |
+| `horizon_value` | INTEGER | NO | Horizon number |
+| `horizon_in_year` | INTEGER | NO | Absolute horizon within year |
+| `q05` | FLOAT | YES | 5th percentile forecast |
+| `q25` | FLOAT | YES | 25th percentile forecast |
+| `q50` | FLOAT | YES | 50th percentile forecast (median) |
+| `q75` | FLOAT | YES | 75th percentile forecast |
+| `q95` | FLOAT | YES | 95th percentile forecast |
+| `forecasted_discharge` | FLOAT | YES | Point forecast value |
+
+**Unique constraint:** `(horizon_type, code, model_type, date, target)`
+
+---
+
+#### `lr_forecasts`
+Linear regression model forecasts with model parameters.
+
+| Column | Type | Nullable | Description |
+|--------|------|----------|-------------|
+| `id` | INTEGER | NO | Primary key (auto-increment) |
+| `horizon_type` | ENUM(HorizonType) | NO | Time horizon granularity |
+| `code` | VARCHAR(10) | NO | Station/catchment identifier |
+| `date` | DATE | NO | Forecast date |
+| `horizon_value` | INTEGER | NO | Horizon number |
+| `horizon_in_year` | INTEGER | NO | Absolute horizon within year |
+| `discharge_avg` | FLOAT | YES | Average discharge used in model |
+| `predictor` | FLOAT | YES | Predictor variable value |
+| `slope` | FLOAT | YES | Regression slope coefficient |
+| `intercept` | FLOAT | YES | Regression intercept |
+| `forecasted_discharge` | FLOAT | YES | Forecasted discharge value |
+| `q_mean` | FLOAT | YES | Mean of forecast distribution |
+| `q_std_sigma` | FLOAT | YES | Standard deviation (sigma) |
+| `delta` | FLOAT | YES | Forecast uncertainty delta |
+| `rsquared` | FLOAT | YES | R² goodness of fit |
+
+**Unique constraint:** `(horizon_type, code, date)`
+
+---
+
+#### `skill_metrics`
+Model performance metrics for forecast verification.
+
+| Column | Type | Nullable | Description |
+|--------|------|----------|-------------|
+| `id` | INTEGER | NO | Primary key (auto-increment) |
+| `horizon_type` | ENUM(HorizonType) | NO | Time horizon granularity |
+| `code` | VARCHAR(10) | NO | Station/catchment identifier |
+| `model_type` | ENUM(ModelType) | NO | Model being evaluated |
+| `date` | DATE | NO | Evaluation date |
+| `horizon_in_year` | INTEGER | NO | Absolute horizon within year |
+| `sdivsigma` | FLOAT | YES | S/σ ratio (skill score) |
+| `nse` | FLOAT | YES | Nash-Sutcliffe Efficiency |
+| `delta` | FLOAT | YES | Forecast error delta |
+| `accuracy` | FLOAT | YES | Accuracy percentage |
+| `mae` | FLOAT | YES | Mean Absolute Error |
+| `n_pairs` | INTEGER | YES | Number of forecast-observation pairs |
+
+**Unique constraint:** `(horizon_type, code, model_type, date)`
+
+---
+
+## Useful Query Examples
+
+### Preprocessing Database Queries
+
+```sql
+-- Get latest runoff data for a station
+SELECT * FROM runoffs
+WHERE code = '15013'
+ORDER BY date DESC
+LIMIT 10;
+
+-- Get all pentad runoffs for a station in a year
+SELECT * FROM runoffs
+WHERE code = '15013'
+  AND horizon_type = 'PENTAD'
+  AND date >= '2024-01-01'
+ORDER BY date;
+
+-- Get hydrograph percentiles for current period
+SELECT code, date, q05, q25, q50, q75, q95, current
+FROM hydrographs
+WHERE horizon_type = 'PENTAD'
+  AND date = CURRENT_DATE;
+
+-- Get temperature data for a station
+SELECT date, value, norm, value - norm as anomaly
+FROM meteo
+WHERE code = '15013'
+  AND meteo_type = 'T'
+ORDER BY date DESC
+LIMIT 30;
+
+-- Get snow water equivalent across elevation zones
+SELECT date, value, value1, value2, value3, value4, value5
+FROM snow
+WHERE code = '15013'
+  AND snow_type = 'SWE'
+ORDER BY date DESC
+LIMIT 10;
+
+-- Count records per station
+SELECT code, COUNT(*) as records
+FROM runoffs
+GROUP BY code
+ORDER BY records DESC;
+```
+
+### Postprocessing Database Queries
+
+```sql
+-- Get latest forecasts for a station
+SELECT date, target, model_type, q50, forecasted_discharge
+FROM forecasts
+WHERE code = '15013'
+ORDER BY date DESC, target
+LIMIT 20;
+
+-- Compare forecasts across models for a specific date
+SELECT model_type, q05, q25, q50, q75, q95
+FROM forecasts
+WHERE code = '15013'
+  AND date = '2024-06-01'
+  AND horizon_type = 'PENTAD';
+
+-- Get linear regression forecast with model parameters
+SELECT date, predictor, slope, intercept, forecasted_discharge, rsquared
+FROM lr_forecasts
+WHERE code = '15013'
+ORDER BY date DESC
+LIMIT 10;
+
+-- Compare skill metrics across models
+SELECT model_type, AVG(nse) as avg_nse, AVG(accuracy) as avg_accuracy, AVG(mae) as avg_mae
+FROM skill_metrics
+WHERE code = '15013'
+  AND horizon_type = 'PENTAD'
+GROUP BY model_type
+ORDER BY avg_nse DESC;
+
+-- Find best performing model per station
+SELECT DISTINCT ON (code) code, model_type, nse, accuracy
+FROM skill_metrics
+WHERE horizon_type = 'PENTAD'
+ORDER BY code, nse DESC;
+
+-- Get skill metrics trend over time
+SELECT date, model_type, nse, accuracy
+FROM skill_metrics
+WHERE code = '15013'
+  AND model_type = 'TFT'
+ORDER BY date;
 ```
 
 ## Related Documentation

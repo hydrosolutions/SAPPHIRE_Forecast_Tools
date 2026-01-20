@@ -2,7 +2,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from typing import List, Optional
 
-from app.models import Runoff, Hydrograph, Meteo, Snow
+from app.models import Runoff, Hydrograph, Meteo, Snow, HorizonType, MeteoType, SnowType
 from app.schemas import RunoffCreate, RunoffUpdate, HydrographCreate, HydrographBulkCreate, MeteoBulkCreate, SnowBulkCreate
 from app.logger import logger
 
@@ -53,7 +53,9 @@ def get_runoff(db: Session, horizon: Optional[str] = None, code: Optional[str] =
     try:
         query = db.query(Runoff)
         if horizon:
-            query = query.filter(Runoff.horizon_type == horizon)
+            # Convert string to HorizonType enum for proper comparison
+            horizon_enum = HorizonType(horizon)
+            query = query.filter(Runoff.horizon_type == horizon_enum)
         if code:
             query = query.filter(Runoff.code == code)
         if start_date:
@@ -115,7 +117,9 @@ def get_hydrograph(db: Session, horizon: Optional[str] = None, code: Optional[st
     try:
         query = db.query(Hydrograph)
         if horizon:
-            query = query.filter(Hydrograph.horizon_type == horizon)
+            # Convert string to HorizonType enum for proper comparison
+            horizon_enum = HorizonType(horizon)
+            query = query.filter(Hydrograph.horizon_type == horizon_enum)
         if code:
             query = query.filter(Hydrograph.code == code)
         if start_date:
@@ -178,7 +182,9 @@ def get_meteo(db: Session, meteo_type: Optional[str] = None, code: Optional[str]
     try:
         query = db.query(Meteo)
         if meteo_type:
-            query = query.filter(Meteo.meteo_type == meteo_type)
+            # Convert string to MeteoType enum for proper comparison
+            meteo_type_enum = MeteoType(meteo_type)
+            query = query.filter(Meteo.meteo_type == meteo_type_enum)
         if code:
             query = query.filter(Meteo.code == code)
         if start_date:
@@ -241,7 +247,9 @@ def get_snow(db: Session, snow_type: Optional[str] = None, code: Optional[str] =
     try:
         query = db.query(Snow)
         if snow_type:
-            query = query.filter(Snow.snow_type == snow_type)
+            # Convert string to SnowType enum for proper comparison
+            snow_type_enum = SnowType(snow_type)
+            query = query.filter(Snow.snow_type == snow_type_enum)
         if code:
             query = query.filter(Snow.code == code)
         if start_date:

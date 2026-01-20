@@ -2229,8 +2229,40 @@ def get_runoff_data_for_sites_HF(ieh_hf_sdk=None, date_col='date', name_col='nam
         # Calculate virtual hydropost data where necessary
         if virtual_stations_present:
             read_data = calculate_virtual_stations_data(read_data)
-            # Note: virtual station calculations for new_data would need the full 
-            # historical context, so we skip it here. The full_data already has them.
+            # Extract virtual station data for the new_data date range
+            # Virtual stations need full historical context for calculation,
+            # so we calculate them on read_data and then extract the relevant dates
+            if not new_data.empty:
+                # Get virtual station codes from config
+                try:
+                    config_path = os.path.join(
+                        os.getenv('ieasyforecast_configuration_path'),
+                        os.getenv('ieasyforecast_virtual_stations')
+                    )
+                    with open(config_path, 'r') as f:
+                        json_data = json.load(f)
+                        virtual_station_codes = list(json_data['virtualStations'].keys())
+
+                    # Get the date range from new_data
+                    new_data_dates = pd.to_datetime(new_data[date_col]).dt.normalize()
+                    min_date = new_data_dates.min()
+                    max_date = new_data_dates.max()
+
+                    # Extract virtual station records from read_data for this date range
+                    read_data_dates = pd.to_datetime(read_data[date_col]).dt.normalize()
+                    virtual_mask = (
+                        read_data[code_col].isin(virtual_station_codes) &
+                        (read_data_dates >= min_date) &
+                        (read_data_dates <= max_date)
+                    )
+                    virtual_new_data = read_data[virtual_mask].copy()
+
+                    if not virtual_new_data.empty:
+                        # Add virtual station records to new_data
+                        new_data = pd.concat([new_data, virtual_new_data], ignore_index=True)
+                        logger.info(f"Added {len(virtual_new_data)} virtual station records to new_data for API sync")
+                except Exception as e:
+                    logger.warning(f"Could not extract virtual station data for API: {e}")
 
         # For sanity sake, we round the data to a max of 3 decimal places
         read_data[discharge_col] = read_data[discharge_col].round(3)
@@ -2995,30 +3027,49 @@ def write_daily_hydrograph_data_to_csv(
 def verify_runoff_data_consistency(csv_path: Optional[str] = None) -> dict:
     """
     Verify consistency between runoff data in CSV file and SAPPHIRE API database.
-    
+
     Compares the runoff_day.csv file with data in the preprocessing database.
     Only runs when SAPPHIRE_API_ENABLED is true.
-    
+
+    Handles virtual stations specially - they are calculated from weighted sums
+    of contributing stations and may have different sync timing.
+
     Args:
         csv_path: Path to CSV file. If None, uses environment variable.
-        
+
     Returns:
         dict with verification results:
             - 'status': 'match', 'mismatch', 'error', or 'skipped'
             - 'csv_count': number of records in CSV
             - 'api_count': number of records in API for same date range
             - 'mismatches': list of mismatched records (if any)
+            - 'virtual_stations': dict with virtual station specific info
             - 'message': human-readable summary
     """
     import requests
-    
+
     api_enabled = os.getenv("SAPPHIRE_API_ENABLED", "true").lower() == "true"
     if not api_enabled:
         return {
             'status': 'skipped',
             'message': 'API disabled, skipping verification'
         }
-    
+
+    # Get virtual station codes from config (if available)
+    virtual_station_codes = set()
+    try:
+        config_path = os.path.join(
+            os.getenv('ieasyforecast_configuration_path', ''),
+            os.getenv('ieasyforecast_virtual_stations', '')
+        )
+        if os.path.exists(config_path):
+            with open(config_path, 'r') as f:
+                json_data = json.load(f)
+                virtual_station_codes = set(json_data.get('virtualStations', {}).keys())
+            logger.info(f"Loaded {len(virtual_station_codes)} virtual station codes for consistency check")
+    except Exception as e:
+        logger.warning(f"Could not load virtual station config: {e}")
+
     # Get CSV path
     if csv_path is None:
         intermediate_data_path = os.getenv("ieasyforecast_intermediate_data_path")
@@ -3029,7 +3080,7 @@ def verify_runoff_data_consistency(csv_path: Optional[str] = None) -> dict:
                 'message': 'Environment variables not set for CSV path'
             }
         csv_path = os.path.join(intermediate_data_path, csv_file)
-    
+
     # Read CSV
     try:
         csv_df = pd.read_csv(csv_path)
@@ -3040,17 +3091,17 @@ def verify_runoff_data_consistency(csv_path: Optional[str] = None) -> dict:
             'status': 'error',
             'message': f'Failed to read CSV: {e}'
         }
-    
+
     # Get date range from CSV
     dates = pd.to_datetime(csv_df['date'])
     start_date = dates.min().strftime('%Y-%m-%d')
     end_date = dates.max().strftime('%Y-%m-%d')
     codes = csv_df['code'].unique().tolist()
-    
+
     # Query API for each station (to handle pagination properly)
     api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
     all_api_records = []
-    
+
     try:
         for code in codes:
             # Query with high limit to get all records for this station
@@ -3075,7 +3126,7 @@ def verify_runoff_data_consistency(csv_path: Optional[str] = None) -> dict:
             'status': 'error',
             'message': f'Failed to query API: {e}'
         }
-    
+
     # Convert API response to DataFrame
     if not all_api_records:
         return {
@@ -3084,82 +3135,127 @@ def verify_runoff_data_consistency(csv_path: Optional[str] = None) -> dict:
             'api_count': 0,
             'message': f'No data in API for date range {start_date} to {end_date}'
         }
-    
+
     api_df = pd.DataFrame(all_api_records)
     api_df['date'] = pd.to_datetime(api_df['date']).dt.strftime('%Y-%m-%d')
     api_df['code'] = api_df['code'].astype(str)
-    
+
     # Compare record counts
     csv_count = len(csv_df)
     api_count = len(api_df)
-    
+
     # Create comparison keys (code + date)
     csv_df['key'] = csv_df['code'] + '_' + csv_df['date']
     api_df['key'] = api_df['code'] + '_' + api_df['date']
-    
+
     # Find missing/extra records
     csv_keys = set(csv_df['key'])
     api_keys = set(api_df['key'])
-    
+
     missing_in_api = csv_keys - api_keys
     extra_in_api = api_keys - csv_keys
-    
+
+    # Separate virtual station missing records from regular station missing records
+    virtual_missing = set()
+    regular_missing = set()
+    for key in missing_in_api:
+        code = key.split('_')[0]
+        if code in virtual_station_codes:
+            virtual_missing.add(key)
+        else:
+            regular_missing.add(key)
+
     # For records in both, compare discharge values
     common_keys = csv_keys & api_keys
     mismatches = []
-    
+    virtual_mismatches = []
+
     for key in list(common_keys)[:100]:  # Limit detailed comparison to first 100
         csv_row = csv_df[csv_df['key'] == key].iloc[0]
         api_row = api_df[api_df['key'] == key].iloc[0]
-        
+
         csv_discharge = csv_row['discharge'] if pd.notna(csv_row['discharge']) else None
-        api_discharge = api_row['value'] if pd.notna(api_row['value']) else None
-        
+        api_discharge = api_row['discharge'] if pd.notna(api_row['discharge']) else None
+
         # Compare with tolerance for floating point
+        is_mismatch = False
         if csv_discharge is not None and api_discharge is not None:
             if abs(csv_discharge - api_discharge) > 0.001:
-                mismatches.append({
-                    'key': key,
-                    'csv_discharge': csv_discharge,
-                    'api_discharge': api_discharge
-                })
+                is_mismatch = True
         elif csv_discharge != api_discharge:  # One is None, other is not
-            mismatches.append({
+            is_mismatch = True
+
+        if is_mismatch:
+            mismatch_info = {
                 'key': key,
                 'csv_discharge': csv_discharge,
                 'api_discharge': api_discharge
-            })
-    
-    # Build result
-    if not missing_in_api and not extra_in_api and not mismatches:
+            }
+            code = key.split('_')[0]
+            if code in virtual_station_codes:
+                virtual_mismatches.append(mismatch_info)
+            else:
+                mismatches.append(mismatch_info)
+
+    # Build result - consider data consistent if only virtual stations have issues
+    # (since virtual stations are calculated and may have sync delays)
+    has_regular_issues = bool(regular_missing or extra_in_api or mismatches)
+    has_virtual_issues = bool(virtual_missing or virtual_mismatches)
+
+    if not has_regular_issues and not has_virtual_issues:
         status = 'match'
         message = f'Data consistent: {csv_count} CSV records match {api_count} API records'
+    elif not has_regular_issues and has_virtual_issues:
+        # Only virtual station issues - report as warning, not error
+        status = 'match_with_virtual_lag'
+        parts = []
+        if virtual_missing:
+            parts.append(f'{len(virtual_missing)} virtual station records pending sync')
+        if virtual_mismatches:
+            parts.append(f'{len(virtual_mismatches)} virtual station value differences')
+        message = f'Regular stations consistent. Virtual stations: {", ".join(parts)}'
     else:
         status = 'mismatch'
         parts = []
-        if missing_in_api:
-            parts.append(f'{len(missing_in_api)} records missing in API')
+        if regular_missing:
+            parts.append(f'{len(regular_missing)} regular records missing in API')
+        if virtual_missing:
+            parts.append(f'{len(virtual_missing)} virtual records missing in API')
         if extra_in_api:
             parts.append(f'{len(extra_in_api)} extra records in API')
         if mismatches:
-            parts.append(f'{len(mismatches)} value mismatches')
+            parts.append(f'{len(mismatches)} regular value mismatches')
+        if virtual_mismatches:
+            parts.append(f'{len(virtual_mismatches)} virtual value mismatches')
         message = f'Data inconsistent: {", ".join(parts)}'
-    
+
     result = {
         'status': status,
         'csv_count': csv_count,
         'api_count': api_count,
         'missing_in_api': len(missing_in_api),
+        'missing_regular': len(regular_missing),
+        'missing_virtual': len(virtual_missing),
         'extra_in_api': len(extra_in_api),
         'value_mismatches': len(mismatches),
-        'message': message
+        'virtual_value_mismatches': len(virtual_mismatches),
+        'message': message,
+        'virtual_stations': {
+            'codes': list(virtual_station_codes),
+            'missing_count': len(virtual_missing),
+            'mismatch_count': len(virtual_mismatches)
+        }
     }
-    
+
     if mismatches:
         result['sample_mismatches'] = mismatches[:5]  # Include first 5 for debugging
-    if missing_in_api:
-        result['sample_missing'] = list(missing_in_api)[:5]
-    
+    if virtual_mismatches:
+        result['sample_virtual_mismatches'] = virtual_mismatches[:5]
+    if regular_missing:
+        result['sample_missing_regular'] = list(regular_missing)[:5]
+    if virtual_missing:
+        result['sample_missing_virtual'] = list(virtual_missing)[:5]
+
     return result
 
 

@@ -155,12 +155,147 @@ Write tests for `sapphire/services/preprocessing/app/data_migrator.py`:
 - [ ] Maintenance mode: sync last N days (configurable)
 - [ ] Initial mode: sync all historical data (for first-time setup)
 
-### Phase 4: Integrate into Other Modules (PENDING)
+### Phase 4: Integrate into Other Modules (IN PROGRESS)
 Order of integration:
 1. **preprocessing_gateway** - Similar pattern to preprocessing_runoff
 2. **linear_regression** - Pentad/decad aggregations, forecasts
 3. **machine_learning** - ML forecasts
 4. **postprocessing_forecasts** - Final forecast output, skill metrics
+
+#### 4.2 Linear Regression LR Forecasts (COMPLETE)
+- [x] Add `_write_lr_forecast_to_api()` helper in forecast_library.py
+- [x] Modify `write_linreg_pentad_forecast_data()` with api_data parameter
+- [x] Modify `write_linreg_decad_forecast_data()` with api_data parameter
+- [x] Add sapphire-api-client dependency to linear_regression/requirements.txt
+- [x] Add tests for API integration
+
+**Column Mapping (LR Forecasts):**
+| CSV Column | API Field |
+|------------|-----------|
+| code | code (str) |
+| date | date (YYYY-MM-DD) |
+| pentad_in_month/decad_in_month | horizon_value |
+| pentad_in_year/decad_in_year | horizon_in_year |
+| discharge_avg | discharge_avg |
+| predictor | predictor |
+| slope | slope |
+| intercept | intercept |
+| forecasted_discharge | forecasted_discharge |
+| q_mean | q_mean |
+| q_std_sigma | q_std_sigma |
+| delta | delta |
+| rsquared | rsquared |
+| (constant) | horizon_type: "pentad"/"decade" |
+
+**Incremental Sync Strategy:**
+- The existing `last_line` variable contains newest forecast per station
+- This is the "new data" sent to API by default
+- Caller can override with `api_data` parameter for custom sync logic
+- Full combined data still written to CSV for backward compatibility
+- Server deduplicates by `(horizon_type, code, date)` - matches CSV behavior
+
+**Files Modified:**
+- `apps/iEasyHydroForecast/forecast_library.py` - Added import, helper function, modified write functions
+- `apps/linear_regression/requirements.txt` - Added sapphire-api-client dependency
+- `apps/linear_regression/test/test_forecast_library_api.py` - New test file for API integration
+
+#### 4.2b Linear Regression Hydrograph (PENDING)
+- [ ] Integrate pentad/decad hydrograph data with `/api/preprocessing/hydrograph/`
+
+#### 4.2c Linear Regression Discharge (PENDING)
+- [ ] Integrate pentad/decad discharge data with `/api/preprocessing/runoff/`
+
+#### 4.2d Linear Regression Daily Discharge Read (COMPLETE)
+- [x] Add `SapphirePreprocessingClient` import to forecast_library.py
+- [x] Add `_read_daily_discharge_from_api()` function with pagination support
+- [x] Add `read_daily_discharge_data()` unified function (API default, CSV fallback via env var)
+- [x] Update `get_pentadal_and_decadal_data()` to use new unified function
+- [x] Add tests for read functionality
+
+**Read Integration Design:**
+- **Default behavior**: Read from SAPPHIRE API (`SAPPHIRE_API_ENABLED=true`)
+- **Fail fast**: If API unavailable, raises `SapphireAPIError` immediately (no silent CSV fallback)
+- **Local dev mode**: Set `SAPPHIRE_API_ENABLED=false` to use CSV files
+- **Pagination**: Handles large datasets with configurable page size (default 10,000 records)
+- **Filtering**: Supports optional `site_codes`, `start_date`, `end_date` parameters
+
+**Functions Added:**
+| Function | Purpose |
+|----------|---------|
+| `_read_daily_discharge_from_api()` | Low-level API read with pagination and health check |
+| `read_daily_discharge_data()` | Unified entry point (API or CSV based on env var) |
+
+**API Endpoint Used:**
+- `GET /runoff/?horizon=day` - Returns daily discharge records
+
+**Bug Fix - crud.py Enum Handling:**
+The preprocessing API's `get_runoff()`, `get_hydrograph()`, `get_meteo()`, and `get_snow()` functions were fixed to properly convert query parameters to enum types. Without this fix, queries like `horizon=day` wouldn't match records stored as `HorizonType.DAY` in the database.
+
+```python
+# Before (broken - string comparison against enum)
+if horizon:
+    query = query.filter(Runoff.horizon_type == horizon)
+
+# After (fixed - convert to enum)
+if horizon:
+    horizon_enum = HorizonType(horizon)
+    query = query.filter(Runoff.horizon_type == horizon_enum)
+```
+
+**DataFrame Format:**
+| Column | Type | Description |
+|--------|------|-------------|
+| code | str | Station code |
+| date | datetime | Measurement date |
+| discharge | float | Discharge in m³/s |
+
+**Migration Path:**
+1. Deploy with `SAPPHIRE_API_ENABLED=false` (current CSV behavior)
+2. Verify API has data: `SELECT COUNT(*) FROM runoffs WHERE horizon_type='day';`
+3. Enable `SAPPHIRE_API_ENABLED=true` once API is verified
+4. Rollback: Set `SAPPHIRE_API_ENABLED=false` if issues arise
+
+#### 4.2e Runtime Consistency Checking (COMPLETE)
+- [x] Add `_check_dataframe_consistency()` helper function with strict/lenient modes
+- [x] Add `_verify_write_consistency()` helper function
+- [x] Add consistency check to `read_daily_discharge_data()` for reads
+- [x] Add consistency check to `write_linreg_pentad_forecast_data()` for writes
+- [x] Add consistency check to `write_linreg_decad_forecast_data()` for writes
+- [x] Add unit tests for consistency checking
+- [x] Add lenient mode (default) to handle historical data differences from outlier filtering
+
+**Consistency Check Feature:**
+
+Enable runtime verification that API and CSV data match by setting:
+```bash
+SAPPHIRE_CONSISTENCY_CHECK=true
+```
+
+| Environment Variable | Default | Description |
+|---------------------|---------|-------------|
+| `SAPPHIRE_CONSISTENCY_CHECK` | `false` | Enable data consistency verification |
+| `SAPPHIRE_CONSISTENCY_STRICT` | `false` | Strict mode: fail on value/NaN mismatches. Lenient mode (default): log as warnings |
+
+**Lenient vs Strict Mode:**
+- **Lenient (default)**: NaN and value mismatches are logged as warnings but don't cause failure. This is expected when historical data has different outlier filtering between API and CSV sources.
+- **Strict**: Any mismatch causes failure. Use for validation after fresh migrations.
+
+**For Reads:**
+- Reads from BOTH API and CSV
+- Compares key columns (`code`, `date`, `discharge`)
+- Raises `ValueError` if data doesn't match
+- Returns API data if consistent
+
+**For Writes:**
+- After writing to both destinations
+- Verifies CSV contains data matching what was sent to API
+- Compares forecast columns (`discharge_avg`, `forecasted_discharge`, `rsquared`, etc.)
+- Raises `ValueError` with details if inconsistencies found
+
+**Use Cases:**
+- Post-migration validation: Verify API was populated correctly
+- Debugging: Identify data transformation issues
+- CI/CD: Add to integration tests
 
 ### Phase 5: Remove CSV Fallback (FUTURE)
 Once all modules are verified:
@@ -221,6 +356,9 @@ print(f"Wrote {count} runoff records")
 - `sapphire/services/preprocessing/app/main.py` - FastAPI endpoints
 - `sapphire/docker-compose.yml` - Service definitions
 - `apps/forecast_dashboard/src/db.py` - Reference for API reading pattern
+- `apps/iEasyHydroForecast/forecast_library.py` - LR forecast API integration (Phase 4.2), Daily discharge read (Phase 4.2d)
+- `apps/linear_regression/requirements.txt` - Dependencies including sapphire-api-client
+- `apps/linear_regression/test/test_forecast_library_api.py` - API integration tests (write and read)
 
 ## Design Decisions (Resolved)
 
@@ -272,4 +410,4 @@ def write_data(df, station_code, ...):
 ```
 
 ---
-*Last updated: 2026-01-19*
+*Last updated: 2026-01-20 (added Phase 4.2d - Daily Discharge Read, Phase 4.2e - Consistency Checking, crud.py enum fixes, lenient/strict consistency modes)*

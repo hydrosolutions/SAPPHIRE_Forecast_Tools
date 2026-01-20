@@ -27,6 +27,7 @@ This module supports writing runoff data to the SAPPHIRE preprocessing API in ad
     ┌─────────────────────────────────────────┐
     │         Combined DataFrame              │
     │    (full_data + new_data tracked)       │
+    │    + Virtual station calculations       │
     └─────────────────┬───────────────────────┘
                       │
           ┌───────────┴───────────┐
@@ -37,6 +38,16 @@ This module supports writing runoff data to the SAPPHIRE preprocessing API in ad
     └───────────┘           │(new only) │
                             └───────────┘
 ```
+
+### Virtual Stations
+
+Virtual stations (e.g., reservoir inflows calculated from weighted sums of contributing gauges) are handled specially:
+
+1. **Calculation**: Virtual station discharge is calculated from the weighted sum of contributing stations' data, as configured in `config_virtual_stations.json`.
+
+2. **API Sync**: After calculating virtual stations for the full dataset, the module extracts virtual station records for the same date range as the new data and includes them in the API sync.
+
+3. **Consistency Checking**: The `verify_runoff_data_consistency()` function separates virtual station issues from regular station issues, since virtual stations may have sync delays due to their calculation dependencies.
 
 ### Why Incremental Sync?
 
