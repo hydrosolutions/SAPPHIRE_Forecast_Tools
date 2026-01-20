@@ -38,11 +38,14 @@ This module supports reading runoff data from the SAPPHIRE preprocessing API. Th
 │   Apply Linear Regression Models    │
 └─────────────┬───────────────────────┘
               │
-              ▼
-┌─────────────────────────────────────┐
-│         SAPPHIRE API                │
-│   (postprocessing/forecasts)        │
-└─────────────────────────────────────┘
+     ┌────────┴────────┐
+     ▼                 ▼
+┌──────────────┐  ┌──────────────────┐
+│  SAPPHIRE    │  │   SAPPHIRE       │
+│  API (post-  │  │   API (pre-      │  │   API (pre-      │
+│  processing/ │  │   processing/    │  │   processing/    │
+│  lr-forecast)│  │   hydrograph)    │  │   runoff)        │
+└──────────────┘  └──────────────────┘  └──────────────────┘
 ```
 
 ### Configuration
@@ -51,17 +54,29 @@ This module supports reading runoff data from the SAPPHIRE preprocessing API. Th
 |---------------------|---------|-------------|
 | `SAPPHIRE_API_URL` | `http://localhost:8000` | Base URL of the SAPPHIRE API gateway |
 | `SAPPHIRE_API_ENABLED` | `true` | Set to `false` to read from CSV files instead |
+| `SAPPHIRE_SYNC_MODE` | `operational` | Sync mode for writes: `operational`, `maintenance`, or `initial` |
 | `SAPPHIRE_CONSISTENCY_CHECK` | `false` | Set to `true` to read from both API and CSV and verify consistency |
 | `SAPPHIRE_CONSISTENCY_STRICT` | `false` | Set to `true` to fail on value/NaN mismatches during consistency check |
+
+### Sync Modes (SAPPHIRE_SYNC_MODE)
+
+Controls how much data is written to the API for pentad/decad runoff data:
+
+| Mode | Behavior | Use Case |
+|------|----------|----------|
+| `operational` (default) | Write only the latest date's data | Daily forecast runs |
+| `maintenance` | Write the last 30 days of data | Backfill after outages, corrections |
+| `initial` | Write all data | First-time setup, database rebuild |
 
 ### Operating Modes
 
 | Mode | Environment Variables | Behavior |
 |------|----------------------|----------|
-| **Production** | Default settings | Read from API, fail fast if unavailable |
-| **Local Development** | `SAPPHIRE_API_ENABLED=false` | Read from CSV files |
-| **Validation** | `SAPPHIRE_CONSISTENCY_CHECK=true` | Read from both, compare data |
-| **Strict Validation** | `SAPPHIRE_CONSISTENCY_CHECK=true`, `SAPPHIRE_CONSISTENCY_STRICT=true` | Fail on any mismatch |
+| **Production** | Default settings | Read from API, write latest data only |
+| **Local Development** | `SAPPHIRE_API_ENABLED=false` | Read/write CSV files only |
+| **Maintenance** | `SAPPHIRE_SYNC_MODE=maintenance` | Write last 30 days to API |
+| **Initial Setup** | `SAPPHIRE_SYNC_MODE=initial` | Write all historical data to API |
+| **Validation** | `SAPPHIRE_CONSISTENCY_CHECK=true` | Read from both sources, compare data |
 
 ### Consistency Checking
 

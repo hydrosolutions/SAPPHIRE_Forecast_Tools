@@ -582,7 +582,7 @@ def main():
             "pentad": "forecast_pentad_linreg_latest.csv",
             "decade": "forecast_decad_linreg_latest.csv"
         }
-        migrators_to_run.append(LRForecastDataMigrator(API_URL, BATCH_SIZE, horizons, sub_url="lr-forecast"))
+        migrators_to_run.append(LRForecastDataMigrator(API_URL, BATCH_SIZE, horizons, sub_url="lr-forecasts"))
 
     if args.type in ['forecast', 'all']:
         horizons = {

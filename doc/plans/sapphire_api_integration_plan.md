@@ -199,11 +199,58 @@ Order of integration:
 - `apps/linear_regression/requirements.txt` - Added sapphire-api-client dependency
 - `apps/linear_regression/test/test_forecast_library_api.py` - New test file for API integration
 
-#### 4.2b Linear Regression Hydrograph (PENDING)
-- [ ] Integrate pentad/decad hydrograph data with `/api/preprocessing/hydrograph/`
+#### 4.2b Linear Regression Hydrograph (COMPLETE)
+- [x] Add `_write_hydrograph_to_api()` helper function in forecast_library.py
+- [x] Update `write_pentad_hydrograph_data()` to write to API before CSV
+- [x] Update `write_decad_hydrograph_data()` to write to API before CSV
 
-#### 4.2c Linear Regression Discharge (PENDING)
-- [ ] Integrate pentad/decad discharge data with `/api/preprocessing/runoff/`
+**Hydrograph API Integration:**
+- Uses `SapphirePreprocessingClient.write_hydrograph()` method
+- Writes to `/api/preprocessing/hydrograph/` endpoint
+- Supports both pentad and decade horizon types
+- Column mapping handles year columns dynamically (e.g., "2025", "2026" → previous, current)
+
+**Column Mapping (Hydrograph):**
+| CSV Column | API Field |
+|------------|-----------|
+| code | code (str) |
+| date | date (YYYY-MM-DD) |
+| pentad/decad | horizon_value |
+| pentad_in_year/decad_in_year | horizon_in_year |
+| day_of_year | day_of_year |
+| mean, min, max | mean, min, max |
+| q05, q25, q75, q95 | q05, q25, q75, q95 |
+| norm | norm |
+| <previous_year> | previous |
+| <current_year> | current |
+
+#### 4.2c Linear Regression Discharge (COMPLETE)
+- [x] Add `_write_runoff_to_api()` helper function in forecast_library.py
+- [x] Update `write_pentad_time_series_data()` to write to API before CSV
+- [x] Update `write_decad_time_series_data()` to write to API before CSV
+- [x] Implement sync modes: operational (latest only), maintenance (30 days), initial (all)
+
+**Runoff API Integration:**
+- Uses `SapphirePreprocessingClient.write_runoff()` method
+- Writes to `/api/preprocessing/runoff/` endpoint
+- Supports both pentad and decade horizon types
+
+**Sync Modes (via SAPPHIRE_SYNC_MODE env var):**
+| Mode | Behavior | Use Case |
+|------|----------|----------|
+| operational (default) | Write only latest date's data | Daily forecast runs |
+| maintenance | Write last 30 days | Backfill after outages |
+| initial | Write all data | First-time setup |
+
+**Column Mapping (Runoff):**
+| CSV Column | API Field |
+|------------|-----------|
+| code | code (str) |
+| date | date (YYYY-MM-DD) |
+| pentad/decad_in_month | horizon_value |
+| pentad_in_year/decad_in_year | horizon_in_year |
+| discharge_avg | discharge |
+| predictor | predictor |
 
 #### 4.2d Linear Regression Daily Discharge Read (COMPLETE)
 - [x] Add `SapphirePreprocessingClient` import to forecast_library.py
@@ -410,4 +457,4 @@ def write_data(df, station_code, ...):
 ```
 
 ---
-*Last updated: 2026-01-20 (added Phase 4.2d - Daily Discharge Read, Phase 4.2e - Consistency Checking, crud.py enum fixes, lenient/strict consistency modes)*
+*Last updated: 2026-01-20 (added Phase 4.2b - Hydrograph API write, Phase 4.2c - Pentad/Decad Discharge write with sync modes, Phase 4.2d - Daily Discharge Read, Phase 4.2e - Consistency Checking)*
