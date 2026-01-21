@@ -118,6 +118,11 @@ logger.debug('Debug message for logger level 10')
 
 #Custom Libraries
 from scr import utils_ml_forecast
+from scr.utils_ml_forecast import (
+    _write_ml_forecast_to_api,
+    _check_ml_forecast_consistency,
+    SAPPHIRE_API_AVAILABLE
+)
 from scr import TFTPredictor, TSMixerPredictor, TiDEPredictor, predictor_ARIMA
 
 # Local libraries, installed with pip install -e ./iEasyHydroForecast
@@ -151,17 +156,19 @@ class LossLogger(Callback):
 
 
 
-def write_pentad_forecast(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, forecast_pentad):
+def write_pentad_forecast(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, forecast_pentad, api_data=None):
     """
     Save the pentad forecast data. If a forecast interval needs to be saved,
     it appends the new forecast to the existing interval forecast file.
     The function avoids overwriting by appending data and removing duplicates.
+    Also writes to SAPPHIRE API if enabled.
 
     Parameters:
     OUTPUT_PATH_DISCHARGE (str): Path to the output directory where forecast files are saved.
     MODEL_TO_USE (str): The name of the model used for the forecast.
     forecast_pentad (pd.DataFrame): The new forecast data to be saved.
-    utils_ml_forecast (module): The module containing the save_pentad_forecast function or flag.
+    api_data (pd.DataFrame, optional): Data to write to API. If None, uses forecast_pentad.
+        For operational mode, this should be today's forecasts only.
 
     Returns:
     None
@@ -183,16 +190,31 @@ def write_pentad_forecast(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, forecast_pentad):
     # Save the updated forecast
     forecast_pentad.to_csv(forecast_file_path, index=False)
 
+    # Write to SAPPHIRE API (operational mode: write only today's data)
+    if SAPPHIRE_API_AVAILABLE:
+        try:
+            # Use api_data if provided, otherwise use forecast_pentad
+            data_for_api = api_data if api_data is not None else forecast_pentad
+            _write_ml_forecast_to_api(data_for_api, "pentad", MODEL_TO_USE)
+            # Optional consistency check
+            _check_ml_forecast_consistency(forecast_pentad, "pentad", MODEL_TO_USE)
+        except Exception as e:
+            logger.error(f"Failed to write pentad forecast to API: {e}")
+            # Don't fail the whole process - CSV was already saved
 
-def write_decad_forecast(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, forecast_decad):
+
+def write_decad_forecast(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, forecast_decad, api_data=None):
     """
     Save the decad forecast data. The function saves the forecast data to a new file.
     if there is already a forecast file, the new forecast will be appended to the existing file
+    Also writes to SAPPHIRE API if enabled.
 
     Parameters:
     OUTPUT_PATH_DISCHARGE (str): Path to the output directory where forecast files are saved.
     MODEL_TO_USE (str): The name of the model used for the forecast.
     forecast_decad (pd.DataFrame): The new forecast data to be saved.
+    api_data (pd.DataFrame, optional): Data to write to API. If None, uses forecast_decad.
+        For operational mode, this should be today's forecasts only.
 
     Returns:
     None
@@ -210,6 +232,18 @@ def write_decad_forecast(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, forecast_decad):
 
     forecast_decad = forecast_decad.drop_duplicates(subset=['forecast_date','date', 'code'], keep='last')
     forecast_decad.to_csv(os.path.join(OUTPUT_PATH_DISCHARGE, f'decad_{MODEL_TO_USE}_forecast.csv'), index=False)
+
+    # Write to SAPPHIRE API (operational mode: write only today's data)
+    if SAPPHIRE_API_AVAILABLE:
+        try:
+            # Use api_data if provided, otherwise use forecast_decad
+            data_for_api = api_data if api_data is not None else forecast_decad
+            _write_ml_forecast_to_api(data_for_api, "decade", MODEL_TO_USE)
+            # Optional consistency check
+            _check_ml_forecast_consistency(forecast_decad, "decade", MODEL_TO_USE)
+        except Exception as e:
+            logger.error(f"Failed to write decad forecast to API: {e}")
+            # Don't fail the whole process - CSV was already saved
 
 
 
@@ -685,15 +719,16 @@ def make_ml_forecast():
             os.makedirs(OUTPUT_PATH_DISCHARGE)
         forecast.to_csv(forecast_today_path, index=False)
         # Append the new forecast to the existing forecast file
-        write_pentad_forecast(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, forecast)
+        # Pass forecast as api_data for operational mode (today's forecasts only)
+        write_pentad_forecast(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, forecast, api_data=forecast)
     else:
         forecast_today_path = os.path.join(OUTPUT_PATH_DISCHARGE, f'decad_{MODEL_TO_USE}_forecast_latest.csv')
         # Create the directory if it doesn't exist
         if not os.path.exists(OUTPUT_PATH_DISCHARGE):
             os.makedirs(OUTPUT_PATH_DISCHARGE)
         forecast.to_csv(forecast_today_path, index=False)
-        forecast.to_csv(forecast_today_path, index=False)
-        write_decad_forecast(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, forecast)
+        # Pass forecast as api_data for operational mode (today's forecasts only)
+        write_decad_forecast(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, forecast, api_data=forecast)
 
     logger.info('Forecast saved successfully. Exiting make_forecast.py\n')
     logger.info('--------------------------------------------------------------------')

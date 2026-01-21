@@ -537,4 +537,173 @@ When enabled:
 - `apps/preprocessing_gateway/extend_era5_reanalysis.py` - Added imports, API write function (all data), consistency check, integration
 - `apps/preprocessing_gateway/test/test_api_integration.py` - New test file (23 tests)
 
-*Last updated: 2026-01-20 (added consistency checking to Phase 4.1)*
+*Last updated: 2026-01-21 (completed Phase 4.3 machine_learning integration)*
+
+---
+
+#### 4.3 Machine Learning Forecasts API Integration (COMPLETE)
+
+**Overview:**
+Integrate SAPPHIRE API writing into the machine_learning module for ML model forecasts (TFT, TIDE, TSMIXER).
+
+**Scripts to modify:**
+| Script | Mode | Behavior |
+|--------|------|----------|
+| `make_forecast.py` | Operational | Write today's forecasts only |
+| `recalculate_nan_forecasts.py` | Maintenance | Write only recalculated NaN forecasts |
+| `fill_ml_gaps.py` | Maintenance | Write only gap-filled forecasts |
+
+**Environment Variables (existing):**
+| Variable | Values | Purpose |
+|----------|--------|---------|
+| `SAPPHIRE_MODEL_TO_USE` | TFT, TIDE, TSMIXER | Which ML model to use |
+| `SAPPHIRE_PREDICTION_MODE` | PENTAD, DECAD | Prediction horizon |
+| `ieasyhydroforecast_available_ML_models` | comma-separated list | Available ML models |
+| `ieasyhydroforecast_run_ML_models` | true/false | Whether to run ML models |
+
+**Environment Variables (new - consistent with other modules):**
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `SAPPHIRE_API_ENABLED` | true | Enable/disable API writes |
+| `SAPPHIRE_API_URL` | http://localhost:8000 | API base URL |
+| `SAPPHIRE_CONSISTENCY_CHECK` | false | Enable consistency checking |
+
+**API Endpoint:**
+- `POST /forecast/` - Create/update ML forecasts
+- `GET /forecast/?model={model}&horizon={horizon}` - Read forecasts with filtering
+
+**ML Forecast DataFrame Columns:**
+| Column | Type | Description |
+|--------|------|-------------|
+| code | int | Station code |
+| date | datetime | Target date (when forecast is for) |
+| forecast_date | datetime | When the forecast was made |
+| flag | int | Quality flag (0=ok, 1=NaN, 2=error) |
+| Q5, Q10, Q15, ..., Q95 | float | Quantile predictions |
+
+**API Forecast Schema:**
+| Field | Type | Description |
+|-------|------|-------------|
+| horizon_type | string | "pentad" or "decade" |
+| code | string | Station code |
+| model_type | string | "TFT", "TiDE", "TSMixer" |
+| date | date | When forecast was made (forecast_date) |
+| target | date | Target date (date column) |
+| flag | int | Quality flag |
+| horizon_value | int | Pentad/decad in month (1-6 / 1-3) |
+| horizon_in_year | int | Pentad/decad in year (1-72 / 1-36) |
+| q05, q25, q50, q75, q95 | float | Quantile predictions |
+| forecasted_discharge | float | Q50 value (median forecast) |
+
+**Column Mapping:**
+| ML DataFrame | API Field | Notes |
+|--------------|-----------|-------|
+| code | code | Convert to string |
+| forecast_date | date | When forecast was made |
+| date | target | Target date |
+| flag | flag | Quality flag |
+| Q5 | q05 | Quantile 5% |
+| Q25 | q25 | Quantile 25% |
+| Q50 | q50, forecasted_discharge | Median (main forecast) |
+| Q75 | q75 | Quantile 75% |
+| Q95 | q95 | Quantile 95% |
+| (constant) | horizon_type | "pentad" or "decade" |
+| (constant) | model_type | From SAPPHIRE_MODEL_TO_USE |
+| (calculated) | horizon_value | Calculate from target date |
+| (calculated) | horizon_in_year | Calculate from target date |
+
+**Implementation Steps:**
+
+##### Step 4.3.1: Add Utility Functions
+**File:** `apps/machine_learning/scr/utils_ml_forecast.py`
+
+Add helper functions:
+```python
+def calculate_pentad_from_date(date):
+    """Calculate pentad_in_month and pentad_in_year from date"""
+
+def calculate_decad_from_date(date):
+    """Calculate decad_in_month and decad_in_year from date"""
+
+def _write_ml_forecast_to_api(data: pd.DataFrame, horizon_type: str, model_type: str) -> bool:
+    """Write ML forecasts to SAPPHIRE API"""
+
+def _check_ml_forecast_consistency(csv_data: pd.DataFrame, horizon_type: str, model_type: str) -> bool:
+    """Check consistency between API and CSV data"""
+```
+
+##### Step 4.3.2: Update make_forecast.py (Operational) - COMPLETE
+**File:** `apps/machine_learning/make_forecast.py`
+
+Changes:
+- [x] Add sapphire-api-client imports
+- [x] Update `write_pentad_forecast()` to call API after CSV
+- [x] Update `write_decad_forecast()` to call API after CSV
+- [x] API writes only today's forecasts (operational behavior)
+
+##### Step 4.3.3: Update recalculate_nan_forecasts.py (Maintenance) - COMPLETE
+**File:** `apps/machine_learning/recalculate_nan_forecasts.py`
+
+Changes:
+- [x] Add sapphire-api-client imports
+- [x] After saving updated CSV, write only the recalculated forecasts to API
+- [x] Only forecasts with previously flag=1 or flag=2 that were recalculated
+
+##### Step 4.3.4: Update fill_ml_gaps.py (Maintenance) - COMPLETE
+**File:** `apps/machine_learning/fill_ml_gaps.py`
+
+Changes:
+- [x] Add sapphire-api-client imports
+- [x] After saving updated CSV, write only the gap-filled forecasts to API
+- [x] Only forecasts that were missing and have been filled in
+
+##### Step 4.3.5: Update requirements.txt - COMPLETE
+**File:** `apps/machine_learning/requirements.txt`
+
+Added:
+```
+sapphire-api-client @ git+https://github.com/hydrosolutions/sapphire-api-client.git
+```
+
+##### Step 4.3.6: Add/Update sapphire-api-client - PENDING
+**Repository:** `hydrosolutions/sapphire-api-client`
+
+Note: Need to add `write_forecasts()` method to `SapphirePostprocessingClient`:
+```python
+def write_forecasts(self, records: List[dict]) -> int:
+    """Write ML forecast records to the API."""
+    return self._write_bulk("/forecast/", records)
+```
+
+##### Step 4.3.7: Add Tests - COMPLETE
+**File:** `apps/machine_learning/test/test_api_integration.py` (new)
+
+Test classes (21 tests, all passing):
+- `TestCalculatePentadFromDate` - 5 tests for pentad calculation helper
+- `TestCalculateDecadFromDate` - 4 tests for decad calculation helper
+- `TestWriteMLForecastToApi` - 7 tests for API write function
+- `TestCheckMLForecastConsistency` - 5 tests for consistency checking
+
+**Verification:**
+
+1. **Unit tests:** `pytest apps/machine_learning/test/test_api_integration.py -v`
+2. **Integration test:**
+   - Start Docker services: `cd sapphire && docker-compose up -d`
+   - Run make_forecast.py with `SAPPHIRE_API_ENABLED=true`
+   - Verify forecasts written: `SELECT COUNT(*) FROM forecasts WHERE model_type='TFT';`
+   - Verify for all models: TFT, TIDE, TSMIXER
+   - Verify for all horizons: pentad, decade
+3. **CSV mode test:**
+   - Set `SAPPHIRE_API_ENABLED=false`
+   - Verify only CSV written (for local dev)
+
+**Deduplication:**
+- API uses unique constraint: `(horizon_type, code, model_type, date, target)`
+- Server-side upsert: updates existing records, inserts new ones
+- Matches CSV behavior: `drop_duplicates(subset=['forecast_date','date', 'code'], keep='last')`
+
+**Notes:**
+- ML forecasts use many quantiles (Q5-Q95 in steps of 5), but API only stores Q05, Q25, Q50, Q75, Q95
+- `forecasted_discharge` maps to Q50 (median forecast)
+- Horizon values (pentad_in_month, etc.) need to be calculated from target date
+- Module behavior is determined by script purpose, not SAPPHIRE_SYNC_MODE env var

@@ -49,6 +49,20 @@ warnings.filterwarnings("ignore")
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
+# --------------------------------------------------------------------
+# SAPPHIRE API Client Imports
+# --------------------------------------------------------------------
+try:
+    from sapphire_api_client import (
+        SapphirePostprocessingClient,
+        SapphireAPIError
+    )
+    SAPPHIRE_API_AVAILABLE = True
+except ImportError:
+    SAPPHIRE_API_AVAILABLE = False
+    SapphirePostprocessingClient = None
+    SapphireAPIError = Exception
+
 
 
 # --------------------------------------------------------------------
@@ -316,3 +330,282 @@ def save_decadal_forecast()-> bool:
     is_day_to_save = today.day in days_to_save
 
     return is_last_day_of_month or is_day_to_save
+
+
+# --------------------------------------------------------------------
+# SAPPHIRE API INTEGRATION
+# --------------------------------------------------------------------
+
+def calculate_pentad_from_date(date) -> tuple:
+    """
+    Calculate pentad_in_month and pentad_in_year from a date.
+
+    Args:
+        date: datetime, pd.Timestamp, or string in 'YYYY-MM-DD' format
+
+    Returns:
+        tuple: (pentad_in_month, pentad_in_year) as integers
+    """
+    if isinstance(date, str):
+        date = pd.to_datetime(date)
+    elif isinstance(date, datetime.date) and not isinstance(date, datetime.datetime):
+        date = pd.Timestamp(date)
+
+    # Calculate pentad in month (1-6)
+    pentad_in_month = min((date.day - 1) // 5 + 1, 6)
+
+    # Calculate pentad in year (1-72)
+    pentad_in_year = (date.month - 1) * 6 + pentad_in_month
+
+    return pentad_in_month, pentad_in_year
+
+
+def calculate_decad_from_date(date) -> tuple:
+    """
+    Calculate decad_in_month and decad_in_year from a date.
+
+    Args:
+        date: datetime, pd.Timestamp, or string in 'YYYY-MM-DD' format
+
+    Returns:
+        tuple: (decad_in_month, decad_in_year) as integers
+    """
+    if isinstance(date, str):
+        date = pd.to_datetime(date)
+    elif isinstance(date, datetime.date) and not isinstance(date, datetime.datetime):
+        date = pd.Timestamp(date)
+
+    # Calculate decad in month (1-3)
+    decad_in_month = min((date.day - 1) // 10 + 1, 3)
+
+    # Calculate decad in year (1-36)
+    decad_in_year = (date.month - 1) * 3 + decad_in_month
+
+    return decad_in_month, decad_in_year
+
+
+def _write_ml_forecast_to_api(data: pd.DataFrame, horizon_type: str, model_type: str) -> bool:
+    """
+    Write ML forecasts to SAPPHIRE postprocessing API.
+
+    Args:
+        data: DataFrame with ML forecast data. Expected columns:
+            - code: station code
+            - date: target date (when forecast is for)
+            - forecast_date: when the forecast was made
+            - flag: quality flag (0=ok, 1=NaN, 2=error)
+            - Q5, Q25, Q50, Q75, Q95: quantile predictions
+        horizon_type: Either "pentad" or "decade"
+        model_type: ML model name (TFT, TIDE, TSMIXER)
+
+    Returns:
+        bool: True if successful, False otherwise
+
+    Raises:
+        SapphireAPIError: If API write fails after retries
+    """
+    if not SAPPHIRE_API_AVAILABLE:
+        logger.warning("sapphire-api-client not installed, skipping ML forecast API write")
+        return False
+
+    # Check if API writing is enabled (default: enabled)
+    api_enabled = os.getenv("SAPPHIRE_API_ENABLED", "true").lower() == "true"
+    if not api_enabled:
+        logger.info("SAPPHIRE API writing disabled via SAPPHIRE_API_ENABLED=false")
+        return False
+
+    # Get API URL from environment
+    api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
+
+    client = SapphirePostprocessingClient(base_url=api_url)
+
+    # Health check first - fail fast if API unavailable
+    if not client.readiness_check():
+        raise SapphireAPIError(f"SAPPHIRE API at {api_url} is not ready")
+
+    # Map model type to API format
+    model_type_map = {
+        "TFT": "TFT",
+        "TIDE": "TiDE",
+        "TSMIXER": "TSMixer"
+    }
+    api_model_type = model_type_map.get(model_type.upper(), model_type)
+
+    # Prepare records for API
+    records = []
+    for _, row in data.iterrows():
+        # Get dates
+        target_date = pd.to_datetime(row['date'])
+        forecast_date = pd.to_datetime(row['forecast_date'])
+
+        # Calculate horizon values from target date
+        if horizon_type == "pentad":
+            horizon_value, horizon_in_year = calculate_pentad_from_date(target_date)
+        elif horizon_type == "decade":
+            horizon_value, horizon_in_year = calculate_decad_from_date(target_date)
+        else:
+            raise ValueError(f"Invalid horizon_type: {horizon_type}. Must be 'pentad' or 'decade'.")
+
+        # Map quantile columns (ML uses Q5, Q25, etc.; API uses q05, q25, etc.)
+        record = {
+            "horizon_type": horizon_type,
+            "code": str(int(row['code'])),
+            "model_type": api_model_type,
+            "date": forecast_date.strftime('%Y-%m-%d'),
+            "target": target_date.strftime('%Y-%m-%d'),
+            "flag": int(row['flag']) if pd.notna(row.get('flag')) else None,
+            "horizon_value": horizon_value,
+            "horizon_in_year": horizon_in_year,
+            "q05": float(row['Q5']) if pd.notna(row.get('Q5')) else None,
+            "q25": float(row['Q25']) if pd.notna(row.get('Q25')) else None,
+            "q50": float(row['Q50']) if pd.notna(row.get('Q50')) else None,
+            "q75": float(row['Q75']) if pd.notna(row.get('Q75')) else None,
+            "q95": float(row['Q95']) if pd.notna(row.get('Q95')) else None,
+            "forecasted_discharge": float(row['Q50']) if pd.notna(row.get('Q50')) else None,
+        }
+        records.append(record)
+
+    # Write to API
+    if records:
+        count = client.write_forecasts(records)
+        logger.info(f"Successfully wrote {count} ML forecast records to SAPPHIRE API ({model_type}, {horizon_type})")
+        print(f"SAPPHIRE API: Successfully wrote {count} ML forecast records ({model_type}, {horizon_type})")
+        return True
+    else:
+        logger.info("No ML forecast records to write to API")
+        return False
+
+
+def _check_ml_forecast_consistency(csv_data: pd.DataFrame, horizon_type: str, model_type: str) -> bool:
+    """
+    Check consistency between ML forecast data in CSV and API.
+
+    This function reads back from the API after a write and compares with CSV data
+    to verify data integrity. Only enabled when SAPPHIRE_CONSISTENCY_CHECK=true.
+
+    Args:
+        csv_data: DataFrame with forecast data from CSV
+        horizon_type: Either "pentad" or "decade"
+        model_type: ML model name (TFT, TIDE, TSMIXER)
+
+    Returns:
+        bool: True if data is consistent, False otherwise
+    """
+    # Check if consistency checking is enabled
+    consistency_check = os.getenv("SAPPHIRE_CONSISTENCY_CHECK", "false").lower() == "true"
+    if not consistency_check:
+        return True
+
+    if not SAPPHIRE_API_AVAILABLE:
+        logger.warning("sapphire-api-client not installed, skipping consistency check")
+        return True
+
+    api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
+    client = SapphirePostprocessingClient(base_url=api_url)
+
+    # Map model type to API format
+    model_type_map = {
+        "TFT": "TFT",
+        "TIDE": "TiDE",
+        "TSMIXER": "TSMixer"
+    }
+    api_model_type = model_type_map.get(model_type.upper(), model_type)
+
+    # Get the date range from CSV data
+    csv_data = csv_data.copy()
+    csv_data['forecast_date'] = pd.to_datetime(csv_data['forecast_date'])
+    latest_date = csv_data['forecast_date'].max()
+
+    # Read from API - only latest forecast date
+    try:
+        api_data = client.read_forecasts(
+            horizon=horizon_type,
+            model=api_model_type,
+            start_date=latest_date.strftime('%Y-%m-%d'),
+            end_date=latest_date.strftime('%Y-%m-%d')
+        )
+    except Exception as e:
+        logger.warning(f"Failed to read from API for consistency check: {e}")
+        return True  # Don't fail on read errors
+
+    if api_data.empty:
+        logger.warning(f"No API data found for consistency check ({model_type}, {horizon_type})")
+        return True
+
+    # Track consistency
+    is_consistent = True
+
+    # Filter CSV to latest forecast date for comparison
+    csv_latest = csv_data[csv_data['forecast_date'] == latest_date].copy()
+
+    # Check row counts
+    if len(api_data) != len(csv_latest):
+        logger.warning(
+            f"ML forecast consistency check: Row count mismatch. "
+            f"API has {len(api_data)} rows, CSV has {len(csv_latest)} rows"
+        )
+        is_consistent = False
+
+    # Convert API data for comparison
+    api_data['code'] = api_data['code'].astype(str)
+    csv_latest['code'] = csv_latest['code'].astype(str)
+    api_data['target'] = pd.to_datetime(api_data['target'])
+    csv_latest['date'] = pd.to_datetime(csv_latest['date'])
+
+    # Merge on code and target date
+    merged = csv_latest.merge(
+        api_data,
+        left_on=['code', 'date'],
+        right_on=['code', 'target'],
+        how='outer',
+        suffixes=('_csv', '_api'),
+        indicator=True
+    )
+
+    # Check for rows only in CSV
+    only_csv = merged[merged['_merge'] == 'left_only']
+    if len(only_csv) > 0:
+        logger.warning(
+            f"ML forecast consistency check: {len(only_csv)} rows in CSV but not in API"
+        )
+        is_consistent = False
+
+    # Check for rows only in API
+    only_api = merged[merged['_merge'] == 'right_only']
+    if len(only_api) > 0:
+        logger.warning(
+            f"ML forecast consistency check: {len(only_api)} rows in API but not in CSV"
+        )
+        is_consistent = False
+
+    # Check value mismatches for matching rows
+    both = merged[merged['_merge'] == 'both']
+    if len(both) > 0:
+        # Compare Q50 values (main forecast)
+        mismatches = []
+        for _, row in both.iterrows():
+            csv_q50 = row.get('Q50')
+            api_q50 = row.get('q50')
+            if pd.notna(csv_q50) and pd.notna(api_q50):
+                if abs(csv_q50 - api_q50) > 0.001:  # Allow small floating point differences
+                    # Get the target date from either merged column
+                    target_date = row.get('target') if pd.notna(row.get('target')) else row.get('date_csv')
+                    mismatches.append({
+                        'code': row['code'],
+                        'target_date': target_date,
+                        'csv_q50': csv_q50,
+                        'api_q50': api_q50
+                    })
+
+        if mismatches:
+            logger.warning(
+                f"ML forecast consistency check: {len(mismatches)} value mismatches found"
+            )
+            for m in mismatches[:5]:  # Log first 5
+                logger.warning(f"  Code {m['code']}, target {m['target_date']}: CSV={m['csv_q50']}, API={m['api_q50']}")
+            is_consistent = False
+
+    if is_consistent:
+        logger.info(f"ML forecast consistency check passed ({model_type}, {horizon_type})")
+
+    return is_consistent

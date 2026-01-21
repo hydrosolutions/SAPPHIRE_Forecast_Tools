@@ -41,7 +41,7 @@ export ieasyhydroforecast_env_file_path
 
 # Get SAPPHIRE_PREDICTION_MODE from env if set, otherwise use default
 if [ -z "$SAPPHIRE_PREDICTION_MODE" ]; then
-    SAPPHIRE_PREDICTION_MODE=PENTAD
+    SAPPHIRE_PREDICTION_MODE=DECAD
 fi
 export SAPPHIRE_PREDICTION_MODE
 
