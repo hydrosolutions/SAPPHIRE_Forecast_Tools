@@ -457,4 +457,84 @@ def write_data(df, station_code, ...):
 ```
 
 ---
-*Last updated: 2026-01-20 (added Phase 4.2b - Hydrograph API write, Phase 4.2c - Pentad/Decad Discharge write with sync modes, Phase 4.2d - Daily Discharge Read, Phase 4.2e - Consistency Checking)*
+#### 4.2f API Client Endpoint Naming Fix (COMPLETE)
+- [x] Fixed endpoint naming in `sapphire-api-client` to use singular form (`/lr-forecast/` instead of `/lr-forecasts/`)
+- [x] All endpoints now match the SAPPHIRE API convention (singular form)
+
+**Endpoint Naming Convention:**
+| Service | Endpoint | Form |
+|---------|----------|------|
+| Preprocessing | `/runoff/` | singular |
+| Preprocessing | `/hydrograph/` | singular |
+| Preprocessing | `/meteo/` | singular |
+| Preprocessing | `/snow/` | singular |
+| Postprocessing | `/forecast/` | singular |
+| Postprocessing | `/lr-forecast/` | singular |
+| Postprocessing | `/skill-metric/` | singular |
+
+#### 4.1 Preprocessing Gateway Snow/Meteo API Integration (COMPLETE)
+- [x] Add `sapphire-api-client` import to snow_data_operational.py
+- [x] Add `_write_snow_to_api()` function (writes latest date only - operational behavior)
+- [x] Update `get_snow_data_operational()` to call API write after CSV
+- [x] Add `sapphire-api-client` import to extend_era5_reanalysis.py
+- [x] Add `_write_meteo_to_api()` function (writes all data passed - maintenance behavior)
+- [x] Update `main()` in extend_era5_reanalysis.py to call API write after CSV
+- [x] Add tests for snow and meteo API integration (17 tests)
+
+**Module Behavior:**
+The preprocessing_gateway modules have fixed behavior based on their purpose:
+- `snow_data_operational.py` → **Operational mode**: Writes only the latest date's data
+- `extend_era5_reanalysis.py` → **Maintenance mode**: Writes all data passed (extends historical data)
+
+Note: These modules do NOT use the `SAPPHIRE_SYNC_MODE` environment variable. The behavior is determined by the module's purpose.
+
+**Snow Data API Integration:**
+- Uses `SapphirePreprocessingClient.write_snow()` method
+- Writes to `/api/preprocessing/snow/` endpoint
+- Supports SWE, HS, RoF snow types
+- Handles elevation band values (value1-value14)
+
+**Snow Column Mapping:**
+| CSV Column | API Field |
+|------------|-----------|
+| date | date (YYYY-MM-DD) |
+| code | code (str) |
+| {snow_type} (e.g., SWE) | value |
+| {snow_type}_1, _2, ... | value1, value2, ... |
+| norm (if present) | norm |
+| (constant) | snow_type: "SWE"/"HS"/"ROF" |
+
+**Meteo Data API Integration:**
+- Uses `SapphirePreprocessingClient.write_meteo()` method
+- Writes to `/api/preprocessing/meteo/` endpoint
+- Supports T (temperature) and P (precipitation)
+- Handles norm values and day_of_year
+
+**Meteo Column Mapping:**
+| CSV Column | API Field |
+|------------|-----------|
+| date | date (YYYY-MM-DD) |
+| code | code (str) |
+| T or P | value |
+| T_norm or P_norm | norm |
+| dayofyear | day_of_year |
+| (constant) | meteo_type: "T"/"P" |
+
+**Consistency Checking (Temporary):**
+Enable runtime verification that API and CSV data match by setting:
+```bash
+SAPPHIRE_CONSISTENCY_CHECK=true
+```
+
+When enabled:
+- After writing to API, reads back from API and compares with CSV data
+- Logs warnings for row count mismatches, value mismatches, missing rows
+- Does not fail on mismatches (logs warnings only)
+- Will be removed once API is verified working correctly
+
+**Files Modified:**
+- `apps/preprocessing_gateway/snow_data_operational.py` - Added imports, API write function (latest only), consistency check, integration
+- `apps/preprocessing_gateway/extend_era5_reanalysis.py` - Added imports, API write function (all data), consistency check, integration
+- `apps/preprocessing_gateway/test/test_api_integration.py` - New test file (23 tests)
+
+*Last updated: 2026-01-20 (added consistency checking to Phase 4.1)*
