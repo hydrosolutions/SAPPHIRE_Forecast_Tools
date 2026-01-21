@@ -927,6 +927,46 @@ def save_stations_to_file(stations, filename):
         pickle.dump(stations, f)
 
 
+def get_all_stations_from_file(valid_codes):
+    all_stations_file = os.path.join(
+        os.getenv("ieasyforecast_intermediate_data_path"),
+        os.getenv("ieasyforecast_all_stations", "all_stations.pkl")
+    )
+    all_stations = load_stations_from_file(all_stations_file)
+    if all_stations is None:
+        all_stations = []
+
+    # Cast all stations attributes to a dataframe
+    all_stations = sapphire_sites_to_dataframe(all_stations)
+
+    all_stations['code'] = all_stations['code'].astype(str)
+    all_stations.rename(columns={'name': 'station_labels'}, inplace=True)
+
+    # Left-join
+    station_list = all_stations['code'].sort_values().unique().tolist()
+    station_df = pd.DataFrame(station_list, columns=['code'])
+    station_df = station_df.merge(
+        all_stations.loc[:, ['code', 'station_labels', 'basin']],
+        left_on='code', right_on='code', how='left')
+    station_df['station_labels'] = station_df['code'] + ' - ' + station_df['station_labels']
+
+    # Create station dictionary
+    station_dict = station_df.groupby('basin')['station_labels'].apply(list).to_dict()
+
+    new_station_dict = {}
+    for basin, stations in station_dict.items():
+        # Only filter if we have valid_codes; otherwise keep prior stations
+        if len(valid_codes) > 0:
+            new_stations = [s for s in stations if any(code in s for code in valid_codes)]  # Corrected line
+        else:
+            new_stations = stations
+        if new_stations:  # Only add the basin if there are valid stations
+            new_station_dict[basin] = new_stations
+    station_dict = new_station_dict
+
+    return all_stations, station_dict
+
+
 def read_all_stations_metadata_from_iehhf():#station_list):
     # cache_key = 'all_stations_metadata_iehhf'
     # if cache_key in pn.state.cache:
