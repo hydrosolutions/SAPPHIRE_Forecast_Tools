@@ -43,6 +43,81 @@ class ForecastResponse(ForecastBase):
         from_attributes = True
 
 
+class LongForecastBase(BaseModel):
+    horizon_type: HorizonType
+    horizon_value: int
+    code: str
+    date: DateType
+    model_type: ModelType
+    valid_from: DateType
+    valid_to: DateType
+    flag: Optional[int] = None
+
+    q: Optional[float] = None
+    q_obs: Optional[float] = None
+    q_xgb: Optional[float] = None
+    q_lgbm: Optional[float] = None
+    q_catboost: Optional[float] = None
+    q_loc: Optional[float] = None
+    q05: Optional[float] = None
+    q10: Optional[float] = None
+    q25: Optional[float] = None
+    q50: Optional[float] = None
+    q75: Optional[float] = None
+    q90: Optional[float] = None
+    q95: Optional[float] = None
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "horizon_type": "month",
+                    "horizon_value": 1,
+                    "code": "15013",
+                    "date": "2026-01-22",
+                    "model_type": "GBT",
+                    "valid_from": "2026-02-01",
+                    "valid_to": "2026-02-28",
+                    "flag": 0,
+                    "q": 123.45,
+                    "q_obs": 120.0,
+                    "q_xgb": 125.0,
+                    "q_lgbm": 124.0,
+                    "q_catboost": 123.0,
+                    "q_loc": 122.0,
+                    "q05": 100.0,
+                    "q10": 110.0,
+                    "q25": 115.0,
+                    "q50": 123.0,
+                    "q75": 130.0,
+                    "q90": 135.0,
+                    "q95": 140.0
+                }
+            ]
+        }
+    }
+
+
+class LongForecastCreate(LongForecastBase):
+    pass
+
+
+class LongForecastBulkCreate(BaseModel):
+    data: List[LongForecastCreate]
+
+
+class LongForecastResponse(LongForecastBase):
+    id: int
+
+    @computed_field
+    @property
+    def model_type_description(self) -> str:
+        return self.model_type.description
+
+    class Config:
+        from_attributes = True
+
+
 class LRForecastBase(BaseModel):
     horizon_type: HorizonType
     code: str
