@@ -13,6 +13,7 @@ class ForecastBase(BaseModel):
     flag: Optional[int] = None
     horizon_value: int
     horizon_in_year: int
+    composition: Optional[str] = None
 
     q05: Optional[float] = None
     q25: Optional[float] = None
@@ -52,6 +53,7 @@ class LongForecastBase(BaseModel):
     valid_from: DateType
     valid_to: DateType
     flag: Optional[int] = None
+    composition: Optional[str] = None
 
     q: Optional[float] = None
     q_obs: Optional[float] = None
@@ -79,6 +81,7 @@ class LongForecastBase(BaseModel):
                     "valid_from": "2026-02-01",
                     "valid_to": "2026-02-28",
                     "flag": 0,
+                    "composition": "",
                     "q": 123.45,
                     "q_obs": 120.0,
                     "q_xgb": 125.0,

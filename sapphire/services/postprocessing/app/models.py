@@ -31,6 +31,8 @@ class ModelType(str, Enum):
     SM_GBT = "SM_GBT"
     SM_GBT_LR = "SM_GBT_LR"
     SM_GBT_NORM = "SM_GBT_Norm"
+    SKILLED_MEAN = "Skilled Mean"
+    NAIVE_MEAN = "Naive Mean"
 
     @property
     def description(self) -> str:
@@ -61,6 +63,7 @@ class Forecast(Base):
     flag = Column(Integer)
     horizon_value = Column(Integer, nullable=False)
     horizon_in_year = Column(Integer, nullable=False)
+    composition = Column(String(100))
 
     # Quantile predictions (Q5 to Q95)
     q05 = Column(Float)
@@ -94,6 +97,7 @@ class LongForecast(Base):
     valid_from = Column(Date, nullable=False)
     valid_to = Column(Date, nullable=False)
     flag = Column(Integer)
+    composition = Column(String(100))
 
     q = Column(Float)
     q_obs = Column(Float)
