@@ -96,6 +96,55 @@ docker exec -it sapphire-user-db psql -U postgres -d user_db
 docker exec -it sapphire-auth-db psql -U postgres -d auth_db
 ```
 
+## Data Migration
+
+The data migrator scripts load historical data from CSV files into the database. This is useful for:
+- Initial database population
+- Recreating tables after schema changes
+- Refreshing data after database issues
+
+### Preprocessing Data Migration
+
+Connect to the preprocessing API container and run migrations:
+
+```bash
+# Connect to the container
+docker exec -it sapphire-preprocessing-api /bin/bash
+
+# Inside the container, run migrations for each data type:
+python app/data_migrator.py --type runoff
+python app/data_migrator.py --type hydrograph
+python app/data_migrator.py --type meteo
+python app/data_migrator.py --type snow
+```
+
+### Postprocessing Data Migration
+
+Connect to the postprocessing API container and run migrations:
+
+```bash
+# Connect to the container
+docker exec -it sapphire-postprocessing-api /bin/bash
+
+# Inside the container, run migrations for each data type:
+python app/data_migrator.py --type skillmetric --batch-size 1
+python app/data_migrator.py --type lrforecast
+python app/data_migrator.py --type combinedforecast
+python app/data_migrator.py --type forecast
+```
+
+**Note:** The `--batch-size 1` flag for skill metrics is needed due to duplicate entry handling.
+
+### Migration Options
+
+| Option | Description |
+|--------|-------------|
+| `--type TYPE` | Data type to migrate (required) |
+| `--batch-size N` | Number of records per batch (default: 1000) |
+| `--dry-run` | Validate without writing to database |
+
+---
+
 ## Running Tests
 
 ### Preprocessing Service

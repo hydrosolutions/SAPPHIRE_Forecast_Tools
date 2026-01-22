@@ -3525,6 +3525,211 @@ def _write_runoff_to_api(data: pd.DataFrame, horizon_type: str) -> pd.DataFrame 
         return None
 
 
+def _write_combined_forecast_to_api(data: pd.DataFrame, horizon_type: str) -> bool:
+    """
+    Write combined forecasts (from all models) to SAPPHIRE postprocessing API.
+
+    Args:
+        data: DataFrame with forecast data. Expected columns:
+            - code: station code
+            - date: forecast date
+            - pentad_in_month/decad_in_month: horizon value (renamed to decad for decade)
+            - pentad_in_year/decad_in_year: horizon in year
+            - forecasted_discharge: the forecast value
+            - model_short: model identifier (LR, TFT, TIDE, TSMIXER, EM, NE)
+        horizon_type: Either "pentad" or "decade"
+
+    Returns:
+        bool: True if successful, False otherwise
+
+    Raises:
+        SapphireAPIError: If API write fails after retries
+    """
+    if not SAPPHIRE_API_AVAILABLE:
+        logger.warning("sapphire-api-client not installed, skipping combined forecast API write")
+        return False
+
+    # Check if API writing is enabled (default: enabled)
+    api_enabled = os.getenv("SAPPHIRE_API_ENABLED", "true").lower() == "true"
+    if not api_enabled:
+        logger.info("SAPPHIRE API writing disabled via SAPPHIRE_API_ENABLED=false")
+        return False
+
+    # Get API URL from environment
+    api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
+
+    client = SapphirePostprocessingClient(base_url=api_url)
+
+    # Health check first - fail fast if API unavailable
+    if not client.readiness_check():
+        raise SapphireAPIError(f"SAPPHIRE API at {api_url} is not ready")
+
+    # Determine column names based on horizon_type
+    if horizon_type == "pentad":
+        horizon_value_col = "pentad_in_month"
+        horizon_in_year_col = "pentad_in_year"
+    elif horizon_type == "decade":
+        # Note: save_forecast_data_decade renames decad_in_month to decad
+        horizon_value_col = "decad"
+        horizon_in_year_col = "decad_in_year"
+    else:
+        raise ValueError(f"Invalid horizon_type: {horizon_type}. Must be 'pentad' or 'decade'.")
+
+    # Map model_short to API model_type format
+    model_type_map = {
+        "LR": "LR",
+        "TFT": "TFT",
+        "TIDE": "TiDE",
+        "TSMIXER": "TSMixer",
+        "EM": "EM",
+        "NE": "NE",
+        "RRAM": "RRAM"
+    }
+
+    # Prepare records for API
+    records = []
+    skipped_count = 0
+    for _, row in data.iterrows():
+        # Skip rows with missing required fields (horizon_value and horizon_in_year are required)
+        if pd.isna(row.get(horizon_value_col)) or pd.isna(row.get(horizon_in_year_col)):
+            skipped_count += 1
+            continue
+
+        model_short = str(row.get('model_short', ''))
+        api_model_type = model_type_map.get(model_short.upper(), model_short)
+
+        date_obj = pd.to_datetime(row['date'])
+        record = {
+            "horizon_type": horizon_type,
+            "code": str(row['code']),
+            "model_type": api_model_type,
+            "date": date_obj.strftime('%Y-%m-%d'),
+            "target": date_obj.strftime('%Y-%m-%d'),  # For combined forecasts, date is the target
+            "horizon_value": int(row[horizon_value_col]),
+            "horizon_in_year": int(row[horizon_in_year_col]),
+            "forecasted_discharge": float(row['forecasted_discharge']) if pd.notna(row.get('forecasted_discharge')) else None,
+        }
+        records.append(record)
+
+    if skipped_count > 0:
+        logger.warning(f"Skipped {skipped_count} forecast records with missing horizon values")
+
+    # Write to API
+    if records:
+        count = client.write_forecasts(records)
+        logger.info(f"Successfully wrote {count} combined forecast records to SAPPHIRE API ({horizon_type})")
+        print(f"SAPPHIRE API: Successfully wrote {count} combined forecast records ({horizon_type})")
+        return True
+    else:
+        logger.info(f"No combined forecast records to write to API ({horizon_type})")
+        return False
+
+
+def _write_skill_metrics_to_api(data: pd.DataFrame, horizon_type: str) -> bool:
+    """
+    Write skill metrics to SAPPHIRE postprocessing API.
+
+    Args:
+        data: DataFrame with skill metrics. Expected columns:
+            - code: station code
+            - pentad_in_year/decad_in_year: horizon in year
+            - model_short: model identifier (LR, TFT, TIDE, TSMIXER, EM, NE)
+            - sdivsigma: s/sigma metric
+            - nse: Nash-Sutcliffe Efficiency
+            - delta: delta metric
+            - accuracy: accuracy metric
+            - mae: Mean Absolute Error
+            - n_pairs: number of data pairs
+        horizon_type: Either "pentad" or "decade"
+
+    Returns:
+        bool: True if successful, False otherwise
+
+    Raises:
+        SapphireAPIError: If API write fails after retries
+    """
+    if not SAPPHIRE_API_AVAILABLE:
+        logger.warning("sapphire-api-client not installed, skipping skill metrics API write")
+        return False
+
+    # Check if API writing is enabled (default: enabled)
+    api_enabled = os.getenv("SAPPHIRE_API_ENABLED", "true").lower() == "true"
+    if not api_enabled:
+        logger.info("SAPPHIRE API writing disabled via SAPPHIRE_API_ENABLED=false")
+        return False
+
+    # Get API URL from environment
+    api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
+
+    client = SapphirePostprocessingClient(base_url=api_url)
+
+    # Health check first - fail fast if API unavailable
+    if not client.readiness_check():
+        raise SapphireAPIError(f"SAPPHIRE API at {api_url} is not ready")
+
+    # Determine column names based on horizon_type
+    if horizon_type == "pentad":
+        horizon_in_year_col = "pentad_in_year"
+    elif horizon_type == "decade":
+        horizon_in_year_col = "decad_in_year"
+    else:
+        raise ValueError(f"Invalid horizon_type: {horizon_type}. Must be 'pentad' or 'decade'.")
+
+    # Map model_short to API model_type format
+    model_type_map = {
+        "LR": "LR",
+        "TFT": "TFT",
+        "TIDE": "TiDE",
+        "TSMIXER": "TSMixer",
+        "EM": "EM",
+        "NE": "NE",
+        "RRAM": "RRAM"
+    }
+
+    # Use today's date for the skill metrics (they are calculated on run day)
+    today = pd.Timestamp.now().strftime('%Y-%m-%d')
+
+    # Prepare records for API
+    records = []
+    skipped_count = 0
+    for _, row in data.iterrows():
+        # Skip rows with missing required field (horizon_in_year is required)
+        if pd.isna(row.get(horizon_in_year_col)):
+            skipped_count += 1
+            continue
+
+        model_short = str(row.get('model_short', ''))
+        api_model_type = model_type_map.get(model_short.upper(), model_short)
+
+        record = {
+            "horizon_type": horizon_type,
+            "code": str(row['code']),
+            "model_type": api_model_type,
+            "date": today,
+            "horizon_in_year": int(row[horizon_in_year_col]),
+            "sdivsigma": float(row['sdivsigma']) if pd.notna(row.get('sdivsigma')) else None,
+            "nse": float(row['nse']) if pd.notna(row.get('nse')) else None,
+            "delta": float(row['delta']) if pd.notna(row.get('delta')) else None,
+            "accuracy": float(row['accuracy']) if pd.notna(row.get('accuracy')) else None,
+            "mae": float(row['mae']) if pd.notna(row.get('mae')) else None,
+            "n_pairs": int(row['n_pairs']) if pd.notna(row.get('n_pairs')) else None,
+        }
+        records.append(record)
+
+    if skipped_count > 0:
+        logger.warning(f"Skipped {skipped_count} skill metric records with missing horizon_in_year")
+
+    # Write to API
+    if records:
+        count = client.write_skill_metrics(records)
+        logger.info(f"Successfully wrote {count} skill metric records to SAPPHIRE API ({horizon_type})")
+        print(f"SAPPHIRE API: Successfully wrote {count} skill metric records ({horizon_type})")
+        return True
+    else:
+        logger.info(f"No skill metric records to write to API ({horizon_type})")
+        return False
+
+
 def write_linreg_pentad_forecast_data(data: pd.DataFrame, api_data: pd.DataFrame = None):
     """
     Writes the data to a csv file for later reading into the forecast dashboard.
@@ -5344,6 +5549,13 @@ def save_pentadal_skill_metrics(data: pd.DataFrame):
         logger.error(f"Could not write the data to {filepath}.")
         raise e
 
+    # Write to SAPPHIRE API
+    if SAPPHIRE_API_AVAILABLE:
+        try:
+            _write_skill_metrics_to_api(data, "pentad")
+        except Exception as e:
+            logger.error(f"Failed to write pentadal skill metrics to API: {e}")
+
     return ret
 
 def save_decadal_skill_metrics(data: pd.DataFrame):
@@ -5392,6 +5604,13 @@ def save_decadal_skill_metrics(data: pd.DataFrame):
     except Exception as e:
         logger.error(f"Could not write the data to {filepath}.")
         raise e
+
+    # Write to SAPPHIRE API
+    if SAPPHIRE_API_AVAILABLE:
+        try:
+            _write_skill_metrics_to_api(data, "decade")
+        except Exception as e:
+            logger.error(f"Failed to write decadal skill metrics to API: {e}")
 
     return ret
 
@@ -5503,6 +5722,13 @@ def save_forecast_data_pentad(simulated: pd.DataFrame):
     # Write the latest data to a csv file
     ret = simulated_latest.to_csv(filename_latest, index=False)
 
+    # Write to SAPPHIRE API (latest forecasts only)
+    if SAPPHIRE_API_AVAILABLE:
+        try:
+            _write_combined_forecast_to_api(simulated_latest, "pentad")
+        except Exception as e:
+            logger.error(f"Failed to write pentadal combined forecasts to API: {e}")
+
     return ret
 
 def save_forecast_data_decade(simulated: pd.DataFrame):
@@ -5548,6 +5774,13 @@ def save_forecast_data_decade(simulated: pd.DataFrame):
 
     # Write the latest data to a csv file
     ret = simulated_latest.to_csv(filename_latest, index=False)
+
+    # Write to SAPPHIRE API (latest forecasts only)
+    if SAPPHIRE_API_AVAILABLE:
+        try:
+            _write_combined_forecast_to_api(simulated_latest, "decade")
+        except Exception as e:
+            logger.error(f"Failed to write decadal combined forecasts to API: {e}")
 
     return ret
 

@@ -157,10 +157,10 @@ Write tests for `sapphire/services/preprocessing/app/data_migrator.py`:
 
 ### Phase 4: Integrate into Other Modules (IN PROGRESS)
 Order of integration:
-1. **preprocessing_gateway** - Similar pattern to preprocessing_runoff
-2. **linear_regression** - Pentad/decad aggregations, forecasts
-3. **machine_learning** - ML forecasts
-4. **postprocessing_forecasts** - Final forecast output, skill metrics
+1. **preprocessing_gateway** - Similar pattern to preprocessing_runoff ✅ COMPLETE
+2. **linear_regression** - Pentad/decad aggregations, forecasts ✅ COMPLETE
+3. **machine_learning** - ML forecasts ✅ COMPLETE
+4. **postprocessing_forecasts** - Final forecast output, skill metrics ⚠️ PARTIAL (blocked by skill metrics issue)
 
 #### 4.2 Linear Regression LR Forecasts (COMPLETE)
 - [x] Add `_write_lr_forecast_to_api()` helper in forecast_library.py
@@ -537,7 +537,7 @@ When enabled:
 - `apps/preprocessing_gateway/extend_era5_reanalysis.py` - Added imports, API write function (all data), consistency check, integration
 - `apps/preprocessing_gateway/test/test_api_integration.py` - New test file (23 tests)
 
-*Last updated: 2026-01-21 (completed Phase 4.3 machine_learning integration)*
+*Last updated: 2026-01-21 (Phase 4.4 postprocessing_forecasts partial - blocked by skill metrics duplicate issue)*
 
 ---
 
@@ -707,3 +707,119 @@ Test classes (21 tests, all passing):
 - `forecasted_discharge` maps to Q50 (median forecast)
 - Horizon values (pentad_in_month, etc.) need to be calculated from target date
 - Module behavior is determined by script purpose, not SAPPHIRE_SYNC_MODE env var
+
+---
+
+#### 4.4 Postprocessing Forecasts API Integration (PARTIAL - BLOCKED)
+
+**Overview:**
+Integrate SAPPHIRE API writing into the postprocessing_forecasts module for combined forecasts and skill metrics.
+
+**Scripts modified:**
+| Script | Purpose |
+|--------|---------|
+| `postprocessing_forecasts.py` | Combines forecasts from all models, calculates skill metrics |
+
+**API Endpoints:**
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `POST /forecast/` | Bulk write | Combined forecasts from all models |
+| `POST /skill-metric/` | Bulk write | Skill metrics per model/station/horizon |
+
+**Functions Added to forecast_library.py:**
+
+| Function | Purpose | Status |
+|----------|---------|--------|
+| `_write_combined_forecast_to_api()` | Write combined forecasts | COMPLETE |
+| `_write_skill_metrics_to_api()` | Write skill metrics | COMPLETE |
+
+**Functions Updated:**
+
+| Function | Change | Status |
+|----------|--------|--------|
+| `save_forecast_data_pentad()` | Calls API after CSV write | COMPLETE |
+| `save_forecast_data_decade()` | Calls API after CSV write | COMPLETE |
+| `save_pentadal_skill_metrics()` | Calls API after CSV write | COMPLETE |
+| `save_decadal_skill_metrics()` | Calls API after CSV write | COMPLETE |
+
+**Combined Forecast Column Mapping:**
+| CSV Column | API Field | Notes |
+|------------|-----------|-------|
+| code | code | Convert to string |
+| date | date, target | For combined, date = target |
+| pentad_in_month / decad | horizon_value | Note: decade renamed from decad_in_month |
+| pentad_in_year / decad_in_year | horizon_in_year | Required field |
+| forecasted_discharge | forecasted_discharge | Optional, can be None |
+| model_short | model_type | Mapped: TIDE→TiDE, TSMIXER→TSMixer |
+
+**Model Type Mapping:**
+| CSV model_short | API model_type |
+|-----------------|----------------|
+| LR | LR |
+| TFT | TFT |
+| TIDE | TiDE |
+| TSMIXER | TSMixer |
+| EM | EM |
+| NE | NE |
+| RRAM | RRAM |
+
+**Skill Metrics Column Mapping:**
+| CSV Column | API Field | Notes |
+|------------|-----------|-------|
+| code | code | Convert to string |
+| (today) | date | Current date when metrics calculated |
+| pentad_in_year / decad_in_year | horizon_in_year | Required field |
+| model_short | model_type | Same mapping as forecasts |
+| sdivsigma | sdivsigma | Optional |
+| nse | nse | Optional |
+| delta | delta | Optional |
+| accuracy | accuracy | Optional |
+| mae | mae | Optional |
+| n_pairs | n_pairs | Optional (int in DB, float in schema) |
+
+**Files Modified:**
+- `apps/iEasyHydroForecast/forecast_library.py` - Added API helper functions, updated save functions
+- `apps/postprocessing_forecasts/requirements.txt` - Added sapphire-api-client dependency
+- `apps/postprocessing_forecasts/tests/test_api_integration.py` - New test file (15 tests, all passing)
+
+**Tests:**
+| Test Class | Tests | Status |
+|------------|-------|--------|
+| `TestWriteCombinedForecastToApi` | 8 tests | PASSING |
+| `TestWriteSkillMetricsToApi` | 7 tests | PASSING |
+
+**Verification Status:**
+- Combined forecasts: **WORKING** (22,719 records written successfully)
+- Skill metrics: **BLOCKED** (500 error due to duplicate entries)
+
+**Known Issue - Duplicate Skill Metrics for Ensemble Mean:**
+
+The skill metrics API write fails with a 500 Internal Server Error due to duplicate entries for Ensemble Mean (EM) model.
+
+**Root Cause:**
+Ensemble Mean is not a fixed model - it's a dynamic average of well-performing models that varies by station and time period. The current system calculates skill metrics for different ensemble compositions but doesn't track which models are included.
+
+Example duplicates observed:
+```
+('PENTAD', '16151', 'ENSEMBLE_MEAN', '2026-01-21', 3) - two entries with different metric values
+```
+
+**Current Database Constraint:**
+```python
+UniqueConstraint('horizon_type', 'code', 'model_type', 'date', name='uq_skill_metrics_horizon_code_model_date')
+```
+
+**Issue Draft Created:**
+`doc/plans/issues/gi_duplicate_skill_metrics_ensemble_composition.md`
+
+**Proposed Solutions:**
+1. **Option A (Recommended):** Add `ensemble_models` field to track which models compose the ensemble
+2. **Option B (Quick fix):** Deduplicate before API write (loses information)
+3. **Option C:** Include `horizon_in_year` in unique constraint
+
+**Status:** Awaiting team discussion on whether to track ensemble composition in data tables.
+
+**Workaround:**
+Set `SAPPHIRE_API_ENABLED=false` to skip API writes and use CSV only until issue is resolved.
+
+*Last updated: 2026-01-21*
