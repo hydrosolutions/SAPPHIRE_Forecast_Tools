@@ -249,12 +249,12 @@ def get_directory_mtime(directory_path):
     combined_mtime = max(mtimes) if mtimes else 0
     return combined_mtime
 
-def load_data():
-    global hydrograph_day_all, hydrograph_pentad_all, linreg_predictor, \
-        forecasts_all, forecast_stats, all_stations, station_dict, station_df, \
-        station_list, linreg_datatable, stations_iehhf, \
-        rram_forecast, ml_forecast, rain, temp, latest_data_is_current_year, \
-        iehhf_warning, snow_data
+# def load_data():
+    # global hydrograph_day_all, hydrograph_pentad_all, linreg_predictor, \
+    #     forecasts_all, forecast_stats, all_stations, station_dict, station_df, \
+    #     station_list, linreg_datatable, stations_iehhf, \
+    #     rram_forecast, ml_forecast, rain, temp, latest_data_is_current_year, \
+    #     iehhf_warning, snow_data
     # File modification times
     # hydrograph_day_file = os.path.join(
     #     os.getenv("ieasyforecast_intermediate_data_path"),
@@ -374,11 +374,11 @@ def load_data():
     #     stations_iehhf, forecast_stats_file_mtime)
 
     # Hydroposts metadata
-    station_list, all_stations, station_df, station_dict, iehhf_warning = processing.read_all_stations_metadata_from_iehhf()
+    # station_list, all_stations, station_df, station_dict, iehhf_warning = processing.read_all_stations_metadata_from_iehhf()
     #station_list, all_stations, station_df, station_dict = processing.read_all_stations_metadata_from_file(
     #    hydrograph_day_all['code'].unique().tolist())
-    if not station_list:
-        raise ValueError("The station list is empty. Please check the data source and ensure it contains valid stations.")
+    # if not station_list:
+    #     raise ValueError("The station list is empty. Please check the data source and ensure it contains valid stations.")
     #print("DEBUG: forecast_dashboard.py: Station list:\n", station_list)
     #print("DEBUG: forecast_dashboard.py: All stations: \n", all_stations)
     #logger.debug(f"DEBUG: forecast_dashboard.py: Station list:\n{station_list}")
@@ -442,47 +442,47 @@ def load_data():
     #       .astype(str)
     #       .tolist()
     # )
-    valid_codes = ['16159', '16159', '16159', '16101', '16159', '16159', '15054', '16101', '16134', '16101', '16101', '16134', '16134', '15081', '15054', '16105', '16101', '16105', '16100', '16105', '15054', '16160', '15149', '15149', '15149', '15149', '15149', '16105', '15149', '16100', '16100', '16100', '16160', '16160', '16101', '16159', '16100', '15054', '15034', '16139', '16143', '16143', '15051', '15051', '15051', '15051', '16151', '15051', '15081', '15081', '16135', '16135', '16135', '15034', '15034', '16160', '16134', '16143', '16143', '16143', '16139', '16139', '16139', '16139', '16151', '16151', '16151', '16151', '16151', '15054', '15054', '15051', '16143', '16146', '16146', '16146', '16146', '16139', '16160', '15283', '16105', '15215', '15215', '15215', '15261', '16936', '15216', '15216', '15215', '15216', '15216', '15216', '15256', '15256', '15256', '15256', '16936', '15216', '15215', '15259', '15215', '15034', '15259', '15259', '16936', '16936', '16936', '16936', '15259', '15259', '15259', '15013', '15283', '15013', '15013', '15013', '15013', '15013', '15283', '16160', '15283', '15090', '16127', '16127', '16127', '16127', '16127', '16127', '16158', '16134', '16158', '16158', '16158', '16158', '15090', '15102', '15102', '16105', '16158', '16134', '15090', '15283', '15090', '16121', '16121', '16121', '16121', '16121', '16121', '15030', '15030', '15030', '15030', '15102', '15102', '15102', '15102', '15090', '15090', '15256', '15034', '15287', '15083', '16096', '16096', '16096', '16096', '16096', '15171', '16161', '15025', '15171', '15171', '15171', '15171', '16146', '15189', '15189', '15960', '15171', '16096', '16161', '16161', '15189', '16161', '16161', '16070', '16070', '16070', '16070', '16070', '16070', '16169', '16169', '16169', '16169', '16169', '16169', '15189', '16161', '15189', '15025', '15194', '15194', '16068', '15020', '16059', '15020', '15020', '15020', '16059', '16068', '16059', '15256', '16146', '17462', '17462', '17462', '17462', '17462', '16059', '16068', '16068', '16068', '16055', '16055', '16055', '16055', '16055', '16055', '16176', '16176', '16176', '16176', '16176', '16176', '15194', '16059', '16059', '16068', '15189', '15194', '15034', '15214', '15287', '16153', '16153', '16100', '15025', '15025', '15016', '15954', '16153', '15954', '15212', '15212', '15212', '15212', '15212', '16487', '16487', '15212', '16153', '16153', '16136', '15083', '15083', '15083', '15083', '15083', '16135', '16135', '16135', '16136', '15081', '15081', '15081', '16136', '16136', '16136', '16136', '16153', '16487', '15287', '16487', '16487', '16681', '15283', '15214', '15214', '15214', '15312', '15016', '16510', '15312', '15312', '15312', '15312', '15287', '15214', '15287', '15287', '15312', '16510', '16510', '16510', '15016', '15954', '15954', '15954', '15954', '15016', '15016', '15016', '15214', '15285', '15285', '15285', '15285', '15285', '15285', '16510', '16510', '16487', '17462']
-    print('valid_codes:', valid_codes)
+    # valid_codes = ['16159', '16159', '16159', '16101', '16159', '16159', '15054', '16101', '16134', '16101', '16101', '16134', '16134', '15081', '15054', '16105', '16101', '16105', '16100', '16105', '15054', '16160', '15149', '15149', '15149', '15149', '15149', '16105', '15149', '16100', '16100', '16100', '16160', '16160', '16101', '16159', '16100', '15054', '15034', '16139', '16143', '16143', '15051', '15051', '15051', '15051', '16151', '15051', '15081', '15081', '16135', '16135', '16135', '15034', '15034', '16160', '16134', '16143', '16143', '16143', '16139', '16139', '16139', '16139', '16151', '16151', '16151', '16151', '16151', '15054', '15054', '15051', '16143', '16146', '16146', '16146', '16146', '16139', '16160', '15283', '16105', '15215', '15215', '15215', '15261', '16936', '15216', '15216', '15215', '15216', '15216', '15216', '15256', '15256', '15256', '15256', '16936', '15216', '15215', '15259', '15215', '15034', '15259', '15259', '16936', '16936', '16936', '16936', '15259', '15259', '15259', '15013', '15283', '15013', '15013', '15013', '15013', '15013', '15283', '16160', '15283', '15090', '16127', '16127', '16127', '16127', '16127', '16127', '16158', '16134', '16158', '16158', '16158', '16158', '15090', '15102', '15102', '16105', '16158', '16134', '15090', '15283', '15090', '16121', '16121', '16121', '16121', '16121', '16121', '15030', '15030', '15030', '15030', '15102', '15102', '15102', '15102', '15090', '15090', '15256', '15034', '15287', '15083', '16096', '16096', '16096', '16096', '16096', '15171', '16161', '15025', '15171', '15171', '15171', '15171', '16146', '15189', '15189', '15960', '15171', '16096', '16161', '16161', '15189', '16161', '16161', '16070', '16070', '16070', '16070', '16070', '16070', '16169', '16169', '16169', '16169', '16169', '16169', '15189', '16161', '15189', '15025', '15194', '15194', '16068', '15020', '16059', '15020', '15020', '15020', '16059', '16068', '16059', '15256', '16146', '17462', '17462', '17462', '17462', '17462', '16059', '16068', '16068', '16068', '16055', '16055', '16055', '16055', '16055', '16055', '16176', '16176', '16176', '16176', '16176', '16176', '15194', '16059', '16059', '16068', '15189', '15194', '15034', '15214', '15287', '16153', '16153', '16100', '15025', '15025', '15016', '15954', '16153', '15954', '15212', '15212', '15212', '15212', '15212', '16487', '16487', '15212', '16153', '16153', '16136', '15083', '15083', '15083', '15083', '15083', '16135', '16135', '16135', '16136', '15081', '15081', '15081', '16136', '16136', '16136', '16136', '16153', '16487', '15287', '16487', '16487', '16681', '15283', '15214', '15214', '15214', '15312', '15016', '16510', '15312', '15312', '15312', '15312', '15287', '15214', '15287', '15287', '15312', '16510', '16510', '16510', '15016', '15954', '15954', '15954', '15954', '15016', '15016', '15016', '15214', '15285', '15285', '15285', '15285', '15285', '15285', '16510', '16510', '16487', '17462']
+    # print('valid_codes:', valid_codes)
 
     # Normalize 'code' columns in related DataFrames so filtering is consistent
-    def _normalize_code_col(df):
-        if df is None or 'code' not in df.columns:
-            return df
-        df = df.copy()
-        df['code'] = pd.to_numeric(df['code'], errors='coerce')
-        df = df[df['code'].notna()].copy()
-        df['code'] = df['code'].astype('int64').astype(str)
-        return df
+    # def _normalize_code_col(df):
+    #     if df is None or 'code' not in df.columns:
+    #         return df
+    #     df = df.copy()
+    #     df['code'] = pd.to_numeric(df['code'], errors='coerce')
+    #     df = df[df['code'].notna()].copy()
+    #     df['code'] = df['code'].astype('int64').astype(str)
+    #     return df
 
     # forecasts_all = _normalize_code_col(forecasts_all)
     # forecast_stats = _normalize_code_col(forecast_stats)
-    station_df = _normalize_code_col(station_df)
-    all_stations = _normalize_code_col(all_stations)
+    # station_df = _normalize_code_col(station_df)
+    # all_stations = _normalize_code_col(all_stations)
 
     # Filter forecasts_all and station_list based on valid codes (if any)
-    if len(valid_codes) > 0:
+    # if len(valid_codes) > 0:
         # forecasts_all = forecasts_all[forecasts_all['code'].isin(valid_codes)]
         # forecast_stats = forecast_stats[forecast_stats['code'].isin(valid_codes)]
-        station_df = station_df[station_df['code'].isin(valid_codes)]
-        all_stations = all_stations[all_stations['code'].isin(valid_codes)]
-    print('station_list prior: ', station_list)
+        # station_df = station_df[station_df['code'].isin(valid_codes)]
+        # all_stations = all_stations[all_stations['code'].isin(valid_codes)]
+    # print('station_list prior: ', station_list)
     # Update station_list after potential filtering
-    station_list = station_df['station_labels'].unique().tolist()
-    print('station_dict prior: ', station_dict)
+    # station_list = station_df['station_labels'].unique().tolist()
+    # print('station_dict prior: ', station_dict)
     # Create a new station_dict that only includes stations in station_list
-    new_station_dict = {}
-    for basin, stations in station_dict.items():
-        # Only filter if we have valid_codes; otherwise keep prior stations
-        if len(valid_codes) > 0:
-            new_stations = [s for s in stations if any(code in s for code in valid_codes)]  # Corrected line
-        else:
-            new_stations = stations
-        if new_stations:  # Only add the basin if there are valid stations
-            new_station_dict[basin] = new_stations
-    station_dict = new_station_dict
+    # new_station_dict = {}
+    # for basin, stations in station_dict.items():
+    #     # Only filter if we have valid_codes; otherwise keep prior stations
+    #     if len(valid_codes) > 0:
+    #         new_stations = [s for s in stations if any(code in s for code in valid_codes)]  # Corrected line
+    #     else:
+    #         new_stations = stations
+    #     if new_stations:  # Only add the basin if there are valid stations
+    #         new_station_dict[basin] = new_stations
+    # station_dict = new_station_dict
 
-    print('station_dict after: ', station_dict)
+    # print('station_dict after: ', station_dict)
     #print('Updated data:')
     #print('forecasts_all:\n', forecasts_all)
     #print('station_list:', station_list)
@@ -549,42 +549,50 @@ def load_data():
 
 stations_iehhf = None
 
-load_data()
+# load_data()
 
-data = {}
+# data = {}
 
-horizon = os.getenv("sapphire_forecast_horizon", "pentad")
-horizon_in_year = "pentad_in_year" if horizon == "pentad" else "decad_in_year"
+# horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+# horizon_in_year = "pentad_in_year" if horizon == "pentad" else "decad_in_year"
 
-data["hydrograph_day_all"] = db.get_hydrograph_day_all('15189')
-data["hydrograph_pentad_all"] = db.get_hydrograph_pentad_all('15189')
-data["hydrograph_day_all"] = processing.add_labels_to_hydrograph(data["hydrograph_day_all"], all_stations)
-data["hydrograph_pentad_all"] = processing.add_labels_to_hydrograph(data["hydrograph_pentad_all"], all_stations)
+# data["hydrograph_day_all"] = db.get_hydrograph_day_all('15189')
+# data["hydrograph_pentad_all"] = db.get_hydrograph_pentad_all('15189')
+# data["hydrograph_day_all"] = processing.add_labels_to_hydrograph(data["hydrograph_day_all"], all_stations)
+# data["hydrograph_pentad_all"] = processing.add_labels_to_hydrograph(data["hydrograph_pentad_all"], all_stations)
 
-data["rain"] = db.get_rain('15189')
-data["temp"] = db.get_temp('15189')
+# data["rain"] = db.get_rain('15189')
+# data["temp"] = db.get_temp('15189')
 
-data["snow_data"] = db.get_snow_data('15189')
+# data["snow_data"] = db.get_snow_data('15189')
 
-data["ml_forecast"] = db.get_ml_forecast('15189')
-data["ml_forecast"] = processing.add_labels_to_hydrograph(data["ml_forecast"], all_stations)
+# data["ml_forecast"] = db.get_ml_forecast('15189')
+# data["ml_forecast"] = processing.add_labels_to_hydrograph(data["ml_forecast"], all_stations)
 
-data["linreg_predictor"] = db.get_linreg_predictor('15189')
-data["linreg_predictor"] = processing.add_labels_to_hydrograph(data["linreg_predictor"], all_stations)
+# data["linreg_predictor"] = db.get_linreg_predictor('15189')
+# data["linreg_predictor"] = processing.add_labels_to_hydrograph(data["linreg_predictor"], all_stations)
+# linreg_datatable = processing.shift_date_by_n_days(data["linreg_predictor"], 1)
+
+# data["forecasts_all"] = db.get_forecasts_all('15189')
+# data["forecasts_all"] = processing.add_labels_to_hydrograph(data["forecasts_all"], all_stations)
+# data["forecasts_all"] = processing.internationalize_forecast_model_names(_, data["forecasts_all"])
+
+# data["forecast_stats"] = db.get_forecast_stats('15189')
+# data["forecast_stats"] = processing.internationalize_forecast_model_names(_, data["forecast_stats"])
+
+# data["forecasts_all"] = data["forecasts_all"].merge(
+#         data["forecast_stats"],
+#         on=['code', horizon_in_year, 'model_short', 'model_long'],
+#         how='left',
+#         suffixes=('', '_stats'))
+
+valid_codes = ['16159', '16159', '16159', '16101', '16159', '16159', '15054', '16101', '16134', '16101', '16101', '16134', '16134', '15081', '15054', '16105', '16101', '16105', '16100', '16105', '15054', '16160', '15149', '15149', '15149', '15149', '15149', '16105', '15149', '16100', '16100', '16100', '16160', '16160', '16101', '16159', '16100', '15054', '15034', '16139', '16143', '16143', '15051', '15051', '15051', '15051', '16151', '15051', '15081', '15081', '16135', '16135', '16135', '15034', '15034', '16160', '16134', '16143', '16143', '16143', '16139', '16139', '16139', '16139', '16151', '16151', '16151', '16151', '16151', '15054', '15054', '15051', '16143', '16146', '16146', '16146', '16146', '16139', '16160', '15283', '16105', '15215', '15215', '15215', '15261', '16936', '15216', '15216', '15215', '15216', '15216', '15216', '15256', '15256', '15256', '15256', '16936', '15216', '15215', '15259', '15215', '15034', '15259', '15259', '16936', '16936', '16936', '16936', '15259', '15259', '15259', '15013', '15283', '15013', '15013', '15013', '15013', '15013', '15283', '16160', '15283', '15090', '16127', '16127', '16127', '16127', '16127', '16127', '16158', '16134', '16158', '16158', '16158', '16158', '15090', '15102', '15102', '16105', '16158', '16134', '15090', '15283', '15090', '16121', '16121', '16121', '16121', '16121', '16121', '15030', '15030', '15030', '15030', '15102', '15102', '15102', '15102', '15090', '15090', '15256', '15034', '15287', '15083', '16096', '16096', '16096', '16096', '16096', '15171', '16161', '15025', '15171', '15171', '15171', '15171', '16146', '15189', '15189', '15960', '15171', '16096', '16161', '16161', '15189', '16161', '16161', '16070', '16070', '16070', '16070', '16070', '16070', '16169', '16169', '16169', '16169', '16169', '16169', '15189', '16161', '15189', '15025', '15194', '15194', '16068', '15020', '16059', '15020', '15020', '15020', '16059', '16068', '16059', '15256', '16146', '17462', '17462', '17462', '17462', '17462', '16059', '16068', '16068', '16068', '16055', '16055', '16055', '16055', '16055', '16055', '16176', '16176', '16176', '16176', '16176', '16176', '15194', '16059', '16059', '16068', '15189', '15194', '15034', '15214', '15287', '16153', '16153', '16100', '15025', '15025', '15016', '15954', '16153', '15954', '15212', '15212', '15212', '15212', '15212', '16487', '16487', '15212', '16153', '16153', '16136', '15083', '15083', '15083', '15083', '15083', '16135', '16135', '16135', '16136', '15081', '15081', '15081', '16136', '16136', '16136', '16136', '16153', '16487', '15287', '16487', '16487', '16681', '15283', '15214', '15214', '15214', '15312', '15016', '16510', '15312', '15312', '15312', '15312', '15287', '15214', '15287', '15287', '15312', '16510', '16510', '16510', '15016', '15954', '15954', '15954', '15954', '15016', '15016', '15016', '15214', '15285', '15285', '15285', '15285', '15285', '15285', '16510', '16510', '16487', '17462']
+all_stations, station_dict = processing.get_all_stations_from_file(valid_codes)
+iehhf_warning = None
+
+data = db.get_data('15189', all_stations)
+
 linreg_datatable = processing.shift_date_by_n_days(data["linreg_predictor"], 1)
-
-data["forecasts_all"] = db.get_forecasts_all('15189')
-data["forecasts_all"] = processing.add_labels_to_hydrograph(data["forecasts_all"], all_stations)
-data["forecasts_all"] = processing.internationalize_forecast_model_names(_, data["forecasts_all"])
-
-data["forecast_stats"] = db.get_forecast_stats('15189')
-data["forecast_stats"] = processing.internationalize_forecast_model_names(_, data["forecast_stats"])
-
-data["forecasts_all"] = data["forecasts_all"].merge(
-        data["forecast_stats"],
-        on=['code', horizon_in_year, 'model_short', 'model_long'],
-        how='left',
-        suffixes=('', '_stats'))
 
 rram_forecast = None
 
@@ -604,7 +612,7 @@ if not latest_data_is_current_year:
 
 sites_list = Site.get_site_attribues_from_iehhf_dataframe(all_stations)
 
-hydropost_to_basin = {site.code: site.basin_ru for site in sites_list}
+# hydropost_to_basin = {site.code: site.basin_ru for site in sites_list}
 
 bulletin_table = pn.Column()
 
@@ -1159,33 +1167,36 @@ def get_forecast_warning(station):
 def update_model_select(station_value, selected_pentad, selected_decad):
     # global hydrograph_day_all, hydrograph_pentad_all, rain, temp, snow_data, ml_forecast, linreg_predictor, forecasts_all, forecast_stats
 
-    data["hydrograph_day_all"] = db.get_hydrograph_day_all(station)
-    data["hydrograph_pentad_all"] = db.get_hydrograph_pentad_all(station)
-    data["hydrograph_day_all"] = processing.add_labels_to_hydrograph(data["hydrograph_day_all"], all_stations)
-    data["hydrograph_pentad_all"] = processing.add_labels_to_hydrograph(data["hydrograph_pentad_all"], all_stations)
+    # data["hydrograph_day_all"] = db.get_hydrograph_day_all(station)
+    # data["hydrograph_pentad_all"] = db.get_hydrograph_pentad_all(station)
+    # data["hydrograph_day_all"] = processing.add_labels_to_hydrograph(data["hydrograph_day_all"], all_stations)
+    # data["hydrograph_pentad_all"] = processing.add_labels_to_hydrograph(data["hydrograph_pentad_all"], all_stations)
 
-    data["rain"] = db.get_rain(station)
-    data["temp"] = db.get_temp(station)
-    data["snow_data"] = db.get_snow_data(station)
+    # data["rain"] = db.get_rain(station)
+    # data["temp"] = db.get_temp(station)
+    # data["snow_data"] = db.get_snow_data(station)
 
-    data["ml_forecast"] = db.get_ml_forecast(station)
-    data["ml_forecast"] = processing.add_labels_to_hydrograph(data["ml_forecast"], all_stations)
+    # data["ml_forecast"] = db.get_ml_forecast(station)
+    # data["ml_forecast"] = processing.add_labels_to_hydrograph(data["ml_forecast"], all_stations)
 
-    data["linreg_predictor"] = db.get_linreg_predictor(station)
-    data["linreg_predictor"] = processing.add_labels_to_hydrograph(data["linreg_predictor"], all_stations)
+    # data["linreg_predictor"] = db.get_linreg_predictor(station)
+    # data["linreg_predictor"] = processing.add_labels_to_hydrograph(data["linreg_predictor"], all_stations)
 
-    data["forecasts_all"] = db.get_forecasts_all(station)
-    data["forecasts_all"] = processing.add_labels_to_hydrograph(data["forecasts_all"], all_stations)
-    data["forecasts_all"] = processing.internationalize_forecast_model_names(_, data["forecasts_all"])
+    # data["forecasts_all"] = db.get_forecasts_all(station)
+    # data["forecasts_all"] = processing.add_labels_to_hydrograph(data["forecasts_all"], all_stations)
+    # data["forecasts_all"] = processing.internationalize_forecast_model_names(_, data["forecasts_all"])
 
-    data["forecast_stats"] = db.get_forecast_stats(station)
-    data["forecast_stats"] = processing.internationalize_forecast_model_names(_, data["forecast_stats"])
+    # data["forecast_stats"] = db.get_forecast_stats(station)
+    # data["forecast_stats"] = processing.internationalize_forecast_model_names(_, data["forecast_stats"])
 
-    data["forecasts_all"] = data["forecasts_all"].merge(
-        data["forecast_stats"],
-        on=['code', horizon_in_year, 'model_short', 'model_long'],
-        how='left',
-        suffixes=('', '_stats'))
+    # data["forecasts_all"] = data["forecasts_all"].merge(
+    #     data["forecast_stats"],
+    #     on=['code', horizon_in_year, 'model_short', 'model_long'],
+    #     how='left',
+    #     suffixes=('', '_stats'))
+
+    global data
+    data = db.get_data(station, all_stations)
 
     update_site_attributes_with_hydrograph_statistics_for_selected_pentad(_=_, sites=sites_list, df=data["hydrograph_pentad_all"], pentad=pentad_selector.value, decad=decad_selector.value)
 

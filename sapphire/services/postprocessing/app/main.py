@@ -6,7 +6,7 @@ from typing import List
 
 from app import crud
 from app.database import engine, Base, get_db
-from app.schemas import ForecastResponse, ForecastBulkCreate, LRForecastResponse, LRForecastBulkCreate, SkillMetricResponse, SkillMetricBulkCreate
+from app.schemas import ForecastResponse, ForecastBulkCreate, LongForecastResponse, LongForecastBulkCreate, LRForecastResponse, LRForecastBulkCreate, SkillMetricResponse, SkillMetricBulkCreate
 from app.logger import logger
 from app.config import settings
 
@@ -105,6 +105,58 @@ def read_forecast(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve forecasts"
+        )
+
+
+@app.post("/long-forecast/",
+          response_model=List[LongForecastResponse],
+          status_code=status.HTTP_201_CREATED,
+          tags=["LongForecast"])
+def create_long_forecast(bulk_data: LongForecastBulkCreate, db: Session = Depends(get_db)):
+    """Create or update multiple long forecasts in bulk"""
+    try:
+        return crud.create_long_forecast(db=db, bulk_data=bulk_data)
+    except SQLAlchemyError:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create or update long forecasts in bulk"
+        )
+
+
+@app.get("/long-forecast/", response_model=List[LongForecastResponse], tags=["LongForecast"])
+def read_long_forecast(
+    horizon_type: str = None,
+    horizon_value: int = None,
+    code: str = None,
+    model: str = None,
+    start_date: str = None,
+    end_date: str = None,
+    valid_from: str = None,
+    valid_to: str = None,
+    skip: int = 0,
+    limit: int = 100,
+    db: Session = Depends(get_db)
+):
+    """Retrieve long forecasts with optional filtering by horizon type and value, code, model_type, date range, valid_from and valid_to"""
+    try:
+        long_forecasts = crud.get_long_forecast(
+            db=db,
+            horizon_type=horizon_type,
+            horizon_value=horizon_value,
+            code=code,
+            model=model,
+            start_date=start_date,
+            end_date=end_date,
+            valid_from=valid_from,
+            valid_to=valid_to,
+            skip=skip,
+            limit=limit
+        )
+        return long_forecasts
+    except SQLAlchemyError:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve long forecasts"
         )
 
 

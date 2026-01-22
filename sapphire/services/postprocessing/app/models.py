@@ -22,6 +22,17 @@ class ModelType(str, Enum):
     NEURAL_ENSEMBLE = "NE"
     RRAM = "RRAM"
     LINEAR_REGRESSION = "LR"
+    GBT = "GBT"
+    LR_BASE = "LR_Base"
+    LR_SM = "LR_SM"
+    LR_SM_DT = "LR_SM_DT"
+    LR_SM_ROF = "LR_SM_ROF"
+    MC_ALD = "MC_ALD"
+    SM_GBT = "SM_GBT"
+    SM_GBT_LR = "SM_GBT_LR"
+    SM_GBT_NORM = "SM_GBT_Norm"
+    SKILLED_MEAN = "Skilled Mean"
+    NAIVE_MEAN = "Naive Mean"
 
     @property
     def description(self) -> str:
@@ -52,6 +63,7 @@ class Forecast(Base):
     flag = Column(Integer)
     horizon_value = Column(Integer, nullable=False)
     horizon_in_year = Column(Integer, nullable=False)
+    composition = Column(String(100))
 
     # Quantile predictions (Q5 to Q95)
     q05 = Column(Float)
@@ -68,6 +80,43 @@ class Forecast(Base):
         Index('ix_forecasts_horizon_code_date_target', 'horizon_type', 'code', 'date', 'target'),
         Index('ix_forecasts_horizon_code_model_date_target', 'horizon_type', 'code', 'model_type', 'date', 'target'),
         UniqueConstraint('horizon_type', 'code', 'model_type', 'date', 'target', name='uq_forecasts_horizon_code_model_date_target')
+    )
+
+
+class LongForecast(Base):
+    __tablename__ = "long_forecasts"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+
+    # Metadata fields
+    horizon_type = Column(SQLEnum(HorizonType), nullable=False)
+    horizon_value = Column(Integer, nullable=False)
+    code = Column(String(10), nullable=False)
+    date = Column(Date, nullable=False)
+    model_type = Column(SQLEnum(ModelType), nullable=False)
+    valid_from = Column(Date, nullable=False)
+    valid_to = Column(Date, nullable=False)
+    flag = Column(Integer)
+    composition = Column(String(100))
+
+    q = Column(Float)
+    q_obs = Column(Float)
+    q_xgb = Column(Float)
+    q_lgbm = Column(Float)
+    q_catboost = Column(Float)
+    q_loc = Column(Float)
+    q05 = Column(Float)
+    q10 = Column(Float)
+    q25 = Column(Float)
+    q50 = Column(Float)
+    q75 = Column(Float)
+    q90 = Column(Float)
+    q95 = Column(Float)
+
+    # Composite index for filtering and ordering, plus unique constraint
+    __table_args__ = (
+        Index('ix_long_forecasts_horizon_type_value_code_date_model_from_to', 'horizon_type', 'horizon_value', 'code', 'date', 'model_type', 'valid_from', 'valid_to'),
+        UniqueConstraint('horizon_type', 'horizon_value', 'code', 'date', 'model_type', 'valid_from', 'valid_to', name='uq_long_forecasts_horizon_type_value_code_date_model_from_to')
     )
 
 

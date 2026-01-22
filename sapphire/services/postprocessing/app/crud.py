@@ -2,8 +2,8 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from typing import List, Optional
 
-from app.models import Forecast, LRForecast, SkillMetric
-from app.schemas import ForecastBulkCreate, LRForecastBulkCreate, SkillMetricBulkCreate
+from app.models import Forecast, LongForecast, LRForecast, SkillMetric
+from app.schemas import ForecastBulkCreate, LongForecastBulkCreate, LRForecastBulkCreate, SkillMetricBulkCreate
 from app.logger import logger
 
 
@@ -86,6 +86,91 @@ def get_forecast(
         return results
     except SQLAlchemyError as e:
         logger.error(f"Error fetching forecasts: {str(e)}", exc_info=True)
+        raise
+
+
+def create_long_forecast(db: Session, bulk_data: LongForecastBulkCreate) -> List[LongForecast]:
+    """Create or update multiple long forecasts in bulk (upsert based on horizon_type, horizon_value, code, date, model_type, valid_from, valid_to)"""
+    try:
+        db_long_forecasts = []
+
+        for item in bulk_data.data:
+            # Check if a record with the same (horizon_type, horizon_value, code, date, model_type, valid_from, valid_to) exists
+            existing_long_forecast = db.query(LongForecast).filter(
+                LongForecast.horizon_type == item.horizon_type,
+                LongForecast.horizon_value == item.horizon_value,
+                LongForecast.code == item.code,
+                LongForecast.date == item.date,
+                LongForecast.model_type == item.model_type,
+                LongForecast.valid_from == item.valid_from,
+                LongForecast.valid_to == item.valid_to
+            ).first()
+
+            if existing_long_forecast:
+                # Update existing record
+                for key, value in item.model_dump().items():
+                    setattr(existing_long_forecast, key, value)
+                db_long_forecasts.append(existing_long_forecast)
+                logger.info(f"Updated long forecast: {item.horizon_type}, {item.horizon_value}, {item.code}, {item.date}, {item.model_type}, {item.valid_from}, {item.valid_to}")
+            else:
+                # Create new record
+                new_long_forecast = LongForecast(**item.model_dump())
+                db.add(new_long_forecast)
+                db_long_forecasts.append(new_long_forecast)
+                logger.info(f"Created long forecast: {item.horizon_type}, {item.horizon_value}, {item.code}, {item.date}, {item.model_type}, {item.valid_from}, {item.valid_to}")
+
+        db.commit()
+
+        # Refresh all long forecasts to get updated state
+        for long_forecast in db_long_forecasts:
+            db.refresh(long_forecast)
+
+        logger.info(f"Processed {len(db_long_forecasts)} long forecasts in bulk")
+        return db_long_forecasts
+    except SQLAlchemyError as e:
+        db.rollback()
+        logger.error(f"Error creating/updating long forecasts in bulk: {str(e)}", exc_info=True)
+        raise
+
+
+def get_long_forecast(
+    db: Session,
+    horizon_type: Optional[str] = None,
+    horizon_value: Optional[int] = None,
+    code: Optional[str] = None,
+    model: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    valid_from: Optional[str] = None,
+    valid_to: Optional[str] = None,
+    skip: int = 0,
+    limit: int = 100
+) -> List[LongForecast]:
+    """Retrieve long forecasts with optional filtering by horizon type and value, code, model_type, date range, valid_from and valid_to"""
+    try:
+        query = db.query(LongForecast)
+        if horizon_type:
+            query = query.filter(LongForecast.horizon_type == horizon_type)
+        if horizon_value is not None:
+            query = query.filter(LongForecast.horizon_value == horizon_value)
+        if code:
+            query = query.filter(LongForecast.code == code)
+        if model:
+            query = query.filter(LongForecast.model_type == model)
+        if start_date:
+            query = query.filter(LongForecast.date >= start_date)
+        if end_date:
+            query = query.filter(LongForecast.date <= end_date)
+        if valid_from:
+            query = query.filter(LongForecast.valid_from >= valid_from)
+        if valid_to:
+            query = query.filter(LongForecast.valid_to <= valid_to)
+
+        results = query.offset(skip).limit(limit).all()
+        logger.info(f"Fetched {len(results)} long forecasts (code={code}, skip={skip}, limit={limit})")
+        return results
+    except SQLAlchemyError as e:
+        logger.error(f"Error fetching long forecasts: {str(e)}", exc_info=True)
         raise
 
 

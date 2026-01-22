@@ -3,6 +3,8 @@ import pandas as pd
 import numpy as np
 import time
 import os
+from src import processing
+from src.gettext_config import _
 # from cachetools import TTLCache # pip install cachetools
 # from typing import Optional, Dict, Any, Tuple
 
@@ -31,6 +33,43 @@ if horizon == "decad":
 #         else:
 #             items.append((k, str(v)))
 #     return tuple(items)
+
+
+def get_data(station, all_stations):
+    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+    horizon_in_year = "pentad_in_year" if horizon == "pentad" else "decad_in_year"
+
+    data = {}
+
+    data["hydrograph_day_all"] = get_hydrograph_day_all(station)
+    data["hydrograph_pentad_all"] = get_hydrograph_pentad_all(station)
+    data["hydrograph_day_all"] = processing.add_labels_to_hydrograph(data["hydrograph_day_all"], all_stations)
+    data["hydrograph_pentad_all"] = processing.add_labels_to_hydrograph(data["hydrograph_pentad_all"], all_stations)
+
+    data["rain"] = get_rain(station)
+    data["temp"] = get_temp(station)
+    data["snow_data"] = get_snow_data(station)
+
+    data["ml_forecast"] = get_ml_forecast(station)
+    data["ml_forecast"] = processing.add_labels_to_hydrograph(data["ml_forecast"], all_stations)
+
+    data["linreg_predictor"] = get_linreg_predictor(station)
+    data["linreg_predictor"] = processing.add_labels_to_hydrograph(data["linreg_predictor"], all_stations)
+
+    data["forecasts_all"] = get_forecasts_all(station)
+    data["forecasts_all"] = processing.add_labels_to_hydrograph(data["forecasts_all"], all_stations)
+    data["forecasts_all"] = processing.internationalize_forecast_model_names(_, data["forecasts_all"])
+
+    data["forecast_stats"] = get_forecast_stats(station)
+    data["forecast_stats"] = processing.internationalize_forecast_model_names(_, data["forecast_stats"])
+
+    data["forecasts_all"] = data["forecasts_all"].merge(
+        data["forecast_stats"],
+        on=['code', horizon_in_year, 'model_short', 'model_long'],
+        how='left',
+        suffixes=('', '_stats'))
+    return data
+
 
 def read_data(service_type:str, data_type: str, params: dict = None):
     """Read data from the API
