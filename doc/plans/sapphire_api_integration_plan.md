@@ -822,4 +822,47 @@ UniqueConstraint('horizon_type', 'code', 'model_type', 'date', name='uq_skill_me
 **Workaround:**
 Set `SAPPHIRE_API_ENABLED=false` to skip API writes and use CSV only until issue is resolved.
 
-*Last updated: 2026-01-21*
+**Next Steps:**
+- [ ] Add composition column to forecast tables (tracks which models compose ensemble forecasts)
+- [ ] Resolve skill metrics duplicate issue before re-enabling API writes
+
+---
+
+#### 4.4b Data Migration Debugging (COMPLETE)
+
+**Issue:** Data migration fails on `maxat_sapphire_2_bea` branch but works on `maxat_sapphire_2` branch.
+
+**Root Cause Found:** Typo in endpoint URL - `lr-forecasts` (plural) instead of `lr-forecast` (singular).
+
+**Fix Applied:**
+- [x] Fixed `sapphire/services/postprocessing/app/data_migrator.py` - changed `sub_url="lr-forecasts"` to `sub_url="lr-forecast"`
+- [x] Fixed `sapphire/services/postprocessing/tests/test_data_migrator.py` - updated all test references
+
+**Affected migrations (now fixed):**
+- [x] Linear regression forecasts (pentad/decad) - endpoint typo fixed
+
+**Note:** Combined forecast migration may still fail due to the skill metrics duplicate issue (see Phase 4.4).
+
+---
+
+#### 4.1b Snow API Integration Testing (PENDING)
+
+**Status:** Code complete, needs integration testing.
+
+**Test Tasks:**
+- [ ] Test snow API integration in preprocessing_gateway with live Data Gateway
+- [ ] Verify SWE, HS, RoF data written correctly to API
+- [ ] Verify consistency check passes
+
+*Last updated: 2026-01-22*
+
+---
+
+## Change Log
+
+| Date | Changes |
+|------|---------|
+| 2026-01-22 | Fixed LR forecast endpoint typo (`lr-forecasts` → `lr-forecast`) in data_migrator.py and tests |
+| 2026-01-22 | Added Phase 4.4b data migration debugging section |
+| 2026-01-22 | Added Phase 4.1b snow API integration testing section |
+| 2026-01-21 | Phase 4.4 postprocessing partial - blocked by skill metrics duplicate issue |

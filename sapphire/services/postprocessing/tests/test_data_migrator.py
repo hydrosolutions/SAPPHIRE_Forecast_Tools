@@ -209,7 +209,7 @@ class TestLRForecastDataMigrator:
         """Set up test migrator."""
         self.migrator = LRForecastDataMigrator(
             api_base_url="http://test:8000",
-            sub_url="lr-forecasts"
+            sub_url="lr-forecast"
         )
 
     def test_prepare_pentad_data_basic(self):
@@ -459,7 +459,7 @@ class TestDataMigratorBase:
         """Test successful batch send."""
         migrator = LRForecastDataMigrator(
             api_base_url="http://test:8000",
-            sub_url="lr-forecasts"
+            sub_url="lr-forecast"
         )
 
         with patch.object(migrator.session, 'post') as mock_post:
@@ -468,27 +468,27 @@ class TestDataMigratorBase:
             mock_post.return_value = mock_response
 
             batch = [{"code": "12345", "date": "2024-01-01"}]
-            success, count = migrator.send_batch(batch, "lr-forecasts")
+            success, count = migrator.send_batch(batch, "lr-forecast")
 
             assert success is True
             assert count == 1
             mock_post.assert_called_once()
             call_args = mock_post.call_args
-            assert call_args[0][0] == "http://test:8000/lr-forecasts/"
+            assert call_args[0][0] == "http://test:8000/lr-forecast/"
             assert call_args[1]["json"] == {"data": batch}
 
     def test_send_batch_failure(self):
         """Test batch send failure."""
         migrator = LRForecastDataMigrator(
             api_base_url="http://test:8000",
-            sub_url="lr-forecasts"
+            sub_url="lr-forecast"
         )
 
         with patch.object(migrator.session, 'post') as mock_post:
             mock_post.side_effect = requests.exceptions.ConnectionError("Connection error")
 
             batch = [{"code": "12345", "date": "2024-01-01"}]
-            success, count = migrator.send_batch(batch, "lr-forecasts")
+            success, count = migrator.send_batch(batch, "lr-forecast")
 
             assert success is False
             assert count == 0
@@ -498,7 +498,7 @@ class TestDataMigratorBase:
         migrator = LRForecastDataMigrator(
             api_base_url="http://test:8000",
             batch_size=2,
-            sub_url="lr-forecasts"
+            sub_url="lr-forecast"
         )
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -534,7 +534,7 @@ class TestDataMigratorBase:
         """Test migrate_csv with invalid horizon type."""
         migrator = LRForecastDataMigrator(
             api_base_url="http://test:8000",
-            sub_url="lr-forecasts"
+            sub_url="lr-forecast"
         )
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -593,7 +593,7 @@ class TestRecordSchemaCompliance:
 
     def test_lr_forecast_pentad_record_schema(self):
         """Verify LR forecast pentad record has all required fields."""
-        migrator = LRForecastDataMigrator(sub_url="lr-forecasts")
+        migrator = LRForecastDataMigrator(sub_url="lr-forecast")
         df = pd.DataFrame({
             "code": ["12345"],
             "date": ["2024-01-05"],

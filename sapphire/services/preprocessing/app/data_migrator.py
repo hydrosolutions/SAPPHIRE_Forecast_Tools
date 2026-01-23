@@ -271,6 +271,8 @@ class HydrographDataMigrator(DataMigrator):
         """Prepare pentad (5-day) hydrograph data for API"""
         records = []
         for _, row in df.iterrows():
+            if not pd.notna(row['pentad']):
+                continue
             record = {
                 "horizon_type": "pentad",
                 "code": str(row['code']),
@@ -301,6 +303,8 @@ class HydrographDataMigrator(DataMigrator):
         for _, row in df.iterrows():
             date_obj = pd.to_datetime(row['date'])
             decade_value = ((date_obj.day - 1) // 10) + 1
+            if not pd.notna(row['day_of_year']):
+                continue
             record = {
                 "horizon_type": "decade",
                 "code": str(row['code']),

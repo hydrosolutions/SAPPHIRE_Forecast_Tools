@@ -18,7 +18,8 @@ def create_forecast(db: Session, bulk_data: ForecastBulkCreate) -> List[Forecast
                 Forecast.horizon_type == item.horizon_type,
                 Forecast.code == item.code,
                 Forecast.model_type == item.model_type,
-                Forecast.date == item.date
+                Forecast.date == item.date,
+                Forecast.target == item.target
             ).first()
 
             if existing_forecast:
