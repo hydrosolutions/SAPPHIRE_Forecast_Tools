@@ -27,13 +27,13 @@ def create_forecast(db: Session, bulk_data: ForecastBulkCreate) -> List[Forecast
                 for key, value in item.model_dump().items():
                     setattr(existing_forecast, key, value)
                 db_forecasts.append(existing_forecast)
-                logger.info(f"Updated forecast: {item.horizon_type}, {item.code}, {item.model_type}, {item.date}")
+                logger.info(f"Updated forecast: {item.horizon_type}, {item.code}, {item.model_type}, {item.date}, {item.target}")
             else:
                 # Create new record
                 new_forecast = Forecast(**item.model_dump())
                 db.add(new_forecast)
                 db_forecasts.append(new_forecast)
-                logger.info(f"Created forecast: {item.horizon_type}, {item.code}, {item.model_type}, {item.date}")
+                logger.info(f"Created forecast: {item.horizon_type}, {item.code}, {item.model_type}, {item.date}, {item.target}")
 
         db.commit()
 
