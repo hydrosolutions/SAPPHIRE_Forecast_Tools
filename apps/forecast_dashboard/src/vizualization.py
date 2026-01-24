@@ -13,7 +13,7 @@ from calendar import month_abbr
 import holoviews as hv
 from holoviews import streams
 import panel as pn
-from bokeh.models import Label, Title, HoverTool, FixedTicker, FuncTickFormatter, CustomJSTickFormatter, LinearAxis, \
+from bokeh.models import Label, Title, HoverTool, FixedTicker, CustomJSTickFormatter, LinearAxis, \
     NumberFormatter, DateFormatter, CustomJS
 from bokeh.models.formatters import DatetimeTickFormatter
 from bokeh.models.widgets.tables import CheckboxEditor, BooleanFormatter
@@ -324,7 +324,7 @@ def add_custom_xticklabels_pentad(_, plot, element):
                 decade_number = i * 3 + j + 1
                 labels[decade_number] = f"{month_label}, {j + 1}" if j == 0 else f"{j + 1}"
 
-    # Create a FixedTicker and a FuncTickFormatter with the specified ticks and labels
+    # Create a FixedTicker and a CustomJSTickFormatter with the specified ticks and labels
     ticker = FixedTicker(ticks=ticks)
     formatter = CustomJSTickFormatter(code="""
         var labels = %s;
