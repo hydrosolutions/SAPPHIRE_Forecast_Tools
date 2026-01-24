@@ -45,6 +45,9 @@ if [ -z "$SAPPHIRE_PREDICTION_MODE" ]; then
 fi
 export SAPPHIRE_PREDICTION_MODE
 
+# Check for consistency between API and csv writes
+SAPPHIRE_CONSISTENCY_CHECK=true
+export SAPPHIRE_CONSISTENCY_CHECK
 
 for model in TFT TIDE TSMIXER; do
 #for model in TIDE; do

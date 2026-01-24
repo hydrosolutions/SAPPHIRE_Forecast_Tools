@@ -549,3 +549,53 @@ class TestWriteSkillMetricsToApi:
 
         finally:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
+
+    @patch('forecast_library.SapphirePostprocessingClient')
+    def test_composition_extracted_from_model_long(self, mock_client_class):
+        """Test that composition is extracted from model_long for ensemble models."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        os.environ['SAPPHIRE_API_ENABLED'] = 'true'
+        try:
+            mock_client = Mock()
+            mock_client.readiness_check.return_value = True
+            mock_client.write_skill_metrics.return_value = 3
+            mock_client_class.return_value = mock_client
+
+            # Test data with model_long containing composition info
+            data = pd.DataFrame({
+                'code': [12345, 12345, 12345],
+                'pentad_in_year': [1, 1, 1],
+                'model_short': ['EM', 'NE', 'TFT'],
+                'model_long': [
+                    'Ens. Mean with TFT, TiDE, TSMixer (EM)',
+                    'Neural Ensemble with LR, TFT (NE)',
+                    'Temporal Fusion Transformer (TFT)'
+                ],
+                'sdivsigma': [0.1, 0.2, 0.3],
+                'nse': [0.9, 0.8, 0.7],
+                'delta': [0.1, 0.2, 0.3],
+                'accuracy': [0.9, 0.8, 0.7],
+                'mae': [5.0, 6.0, 7.0],
+                'n_pairs': [100, 100, 100],
+            })
+
+            _write_skill_metrics_to_api(data, "pentad")
+
+            call_args = mock_client.write_skill_metrics.call_args[0][0]
+
+            # EM should have composition extracted
+            em_record = next(r for r in call_args if r['model_type'] == 'EM')
+            assert em_record['composition'] == 'TFT, TiDE, TSMixer'
+
+            # NE should have composition extracted
+            ne_record = next(r for r in call_args if r['model_type'] == 'NE')
+            assert ne_record['composition'] == 'LR, TFT'
+
+            # Non-ensemble (TFT) should have no composition
+            tft_record = next(r for r in call_args if r['model_type'] == 'TFT')
+            assert tft_record['composition'] is None
+
+        finally:
+            os.environ.pop('SAPPHIRE_API_ENABLED', None)

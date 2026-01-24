@@ -55,13 +55,20 @@ logger = logging.getLogger(__name__)
 try:
     from sapphire_api_client import (
         SapphirePostprocessingClient,
+        SapphirePreprocessingClient,
         SapphireAPIError
     )
     SAPPHIRE_API_AVAILABLE = True
 except ImportError:
     SAPPHIRE_API_AVAILABLE = False
     SapphirePostprocessingClient = None
+    SapphirePreprocessingClient = None
     SapphireAPIError = Exception
+
+# Import forecast_library for API data reading
+import sys
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'iEasyHydroForecast'))
+import forecast_library as fl
 
 
 
@@ -80,6 +87,85 @@ class LossLogger(Callback):
 
     def on_validation_epoch_end(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule") -> None:
         self.val_loss.append(float(trainer.callback_metrics["val_loss"]))
+
+
+# --------------------------------------------------------------------
+# Read meteo data combined (Temperature and Precipitation)
+# --------------------------------------------------------------------
+def read_meteo_data_combined(
+    site_codes: list = None,
+    start_date: str = None,
+    end_date: str = None,
+    csv_path_t: str = None,
+    csv_path_p: str = None,
+) -> pd.DataFrame:
+    """
+    Read both temperature and precipitation meteo data and merge them.
+
+    This helper function:
+    - Reads both T (temperature) and P (precipitation) meteo data
+    - Merges them into a single DataFrame
+    - Handles API vs CSV fallback based on SAPPHIRE_API_ENABLED env var
+
+    Parameters:
+    -----------
+    site_codes : list | None
+        List of station codes to filter (used only for API source).
+    start_date : str | None
+        Start date filter (used only for API source).
+    end_date : str | None
+        End date filter (used only for API source).
+    csv_path_t : str | None
+        Path to temperature CSV file (used only for CSV fallback).
+    csv_path_p : str | None
+        Path to precipitation CSV file (used only for CSV fallback).
+
+    Returns:
+    --------
+    pandas.DataFrame
+        Merged meteo data with columns 'code', 'date', 'T' (temperature), 'P' (precipitation).
+
+    Raises:
+    -------
+    SapphireAPIError
+        If API is enabled but unavailable.
+    FileNotFoundError
+        If using CSV and files don't exist.
+    """
+    # Read temperature data
+    t_data = fl.read_meteo_data(
+        meteo_type='T',
+        site_codes=site_codes,
+        start_date=start_date,
+        end_date=end_date,
+        csv_path=csv_path_t,
+    )
+    # Rename 'value' column to 'T'
+    t_data = t_data.rename(columns={'value': 'T'})
+
+    # Read precipitation data
+    p_data = fl.read_meteo_data(
+        meteo_type='P',
+        site_codes=site_codes,
+        start_date=start_date,
+        end_date=end_date,
+        csv_path=csv_path_p,
+    )
+    # Rename 'value' column to 'P'
+    p_data = p_data.rename(columns={'value': 'P'})
+
+    # Merge temperature and precipitation data on code and date
+    # Use inner join to only keep rows where both T and P have data
+    merged_data = pd.merge(t_data, p_data, on=['code', 'date'], how='inner')
+
+    # Sort by code and date
+    merged_data = merged_data.sort_values(by=['code', 'date'])
+
+    logger.info(f"Combined meteo data loaded: {len(merged_data)} records")
+    logger.info(f"Date range: {merged_data['date'].min()} to {merged_data['date'].max()}")
+    logger.info(f"Stations: {merged_data['code'].unique().tolist()}")
+
+    return merged_data
 
 
 # --------------------------------------------------------------------

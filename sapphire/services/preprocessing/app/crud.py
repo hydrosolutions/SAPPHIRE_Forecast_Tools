@@ -62,7 +62,8 @@ def get_runoff(db: Session, horizon: Optional[str] = None, code: Optional[str] =
             query = query.filter(Runoff.date >= start_date)
         if end_date:
             query = query.filter(Runoff.date <= end_date)
-        results = query.offset(skip).limit(limit).all()
+        # Order by code and date for consistent pagination
+        results = query.order_by(Runoff.code, Runoff.date).offset(skip).limit(limit).all()
         logger.info(f"Fetched {len(results)} runoffs (code={code}, skip={skip}, limit={limit})")
         return results
     except SQLAlchemyError as e:
@@ -126,7 +127,8 @@ def get_hydrograph(db: Session, horizon: Optional[str] = None, code: Optional[st
             query = query.filter(Hydrograph.date >= start_date)
         if end_date:
             query = query.filter(Hydrograph.date <= end_date)
-        results = query.offset(skip).limit(limit).all()
+        # Order by code and date for consistent pagination
+        results = query.order_by(Hydrograph.code, Hydrograph.date).offset(skip).limit(limit).all()
         logger.info(f"Fetched {len(results)} hydrographs (code={code}, skip={skip}, limit={limit})")
         return results
     except SQLAlchemyError as e:
@@ -191,7 +193,8 @@ def get_meteo(db: Session, meteo_type: Optional[str] = None, code: Optional[str]
             query = query.filter(Meteo.date >= start_date)
         if end_date:
             query = query.filter(Meteo.date <= end_date)
-        results = query.offset(skip).limit(limit).all()
+        # Order by code and date for consistent pagination
+        results = query.order_by(Meteo.code, Meteo.date).offset(skip).limit(limit).all()
         logger.info(f"Fetched {len(results)} meteo records (code={code}, skip={skip}, limit={limit})")
         return results
     except SQLAlchemyError as e:

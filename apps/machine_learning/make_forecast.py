@@ -137,6 +137,7 @@ sys.path.append(forecast_dir)
 
 # Import the setup_library module from the iEasyHydroForecast package
 import setup_library as sl
+import forecast_library as fl
 
 # --------------------------------------------------------------------
 # CALLBACKS
@@ -355,15 +356,37 @@ def prepare_static_data(path_to_static_features : str):
     return static_features
 
 
-def load_control_member_data( path_to_qmapped_era5, hru_ml_models):
-    """Load and prepare ERA5 data."""
-
+def load_control_member_data(path_to_qmapped_era5, hru_ml_models):
+    """
+    Load and prepare ERA5 meteo data (temperature and precipitation).
+    
+    Reads from SAPPHIRE API by default, falls back to CSV if API is disabled.
+    Set SAPPHIRE_API_ENABLED=false to use CSV files.
+    
+    Parameters:
+    -----------
+    path_to_qmapped_era5 : str
+        Path to directory containing CSV files (used only for CSV fallback).
+    hru_ml_models : str
+        HRU identifier for constructing CSV filenames (used only for CSV fallback).
+    
+    Returns:
+    --------
+    pandas.DataFrame
+        Merged meteo data with columns 'code', 'date', 'P', 'T'.
+    """
+    # Construct CSV paths for fallback
     path_p = os.path.join(path_to_qmapped_era5, hru_ml_models + '_P_control_member.csv')
     path_t = os.path.join(path_to_qmapped_era5, hru_ml_models + '_T_control_member.csv')
     
-    p_qmapped_era5 = pd.read_csv(path_p, parse_dates=['date'])
-    t_qmapped_era5 = pd.read_csv(path_t, parse_dates=['date'])
-    qmapped_era5 = pd.merge(p_qmapped_era5, t_qmapped_era5, on=['code', 'date'])
+    # Use the utility function which handles API vs CSV fallback
+    qmapped_era5 = utils_ml_forecast.read_meteo_data_combined(
+        csv_path_t=path_t,
+        csv_path_p=path_p,
+    )
+    
+    # Convert code to int (API returns strings, ML module expects integers)
+    qmapped_era5['code'] = qmapped_era5['code'].astype(int)
     
     return qmapped_era5
 
@@ -521,11 +544,11 @@ def make_ml_forecast():
     # --------------------------------------------------------------------
     # LOAD AND PREPARE DATA
     # --------------------------------------------------------------------
-    PATH_TO_PAST_DISCHARGE = os.getenv('ieasyforecast_daily_discharge_file')
-    PATH_TO_PAST_DISCHARGE = os.path.join(intermediate_data_path, PATH_TO_PAST_DISCHARGE)
-
-
-    past_discharge = pd.read_csv(PATH_TO_PAST_DISCHARGE, parse_dates=['date'])
+    # Read discharge data from API (default) or CSV fallback
+    # The function uses SAPPHIRE_API_ENABLED env var to determine data source
+    past_discharge = fl.read_daily_discharge_data()
+    # Convert code to int (API returns strings, ML module expects integers)
+    past_discharge['code'] = past_discharge['code'].astype(int)
 
     qmapped_era5 = prepare_forcing_data(
         intermediate_data_path = intermediate_data_path,

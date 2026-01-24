@@ -2843,6 +2843,9 @@ def _read_daily_discharge_from_api(
     # Combine all pages
     discharge_data = pd.concat(all_data, ignore_index=True)
 
+    # Remove duplicates (defensive - API pagination should be consistent with ORDER BY)
+    discharge_data = discharge_data.drop_duplicates(subset=['code', 'date'], keep='first')
+
     # Select and rename columns to match expected format
     # API returns: id, horizon_type, code, date, discharge, predictor, horizon_value, horizon_in_year
     # We need: code, date, discharge
@@ -2976,6 +2979,512 @@ def read_daily_discharge_data(
         logger.info("Reading daily discharge data from CSV (SAPPHIRE_API_ENABLED=false)")
         # Note: CSV function doesn't support filtering, returns all data
         return read_daily_discharge_data_from_csv()
+
+
+def read_meteo_data_from_csv(
+    meteo_type: str,
+    csv_path: str | None = None,
+) -> pd.DataFrame:
+    """
+    Read meteo data from a CSV file.
+
+    Parameters:
+    -----------
+    meteo_type : str
+        Type of meteo data: 'T' (temperature) or 'P' (precipitation).
+    csv_path : str | None
+        Path to CSV file. If None, constructs path from environment variables.
+
+    Returns:
+    --------
+    pandas.DataFrame
+        The meteo data with columns 'code', 'date', 'value'.
+
+    Raises:
+    -------
+    FileNotFoundError
+        If the specified file does not exist.
+    ValueError
+        If meteo_type is invalid or required columns are missing.
+    """
+    if meteo_type not in ('T', 'P'):
+        raise ValueError(f"meteo_type must be 'T' or 'P', got: {meteo_type}")
+
+    if csv_path is None:
+        # Construct path from environment variables
+        # Expected naming: {HRU}_T_control_member.csv or {HRU}_P_control_member.csv
+        data_path = os.getenv("ieasyforecast_intermediate_data_path")
+        hru = os.getenv("ieasyforecast_ml_hru_models", "global")
+        if data_path is None:
+            raise EnvironmentError(
+                "Environment variable 'ieasyforecast_intermediate_data_path' must be set."
+            )
+        csv_path = os.path.join(data_path, f"{hru}_{meteo_type}_control_member.csv")
+
+    if not os.path.exists(csv_path):
+        raise FileNotFoundError(f"The specified file {csv_path} does not exist.")
+
+    try:
+        meteo_data = pd.read_csv(csv_path, sep=',')
+    except pd.errors.ParserError:
+        raise pd.errors.ParserError(f"The specified file {csv_path} cannot be read as a CSV.")
+
+    # Standardize column names - CSV may have different column names
+    # Expected columns: code, date, and value column (may be named by type like 'T' or 'P')
+    if 'code' not in meteo_data.columns:
+        raise ValueError(f"CSV file missing required 'code' column")
+    if 'date' not in meteo_data.columns:
+        raise ValueError(f"CSV file missing required 'date' column")
+
+    # Find the value column - could be 'value', 'T', 'P', or similar
+    value_col = None
+    for col in ['value', meteo_type, meteo_type.lower()]:
+        if col in meteo_data.columns:
+            value_col = col
+            break
+
+    # If still not found, use the last column that's not code/date
+    if value_col is None:
+        non_key_cols = [c for c in meteo_data.columns if c not in ('code', 'date')]
+        if non_key_cols:
+            value_col = non_key_cols[-1]
+            logger.warning(f"Could not find standard value column, using '{value_col}'")
+        else:
+            raise ValueError(f"CSV file missing value column")
+
+    # Rename to standard format
+    meteo_data = meteo_data[['code', 'date', value_col]].copy()
+    if value_col != 'value':
+        meteo_data = meteo_data.rename(columns={value_col: 'value'})
+
+    # Convert types
+    meteo_data['date'] = parse_dates_robust(meteo_data['date'], 'date')
+    meteo_data['code'] = meteo_data['code'].astype(str)
+
+    # Sort
+    meteo_data = meteo_data.sort_values(by=['code', 'date'])
+
+    logger.info(f"Meteo data ({meteo_type}) read from {csv_path}: {len(meteo_data)} records")
+    logger.info(f"Date range: {meteo_data['date'].min()} to {meteo_data['date'].max()}")
+    logger.info(f"Stations: {meteo_data['code'].unique().tolist()}")
+
+    return meteo_data
+
+
+def _read_meteo_data_from_api(
+    meteo_type: str,
+    site_codes: list[str] | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> pd.DataFrame:
+    """
+    Read meteo data from the SAPPHIRE API.
+
+    Parameters:
+    -----------
+    meteo_type : str
+        Type of meteo data: 'T' (temperature) or 'P' (precipitation).
+    site_codes : list[str] | None
+        List of station codes to filter. If None, reads all stations.
+    start_date : str | None
+        Start date filter (YYYY-MM-DD format). If None, no start filter.
+    end_date : str | None
+        End date filter (YYYY-MM-DD format). If None, no end filter.
+
+    Returns:
+    --------
+    pandas.DataFrame
+        The meteo data with columns 'code', 'date', 'value'.
+
+    Raises:
+    -------
+    SapphireAPIError
+        If the API is not available or the request fails.
+    RuntimeError
+        If the sapphire-api-client is not installed.
+    ValueError
+        If meteo_type is invalid.
+    """
+    if meteo_type not in ('T', 'P'):
+        raise ValueError(f"meteo_type must be 'T' or 'P', got: {meteo_type}")
+
+    if not SAPPHIRE_API_AVAILABLE:
+        raise RuntimeError(
+            "sapphire-api-client is not installed. "
+            "Install it with: pip install git+https://github.com/hydrosolutions/sapphire-api-client.git"
+        )
+
+    api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
+    client = SapphirePreprocessingClient(base_url=api_url)
+
+    # Health check first - fail fast if API unavailable
+    if not client.readiness_check():
+        raise SapphireAPIError(f"SAPPHIRE API at {api_url} is not ready")
+
+    logger.info(f"Reading meteo data ({meteo_type}) from SAPPHIRE API at {api_url}")
+
+    # Collect all data with pagination
+    all_data = []
+    page_size = 10000
+
+    # If site_codes provided, query per code for efficiency
+    codes_to_query = site_codes if site_codes else [None]
+
+    for code in codes_to_query:
+        skip = 0
+        while True:
+            df_page = client.read_meteo(
+                meteo_type=meteo_type,
+                code=code,
+                start_date=start_date,
+                end_date=end_date,
+                skip=skip,
+                limit=page_size,
+            )
+
+            if df_page.empty:
+                break
+
+            all_data.append(df_page)
+            logger.debug(
+                f"Read {len(df_page)} meteo records for type={meteo_type}, code={code} (skip={skip})"
+            )
+
+            if len(df_page) < page_size:
+                break
+
+            skip += page_size
+
+    if not all_data:
+        logger.warning(f"No meteo data ({meteo_type}) returned from API")
+        return pd.DataFrame(columns=['code', 'date', 'value'])
+
+    # Combine all pages
+    meteo_data = pd.concat(all_data, ignore_index=True)
+
+    # Remove duplicates (defensive - API pagination should be consistent with ORDER BY)
+    meteo_data = meteo_data.drop_duplicates(subset=['code', 'date'], keep='first')
+
+    # Select and rename columns to match expected format
+    # API returns: id, meteo_type, code, date, value, norm, day_of_year
+    meteo_data = meteo_data[['code', 'date', 'value']].copy()
+
+    # Convert types
+    meteo_data['date'] = parse_dates_robust(meteo_data['date'], 'date')
+    meteo_data['code'] = meteo_data['code'].astype(str)
+
+    # Sort
+    meteo_data = meteo_data.sort_values(by=['code', 'date'])
+
+    logger.info(f"Meteo data ({meteo_type}) read from API: {len(meteo_data)} records")
+    logger.info(f"Date range: {meteo_data['date'].min()} to {meteo_data['date'].max()}")
+    logger.info(f"Stations: {meteo_data['code'].unique().tolist()}")
+
+    return meteo_data
+
+
+def read_meteo_data(
+    meteo_type: str,
+    site_codes: list[str] | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    csv_path: str | None = None,
+) -> pd.DataFrame:
+    """
+    Read meteo data from API (default) or CSV fallback.
+
+    This is the unified entry point for reading meteo data.
+    By default, reads from the SAPPHIRE API. Set SAPPHIRE_API_ENABLED=false
+    to use CSV files instead (for local development without API).
+
+    Parameters:
+    -----------
+    meteo_type : str
+        Type of meteo data: 'T' (temperature) or 'P' (precipitation).
+    site_codes : list[str] | None
+        List of station codes to filter (used only for API source).
+    start_date : str | None
+        Start date filter (used only for API source).
+    end_date : str | None
+        End date filter (used only for API source).
+    csv_path : str | None
+        Path to CSV file (used only for CSV fallback).
+
+    Returns:
+    --------
+    pandas.DataFrame
+        The meteo data with columns 'code', 'date', 'value'.
+
+    Raises:
+    -------
+    SapphireAPIError
+        If API is enabled but unavailable (fail fast behavior).
+    EnvironmentError
+        If using CSV and required environment variables are not set.
+    FileNotFoundError
+        If using CSV and the file doesn't exist.
+    ValueError
+        If meteo_type is invalid.
+    """
+    if meteo_type not in ('T', 'P'):
+        raise ValueError(f"meteo_type must be 'T' or 'P', got: {meteo_type}")
+
+    # Check if API is enabled (default: true)
+    api_enabled = os.getenv("SAPPHIRE_API_ENABLED", "true").lower() == "true"
+
+    if api_enabled:
+        logger.info(f"Reading meteo data ({meteo_type}) from SAPPHIRE API (SAPPHIRE_API_ENABLED=true)")
+        return _read_meteo_data_from_api(
+            meteo_type=meteo_type,
+            site_codes=site_codes,
+            start_date=start_date,
+            end_date=end_date,
+        )
+    else:
+        logger.info(f"Reading meteo data ({meteo_type}) from CSV (SAPPHIRE_API_ENABLED=false)")
+        return read_meteo_data_from_csv(meteo_type=meteo_type, csv_path=csv_path)
+
+
+def read_hydrograph_data_from_csv(
+    horizon_type: str,
+) -> pd.DataFrame:
+    """
+    Read hydrograph data from a CSV file.
+
+    Parameters:
+    -----------
+    horizon_type : str
+        Either 'pentad' or 'decade'.
+
+    Returns:
+    --------
+    pandas.DataFrame
+        The hydrograph data with standard columns.
+
+    Raises:
+    -------
+    EnvironmentError
+        If required environment variables are not set.
+    FileNotFoundError
+        If the specified file does not exist.
+    ValueError
+        If horizon_type is invalid or required columns are missing.
+    """
+    if horizon_type not in ('pentad', 'decade'):
+        raise ValueError(f"horizon_type must be 'pentad' or 'decade', got: {horizon_type}")
+
+    # Get file path from environment
+    data_path = os.getenv("ieasyforecast_intermediate_data_path")
+    if horizon_type == 'pentad':
+        file_name = os.getenv("ieasyforecast_hydrograph_pentad_file")
+    else:
+        file_name = os.getenv("ieasyforecast_hydrograph_decad_file")
+
+    if data_path is None or file_name is None:
+        raise EnvironmentError(
+            f"Environment variables 'ieasyforecast_intermediate_data_path' and "
+            f"'ieasyforecast_hydrograph_{horizon_type}_file' must be set."
+        )
+
+    file_path = os.path.join(data_path, file_name)
+
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"The specified file {file_path} does not exist.")
+
+    try:
+        hydrograph_data = pd.read_csv(file_path, sep=',')
+    except pd.errors.ParserError:
+        raise pd.errors.ParserError(f"The specified file {file_path} cannot be read as a CSV.")
+
+    # Check required columns
+    required_columns = ['code', 'day_of_year']
+    if not all(col in hydrograph_data.columns for col in required_columns):
+        raise ValueError(f"CSV file missing required columns: {required_columns}")
+
+    # Convert types
+    if 'date' in hydrograph_data.columns:
+        hydrograph_data['date'] = parse_dates_robust(hydrograph_data['date'], 'date')
+    hydrograph_data['code'] = hydrograph_data['code'].astype(str)
+    hydrograph_data['day_of_year'] = hydrograph_data['day_of_year'].astype(int)
+
+    # Sort
+    hydrograph_data = hydrograph_data.sort_values(by=['code', 'day_of_year'])
+
+    logger.info(f"Hydrograph data ({horizon_type}) read from {file_path}: {len(hydrograph_data)} records")
+    logger.info(f"Stations: {hydrograph_data['code'].unique().tolist()}")
+
+    return hydrograph_data
+
+
+def _read_hydrograph_data_from_api(
+    horizon_type: str,
+    site_codes: list[str] | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> pd.DataFrame:
+    """
+    Read hydrograph data from the SAPPHIRE API.
+
+    Parameters:
+    -----------
+    horizon_type : str
+        Either 'pentad' or 'decade'.
+    site_codes : list[str] | None
+        List of station codes to filter. If None, reads all stations.
+    start_date : str | None
+        Start date filter (YYYY-MM-DD format). If None, no start filter.
+    end_date : str | None
+        End date filter (YYYY-MM-DD format). If None, no end filter.
+
+    Returns:
+    --------
+    pandas.DataFrame
+        The hydrograph data with standard columns.
+
+    Raises:
+    -------
+    SapphireAPIError
+        If the API is not available or the request fails.
+    RuntimeError
+        If the sapphire-api-client is not installed.
+    ValueError
+        If horizon_type is invalid.
+    """
+    if horizon_type not in ('pentad', 'decade'):
+        raise ValueError(f"horizon_type must be 'pentad' or 'decade', got: {horizon_type}")
+
+    if not SAPPHIRE_API_AVAILABLE:
+        raise RuntimeError(
+            "sapphire-api-client is not installed. "
+            "Install it with: pip install git+https://github.com/hydrosolutions/sapphire-api-client.git"
+        )
+
+    api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
+    client = SapphirePreprocessingClient(base_url=api_url)
+
+    # Health check first - fail fast if API unavailable
+    if not client.readiness_check():
+        raise SapphireAPIError(f"SAPPHIRE API at {api_url} is not ready")
+
+    logger.info(f"Reading hydrograph data ({horizon_type}) from SAPPHIRE API at {api_url}")
+
+    # Collect all data with pagination
+    all_data = []
+    page_size = 10000
+
+    # If site_codes provided, query per code for efficiency
+    codes_to_query = site_codes if site_codes else [None]
+
+    for code in codes_to_query:
+        skip = 0
+        while True:
+            df_page = client.read_hydrograph(
+                horizon_type=horizon_type,
+                code=code,
+                start_date=start_date,
+                end_date=end_date,
+                skip=skip,
+                limit=page_size,
+            )
+
+            if df_page.empty:
+                break
+
+            all_data.append(df_page)
+            logger.debug(
+                f"Read {len(df_page)} hydrograph records for type={horizon_type}, code={code} (skip={skip})"
+            )
+
+            if len(df_page) < page_size:
+                break
+
+            skip += page_size
+
+    if not all_data:
+        logger.warning(f"No hydrograph data ({horizon_type}) returned from API")
+        return pd.DataFrame(columns=[
+            'code', 'date', 'horizon_value', 'horizon_in_year', 'day_of_year',
+            'count', 'mean', 'std', 'min', 'max', 'q05', 'q25', 'q50', 'q75', 'q95',
+            'norm', 'previous', 'current'
+        ])
+
+    # Combine all pages
+    hydrograph_data = pd.concat(all_data, ignore_index=True)
+
+    # Remove duplicates (defensive - API pagination should be consistent with ORDER BY)
+    hydrograph_data = hydrograph_data.drop_duplicates(subset=['code', 'date'], keep='first')
+
+    # Convert types
+    if 'date' in hydrograph_data.columns:
+        hydrograph_data['date'] = parse_dates_robust(hydrograph_data['date'], 'date')
+    hydrograph_data['code'] = hydrograph_data['code'].astype(str)
+
+    # Sort
+    hydrograph_data = hydrograph_data.sort_values(by=['code', 'day_of_year'])
+
+    logger.info(f"Hydrograph data ({horizon_type}) read from API: {len(hydrograph_data)} records")
+    logger.info(f"Stations: {hydrograph_data['code'].unique().tolist()}")
+
+    return hydrograph_data
+
+
+def read_hydrograph_data(
+    horizon_type: str,
+    site_codes: list[str] | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> pd.DataFrame:
+    """
+    Read hydrograph data from API (default) or CSV fallback.
+
+    This is the unified entry point for reading hydrograph data.
+    By default, reads from the SAPPHIRE API. Set SAPPHIRE_API_ENABLED=false
+    to use CSV files instead (for local development without API).
+
+    Parameters:
+    -----------
+    horizon_type : str
+        Either 'pentad' or 'decade'.
+    site_codes : list[str] | None
+        List of station codes to filter (used only for API source).
+    start_date : str | None
+        Start date filter (used only for API source).
+    end_date : str | None
+        End date filter (used only for API source).
+
+    Returns:
+    --------
+    pandas.DataFrame
+        The hydrograph data with standard columns.
+
+    Raises:
+    -------
+    SapphireAPIError
+        If API is enabled but unavailable (fail fast behavior).
+    EnvironmentError
+        If using CSV and required environment variables are not set.
+    FileNotFoundError
+        If using CSV and the file doesn't exist.
+    ValueError
+        If horizon_type is invalid.
+    """
+    if horizon_type not in ('pentad', 'decade'):
+        raise ValueError(f"horizon_type must be 'pentad' or 'decade', got: {horizon_type}")
+
+    # Check if API is enabled (default: true)
+    api_enabled = os.getenv("SAPPHIRE_API_ENABLED", "true").lower() == "true"
+
+    if api_enabled:
+        logger.info(f"Reading hydrograph data ({horizon_type}) from SAPPHIRE API (SAPPHIRE_API_ENABLED=true)")
+        return _read_hydrograph_data_from_api(
+            horizon_type=horizon_type,
+            site_codes=site_codes,
+            start_date=start_date,
+            end_date=end_date,
+        )
+    else:
+        logger.info(f"Reading hydrograph data ({horizon_type}) from CSV (SAPPHIRE_API_ENABLED=false)")
+        return read_hydrograph_data_from_csv(horizon_type=horizon_type)
 
 
 
@@ -3120,9 +3629,29 @@ def _verify_preprocessing_write_consistency(
     if 'date' in written_copy.columns:
         written_copy['date'] = pd.to_datetime(written_copy['date'])
 
+    # Deduplicate both datasets by key columns (keep last, matching API upsert behavior)
+    # The API uses upsert, so only the last value per unique key is stored
+    available_keys = [k for k in key_columns if k in written_copy.columns]
+    if available_keys:
+        orig_written_count = len(written_copy)
+        orig_csv_count = len(csv_data)
+
+        written_copy = written_copy.drop_duplicates(subset=available_keys, keep='last')
+        csv_data = csv_data.drop_duplicates(subset=available_keys, keep='last')
+
+        if len(written_copy) < orig_written_count or len(csv_data) < orig_csv_count:
+            logger.debug(
+                f"Deduplication for consistency check: "
+                f"written_data {orig_written_count}->{len(written_copy)}, "
+                f"csv_data {orig_csv_count}->{len(csv_data)}"
+            )
+
     # Find matching rows in CSV
     issues = []
     matched_count = 0
+
+    # Numeric key columns that need type normalization
+    numeric_key_cols = ['pentad_in_year', 'decad_in_year', 'horizon_in_year']
 
     for _, api_row in written_copy.iterrows():
         # Build match condition
@@ -3134,6 +3663,13 @@ def _verify_preprocessing_write_consistency(
                 col_condition = csv_data['code'].astype(str) == str(api_row['code'])
             elif key_col == 'date':
                 col_condition = csv_data['date'].dt.normalize() == pd.Timestamp(api_row['date']).normalize()
+            elif key_col in numeric_key_cols:
+                # Handle numeric columns - convert both to float for comparison
+                api_val = api_row[key_col]
+                if pd.isna(api_val):
+                    col_condition = csv_data[key_col].isna()
+                else:
+                    col_condition = csv_data[key_col].astype(float) == float(api_val)
             else:
                 col_condition = csv_data[key_col] == api_row[key_col]
 
@@ -3176,7 +3712,27 @@ def _verify_preprocessing_write_consistency(
                     )
 
     if issues:
-        return False, f"{data_type}: Matched {matched_count} rows, but found {len(issues)} issues: " + "; ".join(issues[:5])
+        total_rows = matched_count + len([i for i in issues if "No CSV row found" in i])
+        issue_pct = len(issues) / max(total_rows, 1) * 100
+        summary = f"{data_type}: {matched_count} rows matched, {len(issues)} issues ({issue_pct:.1f}%)"
+
+        # Classify issues
+        missing_rows = [i for i in issues if "No CSV row found" in i]
+        value_mismatches = [i for i in issues if "mismatch" in i]
+
+        details = []
+        if missing_rows:
+            details.append(f"{len(missing_rows)} rows not in CSV")
+        if value_mismatches:
+            details.append(f"{len(value_mismatches)} value mismatches")
+
+        if details:
+            summary += f" ({', '.join(details)})"
+
+        # Show sample issues
+        summary += ": " + "; ".join(issues[:5])
+
+        return False, summary
 
     return True, f"{data_type}: Verified {matched_count} rows - API and CSV data are consistent"
 
@@ -3537,6 +4093,7 @@ def _write_combined_forecast_to_api(data: pd.DataFrame, horizon_type: str) -> bo
             - pentad_in_year/decad_in_year: horizon in year
             - forecasted_discharge: the forecast value
             - model_short: model identifier (LR, TFT, TIDE, TSMIXER, EM, NE)
+            - composition (optional): for ensemble models, which models compose it
         horizon_type: Either "pentad" or "decade"
 
     Returns:
@@ -3598,6 +4155,19 @@ def _write_combined_forecast_to_api(data: pd.DataFrame, horizon_type: str) -> bo
         model_short = str(row.get('model_short', ''))
         api_model_type = model_type_map.get(model_short.upper(), model_short)
 
+        # Get composition for ensemble models (EM, NE)
+        # First check if composition column exists, otherwise extract from model_long
+        composition = None
+        if 'composition' in row.index and pd.notna(row.get('composition')):
+            composition = str(row['composition'])
+        elif model_short.upper() in ('EM', 'NE') and 'model_long' in row.index and pd.notna(row.get('model_long')):
+            # Extract model names from model_long like "Ens. Mean with TFT, TiDE, TSMixer (EM)"
+            model_long = str(row['model_long'])
+            # Pattern: "Ens. Mean with <models> (EM)" or "... (NE)"
+            match = re.search(r'with\s+(.+?)\s+\([EN][ME]\)', model_long)
+            if match:
+                composition = match.group(1).strip()
+
         date_obj = pd.to_datetime(row['date'])
         record = {
             "horizon_type": horizon_type,
@@ -3607,6 +4177,7 @@ def _write_combined_forecast_to_api(data: pd.DataFrame, horizon_type: str) -> bo
             "target": date_obj.strftime('%Y-%m-%d'),  # For combined forecasts, date is the target
             "horizon_value": int(row[horizon_value_col]),
             "horizon_in_year": int(row[horizon_in_year_col]),
+            "composition": composition,
             "forecasted_discharge": float(row['forecasted_discharge']) if pd.notna(row.get('forecasted_discharge')) else None,
         }
         records.append(record)
@@ -3640,6 +4211,7 @@ def _write_skill_metrics_to_api(data: pd.DataFrame, horizon_type: str) -> bool:
             - accuracy: accuracy metric
             - mae: Mean Absolute Error
             - n_pairs: number of data pairs
+            - composition (optional): for ensemble models, which models compose it
         horizon_type: Either "pentad" or "decade"
 
     Returns:
@@ -3701,12 +4273,26 @@ def _write_skill_metrics_to_api(data: pd.DataFrame, horizon_type: str) -> bool:
         model_short = str(row.get('model_short', ''))
         api_model_type = model_type_map.get(model_short.upper(), model_short)
 
+        # Get composition for ensemble models (EM, NE)
+        # First check if composition column exists, otherwise extract from model_long
+        composition = None
+        if 'composition' in row.index and pd.notna(row.get('composition')):
+            composition = str(row['composition'])
+        elif model_short.upper() in ('EM', 'NE') and 'model_long' in row.index and pd.notna(row.get('model_long')):
+            # Extract model names from model_long like "Ens. Mean with TFT, TiDE, TSMixer (EM)"
+            model_long = str(row['model_long'])
+            # Pattern: "Ens. Mean with <models> (EM)" or "... (NE)"
+            match = re.search(r'with\s+(.+?)\s+\([EN][ME]\)', model_long)
+            if match:
+                composition = match.group(1).strip()
+
         record = {
             "horizon_type": horizon_type,
             "code": str(row['code']),
             "model_type": api_model_type,
             "date": today,
             "horizon_in_year": int(row[horizon_in_year_col]),
+            "composition": composition,
             "sdivsigma": float(row['sdivsigma']) if pd.notna(row.get('sdivsigma')) else None,
             "nse": float(row['nse']) if pd.notna(row.get('nse')) else None,
             "delta": float(row['delta']) if pd.notna(row.get('delta')) else None,
@@ -5556,6 +6142,28 @@ def save_pentadal_skill_metrics(data: pd.DataFrame):
         except Exception as e:
             logger.error(f"Failed to write pentadal skill metrics to API: {e}")
 
+    # --- Consistency Check ---
+    consistency_check = os.getenv("SAPPHIRE_CONSISTENCY_CHECK", "false").lower() == "true"
+    if consistency_check:
+        logger.info("SAPPHIRE_CONSISTENCY_CHECK: Verifying write consistency for pentad skill metrics")
+        print("SAPPHIRE_CONSISTENCY_CHECK: Verifying pentad skill metrics write consistency...")
+
+        is_consistent, message = _verify_preprocessing_write_consistency(
+            written_data=data,
+            csv_file_path=filepath,
+            data_type="skill metrics pentad",
+            key_columns=['code', 'pentad_in_year', 'model_short'],
+            value_columns=['sdivsigma', 'nse', 'delta', 'accuracy', 'mae', 'n_pairs'],
+        )
+
+        if is_consistent:
+            logger.info(f"CONSISTENCY CHECK PASSED: {message}")
+            print(f"SAPPHIRE_CONSISTENCY_CHECK: PASSED - {message}")
+        else:
+            logger.error(f"CONSISTENCY CHECK FAILED: {message}")
+            print(f"SAPPHIRE_CONSISTENCY_CHECK: FAILED - {message}")
+            # Log warning but don't raise - skill metrics overwrites entire file
+
     return ret
 
 def save_decadal_skill_metrics(data: pd.DataFrame):
@@ -5611,6 +6219,28 @@ def save_decadal_skill_metrics(data: pd.DataFrame):
             _write_skill_metrics_to_api(data, "decade")
         except Exception as e:
             logger.error(f"Failed to write decadal skill metrics to API: {e}")
+
+    # --- Consistency Check ---
+    consistency_check = os.getenv("SAPPHIRE_CONSISTENCY_CHECK", "false").lower() == "true"
+    if consistency_check:
+        logger.info("SAPPHIRE_CONSISTENCY_CHECK: Verifying write consistency for decad skill metrics")
+        print("SAPPHIRE_CONSISTENCY_CHECK: Verifying decad skill metrics write consistency...")
+
+        is_consistent, message = _verify_preprocessing_write_consistency(
+            written_data=data,
+            csv_file_path=filepath,
+            data_type="skill metrics decade",
+            key_columns=['code', 'decad_in_year', 'model_short'],
+            value_columns=['sdivsigma', 'nse', 'delta', 'accuracy', 'mae', 'n_pairs'],
+        )
+
+        if is_consistent:
+            logger.info(f"CONSISTENCY CHECK PASSED: {message}")
+            print(f"SAPPHIRE_CONSISTENCY_CHECK: PASSED - {message}")
+        else:
+            logger.error(f"CONSISTENCY CHECK FAILED: {message}")
+            print(f"SAPPHIRE_CONSISTENCY_CHECK: FAILED - {message}")
+            # Log warning but don't raise - skill metrics overwrites entire file
 
     return ret
 
@@ -5729,6 +6359,28 @@ def save_forecast_data_pentad(simulated: pd.DataFrame):
         except Exception as e:
             logger.error(f"Failed to write pentadal combined forecasts to API: {e}")
 
+    # --- Consistency Check ---
+    consistency_check = os.getenv("SAPPHIRE_CONSISTENCY_CHECK", "false").lower() == "true"
+    if consistency_check:
+        logger.info("SAPPHIRE_CONSISTENCY_CHECK: Verifying write consistency for pentad combined forecasts")
+        print("SAPPHIRE_CONSISTENCY_CHECK: Verifying pentad combined forecasts write consistency...")
+
+        is_consistent, message = _verify_preprocessing_write_consistency(
+            written_data=simulated_latest,
+            csv_file_path=filename_latest,
+            data_type="combined forecasts pentad",
+            key_columns=['code', 'date', 'pentad_in_year', 'model_short'],
+            value_columns=['forecasted_discharge'],
+        )
+
+        if is_consistent:
+            logger.info(f"CONSISTENCY CHECK PASSED: {message}")
+            print(f"SAPPHIRE_CONSISTENCY_CHECK: PASSED - {message}")
+        else:
+            logger.error(f"CONSISTENCY CHECK FAILED: {message}")
+            print(f"SAPPHIRE_CONSISTENCY_CHECK: FAILED - {message}")
+            # Log warning but don't raise
+
     return ret
 
 def save_forecast_data_decade(simulated: pd.DataFrame):
@@ -5781,6 +6433,28 @@ def save_forecast_data_decade(simulated: pd.DataFrame):
             _write_combined_forecast_to_api(simulated_latest, "decade")
         except Exception as e:
             logger.error(f"Failed to write decadal combined forecasts to API: {e}")
+
+    # --- Consistency Check ---
+    consistency_check = os.getenv("SAPPHIRE_CONSISTENCY_CHECK", "false").lower() == "true"
+    if consistency_check:
+        logger.info("SAPPHIRE_CONSISTENCY_CHECK: Verifying write consistency for decad combined forecasts")
+        print("SAPPHIRE_CONSISTENCY_CHECK: Verifying decad combined forecasts write consistency...")
+
+        is_consistent, message = _verify_preprocessing_write_consistency(
+            written_data=simulated_latest,
+            csv_file_path=filename_latest,
+            data_type="combined forecasts decade",
+            key_columns=['code', 'date', 'decad_in_year', 'model_short'],
+            value_columns=['forecasted_discharge'],
+        )
+
+        if is_consistent:
+            logger.info(f"CONSISTENCY CHECK PASSED: {message}")
+            print(f"SAPPHIRE_CONSISTENCY_CHECK: PASSED - {message}")
+        else:
+            logger.error(f"CONSISTENCY CHECK FAILED: {message}")
+            print(f"SAPPHIRE_CONSISTENCY_CHECK: FAILED - {message}")
+            # Log warning but don't raise
 
     return ret
 

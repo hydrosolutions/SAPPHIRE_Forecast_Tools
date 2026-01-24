@@ -256,7 +256,7 @@ uv run pytest tests/ -v -k "test_name"
 - [ ] Criterion 2: [Specific, measurable]
 - [ ] All existing tests pass
 - [ ] New tests cover the changes
-- [ ] Code follows project conventions (see `.serena/memories/code_style_conventions.md`)
+- [ ] Code follows project conventions (see `CLAUDE.md`)
 
 ---
 

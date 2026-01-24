@@ -163,6 +163,7 @@ class SkillMetricBase(BaseModel):
     model_type: ModelType
     date: DateType
     horizon_in_year: int
+    composition: Optional[str] = None  # Tracks which models compose ensemble
 
     sdivsigma: Optional[float] = None
     nse: Optional[float] = None
