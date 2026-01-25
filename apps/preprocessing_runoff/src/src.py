@@ -296,8 +296,9 @@ def filter_roughly_for_outliers(combined_data, group_by='Code',
     combined_data = combined_data.reset_index(drop=True)
 
     # Apply the function to each group
+    # Note: include_groups=True preserves grouping columns in each group (required for pandas 3.0+)
     combined_data = combined_data.groupby([group_by, 'month'], as_index=False).apply(
-        filter_group, filter_col, date_col)
+        filter_group, filter_col, date_col, include_groups=True)
 
     # Ungroup the DataFrame
     combined_data = combined_data.reset_index(drop=True)
