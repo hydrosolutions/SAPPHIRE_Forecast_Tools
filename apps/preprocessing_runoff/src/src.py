@@ -210,8 +210,8 @@ def filter_roughly_for_outliers(combined_data, group_by='Code',
     Raises:
     ValueError: If the group_by column is not found in the input DataFrame.
     """
-    def filter_group(group, filter_col, date_col, group_name):
-        # group_name is passed explicitly since pandas 3.0+ excludes grouping columns from groups
+    def filter_group(group, filter_col, date_col, group_name, group_by):
+        # group_name and group_by are passed explicitly since pandas 3.0+ excludes grouping columns from groups
 
         # Only apply IQR filtering if the group has more than 10 rows
         if len(group) > 10:
@@ -263,6 +263,11 @@ def filter_roughly_for_outliers(combined_data, group_by='Code',
         num_total = group[filter_col].notna().sum() + num_outliers
         logger.info(f"filter_roughly_for_outliers:\n     from a total of {num_total}, {num_outliers} outliers set to NaN in group '{group_name}'.")
 
+        # Add back the group_by column for pandas 3.0+ compatibility
+        # (grouping columns are excluded from groups in pandas 3.0+)
+        if group_by not in group.columns:
+            group[group_by] = group_name
+
         return group
 
     # Test if the group_by column is available
@@ -299,13 +304,14 @@ def filter_roughly_for_outliers(combined_data, group_by='Code',
     # Apply the function to each group
     # Note: Use lambda to pass group name since pandas 3.0+ excludes grouping columns from groups
     combined_data = combined_data.groupby([group_by, 'month']).apply(
-        lambda g: filter_group(g, filter_col, date_col, g.name[0]))
+        lambda g: filter_group(g, filter_col, date_col, g.name[0], group_by))
 
     # Ungroup the DataFrame
     combined_data = combined_data.reset_index(drop=True)
 
-    # Drop the temporary month column
-    combined_data.drop(columns=['month'], inplace=True)
+    # Drop the temporary month column if it exists (in pandas 3.0+ it's excluded from groups)
+    if 'month' in combined_data.columns:
+        combined_data.drop(columns=['month'], inplace=True)
 
     # Drop rows with duplicate code and dates, keeping the last one
     combined_data = combined_data.drop_duplicates(subset=[group_by, date_col], keep='last')
