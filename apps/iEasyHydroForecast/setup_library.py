@@ -18,6 +18,20 @@ from dotenv import load_dotenv
 import forecast_library as fl
 import tag_library as tl
 
+# SAPPHIRE API client for database operations
+try:
+    from sapphire_api_client import (
+        SapphirePreprocessingClient,
+        SapphirePostprocessingClient,
+        SapphireAPIError
+    )
+    SAPPHIRE_API_AVAILABLE = True
+except ImportError:
+    SAPPHIRE_API_AVAILABLE = False
+    SapphirePreprocessingClient = None
+    SapphirePostprocessingClient = None
+    SapphireAPIError = Exception  # Fallback for type hints
+
 # Configure the logging level and formatter
 logging.basicConfig(level=logging.WARNING)
 formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
@@ -983,26 +997,366 @@ def get_pentadal_forecast_sites_from_HF_SDK(ieh_hf_sdk):
 # --- Reading of forecast results ------------------------------------------------
 # region Reading_forecast_results
 
-def read_observed_pentadal_data():
+# --- API Helper Functions for Postprocessing Data ---
+
+def _read_lr_forecasts_from_api(
+    horizon_type: str,
+    site_codes: list[str] | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> pd.DataFrame:
     """
-    Read the pentadal hydrograph data.
+    Read linear regression forecast data from the SAPPHIRE Postprocessing API.
+
+    Parameters:
+    -----------
+    horizon_type : str
+        Either 'pentad' or 'decade'.
+    site_codes : list[str] | None
+        List of station codes to filter. If None, reads all stations.
+    start_date : str | None
+        Start date filter (YYYY-MM-DD format). If None, no start filter.
+    end_date : str | None
+        End date filter (YYYY-MM-DD format). If None, no end filter.
 
     Returns:
-    data (pandas.DataFrame): The pentadal data.
+    --------
+    pandas.DataFrame
+        The LR forecast data with columns: code, date, forecasted_discharge,
+        predictor, slope, intercept, horizon_value, horizon_in_year,
+        discharge_avg, q_mean, q_std_sigma, delta, rsquared, model_long, model_short.
+
+    Raises:
+    -------
+    SapphireAPIError
+        If the API is not available or the request fails.
+    RuntimeError
+        If the sapphire-api-client is not installed.
+    ValueError
+        If horizon_type is invalid.
+    """
+    if horizon_type not in ('pentad', 'decade'):
+        raise ValueError(f"horizon_type must be 'pentad' or 'decade', got: {horizon_type}")
+
+    if not SAPPHIRE_API_AVAILABLE:
+        raise RuntimeError(
+            "sapphire-api-client is not installed. "
+            "Install it with: pip install git+https://github.com/hydrosolutions/sapphire-api-client.git"
+        )
+
+    api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
+    client = SapphirePostprocessingClient(base_url=api_url)
+
+    # Health check first - fail fast if API unavailable
+    if not client.readiness_check():
+        raise SapphireAPIError(f"SAPPHIRE API at {api_url} is not ready")
+
+    logger.info(f"Reading LR forecasts ({horizon_type}) from SAPPHIRE API at {api_url}")
+
+    # Collect all data with pagination
+    all_data = []
+    page_size = 10000
+
+    # If site_codes provided, query per code for efficiency
+    codes_to_query = site_codes if site_codes else [None]
+
+    for code in codes_to_query:
+        skip = 0
+        while True:
+            df_page = client.read_lr_forecasts(
+                horizon=horizon_type,
+                code=code,
+                start_date=start_date,
+                end_date=end_date,
+                skip=skip,
+                limit=page_size,
+            )
+
+            if df_page.empty:
+                break
+
+            all_data.append(df_page)
+            logger.debug(
+                f"Read {len(df_page)} LR forecast records for horizon={horizon_type}, code={code} (skip={skip})"
+            )
+
+            if len(df_page) < page_size:
+                break
+
+            skip += page_size
+
+    if not all_data:
+        logger.warning(f"No LR forecast data ({horizon_type}) returned from API")
+        return pd.DataFrame()
+
+    # Combine all pages
+    forecast_data = pd.concat(all_data, ignore_index=True)
+
+    # Remove duplicates (defensive)
+    forecast_data = forecast_data.drop_duplicates(subset=['code', 'date'], keep='last')
+
+    # Convert types
+    if 'date' in forecast_data.columns:
+        forecast_data['date'] = fl.parse_dates_robust(forecast_data['date'], 'date')
+    forecast_data['code'] = forecast_data['code'].astype(str).str.replace(r'\.0$', '', regex=True)
+
+    # Add model columns
+    forecast_data["model_long"] = "Linear regression (LR)"
+    forecast_data["model_short"] = "LR"
+
+    # Sort by code and date
+    forecast_data = forecast_data.sort_values(by=['code', 'date'])
+
+    logger.info(f"LR forecast data ({horizon_type}) read from API: {len(forecast_data)} records")
+    logger.info(f"Date range: {forecast_data['date'].min()} to {forecast_data['date'].max()}")
+    logger.info(f"Stations: {forecast_data['code'].unique().tolist()}")
+
+    return forecast_data
+
+
+def _read_ml_forecasts_from_api(
+    model: str,
+    horizon_type: str,
+    site_codes: list[str] | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> pd.DataFrame:
+    """
+    Read machine learning forecast data from the SAPPHIRE Postprocessing API.
+
+    Parameters:
+    -----------
+    model : str
+        Model type filter: 'TFT', 'TIDE', 'TSMIXER', or 'ARIMA'.
+    horizon_type : str
+        Either 'pentad' or 'decade'.
+    site_codes : list[str] | None
+        List of station codes to filter. If None, reads all stations.
+    start_date : str | None
+        Start date filter (YYYY-MM-DD format). If None, no start filter.
+    end_date : str | None
+        End date filter (YYYY-MM-DD format). If None, no end filter.
+
+    Returns:
+    --------
+    pandas.DataFrame
+        The ML forecast data with columns: code, date, forecasted_discharge,
+        flag, q05, q25, q50, q75, q95, model_long, model_short.
+
+    Raises:
+    -------
+    SapphireAPIError
+        If the API is not available or the request fails.
+    RuntimeError
+        If the sapphire-api-client is not installed.
+    ValueError
+        If horizon_type or model is invalid.
+    """
+    if horizon_type not in ('pentad', 'decade'):
+        raise ValueError(f"horizon_type must be 'pentad' or 'decade', got: {horizon_type}")
+
+    # Model type mapping for display names
+    model_mapping = {
+        'TFT': ('Temporal Fusion Transformer (TFT)', 'TFT'),
+        'TIDE': ('Time-series Dense Encoder (TiDE)', 'TiDE'),
+        'TSMIXER': ('Time-Series Mixer (TSMixer)', 'TSMixer'),
+        'ARIMA': ('AutoRegressive Integrated Moving Average (ARIMA)', 'ARIMA'),
+        'RRMAMBA': ('Rainfall-Runoff Mamba (RRMAMBA)', 'RRMAMBA'),
+    }
+
+    model_upper = model.upper()
+    if model_upper not in model_mapping:
+        raise ValueError(f"model must be one of {list(model_mapping.keys())}, got: {model}")
+
+    model_long, model_short = model_mapping[model_upper]
+
+    if not SAPPHIRE_API_AVAILABLE:
+        raise RuntimeError(
+            "sapphire-api-client is not installed. "
+            "Install it with: pip install git+https://github.com/hydrosolutions/sapphire-api-client.git"
+        )
+
+    api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
+    client = SapphirePostprocessingClient(base_url=api_url)
+
+    # Health check first - fail fast if API unavailable
+    if not client.readiness_check():
+        raise SapphireAPIError(f"SAPPHIRE API at {api_url} is not ready")
+
+    logger.info(f"Reading {model} forecasts ({horizon_type}) from SAPPHIRE API at {api_url}")
+
+    # Collect all data with pagination
+    all_data = []
+    page_size = 10000
+
+    # If site_codes provided, query per code for efficiency
+    codes_to_query = site_codes if site_codes else [None]
+
+    for code in codes_to_query:
+        skip = 0
+        while True:
+            df_page = client.read_forecasts(
+                horizon=horizon_type,
+                code=code,
+                start_date=start_date,
+                end_date=end_date,
+                skip=skip,
+                limit=page_size,
+            )
+
+            # Store original page length before filtering for pagination check
+            original_page_len = len(df_page)
+
+            if df_page.empty:
+                break
+
+            # Filter by model type if the API returns multiple models
+            # (Note: The API may or may not support model filtering directly)
+            if 'model_type' in df_page.columns:
+                df_page = df_page[df_page['model_type'].str.upper() == model_upper]
+
+            if not df_page.empty:
+                all_data.append(df_page)
+                logger.debug(
+                    f"Read {len(df_page)} {model} forecast records for horizon={horizon_type}, code={code} (skip={skip})"
+                )
+
+            if original_page_len < page_size:
+                break
+
+            skip += page_size
+
+    if not all_data:
+        logger.warning(f"No {model} forecast data ({horizon_type}) returned from API")
+        return pd.DataFrame()
+
+    # Combine all pages
+    forecast_data = pd.concat(all_data, ignore_index=True)
+
+    # Remove duplicates (defensive)
+    forecast_data = forecast_data.drop_duplicates(subset=['code', 'date'], keep='last')
+
+    # Convert types
+    if 'date' in forecast_data.columns:
+        forecast_data['date'] = fl.parse_dates_robust(forecast_data['date'], 'date')
+    forecast_data['code'] = forecast_data['code'].astype(str).str.replace(r'\.0$', '', regex=True)
+
+    # Add model columns
+    forecast_data["model_long"] = model_long
+    forecast_data["model_short"] = model_short
+
+    # Sort by code and date
+    forecast_data = forecast_data.sort_values(by=['code', 'date'])
+
+    logger.info(f"{model} forecast data ({horizon_type}) read from API: {len(forecast_data)} records")
+    if not forecast_data.empty:
+        logger.info(f"Date range: {forecast_data['date'].min()} to {forecast_data['date'].max()}")
+        logger.info(f"Stations: {forecast_data['code'].unique().tolist()}")
+
+    return forecast_data
+
+
+def read_observed_pentadal_data():
+    """
+    Read the pentadal observed discharge data from API (default) or CSV fallback.
+
+    By default, reads from the SAPPHIRE API runoff endpoint with horizon="pentad".
+    Set SAPPHIRE_API_ENABLED=false to use CSV files instead.
+
+    Returns:
+    data (pandas.DataFrame): The pentadal data with columns including:
+        - code: station code
+        - date: observation date
+        - discharge_avg: observed discharge value
+        - model_long: "Observed (Obs)"
+        - model_short: "Obs"
+        - pentad_in_month: pentad within the month (1-6)
+        - pentad_in_year: pentad within the year (1-72)
 
     Details:
-    The file to read is specified in the environment variable
-    ieasyforecast_daily_discharge_file. It is expected to have a column 'date'
+    When using API, data is read via SapphirePreprocessingClient.read_runoff()
+    with horizon="pentad". The 'discharge' column is renamed to 'discharge_avg'
+    to match expected downstream format.
+    When using CSV, the file to read is specified in the environment variable
+    ieasyforecast_pentad_discharge_file. It is expected to have a column 'date'
     with the date of the hydrograph data. If the file has a column 'pentad', it
     is renamed to 'pentad_in_month'.
     """
-    # Read the pentadal hydrograph data with robust date parsing
+    # Check if API is enabled (default: true)
+    api_enabled = os.getenv("SAPPHIRE_API_ENABLED", "true").lower() == "true"
+
+    if api_enabled and SAPPHIRE_API_AVAILABLE:
+        logger.info("Reading observed pentadal data from SAPPHIRE API (SAPPHIRE_API_ENABLED=true)")
+        try:
+            # Get API URL from environment, default to localhost
+            api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
+            client = SapphirePreprocessingClient(base_url=api_url)
+
+            # Health check first - fail fast if API unavailable
+            if not client.readiness_check():
+                raise Exception(f"SAPPHIRE API at {api_url} is not ready")
+
+            # Read pentad discharge data from runoff API with pagination
+            all_data = []
+            skip = 0
+            page_size = 10000
+            while True:
+                df_page = client.read_runoff(
+                    horizon="pentad",
+                    skip=skip,
+                    limit=page_size,
+                )
+                if df_page.empty:
+                    break
+                all_data.append(df_page)
+                if len(df_page) < page_size:
+                    break
+                skip += page_size
+
+            if all_data:
+                data = pd.concat(all_data, ignore_index=True)
+
+                # Rename discharge to discharge_avg for downstream compatibility
+                if 'discharge' in data.columns:
+                    data = data.rename(columns={'discharge': 'discharge_avg'})
+
+                # Rename horizon columns to pentad-specific names
+                if 'horizon_value' in data.columns and 'pentad_in_month' not in data.columns:
+                    data = data.rename(columns={'horizon_value': 'pentad_in_month'})
+                if 'horizon_in_year' in data.columns and 'pentad_in_year' not in data.columns:
+                    data = data.rename(columns={'horizon_in_year': 'pentad_in_year'})
+
+                # Apply robust date parsing and ensure code is string
+                if 'date' in data.columns:
+                    data['date'] = fl.parse_dates_robust(data['date'], 'date')
+                if 'code' in data.columns:
+                    data['code'] = data['code'].astype(str).str.replace(r'\.0$', '', regex=True)
+
+                # Rename 'pentad' to 'pentad_in_month' if present for consistency
+                if 'pentad' in data.columns and 'pentad_in_month' not in data.columns:
+                    data.rename(columns={'pentad': 'pentad_in_month'}, inplace=True)
+            else:
+                data = pd.DataFrame(columns=['code', 'date', 'discharge_avg'])
+
+            # Add model columns for observed data
+            data["model_long"] = "Observed (Obs)"
+            data["model_short"] = "Obs"
+
+            logger.info(f"Read {len(data)} rows of observed data for the pentadal forecast horizon from API.")
+            return data
+
+        except Exception as e:
+            logger.warning(f"Failed to read from API: {e}. Falling back to CSV.")
+            # Fall through to CSV reading
+
+    # CSV fallback: Read from file
+    logger.info("Reading observed pentadal data from CSV (SAPPHIRE_API_ENABLED=false or API unavailable)")
     filepath = os.path.join(
         os.getenv("ieasyforecast_intermediate_data_path"),
         os.getenv("ieasyforecast_pentad_discharge_file")
     )
     data = pd.read_csv(filepath)
-    
+
     # Apply robust date parsing and ensure code is string without .0 suffixes
     if 'date' in data.columns:
         data['date'] = fl.parse_dates_robust(data['date'], 'date')
@@ -1016,29 +1370,106 @@ def read_observed_pentadal_data():
     # If there is a column name 'pentad', rename it to 'pentad_in_month'
     if 'pentad' in data.columns:
         data.rename(columns={'pentad': 'pentad_in_month'}, inplace=True)
-    logger.info(f"Read {len(data)} rows of observed data for the pentadal forecast horizon.")
+    logger.info(f"Read {len(data)} rows of observed data for the pentadal forecast horizon from CSV.")
 
     return data
 
 def read_observed_decadal_data():
     """
-    Read the decadal hydrograph data.
+    Read the decadal observed discharge data from API (default) or CSV fallback.
+
+    By default, reads from the SAPPHIRE API runoff endpoint with horizon="decade".
+    Set SAPPHIRE_API_ENABLED=false to use CSV files instead.
 
     Returns:
-    data (pandas.DataFrame): The decadal data.
+    data (pandas.DataFrame): The decadal data with columns including:
+        - code: station code
+        - date: observation date
+        - discharge_avg: observed discharge value
+        - model_long: "Observed (Obs)"
+        - model_short: "Obs"
+        - decad_in_month: decade within the month (1-3)
+        - decad_in_year: decade within the year (1-36)
 
     Details:
-    The file to read is specified in the environment variable
-    ieasyforecast_daily_discharge_file. It is expected to have a column 'date'
+    When using API, data is read via SapphirePreprocessingClient.read_runoff()
+    with horizon="decade". The 'discharge' column is renamed to 'discharge_avg'
+    to match expected downstream format.
+    When using CSV, the file to read is specified in the environment variable
+    ieasyforecast_decad_discharge_file. It is expected to have a column 'date'
     with the date of the hydrograph data.
     """
-    # Read the decadal hydrograph data with robust date parsing
+    # Check if API is enabled (default: true)
+    api_enabled = os.getenv("SAPPHIRE_API_ENABLED", "true").lower() == "true"
+
+    if api_enabled and SAPPHIRE_API_AVAILABLE:
+        logger.info("Reading observed decadal data from SAPPHIRE API (SAPPHIRE_API_ENABLED=true)")
+        try:
+            # Get API URL from environment, default to localhost
+            api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
+            client = SapphirePreprocessingClient(base_url=api_url)
+
+            # Health check first - fail fast if API unavailable
+            if not client.readiness_check():
+                raise Exception(f"SAPPHIRE API at {api_url} is not ready")
+
+            # Read decade discharge data from runoff API with pagination
+            all_data = []
+            skip = 0
+            page_size = 10000
+            while True:
+                df_page = client.read_runoff(
+                    horizon="decade",
+                    skip=skip,
+                    limit=page_size,
+                )
+                if df_page.empty:
+                    break
+                all_data.append(df_page)
+                if len(df_page) < page_size:
+                    break
+                skip += page_size
+
+            if all_data:
+                data = pd.concat(all_data, ignore_index=True)
+
+                # Rename discharge to discharge_avg for downstream compatibility
+                if 'discharge' in data.columns:
+                    data = data.rename(columns={'discharge': 'discharge_avg'})
+
+                # Rename horizon columns to decad-specific names
+                if 'horizon_value' in data.columns and 'decad_in_month' not in data.columns:
+                    data = data.rename(columns={'horizon_value': 'decad_in_month'})
+                if 'horizon_in_year' in data.columns and 'decad_in_year' not in data.columns:
+                    data = data.rename(columns={'horizon_in_year': 'decad_in_year'})
+
+                # Apply robust date parsing and ensure code is string
+                if 'date' in data.columns:
+                    data['date'] = fl.parse_dates_robust(data['date'], 'date')
+                if 'code' in data.columns:
+                    data['code'] = data['code'].astype(str).str.replace(r'\.0$', '', regex=True)
+            else:
+                data = pd.DataFrame(columns=['code', 'date', 'discharge_avg'])
+
+            # Add model columns for observed data
+            data["model_long"] = "Observed (Obs)"
+            data["model_short"] = "Obs"
+
+            logger.info(f"Read {len(data)} rows of observed data for the decadal forecast horizon from API.")
+            return data
+
+        except Exception as e:
+            logger.warning(f"Failed to read from API: {e}. Falling back to CSV.")
+            # Fall through to CSV reading
+
+    # CSV fallback: Read from file
+    logger.info("Reading observed decadal data from CSV (SAPPHIRE_API_ENABLED=false or API unavailable)")
     filepath = os.path.join(
         os.getenv("ieasyforecast_intermediate_data_path"),
         os.getenv("ieasyforecast_decad_discharge_file")
     )
     data = pd.read_csv(filepath)
-    
+
     # Apply robust date parsing and ensure code is string without .0 suffixes
     if 'date' in data.columns:
         data['date'] = fl.parse_dates_robust(data['date'], 'date')
@@ -1049,7 +1480,7 @@ def read_observed_decadal_data():
     data["model_long"] = "Observed (Obs)"
     data["model_short"] = "Obs"
 
-    logger.info(f"Read {len(data)} rows of observed data for the pentadal forecast horizon.")
+    logger.info(f"Read {len(data)} rows of observed data for the decadal forecast horizon from CSV.")
 
     return data
 
@@ -1057,6 +1488,9 @@ def read_linreg_forecasts_pentad():
     """
     Read the linear regression forecasts for the pentadal forecast horizon and
     adds the name of the model to the DataFrame.
+
+    By default, reads from the SAPPHIRE Postprocessing API.
+    Set SAPPHIRE_API_ENABLED=false to use CSV files instead.
 
     Since the linreg result file currently holds some general runoff statistics,
     we need to filter these out and return them in a separate DataFrame.
@@ -1068,7 +1502,8 @@ def read_linreg_forecasts_pentad():
         pentadal forecast horizon.
 
     Details:
-    The file to read is specified in the environment variable
+    When using API, data is read via _read_lr_forecasts_from_api(horizon_type="pentad").
+    When using CSV, the file to read is specified in the environment variable
     ieasyforecast_analysis_pentad_file. It is expected to have a column 'date'
     with the date of the forecast.
 
@@ -1093,25 +1528,74 @@ def read_linreg_forecasts_pentad():
     delta: The acceptable range for the forecast around the observed discharge.
         Calculated by the hydromet as 0.674 * q_std_sigma (assuming normal distribution of the pentadal discharge)
     """
-    # Read the linear regression forecasts for the pentadal forecast horizon with robust date parsing
+    # Check if API is enabled (default: true)
+    api_enabled = os.getenv("SAPPHIRE_API_ENABLED", "true").lower() == "true"
+
+    if api_enabled and SAPPHIRE_API_AVAILABLE:
+        logger.info("Reading LR pentadal forecasts from SAPPHIRE API (SAPPHIRE_API_ENABLED=true)")
+        try:
+            # Read from API using the helper function
+            data = _read_lr_forecasts_from_api(horizon_type="pentad")
+
+            if data.empty:
+                logger.warning("No LR pentadal forecast data returned from API, falling back to CSV")
+            else:
+                # Drop duplicate rows in date and code if they exist, keeping the last row
+                data.drop_duplicates(subset=["date", "code"], keep="last", inplace=True)
+
+                # Split the data into forecasts and statistics
+                # The statistics are general runoff statistics and are later merged to the
+                # observed DataFrame
+                stats_cols = ["date", "code", "q_mean", "q_std_sigma", "delta"]
+                stats_cols_present = [c for c in stats_cols if c in data.columns]
+                if len(stats_cols_present) >= 3:  # At least date, code, and one stat column
+                    stats = data[stats_cols_present].copy()
+                else:
+                    stats = pd.DataFrame(columns=["date", "code", "q_mean", "q_std_sigma", "delta"])
+
+                # Remove stats columns and discharge_avg from forecasts if present
+                cols_to_drop = ["q_mean", "q_std_sigma", "delta", "discharge_avg"]
+                cols_to_drop_present = [c for c in cols_to_drop if c in data.columns]
+                forecasts = data.drop(columns=cols_to_drop_present, errors='ignore')
+
+                # Recalculate pentad in month and pentad in year
+                forecasts["pentad_in_month"] = (forecasts["date"] + pd.Timedelta(days=1)).apply(tl.get_pentad)
+                forecasts["pentad_in_year"] = (forecasts["date"] + pd.Timedelta(days=1)).apply(tl.get_pentad_in_year)
+
+                # Save the most recent forecasts to CSV for comparison
+                try:
+                    save_most_recent_forecasts(forecasts, "LR")
+                except ImportError:
+                    logger.warning("Could not import save_most_recent_forecasts from src.postprocessing_tools")
+                except Exception as e:
+                    logger.warning(f"Error saving most recent LR forecasts: {e}")
+
+                logger.info(f"Read {len(forecasts)} rows of linear regression forecasts for the pentadal forecast horizon from API.")
+                logger.info(f"Read {len(stats)} rows of general runoff statistics for the pentadal forecast horizon from API.")
+                logger.debug(f"Columns in the linear regression forecast data:\n{forecasts.columns}")
+                logger.debug(f"Linear regression forecast data: \n{forecasts.head()}")
+                logger.debug(f"Columns in the general runoff statistics data:\n{stats.columns}")
+                logger.debug(f"General runoff statistics data: \n{stats.head()}")
+
+                return forecasts, stats
+
+        except Exception as e:
+            logger.warning(f"Failed to read LR pentadal forecasts from API: {e}. Falling back to CSV.")
+            # Fall through to CSV reading
+
+    # CSV fallback: Read from file
+    logger.info("Reading LR pentadal forecasts from CSV (SAPPHIRE_API_ENABLED=false or API unavailable)")
     filepath = os.path.join(
         os.getenv("ieasyforecast_intermediate_data_path"),
         os.getenv("ieasyforecast_analysis_pentad_file")
     )
     data = pd.read_csv(filepath)
-    
+
     # Apply robust date parsing and ensure code is string without .0 suffixes
     if 'date' in data.columns:
         data['date'] = fl.parse_dates_robust(data['date'], 'date')
     if 'code' in data.columns:
         data['code'] = data['code'].astype(str).str.replace(r'\.0$', '', regex=True)
-
-    # Debugging prints:
-    print(f"\n\n\n\n\n||||  DEBUGGING  -  read_csv  ||||")
-    # Print the latest date in the DataFrame
-    latest_date_temp = data['date'].max()
-    print(f"Latest date in simulated_df: {latest_date_temp}")
-    print(f"\n\n\n\n\n\n")
 
     # Drop duplicate rows in date and code if they exist, keeping the last row
     data.drop_duplicates(subset=["date", "code"], keep="last", inplace=True)
@@ -1142,11 +1626,11 @@ def read_linreg_forecasts_pentad():
     except Exception as e:
         logger.warning(f"Error saving most recent LR forecasts: {e}")
 
-    logger.info(f"Read {len(forecasts)} rows of linear regression forecasts for the pentadal forecast horizon.")
-    logger.info(f"Read {len(stats)} rows of general runoff statistics for the pentadal forecast horizon.")
-    logger.debug(f"Colums in the linear regression forecast data:\n{forecasts.columns}")
+    logger.info(f"Read {len(forecasts)} rows of linear regression forecasts for the pentadal forecast horizon from CSV.")
+    logger.info(f"Read {len(stats)} rows of general runoff statistics for the pentadal forecast horizon from CSV.")
+    logger.debug(f"Columns in the linear regression forecast data:\n{forecasts.columns}")
     logger.debug(f"Linear regression forecast data: \n{forecasts.head()}")
-    logger.debug(f"Colums in the general runoff statistics data:\n{stats.columns}")
+    logger.debug(f"Columns in the general runoff statistics data:\n{stats.columns}")
     logger.debug(f"General runoff statistics data: \n{stats.head()}")
 
     return forecasts, stats
@@ -1156,6 +1640,9 @@ def read_linreg_forecasts_decade():
     Read the linear regression forecasts for the decadal forecast horizon and
     adds the name of the model to the DataFrame.
 
+    By default, reads from the SAPPHIRE Postprocessing API.
+    Set SAPPHIRE_API_ENABLED=false to use CSV files instead.
+
     Since the linreg result file currently holds some general runoff statistics,
     we need to filter these out and return them in a separate DataFrame.
 
@@ -1163,21 +1650,22 @@ def read_linreg_forecasts_decade():
     forecasts (pandas.DataFrame): The linear regression forecasts for the
         decadal forecast horizon with added model_long and model_short columns.
     stats (pandas.DataFrame): The statistics of the observed data for the
-        pentadal forecast horizon.
+        decadal forecast horizon.
 
     Details:
-    The file to read is specified in the environment variable
+    When using API, data is read via _read_lr_forecasts_from_api(horizon_type="decade").
+    When using CSV, the file to read is specified in the environment variable
     ieasyforecast_analysis_decad_file. It is expected to have a column 'date'
     with the date of the forecast.
 
     Generally, we expect the following columns in the forecast files:
-    date: The date the forecast is produced for the following pentad
+    date: The date the forecast is produced for the following decade
     code: The unique hydropost identifier
-    forecasted_discharge: The forecasted discharge for the pentad
+    forecasted_discharge: The forecasted discharge for the decade
 
     Optional columns are, in the case of the linear regression method:
     predictor: The predictor used in the linear regression model
-    discharge_avg: The average discharge for the pentad used in the linear regression model
+    discharge_avg: The average discharge for the decade used in the linear regression model
     decad_in_month: The decade in the month for which the forecast is produced
     decad_in_year: The decade in the year for which the forecast is produced
     slope: The slope of the linear regression model
@@ -1191,13 +1679,69 @@ def read_linreg_forecasts_decade():
     delta: The acceptable range for the forecast around the observed discharge.
         Calculated by the hydromet as 0.674 * q_std_sigma (assuming normal distribution of the decadal discharge)
     """
-    # Read the linear regression forecasts for the decadal forecast horizon with robust date parsing
+    # Check if API is enabled (default: true)
+    api_enabled = os.getenv("SAPPHIRE_API_ENABLED", "true").lower() == "true"
+
+    if api_enabled and SAPPHIRE_API_AVAILABLE:
+        logger.info("Reading LR decadal forecasts from SAPPHIRE API (SAPPHIRE_API_ENABLED=true)")
+        try:
+            # Read from API using the helper function
+            data = _read_lr_forecasts_from_api(horizon_type="decade")
+
+            if data.empty:
+                logger.warning("No LR decadal forecast data returned from API, falling back to CSV")
+            else:
+                # Drop duplicate rows in date and code if they exist, keeping the last row
+                data.drop_duplicates(subset=["date", "code"], keep="last", inplace=True)
+
+                # Split the data into forecasts and statistics
+                # The statistics are general runoff statistics and are later merged to the
+                # observed DataFrame
+                stats_cols = ["date", "code", "q_mean", "q_std_sigma", "delta"]
+                stats_cols_present = [c for c in stats_cols if c in data.columns]
+                if len(stats_cols_present) >= 3:  # At least date, code, and one stat column
+                    stats = data[stats_cols_present].copy()
+                else:
+                    stats = pd.DataFrame(columns=["date", "code", "q_mean", "q_std_sigma", "delta"])
+
+                # Remove stats columns and discharge_avg from forecasts if present
+                cols_to_drop = ["q_mean", "q_std_sigma", "delta", "discharge_avg"]
+                cols_to_drop_present = [c for c in cols_to_drop if c in data.columns]
+                forecasts = data.drop(columns=cols_to_drop_present, errors='ignore')
+
+                # Recalculate decad in month and decad in year
+                forecasts["decad_in_month"] = (forecasts["date"] + pd.Timedelta(days=1)).apply(tl.get_decad_in_month)
+                forecasts["decad_in_year"] = (forecasts["date"] + pd.Timedelta(days=1)).apply(tl.get_decad_in_year)
+
+                # Save the most recent forecasts to CSV for comparison
+                try:
+                    save_most_recent_forecasts_decade(forecasts, "LR")
+                except ImportError:
+                    logger.warning("Could not import save_most_recent_forecasts_decade from src.postprocessing_tools")
+                except Exception as e:
+                    logger.warning(f"Error saving most recent LR forecasts: {e}")
+
+                logger.info(f"Read {len(forecasts)} rows of linear regression forecasts for the decadal forecast horizon from API.")
+                logger.info(f"Read {len(stats)} rows of general runoff statistics for the decadal forecast horizon from API.")
+                logger.debug(f"Columns in the linear regression forecast data:\n{forecasts.columns}")
+                logger.debug(f"Linear regression forecast data: \n{forecasts.head()}")
+                logger.debug(f"Columns in the general runoff statistics data:\n{stats.columns}")
+                logger.debug(f"General runoff statistics data: \n{stats.head()}")
+
+                return forecasts, stats
+
+        except Exception as e:
+            logger.warning(f"Failed to read LR decadal forecasts from API: {e}. Falling back to CSV.")
+            # Fall through to CSV reading
+
+    # CSV fallback: Read from file
+    logger.info("Reading LR decadal forecasts from CSV (SAPPHIRE_API_ENABLED=false or API unavailable)")
     filepath = os.path.join(
         os.getenv("ieasyforecast_intermediate_data_path"),
         os.getenv("ieasyforecast_analysis_decad_file")
     )
     data = pd.read_csv(filepath)
-    
+
     # Apply robust date parsing and ensure code is string without .0 suffixes
     if 'date' in data.columns:
         data['date'] = fl.parse_dates_robust(data['date'], 'date')
@@ -1221,7 +1765,7 @@ def read_linreg_forecasts_decade():
     #forecasts.loc[:, "date"] = forecasts.loc[:, "date"] + pd.DateOffset(days=1)
     #stats.loc[:, "date"] = stats.loc[:, "date"] + pd.DateOffset(days=1)
 
-    # Recalculate pentad in month and pentad in year
+    # Recalculate decad in month and decad in year
     forecasts["decad_in_month"] = (forecasts["date"] + pd.Timedelta(days=1)).apply(tl.get_decad_in_month)
     forecasts["decad_in_year"] = (forecasts["date"] + pd.Timedelta(days=1)).apply(tl.get_decad_in_year)
 
@@ -1229,15 +1773,15 @@ def read_linreg_forecasts_decade():
     try:
         save_most_recent_forecasts_decade(forecasts, "LR")
     except ImportError:
-        logger.warning("Could not import save_most_recent_forecasts from src.postprocessing_tools")
+        logger.warning("Could not import save_most_recent_forecasts_decade from src.postprocessing_tools")
     except Exception as e:
         logger.warning(f"Error saving most recent LR forecasts: {e}")
 
-    logger.info(f"Read {len(forecasts)} rows of linear regression forecasts for the decadal forecast horizon.")
-    logger.info(f"Read {len(stats)} rows of general runoff statistics for the decadal forecast horizon.")
-    logger.debug(f"Colums in the linear regression forecast data:\n{forecasts.columns}")
+    logger.info(f"Read {len(forecasts)} rows of linear regression forecasts for the decadal forecast horizon from CSV.")
+    logger.info(f"Read {len(stats)} rows of general runoff statistics for the decadal forecast horizon from CSV.")
+    logger.debug(f"Columns in the linear regression forecast data:\n{forecasts.columns}")
     logger.debug(f"Linear regression forecast data: \n{forecasts.head()}")
-    logger.debug(f"Colums in the general runoff statistics data:\n{stats.columns}")
+    logger.debug(f"Columns in the general runoff statistics data:\n{stats.columns}")
     logger.debug(f"General runoff statistics data: \n{stats.head()}")
 
     return forecasts, stats
@@ -2134,6 +2678,9 @@ def read_machine_learning_forecasts_pentad(model):
     Reads forecast results from the machine learning model for the pentadal
     forecast horizon with robust error handling.
 
+    By default, reads from the SAPPHIRE Postprocessing API.
+    Set SAPPHIRE_API_ENABLED=false to use CSV files instead.
+
     Args:
     model (str): The machine learning model to read the forecast results from.
         Allowed values are 'TFT', 'TIDE', 'TSMIXER', and 'ARIMA'.
@@ -2148,12 +2695,12 @@ def read_machine_learning_forecasts_pentad(model):
     if model == 'TFT':
         filename = f"pentad_{model}_forecast.csv".format(model=model)
         hindcast_filename = f"{model}_PENTAD_hindcast_daily*.csv".format(model=model)
-        model_long = "Temporal-Fusion Transformer (TFT)"
+        model_long = "Temporal Fusion Transformer (TFT)"
         model_short = "TFT"
     elif model == 'TIDE':
         filename = f"pentad_{model}_forecast.csv".format(model=model)
         hindcast_filename = f"{model}_PENTAD_hindcast_daily*.csv".format(model=model)
-        model_long = "Time-Series Dense Encoder (TiDE)"
+        model_long = "Time-series Dense Encoder (TiDE)"
         model_short = "TiDE"
     elif model == 'TSMIXER':
         filename = f"pentad_{model}_forecast.csv".format(model=model)
@@ -2168,6 +2715,37 @@ def read_machine_learning_forecasts_pentad(model):
     else:
         logger.warning(f"Invalid model: {model}. Valid models are: 'TFT', 'TIDE', 'TSMIXER', 'ARIMA'")
         return pd.DataFrame()
+
+    # Check if API is enabled (default: true)
+    api_enabled = os.getenv("SAPPHIRE_API_ENABLED", "true").lower() == "true"
+
+    if api_enabled and SAPPHIRE_API_AVAILABLE:
+        logger.info(f"Reading {model} pentadal forecasts from SAPPHIRE API (SAPPHIRE_API_ENABLED=true)")
+        try:
+            # Read from API using the helper function
+            forecast = _read_ml_forecasts_from_api(model=model, horizon_type="pentad")
+
+            if not forecast.empty:
+                # Save the most recent forecasts to CSV for comparison
+                try:
+                    save_most_recent_forecasts(forecast, model_short)
+                except ImportError:
+                    logger.warning(f"Could not import save_most_recent_forecasts from src.postprocessing_tools")
+                except Exception as e:
+                    logger.warning(f"Error saving most recent {model_short} forecasts: {e}")
+
+                logger.info(f"Read {len(forecast)} rows of {model} forecasts for the pentadal forecast horizon from API.")
+                return forecast
+            else:
+                logger.warning(f"No {model} pentadal forecast data returned from API, falling back to CSV")
+                # Fall through to CSV reading
+
+        except Exception as e:
+            logger.warning(f"Failed to read {model} pentadal forecasts from API: {e}. Falling back to CSV.")
+            # Fall through to CSV reading
+
+    # CSV fallback: Read from file
+    logger.info(f"Reading {model} pentadal forecasts from CSV (SAPPHIRE_API_ENABLED=false or API unavailable)")
 
     # Read environment variables to construct the file path
     intermediate_data_path = os.getenv("ieasyforecast_intermediate_data_path")
@@ -2200,6 +2778,7 @@ def read_machine_learning_forecasts_pentad(model):
         except Exception as e:
             logger.warning(f"Error saving most recent {model_short} forecasts: {e}")
 
+        logger.info(f"Read {len(forecast)} rows of {model} forecasts for the pentadal forecast horizon from CSV.")
         return forecast
     except Exception as e:
         logger.warning(f"Error reading {model} forecast from {filepath}: {e}")
@@ -2209,6 +2788,9 @@ def read_machine_learning_forecasts_decade(model):
     '''
     Reads forecast results from the machine learning model for the decadal
     forecast horizon with robust error handling.
+
+    By default, reads from the SAPPHIRE Postprocessing API.
+    Set SAPPHIRE_API_ENABLED=false to use CSV files instead.
 
     Args:
     model (str): The machine learning model to read the forecast results from.
@@ -2224,12 +2806,12 @@ def read_machine_learning_forecasts_decade(model):
     if model == 'TFT':
         filename = f"decad_{model}_forecast.csv".format(model=model)
         hindcast_filename = f"{model}_DECAD_hindcast_daily*.csv".format(model=model)
-        model_long = "Temporal-Fusion Transformer (TFT)"
+        model_long = "Temporal Fusion Transformer (TFT)"
         model_short = "TFT"
     elif model == 'TIDE':
         filename = f"decad_{model}_forecast.csv".format(model=model)
         hindcast_filename = f"{model}_DECAD_hindcast_daily*.csv".format(model=model)
-        model_long = "Time-Series Dense Encoder (TiDE)"
+        model_long = "Time-series Dense Encoder (TiDE)"
         model_short = "TiDE"
     elif model == 'TSMIXER':
         filename = f"decad_{model}_forecast.csv".format(model=model)
@@ -2244,6 +2826,37 @@ def read_machine_learning_forecasts_decade(model):
     else:
         logger.warning(f"Invalid model: {model}. Valid models are: 'TFT', 'TIDE', 'TSMIXER', 'ARIMA'")
         return pd.DataFrame()
+
+    # Check if API is enabled (default: true)
+    api_enabled = os.getenv("SAPPHIRE_API_ENABLED", "true").lower() == "true"
+
+    if api_enabled and SAPPHIRE_API_AVAILABLE:
+        logger.info(f"Reading {model} decadal forecasts from SAPPHIRE API (SAPPHIRE_API_ENABLED=true)")
+        try:
+            # Read from API using the helper function
+            forecast = _read_ml_forecasts_from_api(model=model, horizon_type="decade")
+
+            if not forecast.empty:
+                # Save the most recent forecasts to CSV for comparison
+                try:
+                    save_most_recent_forecasts_decade(forecast, model_short)
+                except ImportError:
+                    logger.warning(f"Could not import save_most_recent_forecasts_decade from src.postprocessing_tools")
+                except Exception as e:
+                    logger.warning(f"Error saving most recent {model_short} forecasts: {e}")
+
+                logger.info(f"Read {len(forecast)} rows of {model} forecasts for the decadal forecast horizon from API.")
+                return forecast
+            else:
+                logger.warning(f"No {model} decadal forecast data returned from API, falling back to CSV")
+                # Fall through to CSV reading
+
+        except Exception as e:
+            logger.warning(f"Failed to read {model} decadal forecasts from API: {e}. Falling back to CSV.")
+            # Fall through to CSV reading
+
+    # CSV fallback: Read from file
+    logger.info(f"Reading {model} decadal forecasts from CSV (SAPPHIRE_API_ENABLED=false or API unavailable)")
 
     # Read environment variables to construct the file path
     intermediate_data_path = os.getenv("ieasyforecast_intermediate_data_path")
@@ -2276,6 +2889,7 @@ def read_machine_learning_forecasts_decade(model):
         except Exception as e:
             logger.warning(f"Error saving most recent {model_short} forecasts: {e}")
 
+        logger.info(f"Read {len(forecast)} rows of {model} forecasts for the decadal forecast horizon from CSV.")
         return forecast
     except Exception as e:
         logger.warning(f"Error reading {model} forecast from {filepath}: {e}")

@@ -1925,9 +1925,10 @@ def calculate_skill_metrics_pentad(
         test_for_tuples(skill_metrics_df)
 
     # Calculate the skill metrics for each group based on the 'pentad_in_year', 'code' and 'model' columns
+    # Select only the columns needed for the apply functions to avoid duplicate column issues with reset_index()
     with timer(timing_stats, 'calculate_skill_metrics_pentad - Calculate sdivsigma_nse'):
         skill_stats = skill_metrics_df. \
-            groupby(['pentad_in_year', 'code', 'model_long', 'model_short'])[skill_metrics_df.columns]. \
+            groupby(['pentad_in_year', 'code', 'model_long', 'model_short'])[['discharge_avg', 'forecasted_discharge']]. \
             apply(
                 sdivsigma_nse,
                 observed_col='discharge_avg',
@@ -1942,7 +1943,7 @@ def calculate_skill_metrics_pentad(
 
     with timer(timing_stats, 'calculate_skill_metrics_pentad - Calculate mae'):
         mae_stats = skill_metrics_df. \
-            groupby(['pentad_in_year', 'code', 'model_long', 'model_short'])[skill_metrics_df.columns]. \
+            groupby(['pentad_in_year', 'code', 'model_long', 'model_short'])[['discharge_avg', 'forecasted_discharge']]. \
             apply(
                 mae,
                 observed_col='discharge_avg',
@@ -1953,7 +1954,7 @@ def calculate_skill_metrics_pentad(
 
     with timer(timing_stats, 'calculate_skill_metrics_pentad - Calculate forecast_accuracy_hydromet'):
         accuracy_stats = skill_metrics_df. \
-            groupby(['pentad_in_year', 'code', 'model_long', 'model_short'])[skill_metrics_df.columns]. \
+            groupby(['pentad_in_year', 'code', 'model_long', 'model_short'])[['discharge_avg', 'forecasted_discharge', 'delta']]. \
             apply(
                 forecast_accuracy_hydromet,
                 observed_col='discharge_avg',
@@ -2025,8 +2026,10 @@ def calculate_skill_metrics_pentad(
         number_of_models = simulated['model_long'].nunique()
         print("DEBUG: number_of_models\n", number_of_models)
         if number_of_models > 1:
+            # Select only the columns needed for the apply functions to avoid
+            # duplicate column issues with reset_index()
             ensemble_skill_stats = ensemble_skill_metrics_df. \
-                groupby(['pentad_in_year', 'code', 'model_long', 'model_short'])[ensemble_skill_metrics_df.columns]. \
+                groupby(['pentad_in_year', 'code', 'model_long', 'model_short'])[['discharge_avg', 'forecasted_discharge']]. \
                 apply(
                     sdivsigma_nse,
                     observed_col='discharge_avg',
@@ -2034,9 +2037,9 @@ def calculate_skill_metrics_pentad(
                 reset_index()
             #print("DEBUG: ensemble_skill_stats\n", ensemble_skill_stats.columns)
             #print("DEBUG: ensemble_skill_stats\n", ensemble_skill_stats.head(20))
-            
+
             ensemble_mae_stats = ensemble_skill_metrics_df. \
-                groupby(['pentad_in_year', 'code', 'model_long', 'model_short'])[ensemble_skill_metrics_df.columns]. \
+                groupby(['pentad_in_year', 'code', 'model_long', 'model_short'])[['discharge_avg', 'forecasted_discharge']]. \
                 apply(
                     mae,
                     observed_col='discharge_avg',
@@ -2044,7 +2047,7 @@ def calculate_skill_metrics_pentad(
                 reset_index()
 
             ensemble_accuracy_stats = ensemble_skill_metrics_df. \
-                groupby(['pentad_in_year', 'code', 'model_long', 'model_short'])[ensemble_skill_metrics_df.columns]. \
+                groupby(['pentad_in_year', 'code', 'model_long', 'model_short'])[['discharge_avg', 'forecasted_discharge', 'delta']]. \
                 apply(
                     forecast_accuracy_hydromet,
                     observed_col='discharge_avg',
@@ -2230,9 +2233,10 @@ def calculate_skill_metrics_decade(
         test_for_tuples(skill_metrics_df)
 
     # Calculate the skill metrics for each group based on the 'decad_in_year', 'code' and 'model' columns
+    # Select only the columns needed for the apply functions to avoid duplicate column issues with reset_index()
     with timer(timing_stats, 'calculate_skill_metrics_decade - Calculate sdivsigma_nse'):
         skill_stats = skill_metrics_df. \
-            groupby(['decad_in_year', 'code', 'model_long', 'model_short'])[skill_metrics_df.columns]. \
+            groupby(['decad_in_year', 'code', 'model_long', 'model_short'])[['discharge_avg', 'forecasted_discharge']]. \
             apply(
                 sdivsigma_nse,
                 observed_col='discharge_avg',
@@ -2247,7 +2251,7 @@ def calculate_skill_metrics_decade(
 
     with timer(timing_stats, 'calculate_skill_metrics_decad - Calculate mae'):
         mae_stats = skill_metrics_df. \
-            groupby(['decad_in_year', 'code', 'model_long', 'model_short'])[skill_metrics_df.columns]. \
+            groupby(['decad_in_year', 'code', 'model_long', 'model_short'])[['discharge_avg', 'forecasted_discharge']]. \
             apply(
                 mae,
                 observed_col='discharge_avg',
@@ -2258,7 +2262,7 @@ def calculate_skill_metrics_decade(
 
     with timer(timing_stats, 'calculate_skill_metrics_decad - Calculate forecast_accuracy_hydromet'):
         accuracy_stats = skill_metrics_df. \
-            groupby(['decad_in_year', 'code', 'model_long', 'model_short'])[skill_metrics_df.columns]. \
+            groupby(['decad_in_year', 'code', 'model_long', 'model_short'])[['discharge_avg', 'forecasted_discharge', 'delta']]. \
             apply(
                 forecast_accuracy_hydromet,
                 observed_col='discharge_avg',
@@ -2328,8 +2332,10 @@ def calculate_skill_metrics_decade(
         number_of_models = simulated['model_long'].nunique()
         print("DEBUG: number_of_models\n", number_of_models)
         if number_of_models > 1:
+            # Select only the columns needed for the apply functions to avoid
+            # duplicate column issues with reset_index()
             ensemble_skill_stats = ensemble_skill_metrics_df. \
-                groupby(['decad_in_year', 'code', 'model_long', 'model_short'])[ensemble_skill_metrics_df.columns]. \
+                groupby(['decad_in_year', 'code', 'model_long', 'model_short'])[['discharge_avg', 'forecasted_discharge']]. \
                 apply(
                     sdivsigma_nse,
                     observed_col='discharge_avg',
@@ -2339,7 +2345,7 @@ def calculate_skill_metrics_decade(
             #print("DEBUG: ensemble_skill_stats\n", ensemble_skill_stats.head(20))
 
             ensemble_mae_stats = ensemble_skill_metrics_df. \
-                groupby(['decad_in_year', 'code', 'model_long', 'model_short'])[ensemble_skill_metrics_df.columns]. \
+                groupby(['decad_in_year', 'code', 'model_long', 'model_short'])[['discharge_avg', 'forecasted_discharge']]. \
                 apply(
                     mae,
                     observed_col='discharge_avg',
@@ -2347,7 +2353,7 @@ def calculate_skill_metrics_decade(
                 reset_index()
 
             ensemble_accuracy_stats = ensemble_skill_metrics_df. \
-                groupby(['decad_in_year', 'code', 'model_long', 'model_short'])[ensemble_skill_metrics_df.columns]. \
+                groupby(['decad_in_year', 'code', 'model_long', 'model_short'])[['discharge_avg', 'forecasted_discharge', 'delta']]. \
                 apply(
                     forecast_accuracy_hydromet,
                     observed_col='discharge_avg',
@@ -3379,7 +3385,7 @@ def _read_hydrograph_data_from_api(
         skip = 0
         while True:
             df_page = client.read_hydrograph(
-                horizon_type=horizon_type,
+                horizon=horizon_type,
                 code=code,
                 start_date=start_date,
                 end_date=end_date,

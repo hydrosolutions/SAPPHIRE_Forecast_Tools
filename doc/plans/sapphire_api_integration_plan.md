@@ -1048,7 +1048,7 @@ def load_control_member_data(
 
 ---
 
-### Phase 4.6: Postprocessing Module API Data Reading (PENDING)
+### Phase 4.6: Postprocessing Module API Data Reading (COMPLETE)
 
 **Overview:**
 Migrate the postprocessing_forecasts module from reading forecast results and observed data from CSV files to reading from the SAPPHIRE API. This completes the API-first architecture for the postprocessing module.
@@ -1062,40 +1062,47 @@ Migrate the postprocessing_forecasts module from reading forecast results and ob
 | LR forecasts decade | CSV (`ieasyforecast_analysis_decad_file`) | postprocessing-api | `GET /lr-forecast/` |
 | ML forecasts (TFT, TiDE, TSMixer) | CSV files | postprocessing-api | `GET /forecast/` |
 
-**Scripts to modify:**
-- `apps/iEasyHydroForecast/setup_library.py` - Update read functions
+**Scripts modified:**
+- `apps/iEasyHydroForecast/setup_library.py` - Updated read functions with API support
 
-**Functions to add/modify in setup_library.py:**
+**Functions added/modified in setup_library.py:**
 
-| Function | Purpose |
-|----------|---------|
-| `read_observed_pentadal_data()` | Update to use `fl.read_hydrograph_data()` with API support |
-| `read_observed_decadal_data()` | Update to use `fl.read_hydrograph_data()` with API support |
-| `read_lr_forecasts_from_api()` | New: Read LR forecasts from postprocessing API |
-| `read_linreg_forecasts_pentad()` | Update to use API with CSV fallback |
-| `read_linreg_forecasts_decade()` | Update to use API with CSV fallback |
-| `read_ml_forecasts_from_api()` | New: Read ML forecasts from postprocessing API |
-| `read_machine_learning_forecasts_pentad()` | Update to use API with CSV fallback |
-| `read_machine_learning_forecasts_decade()` | Update to use API with CSV fallback |
+| Function | Purpose | Status |
+|----------|---------|--------|
+| `_read_lr_forecasts_from_api()` | Read LR forecasts from postprocessing API | COMPLETE |
+| `_read_ml_forecasts_from_api()` | Read ML forecasts from postprocessing API | COMPLETE |
+| `read_observed_pentadal_data()` | Uses `fl.read_hydrograph_data()` with API support | COMPLETE |
+| `read_observed_decadal_data()` | Uses `fl.read_hydrograph_data()` with API support | COMPLETE |
+| `read_linreg_forecasts_pentad()` | API with CSV fallback | COMPLETE |
+| `read_linreg_forecasts_decade()` | API with CSV fallback | COMPLETE |
+| `read_machine_learning_forecasts_pentad()` | API with CSV fallback | COMPLETE |
+| `read_machine_learning_forecasts_decade()` | API with CSV fallback | COMPLETE |
 
-**Pattern to follow:**
-Use the established pattern from `read_daily_discharge_data()`:
+**Pattern followed:**
+Uses the established pattern from `read_daily_discharge_data()`:
 1. Check `SAPPHIRE_API_AVAILABLE` and `SAPPHIRE_API_ENABLED` env var
 2. Try API first with pagination (page_size=10000, skip/limit pattern)
 3. Fall back to CSV if API unavailable or disabled
 4. Log data source used
 
 **Implementation Checklist:**
-- [ ] Add `read_lr_forecasts_from_api()` function to setup_library.py
-- [ ] Update `read_linreg_forecasts_pentad()` to use API with CSV fallback
-- [ ] Update `read_linreg_forecasts_decade()` to use API with CSV fallback
-- [ ] Add `read_ml_forecasts_from_api()` function to setup_library.py
-- [ ] Update `read_machine_learning_forecasts_pentad()` to use API with CSV fallback
-- [ ] Update `read_machine_learning_forecasts_decade()` to use API with CSV fallback
-- [ ] Update `read_observed_pentadal_data()` to use `fl.read_hydrograph_data()`
-- [ ] Update `read_observed_decadal_data()` to use `fl.read_hydrograph_data()`
-- [ ] Add unit tests for new API read functions
-- [ ] Integration test with Docker services
+- [x] Add `_read_lr_forecasts_from_api()` function to setup_library.py
+- [x] Update `read_linreg_forecasts_pentad()` to use API with CSV fallback
+- [x] Update `read_linreg_forecasts_decade()` to use API with CSV fallback
+- [x] Add `_read_ml_forecasts_from_api()` function to setup_library.py
+- [x] Update `read_machine_learning_forecasts_pentad()` to use API with CSV fallback
+- [x] Update `read_machine_learning_forecasts_decade()` to use API with CSV fallback
+- [x] Update `read_observed_pentadal_data()` to use preprocessing runoff API
+- [x] Update `read_observed_decadal_data()` to use preprocessing runoff API
+- [x] Add unit tests for new API read functions (45 tests in test_api_read.py)
+- [x] Integration test with Docker services (7/7 tests passed - see test plan)
+
+**Files Created:**
+- `apps/postprocessing_forecasts/tests/test_api_read.py` - 45 unit tests for API read functions
+
+**Model Type Support:**
+- TFT, TiDE, TSMixer, ARIMA, RRMAMBA models are supported
+- Model type mapping handles case differences (API uses mixed case: TiDE, TSMixer)
 
 ---
 
@@ -1103,6 +1110,8 @@ Use the established pattern from `read_daily_discharge_data()`:
 
 | Date | Changes |
 |------|---------|
+| 2026-01-25 | Phase 4.6 COMPLETE: Integration testing passed (7/7 tests). All postprocessing data reads now use SAPPHIRE API with CSV fallback. Fixed observed data functions to use runoff API instead of hydrograph. Consistency check verified API and CSV data match. |
+| 2026-01-25 | Phase 4.6 implementation: Added API read functions to setup_library.py (_read_lr_forecasts_from_api, _read_ml_forecasts_from_api), updated 8 read functions with API support and CSV fallback, created 45 unit tests. |
 | 2026-01-24 | Added Phase 4.6: Postprocessing Module API Data Reading - migrate postprocessing module to read forecast results and observed data from API instead of CSV |
 | 2026-01-24 | Phase 4.4 complete: Fixed skill metrics deduplication in data_migrator.py, updated CRUD to filter on all unique constraint fields, ran all postprocessing data migrations successfully (36,087 skill metrics, 28,311 forecasts, 6,323 LR forecasts, 2,805 ML forecasts) |
 | 2026-01-23 | Implemented Phase 4.5: Added read_meteo_data/read_hydrograph_data functions to forecast_library.py, updated ML module to use API-first data reading, added read_meteo_data_combined helper to utils_ml_forecast.py |
