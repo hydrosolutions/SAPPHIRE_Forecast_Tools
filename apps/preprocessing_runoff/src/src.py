@@ -210,7 +210,8 @@ def filter_roughly_for_outliers(combined_data, group_by='Code',
     Raises:
     ValueError: If the group_by column is not found in the input DataFrame.
     """
-    def filter_group(group, filter_col, date_col):
+    def filter_group(group, filter_col, date_col, group_name):
+        # group_name is passed explicitly since pandas 3.0+ excludes grouping columns from groups
 
         # Only apply IQR filtering if the group has more than 10 rows
         if len(group) > 10:
@@ -260,7 +261,7 @@ def filter_roughly_for_outliers(combined_data, group_by='Code',
         # Print statistics of how many values were set to NaN
         num_outliers = group[filter_col].isna().sum()
         num_total = group[filter_col].notna().sum() + num_outliers
-        logger.info(f"filter_roughly_for_outliers:\n     from a total of {num_total}, {num_outliers} outliers set to NaN in group '{group[group_by].iloc[0]}'.")
+        logger.info(f"filter_roughly_for_outliers:\n     from a total of {num_total}, {num_outliers} outliers set to NaN in group '{group_name}'.")
 
         return group
 
@@ -296,9 +297,9 @@ def filter_roughly_for_outliers(combined_data, group_by='Code',
     combined_data = combined_data.reset_index(drop=True)
 
     # Apply the function to each group
-    # Note: include_groups=True preserves grouping columns in each group (required for pandas 3.0+)
-    combined_data = combined_data.groupby([group_by, 'month'], as_index=False).apply(
-        filter_group, filter_col, date_col, include_groups=True)
+    # Note: Use lambda to pass group name since pandas 3.0+ excludes grouping columns from groups
+    combined_data = combined_data.groupby([group_by, 'month']).apply(
+        lambda g: filter_group(g, filter_col, date_col, g.name[0]))
 
     # Ungroup the DataFrame
     combined_data = combined_data.reset_index(drop=True)
