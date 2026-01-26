@@ -33,6 +33,7 @@ from src.auth_utils import *
 import calendar
 
 from src.gettext_config import _
+from concurrent.futures import ThreadPoolExecutor
 from src import db
 
 # Get the absolute path of the directory containing the current script
@@ -2156,3 +2157,28 @@ language_buttons.visible = False
 # Make the dashboard servable
 dashboard.servable()
 # endregion
+
+def on_stations_loaded(fut):
+    try:
+        global all_stations, sites_list
+        _all_stations, _station_dict = fut.result()
+        print("@@@@@@@@@@ Stations loaded from iehhf")
+        print(f"Number of stations loaded: {len(_all_stations) if _all_stations is not None else 0}")
+        # print(type(_all_stations))
+        if _all_stations is not None:
+            # print("Stations: ", _all_stations)
+            all_stations = _all_stations
+            station.groups = _station_dict
+
+            sites_list = Site.get_site_attribues_from_iehhf_dataframe(all_stations)
+            sites_list = update_site_attributes_with_hydrograph_statistics_for_selected_pentad(_=_, sites=sites_list, df=data["hydrograph_pentad_all"], pentad=pentad_selector.value, decad=decad_selector.value)
+            sites_list = update_site_attributes_with_linear_regression_predictor(_, sites=sites_list, df=data["linreg_predictor"], pentad=pentad_selector.value, decad=decad_selector.value)
+
+    except Exception as e:
+        print(f"Failed to load stations: {e}")
+
+executor = ThreadPoolExecutor(max_workers=1)
+
+future = executor.submit(processing.get_all_stations_from_iehhf, valid_codes)
+
+future.add_done_callback(on_stations_loaded)
