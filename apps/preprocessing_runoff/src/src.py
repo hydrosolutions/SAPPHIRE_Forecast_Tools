@@ -200,8 +200,8 @@ def filter_roughly_for_outliers(combined_data, group_by='Code',
     Raises:
     ValueError: If the group_by column is not found in the input DataFrame.
     """
-    def filter_group(group, filter_col, date_col):
-
+    def filter_group(group, filter_col, date_col, group_name):
+        """Inner function to filter outliers for a single group."""
         # Only apply IQR filtering if the group has more than 10 rows
         if len(group) > 10:
             # Calculate Q1, Q3, and IQR
@@ -229,6 +229,9 @@ def filter_roughly_for_outliers(combined_data, group_by='Code',
         group = group.reindex(all_dates)
         group.index.name = date_col
 
+        # Forward-fill the group_by column for newly added dates
+        group[group_by] = group[group_by].ffill()
+
         # Interpolate gaps of length of max 2 days linearly
         group[filter_col] = group[filter_col].interpolate(method='time', limit=2)
 
@@ -250,7 +253,7 @@ def filter_roughly_for_outliers(combined_data, group_by='Code',
         # Print statistics of how many values were set to NaN
         num_outliers = group[filter_col].isna().sum()
         num_total = group[filter_col].notna().sum() + num_outliers
-        logger.info(f"filter_roughly_for_outliers:\n     from a total of {num_total}, {num_outliers} outliers set to NaN in group '{group[group_by].iloc[0]}'.")
+        logger.info(f"filter_roughly_for_outliers:\n     from a total of {num_total}, {num_outliers} outliers set to NaN in group '{group_name}'.")
 
         return group
 
@@ -287,16 +290,12 @@ def filter_roughly_for_outliers(combined_data, group_by='Code',
     combined_data = combined_data.reset_index(drop=True)
 
     # Apply the function to each group
-    # Note: FutureWarning about include_groups is expected - the filter_group function
-    # needs access to group_by column for logging. Full fix deferred to Phase 8.
-    import warnings
-    with warnings.catch_warnings():
-        warnings.filterwarnings("ignore", message="DataFrameGroupBy.apply operated on the grouping columns")
-        combined_data = combined_data.groupby([group_by, 'month'], as_index=False).apply(
-            filter_group, filter_col, date_col)
-
-    # Ungroup the DataFrame
-    combined_data = combined_data.reset_index(drop=True)
+    # Iterate manually to pass group name for logging (pandas 2.2+ removed include_groups)
+    result_frames = []
+    for (group_key, month), group_df in combined_data.groupby([group_by, 'month']):
+        processed = filter_group(group_df.copy(), filter_col, date_col, group_name=group_key)
+        result_frames.append(processed)
+    combined_data = pd.concat(result_frames, ignore_index=True)
 
     # Drop the temporary month column
     combined_data.drop(columns=['month'], inplace=True)
