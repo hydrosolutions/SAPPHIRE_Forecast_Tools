@@ -33,6 +33,7 @@ from src.auth_utils import *
 import calendar
 
 from src.gettext_config import _
+from src import db
 
 # Get the absolute path of the directory containing the current script
 cwd = os.getcwd()
@@ -248,132 +249,136 @@ def get_directory_mtime(directory_path):
     combined_mtime = max(mtimes) if mtimes else 0
     return combined_mtime
 
-def load_data():
-    global hydrograph_day_all, hydrograph_pentad_all, linreg_predictor, \
-        forecasts_all, forecast_stats, all_stations, station_dict, station_df, \
-        station_list, linreg_datatable, stations_iehhf, \
-        rram_forecast, ml_forecast, rain, temp, latest_data_is_current_year, \
-        iehhf_warning, snow_data
+# def load_data():
+    # global hydrograph_day_all, hydrograph_pentad_all, linreg_predictor, \
+    #     forecasts_all, forecast_stats, all_stations, station_dict, station_df, \
+    #     station_list, linreg_datatable, stations_iehhf, \
+    #     rram_forecast, ml_forecast, rain, temp, latest_data_is_current_year, \
+    #     iehhf_warning, snow_data
     # File modification times
-    hydrograph_day_file = os.path.join(
-        os.getenv("ieasyforecast_intermediate_data_path"),
-        os.getenv("ieasyforecast_hydrograph_day_file"))
-    hydrograph_day_file_mtime = os.path.getmtime(hydrograph_day_file)
+    # hydrograph_day_file = os.path.join(
+    #     os.getenv("ieasyforecast_intermediate_data_path"),
+    #     os.getenv("ieasyforecast_hydrograph_day_file"))
+    # hydrograph_day_file_mtime = os.path.getmtime(hydrograph_day_file)
 
-    hydrograph_pentad_file = os.path.join(
-        os.getenv("ieasyforecast_intermediate_data_path"),
-        os.getenv("ieasyforecast_hydrograph_pentad_file"))
-    hydrograph_pentad_file_mtime = os.path.getmtime(hydrograph_pentad_file)
+    # hydrograph_pentad_file = os.path.join(
+    #     os.getenv("ieasyforecast_intermediate_data_path"),
+    #     os.getenv("ieasyforecast_hydrograph_pentad_file"))
+    # hydrograph_pentad_file_mtime = os.path.getmtime(hydrograph_pentad_file)
 
-    linreg_forecast_file = os.path.join(
-        os.getenv("ieasyforecast_intermediate_data_path"),
-        os.getenv("ieasyforecast_analysis_pentad_file"))
-    linreg_forecast_file_mtime = os.path.getmtime(linreg_forecast_file)
+    # linreg_forecast_file = os.path.join(
+    #     os.getenv("ieasyforecast_intermediate_data_path"),
+    #     os.getenv("ieasyforecast_analysis_pentad_file"))
+    # linreg_forecast_file_mtime = os.path.getmtime(linreg_forecast_file)
 
-    forecast_results_file = os.path.join(
-        os.getenv("ieasyforecast_intermediate_data_path"),
-        os.getenv("ieasyforecast_combined_forecast_pentad_file"))
+    # forecast_results_file = os.path.join(
+    #     os.getenv("ieasyforecast_intermediate_data_path"),
+    #     os.getenv("ieasyforecast_combined_forecast_pentad_file"))
     # Append _latest to the filename to get the latest file
-    forecast_results_file = forecast_results_file.replace('.csv', '_latest.csv')
-    forecast_results_file_mtime = os.path.getmtime(forecast_results_file)
+    # forecast_results_file = forecast_results_file.replace('.csv', '_latest.csv')
+    # forecast_results_file_mtime = os.path.getmtime(forecast_results_file)
 
-    forecast_stats_file = os.path.join(
-        os.getenv("ieasyforecast_intermediate_data_path"),
-        os.getenv("ieasyforecast_pentadal_skill_metrics_file"))
-    forecast_stats_file_mtime = os.path.getmtime(forecast_stats_file)
+    # forecast_stats_file = os.path.join(
+    #     os.getenv("ieasyforecast_intermediate_data_path"),
+    #     os.getenv("ieasyforecast_pentadal_skill_metrics_file"))
+    # forecast_stats_file_mtime = os.path.getmtime(forecast_stats_file)
 
-    if display_CM_forecasts == True:
+    # if display_CM_forecasts == True:
         # For rram and ml forecasts, get the directory modification times
-        rram_file_path = os.getenv('ieasyhydroforecast_PATH_TO_RESULT')
-        rram_file_mtime = get_directory_mtime(rram_file_path)
+        # rram_file_path = os.getenv('ieasyhydroforecast_PATH_TO_RESULT')
+        # rram_file_mtime = get_directory_mtime(rram_file_path)
+        # pass
 
-    if display_ML_forecasts == True:
-        ml_forecast_dir = os.path.join(
-            os.getenv("ieasyforecast_intermediate_data_path"),
-            os.getenv("ieasyhydroforecast_OUTPUT_PATH_DISCHARGE"))
-        ml_forecast_mtime = get_directory_mtime(ml_forecast_dir)
+    # if display_ML_forecasts == True:
+        # ml_forecast_dir = os.path.join(
+        #     os.getenv("ieasyforecast_intermediate_data_path"),
+        #     os.getenv("ieasyhydroforecast_OUTPUT_PATH_DISCHARGE"))
+        # ml_forecast_mtime = get_directory_mtime(ml_forecast_dir)
+        # pass
         
-    if display_weather_data == True:
+    # if display_weather_data == True:
         # Rainfall and temperature data files
-        p_file = os.path.join(
-            os.getenv('ieasyhydroforecast_PATH_TO_HIND'),
-            os.getenv('ieasyhydroforecast_FILE_CF_HIND_P'))
-        t_file = os.path.join(
-            os.getenv('ieasyhydroforecast_PATH_TO_HIND'),
-            os.getenv('ieasyhydroforecast_FILE_CF_HIND_T')
-        )
+        # p_file = os.path.join(
+        #     os.getenv('ieasyhydroforecast_PATH_TO_HIND'),
+        #     os.getenv('ieasyhydroforecast_FILE_CF_HIND_P'))
+        # t_file = os.path.join(
+        #     os.getenv('ieasyhydroforecast_PATH_TO_HIND'),
+        #     os.getenv('ieasyhydroforecast_FILE_CF_HIND_T')
+        # )
 
         # replace .csv with _dashboard.csv
-        p_file = p_file.replace('.csv', '_dashboard.csv')
-        t_file = t_file.replace('.csv', '_dashboard.csv')
-        p_file_mtime = os.path.getmtime(p_file)
-        t_file_mtime = os.path.getmtime(t_file)
+        # p_file = p_file.replace('.csv', '_dashboard.csv')
+        # t_file = t_file.replace('.csv', '_dashboard.csv')
+        # p_file_mtime = os.path.getmtime(p_file)
+        # t_file_mtime = os.path.getmtime(t_file)
+        # pass
 
-    if display_snow_data == True:
-        # Define hs_file, swe_file and rof_file here
-        snow_data_path = os.path.join(
-            os.getenv('ieasyforecast_intermediate_data_path'),
-            os.getenv('ieasyhydroforecast_OUTPUT_PATH_SNOW'))
+    # if display_snow_data == True:
+    #     # Define hs_file, swe_file and rof_file here
+    #     snow_data_path = os.path.join(
+    #         os.getenv('ieasyforecast_intermediate_data_path'),
+    #         os.getenv('ieasyhydroforecast_OUTPUT_PATH_SNOW'))
 
-        hru_snow = os.getenv('ieasyhydroforecast_HRU_SNOW_DATA_DASHBOARD')
-        snow_vars_env = os.getenv('ieasyhydroforecast_SNOW_VARS').split(',')  # e.g., ['SWE', 'HS', 'RoF']
+    #     hru_snow = os.getenv('ieasyhydroforecast_HRU_SNOW_DATA_DASHBOARD')
+    #     snow_vars_env = os.getenv('ieasyhydroforecast_SNOW_VARS').split(',')  # e.g., ['SWE', 'HS', 'RoF']
 
-        if snow_vars_env and hru_snow:
-            # Create a dict of snow files
-            snow_files = {
-                var: os.path.join(snow_data_path, var, f"{hru_snow}_{var}.csv")
-                for var in snow_vars_env
-            }
-            # Only get mtime for files that exist
-            snow_files_mtime = {
-                var: os.path.getmtime(path) if os.path.exists(path) else None
-                for var, path in snow_files.items()
-            }
-        else:
-            snow_files = {}
-            snow_files_mtime = {}
-    else: 
-        snow_files = {}
-        snow_files_mtime = {}
+    #     if snow_vars_env and hru_snow:
+    #         # Create a dict of snow files
+    #         snow_files = {
+    #             var: os.path.join(snow_data_path, var, f"{hru_snow}_{var}.csv")
+    #             for var in snow_vars_env
+    #         }
+    #         # Only get mtime for files that exist
+    #         snow_files_mtime = {
+    #             var: os.path.getmtime(path) if os.path.exists(path) else None
+    #             for var, path in snow_files.items()
+    #         }
+    #     else:
+    #         snow_files = {}
+    #         snow_files_mtime = {}
+    # else:
+    #     snow_files = {}
+    #     snow_files_mtime = {}
 
     # Hydrograph day and pentad data
-    hydrograph_day_all = processing.read_hydrograph_day_data_for_pentad_forecasting(
-        stations_iehhf, hydrograph_day_file_mtime)
+    # hydrograph_day_all = processing.read_hydrograph_day_data_for_pentad_forecasting(
+    #     stations_iehhf, hydrograph_day_file_mtime)
     # print head and tail of hydrograph_day_all where code == 15194
     #print(f"DEBUG: forecast_dashboard.py: hydrograph_day_all head:\n{hydrograph_day_all[hydrograph_day_all['code'] == '15194'].head()}")
     #print(f"DEBUG: forecast_dashboard.py: hydrograph_day_all tail:\n{hydrograph_day_all[hydrograph_day_all['code'] == '15194'].tail()}")
 
-    hydrograph_pentad_all = processing.read_hydrograph_pentad_data_for_pentad_forecasting(
-        stations_iehhf, hydrograph_pentad_file_mtime)
+    # hydrograph_pentad_all = processing.read_hydrograph_pentad_data_for_pentad_forecasting(
+    #     stations_iehhf, hydrograph_pentad_file_mtime)
 
     # Daily forecasts from RRAM & ML models
-    if display_CM_forecasts == True:
-        rram_forecast = processing.read_rram_forecast_data(rram_file_mtime)
-    if display_ML_forecasts == True:
-        ml_forecast = processing.read_ml_forecast_data(ml_forecast_mtime)
-        
+    # if display_CM_forecasts == True:
+    #     # rram_forecast = processing.read_rram_forecast_data(rram_file_mtime)
+    #     pass
+    # if display_ML_forecasts == True:
+    #     # ml_forecast = processing.read_ml_forecast_data(ml_forecast_mtime)
+
+    #     pass
     # Pentadal forecast data
     # - linreg_predictor: for displaying predictor in predictor tab
     # Set multi-index for faster lookups
-    linreg_predictor = processing.read_linreg_forecast_data(
-        stations_iehhf, linreg_forecast_file_mtime)
+    # linreg_predictor = processing.read_linreg_forecast_data(
+    #     stations_iehhf, linreg_forecast_file_mtime)
     # Print tail of linreg_predictor where code == '15149'
     #print(f"DEBUG: forecast_dashboard.py: linreg_predictor tail:\n{linreg_predictor[linreg_predictor['code'] == '15149'].tail()}")
     # - forecast results from all models
     # Reads in latest forecast results (_latest.csv) for all models
-    forecasts_all = processing.read_forecast_results_file(
-        stations_iehhf, forecast_results_file_mtime)
+    # forecasts_all = processing.read_forecast_results_file(
+    #     stations_iehhf, forecast_results_file_mtime)
     # Forecast statistics
-    forecast_stats = processing.read_forecast_stats_file(
-        stations_iehhf, forecast_stats_file_mtime)
+    # forecast_stats = processing.read_forecast_stats_file(
+    #     stations_iehhf, forecast_stats_file_mtime)
 
     # Hydroposts metadata
-    station_list, all_stations, station_df, station_dict, iehhf_warning = processing.read_all_stations_metadata_from_iehhf(
-        hydrograph_day_all['code'].unique().tolist())
+    # station_list, all_stations, station_df, station_dict, iehhf_warning = processing.read_all_stations_metadata_from_iehhf()
     #station_list, all_stations, station_df, station_dict = processing.read_all_stations_metadata_from_file(
     #    hydrograph_day_all['code'].unique().tolist())
-    if not station_list:
-        raise ValueError("The station list is empty. Please check the data source and ensure it contains valid stations.")
+    # if not station_list:
+    #     raise ValueError("The station list is empty. Please check the data source and ensure it contains valid stations.")
     #print("DEBUG: forecast_dashboard.py: Station list:\n", station_list)
     #print("DEBUG: forecast_dashboard.py: All stations: \n", all_stations)
     #logger.debug(f"DEBUG: forecast_dashboard.py: Station list:\n{station_list}")
@@ -385,115 +390,118 @@ def load_data():
     #print(f"DEBUG: First station: {station_dict[next(iter(station_dict))][0]}")
 
     # Add the station_labels column to the hydrograph_day_all DataFrame
-    hydrograph_day_all = processing.add_labels_to_hydrograph(hydrograph_day_all, all_stations)
-    hydrograph_pentad_all = processing.add_labels_to_hydrograph(hydrograph_pentad_all, all_stations)
+    # hydrograph_day_all = processing.add_labels_to_hydrograph(hydrograph_day_all, all_stations)
+    # hydrograph_pentad_all = processing.add_labels_to_hydrograph(hydrograph_pentad_all, all_stations)
 
     # Define a flag to indicate if the latest data in hydrograph_pentad_all is for the current year
-    current_year_temp = dt.datetime.now().year
-    if str(current_year_temp) in hydrograph_pentad_all.columns:
-        latest_data_is_current_year = True
-    else:
-        latest_data_is_current_year = False
-    del current_year_temp
+    # current_year_temp = dt.datetime.now().year
+    # if str(current_year_temp) in hydrograph_pentad_all.columns:
+    #     latest_data_is_current_year = True
+    # else:
+    #     latest_data_is_current_year = False
+    # del current_year_temp
 
     #print(f"DEBUG: linreg_predictor raw: {linreg_predictor.tail()}")
-    linreg_predictor = processing.add_labels_to_forecast_pentad_df(linreg_predictor, all_stations)
+    # linreg_predictor = processing.add_labels_to_forecast_pentad_df(linreg_predictor, all_stations)
     #print(f"DEBUG: linreg_predictor with labels: {linreg_predictor.tail()}")
     #print(f"DEBUG: forecast_dashboard.py: linreg_predictor tail:\n{linreg_predictor[linreg_predictor['code'] == '15149'].tail()}")
-    linreg_datatable = processing.shift_date_by_n_days(linreg_predictor, 1)
+    # linreg_datatable = processing.shift_date_by_n_days(linreg_predictor, 1)
     #print(f"DEBUG: forecast_dashboard.py: linreg_predictor tail:\n{linreg_predictor[linreg_predictor['code'] == '15149'].tail()}")
     #print(f"DEBUG: linreg_datatable.columns: {linreg_datatable.columns}")
     #print(f"DEBUG: linreg_datatable: {linreg_datatable.tail()}")
     #print(f"DEBUG: linreg_predictor.columns: {linreg_predictor.columns}")
     #print(f"DEBUG: linreg_predictor: {linreg_predictor.tail()}")
-    forecasts_all = processing.add_labels_to_forecast_pentad_df(forecasts_all, all_stations)
+    # forecasts_all = processing.add_labels_to_forecast_pentad_df(forecasts_all, all_stations)
     #print('column names of forecasts_all:\n', forecasts_all.columns)
     #print('\n\nhead of forecasts_all:\n', forecasts_all.head(), '\n\n')
     # Determine the horizon (pentad or decad)
-    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
-    horizon_in_year = "pentad_in_year" if horizon == "pentad" else "decad_in_year"
+    # horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+    # horizon_in_year = "pentad_in_year" if horizon == "pentad" else "decad_in_year"
     #print('horizon_in_year_col:', horizon_in_year)
 
     # Find the latest year in the data
-    latest_year = forecasts_all['date'].dt.year.max()
+    # latest_year = forecasts_all['date'].dt.year.max()
     #print('latest_year:', latest_year)
 
     # Filter the DataFrame to include only the latest year
-    forecasts_latest_year = forecasts_all[forecasts_all['date'].dt.year == latest_year]
+    # forecasts_latest_year = forecasts_all[forecasts_all['date'].dt.year == latest_year]
 
     # Find the maximum pentad_in_year or decad_in_year value in the latest year
-    latest_horizon_in_year = forecasts_latest_year[horizon_in_year].max()
+    # latest_horizon_in_year = forecasts_latest_year[horizon_in_year].max()
     #print('latest_horizon_in_year:', latest_horizon_in_year)
 
     # Filter the DataFrame to include only the latest pentad/decad in the latest year
-    forecasts_current = forecasts_latest_year[forecasts_latest_year[horizon_in_year] == latest_horizon_in_year]
+    # forecasts_current = forecasts_latest_year[forecasts_latest_year[horizon_in_year] == latest_horizon_in_year]
     #print('forecasts_current:\n', forecasts_current)
     
     # Get valid codes and normalize to string integers reliably
-    valid_codes = (
-        pd.to_numeric(forecasts_current['code'], errors='coerce')
-          .dropna()
-          .astype('int64')
-          .astype(str)
-          .tolist()
-    )
-    print('valid_codes:', valid_codes)
+    # valid_codes = (
+    #     pd.to_numeric(forecasts_current['code'], errors='coerce')
+    #       .dropna()
+    #       .astype('int64')
+    #       .astype(str)
+    #       .tolist()
+    # )
+    # valid_codes = ['16159', '16159', '16159', '16101', '16159', '16159', '15054', '16101', '16134', '16101', '16101', '16134', '16134', '15081', '15054', '16105', '16101', '16105', '16100', '16105', '15054', '16160', '15149', '15149', '15149', '15149', '15149', '16105', '15149', '16100', '16100', '16100', '16160', '16160', '16101', '16159', '16100', '15054', '15034', '16139', '16143', '16143', '15051', '15051', '15051', '15051', '16151', '15051', '15081', '15081', '16135', '16135', '16135', '15034', '15034', '16160', '16134', '16143', '16143', '16143', '16139', '16139', '16139', '16139', '16151', '16151', '16151', '16151', '16151', '15054', '15054', '15051', '16143', '16146', '16146', '16146', '16146', '16139', '16160', '15283', '16105', '15215', '15215', '15215', '15261', '16936', '15216', '15216', '15215', '15216', '15216', '15216', '15256', '15256', '15256', '15256', '16936', '15216', '15215', '15259', '15215', '15034', '15259', '15259', '16936', '16936', '16936', '16936', '15259', '15259', '15259', '15013', '15283', '15013', '15013', '15013', '15013', '15013', '15283', '16160', '15283', '15090', '16127', '16127', '16127', '16127', '16127', '16127', '16158', '16134', '16158', '16158', '16158', '16158', '15090', '15102', '15102', '16105', '16158', '16134', '15090', '15283', '15090', '16121', '16121', '16121', '16121', '16121', '16121', '15030', '15030', '15030', '15030', '15102', '15102', '15102', '15102', '15090', '15090', '15256', '15034', '15287', '15083', '16096', '16096', '16096', '16096', '16096', '15171', '16161', '15025', '15171', '15171', '15171', '15171', '16146', '15189', '15189', '15960', '15171', '16096', '16161', '16161', '15189', '16161', '16161', '16070', '16070', '16070', '16070', '16070', '16070', '16169', '16169', '16169', '16169', '16169', '16169', '15189', '16161', '15189', '15025', '15194', '15194', '16068', '15020', '16059', '15020', '15020', '15020', '16059', '16068', '16059', '15256', '16146', '17462', '17462', '17462', '17462', '17462', '16059', '16068', '16068', '16068', '16055', '16055', '16055', '16055', '16055', '16055', '16176', '16176', '16176', '16176', '16176', '16176', '15194', '16059', '16059', '16068', '15189', '15194', '15034', '15214', '15287', '16153', '16153', '16100', '15025', '15025', '15016', '15954', '16153', '15954', '15212', '15212', '15212', '15212', '15212', '16487', '16487', '15212', '16153', '16153', '16136', '15083', '15083', '15083', '15083', '15083', '16135', '16135', '16135', '16136', '15081', '15081', '15081', '16136', '16136', '16136', '16136', '16153', '16487', '15287', '16487', '16487', '16681', '15283', '15214', '15214', '15214', '15312', '15016', '16510', '15312', '15312', '15312', '15312', '15287', '15214', '15287', '15287', '15312', '16510', '16510', '16510', '15016', '15954', '15954', '15954', '15954', '15016', '15016', '15016', '15214', '15285', '15285', '15285', '15285', '15285', '15285', '16510', '16510', '16487', '17462']
+    # print('valid_codes:', valid_codes)
 
     # Normalize 'code' columns in related DataFrames so filtering is consistent
-    def _normalize_code_col(df):
-        if df is None or 'code' not in df.columns:
-            return df
-        df = df.copy()
-        df['code'] = pd.to_numeric(df['code'], errors='coerce')
-        df = df[df['code'].notna()].copy()
-        df['code'] = df['code'].astype('int64').astype(str)
-        return df
+    # def _normalize_code_col(df):
+    #     if df is None or 'code' not in df.columns:
+    #         return df
+    #     df = df.copy()
+    #     df['code'] = pd.to_numeric(df['code'], errors='coerce')
+    #     df = df[df['code'].notna()].copy()
+    #     df['code'] = df['code'].astype('int64').astype(str)
+    #     return df
 
-    forecasts_all = _normalize_code_col(forecasts_all)
-    forecast_stats = _normalize_code_col(forecast_stats)
-    station_df = _normalize_code_col(station_df)
-    all_stations = _normalize_code_col(all_stations)
+    # forecasts_all = _normalize_code_col(forecasts_all)
+    # forecast_stats = _normalize_code_col(forecast_stats)
+    # station_df = _normalize_code_col(station_df)
+    # all_stations = _normalize_code_col(all_stations)
 
     # Filter forecasts_all and station_list based on valid codes (if any)
-    if len(valid_codes) > 0:
-        forecasts_all = forecasts_all[forecasts_all['code'].isin(valid_codes)]
-        forecast_stats = forecast_stats[forecast_stats['code'].isin(valid_codes)]
-        station_df = station_df[station_df['code'].isin(valid_codes)]
-        all_stations = all_stations[all_stations['code'].isin(valid_codes)]
-    print('station_list prior: ', station_list)
+    # if len(valid_codes) > 0:
+        # forecasts_all = forecasts_all[forecasts_all['code'].isin(valid_codes)]
+        # forecast_stats = forecast_stats[forecast_stats['code'].isin(valid_codes)]
+        # station_df = station_df[station_df['code'].isin(valid_codes)]
+        # all_stations = all_stations[all_stations['code'].isin(valid_codes)]
+    # print('station_list prior: ', station_list)
     # Update station_list after potential filtering
-    station_list = station_df['station_labels'].unique().tolist()
-    print('station_dict prior: ', station_dict)
+    # station_list = station_df['station_labels'].unique().tolist()
+    # print('station_dict prior: ', station_dict)
     # Create a new station_dict that only includes stations in station_list
-    new_station_dict = {}
-    for basin, stations in station_dict.items():
-        # Only filter if we have valid_codes; otherwise keep prior stations
-        if len(valid_codes) > 0:
-            new_stations = [s for s in stations if any(code in s for code in valid_codes)]  # Corrected line
-        else:
-            new_stations = stations
-        if new_stations:  # Only add the basin if there are valid stations
-            new_station_dict[basin] = new_stations
-    station_dict = new_station_dict
+    # new_station_dict = {}
+    # for basin, stations in station_dict.items():
+    #     # Only filter if we have valid_codes; otherwise keep prior stations
+    #     if len(valid_codes) > 0:
+    #         new_stations = [s for s in stations if any(code in s for code in valid_codes)]  # Corrected line
+    #     else:
+    #         new_stations = stations
+    #     if new_stations:  # Only add the basin if there are valid stations
+    #         new_station_dict[basin] = new_stations
+    # station_dict = new_station_dict
 
-    print('station_dict after: ', station_dict)
+    # print('station_dict after: ', station_dict)
     #print('Updated data:')
     #print('forecasts_all:\n', forecasts_all)
     #print('station_list:', station_list)
     #print('station_df:\n', station_df)
     
-    if display_CM_forecasts == True: 
-        rram_forecast = processing.add_labels_to_forecast_pentad_df(rram_forecast, all_stations)
-    else: 
-        rram_forecast = None
-    if display_ML_forecasts == True:
-        ml_forecast = processing.add_labels_to_forecast_pentad_df(ml_forecast, all_stations)
-    else: 
-        ml_forecast = None
+    # if display_CM_forecasts == True: 
+    #     rram_forecast = processing.add_labels_to_forecast_pentad_df(rram_forecast, all_stations)
+    # else: 
+    #     rram_forecast = None
+    # if display_ML_forecasts == True:
+    #     # ml_forecast = processing.add_labels_to_forecast_pentad_df(ml_forecast, all_stations)
+    #     pass
+    # else: 
+    #     # ml_forecast = None
+    #     pass
 
     # Replace model names with translation strings
-    forecasts_all = processing.internationalize_forecast_model_names(_, forecasts_all)
-    forecast_stats = processing.internationalize_forecast_model_names(_, forecast_stats)
+    # forecasts_all = processing.internationalize_forecast_model_names(_, forecasts_all)
+    # forecast_stats = processing.internationalize_forecast_model_names(_, forecast_stats)
 
     # Merge forecast stats with forecasts by code and pentad_in_year and model_short
     #print(f'\n\nhead of forecasts_all:\n{forecasts_all.head()}')
@@ -501,30 +509,35 @@ def load_data():
     #print(f'type of forecasts_all[pentad_in_year]: {forecasts_all[horizon_in_year].dtype}')
     #print(f'\n\nhead of forecast_stats:\n{forecast_stats.head()}')
     #print(f'type of forecast_stats[pentad_in_year]: {forecast_stats[horizon_in_year].dtype}')
-    forecasts_all = forecasts_all.merge(
-        forecast_stats,
-        on=['code', horizon_in_year, 'model_short', 'model_long'],
-        how='left',
-        suffixes=('', '_stats'))
+    # forecasts_all = forecasts_all.merge(
+    #     forecast_stats,
+    #     on=['code', horizon_in_year, 'model_short', 'model_long'],
+    #     how='left',
+    #     suffixes=('', '_stats'))
 
     # weather data
-    if display_weather_data == True:
-        rain = processing.read_rainfall_data(p_file_mtime)  # (max(hind_p_file_mtime, cf_p_file_mtime))
-        temp = processing.read_temperature_data(t_file_mtime)  # max(hind_t_file_mtime, cf_t_file_mtime))
-    else: 
-        rain = None
-        temp = None
+    # if display_weather_data == True:
+    #     # rain = processing.read_rainfall_data(p_file_mtime)  # (max(hind_p_file_mtime, cf_p_file_mtime))
+    #     # temp = processing.read_temperature_data(t_file_mtime)  # max(hind_t_file_mtime, cf_t_file_mtime))
+    #     pass
+    # else: 
+    #     # rain = None
+    #     # temp = None
+    #     pass
 
-    if display_snow_data == True:
-        snow_data = {}
-        for var, path in snow_files.items():
-            mtime = snow_files_mtime.get(var)
-            if mtime is not None:
-                snow_data[var] = processing.read_snow_data(var, path, mtime)
-            else:
-                snow_data[var] = None
-    else: 
-        snow_data = None
+    # if display_snow_data == True:
+    #     # snow_data = {}
+    #     # for var, path in snow_files.items():
+    #     #     mtime = snow_files_mtime.get(var)
+    #     #     if mtime is not None:
+    #     #         # snow_data[var] = processing.read_snow_data(var, path, mtime)
+    #     #         pass
+    #     #     else:
+    #     #         snow_data[var] = None
+    #     pass
+    # else: 
+    #     # snow_data = None
+    #     pass
 
     # Debugging prints to see if we have read data correctly
     #print(f"--- display_weather_data: {display_weather_data}")
@@ -536,25 +549,70 @@ def load_data():
 
 stations_iehhf = None
 
-load_data()
+# load_data()
 
+# data = {}
+
+# horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+# horizon_in_year = "pentad_in_year" if horizon == "pentad" else "decad_in_year"
+
+# data["hydrograph_day_all"] = db.get_hydrograph_day_all('15189')
+# data["hydrograph_pentad_all"] = db.get_hydrograph_pentad_all('15189')
+# data["hydrograph_day_all"] = processing.add_labels_to_hydrograph(data["hydrograph_day_all"], all_stations)
+# data["hydrograph_pentad_all"] = processing.add_labels_to_hydrograph(data["hydrograph_pentad_all"], all_stations)
+
+# data["rain"] = db.get_rain('15189')
+# data["temp"] = db.get_temp('15189')
+
+# data["snow_data"] = db.get_snow_data('15189')
+
+# data["ml_forecast"] = db.get_ml_forecast('15189')
+# data["ml_forecast"] = processing.add_labels_to_hydrograph(data["ml_forecast"], all_stations)
+
+# data["linreg_predictor"] = db.get_linreg_predictor('15189')
+# data["linreg_predictor"] = processing.add_labels_to_hydrograph(data["linreg_predictor"], all_stations)
+# linreg_datatable = processing.shift_date_by_n_days(data["linreg_predictor"], 1)
+
+# data["forecasts_all"] = db.get_forecasts_all('15189')
+# data["forecasts_all"] = processing.add_labels_to_hydrograph(data["forecasts_all"], all_stations)
+# data["forecasts_all"] = processing.internationalize_forecast_model_names(_, data["forecasts_all"])
+
+# data["forecast_stats"] = db.get_forecast_stats('15189')
+# data["forecast_stats"] = processing.internationalize_forecast_model_names(_, data["forecast_stats"])
+
+# data["forecasts_all"] = data["forecasts_all"].merge(
+#         data["forecast_stats"],
+#         on=['code', horizon_in_year, 'model_short', 'model_long'],
+#         how='left',
+#         suffixes=('', '_stats'))
+
+valid_codes = ['16159', '16159', '16159', '16101', '16159', '16159', '15054', '16101', '16134', '16101', '16101', '16134', '16134', '15081', '15054', '16105', '16101', '16105', '16100', '16105', '15054', '16160', '15149', '15149', '15149', '15149', '15149', '16105', '15149', '16100', '16100', '16100', '16160', '16160', '16101', '16159', '16100', '15054', '15034', '16139', '16143', '16143', '15051', '15051', '15051', '15051', '16151', '15051', '15081', '15081', '16135', '16135', '16135', '15034', '15034', '16160', '16134', '16143', '16143', '16143', '16139', '16139', '16139', '16139', '16151', '16151', '16151', '16151', '16151', '15054', '15054', '15051', '16143', '16146', '16146', '16146', '16146', '16139', '16160', '15283', '16105', '15215', '15215', '15215', '15261', '16936', '15216', '15216', '15215', '15216', '15216', '15216', '15256', '15256', '15256', '15256', '16936', '15216', '15215', '15259', '15215', '15034', '15259', '15259', '16936', '16936', '16936', '16936', '15259', '15259', '15259', '15013', '15283', '15013', '15013', '15013', '15013', '15013', '15283', '16160', '15283', '15090', '16127', '16127', '16127', '16127', '16127', '16127', '16158', '16134', '16158', '16158', '16158', '16158', '15090', '15102', '15102', '16105', '16158', '16134', '15090', '15283', '15090', '16121', '16121', '16121', '16121', '16121', '16121', '15030', '15030', '15030', '15030', '15102', '15102', '15102', '15102', '15090', '15090', '15256', '15034', '15287', '15083', '16096', '16096', '16096', '16096', '16096', '15171', '16161', '15025', '15171', '15171', '15171', '15171', '16146', '15189', '15189', '15960', '15171', '16096', '16161', '16161', '15189', '16161', '16161', '16070', '16070', '16070', '16070', '16070', '16070', '16169', '16169', '16169', '16169', '16169', '16169', '15189', '16161', '15189', '15025', '15194', '15194', '16068', '15020', '16059', '15020', '15020', '15020', '16059', '16068', '16059', '15256', '16146', '17462', '17462', '17462', '17462', '17462', '16059', '16068', '16068', '16068', '16055', '16055', '16055', '16055', '16055', '16055', '16176', '16176', '16176', '16176', '16176', '16176', '15194', '16059', '16059', '16068', '15189', '15194', '15034', '15214', '15287', '16153', '16153', '16100', '15025', '15025', '15016', '15954', '16153', '15954', '15212', '15212', '15212', '15212', '15212', '16487', '16487', '15212', '16153', '16153', '16136', '15083', '15083', '15083', '15083', '15083', '16135', '16135', '16135', '16136', '15081', '15081', '15081', '16136', '16136', '16136', '16136', '16153', '16487', '15287', '16487', '16487', '16681', '15283', '15214', '15214', '15214', '15312', '15016', '16510', '15312', '15312', '15312', '15312', '15287', '15214', '15287', '15287', '15312', '16510', '16510', '16510', '15016', '15954', '15954', '15954', '15954', '15016', '15016', '15016', '15214', '15285', '15285', '15285', '15285', '15285', '15285', '16510', '16510', '16487', '17462']
+all_stations, station_dict = processing.get_all_stations_from_file(valid_codes)
+iehhf_warning = None
+
+data = db.get_data('15189', all_stations)
+
+linreg_datatable = processing.shift_date_by_n_days(data["linreg_predictor"], 1)
+
+rram_forecast = None
 
 # Test if we have sites in stations_iehhf which are not present in forecasts_all
 # Placeholder for a message pane
 message_pane = pn.pane.Markdown("", width=300)
 if stations_iehhf is not None:
-    missing_sites = set(stations_iehhf) - set(forecasts_all['code'].unique())
+    missing_sites = set(stations_iehhf) - set(data["forecasts_all"]['code'].unique())
     if missing_sites:
         missing_sites_message = f"_('WARNING: The following sites are missing from the forecast results:') {missing_sites}. _('No forecasts are currently available for these sites. Please make sure your forecast models are configured to produce results for these sites, re-run hindcasts manually and re-run the forecast.')"
         message_pane.object = missing_sites_message
 
 # Add message to message_pane, depending on the status of recent data availability
+latest_data_is_current_year = True
 if not latest_data_is_current_year:
     message_pane.object += "\n\n" + _("WARNING: The latest data available is not for the current year. Forecast Tools may not have access to iEasyHydro. Please contact the system administrator.")
 
 sites_list = Site.get_site_attribues_from_iehhf_dataframe(all_stations)
 
-hydropost_to_basin = {site.code: site.basin_ru for site in sites_list}
+# hydropost_to_basin = {site.code: site.basin_ru for site in sites_list}
 
 bulletin_table = pn.Column()
 
@@ -563,7 +621,7 @@ bulletin_sites = []
 tabs_container = pn.Column()
 
 # Create a dictionary of the model names and the corresponding model labels
-model_dict_all = forecasts_all[['model_short', 'model_long']] \
+model_dict_all = data["forecasts_all"][['model_short', 'model_long']] \
     .drop_duplicates() \
     .set_index('model_long')['model_short'].to_dict()
 #print(f"DEBUG: forecast_dashboard.py: station_dict: {station_dict}")
@@ -597,7 +655,7 @@ decad_options = {
 # region widgets
 
 # Widget for date selection, always visible
-forecast_date = forecasts_all['date'].max().date()  # Dates here refer to the forecast issue day, i.e. 1 day before the first day of the forecast pentad.
+forecast_date = data["forecasts_all"]['date'].max().date()  # Dates here refer to the forecast issue day, i.e. 1 day before the first day of the forecast pentad.
 date_picker = pn.widgets.DatePicker(name=_("Select date:"),
                                     start=dt.datetime((forecast_date.year-1), 1, 5).date(),
                                     end=forecast_date,
@@ -605,7 +663,7 @@ date_picker = pn.widgets.DatePicker(name=_("Select date:"),
 
 
 # Get the last available date in the data
-last_date = forecasts_all['date'].max() + dt.timedelta(days=1)
+last_date = data["forecasts_all"]['date'].max() + dt.timedelta(days=1)
 
 # Determine the corresponding pentad
 current_pentad = tl.get_pentad_for_date(last_date)
@@ -614,7 +672,7 @@ current_pentad = tl.get_pentad_for_date(last_date)
 # the pentad of the forecast period.
 horizon = os.getenv("sapphire_forecast_horizon", "pentad")
 horizon_in_year = "pentad_in_year" if horizon == "pentad" else "decad_in_year"
-forecast_horizon_for_saving_bulletin = int(linreg_predictor[horizon_in_year].tail(1).values[0]) + 1
+forecast_horizon_for_saving_bulletin = int(data["linreg_predictor"][horizon_in_year].tail(1).values[0]) + 1
 forecast_year_for_saving_bulletin = last_date.year
 
 # Get information for bulletin headers into a dataframe that can be passed to
@@ -647,7 +705,7 @@ print(f"   dbg: current_decad: {current_decad}")
 _default_station_value = None
 if station_dict:
     try:
-        _default_station_value = station_dict[next(iter(station_dict))][0]
+        _default_station_value = "15189 - Аламедин  -  у.р.Чункурчак" #station_dict[next(iter(station_dict))][0]
     except Exception:
         _default_station_value = None
 station = pn.widgets.Select(
@@ -663,14 +721,14 @@ station = pn.widgets.Select(
 # Update the model_dict with the models we have results for for the selected
 # station
 print("DEBUG: forecast_dashboard.py: station.value: ", station.value)
-model_dict = processing.update_model_dict_date(model_dict_all, forecasts_all, station.value, date_picker.value)
+model_dict = processing.update_model_dict_date(model_dict_all, data["forecasts_all"], station.value, date_picker.value)
 print(f"DEBUG: forecast_dashboard.py: model_dict: {model_dict}")
 # Model dict can be empty if no forecasts at all are available for the selected station
 
 
 #@pn.depends(station, pentad_selector, watch=True)
 def get_best_models_for_station_and_pentad(station_value, pentad_value, decad_value):
-    return processing.get_best_models_for_station_and_pentad(forecasts_all, station_value, pentad_value, decad_value)
+    return processing.get_best_models_for_station_and_pentad(data["forecasts_all"], station_value, pentad_value, decad_value)
 current_model_pre_selection = get_best_models_for_station_and_pentad(station.value, pentad_selector.value, decad_selector.value)
 
 print(f"DEBUG: forecast_dashboard.py: model_dict: \n{model_dict}")
@@ -912,9 +970,9 @@ bulletin_tabulator = pn.widgets.Tabulator(
 
 
 # region update_functions
-@pn.depends(pentad_selector, decad_selector, watch=True)
+# @pn.depends(pentad_selector, decad_selector, watch=True)
 def update_site_attributes_with_hydrograph_statistics_for_selected_pentad(_,
-    sites=sites_list, df=hydrograph_pentad_all, pentad=pentad_selector.value, decad=decad_selector.value):
+    sites=sites_list, df=data["hydrograph_pentad_all"], pentad=pentad_selector.value, decad=decad_selector.value):
     """Update site attributes with hydrograph statistics for selected pentad"""
     #print(f"\n\n\nDEBUG update_site_attributes_with_hydrograph_statistics_for_selected_pentad: pentad: {pentad}")
     #print(f"column names: {df.columns}")
@@ -967,7 +1025,7 @@ def update_site_attributes_with_hydrograph_statistics_for_selected_pentad(_,
 
 
 @pn.depends(pentad_selector, watch=True)
-def update_site_attributes_with_linear_regression_predictor(_, sites=sites_list, df=linreg_predictor, pentad=pentad_selector.value, decad=decad_selector.value):
+def update_site_attributes_with_linear_regression_predictor(_, sites=sites_list, df=data["linreg_predictor"], pentad=pentad_selector.value, decad=decad_selector.value):
     """Update site attributes with linear regression predictor"""
     # Print pentad
     #print(f"\n\nDEBUGGING update_site_attributes_with_linear_regression_predictor: pentad: {pentad}")
@@ -999,10 +1057,10 @@ def update_site_attributes_with_linear_regression_predictor(_, sites=sites_list,
     #print(f"Updated sites with linear regression predictor from DataFrame.")
     return sites
 
-sites_list = update_site_attributes_with_hydrograph_statistics_for_selected_pentad(_=_, sites=sites_list, df=hydrograph_pentad_all, pentad=pentad_selector.value, decad=decad_selector.value)
+sites_list = update_site_attributes_with_hydrograph_statistics_for_selected_pentad(_=_, sites=sites_list, df=data["hydrograph_pentad_all"], pentad=pentad_selector.value, decad=decad_selector.value)
 
 #print(f"DEBUG: forecast_dashboard.py before update: linreg_predictor tail:\n{linreg_predictor.loc[linreg_predictor['code'] == '15149', ['date', 'code', 'predictor', 'pentad_in_year', 'pentad_in_month']].tail()}")
-sites_list = update_site_attributes_with_linear_regression_predictor(_, sites=sites_list, df=linreg_predictor, pentad=pentad_selector.value, decad=decad_selector.value)
+sites_list = update_site_attributes_with_linear_regression_predictor(_, sites=sites_list, df=data["linreg_predictor"], pentad=pentad_selector.value, decad=decad_selector.value)
 
 
 # Adding the watcher logic for disabling the "Add to Bulletin" button
@@ -1066,9 +1124,9 @@ def get_pane_alert(msg):
 def get_predictors_warning(station):
     predictors_warning.objects = []  # clear old content
     today_date = today.date()
-    filtered = hydrograph_day_all[
-        (hydrograph_day_all["station_labels"] == station.value) &
-        (hydrograph_day_all["date"] == pd.to_datetime(today_date))
+    filtered = data["hydrograph_day_all"][
+        (data["hydrograph_day_all"]["station_labels"] == station.value) &
+        (data["hydrograph_day_all"]["date"] == pd.to_datetime(today_date))
     ]
 
     if not filtered.empty:
@@ -1084,9 +1142,9 @@ def get_predictors_warning(station):
 
 def get_forecast_warning(station):
     forecast_warning.objects = []  # clear old content
-    filtered = forecasts_all[
-        (forecasts_all["station_labels"] == station.value) &
-        (forecasts_all["date"] == pd.to_datetime(date_picker.value))
+    filtered = data["forecasts_all"][
+        (data["forecasts_all"]["station_labels"] == station.value) &
+        (data["forecasts_all"]["date"] == pd.to_datetime(date_picker.value))
     ]
     if not filtered.empty:
         # filter rows where forecasted_discharge is NaN
@@ -1107,6 +1165,41 @@ def get_forecast_warning(station):
 
 @pn.depends(station, pentad_selector, decad_selector, watch=True)
 def update_model_select(station_value, selected_pentad, selected_decad):
+    # global hydrograph_day_all, hydrograph_pentad_all, rain, temp, snow_data, ml_forecast, linreg_predictor, forecasts_all, forecast_stats
+
+    # data["hydrograph_day_all"] = db.get_hydrograph_day_all(station)
+    # data["hydrograph_pentad_all"] = db.get_hydrograph_pentad_all(station)
+    # data["hydrograph_day_all"] = processing.add_labels_to_hydrograph(data["hydrograph_day_all"], all_stations)
+    # data["hydrograph_pentad_all"] = processing.add_labels_to_hydrograph(data["hydrograph_pentad_all"], all_stations)
+
+    # data["rain"] = db.get_rain(station)
+    # data["temp"] = db.get_temp(station)
+    # data["snow_data"] = db.get_snow_data(station)
+
+    # data["ml_forecast"] = db.get_ml_forecast(station)
+    # data["ml_forecast"] = processing.add_labels_to_hydrograph(data["ml_forecast"], all_stations)
+
+    # data["linreg_predictor"] = db.get_linreg_predictor(station)
+    # data["linreg_predictor"] = processing.add_labels_to_hydrograph(data["linreg_predictor"], all_stations)
+
+    # data["forecasts_all"] = db.get_forecasts_all(station)
+    # data["forecasts_all"] = processing.add_labels_to_hydrograph(data["forecasts_all"], all_stations)
+    # data["forecasts_all"] = processing.internationalize_forecast_model_names(_, data["forecasts_all"])
+
+    # data["forecast_stats"] = db.get_forecast_stats(station)
+    # data["forecast_stats"] = processing.internationalize_forecast_model_names(_, data["forecast_stats"])
+
+    # data["forecasts_all"] = data["forecasts_all"].merge(
+    #     data["forecast_stats"],
+    #     on=['code', horizon_in_year, 'model_short', 'model_long'],
+    #     how='left',
+    #     suffixes=('', '_stats'))
+
+    global data
+    data = db.get_data(station, all_stations)
+
+    update_site_attributes_with_hydrograph_statistics_for_selected_pentad(_=_, sites=sites_list, df=data["hydrograph_pentad_all"], pentad=pentad_selector.value, decad=decad_selector.value)
+
     get_predictors_warning(station)
     get_forecast_warning(station)
     print("\n=== Starting Model Select Update ===")
@@ -1115,14 +1208,14 @@ def update_model_select(station_value, selected_pentad, selected_decad):
     print(f"  Current value: {model_checkbox.value}")
 
     # First get the updated model dictionary
-    updated_model_dict = processing.update_model_dict_date(model_dict_all, forecasts_all, station_value, date_picker.value)
+    updated_model_dict = processing.update_model_dict_date(model_dict_all, data["forecasts_all"], station_value, date_picker.value)
 
     print("\nAfter update_model_dict:")
     print(f"  Updated model dict: {updated_model_dict}")
 
     # Get pre-selected models
     current_model_pre_selection = processing.get_best_models_for_station_and_pentad(
-        forecasts_all, station_value, selected_pentad, selected_decad
+        data["forecasts_all"], station_value, selected_pentad, selected_decad
     )
 
     print("\nAfter get_best_models:")
@@ -1525,13 +1618,13 @@ pentad_selector.param.watch(update_callback, 'value')
 # Initial setup: populate the main area with the initial selection
 #update_callback(None)  # This does not seem to be needed
 daily_hydrograph_plot = pn.pane.HoloViews(hv.Curve([]), sizing_mode="stretch_both")
-if rain is None: 
+if data["rain"] is None: 
     daily_rainfall_plot = pn.pane.Markdown(_("No precipitation data from SAPPHIRE Data Gateway available."))
     daily_temperature_plot = pn.pane.Markdown(_("No temperature data from SAPPHIRE Data Gatway available."))
 else: 
     daily_rainfall_plot = pn.pane.HoloViews(hv.Curve([]), sizing_mode="stretch_width") 
     daily_temperature_plot = pn.pane.HoloViews(hv.Curve([]), sizing_mode="stretch_width") 
-if snow_data is None:
+if data["snow_data"] is None:
     snow_plot_panes = pn.pane.Markdown(_("No snow data from SAPPHIRE Data Gateway available."))
 else:
     snow_plot_panes = {
@@ -1589,10 +1682,10 @@ def update_forecast_plots(event):
     pentad_forecast_plot.object = update_forecast_hydrograph(
         show_daily_data_widget.value,
         _,
-        hydrograph_day_all=hydrograph_day_all,
-        hydrograph_pentad_all=hydrograph_pentad_all,
-        linreg_predictor=linreg_predictor,
-        forecasts_all=forecasts_all,
+        hydrograph_day_all=data["hydrograph_day_all"],
+        hydrograph_pentad_all=data["hydrograph_pentad_all"],
+        linreg_predictor=data["linreg_predictor"],
+        forecasts_all=data["forecasts_all"],
         station=station.value,
         title_date=date_picker.value,
         model_selection=model_checkbox.value,
@@ -1600,12 +1693,12 @@ def update_forecast_plots(event):
         range_slider=manual_range.value,
         range_visibility=show_range_button.value,
         rram_forecast=rram_forecast,
-        ml_forecast=ml_forecast
+        ml_forecast=data["ml_forecast"]
     )
     temp = viz.plot_forecast_skill(
         _,
-        hydrograph_pentad_all,
-        forecasts_all,
+        data["hydrograph_pentad_all"],
+        data["forecasts_all"],
         station_widget=station.value,
         date_picker=date_picker.value,
         model_checkbox=model_checkbox.value,
@@ -1621,7 +1714,7 @@ def update_forecast_plots(event):
 update_forecast_button.on_click(update_forecast_plots)
 
 skill_table = pn.panel(
-    viz.create_skill_table(_, forecast_stats),
+    viz.create_skill_table(_, data["forecast_stats"]),
     sizing_mode='stretch_width')
 
 skill_metrics_download_filename, skill_metrics_download_button = skill_table.download_menu(
@@ -1638,7 +1731,7 @@ skill_metrics_download_filename, skill_metrics_download_button = skill_table.dow
 # @pn.depends(station, model_checkbox, allowable_range_selection, manual_range, watch=True)
 def update_forecast_tabulator(station, model_checkbox, allowable_range_selection, manual_range):
     viz.create_forecast_summary_tabulator(
-        _, forecasts_all, station, date_picker,
+        _, data["forecasts_all"], station, date_picker,
         model_checkbox, allowable_range_selection, manual_range,
         forecast_tabulator
     )
@@ -1652,8 +1745,8 @@ def update_visualizations():
     #print('---   ---plot_pentad_forecast_hydrograph_data---   ---')
     viz.plot_pentad_forecast_hydrograph_data(
         _,
-        hydrograph_pentad_all=hydrograph_pentad_all,
-        forecasts_all=forecasts_all,
+        hydrograph_pentad_all=data["hydrograph_pentad_all"],
+        forecasts_all=data["forecasts_all"],
         station=station.value,
         title_date=date_picker.value,
         model_selection=model_checkbox.value,
@@ -1666,9 +1759,9 @@ def update_visualizations():
     #print('---   ---plot_pentad_forecast_hydrograph_data_v2---   ---')
     viz.plot_pentad_forecast_hydrograph_data_v2(
         _,
-        hydrograph_day_all=hydrograph_day_all,
-        linreg_predictor=linreg_predictor,
-        forecasts_all=forecasts_all,
+        hydrograph_day_all=data["hydrograph_day_all"],
+        linreg_predictor=data["linreg_predictor"],
+        forecasts_all=data["forecasts_all"],
         station=station.value,
         title_date=date_picker.value,
         model_selection=model_checkbox.value,
@@ -1676,7 +1769,7 @@ def update_visualizations():
         range_slider=manual_range.value,
         range_visibility=show_range_button.value,
         rram_forecast=rram_forecast,
-        ml_forecast=ml_forecast
+        ml_forecast=data["ml_forecast"]
     )
     #print('---   ---done with plot_pentad_forecast_hydrograph_data_v2---   ---')
 
@@ -1988,19 +2081,19 @@ def update_active_tab(event):
     active_tab = dashboard_content.active  # 0: Predictors tab, 1: Forecast tab
     if active_tab == 0 and latest_predictors != station.value:
         latest_predictors = station.value
-        daily_hydrograph_plot.object = viz.plot_daily_hydrograph_data(_, hydrograph_day_all, linreg_predictor, station.value, date_picker.value)
+        daily_hydrograph_plot.object = viz.plot_daily_hydrograph_data(_, data["hydrograph_day_all"], data["linreg_predictor"], station.value, date_picker.value)
         if display_weather_data == True: 
-            daily_rainfall_plot.object = viz.plot_daily_rainfall_data(_, rain, station.value, date_picker.value, linreg_predictor)
-            daily_temperature_plot.object = viz.plot_daily_temperature_data(_, temp, station.value, date_picker.value, linreg_predictor)
+            daily_rainfall_plot.object = viz.plot_daily_rainfall_data(_, data["rain"], station.value, date_picker.value, data["linreg_predictor"])
+            daily_temperature_plot.object = viz.plot_daily_temperature_data(_, data["temp"], station.value, date_picker.value, data["linreg_predictor"])
         if display_snow_data == True:
-            for var in snow_data.keys():
-                if snow_data[var] is not None:
-                    snow_plot_panes[var].object = viz.plot_daily_snow_data(_, snow_data, var, station.value, date_picker.value, linreg_predictor)
+            for var in data["snow_data"].keys():
+                if data["snow_data"][var] is not None:
+                    snow_plot_panes[var].object = viz.plot_daily_snow_data(_, data["snow_data"], var, station.value, date_picker.value, data["linreg_predictor"])
                 else: 
                     snow_plot_panes[var].object = pn.pane.Markdown(_("No snow data from SAPPHIRE Data Gateway available."))
     elif active_tab == 1 and latest_forecast != station.value:
         latest_forecast = station.value
-        plot = viz.select_and_plot_data(_, linreg_predictor, station.value, pentad_selector.value, decad_selector.value, SAVE_DIRECTORY)
+        plot = viz.select_and_plot_data(_, data["linreg_predictor"], station.value, pentad_selector.value, decad_selector.value, SAVE_DIRECTORY)
         forecast_data_and_plot[:] = plot.objects
         update_forecast_plots(None)
 
