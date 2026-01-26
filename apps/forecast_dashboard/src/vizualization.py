@@ -13,7 +13,7 @@ from calendar import month_abbr
 import holoviews as hv
 from holoviews import streams
 import panel as pn
-from bokeh.models import Label, Title, HoverTool, FixedTicker, CustomJSTickFormatter, LinearAxis, \
+from bokeh.models import Label, Title, HoverTool, FixedTicker, FuncTickFormatter, CustomJSTickFormatter, LinearAxis, \
     NumberFormatter, DateFormatter, CustomJS
 from bokeh.models.formatters import DatetimeTickFormatter
 from bokeh.models.widgets.tables import CheckboxEditor, BooleanFormatter
@@ -324,7 +324,7 @@ def add_custom_xticklabels_pentad(_, plot, element):
                 decade_number = i * 3 + j + 1
                 labels[decade_number] = f"{month_label}, {j + 1}" if j == 0 else f"{j + 1}"
 
-    # Create a FixedTicker and a CustomJSTickFormatter with the specified ticks and labels
+    # Create a FixedTicker and a FuncTickFormatter with the specified ticks and labels
     ticker = FixedTicker(ticks=ticks)
     formatter = CustomJSTickFormatter(code="""
         var labels = %s;
@@ -1133,11 +1133,7 @@ def plot_current_runoff_forecast_range_date_format(
     # Convert jitter width to timedelta
     jitter_timedelta = pd.to_timedelta(np.linspace(-jitter_width, jitter_width, len(data)), unit='h')
 
-    # Convert date_col to datetime if not already
-    data.loc[:, date_col] = pd.to_datetime(data[date_col])
-
     # Apply jitter to the datetime column
-    data[date_col] = pd.to_datetime(data[date_col], errors="coerce")
     data.loc[:, date_col] = data[date_col] + jitter_timedelta
 
     # Create the overlay
@@ -1283,10 +1279,6 @@ def plot_current_runoff_forecast_range_date_format_v2(
 
         lower_bound = fl.round_discharge(model_data[min_col].iloc[-1])
         upper_bound = fl.round_discharge(model_data[max_col].iloc[-1])
-        if lower_bound is None:
-            lower_bound = "N/A"
-        if upper_bound is None:
-            upper_bound = "N/A"
         range_legend_entry = model + " " + _("range") + ": " + lower_bound + "-" + upper_bound + " " + unit_string
         # print(f"Debug: model_data\n{model_data}")
         # print("MODEL: ", model)
@@ -1674,9 +1666,7 @@ def create_date_picker_with_pentad_text(date_picker, _):
 
 # region predictor_tab
 def plot_daily_hydrograph_data(_, hydrograph_day_all, linreg_predictor, station, title_date):
-    print(f"\n\nDEBUG: plot_daily_hydrograph_data")
-    print(f"station: {station}")
-    print(f"hydrograph_day_all head:\n{hydrograph_day_all.head()}")
+    # print(f"\n\nDEBUG: plot_daily_hydrograph_data")
     # print(f"title_date: {title_date}")
 
     # Custom hover tool tip for the daily hydrograph
@@ -1701,13 +1691,9 @@ def plot_daily_hydrograph_data(_, hydrograph_day_all, linreg_predictor, station,
     # filter hydrograph_day_all & linreg_predictor by station
     linreg_predictor = processing.add_predictor_dates(linreg_predictor, station, title_date)
 
-    print("hydrograph_day_all head before data assign: ", hydrograph_day_all.head())
-    print("station: ", station)
-    print("hydrgraph_day_all station_labels unique values: ", hydrograph_day_all['station_labels'].unique())
-
     data = hydrograph_day_all[hydrograph_day_all['station_labels'] == station].copy()
-    print("\n\n\ncolumns of data: ", data.columns)
-    print("head and tail of data: \n", data.head(), "\n", data.tail())
+    # print("\n\n\ncolumns of data: ", data.columns)
+    # print("head and tail of data: \n", data.head(), "\n", data.tail())
     current_year = int(data['date'].dt.year.max())
     last_year = current_year - 1
 
@@ -2054,8 +2040,8 @@ def plot_daily_temperature_data(_, daily_rainfall, station, date_picker,
 
     # Plot the daily rainfall data using holoviews
     title_text = f"{_('Daily average temperature for basin of')} {station} {_('on')} {date_picker.strftime('%Y-%m-%d')}"
-    current_year_text = f"{_('Current year')}, {current_period}: {predictor_rainfall['T'].mean()} °C"
-    forecast_text = f"{_('Forecast')}, {forecast_period}: {forecasts['T'].mean()} °C"
+    current_year_text = f"{_('Current year')}, {current_period}: {predictor_rainfall['T'].mean().round()} °C"
+    forecast_text = f"{_('Forecast')}, {forecast_period}: {forecasts['T'].mean().round()} °C"
 
     hvspan_predictor = hv.VSpan(
         linreg_predictor['predictor_start_date'].values[0],
@@ -2183,21 +2169,19 @@ def plot_daily_snow_data(_, snow_data, variable, station, date_picker, linreg_pr
     # Get current year data
     current_year = station_data[station_data['year'] == date_picker.year].copy()
     current_year = current_year.sort_values('date')
-    norm_snow = current_year[['doy', 'norm', 'date']].copy()
-    norm_snow.rename(columns={"norm": variable}, inplace=True)
 
     # Get the forecasts for the selected date
     forecasts = current_year[current_year['date'] >= date_picker].copy()
 
     # Calculate norm: mean by day-of-year, excluding current year
     historical_data = station_data[station_data['year'] != date_picker.year]
-    # norm_snow = historical_data.groupby('doy')[variable].mean().reset_index()
+    norm_snow = historical_data.groupby('doy')[variable].mean().reset_index()
     
     # Map doy back to dates in the current year for plotting
     current_year_value = date_picker.year
-    # norm_snow['date'] = norm_snow['doy'].apply(
-    #     lambda x: pd.Timestamp(current_year_value, 1, 1) + pd.Timedelta(days=x - 1))
-    # norm_snow = norm_snow.sort_values('date')
+    norm_snow['date'] = norm_snow['doy'].apply(
+        lambda x: pd.Timestamp(current_year_value, 1, 1) + pd.Timedelta(days=x - 1))
+    norm_snow = norm_snow.sort_values('date')
 
     # Get predictor period data
     linreg_predictor = processing.add_predictor_dates(linreg_predictor, station, date_picker)

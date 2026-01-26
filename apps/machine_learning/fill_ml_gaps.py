@@ -43,13 +43,6 @@ logger.addHandler(file_handler)
 import warnings
 warnings.filterwarnings("ignore")
 
-# SAPPHIRE API imports
-from scr.utils_ml_forecast import (
-    _write_ml_forecast_to_api,
-    _check_ml_forecast_consistency,
-    SAPPHIRE_API_AVAILABLE
-)
-
 
 # Local libraries, installed with pip install -e ./iEasyHydroForecast
 # Get the absolute path of the directory containing the current script
@@ -261,7 +254,6 @@ def fill_ml_gaps():
 
         #now iterate and fill the missing forecasts,
         #this complicated way is needed to ensure that the original forecast are not overwrtitten by the hindcast
-        all_filled_forecasts = []  # Collect all gap-filled forecasts for API
         for code, missing_forecasts in missing_forecasts_dict.items():
             mask_dates = pd.Series(False, index=hindcast.index)
             for missing_forecast in missing_forecasts:
@@ -273,8 +265,6 @@ def fill_ml_gaps():
 
             # append the missing forecasts to the original forecast
             forecast = pd.concat([forecast, hindcast_missing], axis=0)
-            # Also collect for API write
-            all_filled_forecasts.append(hindcast_missing)
 
 
         forecast['forecast_date'] = pd.to_datetime(forecast['forecast_date'])
@@ -283,16 +273,6 @@ def fill_ml_gaps():
         # save the forecast
         forecast.to_csv(os.path.join(PATH_FORECAST, prefix + '_' +  MODEL_TO_USE + '_forecast.csv'), index=False)
 
-        # Write gap-filled forecasts to SAPPHIRE API (maintenance mode)
-        if SAPPHIRE_API_AVAILABLE and len(all_filled_forecasts) > 0:
-            try:
-                filled_df = pd.concat(all_filled_forecasts, axis=0)
-                horizon_type = "pentad" if prefix == "pentad" else "decade"
-                _write_ml_forecast_to_api(filled_df, horizon_type, MODEL_TO_USE)
-                logger.info(f"Wrote {len(filled_df)} gap-filled forecasts to API")
-            except Exception as e:
-                logger.error(f"Failed to write gap-filled forecasts to API: {e}")
-                # Don't fail the whole process - CSV was already saved
 
         logger.info('Missing forecasts filled in')
 
