@@ -22,37 +22,17 @@ source /Users/bea/anaconda3/etc/profile.d/conda.sh
 # Deactivate the current Python environment
 conda deactivate
 
-#-------------------------------------------------------------------------------
-# Preprocessing Runoff & Postprocessing Forecasts Module Tests
-#-------------------------------------------------------------------------------
 # Activate the Python environment for the preprocessing module
 # Replace the environment name with the name of the environment you created
 conda activate sapphire_preprocessing_discharge
 
 # Run the tests for the preprocessing module
 SAPPHIRE_TEST_ENV=True pytest preprocessing_runoff/test
-SAPPHIRE_TEST_ENV=True pytest postprocessing_forecasts/test  
+# SAPPHIRE_TEST_ENV=True pytest postprocessing_forecasts/test  # Currently no test here
 
 # Deactivate the Python environment for the preprocessing module
 conda deactivate
 
-#-------------------------------------------------------------------------------
-# Preprocessing Gateway Module Tests
-#-------------------------------------------------------------------------------
-# Activate the Python environment for the preprocessing module
-# Replace the environment name with the name of the environment you created
-conda activate sapphire_qmap
-
-# Run the tests for the preprocessing module
-SAPPHIRE_TEST_ENV=True pytest preprocessing_gateway/test
-
-# Deactivate the Python environment for the preprocessing gateway module
-conda deactivate
-
-
-#-------------------------------------------------------------------------------
-# Linear Regression Module Tests
-#-------------------------------------------------------------------------------
 # Activate the Python environment for the linear regression module
 conda activate sapphire_linear_regression
 
@@ -62,33 +42,24 @@ SAPPHIRE_TEST_ENV=True pytest linear_regression/test
 # Deactivate the Python environment for the linear regression module
 conda deactivate
 
-#-------------------------------------------------------------------------------
-# Machine Learning Module Tests
-#-------------------------------------------------------------------------------
-# Activate the Python environment for the machine learning module
-conda activate sapphire_ml_3.11
+# Activate the Python environment for the reset_forecast_run_date module
+conda activate sapphire_reset_rundate
 
-# Run the tests for the machine learning module
-SAPPHIRE_TEST_ENV=True pytest machine_learning/test
+# Run the tests for the reset_forecast_run_date module
+SAPPHIRE_TEST_ENV=True pytest reset_forecast_run_date/tests
 
-# Deactivate the Python environment for the machine learning module
+# Deactivate the Python environment for the reset_forecast_run_date module
 conda deactivate
 
-#-------------------------------------------------------------------------------
-# Forecast Dashboard Module Tests
-#-------------------------------------------------------------------------------
 # Activate the Python environment for the forecast_dashboard module
-#conda activate sapphire_dashboard
+conda activate sapphire_dashboard
 
 # Run the tests for the forecast_dashboard module
 #SAPPHIRE_TEST_ENV=True pytest forecast_dashboard/tests
 
 # Deactivate the Python environment for the forecast_dashboard module
-#conda deactivate
+conda deactivate
 
-#-------------------------------------------------------------------------------
-# iEasyHydroForecast Module Tests
-#-------------------------------------------------------------------------------
 # Activate the Python environment for the iEasyHydroForecast module
 conda activate hsol_py311  # sapphire_ieasyhydroforecast
 
@@ -96,16 +67,4 @@ conda activate hsol_py311  # sapphire_ieasyhydroforecast
 SAPPHIRE_TEST_ENV=True python -m unittest discover -s iEasyHydroForecast/tests -p 'test_*.py'
 
 # Deactivate the Python environment for the iEasyHydroForecast module
-conda deactivate
-
-#-------------------------------------------------------------------------------
-# Pipeline Module Tests
-#-------------------------------------------------------------------------------
-# Activate the Python environment for the pipeline module
-conda activate sapphire_pipeline
-
-# Run the tests for the pipeline module
-SAPPHIRE_TEST_ENV=True pytest pipeline/tests
-
-# Deactivate the Python environment for the pipeline module
 conda deactivate

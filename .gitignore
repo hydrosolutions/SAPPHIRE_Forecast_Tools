@@ -113,7 +113,6 @@ celerybeat.pid
 
 # Environments
 .venv
-.env
 env/
 venv/
 ENV/
@@ -149,7 +148,7 @@ cython_debug/
 #  be found at https://github.com/github/gitignore/blob/main/Global/JetBrains.gitignore
 #  and can be added to the global gitignore or merged into this file.  For a more nuclear
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
-.idea/
+#.idea/
 iEasyHydroForecast/.DS_Store
 .DS_Store
 apps/configuration_dashboard/.Rhistory
@@ -223,6 +222,5 @@ apps/forecast_dashboard/user_activity.csv
 /apps/machine_learning_monthly/logs
 temp_luigi.cfg
 
-# local files
-/apps/logs
-/.serena
+# Serena MCP server local files
+.serena/

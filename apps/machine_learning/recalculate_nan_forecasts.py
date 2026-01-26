@@ -41,12 +41,7 @@ logger.addHandler(file_handler)
 import warnings
 warnings.filterwarnings("ignore")
 
-# SAPPHIRE API imports
-from scr.utils_ml_forecast import (
-    _write_ml_forecast_to_api,
-    _check_ml_forecast_consistency,
-    SAPPHIRE_API_AVAILABLE
-)
+
 
 
 # Local libraries, installed with pip install -e ./iEasyHydroForecast
@@ -302,17 +297,6 @@ def recalculate_nan_forecasts():
     forecast = forecast.sort_values(by='forecast_date')
     # save the forecast
     forecast.to_csv(os.path.join(PATH_FORECAST, prefix + '_' +  MODEL_TO_USE + '_forecast.csv'), index=False)
-
-    # Write recalculated forecasts to SAPPHIRE API (maintenance mode)
-    # Only write the hindcast data that replaced NaN values
-    if SAPPHIRE_API_AVAILABLE and len(hindcast) > 0:
-        try:
-            horizon_type = "pentad" if prefix == "pentad" else "decade"
-            _write_ml_forecast_to_api(hindcast, horizon_type, MODEL_TO_USE)
-            logger.info(f"Wrote {len(hindcast)} recalculated forecasts to API")
-        except Exception as e:
-            logger.error(f"Failed to write recalculated forecasts to API: {e}")
-            # Don't fail the whole process - CSV was already saved
 
     logger.info('Nan Values are replaced. Exiting recalculate_nan_forecasts.py\n')
     logger.info('--------------------------------------------------------------------')

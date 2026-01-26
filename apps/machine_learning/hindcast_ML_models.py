@@ -114,7 +114,6 @@ sys.path.append(forecast_dir)
 
 # Import the setup_library module from the iEasyHydroForecast package
 import setup_library as sl
-import forecast_library as fl
 
 
 # --------------------------------------------------------------------
@@ -358,11 +357,9 @@ def main():
         scaler_static.index = scaler_static['Unnamed: 0']
 
 
-    # Read observed discharge data from API (default) or CSV fallback
-    # The function uses SAPPHIRE_API_ENABLED env var to determine data source
-    observed_discharge = fl.read_daily_discharge_data()
+    #PATH TO OBSERVED DISCHARGE
+    observed_discharge = pd.read_csv(PATH_TO_PAST_DISCHARGE)
 
-    # Note: read_daily_discharge_data returns 'code' as string, convert to int
     observed_discharge['code'] = observed_discharge['code'].astype(int)
     era5_data_transformed['code'] = era5_data_transformed['code'].astype(int)
 

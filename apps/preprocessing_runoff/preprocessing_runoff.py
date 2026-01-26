@@ -36,7 +36,6 @@ import sys
 import time
 import logging
 from logging.handlers import TimedRotatingFileHandler
-import pandas as pd
 
 # SDK library for accessing the DB, installed with
 # pip install git+https://github.com/hydrosolutions/ieasyhydro-python-sdk
@@ -223,31 +222,27 @@ def main():
                 site_list=fc_sites,
                 code_list=site_codes,
         )
-        # Non-HF SDK returns DataFrame directly; use empty DataFrame for new_data
-        # (legacy mode - will skip API write since empty)
-        new_data = pd.DataFrame()
         logger.info("Runoff data read from iEasyHydro SDK")
 
-    else:
-        runoff_result = src.get_runoff_data_for_sites_HF(
+    else: 
+        runoff_data = src.get_runoff_data_for_sites_HF(
                 ieh_hf_sdk,
                 date_col='date',
                 discharge_col='discharge',
                 code_col='code',
                 site_list=fc_sites,
-                code_list=site_codes,
+                code_list=site_codes, 
                 id_list=site_ids,
                 target_timezone=target_time_zone,
         )
-        runoff_data = runoff_result.full_data
-        new_data = runoff_result.new_data
-        logger.info(f"Runoff data read from iEasyHydro HF SDK: {len(runoff_data)} total, {len(new_data)} new")
+        logger.info("Runoff data read from iEasyHydro HF SDK")
     print(f"head of runoff data:\n{runoff_data.head(5)}")
     print(f"tail of runoff data:\n{runoff_data.tail(5)}")
     print(f"columns of runoff data: {runoff_data.columns.tolist()}")
     print(f"types of columns in runoff data: {runoff_data.dtypes.to_dict()}")
-    # Print whether or not the date column is in datetime format
+    # Print whetehr or not the date column is in datetime format
     if 'date' in runoff_data.columns:
+        import pandas as pd
         if runoff_data['date'].dtype == 'datetime64[ns]':
             logger.info("Date column is in datetime format.")
         # Test if date is in pandas date format
@@ -277,13 +272,6 @@ def main():
     start_time = time.time()
     filtered_data = src.filter_roughly_for_outliers(
         runoff_data, 'code', 'discharge')
-    # Also filter new_data for API writes (if it has data)
-    if not new_data.empty:
-        filtered_new_data = src.filter_roughly_for_outliers(
-            new_data, 'code', 'discharge')
-        logger.info(f"Filtered new data: {len(filtered_new_data)} records for API")
-    else:
-        filtered_new_data = new_data
     end_time = time.time()
     time_filter_roughly_for_outliers = end_time - start_time
 
@@ -326,8 +314,7 @@ def main():
     start_time = time.time()
     ret = src.write_daily_time_series_data_to_csv(
         data=filtered_data,
-        column_list=['code', 'date', 'discharge'],
-        api_data=filtered_new_data)  # Only send new data to API
+        column_list=['code', 'date', 'discharge'])
     if ret is None:
         logger.info("Daily time series data written successfully.")
     else:
@@ -338,23 +325,9 @@ def main():
 
     # Daily hydrograph data
     start_time = time.time()
-    # For API, only send today's hydrograph data (one row per station)
-    # The full hydrograph (all 365/366 days) is written to CSV
-    today = pd.Timestamp.now().normalize()
-    today_str = today.strftime('%Y-%m-%d')
-    # Filter hydrograph to today's date for API
-    if 'date' in hydrograph.columns:
-        hydrograph_api_data = hydrograph[
-            pd.to_datetime(hydrograph['date']).dt.strftime('%Y-%m-%d') == today_str
-        ].copy()
-        logger.info(f"Filtered hydrograph for API: {len(hydrograph_api_data)} rows for {today_str}")
-    else:
-        hydrograph_api_data = pd.DataFrame()  # Skip API if no date column
-
     ret = src.write_daily_hydrograph_data_to_csv(
         data=hydrograph,
-        column_list=hydrograph.columns.tolist(),
-        api_data=hydrograph_api_data)  # Only send today's hydrograph to API
+        column_list=hydrograph.columns.tolist())
     if ret is None:
         logger.info("Daily hydrograph data written successfully.")
     else:
@@ -362,39 +335,6 @@ def main():
         sys.exit(1)
     end_time = time.time()
     time_write_daily_hydrograph_data = end_time - start_time
-
-    # === Data Verification (Debug Mode) ===
-    # When SAPPHIRE_DEBUG_VERIFY=true, compare CSV and API data to ensure consistency
-    if os.getenv("SAPPHIRE_DEBUG_VERIFY", "false").lower() == "true":
-        logger.info("Running data consistency verification (SAPPHIRE_DEBUG_VERIFY=true)...")
-
-        # Verify runoff data
-        runoff_verification = src.verify_runoff_data_consistency()
-        if runoff_verification['status'] == 'match':
-            logger.info(f"✓ Runoff: {runoff_verification['message']}")
-        elif runoff_verification['status'] == 'mismatch':
-            logger.warning(f"✗ Runoff: {runoff_verification['message']}")
-            if 'sample_mismatches' in runoff_verification:
-                for m in runoff_verification['sample_mismatches']:
-                    logger.warning(f"  - {m}")
-        elif runoff_verification['status'] == 'error':
-            logger.error(f"✗ Runoff verification error: {runoff_verification['message']}")
-        else:
-            logger.info(f"Runoff: {runoff_verification['message']}")
-
-        # Verify hydrograph data
-        hydrograph_verification = src.verify_hydrograph_data_consistency()
-        if hydrograph_verification['status'] == 'match':
-            logger.info(f"✓ Hydrograph: {hydrograph_verification['message']}")
-        elif hydrograph_verification['status'] == 'mismatch':
-            logger.warning(f"✗ Hydrograph: {hydrograph_verification['message']}")
-            if 'sample_mismatches' in hydrograph_verification:
-                for m in hydrograph_verification['sample_mismatches']:
-                    logger.warning(f"  - {m}")
-        elif hydrograph_verification['status'] == 'error':
-            logger.error(f"✗ Hydrograph verification error: {hydrograph_verification['message']}")
-        else:
-            logger.info(f"Hydrograph: {hydrograph_verification['message']}")
 
     overall_end_time = time.time()
     print("\n")

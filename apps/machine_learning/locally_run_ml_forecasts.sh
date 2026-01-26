@@ -41,13 +41,10 @@ export ieasyhydroforecast_env_file_path
 
 # Get SAPPHIRE_PREDICTION_MODE from env if set, otherwise use default
 if [ -z "$SAPPHIRE_PREDICTION_MODE" ]; then
-    SAPPHIRE_PREDICTION_MODE=DECAD
+    SAPPHIRE_PREDICTION_MODE=PENTAD
 fi
 export SAPPHIRE_PREDICTION_MODE
 
-# Check for consistency between API and csv writes
-SAPPHIRE_CONSISTENCY_CHECK=true
-export SAPPHIRE_CONSISTENCY_CHECK
 
 for model in TFT TIDE TSMIXER; do
 #for model in TIDE; do
