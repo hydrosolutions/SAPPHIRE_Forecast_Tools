@@ -383,20 +383,9 @@ class PreprocessingRunoff(DockerTaskBase):
                 attempt_number=attempt
             )
         )
-        
-        # Write marker file only if successful
-        if status == "Success":
-            # Create the marker file that dependent tasks will check for
-            today = datetime.date.today()
-            marker_file = get_marker_filepath('preprocessing_runoff', date=today)
-            print(f"Writing success marker file to: {marker_file}")
-            with open(marker_file, 'w') as f:
-                f.write(f"PreprocessingRunoff completed successfully at {datetime.datetime.now()}")
-            # Verify file was created
-            if os.path.exists(marker_file):
-                print(f"✅ Marker file created successfully at {marker_file}")
-            else:
-                print(f"❌ Failed to create marker file at {marker_file}")
+        # Note: Marker file writing removed - preprocessing_runoff now runs every time
+        # to ensure fresh data (fast enough after py312 migration)
+
 
 class PreprocessingGatewayQuantileMapping(DockerTaskBase):
     # Define the logging output of the task.
@@ -500,18 +489,8 @@ class LinearRegression(DockerTaskBase):
     docker_logs_file_path = f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/docker_logs/log_linreg_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
 
     def requires(self):
-        # Check if there's a marker file for today's preprocessing
-        today = datetime.date.today()
-        marker_file = get_marker_filepath('preprocessing_runoff', date=today)
-        
-        # If the marker exists, use the external task, otherwise use the regular task
-        print(f"Checking for preprocessing marker file: {marker_file}")
-        if os.path.exists(marker_file):
-            print(f"Using external preprocessing task for {today}")
-            return ExternalPreprocessingRunoff()
-        else:
-            print(f"No preprocessing marker found for {today}, running preprocessing task")
-            return PreprocessingRunoff()
+        # Always run preprocessing_runoff - it's fast enough now and ensures fresh data
+        return PreprocessingRunoff()
 
     def output(self):
         return luigi.LocalTarget(f'/app/log_linreg.txt')
@@ -545,16 +524,8 @@ class ConceptualModel(DockerTaskBase):
     docker_logs_file_path = f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/docker_logs/log_conceptmod_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
 
     def requires(self):
-        # Check if there's a marker file for today's preprocessing
-        today = datetime.date.today()
-        marker_file_runoff = get_marker_filepath('preprocessing_runoff', date=today)
-        marker_file_gateway = get_marker_filepath('preprocessing_gateway', date=today)
-    
-        # If the marker exists, use the external task, otherwise use the regular task
-        if os.path.exists(marker_file_runoff) and os.path.exists(marker_file_gateway):
-            return [ExternalPreprocessingRunoff(), ExternalPreprocessingGateway()]
-        else:
-            return [PreprocessingRunoff(), PreprocessingGatewayQuantileMapping()]
+        # Always run preprocessing - fast enough now and ensures fresh data
+        return [PreprocessingRunoff(), PreprocessingGatewayQuantileMapping()]
 
     def output(self):
         return luigi.LocalTarget(f'/app/log_conceptmod.txt')
@@ -609,16 +580,8 @@ class RunMLModel(DockerTaskBase):
         return f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/docker_logs/log_ml_{self.model_type}_{self.prediction_mode}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
 
     def requires(self):
-        # Check if there's a marker file for today's preprocessing
-        today = datetime.date.today()
-        marker_file_runoff = get_marker_filepath('preprocessing_runoff', date=today)
-        marker_file_gateway = get_marker_filepath('preprocessing_gateway', date=today)
-    
-        # If the marker exists, use the external task, otherwise use the regular task
-        if os.path.exists(marker_file_runoff) and os.path.exists(marker_file_gateway):
-            return [ExternalPreprocessingRunoff(), ExternalPreprocessingGateway()]
-        else:
-            return [PreprocessingRunoff(), PreprocessingGatewayQuantileMapping()]
+        # Always run preprocessing - fast enough now and ensures fresh data
+        return [PreprocessingRunoff(), PreprocessingGatewayQuantileMapping()]
 
     def output(self):
         return luigi.LocalTarget(f'/app/log_ml_{self.model_type}_{self.prediction_mode}.txt')
@@ -657,21 +620,9 @@ class RunAllMLModels(luigi.WrapperTask):
     prediction_mode = luigi.Parameter(default='ALL')
 
     def requires(self):
-        # Check for marker files first
-        today = datetime.date.today()
-        marker_file_runoff = get_marker_filepath('preprocessing_runoff', date=today)
-        marker_file_gateway = get_marker_filepath('preprocessing_gateway', date=today)
-    
-        # Yield appropriate preprocessing tasks
-        if os.path.exists(marker_file_runoff):
-            yield ExternalPreprocessingRunoff()
-        else:
-            yield PreprocessingRunoff()
-        
-        if os.path.exists(marker_file_gateway):
-            yield ExternalPreprocessingGateway()
-        else:
-            yield PreprocessingGatewayQuantileMapping()
+        # Always run preprocessing - fast enough now and ensures fresh data
+        yield PreprocessingRunoff()
+        yield PreprocessingGatewayQuantileMapping()
 
         # Get the list of available ML models from .env file
         models = env.get('ieasyhydroforecast_available_ML_models').split(',')

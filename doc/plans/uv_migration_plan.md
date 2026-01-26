@@ -1796,5 +1796,120 @@ After successful server testing:
 
 ---
 
+---
+
+## Server Testing Observations (2026-01-26)
+
+### Summary
+
+Testing py312 images via operational cronjobs on the production server.
+
+**Verified Working:**
+- No errors in `~/logs` or `intermediate_data/docker_logs`
+- `hydrograph_decad.csv` - expected output
+- `hydrograph_day.csv` - expected output
+- `forecast_*_linreg_latest.csv` - all good
+
+**Issue Identified: Patchy ML Forecasts**
+
+ML forecasts in `combined_forecasts_pentad_latest.csv` are intermittent. Example for station 16059:
+
+| Date | Pentad | LR | TFT | TiDE | TSMixer | NE | Exit Code | Status |
+|------|--------|----|----|------|---------|----|----|--------|
+| 2026-01-25 | 6 | ✅ | ❌ | ❌ | ❌ | ❌ | 3 | **FAILED** |
+| 2026-01-20 | 5 | ✅ | ✅ | ✅ | ✅ | ✅ | 0 | OK |
+| 2026-01-15 | 4 | ✅ | ✅ | ✅ | ✅ | ✅ | 4 | OK |
+| 2026-01-10 | 3 | ✅ | ✅ | ✅ | ✅ | ✅ | 4 | OK |
+| 2026-01-05 | 2 | ✅ | ❌ | ❌ | ❌ | ❌ | 3 | **FAILED** |
+
+**Pattern:** Exit code 3 correlates with missing ML forecasts. Linear regression (LR) works consistently.
+
+### Issues to Investigate
+
+| ID | Issue | Priority | Status |
+|----|-------|----------|--------|
+| OBS-001 | ML forecasts missing - Luigi skips preprocessing_runoff | High | **FIXED** - removed marker file check |
+
+### OBS-001: ML Forecasts Missing Due to Insufficient Input Data
+
+**Root Cause Identified:** ML models fail because discharge input data has too many missing values.
+
+**Evidence from Server (2026-01-26):**
+
+```bash
+# CSV header confirms structure:
+head -1 combined_forecasts_pentad_latest.csv
+# date,code,predictor,pentad_in_month,pentad_in_year,slope,intercept,forecasted_discharge,
+# rsquared,model_long,model_short,Q5,Q10,...,Q95,flag,sd_Qsim,discharge
+
+# Raw TiDE output shows flag=1 and empty quantiles:
+cat predictions/TIDE/pentad_TIDE_forecast_latest.csv | grep 16059
+# ,,,,,,,,,,,,,,,,,,,2026-01-27,16059,2026-01-26 00:00:00,1
+#                                                        ↑ flag=1
+
+# Same pattern for TFT and TSMIXER - all show flag=1
+```
+
+**What flag=1 means** (from `make_forecast.py:prepare_forecast_data()`):
+- Input discharge data has too many missing days (`missing_values['exceeds_threshold']`)
+- OR too many missing days at the end of input (`nans_at_end >= threshold_missing_days_end`)
+
+Thresholds are set via environment variables:
+- `ieasyhydroforecast_THRESHOLD_MISSING_DAYS_TFT` (etc.)
+- `ieasyhydroforecast_THRESHOLD_MISSING_DAYS_END`
+
+**Note on flag values 3.0/4.0 in combined_forecasts:**
+The `read_daily_probabilistic_ml_forecasts_pentad()` function averages ALL numeric columns
+including `flag` when grouping 5-6 daily forecasts into one pentad value. Mixed success/failure
+days produce non-integer averages.
+
+**Upstream Issue:** The ML module isn't receiving enough recent discharge data.
+
+**Server Investigation (2026-01-26):**
+- Station 16059 last data in `hydrograph_day.csv`: January 22, 2026 (4 days stale)
+- No errors in preprunoff maintenance logs
+- Running `daily_preprunoff_maintenance.sh` **manually** successfully fetched the missing data
+- Data IS available in iEasyHydro HF database
+
+**Root Cause:** Luigi pipeline skipping preprocessing_runoff task
+
+The `run_pentadal_forecasts.sh` DOES include preprocessing_runoff as a Luigi dependency, but Luigi
+appears to skip it (likely due to existing marker files from previous runs).
+
+**Cronjob Schedule Analysis:**
+```
+03:00 UTC - Gateway Preprocessing (weather)
+04:00 UTC - Pentadal Forecasts (includes preprocessing_runoff via Luigi)
+05:00 UTC - Decadal Forecasts
+19:04 UTC - preprunoff_maintenance (standalone, works correctly)
+20:00 UTC - ML maintenance
+20:34 UTC - Linreg maintenance
+```
+
+**The discrepancy:**
+- `daily_preprunoff_maintenance.sh` (standalone) → fetches data correctly
+- `preprocessing_runoff` in Luigi pipeline → skipped or not fetching
+
+**Likely cause:** Luigi marker files indicate task is "complete" so Luigi skips re-running it,
+even though new data is available in iEasyHydro HF. This is a known issue (see P-001 in module_issues.md).
+
+**Fix Applied (2026-01-26):**
+
+Removed marker file check for `preprocessing_runoff` from pipeline. Changes in `apps/pipeline/pipeline_docker.py`:
+
+1. `LinearRegression.requires()` - now always returns `PreprocessingRunoff()`
+2. `ConceptualModel.requires()` - now always returns `[PreprocessingRunoff(), PreprocessingGatewayQuantileMapping()]`
+3. `RunMLModel.requires()` - now always returns `[PreprocessingRunoff(), PreprocessingGatewayQuantileMapping()]`
+4. `RunAllMLModels.requires()` - now always yields `PreprocessingRunoff()` and `PreprocessingGatewayQuantileMapping()`
+5. `PreprocessingRunoff.run()` - removed marker file writing (no longer needed)
+
+**Rationale:** With py312 migration, preprocessing_runoff is fast enough to run every time, ensuring fresh data.
+
+**Cleanup Note:** The `ExternalPreprocessingRunoff` class (line 342) is no longer used and can be removed in a future cleanup.
+
+**Deployment:** Rebuild pipeline Docker image and redeploy to server.
+
+---
+
 *Document created: 2025-12-01*
-*Last updated: 2026-01-16*
+*Last updated: 2026-01-26*
