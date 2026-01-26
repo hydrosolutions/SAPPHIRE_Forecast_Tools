@@ -1155,7 +1155,9 @@ def _read_ml_forecasts_from_api(
     if horizon_type not in ('pentad', 'decade'):
         raise ValueError(f"horizon_type must be 'pentad' or 'decade', got: {horizon_type}")
 
-    # Model type mapping for display names
+    # Model type mapping: API model_type -> (model_long, model_short)
+    # - model_long: Full descriptive name for display
+    # - model_short: Abbreviated name for column headers and compact display
     model_mapping = {
         'TFT': ('Temporal Fusion Transformer (TFT)', 'TFT'),
         'TIDE': ('Time-series Dense Encoder (TiDE)', 'TiDE'),

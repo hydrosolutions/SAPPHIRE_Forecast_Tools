@@ -139,6 +139,24 @@ Write tests for `sapphire/services/preprocessing/app/data_migrator.py`:
 - Full dataset written to CSV, only new records sent to API
 - Dramatically improves performance for daily operational runs
 
+**RunoffDataResult Data Structure:**
+```python
+@dataclass
+class RunoffDataResult:
+    full_data: pd.DataFrame  # Complete dataset for CSV output
+    new_data: pd.DataFrame   # Incremental data for API sync
+```
+- Returned by `get_runoff_data_for_sites_HF()`
+- Enables efficient API sync by separating historical from new data
+- The `full_data` field contains the complete time series needed for CSV output
+- The `new_data` field contains only records fetched since the last sync
+
+**Incremental Sync Filtering:**
+- Both `full_data` and `new_data` go through `filter_roughly_for_outliers()`
+- Only filtered `new_data` is sent to API via the `api_data` parameter
+- This prevents sending outlier values to the database
+- Ensures data quality consistency between CSV and API storage
+
 #### 3.2 Daily Hydrograph API Integration (COMPLETE)
 - [x] Add `_write_hydrograph_to_api()` function with column mapping (5% → q05, etc.)
 - [x] Update `write_daily_hydrograph_data_to_csv()` with `api_data` parameter
@@ -197,7 +215,7 @@ Order of integration:
 **Files Modified:**
 - `apps/iEasyHydroForecast/forecast_library.py` - Added import, helper function, modified write functions
 - `apps/linear_regression/requirements.txt` - Added sapphire-api-client dependency
-- `apps/linear_regression/test/test_forecast_library_api.py` - New test file for API integration
+- `apps/linear_regression/test/test_forecast_library_api.py` - New test file for API integration (47 tests)
 
 #### 4.2b Linear Regression Hydrograph (COMPLETE)
 - [x] Add `_write_hydrograph_to_api()` helper function in forecast_library.py
@@ -322,6 +340,7 @@ SAPPHIRE_CONSISTENCY_CHECK=true
 |---------------------|---------|-------------|
 | `SAPPHIRE_CONSISTENCY_CHECK` | `false` | Enable data consistency verification |
 | `SAPPHIRE_CONSISTENCY_STRICT` | `false` | Strict mode: fail on value/NaN mismatches. Lenient mode (default): log as warnings |
+| `SAPPHIRE_DEBUG_VERIFY` | `false` | Enable debug verification in preprocessing_runoff module to compare CSV and API data after writes |
 
 **Lenient vs Strict Mode:**
 - **Lenient (default)**: NaN and value mismatches are logged as warnings but don't cause failure. This is expected when historical data has different outlier filtering between API and CSV sources.
@@ -535,7 +554,7 @@ When enabled:
 **Files Modified:**
 - `apps/preprocessing_gateway/snow_data_operational.py` - Added imports, API write function (latest only), consistency check, integration
 - `apps/preprocessing_gateway/extend_era5_reanalysis.py` - Added imports, API write function (all data), consistency check, integration
-- `apps/preprocessing_gateway/test/test_api_integration.py` - New test file (23 tests)
+- `apps/preprocessing_gateway/test/test_api_integration.py` - New test file (55 tests)
 
 *Last updated: 2026-01-24 (Phase 4.4 postprocessing_forecasts COMPLETE - all data migrations successful)*
 
@@ -544,7 +563,7 @@ When enabled:
 #### 4.3 Machine Learning Forecasts API Integration (COMPLETE)
 
 **Overview:**
-Integrate SAPPHIRE API writing into the machine_learning module for ML model forecasts (TFT, TIDE, TSMIXER).
+Integrate SAPPHIRE API writing into the machine_learning module for ML model forecasts (TFT, TIDE, TSMIXER, RRMAMBA).
 
 **Scripts to modify:**
 | Script | Mode | Behavior |
@@ -586,7 +605,7 @@ Integrate SAPPHIRE API writing into the machine_learning module for ML model for
 |-------|------|-------------|
 | horizon_type | string | "pentad" or "decade" |
 | code | string | Station code |
-| model_type | string | "TFT", "TiDE", "TSMixer" |
+| model_type | string | "TFT", "TiDE", "TSMixer", "RRMAMBA" |
 | date | date | When forecast was made (forecast_date) |
 | target | date | Target date (date column) |
 | flag | int | Quality flag |
@@ -780,7 +799,7 @@ Integrate SAPPHIRE API writing into the postprocessing_forecasts module for comb
 **Files Modified:**
 - `apps/iEasyHydroForecast/forecast_library.py` - Added API helper functions, updated save functions
 - `apps/postprocessing_forecasts/requirements.txt` - Added sapphire-api-client dependency
-- `apps/postprocessing_forecasts/tests/test_api_integration.py` - New test file (15 tests, all passing)
+- `apps/postprocessing_forecasts/tests/test_api_integration.py` - New test file (16 tests, all passing)
 
 **Tests:**
 | Test Class | Tests | Status |
@@ -1056,8 +1075,8 @@ Migrate the postprocessing_forecasts module from reading forecast results and ob
 **Current State:**
 | Data Type | Current Source | Target Source | API Endpoint |
 |-----------|---------------|---------------|--------------|
-| Observed pentad discharge | CSV (`ieasyforecast_pentad_discharge_file`) | preprocessing-api | `GET /hydrograph/` |
-| Observed decade discharge | CSV (`ieasyforecast_decad_discharge_file`) | preprocessing-api | `GET /hydrograph/` |
+| Observed pentad discharge | CSV (`ieasyforecast_pentad_discharge_file`) | preprocessing-api | `GET /runoff/` |
+| Observed decade discharge | CSV (`ieasyforecast_decad_discharge_file`) | preprocessing-api | `GET /runoff/` |
 | LR forecasts pentad | CSV (`ieasyforecast_analysis_pentad_file`) | postprocessing-api | `GET /lr-forecast/` |
 | LR forecasts decade | CSV (`ieasyforecast_analysis_decad_file`) | postprocessing-api | `GET /lr-forecast/` |
 | ML forecasts (TFT, TiDE, TSMixer) | CSV files | postprocessing-api | `GET /forecast/` |
@@ -1106,10 +1125,47 @@ Uses the established pattern from `read_daily_discharge_data()`:
 
 ---
 
+### Compatibility Notes
+
+#### pandas 3.0+ Changes to `filter_roughly_for_outliers()`
+
+**Location:** `apps/preprocessing_runoff/src/src.py`
+
+**Issue:** In pandas 3.0+, `groupby().apply()` no longer includes grouping columns in the function input DataFrame. This is a breaking change from pandas 2.x behavior.
+
+**Impact:** The `filter_roughly_for_outliers()` function uses `groupby('Code').apply()` to filter outliers per station. In pandas 3.0+, the `Code` column is excluded from the group DataFrame passed to the lambda function.
+
+**Fix Applied:**
+1. Pass `group_name` explicitly via `include_groups=False` in the `apply()` call
+2. Conditionally add the grouping column back inside the applied function if missing
+
+**Code Pattern:**
+```python
+# pandas 3.0+ compatible groupby().apply()
+def filter_func(group, group_name):
+    # group no longer contains 'Code' column in pandas 3.0+
+    if 'Code' not in group.columns:
+        group = group.copy()
+        group['Code'] = group_name
+    # ... rest of filtering logic
+    return filtered_group
+
+# Apply with include_groups=False (pandas 3.0+ compatible)
+result = df.groupby('Code', group_keys=False).apply(
+    lambda g: filter_func(g, g.name),
+    include_groups=False
+)
+```
+
+**Testing:** Verify outlier filtering works correctly by checking that the output DataFrame maintains the `Code` column and filtering thresholds are applied per-station.
+
+---
+
 ## Change Log
 
 | Date | Changes |
 |------|---------|
+| 2026-01-26 | Pandas 3.0 compatibility: Fixed `filter_roughly_for_outliers()` in preprocessing_runoff/src/src.py to handle groupby().apply() behavior change where grouping columns are excluded. Added explicit group_name parameter passing and conditional column restoration. |
 | 2026-01-25 | Phase 4.6 COMPLETE: Integration testing passed (7/7 tests). All postprocessing data reads now use SAPPHIRE API with CSV fallback. Fixed observed data functions to use runoff API instead of hydrograph. Consistency check verified API and CSV data match. |
 | 2026-01-25 | Phase 4.6 implementation: Added API read functions to setup_library.py (_read_lr_forecasts_from_api, _read_ml_forecasts_from_api), updated 8 read functions with API support and CSV fallback, created 45 unit tests. |
 | 2026-01-24 | Added Phase 4.6: Postprocessing Module API Data Reading - migrate postprocessing module to read forecast results and observed data from API instead of CSV |

@@ -2703,7 +2703,10 @@ def _check_dataframe_consistency(
 
 def read_daily_discharge_data_from_csv():
     """
-    Read the discharge data from a csv file specified in the environment.
+    Read daily discharge data from CSV file (fallback when API disabled).
+
+    This is the CSV fallback for read_daily_discharge_data(). Used when
+    SAPPHIRE_API_ENABLED=false or when API is unavailable.
 
     Returns:
     --------
@@ -2992,7 +2995,10 @@ def read_meteo_data_from_csv(
     csv_path: str | None = None,
 ) -> pd.DataFrame:
     """
-    Read meteo data from a CSV file.
+    Read meteorological data from CSV files (fallback when API disabled).
+
+    This is the CSV fallback for read_meteo_data(). Used when
+    SAPPHIRE_API_ENABLED=false or when API is unavailable.
 
     Parameters:
     -----------
@@ -3255,7 +3261,10 @@ def read_hydrograph_data_from_csv(
     horizon_type: str,
 ) -> pd.DataFrame:
     """
-    Read hydrograph data from a CSV file.
+    Read hydrograph data from CSV file (fallback when API disabled).
+
+    This is the CSV fallback for read_hydrograph_data(). Used when
+    SAPPHIRE_API_ENABLED=false or when API is unavailable.
 
     Parameters:
     -----------
