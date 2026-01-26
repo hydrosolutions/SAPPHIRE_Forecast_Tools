@@ -1,6 +1,0 @@
-# Local cache (language server data)
-/cache/
-
-# Personal memories (contain local paths, ports, sensitive info)
-/memories/suggested_commands.md
-/memories/module_testing_procedure.md
