@@ -60,4 +60,19 @@ The working demo will be implemented in SAPPHIRE v2.
 
 ---
 
+## Post-Merge Checklist (maxat_sapphire_2)
+
+After merging `maxat_sapphire_2` into `main`, complete these tasks:
+
+- [ ] **SEC-005: Verify bokeh update** — The `maxat_sapphire_2` branch includes the fix for
+  `FuncTickFormatter` (removed in bokeh 3.5+). After merge:
+  1. Verify `apps/forecast_dashboard/pyproject.toml` has `bokeh>=3.8.2` (or similar)
+  2. Run `uv lock` in forecast_dashboard to update lock file
+  3. Run dashboard tests: `SAPPHIRE_TEST_ENV=True bash run_tests.sh forecast_dashboard`
+  4. Test dashboard manually in browser
+  5. Update `doc/plans/security_updates.md` to mark SEC-005 as completed
+
+---
+
 *Created: 2026-01-07*
+*Updated: 2026-01-27*
