@@ -223,5 +223,6 @@ apps/forecast_dashboard/user_activity.csv
 /apps/machine_learning_monthly/logs
 temp_luigi.cfg
 
-# Serena MCP server local files
-.serena/
+# local files
+/apps/logs
+/.serena

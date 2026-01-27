@@ -167,6 +167,7 @@ class SkillMetric(Base):
     model_type = Column(SQLEnum(ModelType), nullable=False)
     date = Column(Date, nullable=False)
     horizon_in_year = Column(Integer, nullable=False)
+    composition = Column(String(100))  # Tracks which models compose ensemble (e.g., "LR,TFT,TiDE")
 
     # Skill metrics
     sdivsigma = Column(Float)
@@ -179,5 +180,5 @@ class SkillMetric(Base):
     # Composite index for filtering and ordering, plus unique constraint
     __table_args__ = (
         Index('ix_skill_metrics_horizon_code_model_date', 'horizon_type', 'code', 'model_type', 'date'),
-        UniqueConstraint('horizon_type', 'code', 'model_type', 'date', name='uq_skill_metrics_horizon_code_model_date')
+        UniqueConstraint('horizon_type', 'code', 'model_type', 'date', 'horizon_in_year', name='uq_skill_metrics_horizon_code_model_date_horizon')
     )

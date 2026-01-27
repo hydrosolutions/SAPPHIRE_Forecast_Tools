@@ -438,7 +438,21 @@ class SkillMetricDataMigrator(DataMigrator):
                 "n_pairs": float(row['n_pairs']) if pd.notna(row['n_pairs']) else None
             }
             records.append(record)
-        return records
+
+        # Deduplicate by unique key (keeping first occurrence)
+        seen = set()
+        unique_records = []
+        for record in records:
+            key = (record['horizon_type'], record['code'], record['model_type'],
+                   record['date'], record['horizon_in_year'])
+            if key not in seen:
+                seen.add(key)
+                unique_records.append(record)
+
+        if len(unique_records) < len(records):
+            logger.info(f"Deduplicated {len(records) - len(unique_records)} duplicate pentad skill metrics")
+
+        return unique_records
 
     def prepare_decade_data(self, df: pd.DataFrame) -> List[Dict]:
         """Prepare decade (10-day) runoff data for API"""
@@ -497,7 +511,21 @@ class SkillMetricDataMigrator(DataMigrator):
                 "n_pairs": float(row['n_pairs']) if pd.notna(row['n_pairs']) else None
             }
             records.append(record)
-        return records
+
+        # Deduplicate by unique key (keeping first occurrence)
+        seen = set()
+        unique_records = []
+        for record in records:
+            key = (record['horizon_type'], record['code'], record['model_type'],
+                   record['date'], record['horizon_in_year'])
+            if key not in seen:
+                seen.add(key)
+                unique_records.append(record)
+
+        if len(unique_records) < len(records):
+            logger.info(f"Deduplicated {len(records) - len(unique_records)} duplicate decade skill metrics")
+
+        return unique_records
 
 
 def parse_arguments():

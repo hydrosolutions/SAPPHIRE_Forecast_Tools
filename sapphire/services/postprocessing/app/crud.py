@@ -245,17 +245,19 @@ def get_lr_forecast(
 
 
 def create_skill_metric(db: Session, bulk_data: SkillMetricBulkCreate) -> List[SkillMetric]:
-    """Create or update multiple skill metrics in bulk (upsert based on horizon_type, code, model_type, date)"""
+    """Create or update multiple skill metrics in bulk (upsert based on horizon_type, code, model_type, date, horizon_in_year)"""
     try:
         db_skill_metrics = []
 
         for item in bulk_data.data:
-            # Check if a record with the same (horizon_type, code, model_type, date) exists
+            # Check if a record with the same unique constraint fields exists
+            # Note: We flush after each add so queries find pending records in the same batch
             existing_skill_metric = db.query(SkillMetric).filter(
                 SkillMetric.horizon_type == item.horizon_type,
                 SkillMetric.code == item.code,
                 SkillMetric.model_type == item.model_type,
-                SkillMetric.date == item.date
+                SkillMetric.date == item.date,
+                SkillMetric.horizon_in_year == item.horizon_in_year
             ).first()
 
             if existing_skill_metric:
@@ -263,13 +265,14 @@ def create_skill_metric(db: Session, bulk_data: SkillMetricBulkCreate) -> List[S
                 for key, value in item.model_dump().items():
                     setattr(existing_skill_metric, key, value)
                 db_skill_metrics.append(existing_skill_metric)
-                logger.info(f"Updated skill metric: {item.horizon_type}, {item.code}, {item.model_type}, {item.date}")
+                logger.info(f"Updated skill metric: {item.horizon_type}, {item.code}, {item.model_type}, {item.date}, horizon_in_year={item.horizon_in_year}")
             else:
                 # Create new record
                 new_skill_metric = SkillMetric(**item.model_dump())
                 db.add(new_skill_metric)
+                db.flush()  # Flush so subsequent queries find this pending record
                 db_skill_metrics.append(new_skill_metric)
-                logger.info(f"Created skill metric: {item.horizon_type}, {item.code}, {item.model_type}, {item.date}")
+                logger.info(f"Created skill metric: {item.horizon_type}, {item.code}, {item.model_type}, {item.date}, horizon_in_year={item.horizon_in_year}")
 
         db.commit()
 
