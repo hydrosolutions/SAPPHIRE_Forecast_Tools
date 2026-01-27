@@ -1,0 +1,52 @@
+[project]
+name = "forecast-dashboard"
+version = "0.1.0"
+description = "Interactive forecast dashboard for SAPPHIRE forecast tools using Panel/Bokeh"
+requires-python = ">=3.11"
+dependencies = [
+    # Visualization stack
+    # NOTE: Pinning bokeh<3.5 due to breaking changes in 3.5+ (FuncTickFormatter removed)
+    # Panel and HoloViews are also pinned for compatibility
+    "panel>=1.4.2,<1.5",
+    "holoviews>=1.18.3,<1.20",
+    "bokeh>=3.4.1,<3.5",
+
+    # Data processing
+    "pandas>=2.2.2",
+    "numpy>=1.26.4",
+    "scipy>=1.13.0",
+    "scikit-learn>=1.5.0",
+    "openpyxl>=3.1.2",
+
+    # Configuration
+    "python-dotenv>=1.0.1",
+
+    # Docker container management
+    "docker>=7.1.0",
+
+    # File watching (for development)
+    "watchfiles>=0.22.0",
+
+    # Report generation
+    "ieasyreports @ git+https://github.com/hydrosolutions/ieasyreports.git@main",
+
+    # Internal dependency
+    "iEasyHydroForecast @ file:///${PROJECT_ROOT}/../iEasyHydroForecast",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2.0",
+]
+test = [
+    "pytest>=8.2.0",
+    "playwright>=1.51.0",
+    "pytest-playwright>=0.7.0",
+]
+
+[tool.uv.sources]
+iEasyHydroForecast = { path = "../iEasyHydroForecast", editable = true }
+
+[tool.pytest.ini_options]
+pythonpath = [".."]
+testpaths = ["tests"]

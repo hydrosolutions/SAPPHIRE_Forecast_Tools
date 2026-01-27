@@ -3,6 +3,7 @@ name: Test Build Docker Images
 env:
   # Use a test tag to avoid conflicts with production images
   IMAGE_TAG: build-test
+  IMAGE_TAG_PY312: py312
 
   # Define image names (same as in deploy_main.yml)
   BASE_IMAGE_NAME: mabesa/sapphire-pythonbaseimage
@@ -19,9 +20,9 @@ env:
 
 on:
   # Run on all branch pushes except main (which uses deploy_main.yml)
-  #push:
-  #  branches-ignore:
-  #    - main
+  push:
+    branches-ignore:
+      - main
   # Also run on PRs targeting main
   pull_request:
     branches:
@@ -59,6 +60,33 @@ jobs:
       run: |
         SAPPHIRE_TEST_ENV=True python -m unittest discover -s iEasyHydroForecast/tests -p 'test_*.py'
 
+  # Test iEasyHydroForecast with Python 3.12 + uv + pytest
+  test_ieasyhydroforecast_py312:
+    runs-on: ubuntu-latest
+    name: Test iEasyHydroForecast (Python 3.12 + uv)
+
+    steps:
+    - name: Checkout the commit that triggered the workflow
+      uses: actions/checkout@v4
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v5
+      with:
+        version: "latest"
+
+    - name: Set up Python 3.12 with uv
+      run: uv python install 3.12
+
+    - name: Install dependencies with uv
+      working-directory: ./apps/iEasyHydroForecast
+      run: |
+        uv sync --all-extras
+
+    - name: Test with pytest
+      working-directory: ./apps
+      run: |
+        SAPPHIRE_TEST_ENV=True iEasyHydroForecast/.venv/bin/python -m pytest iEasyHydroForecast/tests/ -v
+
   # Build but don't push the base image
   build_python_311_base_image:
     needs: [test_ieasyhydroforecast]
@@ -88,6 +116,27 @@ jobs:
         run: |
           docker run --rm "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" python -c "print('Base image build successful!')"
 
+  # Build but don't push the Python 3.12 + uv base image
+  build_python_312_base_image:
+    needs: [test_ieasyhydroforecast, test_ieasyhydroforecast_py312]
+    runs-on: ubuntu-latest
+    name: Build Python 3.12 + uv base image
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Build Docker image
+        run: |
+          DOCKER_BUILDKIT=1 docker build \
+          -t "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" \
+          -f ./apps/docker_base_image/Dockerfile.py312 .
+      - name: Test Base Image
+        run: |
+          echo "Verifying Python version..."
+          docker run --rm "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" python --version
+          echo "Verifying uv is available..."
+          docker run --rm "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" uv --version
+          # Note: py312 base image only provides Python + uv. Packages are installed by child images via uv sync.
+
   # Build but don't push the pipeline image
   build_pipeline_image:
     needs: [build_python_311_base_image]
@@ -103,6 +152,51 @@ jobs:
           --build-arg GROUP_ID=1001 \
           -t "${{ env.PIPELINE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
           -f ./apps/pipeline/Dockerfile .
+
+  # Test pipeline with Python 3.12 + uv
+  test_pipeline_py312:
+    runs-on: ubuntu-latest
+    name: Test pipeline (Python 3.12 + uv)
+    steps:
+      - name: Check out the current branch
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install Python 3.12
+        run: uv python install 3.12
+
+      - name: Install pipeline dependencies
+        working-directory: ./apps/pipeline
+        run: uv sync --all-extras
+
+      - name: Verify imports
+        working-directory: ./apps
+        run: |
+          pipeline/.venv/bin/python -c "import luigi; import docker; import yaml; import requests; import tenacity; from dotenv import load_dotenv; print('All imports successful!'); print(f'luigi: {luigi.__version__}'); print(f'docker: {docker.__version__}')"
+
+  # Build pipeline Python 3.12 + uv image
+  build_pipeline_py312:
+    needs: [test_pipeline_py312, build_python_312_base_image]
+    runs-on: ubuntu-latest
+    name: Build pipeline (Python 3.12 + uv)
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build base image first (required as dependency)
+        run: |
+          DOCKER_BUILDKIT=1 docker build \
+          -t "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" \
+          -f ./apps/docker_base_image/Dockerfile.py312 .
+
+      - name: Build Docker image
+        run: |
+          docker build \
+          -t "${{ env.PIPELINE_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" \
+          -f ./apps/pipeline/Dockerfile.py312 .
 
   # Build but don't push the conceptual model image
   build_conceptual_model:
@@ -142,7 +236,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Set PYTHONPATH
         run: |
-          echo "PYTHONPATH=${GITHUB_WORKSPACE}/apps/iEasyHydroForecast" >> $GITHUB_ENV
+          echo "PYTHONPATH=${GITHUB_WORKSPACE}/apps:${GITHUB_WORKSPACE}/apps/iEasyHydroForecast" >> $GITHUB_ENV
       - name: Install dependencies for pre-processing of runoff
         working-directory: ./apps
         run: |
@@ -154,6 +248,37 @@ jobs:
         working-directory: ./apps
         run: |
           SAPPHIRE_TEST_ENV=True pytest preprocessing_runoff/test
+
+  # Test preprocessing runoff with Python 3.12 + uv
+  test_preprocessing_runoff_py312:
+    runs-on: ubuntu-latest
+    name: Test pre-processing of runoff (Python 3.12 + uv)
+
+    steps:
+    - name: Checkout the commit that triggered the workflow
+      uses: actions/checkout@v4
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v5
+      with:
+        version: "latest"
+
+    - name: Set up Python 3.12 with uv
+      run: uv python install 3.12
+
+    - name: Set PYTHONPATH
+      run: |
+        echo "PYTHONPATH=${GITHUB_WORKSPACE}/apps:${GITHUB_WORKSPACE}/apps/iEasyHydroForecast" >> $GITHUB_ENV
+
+    - name: Install dependencies with uv
+      working-directory: ./apps/preprocessing_runoff
+      run: |
+        uv sync --all-extras
+
+    - name: Test with pytest
+      working-directory: ./apps
+      run: |
+        SAPPHIRE_TEST_ENV=True preprocessing_runoff/.venv/bin/python -m pytest preprocessing_runoff/test/ -v
 
   # Build the preprocessing runoff image
   build_preprocessing_runoff:
@@ -175,6 +300,25 @@ jobs:
           --build-arg SAPPHIRE_DOCKER_GID=${{ env.SAPPHIRE_DOCKER_GID }} \
           -t "${{ env.PREPQ_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
           -f ./apps/preprocessing_runoff/Dockerfile .
+
+  # Build the preprocessing runoff py312 image
+  build_preprocessing_runoff_py312:
+    needs: [test_preprocessing_runoff_py312, test_ieasyhydroforecast_py312, build_python_312_base_image]
+    runs-on: ubuntu-latest
+    name: Build preprocessing runoff module (Python 3.12 + uv)
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Build base image first (required as dependency)
+        run: |
+          DOCKER_BUILDKIT=1 docker build \
+          -t "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" \
+          -f ./apps/docker_base_image/Dockerfile.py312 .
+      - name: Build preprocessing runoff py312 image
+        run: |
+          docker build \
+          -t "${{ env.PREPQ_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" \
+          -f ./apps/preprocessing_runoff/Dockerfile.py312 .
 
   # Set up the preprocessing gateway environment
   set_up_preprocessing_gateway:
@@ -220,6 +364,55 @@ jobs:
           -t "${{ env.PREPG_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
           -f ./apps/preprocessing_gateway/Dockerfile .
 
+  # Test preprocessing gateway with Python 3.12 + uv
+  test_preprocessing_gateway_py312:
+    runs-on: ubuntu-latest
+    name: Test preprocessing gateway (Python 3.12 + uv)
+
+    steps:
+    - name: Checkout the commit that triggered the workflow
+      uses: actions/checkout@v4
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v5
+      with:
+        version: "latest"
+
+    - name: Set up Python 3.12 with uv
+      run: uv python install 3.12
+
+    - name: Install dependencies with uv
+      working-directory: ./apps/preprocessing_gateway
+      run: |
+        uv sync --all-extras
+
+    - name: Verify imports
+      working-directory: ./apps
+      run: |
+        preprocessing_gateway/.venv/bin/python -c "import pandas; import numpy; import scipy; import sklearn; import luigi; import sapphire_dg_client; print('All imports successful!')"
+
+  # Build preprocessing gateway Python 3.12 + uv image
+  build_preprocessing_gateway_py312:
+    needs: [test_preprocessing_gateway_py312, build_python_312_base_image]
+    runs-on: ubuntu-latest
+    name: Build preprocessing gateway (Python 3.12 + uv)
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build base image first (required as dependency)
+        run: |
+          DOCKER_BUILDKIT=1 docker build \
+          -t "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" \
+          -f ./apps/docker_base_image/Dockerfile.py312 .
+
+      - name: Build Docker image
+        run: |
+          docker build \
+          -t "${{ env.PREPG_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" \
+          -f ./apps/preprocessing_gateway/Dockerfile.py312 .
+
   # Set up the machine learning environment
   set_up_machine_learning:
     needs: [build_python_311_base_image, test_ieasyhydroforecast]
@@ -244,12 +437,25 @@ jobs:
         python -m pip install -r machine_learning/requirements.txt
 
   # Build the machine learning image
+  # Note: ML image is very large (~3-4GB) due to PyTorch/Darts, needs extra disk space
   build_machine_learning_image:
     needs: [set_up_machine_learning]
     runs-on: ubuntu-latest
+    timeout-minutes: 60  # Fail after 1 hour instead of default 6 hours
     name: Dockerize and push machine learning module to Dockerhub
 
     steps:
+      - name: Free disk space
+        run: |
+          echo "Disk space before cleanup:"
+          df -h
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/share/boost
+          sudo rm -rf /usr/local/lib/android
+          echo "Disk space after cleanup:"
+          df -h
+
       # To use this repository's private action, you must check out the
       # repository.
       - name: Checkout
@@ -261,6 +467,64 @@ jobs:
           docker build --no-cache \
           -t "${{ env.ML_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
           -f ./apps/machine_learning/Dockerfile .
+
+  # Test machine learning with Python 3.12 + uv
+  test_machine_learning_py312:
+    runs-on: ubuntu-latest
+    name: Test machine learning (Python 3.12 + uv)
+    steps:
+      - name: Check out the current branch
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install Python 3.12
+        run: uv python install 3.12
+
+      - name: Install machine_learning dependencies
+        working-directory: ./apps/machine_learning
+        run: uv sync --all-extras
+
+      - name: Verify imports
+        working-directory: ./apps
+        run: |
+          machine_learning/.venv/bin/python -c "import torch; import darts; import pandas; import numpy; print('All imports successful!'); print(f'torch: {torch.__version__}'); print(f'darts: {darts.__version__}')"
+
+  # Build machine learning Python 3.12 + uv image
+  # Note: ML image is very large (~3-4GB) due to PyTorch/Darts, needs extra disk space
+  build_machine_learning_py312:
+    needs: [test_machine_learning_py312, build_python_312_base_image]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60  # Fail after 1 hour instead of default 6 hours
+    name: Build machine learning (Python 3.12 + uv)
+
+    steps:
+      - name: Free disk space
+        run: |
+          echo "Disk space before cleanup:"
+          df -h
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/share/boost
+          sudo rm -rf /usr/local/lib/android
+          echo "Disk space after cleanup:"
+          df -h
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build base image first (required as dependency)
+        run: |
+          DOCKER_BUILDKIT=1 docker build \
+          -t "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" \
+          -f ./apps/docker_base_image/Dockerfile.py312 .
+
+      - name: Build Docker image
+        run: |
+          docker build \
+          -t "${{ env.ML_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" \
+          -f ./apps/machine_learning/Dockerfile.py312 .
 
   # Test the reset run date
   test_reset_forecast_run_date:
@@ -374,6 +638,51 @@ jobs:
           -t "${{ env.DASHBOARD_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
           -f ./apps/forecast_dashboard/Dockerfile .
 
+  # Test forecast dashboard with Python 3.12 + uv
+  test_dashboard_py312:
+    runs-on: ubuntu-latest
+    name: Test forecast dashboard (Python 3.12 + uv)
+    steps:
+      - name: Check out the current branch
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install Python 3.12
+        run: uv python install 3.12
+
+      - name: Install forecast_dashboard dependencies
+        working-directory: ./apps/forecast_dashboard
+        run: uv sync --all-extras
+
+      - name: Verify imports
+        working-directory: ./apps
+        run: |
+          forecast_dashboard/.venv/bin/python -c "import panel; import holoviews; import bokeh; import pandas; import numpy; import scipy; import sklearn; import docker; print('All imports successful!'); print(f'panel: {panel.__version__}'); print(f'bokeh: {bokeh.__version__}')"
+
+  # Build forecast dashboard Python 3.12 + uv image
+  build_dashboard_py312:
+    needs: [test_dashboard_py312, build_python_312_base_image]
+    runs-on: ubuntu-latest
+    name: Build forecast dashboard (Python 3.12 + uv)
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build base image first (required as dependency)
+        run: |
+          DOCKER_BUILDKIT=1 docker build \
+          -t "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" \
+          -f ./apps/docker_base_image/Dockerfile.py312 .
+
+      - name: Build Docker image
+        run: |
+          docker build \
+          -t "${{ env.DASHBOARD_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" \
+          -f ./apps/forecast_dashboard/Dockerfile.py312 .
+
   # Build postprocessing image
   build_postprocessing_runoff:
     # Same requirements as preprocessing_runoff module
@@ -394,6 +703,45 @@ jobs:
           -t "${{ env.POSTPQ_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
           -f ./apps/postprocessing_forecasts/Dockerfile .
 
+  # Test postprocessing with Python 3.12 + uv
+  test_postprocessing_py312:
+    runs-on: ubuntu-latest
+    name: Test postprocessing (Python 3.12 + uv)
+    steps:
+      - name: Check out the current branch
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install Python 3.12
+        run: uv python install 3.12
+
+      - name: Install postprocessing_forecasts dependencies
+        working-directory: ./apps/postprocessing_forecasts
+        run: uv sync --all-extras
+
+      - name: Verify imports
+        working-directory: ./apps
+        run: |
+          postprocessing_forecasts/.venv/bin/python -c "import pandas; import numpy; import openpyxl; print('All imports successful!')"
+
+  # Build postprocessing Python 3.12 + uv image
+  build_postprocessing_py312:
+    needs: [test_postprocessing_py312, test_ieasyhydroforecast_py312, build_python_312_base_image]
+    runs-on: ubuntu-latest
+    name: Build postprocessing (Python 3.12 + uv)
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: |
+          docker build \
+          -t "${{ env.POSTPQ_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" \
+          -f ./apps/postprocessing_forecasts/Dockerfile.py312 .
+
   # Test linear regression
   test_linear_regression:
     needs: [build_python_311_base_image]
@@ -402,7 +750,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11"]
+        python-version: ["3.11"]
 
     steps:
       - name: Check out the current branch
@@ -447,20 +795,73 @@ jobs:
           -t "${{ env.LINREG_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
           -f ./apps/linear_regression/Dockerfile .
 
+  # Test linear regression with Python 3.12 + uv
+  test_linear_regression_py312:
+    runs-on: ubuntu-latest
+    name: Test linear regression (Python 3.12 + uv)
+    steps:
+      - name: Check out the current branch
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install Python 3.12
+        run: uv python install 3.12
+
+      - name: Install linear_regression dependencies
+        working-directory: ./apps/linear_regression
+        run: uv sync --all-extras
+
+      - name: Verify imports
+        working-directory: ./apps
+        run: |
+          linear_regression/.venv/bin/python -c "import pandas; import numpy; import docker; from ieasyhydro_sdk.sdk import IEasyHydroSDK, IEasyHydroHFSDK; print('All imports successful!')"
+
+  # Build linear regression Python 3.12 + uv image
+  build_linreg_py312:
+    needs: [test_linear_regression_py312, build_python_312_base_image]
+    runs-on: ubuntu-latest
+    name: Build linear regression (Python 3.12 + uv)
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build base image first (required as dependency)
+        run: |
+          DOCKER_BUILDKIT=1 docker build \
+          -t "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" \
+          -f ./apps/docker_base_image/Dockerfile.py312 .
+
+      - name: Build Docker image
+        run: |
+          docker build \
+          -t "${{ env.LINREG_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" \
+          -f ./apps/linear_regression/Dockerfile.py312 .
+
 
   # Final job that summarizes all built images
   summarize_builds:
     needs: [
       build_python_311_base_image,
+      build_python_312_base_image,
       build_pipeline_image,
+      build_pipeline_py312,
       build_conceptual_model,
       build_preprocessing_runoff,
+      build_preprocessing_runoff_py312,
       build_preprocessing_gateway,
+      build_preprocessing_gateway_py312,
       build_machine_learning_image,
+      build_machine_learning_py312,
       build_reset_forecast,
       build_dashboard,
+      build_dashboard_py312,
       build_postprocessing_runoff,
-      build_linreg
+      build_postprocessing_py312,
+      build_linreg,
+      build_linreg_py312
     ]
     runs-on: ubuntu-latest
     name: Summarize Docker image builds
@@ -471,10 +872,16 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Successfully built the following Docker images:" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Python 3.11 + pip (production)" >> $GITHUB_STEP_SUMMARY
           echo "- ${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" >> $GITHUB_STEP_SUMMARY
           echo "- ${{ env.PIPELINE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" >> $GITHUB_STEP_SUMMARY
           echo "- ${{ env.CONCMOD_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" >> $GITHUB_STEP_SUMMARY
           echo "- ${{ env.PREPQ_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" >> $GITHUB_STEP_SUMMARY
-          # Add all other images here
+          echo "- ${{ env.PREPG_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Python 3.12 + uv (migration testing)" >> $GITHUB_STEP_SUMMARY
+          echo "- ${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" >> $GITHUB_STEP_SUMMARY
+          echo "- ${{ env.PREPQ_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" >> $GITHUB_STEP_SUMMARY
+          echo "- ${{ env.PREPG_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Note:** These images were built for testing only and not pushed to DockerHub." >> $GITHUB_STEP_SUMMARY

@@ -1,0 +1,48 @@
+[project]
+name = "preprocessing-gateway"
+version = "0.1.0"
+description = "Preprocessing module for weather data from SAPPHIRE data gateway"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [
+    {name = "Sandro Hunziker", url = "https://github.com/sandrohuni"},
+    {name = "Beatrice Marti", url = "https://github.com/mabesa"},
+]
+dependencies = [
+    # Core data processing
+    "pandas>=2.2.2",
+    "numpy>=1.26.4,<2.0.0",
+    # Scientific computing (for quantile mapping)
+    "scipy>=1.14.0",
+    "scikit-learn>=1.5.0",
+    # Date/time handling
+    "python-dateutil>=2.9.0",
+    "pytz>=2024.1",
+    # Configuration
+    "python-dotenv>=1.0.1",
+    # Workflow orchestration
+    "luigi>=3.5.0",
+    # SAPPHIRE Data Gateway client (private repo - requires access)
+    "sapphire-dg-client @ git+https://github.com/hydrosolutions/sapphire-dg-client.git@main",
+    # Local library dependency
+    "iEasyHydroForecast",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2.0",
+]
+
+[tool.uv]
+# Allow git and local path dependencies
+allow-insecure-host = []
+
+[tool.uv.sources]
+# Use local iEasyHydroForecast from sibling directory
+iEasyHydroForecast = { path = "../iEasyHydroForecast", editable = true }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]

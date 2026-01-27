@@ -1,7 +1,10 @@
 import os
+import sys
 import datetime as dt
 
-from linear_regression.src import src
+# Add src directory to path for imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+import src
 
 
 

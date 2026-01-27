@@ -1,4 +1,6 @@
 # docker compose file for running the sapphire forecast tools
+# Using Python 3.12 + uv (commands use 'uv run panel')
+#
 # build: ieasyhydroforecast_data_root_dir=<path> docker-compose -f /path/to/docker-compose.yml build --no-cache
 # run: ieasyhydroforecast_data_root_dir=<path> docker-compose -f /path/to/docker-compose.yml up -d
 # stop: docker-compose -f /path/to/docker-compose.yml down
@@ -29,10 +31,10 @@ services:
   #    - com.centurylinklabs.watchtower.enable=true
 
   pentaddashboard:
-    image: mabesa/sapphire-dashboard:${ieasyhydroforecast_frontend_docker_image_tag:-latest}
+    image: mabesa/sapphire-dashboard:${ieasyhydroforecast_frontend_docker_image_tag:-py312}
     build:
       context: ../
-      dockerfile: ./apps/forecast_dashboard/Dockerfile
+      dockerfile: ./apps/forecast_dashboard/Dockerfile.py312
     working_dir: /app/apps/forecast_dashboard
     init: true
     environment:
@@ -48,7 +50,7 @@ services:
     command: >
       bash -c "
       ORIGINS_ARGS=$(echo $${ieasyhydroforecast_url_pentad} | sed 's/,/ --allow-websocket-origin=/g' | sed 's/^/--allow-websocket-origin=/') &&
-      panel serve
+      uv run panel serve
       --address=0.0.0.0
       --port=5006
       $${ORIGINS_ARGS}
@@ -75,10 +77,10 @@ services:
       retries: 3
 
   decaddashboard:
-    image: mabesa/sapphire-dashboard:${ieasyhydroforecast_frontend_docker_image_tag:-latest}
+    image: mabesa/sapphire-dashboard:${ieasyhydroforecast_frontend_docker_image_tag:-py312}
     build:
       context: ../
-      dockerfile: ./apps/forecast_dashboard/Dockerfile
+      dockerfile: ./apps/forecast_dashboard/Dockerfile.py312
     working_dir: /app/apps/forecast_dashboard
     init: true
     environment:
@@ -94,7 +96,7 @@ services:
     command: >
       bash -c "
       ORIGINS_ARGS=$(echo $${ieasyhydroforecast_url_decad} | sed 's/,/ --allow-websocket-origin=/g' | sed 's/^/--allow-websocket-origin=/') &&
-      panel serve
+      uv run panel serve
       --address=0.0.0.0
       --port=5007
       $${ORIGINS_ARGS}

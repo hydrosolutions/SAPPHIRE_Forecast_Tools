@@ -441,10 +441,6 @@ def get_hindcast_start_date_from_output(prediction_mode='BOTH', site_list=None):
         site_codes = set(str(s) for s in site_list)
         existing_codes = set(gauge_dates.keys())
         new_gauges = list(site_codes - existing_codes)
-        # DEBUG: Log comparison details
-        logger.info(f"DEBUG: site_codes from iEH HF: {sorted(site_codes)}")
-        logger.info(f"DEBUG: existing_codes from output files: {sorted(existing_codes)}")
-        logger.info(f"DEBUG: new_gauges (in iEH but not in output): {sorted(new_gauges)}")
         if new_gauges:
             logger.info(f"Found {len(new_gauges)} new gauges without forecast history: {new_gauges}")
 
@@ -486,16 +482,20 @@ def get_hindcast_start_date_from_output(prediction_mode='BOTH', site_list=None):
             logger.error("Please set ieasyhydroforecast_START_DATE=YYYY-MM-DD in your .env file")
             return None
 
-    # Return the earliest start date (to cover all gauges)
+    # Return the second earliest start date to avoid outliers with very old dates
+    # This handles cases where one gauge has e.g. 2000-01-01 while all others have recent dates
     if start_dates:
-        earliest_start = min(start_dates)
-        logger.info(f"Auto-detected hindcast start date: {earliest_start} (earliest across all gauges)")
-        # DEBUG: Log all start dates and exit early
-        logger.info(f"DEBUG: All start_dates list: {sorted(start_dates)}")
-        logger.info(f"DEBUG: Minimum (earliest) start date: {earliest_start}")
-        logger.info("DEBUG: Exiting early for debugging. Remove this block when done.")
-        sys.exit(0)
-        return earliest_start
+        sorted_dates = sorted(start_dates)
+        if len(sorted_dates) >= 2:
+            # Use second earliest to skip potential outlier
+            selected_start = sorted_dates[1]
+            logger.info(f"Auto-detected hindcast start date: {selected_start} (second earliest across {len(sorted_dates)} gauges)")
+            logger.info(f"  Skipped earliest date {sorted_dates[0]} to avoid outlier gauge")
+        else:
+            # Only one gauge, use it
+            selected_start = sorted_dates[0]
+            logger.info(f"Auto-detected hindcast start date: {selected_start} (only gauge)")
+        return selected_start
     else:
         # No existing forecasts and no new gauges - use default if available
         if default_start_date:

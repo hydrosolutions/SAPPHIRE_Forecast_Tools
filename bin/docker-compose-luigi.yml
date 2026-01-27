@@ -1,4 +1,5 @@
 # Docker compose file for SAPPHIRE forecast tools using a containerized Luigi daemon
+# Using Python 3.12 + uv (commands use 'uv run luigi')
 #
 # Usage:
 # 1. Start the Luigi daemon in the background:
@@ -19,14 +20,14 @@ services:
 
   # Base pipeline service configuration
   pipeline-base:
-    cpus: 4
+    #cpus: 4  # Limit CPU usage if desired. Docker will automatically use all available CPUs if not set.
     build:
       context: ../
-      dockerfile: ./apps/pipeline/Dockerfile
+      dockerfile: ./apps/pipeline/Dockerfile.py312
       args:
-        TAG: ${ieasyhydroforecast_backend_docker_image_tag:-local}
-    image: mabesa/sapphire-pipeline:${ieasyhydroforecast_backend_docker_image_tag:-local}
-    working_dir: /app
+        TAG: ${ieasyhydroforecast_backend_docker_image_tag:-py312}
+    image: mabesa/sapphire-pipeline:${ieasyhydroforecast_backend_docker_image_tag:-py312}
+    working_dir: /app/apps/pipeline
     environment:
       - PYTHONPATH=/app
       - ieasyhydroforecast_data_root_dir=${ieasyhydroforecast_data_root_dir}
@@ -51,8 +52,8 @@ services:
       - ieasyhydroforecast_data_root_dir=${ieasyhydroforecast_data_root_dir}
       - ieasyhydroforecast_env_file_path=${ieasyhydroforecast_env_file_path}
       - ieasyhydroforecast_backend_docker_image_tag=${ieasyhydroforecast_backend_docker_image_tag}
-    #command: ['luigi', '--module', 'apps.pipeline.pipeline_docker', 'RunPreprocessingGatewayWorkflow']
-    command: ['luigi', '--scheduler-host', 'luigi-daemon', '--scheduler-port', '8082', '--module', 'apps.pipeline.pipeline_docker', 'RunPreprocessingGatewayWorkflow']
+    #command: ['uv', 'run', 'luigi', '--module', 'apps.pipeline.pipeline_docker', 'RunPreprocessingGatewayWorkflow']
+    command: ['uv', 'run', 'luigi', '--scheduler-host', 'luigi-daemon', '--scheduler-port', '8082', '--module', 'apps.pipeline.pipeline_docker', 'RunPreprocessingGatewayWorkflow']
     container_name: sapphire-pipeline-preprocessing-gateway
   
   # Service for runoff preprocessing only 
@@ -64,7 +65,7 @@ services:
       - ieasyhydroforecast_data_root_dir=${ieasyhydroforecast_data_root_dir}
       - ieasyhydroforecast_env_file_path=${ieasyhydroforecast_env_file_path}
       - ieasyhydroforecast_backend_docker_image_tag=${ieasyhydroforecast_backend_docker_image_tag}
-    command: ['luigi', '--scheduler-host', 'luigi-daemon', '--scheduler-port', '8082', '--module', 'apps.pipeline.pipeline_docker', 'RunPreprocessingRunoffWorkflow']
+    command: ['uv', 'run', 'luigi', '--scheduler-host', 'luigi-daemon', '--scheduler-port', '8082', '--module', 'apps.pipeline.pipeline_docker', 'RunPreprocessingRunoffWorkflow']
     container_name: sapphire-pipeline-preprocessing-runoff
 
   # Service for pentadal forecasting
@@ -76,7 +77,7 @@ services:
       - ieasyhydroforecast_data_root_dir=${ieasyhydroforecast_data_root_dir}
       - ieasyhydroforecast_env_file_path=${ieasyhydroforecast_env_file_path}
       - SAPPHIRE_PREDICTION_MODE=PENTAD
-    command: ['luigi', '--scheduler-host', 'luigi-daemon', '--scheduler-port', '8082', '--module', 'apps.pipeline.pipeline_docker', 'RunPentadalWorkflow']
+    command: ['uv', 'run', 'luigi', '--scheduler-host', 'luigi-daemon', '--scheduler-port', '8082', '--module', 'apps.pipeline.pipeline_docker', 'RunPentadalWorkflow']
     container_name: sapphire-pipeline-pentadal
 
   # Service for decadal forecasting
@@ -88,7 +89,7 @@ services:
       - ieasyhydroforecast_data_root_dir=${ieasyhydroforecast_data_root_dir}
       - ieasyhydroforecast_env_file_path=${ieasyhydroforecast_env_file_path}
       - SAPPHIRE_PREDICTION_MODE=DECAD
-    command: ['luigi', '--scheduler-host', 'luigi-daemon', '--scheduler-port', '8082', '--module', 'apps.pipeline.pipeline_docker', 'RunDecadalWorkflow']
+    command: ['uv', 'run', 'luigi', '--scheduler-host', 'luigi-daemon', '--scheduler-port', '8082', '--module', 'apps.pipeline.pipeline_docker', 'RunDecadalWorkflow']
     container_name: sapphire-pipeline-decadal
 
   # Luigi scheduler daemon
@@ -97,7 +98,7 @@ services:
     build:
       context: ../
       dockerfile: ./bin/luigi-daemon.Dockerfile
-    image: sapphire/luigi-daemon:${ieasyhydroforecast_backend_docker_image_tag:-local}
+    image: sapphire/luigi-daemon:${ieasyhydroforecast_backend_docker_image_tag:-py312}
     ports:
       - "8082:8082"
     restart: unless-stopped

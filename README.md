@@ -1,11 +1,33 @@
 ![test and deploy](https://github.com/hydrosolutions/SAPPHIRE_Forecast_Tools/actions/workflows/test_deploy_main.yml/badge.svg)
+![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
+![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)
+![Docker](https://img.shields.io/badge/docker-ready-blue.svg?logo=docker)
 
 # 💎 SAPPHIRE Forecast Tools
-Tools for operational hydrological forecasting for Central Asian hydromets. The tools are co-designed with the Kyrgyz Hydrometeorological Services as part of the ongoing [SAPPHIRE project](https://www.hydrosolutions.ch/projects/sapphire-central-asia) and funded by the [Swiss Agency for Development and Cooperation](https://www.eda.admin.ch/eda/en/home/fdfa/organisation-fdfa/directorates-divisions/sdc.html).
 
-The tools are designed to be deployed on a local computer with access to operational hydrometeorological data through the [iEasyHydro](https://ieasyhydro.org) database or through excel files. This repository holds data from the public domain for demonstration.
+**Open-source operational runoff forecasting — from standalone deployment to system integration**
 
-Note that this repository is **WORK IN PROGRESS**.
+A modular toolkit for operational hydrological forecasting that works at two levels:
+
+- **Full operational system** — A complete forecasting platform with dashboards, automated pipelines, and bulletin generation, designed for hydromets of countries of the former Soviet Union (pentadal/decadal forecasts, Russian language support)
+
+- **Standalone forecast models** — A backend module where different runoff models can be coupled, runnable independently of the full system
+
+## Key Features
+
+- **Multiple forecast models** — Linear regression (temporally aggregated auto-regressive model with a direct forecasting framework), deep learning models (TIDE, TSMixer, TFT) for short-term forecasting, and airGR model suite with added glacier melt functionality
+- **Flexible data sources** — Optimized to link with [iEasyHydro High Frequency](https://hf.ieasyhydro.org) but also operational as standalone
+- **Forecast dashboard** — Interactive web interface for forecast analysis and production of forecast bulletins
+- **Smart workflow orchestration** — Luigi-based pipeline management for automated, scheduled forecasts
+- **Tested deployments** — Validated on AWS cloud servers and Ubuntu local server deployments
+- **Easy updates & deployment** — Docker-containerized with GitHub Actions for continuous deployment
+- **Ensemble forecasting** — Automatically combines models for robust predictions
+
+## Project Origins
+
+Co-designed with the Kyrgyz Hydrometeorological Services as part of the [SAPPHIRE Central Asia project](https://www.hydrosolutions.ch/projects/sapphire-central-asia), funded by the [Swiss Agency for Development and Cooperation](https://www.eda.admin.ch/eda/en/home/fdfa/organisation-fdfa/directorates-divisions/sdc.html). While the full operational workflow is tailored for hydromets of countries of the former Soviet Union, the standalone forecast models are designed for worldwide applicability.
+
+---
 
 # Overview
 4 tools are currently deployed via Docker and provided in this repository (see folder apps):
@@ -179,3 +201,9 @@ This is a collaboraion  project where each contributor profited from input of al
 - Vjekoslav Večković [@vjekoslavveckovic](https://github.com/vjekoslavveckovic): Implementation of custom functions and complex interactivity for the forecast dashboard (module forecast_dashboard).
 - Davor Škalec [@skalecdavor](https://github.com/skalecdavor) and Vatroslav Čelan [@vatrocelan](https://github.com/vatrocelan): Support with the integration of the ieasyreports and ieasyhydro-python-sdk libraries.
 - Beatrice Marti [@mabesa](https://github.com/mabesa): Design and implementation of the forecast tools and all modules not named above and coordination of the project.
+
+# Maintenance Status
+
+🟢 **Active Development**
+
+This repository is part of an ongoing project and is actively maintained.

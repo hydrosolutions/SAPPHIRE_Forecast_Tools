@@ -190,26 +190,43 @@ To edit the cron jobs, type the following command to the console:
 ```bash
 crontab -e
 ```
-Add the following line to the crontab file (assuming your server times corresponds to the required run times; if not, adjust the times accordingly):
+
+**Important: Log rotation**
+
+The crontab below uses timestamped log files (e.g., `sapphire_gateway_20260116.log`) to prevent logs from growing indefinitely. A cleanup job deletes logs older than 7 days. Make sure the log directory exists:
+```bash
+mkdir -p /home/ubuntu/logs
+```
+
+Add the following to the crontab file. Adjust times for your timezone (example below uses UTC, with jobs running in the morning Bishkek time):
 ```bash
 # m h  dom mon dow   command
 # ---------------------------------------------------------------------------
-# SAPPHIRE Forecast Tools Schedule
+# SAPPHIRE Forecast Tools Schedule (Times in UTC)
 # ---------------------------------------------------------------------------
-# NOTE: The Luigi daemon (luigid) must be running as a service for these tasks to be scheduled correctly.
+# NOTE: The Luigi daemon (luigid) must be running as a service for these tasks.
 #
-# (1) Run Gateway Preprocessing at 09:00. This is independent of daily data.
-0 9 * * * cd /data/SAPPHIRE_Forecast_Tools && /bin/bash -c 'bash bin/run_preprocessing_gateway.sh /data/kyg_data_forecast_tools/config/.env_develop_kghm' >> /home/ubuntu/logs/sapphire_gateway_preprocessing.log 2>&1
+# Log cleanup: delete logs older than 7 days (runs daily at 02:00 UTC)
+0 2 * * * find /home/ubuntu/logs -name "sapphire_*.log" -mtime +7 -delete
 #
-# (2) Run Pentadal Forecast pipeline at 10:00. Luigi will trigger runoff preprocessing.
-0 10 * * * cd /data/SAPPHIRE_Forecast_Tools && /bin/bash -c 'bash bin/run_pentadal_forecasts.sh /data/kyg_data_forecast_tools/config/.env_develop_kghm' >> /home/ubuntu/logs/sapphire_pentadal_forecast.log 2>&1
+# (1) Gateway Preprocessing at 03:00 UTC (09:00 Bishkek). Independent of daily data.
+0 3 * * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_preprocessing_gateway.sh /data/kyg_data_forecast_tools/config/.env_develop_kghm >> /home/ubuntu/logs/sapphire_gateway_$(date +\%Y\%m\%d).log 2>&1
 #
-# (3) Run Decadal Forecast pipeline at 11:00. Luigi will use the already-running/completed runoff task.
-0 10 * * * cd /data/SAPPHIRE_Forecast_Tools && /bin/bash -c 'bash bin/run_decadal_forecasts.sh /data/kyg_data_forecast_tools/config/.env_develop_kghm' >> /home/ubuntu/logs/sapphire_decadal_forecast.log 2>&1
+# (2) Pentadal Forecast at 04:00 UTC (10:00 Bishkek). Luigi triggers runoff preprocessing.
+0 4 * * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_pentadal_forecasts.sh /data/kyg_data_forecast_tools/config/.env_develop_kghm >> /home/ubuntu/logs/sapphire_pentadal_$(date +\%Y\%m\%d).log 2>&1
 #
-# (4) Maintenance jobs (frontend update, ML maintenance)
-2 20 * * * cd /data/SAPPHIRE_Forecast_Tools && /bin/bash -c 'bash bin/daily_update_sapphire_frontend.sh /data/kyg_data_forecast_tools/config/.env_develop_kghm' >> /home/ubuntu/logs/sapphire_operational_logs_frontend.log 2>&1
-0 10 * * * cd /data/SAPPHIRE_Forecast_Tools && /bin/bash -c 'bash bin/daily_ml_maintenance.sh /data/kyg_data_forecast_tools/config/.env_develop_kghm' >> /home/ubuntu/logs/sapphire_ml_maintenance.log 2>&1
+# (3) Decadal Forecast at 05:00 UTC (11:00 Bishkek). Luigi uses completed runoff task.
+0 5 * * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/run_decadal_forecasts.sh /data/kyg_data_forecast_tools/config/.env_develop_kghm >> /home/ubuntu/logs/sapphire_decadal_$(date +\%Y\%m\%d).log 2>&1
+#
+# (4) Maintenance jobs (evening UTC / night Bishkek)
+# Frontend update
+2 19 * * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/daily_update_sapphire_frontend.sh /data/kyg_data_forecast_tools/config/.env_develop_kghm >> /home/ubuntu/logs/sapphire_frontend_$(date +\%Y\%m\%d).log 2>&1
+# Preprocessing runoff maintenance (gap filling)
+4 19 * * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/daily_preprunoff_maintenance.sh /data/kyg_data_forecast_tools/config/.env_develop_kghm >> /home/ubuntu/logs/sapphire_preprunoff_maint_$(date +\%Y\%m\%d).log 2>&1
+# ML model maintenance (hindcast catch-up)
+0 20 * * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/daily_ml_maintenance.sh /data/kyg_data_forecast_tools/config/.env_develop_kghm >> /home/ubuntu/logs/sapphire_ml_maint_$(date +\%Y\%m\%d).log 2>&1
+# Linear regression maintenance (hindcast catch-up)
+34 20 * * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/daily_linreg_maintenance.sh /data/kyg_data_forecast_tools/config/.env_develop_kghm >> /home/ubuntu/logs/sapphire_linreg_maint_$(date +\%Y\%m\%d).log 2>&1
 ```
 To check if the cron jobs have been set up correctly, you can list them with `crontab -l`.
 

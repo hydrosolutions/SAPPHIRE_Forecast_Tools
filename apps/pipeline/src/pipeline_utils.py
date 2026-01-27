@@ -11,17 +11,17 @@ import signal
 
 
 
-def get_docker_hub_image_creation_date(namespace, image_name):
-    # Docker Hub API URL for fetching manifest data
-    # curl --location 'https://hub.docker.com//v2/namespaces/{namespace}/repositories/{image_name}/'
-    url = f"https://hub.docker.com//v2/namespaces/{namespace}/repositories/{image_name}/"
+def get_docker_hub_image_creation_date(namespace, image_name, tag):
+    # Docker Hub API URL for fetching tag-specific data
+    # curl --location 'https://hub.docker.com/v2/repositories/{namespace}/{image_name}/tags/{tag}'
+    url = f"https://hub.docker.com/v2/repositories/{namespace}/{image_name}/tags/{tag}"
 
-    # Get the docker image manifest data
+    # Get the docker image tag data
     try:
         response = requests.get(url, timeout=10)
         if response.status_code == 200:
-            manifest_data = response.json()
-            return manifest_data.get('last_updated')  # Use .get() for safety
+            tag_data = response.json()
+            return tag_data.get('tag_last_pushed')  # Tag-specific push date
         else:
             print(f"Failed to fetch image data from Docker Hub: {response.status_code}")
             return None
@@ -38,8 +38,8 @@ def there_is_a_newer_image_on_docker_hub(client, repository, image_name, tag):
         if local_image_creation_date.tzinfo is None or local_image_creation_date.tzinfo.utcoffset(local_image_creation_date) is None:
             local_image_creation_date = local_image_creation_date.replace(tzinfo=pytz.UTC)
 
-        # Get the Docker Hub image creation time
-        hub_image_creation_date_str = get_docker_hub_image_creation_date(repository, image_name)
+        # Get the Docker Hub image creation time for the specific tag
+        hub_image_creation_date_str = get_docker_hub_image_creation_date(repository, image_name, tag)
         if not hub_image_creation_date_str:
             print("Failed to fetch the Docker Hub image creation date.")
             return False

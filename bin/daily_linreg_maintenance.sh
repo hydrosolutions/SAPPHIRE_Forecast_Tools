@@ -84,6 +84,21 @@ PREDICTION_MODES=("PENTAD" "DECAD")
 MEMORY_LIMIT="4g"
 MEMORY_SWAP="6g"
 
+# macOS Docker compatibility: localhost inside container doesn't reach host's localhost
+# On macOS, we need to use host.docker.internal instead of localhost.
+# The iEasyHydro HF server must be configured to accept connections from host.docker.internal.
+DOCKER_HOST_OVERRIDE=""
+if [[ "$(uname)" == "Darwin" ]]; then
+    # Check if IEASYHYDROHF_HOST uses localhost - if so, we need to override it
+    if [[ "$IEASYHYDROHF_HOST" == *"localhost"* ]]; then
+        DOCKER_IEASYHYDROHF_HOST="${IEASYHYDROHF_HOST//localhost/host.docker.internal}"
+        log_message "macOS detected: overriding IEASYHYDROHF_HOST for Docker container"
+        log_message "  Original: $IEASYHYDROHF_HOST"
+        log_message "  Docker:   $DOCKER_IEASYHYDROHF_HOST"
+        DOCKER_HOST_OVERRIDE="-e IEASYHYDROHF_HOST=${DOCKER_IEASYHYDROHF_HOST}"
+    fi
+fi
+
 log_message "Running hindcast for prediction modes: ${PREDICTION_MODES[*]}"
 
 # Run hindcast for each prediction mode sequentially
@@ -101,9 +116,9 @@ for MODE in "${PREDICTION_MODES[@]}"; do
         docker rm -f $CONTAINER_NAME
     fi
 
-    # Run the linear regression container in hindcast mode
-    # The --hindcast flag triggers automatic start date detection from output files
-    # Note: We override the CMD to add --hindcast, but must replicate the PYTHONPATH setup
+    # Run the linear regression container in maintenance (hindcast) mode
+    # RUN_MODE=maintenance triggers --hindcast flag via the container's CMD
+    # DOCKER_HOST_OVERRIDE is set on macOS to replace localhost with host.docker.internal
     docker run \
         --name $CONTAINER_NAME \
         --network host \
@@ -112,6 +127,8 @@ for MODE in "${PREDICTION_MODES[@]}"; do
         -e SAPPHIRE_OPDEV_ENV=True \
         -e IN_DOCKER=True \
         -e SAPPHIRE_PREDICTION_MODE=${MODE} \
+        -e RUN_MODE=maintenance \
+        ${DOCKER_HOST_OVERRIDE} \
         -v ${ieasyhydroforecast_data_ref_dir}/config:${ieasyhydroforecast_container_data_ref_dir}/config \
         -v ${ieasyhydroforecast_data_ref_dir}/daily_runoff:${ieasyhydroforecast_container_data_ref_dir}/daily_runoff \
         -v ${ieasyhydroforecast_data_ref_dir}/intermediate_data:${ieasyhydroforecast_container_data_ref_dir}/intermediate_data \
@@ -119,7 +136,6 @@ for MODE in "${PREDICTION_MODES[@]}"; do
         --memory=${MEMORY_LIMIT} \
         --memory-swap=${MEMORY_SWAP} \
         ${IMAGE_ID} \
-        sh -c "PYTHONPATH=/app/apps/iEasyHydroForecast python apps/linear_regression/linear_regression.py --hindcast" \
         2>&1 | tee "$SERVICE_LOG"
 
     EXIT_CODE=$?

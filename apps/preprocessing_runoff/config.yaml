@@ -1,0 +1,57 @@
+# Configuration for the preprocessing_runoff module
+#
+# This file controls behavior for operational and maintenance modes.
+# Values can be overridden via environment variables.
+
+# Logging configuration
+# Priority: module log_level > env log_level > default (INFO)
+logging:
+  # Log level for this module: DEBUG, INFO, WARNING, ERROR
+  # If not set, falls back to env variable 'log_level', then INFO
+  log_level: DEBUG
+
+maintenance:
+  # Number of days to fetch during maintenance mode
+  # Override with: PREPROCESSING_MAINTENANCE_LOOKBACK_DAYS
+  lookback_days: 50
+
+operational:
+  # Fetch yesterday's daily average discharge (WDDA)
+  fetch_yesterday: true
+  # Fetch today's morning discharge (WDD)
+  fetch_morning: true
+
+# Validation configuration (Phase 3)
+# Post-write validation checks data completeness and tracks site reliability
+validation:
+  # Enable post-write validation in maintenance mode
+  enabled: true
+  # Maximum age of data in days - sites without data this recent are flagged
+  max_age_days: 3
+  # Reliability threshold - sites below this % are flagged as unreliable
+  reliability_threshold: 80.0
+  # Reliability stats file (relative to intermediate_data_path)
+  # This file tracks site reliability over time
+  stats_file: "reliability_stats.json"
+
+# Spot-check configuration (Phase 4)
+# Validates output data against direct API queries for selected sites
+spot_check:
+  # Enable spot-check validation in maintenance mode
+  enabled: true
+  # Sites to spot-check are configured via environment variable:
+  # - IEASYHYDRO_SPOTCHECK_SITES (comma-separated site codes, e.g., "15166,16159,15189")
+  # If not set, spot-check is skipped
+
+# Site caching configuration (Phase 6)
+# Caches forecast site list to avoid slow SDK calls in operational mode
+site_cache:
+  # Enable site caching
+  enabled: true
+  # Cache file name (relative to intermediate_data_path)
+  cache_file: "forecast_sites_cache.json"
+  # Maximum age in days before cache is considered stale
+  max_age_days: 7
+
+# Note: iEasyHydro HF API has a hard limit of page_size=10 (undocumented).
+# This is handled automatically by the module - no configuration needed.

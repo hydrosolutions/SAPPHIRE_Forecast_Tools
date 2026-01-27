@@ -1,70 +1,165 @@
 #!/usr/bin/env bash
 
 # This script runs the tests for all the modules in the Sapphire project.
-# It assumes that the conda.sh script is located in the etc/profile.d directory
-# of the Anaconda installation. Replace /path/to/conda with the path to your
-# Anaconda installation. The script also assumes that the Python environments
-# for the preprocessing, linear regression, reset_forecast_run_date, and
-# forecast_dashboard modules are named sapphire_preprocessing_discharge,
-# sapphire_linear_regression, sapphire_reset_rundate, and sapphire_dashboard,
-# respectively. Replace the environment names with the names of the environments
-# you created.
+# It uses uv-based virtual environments (.venv) in each module directory.
 #
-# Useage:
-# cd to the apps directory and run the script with the following command:
-# $ bash run_tests.sh
+# Usage:
+#   cd to the apps directory and run the script with the following command:
+#   $ bash run_tests.sh
+#
+#   Or run tests for a specific module:
+#   $ bash run_tests.sh iEasyHydroForecast
+#   $ bash run_tests.sh pipeline
+#
+# Integration Tests (forecast_dashboard):
+#   By default, dashboard integration tests are SKIPPED. To run them, set
+#   the appropriate environment variables:
+#
+#   $ TEST_LOCAL=true bash run_tests.sh forecast_dashboard
+#       Runs local dashboard tests (requires server at localhost:5055 + data)
+#
+#   $ TEST_PENTAD=true bash run_tests.sh forecast_dashboard
+#       Runs pentad production server tests
+#
+#   $ TEST_DECAD=true bash run_tests.sh forecast_dashboard
+#       Runs decad production server tests
+#
+#   $ TEST_LOCAL=true TEST_PENTAD=true bash run_tests.sh forecast_dashboard
+#       Runs both local and pentad tests
+#
+# Prerequisites:
+#   - Each module needs a .venv with pytest installed: cd <module> && uv sync --all-extras
+#   - For dashboard tests: playwright install chromium
 
+set -e  # Exit on first error
 
-# Source the conda.sh script to initialize the shell with conda
-# Replace /path/to/conda with the path to your conda installation
-source /Users/bea/anaconda3/etc/profile.d/conda.sh
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
 
-# Deactivate the current Python environment
-conda deactivate
+# Get the directory where the script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
 
-# Activate the Python environment for the preprocessing module
-# Replace the environment name with the name of the environment you created
-conda activate sapphire_preprocessing_discharge
+# Track results
+PASSED=()
+FAILED=()
+SKIPPED=()
 
-# Run the tests for the preprocessing module
-SAPPHIRE_TEST_ENV=True pytest preprocessing_runoff/test
-# SAPPHIRE_TEST_ENV=True pytest postprocessing_forecasts/test  # Currently no test here
+run_module_tests() {
+    local module=$1
+    local venv_path="${module}/.venv/bin/pytest"
 
-# Deactivate the Python environment for the preprocessing module
-conda deactivate
+    echo ""
+    echo "========================================"
+    echo -e "${YELLOW}Testing: ${module}${NC}"
+    echo "========================================"
 
-# Activate the Python environment for the linear regression module
-conda activate sapphire_linear_regression
+    # Check if venv exists
+    if [ ! -f "$venv_path" ]; then
+        echo -e "${YELLOW}⚠ Skipping ${module}: No .venv found. Run 'cd ${module} && uv sync' first.${NC}"
+        SKIPPED+=("$module")
+        return 0
+    fi
 
-# Run the tests for the linear regression module
-SAPPHIRE_TEST_ENV=True pytest linear_regression/test
+    # Find test directory (could be 'tests' or 'test')
+    local test_dir=""
+    if [ -d "${module}/tests" ]; then
+        test_dir="${module}/tests"
+    elif [ -d "${module}/test" ]; then
+        test_dir="${module}/test"
+    else
+        echo -e "${YELLOW}⚠ Skipping ${module}: No test directory found (looked for 'tests' and 'test')${NC}"
+        SKIPPED+=("$module")
+        return 0
+    fi
 
-# Deactivate the Python environment for the linear regression module
-conda deactivate
+    # Run tests
+    if SAPPHIRE_TEST_ENV=True "$venv_path" "$test_dir" -v; then
+        echo -e "${GREEN}✓ ${module} tests passed${NC}"
+        PASSED+=("$module")
+    else
+        echo -e "${RED}✗ ${module} tests failed${NC}"
+        FAILED+=("$module")
+    fi
+}
 
-# Activate the Python environment for the reset_forecast_run_date module
-conda activate sapphire_reset_rundate
+# List of all modules with tests
+MODULES=(
+    "iEasyHydroForecast"
+    "preprocessing_runoff"
+    "linear_regression"
+    "postprocessing_forecasts"
+    "pipeline"
+    "forecast_dashboard"
+)
 
-# Run the tests for the reset_forecast_run_date module
-SAPPHIRE_TEST_ENV=True pytest reset_forecast_run_date/tests
+# If a specific module is provided as argument, only run that one
+if [ -n "$1" ]; then
+    # Check if module is valid
+    valid_module=false
+    for mod in "${MODULES[@]}"; do
+        if [ "$1" == "$mod" ]; then
+            valid_module=true
+            break
+        fi
+    done
 
-# Deactivate the Python environment for the reset_forecast_run_date module
-conda deactivate
+    if [ "$valid_module" = true ]; then
+        run_module_tests "$1"
+    else
+        echo "Unknown module: $1"
+        echo "Available modules: ${MODULES[*]}"
+        exit 1
+    fi
+else
+    # Run all module tests
+    echo "Running tests for all modules..."
+    echo ""
 
-# Activate the Python environment for the forecast_dashboard module
-conda activate sapphire_dashboard
+    for module in "${MODULES[@]}"; do
+        run_module_tests "$module"
+    done
+fi
 
-# Run the tests for the forecast_dashboard module
-#SAPPHIRE_TEST_ENV=True pytest forecast_dashboard/tests
+# Print summary
+echo ""
+echo "========================================"
+echo "TEST SUMMARY"
+echo "========================================"
 
-# Deactivate the Python environment for the forecast_dashboard module
-conda deactivate
+if [ ${#PASSED[@]} -gt 0 ]; then
+    echo -e "${GREEN}Passed (${#PASSED[@]}):${NC} ${PASSED[*]}"
+fi
 
-# Activate the Python environment for the iEasyHydroForecast module
-conda activate hsol_py311  # sapphire_ieasyhydroforecast
+if [ ${#SKIPPED[@]} -gt 0 ]; then
+    echo -e "${YELLOW}Skipped (${#SKIPPED[@]}):${NC} ${SKIPPED[*]}"
+fi
 
-# Run the tests for the iEasyHydroForecast module
-SAPPHIRE_TEST_ENV=True python -m unittest discover -s iEasyHydroForecast/tests -p 'test_*.py'
+if [ ${#FAILED[@]} -gt 0 ]; then
+    echo -e "${RED}Failed (${#FAILED[@]}):${NC} ${FAILED[*]}"
+    echo ""
+    exit 1
+fi
 
-# Deactivate the Python environment for the iEasyHydroForecast module
-conda deactivate
+echo ""
+echo -e "${GREEN}All tests completed successfully!${NC}"
+
+# Check if integration tests were skipped and print warning
+INTEGRATION_WARNING=false
+if [[ " ${PASSED[*]} " =~ " forecast_dashboard " ]] || [[ "$1" == "forecast_dashboard" ]]; then
+    if [ "${TEST_LOCAL:-false}" != "true" ] && [ "${TEST_PENTAD:-false}" != "true" ] && [ "${TEST_DECAD:-false}" != "true" ]; then
+        INTEGRATION_WARNING=true
+    fi
+fi
+
+if [ "$INTEGRATION_WARNING" = true ]; then
+    echo ""
+    echo -e "${YELLOW}⚠ NOTE: Dashboard integration tests were SKIPPED.${NC}"
+    echo -e "${YELLOW}  To run integration tests, use environment variables:${NC}"
+    echo -e "${YELLOW}    TEST_LOCAL=true bash run_tests.sh forecast_dashboard${NC}"
+    echo -e "${YELLOW}    TEST_PENTAD=true bash run_tests.sh forecast_dashboard${NC}"
+    echo -e "${YELLOW}    TEST_DECAD=true bash run_tests.sh forecast_dashboard${NC}"
+fi
