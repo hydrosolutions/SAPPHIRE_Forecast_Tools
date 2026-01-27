@@ -138,38 +138,4 @@ See detailed plan file for description.
 
 ---
 
-## Collection of issues while working on modules, to be planned for soonish
-
-branch dependency_updates_Jan_26
-bash run_tests.sh
-
-module: pipeline
-
-pipeline/.venv/lib/python3.12/site-packages/luigi/parameter.py:408
-  /Users/bea/Documents/GitHub/SAPPHIRE_forecast_tools/apps/pipeline/.venv/lib/python3.12/site-packages/luigi/parameter.py:408: DeprecationWarning: datetime.datetime.utcfromtimestamp() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.fromtimestamp(timestamp, datetime.UTC).
-    _UNIX_EPOCH = datetime.datetime.utcfromtimestamp(0)
-
-pipeline/.venv/lib/python3.12/site-packages/luigi/__init__.py:87
-  /Users/bea/Documents/GitHub/SAPPHIRE_forecast_tools/apps/pipeline/.venv/lib/python3.12/site-packages/luigi/__init__.py:87: DeprecationWarning: 
-          Autoloading range tasks by default has been deprecated and will be removed in a future version.
-          To get the behavior now add an option to luigi.cfg:
-  
-            [core]
-              autoload_range: false
-  
-          Alternately set the option to true to continue with existing behaviour and suppress this warning.
-      
-    warnings.warn(warning_message, DeprecationWarning)
-
-pipeline/tests/test_preprocessing.py:6
-  /Users/bea/Documents/GitHub/SAPPHIRE_forecast_tools/apps/pipeline/tests/test_preprocessing.py:6: PytestCollectionWarning: cannot collect test class 'TestPreprocessingGateway' because it has a __init__ constructor (from: tests/test_preprocessing.py)
-    class TestPreprocessingGateway(luigi.Task):
-
--- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
-
-module linear regressison
-bash run_tests.sh
-
-tests failed (1) linear_regression. No tests collected.
-
 *Last updated: 2026-01-27*
