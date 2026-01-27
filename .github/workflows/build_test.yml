@@ -198,25 +198,27 @@ jobs:
           -t "${{ env.PIPELINE_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" \
           -f ./apps/pipeline/Dockerfile.py312 .
 
-  # Build but don't push the conceptual model image
-  build_conceptual_model:
-    runs-on: ubuntu-latest
-    name: Build conceptual model module
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Detect Docker group ID
-        run: |
-          DOCKER_GID=$(getent group docker | cut -d: -f3 || stat -c "%g" /var/run/docker.sock)
-          echo "SAPPHIRE_DOCKER_GID=$DOCKER_GID" >> $GITHUB_ENV
-      - name: Build Docker image
-        run: |
-          docker build \
-          --build-arg USER_ID=1001 \
-          --build-arg GROUP_ID=1001 \
-          --build-arg SAPPHIRE_DOCKER_GID=${{ env.SAPPHIRE_DOCKER_GID }} \
-          -t "${{ env.CONCMOD_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
-          -f ./apps/conceptual_model/Dockerfile .
+  # DISABLED (2026-01-27): conceptual_model CI builds disabled - R dependencies broken
+  # Module is maintenance-only. Existing Docker images frozen. See apps/conceptual_model/README.md
+  # To re-enable: uncomment this job and add build_conceptual_model to summarize_builds.needs
+  # build_conceptual_model:
+  #   runs-on: ubuntu-latest
+  #   name: Build conceptual model module
+  #   steps:
+  #     - name: Checkout
+  #       uses: actions/checkout@v4
+  #     - name: Detect Docker group ID
+  #       run: |
+  #         DOCKER_GID=$(getent group docker | cut -d: -f3 || stat -c "%g" /var/run/docker.sock)
+  #         echo "SAPPHIRE_DOCKER_GID=$DOCKER_GID" >> $GITHUB_ENV
+  #     - name: Build Docker image
+  #       run: |
+  #         docker build \
+  #         --build-arg USER_ID=1001 \
+  #         --build-arg GROUP_ID=1001 \
+  #         --build-arg SAPPHIRE_DOCKER_GID=${{ env.SAPPHIRE_DOCKER_GID }} \
+  #         -t "${{ env.CONCMOD_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
+  #         -f ./apps/conceptual_model/Dockerfile .
 
   # Test preprocessing runoff
   test_preprocessing_runoff:
@@ -848,7 +850,7 @@ jobs:
       build_python_312_base_image,
       build_pipeline_image,
       build_pipeline_py312,
-      build_conceptual_model,
+      # build_conceptual_model,  # DISABLED: R dependencies broken
       build_preprocessing_runoff,
       build_preprocessing_runoff_py312,
       build_preprocessing_gateway,
