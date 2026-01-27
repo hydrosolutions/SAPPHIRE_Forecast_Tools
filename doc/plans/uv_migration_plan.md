@@ -603,53 +603,146 @@ These share similar dependency profiles with preprocessing_runoff.
 
 **Goal**: After all modules are validated with `:py312`, switch `:latest` to Python 3.12 + uv and archive the old Python 3.11 image.
 
+**Status**: 🔄 Ready for execution
+
 ### Prerequisites
 
 Before starting Phase 6, ensure:
-- [ ] All modules tested and working with `:py312`
-- [ ] No open issues related to Python 3.12 compatibility
+- [x] All modules tested and working with `:py312`
+- [x] No open issues related to Python 3.12 compatibility
+- [x] Server testing completed (2026-01-26)
+- [x] OBS-001 ML issue fixed (marker file check removed)
 - [ ] Team notified and agreed on transition date
 
-### Step 6.1: Create Archive Tag for Python 3.11
+### Step 6.0: Commit Staged Plan Files
+
+Before merging, commit any staged files to keep the branch clean:
 
 ```bash
-# Tag current :latest as :py311 for archive
-docker pull mabesa/sapphire-pythonbaseimage:latest
-docker tag mabesa/sapphire-pythonbaseimage:latest mabesa/sapphire-pythonbaseimage:py311
-docker push mabesa/sapphire-pythonbaseimage:py311
+git status  # Check for staged files
+git commit -m "Add planning documents from maxat_sapphire_2 branch"
+```
+
+**Current staged files:**
+- `doc/plans/postprocessing_forecasts_improvement_plan.md`
+- `doc/plans/sapphire_showcase_positioning.md`
+
+### Step 6.1: Create Archive Tags for Python 3.11
+
+Tag current `:latest` images as `:py311` for rollback capability:
+
+```bash
+# Archive all production images
+for img in pythonbaseimage pipeline preprunoff prepgateway linreg ml dashboard postprocessing; do
+  docker pull mabesa/sapphire-$img:latest
+  docker tag mabesa/sapphire-$img:latest mabesa/sapphire-$img:py311
+  docker push mabesa/sapphire-$img:py311
+done
 ```
 
 ### Step 6.2: Update deploy_main.yml
 
-Change the `:latest` build job to use Python 3.12 + uv:
+Three changes required in `.github/workflows/deploy_main.yml`:
+
+#### 6.2a: Revert branch trigger to `main`
 
 ```yaml
-build_and_push_base_image:
-  # Now builds Python 3.12 + uv as :latest
-  steps:
-    - name: Build Docker image
-      run: |
-        DOCKER_BUILDKIT=1 docker build --pull --no-cache \
-        -t "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
-        -f ./apps/docker_base_image/Dockerfile.py312 .
+on:
+  push:
+    # CHANGE FROM: branches: [ "implementation_planning" ]
+    branches: [ "main" ]
 ```
 
-### Step 6.3: Update All Module Dockerfiles
+#### 6.2b: Switch `:latest` jobs to use `Dockerfile.py312`
 
-Change modules back to `:latest` (now Python 3.12):
+For each module's `:latest` build job, change the Dockerfile reference:
 
-```dockerfile
-# All modules can now use :latest again
-FROM mabesa/sapphire-pythonbaseimage:latest
+```yaml
+# BEFORE
+-f ./apps/<module>/Dockerfile .
+
+# AFTER
+-f ./apps/<module>/Dockerfile.py312 .
 ```
 
-### Step 6.4: Update README Badge
+**Jobs to update:**
+- [ ] `build_and_push_python_311_base_image` → use `Dockerfile.py312`
+- [ ] `push_pipeline_to_Dockerhub` → use `Dockerfile.py312`
+- [ ] `push_preprocessing_runoff_to_Dockerhub` → use `Dockerfile.py312`
+- [ ] `push_preprocessing_gateway_to_Dockerhub` → use `Dockerfile.py312`
+- [ ] `push_machine_learning_to_Dockerhub` → use `Dockerfile.py312`
+- [ ] `push_forecast_dashboard_to_Dockerhub` → use `Dockerfile.py312`
+- [ ] `push_postprocessing_to_Dockerhub` → use `Dockerfile.py312`
+- [ ] `push_linear_regression_to_Dockerhub` → use `Dockerfile.py312`
+
+#### 6.2c: Keep `:py312` jobs (for now)
+
+**Decision**: Keep the `:py312` jobs during transition period. They will build identical images to `:latest` but provide a safety net. Remove them in Step 6.10 after confirming stability.
+
+### Step 6.3: Update README Badge
 
 ```markdown
 ![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)
 ```
 
-### Step 6.5: Team Communication
+### Step 6.4: Create Pull Request
+
+Create PR from `implementation_planning` → `main`:
+
+```bash
+gh pr create --base main --head implementation_planning \
+  --title "Python 3.12 + uv migration" \
+  --body "## Summary
+- Migrates all modules from Python 3.11 + pip to Python 3.12 + uv
+- Adds pyproject.toml and uv.lock to all modules
+- Creates Dockerfile.py312 for all modules
+- Flips :latest tag to use Python 3.12
+
+## Testing
+- All modules tested locally with Python 3.12
+- Server testing completed 2026-01-26
+- CI/CD py312 jobs passing
+
+## Rollback
+If issues arise, use :py311 archived images."
+```
+
+### Step 6.5: Merge Pull Request
+
+After PR review and approval:
+
+```bash
+gh pr merge --squash  # or --merge depending on preference
+```
+
+### Step 6.6: Verify CI/CD Passes on Main
+
+After merge, monitor GitHub Actions:
+
+1. Go to https://github.com/hydrosolutions/SAPPHIRE_forecast_tools/actions
+2. Verify the `deploy_main.yml` workflow triggers on the merge commit
+3. Check that all jobs complete successfully:
+   - [ ] Test jobs pass
+   - [ ] `:latest` images build and push successfully
+   - [ ] `:py312` images build and push successfully
+
+**If CI fails**: Do NOT proceed. Debug and fix issues first.
+
+### Step 6.7: Verify DockerHub Images Updated
+
+Confirm new images are on DockerHub:
+
+```bash
+# Check image manifests show Python 3.12
+docker pull mabesa/sapphire-pythonbaseimage:latest
+docker run --rm mabesa/sapphire-pythonbaseimage:latest python --version
+# Expected: Python 3.12.x
+
+# Verify uv is available
+docker run --rm mabesa/sapphire-pythonbaseimage:latest uv --version
+```
+
+### Step 6.8: Team Communication
 
 ```
 📢 Migration Complete: Python 3.12 + uv Now Default
@@ -668,11 +761,10 @@ The :latest tag now uses Python 3.12 and uv package manager.
   FROM mabesa/sapphire-pythonbaseimage:py311
 ```
 
-### Step 6.6: Migrate Dockerfiles from `uv export` to `uv sync` (Optional)
+### Step 6.9: Completed - Dockerfile Migration to `uv sync`
 
-The `preprocessing_runoff` module has been updated to use `uv sync` instead of `uv export` in its Dockerfile. This pattern is cleaner and doesn't require pip at runtime. Other modules should be migrated for consistency.
+All modules have been updated to use `uv sync` instead of `uv export`:
 
-**Current state:**
 - [x] `preprocessing_runoff` - uses `uv sync`
 - [x] `forecast_dashboard` - uses `uv sync`
 - [x] `linear_regression` - uses `uv sync`
@@ -682,28 +774,13 @@ The `preprocessing_runoff` module has been updated to use `uv sync` instead of `
 - [x] `preprocessing_gateway` - uses `uv sync`
 - [x] `preprocessing_station_forcing` - uses `uv sync`
 
-**Pattern change:**
-```dockerfile
-# OLD: uv export + pip install
-RUN uv export --frozen --no-dev > /tmp/requirements.txt && \
-    pip install --no-cache-dir -r /tmp/requirements.txt
+### Step 6.10: Cleanup (After 2-4 Weeks of Stable Operation)
 
-# NEW: uv sync (cleaner, no pip needed at runtime)
-RUN uv sync --frozen --no-dev
-```
-
-**Benefits:**
-- Simpler Dockerfile (no intermediate requirements.txt)
-- No pip needed at runtime
-- Better alignment with uv's intended workflow
-- Consistent pattern across all modules
-
-### Step 6.7: Cleanup (Optional)
-
-After 2-4 weeks of stable operation:
-- [ ] Remove `:py312` tag (redundant with `:latest`)
+After confirming stability in production:
+- [ ] Remove `:py312` jobs from `deploy_main.yml` (now redundant with `:latest`)
+- [ ] Remove `:py312` jobs from `build_test.yml`
 - [ ] Consider removing `:py311` tag if no longer needed
-- [ ] Remove `Dockerfile.py312` if consolidated into main Dockerfile
+- [ ] Optionally consolidate `Dockerfile.py312` into main `Dockerfile`
 
 ---
 
@@ -1509,7 +1586,7 @@ If AGPL packages are found:
 | 5a | forecast_dashboard | ✅ Completed | `:py312` | B | pyproject.toml + uv.lock (67 packages) + Dockerfile.py312; Panel 1.4.5, Bokeh 3.4.3 (pinned <3.5 for FuncTickFormatter compatibility), HoloViews 1.19.1; local Py3.12 test OK; Docker operational test OK. CI/CD workflows updated. |
 | 5b | pipeline | ✅ Completed | `:py312` | B | pyproject.toml + uv.lock (35 packages) + Dockerfile.py312; Luigi 3.6.0; local Py3.12 test OK; Docker operational test OK (Docker socket access verified). CI/CD workflows updated. |
 | 5c | postprocessing_forecasts | ✅ Completed | `:py312` | B | pyproject.toml + uv.lock (29 packages) + Dockerfile.py312; local Py3.12 test OK (script runs successfully with pentad/decadal forecasts). |
-| 6 | Flip `:latest` to py312 | 🔄 Ready for Flip | `:latest` | B avg | **2026-01-16**: All development complete. Shell script fixes for py312 compatibility (see below). Local testing passed. Server testing via cronjobs in progress (weekend). **After weekend review**: Execute flip steps 6.1-6.5. |
+| 6 | Flip `:latest` to py312 | 🔄 Ready for Flip | `:latest` | B avg | **2026-01-27**: All development complete. Server testing passed (2026-01-26). Execute steps 6.0-6.10. See refined Phase 6 section for detailed procedure. |
 | 7 | Full package upgrade | Not started | `:py312` | B | Upgrade all packages to latest versions after py312 migration complete. |
 
 ### Shell Script Fixes for py312 (2026-01-16)
@@ -1548,7 +1625,9 @@ The maintenance script was overriding CMD with a relative path that got resolved
 
 **Fixed**: `apps/pipeline/Dockerfile.py312` - CMD now uses `cd /app/apps/pipeline && uv run luigi ...` to ensure venv is found
 
-### Phase 6 Flip Procedure (After Weekend Testing)
+### Phase 6 Flip Procedure
+
+**Status**: 🔄 Ready for execution (2026-01-27)
 
 **Prerequisites** (all completed ✅):
 - [x] All modules have pyproject.toml + uv.lock
@@ -1556,30 +1635,26 @@ The maintenance script was overriding CMD with a relative path that got resolved
 - [x] All py312 images building in CI/CD with SLSA attestation
 - [x] Shell scripts fixed for py312 compatibility
 - [x] Local testing passed
-- [ ] Weekend cronjob testing successful (in progress)
+- [x] Server cronjob testing successful (2026-01-26)
+- [x] OBS-001 ML issue fixed (marker file check removed)
 
-**Flip Steps (execute after Monday review)**:
+**See [Phase 6: Flip `:latest` to Python 3.12 + uv](#phase-6-flip-latest-to-python-312--uv) for detailed steps 6.0-6.10.**
 
-1. **Create `:py311` archive tags** (for rollback capability):
-   ```bash
-   for img in pythonbaseimage pipeline preprunoff prepgateway linreg ml dashboard postprocessing; do
-     docker pull mabesa/sapphire-$img:latest
-     docker tag mabesa/sapphire-$img:latest mabesa/sapphire-$img:py311
-     docker push mabesa/sapphire-$img:py311
-   done
-   ```
-
-2. **Update deploy_main.yml**:
-   - Revert branch trigger: `branches: ["main"]`
-   - Update `:latest` build jobs to use `Dockerfile.py312`
-   - Remove `:py312` jobs (now redundant with `:latest`)
-   - Keep `:py311` as archived reference
-
-3. **Update README.md badge**: `Python 3.12+`
-
-4. **Merge to main**: Create PR from `implementation_planning` → `main`
-
-5. **Team communication**: Announce the flip
+**Quick Reference:**
+| Step | Task |
+|------|------|
+| 6.0 | Commit staged plan files |
+| 6.1 | Create `:py311` archive tags |
+| 6.2a | Revert deploy_main.yml branch trigger to `main` |
+| 6.2b | Switch `:latest` jobs to `Dockerfile.py312` |
+| 6.2c | Keep `:py312` jobs (remove later in 6.10) |
+| 6.3 | Update README.md badge |
+| 6.4 | Create PR: `implementation_planning` → `main` |
+| 6.5 | Merge PR |
+| 6.6 | Verify CI/CD passes on main |
+| 6.7 | Verify DockerHub images updated |
+| 6.8 | Team communication |
+| 6.10 | Cleanup (after 2-4 weeks) |
 
 ---
 
