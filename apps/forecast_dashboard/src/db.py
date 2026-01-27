@@ -276,7 +276,7 @@ def get_ml_forecast(station):
     ne["model_short"] = "NE"
     ne["model_long"]  = "Neural Ensemble (NE)"
     ne["flag"] = 0
-    ne["composition"] = "TFT+TiDE+TSMixer"
+    ne["composition"] = "TFT,TiDE,TSMixer"
 
     # match column order and append
     ne = ne[ml_forecast.columns]

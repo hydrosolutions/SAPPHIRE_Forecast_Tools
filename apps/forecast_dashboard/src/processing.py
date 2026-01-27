@@ -927,6 +927,76 @@ def save_stations_to_file(stations, filename):
         pickle.dump(stations, f)
 
 
+def get_all_stations_from_iehhf(valid_codes):
+    all_stations_file = os.path.join(
+        os.getenv("ieasyforecast_intermediate_data_path"),
+        os.getenv("ieasyforecast_all_stations", "all_stations.pkl")
+    )
+    from ieasyhydro_sdk.sdk import IEasyHydroHFSDK
+    try:
+        iehhf = IEasyHydroHFSDK()
+        # Uncomment to test failure to connect to iEH HF
+        # raise ConnectionError("Simulated iEHHF failure")
+        print("iEHHF connected. Fetching station metadata...")
+        # iehhf_warning = None
+        # Get a list of site objects from iEH HF
+        all_stations, _, _ = sl.get_pentadal_forecast_sites_from_HF_SDK(iehhf)
+        # Save to file for later use
+        save_stations_to_file(all_stations, all_stations_file)
+    except Exception as e:
+        print(f"iEHHF not available, falling back to file. Error: {e}")
+        # iehhf_warning = f"iEHHF not available, station metadata is read from file which might not be in sync with hf.ieasyhydro.org."
+        # all_stations = load_stations_from_file(all_stations_file)
+        # if all_stations is None:
+        #     all_stations = []
+
+        # Simulate delay for loading from file
+        # import time
+        # subset_file = os.path.join(
+        #     os.getenv("ieasyforecast_intermediate_data_path"),
+        #     os.getenv("ieasyforecast_subset_stations", "subset_stations.pkl")
+        # )
+        # all_stations = load_stations_from_file(subset_file)
+        # # temp = []
+        # # for station in all_stations:
+        # #     if station.code != '15189':
+        # #         temp.append(station)
+        # # all_stations = temp
+        # time.sleep(3)
+
+        return None, None
+
+    # Cast all stations attributes to a dataframe
+    all_stations = sapphire_sites_to_dataframe(all_stations)
+
+    all_stations['code'] = all_stations['code'].astype(str)
+    all_stations.rename(columns={'name': 'station_labels'}, inplace=True)
+
+    # Left-join
+    station_list = all_stations['code'].sort_values().unique().tolist()
+    station_df = pd.DataFrame(station_list, columns=['code'])
+    station_df = station_df.merge(
+        all_stations.loc[:, ['code', 'station_labels', 'basin']],
+        left_on='code', right_on='code', how='left')
+    station_df['station_labels'] = station_df['code'] + ' - ' + station_df['station_labels']
+
+    # Create station dictionary
+    station_dict = station_df.groupby('basin')['station_labels'].apply(list).to_dict()
+
+    new_station_dict = {}
+    for basin, stations in station_dict.items():
+        # Only filter if we have valid_codes; otherwise keep prior stations
+        if len(valid_codes) > 0:
+            new_stations = [s for s in stations if any(code in s for code in valid_codes)]  # Corrected line
+        else:
+            new_stations = stations
+        if new_stations:  # Only add the basin if there are valid stations
+            new_station_dict[basin] = new_stations
+    station_dict = new_station_dict
+
+    return all_stations, station_dict
+
+
 def get_all_stations_from_file(valid_codes):
     all_stations_file = os.path.join(
         os.getenv("ieasyforecast_intermediate_data_path"),
@@ -935,6 +1005,19 @@ def get_all_stations_from_file(valid_codes):
     all_stations = load_stations_from_file(all_stations_file)
     if all_stations is None:
         all_stations = []
+
+    # # # # For testing (simulation): create a subset of stations and save to file
+    # subset_file = os.path.join(
+    #     os.getenv("ieasyforecast_intermediate_data_path"),
+    #     os.getenv("ieasyforecast_subset_stations", "subset_stations.pkl")
+    # )
+    # subset = []
+    # for station in all_stations:
+    #     # print("STATION:", station.code, station.name, type(station))
+    #     if station.code in ['15013', '15016', '16055', '16936', '15256', '15259', '15212', '15189']:
+    #         subset.append(station)
+    #         # print("ADDED:", station.code, station.name)
+    # save_stations_to_file(subset, subset_file)
 
     # Cast all stations attributes to a dataframe
     all_stations = sapphire_sites_to_dataframe(all_stations)
