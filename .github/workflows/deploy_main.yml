@@ -773,72 +773,72 @@ jobs:
           docker push "${{ env.RERUN_IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
 
 
-  test_dashboard:
-    needs: [build_and_push_python_311_base_image]
-    runs-on: ubuntu-latest
-    name: Test forecast dashboard
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.11"]
+  # test_dashboard:
+  #   needs: [build_and_push_python_311_base_image]
+  #   runs-on: ubuntu-latest
+  #   name: Test forecast dashboard
+  #   strategy:
+  #     fail-fast: false
+  #     matrix:
+  #       python-version: ["3.11"]
 
-    steps:
-      - name: Checks out current branch
-        uses: actions/checkout@v4
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-      - name: Set PYTHONPATH
-        run: |
-          # Adding the iEasyHydroForecast folder to the PYTHONPATH
-          echo "PYTHONPATH=${GITHUB_WORKSPACE}/apps/iEasyHydroForecast" >> $GITHUB_ENV
-      - name: Get env var from GitHub secrets
-        run: |
-          echo "ieasyhydroforecast_url=${{ secrets.ieasyhydroforecast_url }}" >> $GITHUB_ENV
-      - name: Install dependencies
-        # Default working directory is the repository root folder
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r ./apps/forecast_dashboard/requirements.txt
-          python -m pip install --no-cache-dir --upgrade --force-reinstall "git+https://github.com/hydrosolutions/ieasyhydro-python-sdk@master" 
-          python -m pip install git+https://github.com/hydrosolutions/ieasyreports.git@main
-          python -m pip install -e ./apps/iEasyHydroForecast
-      - name: Test with pytest
-        working-directory: ./apps
-        run: |
-          # Currently no tests implemented. No tests to run for the moment
-          #SAPPHIRE_TEST_ENV=True python -m pytest -s forecast_dashboard/tests/
+  #   steps:
+  #     - name: Checks out current branch
+  #       uses: actions/checkout@v4
+  #     - name: Set up Python ${{ matrix.python-version }}
+  #       uses: actions/setup-python@v5
+  #       with:
+  #         python-version: ${{ matrix.python-version }}
+  #     - name: Set PYTHONPATH
+  #       run: |
+  #         # Adding the iEasyHydroForecast folder to the PYTHONPATH
+  #         echo "PYTHONPATH=${GITHUB_WORKSPACE}/apps/iEasyHydroForecast" >> $GITHUB_ENV
+  #     - name: Get env var from GitHub secrets
+  #       run: |
+  #         echo "ieasyhydroforecast_url=${{ secrets.ieasyhydroforecast_url }}" >> $GITHUB_ENV
+  #     - name: Install dependencies
+  #       # Default working directory is the repository root folder
+  #       run: |
+  #         python -m pip install --upgrade pip
+  #         python -m pip install -r ./apps/forecast_dashboard/requirements.txt
+  #         python -m pip install --no-cache-dir --upgrade --force-reinstall "git+https://github.com/hydrosolutions/ieasyhydro-python-sdk@master" 
+  #         python -m pip install git+https://github.com/hydrosolutions/ieasyreports.git@main
+  #         python -m pip install -e ./apps/iEasyHydroForecast
+  #     - name: Test with pytest
+  #       working-directory: ./apps
+  #       run: |
+  #         # Currently no tests implemented. No tests to run for the moment
+  #         #SAPPHIRE_TEST_ENV=True python -m pytest -s forecast_dashboard/tests/
 
-  push_dashboard_to_Dckerhub:
-    needs: [test_dashboard, test_ieasyhydroforecast]
-    runs-on: ubuntu-latest
-    name: Dockerize and push forecast dashboard to Dockerhub
+  # push_dashboard_to_Dckerhub:
+  #   needs: [test_dashboard, test_ieasyhydroforecast]
+  #   runs-on: ubuntu-latest
+  #   name: Dockerize and push forecast dashboard to Dockerhub
 
-    steps:
-      # To use this repository's private action, you must check out the
-      # repository.
-      - name: Checkout
-        uses: actions/checkout@v4
+  #   steps:
+  #     # To use this repository's private action, you must check out the
+  #     # repository.
+  #     - name: Checkout
+  #       uses: actions/checkout@v4
 
-      # Run the dockerization & deployment script
-      - name: Build Docker image
-        run: |
-          docker build --pull --no-cache \
-          -t "${{ env.DASHBOARD_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
-          -f ./apps/forecast_dashboard/Dockerfile.py312 .
+  #     # Run the dockerization & deployment script
+  #     - name: Build Docker image
+  #       run: |
+  #         docker build --pull --no-cache \
+  #         -t "${{ env.DASHBOARD_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
+  #         -f ./apps/forecast_dashboard/Dockerfile.py312 .
 
-      # Log in to the Docker registry
-      - name: Log in to the Docker registry
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
+  #     # Log in to the Docker registry
+  #     - name: Log in to the Docker registry
+  #       uses: docker/login-action@v3
+  #       with:
+  #         username: ${{ secrets.DOCKER_USERNAME }}
+  #         password: ${{ secrets.DOCKER_PASSWORD }}
 
-      # Push the image to Dockerhub
-      - name: Push the image to Dockerhub
-        run: |
-          docker push "${{ env.DASHBOARD_IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
+  #     # Push the image to Dockerhub
+  #     - name: Push the image to Dockerhub
+  #       run: |
+  #         docker push "${{ env.DASHBOARD_IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
 
   # Test forecast dashboard with Python 3.12 + uv
   test_dashboard_py312:
@@ -1111,7 +1111,7 @@ jobs:
       push_machine_learning_to_Dckerhub,
       push_machine_learning_py312_to_Dockerhub,
       push_reset_forecast_to_Dckerhub,
-      push_dashboard_to_Dckerhub,
+      # push_dashboard_to_Dckerhub,
       push_dashboard_py312_to_Dockerhub,
       push_postprocessing_runoff_to_Dckerhub,
       push_postprocessing_py312_to_Dockerhub,
