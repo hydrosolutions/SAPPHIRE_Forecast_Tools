@@ -27,8 +27,6 @@ services:
   #    - ${ieasyhydroforecast_data_ref_dir}/config:${ieasyhydroforecast_container_data_ref_dir}/config
   #    - ${ieasyhydroforecast_data_ref_dir}/GIS:${ieasyhydroforecast_container_data_ref_dir}/GIS
   #  container_name: sapphire-frontend-config
-  #  labels:
-  #    - com.centurylinklabs.watchtower.enable=true
 
   pentaddashboard:
     image: mabesa/sapphire-dashboard:${ieasyhydroforecast_frontend_docker_image_tag:-py312}
@@ -68,8 +66,6 @@ services:
       - ${ieasyhydroforecast_data_ref_dir}/bin:${ieasyhydroforecast_container_data_ref_dir}/bin
       - /var/run/docker.sock:/var/run/docker.sock
     container_name: sapphire-frontend-forecast-pentad
-    labels:
-      - com.centurylinklabs.watchtower.enable=true
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5006/pentad_dashboard"]
       interval: 30s
@@ -114,29 +110,11 @@ services:
       - ${ieasyhydroforecast_data_ref_dir}/bin:${ieasyhydroforecast_container_data_ref_dir}/bin
       - /var/run/docker.sock:/var/run/docker.sock
     container_name: sapphire-frontend-forecast-decad
-    labels:
-      - com.centurylinklabs.watchtower.enable=true
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5007/decad_dashboard"]
       interval: 30s
       timeout: 5s
       retries: 3
-
-  watchtower:
-    image: containrrr/watchtower
-    container_name: watchtower
-    restart: always
-    command: --interval 30 --label-enable --cleanup
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-    environment:
-      - WATCHTOWER_NOTIFICATIONS=email
-      - WATCHTOWER_NOTIFICATION_EMAIL_FROM=${SAPPHIRE_PIPELINE_SENDER_EMAIL}
-      - WATCHTOWER_NOTIFICATION_EMAIL_TO=${SAPPHIRE_PIPELINE_EMAIL_RECIPIENTS}
-      - WATCHTOWER_NOTIFICATION_EMAIL_SERVER=${SAPPHIRE_PIPELINE_SMTP_SERVER}
-      - WATCHTOWER_NOTIFICATION_EMAIL_SERVER_PORT=${SAPPHIRE_PIPELINE_SMTP_PORT}
-      - WATCHTOWER_NOTIFICATION_EMAIL_SERVER_USER=${SAPPHIRE_PIPELINE_SMTP_USERNAME}
-      - WATCHTOWER_NOTIFICATION_EMAIL_SERVER_PASSWORD=${SAPPHIRE_PIPELINE_SMTP_PASSWORD}
 
 
 
