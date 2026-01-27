@@ -18,9 +18,7 @@ env:
 
 on:
   push:
-    # TEMPORARY: Deploy from implementation_planning branch to test py312 images on AWS server
-    # TODO: Revert to "main" after server testing is complete
-    branches: [ "implementation_planning" ]
+    branches: [ "main" ]
   #pull_request:
   #  branches: [ "main" ]
 
@@ -106,7 +104,7 @@ jobs:
         run: |
           DOCKER_BUILDKIT=1 docker build --pull --no-cache \
           -t "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
-          -f ./apps/docker_base_image/Dockerfile .
+          -f ./apps/docker_base_image/Dockerfile.py312 .
 
       # Log in to the Docker registry
       - name: Log in to the Docker registry
@@ -205,7 +203,7 @@ jobs:
         run: |
           docker build --pull --no-cache \
           -t "${{ env.PIPELINE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
-          -f ./apps/pipeline/Dockerfile .
+          -f ./apps/pipeline/Dockerfile.py312 .
 
       # Log in to the Docker registry
       - name: Log in to the Docker registry
@@ -420,7 +418,7 @@ jobs:
         run: |
           docker build --pull --no-cache \
           -t "${{ env.PREPQ_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
-          -f ./apps/preprocessing_runoff/Dockerfile .
+          -f ./apps/preprocessing_runoff/Dockerfile.py312 .
 
       # Log in to the Docker registry
       - name: Log in to the Docker registry
@@ -507,7 +505,7 @@ jobs:
           docker build --pull --no-cache \
           --build-arg SAPPHIRE_DG_HOST=${{ secrets.SAPPHIRE_DG_HOST }} \
           -t "${{ env.PREPG_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
-          -f ./apps/preprocessing_gateway/Dockerfile .
+          -f ./apps/preprocessing_gateway/Dockerfile.py312 .
 
       # Log in to the Docker registry
       - name: Log in to the Docker registry
@@ -630,7 +628,7 @@ jobs:
         run: |
           docker build --pull --no-cache \
           -t "${{ env.ML_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
-          -f ./apps/machine_learning/Dockerfile .
+          -f ./apps/machine_learning/Dockerfile.py312 .
 
       # Log in to the Docker registry
       - name: Log in to the Docker registry
@@ -828,7 +826,7 @@ jobs:
         run: |
           docker build --pull --no-cache \
           -t "${{ env.DASHBOARD_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
-          -f ./apps/forecast_dashboard/Dockerfile .
+          -f ./apps/forecast_dashboard/Dockerfile.py312 .
 
       # Log in to the Docker registry
       - name: Log in to the Docker registry
@@ -913,7 +911,7 @@ jobs:
         run: |
           docker build --pull --no-cache \
           -t "${{ env.POSTPQ_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
-          -f ./apps/postprocessing_forecasts/Dockerfile .
+          -f ./apps/postprocessing_forecasts/Dockerfile.py312 .
 
       # Log in to the Docker registry
       - name: Log in to the Docker registry
@@ -1030,7 +1028,7 @@ jobs:
         run: |
           docker build --pull --no-cache \
           -t "${{ env.LINREG_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
-          -f ./apps/linear_regression/Dockerfile .
+          -f ./apps/linear_regression/Dockerfile.py312 .
 
       # Log in to the Docker registry
       - name: Log in to the Docker registry
