@@ -1,10 +1,9 @@
 # Monitoring the SAPPHIRE Forecast Tools
-To monitor the the SAPPHIRE Forecast Tools, the following components are set up: 
+To monitor the the SAPPHIRE Forecast Tools, the following components are set up:
 
-- Monitoring of the pipeline tasks  
+- Monitoring of the pipeline tasks
 - Healthcheck for the Docker containers running the forecast dashboards
-- Watchtower notifications for Docker container updates
-- Systemd service for monitoring the Docker containers 
+- Systemd service for monitoring the Docker containers
 - Systemd service for monitoring the dashboard logs
 
 This document provides a guide on how to set up the monitoring system for the forecast dashboards. We also provide troubleshooting tips for common issues.
@@ -13,7 +12,6 @@ Use the following table of contents to navigate through the document:
 <!-- toc -->
 - [Monitoring the SAPPHIRE Forecast Tools](#monitoring-the-sapphire-forecast-tools)
   - [Pipeline Tasks Monitoring](#pipeline-tasks-monitoring)
-  - [Watchtower Notifications](#watchtower-notifications)
   - [Docker Healthcheck](#docker-healthcheck)
   - [Systemd Service for Docker Container Monitoring](#systemd-service-for-docker-container-monitoring)
     - [🔧 Installation Steps](#-installation-steps)
@@ -51,9 +49,6 @@ SAPPHIRE_PIPELINE_SMTP_PASSWORD=<your_smtp_password>
 SAPPHIRE_PIPELINE_SENDER_EMAIL=<your_sender_email>
 SAPPHIRE_PIPELINE_EMAIL_RECIPIENTS=<your_recipient_emails_comma_separated>
 ```
-
-## Watchtower Notifications
-Watchtower is a tool that automatically updates running Docker containers. It is configured to send notifications when a container is updated (see file `bin/docker-compose-dashboards.yml`). No need to set up any additional environment variables for this feature.
 
 ## Docker Healthcheck 
 The Docker healthcheck is set up in the `docker-compose-dashboards.yml` file. It checks if the dashboard is running and sends a notification if it is not. No need to set up any additional environment variables for this feature.

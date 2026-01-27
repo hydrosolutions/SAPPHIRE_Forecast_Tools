@@ -548,9 +548,6 @@ services:
   decaddashboard:
     profiles: [dashboard, full]
     # ...
-  watchtower:
-    profiles: [dashboard, full]
-    # ...
 ```
 
 ---
