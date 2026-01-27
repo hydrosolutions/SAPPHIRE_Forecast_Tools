@@ -521,6 +521,12 @@ Each module in `/apps/` should have documentation in two places:
 - No new features will be added to this module
 - Security updates to the base image (rocker/tidyverse) will be applied when feasible
 
+**Update (2026-01-27): CI/CD Disabled**
+- R dependency builds broken in rocker/tidyverse upstream (urllib update incompatibility)
+- CI builds disabled in: `build_test.yml`, `deploy_main.yml`, `scheduled_security_rebuild.yml`
+- Existing Docker images frozen at current state
+- To re-enable: fix R dependencies, uncomment jobs in workflows
+
 **Documentation Tasks:**
 - [x] Add deprecation notice to `apps/conceptual_model/README.md` (2025-12-06)
 - [x] Document that upstream dependencies (airGR_GM, airgrdatassim) are unmaintained (2025-12-06)

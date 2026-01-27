@@ -2,6 +2,8 @@
 
 > **MAINTENANCE-ONLY:** This module is being phased out. No new features will be added. For new deployments, consider using the [machine_learning](../machine_learning/) module instead.
 
+> **CI/CD DISABLED (2026-01-27):** Docker builds disabled in GitHub Actions due to broken R dependencies in upstream rocker/tidyverse image. Existing Docker images are frozen. To re-enable, fix `install_packages.R` and uncomment jobs in `build_test.yml`, `deploy_main.yml`, and `scheduled_security_rebuild.yml`.
+
 R-based hydrological forecasting module using the GR4J rainfall-runoff model with CemaNeige snow module. Produces ensemble streamflow forecasts using ECMWF weather forecast data.
 
 ## Overview

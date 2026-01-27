@@ -88,6 +88,24 @@ Blocked by: Swiss data source API documentation/access
 
 ---
 
+## Conceptual Model Module (`cm`)
+
+### CM-001: CI/CD builds disabled - R dependencies broken
+**Status**: Open (Workaround Applied)
+**Priority**: Low
+**Discovered**: 2026-01-27
+**File**: —
+
+R dependency installation fails during Docker build due to upstream rocker/tidyverse changes (urllib update incompatibility). CI builds disabled in `build_test.yml`, `deploy_main.yml`, and `scheduled_security_rebuild.yml`. Existing Docker images frozen at current state.
+
+**Workaround**: Jobs commented out in all CI workflows. Module remains functional using existing frozen images.
+
+**To fix**: Debug and update `install_packages.R` to work with current R package ecosystem, then uncomment CI jobs.
+
+**Note**: Module is already in maintenance-only mode and planned for phase-out. Fix is low priority unless customer demand requires it.
+
+---
+
 ## Linear Regression Module (`lr`)
 
 ### LR-001: [Title TBD]
@@ -104,6 +122,7 @@ See detailed plan file for description.
 
 | Module | Abbreviation |
 |--------|--------------|
+| conceptual_model | `cm` |
 | preprocessing_runoff | `prepq` |
 | preprocessing_gateway | `prepg` |
 | preprocessing_station_forcing | `prepf` |
@@ -119,4 +138,4 @@ See detailed plan file for description.
 
 ---
 
-*Last updated: 2025-01-09*
+*Last updated: 2026-01-27*
