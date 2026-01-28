@@ -440,37 +440,39 @@ Critical untested functions:
 
 ### Implementation Priority
 
-**Phase 1: Critical (Fix PREPQ-005)**
+**Phase 1: Critical (Fix PREPQ-005)** ✅ COMPLETE
 1. Tests for `_merge_with_update()` - document bug, then fix
 2. Tests for gap detection logic (new functionality)
 3. Integration test: maintenance mode produces continuous data
 
-**Phase 2: High (Data Integrity)**
-1. API pagination tests
-2. Cache loading tests
-3. Hydrograph generation tests
+**Phase 2: High (Data Integrity)** ✅ COMPLETE
+1. ~~API pagination tests~~ (deferred - requires mock SDK)
+2. Cache loading tests - `test_cache_management.py`
+3. Hydrograph generation tests - `test_hydrograph_generation.py`
 
-**Phase 3: Medium (Robustness)**
-1. Error handling tests
-2. Edge case tests
-3. Output validation tests
+**Phase 3: Medium (Robustness)** ✅ COMPLETE
+1. Error handling tests - `test_edge_cases.py`
+2. Edge case tests - `test_edge_cases.py`
+3. Output validation tests - `test_output_validation.py`
 
-**Phase 4: Low (Completeness)**
-1. Excel loading tests (legacy path)
-2. Mode detection tests
-3. Encoding/formatting tests
+**Phase 4: Low (Completeness)** ✅ COMPLETE
+1. Excel loading tests (legacy path) - covered in `test_src.py`
+2. Mode detection tests - covered in `test_config.py`
+3. Encoding/formatting tests - `test_output_validation.py`
 
 ### Test File Organization
 
 ```
 apps/preprocessing_runoff/test/
-├── test_integration_maintenance_gaps.py  # Existing PREPQ-005 tests
-├── test_merge_update.py                  # NEW: _merge_with_update() tests
-├── test_api_client.py                    # NEW: API fetch/pagination tests
-├── test_cache_management.py              # NEW: Cache loading tests
-├── test_hydrograph_generation.py         # NEW: Hydrograph stats tests
-├── test_output_validation.py             # NEW: File schema tests
-└── test_edge_cases.py                    # NEW: Error/boundary tests
+├── test_integration_maintenance_gaps.py  # PREPQ-005 integration tests (37 tests)
+├── test_merge_update.py                  # _merge_with_update() tests (7 tests)
+├── test_filter_outliers_seasonal.py      # Seasonal filtering bug tests (15 tests)
+├── test_cache_management.py              # Cache loading tests (9 tests) ✓ IMPLEMENTED
+├── test_hydrograph_generation.py         # Hydrograph stats tests (24 tests) ✓ IMPLEMENTED
+├── test_output_validation.py             # File schema tests (17 tests) ✓ IMPLEMENTED
+├── test_edge_cases.py                    # Error/boundary tests (24 tests) ✓ IMPLEMENTED
+├── test_config.py                        # Configuration tests (9 tests)
+└── test_src.py                           # Core function tests (22 tests)
 ```
 
 ### Testing Philosophy
@@ -523,16 +525,17 @@ The maximum age for gap detection is hardcoded to 730 days (2 years). Gaps older
 - [x] Manual site filtering implemented (only fill gaps for sites in code_list)
 - [x] Deduplication of API responses implemented
 - [x] Comprehensive logging added for debugging
-- [ ] `hydrograph_day.csv` contains continuous data (no multi-month gaps) - *needs server testing*
-- [ ] Downstream forecasts (linreg, ML) produce continuous output - *needs server testing*
-- [ ] Dashboard visualizations show continuous data without straight-line gaps - *needs server testing*
+- [x] `hydrograph_day.csv` contains continuous data (no multi-month gaps) - *preprocessing verified on server 2026-01-28*
+- [ ] Downstream forecasts (linreg, ML) produce continuous output - *awaiting verification*
+- [ ] Dashboard visualizations show continuous data without straight-line gaps - *awaiting verification*
 - [x] Tests updated to assert FIXED behavior (gap should be filled)
 - [x] End-to-end integration tests with mocked SDK
 - [x] CSV round-trip tests (verify type consistency after write/read)
 - [x] Manual site filtering tests
 - [ ] Phase 2-4 tests implemented (post-fix)
-- [x] All preprocessing_runoff module tests pass - **72 tests passing**
+- [x] All preprocessing_runoff module tests pass - **164 tests passing**
 - [x] All repository tests pass (excluding linear_regression which has no tests)
+- [x] Phase 2-4 tests implemented (cache management, hydrograph generation, output validation, edge cases)
 
 ## Testing Results (2026-01-28)
 
@@ -573,8 +576,9 @@ AFTER FIX:
 
 ### Test Coverage
 
-- **15 new tests** specifically for seasonal data preservation bug fix
-- **90 total tests** passing in preprocessing_runoff module
+- **15 tests** for seasonal data preservation bug fix (`test_filter_outliers_seasonal.py`)
+- **74 new tests** for Phase 2-4 comprehensive coverage
+- **164 total tests** passing in preprocessing_runoff module
 
 ### Files Changed
 
@@ -584,7 +588,20 @@ AFTER FIX:
 
 ## Priority
 
-**Complete** - Both bugs investigated and the code bug has been fixed. Server testing needed to verify.
+**High** - Preprocessing fix verified. Awaiting downstream module verification.
+
+## Server Verification (2026-01-28)
+
+**Preprocessing module verified:**
+
+1. **Docker image verified**: `mabesa/sapphire-preprunoff:latest` contains the fix (both `apply_iqr_filter` and `reindex_and_interpolate` functions present)
+2. **Maintenance mode run successful**: Server preprocessing completed without errors
+3. **Data continuity verified**: March-November data now preserved in output files
+
+**Downstream verification in progress:**
+- [ ] Linear regression module
+- [ ] Machine learning module
+- [ ] Forecast dashboard
 
 ---
 
@@ -593,3 +610,5 @@ AFTER FIX:
 *Updated: 2026-01-28 - Added clarifications section addressing implementation questions*
 *Updated: 2026-01-28 - Added implementation design notes and end-to-end integration tests*
 *Updated: 2026-01-28 - Local testing complete, fix verified working, remaining gaps are source data issues*
+*Updated: 2026-01-28 - Server testing complete, preprocessing module verified in production*
+*Updated: 2026-01-28 - Phase 2-4 tests implemented (164 total tests passing)*
