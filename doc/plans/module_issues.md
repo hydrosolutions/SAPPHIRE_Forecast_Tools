@@ -103,7 +103,7 @@ Blocked by: Swiss data source API documentation/access
 
 **Test coverage**: 90 tests passing (15 new tests for seasonal data preservation fix)
 
-Awaiting server testing to verify full pipeline integration.
+Preprocessing module verified on server. Awaiting downstream module verification (linreg, ML, dashboard).
 
 ---
 
