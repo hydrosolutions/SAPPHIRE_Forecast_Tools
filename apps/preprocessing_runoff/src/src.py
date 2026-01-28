@@ -2309,9 +2309,23 @@ def _merge_with_update(existing_data: pd.DataFrame, new_data: pd.DataFrame,
     # Create a copy to avoid modifying the original
     result = existing_data.copy()
 
+    # Ensure consistent types for index columns
+    result[code_col] = result[code_col].astype(str)
+    result[date_col] = pd.to_datetime(result[date_col]).dt.normalize()
+    new_data = new_data.copy()
+    new_data[code_col] = new_data[code_col].astype(str)
+    new_data[date_col] = pd.to_datetime(new_data[date_col]).dt.normalize()
+
     # Set index for efficient lookup
     result_indexed = result.set_index([code_col, date_col])
     new_indexed = new_data.set_index([code_col, date_col])
+
+    # Log unique sites and date ranges for debugging
+    existing_sites = set(result[code_col].unique())
+    new_sites = set(new_data[code_col].unique())
+    sites_in_both = existing_sites & new_sites
+    sites_only_in_new = new_sites - existing_sites
+    logger.debug(f"[MERGE] Sites in existing: {len(existing_sites)}, in new: {len(new_sites)}, in both: {len(sites_in_both)}, only in new: {len(sites_only_in_new)}")
 
     # Count overlapping keys (potential updates)
     overlapping_keys = result_indexed.index.intersection(new_indexed.index)
@@ -2322,7 +2336,12 @@ def _merge_with_update(existing_data: pd.DataFrame, new_data: pd.DataFrame,
 
     # Add any new rows that weren't in the existing data
     new_rows = new_indexed[~new_indexed.index.isin(result_indexed.index)]
+    logger.debug(f"[MERGE] New rows to add (gap fills): {len(new_rows)}")
     if not new_rows.empty:
+        # Log sample of new rows being added
+        sample_new = new_rows.head(5).reset_index()
+        for _, row in sample_new.iterrows():
+            logger.debug(f"[MERGE]   Adding: site={row[code_col]}, date={row[date_col]}")
         result_indexed = pd.concat([result_indexed, new_rows])
 
     # Reset index and return
@@ -2331,6 +2350,268 @@ def _merge_with_update(existing_data: pd.DataFrame, new_data: pd.DataFrame,
     logger.info(f"[MERGE] Complete: {len(existing_data)} existing + {len(new_rows)} new = {len(result)} total")
 
     return result
+
+
+def _detect_gaps_in_data(
+    data: pd.DataFrame,
+    code_col: str,
+    date_col: str,
+    max_gap_age_days: int = 730
+) -> List[Tuple[str, pd.Timestamp, pd.Timestamp]]:
+    """
+    Detect gaps (missing dates) in the data for each site.
+
+    A gap is any date where a station should have data but doesn't.
+    Single missing days count as gaps.
+
+    Args:
+        data: DataFrame with site data (must have code_col and date_col).
+        code_col: Name of the site code column.
+        date_col: Name of the date column.
+        max_gap_age_days: Don't detect gaps older than this many days (default 2 years).
+                         This prevents requesting very old data that likely doesn't exist.
+
+    Returns:
+        List of (site_code, gap_start, gap_end) tuples representing date ranges
+        with missing data. Gaps are inclusive of both start and end dates.
+    """
+    if data.empty:
+        logger.debug("[GAPS] No data to check for gaps")
+        return []
+
+    # Ensure date column is datetime
+    data = data.copy()
+    data[date_col] = pd.to_datetime(data[date_col]).dt.normalize()
+    data[code_col] = data[code_col].astype(str)
+
+    # Debug: log date types to verify consistency
+    sample_date = data[date_col].iloc[0] if len(data) > 0 else None
+    logger.debug(f"[GAPS] Date column type after normalize: {type(sample_date)}, dtype: {data[date_col].dtype}")
+
+    # Calculate the cutoff date for gap detection
+    cutoff_date = pd.Timestamp.now().normalize() - pd.Timedelta(days=max_gap_age_days)
+    logger.debug(f"[GAPS] Cutoff date: {cutoff_date} (gaps older than this are ignored)")
+
+    gaps = []
+
+    for site_code in data[code_col].unique():
+        site_data = data[data[code_col] == site_code].copy()
+        site_dates = site_data[date_col].sort_values()
+
+        if len(site_dates) < 2:
+            continue
+
+        # Get the date range for this site
+        min_date = site_dates.min()
+        max_date = site_dates.max()
+
+        # Apply cutoff - don't look for gaps older than max_gap_age_days
+        effective_min_date = max(min_date, cutoff_date)
+
+        if effective_min_date >= max_date:
+            continue
+
+        # Create a complete date range
+        all_dates = pd.date_range(start=effective_min_date, end=max_date, freq='D')
+
+        # Find missing dates
+        existing_dates = set(site_dates)
+
+        # Debug first site to check types
+        if site_code == data[code_col].unique()[0]:
+            sample_existing = next(iter(existing_dates)) if existing_dates else None
+            sample_all = all_dates[0] if len(all_dates) > 0 else None
+            logger.debug(f"[GAPS] Type check - existing_dates sample: {type(sample_existing)}, all_dates sample: {type(sample_all)}")
+            logger.debug(f"[GAPS] Site {site_code}: {len(existing_dates)} existing dates, {len(all_dates)} expected dates")
+
+        missing_dates = [d for d in all_dates if d not in existing_dates]
+
+        if not missing_dates:
+            continue
+
+        # Convert missing dates to gap ranges (consecutive missing dates become one gap)
+        missing_dates = sorted(missing_dates)
+        gap_start = missing_dates[0]
+        gap_end = missing_dates[0]
+
+        for i in range(1, len(missing_dates)):
+            if (missing_dates[i] - missing_dates[i-1]).days == 1:
+                # Consecutive missing date, extend the gap
+                gap_end = missing_dates[i]
+            else:
+                # Non-consecutive, save current gap and start a new one
+                gaps.append((site_code, gap_start, gap_end))
+                gap_start = missing_dates[i]
+                gap_end = missing_dates[i]
+
+        # Don't forget the last gap
+        gaps.append((site_code, gap_start, gap_end))
+
+    # Log summary
+    if gaps:
+        total_gap_days = sum((g[2] - g[1]).days + 1 for g in gaps)
+        sites_with_gaps = len(set(g[0] for g in gaps))
+        logger.info(f"[GAPS] Detected {len(gaps)} gaps ({total_gap_days} total days) across {sites_with_gaps} sites")
+
+        # Log details for debugging
+        for site_code, start, end in gaps[:10]:  # Only log first 10
+            days = (end - start).days + 1
+            logger.debug(f"[GAPS]   Site {site_code}: {start.date()} to {end.date()} ({days} days)")
+        if len(gaps) > 10:
+            logger.debug(f"[GAPS]   ... and {len(gaps) - 10} more gaps")
+    else:
+        logger.debug("[GAPS] No gaps detected in data")
+
+    return gaps
+
+
+def _group_gaps_for_api(
+    gaps: List[Tuple[str, pd.Timestamp, pd.Timestamp]],
+    max_batch_size: int = 30
+) -> List[Tuple[pd.Timestamp, pd.Timestamp, List[str]]]:
+    """
+    Group gaps into efficient API request batches.
+
+    Gaps that overlap in time are grouped together to minimize API calls.
+
+    Args:
+        gaps: List of (site_code, gap_start, gap_end) tuples.
+        max_batch_size: Maximum number of sites per batch.
+
+    Returns:
+        List of (start_date, end_date, [site_codes]) tuples for API requests.
+    """
+    if not gaps:
+        return []
+
+    # Group gaps by overlapping time periods
+    # Sort by start date
+    sorted_gaps = sorted(gaps, key=lambda x: (x[1], x[2]))
+
+    batches = []
+    current_start = sorted_gaps[0][1]
+    current_end = sorted_gaps[0][2]
+    current_sites = {sorted_gaps[0][0]}
+
+    for site_code, gap_start, gap_end in sorted_gaps[1:]:
+        # Check if this gap overlaps with or is adjacent to the current batch
+        if gap_start <= current_end + pd.Timedelta(days=1):
+            # Overlapping or adjacent, extend the batch
+            current_end = max(current_end, gap_end)
+            current_sites.add(site_code)
+
+            # If batch gets too large, save it and start fresh
+            if len(current_sites) >= max_batch_size:
+                batches.append((current_start, current_end, list(current_sites)))
+                current_start = gap_start
+                current_end = gap_end
+                current_sites = {site_code}
+        else:
+            # Non-overlapping, save current batch and start new one
+            batches.append((current_start, current_end, list(current_sites)))
+            current_start = gap_start
+            current_end = gap_end
+            current_sites = {site_code}
+
+    # Don't forget the last batch
+    batches.append((current_start, current_end, list(current_sites)))
+
+    logger.debug(f"[GAPS] Grouped {len(gaps)} gaps into {len(batches)} API batches")
+
+    return batches
+
+
+def _fill_gaps_from_api(
+    ieh_hf_sdk,
+    gaps: List[Tuple[str, pd.Timestamp, pd.Timestamp]],
+    target_timezone,
+    date_col: str,
+    discharge_col: str,
+    code_col: str,
+    manual_site_codes: List[str] = None
+) -> pd.DataFrame:
+    """
+    Request data from the API for detected gaps.
+
+    Args:
+        ieh_hf_sdk: The iEasyHydro HF SDK instance.
+        gaps: List of (site_code, gap_start, gap_end) tuples.
+        target_timezone: Timezone for API requests.
+        date_col: Name of the date column.
+        discharge_col: Name of the discharge column.
+        code_col: Name of the site code column.
+        manual_site_codes: List of site codes known to be manual stations.
+            If provided, gaps for sites not in this list are skipped.
+
+    Returns:
+        DataFrame with data for the gap periods (may be empty if API has no data).
+    """
+    if not gaps or ieh_hf_sdk is None:
+        return pd.DataFrame()
+
+    # Filter gaps to only include manual sites if the list is provided
+    if manual_site_codes is not None:
+        manual_set = set(str(code) for code in manual_site_codes)
+        original_count = len(gaps)
+        gaps = [(site, start, end) for site, start, end in gaps if str(site) in manual_set]
+        if len(gaps) < original_count:
+            logger.debug(f"[GAPS] Filtered gaps: {original_count} -> {len(gaps)} (manual sites only)")
+        if not gaps:
+            logger.info("[GAPS] No gaps remaining after filtering for manual sites")
+            return pd.DataFrame()
+
+    # Group gaps into efficient batches
+    batches = _group_gaps_for_api(gaps)
+
+    logger.info(f"[GAPS] Filling {len(gaps)} gaps with {len(batches)} API batches")
+
+    all_gap_data = []
+
+    for batch_start, batch_end, batch_sites in batches:
+        # Convert to timezone-aware datetime for API
+        start_datetime = pd.Timestamp(batch_start).replace(hour=0, minute=1)
+        start_datetime = start_datetime.tz_localize(target_timezone)
+
+        end_datetime = pd.Timestamp(batch_end).replace(hour=23, minute=59)
+        end_datetime = end_datetime.tz_localize(target_timezone)
+
+        logger.debug(f"[GAPS] Fetching gap data: {batch_start.date()} to {batch_end.date()} for {len(batch_sites)} sites")
+
+        try:
+            batch_data = get_daily_average_discharge_from_iEH_HF_for_multiple_sites(
+                ieh_hf_sdk=ieh_hf_sdk,
+                id_list=batch_sites,
+                start_datetime=start_datetime,
+                end_datetime=end_datetime,
+                target_timezone=target_timezone,
+                date_col=date_col,
+                discharge_col=discharge_col,
+                code_col=code_col
+            )
+
+            if not batch_data.empty:
+                all_gap_data.append(batch_data)
+                logger.debug(f"[GAPS] Retrieved {len(batch_data)} records for gap period")
+            else:
+                # Empty response is okay - this might be a legitimate gap
+                logger.debug(f"[GAPS] No data in API for gap period {batch_start.date()} to {batch_end.date()}")
+
+        except Exception as e:
+            # Log but don't fail - we'll just have the gap remain
+            logger.warning(f"[GAPS] Error fetching gap data: {e}")
+
+    if all_gap_data:
+        result = pd.concat(all_gap_data, ignore_index=True)
+        # Deduplicate: Multiple batches may overlap and return the same (code, date) pair
+        before_dedup = len(result)
+        result = result.drop_duplicates(subset=[code_col, date_col], keep='first')
+        if len(result) < before_dedup:
+            logger.debug(f"[GAPS] Removed {before_dedup - len(result)} duplicate records")
+        logger.info(f"[GAPS] Gap filling complete: retrieved {len(result)} records")
+        return result
+    else:
+        logger.info("[GAPS] Gap filling complete: no additional data found in API")
+        return pd.DataFrame()
 
 
 def _read_runoff_data_by_organization(organization, date_col, discharge_col, name_col, code_col, code_list):
@@ -2846,7 +3127,51 @@ def get_runoff_data_for_sites_HF(ieh_hf_sdk=None, date_col='date', name_col='nam
             else:
                 # In operational mode, simply append new data
                 read_data = pd.concat([read_data, db_average_data], ignore_index=True)
-            
+
+        # PREPQ-005 fix: In maintenance mode, detect and fill gaps in the data
+        # This handles the case where cached/Excel data has gaps that the regular
+        # smart-lookback fetch doesn't cover (gaps in historical periods)
+        if mode == 'maintenance' and not read_data.empty:
+            logger.info(f"[GAPS] Starting gap detection for {len(read_data)} records across {read_data[code_col].nunique()} sites")
+            logger.info(f"[GAPS] Date range in read_data: {read_data[date_col].min()} to {read_data[date_col].max()}")
+            logger.info(f"[GAPS] code_list has {len(code_list) if code_list else 0} manual sites: {code_list[:5] if code_list else 'None'}...")
+
+            gaps = _detect_gaps_in_data(read_data, code_col, date_col)
+
+            if gaps:
+                logger.info(f"[GAPS] Detected {len(gaps)} gaps, now filling from API")
+                gap_data = _fill_gaps_from_api(
+                    ieh_hf_sdk=ieh_hf_sdk,
+                    gaps=gaps,
+                    target_timezone=target_timezone,
+                    date_col=date_col,
+                    discharge_col=discharge_col,
+                    code_col=code_col,
+                    manual_site_codes=code_list  # Only fill gaps for manual sites
+                )
+                logger.info(f"[GAPS] API returned {len(gap_data)} records for gap filling")
+                if not gap_data.empty:
+                    gap_data = standardize_date_column(gap_data, date_col=date_col)
+
+                    # Diagnostic: Check how many API records are for actual gap dates
+                    gap_dates_set = set()
+                    for site_code, gap_start, gap_end in gaps:
+                        for d in pd.date_range(gap_start, gap_end, freq='D'):
+                            gap_dates_set.add((str(site_code), d.normalize()))
+
+                    gap_data_dates = set(zip(gap_data[code_col].astype(str), pd.to_datetime(gap_data[date_col]).dt.normalize()))
+                    records_for_gaps = gap_data_dates & gap_dates_set
+                    logger.info(f"[GAPS] Of {len(gap_data)} API records, {len(records_for_gaps)} are for actual gap dates (out of {len(gap_dates_set)} gap dates)")
+
+                    before_merge = len(read_data)
+                    # Merge the gap data into the existing data
+                    read_data = _merge_with_update(read_data, gap_data, code_col, date_col, discharge_col)
+                    logger.info(f"[GAPS] After merge: {before_merge} -> {len(read_data)} records")
+                else:
+                    logger.warning("[GAPS] No gap data returned from API - gaps will remain unfilled")
+            else:
+                logger.info("[GAPS] No gaps detected in the data")
+
         # Get today's morning data if necessary
         db_morning_data = get_todays_morning_discharge_from_iEH_HF_for_multiple_sites(
             ieh_hf_sdk=ieh_hf_sdk,
