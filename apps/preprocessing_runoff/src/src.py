@@ -200,8 +200,12 @@ def filter_roughly_for_outliers(combined_data, group_by='Code',
     Raises:
     ValueError: If the group_by column is not found in the input DataFrame.
     """
-    def filter_group(group, filter_col, date_col, group_name):
-        """Inner function to filter outliers for a single group."""
+    def apply_iqr_filter(group, filter_col, group_name):
+        """Apply IQR-based outlier detection to a seasonal group.
+
+        This is applied per (station, season) group to get better seasonal
+        statistics for outlier detection.
+        """
         # Only apply IQR filtering if the group has more than 10 rows
         if len(group) > 10:
             # Calculate Q1, Q3, and IQR
@@ -217,11 +221,23 @@ def filter_roughly_for_outliers(combined_data, group_by='Code',
             group.loc[group[filter_col] > upper_bound, filter_col] = np.nan
             group.loc[group[filter_col] < lower_bound, filter_col] = np.nan
 
+            num_outliers = group[filter_col].isna().sum()
+            logger.debug(f"IQR filter: {num_outliers} outliers marked in seasonal group '{group_name}'")
+
+        return group
+
+    def reindex_and_interpolate(group, filter_col, date_col, group_name):
+        """Reindex to fill date gaps and interpolate small gaps.
+
+        This is applied per station (NOT per season) to avoid the bug where
+        seasonal reindexing creates NaN values that overwrite valid data from
+        other seasons when groups are concatenated.
+        """
         # Set the date column as the index
         group[date_col] = pd.to_datetime(group[date_col])
         group.set_index(date_col, inplace=True)
 
-        # Drop duplicates from the index
+        # Drop duplicates from the index, keeping first (which has real data)
         group = group.loc[~group.index.duplicated(keep='first')]
 
         # Reindex the data frame to include all dates in the range
@@ -244,7 +260,7 @@ def filter_roughly_for_outliers(combined_data, group_by='Code',
         group.loc[group['change'] > 3, filter_col] = np.nan
         group.drop(columns=['prev_value', 'change'], inplace=True)
 
-        # Interpolate gaps of length of max 2 days linearly
+        # Interpolate gaps of length of max 2 days linearly (again, after anomaly removal)
         group[filter_col] = group[filter_col].interpolate(method='time', limit=2)
 
         # Reset the index
@@ -253,7 +269,7 @@ def filter_roughly_for_outliers(combined_data, group_by='Code',
         # Print statistics of how many values were set to NaN
         num_outliers = group[filter_col].isna().sum()
         num_total = group[filter_col].notna().sum() + num_outliers
-        logger.info(f"filter_roughly_for_outliers:\n     from a total of {num_total}, {num_outliers} outliers set to NaN in group '{group_name}'.")
+        logger.info(f"filter_roughly_for_outliers:\n     from a total of {num_total}, {num_outliers} NaN values in station '{group_name}'.")
 
         return group
 
@@ -268,6 +284,10 @@ def filter_roughly_for_outliers(combined_data, group_by='Code',
     # Drop rows with NaN in the group_by column
     # Use .copy() to avoid SettingWithCopyWarning when modifying the DataFrame later
     combined_data = combined_data.dropna(subset=[group_by]).copy()
+
+    # Handle empty DataFrame
+    if combined_data.empty:
+        return combined_data
 
     # Replace empty places in the filter_col column with NaN
     combined_data[filter_col] = combined_data[filter_col].replace('', np.nan)
@@ -289,19 +309,29 @@ def filter_roughly_for_outliers(combined_data, group_by='Code',
     # Ensure the DataFrame is properly structured
     combined_data = combined_data.reset_index(drop=True)
 
-    # Apply the function to each group
-    # Iterate manually to pass group name for logging (pandas 2.2+ removed include_groups)
+    # STEP 1: Apply IQR filtering per (station, season) group
+    # This uses seasonal statistics for better outlier detection
     result_frames = []
     for (group_key, month), group_df in combined_data.groupby([group_by, 'month']):
-        processed = filter_group(group_df.copy(), filter_col, date_col, group_name=group_key)
+        processed = apply_iqr_filter(group_df.copy(), filter_col, group_name=f"{group_key}_{month}")
         result_frames.append(processed)
     combined_data = pd.concat(result_frames, ignore_index=True)
 
-    # Drop the temporary month column
+    # Drop the temporary month column - no longer needed after IQR filtering
     combined_data.drop(columns=['month'], inplace=True)
 
-    # Drop rows with duplicate code and dates, keeping the last one
-    combined_data = combined_data.drop_duplicates(subset=[group_by, date_col], keep='last')
+    # Drop rows with duplicate code and dates BEFORE reindexing
+    # Use keep='first' to preserve original data over any duplicates
+    combined_data = combined_data.drop_duplicates(subset=[group_by, date_col], keep='first')
+
+    # STEP 2: Reindex and interpolate per STATION (not per season)
+    # This is critical: reindexing per season caused the bug where winter group's
+    # NaN values (from reindexing Jan-Dec) overwrote valid spring/summer/autumn data
+    result_frames = []
+    for group_key, group_df in combined_data.groupby(group_by):
+        processed = reindex_and_interpolate(group_df.copy(), filter_col, date_col, group_name=group_key)
+        result_frames.append(processed)
+    combined_data = pd.concat(result_frames, ignore_index=True)
 
     # Sort by code and date
     combined_data = combined_data.sort_values(by=[group_by, date_col])
