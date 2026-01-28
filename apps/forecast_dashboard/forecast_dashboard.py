@@ -13,8 +13,8 @@ import pandas as pd
 import datetime as dt
 from datetime import timedelta
 
-import logging
-from logging.handlers import TimedRotatingFileHandler
+# import logging
+# from logging.handlers import TimedRotatingFileHandler
 
 import holoviews as hv
 # Set the default extension
@@ -35,6 +35,8 @@ import calendar
 from src.gettext_config import _
 from concurrent.futures import ThreadPoolExecutor
 from src import db
+from dashboard.logger import setup_logger
+from dashboard import widgets
 
 # Get the absolute path of the directory containing the current script
 cwd = os.getcwd()
@@ -59,30 +61,32 @@ import tag_library as tl
 # region set up the logger
 
 # Configure the logging level and formatter
-logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.DEBUG)
-formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+# logger = logging.getLogger(__name__)
+# logging.basicConfig(level=logging.DEBUG)
+# formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 
-# Remove all handlers associated with the logger
-for handler in logger.handlers[:]:
-    logger.removeHandler(handler)
+# # Remove all handlers associated with the logger
+# for handler in logger.handlers[:]:
+#     logger.removeHandler(handler)
 
-# Create the logs directory if it doesn't exist
-if not os.path.exists('logs'):
-    os.makedirs('logs')
+# # Create the logs directory if it doesn't exist
+# if not os.path.exists('logs'):
+#     os.makedirs('logs')
 
-# Create a file handler to write logs to a file
-# A new log file is created every <interval> day at <when>. It is kept for <backupCount> days.
-file_handler = TimedRotatingFileHandler('logs/log', when='midnight', interval=1, backupCount=30)
-file_handler.setFormatter(formatter)
+# # Create a file handler to write logs to a file
+# # A new log file is created every <interval> day at <when>. It is kept for <backupCount> days.
+# file_handler = TimedRotatingFileHandler('logs/log', when='midnight', interval=1, backupCount=30)
+# file_handler.setFormatter(formatter)
 
-# Create a stream handler to print logs to the console
-console_handler = logging.StreamHandler()
-console_handler.setFormatter(formatter)
+# # Create a stream handler to print logs to the console
+# console_handler = logging.StreamHandler()
+# console_handler.setFormatter(formatter)
 
-# Get the root logger and add the handlers to it
-logger.addHandler(file_handler)
-logger.addHandler(console_handler) 
+# # Get the root logger and add the handlers to it
+# logger.addHandler(file_handler)
+# logger.addHandler(console_handler) 
+
+logger = setup_logger()
 
 # endregion
 
@@ -240,15 +244,15 @@ if display_snow_data and display_weather_data:
 else:
     display_snow_data = False
 
-def get_directory_mtime(directory_path):
-    mtimes = []
-    for root, dirs, files in os.walk(directory_path):
-        for file in files:
-            filepath = os.path.join(root, file)
-            mtimes.append(os.path.getmtime(filepath))
-    # Combine mtimes into a single value, e.g., take the maximum
-    combined_mtime = max(mtimes) if mtimes else 0
-    return combined_mtime
+# def get_directory_mtime(directory_path):
+#     mtimes = []
+#     for root, dirs, files in os.walk(directory_path):
+#         for file in files:
+#             filepath = os.path.join(root, file)
+#             mtimes.append(os.path.getmtime(filepath))
+#     # Combine mtimes into a single value, e.g., take the maximum
+#     combined_mtime = max(mtimes) if mtimes else 0
+#     return combined_mtime
 
 # def load_data():
     # global hydrograph_day_all, hydrograph_pentad_all, linreg_predictor, \
@@ -615,7 +619,7 @@ sites_list = Site.get_site_attribues_from_iehhf_dataframe(all_stations)
 
 # hydropost_to_basin = {site.code: site.basin_ru for site in sites_list}
 
-bulletin_table = pn.Column()
+# bulletin_table = pn.Column()
 
 bulletin_sites = []
 
@@ -627,40 +631,41 @@ model_dict_all = data["forecasts_all"][['model_short', 'model_long']] \
     .set_index('model_long')['model_short'].to_dict()
 #print(f"DEBUG: forecast_dashboard.py: station_dict: {station_dict}")
 
-pentads = [
-    f"{i+1}{_('st pentad of')} {calendar.month_name[month]}" if i == 0 else
-    f"{i+1}{_('nd pentad of')} {calendar.month_name[month]}" if i == 1 else
-    f"{i+1}{_('rd pentad of')} {calendar.month_name[month]}" if i == 2 else
-    f"{i+1}{_('th pentad of')} {calendar.month_name[month]}"
-    for month in range(1, 13) for i in range(6)
-]
+# pentads = [
+#     f"{i+1}{_('st pentad of')} {calendar.month_name[month]}" if i == 0 else
+#     f"{i+1}{_('nd pentad of')} {calendar.month_name[month]}" if i == 1 else
+#     f"{i+1}{_('rd pentad of')} {calendar.month_name[month]}" if i == 2 else
+#     f"{i+1}{_('th pentad of')} {calendar.month_name[month]}"
+#     for month in range(1, 13) for i in range(6)
+# ]
 
 # Create a dictionary mapping each pentad description to its pentad_in_year value
-pentad_options = {f"{i+1}{_('st pentad of')} {calendar.month_name[month]}" if i == 0 else
-                  f"{i+1}{_('nd pentad of')} {calendar.month_name[month]}" if i == 1 else
-                  f"{i+1}{_('rd pentad of')} {calendar.month_name[month]}" if i == 2 else
-                  f"{i+1}{_('th pentad of')} {calendar.month_name[month]}": i + (month-1)*6 + 1
-                  for month in range(1, 13) for i in range(6)}
+# pentad_options = {f"{i+1}{_('st pentad of')} {calendar.month_name[month]}" if i == 0 else
+#                   f"{i+1}{_('nd pentad of')} {calendar.month_name[month]}" if i == 1 else
+#                   f"{i+1}{_('rd pentad of')} {calendar.month_name[month]}" if i == 2 else
+#                   f"{i+1}{_('th pentad of')} {calendar.month_name[month]}": i + (month-1)*6 + 1
+#                   for month in range(1, 13) for i in range(6)}
 
 # Create a dictionary mapping each decade description to its decad_in_year value
-decad_options = {
-    f"{i+1}{_('st decade of')} {calendar.month_name[month]}" if i == 0 else
-    f"{i+1}{_('nd decade of')} {calendar.month_name[month]}" if i == 1 else
-    f"{i+1}{_('rd decade of')} {calendar.month_name[month]}" if i == 2 else
-    f"{i+1}{_('th decade of')} {calendar.month_name[month]}": i + (month - 1) * 3 + 1
-    for month in range(1, 13) for i in range(3)
-}
+# decad_options = {
+#     f"{i+1}{_('st decade of')} {calendar.month_name[month]}" if i == 0 else
+#     f"{i+1}{_('nd decade of')} {calendar.month_name[month]}" if i == 1 else
+#     f"{i+1}{_('rd decade of')} {calendar.month_name[month]}" if i == 2 else
+#     f"{i+1}{_('th decade of')} {calendar.month_name[month]}": i + (month - 1) * 3 + 1
+#     for month in range(1, 13) for i in range(3)
+# }
 # endregion
 
 
 # region widgets
 
 # Widget for date selection, always visible
-forecast_date = data["forecasts_all"]['date'].max().date()  # Dates here refer to the forecast issue day, i.e. 1 day before the first day of the forecast pentad.
-date_picker = pn.widgets.DatePicker(name=_("Select date:"),
-                                    start=dt.datetime((forecast_date.year-1), 1, 5).date(),
-                                    end=forecast_date,
-                                    value=forecast_date)
+# forecast_date = data["forecasts_all"]['date'].max().date()  # Dates here refer to the forecast issue day, i.e. 1 day before the first day of the forecast pentad.
+# date_picker = pn.widgets.DatePicker(name=_("Select date:"),
+#                                     start=dt.datetime((forecast_date.year-1), 1, 5).date(),
+#                                     end=forecast_date,
+#                                     value=forecast_date)
+date_picker = widgets.create_date_picker(data["forecasts_all"])
 
 
 # Get the last available date in the data
@@ -682,39 +687,42 @@ bulletin_header_info = processing.get_bulletin_header_info(last_date, sapphire_f
 #print(f"DEBUG: forecast_dashboard.py: bulletin_header_info:\n{bulletin_header_info}")
 
 # Create the dropdown widget for pentad selection
-pentad_selector = pn.widgets.Select(
-    name=_("Select Pentad"),
-    options=pentad_options,
-    value=current_pentad,  # Default to the last available pentad
-    margin=(0, 0, 0, 0)
-)
+# pentad_selector = pn.widgets.Select(
+#     name=_("Select Pentad"),
+#     options=pentad_options,
+#     value=current_pentad,  # Default to the last available pentad
+#     margin=(0, 0, 0, 0)
+# )
+pentad_selector = widgets.create_pentad_selector(current_pentad)
 
 current_decad = tl.get_decad_for_date(last_date)
 # Create the dropdown widget for decad selection
-decad_selector = pn.widgets.Select(
-    name=_("Select Decad"),
-    options=decad_options,
-    value=current_decad,  # Default to the last available decad
-    margin=(0, 0, 0, 0)
-)
+# decad_selector = pn.widgets.Select(
+#     name=_("Select Decad"),
+#     options=decad_options,
+#     value=current_decad,  # Default to the last available decad
+#     margin=(0, 0, 0, 0)
+# )
+decad_selector = widgets.create_decad_selector(current_decad)
 print(f"   dbg: current_pentad: {current_pentad}")
 print(f"   dbg: current_decad: {current_decad}")
 
 # Widget for station selection, always visible
 #print(f"\n\nDEBUG: forecast_dashboard.py: station select name string: {_('Select discharge station:')}\n\n")
 #station = layout.create_station_selection_widget(station_dict)
-_default_station_value = None
-if station_dict:
-    try:
-        _default_station_value = "15189 - Аламедин  -  у.р.Чункурчак" #station_dict[next(iter(station_dict))][0]
-    except Exception:
-        _default_station_value = None
-station = pn.widgets.Select(
-    name=_("Select discharge station:"),
-    groups=station_dict if station_dict else {_("No stations available"): []},
-    value=_default_station_value,
-    margin=(0, 0, 0, 0)
-    )
+# _default_station_value = None
+# if station_dict:
+#     try:
+#         _default_station_value = "15189 - Аламедин  -  у.р.Чункурчак" #station_dict[next(iter(station_dict))][0]
+#     except Exception:
+#         _default_station_value = None
+# station = pn.widgets.Select(
+#     name=_("Select discharge station:"),
+#     groups=station_dict if station_dict else {_("No stations available"): []},
+#     value=_default_station_value,
+#     margin=(0, 0, 0, 0)
+#     )
+station = widgets.create_station(station_dict)
 
 # Print the station widget selection
 #print(f"DEBUG: forecast_dashboard.py: Station widget selection: {station.value}")
@@ -737,16 +745,17 @@ print(f"DEBUG: forecast_dashboard.py: current_model_pre_selection: \n{current_mo
 
 # Widget for forecast model selection, only visible in forecast tab
 # a given hydropost/station.
-model_checkbox = pn.widgets.CheckBoxGroup(
-    name=_("Select forecast model:"),
-    options=model_dict,
-    value=[],
-    #value=[model_dict[model] for model in current_model_pre_selection],
-    #width=200,  # 280
-    margin=(0, 0, 0, 0),
-    sizing_mode='stretch_width',
-    css_classes=['checkbox-label']
-)
+# model_checkbox = pn.widgets.CheckBoxGroup(
+#     name=_("Select forecast model:"),
+#     options=model_dict,
+#     value=[],
+#     #value=[model_dict[model] for model in current_model_pre_selection],
+#     #width=200,  # 280
+#     margin=(0, 0, 0, 0),
+#     sizing_mode='stretch_width',
+#     css_classes=['checkbox-label']
+# )
+model_checkbox = widgets.create_model_checkbox(model_dict)
 # Add models to value list safely
 for model in current_model_pre_selection:
     if model in model_dict:
@@ -759,212 +768,224 @@ for model in current_model_pre_selection:
     # Skip models that can't be found
 print(f"\n\n\nmodel_checkbox: {model_checkbox.value}\n\n\n")
 
-allowable_range_label = pn.pane.Markdown(
-    _("Select forecast range (for both summary table and figures):"),
-    styles={"white-space": "normal"},  # force wrapping
-    margin=(0, 0, -5, 0)
-)
-allowable_range_selection = pn.widgets.Select(
-    options=[_("delta"), _("Manual range, select value below"), _("min[delta, %]")],
-    value=_("delta"),
-    margin=(0, 0, 0, 0)
-)
-manual_range = pn.widgets.IntSlider(
-    name=_("Manual range (%)"),
-    start=0,
-    end=100,
-    value=20,
-    step=1,
-    margin=(20, 0, 0, 0)  # martin=(top, right, bottom, left)
-)
-manual_range.visible = False
+# allowable_range_label = pn.pane.Markdown(
+#     _("Select forecast range (for both summary table and figures):"),
+#     styles={"white-space": "normal"},  # force wrapping
+#     margin=(0, 0, -5, 0)
+# )
+# allowable_range_selection = pn.widgets.Select(
+#     options=[_("delta"), _("Manual range, select value below"), _("min[delta, %]")],
+#     value=_("delta"),
+#     margin=(0, 0, 0, 0)
+# )
+# manual_range = pn.widgets.IntSlider(
+#     name=_("Manual range (%)"),
+#     start=0,
+#     end=100,
+#     value=20,
+#     step=1,
+#     margin=(20, 0, 0, 0)  # martin=(top, right, bottom, left)
+# )
+# manual_range.visible = False
 
 
-def draw_show_forecast_ranges_widget():
-    return pn.widgets.RadioButtonGroup(
-        name=_("Show ranges in figure:"),
-        options=[_("Yes"), _("No")],
-        value=_("No"))
-show_range_button = draw_show_forecast_ranges_widget()
+# def draw_show_forecast_ranges_widget():
+#     return pn.widgets.RadioButtonGroup(
+#         name=_("Show ranges in figure:"),
+#         options=[_("Yes"), _("No")],
+#         value=_("No"))
+# show_range_button = draw_show_forecast_ranges_widget()
+allowable_range_selection, manual_range, show_range_button = widgets.create_range_widgets()
 
-show_daily_data_widget = pn.widgets.RadioButtonGroup(
-    name=_("Show daily data:"),
-    options=[_("Yes"), _("No")],
-    value=_("No")
-)
+# show_daily_data_widget = pn.widgets.RadioButtonGroup(
+#     name=_("Show daily data:"),
+#     options=[_("Yes"), _("No")],
+#     value=_("No")
+# )
+show_daily_data_widget = widgets.create_show_daily_data_widget()
 
-selected_indices = pn.widgets.CheckBoxGroup(
-    name=_("Select Data Points:"),
-    options={str(i): i for i in range(len(linreg_datatable))},
-    value=[],
-    width=280,
-    margin=(0, 0, 0, 0)
-)
+# selected_indices = pn.widgets.CheckBoxGroup(
+#     name=_("Select Data Points:"),
+#     options={str(i): i for i in range(len(linreg_datatable))},
+#     value=[],
+#     width=280,
+#     margin=(0, 0, 0, 0)
+# )
 
 # Write bulletin button
-write_bulletin_button = pn.widgets.Button(
-    name=_("Write bulletin"),
-    button_type='primary',
-    description=_("Write bulletin to Excel"))
+# write_bulletin_button = pn.widgets.Button(
+#     name=_("Write bulletin"),
+#     button_type='primary',
+#     description=_("Write bulletin to Excel"))
 #indicator = pn.indicators.LoadingSpinner(value=False, size=25)
 
 # Button to remove selected forecasts from the bulletin
-remove_bulletin_button = pn.widgets.Button(
-    name=_("Remove Selected"),
-    button_type='danger',
-    margin=(10, 0, 0, 0)  # top, right, bottom, left
-)
+# remove_bulletin_button = pn.widgets.Button(
+#     name=_("Remove Selected"),
+#     button_type='danger',
+#     margin=(10, 0, 0, 0)  # top, right, bottom, left
+# )
+remove_bulletin_button, write_bulletin_button = widgets.create_bulletin_buttons()
 
 
 # Create language selection buttons as links that reload the page with the selected language
-def create_language_buttons():
-    buttons = []
-    for lang_name, lang_code in {'English': 'en_CH', 'Русский': 'ru_KG', 'Кыргызча': 'ky_KG'}.items():
-        # Create a hyperlink styled as a button
-        href = pn.state.location.pathname + f'?lang={lang_code}'
+# def create_language_buttons():
+#     buttons = []
+#     for lang_name, lang_code in {'English': 'en_CH', 'Русский': 'ru_KG', 'Кыргызча': 'ky_KG'}.items():
+#         # Create a hyperlink styled as a button
+#         href = pn.state.location.pathname + f'?lang={lang_code}'
 
-        current_user = check_current_user()
+#         current_user = check_current_user()
 
-        if current_user:
-            # Log language change before redirecting
-            log_user_activity(current_user, 'language_change')
+#         if current_user:
+#             # Log language change before redirecting
+#             log_user_activity(current_user, 'language_change')
 
-        link = f'<a href="{href}" style="margin-right: 10px; padding: 5px 10px; background-color: white; color: #307086; text-decoration: none; border-radius: 4px;">{lang_name}</a>'
-        buttons.append(link)
-    # Combine the links into a single Markdown pane
-    return pn.pane.Markdown(' '.join(buttons))
+#         link = f'<a href="{href}" style="margin-right: 10px; padding: 5px 10px; background-color: white; color: #307086; text-decoration: none; border-radius: 4px;">{lang_name}</a>'
+#         buttons.append(link)
+#     # Combine the links into a single Markdown pane
+#     return pn.pane.Markdown(' '.join(buttons))
 
-language_buttons = create_language_buttons()
-language_buttons.visible = False  # Initially hidden
+# language_buttons = create_language_buttons()
+# language_buttons.visible = False  # Initially hidden
+language_buttons = widgets.create_language_buttons()
 
 # Put the message into a card with visibility set to off is the message is empty
-message_card = pn.Card(
-    message_pane,
-    title=_("Messages:"),
-    width_policy='fit',
-    width=station.width
-)
+# message_card = pn.Card(
+#     message_pane,
+#     title=_("Messages:"),
+#     width_policy='fit',
+#     width=station.width
+# )
 
 # Create a single Tabulator instance
-forecast_tabulator = pn.widgets.Tabulator(
-    theme='bootstrap',
-    show_index=False,
-    selection=[],
-    selectable='checkbox-single',
-    sizing_mode='stretch_both',
-    height=None
-)
+# forecast_tabulator = pn.widgets.Tabulator(
+#     theme='bootstrap',
+#     show_index=False,
+#     selection=[],
+#     selectable='checkbox-single',
+#     sizing_mode='stretch_both',
+#     height=None
+# )
+forecast_tabulator = widgets.create_forecast_tabulator()
 
-basin_names = list(station_dict.keys())
-basin_names.insert(0, _("All basins"))  # Add 'Select all basins' as the first option
+# basin_names = list(station_dict.keys())
+# basin_names.insert(0, _("All basins"))  # Add 'Select all basins' as the first option
 
 # Create the 'Select Basin' widget
-select_basin_widget = pn.widgets.Select(
-    name=_("Select basin:"),
-    options=basin_names,
-    value=_("All basins"),  # Default value
-    margin=(0, 0, 0, 0)
-)
+# select_basin_widget = pn.widgets.Select(
+#     name=_("Select basin:"),
+#     options=basin_names,
+#     value=_("All basins"),  # Default value
+#     margin=(0, 0, 0, 0)
+# )
+select_basin_widget = widgets.create_select_basin_widget(station_dict)
 
 # endregion
 
 # region forecast_card
 
-update_forecast_button = pn.widgets.Button(name=_("Apply changes"), button_type="success")
+# update_forecast_button = pn.widgets.Button(name=_("Apply changes"), button_type="success")
+update_forecast_button = widgets.create_update_forecast_button()
 # Forecast card for sidepanel
-forecast_model_title = pn.pane.Markdown(
-    _("Select forecast model (for figures only):"), margin=(0, 0, -15, 0))  # margin=(top, right, bottom, left)
-range_selection_title = pn.pane.Markdown(
-    _("Show ranges (for figures only):"), margin=(0, 0, -15, 0))
-forecast_card = pn.Card(
-    pn.Column(
-        allowable_range_label,
-        allowable_range_selection,
-        manual_range,
-        pn.layout.Divider(),
-        forecast_model_title,
-        model_checkbox,
-        range_selection_title,
-        show_range_button,
-        update_forecast_button
-    ),
-    title=_('Forecast configuration:'),
-    width_policy='fit', width=station.width,
-    collapsed=False
-)
-# Initially hide the card
-forecast_card.visible = False
+# forecast_model_title = pn.pane.Markdown(
+#     _("Select forecast model (for figures only):"), margin=(0, 0, -15, 0))  # margin=(top, right, bottom, left)
+# range_selection_title = pn.pane.Markdown(
+#     _("Show ranges (for figures only):"), margin=(0, 0, -15, 0))
+# forecast_card = pn.Card(
+#     pn.Column(
+#         allowable_range_label,
+#         allowable_range_selection,
+#         manual_range,
+#         pn.layout.Divider(),
+#         forecast_model_title,
+#         model_checkbox,
+#         range_selection_title,
+#         show_range_button,
+#         update_forecast_button
+#     ),
+#     title=_('Forecast configuration:'),
+#     width_policy='fit', width=station.width,
+#     collapsed=False
+# )
+# # Initially hide the card
+# forecast_card.visible = False
+forecast_card = widgets.create_forecast_card(allowable_range_selection, manual_range, model_checkbox, show_range_button, update_forecast_button, station)
 
 
 # Pentad card
-pentad_card = pn.Card(
-    pn.Column(
-        pentad_selector
-        ),
-    title=_('Pentad:'),
-    width_policy='fit', width=station.width,
-    collapsed=False
-)
+# pentad_card = pn.Card(
+#     pn.Column(
+#         pentad_selector
+#         ),
+#     title=_('Pentad:'),
+#     width_policy='fit', width=station.width,
+#     collapsed=False
+# )
 
-pentad_card.visible = False
+# pentad_card.visible = False
+pentad_card = widgets.create_pentad_card(pentad_selector, station)
 
-
-station_card = pn.Card(
-    pn.Column(
-        station
-    ),
-    title=_('Hydropost:'),
-    width_policy='fit',
-    width=station.width,
-    collapsed=False
-)
-station_card.visible = True
+# station_card = pn.Card(
+#     pn.Column(
+#         station
+#     ),
+#     title=_('Hydropost:'),
+#     width_policy='fit',
+#     width=station.width,
+#     collapsed=False
+# )
+# station_card.visible = True
+station_card = widgets.create_station_card(station)
 
 # Basin card
-basin_card = pn.Card(
-    pn.Column(
-        select_basin_widget
-        ),
-    title=_('Select basin:'),
-    width_policy='fit', width=station.width,
-    collapsed=False
-)
+# basin_card = pn.Card(
+#     pn.Column(
+#         select_basin_widget
+#         ),
+#     title=_('Select basin:'),
+#     width_policy='fit', width=station.width,
+#     collapsed=False
+# )
 
-basin_card.visible = False
+# basin_card.visible = False
+basin_card = widgets.create_basin_card(select_basin_widget, station)
 
 
-add_to_bulletin_button = pn.widgets.Button(name=_("Add to bulletin"), button_type="primary")
+# add_to_bulletin_button = pn.widgets.Button(name=_("Add to bulletin"), button_type="primary")
+add_to_bulletin_button = widgets.create_add_to_bulletin_button()
 
 # Initialize the bulletin_tabulator as a global Tabulator with predefined columns and grouping
-bulletin_tabulator = pn.widgets.Tabulator(
-    value=pd.DataFrame(columns=[
-        _('Hydropost'), _('Model'), _('Basin'),
-        _('Forecasted discharge'), _('Forecast lower bound'), _('Forecast upper bound'),
-        _('δ'), _('s/σ'), _('MAE'), _('Accuracy')
-    ]),
-    theme='bootstrap',
-    configuration={
-        'columns': [
-            {'field': 'station_label', 'title': _('Hydropost')},
-            {'field': 'model_short', 'title': _('Model')},
-            {'field': 'basin_ru', 'title': _('Basin')},
-            {'field': 'forecasted_discharge', 'title': _('Forecasted discharge')},
-            {'field': 'fc_lower', 'title': _('Forecast lower bound')},
-            {'field': 'fc_upper', 'title': _('Forecast upper bound')},
-            {'field': 'delta', 'title': _('δ')},
-            {'field': 'sdivsigma', 'title': _('s/σ')},
-            {'field': 'mae', 'title': _('MAE')},
-            {'field': 'accuracy', 'title': _('Accuracy')},
-        ],
-        'columnFilters': True  # Enable column filtering if needed
-    },
-    show_index=False,
-    height=300,
-    selectable='checkbox',  # Allow multiple selections for removal
-    sizing_mode='stretch_width',
-    groupby=[_('Basin')],  # Enable grouping by 'Basin'
-    layout='fit_columns'
-)
+# bulletin_tabulator = pn.widgets.Tabulator(
+#     value=pd.DataFrame(columns=[
+#         _('Hydropost'), _('Model'), _('Basin'),
+#         _('Forecasted discharge'), _('Forecast lower bound'), _('Forecast upper bound'),
+#         _('δ'), _('s/σ'), _('MAE'), _('Accuracy')
+#     ]),
+#     theme='bootstrap',
+#     configuration={
+#         'columns': [
+#             {'field': 'station_label', 'title': _('Hydropost')},
+#             {'field': 'model_short', 'title': _('Model')},
+#             {'field': 'basin_ru', 'title': _('Basin')},
+#             {'field': 'forecasted_discharge', 'title': _('Forecasted discharge')},
+#             {'field': 'fc_lower', 'title': _('Forecast lower bound')},
+#             {'field': 'fc_upper', 'title': _('Forecast upper bound')},
+#             {'field': 'delta', 'title': _('δ')},
+#             {'field': 'sdivsigma', 'title': _('s/σ')},
+#             {'field': 'mae', 'title': _('MAE')},
+#             {'field': 'accuracy', 'title': _('Accuracy')},
+#         ],
+#         'columnFilters': True  # Enable column filtering if needed
+#     },
+#     show_index=False,
+#     height=300,
+#     selectable='checkbox',  # Allow multiple selections for removal
+#     sizing_mode='stretch_width',
+#     groupby=[_('Basin')],  # Enable grouping by 'Basin'
+#     layout='fit_columns'
+# )
+bulletin_tabulator = widgets.create_bulletin_tabulator()
 # endregion
 
 #endregion
@@ -1271,7 +1292,8 @@ def update_model_select(station_value, selected_pentad, selected_decad):
 
 
 # Create the pop-up notification pane (initially hidden)
-add_to_bulletin_popup = pn.pane.Alert(_("Added to bulletin"), alert_type="success", visible=False)
+# add_to_bulletin_popup = pn.pane.Alert(_("Added to bulletin"), alert_type="success", visible=False)
+add_to_bulletin_popup = widgets.create_add_to_bulletin_popup()
 
 
 def get_bulletin_csv_path(year, horizon_value):
@@ -1547,11 +1569,12 @@ def update_bulletin_table(event=None):
     create_bulletin_table()
 
 
-bulletin_table = pn.Column(
-    bulletin_tabulator,  # Add the global Tabulator directly
-    pn.Row(remove_bulletin_button, sizing_mode='stretch_width'),
-    add_to_bulletin_popup  # Include the popup for success messages
-)
+# bulletin_table = pn.Column(
+#     bulletin_tabulator,  # Add the global Tabulator directly
+#     pn.Row(remove_bulletin_button, sizing_mode='stretch_width'),
+#     add_to_bulletin_popup  # Include the popup for success messages
+# )
+bulletin_table = widgets.create_bulletin_table(bulletin_tabulator, remove_bulletin_button, add_to_bulletin_popup)
 
 update_bulletin_table()
 
@@ -1611,7 +1634,7 @@ remove_bulletin_button.on_click(remove_selected_from_bulletin)
 
 # region dashboard_layout
 # Dynamically update figures
-date_picker_with_pentad_text = viz.create_date_picker_with_pentad_text(date_picker, _)
+# date_picker_with_pentad_text = viz.create_date_picker_with_pentad_text(date_picker, _)
 
 update_callback = viz.update_forecast_data(_, linreg_datatable, station, pentad_selector)
 pentad_selector.param.watch(update_callback, 'value')
@@ -1801,10 +1824,11 @@ if not hasattr(processing.data_reloader, 'watcher_attached'):
     processing.data_reloader.watcher_attached = True
 
 # Same Tabulator in both tabs
-forecast_summary_table = pn.panel(
-    forecast_tabulator,
-    sizing_mode='stretch_width'
-)
+# forecast_summary_table = pn.panel(
+#     forecast_tabulator,
+#     sizing_mode='stretch_width'
+# )
+forecast_summary_table = widgets.create_forecast_summary_table(forecast_tabulator)
 
 # Update the site object based on site and forecast selection
 #print(f"DEBUG: forecast_dashboard.py: forecast_tabulator: {forecast_summary_tabulator}")
@@ -1861,17 +1885,20 @@ reload_card = viz.create_reload_button()
 # Custom authentication logic by Vjekoslav Večković
 
 # Create widgets for login
-username_input = pn.widgets.TextInput(name=_('Username'), placeholder=_('Enter your username'))
-password_input = pn.widgets.PasswordInput(name=_('Password'), placeholder=_('Enter your password'))
-login_submit_button = pn.widgets.Button(name=_('Login'), button_type='primary')
-login_feedback = pn.pane.Markdown("", visible=False)
-dashboard_link = pn.pane.Markdown("", visible=False)
+# username_input = pn.widgets.TextInput(name=_('Username'), placeholder=_('Enter your username'))
+# password_input = pn.widgets.PasswordInput(name=_('Password'), placeholder=_('Enter your password'))
+# login_submit_button = pn.widgets.Button(name=_('Login'), button_type='primary')
+# login_feedback = pn.pane.Markdown("", visible=False)
+# dashboard_link = pn.pane.Markdown("", visible=False)
+username_input, password_input, login_submit_button, login_feedback = widgets.create_login_widgets()
 
 # Create logout confirmation widgets
-logout_confirm = pn.pane.Markdown("**Are you sure you want to log out?**", visible=False)
-logout_yes = pn.widgets.Button(name="Yes", button_type="success", visible=False)
-logout_no = pn.widgets.Button(name="No", button_type="danger", visible=False)
-logout_button = pn.widgets.Button(name="Logout", button_type="danger")
+# logout_confirm = pn.pane.Markdown("**Are you sure you want to log out?**", visible=False)
+# logout_yes = pn.widgets.Button(name="Yes", button_type="success", visible=False)
+# logout_no = pn.widgets.Button(name="No", button_type="danger", visible=False)
+logout_confirm, logout_yes, logout_no = widgets.create_logout_confirm_widgets()
+# logout_button = pn.widgets.Button(name="Logout", button_type="danger")
+logout_button = widgets.create_logout_button()
 
 
 def update_last_activity():
@@ -2040,18 +2067,20 @@ logout_no.on_click(handle_logout_cancel)
 
 
 # Create layout components
-login_form = pn.Column(
-    pn.pane.Markdown(f"# {_('Login')}"),
-    username_input,
-    password_input,
-    login_submit_button,
-    login_feedback
-)
+# login_form = pn.Column(
+#     pn.pane.Markdown(f"# {_('Login')}"),
+#     username_input,
+#     password_input,
+#     login_submit_button,
+#     login_feedback
+# )
+login_form = widgets.create_login_form(username_input, password_input, login_submit_button, login_feedback)
 
-logout_panel = pn.Column(
-    logout_confirm,
-    pn.Row(logout_yes, logout_no)
-)
+# logout_panel = pn.Column(
+#     logout_confirm,
+#     pn.Row(logout_yes, logout_no)
+# )
+logout_panel = widgets.create_logout_panel(logout_confirm, logout_yes, logout_no)
 predictors_warning = pn.Column()
 forecast_warning = pn.Column()
 get_predictors_warning(station)
@@ -2178,7 +2207,5 @@ def on_stations_loaded(fut):
         print(f"Failed to load stations: {e}")
 
 executor = ThreadPoolExecutor(max_workers=1)
-
 future = executor.submit(processing.get_all_stations_from_iehhf, valid_codes)
-
 future.add_done_callback(on_stations_loaded)
