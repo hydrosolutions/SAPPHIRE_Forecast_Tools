@@ -90,18 +90,18 @@ Blocked by: Swiss data source API documentation/access
 
 ### PREPQ-005: Maintenance Mode Produces Data with Large Gaps
 **Status**: Ready for Server Testing
-**Priority**: Medium
+**Priority**: High
 **Discovered**: 2026-01-27
 **File**: [`issues/gi_PREPQ-005_maintenance_mode_data_gaps.md`](issues/gi_PREPQ-005_maintenance_mode_data_gaps.md)
 **GitHub**: —
 
-Gap-filling implementation complete. Local testing shows:
-- Gap detection works correctly (101 gaps detected across 40 sites)
-- API calls are made for gap periods
-- Manual site filtering implemented
-- 72 tests passing
+**Two bugs found and fixed:**
 
-**Key finding**: Remaining gaps are **real operational data gaps** where the iEasyHydro HF database has no measurements. The code correctly attempts to fill gaps, but the API has no data for those dates.
+1. **API gap filling** - Working correctly; remaining gaps are real operational data gaps where iEasyHydro HF has no measurements
+
+2. **Seasonal filtering bug (CRITICAL)** - `filter_roughly_for_outliers()` was systematically removing valid March-November data due to flawed seasonal grouping + reindexing logic. Fixed by separating IQR filtering (per season) from reindexing (per station).
+
+**Test coverage**: 90 tests passing (15 new tests for seasonal data preservation fix)
 
 Awaiting server testing to verify full pipeline integration.
 

@@ -534,45 +534,57 @@ The maximum age for gap detection is hardcoded to 730 days (2 years). Gaps older
 - [x] All preprocessing_runoff module tests pass - **72 tests passing**
 - [x] All repository tests pass (excluding linear_regression which has no tests)
 
-## Local Testing Results (2026-01-28)
+## Testing Results (2026-01-28)
 
-### Summary
+### Summary - Two Bugs Found and Fixed
 
-The gap-filling implementation is **working correctly**. Local testing with maintenance mode shows:
+Investigation revealed **two separate bugs** causing data gaps:
 
-1. **Smart lookback fetch works**: 39,326 new records fetched from API (2024-01-01 to 2026-01-27)
-2. **Gap detection works**: 101 gaps detected (1,618 total days) across 40 sites
-3. **Gap filling API calls work**: 13 API batches requested for gap periods
-4. **Manual site filtering works**: Only gaps for manual sites (code_list) are filled
+1. **Bug 1 (API gap filling)**: Gap detection and API calls were working correctly, but the iEasyHydro HF database genuinely lacked data for some periods. This was not a code bug - these are real operational data gaps.
 
-### Key Finding
+2. **Bug 2 (Seasonal filtering - CRITICAL)**: The `filter_roughly_for_outliers()` function was systematically removing valid March-November data due to a flaw in how seasonal grouping interacted with date reindexing.
 
-The remaining gaps are **real operational data gaps** where the iEasyHydro HF database has no measurements:
+### Bug 2: Root Cause Analysis
+
+The `filter_roughly_for_outliers()` function in `src/src.py` had a critical bug:
+
+1. **Grouped by (Code, season)** where seasons are: winter (Dec-Feb), spring (Mar-May), summer (Jun-Aug), autumn (Sep-Nov)
+2. **Reindexed each seasonal group** from its min to max date using `pd.date_range()`
+3. **The 'winter' group** (which includes December) had a date range spanning Jan-Dec (full year)
+4. **Reindexing winter** created NaN rows for ALL months including Mar-Nov
+5. **Concatenated groups** and used `drop_duplicates(keep='last')`
+6. **Since 'winter' is alphabetically last**, its NaN values overwrote valid spring/summer/autumn data!
+
+### Fix Applied
+
+Split the function into two steps:
+1. **Step 1**: Apply IQR filtering per (station, season) group - seasonal statistics for outlier detection
+2. **Step 2**: Reindex and interpolate per STATION (not per season) - prevents cross-season NaN overwrites
+
+### Verification
 
 ```
-[GAPS] Of 14032 API records, 0 are for actual gap dates (out of 1618 gap dates)
+BEFORE FIX:
+  Month 11 (November): 0 rows with discharge data ✗ BUG!
+
+AFTER FIX:
+  Month 11 (November): 30 rows with discharge data ✓ PRESERVED
 ```
 
-Gap periods with no data in API:
-- 2025-06-10 to 2025-06-20 (1 site)
-- 2025-07-21 to 2025-07-22 (1 site)
-- 2025-07-26 to 2025-07-27 (2 sites)
-- 2025-11-20 to 2025-11-21 (1 site)
-- 2025-12-16 to 2025-12-16 (1 site)
-- 2025-12-26 to 2025-12-27 (2 sites)
-- 2026-01-21 to 2026-01-22 (3 sites)
+### Test Coverage
 
-These gaps cannot be filled programmatically because the source data doesn't exist.
+- **15 new tests** specifically for seasonal data preservation bug fix
+- **90 total tests** passing in preprocessing_runoff module
 
-### Current Status
+### Files Changed
 
-- **Code**: Fix implemented and tested locally
-- **Tests**: 72 tests passing in preprocessing_runoff module
-- **Server Testing**: Pending - will verify full pipeline integration
+- `apps/preprocessing_runoff/src/src.py` - Fixed `filter_roughly_for_outliers()` function
+- `apps/preprocessing_runoff/test/test_filter_outliers_seasonal.py` - New comprehensive tests
+- `apps/preprocessing_runoff/test/test_src.py` - Updated existing test
 
 ## Priority
 
-**Medium** - The code fix is complete and working. Remaining gaps are due to missing source data, not code issues.
+**Complete** - Both bugs investigated and the code bug has been fixed. Server testing needed to verify.
 
 ---
 

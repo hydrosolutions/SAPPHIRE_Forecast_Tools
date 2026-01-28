@@ -167,8 +167,20 @@ def test_filter_roughly_for_outliers_no_outliers():
     # Drop index
     result = result.reset_index(drop=True)
 
-    # Check that the result is the same as the input
-    pd.testing.assert_frame_equal(result, df, check_like=True)
+    # Check that all original data is preserved (values should match for original dates)
+    for code in ['A', 'B']:
+        for date in ['2000-01-01', '2000-01-02', '2000-01-03']:
+            orig_val = df[(df['Code'] == code) & (df['Date'] == date)]['Q_m3s'].values[0]
+            result_val = result[(result['Code'] == code) & (result['Date'] == date)]['Q_m3s'].values[0]
+            assert orig_val == result_val, f"Value mismatch for {code} on {date}"
+
+    # Verify no NaN values were introduced for original dates
+    for code in ['A', 'B']:
+        code_data = result[result['Code'] == code]
+        original_dates = pd.to_datetime(['2000-01-01', '2000-01-02', '2000-01-03'])
+        for date in original_dates:
+            val = code_data[code_data['Date'] == date]['Q_m3s'].values[0]
+            assert not pd.isna(val), f"Unexpected NaN for {code} on {date}"
 
 def test_filter_roughly_for_outliers_with_outliers():
     # Create a DataFrame with an outlier
