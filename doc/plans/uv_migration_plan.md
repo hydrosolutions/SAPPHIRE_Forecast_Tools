@@ -1683,6 +1683,133 @@ All production workflows have been updated to use Python 3.12 + uv exclusively:
 
 ---
 
+## Phase 6.11: Dockerfile Cleanup (2026-01-29)
+
+**Goal**: Clean up the Dockerfile naming by removing old Python 3.11 Dockerfiles and renaming `Dockerfile.py312` to `Dockerfile`.
+
+**Status**: 🔄 In Progress
+
+### Step 6.11.1: Update Base Image References (CRITICAL)
+
+**Issue found**: All `Dockerfile.py312` files currently reference `:py312` tag instead of `:latest`.
+
+**Action**: Before renaming, update all module Dockerfiles to use `:latest`:
+
+```dockerfile
+# BEFORE (WRONG):
+FROM mabesa/sapphire-pythonbaseimage:py312 AS base
+
+# AFTER (CORRECT):
+FROM mabesa/sapphire-pythonbaseimage:latest AS base
+```
+
+**Modules to update (8 total):**
+- [ ] `preprocessing_runoff/Dockerfile.py312`
+- [ ] `preprocessing_gateway/Dockerfile.py312`
+- [ ] `linear_regression/Dockerfile.py312`
+- [ ] `machine_learning/Dockerfile.py312`
+- [ ] `forecast_dashboard/Dockerfile.py312`
+- [ ] `pipeline/Dockerfile.py312`
+- [ ] `postprocessing_forecasts/Dockerfile.py312`
+- [ ] `preprocessing_station_forcing/Dockerfile.py312`
+
+**Exception**: `docker_base_image/Dockerfile.py312` uses `FROM python:3.12-slim-bookworm` (no base image dependency).
+
+### Step 6.11.2: Remove Old Dockerfiles
+
+**Modules with both `Dockerfile` (py311) and `Dockerfile.py312` (8 total):**
+- [ ] `docker_base_image`
+- [ ] `preprocessing_runoff`
+- [ ] `preprocessing_gateway`
+- [ ] `linear_regression`
+- [ ] `machine_learning`
+- [ ] `forecast_dashboard`
+- [ ] `pipeline`
+- [ ] `postprocessing_forecasts`
+
+```bash
+git rm apps/docker_base_image/Dockerfile
+git rm apps/preprocessing_runoff/Dockerfile
+git rm apps/preprocessing_gateway/Dockerfile
+git rm apps/linear_regression/Dockerfile
+git rm apps/machine_learning/Dockerfile
+git rm apps/forecast_dashboard/Dockerfile
+git rm apps/pipeline/Dockerfile
+git rm apps/postprocessing_forecasts/Dockerfile
+```
+
+**Modules with only old `Dockerfile` (deprecated/R-based - leave as-is):**
+- `reset_forecast_run_date` - deprecated
+- `conceptual_model` - R-based, maintenance-only
+- `configuration_dashboard` - R-based, deprecated
+
+### Step 6.11.3: Rename Dockerfile.py312 to Dockerfile
+
+**Modules to rename (9 total):**
+```bash
+git mv apps/docker_base_image/Dockerfile.py312 apps/docker_base_image/Dockerfile
+git mv apps/preprocessing_runoff/Dockerfile.py312 apps/preprocessing_runoff/Dockerfile
+git mv apps/preprocessing_gateway/Dockerfile.py312 apps/preprocessing_gateway/Dockerfile
+git mv apps/linear_regression/Dockerfile.py312 apps/linear_regression/Dockerfile
+git mv apps/machine_learning/Dockerfile.py312 apps/machine_learning/Dockerfile
+git mv apps/forecast_dashboard/Dockerfile.py312 apps/forecast_dashboard/Dockerfile
+git mv apps/pipeline/Dockerfile.py312 apps/pipeline/Dockerfile
+git mv apps/postprocessing_forecasts/Dockerfile.py312 apps/postprocessing_forecasts/Dockerfile
+git mv apps/preprocessing_station_forcing/Dockerfile.py312 apps/preprocessing_station_forcing/Dockerfile
+```
+
+### Step 6.11.4: Update GitHub Actions Workflows
+
+Update all workflow files to reference `Dockerfile` instead of `Dockerfile.py312`:
+
+**Files and reference counts:**
+- [ ] `.github/workflows/deploy_main.yml` (8 references)
+- [ ] `.github/workflows/deploy_local.yml` (8 references)
+- [ ] `.github/workflows/scheduled_security_rebuild.yml` (9 references)
+- [ ] `.github/workflows/build_test.yml` (14 references)
+
+**Total: 39 references to update**
+
+### Step 6.11.5: Update Docker Compose and Shell Scripts in bin/
+
+**Docker Compose files:**
+- [ ] `bin/docker-compose-luigi.yml` - line 26: `Dockerfile.py312` → `Dockerfile`
+- [ ] `bin/docker-compose-dashboards.yml` - lines 35, 79: `Dockerfile.py312` → `Dockerfile`
+
+**Total: 3 references to update**
+
+**Special files (leave as-is):**
+- `bin/luigi-daemon.Dockerfile` - separate daemon, Python 3.11 for stability
+
+### Step 6.11.6: Verify No Stray References
+
+After all updates, verify no references remain:
+```bash
+# Should find 0 results:
+grep -r "Dockerfile\.py312" .github/ bin/ apps/ --include="*.yml" --include="*.yaml" --include="*.sh"
+grep -r "Dockerfile\.py312" . --include="*.md"
+```
+
+### Step 6.11.7: Verify CI/CD Still Works
+
+After all changes:
+1. Push to feature branch
+2. Verify `build_test.yml` passes
+3. Create PR and verify all checks pass
+
+### Summary of Changes
+
+| Action | Count |
+|--------|-------|
+| Update base image refs (`:py312` → `:latest`) | 8 |
+| Remove old Dockerfiles | 8 |
+| Rename `.py312` → `Dockerfile` | 9 |
+| Update GitHub Actions | 39 |
+| Update docker-compose | 3 |
+| **Total** | **67**
+
+---
+
 ## Phase 7: Full Package Upgrade (Post-Migration)
 
 **Goal**: Update all packages to latest secure versions after Python 3.12 migration is stable.
