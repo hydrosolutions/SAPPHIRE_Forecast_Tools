@@ -2,7 +2,6 @@ name: Test & push main branch do Dockerhub
 
 env:
   IMAGE_TAG: latest
-  IMAGE_TAG_PY312: py312
 
   BASE_IMAGE_NAME: mabesa/sapphire-pythonbaseimage
   PIPELINE_IMAGE_NAME: mabesa/sapphire-pipeline
@@ -62,8 +61,7 @@ jobs:
       run: |
         SAPPHIRE_TEST_ENV=True python -m unittest discover -s iEasyHydroForecast/tests -p 'test_*.py'
 
-  # NEW: Test iEasyHydroForecast with Python 3.12 + uv + pytest
-  # This runs in parallel with the Python 3.11 tests during migration
+  # Test iEasyHydroForecast with Python 3.12 + uv + pytest
   test_ieasyhydroforecast_py312:
     runs-on: ubuntu-latest
     name: Test iEasyHydroForecast (Python 3.12 + uv)
@@ -90,63 +88,8 @@ jobs:
       run: |
         SAPPHIRE_TEST_ENV=True iEasyHydroForecast/.venv/bin/python -m pytest iEasyHydroForecast/tests/ -v
 
-  build_and_push_python_311_base_image:
-    needs: [test_ieasyhydroforecast]
-    runs-on: ubuntu-latest
-    name: Build and push Python 3.11 base image
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      # Run the dockerization & deployment script
-      - name: Build Docker image
-        run: |
-          DOCKER_BUILDKIT=1 docker build --pull --no-cache \
-          -t "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
-          -f ./apps/docker_base_image/Dockerfile.py312 .
-
-      # Log in to the Docker registry
-      - name: Log in to the Docker registry
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
-
-      # Push the image to Dockerhub
-      - name: Push the image to Dockerhub
-        run: |
-          docker push "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
-
-      - name: Install Cosign
-        run: |
-          curl -L https://github.com/sigstore/cosign/releases/latest/download/cosign-linux-amd64 -o cosign
-          chmod +x cosign
-          sudo mv cosign /usr/local/bin/
-
-      - name: Sign Docker Image with Cosign
-        run: |
-          DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}")
-          echo "DIGEST=$DIGEST" >> $GITHUB_ENV  # Explicitly set as env var
-          cosign sign --key env://COSIGN_PRIVATE_KEY --yes "$DIGEST"
-        env:
-          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
-          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
-
-      - name: Re-Tag Image
-        run: |
-          # Store only the latest digest
-          echo "LATEST_IMAGE_DIGEST=${DIGEST}" >> $GITHUB_ENV
-
-          # Tag with latest
-          docker tag "${DIGEST}" "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG}}"
-          docker push "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
-
-
-  # NEW: Build Python 3.12 + uv base image in parallel
-  # This job builds the :py312 tag for testing during the migration
-  # See: implementation_planning/uv_migration_plan.md
-  build_and_push_python_312_base_image:
+  # Build and push Python 3.12 + uv base image
+  build_and_push_base_image:
     needs: [test_ieasyhydroforecast, test_ieasyhydroforecast_py312]
     runs-on: ubuntu-latest
     name: Build and push Python 3.12 + uv base image
@@ -171,7 +114,7 @@ jobs:
           context: .
           file: ./apps/docker_base_image/Dockerfile.py312
           push: true
-          tags: ${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}
+          tags: ${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}
           # Enable SLSA provenance attestation
           provenance: true
           sbom: true
@@ -181,41 +124,13 @@ jobs:
 
       - name: Verify image
         run: |
-          docker pull "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}"
+          docker pull "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
           echo "Verifying Python version..."
-          docker run --rm "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" python --version
+          docker run --rm "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" python --version
           echo "Verifying uv is available..."
-          docker run --rm "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" uv --version
-          # Note: py312 base image only provides Python + uv. Packages are installed by child images via uv sync.
+          docker run --rm "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" uv --version
+          # Note: base image only provides Python + uv. Packages are installed by child images via uv sync.
 
-
-  build_and_push_pipeline_image:
-    needs: [build_and_push_python_311_base_image]
-    runs-on: ubuntu-latest
-    name: Build and push pipeline/orchestrator image
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      # Run the dockerization & deployment script
-      - name: Build Docker image
-        run: |
-          docker build --pull --no-cache \
-          -t "${{ env.PIPELINE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
-          -f ./apps/pipeline/Dockerfile.py312 .
-
-      # Log in to the Docker registry
-      - name: Log in to the Docker registry
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
-
-      # Push the image to Dockerhub
-      - name: Push the image to Dockerhub
-        run: |
-          docker push "${{ env.PIPELINE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
 
   # Test pipeline with Python 3.12 + uv
   test_pipeline_py312:
@@ -240,11 +155,11 @@ jobs:
         run: |
           pipeline/.venv/bin/python -c "import luigi; import docker; import yaml; import requests; import tenacity; from dotenv import load_dotenv; print('All imports successful!'); print(f'luigi: {luigi.__version__}'); print(f'docker: {docker.__version__}')"
 
-  # Build and push pipeline Python 3.12 + uv image
-  push_pipeline_py312_to_Dockerhub:
-    needs: [test_pipeline_py312, test_ieasyhydroforecast_py312, build_and_push_python_312_base_image]
+  # Build and push pipeline image
+  push_pipeline_to_Dockerhub:
+    needs: [test_pipeline_py312, test_ieasyhydroforecast_py312, build_and_push_base_image]
     runs-on: ubuntu-latest
-    name: Build and push pipeline (Python 3.12 + uv)
+    name: Build and push pipeline/orchestrator image
 
     steps:
       - name: Checkout
@@ -265,7 +180,7 @@ jobs:
           context: .
           file: ./apps/pipeline/Dockerfile.py312
           push: true
-          tags: ${{ env.PIPELINE_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}
+          tags: ${{ env.PIPELINE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}
           provenance: true
           sbom: true
           cache-from: type=gha
@@ -327,44 +242,7 @@ jobs:
   #   - name: Push the image to Dockerhub
   #     run: |
   #       docker push "${{ env.CONCMOD_IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
-  #
-  #   - name: Tag and push as py312
-  #     run: |
-  #       docker tag "${{ env.CONCMOD_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" "${{ env.CONCMOD_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}"
-  #       docker push "${{ env.CONCMOD_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}"
 
-
-  test_preprocessing_runoff:
-    needs: [build_and_push_python_311_base_image]
-    runs-on: ubuntu-latest
-    name: Test pre-processing of runoff
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.11"]
-
-    steps:
-    - name: Check out the current branch
-      uses: actions/checkout@v4
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v5
-      with:
-        python-version: ${{ matrix.python-version }}
-    - name: Set PYTHONPATH
-      run: |
-        # Adding apps and iEasyHydroForecast folders to PYTHONPATH
-        echo "PYTHONPATH=${GITHUB_WORKSPACE}/apps:${GITHUB_WORKSPACE}/apps/iEasyHydroForecast" >> $GITHUB_ENV
-    - name: Install dependencies for pre-processing of runoff
-      working-directory: ./apps
-      run: |
-        python -m pip install --upgrade pip
-        python -m pip install -r preprocessing_runoff/requirements.txt
-        python -m pip install --no-cache-dir --upgrade --force-reinstall "git+https://github.com/hydrosolutions/ieasyhydro-python-sdk@master"
-        python -m pip install -e iEasyHydroForecast
-    - name: Test
-      working-directory: ./apps
-      run: |
-        SAPPHIRE_TEST_ENV=True pytest preprocessing_runoff/test
 
   # Test preprocessing runoff with Python 3.12 + uv
   test_preprocessing_runoff_py312:
@@ -397,41 +275,11 @@ jobs:
       run: |
         SAPPHIRE_TEST_ENV=True preprocessing_runoff/.venv/bin/python -m pytest preprocessing_runoff/test/ -v
 
-  push_preprocessing_runoff_to_Dckerhub:
-    needs: [test_preprocessing_runoff, test_ieasyhydroforecast]
+  # Build and push preprocessing runoff image
+  push_preprocessing_runoff_to_Dockerhub:
+    needs: [test_preprocessing_runoff_py312, test_ieasyhydroforecast_py312, build_and_push_base_image]
     runs-on: ubuntu-latest
-    name: Dockerize and push preprocessing runoff module to Dockerhub
-
-    steps:
-      # To use this repository's private action, you must check out the
-      # repository.
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      # Run the dockerization & deployment script
-      - name: Build Docker image
-        run: |
-          docker build --pull --no-cache \
-          -t "${{ env.PREPQ_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
-          -f ./apps/preprocessing_runoff/Dockerfile.py312 .
-
-      # Log in to the Docker registry
-      - name: Log in to the Docker registry
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
-
-      # Push the image to Dockerhub
-      - name: Push the image to Dockerhub
-        run: |
-          docker push "${{ env.PREPQ_IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
-
-  # Build and push preprocessing runoff Python 3.12 + uv image
-  push_preprocessing_runoff_py312_to_Dockerhub:
-    needs: [test_preprocessing_runoff_py312, test_ieasyhydroforecast_py312, build_and_push_python_312_base_image]
-    runs-on: ubuntu-latest
-    name: Build and push preprocessing runoff (Python 3.12 + uv)
+    name: Build and push preprocessing runoff module
 
     steps:
       - name: Checkout
@@ -452,67 +300,12 @@ jobs:
           context: .
           file: ./apps/preprocessing_runoff/Dockerfile.py312
           push: true
-          tags: ${{ env.PREPQ_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}
+          tags: ${{ env.PREPQ_IMAGE_NAME }}:${{ env.IMAGE_TAG }}
           provenance: true
           sbom: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-
-  set_up_preprocessing_gateway:
-    needs: [build_and_push_python_311_base_image]
-    runs-on: ubuntu-latest
-    name: Setting up of preprocessing gateway
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.11"]
-
-    steps:
-    - name: Check out the current branch
-      uses: actions/checkout@v4
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v5
-      with:
-        python-version: ${{ matrix.python-version }}
-    - name: Install dependencies for pre-processing of gateway data
-      working-directory: ./apps
-      run: |
-        python -m pip install --upgrade pip
-        python -m pip install -r preprocessing_gateway/requirements.txt
-        python -m pip install git+https://github.com/hydrosolutions/sapphire-dg-client.git
-
-
-  push_preprocessing_gateway_to_Dckerhub:
-    needs: [set_up_preprocessing_gateway]
-    runs-on: ubuntu-latest
-    name: Dockerize and push preprocessing gateway module to Dockerhub
-
-    steps:
-      # To use this repository's private action, you must check out the
-      # repository.
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      # Run the dockerization & deployment script
-      - name: Build Docker image
-        run: |
-          docker build --pull --no-cache \
-          --build-arg SAPPHIRE_DG_HOST=${{ secrets.SAPPHIRE_DG_HOST }} \
-          -t "${{ env.PREPG_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
-          -f ./apps/preprocessing_gateway/Dockerfile.py312 .
-
-      # Log in to the Docker registry
-      - name: Log in to the Docker registry
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
-
-      # Push the image to Dockerhub
-      - name: Push the image to Dockerhub
-        run: |
-          docker push "${{ env.PREPG_IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
 
   # Test preprocessing gateway with Python 3.12 + uv
   test_preprocessing_gateway_py312:
@@ -541,11 +334,11 @@ jobs:
       run: |
         preprocessing_gateway/.venv/bin/python -c "import pandas; import numpy; import scipy; import sklearn; import luigi; import sapphire_dg_client; print('All imports successful!')"
 
-  # Build and push preprocessing gateway Python 3.12 + uv image
-  push_preprocessing_gateway_py312_to_Dockerhub:
-    needs: [test_preprocessing_gateway_py312, test_ieasyhydroforecast_py312, build_and_push_python_312_base_image]
+  # Build and push preprocessing gateway image
+  push_preprocessing_gateway_to_Dockerhub:
+    needs: [test_preprocessing_gateway_py312, test_ieasyhydroforecast_py312, build_and_push_base_image]
     runs-on: ubuntu-latest
-    name: Build and push preprocessing gateway (Python 3.12 + uv)
+    name: Build and push preprocessing gateway module
 
     steps:
       - name: Checkout
@@ -566,76 +359,11 @@ jobs:
           context: .
           file: ./apps/preprocessing_gateway/Dockerfile.py312
           push: true
-          tags: ${{ env.PREPG_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}
+          tags: ${{ env.PREPG_IMAGE_NAME }}:${{ env.IMAGE_TAG }}
           provenance: true
           sbom: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-  set_up_machine_learning:
-    needs: [build_and_push_python_311_base_image, test_ieasyhydroforecast]
-    runs-on: ubuntu-latest
-    name: Setting up of machine learning environment
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.11"]
-
-    steps:
-    - name: Check out the current branch
-      uses: actions/checkout@v4
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v5
-      with:
-        python-version: ${{ matrix.python-version }}
-    - name: Install dependencies for the machine learning module
-      working-directory: ./apps
-      run: |
-        python -m pip install --upgrade pip
-        python -m pip install -r machine_learning/requirements.txt
-
-
-  push_machine_learning_to_Dckerhub:
-    needs: [set_up_machine_learning]
-    runs-on: ubuntu-latest
-    timeout-minutes: 60  # Fail after 1 hour instead of default 6 hours
-    name: Dockerize and push machine learning module to Dockerhub
-
-    steps:
-      - name: Free disk space
-        run: |
-          echo "Disk space before cleanup:"
-          df -h
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /opt/ghc
-          sudo rm -rf /usr/local/share/boost
-          sudo rm -rf /usr/local/lib/android
-          echo "Disk space after cleanup:"
-          df -h
-
-      # To use this repository's private action, you must check out the
-      # repository.
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      # Run the dockerization & deployment script
-      - name: Build Docker image
-        run: |
-          docker build --pull --no-cache \
-          -t "${{ env.ML_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
-          -f ./apps/machine_learning/Dockerfile.py312 .
-
-      # Log in to the Docker registry
-      - name: Log in to the Docker registry
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
-
-      # Push the image to Dockerhub
-      - name: Push the image to Dockerhub
-        run: |
-          docker push "${{ env.ML_IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
 
   # Test machine learning with Python 3.12 + uv
   test_machine_learning_py312:
@@ -660,13 +388,13 @@ jobs:
         run: |
           machine_learning/.venv/bin/python -c "import torch; import darts; import pandas; import numpy; print('All imports successful!'); print(f'torch: {torch.__version__}'); print(f'darts: {darts.__version__}')"
 
-  # Build and push machine learning Python 3.12 + uv image
+  # Build and push machine learning image
   # Note: ML image is very large (~3-4GB) due to PyTorch/Darts, needs extra disk space
-  push_machine_learning_py312_to_Dockerhub:
-    needs: [test_machine_learning_py312, test_ieasyhydroforecast_py312, build_and_push_python_312_base_image]
+  push_machine_learning_to_Dockerhub:
+    needs: [test_machine_learning_py312, test_ieasyhydroforecast_py312, build_and_push_base_image]
     runs-on: ubuntu-latest
     timeout-minutes: 60  # Fail after 1 hour instead of default 6 hours
-    name: Build and push machine learning (Python 3.12 + uv)
+    name: Build and push machine learning module
 
     steps:
       - name: Free disk space
@@ -698,7 +426,7 @@ jobs:
           context: .
           file: ./apps/machine_learning/Dockerfile.py312
           push: true
-          tags: ${{ env.ML_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}
+          tags: ${{ env.ML_IMAGE_NAME }}:${{ env.IMAGE_TAG }}
           provenance: true
           sbom: true
           cache-from: type=gha
@@ -730,7 +458,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install flake8
           python -m pip install -r reset_forecast_run_date/requirements.txt
-          python -m pip install --no-cache-dir --upgrade --force-reinstall "git+https://github.com/hydrosolutions/ieasyhydro-python-sdk@master" 
+          python -m pip install --no-cache-dir --upgrade --force-reinstall "git+https://github.com/hydrosolutions/ieasyhydro-python-sdk@master"
           python -m pip install -e iEasyHydroForecast
       - name: Test
         working-directory: ./apps
@@ -738,7 +466,7 @@ jobs:
           SAPPHIRE_TEST_ENV=True pytest reset_forecast_run_date/tests
 
   push_reset_forecast_to_Dckerhub:
-    needs: [test_reset_forecast_run_date, test_ieasyhydroforecast, build_and_push_python_311_base_image]
+    needs: [test_reset_forecast_run_date, test_ieasyhydroforecast, build_and_push_base_image]
     runs-on: ubuntu-latest
     name: Dockerize resetting of forecast run date and push to Dockerhub
 
@@ -768,73 +496,6 @@ jobs:
           docker push "${{ env.RERUN_IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
 
 
-  # test_dashboard:
-  #   needs: [build_and_push_python_311_base_image]
-  #   runs-on: ubuntu-latest
-  #   name: Test forecast dashboard
-  #   strategy:
-  #     fail-fast: false
-  #     matrix:
-  #       python-version: ["3.11"]
-
-  #   steps:
-  #     - name: Checks out current branch
-  #       uses: actions/checkout@v4
-  #     - name: Set up Python ${{ matrix.python-version }}
-  #       uses: actions/setup-python@v5
-  #       with:
-  #         python-version: ${{ matrix.python-version }}
-  #     - name: Set PYTHONPATH
-  #       run: |
-  #         # Adding the iEasyHydroForecast folder to the PYTHONPATH
-  #         echo "PYTHONPATH=${GITHUB_WORKSPACE}/apps/iEasyHydroForecast" >> $GITHUB_ENV
-  #     - name: Get env var from GitHub secrets
-  #       run: |
-  #         echo "ieasyhydroforecast_url=${{ secrets.ieasyhydroforecast_url }}" >> $GITHUB_ENV
-  #     - name: Install dependencies
-  #       # Default working directory is the repository root folder
-  #       run: |
-  #         python -m pip install --upgrade pip
-  #         python -m pip install -r ./apps/forecast_dashboard/requirements.txt
-  #         python -m pip install --no-cache-dir --upgrade --force-reinstall "git+https://github.com/hydrosolutions/ieasyhydro-python-sdk@master" 
-  #         python -m pip install git+https://github.com/hydrosolutions/ieasyreports.git@main
-  #         python -m pip install -e ./apps/iEasyHydroForecast
-  #     - name: Test with pytest
-  #       working-directory: ./apps
-  #       run: |
-  #         # Currently no tests implemented. No tests to run for the moment
-  #         #SAPPHIRE_TEST_ENV=True python -m pytest -s forecast_dashboard/tests/
-
-  # push_dashboard_to_Dckerhub:
-  #   needs: [test_dashboard, test_ieasyhydroforecast]
-  #   runs-on: ubuntu-latest
-  #   name: Dockerize and push forecast dashboard to Dockerhub
-
-  #   steps:
-  #     # To use this repository's private action, you must check out the
-  #     # repository.
-  #     - name: Checkout
-  #       uses: actions/checkout@v4
-
-  #     # Run the dockerization & deployment script
-  #     - name: Build Docker image
-  #       run: |
-  #         docker build --pull --no-cache \
-  #         -t "${{ env.DASHBOARD_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
-  #         -f ./apps/forecast_dashboard/Dockerfile.py312 .
-
-  #     # Log in to the Docker registry
-  #     - name: Log in to the Docker registry
-  #       uses: docker/login-action@v3
-  #       with:
-  #         username: ${{ secrets.DOCKER_USERNAME }}
-  #         password: ${{ secrets.DOCKER_PASSWORD }}
-
-  #     # Push the image to Dockerhub
-  #     - name: Push the image to Dockerhub
-  #       run: |
-  #         docker push "${{ env.DASHBOARD_IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
-
   # Test forecast dashboard with Python 3.12 + uv
   test_dashboard_py312:
     runs-on: ubuntu-latest
@@ -858,11 +519,11 @@ jobs:
         run: |
           forecast_dashboard/.venv/bin/python -c "import panel; import holoviews; import bokeh; import pandas; import numpy; import scipy; import sklearn; import docker; print('All imports successful!'); print(f'panel: {panel.__version__}'); print(f'bokeh: {bokeh.__version__}')"
 
-  # Build and push forecast dashboard Python 3.12 + uv image
-  push_dashboard_py312_to_Dockerhub:
-    needs: [test_dashboard_py312, test_ieasyhydroforecast_py312, build_and_push_python_312_base_image]
+  # Build and push forecast dashboard image
+  push_dashboard_to_Dockerhub:
+    needs: [test_dashboard_py312, test_ieasyhydroforecast_py312, build_and_push_base_image]
     runs-on: ubuntu-latest
-    name: Build and push forecast dashboard (Python 3.12 + uv)
+    name: Build and push forecast dashboard
 
     steps:
       - name: Checkout
@@ -883,42 +544,11 @@ jobs:
           context: .
           file: ./apps/forecast_dashboard/Dockerfile.py312
           push: true
-          tags: ${{ env.DASHBOARD_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}
+          tags: ${{ env.DASHBOARD_IMAGE_NAME }}:${{ env.IMAGE_TAG }}
           provenance: true
           sbom: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-  push_postprocessing_runoff_to_Dckerhub:
-    # Same requirements as preprocessing_runoff module
-    needs: [test_preprocessing_runoff, test_ieasyhydroforecast]
-    runs-on: ubuntu-latest
-    name: Dockerize and push postprocessing module to Dockerhub
-
-    steps:
-      # To use this repository's private action, you must check out the
-      # repository.
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      # Run the dockerization & deployment script
-      - name: Build Docker image
-        run: |
-          docker build --pull --no-cache \
-          -t "${{ env.POSTPQ_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
-          -f ./apps/postprocessing_forecasts/Dockerfile.py312 .
-
-      # Log in to the Docker registry
-      - name: Log in to the Docker registry
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
-
-      # Push the image to Dockerhub
-      - name: Push the image to Dockerhub
-        run: |
-          docker push "${{ env.POSTPQ_IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
 
   # Test postprocessing with Python 3.12 + uv
   test_postprocessing_py312:
@@ -943,11 +573,11 @@ jobs:
         run: |
           postprocessing_forecasts/.venv/bin/python -c "import pandas; import numpy; import openpyxl; print('All imports successful!')"
 
-  # Build and push postprocessing Python 3.12 + uv image
-  push_postprocessing_py312_to_Dockerhub:
-    needs: [test_postprocessing_py312, test_ieasyhydroforecast_py312, build_and_push_python_312_base_image]
+  # Build and push postprocessing image
+  push_postprocessing_to_Dockerhub:
+    needs: [test_postprocessing_py312, test_ieasyhydroforecast_py312, build_and_push_base_image]
     runs-on: ubuntu-latest
-    name: Build and push postprocessing (Python 3.12 + uv)
+    name: Build and push postprocessing module
 
     steps:
       - name: Checkout
@@ -968,74 +598,11 @@ jobs:
           context: .
           file: ./apps/postprocessing_forecasts/Dockerfile.py312
           push: true
-          tags: ${{ env.POSTPQ_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}
+          tags: ${{ env.POSTPQ_IMAGE_NAME }}:${{ env.IMAGE_TAG }}
           provenance: true
           sbom: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-  test_linear_regression:
-    needs: [build_and_push_python_311_base_image]
-    runs-on: ubuntu-latest
-    name: Test linear regression module
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.11"]
-
-    steps:
-      - name: Check out the current branch
-        uses: actions/checkout@v4
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-      - name: Set PYTHONPATH
-        run: |
-          # Adding the iEasyHydroForecast folder to the PYTHONPATH
-          echo "PYTHONPATH=${GITHUB_WORKSPACE}/apps/iEasyHydroForecast" >> $GITHUB_ENV
-      - name: Install dependencies for reset of run date
-        working-directory: ./apps
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r linear_regression/requirements.txt
-          python -m pip install --no-cache-dir --upgrade --force-reinstall "git+https://github.com/hydrosolutions/ieasyhydro-python-sdk@master" 
-          python -m pip install -e iEasyHydroForecast
-      - name: Test
-        working-directory: ./apps
-        run: |
-          #SAPPHIRE_TEST_ENV=True pytest linear_regression/test
-
-  push_linreg_to_Dckerhub:
-    # Same requirements as preprocessing_runoff module
-    needs: [test_linear_regression, test_ieasyhydroforecast]
-    runs-on: ubuntu-latest
-    name: Dockerize and push linear regression module to Dockerhub
-
-    steps:
-      # To use this repository's private action, you must check out the
-      # repository.
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      # Run the dockerization & deployment script
-      - name: Build Docker image
-        run: |
-          docker build --pull --no-cache \
-          -t "${{ env.LINREG_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
-          -f ./apps/linear_regression/Dockerfile.py312 .
-
-      # Log in to the Docker registry
-      - name: Log in to the Docker registry
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
-
-      # Push the image to Dockerhub
-      - name: Push the image to Dockerhub
-        run: |
-          docker push "${{ env.LINREG_IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
 
   # Test linear regression with Python 3.12 + uv
   test_linear_regression_py312:
@@ -1060,11 +627,11 @@ jobs:
         run: |
           linear_regression/.venv/bin/python -c "import pandas; import numpy; import docker; from ieasyhydro_sdk.sdk import IEasyHydroSDK, IEasyHydroHFSDK; print('All imports successful!')"
 
-  # Build and push linear regression Python 3.12 + uv image
-  push_linreg_py312_to_Dockerhub:
-    needs: [test_linear_regression_py312, test_ieasyhydroforecast_py312, build_and_push_python_312_base_image]
+  # Build and push linear regression image
+  push_linreg_to_Dockerhub:
+    needs: [test_linear_regression_py312, test_ieasyhydroforecast_py312, build_and_push_base_image]
     runs-on: ubuntu-latest
-    name: Build and push linear regression (Python 3.12 + uv)
+    name: Build and push linear regression module
 
     steps:
       - name: Checkout
@@ -1085,7 +652,7 @@ jobs:
           context: .
           file: ./apps/linear_regression/Dockerfile.py312
           push: true
-          tags: ${{ env.LINREG_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}
+          tags: ${{ env.LINREG_IMAGE_NAME }}:${{ env.IMAGE_TAG }}
           provenance: true
           sbom: true
           cache-from: type=gha
@@ -1094,24 +661,16 @@ jobs:
   # Final job that summarizes all built images
   summarize_builds:
     needs: [
-      build_and_push_python_311_base_image,
-      build_and_push_python_312_base_image,
-      build_and_push_pipeline_image,
-      push_pipeline_py312_to_Dockerhub,
+      build_and_push_base_image,
+      push_pipeline_to_Dockerhub,
       # push_conceptual_model_to_Dckerhub,  # DISABLED: R dependencies broken
-      push_preprocessing_runoff_to_Dckerhub,
-      push_preprocessing_runoff_py312_to_Dockerhub,
-      push_preprocessing_gateway_to_Dckerhub,
-      push_preprocessing_gateway_py312_to_Dockerhub,
-      push_machine_learning_to_Dckerhub,
-      push_machine_learning_py312_to_Dockerhub,
+      push_preprocessing_runoff_to_Dockerhub,
+      push_preprocessing_gateway_to_Dockerhub,
+      push_machine_learning_to_Dockerhub,
       push_reset_forecast_to_Dckerhub,
-      # push_dashboard_to_Dckerhub,
-      push_dashboard_py312_to_Dockerhub,
-      push_postprocessing_runoff_to_Dckerhub,
-      push_postprocessing_py312_to_Dockerhub,
-      push_linreg_to_Dckerhub,
-      push_linreg_py312_to_Dockerhub
+      push_dashboard_to_Dockerhub,
+      push_postprocessing_to_Dockerhub,
+      push_linreg_to_Dockerhub
     ]
     runs-on: ubuntu-latest
     name: Summarize Docker image builds
@@ -1122,26 +681,21 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Successfully built the following Docker images:" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "## Production Images (:latest - Python 3.12)" >> $GITHUB_STEP_SUMMARY
-          echo "- ${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" >> $GITHUB_STEP_SUMMARY
-          echo "- ${{ env.PIPELINE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" >> $GITHUB_STEP_SUMMARY
-          # echo "- ${{ env.CONCMOD_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" >> $GITHUB_STEP_SUMMARY  # DISABLED
-          echo "- ${{ env.PREPQ_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" >> $GITHUB_STEP_SUMMARY
-          echo "- ${{ env.LINREG_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" >> $GITHUB_STEP_SUMMARY
-          echo "- ${{ env.ML_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" >> $GITHUB_STEP_SUMMARY
-          echo "- ${{ env.DASHBOARD_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" >> $GITHUB_STEP_SUMMARY
-          echo "- ${{ env.POSTPQ_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" >> $GITHUB_STEP_SUMMARY
+          echo "## Production Images (:latest - Python 3.12 + uv)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "## Parallel Testing Images (:py312 - Python 3.12 + uv)" >> $GITHUB_STEP_SUMMARY
-          echo "- ${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" >> $GITHUB_STEP_SUMMARY
-          echo "- ${{ env.PIPELINE_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" >> $GITHUB_STEP_SUMMARY
-          # echo "- ${{ env.CONCMOD_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }} (R-based, same as :latest)" >> $GITHUB_STEP_SUMMARY  # DISABLED
-          echo "- ${{ env.PREPQ_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" >> $GITHUB_STEP_SUMMARY
-          echo "- ${{ env.PREPG_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" >> $GITHUB_STEP_SUMMARY
-          echo "- ${{ env.LINREG_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" >> $GITHUB_STEP_SUMMARY
-          echo "- ${{ env.ML_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" >> $GITHUB_STEP_SUMMARY
-          echo "- ${{ env.DASHBOARD_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" >> $GITHUB_STEP_SUMMARY
-          echo "- ${{ env.POSTPQ_IMAGE_NAME }}:${{ env.IMAGE_TAG_PY312 }}" >> $GITHUB_STEP_SUMMARY
+          echo "All images built with Docker Scout compliance:" >> $GITHUB_STEP_SUMMARY
+          echo "- SLSA provenance attestation" >> $GITHUB_STEP_SUMMARY
+          echo "- SBOM (Software Bill of Materials)" >> $GITHUB_STEP_SUMMARY
+          echo "- GitHub Actions cache" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Note:** Both :latest and :py312 now use Python 3.12 + uv." >> $GITHUB_STEP_SUMMARY
-          # echo "The conceptual_model :py312 tag is identical to :latest (R-based module, not Python)." >> $GITHUB_STEP_SUMMARY  # DISABLED
+          echo "| Image | Tag |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|-----|" >> $GITHUB_STEP_SUMMARY
+          echo "| ${{ env.BASE_IMAGE_NAME }} | ${{ env.IMAGE_TAG }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| ${{ env.PIPELINE_IMAGE_NAME }} | ${{ env.IMAGE_TAG }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| ${{ env.PREPQ_IMAGE_NAME }} | ${{ env.IMAGE_TAG }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| ${{ env.PREPG_IMAGE_NAME }} | ${{ env.IMAGE_TAG }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| ${{ env.LINREG_IMAGE_NAME }} | ${{ env.IMAGE_TAG }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| ${{ env.ML_IMAGE_NAME }} | ${{ env.IMAGE_TAG }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| ${{ env.DASHBOARD_IMAGE_NAME }} | ${{ env.IMAGE_TAG }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| ${{ env.POSTPQ_IMAGE_NAME }} | ${{ env.IMAGE_TAG }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| ${{ env.RERUN_IMAGE_NAME }} | ${{ env.IMAGE_TAG }} |" >> $GITHUB_STEP_SUMMARY
