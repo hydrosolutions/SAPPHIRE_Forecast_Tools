@@ -12,7 +12,6 @@ env:
   LINREG_IMAGE_NAME: mabesa/sapphire-linreg
   ML_IMAGE_NAME: mabesa/sapphire-ml
   POSTPQ_IMAGE_NAME: mabesa/sapphire-postprocessing
-  RERUN_IMAGE_NAME: mabesa/sapphire-rerun
   CONCMOD_IMAGE_NAME: mabesa/sapphire-conceptmod
 
 on:
@@ -22,44 +21,6 @@ on:
   #  branches: [ "main" ]
 
 jobs:
-
-  test_ieasyhydroforecast:
-    runs-on: ubuntu-latest
-    name: Test iEasyHydroForecast
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.11"]
-
-    steps:
-    - name: Checkout the commit that triggered the workflow
-      uses: actions/checkout@v4
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v5
-      with:
-        python-version: ${{ matrix.python-version }}
-    - name: Set PYTHONPATH
-      run: |
-        # Adding the iEasyHydroForecast folder to the PYTHONPATH
-        echo "PYTHONPATH=${GITHUB_WORKSPACE}/apps/iEasyHydroForecast" >> $GITHUB_ENV
-    - name: Install dependencies
-      working-directory: .
-      run: |
-        python -m pip install --upgrade pip
-        python -m pip install flake8
-        python -m pip install -r ./apps/iEasyHydroForecast/requirements.txt
-        python -m pip install --no-cache-dir --upgrade --force-reinstall "git+https://github.com/hydrosolutions/ieasyhydro-python-sdk@master"
-        python -m pip install -e ./apps/iEasyHydroForecast
-    - name: Lint with flake8
-      run: |
-        # stop the build if there are Python syntax errors or undefined names
-        #flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
-        # exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
-        #flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
-    - name: Test with unittest
-      working-directory: ./apps
-      run: |
-        SAPPHIRE_TEST_ENV=True python -m unittest discover -s iEasyHydroForecast/tests -p 'test_*.py'
 
   # Test iEasyHydroForecast with Python 3.12 + uv + pytest
   test_ieasyhydroforecast_py312:
@@ -90,7 +51,7 @@ jobs:
 
   # Build and push Python 3.12 + uv base image
   build_and_push_base_image:
-    needs: [test_ieasyhydroforecast, test_ieasyhydroforecast_py312]
+    needs: [test_ieasyhydroforecast_py312]
     runs-on: ubuntu-latest
     name: Build and push Python 3.12 + uv base image
 
@@ -432,70 +393,6 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  test_reset_forecast_run_date:
-    needs: [test_ieasyhydroforecast]
-    runs-on: ubuntu-latest
-    name: Test reset forecast run date
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.11"]
-
-    steps:
-      - name: Check out the current branch
-        uses: actions/checkout@v4
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-      - name: Set PYTHONPATH
-        run: |
-          # Adding the iEasyHydroForecast folder to the PYTHONPATH
-          echo "PYTHONPATH=${GITHUB_WORKSPACE}/apps/iEasyHydroForecast" >> $GITHUB_ENV
-      - name: Install dependencies for reset of run date
-        working-directory: ./apps
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install flake8
-          python -m pip install -r reset_forecast_run_date/requirements.txt
-          python -m pip install --no-cache-dir --upgrade --force-reinstall "git+https://github.com/hydrosolutions/ieasyhydro-python-sdk@master"
-          python -m pip install -e iEasyHydroForecast
-      - name: Test
-        working-directory: ./apps
-        run: |
-          SAPPHIRE_TEST_ENV=True pytest reset_forecast_run_date/tests
-
-  push_reset_forecast_to_Dckerhub:
-    needs: [test_reset_forecast_run_date, test_ieasyhydroforecast, build_and_push_base_image]
-    runs-on: ubuntu-latest
-    name: Dockerize resetting of forecast run date and push to Dockerhub
-
-    steps:
-      # To use this repository's private action, you must check out the
-      # repository.
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      # Run the dockerization & deployment script
-      - name: Build Docker image
-        run: |
-          docker build --pull --no-cache \
-          -t "${{ env.RERUN_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
-          -f ./apps/reset_forecast_run_date/Dockerfile .
-
-      # Log in to the Docker registry
-      - name: Log in to the Docker registry
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
-
-      # Push the image to Dockerhub
-      - name: Push the image to Dockerhub
-        run: |
-          docker push "${{ env.RERUN_IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
-
-
   # Test forecast dashboard with Python 3.12 + uv
   test_dashboard_py312:
     runs-on: ubuntu-latest
@@ -667,7 +564,6 @@ jobs:
       push_preprocessing_runoff_to_Dockerhub,
       push_preprocessing_gateway_to_Dockerhub,
       push_machine_learning_to_Dockerhub,
-      push_reset_forecast_to_Dckerhub,
       push_dashboard_to_Dockerhub,
       push_postprocessing_to_Dockerhub,
       push_linreg_to_Dockerhub
@@ -698,4 +594,3 @@ jobs:
           echo "| ${{ env.ML_IMAGE_NAME }} | ${{ env.IMAGE_TAG }} |" >> $GITHUB_STEP_SUMMARY
           echo "| ${{ env.DASHBOARD_IMAGE_NAME }} | ${{ env.IMAGE_TAG }} |" >> $GITHUB_STEP_SUMMARY
           echo "| ${{ env.POSTPQ_IMAGE_NAME }} | ${{ env.IMAGE_TAG }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| ${{ env.RERUN_IMAGE_NAME }} | ${{ env.IMAGE_TAG }} |" >> $GITHUB_STEP_SUMMARY
