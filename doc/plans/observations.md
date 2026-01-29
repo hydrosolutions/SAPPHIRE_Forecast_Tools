@@ -33,6 +33,25 @@ However, the forecast dashboard does not display the data correctly. This is a *
 
 ---
 
+### Postprocessing: Tier 1 Bug Fixes Verified on Server
+
+**Source**: Server testing after commit a52597d deployment
+**Date**: 2026-01-29
+
+Deployed Phase 1 Tier 1 bug fixes from `postprocessing_bug_fixes` branch:
+- ✅ Bug 1+2 (return value masking): Error accumulation pattern working
+- ✅ Bug 3 (unsafe .iloc[0]): Safe DataFrame access working
+- ✅ Bug 4 (non-atomic file ops): Atomic writes working
+
+**Postprocessing module ran without errors on the test server.**
+
+However, **machine learning hindcasts still failing** - this is a separate, pre-existing issue (see ML Maintenance observation from 2026-01-27 below). The postprocessing fixes do not address ML hindcast failures.
+
+**Assessment**: Postprocessing bug fixes verified working. ML hindcast issue is unrelated and tracked separately.
+**Status**: RESOLVED (postprocessing fixes) - ML issue remains open
+
+---
+
 ## 2026-01-27
 
 ### Dashboard: Predictor Data Gaps and Missing Snow Data (Production Server)
