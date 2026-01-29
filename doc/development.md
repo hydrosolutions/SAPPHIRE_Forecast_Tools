@@ -5,7 +5,7 @@ This document describes how to develop the application and how to add hydrologic
 - [1. Prerequisites](#1-prerequisites)
   - [1.1 Installation of 3rd party software](#11-installation-of-3rd-party-software)
     - [Python](#python)
-    - [Conda](#conda)
+    - [uv Package Manager](#uv-package-manager)
     - [Visual Studio Code](#visual-studio-code)
     - [R](#r)
     - [RStudio](#rstudio)
@@ -15,7 +15,7 @@ This document describes how to develop the application and how to add hydrologic
     - [Clone the github repository](#clone-the-github-repository)
     - [Test-run the Sapphire forecast tools](#test-run-the-sapphire-forecast-tools)
   - [1.3 Set up your work environment](#13-set-up-your-work-environment)
-    - [Activate the conda environment](#activate-the-conda-environment)
+    - [Activate the virtual environment](#activate-the-virtual-environment)
     - [Install the required packages](#install-the-required-packages)
 - [2. Development instructions specific to the tools](#2-development-instructions-specific-to-the-tools)
   - [2.1 Configuration dashboard configuration\_dashboard](#21-configuration-dashboard-configuration_dashboard)
@@ -79,7 +79,7 @@ This document describes how to develop the application and how to add hydrologic
 
 Note: The software has been developed on a Mac computer and packaged with Ubuntu base images using Docker using GitHub Actions (with workflow instructions in .github/workflows/main.yml). It has been tested extensibly on an Ubuntu server. The software has not been tested on Windows.
 
-The following open-source technologies are used in the development of the forecast tools: - For scripting and development: - Scripting language [Python](#python) and user interface [Visual Studio Code](#visual-studio-code) - Python package manager [Conda](#conda) - Scripting language [R](#R) and user interface RStudio - Code version control: GitHub Desktop - Containerization: Docker
+The following open-source technologies are used in the development of the forecast tools: - For scripting and development: - Scripting language [Python](#python) and user interface [Visual Studio Code](#visual-studio-code) - Python package manager [uv](#uv-package-manager) - Scripting language [R](#R) and user interface RStudio - Code version control: GitHub Desktop - Containerization: Docker
 
 If you have all of these technologies installed on your computer, you can skip the installation instructions below and proceed to the instructions on the general development workflow (TODO: add link to section).
 
@@ -89,21 +89,23 @@ You will find instructions on how to install the technologies used in the develo
 
 ### Python
 
-Install Python on your computer. The installation instructions can be found in many places on the internet, for example [here](https://realpython.com/installing-python/). We recommend the installation of Python 3.11. You can check the version of Python installed on your computer by running the following command in the terminal:
+Install Python on your computer. The installation instructions can be found in many places on the internet, for example [here](https://realpython.com/installing-python/). We recommend the installation of Python 3.12. You can check the version of Python installed on your computer by running the following command in the terminal:
 
 ``` bash
 python --version
 ```
 
-### Conda
+### uv Package Manager
 
-We use conda for managing the Python environment. The installation instructions can be found [here](https://docs.conda.io/projects/conda/en/latest/user-guide/install/). Once conda is installed, you can create a new conda environment by running the following command in the terminal:
+We use [uv](https://docs.astral.sh/uv/) for managing Python environments and dependencies. uv is a fast, modern Python package manager that handles virtual environments and dependency resolution. The installation instructions can be found [here](https://docs.astral.sh/uv/getting-started/installation/).
+
+Once uv is installed, you can create a new virtual environment and install dependencies by navigating to a module directory (which contains a `pyproject.toml` file) and running:
 
 ``` bash
-conda create --name my_environment python=3.11
+uv sync --python 3.12
 ```
 
-Through the name tag you can specify a recognizable name for the environment (you can replace my_environment with a name of your choosing). We use a different environment for each module of the backend. For development, python 3.11 was used. We therefore recommend you continue development with python 3.11 as well.
+This will create a `.venv` directory with Python 3.12 and install all dependencies specified in `pyproject.toml`. Each module has its own `pyproject.toml` defining its dependencies. For development, Python 3.12 is used across all modules.
 
 ### Visual Studio Code
 
@@ -169,30 +171,26 @@ bash bin/run_sapphire_forecast_tools.sh /Users/username/forecasting/
 
 ## 1.3 Set up your work environment
 
-If the demo version runs on your system, you can be confident, that you have all the necessary software installed and that the SAPPHIRE Forecast Tools are working on your system. You can now set up your work environment to start developing the forecast tools. Each module comes with a requirements.txt file that lists the required packages. You can install the required packages in your conda environment by following the instructions below. We recommend individual conda environments for each module of the forecast tools.
+If the demo version runs on your system, you can be confident, that you have all the necessary software installed and that the SAPPHIRE Forecast Tools are working on your system. You can now set up your work environment to start developing the forecast tools. Each module has a `pyproject.toml` file that specifies its dependencies. You can install the required packages using uv by following the instructions below. We recommend individual virtual environments for each module of the forecast tools.
 
-### Activate the conda environment
+### Activate the virtual environment
 
-You can list the available conda environments with:
-
-``` bash
-conda env list
-```
-
-You can activate an environment by running the following command in the terminal (replace my_environment with the name of the environment you want to work in):
+Each module directory contains (or will create) a `.venv` directory with its virtual environment. You can activate an environment by running the following command in the terminal from within the module directory:
 
 ``` bash
-conda activate my_environment
+source .venv/bin/activate
 ```
 
 ### Install the required packages
 
-Each module has a requirements.txt file that lists the required packages. You can install the required packages in your conda environment by running the following command in the terminal:
+Each module has a `pyproject.toml` file that specifies its dependencies. You can install the required packages by navigating to the module directory and running:
 
 ``` bash
 cd apps/module_name
-pip install -r requirements.txt
+uv sync
 ```
+
+This will create a virtual environment (if one doesn't exist) and install all dependencies specified in `pyproject.toml`.
 
 You now have a working installation of the SAPPHIRE Forecast Tools with a public demo data set.
 
@@ -351,27 +349,23 @@ Should the code attributes in the data gateway not correspond to the code attrib
 TODO: Add step-by-step instructions of how to upload shapefile and subscribe to operational data on the data gateway (assuming the data gateway is up and running).
 </div>
 <br></br>
-To run the preprocessing_gateway module locally, you will can install the required packages as follows:
+To run the preprocessing_gateway module locally, install the required packages as follows:
 
 Open a terminal and navigate to the preprocessing_gateway folder in the repository:
 ``` bash
 cd /path/to/SAPPHIRE_Forecast_Tools/apps/preprocessing_gateway
 ```
-Then install the required packages by running the following command in the terminal with either conda or pip:
+Then install the required packages by running the following command in the terminal:
 
-<details>
-<summary>Conda</summary>
+``` bash
+uv sync
 ```
-conda install --file requirements.txt
-```
-</details>
 
-<details>
-<summary>Pip</summary>
+This will create a virtual environment and install all dependencies specified in the module's `pyproject.toml` file. To activate the environment:
+
+``` bash
+source .venv/bin/activate
 ```
-pip install -r requirements.txt
-```
-</details>
 
 #### I/O
 
@@ -1013,16 +1007,11 @@ The fill_ml_gaps.py is used to fill any gaps in the forecast files. This step is
 
 #### Prerequisites
 
-To run this script you need to install the requirements:
+To run this module you need to install the dependencies using uv:
 
 ``` bash
 cd SAPPHIRE_Forecast_Tools/apps/machine_learning
-
-#conda
-conda install --file requirements.txt
-
-#or with pip
-#pip install -r requirements.txt
+uv sync
 ```
 
 #### I/O
@@ -1200,13 +1189,19 @@ where <container_id> is the id of the container you want to inspect. You can fin
 
 ### 2.2.9 Forecast dashboard
 
-#### Prerequisites 
-The forecast dashboard is implemented in python using the panel framework. As for the backend development, we recommend the use of a Python IDE and conda for managing the Python environment. Please refer to the instructions above should you require more information on how to install these tools.
+#### Prerequisites
+The forecast dashboard is implemented in python using the panel framework. As for the backend development, we recommend the use of a Python IDE and uv for managing Python environments. Please refer to the instructions above should you require more information on how to install these tools.
 
-If you have already set up a python environment for the forecast dashboard, you can activate it by running the following command in the terminal and skipp the installation of python_requirements.txt:
+If you have already set up a Python environment for the forecast dashboard, you can activate it by running the following command in the terminal from the forecast_dashboard directory:
 
 ``` bash
-conda activate my_environment
+source .venv/bin/activate
+```
+
+Or run commands directly with uv without activating:
+
+``` bash
+uv run <command>
 ```
 
 #### How to run the forecast dashboard locally
@@ -1251,36 +1246,30 @@ The backend consists of a set of tools that are used to produce forecasts. They 
 
 You will need a Python IDE for development. If you do not alreay have one installed, we recommend the use of Visual Studio Code for developping the backend. The installation instructions can be found [here](https://code.visualstudio.com/download). You will need to install the Python extension for Visual Studio Code. The installation instructions can be found [here](https://code.visualstudio.com/docs/languages/python).
 
-We use conda for managing the Python environment. The installation instructions can be found [here](https://docs.conda.io/projects/conda/en/latest/user-guide/install/). Once conda is installed, you can create a new conda environment by running the following command in the terminal:
+We use [uv](https://docs.astral.sh/uv/) for managing Python environments and dependencies. The installation instructions can be found [here](https://docs.astral.sh/uv/getting-started/installation/). Once uv is installed, you can create a new virtual environment and install dependencies by navigating to a module directory and running:
 
 ``` bash
-conda create --name my_environment python=3.11
+uv sync --python 3.12
 ```
 
-Through the name tag you can specify a recognizable name for the environment (you can replace my_environment with a name of your choosing). We use a different environment for each module of the backend. For development, python 3.10 and 3.11 was used. We therefore recommend you continue development with python 3.10 or 3.11 as well. You can activate the environment by running the following command in the terminal:
+This will create a `.venv` directory with Python 3.12 and install all dependencies. For development, Python 3.12 is used. You can activate the environment by running the following command in the terminal:
 
 ``` bash
-conda activate my_environment
+source .venv/bin/activate
 ```
 
 The name of your environment will now appear in brackets in the terminal.
 
 We show how to proceed with each module based on the example of the preprocessing_runoff tool. The procedure is the same for all modules.
 
-Install the following packages in the terminal (note that this will take some time):
+Install the dependencies by running in the terminal:
 
 ``` bash
 cd apps/preprocessing_runoff
-pip install -r requirements.txt
+uv sync
 ```
 
-The backend can read data from excel and/or from the iEasyHydro database (both from the online and from the local version of the software). If you wish to use the iEasyHydro database, you will need to install the iEasyHydro SKD library. More information on this library that can be used to access your organizations iEasyHydro database can be found [here](https://github.com/hydrosolutions/ieasyhydro-python-sdk). Some tools require the the library [iEasyReports](https://github.com/hydrosolutions/ieasyreports) that allows the backend of the forecast tools and the forecast dashboards to write bulletins in a similar fashion as the software iEasyHydro. And finally you will need to load the iEasyHydroForecast library that comes with this package. You will therefore further need to install the following packages in the terminal:
-
-``` bash
-pip install git+https://github.com/hydrosolutions/ieasyhydro-python-sdk
-pip install git+https://github.com/hydrosolutions/ieasyreports.git@main
-pip install -e ../iEasyHydroForecast
-```
+The backend can read data from excel and/or from the iEasyHydro database (both from the online and from the local version of the software). All required dependencies, including the iEasyHydro SDK library, iEasyReports, and the iEasyHydroForecast library are specified in each module's `pyproject.toml` and will be installed automatically when you run `uv sync`. More information on the iEasyHydro SDK library that can be used to access your organization's iEasyHydro database can be found [here](https://github.com/hydrosolutions/ieasyhydro-python-sdk). The [iEasyReports](https://github.com/hydrosolutions/ieasyreports) library allows the backend of the forecast tools and the forecast dashboards to write bulletins in a similar fashion as the software iEasyHydro.
 
 If you wish to use data from your organizations iEasyHydro database, you will need to configure the apps/config/.env_develop file (see [doc/configuration.md](configuration.md) for more detailed instructions). We recommend testing your configuration by running a few example queries from the [documentation of the SDK library](https://github.com/hydrosolutions/ieasyhydro-python-sdk) in a jupyter notebook.
 
@@ -1387,37 +1376,35 @@ If you want to use private data for the development of the forecast tools, you c
 
 Development takes place in a git branch created from the main branch. Once the development is finished, the branch is merged into the main branch. This merging requires the approval of a pull requrest by a main developer. The main branch is tested in deployment mode and then merged to the deploy branch. 3rd party users of the forecast tools are requested to pull the tested deploy branch. The deployment is done automatically using GitHub Actions. The workflow instructions can be found in .github/workflows/deploy\_\*.yml.
 
-### Testing 
+### Testing
 
 #### Installing Playwright Pytest
-Install the Pytest plugin:
-`bash
-conda config --add channels conda-forge
-conda config --add channels microsoft
-conda install pytest-playwright
-`
+First, ensure you are in a module directory with a virtual environment. Then install the Pytest plugin:
+```bash
+uv add pytest-playwright
+```
 Install the required browsers:
-`bash
-pip install --force-reinstall playwright
-python -m playwright install
-`
+```bash
+uv run playwright install
+```
+
 #### Running tests
-In the forecast_dashboard directory, run: 
-`bash
-pytest
-pytest --headed
-pytest --headed -s  
-`  
+In the forecast_dashboard directory, run:
+```bash
+uv run pytest
+uv run pytest --headed
+uv run pytest --headed -s
+```
 
 #### Install pre-commit hooks
-Pre-commit hooks are used to automatically format code and run tests before committing changes. To install pre-commit hooks, run the following command:
-`bash
-pip install pre-commit
-`
+Pre-commit hooks are used to automatically format code and run tests before committing changes. To install pre-commit hooks, run the following command from the project root:
+```bash
+uv tool install pre-commit
+```
 Then, run the following command to install the pre-commit hooks:
-`bash
+```bash
 pre-commit install
-`
+```
 
 #### To run the integration tests for the dashboard: 
 Pre-commit hooks only work when the dashboard is running locally and make your commits from the terminal (not GitHub Desktop or VSCode). 
@@ -1436,24 +1423,24 @@ git commit -m "your commit message" --no-verify
 
 Testing tools are being developed for each tool. This is work in progress.
 
-To run all tests, navigate to the apps directory in your terminal and type the following command:
+To run all tests, navigate to a module directory (e.g., `apps/preprocessing_runoff`) in your terminal and type the following command:
 
 ``` bash
-SAPPHIRE_TEST_ENV=True python -m pytest -s
+SAPPHIRE_TEST_ENV=True uv run pytest -s
 ```
 
 SAPPHIRE_TEST_ENV=True defines an environment variable TEST_ENV to true. We use this environment variable to set up temporary test environments. The -s is optional, it will print output from your functions to the terminal.
 
-To run tests in a specific file, navigate to the apps directory in your terminal and type the following command:
+To run tests in a specific file, navigate to the module directory in your terminal and type the following command:
 
 ``` bash
-SAPPHIRE_TEST_ENV=True python -m pytest -s tests/test_file.py
+SAPPHIRE_TEST_ENV=True uv run pytest -s tests/test_file.py
 ```
 
-Replace test_file.py with the name of the file you want to test. To run tests in a specific function, navigate to the apps directory in your terminal and type the following command:
+Replace test_file.py with the name of the file you want to test. To run tests in a specific function, navigate to the module directory in your terminal and type the following command:
 
 ``` bash
-SAPPHIRE_TEST_ENV=True python -m pytest -s tests/test_file.py::test_function
+SAPPHIRE_TEST_ENV=True uv run pytest -s tests/test_file.py::test_function
 ```
 
 Replace test_function with the name of the function you want to test.

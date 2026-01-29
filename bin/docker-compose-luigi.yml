@@ -25,8 +25,8 @@ services:
       context: ../
       dockerfile: ./apps/pipeline/Dockerfile
       args:
-        TAG: ${ieasyhydroforecast_backend_docker_image_tag:-py312}
-    image: mabesa/sapphire-pipeline:${ieasyhydroforecast_backend_docker_image_tag:-py312}
+        TAG: ${ieasyhydroforecast_backend_docker_image_tag:-latest}
+    image: mabesa/sapphire-pipeline:${ieasyhydroforecast_backend_docker_image_tag:-latest}
     working_dir: /app/apps/pipeline
     environment:
       - PYTHONPATH=/app
@@ -98,7 +98,7 @@ services:
     build:
       context: ../
       dockerfile: ./bin/luigi-daemon.Dockerfile
-    image: sapphire/luigi-daemon:${ieasyhydroforecast_backend_docker_image_tag:-py312}
+    image: sapphire/luigi-daemon:${ieasyhydroforecast_backend_docker_image_tag:-latest}
     ports:
       - "8082:8082"
     restart: unless-stopped

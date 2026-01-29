@@ -84,9 +84,7 @@ SAPPHIRE_PREDICTION_MODE=DECAD python postprocessing_forecasts.py
 
 ### Docker Execution
 
-Two Dockerfiles are available:
-- `Dockerfile` - Python 3.11 with pip (legacy)
-- `Dockerfile.py312` - Python 3.12 with uv (recommended)
+The Docker image uses Python 3.12 with uv package manager. The `:latest` tag is built from `Dockerfile` with Python 3.12.
 
 ## Dependencies
 
@@ -101,10 +99,10 @@ Run tests from the module directory:
 
 ```bash
 # Run all tests
-python -m pytest tests/ -v
+uv run pytest tests/ -v
 
 # Run specific test file
-python -m pytest tests/test_postprocessing_tools.py -v -s
+uv run pytest tests/test_postprocessing_tools.py -v -s
 ```
 
 Test files:

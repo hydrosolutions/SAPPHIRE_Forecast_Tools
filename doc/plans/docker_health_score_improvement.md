@@ -13,7 +13,7 @@ Docker Hub health scores are affected by:
 3. **Outdated base images**
 4. **Unnecessary packages** (larger attack surface)
 
-### Analysis of Current linreg Dockerfile.py312
+### Analysis of Current linreg Dockerfile
 
 ```dockerfile
 # Current issues:
@@ -60,7 +60,7 @@ The image runs as root because "This module writes to shared volumes, requiring 
 Instead of running as root, configure host volumes with proper permissions:
 
 ```dockerfile
-# In Dockerfile.py312
+# In Dockerfile
 USER appuser
 
 # Ensure the entrypoint fixes permissions if needed
@@ -90,7 +90,7 @@ If operational constraints require root, document the security implications and 
 Review base image for unnecessary packages:
 
 ```dockerfile
-# Current in Dockerfile.py312:
+# Current in Dockerfile:
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         gcc \      # Needed for compiling Python extensions
@@ -155,7 +155,7 @@ uv pip list --outdated
 pip-audit
 
 # Build and test locally
-docker build -f apps/linear_regression/Dockerfile.py312 -t test-linreg:py312 .
+docker build -f apps/linear_regression/Dockerfile -t test-linreg:py312 .
 docker run --rm test-linreg:py312 python -c "import linear_regression; print('OK')"
 ```
 
