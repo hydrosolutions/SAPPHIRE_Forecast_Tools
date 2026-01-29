@@ -121,32 +121,37 @@ All results → process_hydro_HF_data() → Single DataFrame
 **Files modified**:
 - `apps/preprocessing_runoff/src/src.py`
 
-### Phase 3: Add Tests (OPTIONAL)
+### Phase 3: Add Tests ✅ COMPLETE
 
 **Goal**: Ensure the fix works and prevent regression.
 
-**Test cases** (can be added if regressions occur):
-1. Site appears as hydro on page 1, meteo on page 2 → should keep hydro data
-2. Site appears as meteo on page 1, hydro on page 2 → should keep hydro data
-3. Site appears as meteo only across all pages → should be classified as meteo-only
-4. Site appears as hydro only across all pages → should keep all data
+**Test cases implemented** in `apps/preprocessing_runoff/test/test_pagination.py`:
+1. Site appears as hydro on page 1, meteo on page 2 → should keep hydro data ✓
+2. Site appears as meteo on page 1, hydro on page 2 → should keep hydro data ✓
+3. Site appears as meteo only across all pages → should be classified as meteo-only ✓
+4. Site appears as hydro only across all pages → should keep all data ✓
+5. Dual-type site keeps all hydro records ✓
+6. Records from multiple pages aggregated correctly ✓
+7. Same site multiple dates across pages aggregated ✓
+8. Empty results returns empty DataFrame ✓
+9. Null values skipped ✓
 
-**Files to add/modify**:
-- `apps/preprocessing_runoff/test/`
+**Files added**:
+- `apps/preprocessing_runoff/test/test_pagination.py` (9 tests)
 
-**Status**: All 31 existing tests pass with the fix. Specific pagination tests are optional unless regressions are observed.
+**Status**: All 9 pagination tests pass (added 2026-01-29).
 
 ---
 
 ## Acceptance Criteria
 
 - [x] Sites with discharge data are never misclassified as "meteo-only" (fixed via aggregation)
-- [ ] Spot-check sites have consistent data in output (needs local test)
+- [x] Spot-check sites have consistent data in output (verified server + local 2026-01-29)
 - [x] Logging accurately reports which sites truly have no discharge data
 - [x] Dual-type sites (both hydro and meteo) are logged for awareness
 - [x] No performance regression (parallel page fetching still works)
 - [x] All existing tests pass (31/31)
-- [ ] New tests cover the pagination edge case (optional, can add if needed)
+- [x] New tests cover the pagination edge case (9 tests added 2026-01-29)
 
 ---
 
