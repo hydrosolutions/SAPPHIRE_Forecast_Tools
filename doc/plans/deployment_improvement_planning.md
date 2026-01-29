@@ -82,10 +82,10 @@ Current state: **~100+ environment variables** in `.env` file including:
 **Best for**: Debugging individual modules, unit tests
 
 ```bash
-# Create virtual environment
-python3.11 -m venv venv
-source venv/bin/activate
-pip install -r apps/pipeline/requirements.txt
+# Create virtual environment with uv
+uv venv --python 3.12
+source .venv/bin/activate
+uv sync  # Install dependencies from pyproject.toml
 
 # Set env file path
 export ieasyhydroforecast_env_file_path=/path/to/.env
@@ -156,14 +156,10 @@ setup: setup-venv setup-data setup-env  ## Complete local development setup
 
 setup-venv:  ## Create Python virtual environment and install dependencies
 	@echo -e "$(BLUE)Creating virtual environment...$(NC)"
-	python3.11 -m venv venv
-	./venv/bin/pip install --upgrade pip
-	./venv/bin/pip install -e apps/iEasyHydroForecast
-	./venv/bin/pip install -r apps/linear_regression/requirements.txt
-	./venv/bin/pip install -r apps/preprocessing_runoff/requirements.txt
-	./venv/bin/pip install -r apps/postprocessing_forecasts/requirements.txt
-	./venv/bin/pip install -r apps/machine_learning/requirements.txt || true
-	@echo -e "$(GREEN)✓ Virtual environment ready. Activate with: source venv/bin/activate$(NC)"
+	uv venv --python 3.12
+	uv sync
+	uv pip install -e apps/iEasyHydroForecast
+	@echo -e "$(GREEN)✓ Virtual environment ready. Activate with: source .venv/bin/activate$(NC)"
 
 setup-data:  ## Set up local data directory with symlinks to Dropbox
 	@echo -e "$(BLUE)Setting up data directory...$(NC)"
