@@ -18,7 +18,7 @@ env:
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "postprocessing_bug_fixes" ]
   #pull_request:
   #  branches: [ "main" ]
 

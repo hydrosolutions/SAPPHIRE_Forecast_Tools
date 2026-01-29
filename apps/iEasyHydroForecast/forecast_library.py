@@ -8,6 +8,8 @@ import logging
 import string
 import re
 import time
+import tempfile
+import shutil
 from contextlib import contextmanager
 
 from ieasyhydro_sdk.filters import BasicDataValueFilters
@@ -31,6 +33,56 @@ except ImportError:
 import tag_library as tl
 
 logger = logging.getLogger(__name__)
+
+
+def atomic_write_csv(data: pd.DataFrame, filepath: str, **to_csv_kwargs) -> None:
+    """
+    Write a DataFrame to CSV atomically using temp file + rename pattern.
+
+    This prevents data loss if a crash occurs during the write operation.
+    The file is first written to a temporary location, then atomically
+    moved to the final destination using os.replace().
+
+    Args:
+        data: DataFrame to write
+        filepath: Final destination path for the CSV file
+        **to_csv_kwargs: Additional arguments to pass to DataFrame.to_csv()
+
+    Raises:
+        Exception: If the write operation fails (temp file is cleaned up)
+    """
+    # Get the directory of the target file
+    target_dir = os.path.dirname(filepath) or '.'
+
+    # Ensure the target directory exists
+    os.makedirs(target_dir, exist_ok=True)
+
+    # Create a temp file in the same directory (ensures same filesystem for atomic rename)
+    temp_fd, temp_path = tempfile.mkstemp(suffix='.tmp', dir=target_dir)
+
+    try:
+        # Close the file descriptor (we'll write via pandas)
+        os.close(temp_fd)
+
+        # Write to the temp file
+        data.to_csv(temp_path, **to_csv_kwargs)
+
+        # Atomic move: os.replace() is atomic on POSIX systems when src and dst
+        # are on the same filesystem. On Windows, it's atomic if dst doesn't exist.
+        # shutil.move uses os.rename under the hood for same-filesystem moves.
+        shutil.move(temp_path, filepath)
+
+        logger.debug(f"Atomically wrote {len(data)} rows to {filepath}")
+
+    except Exception as e:
+        # Clean up the temp file if something went wrong
+        if os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass  # Ignore cleanup errors
+        raise e
+
 
 def parse_dates_robust(date_series, column_name='date'):
     """
@@ -5275,15 +5327,9 @@ def write_pentad_hydrograph_data(data: pd.DataFrame, iehhf_sdk = None):
         print(os.getenv("ieasyforecast_hydrograph_pentad_file"))
         raise e
 
-    # Overwrite the file if it already exists
-    if os.path.exists(output_file_path):
-        os.remove(output_file_path)
-
-    # Write the data to a csv file. Raise an error if this does not work.
-    # If the data is written to the csv file, log a message that the data
-    # has been written.
+    # Write atomically (temp file + rename) to prevent data loss on crash
     try:
-        ret = runoff_stats.to_csv(output_file_path, index=False)
+        atomic_write_csv(runoff_stats, output_file_path, index=False)
         logger.info(f"Data written to {output_file_path}.")
     except Exception as e:
         logger.error(f"Could not write the data to {output_file_path}.")
@@ -5311,7 +5357,7 @@ def write_pentad_hydrograph_data(data: pd.DataFrame, iehhf_sdk = None):
             print(f"SAPPHIRE_CONSISTENCY_CHECK: FAILED - {message}")
             # Log warning but don't raise - hydrograph overwrites entire file
 
-    return ret
+    return None
 
 def write_decad_hydrograph_data(data: pd.DataFrame, iehhf_sdk = None):
     """
@@ -5351,12 +5397,13 @@ def write_decad_hydrograph_data(data: pd.DataFrame, iehhf_sdk = None):
         # Create an empty DataFrame with the expected structure and return
         logger.warning("Creating empty output file")
         empty_df = pd.DataFrame(columns=['code', 'decad_in_year', 'mean', 'min', 'max', 'q05', 'q25', 'q75', 'q95', 'norm'])
-        
+
         try:
             output_file_path = os.path.join(
                 os.getenv("ieasyforecast_intermediate_data_path"),
                 os.getenv("ieasyforecast_hydrograph_decad_file"))
-            empty_df.to_csv(output_file_path, index=False)
+            # Use atomic write for consistency with the rest of the codebase
+            atomic_write_csv(empty_df, output_file_path, index=False)
             logger.info(f"Empty CSV file created at {output_file_path}")
             return None
         except Exception as e:
@@ -5699,45 +5746,34 @@ def write_decad_hydrograph_data(data: pd.DataFrame, iehhf_sdk = None):
         logger.error(f"ieasyforecast_hydrograph_decad_file: {os.getenv('ieasyforecast_hydrograph_decad_file')}")
         raise e
 
-    # Overwrite the file if it already exists
-    if os.path.exists(output_file_path):
-        try:
-            os.remove(output_file_path)
-            logger.debug(f"Removed existing file: {output_file_path}")
-        except Exception as e:
-            logger.error(f"Could not remove existing file {output_file_path}: {e}")
-            raise
-
-    # Write the data to a csv file. Raise an error if this does not work.
-    # If the data is written to the csv file, log a message that the data
-    # has been written.
+    # Write atomically (temp file + rename) to prevent data loss on crash
     try:
         # Validate DataFrame one more time before writing
         if runoff_stats.empty:
             raise ValueError("DataFrame is empty, cannot write to CSV")
-        
+
         # Log summary of data being written
         logger.info(f"Writing {len(runoff_stats)} rows to {output_file_path}")
         logger.info(f"Data covers {runoff_stats['code'].nunique()} stations and "
                    f"{runoff_stats['decad_in_year'].nunique()} decads")
-        
-        ret = runoff_stats.to_csv(output_file_path, index=False)
-        
+
+        atomic_write_csv(runoff_stats, output_file_path, index=False)
+
         # Verify the file was actually written
         if not os.path.exists(output_file_path):
             raise FileNotFoundError(f"CSV file was not created at {output_file_path}")
-        
+
         # Check file size
         file_size = os.path.getsize(output_file_path)
         if file_size == 0:
             raise ValueError(f"CSV file was created but is empty: {output_file_path}")
-        
+
         logger.info(f"Data successfully written to {output_file_path} (size: {file_size} bytes)")
-        
+
     except Exception as e:
         logger.error(f"Could not write the data to {output_file_path}: {e}")
         logger.error(f"DataFrame info: shape={runoff_stats.shape}, columns={list(runoff_stats.columns)}")
-        
+
         # Try to save debug information
         try:
             debug_path = output_file_path.replace('.csv', '_debug.csv')
@@ -5770,7 +5806,7 @@ def write_decad_hydrograph_data(data: pd.DataFrame, iehhf_sdk = None):
             print(f"SAPPHIRE_CONSISTENCY_CHECK: FAILED - {message}")
             # Log warning but don't raise - hydrograph overwrites entire file
 
-    return ret
+    return None
 
 def write_decad_hydrograph_data_first_version(data: pd.DataFrame, iehhf_sdk = None):
     """
@@ -5888,21 +5924,15 @@ def write_decad_hydrograph_data_first_version(data: pd.DataFrame, iehhf_sdk = No
         print(os.getenv("ieasyforecast_hydrograph_decad_file"))
         raise e
 
-    # Overwrite the file if it already exists
-    if os.path.exists(output_file_path):
-        os.remove(output_file_path)
-
-    # Write the data to a csv file. Raise an error if this does not work.
-    # If the data is written to the csv file, log a message that the data
-    # has been written.
+    # Write atomically (temp file + rename) to prevent data loss on crash
     try:
-        ret = runoff_stats.to_csv(output_file_path, index=False)
+        atomic_write_csv(runoff_stats, output_file_path, index=False)
         logger.info(f"Data written to {output_file_path}.")
     except Exception as e:
         logger.error(f"Could not write the data to {output_file_path}.")
         raise e
 
-    return ret
+    return None
 
 def write_pentad_time_series_data(data: pd.DataFrame):
     """
@@ -5961,19 +5991,13 @@ def write_pentad_time_series_data(data: pd.DataFrame):
         print(os.getenv("ieasyforecast_pentad_discharge_file"))
         raise e
 
-    # Overwrite the file if it already exists
-    if os.path.exists(output_file_path):
-        os.remove(output_file_path)
-
-    # Write the data to a csv file. Raise an error if this does not work.
-    # If the data is written to the csv file, log a message that the data
-    # has been written.
+    # Write atomically (temp file + rename) to prevent data loss on crash
     try:
         # Ensure date is formatted as YYYY-MM-DD before writing
         if 'date' in data.columns:
             data['date'] = pd.to_datetime(data['date'], errors='coerce').dt.strftime('%Y-%m-%d')
 
-        ret = data.to_csv(output_file_path, index=False)
+        atomic_write_csv(data, output_file_path, index=False)
         logger.info(f"Data written to {output_file_path}.")
     except Exception as e:
         logger.error(f"Could not write the data to {output_file_path}.")
@@ -6001,7 +6025,7 @@ def write_pentad_time_series_data(data: pd.DataFrame):
             print(f"SAPPHIRE_CONSISTENCY_CHECK: FAILED - {message}")
             # Log warning but don't raise - continue with CSV as backup
 
-    return ret
+    return None
 
 def write_decad_time_series_data(data: pd.DataFrame):
     """
@@ -6061,19 +6085,13 @@ def write_decad_time_series_data(data: pd.DataFrame):
         print(os.getenv("ieasyforecast_decad_discharge_file"))
         raise e
 
-    # Overwrite the file if it already exists
-    if os.path.exists(output_file_path):
-        os.remove(output_file_path)
-
-    # Write the data to a csv file. Raise an error if this does not work.
-    # If the data is written to the csv file, log a message that the data
-    # has been written.
+    # Write atomically (temp file + rename) to prevent data loss on crash
     try:
         # Ensure date is formatted as YYYY-MM-DD before writing
         if 'date' in data.columns:
             data['date'] = pd.to_datetime(data['date'], errors='coerce').dt.strftime('%Y-%m-%d')
 
-        ret = data.to_csv(output_file_path, index=False)
+        atomic_write_csv(data, output_file_path, index=False)
         logger.info(f"Data written to {output_file_path}.")
     except Exception as e:
         logger.error(f"Could not write the data to {output_file_path}.")
@@ -6101,7 +6119,7 @@ def write_decad_time_series_data(data: pd.DataFrame):
             print(f"SAPPHIRE_CONSISTENCY_CHECK: FAILED - {message}")
             # Log warning but don't raise - continue with CSV as backup
 
-    return ret
+    return None
 
 def save_pentadal_skill_metrics(data: pd.DataFrame):
     """
@@ -6136,15 +6154,9 @@ def save_pentadal_skill_metrics(data: pd.DataFrame):
         os.getenv("ieasyforecast_intermediate_data_path"),
         os.getenv("ieasyforecast_pentadal_skill_metrics_file"))
 
-    # Overwrite the file if it already exists
-    if os.path.exists(filepath):
-        os.remove(filepath)
-
-    # Write the data to a csv file. Raise an error if this does not work.
-    # If the data is written to the csv file, log a message that the data
-    # has been written.
+    # Write atomically (temp file + rename) to prevent data loss on crash
     try:
-        ret = data.to_csv(filepath, index=False)
+        atomic_write_csv(data, filepath, index=False)
         logger.info(f"Data written to {filepath}.")
     except Exception as e:
         logger.error(f"Could not write the data to {filepath}.")
@@ -6179,7 +6191,7 @@ def save_pentadal_skill_metrics(data: pd.DataFrame):
             print(f"SAPPHIRE_CONSISTENCY_CHECK: FAILED - {message}")
             # Log warning but don't raise - skill metrics overwrites entire file
 
-    return ret
+    return None
 
 def save_decadal_skill_metrics(data: pd.DataFrame):
     """
@@ -6214,15 +6226,9 @@ def save_decadal_skill_metrics(data: pd.DataFrame):
         os.getenv("ieasyforecast_intermediate_data_path"),
         os.getenv("ieasyforecast_decadal_skill_metrics_file"))
 
-    # Overwrite the file if it already exists
-    if os.path.exists(filepath):
-        os.remove(filepath)
-
-    # Write the data to a csv file. Raise an error if this does not work.
-    # If the data is written to the csv file, log a message that the data
-    # has been written.
+    # Write atomically (temp file + rename) to prevent data loss on crash
     try:
-        ret = data.to_csv(filepath, index=False)
+        atomic_write_csv(data, filepath, index=False)
         logger.info(f"Data written to {filepath}.")
     except Exception as e:
         logger.error(f"Could not write the data to {filepath}.")
@@ -6257,7 +6263,7 @@ def save_decadal_skill_metrics(data: pd.DataFrame):
             print(f"SAPPHIRE_CONSISTENCY_CHECK: FAILED - {message}")
             # Log warning but don't raise - skill metrics overwrites entire file
 
-    return ret
+    return None
 
 def get_latest_forecasts(simulated_df, horizon_column_name='pentad_in_year'):
     """
