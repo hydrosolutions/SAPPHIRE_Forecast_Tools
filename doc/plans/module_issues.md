@@ -53,10 +53,11 @@ Initial diagnosis was incorrect (page_size=1000 is not valid - API limit is 10).
 ---
 
 ### PREPQ-003: iEasyHydro HF Data Retrieval Validation
-**Status**: Ready for Server Testing
+**Status**: Complete
 **Priority**: High
 **Discovered**: 2025-01-09
-**File**: [`issues/gi_PR-002_data_retrieval_validation.md`](issues/gi_PR-002_data_retrieval_validation.md)
+**Resolved**: 2026-01-29
+**File**: [`issues/archive/gi_PR-002_data_retrieval_validation.md`](issues/archive/gi_PR-002_data_retrieval_validation.md)
 **GitHub**: —
 
 Comprehensive data retrieval improvements including:
@@ -67,7 +68,7 @@ Comprehensive data retrieval improvements including:
 - Site caching for operational mode
 - Reliability fixes (empty DataFrame check, undefined variable, stale cache warning)
 
-All phases complete. Needs server deployment testing before archiving.
+All 9 phases complete. Server deployment verified 2026-01-29 alongside PREPQ-005.
 
 ---
 
@@ -93,7 +94,7 @@ Blocked by: Swiss data source API documentation/access
 **Priority**: High
 **Discovered**: 2026-01-27
 **Resolved**: 2026-01-29
-**File**: [`issues/gi_PREPQ-005_maintenance_mode_data_gaps.md`](issues/gi_PREPQ-005_maintenance_mode_data_gaps.md)
+**File**: [`issues/archive/gi_PREPQ-005_maintenance_mode_data_gaps.md`](issues/archive/gi_PREPQ-005_maintenance_mode_data_gaps.md)
 **GitHub**: —
 
 **Two bugs found and fixed:**
