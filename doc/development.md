@@ -993,7 +993,8 @@ Folder Structure:
         -   init.py
         -   predictor_MODELXY.py
         -   utils_ml_forecast.py
-    -   requirements.txt
+    -   pyproject.toml
+    -   uv.lock
 
 The core part of this module are the predictor_classes. These classes are wrapped around a darts forecasting model (check out the available models [here](#https://unit8co.github.io/darts/generated_api/darts.models.forecasting.html)). In these classes, the whole feature calculation is done and the input variables are scaled with the same scalers the model was trained on. Note that it is extremely important, that the processing of the inputs is done exactly the same as during the training process. Otherwise the model will produce unexpected outputs. Also make sure that the order of the features in the darts.Timeseries creation is the same as during the training, as this can lead to unexpected behaviour aswell. The predictor class should include the following functions to work: get_input_chunk_length, get_max_forecast_horizon, predict. As these functions are called from the other scripts.
 

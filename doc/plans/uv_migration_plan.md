@@ -1704,28 +1704,28 @@ FROM mabesa/sapphire-pythonbaseimage:latest AS base
 ```
 
 **Modules to update (8 total):**
-- [ ] `preprocessing_runoff/Dockerfile.py312`
-- [ ] `preprocessing_gateway/Dockerfile.py312`
-- [ ] `linear_regression/Dockerfile.py312`
-- [ ] `machine_learning/Dockerfile.py312`
-- [ ] `forecast_dashboard/Dockerfile.py312`
-- [ ] `pipeline/Dockerfile.py312`
-- [ ] `postprocessing_forecasts/Dockerfile.py312`
-- [ ] `preprocessing_station_forcing/Dockerfile.py312`
+- [x] `preprocessing_runoff/Dockerfile.py312`
+- [x] `preprocessing_gateway/Dockerfile.py312`
+- [x] `linear_regression/Dockerfile.py312`
+- [x] `machine_learning/Dockerfile.py312`
+- [x] `forecast_dashboard/Dockerfile.py312`
+- [x] `pipeline/Dockerfile.py312`
+- [x] `postprocessing_forecasts/Dockerfile.py312`
+- [x] `preprocessing_station_forcing/Dockerfile.py312`
 
 **Exception**: `docker_base_image/Dockerfile.py312` uses `FROM python:3.12-slim-bookworm` (no base image dependency).
 
 ### Step 6.11.2: Remove Old Dockerfiles
 
 **Modules with both `Dockerfile` (py311) and `Dockerfile.py312` (8 total):**
-- [ ] `docker_base_image`
-- [ ] `preprocessing_runoff`
-- [ ] `preprocessing_gateway`
-- [ ] `linear_regression`
-- [ ] `machine_learning`
-- [ ] `forecast_dashboard`
-- [ ] `pipeline`
-- [ ] `postprocessing_forecasts`
+- [x] `docker_base_image`
+- [x] `preprocessing_runoff`
+- [x] `preprocessing_gateway`
+- [x] `linear_regression`
+- [x] `machine_learning`
+- [x] `forecast_dashboard`
+- [x] `pipeline`
+- [x] `postprocessing_forecasts`
 
 ```bash
 git rm apps/docker_base_image/Dockerfile
@@ -1763,18 +1763,18 @@ git mv apps/preprocessing_station_forcing/Dockerfile.py312 apps/preprocessing_st
 Update all workflow files to reference `Dockerfile` instead of `Dockerfile.py312`:
 
 **Files and reference counts:**
-- [ ] `.github/workflows/deploy_main.yml` (8 references)
-- [ ] `.github/workflows/deploy_local.yml` (8 references)
-- [ ] `.github/workflows/scheduled_security_rebuild.yml` (9 references)
-- [ ] `.github/workflows/build_test.yml` (14 references)
+- [x] `.github/workflows/deploy_main.yml` (8 references)
+- [x] `.github/workflows/deploy_local.yml` (8 references)
+- [x] `.github/workflows/scheduled_security_rebuild.yml` (9 references)
+- [x] `.github/workflows/build_test.yml` (14 references)
 
 **Total: 39 references to update**
 
 ### Step 6.11.5: Update Docker Compose and Shell Scripts in bin/
 
 **Docker Compose files:**
-- [ ] `bin/docker-compose-luigi.yml` - line 26: `Dockerfile.py312` → `Dockerfile`
-- [ ] `bin/docker-compose-dashboards.yml` - lines 35, 79: `Dockerfile.py312` → `Dockerfile`
+- [x] `bin/docker-compose-luigi.yml` - line 26: `Dockerfile.py312` → `Dockerfile`
+- [x] `bin/docker-compose-dashboards.yml` - lines 35, 79: `Dockerfile.py312` → `Dockerfile`
 
 **Total: 3 references to update**
 
@@ -1807,6 +1807,36 @@ After all changes:
 | Update GitHub Actions | 39 |
 | Update docker-compose | 3 |
 | **Total** | **67**
+
+---
+
+## Phase 6.12: Remove Legacy requirements.txt Files (2026-01-29)
+
+**Goal**: Clean up legacy requirements.txt files from modules that have migrated to uv (pyproject.toml + uv.lock).
+
+**Status**: ✅ Completed
+
+### Files Removed (9 total)
+
+All modules with uv.lock had their requirements.txt removed:
+
+- [x] `apps/iEasyHydroForecast/requirements.txt`
+- [x] `apps/preprocessing_runoff/requirements.txt`
+- [x] `apps/preprocessing_gateway/requirements.txt`
+- [x] `apps/preprocessing_station_forcing/requirements.txt`
+- [x] `apps/forecast_dashboard/requirements.txt`
+- [x] `apps/linear_regression/requirements.txt`
+- [x] `apps/machine_learning/requirements.txt`
+- [x] `apps/postprocessing_forecasts/requirements.txt`
+- [x] `apps/pipeline/requirements.txt`
+
+### Files Retained (3 total)
+
+These modules still need requirements.txt:
+
+- `apps/docker_base_image/requirements.txt` - Base image, no pyproject.toml yet
+- `apps/conceptual_model/requirements.txt` - R-based module, lists R packages
+- `apps/reset_forecast_run_date/requirements.txt` - Deprecated module, kept for reference
 
 ---
 
