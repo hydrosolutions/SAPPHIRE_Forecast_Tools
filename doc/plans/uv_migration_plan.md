@@ -1840,6 +1840,37 @@ These modules still need requirements.txt:
 
 ---
 
+## Phase 6.13: Documentation Cleanup (2026-01-29)
+
+**Goal**: Update all documentation to remove outdated references to `requirements.txt` and pip commands.
+
+**Status**: ✅ Completed
+
+### Files Updated
+
+| File | Changes |
+|------|---------|
+| `README.md` | Updated preprocessing_gateway folder structure: `requirements.txt` → `pyproject.toml` + `uv.lock` |
+| `doc/plans/deployment_improvement_planning.md` | Replaced `pip install -r requirements.txt` with `uv sync` commands |
+| `doc/plans/Makefile.planned` | Updated `setup-venv` target to use `uv sync` per module |
+| `doc/plans/postprocessing_forecasts_improvement_plan.md` | Updated folder tree: `requirements.txt` → `pyproject.toml` + `uv.lock` |
+| `doc/development.md` | Updated machine_learning folder structure and installation instructions |
+| `doc/dev/testing_workflow.md` | Removed Dockerfile.py312 references |
+| `doc/maintenance/docker-security-maintenance.md` | Updated to Python 3.12 |
+| `doc/plans/docker_health_score_improvement.md` | Updated Dockerfile examples |
+| `apps/iEasyHydroForecast/README.md` | Consolidated to single uv workflow |
+| `apps/postprocessing_forecasts/README.md` | Added uv sync instructions |
+| `bin/docker-compose-*.yml` | Updated default tags to `:latest` |
+
+### References Retained (Historical Context)
+
+The following files intentionally retain `requirements.txt` references as historical/migration documentation:
+- `doc/plans/uv_migration_plan.md` - Documents the migration FROM requirements.txt
+- `doc/uv-migration-guide.md` - Comparison guide for old vs new approach
+- `doc/development.md` (conceptual_model section) - R-based module still uses requirements.txt
+
+---
+
 ## Phase 7: Full Package Upgrade (Post-Migration)
 
 **Goal**: Update all packages to latest secure versions after Python 3.12 migration is stable.
