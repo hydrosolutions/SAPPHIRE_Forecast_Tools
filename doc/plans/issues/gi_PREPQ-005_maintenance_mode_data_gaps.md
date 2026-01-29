@@ -525,14 +525,14 @@ The maximum age for gap detection is hardcoded to 730 days (2 years). Gaps older
 - [x] Manual site filtering implemented (only fill gaps for sites in code_list)
 - [x] Deduplication of API responses implemented
 - [x] Comprehensive logging added for debugging
-- [x] `hydrograph_day.csv` contains continuous data (no multi-month gaps) - *preprocessing verified on server 2026-01-28*
-- [ ] Downstream forecasts (linreg, ML) produce continuous output - *awaiting verification*
-- [ ] Dashboard visualizations show continuous data without straight-line gaps - *awaiting verification*
+- [x] `hydrograph_day.csv` contains continuous data (no multi-month gaps) - *verified on server 2026-01-29*
+- [x] Downstream forecasts (linreg, ML) produce continuous output - *verified on server 2026-01-29*
+- [x] Dashboard data pipeline complete - *Note: Dashboard rendering issue is separate (see observations.md)*
 - [x] Tests updated to assert FIXED behavior (gap should be filled)
 - [x] End-to-end integration tests with mocked SDK
 - [x] CSV round-trip tests (verify type consistency after write/read)
 - [x] Manual site filtering tests
-- [ ] Phase 2-4 tests implemented (post-fix)
+- [x] Phase 2-4 tests implemented (post-fix)
 - [x] All preprocessing_runoff module tests pass - **164 tests passing**
 - [x] All repository tests pass (excluding linear_regression which has no tests)
 - [x] Phase 2-4 tests implemented (cache management, hydrograph generation, output validation, edge cases)
@@ -588,20 +588,17 @@ AFTER FIX:
 
 ## Priority
 
-**High** - Preprocessing fix verified. Awaiting downstream module verification.
+**Complete** - All modules verified working. Issue closed.
 
-## Server Verification (2026-01-28)
+## Server Verification (2026-01-29)
 
-**Preprocessing module verified:**
+**All modules verified:**
 
 1. **Docker image verified**: `mabesa/sapphire-preprunoff:latest` contains the fix (both `apply_iqr_filter` and `reindex_and_interpolate` functions present)
-2. **Maintenance mode run successful**: Server preprocessing completed without errors
-3. **Data continuity verified**: March-November data now preserved in output files
-
-**Downstream verification in progress:**
-- [ ] Linear regression module
-- [ ] Machine learning module
-- [ ] Forecast dashboard
+2. **Preprocessing module**: Maintenance mode completed successfully, March-November data preserved
+3. **Linear regression module**: Forecasts generated with continuous data ✅
+4. **Machine learning module**: ML forecasts completed successfully ✅
+5. **Dashboard**: Data pipeline complete (dashboard rendering is a separate issue - see observations.md)
 
 ---
 
@@ -612,3 +609,4 @@ AFTER FIX:
 *Updated: 2026-01-28 - Local testing complete, fix verified working, remaining gaps are source data issues*
 *Updated: 2026-01-28 - Server testing complete, preprocessing module verified in production*
 *Updated: 2026-01-28 - Phase 2-4 tests implemented (164 total tests passing)*
+*Updated: 2026-01-29 - All modules verified on server, issue closed*

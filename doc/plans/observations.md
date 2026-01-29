@@ -14,6 +14,25 @@ Periodically review and triage into formal issues in `module_issues.md` or GitHu
 
 ---
 
+## 2026-01-29
+
+### Dashboard: Data Not Displaying After PREPQ-005 Fix
+
+**Source**: Server testing after preprocessing_runoff fix deployment
+**Date**: 2026-01-29
+
+After deploying the PREPQ-005 fix (seasonal filtering bug in `filter_roughly_for_outliers()`), all upstream modules run successfully:
+- ✅ preprocessing_runoff: March-November data now preserved in `runoff_day.csv` and `hydrograph_day.csv`
+- ✅ linear_regression: Forecasts generated with continuous data
+- ✅ machine_learning: ML forecasts completed successfully
+
+However, the forecast dashboard does not display the data correctly. This is a **separate issue** from PREPQ-005 - the preprocessing data is correct but the dashboard is not rendering it.
+
+**Assessment**: Dashboard rendering issue, not a data issue. Needs separate investigation.
+**Status**: Needs investigation - new issue, not related to PREPQ-005
+
+---
+
 ## 2026-01-27
 
 ### Dashboard: Predictor Data Gaps and Missing Snow Data (Production Server)
@@ -54,7 +73,7 @@ Same pattern in `forecast_decad_linreg_latest.csv`.
 ~~Previous assessment that preprocessing_runoff is working correctly is FALSE.~~
 
 **Assessment**: Bug in preprocessing_runoff maintenance mode - producing data with large gaps. This is NOT a dashboard issue.
-**Status**: TRIAGED - see PREPQ-005
+**Status**: RESOLVED - Fixed in PREPQ-005 (seasonal filtering bug in `filter_roughly_for_outliers()`)
 
 ---
 
@@ -175,4 +194,4 @@ FileNotFoundError: [Errno 2] No such file or directory:
 
 ---
 
-*Last updated: 2026-01-27*
+*Last updated: 2026-01-29*

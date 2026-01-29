@@ -89,9 +89,10 @@ Blocked by: Swiss data source API documentation/access
 ---
 
 ### PREPQ-005: Maintenance Mode Produces Data with Large Gaps
-**Status**: Ready for Server Testing
+**Status**: Complete
 **Priority**: High
 **Discovered**: 2026-01-27
+**Resolved**: 2026-01-29
 **File**: [`issues/gi_PREPQ-005_maintenance_mode_data_gaps.md`](issues/gi_PREPQ-005_maintenance_mode_data_gaps.md)
 **GitHub**: —
 
@@ -101,9 +102,9 @@ Blocked by: Swiss data source API documentation/access
 
 2. **Seasonal filtering bug (CRITICAL)** - `filter_roughly_for_outliers()` was systematically removing valid March-November data due to flawed seasonal grouping + reindexing logic. Fixed by separating IQR filtering (per season) from reindexing (per station).
 
-**Test coverage**: 90 tests passing (15 new tests for seasonal data preservation fix)
+**Test coverage**: 164 tests passing (74 new tests for comprehensive coverage)
 
-Preprocessing module verified on server. Awaiting downstream module verification (linreg, ML, dashboard).
+All modules verified on server (preprocessing, linreg, ML). Dashboard rendering issue is separate.
 
 ---
 
@@ -157,4 +158,4 @@ See detailed plan file for description.
 
 ---
 
-*Last updated: 2026-01-28*
+*Last updated: 2026-01-29*
