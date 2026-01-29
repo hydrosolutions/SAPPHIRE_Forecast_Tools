@@ -16,6 +16,18 @@ Periodically review and triage into formal issues in `module_issues.md` or GitHu
 
 ## 2026-01-29
 
+### Pipeline: Incorrect Docker Image Comparison Message
+
+**Source**: UV migration testing
+**Date**: 2026-01-29
+
+Pipeline machine learning part prints "The Docker Hub image is newer than the local image." even when it is not. The image comparison logic appears to be incorrect.
+
+**Assessment**: Low priority cosmetic/logging issue. Does not affect functionality.
+**Status**: Address when debugging or refactoring pipeline module
+
+---
+
 ### Dashboard: Data Not Displaying After PREPQ-005 Fix
 
 **Source**: Server testing after preprocessing_runoff fix deployment
