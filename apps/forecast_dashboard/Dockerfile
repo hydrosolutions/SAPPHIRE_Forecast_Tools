@@ -1,50 +1,42 @@
 # syntax=docker/dockerfile:1
 
+# Python 3.12 + uv image for forecast_dashboard module
+# This image runs in parallel with the :latest (Python 3.11 + pip) version during migration
+# See: implementation_planning/uv_migration_plan.md
+
 FROM mabesa/sapphire-pythonbaseimage:latest AS base
 
 # Run as root to allow running of containers from within dashboard
 USER root
 
-# Copy the contents of the apps/forecast_dashboard directory into the container
-#COPY --chown=appuser:appgroup apps/forecast_dashboard /app/apps/forecast_dashboard
-COPY apps/forecast_dashboard /app/apps/forecast_dashboard
-
-# Specify the working directory inside the container
-WORKDIR /app/apps/forecast_dashboard
-
-# Env
+# Set environment variables
 ENV SAPPHIRE_OPDEV_ENV=True
-#ENV PATH="/home/appuser/.local/bin:${PATH}"
 ENV PATH="/root/.local/bin:${PATH}"
-
-# Add Display to the container. This is needed for the dashboard to work.
 ENV DISPLAY=:0
-
-# Set environment variable to force unbuffered output
 ENV PYTHONUNBUFFERED=1
 
-# Update libraries of the operating system. Especially the ones which are flaged
-# for vulnerabilities in dockerhub. The -y flag automatically anwwers yes to all
-# prompts.
-RUN --mount=type=cache,target=/root/.cache/pip \
-    --mount=type=bind,source=apps/forecast_dashboard/requirements.txt,target=/app/apps/forecast_dashboard/requirements.txt \
-    pip install --trusted-host pypi.python.org -r /app/apps/forecast_dashboard/requirements.txt && \
-    python -m pip install git+https://github.com/hydrosolutions/ieasyreports.git@main
+# Set working directory
+WORKDIR /app
 
-# Expose the port that the application listens on.
+# Copy iEasyHydroForecast (local dependency referenced in pyproject.toml)
+COPY apps/iEasyHydroForecast /app/apps/iEasyHydroForecast
+
+# Copy forecast_dashboard source code (includes pyproject.toml and uv.lock)
+COPY apps/forecast_dashboard /app/apps/forecast_dashboard
+
+# Install all dependencies using uv sync (includes iEasyHydroForecast from local path)
+# This creates a virtual environment and installs from uv.lock for reproducibility
+WORKDIR /app/apps/forecast_dashboard
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev
+
+# Expose the ports that the application listens on.
 # Port 5006 for the pentad dashboard
 # Port 5007 for the decad dashboard
 EXPOSE 5006
 EXPOSE 5007
 
-# Test if file apps/forecast_dashboard/forecast_dashboard.py exists. Print the result.
-# CMD test -f apps/forecast_dashboard/forecast_dashboard.py && echo "File exists" || echo "File does not exist"
-
-# Run the application.
-# On local machine
-#CMD ["panel", "serve", "forecast_dashboard.py", "--show", "--autoreload", "--port", "5006"]
-# On server
-#CMD panel serve --allow-websocket-origin=$ieasyhydroforecast_url forecast_dashboard.py --show --autoreload --num-threads 4 --address 0.0.0.0
-
-# CMD to list all files in app/apps/forecast_dashboard and print the results to the console.
-#CMD ["/bin/sh", "-c", "echo 'here!' && ls /app/apps/forecast_dashboard && echo ' ' && pip list"]
+# Run the application using uv run (activates the virtual environment automatically)
+# The CMD is typically overridden by docker-compose or deployment scripts
+# Default: serve dashboard on port 5006
+CMD ["sh", "-c", "uv run panel serve forecast_dashboard.py --address 0.0.0.0 --port 5006 --allow-websocket-origin=${ieasyhydroforecast_url:-localhost:5006}"]

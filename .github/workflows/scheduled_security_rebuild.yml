@@ -2,6 +2,7 @@ name: Quarterly Security Rebuild
 
 # Rebuilds all Docker images from fresh upstream to pick up security fixes
 # Runs quarterly or on-demand via manual trigger
+# Uses Python 3.12 + uv workflow (aligned with deploy_main.yml)
 
 on:
   schedule:
@@ -24,8 +25,9 @@ env:
   LINREG_IMAGE_NAME: mabesa/sapphire-linreg
   ML_IMAGE_NAME: mabesa/sapphire-ml
   POSTPQ_IMAGE_NAME: mabesa/sapphire-postprocessing
-  RERUN_IMAGE_NAME: mabesa/sapphire-rerun
-  CONCMOD_IMAGE_NAME: mabesa/sapphire-conceptmod
+  # Deprecated/disabled images (kept for reference):
+  # RERUN_IMAGE_NAME: mabesa/sapphire-rerun  # reset_forecast_run_date deprecated
+  # CONCMOD_IMAGE_NAME: mabesa/sapphire-conceptmod  # R-based, builds broken
 
 jobs:
   # Calculate quarterly tag (e.g., 2025-Q1)
@@ -42,97 +44,46 @@ jobs:
           echo "quarterly_tag=${QUARTERLY_TAG}" >> $GITHUB_OUTPUT
           echo "Quarterly tag: ${QUARTERLY_TAG}"
 
-  # Build base image from fresh upstream
-  rebuild-base-image:
+  # Test iEasyHydroForecast with Python 3.12 + uv before building base image
+  test-base-image:
     needs: setup
     runs-on: ubuntu-latest
-    name: Rebuild base image from fresh upstream
-    outputs:
-      image_built: ${{ steps.build.outputs.image_built }}
+    name: Test iEasyHydroForecast (Python 3.12 + uv)
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Build base image
-        id: build
-        run: |
-          DOCKER_BUILDKIT=1 docker build --pull --no-cache \
-            -t "${{ env.BASE_IMAGE_NAME }}:rebuild-test" \
-            -f ./apps/docker_base_image/Dockerfile .
-          echo "image_built=true" >> $GITHUB_OUTPUT
-
-      - name: Save image for testing
-        run: |
-          docker save "${{ env.BASE_IMAGE_NAME }}:rebuild-test" > /tmp/base-image.tar
-
-      - name: Upload image artifact
-        uses: actions/upload-artifact@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
         with:
-          name: base-image
-          path: /tmp/base-image.tar
-          retention-days: 1
+          version: "latest"
 
-  # Run tests against rebuilt base image
-  test-base-image:
-    needs: [setup, rebuild-base-image]
-    runs-on: ubuntu-latest
-    name: Test rebuilt base image
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.11"]
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Set up Python 3.12 with uv
+        run: uv python install 3.12
 
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-
-      - name: Set PYTHONPATH
+      - name: Install dependencies with uv
+        working-directory: ./apps/iEasyHydroForecast
         run: |
-          echo "PYTHONPATH=${GITHUB_WORKSPACE}/apps/iEasyHydroForecast" >> $GITHUB_ENV
+          uv sync --all-extras
 
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r ./apps/iEasyHydroForecast/requirements.txt
-          python -m pip install --no-cache-dir --upgrade --force-reinstall "git+https://github.com/hydrosolutions/ieasyhydro-python-sdk@master"
-          python -m pip install -e ./apps/iEasyHydroForecast
-
-      - name: Run iEasyHydroForecast tests
+      - name: Test with pytest
         working-directory: ./apps
         run: |
-          SAPPHIRE_TEST_ENV=True python -m unittest discover -s iEasyHydroForecast/tests -p 'test_*.py'
+          SAPPHIRE_TEST_ENV=True iEasyHydroForecast/.venv/bin/python -m pytest iEasyHydroForecast/tests/ -v
 
-      - name: Download base image artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: base-image
-          path: /tmp
-
-      - name: Load and verify base image
-        run: |
-          docker load < /tmp/base-image.tar
-          echo "Verifying key imports in container..."
-          docker run --rm "${{ env.BASE_IMAGE_NAME }}:rebuild-test" \
-            python -c "import pandas; import numpy; import sklearn; print('All imports OK')"
-
-  # Push base image after tests pass
-  push-base-image:
+  # Build and push base image from fresh upstream with attestation
+  rebuild-base-image:
     needs: [setup, test-base-image]
     runs-on: ubuntu-latest
-    name: Push base image with quarterly tag
-    steps:
-      - name: Download base image artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: base-image
-          path: /tmp
+    name: Rebuild base image from fresh upstream
 
-      - name: Load base image
-        run: docker load < /tmp/base-image.tar
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
       - name: Log in to Docker registry
         uses: docker/login-action@v3
@@ -140,60 +91,50 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Tag and push base image
+      # Build with --pull to get fresh upstream base images (security updates)
+      # Using --no-cache ensures all layers are rebuilt with latest packages
+      - name: Build and push base image with attestation
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./apps/docker_base_image/Dockerfile
+          push: true
+          tags: |
+            ${{ env.BASE_IMAGE_NAME }}:latest
+            ${{ env.BASE_IMAGE_NAME }}:${{ needs.setup.outputs.quarterly_tag }}
+          # Pull fresh base image to get security patches
+          pull: true
+          # Disable cache to ensure fresh build with latest packages
+          no-cache: true
+          # Enable SLSA provenance attestation
+          provenance: true
+          sbom: true
+
+      - name: Verify base image
         run: |
-          # Tag with :latest
-          docker tag "${{ env.BASE_IMAGE_NAME }}:rebuild-test" "${{ env.BASE_IMAGE_NAME }}:latest"
-          docker push "${{ env.BASE_IMAGE_NAME }}:latest"
-
-          # Tag with quarterly tag (e.g., :2025-Q1)
-          docker tag "${{ env.BASE_IMAGE_NAME }}:rebuild-test" "${{ env.BASE_IMAGE_NAME }}:${{ needs.setup.outputs.quarterly_tag }}"
-          docker push "${{ env.BASE_IMAGE_NAME }}:${{ needs.setup.outputs.quarterly_tag }}"
-
+          docker pull "${{ env.BASE_IMAGE_NAME }}:latest"
+          echo "Verifying Python version..."
+          docker run --rm "${{ env.BASE_IMAGE_NAME }}:latest" python --version
+          echo "Verifying uv is available..."
+          docker run --rm "${{ env.BASE_IMAGE_NAME }}:latest" uv --version
           echo "Pushed ${{ env.BASE_IMAGE_NAME }}:latest"
           echo "Pushed ${{ env.BASE_IMAGE_NAME }}:${{ needs.setup.outputs.quarterly_tag }}"
 
   # Rebuild all module images (only if not skipped)
-  rebuild-module-images:
-    needs: [setup, push-base-image]
+  # Using matrix strategy with docker/build-push-action@v6
+
+  rebuild-pipeline:
+    needs: [setup, rebuild-base-image]
     if: ${{ github.event.inputs.skip_module_rebuild != 'true' }}
     runs-on: ubuntu-latest
-    name: Rebuild ${{ matrix.module.name }}
-    strategy:
-      fail-fast: false
-      matrix:
-        module:
-          - name: pipeline
-            image_env: PIPELINE_IMAGE_NAME
-            dockerfile: ./apps/pipeline/Dockerfile
-          - name: dashboard
-            image_env: DASHBOARD_IMAGE_NAME
-            dockerfile: ./apps/forecast_dashboard/Dockerfile
-          - name: preprunoff
-            image_env: PREPQ_IMAGE_NAME
-            dockerfile: ./apps/preprocessing_runoff/Dockerfile
-          - name: prepgateway
-            image_env: PREPG_IMAGE_NAME
-            dockerfile: ./apps/preprocessing_gateway/Dockerfile
-          - name: linreg
-            image_env: LINREG_IMAGE_NAME
-            dockerfile: ./apps/linear_regression/Dockerfile
-          - name: ml
-            image_env: ML_IMAGE_NAME
-            dockerfile: ./apps/machine_learning/Dockerfile
-          - name: postprocessing
-            image_env: POSTPQ_IMAGE_NAME
-            dockerfile: ./apps/postprocessing_forecasts/Dockerfile
-          - name: rerun
-            image_env: RERUN_IMAGE_NAME
-            dockerfile: ./apps/reset_forecast_run_date/Dockerfile
-          # DISABLED (2026-01-27): conceptual_model CI builds disabled - R dependencies broken
-          # - name: conceptmod
-          #   image_env: CONCMOD_IMAGE_NAME
-          #   dockerfile: ./apps/conceptual_model/Dockerfile
+    name: Rebuild pipeline
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
       - name: Log in to Docker registry
         uses: docker/login-action@v3
@@ -201,50 +142,270 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Get image name
-        id: image
-        run: |
-          case "${{ matrix.module.image_env }}" in
-            PIPELINE_IMAGE_NAME) IMAGE="${{ env.PIPELINE_IMAGE_NAME }}" ;;
-            DASHBOARD_IMAGE_NAME) IMAGE="${{ env.DASHBOARD_IMAGE_NAME }}" ;;
-            PREPQ_IMAGE_NAME) IMAGE="${{ env.PREPQ_IMAGE_NAME }}" ;;
-            PREPG_IMAGE_NAME) IMAGE="${{ env.PREPG_IMAGE_NAME }}" ;;
-            LINREG_IMAGE_NAME) IMAGE="${{ env.LINREG_IMAGE_NAME }}" ;;
-            ML_IMAGE_NAME) IMAGE="${{ env.ML_IMAGE_NAME }}" ;;
-            POSTPQ_IMAGE_NAME) IMAGE="${{ env.POSTPQ_IMAGE_NAME }}" ;;
-            RERUN_IMAGE_NAME) IMAGE="${{ env.RERUN_IMAGE_NAME }}" ;;
-            # CONCMOD_IMAGE_NAME) IMAGE="${{ env.CONCMOD_IMAGE_NAME }}" ;;  # DISABLED: R dependencies broken
-          esac
-          echo "image_name=${IMAGE}" >> $GITHUB_OUTPUT
+      - name: Build and push with attestation
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./apps/pipeline/Dockerfile
+          push: true
+          tags: |
+            ${{ env.PIPELINE_IMAGE_NAME }}:latest
+            ${{ env.PIPELINE_IMAGE_NAME }}:${{ needs.setup.outputs.quarterly_tag }}
+          pull: true
+          no-cache: true
+          provenance: true
+          sbom: true
 
-      - name: Build module image
-        run: |
-          docker build --pull --no-cache \
-            -t "${{ steps.image.outputs.image_name }}:latest" \
-            -f ${{ matrix.module.dockerfile }} .
+  rebuild-dashboard:
+    needs: [setup, rebuild-base-image]
+    if: ${{ github.event.inputs.skip_module_rebuild != 'true' }}
+    runs-on: ubuntu-latest
+    name: Rebuild forecast dashboard
 
-      - name: Push with latest and quarterly tags
-        run: |
-          # Push :latest
-          docker push "${{ steps.image.outputs.image_name }}:latest"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-          # Tag and push quarterly
-          docker tag "${{ steps.image.outputs.image_name }}:latest" \
-            "${{ steps.image.outputs.image_name }}:${{ needs.setup.outputs.quarterly_tag }}"
-          docker push "${{ steps.image.outputs.image_name }}:${{ needs.setup.outputs.quarterly_tag }}"
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker registry
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build and push with attestation
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./apps/forecast_dashboard/Dockerfile
+          push: true
+          tags: |
+            ${{ env.DASHBOARD_IMAGE_NAME }}:latest
+            ${{ env.DASHBOARD_IMAGE_NAME }}:${{ needs.setup.outputs.quarterly_tag }}
+          pull: true
+          no-cache: true
+          provenance: true
+          sbom: true
+
+  rebuild-preprunoff:
+    needs: [setup, rebuild-base-image]
+    if: ${{ github.event.inputs.skip_module_rebuild != 'true' }}
+    runs-on: ubuntu-latest
+    name: Rebuild preprocessing runoff
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker registry
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build and push with attestation
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./apps/preprocessing_runoff/Dockerfile
+          push: true
+          tags: |
+            ${{ env.PREPQ_IMAGE_NAME }}:latest
+            ${{ env.PREPQ_IMAGE_NAME }}:${{ needs.setup.outputs.quarterly_tag }}
+          pull: true
+          no-cache: true
+          provenance: true
+          sbom: true
+
+  rebuild-prepgateway:
+    needs: [setup, rebuild-base-image]
+    if: ${{ github.event.inputs.skip_module_rebuild != 'true' }}
+    runs-on: ubuntu-latest
+    name: Rebuild preprocessing gateway
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker registry
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build and push with attestation
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./apps/preprocessing_gateway/Dockerfile
+          push: true
+          tags: |
+            ${{ env.PREPG_IMAGE_NAME }}:latest
+            ${{ env.PREPG_IMAGE_NAME }}:${{ needs.setup.outputs.quarterly_tag }}
+          pull: true
+          no-cache: true
+          provenance: true
+          sbom: true
+
+  rebuild-linreg:
+    needs: [setup, rebuild-base-image]
+    if: ${{ github.event.inputs.skip_module_rebuild != 'true' }}
+    runs-on: ubuntu-latest
+    name: Rebuild linear regression
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker registry
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build and push with attestation
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./apps/linear_regression/Dockerfile
+          push: true
+          tags: |
+            ${{ env.LINREG_IMAGE_NAME }}:latest
+            ${{ env.LINREG_IMAGE_NAME }}:${{ needs.setup.outputs.quarterly_tag }}
+          pull: true
+          no-cache: true
+          provenance: true
+          sbom: true
+
+  rebuild-ml:
+    needs: [setup, rebuild-base-image]
+    if: ${{ github.event.inputs.skip_module_rebuild != 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60  # ML image is large, needs more time
+    name: Rebuild machine learning
+
+    steps:
+      # Free disk space for large ML image (PyTorch/Darts)
+      - name: Free disk space
+        run: |
+          echo "Disk space before cleanup:"
+          df -h
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/share/boost
+          sudo rm -rf /usr/local/lib/android
+          echo "Disk space after cleanup:"
+          df -h
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker registry
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build and push with attestation
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./apps/machine_learning/Dockerfile
+          push: true
+          tags: |
+            ${{ env.ML_IMAGE_NAME }}:latest
+            ${{ env.ML_IMAGE_NAME }}:${{ needs.setup.outputs.quarterly_tag }}
+          pull: true
+          no-cache: true
+          provenance: true
+          sbom: true
+
+  rebuild-postprocessing:
+    needs: [setup, rebuild-base-image]
+    if: ${{ github.event.inputs.skip_module_rebuild != 'true' }}
+    runs-on: ubuntu-latest
+    name: Rebuild postprocessing forecasts
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker registry
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build and push with attestation
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./apps/postprocessing_forecasts/Dockerfile
+          push: true
+          tags: |
+            ${{ env.POSTPQ_IMAGE_NAME }}:latest
+            ${{ env.POSTPQ_IMAGE_NAME }}:${{ needs.setup.outputs.quarterly_tag }}
+          pull: true
+          no-cache: true
+          provenance: true
+          sbom: true
+
+  # DISABLED: reset_forecast_run_date is deprecated
+  # DISABLED: conceptual_model is R-based with broken dependencies
 
   # Generate summary
   summarize:
-    needs: [setup, push-base-image, rebuild-module-images]
+    needs:
+      - setup
+      - rebuild-base-image
+      - rebuild-pipeline
+      - rebuild-dashboard
+      - rebuild-preprunoff
+      - rebuild-prepgateway
+      - rebuild-linreg
+      - rebuild-ml
+      - rebuild-postprocessing
     if: always()
     runs-on: ubuntu-latest
     name: Generate rebuild summary
+
     steps:
       - name: Generate summary
         run: |
           echo "# Quarterly Security Rebuild Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Quarterly Tag:** ${{ needs.setup.outputs.quarterly_tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Build Configuration" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Python version:** 3.12" >> $GITHUB_STEP_SUMMARY
+          echo "- **Package manager:** uv" >> $GITHUB_STEP_SUMMARY
+          echo "- **Dockerfile:** Dockerfile" >> $GITHUB_STEP_SUMMARY
+          echo "- **Fresh upstream:** yes (--pull --no-cache)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Security Features" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "All images built with:" >> $GITHUB_STEP_SUMMARY
+          echo "- SLSA provenance attestation" >> $GITHUB_STEP_SUMMARY
+          echo "- SBOM (Software Bill of Materials)" >> $GITHUB_STEP_SUMMARY
+          echo "- Fresh upstream base images (security patches)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "## Images Rebuilt" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -259,8 +420,6 @@ jobs:
             echo "| ${{ env.LINREG_IMAGE_NAME }} | ✅ | ✅ |" >> $GITHUB_STEP_SUMMARY
             echo "| ${{ env.ML_IMAGE_NAME }} | ✅ | ✅ |" >> $GITHUB_STEP_SUMMARY
             echo "| ${{ env.POSTPQ_IMAGE_NAME }} | ✅ | ✅ |" >> $GITHUB_STEP_SUMMARY
-            echo "| ${{ env.RERUN_IMAGE_NAME }} | ✅ | ✅ |" >> $GITHUB_STEP_SUMMARY
-            echo "| ${{ env.CONCMOD_IMAGE_NAME }} | ✅ | ✅ |" >> $GITHUB_STEP_SUMMARY
           fi
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "## Reproducibility" >> $GITHUB_STEP_SUMMARY

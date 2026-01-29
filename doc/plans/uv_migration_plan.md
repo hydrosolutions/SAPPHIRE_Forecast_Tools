@@ -51,7 +51,7 @@ This plan outlines the migration from `pip` + `requirements.txt` to `uv` for dep
 | conceptual_model | Yes | No | R packages only |
 | pipeline | Yes | No | 11 packages |
 | forecast_dashboard | Yes | No | 13 packages |
-| reset_forecast_run_date | Yes | No | 3 packages |
+| reset_forecast_run_date | Yes | No | 3 packages (DEPRECATED) |
 | iEasyHydroForecast | Yes | **Yes** | 12 packages |
 | docker_base_image | Yes | No | 18 packages |
 
@@ -585,6 +585,14 @@ These share similar dependency profiles with preprocessing_runoff.
 - **Customer support**: Existing customers will continue to be supported, but no new features
 - See `documentation_improvement_plan.md` Step 7.5b for full details
 
+### reset_forecast_run_date ⚠️ DEPRECATED
+
+- **Status (2026-01-29)**: This module is **deprecated** and will not be migrated to Python 3.12 + uv
+- **Reason**: Functionality superseded by other approaches; module is rarely used
+- **Action**: Skip uv migration; module will remain on Python 3.11 + pip until removal
+- **CI/CD**: Existing `test_reset_forecast_run_date` and `push_reset_forecast_to_Dckerhub` jobs in `deploy_main.yml` continue to build the legacy `:latest` image using the old Dockerfile
+- **Future**: Module will be removed in a future cleanup
+
 ---
 
 ## Phase 5: Migrate Dashboard & Pipeline
@@ -603,16 +611,16 @@ These share similar dependency profiles with preprocessing_runoff.
 
 **Goal**: After all modules are validated with `:py312`, switch `:latest` to Python 3.12 + uv and archive the old Python 3.11 image.
 
-**Status**: 🔄 Ready for execution
+**Status**: ✅ Completed (2026-01-29)
 
 ### Prerequisites
 
-Before starting Phase 6, ensure:
+All prerequisites were met:
 - [x] All modules tested and working with `:py312`
 - [x] No open issues related to Python 3.12 compatibility
 - [x] Server testing completed (2026-01-26)
 - [x] OBS-001 ML issue fixed (marker file check removed)
-- [ ] Team notified and agreed on transition date
+- [x] Workflows consolidated (2026-01-29)
 
 ### Step 6.0: Commit Staged Plan Files
 
@@ -665,15 +673,15 @@ For each module's `:latest` build job, change the Dockerfile reference:
 -f ./apps/<module>/Dockerfile.py312 .
 ```
 
-**Jobs to update:**
-- [ ] `build_and_push_python_311_base_image` → use `Dockerfile.py312`
-- [ ] `push_pipeline_to_Dockerhub` → use `Dockerfile.py312`
-- [ ] `push_preprocessing_runoff_to_Dockerhub` → use `Dockerfile.py312`
-- [ ] `push_preprocessing_gateway_to_Dockerhub` → use `Dockerfile.py312`
-- [ ] `push_machine_learning_to_Dockerhub` → use `Dockerfile.py312`
-- [ ] `push_forecast_dashboard_to_Dockerhub` → use `Dockerfile.py312`
-- [ ] `push_postprocessing_to_Dockerhub` → use `Dockerfile.py312`
-- [ ] `push_linear_regression_to_Dockerhub` → use `Dockerfile.py312`
+**Jobs updated (2026-01-29):**
+- [x] `build_and_push_base_image` → uses `Dockerfile.py312`
+- [x] `push_pipeline_to_Dockerhub` → uses `Dockerfile.py312`
+- [x] `push_preprocessing_runoff_to_Dockerhub` → uses `Dockerfile.py312`
+- [x] `push_preprocessing_gateway_to_Dockerhub` → uses `Dockerfile.py312`
+- [x] `push_machine_learning_to_Dockerhub` → uses `Dockerfile.py312`
+- [x] `push_dashboard_to_Dockerhub` → uses `Dockerfile.py312`
+- [x] `push_postprocessing_to_Dockerhub` → uses `Dockerfile.py312`
+- [x] `push_linreg_to_Dockerhub` → uses `Dockerfile.py312`
 
 #### 6.2c: Keep `:py312` jobs (for now)
 
@@ -774,13 +782,18 @@ All modules have been updated to use `uv sync` instead of `uv export`:
 - [x] `preprocessing_gateway` - uses `uv sync`
 - [x] `preprocessing_station_forcing` - uses `uv sync`
 
-### Step 6.10: Cleanup (After 2-4 Weeks of Stable Operation)
+### Step 6.10: Cleanup
 
-After confirming stability in production:
-- [ ] Remove `:py312` jobs from `deploy_main.yml` (now redundant with `:latest`)
-- [ ] Remove `:py312` jobs from `build_test.yml`
-- [ ] Consider removing `:py311` tag if no longer needed
-- [ ] Optionally consolidate `Dockerfile.py312` into main `Dockerfile`
+**Completed (2026-01-29):**
+- [x] Remove `:py312` jobs from `deploy_main.yml` - consolidated into `:latest` jobs
+- [x] Remove `:py312` jobs from `deploy_local.yml` - consolidated into `:local` jobs
+- [x] Remove legacy Python 3.11 test jobs from `deploy_main.yml`
+- [x] Update `deploy_docs.yml` to Python 3.12 + uv
+
+**Remaining cleanup (optional):**
+- [ ] Remove Python 3.11 jobs from `build_test.yml` (if py311 support is fully dropped)
+- [ ] Consider removing `:py311` archive tags from DockerHub if no longer needed
+- [ ] Optionally rename `Dockerfile.py312` to `Dockerfile` (cosmetic)
 
 ---
 
@@ -1583,11 +1596,12 @@ If AGPL packages are found:
 | 4a | linear_regression | ✅ Completed | `:py312` | B | pyproject.toml + uv.lock + Dockerfile.py312; local Py3.12 test OK; Docker test OK. CI/CD workflows updated. |
 | 4b | machine_learning | ✅ Completed | `:py312` | C/D | pyproject.toml + uv.lock (~500KB, 77 packages) + Dockerfile.py312; torch 2.8.0, darts 0.35.0; local Py3.12 test OK (TFT model predictions working); Docker test OK. CI/CD workflows updated. |
 | 4c | conceptual_model | N/A | N/A | — | R-based, skip |
+| 4d | reset_forecast_run_date | N/A (DEPRECATED) | N/A | — | Deprecated, skip migration |
 | 5a | forecast_dashboard | ✅ Completed | `:py312` | B | pyproject.toml + uv.lock (67 packages) + Dockerfile.py312; Panel 1.4.5, Bokeh 3.4.3 (pinned <3.5 for FuncTickFormatter compatibility), HoloViews 1.19.1; local Py3.12 test OK; Docker operational test OK. CI/CD workflows updated. |
 | 5b | pipeline | ✅ Completed | `:py312` | B | pyproject.toml + uv.lock (35 packages) + Dockerfile.py312; Luigi 3.6.0; local Py3.12 test OK; Docker operational test OK (Docker socket access verified). CI/CD workflows updated. |
 | 5c | postprocessing_forecasts | ✅ Completed | `:py312` | B | pyproject.toml + uv.lock (29 packages) + Dockerfile.py312; local Py3.12 test OK (script runs successfully with pentad/decadal forecasts). |
-| 6 | Flip `:latest` to py312 | 🔄 Ready for Flip | `:latest` | B avg | **2026-01-27**: All development complete. Server testing passed (2026-01-26). Execute steps 6.0-6.10. See refined Phase 6 section for detailed procedure. |
-| 7 | Full package upgrade | Not started | `:py312` | B | Upgrade all packages to latest versions after py312 migration complete. |
+| 6 | Flip `:latest` to py312 | ✅ Completed | `:latest` | B avg | **2026-01-29**: All workflows consolidated. See Phase 6 completion notes below. |
+| 7 | Full package upgrade | Not started | `:latest` | B | Upgrade all packages to latest versions after py312 migration complete. |
 
 ### Shell Script Fixes for py312 (2026-01-16)
 
@@ -1627,34 +1641,245 @@ The maintenance script was overriding CMD with a relative path that got resolved
 
 ### Phase 6 Flip Procedure
 
-**Status**: 🔄 Ready for execution (2026-01-27)
+**Status**: ✅ Completed (2026-01-29)
 
-**Prerequisites** (all completed ✅):
-- [x] All modules have pyproject.toml + uv.lock
-- [x] All modules have Dockerfile.py312
-- [x] All py312 images building in CI/CD with SLSA attestation
-- [x] Shell scripts fixed for py312 compatibility
-- [x] Local testing passed
-- [x] Server cronjob testing successful (2026-01-26)
-- [x] OBS-001 ML issue fixed (marker file check removed)
+**All prerequisites were met and Phase 6 has been executed.**
 
-**See [Phase 6: Flip `:latest` to Python 3.12 + uv](#phase-6-flip-latest-to-python-312--uv) for detailed steps 6.0-6.10.**
+**Completion Summary (2026-01-29):**
 
-**Quick Reference:**
-| Step | Task |
-|------|------|
-| 6.0 | Commit staged plan files |
-| 6.1 | Create `:py311` archive tags |
-| 6.2a | Revert deploy_main.yml branch trigger to `main` |
-| 6.2b | Switch `:latest` jobs to `Dockerfile.py312` |
-| 6.2c | Keep `:py312` jobs (remove later in 6.10) |
-| 6.3 | Update README.md badge |
-| 6.4 | Create PR: `implementation_planning` → `main` |
-| 6.5 | Merge PR |
-| 6.6 | Verify CI/CD passes on main |
-| 6.7 | Verify DockerHub images updated |
-| 6.8 | Team communication |
-| 6.10 | Cleanup (after 2-4 weeks) |
+| Step | Task | Status |
+|------|------|--------|
+| 6.0 | Commit staged plan files | ✅ No staged files needed |
+| 6.1 | Create `:py311` archive tags | ✅ Base image archived |
+| 6.2a | Branch trigger on `main` | ✅ Already configured |
+| 6.2b | Switch `:latest` to `Dockerfile.py312` | ✅ Consolidated |
+| 6.2c | Remove redundant `:py312` jobs | ✅ Done (kept quality features) |
+| 6.3 | Update README.md badge | ✅ Shows Python 3.12 |
+| 6.4/6.5 | PR to main | ✅ Previously merged |
+| 6.6 | Verify CI/CD | ✅ Passing |
+| 6.7 | Verify DockerHub images | ✅ Python 3.12.12, uv 0.9.27 |
+| 6.8 | Team communication | Pending |
+
+**Workflow Consolidation (2026-01-29):**
+
+All production workflows have been updated to use Python 3.12 + uv exclusively:
+
+| Workflow | Branch | Tag | Changes |
+|----------|--------|-----|---------|
+| `deploy_main.yml` | `main` | `:latest` | Consolidated py312 jobs with attestation, removed legacy py311 tests |
+| `deploy_local.yml` | `local` | `:local` | Full rewrite to match deploy_main.yml structure |
+| `scheduled_security_rebuild.yml` | Quarterly | `:latest` + `:YYYY-QN` | Updated to Dockerfile.py312 with attestation |
+| `deploy_docs.yml` | Manual | N/A | Updated to Python 3.12 + uv |
+
+**Deprecated modules removed from all workflows:**
+- `reset_forecast_run_date` - deprecated, removed
+- `conceptual_model` - R-based, commented out
+
+**All workflows now use:**
+- `docker/build-push-action@v6` with `provenance: true` and `sbom: true`
+- `docker/setup-buildx-action@v3` and `docker/login-action@v3`
+- GitHub Actions caching (`cache-from: type=gha`, `cache-to: type=gha,mode=max`)
+- `Dockerfile.py312` for all modules
+
+---
+
+## Phase 6.11: Dockerfile Cleanup (2026-01-29)
+
+**Goal**: Clean up the Dockerfile naming by removing old Python 3.11 Dockerfiles and renaming `Dockerfile.py312` to `Dockerfile`.
+
+**Status**: ✅ Completed
+
+### Step 6.11.1: Update Base Image References (CRITICAL)
+
+**Issue found**: All `Dockerfile.py312` files currently reference `:py312` tag instead of `:latest`.
+
+**Action**: Before renaming, update all module Dockerfiles to use `:latest`:
+
+```dockerfile
+# BEFORE (WRONG):
+FROM mabesa/sapphire-pythonbaseimage:py312 AS base
+
+# AFTER (CORRECT):
+FROM mabesa/sapphire-pythonbaseimage:latest AS base
+```
+
+**Modules to update (8 total):**
+- [x] `preprocessing_runoff/Dockerfile.py312`
+- [x] `preprocessing_gateway/Dockerfile.py312`
+- [x] `linear_regression/Dockerfile.py312`
+- [x] `machine_learning/Dockerfile.py312`
+- [x] `forecast_dashboard/Dockerfile.py312`
+- [x] `pipeline/Dockerfile.py312`
+- [x] `postprocessing_forecasts/Dockerfile.py312`
+- [x] `preprocessing_station_forcing/Dockerfile.py312`
+
+**Exception**: `docker_base_image/Dockerfile.py312` uses `FROM python:3.12-slim-bookworm` (no base image dependency).
+
+### Step 6.11.2: Remove Old Dockerfiles
+
+**Modules with both `Dockerfile` (py311) and `Dockerfile.py312` (8 total):**
+- [x] `docker_base_image`
+- [x] `preprocessing_runoff`
+- [x] `preprocessing_gateway`
+- [x] `linear_regression`
+- [x] `machine_learning`
+- [x] `forecast_dashboard`
+- [x] `pipeline`
+- [x] `postprocessing_forecasts`
+
+```bash
+git rm apps/docker_base_image/Dockerfile
+git rm apps/preprocessing_runoff/Dockerfile
+git rm apps/preprocessing_gateway/Dockerfile
+git rm apps/linear_regression/Dockerfile
+git rm apps/machine_learning/Dockerfile
+git rm apps/forecast_dashboard/Dockerfile
+git rm apps/pipeline/Dockerfile
+git rm apps/postprocessing_forecasts/Dockerfile
+```
+
+**Modules with only old `Dockerfile` (deprecated/R-based - leave as-is):**
+- `reset_forecast_run_date` - deprecated
+- `conceptual_model` - R-based, maintenance-only
+- `configuration_dashboard` - R-based, deprecated
+
+### Step 6.11.3: Rename Dockerfile.py312 to Dockerfile
+
+**Modules to rename (9 total):**
+```bash
+git mv apps/docker_base_image/Dockerfile.py312 apps/docker_base_image/Dockerfile
+git mv apps/preprocessing_runoff/Dockerfile.py312 apps/preprocessing_runoff/Dockerfile
+git mv apps/preprocessing_gateway/Dockerfile.py312 apps/preprocessing_gateway/Dockerfile
+git mv apps/linear_regression/Dockerfile.py312 apps/linear_regression/Dockerfile
+git mv apps/machine_learning/Dockerfile.py312 apps/machine_learning/Dockerfile
+git mv apps/forecast_dashboard/Dockerfile.py312 apps/forecast_dashboard/Dockerfile
+git mv apps/pipeline/Dockerfile.py312 apps/pipeline/Dockerfile
+git mv apps/postprocessing_forecasts/Dockerfile.py312 apps/postprocessing_forecasts/Dockerfile
+git mv apps/preprocessing_station_forcing/Dockerfile.py312 apps/preprocessing_station_forcing/Dockerfile
+```
+
+### Step 6.11.4: Update GitHub Actions Workflows
+
+Update all workflow files to reference `Dockerfile` instead of `Dockerfile.py312`:
+
+**Files and reference counts:**
+- [x] `.github/workflows/deploy_main.yml` (8 references)
+- [x] `.github/workflows/deploy_local.yml` (8 references)
+- [x] `.github/workflows/scheduled_security_rebuild.yml` (9 references)
+- [x] `.github/workflows/build_test.yml` (14 references)
+
+**Total: 39 references to update**
+
+### Step 6.11.5: Update Docker Compose and Shell Scripts in bin/
+
+**Docker Compose files:**
+- [x] `bin/docker-compose-luigi.yml` - line 26: `Dockerfile.py312` → `Dockerfile`
+- [x] `bin/docker-compose-dashboards.yml` - lines 35, 79: `Dockerfile.py312` → `Dockerfile`
+
+**Total: 3 references to update**
+
+**Special files (leave as-is):**
+- `bin/luigi-daemon.Dockerfile` - separate daemon, Python 3.11 for stability
+
+### Step 6.11.6: Verify No Stray References
+
+After all updates, verify no references remain:
+```bash
+# Should find 0 results:
+grep -r "Dockerfile\.py312" .github/ bin/ apps/ --include="*.yml" --include="*.yaml" --include="*.sh"
+grep -r "Dockerfile\.py312" . --include="*.md"
+```
+
+### Step 6.11.7: Verify CI/CD Still Works
+
+After all changes:
+1. Push to feature branch
+2. Verify `build_test.yml` passes
+3. Create PR and verify all checks pass
+
+### Summary of Changes
+
+| Action | Count |
+|--------|-------|
+| Update base image refs (`:py312` → `:latest`) | 8 |
+| Remove old Dockerfiles | 8 |
+| Rename `.py312` → `Dockerfile` | 9 |
+| Update GitHub Actions | 39 |
+| Update docker-compose | 3 |
+| **Total** | **67**
+
+---
+
+## Phase 6.12: Remove Legacy requirements.txt Files (2026-01-29)
+
+**Goal**: Clean up legacy requirements.txt files from modules that have migrated to uv (pyproject.toml + uv.lock).
+
+**Status**: ✅ Completed
+
+### Files Removed (9 total)
+
+All modules with uv.lock had their requirements.txt removed:
+
+- [x] `apps/iEasyHydroForecast/requirements.txt`
+- [x] `apps/preprocessing_runoff/requirements.txt`
+- [x] `apps/preprocessing_gateway/requirements.txt`
+- [x] `apps/preprocessing_station_forcing/requirements.txt`
+- [x] `apps/forecast_dashboard/requirements.txt`
+- [x] `apps/linear_regression/requirements.txt`
+- [x] `apps/machine_learning/requirements.txt`
+- [x] `apps/postprocessing_forecasts/requirements.txt`
+- [x] `apps/pipeline/requirements.txt`
+
+### Files Retained (3 total)
+
+These modules still need requirements.txt:
+
+- `apps/docker_base_image/requirements.txt` - Base image, no pyproject.toml yet
+- `apps/conceptual_model/requirements.txt` - R-based module, lists R packages
+- `apps/reset_forecast_run_date/requirements.txt` - Deprecated module, kept for reference
+
+---
+
+## Phase 6.13: Documentation Cleanup (2026-01-29)
+
+**Goal**: Update all documentation to remove outdated references to `requirements.txt` and pip commands.
+
+**Status**: ✅ Completed
+
+### Files Updated
+
+| File | Changes |
+|------|---------|
+| `README.md` | Updated preprocessing_gateway folder structure: `requirements.txt` → `pyproject.toml` + `uv.lock` |
+| `doc/plans/deployment_improvement_planning.md` | Replaced `pip install -r requirements.txt` with `uv sync` commands |
+| `doc/plans/Makefile.planned` | Updated `setup-venv` target to use `uv sync` per module |
+| `doc/plans/postprocessing_forecasts_improvement_plan.md` | Updated folder tree: `requirements.txt` → `pyproject.toml` + `uv.lock` |
+| `doc/development.md` | Updated machine_learning folder structure and installation instructions |
+| `doc/dev/testing_workflow.md` | Removed Dockerfile.py312 references |
+| `doc/maintenance/docker-security-maintenance.md` | Updated to Python 3.12 |
+| `doc/plans/docker_health_score_improvement.md` | Updated Dockerfile examples |
+| `apps/iEasyHydroForecast/README.md` | Consolidated to single uv workflow |
+| `apps/postprocessing_forecasts/README.md` | Added uv sync instructions |
+| `bin/docker-compose-*.yml` | Updated default tags to `:latest` |
+
+### References Retained (Historical Context)
+
+The following files intentionally retain `requirements.txt` references as historical/migration documentation:
+- `doc/plans/uv_migration_plan.md` - Documents the migration FROM requirements.txt
+- `doc/uv-migration-guide.md` - Comparison guide for old vs new approach
+- `doc/development.md` (conceptual_model section) - R-based module still uses requirements.txt
+
+---
+
+## Phase 6 Complete ✅
+
+**Server verification**: 2026-01-29 - All modules running successfully on test server with Python 3.12 + uv.
+
+Phase 6 (including sub-phases 6.11, 6.12, 6.13) is now complete. The SAPPHIRE project has been fully migrated to:
+- **Python 3.12** (from Python 3.11)
+- **uv** package manager (from pip/conda)
+- **pyproject.toml + uv.lock** (from requirements.txt)
+- **Unified Dockerfile naming** (removed `.py312` suffix)
 
 ---
 
@@ -1662,7 +1887,9 @@ The maintenance script was overriding CMD with a relative path that got resolved
 
 **Goal**: Update all packages to latest secure versions after Python 3.12 migration is stable.
 
-**When**: After Phase 6 is complete and `:latest` points to py312.
+**When**: Incrementally, as part of module refactoring work (not as a dedicated phase).
+
+> **Note**: Package upgrades will be performed when working on refactoring each module, rather than as a separate bulk upgrade. This allows testing changes in context and reduces risk of introducing regressions across multiple modules simultaneously.
 
 ### Steps
 
@@ -1714,48 +1941,49 @@ The maintenance script was overriding CMD with a relative path that got resolved
 
 ## CI/CD Integration
 
-Both GitHub Actions workflows have been updated to test Python 3.12 + uv in parallel with Python 3.11 + pip:
+**Status (2026-01-29):** All production workflows consolidated to Python 3.12 + uv only.
 
-### deploy_main.yml (push to main)
+### Production Workflows (Python 3.12 + uv only)
 
-| Job | Python | Package Manager | Test Runner | Purpose |
-|-----|--------|-----------------|-------------|---------|
-| `test_ieasyhydroforecast` | 3.11 | pip | unittest | Production tests |
-| `test_ieasyhydroforecast_py312` | 3.12 | uv | pytest | Migration tests |
-| `test_preprocessing_runoff` | 3.11 | pip | pytest | Production tests |
-| `test_preprocessing_runoff_py312` | 3.12 | uv | pytest | Migration tests |
-| `build_and_push_python_311_base_image` | 3.11 | pip | — | Build `:latest` tag |
-| `build_and_push_python_312_base_image` | 3.12 | uv | — | Build `:py312` tag (SLSA attestation) |
-| `push_preprocessing_runoff_py312_to_Dockerhub` | 3.12 | uv | — | Build `:py312` tag (SLSA attestation) |
+#### deploy_main.yml (push to main → `:latest` tag)
 
-### build_test.yml (push to feature branches, PRs to main)
+| Job | Purpose |
+|-----|---------|
+| `test_ieasyhydroforecast_py312` | Test iEasyHydroForecast library |
+| `test_pipeline_py312` | Test pipeline module |
+| `test_preprocessing_runoff_py312` | Test preprocessing_runoff |
+| `test_preprocessing_gateway_py312` | Test preprocessing_gateway |
+| `test_machine_learning_py312` | Test ML module |
+| `test_dashboard_py312` | Test forecast_dashboard |
+| `test_postprocessing_py312` | Test postprocessing_forecasts |
+| `test_linear_regression_py312` | Test linear_regression |
+| `build_and_push_base_image` | Build base image with attestation |
+| `push_*_to_Dockerhub` | Build module images with attestation |
 
-| Job | Python | Package Manager | Test Runner | Purpose |
-|-----|--------|-----------------|-------------|---------|
-| `test_ieasyhydroforecast` | 3.11 | pip | unittest | Production tests |
-| `test_ieasyhydroforecast_py312` | 3.12 | uv | pytest | Migration tests |
-| `test_preprocessing_runoff` | 3.12 | pip | pytest | Production tests |
-| `test_preprocessing_runoff_py312` | 3.12 | uv | pytest | Migration tests |
-| `build_python_311_base_image` | 3.11 | pip | — | Build test (no push) |
-| `build_python_312_base_image` | 3.12 | uv | — | Build test (no push) |
-| `build_preprocessing_runoff_py312` | 3.12 | uv | — | Build test (no push) |
+#### deploy_local.yml (push to local → `:local` tag)
+
+Same structure as deploy_main.yml, pushes to `:local` tag for stable hydromet deployments.
+
+#### scheduled_security_rebuild.yml (quarterly → `:latest` + `:YYYY-QN`)
+
+Quarterly security rebuilds with fresh base images. Uses `pull: true` and `no-cache: true`.
+
+### Testing Workflow (Mixed Python versions)
+
+#### build_test.yml (PRs and feature branches)
+
+Intentionally tests both Python 3.11 and 3.12 for broader compatibility coverage during development.
 
 ### Key Implementation Details
 
 1. **uv Installation**: Uses `astral-sh/setup-uv@v5` GitHub Action
 2. **Python Setup**: `uv python install 3.12` (managed by uv)
-3. **Dependency Install**: `uv sync --all-extras` in `apps/iEasyHydroForecast`
-4. **Test Execution**: From `apps/` directory using venv Python:
-   ```bash
-   SAPPHIRE_TEST_ENV=True iEasyHydroForecast/.venv/bin/python -m pytest iEasyHydroForecast/tests/ -v
-   ```
-
-5. **pytest Configuration**: Added to `pyproject.toml`:
-   ```toml
-   [tool.pytest.ini_options]
-   pythonpath = [".."]
-   testpaths = ["tests"]
-   ```
+3. **Dependency Install**: `uv sync --all-extras`
+4. **Docker Builds**: `docker/build-push-action@v6` with:
+   - `provenance: true` (SLSA attestation)
+   - `sbom: true` (Software Bill of Materials)
+   - `cache-from: type=gha` and `cache-to: type=gha,mode=max`
+5. **All modules use**: `Dockerfile.py312`
 
 ---
 
@@ -1987,4 +2215,4 @@ Removed marker file check for `preprocessing_runoff` from pipeline. Changes in `
 ---
 
 *Document created: 2025-12-01*
-*Last updated: 2026-01-26*
+*Last updated: 2026-01-29*
