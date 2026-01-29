@@ -149,7 +149,7 @@ When using iEasyHydro HF as the data source, the following limitations apply:
 - This is by design, as manual stations contain quality-controlled data suitable for forecasting
 
 **API Constraints:**
-- **Page size limit:** The iEasyHydro HF API has a hard limit of 10 records per page (undocumented)
+- **Page size limit:** The iEasyHydro HF API supports up to 1000 records per page
 - The module handles pagination automatically with parallel fetching for performance
 - Records with null/missing values are automatically filtered out
 

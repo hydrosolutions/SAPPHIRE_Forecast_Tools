@@ -53,5 +53,5 @@ site_cache:
   # Maximum age in days before cache is considered stale
   max_age_days: 7
 
-# Note: iEasyHydro HF API has a hard limit of page_size=10 (undocumented).
+# Note: iEasyHydro HF API supports page_size up to 1000 (updated Jan 2026).
 # This is handled automatically by the module - no configuration needed.

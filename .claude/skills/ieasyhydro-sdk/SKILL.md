@@ -158,7 +158,7 @@ response = sdk.get_data_values_for_site(filters=filters)
 | `utc_date_time__lt` | str | No | UTC timestamp < |
 | `utc_date_time` | str | No | Exact UTC timestamp match |
 | `page` | int | No | Page number for pagination |
-| `page_size` | int | No | Items per page (**MAX 10**, see pagination) |
+| `page_size` | int | No | Items per page (max 1000, default 10) |
 
 *Either `site_codes` or `site_ids` can be used, but `site_codes` is recommended.
 †At least one timestamp filter is required.
@@ -264,24 +264,24 @@ local_date_time = datetime.datetime(2025, 9, 25, 20, 0, tzinfo=datetime.timezone
 
 ## Pagination
 
-### CRITICAL: Page Size Limit of 10
+### Page Size Limit
 
-**The API has an undocumented hard limit: `page_size` cannot exceed 10.**
+**The API supports `page_size` up to 1000 (updated January 2026).**
 
-- Requesting `page_size > 10` may cause 422 errors or be silently ignored
 - Default page size is 10
-- You MUST paginate through results for queries returning more than 10 records
+- Using `page_size=1000` significantly improves performance (reduced maintenance run from 800s to 364s)
+- You may still need pagination for very large result sets
 
 ### Pagination Pattern
 
 ```python
 def fetch_all_with_pagination(sdk, filters):
-    """Fetch all results, handling the page_size=10 limit."""
+    """Fetch all results with pagination."""
     all_results = []
     page = 1
 
     while True:
-        paginated_filters = {**filters, "page": page, "page_size": 10}
+        paginated_filters = {**filters, "page": page, "page_size": 1000}
         response = sdk.get_data_values_for_site(filters=paginated_filters)
 
         # Check for API error
@@ -309,7 +309,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 def fetch_all_parallel(sdk, filters, max_workers=10):
     """Fetch all results using parallel page requests."""
-    PAGE_SIZE = 10
+    PAGE_SIZE = 1000
 
     # Step 1: Get first page to learn total count
     first_response = sdk.get_data_values_for_site(
@@ -480,7 +480,7 @@ all_results = []
 page = 1
 while True:
     filters['page'] = page
-    filters['page_size'] = 10  # Max allowed
+    filters['page_size'] = 1000  # Max allowed
 
     response = sdk.get_data_values_for_site(filters=filters)
 
@@ -511,7 +511,7 @@ for station in all_results:
 
 ## Key Gotchas Summary
 
-1. **Page size is limited to 10** - undocumented but enforced
+1. **Page size max is 1000** - use this for better performance
 2. **Use `site_codes` (strings) not `site_ids`** - both work but codes are more reliable
 3. **`local_date_time` acts as UTC** - don't include local timezone offset
 4. **At least one timestamp filter required** - or you get 422 error
