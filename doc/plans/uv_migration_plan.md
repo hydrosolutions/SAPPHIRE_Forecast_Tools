@@ -51,7 +51,7 @@ This plan outlines the migration from `pip` + `requirements.txt` to `uv` for dep
 | conceptual_model | Yes | No | R packages only |
 | pipeline | Yes | No | 11 packages |
 | forecast_dashboard | Yes | No | 13 packages |
-| reset_forecast_run_date | Yes | No | 3 packages |
+| reset_forecast_run_date | Yes | No | 3 packages (DEPRECATED) |
 | iEasyHydroForecast | Yes | **Yes** | 12 packages |
 | docker_base_image | Yes | No | 18 packages |
 
@@ -584,6 +584,14 @@ These share similar dependency profiles with preprocessing_runoff.
 - **Action**: Keep current approach (rocker/tidyverse base image) with periodic security updates only
 - **Customer support**: Existing customers will continue to be supported, but no new features
 - See `documentation_improvement_plan.md` Step 7.5b for full details
+
+### reset_forecast_run_date ⚠️ DEPRECATED
+
+- **Status (2026-01-29)**: This module is **deprecated** and will not be migrated to Python 3.12 + uv
+- **Reason**: Functionality superseded by other approaches; module is rarely used
+- **Action**: Skip uv migration; module will remain on Python 3.11 + pip until removal
+- **CI/CD**: Existing `test_reset_forecast_run_date` and `push_reset_forecast_to_Dckerhub` jobs in `deploy_main.yml` continue to build the legacy `:latest` image using the old Dockerfile
+- **Future**: Module will be removed in a future cleanup
 
 ---
 
@@ -1583,6 +1591,7 @@ If AGPL packages are found:
 | 4a | linear_regression | ✅ Completed | `:py312` | B | pyproject.toml + uv.lock + Dockerfile.py312; local Py3.12 test OK; Docker test OK. CI/CD workflows updated. |
 | 4b | machine_learning | ✅ Completed | `:py312` | C/D | pyproject.toml + uv.lock (~500KB, 77 packages) + Dockerfile.py312; torch 2.8.0, darts 0.35.0; local Py3.12 test OK (TFT model predictions working); Docker test OK. CI/CD workflows updated. |
 | 4c | conceptual_model | N/A | N/A | — | R-based, skip |
+| 4d | reset_forecast_run_date | N/A (DEPRECATED) | N/A | — | Deprecated, skip migration |
 | 5a | forecast_dashboard | ✅ Completed | `:py312` | B | pyproject.toml + uv.lock (67 packages) + Dockerfile.py312; Panel 1.4.5, Bokeh 3.4.3 (pinned <3.5 for FuncTickFormatter compatibility), HoloViews 1.19.1; local Py3.12 test OK; Docker operational test OK. CI/CD workflows updated. |
 | 5b | pipeline | ✅ Completed | `:py312` | B | pyproject.toml + uv.lock (35 packages) + Dockerfile.py312; Luigi 3.6.0; local Py3.12 test OK; Docker operational test OK (Docker socket access verified). CI/CD workflows updated. |
 | 5c | postprocessing_forecasts | ✅ Completed | `:py312` | B | pyproject.toml + uv.lock (29 packages) + Dockerfile.py312; local Py3.12 test OK (script runs successfully with pentad/decadal forecasts). |
