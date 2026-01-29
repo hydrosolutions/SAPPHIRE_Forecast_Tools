@@ -1875,7 +1875,9 @@ The following files intentionally retain `requirements.txt` references as histor
 
 **Goal**: Update all packages to latest secure versions after Python 3.12 migration is stable.
 
-**When**: After Phase 6 is complete and `:latest` points to py312.
+**When**: Incrementally, as part of module refactoring work (not as a dedicated phase).
+
+> **Note**: Package upgrades will be performed when working on refactoring each module, rather than as a separate bulk upgrade. This allows testing changes in context and reduces risk of introducing regressions across multiple modules simultaneously.
 
 ### Steps
 
