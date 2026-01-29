@@ -67,7 +67,7 @@ jobs:
         run: |
           DOCKER_BUILDKIT=1 docker build \
           -t "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
-          -f ./apps/docker_base_image/Dockerfile.py312 .
+          -f ./apps/docker_base_image/Dockerfile .
       - name: Test Base Image
         run: |
           echo "Verifying Python version..."
@@ -113,13 +113,13 @@ jobs:
         run: |
           DOCKER_BUILDKIT=1 docker build \
           -t "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
-          -f ./apps/docker_base_image/Dockerfile.py312 .
+          -f ./apps/docker_base_image/Dockerfile .
 
       - name: Build Docker image
         run: |
           docker build \
           -t "${{ env.PIPELINE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
-          -f ./apps/pipeline/Dockerfile.py312 .
+          -f ./apps/pipeline/Dockerfile .
 
   # DISABLED (2026-01-27): conceptual_model CI builds disabled - R dependencies broken
   # Module is maintenance-only. Existing Docker images frozen. See apps/conceptual_model/README.md
@@ -186,12 +186,12 @@ jobs:
         run: |
           DOCKER_BUILDKIT=1 docker build \
           -t "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
-          -f ./apps/docker_base_image/Dockerfile.py312 .
+          -f ./apps/docker_base_image/Dockerfile .
       - name: Build preprocessing runoff image
         run: |
           docker build \
           -t "${{ env.PREPQ_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
-          -f ./apps/preprocessing_runoff/Dockerfile.py312 .
+          -f ./apps/preprocessing_runoff/Dockerfile .
 
   # Test preprocessing gateway with Python 3.12 + uv
   test_preprocessing_gateway:
@@ -234,13 +234,13 @@ jobs:
         run: |
           DOCKER_BUILDKIT=1 docker build \
           -t "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
-          -f ./apps/docker_base_image/Dockerfile.py312 .
+          -f ./apps/docker_base_image/Dockerfile .
 
       - name: Build Docker image
         run: |
           docker build \
           -t "${{ env.PREPG_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
-          -f ./apps/preprocessing_gateway/Dockerfile.py312 .
+          -f ./apps/preprocessing_gateway/Dockerfile .
 
   # Test machine learning with Python 3.12 + uv
   test_machine_learning:
@@ -292,13 +292,13 @@ jobs:
         run: |
           DOCKER_BUILDKIT=1 docker build \
           -t "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
-          -f ./apps/docker_base_image/Dockerfile.py312 .
+          -f ./apps/docker_base_image/Dockerfile .
 
       - name: Build Docker image
         run: |
           docker build \
           -t "${{ env.ML_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
-          -f ./apps/machine_learning/Dockerfile.py312 .
+          -f ./apps/machine_learning/Dockerfile .
 
   # Test forecast dashboard with Python 3.12 + uv
   test_dashboard:
@@ -337,13 +337,13 @@ jobs:
         run: |
           DOCKER_BUILDKIT=1 docker build \
           -t "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
-          -f ./apps/docker_base_image/Dockerfile.py312 .
+          -f ./apps/docker_base_image/Dockerfile .
 
       - name: Build Docker image
         run: |
           docker build \
           -t "${{ env.DASHBOARD_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
-          -f ./apps/forecast_dashboard/Dockerfile.py312 .
+          -f ./apps/forecast_dashboard/Dockerfile .
 
   # Test postprocessing with Python 3.12 + uv
   test_postprocessing:
@@ -382,7 +382,7 @@ jobs:
         run: |
           docker build \
           -t "${{ env.POSTPQ_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
-          -f ./apps/postprocessing_forecasts/Dockerfile.py312 .
+          -f ./apps/postprocessing_forecasts/Dockerfile .
 
   # Test linear regression with Python 3.12 + uv
   test_linear_regression:
@@ -421,13 +421,13 @@ jobs:
         run: |
           DOCKER_BUILDKIT=1 docker build \
           -t "${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
-          -f ./apps/docker_base_image/Dockerfile.py312 .
+          -f ./apps/docker_base_image/Dockerfile .
 
       - name: Build Docker image
         run: |
           docker build \
           -t "${{ env.LINREG_IMAGE_NAME }}:${{ env.IMAGE_TAG }}" \
-          -f ./apps/linear_regression/Dockerfile.py312 .
+          -f ./apps/linear_regression/Dockerfile .
 
 
   # Final job that summarizes all built images

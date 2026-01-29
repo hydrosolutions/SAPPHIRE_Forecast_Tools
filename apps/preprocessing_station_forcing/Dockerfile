@@ -4,7 +4,7 @@
 # This image runs in parallel with the :latest (Python 3.11 + pip) version during migration
 # See: implementation_planning/uv_migration_plan.md
 
-FROM mabesa/sapphire-pythonbaseimage:py312 AS base
+FROM mabesa/sapphire-pythonbaseimage:latest AS base
 
 # Set environment variable for runtime detection
 ENV SAPPHIRE_OPDEV_ENV=True

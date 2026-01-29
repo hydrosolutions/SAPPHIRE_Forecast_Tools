@@ -32,7 +32,7 @@ services:
     image: mabesa/sapphire-dashboard:${ieasyhydroforecast_frontend_docker_image_tag:-py312}
     build:
       context: ../
-      dockerfile: ./apps/forecast_dashboard/Dockerfile.py312
+      dockerfile: ./apps/forecast_dashboard/Dockerfile
     working_dir: /app/apps/forecast_dashboard
     init: true
     environment:
@@ -76,7 +76,7 @@ services:
     image: mabesa/sapphire-dashboard:${ieasyhydroforecast_frontend_docker_image_tag:-py312}
     build:
       context: ../
-      dockerfile: ./apps/forecast_dashboard/Dockerfile.py312
+      dockerfile: ./apps/forecast_dashboard/Dockerfile
     working_dir: /app/apps/forecast_dashboard
     init: true
     environment:

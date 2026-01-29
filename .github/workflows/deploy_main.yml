@@ -73,7 +73,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: ./apps/docker_base_image/Dockerfile.py312
+          file: ./apps/docker_base_image/Dockerfile
           push: true
           tags: ${{ env.BASE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}
           # Enable SLSA provenance attestation
@@ -139,7 +139,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: ./apps/pipeline/Dockerfile.py312
+          file: ./apps/pipeline/Dockerfile
           push: true
           tags: ${{ env.PIPELINE_IMAGE_NAME }}:${{ env.IMAGE_TAG }}
           provenance: true
@@ -259,7 +259,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: ./apps/preprocessing_runoff/Dockerfile.py312
+          file: ./apps/preprocessing_runoff/Dockerfile
           push: true
           tags: ${{ env.PREPQ_IMAGE_NAME }}:${{ env.IMAGE_TAG }}
           provenance: true
@@ -318,7 +318,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: ./apps/preprocessing_gateway/Dockerfile.py312
+          file: ./apps/preprocessing_gateway/Dockerfile
           push: true
           tags: ${{ env.PREPG_IMAGE_NAME }}:${{ env.IMAGE_TAG }}
           provenance: true
@@ -385,7 +385,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: ./apps/machine_learning/Dockerfile.py312
+          file: ./apps/machine_learning/Dockerfile
           push: true
           tags: ${{ env.ML_IMAGE_NAME }}:${{ env.IMAGE_TAG }}
           provenance: true
@@ -439,7 +439,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: ./apps/forecast_dashboard/Dockerfile.py312
+          file: ./apps/forecast_dashboard/Dockerfile
           push: true
           tags: ${{ env.DASHBOARD_IMAGE_NAME }}:${{ env.IMAGE_TAG }}
           provenance: true
@@ -493,7 +493,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: ./apps/postprocessing_forecasts/Dockerfile.py312
+          file: ./apps/postprocessing_forecasts/Dockerfile
           push: true
           tags: ${{ env.POSTPQ_IMAGE_NAME }}:${{ env.IMAGE_TAG }}
           provenance: true
@@ -547,7 +547,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: ./apps/linear_regression/Dockerfile.py312
+          file: ./apps/linear_regression/Dockerfile
           push: true
           tags: ${{ env.LINREG_IMAGE_NAME }}:${{ env.IMAGE_TAG }}
           provenance: true

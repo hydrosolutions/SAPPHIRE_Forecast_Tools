@@ -1,32 +1,34 @@
 # syntax=docker/dockerfile:1
 
-# Comments are provided throughout this file to help you get started.
-# If you need more help, visit the Dockerfile reference guide at
-# https://docs.docker.com/engine/reference/builder/
-
-#FROM ubuntu:latest as build 
+# Python 3.12 + uv image for linear_regression module
+# This image runs in parallel with the :latest (Python 3.11 + pip) version during migration
+# See: implementation_planning/uv_migration_plan.md
 
 FROM mabesa/sapphire-pythonbaseimage:latest AS base
 
-# Download dependencies as a separate step to take advantage of Docker's caching.
-# Leverage a cache mount to /root/.cache/pip to speed up subsequent builds.
-# Leverage a bind mount to requirements.txt to avoid having to copy them into
-# into this layer.
-RUN --mount=type=cache,target=/root/.cache/pip \
-    --mount=type=bind,source=apps/linear_regression/requirements.txt,target=/app/apps/linear_regression/requirements.txt \
-    pip install --trusted-host pypi.python.org -r apps/linear_regression/requirements.txt
+# Set environment variable for runtime detection
+ENV SAPPHIRE_OPDEV_ENV=True
 
-    # Set an environment variable that can be read by the application to know if it
-# is running in a container.
-ENV SAPPHIRE_OPDEV_ENV=true
+# Switch to root for installation and runtime
+# This module writes to shared volumes, requiring root access
+USER root
 
-# Setting the working directory to /app
+# Set working directory
 WORKDIR /app
 
-# All files in the current directory are copied into the container into
-# directory app.
-COPY apps/linear_regression /app/apps/linear_regression
+# Copy iEasyHydroForecast (local dependency referenced in pyproject.toml)
 COPY apps/iEasyHydroForecast /app/apps/iEasyHydroForecast
 
-# Run the application.
-CMD ["sh", "-c", "PYTHONPATH=/app/apps/iEasyHydroForecast python apps/linear_regression/linear_regression.py"]
+# Copy linear_regression source code (includes pyproject.toml and uv.lock)
+COPY apps/linear_regression /app/apps/linear_regression
+
+# Install all dependencies using uv sync (includes iEasyHydroForecast from local path)
+# This creates a virtual environment and installs from uv.lock for reproducibility
+WORKDIR /app/apps/linear_regression
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev
+
+# Run the application using uv run (activates the virtual environment automatically)
+# RUN_MODE can be "forecast", "maintenance", or empty (runs forecast by default)
+# SAPPHIRE_PREDICTION_MODE can be "PENTAD" or "DECAD"
+CMD ["sh", "-c", "if [ \"$RUN_MODE\" = \"maintenance\" ]; then uv run linear_regression.py --hindcast; else uv run linear_regression.py; fi"]

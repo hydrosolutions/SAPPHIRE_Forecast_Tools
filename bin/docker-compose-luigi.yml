@@ -23,7 +23,7 @@ services:
     #cpus: 4  # Limit CPU usage if desired. Docker will automatically use all available CPUs if not set.
     build:
       context: ../
-      dockerfile: ./apps/pipeline/Dockerfile.py312
+      dockerfile: ./apps/pipeline/Dockerfile
       args:
         TAG: ${ieasyhydroforecast_backend_docker_image_tag:-py312}
     image: mabesa/sapphire-pipeline:${ieasyhydroforecast_backend_docker_image_tag:-py312}

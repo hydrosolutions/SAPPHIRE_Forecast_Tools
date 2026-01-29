@@ -1,28 +1,38 @@
-# pythonbaseimage has appuser as default non-root user
+# syntax=docker/dockerfile:1
+
+# Python 3.12 + uv image for pipeline module
+# This image runs in parallel with the :latest (Python 3.11 + pip) version during migration
+# See: implementation_planning/uv_migration_plan.md
+
 FROM mabesa/sapphire-pythonbaseimage:latest AS base
 
-# Set an environment variable that can be read by the application to know if it
-# is running in a container.
-#ENV IN_DOCKER_CONTAINER=true
-ENV SAPPHRIE_OPDEV_ENV=True
+# Set environment variables
+ENV SAPPHIRE_OPDEV_ENV=True
 ENV PATH="/home/appuser/.local/bin:${PATH}"
 
-# Setting the working directory to /app
+# Switch to root for installation
+USER root
+
+# Set working directory
 WORKDIR /app
 
-# All files in the current directory are copied into the container into
-# directory app.
-COPY --chown=appuser:appgroup apps/pipeline /app/apps/pipeline
-COPY --chown=appuser:appgroup apps/pipeline/luigi.cfg /app/luigi.cfg
+# Copy iEasyHydroForecast (local dependency referenced in pyproject.toml)
+COPY apps/iEasyHydroForecast /app/apps/iEasyHydroForecast
 
-RUN --mount=type=bind,source=apps/pipeline/requirements.txt,target=/app/apps/pipeline/requirements.txt \
-    pip install --no-cache-dir -r /app/apps/pipeline/requirements.txt && \
-    which luigi && \
-    echo $PATH
+# Copy pipeline source code (includes pyproject.toml and uv.lock)
+COPY apps/pipeline /app/apps/pipeline
+COPY apps/pipeline/luigi.cfg /app/luigi.cfg
 
-# Set PYTHONPATH to include /app
+# Install all dependencies using uv sync (includes iEasyHydroForecast from local path)
+# This creates a virtual environment and installs from uv.lock for reproducibility
+RUN --mount=type=cache,target=/root/.cache/uv \
+    cd /app/apps/pipeline && uv sync --frozen --no-dev
+
+# Set PYTHONPATH to include /app for Luigi module resolution
 ENV PYTHONPATH="${PYTHONPATH}:/app"
 
+# Run as root (required for Docker socket access)
 # The command to run when the container starts up
-CMD ["luigi", "--module", "apps.pipeline.pipeline_docker", "PreprocessingRunoff", "--local-scheduler"]
-
+# Using uv run to ensure Luigi runs in the virtual environment
+# Note: Must run from /app/apps/pipeline where the .venv is located
+CMD ["sh", "-c", "cd /app/apps/pipeline && uv run luigi --module apps.pipeline.pipeline_docker PreprocessingRunoff --local-scheduler"]
