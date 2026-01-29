@@ -95,7 +95,8 @@ apps/postprocessing_forecasts/
 │   ├── test_postprocessing_tools.py # 3 tool tests
 │   └── test_mock_postprocessing_forecasts.py  # 1 integration test
 ├── Dockerfile
-└── requirements.txt
+├── pyproject.toml
+└── uv.lock
 
 # Core logic lives in iEasyHydroForecast:
 apps/iEasyHydroForecast/

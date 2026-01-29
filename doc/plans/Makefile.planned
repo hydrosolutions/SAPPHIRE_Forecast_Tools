@@ -26,15 +26,13 @@ setup: setup-venv setup-data setup-env  ## Complete local development setup
 	@echo -e "$(GREEN)✓ Setup complete! Run 'make help' for available commands$(NC)"
 
 setup-venv:  ## Create Python virtual environment and install dependencies
-	@echo -e "$(BLUE)Creating virtual environment...$(NC)"
-	python3.11 -m venv venv
-	./venv/bin/pip install --upgrade pip
-	./venv/bin/pip install -e apps/iEasyHydroForecast
-	./venv/bin/pip install -r apps/linear_regression/requirements.txt
-	./venv/bin/pip install -r apps/preprocessing_runoff/requirements.txt || true
-	./venv/bin/pip install -r apps/postprocessing_forecasts/requirements.txt || true
-	./venv/bin/pip install -r apps/machine_learning/requirements.txt || true
-	@echo -e "$(GREEN)✓ Virtual environment ready. Activate with: source venv/bin/activate$(NC)"
+	@echo -e "$(BLUE)Installing dependencies with uv...$(NC)"
+	cd apps/iEasyHydroForecast && uv sync
+	cd apps/linear_regression && uv sync
+	cd apps/preprocessing_runoff && uv sync || true
+	cd apps/postprocessing_forecasts && uv sync || true
+	cd apps/machine_learning && uv sync || true
+	@echo -e "$(GREEN)✓ Dependencies installed. Each module has its own .venv managed by uv$(NC)"
 
 setup-data:  ## Set up local data directory with symlinks to Dropbox
 	@echo -e "$(BLUE)Setting up data directory...$(NC)"

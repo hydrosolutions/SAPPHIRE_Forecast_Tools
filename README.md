@@ -159,7 +159,8 @@ Files that need to be reviewed and potentially edited or replaced for local depl
       - `Quantile_Mapping_OP.py`: To downscale operational data to the basin level.
       - `extend_era5_reanalysis.py`: To fill potential gaps in the operational data with reanalysis data.
       - `get_era5_reanalysis_data.py`: To get ERA5-Land data to produce hindcasts.
-      - `requirements.txt`: List of python packages that need to be installed in the docker image.
+      - `pyproject.toml`: Project configuration and dependencies managed by uv.
+      - `uv.lock`: Lock file for reproducible dependency resolution.
     - `bat` (being deprecated): Batch files that are used for deployment on Windows.
     - `#data`: Example data to demonstrate how the forecast tools work. The Needs to be replaced with data by the hydromet organization for deployment. The data and file formats are described in more detail in the file doc/user_guide.md.
       - `daily_runoff`: Daily discharge data for the development of the forecast models. The data is stored in Excel files. The paths to these files are configured in the .env file.
