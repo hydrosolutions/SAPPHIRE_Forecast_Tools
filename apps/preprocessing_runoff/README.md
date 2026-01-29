@@ -20,6 +20,8 @@ Key functions:
 |--------|---------|
 | `preprocessing_runoff.py` | Main script - orchestrates the preprocessing workflow |
 | `src/src.py` | Core functions for data processing and statistics |
+| `src/config.py` | Configuration loading (log level, validation, spot-check, site cache settings) |
+| `src/profiling.py` | Performance profiling utilities (enabled via `PREPROCESSING_PROFILING=true`) |
 
 ## Quick Start
 
@@ -154,7 +156,7 @@ When using iEasyHydro HF as the data source, the following limitations apply:
 **Data Availability:**
 - Data must be available in iEasyHydro HF before the preprocessing run (typically 11:00 local time)
 - Yesterday's daily average (`WDDA` variable) and today's morning discharge (`WDD` variable) are fetched
-- Older data gaps can only be filled in maintenance mode within the configured lookback window
+- Older data gaps can only be filled in maintenance mode within the configured lookback window (default: 50 days)
 
 ## Output
 
@@ -171,6 +173,19 @@ Hydrograph statistics by day of year:
 - `count`, `mean`, `std`, `min`, `max` - Basic statistics
 - `5%`, `25%`, `50%`, `75%`, `95%` - Percentiles
 - Recent years (e.g., `2024`, `2025`) - Values for comparison
+
+### forecast_sites_cache.json
+Cached list of forecast sites (updated in maintenance mode):
+- `site_codes` - List of station codes
+- `site_ids` - List of site IDs (for iEasyHydro HF)
+- `created_at` - Cache creation timestamp
+
+Used by operational mode to skip slow SDK site-listing calls.
+
+### reliability_stats.json
+Site reliability tracking (updated in maintenance mode):
+- Tracks data availability percentages per site
+- Used by validation to flag unreliable sites
 
 ## Outlier Filtering
 
@@ -198,16 +213,17 @@ The module supports two operating modes:
 
 ### Operational Mode (Default)
 - **Purpose:** Fast daily updates for operational forecasting
-- **Behavior:** Uses cached data, fetches only yesterday's daily average + today's morning discharge
+- **Behavior:** Uses cached site list (skips slow SDK site-listing calls), fetches only yesterday's daily average + today's morning discharge
 - **When to use:** Daily automated pipeline runs
+- **Site caching:** Uses `forecast_sites_cache.json` to avoid slow SDK calls. Cache is refreshed in maintenance mode.
 
 ```bash
 uv run preprocessing_runoff.py
 ```
 
 ### Maintenance Mode
-- **Purpose:** Gap filling and data quality updates
-- **Behavior:** Always rereads input Excel/CSV files, fetches configurable lookback window from database (default 120 days), merges and updates values
+- **Purpose:** Gap filling, data quality updates, and cache refresh
+- **Behavior:** Always rereads input Excel/CSV files, fetches configurable lookback window from database (default 50 days), merges and updates values, runs validation checks, updates site cache
 - **When to use:** Weekly scheduled maintenance, after data corrections, when data issues are suspected, or when rows were accidentally deleted from output files
 
 ```bash
@@ -222,11 +238,16 @@ Module behavior is controlled by `config.yaml`. This is particularly important f
 
 ```yaml
 # config.yaml
+logging:
+  # Log level for this module: DEBUG, INFO, WARNING, ERROR
+  # If not set, falls back to env variable 'log_level', then INFO
+  log_level: INFO
+
 maintenance:
   # Number of days to look back when fetching data in maintenance mode.
   # This determines how old a gap can be and still get filled from the database.
-  # Default: 120 days. Override with: PREPROCESSING_MAINTENANCE_LOOKBACK_DAYS
-  lookback_days: 120
+  # Default: 50 days. Override with: PREPROCESSING_MAINTENANCE_LOOKBACK_DAYS
+  lookback_days: 50
 
 operational:
   # Fetch yesterday's daily average discharge (WDDA variable)
@@ -234,17 +255,57 @@ operational:
   # Fetch today's morning discharge (WDD variable)
   fetch_morning: true
 
+# Post-write validation (maintenance mode only)
+validation:
+  enabled: true
+  max_age_days: 3           # Sites without data this recent are flagged
+  reliability_threshold: 80.0  # Sites below this % are flagged
+  stats_file: "reliability_stats.json"
+
+# Spot-check validation (maintenance mode only)
+spot_check:
+  enabled: true
+  # Sites configured via IEASYHYDRO_SPOTCHECK_SITES env var
+
+# Site caching (operational mode optimization)
+site_cache:
+  enabled: true
+  cache_file: "forecast_sites_cache.json"
+  max_age_days: 7
 ```
 
 **Key parameters:**
 
 | Parameter | Default | Env Override | Description |
 |-----------|---------|--------------|-------------|
-| `maintenance.lookback_days` | 120 | `PREPROCESSING_MAINTENANCE_LOOKBACK_DAYS` | Days of historical data to fetch in maintenance mode. Gaps older than this cannot be filled from the database. |
+| `logging.log_level` | INFO | `log_level` | Log level for this module |
+| `maintenance.lookback_days` | 50 | `PREPROCESSING_MAINTENANCE_LOOKBACK_DAYS` | Days of historical data to fetch in maintenance mode. Gaps older than this cannot be filled from the database. |
 | `operational.fetch_yesterday` | true | - | Whether to fetch yesterday's daily average discharge |
 | `operational.fetch_morning` | true | - | Whether to fetch today's morning discharge |
+| `validation.enabled` | true | - | Enable post-write validation in maintenance mode |
+| `validation.max_age_days` | 3 | - | Sites without data this recent are flagged |
+| `validation.reliability_threshold` | 80.0 | - | Sites below this % are flagged as unreliable |
+| `spot_check.enabled` | true | - | Enable spot-check validation in maintenance mode |
+| `site_cache.enabled` | true | - | Enable site caching for faster operational mode |
+| `site_cache.max_age_days` | 7 | - | Days before cache is considered stale |
 
 **Note:** In maintenance mode, the module always rereads input Excel/CSV files to ensure data completeness before merging with database data. This ensures that gaps in the output file (e.g., accidentally deleted rows) are restored from the original source data.
+
+## Validation Features (Maintenance Mode)
+
+Maintenance mode includes automated validation checks to ensure data quality.
+
+### Post-Write Validation
+Checks data completeness after writing output files:
+- Verifies all expected sites have recent data (within `max_age_days`)
+- Tracks site reliability over time in `reliability_stats.json`
+- Flags sites below the `reliability_threshold` percentage
+
+### Spot-Check Validation
+Validates output data against direct API queries for selected sites:
+- Configure sites via `IEASYHYDRO_SPOTCHECK_SITES` environment variable
+- Compares values in output file against fresh API responses
+- Helps detect data pipeline issues or SDK bugs
 
 ## Development
 
@@ -276,7 +337,9 @@ uv run pytest test/ -v
 | `IEASYHYDROHF_USERNAME` | API username | .env file |
 | `IEASYHYDROHF_PASSWORD` | API password | .env file |
 | `PREPROCESSING_MODE` | Operating mode: `operational` (default) or `maintenance` | optional |
-| `PREPROCESSING_MAINTENANCE_LOOKBACK_DAYS` | Number of days to fetch in maintenance mode (default: 120) | optional |
+| `PREPROCESSING_MAINTENANCE_LOOKBACK_DAYS` | Number of days to fetch in maintenance mode (default: 50) | optional |
+| `IEASYHYDRO_SPOTCHECK_SITES` | Comma-separated site codes for spot-check validation (e.g., `15166,16159,15189`) | optional |
+| `PREPROCESSING_PROFILING` | Set to `true` to enable performance profiling output | optional |
 | `log_level` | System-wide log level: `DEBUG`, `INFO`, `WARNING`, `ERROR` | optional, default: INFO |
 
 See [doc/configuration.md](../../doc/configuration.md) for the complete list.

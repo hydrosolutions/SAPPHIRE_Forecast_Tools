@@ -2,7 +2,7 @@
 
 ## Overview
 
-SAPPHIRE v2 is the next major version of the forecast tools, introducing architectural improvements and expanded capabilities.
+SAPPHIRE v2 is the next major version of the forecast tools, introducing architectural improvements and expanded capabilities. Work on SAPPHIRE v2 is tracked in the `maxat_sapphire_2` branch.
 
 ## Key Changes from v1
 

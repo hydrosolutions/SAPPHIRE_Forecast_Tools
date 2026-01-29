@@ -9,6 +9,7 @@ The preprocessing_runoff module needs to support Swiss demo data as an additiona
 1. Add Swiss data source integration to preprocessing_runoff
 2. Refactor `src/src.py` into logical modules during the integration
 3. Establish a pattern for adding future data sources (Nepal, others)
+4. Keep operational and maintenance mode fast and stable during refactoring
 
 ## Current State
 

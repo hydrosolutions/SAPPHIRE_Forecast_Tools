@@ -37,7 +37,7 @@ Marker files written by the Docker pipeline are owned by root and accumulate ove
 **Priority**: High
 **Discovered**: 2025-12-18
 **Resolved**: 2025-01-09
-**File**: [`issues/gi_draft_preprunoff_operational_modes.md`](issues/gi_draft_preprunoff_operational_modes.md)
+**File**: [`issues/archive/gi_draft_preprunoff_operational_modes.md`](issues/archive/gi_draft_preprunoff_operational_modes.md)
 
 Module didn't update runoff data in Docker due to file timestamp check. Fixed by adding operational/maintenance modes. SDK limitations discovered during testing are tracked in PREPQ-003.
 
@@ -106,6 +106,22 @@ Blocked by: Swiss data source API documentation/access
 **Test coverage**: 164 tests passing (74 new tests for comprehensive coverage)
 
 All modules verified on server (preprocessing, linreg, ML). Dashboard rendering issue is separate.
+
+---
+
+### PREPQ-006: Pagination Bug - Same Site Returns Different station_type Across Pages
+**Status**: Complete
+**Priority**: High
+**Discovered**: 2026-01-13
+**Resolved**: 2026-01-29
+**File**: [`issues/archive/gi_draft_PR-004_pagination_station_type_bug.md`](issues/archive/gi_draft_PR-004_pagination_station_type_bug.md)
+**GitHub**: —
+
+Sites with both hydro and meteo sensors can appear on different pages with different `station_type` values during paginated API requests. The original implementation processed each page independently, causing data loss when a site's hydro data appeared on a different page than expected.
+
+**Fix**: Aggregate ALL pages before classification (not per-page). A site is "meteo-only" only if it has NO hydro records across ALL pages.
+
+**Test coverage**: 9 pagination regression tests added.
 
 ---
 
