@@ -16,7 +16,7 @@ env:
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "wrap_up_uv_migration" ]
   #pull_request:
   #  branches: [ "main" ]
 
