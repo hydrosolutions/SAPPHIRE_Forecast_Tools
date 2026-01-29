@@ -1174,7 +1174,7 @@ def fetch_hydro_HF_data_robust(sdk, filters, site_codes, batch_size=10, max_work
     logger.info(f"[API] Request: {len(site_codes)} sites, {var_str}, {date_start} to {date_end}")
     logger.debug(f"[API] Site codes: {site_codes[:10]}{'...' if len(site_codes) > 10 else ''}")
 
-    # Remove page_size from filters - let API use default (10) which is most reliable
+    # Remove page_size from filters - let API use its default
     safe_filters = {k: v for k, v in filters.items() if k != 'page_size'}
 
     all_dataframes = []
@@ -1327,7 +1327,7 @@ def fetch_and_format_hydro_HF_data(sdk, initial_filters):
     
     Uses parallel fetching for improved performance:
     1. Fetch page 1 to get total count
-    2. Calculate total pages (page_size=10 is API hard limit)
+    2. Calculate total pages (page_size=1000 is API limit)
     3. Fetch remaining pages in parallel
     4. Aggregate ALL results before processing (fixes meteo-only misclassification)
     
@@ -1356,7 +1356,7 @@ def fetch_and_format_hydro_HF_data(sdk, initial_filters):
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
     
-    PAGE_SIZE = 10  # API hard limit - cannot be changed
+    PAGE_SIZE = 1000  # API hard limit is 1000
     
     # Copy filters and set page size
     filters = initial_filters.copy()
@@ -4069,7 +4069,7 @@ def spot_check_sites(
                 "local_date_time__gte": start_date.strftime('%Y-%m-%dT00:00:00'),
                 "local_date_time__lte": end_date.strftime('%Y-%m-%dT23:59:59'),
                 "page": 1,
-                "page_size": 10,  # API limit
+                "page_size": 1000,  # API limit
             }
 
             logger.debug(f"[DATA] Spot-check {site_code_str} ({variable_name}): Querying API with filters: {filters}")
