@@ -29,7 +29,7 @@ services:
   #  container_name: sapphire-frontend-config
 
   pentaddashboard:
-    image: mabesa/sapphire-dashboard:${ieasyhydroforecast_frontend_docker_image_tag:-py312}
+    image: mabesa/sapphire-dashboard:${ieasyhydroforecast_frontend_docker_image_tag:-latest}
     build:
       context: ../
       dockerfile: ./apps/forecast_dashboard/Dockerfile
@@ -73,7 +73,7 @@ services:
       retries: 3
 
   decaddashboard:
-    image: mabesa/sapphire-dashboard:${ieasyhydroforecast_frontend_docker_image_tag:-py312}
+    image: mabesa/sapphire-dashboard:${ieasyhydroforecast_frontend_docker_image_tag:-latest}
     build:
       context: ../
       dockerfile: ./apps/forecast_dashboard/Dockerfile

@@ -120,8 +120,8 @@ TEST_DECAD=true bash run_tests.sh forecast_dashboard   # Decad production
 1. Docker running locally
 2. Base image built:
    ```bash
-   docker build -f apps/docker_base_image/Dockerfile.py312 \
-     -t mabesa/sapphire-pythonbaseimage:py312 .
+   docker build -f apps/docker_base_image/Dockerfile \
+     -t mabesa/sapphire-pythonbaseimage:latest .
    ```
 3. Valid `.env` file for your organization
 
@@ -129,7 +129,7 @@ TEST_DECAD=true bash run_tests.sh forecast_dashboard   # Decad production
 
 ```bash
 # From repository root
-docker build -f apps/<module>/Dockerfile.py312 \
+docker build -f apps/<module>/Dockerfile \
   -t mabesa/sapphire-<module>:local .
 ```
 
@@ -221,7 +221,7 @@ open http://localhost:8082
 ### CI Pipeline Stages
 
 ```
-Tests (py311 + py312)
+Tests (Python 3.12)
         │
         ▼
 Build Base Images
@@ -235,7 +235,6 @@ Summarize Builds
 
 ### What CI Tests
 
-- Python 3.11 tests (pip-based)
 - Python 3.12 tests (uv-based)
 - Docker image builds for all modules
 - Import verification for modules without tests
@@ -267,7 +266,7 @@ SAPPHIRE_TEST_ENV=True .venv/bin/pytest test*/ -v
 
 **Reproduce locally:**
 ```bash
-docker build -f ./apps/<module>/Dockerfile.py312 . 2>&1 | tee build.log
+docker build -f ./apps/<module>/Dockerfile . 2>&1 | tee build.log
 ```
 
 #### 4. Base Image Dependency Failures
@@ -293,7 +292,7 @@ docker build -f ./apps/<module>/Dockerfile.py312 . 2>&1 | tee build.log
 
 - Before merging significant changes to main
 - Before deploying new Docker image tags
-- When testing Python 3.12 migration (`:py312` tag)
+- When testing significant infrastructure changes
 
 ### Procedure
 
@@ -306,7 +305,7 @@ docker build -f ./apps/<module>/Dockerfile.py312 . 2>&1 | tee build.log
 
 3. **Update `.env` if testing new tag:**
    ```bash
-   # Edit .env: IMAGE_TAG=py312
+   # Edit .env: IMAGE_TAG=latest
    ```
 
 4. **Run end-to-end workflow** using cron job scripts or manually
@@ -358,8 +357,8 @@ docker build -f ./apps/<module>/Dockerfile.py312 . 2>&1 | tee build.log
 
 | Action | Command |
 |--------|---------|
-| Build base image | `docker build -f apps/docker_base_image/Dockerfile.py312 -t mabesa/sapphire-pythonbaseimage:py312 .` |
-| Build module | `docker build -f apps/<module>/Dockerfile.py312 -t mabesa/sapphire-<module>:local .` |
+| Build base image | `docker build -f apps/docker_base_image/Dockerfile -t mabesa/sapphire-pythonbaseimage:latest .` |
+| Build module | `docker build -f apps/<module>/Dockerfile -t mabesa/sapphire-<module>:local .` |
 | Verify Python version | `docker run --rm <image> python --version` |
 | Check imports | `docker run --rm <image> python -c "import pandas; print('OK')"` |
 

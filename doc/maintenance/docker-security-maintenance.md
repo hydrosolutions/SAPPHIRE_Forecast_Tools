@@ -5,7 +5,7 @@ This document describes how Docker images for SAPPHIRE Forecast Tools are kept s
 ## Overview
 
 - **Automated Schedule**: All Docker images are rebuilt quarterly (Jan 1, Apr 1, Jul 1, Oct 1)
-- **Fresh Upstream**: Each rebuild pulls the latest base images (e.g., `python:3.11-slim-bookworm`) to pick up security patches
+- **Fresh Upstream**: Each rebuild pulls the latest base images (e.g., `python:3.12-slim-bookworm`) to pick up security patches
 - **Quarterly Tags**: Each rebuild creates versioned tags (e.g., `:2025-Q1`) for reproducibility
 - **Tests Run First**: Images are only pushed if the test suite passes
 
@@ -19,7 +19,7 @@ The GitHub Actions workflow `scheduled_security_rebuild.yml` runs automatically 
 
 ### What Happens During a Rebuild
 
-1. **Base image rebuilt** from fresh `python:3.11-slim-bookworm`
+1. **Base image rebuilt** from fresh `python:3.12-slim-bookworm`
 2. **Tests run** to verify the rebuilt image works correctly
 3. **Base image pushed** with `:latest` and quarterly tag (e.g., `:2025-Q1`)
 4. **All module images rebuilt** using the fresh base image

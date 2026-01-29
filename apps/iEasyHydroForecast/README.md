@@ -3,16 +3,9 @@ A collection of methods in python that are used by several apps in the SAPPHIRE 
 
 ## Installation
 
-### Option 1: Python 3.11 + pip (current production)
-To install the package with pip, run the following command:
+Install dependencies and the package in editable mode using uv:
 ```bash
-pip install -e .
-```
-
-### Option 2: Python 3.12 + uv (migration in progress)
-To install the package with uv, run the following commands:
-```bash
-# Install dependencies and the package in editable mode
+cd apps/iEasyHydroForecast
 uv sync --all-extras
 ```
 
@@ -21,7 +14,7 @@ This uses `pyproject.toml` and `uv.lock` for reproducible dependency management.
 ## Usage
 To use the package, import the desired methods in your python script. For example:
 ```python
-# Local libraries, installed with pip install -e ./iEasyHydroForecast
+# Local libraries, installed with uv sync (see Installation above)
 # Get the absolute path of the directory containing the current script
 script_dir = os.path.dirname(os.path.abspath(__file__))
 
@@ -39,44 +32,20 @@ import tag_library as tl
 
 ## Testing
 
-All tests must be run from the `apps/` directory (parent of `iEasyHydroForecast/`).
+Tests are run from the `iEasyHydroForecast` directory using pytest.
 
-### Option 1: Python 3.11 + pip (unittest)
-To run all tests with unittest:
-```bash
-cd apps
-SAPPHIRE_TEST_ENV=True python -m unittest discover -s iEasyHydroForecast/tests -p 'test_*.py'
-```
-
-To test a specific method in a class:
-```bash
-cd apps
-SAPPHIRE_TEST_ENV=True python -m unittest iEasyHydroForecast.tests.test_forecast_library.TestCalculateSkillMetricsPentad.test_skill_metrics_calculation
-```
-
-### Option 2: Python 3.12 + uv (pytest)
-First, install dependencies from the `iEasyHydroForecast` directory:
+Run all tests:
 ```bash
 cd apps/iEasyHydroForecast
-uv sync --all-extras
+SAPPHIRE_TEST_ENV=True uv run pytest tests/ -v
 ```
 
-Then run tests from the `apps/` directory using the uv venv's Python:
+Run tests for a specific file:
 ```bash
-cd apps
-SAPPHIRE_TEST_ENV=True iEasyHydroForecast/.venv/bin/python -m pytest iEasyHydroForecast/tests/
+SAPPHIRE_TEST_ENV=True uv run pytest tests/test_forecast_library.py -v
 ```
 
-To test a specific file:
+Run a specific test class or method:
 ```bash
-cd apps
-SAPPHIRE_TEST_ENV=True iEasyHydroForecast/.venv/bin/python -m pytest iEasyHydroForecast/tests/test_forecast_library.py
+SAPPHIRE_TEST_ENV=True uv run pytest tests/test_forecast_library.py::TestCalculateSkillMetricsPentad::test_skill_metrics_calculation -v
 ```
-
-To test a specific test class or method:
-```bash
-cd apps
-SAPPHIRE_TEST_ENV=True iEasyHydroForecast/.venv/bin/python -m pytest iEasyHydroForecast/tests/test_forecast_library.py::TestCalculateSkillMetricsPentad::test_skill_metrics_calculation
-```
-
-
