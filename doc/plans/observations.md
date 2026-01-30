@@ -14,6 +14,27 @@ Periodically review and triage into formal issues in `module_issues.md` or GitHu
 
 ---
 
+## 2026-01-30
+
+### Configuration: Review iEasyHydro HF Requirements
+
+**Source**: Server deployment documentation
+**Date**: 2026-01-30
+
+SAPPHIRE Forecast Tools can run as a standalone tool without iEasyHydro HF connectivity. However, certain organization configurations (e.g., `kghm`, `tjhm`) require access to iEasyHydro HF for data retrieval.
+
+**Review needed**: The `.env` configuration and the "requires access to iEasyHydro HF or not" relationship needs closer examination. Currently unclear which exact configurations require iEH HF access and which can operate standalone.
+
+**Questions to answer**:
+- Which `ieasyhydroforecast_organization` values require iEH HF access?
+- What happens if iEH HF is unavailable for configured organizations?
+- Can a deployment be configured to use local data only?
+
+**Assessment**: Documentation/configuration clarity issue. Planning documents created.
+**Status**: TRIAGED - See `ieasyhydro_hf_migration_plan.md` and `configuration_update_plan.md`
+
+---
+
 ## 2026-01-29
 
 ### Pipeline: Incorrect Docker Image Comparison Message
@@ -221,8 +242,8 @@ FileNotFoundError: [Errno 2] No such file or directory:
 
 | Date | Observation | Outcome |
 |------|-------------|---------|
-| — | — | — |
+| 2026-01-30 | Configuration: Review iEasyHydro HF Requirements | `ieasyhydro_hf_migration_plan.md`, `configuration_update_plan.md` |
 
 ---
 
-*Last updated: 2026-01-29*
+*Last updated: 2026-01-30*

@@ -25,6 +25,9 @@ echo "| Luigi scheduler URL set to: http://${LUIGI_SCHEDULER_HOST}:${LUIGI_SCHED
 # Establish SSH tunnel (if required)
 establish_ssh_tunnel
 
+# Pull Docker images (ensures prepgateway image is available)
+pull_docker_images
+
 # Ensure a stable Compose project so services share the same network
 export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-sapphire}"
 
