@@ -16,6 +16,37 @@ Periodically review and triage into formal issues in `module_issues.md` or GitHu
 
 ## 2026-01-30
 
+### 🚨 URGENT: Preprocessing Gateway Runs Twice (Fix Monday)
+
+**Source**: Ubuntu production server observation
+**Date**: 2026-01-30
+
+**Problem**: Preprocessing gateway module now runs twice in the operational pipeline. The marker file logic that prevented unnecessary reruns within the same day appears to have been removed.
+
+**Impact**:
+- Slows down operational forecasting pipeline unnecessarily
+- Gateway preprocessing is expensive - should only run once per day
+
+**Context from investigation**:
+- Recent commit `a357c62` (2026-01-26) removed marker file checks to "always run fresh preprocessing"
+- This was done for `preprocessing_runoff` but may have affected gateway logic too
+- The rationale was that preprocessing is now fast enough to run every time - but this may not apply to gateway
+
+**Action needed Monday**:
+1. Investigate which commit removed the gateway marker file check
+2. Restore marker file logic for `PreprocessingGatewayQuantileMapping` to prevent same-day reruns
+3. Test on staging before deploying to production
+
+**Files to check**:
+- `apps/pipeline/pipeline_docker.py` - `PreprocessingGatewayQuantileMapping` class
+- `ExternalPreprocessingGateway` task and its marker file logic
+- Recent git history for marker file changes
+
+**Assessment**: Urgent - affects production performance
+**Status**: TO FIX MONDAY
+
+---
+
 ### Configuration: Review iEasyHydro HF Requirements
 
 **Source**: Server deployment documentation
@@ -100,10 +131,7 @@ Two issues observed in dashboard:
 
 3. **No ML forecasts for stations 16059, 15189**: ML forecasts missing for these stations.
 
-2. **No snow data displayed**: Snow data not showing for any station in the dashboard.
-   - ~~Check preprocessing_gateway logs for errors~~ ✅ No errors
-   - ~~Check if snow data exists in intermediate files~~ ✅ Data exists: `intermediate_data/snow_data/SWE/00003_SWE.csv`
-   - Issue is in dashboard - either reading the snow files or rendering the visualization
+2. ~~**No snow data displayed**~~: **RESOLVED** - Fixed by adding missing `.env` variables to test server configuration.
 
 **Investigation findings**:
 

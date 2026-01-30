@@ -34,21 +34,87 @@ SAPPHIRE can run as a standalone forecast tool without iEasyHydro HF. However, c
 
 **If your deployment requires iEasyHydro HF**, the configuration depends on your network setup:
 
-**Option A: Same Network (no SSH required)**
+**Option A: Same Network with Direct API Access**
 
-If the SAPPHIRE server and iEasyHydro HF server are on the same local network:
+If the SAPPHIRE server and iEasyHydro HF server are on the same local network AND the API is accessible from the network:
 
 - [ ] Verify network connectivity to iEasyHydro HF server
   ```bash
   ping -c 3 <ieasyhydro-server-ip>
   ```
-  If ping succeeds, no additional SSH configuration is needed.
+- [ ] Verify API is accessible directly (test common ports):
+  ```bash
+  curl -s http://<ieasyhydro-server-ip>:5555/api/v1/ | head
+  curl -s http://<ieasyhydro-server-ip>:8000/api/v1/ | head
+  ```
+- [ ] If API responds, configure `.env` with direct IP:
+  ```
+  IEASYHYDROHF_HOST=http://<ieasyhydro-server-ip>:<port>
+  ```
 
-**Option B: Different Networks with Local iEasyHydro HF Installation**
+**Option B: Same Network but API Only on Localhost (SSH Tunnel Required)**
 
-If iEasyHydro HF is on a different network (local installation):
+If iEasyHydro HF API only listens on localhost (common security configuration):
 
-- [ ] Configure SSH tunnel to iEasyHydro HF server
+- [ ] Verify ping works but direct API access fails
+- [ ] Test manual SSH tunnel:
+  ```bash
+  ssh -f -N -L 5555:localhost:5555 <user>@<ieasyhydro-server-ip>
+  curl -s http://localhost:5555/api/v1/ | head
+  ```
+- [ ] Configure `.env` to use localhost:
+  ```
+  IEASYHYDROHF_HOST=http://localhost:5555
+  ```
+- [ ] **Set up permanent tunnel with autossh + systemd:**
+
+  1. Install autossh:
+     ```bash
+     sudo apt-get update && sudo apt-get install -y autossh
+     ```
+
+  2. Verify SSH key authentication (no password prompt):
+     ```bash
+     ssh -o BatchMode=yes <user>@<ieasyhydro-server-ip> echo "OK"
+     ```
+
+  3. Create systemd service (`/etc/systemd/system/ieasyhydro-tunnel.service`):
+     ```ini
+     [Unit]
+     Description=SSH Tunnel to iEasyHydro HF Server
+     After=network-online.target
+     Wants=network-online.target
+
+     [Service]
+     Type=simple
+     User=<your-user>
+     Environment="AUTOSSH_GATETIME=0"
+     ExecStart=/usr/bin/autossh -M 0 -N -o "ServerAliveInterval=30" -o "ServerAliveCountMax=3" -o "ExitOnForwardFailure=yes" -L 5555:localhost:5555 <user>@<ieasyhydro-server-ip>
+     Restart=always
+     RestartSec=10
+
+     [Install]
+     WantedBy=multi-user.target
+     ```
+
+  4. Enable and start:
+     ```bash
+     sudo systemctl daemon-reload
+     sudo systemctl enable ieasyhydro-tunnel.service
+     sudo systemctl start ieasyhydro-tunnel.service
+     ```
+
+- [ ] Verify permanent tunnel:
+  ```bash
+  sudo systemctl status ieasyhydro-tunnel.service
+  curl -s http://localhost:5555/api/v1/ | head
+  ```
+
+**Option C: Different Networks with Local iEasyHydro HF Installation**
+
+If iEasyHydro HF is on a different network:
+
+- [ ] Configure SSH tunnel to iEasyHydro HF server (with port forwarding if needed)
 - [ ] Set up automatic SSH tunnel keepalive (e.g., via systemd service or autossh)
 - [ ] Verify the tunnel is active and data can be retrieved
 
@@ -883,6 +949,111 @@ Complete this summary checklist before considering the update complete.
 
 ---
 
+## 7. SERVER OS UPDATES (Periodic Maintenance)
+
+Periodically update the server operating system for security patches and stability.
+
+### 7.1 Pre-Update Checks
+
+- [ ] Check disk space (updates need space):
+  ```bash
+  df -h
+  ```
+  Ensure at least 2GB free on `/` and `/var`
+
+- [ ] Note current kernel version (for rollback reference):
+  ```bash
+  uname -r
+  ```
+
+- [ ] Check for held packages:
+  ```bash
+  apt-mark showhold
+  ```
+
+- [ ] Optionally stop SAPPHIRE services before reboot:
+  ```bash
+  cd /data/SAPPHIRE_Forecast_Tools
+  docker compose -f bin/docker-compose-dashboards.yml down
+  docker compose -f bin/docker-compose-luigi.yml down
+  ```
+
+### 7.2 Update Server
+
+- [ ] Update package lists:
+  ```bash
+  sudo apt update
+  ```
+
+- [ ] Upgrade installed packages:
+  ```bash
+  sudo apt upgrade
+  ```
+  Review changes before confirming. Note if kernel update is included.
+
+- [ ] Reboot if required (especially after kernel updates):
+  ```bash
+  sudo reboot
+  ```
+
+- [ ] After reboot, remove stale packages:
+  ```bash
+  sudo apt autoremove && sudo apt clean
+  ```
+
+### 7.3 Post-Reboot Verification
+
+- [ ] Verify SSH tunnel to iEasyHydro HF is running (if configured):
+  ```bash
+  sudo systemctl status ieasyhydro-tunnel.service
+  lsof -i :5555
+  curl -s http://localhost:5555/api/v1/ | head
+  ```
+
+- [ ] Verify Docker daemon is running:
+  ```bash
+  sudo systemctl status docker
+  docker ps
+  ```
+
+- [ ] Verify cron service is running:
+  ```bash
+  sudo systemctl status cron
+  ```
+
+- [ ] Verify time synchronization:
+  ```bash
+  timedatectl status
+  ```
+
+- [ ] Start SAPPHIRE services by running the crontab scripts (if stopped before reboot):
+  
+
+- [ ] Verify all SAPPHIRE containers are running:
+  ```bash
+  docker ps --filter "name=sapphire" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+  ```
+
+- [ ] Check dashboards are accessible:
+  ```bash
+  curl -s -o /dev/null -w "%{http_code}" http://localhost:5006/forecast_dashboard
+  curl -s -o /dev/null -w "%{http_code}" http://localhost:5007/forecast_dashboard
+  ```
+
+### 7.4 Optional: Docker Maintenance
+
+- [ ] Prune unused Docker resources:
+  ```bash
+  docker system prune -f
+  ```
+
+- [ ] Check Docker disk usage:
+  ```bash
+  docker system df
+  ```
+
+---
+
 ## Quick Reference Commands
 
 ```bash
@@ -908,3 +1079,4 @@ docker system df
 ---
 
 *Last updated: 2026-01-30*
+*Added Section 7: Server OS Updates*
