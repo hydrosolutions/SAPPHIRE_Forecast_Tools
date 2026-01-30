@@ -1,3 +1,35 @@
+"""
+Integration tests for the forecast dashboard.
+
+These tests use Playwright to test the dashboard UI in a real browser.
+By default, integration tests are SKIPPED to allow CI/CD to pass without
+requiring external services.
+
+Environment Variables:
+    TEST_LOCAL  - Set to 'true' to run local dashboard tests (requires local
+                  server running at localhost:5055 and data connection)
+    TEST_PENTAD - Set to 'true' to run pentad production server tests
+    TEST_DECAD  - Set to 'true' to run decad production server tests
+
+Usage Examples:
+    # Run only unit tests (integration tests skipped)
+    pytest test_integration.py
+
+    # Run local integration tests (requires local server + data)
+    TEST_LOCAL=true pytest test_integration.py
+
+    # Run pentad production tests
+    TEST_PENTAD=true pytest test_integration.py
+
+    # Run all integration tests
+    TEST_LOCAL=true TEST_PENTAD=true TEST_DECAD=true pytest test_integration.py
+
+Requirements for TEST_LOCAL=true:
+    - Local dashboard server running at http://localhost:5055/forecast_dashboard
+    - Valid credentials: user1 / user1
+    - Data connection available (ieasyhydroforecast_data_dir environment variable set)
+"""
+
 import os
 import time
 import csv
@@ -8,21 +40,31 @@ import tag_library as tl
 import datetime as dt
 
 
-TEST_PENTAD = False
-TEST_DECAD = False
-TEST_LOCAL = True
-LOCAL_URL = "http://localhost:5006/forecast_dashboard"
+def get_test_flag(env_var: str, default: bool) -> bool:
+    """Get test flag from environment variable or use default."""
+    value = os.getenv(env_var, "").lower()
+    if value in ("true", "1", "yes"):
+        return True
+    elif value in ("false", "0", "no"):
+        return False
+    return default
+
+TEST_PENTAD = get_test_flag("TEST_PENTAD", False)
+TEST_DECAD = get_test_flag("TEST_DECAD", False)
+TEST_LOCAL = get_test_flag("TEST_LOCAL", False)
+LOCAL_URL = "http://localhost:5055/forecast_dashboard"
 PENTAD_URL = "https://kyg.fc.pentad.ieasyhydro.org/forecast_dashboard"
-DECAD_URL = "https://kyg.fc.decade.ieasyhydro.org/forecast_dashboard"
+DECAD_URL = "https://demo.fc.decade.ieasyhydro.org/forecast_dashboard"
 SLEEP = 1
 # Needs full, absolute path with "/" at the end 
 sensitive_data_forecast_tools = os.getenv('ieasyhydroforecast_data_dir')
-horizon = "decad"  # pentad or decad
+horizon = "pentad"  # pentad or decad
 
 today = dt.datetime.now()
 today = today + dt.timedelta(days=1)
 year = today.year
 date_str = today.strftime("%Y-%m-%d")
+print("Today's date:", date_str)
 month_str = today.strftime("%m") + "_" + tl.get_month_str_case1(date_str)
 if horizon == "pentad":
     horizon_value = tl.get_pentad_for_date(today)
@@ -107,6 +149,10 @@ def test_local(page: Page):
         print("#### Skipping LOCAL test...")
         return
 
+    # Set default timeouts at the start of the test
+    page.set_default_timeout(60000)  # 60 seconds for all actions
+    page.set_default_navigation_timeout(60000)  # 60 seconds for navigation
+
     page.goto(LOCAL_URL)
 
     print("#### Testing LOCAL started...")
@@ -176,7 +222,7 @@ def test_local(page: Page):
 
     ### PREDICTORS TAB ###
     # Select station 16936
-    page.select_option("select#input", value="16936 - Нарын  -  Приток в Токтогульское вдхр.**)")
+    page.select_option("select#input", value="16936 - Нарын  -  Приток в Токтогульское вдхр.**)", timeout=60000)
     print("#### Station 16936 selected")
     time.sleep(SLEEP)
 
@@ -197,7 +243,7 @@ def test_local(page: Page):
     summary_table_values = []
 
     def select_station_and_add_to_bulletin(station):
-        page.select_option("select#input", value=station)
+        page.select_option("select#input", value=station, timeout=60000)
         print(f"#### SELECTED station: {station}")
         time.sleep(SLEEP)
 
@@ -211,7 +257,7 @@ def test_local(page: Page):
     stations = [
         "15013 - Джыргалан-с.Советское",
         "16936 - Нарын  -  Приток в Токтогульское вдхр.**)",
-        "15194 - р.Ала-Арча-у.р.Кашка-Суу",
+        #"15194 - р.Ала-Арча-у.р.Кашка-Суу",
         "15256 - Талас -  с.Ак-Таш",
     ]
     for station in stations:

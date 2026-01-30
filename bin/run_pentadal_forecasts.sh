@@ -59,9 +59,9 @@ scheduler_port = ${LUIGI_SCHEDULER_PORT}
 EOF
 
 # Run the pentadal forecasting with proper configuration
+# Note: PYTHONPATH=/app is set in docker-compose-luigi.yml for Luigi module resolution
 docker compose -f bin/docker-compose-luigi.yml run \
     -v $(pwd)/temp_luigi.cfg:/app/luigi.cfg \
-    -e PYTHONPATH="/home/appuser/.local/lib/python3.11/site-packages:${PYTHONPATH}" \
     -e SAPPHIRE_PREDICTION_MODE=PENTAD \
     --user root \
     --rm \

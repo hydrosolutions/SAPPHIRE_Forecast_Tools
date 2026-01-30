@@ -8,6 +8,8 @@ import logging
 import string
 import re
 import time
+import tempfile
+import shutil
 from contextlib import contextmanager
 
 from ieasyhydro_sdk.filters import BasicDataValueFilters
@@ -17,6 +19,56 @@ from sklearn.linear_model import LinearRegression
 import tag_library as tl
 
 logger = logging.getLogger(__name__)
+
+
+def atomic_write_csv(data: pd.DataFrame, filepath: str, **to_csv_kwargs) -> None:
+    """
+    Write a DataFrame to CSV atomically using temp file + rename pattern.
+
+    This prevents data loss if a crash occurs during the write operation.
+    The file is first written to a temporary location, then atomically
+    moved to the final destination using os.replace().
+
+    Args:
+        data: DataFrame to write
+        filepath: Final destination path for the CSV file
+        **to_csv_kwargs: Additional arguments to pass to DataFrame.to_csv()
+
+    Raises:
+        Exception: If the write operation fails (temp file is cleaned up)
+    """
+    # Get the directory of the target file
+    target_dir = os.path.dirname(filepath) or '.'
+
+    # Ensure the target directory exists
+    os.makedirs(target_dir, exist_ok=True)
+
+    # Create a temp file in the same directory (ensures same filesystem for atomic rename)
+    temp_fd, temp_path = tempfile.mkstemp(suffix='.tmp', dir=target_dir)
+
+    try:
+        # Close the file descriptor (we'll write via pandas)
+        os.close(temp_fd)
+
+        # Write to the temp file
+        data.to_csv(temp_path, **to_csv_kwargs)
+
+        # Atomic move: os.replace() is atomic on POSIX systems when src and dst
+        # are on the same filesystem. On Windows, it's atomic if dst doesn't exist.
+        # shutil.move uses os.rename under the hood for same-filesystem moves.
+        shutil.move(temp_path, filepath)
+
+        logger.debug(f"Atomically wrote {len(data)} rows to {filepath}")
+
+    except Exception as e:
+        # Clean up the temp file if something went wrong
+        if os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass  # Ignore cleanup errors
+        raise e
+
 
 def parse_dates_robust(date_series, column_name='date'):
     """
@@ -3042,6 +3094,151 @@ def is_leap_year(year):
     else:
         return False
 
+
+def get_issue_date_from_pentad(pentad_in_year, year):
+    """
+    Given pentad_in_year (1-72) and year, return the issue date.
+    Issue date = last day of the PREVIOUS pentad.
+
+    Pentads are 5-day periods, 6 per month (last one extends to month end).
+    pentad_in_year 1 = Jan 1-5, issue date = Dec 31 of previous year
+    pentad_in_year 2 = Jan 6-10, issue date = Jan 5
+    ...
+    pentad_in_year 72 = Dec 26-31, issue date = Dec 25
+
+    Args:
+        pentad_in_year: int, 1-72
+        year: int, the year for which the pentad is calculated
+
+    Returns:
+        pd.Timestamp: the issue date
+    """
+    pentad_in_year = int(pentad_in_year)
+    year = int(year)
+
+    # Calculate month (1-12) and pentad within month (1-6)
+    month = (pentad_in_year - 1) // 6 + 1
+    pentad_in_month = (pentad_in_year - 1) % 6 + 1
+
+    if pentad_in_month == 1:
+        # Issue date is last day of previous month
+        if month == 1:
+            return pd.Timestamp(year=year-1, month=12, day=31)
+        else:
+            # Get last day of previous month
+            prev_month_last = pd.Timestamp(year=year, month=month, day=1) - pd.Timedelta(days=1)
+            return prev_month_last
+    else:
+        # Issue date is the last day of the previous pentad in the same month
+        # Pentad 2: days 6-10, issue = day 5
+        # Pentad 3: days 11-15, issue = day 10
+        # Pentad 4: days 16-20, issue = day 15
+        # Pentad 5: days 21-25, issue = day 20
+        # Pentad 6: days 26-end, issue = day 25
+        issue_day = (pentad_in_month - 1) * 5
+        return pd.Timestamp(year=year, month=month, day=issue_day)
+
+
+def get_issue_date_from_decad(decad_in_year, year):
+    """
+    Given decad_in_year (1-36) and year, return the issue date.
+    Issue date = last day of the PREVIOUS decad.
+
+    Decads are 10-day periods, 3 per month (last one extends to month end).
+    decad_in_year 1 = Jan 1-10, issue date = Dec 31 of previous year
+    decad_in_year 2 = Jan 11-20, issue date = Jan 10
+    decad_in_year 3 = Jan 21-31, issue date = Jan 20
+    decad_in_year 4 = Feb 1-10, issue date = Jan 31
+    ...
+    decad_in_year 7 = Feb 21-28/29, issue date = Feb 20
+
+    Args:
+        decad_in_year: int, 1-36
+        year: int, the year for which the decad is calculated
+
+    Returns:
+        pd.Timestamp: the issue date
+    """
+    decad_in_year = int(decad_in_year)
+    year = int(year)
+
+    # Calculate month (1-12) and decad within month (1-3)
+    month = (decad_in_year - 1) // 3 + 1
+    decad_in_month = (decad_in_year - 1) % 3 + 1
+
+    if decad_in_month == 1:
+        # Issue date is last day of previous month
+        if month == 1:
+            return pd.Timestamp(year=year-1, month=12, day=31)
+        else:
+            prev_month_last = pd.Timestamp(year=year, month=month, day=1) - pd.Timedelta(days=1)
+            return prev_month_last
+    elif decad_in_month == 2:
+        return pd.Timestamp(year=year, month=month, day=10)
+    else:  # decad_in_month == 3
+        return pd.Timestamp(year=year, month=month, day=20)
+
+
+def get_day_of_year_from_pentad(pentad_in_year, year):
+    """
+    Calculate day_of_year from pentad_in_year and year.
+
+    The day_of_year corresponds to the issue date (last day of previous pentad).
+
+    Args:
+        pentad_in_year: int, 1-72
+        year: int, the year for which to calculate
+
+    Returns:
+        int: day_of_year (1-366)
+    """
+    issue_date = get_issue_date_from_pentad(pentad_in_year, year)
+    return issue_date.dayofyear
+
+
+def get_day_of_year_from_decad(decad_in_year, year):
+    """
+    Calculate day_of_year from decad_in_year and year.
+
+    The day_of_year corresponds to the issue date (last day of previous decad).
+
+    Args:
+        decad_in_year: int, 1-36
+        year: int, the year for which to calculate
+
+    Returns:
+        int: day_of_year (1-366)
+    """
+    issue_date = get_issue_date_from_decad(decad_in_year, year)
+    return issue_date.dayofyear
+
+
+def get_pentad_from_pentad_in_year(pentad_in_year):
+    """
+    Calculate pentad (1-6 within month) from pentad_in_year (1-72).
+
+    Args:
+        pentad_in_year: int, 1-72
+
+    Returns:
+        int: pentad within month (1-6)
+    """
+    return ((int(pentad_in_year) - 1) % 6) + 1
+
+
+def get_decad_from_decad_in_year(decad_in_year):
+    """
+    Calculate decad (1-3 within month) from decad_in_year (1-36).
+
+    Args:
+        decad_in_year: int, 1-36
+
+    Returns:
+        int: decad within month (1-3)
+    """
+    return ((int(decad_in_year) - 1) % 3) + 1
+
+
 def write_pentad_hydrograph_data(data: pd.DataFrame, iehhf_sdk = None):
     """
     Calculates statistics of the pentadal hydrograph and saves it to a csv file.
@@ -3081,11 +3278,32 @@ def write_pentad_hydrograph_data(data: pd.DataFrame, iehhf_sdk = None):
 
     logger.debug(f"Calculating pentadal runoff statistics with data from {data['date'].min()} to {data['date'].max()}")
 
-    # If we are not in a leap year, drop the 29th of February and adjust the day_of_year
+    # Align day_of_year across leap/non-leap year boundaries
+    # The goal is to make day_of_year values comparable between current year and historical years
     data['day_of_year'] = data['date'].dt.dayofyear
-    if not is_leap_year(current_year):
-        data = data[~((data['date'].dt.month == 2) & (data['date'].dt.day == 29))]
-        data.loc[(data['date'].dt.month > 2), 'day_of_year'] -= 1
+    last_year = current_year - 1
+    current_is_leap = is_leap_year(current_year)
+    last_is_leap = is_leap_year(last_year)
+
+    # Case 1: Current=non-leap, Last=leap (e.g., 2025 vs 2024)
+    # Feb 29 data from leap years should be mapped to Feb 28, and day_of_year adjusted for Mar+
+    if not current_is_leap and last_is_leap:
+        # Map Feb 29 from leap years to Feb 28 (don't drop the data!)
+        feb29_mask = (data['date'].dt.month == 2) & (data['date'].dt.day == 29)
+        data.loc[feb29_mask, 'date'] = data.loc[feb29_mask, 'date'] - pd.Timedelta(days=1)
+        # Recalculate day_of_year after date adjustment
+        data['day_of_year'] = data['date'].dt.dayofyear
+        # Subtract 1 from day_of_year for dates after Feb 28 in last year's data
+        last_year_after_feb = (data['date'].dt.year == last_year) & (data['date'].dt.month > 2)
+        data.loc[last_year_after_feb, 'day_of_year'] -= 1
+
+    # Case 2: Current=leap, Last=non-leap (e.g., 2024 vs 2023)
+    # Add 1 to day_of_year for dates after Feb 28 in last year's data
+    elif current_is_leap and not last_is_leap:
+        last_year_after_feb = (data['date'].dt.year == last_year) & (data['date'].dt.month > 2)
+        data.loc[last_year_after_feb, 'day_of_year'] += 1
+
+    # Case 3: Both same type (leap-leap or non-leap-non-leap) - no adjustment needed
 
     runoff_stats = data[data['date'].dt.year != current_year]. \
         reset_index(drop=True). \
@@ -3138,12 +3356,16 @@ def write_pentad_hydrograph_data(data: pd.DataFrame, iehhf_sdk = None):
     # merge to runoff_stats
     last_year = data['date'].dt.year.max() - 1
     current_year = data['date'].dt.year.max()
-    last_year_data = data[data['date'].dt.year == last_year]
+    last_year_data = data[data['date'].dt.year == last_year].copy()
     current_year_data = data[data['date'].dt.year == current_year]
-    #last_year_data = last_year_data.drop(columns=['date'])
-    # Add 1 year to date of last_year_data
-    #last_year_data.loc[:, 'date'] = last_year_data.loc[:, 'date'] + pd.DateOffset(years=1)
-    last_year_data.loc[:, 'date'] = pd.Timestamp(str(current_year)) + pd.to_timedelta(last_year_data['day_of_year'] - 1, unit='D')
+    # Add 1 year to date of last_year_data using DateOffset (handles leap years correctly)
+    last_year_data.loc[:, 'date'] = last_year_data['date'] + pd.DateOffset(years=1)
+    # Handle Feb 29 → Feb 28 mapping explicitly if DateOffset created Feb 29 in non-leap year
+    # (This can happen if last year was leap and current is non-leap)
+    if not is_leap_year(current_year):
+        feb29_mask = (last_year_data['date'].dt.month == 2) & (last_year_data['date'].dt.day == 29)
+        if feb29_mask.any():
+            last_year_data.loc[feb29_mask, 'date'] = last_year_data.loc[feb29_mask, 'date'] - pd.Timedelta(days=1)
     current_year_data = current_year_data.drop(columns=['date'])
     last_year_data = last_year_data.rename(columns={'discharge_avg': str(last_year)}).reset_index(drop=True)
     current_year_data = current_year_data.rename(columns={'discharge_avg': str(current_year)}).reset_index(drop=True)
@@ -3171,6 +3393,51 @@ def write_pentad_hydrograph_data(data: pd.DataFrame, iehhf_sdk = None):
     runoff_stats['pentad_in_year'] = runoff_stats['pentad_in_year'].astype(int)
     runoff_stats = runoff_stats.sort_values(by=['code', 'pentad_in_year'])
 
+    # Fill missing dates by reconstructing from pentad_in_year
+    # The date column should ALWAYS be populated with the issue date, even when
+    # there's no discharge data for that pentad
+    if 'date' in runoff_stats.columns:
+        missing_date_mask = runoff_stats['date'].isna()
+        if missing_date_mask.any():
+            logger.debug(f"Filling {missing_date_mask.sum()} missing dates from pentad_in_year")
+            runoff_stats.loc[missing_date_mask, 'date'] = runoff_stats.loc[missing_date_mask, 'pentad_in_year'].apply(
+                lambda p: get_issue_date_from_pentad(p, current_year)
+            )
+
+    # Fill missing day_of_year by reconstructing from pentad_in_year
+    # The day_of_year should ALWAYS be populated, even when there's no discharge data
+    if 'day_of_year' not in runoff_stats.columns:
+        # Create day_of_year column from pentad_in_year
+        logger.debug("Creating day_of_year column from pentad_in_year")
+        runoff_stats['day_of_year'] = runoff_stats['pentad_in_year'].apply(
+            lambda p: get_day_of_year_from_pentad(p, current_year)
+        )
+    else:
+        # Fill any missing values
+        missing_doy_mask = runoff_stats['day_of_year'].isna()
+        if missing_doy_mask.any():
+            logger.debug(f"Filling {missing_doy_mask.sum()} missing day_of_year values from pentad_in_year")
+            runoff_stats.loc[missing_doy_mask, 'day_of_year'] = runoff_stats.loc[missing_doy_mask, 'pentad_in_year'].apply(
+                lambda p: get_day_of_year_from_pentad(p, current_year)
+            )
+
+    # Fill missing pentad (1-6 within month) by reconstructing from pentad_in_year
+    if 'pentad' not in runoff_stats.columns:
+        logger.debug("Creating pentad column from pentad_in_year")
+        runoff_stats['pentad'] = runoff_stats['pentad_in_year'].apply(get_pentad_from_pentad_in_year)
+    else:
+        missing_pentad_mask = runoff_stats['pentad'].isna()
+        if missing_pentad_mask.any():
+            logger.debug(f"Filling {missing_pentad_mask.sum()} missing pentad values from pentad_in_year")
+            runoff_stats.loc[missing_pentad_mask, 'pentad'] = runoff_stats.loc[missing_pentad_mask, 'pentad_in_year'].apply(
+                get_pentad_from_pentad_in_year
+            )
+
+    # Ensure pentad_in_year, pentad, and day_of_year are integers
+    runoff_stats['pentad_in_year'] = runoff_stats['pentad_in_year'].astype(int)
+    runoff_stats['pentad'] = runoff_stats['pentad'].astype(int)
+    runoff_stats['day_of_year'] = runoff_stats['day_of_year'].astype(int)
+
     # Get the path to the intermediate data folder from the environmental
     # variables and the name of the ieasyforecast_hydrograph_pentad_file.
     # Concatenate them to the output file path.
@@ -3184,21 +3451,15 @@ def write_pentad_hydrograph_data(data: pd.DataFrame, iehhf_sdk = None):
         print(os.getenv("ieasyforecast_hydrograph_pentad_file"))
         raise e
 
-    # Overwrite the file if it already exists
-    if os.path.exists(output_file_path):
-        os.remove(output_file_path)
-
-    # Write the data to a csv file. Raise an error if this does not work.
-    # If the data is written to the csv file, log a message that the data
-    # has been written.
+    # Write atomically (temp file + rename) to prevent data loss on crash
     try:
-        ret = runoff_stats.to_csv(output_file_path, index=False)
+        atomic_write_csv(runoff_stats, output_file_path, index=False)
         logger.info(f"Data written to {output_file_path}.")
     except Exception as e:
         logger.error(f"Could not write the data to {output_file_path}.")
         raise e
 
-    return ret
+    return None
 
 def write_decad_hydrograph_data(data: pd.DataFrame, iehhf_sdk = None):
     """
@@ -3238,12 +3499,13 @@ def write_decad_hydrograph_data(data: pd.DataFrame, iehhf_sdk = None):
         # Create an empty DataFrame with the expected structure and return
         logger.warning("Creating empty output file")
         empty_df = pd.DataFrame(columns=['code', 'decad_in_year', 'mean', 'min', 'max', 'q05', 'q25', 'q75', 'q95', 'norm'])
-        
+
         try:
             output_file_path = os.path.join(
                 os.getenv("ieasyforecast_intermediate_data_path"),
                 os.getenv("ieasyforecast_hydrograph_decad_file"))
-            empty_df.to_csv(output_file_path, index=False)
+            # Use atomic write for consistency with the rest of the codebase
+            atomic_write_csv(empty_df, output_file_path, index=False)
             logger.info(f"Empty CSV file created at {output_file_path}")
             return None
         except Exception as e:
@@ -3268,11 +3530,32 @@ def write_decad_hydrograph_data(data: pd.DataFrame, iehhf_sdk = None):
 
     logger.debug(f"Calculating decadal runoff statistics with data from {data['date'].min()} to {data['date'].max()}")
 
-    # If we are not in a leap year, drop the 29th of February and adjust the day_of_year
+    # Align day_of_year across leap/non-leap year boundaries
+    # The goal is to make day_of_year values comparable between current year and historical years
     data['day_of_year'] = data['date'].dt.dayofyear
-    if not is_leap_year(current_year):
-        data = data[~((data['date'].dt.month == 2) & (data['date'].dt.day == 29))]
-        data.loc[(data['date'].dt.month > 2), 'day_of_year'] -= 1
+    last_year = current_year - 1
+    current_is_leap = is_leap_year(current_year)
+    last_is_leap = is_leap_year(last_year)
+
+    # Case 1: Current=non-leap, Last=leap (e.g., 2025 vs 2024)
+    # Feb 29 data from leap years should be mapped to Feb 28, and day_of_year adjusted for Mar+
+    if not current_is_leap and last_is_leap:
+        # Map Feb 29 from leap years to Feb 28 (don't drop the data!)
+        feb29_mask = (data['date'].dt.month == 2) & (data['date'].dt.day == 29)
+        data.loc[feb29_mask, 'date'] = data.loc[feb29_mask, 'date'] - pd.Timedelta(days=1)
+        # Recalculate day_of_year after date adjustment
+        data['day_of_year'] = data['date'].dt.dayofyear
+        # Subtract 1 from day_of_year for dates after Feb 28 in last year's data
+        last_year_after_feb = (data['date'].dt.year == last_year) & (data['date'].dt.month > 2)
+        data.loc[last_year_after_feb, 'day_of_year'] -= 1
+
+    # Case 2: Current=leap, Last=non-leap (e.g., 2024 vs 2023)
+    # Add 1 to day_of_year for dates after Feb 28 in last year's data
+    elif current_is_leap and not last_is_leap:
+        last_year_after_feb = (data['date'].dt.year == last_year) & (data['date'].dt.month > 2)
+        data.loc[last_year_after_feb, 'day_of_year'] += 1
+
+    # Case 3: Both same type (leap-leap or non-leap-non-leap) - no adjustment needed
 
     # Filter to historical data only (excluding current year for statistics)
     historical_data = data[data['date'].dt.year != current_year].copy()
@@ -3389,8 +3672,13 @@ def write_decad_hydrograph_data(data: pd.DataFrame, iehhf_sdk = None):
         logger.warning(f"No data found for current year ({current_year})")
     
     if not last_year_data.empty:
-        # Process last year data
-        last_year_data.loc[:, 'date'] = pd.Timestamp(str(current_year)) + pd.to_timedelta(last_year_data['day_of_year'] - 1, unit='D')
+        # Process last year data - use DateOffset (handles leap years correctly)
+        last_year_data.loc[:, 'date'] = last_year_data['date'] + pd.DateOffset(years=1)
+        # Handle Feb 29 → Feb 28 mapping explicitly if DateOffset created Feb 29 in non-leap year
+        if not is_leap_year(current_year):
+            feb29_mask = (last_year_data['date'].dt.month == 2) & (last_year_data['date'].dt.day == 29)
+            if feb29_mask.any():
+                last_year_data.loc[feb29_mask, 'date'] = last_year_data.loc[feb29_mask, 'date'] - pd.Timedelta(days=1)
         last_year_data = last_year_data.rename(columns={'discharge_avg': str(last_year)}).reset_index(drop=True)
         
         # Ensure data types match for merge
@@ -3466,11 +3754,56 @@ def write_decad_hydrograph_data(data: pd.DataFrame, iehhf_sdk = None):
         logger.error(f"decad_in_year unique values: {runoff_stats['decad_in_year'].unique()}")
         raise
     
+    # Fill missing dates by reconstructing from decad_in_year
+    # The date column should ALWAYS be populated with the issue date, even when
+    # there's no discharge data for that decad
+    if 'date' in runoff_stats.columns:
+        missing_date_mask = runoff_stats['date'].isna()
+        if missing_date_mask.any():
+            logger.debug(f"Filling {missing_date_mask.sum()} missing dates from decad_in_year")
+            runoff_stats.loc[missing_date_mask, 'date'] = runoff_stats.loc[missing_date_mask, 'decad_in_year'].apply(
+                lambda d: get_issue_date_from_decad(d, current_year)
+            )
+
+    # Fill missing day_of_year by reconstructing from decad_in_year
+    # The day_of_year should ALWAYS be populated, even when there's no discharge data
+    if 'day_of_year' not in runoff_stats.columns:
+        # Create day_of_year column from decad_in_year
+        logger.debug("Creating day_of_year column from decad_in_year")
+        runoff_stats['day_of_year'] = runoff_stats['decad_in_year'].apply(
+            lambda d: get_day_of_year_from_decad(d, current_year)
+        )
+    else:
+        # Fill any missing values
+        missing_doy_mask = runoff_stats['day_of_year'].isna()
+        if missing_doy_mask.any():
+            logger.debug(f"Filling {missing_doy_mask.sum()} missing day_of_year values from decad_in_year")
+            runoff_stats.loc[missing_doy_mask, 'day_of_year'] = runoff_stats.loc[missing_doy_mask, 'decad_in_year'].apply(
+                lambda d: get_day_of_year_from_decad(d, current_year)
+            )
+
+    # Fill missing decad (1-3 within month) by reconstructing from decad_in_year
+    if 'decad' not in runoff_stats.columns:
+        logger.debug("Creating decad column from decad_in_year")
+        runoff_stats['decad'] = runoff_stats['decad_in_year'].apply(get_decad_from_decad_in_year)
+    else:
+        missing_decad_mask = runoff_stats['decad'].isna()
+        if missing_decad_mask.any():
+            logger.debug(f"Filling {missing_decad_mask.sum()} missing decad values from decad_in_year")
+            runoff_stats.loc[missing_decad_mask, 'decad'] = runoff_stats.loc[missing_decad_mask, 'decad_in_year'].apply(
+                get_decad_from_decad_in_year
+            )
+
+    # Ensure decad_in_year, decad, and day_of_year are integers
+    runoff_stats['decad_in_year'] = runoff_stats['decad_in_year'].astype(int)
+    runoff_stats['decad'] = runoff_stats['decad'].astype(int)
+    runoff_stats['day_of_year'] = runoff_stats['day_of_year'].astype(int)
+
     # Final validation before write
     logger.info(f"Final DataFrame ready for write: shape={runoff_stats.shape}, "
                 f"codes={runoff_stats['code'].nunique()}, "
                 f"decads={runoff_stats['decad_in_year'].nunique()}")
-    
+
     # Check for any infinite or NaN values that might cause issues
     inf_count = np.isinf(runoff_stats.select_dtypes(include=[np.number])).sum().sum()
     if inf_count > 0:
@@ -3508,45 +3841,34 @@ def write_decad_hydrograph_data(data: pd.DataFrame, iehhf_sdk = None):
         logger.error(f"ieasyforecast_hydrograph_decad_file: {os.getenv('ieasyforecast_hydrograph_decad_file')}")
         raise e
 
-    # Overwrite the file if it already exists
-    if os.path.exists(output_file_path):
-        try:
-            os.remove(output_file_path)
-            logger.debug(f"Removed existing file: {output_file_path}")
-        except Exception as e:
-            logger.error(f"Could not remove existing file {output_file_path}: {e}")
-            raise
-
-    # Write the data to a csv file. Raise an error if this does not work.
-    # If the data is written to the csv file, log a message that the data
-    # has been written.
+    # Write atomically (temp file + rename) to prevent data loss on crash
     try:
         # Validate DataFrame one more time before writing
         if runoff_stats.empty:
             raise ValueError("DataFrame is empty, cannot write to CSV")
-        
+
         # Log summary of data being written
         logger.info(f"Writing {len(runoff_stats)} rows to {output_file_path}")
         logger.info(f"Data covers {runoff_stats['code'].nunique()} stations and "
                    f"{runoff_stats['decad_in_year'].nunique()} decads")
-        
-        ret = runoff_stats.to_csv(output_file_path, index=False)
-        
+
+        atomic_write_csv(runoff_stats, output_file_path, index=False)
+
         # Verify the file was actually written
         if not os.path.exists(output_file_path):
             raise FileNotFoundError(f"CSV file was not created at {output_file_path}")
-        
+
         # Check file size
         file_size = os.path.getsize(output_file_path)
         if file_size == 0:
             raise ValueError(f"CSV file was created but is empty: {output_file_path}")
-        
+
         logger.info(f"Data successfully written to {output_file_path} (size: {file_size} bytes)")
-        
+
     except Exception as e:
         logger.error(f"Could not write the data to {output_file_path}: {e}")
         logger.error(f"DataFrame info: shape={runoff_stats.shape}, columns={list(runoff_stats.columns)}")
-        
+
         # Try to save debug information
         try:
             debug_path = output_file_path.replace('.csv', '_debug.csv')
@@ -3554,10 +3876,10 @@ def write_decad_hydrograph_data(data: pd.DataFrame, iehhf_sdk = None):
             logger.error(f"Saved first 10 rows for debugging to: {debug_path}")
         except:
             logger.error("Could not save debug information")
-        
+
         raise e
 
-    return ret
+    return None
 
 def write_decad_hydrograph_data_first_version(data: pd.DataFrame, iehhf_sdk = None):
     """
@@ -3675,21 +3997,15 @@ def write_decad_hydrograph_data_first_version(data: pd.DataFrame, iehhf_sdk = No
         print(os.getenv("ieasyforecast_hydrograph_decad_file"))
         raise e
 
-    # Overwrite the file if it already exists
-    if os.path.exists(output_file_path):
-        os.remove(output_file_path)
-
-    # Write the data to a csv file. Raise an error if this does not work.
-    # If the data is written to the csv file, log a message that the data
-    # has been written.
+    # Write atomically (temp file + rename) to prevent data loss on crash
     try:
-        ret = runoff_stats.to_csv(output_file_path, index=False)
+        atomic_write_csv(runoff_stats, output_file_path, index=False)
         logger.info(f"Data written to {output_file_path}.")
     except Exception as e:
         logger.error(f"Could not write the data to {output_file_path}.")
         raise e
 
-    return ret
+    return None
 
 def write_pentad_time_series_data(data: pd.DataFrame):
     """
@@ -3740,25 +4056,19 @@ def write_pentad_time_series_data(data: pd.DataFrame):
         print(os.getenv("ieasyforecast_pentad_discharge_file"))
         raise e
 
-    # Overwrite the file if it already exists
-    if os.path.exists(output_file_path):
-        os.remove(output_file_path)
-
-    # Write the data to a csv file. Raise an error if this does not work.
-    # If the data is written to the csv file, log a message that the data
-    # has been written.
+    # Write atomically (temp file + rename) to prevent data loss on crash
     try:
         # Ensure date is formatted as YYYY-MM-DD before writing
         if 'date' in data.columns:
             data['date'] = pd.to_datetime(data['date'], errors='coerce').dt.strftime('%Y-%m-%d')
-        
-        ret = data.to_csv(output_file_path, index=False)
+
+        atomic_write_csv(data, output_file_path, index=False)
         logger.info(f"Data written to {output_file_path}.")
     except Exception as e:
         logger.error(f"Could not write the data to {output_file_path}.")
         raise e
 
-    return ret
+    return None
 
 def write_decad_time_series_data(data: pd.DataFrame):
     """
@@ -3810,25 +4120,19 @@ def write_decad_time_series_data(data: pd.DataFrame):
         print(os.getenv("ieasyforecast_decad_discharge_file"))
         raise e
 
-    # Overwrite the file if it already exists
-    if os.path.exists(output_file_path):
-        os.remove(output_file_path)
-
-    # Write the data to a csv file. Raise an error if this does not work.
-    # If the data is written to the csv file, log a message that the data
-    # has been written.
+    # Write atomically (temp file + rename) to prevent data loss on crash
     try:
         # Ensure date is formatted as YYYY-MM-DD before writing
         if 'date' in data.columns:
             data['date'] = pd.to_datetime(data['date'], errors='coerce').dt.strftime('%Y-%m-%d')
-        
-        ret = data.to_csv(output_file_path, index=False)
+
+        atomic_write_csv(data, output_file_path, index=False)
         logger.info(f"Data written to {output_file_path}.")
     except Exception as e:
         logger.error(f"Could not write the data to {output_file_path}.")
         raise e
 
-    return ret
+    return None
 
 def save_pentadal_skill_metrics(data: pd.DataFrame):
     """
@@ -3863,21 +4167,15 @@ def save_pentadal_skill_metrics(data: pd.DataFrame):
         os.getenv("ieasyforecast_intermediate_data_path"),
         os.getenv("ieasyforecast_pentadal_skill_metrics_file"))
 
-    # Overwrite the file if it already exists
-    if os.path.exists(filepath):
-        os.remove(filepath)
-
-    # Write the data to a csv file. Raise an error if this does not work.
-    # If the data is written to the csv file, log a message that the data
-    # has been written.
+    # Write atomically (temp file + rename) to prevent data loss on crash
     try:
-        ret = data.to_csv(filepath, index=False)
+        atomic_write_csv(data, filepath, index=False)
         logger.info(f"Data written to {filepath}.")
     except Exception as e:
         logger.error(f"Could not write the data to {filepath}.")
         raise e
 
-    return ret
+    return None
 
 def save_decadal_skill_metrics(data: pd.DataFrame):
     """
@@ -3912,21 +4210,15 @@ def save_decadal_skill_metrics(data: pd.DataFrame):
         os.getenv("ieasyforecast_intermediate_data_path"),
         os.getenv("ieasyforecast_decadal_skill_metrics_file"))
 
-    # Overwrite the file if it already exists
-    if os.path.exists(filepath):
-        os.remove(filepath)
-
-    # Write the data to a csv file. Raise an error if this does not work.
-    # If the data is written to the csv file, log a message that the data
-    # has been written.
+    # Write atomically (temp file + rename) to prevent data loss on crash
     try:
-        ret = data.to_csv(filepath, index=False)
+        atomic_write_csv(data, filepath, index=False)
         logger.info(f"Data written to {filepath}.")
     except Exception as e:
         logger.error(f"Could not write the data to {filepath}.")
         raise e
 
-    return ret
+    return None
 
 def get_latest_forecasts(simulated_df, horizon_column_name='pentad_in_year'):
     """
@@ -5471,6 +5763,109 @@ class Site:
             return []
 
     @classmethod
+    def all_forecast_sites_from_iEH_HF_SDK(cls, sites: list) -> list:
+        """
+        Creates a list of site objects for ALL sites with ANY forecast type enabled.
+
+        Includes sites where any of these flags are True:
+        - daily_forecast
+        - pentad_forecast
+        - decadal_forecast
+        - monthly_forecast
+        - seasonal_forecast
+
+        Args:
+            sites (list): The object containing the site data from
+                ieasyhydro_hf_sdk.get_discharge_sites()
+
+        Returns:
+            list: A list of Site objects for all forecast-enabled sites.
+        """
+        try:
+            df = pd.DataFrame(sites)
+            site_list = []
+
+            for index, row in df.iterrows():
+                row = pd.DataFrame(row).T
+                enabled = row['enabled_forecasts'].values[0]
+
+                # Skip if enabled_forecasts is None
+                if enabled is None:
+                    logger.debug(f'Skipping site {row["site_code"].values[0]} - no forecast flags set.')
+                    continue
+
+                # Check if ANY forecast flag is enabled
+                has_any_forecast = (
+                    enabled.get('daily_forecast', False) or
+                    enabled.get('pentad_forecast', False) or
+                    enabled.get('decadal_forecast', False) or
+                    enabled.get('monthly_forecast', False) or
+                    enabled.get('seasonal_forecast', False)
+                )
+
+                if not has_any_forecast:
+                    logger.debug(f'Skipping site {row["site_code"].values[0]} - no forecast types enabled.')
+                    continue
+
+                # Create Site object
+                name_parts = split_name(row['official_name'].values[0])
+                name_nat_parts = split_name(row['national_name'].values[0])
+
+                site = cls(
+                    code=row['site_code'].values[0],
+                    iehhf_site_id=row['id'].values[0],
+                    name=row['official_name'].values[0],
+                    name_nat=row['national_name'].values[0],
+                    river_name=name_parts[0],
+                    river_name_nat=name_nat_parts[0],
+                    punkt_name=name_parts[1],
+                    punkt_name_nat=name_nat_parts[1],
+                    lat=row['latitude'].values[0],
+                    lon=row['longitude'].values[0],
+                    region=row['region'].values[0]['official_name'],
+                    region_nat=row['region'].values[0]['national_name'],
+                    basin=row['basin'].values[0]['official_name'],
+                    basin_nat=row['basin'].values[0]['national_name'],
+                    qdanger=row['dangerous_discharge'].values[0],
+                    histqmin=row['historical_discharge_minimum'].values[0],
+                    histqmax=row['historical_discharge_maximum'].values[0],
+                    bulletin_order=row['bulletin_order'].values[0],
+                    daily_forecast=enabled.get('daily_forecast', False),
+                    pentadal_forecast=enabled.get('pentad_forecast', False),
+                    decadal_forecast=enabled.get('decadal_forecast', False),
+                    monthly_forecast=enabled.get('monthly_forecast', False),
+                    seasonal_forecast=enabled.get('seasonal_forecast', False),
+                    site_type=row['site_type'].values[0],
+                )
+                site_list.append(site)
+
+            # Filter for manual stations only (avoid duplicates from automatic stations)
+            site_list = [site for site in site_list if site.site_type == 'manual']
+
+            # Sort by basin and bulletin order
+            if site_list:
+                df_sort = pd.DataFrame({
+                    'codes': [site.code for site in site_list],
+                    'basins': [site.basin for site in site_list],
+                    'bulletin_order': [site.bulletin_order for site in site_list]
+                })
+                df_sort = df_sort.sort_values(by=['basins', 'bulletin_order'])
+                ordered_codes = df_sort['codes'].tolist()
+
+                ordered_sites = []
+                for code in ordered_codes:
+                    site = next((s for s in site_list if s.code == code), None)
+                    if site:
+                        ordered_sites.append(site)
+                return ordered_sites
+
+            return site_list
+
+        except Exception as e:
+            logger.error(f'Error creating Site objects from DataFrame: {e}')
+            return []
+
+    @classmethod
     def virtual_decad_forecast_sites_from_iEH_HF_SDK(cls, sites: list) -> list:
         """
         Creates a list of site objects with attributes read from the sites object.
@@ -5697,6 +6092,110 @@ class Site:
             return ordered_sites_list
         except Exception as e:
             print(f'Error creating Site objects from DataFrame: {e}')
+            return []
+
+    @classmethod
+    def virtual_all_forecast_sites_from_iEH_HF_SDK(cls, sites: list) -> list:
+        """
+        Creates a list of virtual site objects for ALL sites with ANY forecast type enabled.
+
+        Includes virtual sites where any of these flags are True:
+        - daily_forecast
+        - pentad_forecast
+        - decadal_forecast
+        - monthly_forecast
+        - seasonal_forecast
+
+        Args:
+            sites (list): The object containing the virtual site data from
+                ieasyhydro_hf_sdk.get_virtual_sites()
+
+        Returns:
+            list: A list of Site objects for all forecast-enabled virtual sites.
+        """
+        logger.debug('Creating virtual sites (all forecasts) from iEH HF SDK.')
+        try:
+            df = pd.DataFrame(sites)
+            site_list = []
+
+            for index, row in df.iterrows():
+                row = pd.DataFrame(row).T
+                enabled = row['enabled_forecasts'].values[0]
+
+                # Skip if enabled_forecasts is None
+                if enabled is None:
+                    logger.debug(f'Skipping virtual site {row["site_code"].values[0]} - no forecast flags set.')
+                    continue
+
+                # Check if ANY forecast flag is enabled
+                has_any_forecast = (
+                    enabled.get('daily_forecast', False) or
+                    enabled.get('pentad_forecast', False) or
+                    enabled.get('decadal_forecast', False) or
+                    enabled.get('monthly_forecast', False) or
+                    enabled.get('seasonal_forecast', False)
+                )
+
+                if not has_any_forecast:
+                    logger.debug(f'Skipping virtual site {row["site_code"].values[0]} - no forecast types enabled.')
+                    continue
+
+                # Create Site object for virtual site
+                name_parts = row['official_name'].values[0].split(' - ')
+                name_nat_parts = row['national_name'].values[0].split(' - ')
+                if len(name_parts) == 1:
+                    name_parts = [row['official_name'].values[0], '']
+                if len(name_nat_parts) == 1:
+                    name_nat_parts = [row['national_name'].values[0], '']
+
+                site = cls(
+                    code=row['site_code'].values[0],
+                    iehhf_site_id=row['id'].values[0],
+                    name=row['official_name'].values[0],
+                    name_nat=row['national_name'].values[0],
+                    river_name=name_parts[0],
+                    river_name_nat=name_nat_parts[0],
+                    punkt_name=name_parts[1],
+                    punkt_name_nat=name_nat_parts[1],
+                    lat=row['latitude'].values[0],
+                    lon=row['longitude'].values[0],
+                    region=row['region'].values[0]['official_name'],
+                    region_nat=row['region'].values[0]['national_name'],
+                    basin=row['basin'].values[0]['official_name'],
+                    basin_nat=row['basin'].values[0]['national_name'],
+                    qdanger=row['dangerous_discharge'].values[0],
+                    histqmin=row['historical_discharge_minimum'].values[0],
+                    histqmax=row['historical_discharge_maximum'].values[0],
+                    bulletin_order=row['bulletin_order'].values[0],
+                    daily_forecast=enabled.get('daily_forecast', False),
+                    pentadal_forecast=enabled.get('pentad_forecast', False),
+                    decadal_forecast=enabled.get('decadal_forecast', False),
+                    monthly_forecast=enabled.get('monthly_forecast', False),
+                    seasonal_forecast=enabled.get('seasonal_forecast', False),
+                )
+                site_list.append(site)
+
+            # Sort by basin and bulletin order
+            if site_list:
+                df_sort = pd.DataFrame({
+                    'codes': [site.code for site in site_list],
+                    'basins': [site.basin for site in site_list],
+                    'bulletin_order': [site.bulletin_order for site in site_list]
+                })
+                df_sort = df_sort.sort_values(by=['basins', 'bulletin_order'])
+                ordered_codes = df_sort['codes'].tolist()
+
+                ordered_sites = []
+                for code in ordered_codes:
+                    site = next((s for s in site_list if s.code == code), None)
+                    if site:
+                        ordered_sites.append(site)
+                return ordered_sites
+
+            return site_list
+
+        except Exception as e:
+            logger.error(f'Error creating virtual Site objects from DataFrame: {e}')
             return []
 
     @classmethod

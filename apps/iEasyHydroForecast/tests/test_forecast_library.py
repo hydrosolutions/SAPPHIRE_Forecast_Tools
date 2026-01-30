@@ -645,7 +645,9 @@ class TestGetPredictorDatetimes(unittest.TestCase):
 
 class TestReadDailyDischargeDataFromCSV(unittest.TestCase):
     def setUp(self):
-        os.environ["ieasyforecast_intermediate_data_path"] = "iEasyHydroForecast/tests/test_data"
+        # Use absolute path based on test file location
+        test_data_path = os.path.join(os.path.dirname(__file__), 'test_data')
+        os.environ["ieasyforecast_intermediate_data_path"] = test_data_path
         os.environ["ieasyforecast_daily_discharge_file"] = "daily_discharge_data_test_file.csv"
         self.original_data_path = os.getenv("ieasyforecast_intermediate_data_path")
         self.original_discharge_file = os.getenv("ieasyforecast_daily_discharge_file")
@@ -667,7 +669,9 @@ class TestReadDailyDischargeDataFromCSV(unittest.TestCase):
 
 
     def test_file_exists(self):
-        os.environ["ieasyforecast_intermediate_data_path"] = "iEasyHydroForecast/tests/test_data"
+        # Use absolute path based on test file location
+        test_data_path = os.path.join(os.path.dirname(__file__), 'test_data')
+        os.environ["ieasyforecast_intermediate_data_path"] = test_data_path
         os.environ["ieasyforecast_daily_discharge_file"] = "daily_discharge_data_test_file.csv"
         expected_output = pd.DataFrame({
             'code': [19213, 19213, 19213, 19213, 19213, 19213, 19213, 19213,
@@ -1872,18 +1876,36 @@ class TestWritePentadHydrographData(unittest.TestCase):
         self.assertIn('norm', output_data.columns)
         self.assertTrue(output_data['norm'].notna().any())
 
-    @patch('os.path.exists')
-    @patch('os.remove')
-    def test_overwrite_existing_file(self, mock_remove, mock_exists):
-        """Test that existing files are overwritten."""
-        # Setup mocks
-        mock_exists.return_value = True
-        
-        # Call the function
+    def test_overwrite_existing_file(self):
+        """Test that existing files are overwritten atomically.
+
+        Note: With the atomic write fix (Bug 4), files are now overwritten
+        using temp file + rename pattern instead of delete-then-write.
+        This test verifies the file is correctly overwritten.
+        """
+        # Construct the output file path from environment variables
+        output_file_path = os.path.join(
+            os.environ["ieasyforecast_intermediate_data_path"],
+            os.environ["ieasyforecast_hydrograph_pentad_file"]
+        )
+
+        # Create an initial file with different content
+        initial_content = "old,data\n1,2\n"
+        with open(output_file_path, 'w') as f:
+            f.write(initial_content)
+
+        # Verify initial file exists
+        self.assertTrue(os.path.exists(output_file_path))
+
+        # Call the function to overwrite
         fl.write_pentad_hydrograph_data(self.test_data)
-        
-        # Check that os.remove was called
-        mock_remove.assert_called_once()
+
+        # Verify file still exists and has new content (not the old content)
+        self.assertTrue(os.path.exists(output_file_path))
+        with open(output_file_path, 'r') as f:
+            new_content = f.read()
+        self.assertNotEqual(new_content, initial_content)
+        self.assertIn('code', new_content)  # Should have the new data columns
         
     def test_error_handling(self):
         """Test error handling when unable to write to the output file."""
@@ -2144,9 +2166,120 @@ class TestWriteDecadHydrographData(unittest.TestCase):
         # Year columns should still be present and populated
         year_columns = [col for col in output_data.columns if col.isdigit() and len(col) == 4]
         self.assertGreater(len(year_columns), 0, "Year columns should exist after norm failure")
-        
+
         for year_col in year_columns:
             self.assertIn(year_col, output_data.columns, f"Year column '{year_col}' should exist after norm failure")
+
+
+# ============================================================================
+# Bug 4 Fix Tests: Atomic File Write Operations
+# These tests verify that the atomic_write_csv function prevents data loss
+# by using temp file + rename pattern instead of delete-then-write.
+# ============================================================================
+
+class TestAtomicWriteCSV(unittest.TestCase):
+    """Tests for the atomic_write_csv function that prevents data loss."""
+
+    def setUp(self):
+        """Set up test fixtures."""
+        self.test_dir = tempfile.mkdtemp()
+        self.test_file = os.path.join(self.test_dir, "test_output.csv")
+        self.test_data = pd.DataFrame({
+            'code': ['15102', '15124', '15136'],
+            'value': [100.0, 200.0, 300.0],
+            'date': ['2023-05-25', '2023-05-25', '2023-05-25']
+        })
+
+    def tearDown(self):
+        """Clean up test fixtures."""
+        if os.path.exists(self.test_dir):
+            shutil.rmtree(self.test_dir)
+
+    def test_atomic_write_success(self):
+        """Test that atomic_write_csv successfully writes data to a new file."""
+        fl.atomic_write_csv(self.test_data, self.test_file, index=False)
+
+        # Verify file exists
+        self.assertTrue(os.path.exists(self.test_file))
+
+        # Verify data is correct (use check_dtype=False since CSV parsing may change dtypes)
+        result = pd.read_csv(self.test_file, dtype={'code': str})
+        assert_frame_equal(result, self.test_data, check_dtype=False)
+
+    def test_atomic_write_overwrites_existing(self):
+        """Test that atomic_write_csv overwrites existing files correctly."""
+        # Create initial file with different data
+        initial_data = pd.DataFrame({'code': ['OLD'], 'value': [999]})
+        initial_data.to_csv(self.test_file, index=False)
+
+        # Overwrite with new data
+        fl.atomic_write_csv(self.test_data, self.test_file, index=False)
+
+        # Verify new data is correct (use check_dtype=False since CSV parsing may change dtypes)
+        result = pd.read_csv(self.test_file, dtype={'code': str})
+        assert_frame_equal(result, self.test_data, check_dtype=False)
+
+    def test_atomic_write_preserves_original_on_failure(self):
+        """Test that original file is preserved if write fails.
+
+        This tests the key property of atomic writes: if something goes wrong
+        during the write, the original file should remain intact.
+        """
+        # Create initial file
+        initial_data = pd.DataFrame({'code': ['ORIGINAL'], 'value': [123]})
+        initial_data.to_csv(self.test_file, index=False)
+
+        # Try to write with a mock that forces an exception during to_csv
+        original_to_csv = pd.DataFrame.to_csv
+
+        def failing_to_csv(*args, **kwargs):
+            raise IOError("Simulated write failure")
+
+        # Patch to_csv to fail
+        with patch.object(pd.DataFrame, 'to_csv', failing_to_csv):
+            with self.assertRaises(IOError):
+                fl.atomic_write_csv(self.test_data, self.test_file, index=False)
+
+        # Original file should still exist and be unchanged
+        self.assertTrue(os.path.exists(self.test_file))
+        result = pd.read_csv(self.test_file)
+        assert_frame_equal(result, initial_data, check_dtype=False)
+
+    def test_atomic_write_creates_directory(self):
+        """Test that atomic_write_csv creates parent directories if needed."""
+        nested_path = os.path.join(self.test_dir, "subdir1", "subdir2", "output.csv")
+
+        fl.atomic_write_csv(self.test_data, nested_path, index=False)
+
+        # Verify file exists in nested directory
+        self.assertTrue(os.path.exists(nested_path))
+
+        # Verify data is correct (use check_dtype=False since CSV parsing may change dtypes)
+        result = pd.read_csv(nested_path, dtype={'code': str})
+        assert_frame_equal(result, self.test_data, check_dtype=False)
+
+    def test_atomic_write_with_kwargs(self):
+        """Test that atomic_write_csv passes kwargs to to_csv correctly."""
+        fl.atomic_write_csv(self.test_data, self.test_file, index=False, sep=';')
+
+        # Verify the file was written with the correct separator
+        with open(self.test_file, 'r') as f:
+            content = f.read()
+            self.assertIn(';', content)  # Should use semicolon separator
+            # Check that data values are present
+            self.assertIn('15102', content)
+            self.assertIn('100.0', content)
+
+    def test_atomic_write_no_temp_files_remain(self):
+        """Test that no temporary files remain after successful write."""
+        fl.atomic_write_csv(self.test_data, self.test_file, index=False)
+
+        # List all files in the directory
+        files = os.listdir(self.test_dir)
+
+        # Should only have the output file, no temp files
+        self.assertEqual(len(files), 1)
+        self.assertEqual(files[0], "test_output.csv")
 
 
 if __name__ == '__main__':

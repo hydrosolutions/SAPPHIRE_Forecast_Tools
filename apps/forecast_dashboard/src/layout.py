@@ -80,11 +80,59 @@ def define_disclaimer(_, in_docker_flag):
         logos,
         pn.pane.HTML("<p> </p>"),
         pn.pane.Markdown(_("disclaimer_waranty")),
-        pn.pane.Markdown(_("Last updated on ") + dt.datetime.now().strftime("%b %d, %Y") + ".")
+        pn.pane.Markdown(_("Last updated on ") + dt.datetime.now().strftime("%b %d, %Y") + "."),
+        pn.pane.HTML('''
+            <div style="font-size: 11px; color: #666; padding: 10px; border-top: 1px solid #ddd; margin-top: 20px;">
+                <strong>Open Source Attribution</strong><br>
+                SAPPHIRE Forecast Tools is open-source software licensed under the 
+                <a href="https://github.com/hydrosolutions/SAPPHIRE_forecast_tools/blob/main/LICENSE" target="_blank">MIT License</a>.<br><br>
+                Built with: 
+                <a href="https://panel.holoviz.org/" target="_blank">Panel</a>, 
+                <a href="https://bokeh.org/" target="_blank">Bokeh</a>, 
+                <a href="https://holoviews.org/" target="_blank">HoloViews</a> (BSD-3-Clause) · 
+                <a href="https://luigi.readthedocs.io/" target="_blank">Luigi</a> (Apache 2.0) · 
+                <a href="https://unit8co.github.io/darts/" target="_blank">Darts</a> (Apache 2.0) · 
+                <a href="https://pytorch.org/" target="_blank">PyTorch</a> (BSD) · 
+                <a href="https://numpy.org/" target="_blank">NumPy</a>, 
+                <a href="https://pandas.pydata.org/" target="_blank">Pandas</a>, 
+                <a href="https://scikit-learn.org/" target="_blank">scikit-learn</a> (BSD)<br>
+                <a href="https://github.com/hydrosolutions/SAPPHIRE_forecast_tools" target="_blank">Source Code</a> · 
+                <a href="https://hydrosolutions.github.io/SAPPHIRE_forecast_tools/" target="_blank">Documentation</a>
+            </div>
+        ''')
+    )
+
+def _create_snow_card(_, snow_plot_panes):
+    """Create a card with all available snow plots in a specific order."""
+    preferred_order = ['SWE', 'HS', 'RoF']
+    
+    valid_plots = [
+        snow_plot_panes[var] 
+        for var in preferred_order 
+        if var in snow_plot_panes and snow_plot_panes[var].object is not None
+    ]
+    
+    if not valid_plots:
+        return pn.Card(
+            pn.pane.Markdown(_("No snow data available")),
+            title=_("Snow Data (SnowMapper)"),
+            collapsed=False
+        )
+    
+    # Calculate height: e.g., 400px per plot + some padding
+    card_height = len(valid_plots) * 400 + 100
+    
+    return pn.Card(
+        *valid_plots,
+        title=_("Snow Data"),
+        collapsed=False,
+        collapsible=True,
+        sizing_mode='stretch_both',
+        min_height=card_height
     )
 
 def define_tabs(_, predictors_warning, forecast_warning,
-                daily_hydrograph_plot, rainfall_plot, temperature_plot,
+                daily_hydrograph_plot, rainfall_plot, temperature_plot, daily_snow_plot,
                 #daily_rel_norm_runoff, daily_rel_to_norm_rainfall,
                 forecast_data_and_plot,
                 forecast_summary_table, pentad_forecast_plot, effectiveness_plot,
@@ -110,6 +158,9 @@ def define_tabs(_, predictors_warning, forecast_warning,
                 pn.Row(
                     pn.Card(temperature_plot, title=_("Temperature"))
                 ), 
+                pn.Row(
+                    _create_snow_card(_, daily_snow_plot)
+                )
             ),
             ), 
             (_('Forecast'),
@@ -132,7 +183,9 @@ def define_tabs(_, predictors_warning, forecast_warning,
                      ),
                      pn.Card(
                          daily_hydrograph_plot,
-                         title=_('Analysis of the forecast'))
+                         title=_('Analysis of the forecast')
+                     )
+                     
             #     pn.Row(
             #         pn.Card(pentad_effectiveness, title=_("Effectiveness of the methods"))),
             #     pn.Row(
@@ -166,6 +219,10 @@ def define_tabs(_, predictors_warning, forecast_warning,
                      sizing_mode='stretch_width',
                      min_height=400 if not daily_hydrograph_plot.object.data.empty else 0,
                  ), 
+                 pn.Row(
+                     _create_snow_card(_, daily_snow_plot), 
+                     sizing_mode='stretch_both',
+                 )
              ),
             ),
             (_('Forecast'),

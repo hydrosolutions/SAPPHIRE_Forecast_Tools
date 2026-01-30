@@ -1,23 +1,36 @@
 # syntax=docker/dockerfile:1
 
+# Python 3.12 + uv image for preprocessing_runoff module
+# This image runs in parallel with the :latest (Python 3.11 + pip) version during migration
+# See: implementation_planning/uv_migration_plan.md
+
 FROM mabesa/sapphire-pythonbaseimage:latest AS base
 
-# Set an environment variable that can be read by the application to know if it
-# is running in a container.
-#ENV IN_DOCKER_CONTAINER=true
-ENV SAPPHRIE_OPDEV_ENV=True
+# Set environment variable for runtime detection
+ENV SAPPHIRE_OPDEV_ENV=True
 
-# Setting the working directory to /app
+# Switch to root for installation and runtime
+# This module writes to shared volumes, requiring root access
+USER root
+
+# Set working directory
 WORKDIR /app
 
-# All files in the current directory are copied into the container into
-# directory app.
+# Copy iEasyHydroForecast (local dependency referenced in pyproject.toml)
+COPY apps/iEasyHydroForecast /app/apps/iEasyHydroForecast
+
+# Copy preprocessing_runoff source code (includes pyproject.toml and uv.lock)
 COPY apps/preprocessing_runoff /app/apps/preprocessing_runoff
 
-# No additional requirements to install for this application.
+# Install all dependencies using uv sync (includes iEasyHydroForecast from local path)
+# This creates a virtual environment and installs from uv.lock for reproducibility
+WORKDIR /app/apps/preprocessing_runoff
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev
 
-# Expose the port that the application listens on.
+# Expose the port that the application listens on
 EXPOSE 8881
 
-# Run the application.
-CMD ["sh", "-c", "PYTHONPATH=/app/apps/iEasyHydroForecast python apps/preprocessing_runoff/preprocessing_runoff.py"]
+# Run the application using uv run (activates the virtual environment automatically)
+# Default is operational mode; use PREPROCESSING_MODE=maintenance for maintenance mode
+CMD ["uv", "run", "preprocessing_runoff.py"]

@@ -1,0 +1,153 @@
+# SAPPHIRE Forecast Tools - Development & Deployment Makefile
+# Usage: make help
+
+SHELL := /bin/bash
+.DEFAULT_GOAL := help
+
+# Configuration (can be overridden: make ENV_FILE=path/to/.env run-linreg)
+ENV_FILE ?= config/.env_local
+DATA_DIR ?= data
+MODE ?= PENTAD
+
+# Derived paths
+REPO_ROOT := $(shell pwd)
+PYTHONPATH := $(REPO_ROOT)/apps/iEasyHydroForecast
+
+# Colors for output
+BLUE := \033[0;34m
+GREEN := \033[0;32m
+YELLOW := \033[0;33m
+NC := \033[0m  # No Color
+
+##@ Setup
+.PHONY: setup setup-venv setup-data setup-env
+
+setup: setup-venv setup-data setup-env  ## Complete local development setup
+	@echo -e "$(GREEN)✓ Setup complete! Run 'make help' for available commands$(NC)"
+
+setup-venv:  ## Create Python virtual environment and install dependencies
+	@echo -e "$(BLUE)Installing dependencies with uv...$(NC)"
+	cd apps/iEasyHydroForecast && uv sync
+	cd apps/linear_regression && uv sync
+	cd apps/preprocessing_runoff && uv sync || true
+	cd apps/postprocessing_forecasts && uv sync || true
+	cd apps/machine_learning && uv sync || true
+	@echo -e "$(GREEN)✓ Dependencies installed. Each module has its own .venv managed by uv$(NC)"
+
+setup-data:  ## Set up local data directory with symlinks to Dropbox
+	@echo -e "$(BLUE)Setting up data directory...$(NC)"
+	@./bin/setup_local_data.sh
+	@echo -e "$(GREEN)✓ Data directory ready at $(DATA_DIR)/$(NC)"
+
+setup-env:  ## Create local .env file from template
+	@if [ ! -f config/.env_local ]; then \
+		cp config/.env_local_template config/.env_local; \
+		echo -e "$(YELLOW)Created config/.env_local - please edit with your credentials$(NC)"; \
+	else \
+		echo -e "$(GREEN)✓ config/.env_local already exists$(NC)"; \
+	fi
+
+##@ Local Python Testing (No Docker)
+.PHONY: run-linreg run-preprunoff run-prepgateway run-postproc run-ml
+
+run-linreg:  ## Run linear regression module locally
+	@echo -e "$(BLUE)Running linear regression ($(MODE))...$(NC)"
+	@./bin/local_run.sh $(ENV_FILE) apps/linear_regression/linear_regression.py $(MODE)
+
+run-preprunoff:  ## Run preprocessing runoff module locally
+	@echo -e "$(BLUE)Running preprocessing runoff...$(NC)"
+	@./bin/local_run.sh $(ENV_FILE) apps/preprocessing_runoff/preprocessing_runoff.py
+
+run-prepgateway:  ## Run preprocessing gateway module locally
+	@echo -e "$(BLUE)Running preprocessing gateway...$(NC)"
+	@./bin/local_run.sh $(ENV_FILE) apps/preprocessing_gateway/Quantile_Mapping_OP.py
+
+run-postproc:  ## Run post-processing module locally
+	@echo -e "$(BLUE)Running post-processing ($(MODE))...$(NC)"
+	@./bin/local_run.sh $(ENV_FILE) apps/postprocessing_forecasts/postprocessing_forecasts.py $(MODE)
+
+run-ml:  ## Run ML forecast module locally (requires MODEL=TFT|TIDE|TSMIXER)
+	@echo -e "$(BLUE)Running ML model $(MODEL) ($(MODE))...$(NC)"
+	SAPPHIRE_MODEL_TO_USE=$(MODEL) ./bin/local_run.sh $(ENV_FILE) apps/machine_learning/make_forecast.py $(MODE)
+
+##@ Local Docker Testing
+.PHONY: docker-build docker-test-pentad docker-test-decad docker-shell
+
+docker-build:  ## Build local Docker images
+	@echo -e "$(BLUE)Building Docker images...$(NC)"
+	docker compose -f bin/docker-compose-local.yml build
+
+docker-test-pentad:  ## Run pentadal pipeline in Docker with local scheduler
+	@echo -e "$(BLUE)Running pentadal pipeline in Docker...$(NC)"
+	@./bin/local_docker_test.sh $(ENV_FILE) PENTAD
+
+docker-test-decad:  ## Run decadal pipeline in Docker with local scheduler
+	@echo -e "$(BLUE)Running decadal pipeline in Docker...$(NC)"
+	@./bin/local_docker_test.sh $(ENV_FILE) DECAD
+
+docker-shell:  ## Start interactive shell in pipeline container
+	@echo -e "$(BLUE)Starting interactive shell...$(NC)"
+	docker compose -f bin/docker-compose-local.yml run --rm pipeline-local /bin/bash
+
+##@ Production Deployment
+.PHONY: forecast-pentad forecast-decad maintenance dashboard-update
+
+forecast-pentad:  ## Run pentadal forecasts (production)
+	@./bin/run_pentadal_forecasts.sh $(ENV_FILE)
+
+forecast-decad:  ## Run decadal forecasts (production)
+	@./bin/run_decadal_forecasts.sh $(ENV_FILE)
+
+maintenance:  ## Run ML maintenance (production)
+	@./bin/daily_ml_maintenance.sh $(ENV_FILE)
+
+dashboard-update:  ## Update dashboards (production)
+	@./bin/daily_update_sapphire_frontend.sh $(ENV_FILE)
+
+##@ Logs & Debugging
+.PHONY: logs logs-follow logs-clean
+
+logs:  ## Show recent pipeline logs
+	@echo -e "$(BLUE)Recent logs:$(NC)"
+	@tail -100 $(DATA_DIR)/logs/$$(ls -t $(DATA_DIR)/logs/ 2>/dev/null | head -1)/*.log 2>/dev/null || \
+		docker compose -f bin/docker-compose-luigi.yml logs --tail=100 2>/dev/null || \
+		echo "No logs found. Run a pipeline first."
+
+logs-follow:  ## Follow pipeline logs in real-time
+	docker compose -f bin/docker-compose-luigi.yml logs -f
+
+logs-clean:  ## Clean old log files (>15 days)
+	find $(DATA_DIR)/logs -type f -mtime +15 -delete 2>/dev/null || true
+	@echo -e "$(GREEN)✓ Old logs cleaned$(NC)"
+
+##@ Utilities
+.PHONY: clean clean-docker status help
+
+clean:  ## Remove build artifacts and temp files
+	rm -rf __pycache__ .pytest_cache .mypy_cache
+	find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+	find . -type f -name "*.pyc" -delete 2>/dev/null || true
+
+clean-docker:  ## Stop and remove all SAPPHIRE containers
+	docker compose -f bin/docker-compose-luigi.yml down 2>/dev/null || true
+	docker compose -f bin/docker-compose-dashboards.yml down 2>/dev/null || true
+	docker container prune -f
+
+status:  ## Show status of SAPPHIRE services
+	@echo -e "$(BLUE)Docker containers:$(NC)"
+	@docker ps --filter "name=sapphire" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null || echo "No containers running"
+	@echo ""
+	@echo -e "$(BLUE)Luigi daemon:$(NC)"
+	@curl -s http://localhost:8082/ > /dev/null 2>&1 && echo "✓ Running at http://localhost:8082" || echo "✗ Not running"
+
+help:  ## Show this help message
+	@echo -e "$(BLUE)SAPPHIRE Forecast Tools$(NC)"
+	@echo ""
+	@echo "Usage: make [target] [VAR=value]"
+	@echo ""
+	@echo "Variables:"
+	@echo "  ENV_FILE  Path to .env file (default: config/.env_local)"
+	@echo "  MODE      Prediction mode: PENTAD or DECAD (default: PENTAD)"
+	@echo "  MODEL     ML model: TFT, TIDE, TSMIXER (for run-ml target)"
+	@echo ""
+	@awk 'BEGIN {FS = ":.*##"; printf ""} /^[a-zA-Z_-]+:.*?##/ { printf "  $(GREEN)%-18s$(NC) %s\n", $$1, $$2 } /^##@/ { printf "\n$(BLUE)%s$(NC)\n", substr($$0, 5) } ' $(MAKEFILE_LIST)

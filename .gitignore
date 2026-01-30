@@ -221,3 +221,22 @@ apps/forecast_dashboard/user_activity.csv
 /logs
 /apps/machine_learning_monthly/logs
 temp_luigi.cfg
+
+# Serena MCP server files
+# Tracked (shared with team):
+#   - .serena/project.yml (project configuration)
+#   - .serena/memories/project_overview.md (architecture docs)
+#   - .serena/memories/code_style_conventions.md (coding standards)
+#   - .serena/memories/task_completion_checklist.md (quality guidelines)
+# Ignored (local/sensitive):
+.serena/cache/
+.serena/memories/suggested_commands.md
+.serena/memories/module_testing_procedure.md
+
+# Claude Code
+# Tracked (shared with team):
+#   - .claude/skills/ (project-specific workflows)
+# Ignored (personal):
+.claude/settings.local.json
+
+/apps/logs

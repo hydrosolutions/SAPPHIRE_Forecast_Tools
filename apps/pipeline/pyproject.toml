@@ -1,0 +1,45 @@
+[project]
+name = "pipeline"
+version = "0.1.0"
+description = "Luigi-based pipeline orchestrator for SAPPHIRE forecast tools"
+requires-python = ">=3.11"
+dependencies = [
+    # Workflow orchestration
+    "luigi>=3.5.0",
+
+    # Docker container management
+    "docker>=7.0.0",
+
+    # Configuration and environment
+    "python-dotenv>=1.0.1",
+    "PyYAML>=6.0.2",
+
+    # HTTP and networking
+    "requests>=2.32.0",
+
+    # Date/time handling
+    "python-dateutil>=2.9.0",
+    "pytz>=2024.1",
+
+    # Retry logic
+    "tenacity>=8.3.0",
+
+    # System utilities
+    "lockfile>=0.12.2",
+    "packaging>=24.0",
+
+    # Internal dependency
+    "iEasyHydroForecast @ file:///${PROJECT_ROOT}/../iEasyHydroForecast",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2.0",
+]
+
+[tool.uv.sources]
+iEasyHydroForecast = { path = "../iEasyHydroForecast", editable = true }
+
+[tool.pytest.ini_options]
+pythonpath = [".."]
+testpaths = ["tests"]
