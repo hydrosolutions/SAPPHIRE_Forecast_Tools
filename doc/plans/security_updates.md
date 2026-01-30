@@ -136,7 +136,7 @@ Currently no automated vulnerability scanning is configured. Consider adding:
 
 - [`docker_health_score_improvement.md`](docker_health_score_improvement.md) - Docker image security
 - [`module_issues.md`](module_issues.md) - General issue tracking
-- [`uv_migration_plan.md`](uv_migration_plan.md) - Python 3.12 migration (affects package management)
+- [`uv_migration_plan (archived)`](archive/uv_migration_plan_COMPLETED_2026-01-29.md) - Python 3.12 migration (completed 2026-01-29)
 
 ---
 

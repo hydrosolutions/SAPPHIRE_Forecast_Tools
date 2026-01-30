@@ -1,8 +1,8 @@
 # syntax=docker/dockerfile:1
 
 # Python 3.12 + uv image for pipeline module
-# This image runs in parallel with the :latest (Python 3.11 + pip) version during migration
-# See: implementation_planning/uv_migration_plan.md
+# Migration completed 2026-01-29 (Python 3.12 + uv)
+# See: doc/plans/archive/uv_migration_plan_COMPLETED_2026-01-29.md
 
 FROM mabesa/sapphire-pythonbaseimage:latest AS base
 
