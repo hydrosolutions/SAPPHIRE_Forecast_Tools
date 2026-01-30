@@ -84,7 +84,8 @@ See the `issue-planning` skill for the full template and guidance.
 
 | Plan | Purpose | Status | Priority | Next Action |
 |------|---------|--------|----------|-------------|
-| `uv_migration_plan.md` | Python 3.11→3.12 + uv migration | Phase 6 (server testing) | **High** | Verify preprunoff with recent data |
+| `archive/uv_migration_plan_COMPLETED_2026-01-29.md` | Python 3.11→3.12 + uv migration | ✅ Complete | - | Archived |
+| `phase7_package_upgrades.md` | Post-migration package upgrades | Not started | Low | Incremental during refactoring |
 | `documentation_improvement_plan.md` | Comprehensive doc overhaul | Phase 1 partial | Medium | Quick Start section |
 | `docker_health_score_improvement.md` | Docker security improvements | Phase 1 done | Low | Test updated uv.lock files |
 | `deployment_improvement_planning.md` | Local dev workflow + Makefile | Not started | Low | Create Makefile when needed |
