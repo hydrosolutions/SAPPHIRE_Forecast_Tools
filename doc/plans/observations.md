@@ -151,15 +151,28 @@ SAPPHIRE Forecast Tools can run as a standalone tool without iEasyHydro HF conne
 
 ## 2026-01-29
 
-### Pipeline: Incorrect Docker Image Comparison Message
+### Pipeline: Docker Image Comparison and Download Bug
 
-**Source**: UV migration testing
-**Date**: 2026-01-29
+**Source**: UV migration testing, production observation
+**Date**: 2026-01-29, updated 2026-02-02
 
 Pipeline machine learning part prints "The Docker Hub image is newer than the local image." even when it is not. The image comparison logic appears to be incorrect.
 
-**Assessment**: Low priority cosmetic/logging issue. Does not affect functionality.
-**Status**: Address when debugging or refactoring pipeline module
+**Additional observation (2026-02-02)**: Pipeline shows "image on dockerhub newer than local image, downloading image" but does not actually download any image. This is not just a message issue - the download action itself doesn't execute.
+
+**Root cause identified**: The comparison logic was comparing incompatible dates:
+- Docker Hub: `tag_last_pushed` (when tag was pushed to registry)
+- Local: `attrs['Created']` (when image was built)
+
+This caused false positives when an image was re-pushed without rebuilding.
+
+**Fix implemented**: Replaced timestamp comparison with digest-based comparison (sha256). Digests uniquely identify image content - same digest = identical images. Added fallback to timestamp for locally-built images without RepoDigests.
+
+**Files modified**:
+- `apps/pipeline/src/pipeline_utils.py` - Added `get_docker_hub_image_digest()`, `get_local_image_digest()`, modified `there_is_a_newer_image_on_docker_hub()`
+- `apps/pipeline/tests/test_pipeline_utils.py` - Added 17 new tests for digest comparison
+
+**Status**: RESOLVED - Fix implemented on branch `fix/gi_P-002_gateway_double_run`
 
 ---
 
@@ -357,4 +370,4 @@ FileNotFoundError: [Errno 2] No such file or directory:
 
 ---
 
-*Last updated: 2026-02-02*
+*Last updated: 2026-02-02 (Docker image comparison fix)*
