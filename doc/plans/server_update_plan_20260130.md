@@ -614,7 +614,7 @@ Run each cron command manually to verify they work correctly. Luigi daemon start
 34 19 * * * cd /data/SAPPHIRE_Forecast_Tools && bash bin/daily_linreg_maintenance.sh /data/taj_data_forecast_tools/config/.env_develop_tjhm >> /home/ubuntu/logs/sapphire_linreg_maintenance_$(date +\%Y\%m\%d).log 2>&1
 ```
 
-**Status**: ________________
+**Status**: Done - crontabs configured
 
 ### 2.6 Test Cron Commands Manually
 
@@ -623,14 +623,14 @@ Run each cron command manually to verify they work correctly. Luigi daemon start
 
 **Run commands:**
 
-- [ ] **Run gateway preprocessing** - In progress
-- [ ] **Run pentadal forecast**
-- [ ] **Run decadal forecast**
-- [ ] **Run maintenance jobs** (optional)
-- [ ] **Monitor progress** in Luigi UI
-- [ ] **Check logs** for errors
+- [x] **Run gateway preprocessing**
+- [x] **Run pentadal forecast**
+- [x] **Run decadal forecast**
+- [~] **Run maintenance jobs** (optional) - skipped
+- [x] **Monitor progress** in Luigi UI
+- [x] **Check logs** for errors
 
-**Status**: In progress - running gateway preprocessing
+**Status**: Done - cron commands tested
 
 ---
 
@@ -638,18 +638,18 @@ Run each cron command manually to verify they work correctly. Luigi daemon start
 
 ### 3.1 Verify Services Running
 
-- [ ] Luigi UI accessible at port 8082
-- [ ] Pentad dashboard accessible at port 5006
-- [ ] Decad dashboard accessible at port 5007
-- [ ] Both dashboards load data correctly
-- [ ] All containers healthy
+- [x] Luigi UI accessible at port 8082
+- [x] Pentad dashboard accessible at port 5006
+- [x] Decad dashboard accessible at port 5007
+- [x] Both dashboards load data correctly - **Issue with data display, see observations**
+- [x] All containers healthy
 
 ### 3.2 Test Forecast Run
 
-- [ ] Run preprocessing gateway task (quick test)
-- [ ] Monitor progress in Luigi UI
-- [ ] Check logs for successful completion
-- [ ] No ERROR or CRITICAL messages in logs
+- [x] Run preprocessing gateway task (quick test)
+- [x] Monitor progress in Luigi UI
+- [x] Check logs for successful completion
+- [x] No ERROR or CRITICAL messages in logs - Panel/HoloViews error observed
 
 ---
 
@@ -657,7 +657,9 @@ Run each cron command manually to verify they work correctly. Luigi daemon start
 
 | Issue | Description | Resolution |
 |-------|-------------|------------|
-| | | |
+| Panel/HoloViews Markdown error | Dashboard shows "'Markdown' object has no attribute 'opts'" error when no snow data available | See `doc/plans/observations.md` 2026-02-02. Needs code fix in `forecast_dashboard.py` |
+| Snow data display | Snow .env variables missing | ✅ Fixed - configured snow paths in .env, dashboard now loads |
+| Stale forecast data | Pentad dashboard shows 5th pentad of January, data gaps for 17082 and other sites | Investigating - contacted local contact to check which iEH HF version (cloud vs local) is operational |
 
 ---
 
@@ -665,27 +667,29 @@ Run each cron command manually to verify they work correctly. Luigi daemon start
 
 ### Services Running
 
-- [ ] Luigi daemon running at port 8082
-- [ ] Pentad dashboard running at port 5006
-- [ ] Decad dashboard running at port 5007
-- [ ] All containers healthy
-- [ ] SSH tunnel to iEasyHydro HF running (if required)
+- [x] Luigi daemon running at port 8082
+- [x] Pentad dashboard running at port 5006
+- [x] Decad dashboard running at port 5007
+- [x] All containers healthy
+- [x] SSH tunnel to iEasyHydro HF - Not required (using cloud API)
 
 ### Crontabs Configured
 
-- [ ] Crontab entries verified correct
-- [ ] Log cleanup job configured
+- [x] Crontab entries verified correct (UTC times for Tajikistan UTC+5)
+- [x] Log cleanup job configured
 
 ### Documentation
 
 - Backend image tag deployed: `local`
 - Frontend image tag deployed: `local`
-- Git commit on server: ________________
+- Git commit on server: `local` branch
 
 ### Next Scheduled Run
 
-- Expected time: ________________
-- Plan to verify after next run: [ ]
+- Expected time: Gateway 03:00 UTC, Pentad 04:00 UTC, Decad 05:00 UTC
+- Plan to verify after next run: [x] Monday 2026-02-03
+
+### Deployment Status: ⚠️ PARTIAL - Services running, dashboard data display issue pending (see observations)
 
 ---
 
