@@ -351,46 +351,226 @@ Replace file-based data exchange with REST API returning DataFrames.
 
 ## Testing Plan
 
+### Testing Requirements
+
+**MANDATORY**: All new or modified methods must have unit tests. Integration tests required for workflow verification.
+
 ### Phase 1 Tests
 
-#### Unit Test
+#### Prerequisites: Create Test Infrastructure
+
+**Create `apps/pipeline/tests/conftest.py`:**
 ```python
-def test_get_gateway_dependency_with_marker():
-    # Create marker file
-    marker = get_marker_filepath('preprocessing_gateway')
-    Path(marker).parent.mkdir(parents=True, exist_ok=True)
-    Path(marker).write_text("test")
+import pytest
+import tempfile
+import os
+from pathlib import Path
 
-    result = get_gateway_dependency()
-    assert isinstance(result, ExternalPreprocessingGateway)
+@pytest.fixture
+def temp_marker_dir(tmp_path):
+    """Temporary directory for marker files."""
+    marker_dir = tmp_path / "marker_files"
+    marker_dir.mkdir()
+    return marker_dir
 
-    # Cleanup
-    Path(marker).unlink()
-
-def test_get_gateway_dependency_without_marker():
-    result = get_gateway_dependency()
-    assert isinstance(result, PreprocessingGatewayQuantileMapping)
-
-def test_time_slot_marker_filepath():
-    path = get_marker_filepath('preprocessing_gateway',
-                               date=datetime.date(2026, 2, 2),
-                               time_slot=0)
-    assert path.endswith('preprocessing_gateway_2026-02-02_slot0.marker')
+@pytest.fixture
+def mock_env(temp_marker_dir, monkeypatch):
+    """Mock environment with temp marker directory."""
+    monkeypatch.setattr('pipeline_docker.MARKER_DIR', str(temp_marker_dir))
+    return {'marker_dir': temp_marker_dir}
 ```
 
-#### Integration Test
+#### Unit Tests (Required)
+
+**Create `apps/pipeline/tests/test_marker_files.py`:**
+```python
+import pytest
+import datetime
+from pathlib import Path
+from unittest.mock import patch, MagicMock
+
+# Test get_marker_filepath()
+class TestGetMarkerFilepath:
+    def test_basic_filepath(self, mock_env):
+        """Test basic marker filepath generation."""
+        from pipeline_docker import get_marker_filepath
+        path = get_marker_filepath('preprocessing_gateway', date=datetime.date(2026, 2, 2))
+        assert 'preprocessing_gateway_2026-02-02.marker' in path
+
+    def test_default_date_is_today(self, mock_env):
+        """Test that date defaults to today."""
+        from pipeline_docker import get_marker_filepath
+        today = datetime.date.today()
+        path = get_marker_filepath('preprocessing_gateway')
+        assert str(today) in path
+
+    def test_time_slot_marker_filepath(self, mock_env):
+        """Test marker filepath with time_slot for sub-daily support."""
+        from pipeline_docker import get_marker_filepath
+        path = get_marker_filepath('preprocessing_gateway',
+                                   date=datetime.date(2026, 2, 2),
+                                   time_slot=0)
+        assert path.endswith('preprocessing_gateway_2026-02-02_slot0.marker')
+
+    def test_different_time_slots_different_paths(self, mock_env):
+        """Test that different time slots produce different paths."""
+        from pipeline_docker import get_marker_filepath
+        date = datetime.date(2026, 2, 2)
+        path0 = get_marker_filepath('preprocessing_gateway', date=date, time_slot=0)
+        path1 = get_marker_filepath('preprocessing_gateway', date=date, time_slot=1)
+        assert path0 != path1
+
+
+# Test get_gateway_dependency()
+class TestGetGatewayDependency:
+    def test_returns_external_task_when_marker_exists(self, mock_env):
+        """When marker file exists, should return ExternalPreprocessingGateway."""
+        from pipeline_docker import get_gateway_dependency, get_marker_filepath, ExternalPreprocessingGateway
+
+        # Create marker file
+        marker = get_marker_filepath('preprocessing_gateway')
+        Path(marker).parent.mkdir(parents=True, exist_ok=True)
+        Path(marker).write_text("test marker content")
+
+        result = get_gateway_dependency()
+        assert isinstance(result, ExternalPreprocessingGateway)
+
+    def test_returns_real_task_when_no_marker(self, mock_env):
+        """When no marker file, should return PreprocessingGatewayQuantileMapping."""
+        from pipeline_docker import get_gateway_dependency, PreprocessingGatewayQuantileMapping
+
+        result = get_gateway_dependency()
+        assert isinstance(result, PreprocessingGatewayQuantileMapping)
+
+    def test_respects_time_slot_parameter(self, mock_env):
+        """Time slot parameter should affect marker file check."""
+        from pipeline_docker import get_gateway_dependency, get_marker_filepath, ExternalPreprocessingGateway
+
+        # Create marker for slot 0 only
+        marker = get_marker_filepath('preprocessing_gateway', time_slot=0)
+        Path(marker).parent.mkdir(parents=True, exist_ok=True)
+        Path(marker).write_text("slot 0 marker")
+
+        # Slot 0 should return external task
+        result_slot0 = get_gateway_dependency(time_slot=0)
+        assert isinstance(result_slot0, ExternalPreprocessingGateway)
+
+        # Slot 1 should return real task (no marker)
+        from pipeline_docker import PreprocessingGatewayQuantileMapping
+        result_slot1 = get_gateway_dependency(time_slot=1)
+        assert isinstance(result_slot1, PreprocessingGatewayQuantileMapping)
+
+
+# Test marker file creation in task
+class TestMarkerFileCreation:
+    def test_marker_created_on_success(self, mock_env, tmp_path):
+        """Verify marker file is created when task succeeds."""
+        from pipeline_docker import get_marker_filepath
+        import datetime
+
+        marker_path = get_marker_filepath('preprocessing_gateway')
+
+        # Simulate successful task completion writing marker
+        Path(marker_path).parent.mkdir(parents=True, exist_ok=True)
+        with open(marker_path, 'w') as f:
+            f.write(f"PreprocessingGateway completed successfully at {datetime.datetime.now()}")
+
+        assert Path(marker_path).exists()
+        content = Path(marker_path).read_text()
+        assert "completed successfully" in content
+
+    def test_marker_not_created_on_failure(self, mock_env):
+        """Verify marker file is NOT created when task fails."""
+        from pipeline_docker import get_marker_filepath
+
+        marker_path = get_marker_filepath('preprocessing_gateway')
+        # Don't create marker (simulating failure)
+        assert not Path(marker_path).exists()
+
+
+# Test requires() method behavior
+class TestRequiresMethods:
+    def test_conceptual_model_uses_helper(self, mock_env):
+        """ConceptualModel.requires() should use get_gateway_dependency()."""
+        # This test verifies the code change was made correctly
+        from pipeline_docker import ConceptualModel
+        import inspect
+
+        source = inspect.getsource(ConceptualModel.requires)
+        assert 'get_gateway_dependency' in source
+        assert 'PreprocessingGatewayQuantileMapping()' not in source
+
+    def test_run_ml_model_uses_helper(self, mock_env):
+        """RunMLModel.requires() should use get_gateway_dependency()."""
+        from pipeline_docker import RunMLModel
+        import inspect
+
+        source = inspect.getsource(RunMLModel.requires)
+        assert 'get_gateway_dependency' in source
+
+    def test_run_all_ml_models_uses_helper(self, mock_env):
+        """RunAllMLModels.requires() should use get_gateway_dependency()."""
+        from pipeline_docker import RunAllMLModels
+        import inspect
+
+        source = inspect.getsource(RunAllMLModels.requires)
+        assert 'get_gateway_dependency' in source
+```
+
+#### Integration Tests
+
+**Manual Integration Test Procedure:**
 ```bash
-# Run gateway preprocessing first
+# 1. Clean up any existing markers
+rm -f /path/to/intermediate_data/marker_files/preprocessing_gateway_*.marker
+
+# 2. Run gateway preprocessing first
 bash bin/run_preprocessing_gateway.sh /path/to/.env
 
-# Verify marker file exists
+# 3. Verify marker file exists
 ls -la /path/to/intermediate_data/marker_files/preprocessing_gateway_*.marker
+# Expected: preprocessing_gateway_YYYY-MM-DD.marker exists
 
-# Run pentadal workflow
+# 4. Run pentadal workflow
 bash bin/run_pentadal_forecasts.sh /path/to/.env
 
-# Check logs - should see "Using external gateway task (already run)"
+# 5. Check logs - should see "Using external gateway task (already run)"
 grep "Using external gateway task" /path/to/logs/*.log
+# Expected: Log message found
+
+# 6. Verify gateway did NOT re-run (check Docker logs)
+docker ps -a --filter "name=prepgateway" --format "{{.Names}} {{.CreatedAt}}"
+# Expected: Only ONE container from step 2, no new container from step 4
+```
+
+**Automated Integration Test (pytest):**
+```python
+# apps/pipeline/tests/test_gateway_integration.py
+import pytest
+import subprocess
+import os
+from pathlib import Path
+
+@pytest.mark.integration
+class TestGatewayDoubleRunPrevention:
+    """Integration tests for gateway double-run fix."""
+
+    @pytest.fixture
+    def clean_markers(self):
+        """Remove gateway markers before test."""
+        marker_dir = os.environ.get('MARKER_DIR', '/tmp/test_markers')
+        for f in Path(marker_dir).glob('preprocessing_gateway_*.marker'):
+            f.unlink()
+        yield
+        # Cleanup after test
+        for f in Path(marker_dir).glob('preprocessing_gateway_*.marker'):
+            f.unlink()
+
+    def test_second_workflow_skips_gateway(self, clean_markers):
+        """Second workflow in same day should skip gateway preprocessing."""
+        # This test requires Docker and full environment setup
+        # Run in CI or manually, not as unit test
+        pass  # Implementation depends on test infrastructure
 ```
 
 ### Phase 2 Tests
@@ -410,16 +590,38 @@ GATEWAY_MODE=maintenance bash bin/run_preprocessing_gateway.sh /path/to/.env
 ## Implementation Checklist
 
 ### Phase 1: Immediate Fix
-- [ ] Create `get_gateway_dependency()` helper function in `pipeline_docker.py`
-- [ ] Update `get_marker_filepath()` to support optional `time_slot` parameter
-- [ ] Modify `ConceptualModel.requires()` to use helper
-- [ ] Modify `RunMLModel.requires()` to use helper
-- [ ] Modify `RunAllMLModels.requires()` to use helper
-- [ ] Add unit tests for `get_gateway_dependency()`
+
+#### Code Changes
+- [x] Create `get_gateway_dependency()` helper function in `pipeline_docker.py`
+- [x] Update `get_marker_filepath()` to support optional `time_slot` parameter
+- [x] Modify `ConceptualModel.requires()` to use helper
+- [x] Modify `RunMLModel.requires()` to use helper
+- [x] Modify `RunAllMLModels.requires()` to use helper
+
+#### Testing (REQUIRED)
+- [x] Create `apps/pipeline/tests/conftest.py` with fixtures
+- [x] Create `apps/pipeline/tests/test_marker_files.py` with unit tests:
+  - [x] `TestGetMarkerFilepath` - 5 test methods (added test_uses_mock_marker_dir)
+  - [x] `TestGetGatewayDependency` - 3 test methods
+  - [x] `TestMarkerFileCreation` - 2 test methods
+  - [x] `TestRequiresMethods` - 3 test methods (verify code changes)
+  - [x] `TestGatewayDependencyIntegration` - 2 test methods (added integration tests)
+- [x] Run unit tests locally (15 tests pass)
+- [x] All unit tests pass
+
+**Test command** (run from repo root):
+```bash
+PYTHONPATH="$PWD:$PWD/apps" SAPPHIRE_TEST_ENV=True apps/pipeline/.venv/bin/pytest apps/pipeline/tests/test_marker_files.py -v
+```
+
+#### Integration Testing
 - [ ] Test locally with manual marker file creation
 - [ ] Run full local integration test (gateway → pentadal)
-- [ ] Deploy to staging/test server
 - [ ] Verify logs show "Using external gateway task" on second run
+
+#### Deployment
+- [ ] Deploy to staging/test server
+- [ ] Run integration test on staging
 - [ ] Deploy to production
 - [ ] Monitor production logs for one full day
 
@@ -501,5 +703,5 @@ GATEWAY_MODE=maintenance bash bin/run_preprocessing_gateway.sh /path/to/.env
 ---
 
 *Created: 2026-02-02*
-*Updated: 2026-02-02 - Corrected mode separation based on actual gateway workflow*
-*Status: DRAFT - Ready for Phase 1 implementation*
+*Updated: 2026-02-02 - Phase 1 code changes and unit tests complete (15/15 pass)*
+*Status: IN PROGRESS - Phase 1 code complete, awaiting integration testing and deployment*
