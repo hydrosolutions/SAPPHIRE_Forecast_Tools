@@ -14,6 +14,89 @@ Periodically review and triage into formal issues in `module_issues.md` or GitHu
 
 ---
 
+## 2026-02-02
+
+### Dashboard: Stale Forecast Data and Data Gaps (Ubuntu Server)
+
+**Source**: Ubuntu production server, pentad dashboard
+**Date**: 2026-02-02
+**Branch**: local branch deployed
+
+**Observations**:
+- Pentad dashboard shows forecast for **5th pentad of January** (stale - should be February)
+- Data gaps for station **17082** and other sites
+- Snow .env configuration was missing - ✅ Fixed, dashboard now loads
+
+**Investigation**:
+- Contacted local contact to verify which iEasyHydro HF version is operational (cloud vs local)
+- Data gaps may be caused by using cloud API while local iEH HF has more recent data (or vice versa)
+
+**Assessment**: Likely iEasyHydro HF data source mismatch. Waiting for response from local contact.
+**Status**: Investigating - awaiting response on iEH HF version
+
+---
+
+### Dashboard: Panel/HoloViews Markdown Object Error (Ubuntu Server)
+
+**Source**: Ubuntu production server, pentad AND decadal dashboards
+**Date**: 2026-02-02
+**Branch**: local branch deployed
+
+**Error** (identical on both pentad and decadal):
+```
+2026-02-02 09:24:16,877 - ERROR - Error running application handler: 'Markdown' object has no attribute 'opts'
+File 'holoviews.py', line 251, in _update_responsive:
+opts = obj.opts.get('plot', backend=backend).kwargs
+
+AttributeError: 'Markdown' object has no attribute 'opts'
+```
+
+**Stack trace points to**:
+- `forecast_dashboard.py:2011` → `update_active_tab(None)`
+- `forecast_dashboard.py:2000` → `snow_plot_panes[var].object = pn.pane.Markdown(_("No snow data from SAPPHIRE Data Gateway available."))`
+- Panel's `holoviews.py:251` → `_update_responsive` tries to call `.opts.get()` on a Markdown object
+
+**Additional context from decadal run**:
+- Bulletin table creation succeeds
+- ML forecasts missing: TSMixer, TiDE, TFT, NE (separate issue)
+- Error occurs specifically when no snow data is available and the code tries to display a Markdown message
+
+**Analysis**: Panel's responsive layout handler is treating a `pn.pane.Markdown` object as if it were a HoloViews object. This happens when assigning a Markdown pane to `snow_plot_panes[var].object`. The `snow_plot_panes` were likely initialized as HoloViews panes, and Panel's watcher assumes all objects assigned to `.object` will have HoloViews `.opts` attribute.
+
+**Potential fix**: Instead of assigning `pn.pane.Markdown(...)` directly to a HoloViews pane's object, may need to wrap or handle the "no data" case differently.
+
+**Assessment**: Panel/HoloViews type mismatch when displaying "no data" message. Affects both pentad and decadal dashboards.
+**Status**: Needs investigation - likely requires code fix in `forecast_dashboard.py`
+
+---
+
+### Dashboard: Missing Forecast Skill Lines in Decadal Figures (Sapphire Server)
+
+**Source**: Sapphire production server, decadal dashboard
+**Date**: 2026-02-02
+**Branch**: local branch deployed
+
+**Problem**: Forecast skill lines are not displayed in figures for decadal forecasts. Pentad dashboard appears OK.
+
+**Assessment**: Data or rendering issue specific to decadal skill metrics. Needs investigation.
+**Status**: Needs investigation
+
+---
+
+### 📋 Deployment Status Tracking
+
+**Purpose**: Track deployment status across servers after server update plan
+
+| Server | Type | Branch | Last Checked | Status |
+|--------|------|--------|--------------|--------|
+| **ubuntu** | Operational | local | 2026-02-02 | ⚠️ Dashboard error (Markdown/opts) |
+| **sapphire** | Operational | local | 2026-02-02 | ⚠️ Decadal: missing forecast skill lines |
+| **zurich** | Testing | main | 2026-02-02 | ✅ Both dashboards OK |
+
+Will update this table as observations are collected.
+
+---
+
 ## 2026-01-30
 
 ### 🚨 URGENT: Preprocessing Gateway Runs Twice (Fix Monday)
@@ -43,7 +126,7 @@ Periodically review and triage into formal issues in `module_issues.md` or GitHu
 - Recent git history for marker file changes
 
 **Assessment**: Urgent - affects production performance
-**Status**: TO FIX MONDAY
+**Status**: TRIAGED - See `doc/plans/issues/gi_P-002_gateway_double_run.md`
 
 ---
 
@@ -274,4 +357,4 @@ FileNotFoundError: [Errno 2] No such file or directory:
 
 ---
 
-*Last updated: 2026-01-30*
+*Last updated: 2026-02-02*
