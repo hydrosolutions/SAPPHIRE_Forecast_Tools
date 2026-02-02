@@ -91,6 +91,9 @@ def setup_docker_volumes(env, paths=None):
     return volumes
 
 # Define global paths for marker files
+# Note: Use get_bind_path() because this code runs INSIDE a Docker container.
+# get_bind_path() returns the container-internal path that matches the volume mount.
+# get_absolute_path() would return the HOST path which doesn't exist inside the container.
 MARKER_DIR = f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/marker_files"
 os.makedirs(MARKER_DIR, exist_ok=True)  # Ensure directory exists
 
