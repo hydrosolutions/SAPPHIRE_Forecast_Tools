@@ -16,7 +16,7 @@ env:
 
 on:
   push:
-    branches: [ "fix/gi_P-002_gateway_double_run" ]
+    branches: [ "main" ]
   #pull_request:
   #  branches: [ "main" ]
 
