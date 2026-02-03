@@ -1,8 +1,8 @@
 # syntax=docker/dockerfile:1
 
 # Python 3.12 + uv base image for SAPPHIRE Forecast Tools
-# This image runs in parallel with :latest (Python 3.11 + pip) during migration
-# See: implementation_planning/uv_migration_plan.md
+# Migration completed 2026-01-29 (Python 3.12 + uv)
+# See: doc/plans/archive/uv_migration_plan_COMPLETED_2026-01-29.md
 
 ARG PYTHON_VERSION=3.12
 FROM python:${PYTHON_VERSION}-slim-bookworm AS base

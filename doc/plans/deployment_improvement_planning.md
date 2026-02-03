@@ -898,3 +898,209 @@ A nightly maintenance script for linear regression hindcast has been created:
 ---
 
 *Last updated: 2026-01-07 - Added Priority 0 (Working Demo) with hydro_data_scraper integration*
+
+---
+
+## Deployment Documentation Integration Strategy (2026-01-30)
+
+### Overview
+
+This section consolidates findings from a comprehensive 18-agent analysis exploring how to integrate `doc/prod/update_deployment_checklist.md` into the broader deployment documentation, considering future development plans and the needs of developers, operators, and new organizations.
+
+### Key Findings
+
+#### Current State Assessment
+
+| Document | Status | Audience |
+|----------|--------|----------|
+| `doc/prod/update_deployment_checklist.md` | Excellent (911 lines, comprehensive checklists) | Operators |
+| `doc/deployment.md` | Good structure but has TODOs | New deployments |
+| `doc/configuration.md` | 6 unfixed TODOs | All users |
+| `bin/` scripts | Well-organized, 24+ scripts | Operations |
+| `bin/utils/common_functions.sh` | Comprehensive (345 lines) | Scripts |
+
+#### Critical Gaps Identified
+
+1. **No Quick Start**: `doc/deployment.md` line 84 says "TODO: Detailed instructions"
+2. **Multiple entry points causing confusion**: README, doc/index.md, deployment.md, etc.
+3. **Configuration TODOs unfixed**: 6 TODOs in configuration.md blocking users
+4. **Missing regional adaptation guide**: Critical for new organizations
+5. **No health check tooling**: Manual verification steps in checklist
+
+### Consolidated Recommendations
+
+#### What to DO (High Impact, Sustainable)
+
+| Item | Effort | Impact | Rationale |
+|------|--------|--------|-----------|
+| Fix TODOs in `configuration.md` | 2h | High | Fix existing debt before adding new docs |
+| Add Quick Start to README | 1h | Very High | Highest impact for new users |
+| Create `bin/utils/health_check.sh` | 2h | High | Automates 10+ manual verification steps |
+| Create `bin/utils/data_freshness.sh` | 2h | High | Diagnoses common "stale data" issues |
+| Implement Makefile (already designed above) | 2h | High | Copy from Phase 1 design above |
+| Add Quick Reference section to top of checklist | 30m | Medium | No new file, immediate value |
+
+#### What to SIMPLIFY (Reduce Scope)
+
+| Original Proposal | Simplified Version |
+|-------------------|-------------------|
+| Create `doc/deployment/` restructure | Keep flat structure, improve mkdocs.yml nav only |
+| Create `GETTING_STARTED.md` | Add Getting Started section to existing `doc/index.md` |
+| Create 6+ new shell scripts in `bin/update/` | Add 2-3 scripts to existing `bin/utils/` |
+| Create ADR system | Capture decisions in PR descriptions (already in git) |
+| Create runbook system | Keep procedures in shell scripts with inline comments |
+| Create deprecation registry | Use inline deprecation notices in existing docs |
+| Document all 8 modules | Document only `pipeline/` (most complex) |
+
+#### What to SKIP (Low Value or Unsustainable)
+
+- **`bin/update/` subdirectory**: Creates confusion with existing `bin/` structure
+- **Formal ADR system**: Requires ongoing discipline unlikely to be sustained
+- **`update_all.sh` one-click script**: Risky for production (operators prefer explicit commands)
+- **Multiple new documentation directories**: Creates sprawl and maintenance burden
+- **Version markers throughout docs**: Must update every release
+
+### Implementation Phases
+
+#### Phase 1: Quick Wins (Week 1, ~6 hours)
+
+| Deliverable | Action | Success Criteria |
+|-------------|--------|------------------|
+| Fix configuration.md TODOs | Edit doc/configuration.md | No TODO markers remain |
+| Quick Start in README | Add 5-step quick start section | New user can run demo in 30 minutes |
+| `bin/utils/health_check.sh` | Create new script | Single command validates all services |
+| `bin/utils/data_freshness.sh` | Create new script | Reports age of key data files |
+
+**Example `bin/utils/health_check.sh`:**
+```bash
+#!/bin/bash
+# Verify SAPPHIRE deployment health - replaces 10+ manual checks
+echo "=== SAPPHIRE Health Check ==="
+
+# Luigi daemon
+echo -n "Luigi daemon: "
+curl -fsS http://localhost:8082/ >/dev/null 2>&1 && echo "OK" || echo "FAIL"
+
+# Dashboards
+for port in 5006 5007; do
+    echo -n "Dashboard :$port: "
+    curl -fsS "http://localhost:$port/" >/dev/null 2>&1 && echo "OK" || echo "FAIL"
+done
+
+# Containers
+echo "Running containers:"
+docker ps --filter "name=sapphire" --format "  {{.Names}}: {{.Status}}"
+
+# Disk space
+echo -n "Disk space: "
+df -h /data 2>/dev/null | awk 'NR==2 {print $4 " available"}' || echo "N/A"
+```
+
+#### Phase 2: Core Infrastructure (Month 1, ~8 hours)
+
+| Deliverable | Action |
+|-------------|--------|
+| Implement Makefile | Copy from Phase 1 design in this document |
+| Add Getting Started to doc/index.md | Role-based paths (developer/operator/new org) |
+| Create `bin/utils/pre_update.sh` | Automated backup before updates |
+| Update mkdocs.yml navigation | Improve nav without moving files |
+
+#### Phase 3: Complete Implementation (Quarter 1, ~12 hours)
+
+| Deliverable | Action |
+|-------------|--------|
+| `doc/modules/pipeline.md` | Document most complex module only |
+| `bin/utils/rollback.sh` | Safe rollback procedure |
+| Quick Reference in checklist | Add TL;DR section at top of update_deployment_checklist.md |
+| Regional adaptation guide | Expand README section for new organizations |
+
+### Risk Mitigations
+
+| Risk | Mitigation |
+|------|------------|
+| Breaking crontab references | Keep all scripts in `bin/` (no moves) |
+| Stale documentation links | Run `mkdocs build --strict` before merging |
+| Untested scripts in production | Add dry-run flags, test on staging first |
+| Maintenance burden unsustainable | Cut ADRs, runbooks, deprecation registry |
+| User overwhelm | Phase changes across multiple PRs |
+
+### Key Principles
+
+1. **Fix existing debt before adding new documentation** - 6 TODOs in configuration.md must be fixed first
+2. **Operators prefer explicit commands** - Don't hide operations behind abstractions
+3. **Single entry point strategy** - Use existing doc/index.md, don't create competing indexes
+4. **Scripts over directories** - Add to existing `bin/utils/`, don't create `bin/update/`
+5. **The checklist works** - The 911-line update_deployment_checklist.md is battle-tested; enhance, don't replace
+
+### Files to Create
+
+| File | Purpose | Priority |
+|------|---------|----------|
+| `bin/utils/health_check.sh` | Service verification | P1 |
+| `bin/utils/data_freshness.sh` | Data age monitoring | P1 |
+| `bin/utils/pre_update.sh` | Backup automation | P2 |
+| `bin/utils/rollback.sh` | Safe rollback | P2 |
+| `doc/modules/pipeline.md` | Pipeline module docs | P3 |
+
+### Files to Modify
+
+| File | Change | Priority |
+|------|--------|----------|
+| `doc/configuration.md` | Fix 6 TODOs | P1 |
+| `README.md` | Add Quick Start section | P1 |
+| `doc/index.md` | Add Getting Started paths | P2 |
+| `doc/prod/update_deployment_checklist.md` | Add Quick Reference at top | P2 |
+| `mkdocs.yml` | Improve navigation structure | P2 |
+
+### Success Criteria
+
+- [ ] New user can run demo in 30 minutes following Quick Start
+- [ ] `make help` shows all available commands (after Makefile implemented)
+- [ ] `health_check.sh` validates deployment in <10 seconds
+- [ ] No TODO markers in configuration.md
+- [ ] Update checklist has Quick Reference section at top
+
+---
+
+## To Evaluate: Luigi Worker ID Configuration
+
+### Observed Issue (2026-01-30)
+
+When running Luigi tasks in Docker containers, each container gets a unique hostname (e.g., `8286f42baf50`). Luigi uses this hostname as part of the worker ID. This can cause "Did not run any tasks" errors when:
+
+1. A container starts a task and then terminates
+2. A new container starts within 60 seconds (Luigi's worker disconnect delay)
+3. Luigi thinks the old worker still owns the task
+
+**Current workaround**: Restart Luigi daemon or wait 60+ seconds between runs.
+
+### Potential Solution to Evaluate
+
+Add fixed `--worker-id` flags to Luigi commands in `docker-compose-luigi.yml`:
+
+```yaml
+command: ['uv', 'run', 'luigi',
+          '--worker-id', 'sapphire-prepgateway-worker',  # Fixed ID
+          ...]
+```
+
+### Considerations
+
+**Pros:**
+- New container seamlessly takes over from terminated container
+- No wait required between runs
+- Simple naming convention: `sapphire-{service}-worker`
+
+**Cons/Unknowns:**
+- Need to verify this doesn't cause issues if same workflow accidentally runs twice
+- Adds configuration to maintain across all services
+- May mask underlying issues that should be fixed differently
+
+### Status
+
+- **Status**: To be evaluated
+- **Added**: 2026-01-30
+
+---
+
+*Section added: 2026-01-30 - Deployment documentation integration strategy based on 18-agent analysis*

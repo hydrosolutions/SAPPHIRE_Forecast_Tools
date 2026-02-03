@@ -376,4 +376,4 @@ docker build -f ./apps/<module>/Dockerfile . 2>&1 | tee build.log
 - [Deployment Guide](../deployment.md) - Server deployment procedures
 - [Development Guide](../development.md) - Module-specific development
 - [Module Issues](../plans/module_issues.md) - Known issues index
-- [UV Migration Plan](../plans/uv_migration_plan.md) - Python 3.12 migration details
+- [UV Migration Plan](../plans/archive/uv_migration_plan_COMPLETED_2026-01-29.md) - Python 3.12 migration details (completed)

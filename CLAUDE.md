@@ -40,7 +40,7 @@ mcp__serena__read_memory(memory_file_name="task_completion_checklist")
 - GitHub Actions CI/CD
 
 ### Current Migration
-Python 3.11 → 3.12 with uv. See `doc/plans/uv_migration_plan.md`
+Python 3.12 + uv migration complete. See `doc/plans/archive/uv_migration_plan_COMPLETED_2026-01-29.md`
 
 ### Known Issues
 See `doc/plans/module_issues.md` for issue index, `doc/plans/issues/` for detailed plans.
