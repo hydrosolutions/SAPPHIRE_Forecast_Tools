@@ -4,3 +4,33 @@ The pipeline is composed of several tasks that are executed in a specific order.
 
 We provide the option to send an email notification when the pipeline is completed. You configure the SMTP server and the recipient email addresses in the .env file of your project.
 
+## Marker File System
+
+The pipeline uses marker files to prevent expensive tasks from running multiple times per day. This is particularly important for the preprocessing gateway task, which makes many API calls to the SAPPHIRE Data Gateway.
+
+### How It Works
+
+1. When `PreprocessingGatewayQuantileMapping` completes successfully, it creates a marker file:
+   ```
+   <intermediate_data_path>/marker_files/preprocessing_gateway_YYYY-MM-DD.marker
+   ```
+
+2. When downstream tasks (like `RunMLModel`, `ConceptualModel`) declare their dependencies via `requires()`, they call `get_gateway_dependency()` which:
+   - Checks if today's marker file exists
+   - If yes: returns `ExternalPreprocessingGateway` (a lightweight task that just verifies the marker)
+   - If no: returns `PreprocessingGatewayQuantileMapping` (runs the full preprocessing)
+
+3. Marker files are automatically cleaned up by the `DeleteOldMarkerFiles` task, which removes markers older than 7 days.
+
+### Key Functions
+
+- `get_marker_filepath(task_name, date, time_slot)` - Generates the marker file path
+- `get_gateway_dependency(time_slot)` - Returns the appropriate gateway task based on marker presence
+
+### Path Resolution
+
+The marker files use `get_bind_path()` for path resolution because the pipeline code runs inside Docker containers. This returns the container-internal path that matches the volume mount point.
+
+### Future: Sub-daily Support
+
+The marker file system includes optional `time_slot` parameter support for future sub-daily forecasting (4x daily). When implemented, markers will include the time slot: `preprocessing_gateway_YYYY-MM-DD_slot0.marker`.

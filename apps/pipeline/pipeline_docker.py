@@ -95,8 +95,6 @@ def setup_docker_volumes(env, paths=None):
 # get_bind_path() returns the container-internal path that matches the volume mount.
 # get_absolute_path() would return the HOST path which doesn't exist inside the container.
 MARKER_DIR = f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/marker_files"
-print(f"DEBUG [pipeline_docker module load]: MARKER_DIR = {MARKER_DIR}")
-print(f"DEBUG [pipeline_docker module load]: ieasyforecast_intermediate_data_path = {env.get('ieasyforecast_intermediate_data_path')}")
 os.makedirs(MARKER_DIR, exist_ok=True)  # Ensure directory exists
 
 def get_marker_filepath(task_name, date=None, time_slot=None):
@@ -136,18 +134,6 @@ def get_gateway_dependency(time_slot=None):
     """
     today = datetime.date.today()
     marker_file = get_marker_filepath('preprocessing_gateway', date=today, time_slot=time_slot)
-
-    # DEBUG: Show what we're checking
-    print(f"DEBUG [get_gateway_dependency]: Checking for marker file at: {marker_file}")
-    print(f"DEBUG [get_gateway_dependency]: MARKER_DIR = {MARKER_DIR}")
-    print(f"DEBUG [get_gateway_dependency]: Directory exists: {os.path.isdir(MARKER_DIR)}")
-    if os.path.isdir(MARKER_DIR):
-        try:
-            files = os.listdir(MARKER_DIR)
-            print(f"DEBUG [get_gateway_dependency]: Files in MARKER_DIR: {files}")
-        except Exception as e:
-            print(f"DEBUG [get_gateway_dependency]: Error listing MARKER_DIR: {e}")
-    print(f"DEBUG [get_gateway_dependency]: Marker file exists: {os.path.exists(marker_file)}")
 
     if os.path.exists(marker_file):
         print(f"Using external gateway task (already run) for {today}" +
