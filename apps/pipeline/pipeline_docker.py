@@ -854,9 +854,10 @@ class DeleteOldGatewayFiles(pu.TimeoutMixin, luigi.Task):
         try:
             # Run with timeout protection
             try:
-                # Using a lambda here to call our method with self's timeout
-                self.run_with_timeout(lambda: self._delete_old_files())
-                deleted_count, deleted_files, errors = self._delete_old_files()
+                # Run deletion with timeout protection and capture result
+                deleted_count, deleted_files, errors = self.run_with_timeout(
+                    lambda: self._delete_old_files()
+                )
 
                 # Format results for the log file
                 result_details = [
@@ -1030,9 +1031,10 @@ class DeleteOldMarkerFiles(pu.TimeoutMixin, luigi.Task):
         try:
             # Run with timeout protection
             try:
-                # Using a lambda here to call our method with self's timeout
-                self.run_with_timeout(lambda: self._delete_old_files())
-                deleted_count, deleted_files, errors = self._delete_old_files()
+                # Run deletion with timeout protection and capture result
+                deleted_count, deleted_files, errors = self.run_with_timeout(
+                    lambda: self._delete_old_files()
+                )
 
                 # Format results for the log file
                 result_details = [
