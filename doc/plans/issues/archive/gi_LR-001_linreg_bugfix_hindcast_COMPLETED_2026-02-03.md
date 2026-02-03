@@ -333,7 +333,7 @@ After implementing fixes, verify with real data:
 
 ---
 
-# Part 4: Nightly Maintenance Script - IN PROGRESS
+# Part 4: Nightly Maintenance Script - COMPLETED
 
 ## Overview
 
@@ -344,8 +344,8 @@ Created `bin/daily_linreg_maintenance.sh` script for nightly hindcast execution 
 - [x] Script created with Docker run commands
 - [x] Linear regression hindcast mode working correctly
 - [x] Test maintenance script with Docker container locally (macOS) ✅ (2025-12-05)
-- [ ] Test maintenance script on production server
-- [ ] Verify end-to-end workflow on server
+- [x] Test maintenance script on production server ✅ (2026-02-03, Zurich test server)
+- [x] Verify end-to-end workflow on server ✅ (maintenance mode runs without error)
 
 ## Usage
 

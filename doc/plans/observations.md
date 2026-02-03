@@ -78,8 +78,8 @@ AttributeError: 'Markdown' object has no attribute 'opts'
 
 **Problem**: Forecast skill lines are not displayed in figures for decadal forecasts. Pentad dashboard appears OK.
 
-**Assessment**: Data or rendering issue specific to decadal skill metrics. Needs investigation.
-**Status**: Needs investigation
+**Assessment**: Data or rendering issue specific to decadal skill metrics. Deferred to after Maxat's dashboard refactoring (maxat_sapphire_2 branch).
+**Status**: DEFERRED - will reassess after dashboard refactoring merge
 
 ---
 
@@ -180,19 +180,19 @@ However, the forecast dashboard does not display the data correctly. This is a *
 ### Postprocessing: Tier 1 Bug Fixes Verified on Server
 
 **Source**: Server testing after commit a52597d deployment
-**Date**: 2026-01-29
+**Date**: 2026-01-29, updated 2026-02-03
 
 Deployed Phase 1 Tier 1 bug fixes from `postprocessing_bug_fixes` branch:
 - ✅ Bug 1+2 (return value masking): Error accumulation pattern working
 - ✅ Bug 3 (unsafe .iloc[0]): Safe DataFrame access working
 - ✅ Bug 4 (non-atomic file ops): Atomic writes working
 
-**Postprocessing module ran without errors on the test server.**
+**Postprocessing module ran without errors on production server (verified 2026-02-03).**
 
 However, **machine learning hindcasts still failing** - this is a separate, pre-existing issue (see ML Maintenance observation from 2026-01-27 below). The postprocessing fixes do not address ML hindcast failures.
 
-**Assessment**: Postprocessing bug fixes verified working. ML hindcast issue is unrelated and tracked separately.
-**Status**: RESOLVED (postprocessing fixes) - ML issue remains open
+**Assessment**: Postprocessing bug fixes verified working on production.
+**Status**: RESOLVED
 
 ---
 
