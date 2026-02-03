@@ -69,27 +69,27 @@ for model in TFT TIDE TSMIXER; do
         # Record the run times for nan dealing
         start_nan_time=$(get_timestamp)
         echo "Starting nan dealing, time: $(date)" >> "$log_file"
-        python recalculate_nan_forecasts.py 2>&1 | tee -a "$log_file"
+        uv run python recalculate_nan_forecasts.py 2>&1 | tee -a "$log_file"
         end_nan_time=$(get_timestamp)
         echo "End nan dealing, time: $(date)" >> "$log_file"
 
         start_make_forecast_time=$(get_timestamp)
         echo "Starting make_forecast, time: $(date)" >> "$log_file"
-        python make_forecast.py 2>&1 | tee -a "$log_file"
+        uv run python make_forecast.py 2>&1 | tee -a "$log_file"
         end_make_forecast_time=$(get_timestamp)
         echo "End make_forecast, time: $(date)" >> "$log_file"
 
         # Record the start time for fill_ml_gaps
         start_fill_ml_gaps_time=$(get_timestamp)
         echo "Starting fill_ml_gaps, time: $(date)" >> "$log_file"
-        python fill_ml_gaps.py 2>&1 | tee -a "$log_file"
+        uv run python fill_ml_gaps.py 2>&1 | tee -a "$log_file"
         end_fill_ml_gaps_time=$(get_timestamp)
         echo "End fill_ml_gaps, time: $(date)" >> "$log_file"
 
         # Record the start time for add_new_station
         start_add_new_station_time=$(get_timestamp)
         echo "Starting add_new_station, time: $(date)" >> "$log_file"
-        python add_new_station.py 2>&1 | tee -a "$log_file"
+        uv run python add_new_station.py 2>&1 | tee -a "$log_file"
         end_add_new_station_time=$(get_timestamp)
         echo "End add_new_station, time: $(date)" >> "$log_file"
 
