@@ -21,12 +21,17 @@ For the full workflow, see [README.md](README.md).
 ## Pipeline Module (`p`)
 
 ### P-001: Marker files owned by root not cleaned up
-**Status**: Open
+**Status**: Complete
 **Priority**: Medium
 **Discovered**: 2025-12-18
+**Resolved**: 2026-02-03
 **File**: —
 
-Marker files written by the Docker pipeline are owned by root and accumulate over time without cleanup.
+Marker files written by the Docker pipeline were accumulating over time.
+
+**Root cause**: Bug in `DeleteOldMarkerFiles` and `DeleteOldGatewayFiles` tasks where `_delete_old_files()` was called twice - first via `run_with_timeout()` (result discarded, files actually deleted), then again to get return values (files already deleted, returned 0). This made logs incorrectly show "Deleted 0 files".
+
+**Fix**: Capture return value from `run_with_timeout()` instead of calling the method twice. Files are now properly deleted and logged.
 
 ---
 
@@ -128,30 +133,34 @@ Sites with both hydro and meteo sensors can appear on different pages with diffe
 ## Conceptual Model Module (`cm`)
 
 ### CM-001: CI/CD builds disabled - R dependencies broken
-**Status**: Open (Workaround Applied)
-**Priority**: Low
+**Status**: Closed (Module Being Phased Out)
+**Priority**: N/A
 **Discovered**: 2026-01-27
+**Closed**: 2026-02-03
 **File**: —
 
 R dependency installation fails during Docker build due to upstream rocker/tidyverse changes (urllib update incompatibility). CI builds disabled in `build_test.yml`, `deploy_main.yml`, and `scheduled_security_rebuild.yml`. Existing Docker images frozen at current state.
 
-**Workaround**: Jobs commented out in all CI workflows. Module remains functional using existing frozen images.
-
-**To fix**: Debug and update `install_packages.R` to work with current R package ecosystem, then uncomment CI jobs.
-
-**Note**: Module is already in maintenance-only mode and planned for phase-out. Fix is low priority unless customer demand requires it.
+**Resolution**: Module is in maintenance-only mode and being phased out in favor of `machine_learning` module. CI jobs will remain disabled. No fix planned unless customer demand requires it.
 
 ---
 
 ## Linear Regression Module (`lr`)
 
-### LR-001: [Title TBD]
-**Status**: Draft
-**Priority**: TBD
-**File**: [`issues/gi_draft_linreg_bugfix.md`](issues/gi_draft_linreg_bugfix.md)
+### LR-001: Leap year date handling and hindcast mode
+**Status**: Complete
+**Priority**: Medium
+**Discovered**: 2025-12-05
+**Resolved**: 2026-02-03
+**File**: [`issues/archive/gi_LR-001_linreg_bugfix_hindcast_COMPLETED_2026-02-03.md`](issues/archive/gi_LR-001_linreg_bugfix_hindcast_COMPLETED_2026-02-03.md)
 **GitHub**: —
 
-See detailed plan file for description.
+Multi-part improvement plan:
+- **Part 1 (Complete)**: Bug fixes for leap year day_of_year alignment, date reconstruction
+- **Part 2 (Complete)**: Hindcast mode with CLI interface
+- **Part 3 (Complete)**: Test coverage (20 new tests, all passing)
+- **Part 4 (Complete)**: Nightly maintenance script - verified on Zurich test server (2026-02-03)
+- **Part 5 (Planned)**: Future parallelization optimization (deferred)
 
 ---
 
@@ -175,4 +184,4 @@ See detailed plan file for description.
 
 ---
 
-*Last updated: 2026-01-29*
+*Last updated: 2026-02-03*
