@@ -23,9 +23,8 @@ run_lt_hparam_calibration() {
 
     # Run the script
     ieasyhydroforecast_env_file_path=$ieasyhydroforecast_env_file_path \
-        lt_forecast_mode=$mode python calibrate_and_hindcast.py --models LR_SM_ROF SM_GBT SM_GBT_Norm SM_GBT_LR MC_ALD --tune_hyperparameters
+        lt_forecast_mode=$mode python calibrate_and_hindcast.py --all --tune_hyperparameters
     
-
 
     # Capture exit status
     local exit_status=$?
@@ -45,8 +44,8 @@ run_lt_hparam_calibration() {
 }
 
 #modes_to_run=("month_0" "month_1" "month_2" "month_3" "month_4" "month_5" "month_6" "month_7" "month_8" "month_9")
-modes_to_run=("month_2" "month_3" "month_4" "month_5" "month_6" "month_7" "month_8" "month_9")
-
+modes_to_run=("month_4" "month_5" "month_6" "month_7" "month_8" "month_9")
+#modes_to_run=("month_1" "month_2" "month_3" "month_4" "month_5" "month_6")
 # Run calibration for each mode
 for mode in "${modes_to_run[@]}"; do
     echo "=========================================="

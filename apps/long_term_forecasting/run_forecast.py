@@ -32,7 +32,7 @@ from lt_forecasting.forecast_models.deep_models.uncertainty_mixture import (
 )
 
 from __init__ import logger 
-from data_interface import DataInterface
+from data_interface import DataInterface, BasePredictorDataInterface
 from config_forecast import ForecastConfig
 from lt_utils import create_model_instance
 
@@ -83,7 +83,9 @@ def run_single_model(data_interface: DataInterface,
     model_dependencies = forecast_configs.get_model_dependencies()
     all_dependencies_forecast_paths = []
     all_dependencies_hindcast_paths = []
+    all_dependencies_models = []
     for dep in model_dependencies.get(model_name, []):
+        all_dependencies_models.append(dep)
         dep_path = forecast_configs.get_output_path(model_name=dep)
         dep_file_forecast = os.path.join(dep_path, f"{dep}_forecast.csv")
         dep_file_hindcast = os.path.join(dep_path, f"{dep}_hindcast.csv")
@@ -102,7 +104,23 @@ def run_single_model(data_interface: DataInterface,
     # This is needed to compute the uncertainty based on past model errors
     configs["path_config"]["path_to_base_predictors"] = all_dependencies_hindcast_paths
 
-    logger.info(f"Running model: {model_name} of type {model_type}")
+    #################################################
+    if len(all_dependencies_models) > 0:
+        base_predictor_interface = BasePredictorDataInterface()
+        base_predictor_data, base_model_cols = base_predictor_interface.load_all_dependencies_csv(
+            all_dependencies_models=all_dependencies_models,
+            all_dependencies_paths=all_dependencies_hindcast_paths
+        )
+
+        logger.info(f"Loaded base predictor data for model {model_name} with columns: {base_model_cols}")
+        logger.info(f"Base predictor data shape: {base_predictor_data.shape}")
+        logger.info(f"Percentage of rows with NaN values in base predictor data: {base_predictor_data.isna().mean().mean() * 100:.2f}%")
+
+        logger.info(f"Running model: {model_name} of type {model_type}")
+    
+    else: 
+        base_predictor_data = None
+        base_model_cols = []
 
     data_dependencies = forecast_configs.get_data_dependencies(model_name=model_name)
     can_be_run = True
@@ -139,13 +157,17 @@ def run_single_model(data_interface: DataInterface,
     if can_be_run:
         today = datetime.now()
         # Create model instance
+        
         model_instance = create_model_instance(
             model_type=model_type,
             model_name=model_name,
             configs=configs,
             data=temporal_data,
             static_data=static_data,
+            base_predictors=base_predictor_data,
+            base_model_names=base_model_cols
         )
+
 
         # Run forecast
         forecast = model_instance.predict_operational(today=today)
@@ -279,7 +301,6 @@ def run_forecast(
     logger.info("="*50 + "\n")
 
     logger.info("Forecast run completed.")
-
 
 
 if __name__ == "__main__":

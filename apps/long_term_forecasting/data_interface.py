@@ -27,7 +27,9 @@ sys.path.append(forecast_dir)
 # Import the setup_library module from the iEasyHydroForecast package
 import setup_library as sl
 
-
+class DataInterfaceDB:
+    def __init__(self):
+        raise NotImplementedError("Database loading not implemented yet.")
 
 class DataInterface:
     def __init__(self):
@@ -280,3 +282,104 @@ class DataInterface:
         data = data.set_index(["code", "date"]).reindex(full_index).reset_index()
 
         return data
+    
+
+class BasePredictorDataInterface:
+    def __init__(self):
+        logger.info("Initialized BasePredictorDataInterface")
+        
+    def get_base_predictor_data_csv(self, 
+                                    model_name: str,
+                                    data_path: str) -> Tuple[pd.DataFrame, List[str]]:
+        """
+        Retrieve the base predictor dataset.
+
+        Returns:
+            pd.DataFrame: The base predictor dataset.
+        """
+        base_data = pd.read_csv(data_path)
+        
+        base_data["date"] = pd.to_datetime(base_data["date"], format="%Y-%m-%d")
+        base_data["code"] = base_data["code"].astype(int)
+
+        # get valid Q columns
+        Q_cols = [col for col in base_data.columns if "Q_" in col]
+        Q_cols = [col for col in Q_cols if col not in ["Q_obs", "Q_OBS"]]
+
+        base_data = base_data[["date", "code"] + Q_cols]
+
+        if len(Q_cols) == 1:
+            include_ensemble = True
+        else:
+            include_ensemble = False
+
+        base_models_cols = []
+
+        for col in Q_cols:
+            sub_model = col.replace("Q_", "")
+            member_name = sub_model
+
+            if sub_model == model_name:
+                if not include_ensemble:
+                    continue
+                base_models_cols.append(member_name)
+
+            else:
+                sub_sub_model = sub_model.split("_")[-1]
+                member_name = f"{model_name}_{sub_sub_model}"
+                base_models_cols.append(member_name)
+
+            base_data.rename(columns={col: member_name}, inplace=True)
+
+        return base_data, base_models_cols
+
+        
+    def get_base_predictor_data_database(self) -> pd.DataFrame:
+        """
+        Retrieve the base predictor dataset from the database.
+
+        Returns:
+            pd.DataFrame: The base predictor dataset.
+        """
+        raise NotImplementedError("Database loading not implemented yet.")
+
+    def load_all_dependencies_csv(self,
+                            all_dependencies_models: List[str],
+                            all_dependencies_paths: List[str],
+                              ) -> Tuple[pd.DataFrame, List[str]]:
+        """
+        Loads all dependencies data from the provided paths.
+        """
+
+        all_predictions = None
+        all_model_cols = []
+        
+        for model_name, model_path in zip(all_dependencies_models, all_dependencies_paths):
+
+            base_data, base_models_cols = self.get_base_predictor_data_csv(
+                model_name=model_name,
+                data_path=model_path
+            )
+
+            if all_predictions is None:
+                all_predictions = base_data
+            else:
+                all_predictions = pd.merge(
+                    all_predictions,
+                    base_data,
+                    on=["date", "code"],
+                    how="inner"
+                )
+            
+            all_model_cols.extend(base_models_cols)
+            
+        return all_predictions, all_model_cols
+
+    def load_all_dependencies_database(self,
+                            all_dependencies_models: List[str]
+                              ) -> Tuple[pd.DataFrame, List[str]]:
+        """
+        Loads all dependencies data from the database.
+        """
+        raise NotImplementedError("Database loading not implemented yet.")
+    

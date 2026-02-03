@@ -38,6 +38,8 @@ def create_model_instance(
     configs: Dict[str, Any],
     data: pd.DataFrame,
     static_data: pd.DataFrame,
+    base_predictors: pd.DataFrame = None,
+    base_model_names: List[str] = None,
 ):
     """
     Create the appropriate model instance based on the model type.
@@ -48,7 +50,8 @@ def create_model_instance(
         configs: All configuration dictionaries
         data: Time series data
         static_data: Static basin characteristics
-
+        base_predictors: DataFrame containing base predictors
+        base_model_names: List of base model names
     Returns:
         Model instance
     """
@@ -78,6 +81,8 @@ def create_model_instance(
             model_config=model_config,
             feature_config=feature_config,
             path_config=path_config,
+            base_predictors=base_predictors,
+            base_model_names=base_model_names,
         )
     elif model_type == "UncertaintyMixture":
         model = UncertaintyMixtureModel(
@@ -87,6 +92,8 @@ def create_model_instance(
             model_config=model_config,
             feature_config=feature_config,
             path_config=path_config,
+            base_predictors=base_predictors,
+            base_model_names=base_model_names,
         )
     else:
         raise ValueError(f"Unknown model type: {model_type}")

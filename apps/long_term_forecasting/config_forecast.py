@@ -157,8 +157,8 @@ class ForecastConfig:
         # this is the offset from the "today"  to start forecasting
         # [t+k, t+k+H-1], where k is the offset and H is the horizon
         self.offset = self.forecast_config["offset"]
-
         self.forecast_days = self.forecast_config['forecast_days']
+        self.allowable_missing_value_operational = self.forecast_config.get("allowable_missing_value_operational", 0)
 
         # now add these to each model's general config
         for model_name in self.all_models:
@@ -166,6 +166,7 @@ class ForecastConfig:
             model_specific_config["general_config"]["prediction_horizon"] = self.forecast_horizon
             model_specific_config["general_config"]["offset"] = self.offset
             model_specific_config["general_config"]["forecast_days"] = self.forecast_days
+            model_specific_config["general_config"]["allowable_missing_value_operational"] = self.allowable_missing_value_operational
             # Optionally, write back the updated config if needed
             config_file = os.path.join(self.all_paths[model_name], "general_config.json")
             with open(config_file, 'w') as f:

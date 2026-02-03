@@ -310,33 +310,37 @@ def calibrate_and_hindcast(
 
         if tune_hyperparameters:
             hparam_tuning_status = forecast_config.get_hyperparameter_tuning_status(model_name=model_name)
-            if not hparam_tuning_status:
-                logger.info(f"Tuning hyperparameters for model {model_name}.")
-                success, message = tune_hyperparameters_model(
-                    model_name=model_name,
-                    forecast_configs=forecast_config,
-                    temporal_data=temporal_data,
-                    static_data=static_data,
-                    data_interface=data_interface,
-                )
-                if success:
-                    logger.info(f"Hyperparameter tuning for model {model_name} completed successfully.")
-                else:
-                    logger.error(f"Hyperparameter tuning for model {model_name} failed: {message}")
-                    logger.error("Skipping calibration due to failed hyperparameter tuning.")
-                    execution_is_success[model_name] = False
-                    continue
-                
-                # Update hyperparameter tuning status
-                forecast_config.update_hyperparameter_tuning_status(
-                    model_name=model_name,
-                    status=success
-                )
+            logger.info(f"Hyperparameter tuning status for model {model_name}: {hparam_tuning_status}")
 
-                # Write this to config
-                forecast_config.write_updated_config()
+            if hparam_tuning_status:
+                logger.info(f"Model {model_name} hyperparameters already tuned. Re-doing tuning as per user request. To skip tuning, run without --tune_hyperparameters flag.")
 
-                time.sleep(10)  # small delay to ensure output files are written properly
+            logger.info(f"Tuning hyperparameters for model {model_name}.")
+            success, message = tune_hyperparameters_model(
+                model_name=model_name,
+                forecast_configs=forecast_config,
+                temporal_data=temporal_data,
+                static_data=static_data,
+                data_interface=data_interface,
+            )
+            if success:
+                logger.info(f"Hyperparameter tuning for model {model_name} completed successfully.")
+            else:
+                logger.error(f"Hyperparameter tuning for model {model_name} failed: {message}")
+                logger.error("Skipping calibration due to failed hyperparameter tuning.")
+                execution_is_success[model_name] = False
+                continue
+            
+            # Update hyperparameter tuning status
+            forecast_config.update_hyperparameter_tuning_status(
+                model_name=model_name,
+                status=success
+            )
+
+            # Write this to config
+            forecast_config.write_updated_config()
+
+            time.sleep(10)  # small delay to ensure output files are written properly
 
         success = calibrate_model(
             data_interface=data_interface,
