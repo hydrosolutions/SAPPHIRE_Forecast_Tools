@@ -18,24 +18,65 @@
 # 3) We multiply this ratio with the long term mean of the calendar month to get the adjusted forecast for the calendar month.
 #
 # Importantly: This is done for all other years, then the prediction year (no data leakage in hindcast).
-def get_lt_configuration():
+def get_lt_configuration(args):
+    operational_issue_day = args.operational_issue_day
+    operational_month_lead_time = args.operational_month_lead_time
     raise NotImplementedError
 
-def calculate_lt_statistics_fc_period():
+def calculate_lt_statistics_fc_period(args):
+
+    # Acces the discharge and prediction data from the args
+    discharge_data = args.discharge_data
+    prediction_data = args.prediction_data
+
+    # Based on the valid_from and valid_to columns, calculate the day-month mean values for each year 
+    # and then the long term mean over all years for the forecasted period (day-month). Except the year of the prediction (no data leakage in hindcast).
+    # This function should work for both the hindcast setting (so multiple years) and the operational setting (only one year, so all historical years are considered).
+    # for the aggregation atleas 50% of the days in the period should have non-missing values.
+    # This should be done for each code (basin) seperately. But in a fast way
+
+    #TODO: Implement the calculation of the long term statistics for the forecasted period (day-month) over all years, except the year of the prediction (no data leakage in hindcast).
+    
     raise NotImplementedError
 
-def calculate_lt_statistics_calendar_month():
+def calculate_lt_statistics_calendar_month(args):
+
+    # Acces the discharge data from the args
+    # aggregate to calendar month long term statistics, for the aggregation atleas 50% of the days in the month should have non-missing values.
+    # for each code (basin) calculate , mean, std, min, max, q_25, q_75, number_years over all years except the year of the prediction (no data leakage in hindcast).
     raise NotImplementedError
 
-def adjust_forecast_to_calendar_month():
+def map_forecasted_period_to_calendar_month(args):
+
+    # Create a reference table mapping the forecasted period (day-month) to the calendar month long term statistics
+    # this is done by accessing the forecast_issue date (date column), xtracting the month and adding + operational_month_lead_time
+    # then mapping the forecasted period (day-month) to the calendar month long term statistics
+
+    # output should be a dataframe  with columns: date, code, fc_period_lt_prediction, fc_period_lt_mean, calendar_month_lt_mean, calendar_month_std, etc. 
     raise NotImplementedError
 
-def post_process_lt_forecast():
-    # 1) Calculate long term statistics for forecasted period
-    calculate_lt_statistics_fc_period()
+def adjust_forecast_to_calendar_month(args):
 
-    # 2) Calculate long term statistics for calendar month
-    calculate_lt_statistics_calendar_month()
+    # Get the mapped forecasted period to calendar month
+    # 1. Calcualte the log ratio between the fc_period_lt_prediction and fc_period_lt_mean.
 
-    # 3) Adjust forecast to calendar month
-    adjust_forecast_to_calendar_month()
+    # Depending on the amount of historical data we choose a different strategy to validate the ratio:
+
+    # A) N = 0, leave the raw forecast as is.
+
+    # B) N < 5, Use the min max * 2 bounds. 
+
+    # C) N >= 5, Use student t-distribution to calculate the 95% confidence interval bounds.
+
+    # 2. Multiply the ratio with the calendar_month_lt_mean to get the adjusted forecast for the calendar month.
+
+    # 3. Non Negative values only. - set negative values to Nan.
+    
+    raise NotImplementedError
+
+def post_process_lt_forecast(args):
+    
+
+    raise NotImplementedError
+
+    return adjusted_forecast
