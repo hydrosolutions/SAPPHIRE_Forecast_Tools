@@ -41,8 +41,8 @@ def get_today():
 # Columns retained in long-term forecasting dataframes + Prediction Columns
 LT_FORECAST_BASE_COLUMNS = [
     'date',
+    'code',
     'valid_from',
     'valid_to',
-    'code',
     'flag',
 ]
