@@ -7,38 +7,67 @@
 #
 
 # region load_libraries
+
+# =========================
+# Standard library imports
+# =========================
+import os
 import sys
+import datetime as dt
+from datetime import datetime, timedelta
+from functools import partial
+from concurrent.futures import ThreadPoolExecutor
+
+# =========================
+# Third-party imports
+# =========================
 import panel as pn
 import pandas as pd
-import datetime as dt
-from datetime import timedelta
+import holoviews as hv
 
 # import logging
 # from logging.handlers import TimedRotatingFileHandler
 
-import holoviews as hv
 # Set the default extension
 # pn.extension('tabulator')
 
 # Local sources
+# =========================
+# Local application imports
+# =========================
 from src.environment import load_configuration
 import src.gettext_config as localize
+from src.gettext_config import _
 import src.processing as processing
 from src.site import SapphireSite as Site
 from src.bulletins import write_to_excel
 import src.layout as layout
 from src.file_downloader import FileDownloader
-from src.auth_utils import *
-
-import calendar
-
-from src.gettext_config import _
-from concurrent.futures import ThreadPoolExecutor
 from src import db
+from src.auth_utils import (
+    load_credentials,
+    check_current_user,
+    save_current_user,
+    remove_current_user,
+    log_auth_event,
+    clear_auth_logs,
+    check_auth_state,
+    log_user_activity,
+    clear_activity_log,
+    check_recent_activity
+)
+
+# import calendar
 from dashboard.logger import setup_logger
 from dashboard import widgets
-from dashboard.bulletin_manager import load_bulletin_from_csv, save_bulletin_to_csv, add_current_selection_to_bulletin, remove_selected_from_bulletin, handle_bulletin_write, create_bulletin_table
-from functools import partial
+from dashboard.bulletin_manager import (
+    load_bulletin_from_csv, 
+    # save_bulletin_to_csv, 
+    add_current_selection_to_bulletin, 
+    remove_selected_from_bulletin, 
+    handle_bulletin_write, 
+    create_bulletin_table
+)
 
 # Get the absolute path of the directory containing the current script
 # cwd = os.getcwd()
