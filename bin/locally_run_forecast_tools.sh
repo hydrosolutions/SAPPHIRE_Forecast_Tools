@@ -202,11 +202,12 @@ run_lt_forecasting() {
 
     #pip install -e "/Users/sandrohunziker/hydrosolutions Dropbox/Sandro Hunziker/SAPPHIRE_Central_Asia_Technical_Work/code/machine_learning_hydrology/monthly_forecasting"
     # Change directory to the location of the script
-    #cd ./apps/preprocessing_runoff
+    cd ./apps/preprocessing_runoff
     cd ../../apps/long_term_forecasting
 
     # Run forecasts for each month, continue even if one fails
-    for month in  1 2 3 4 5 6 7 8 9; do
+    #for month in  0 1 2 3 4 5 6 7 8 9; do
+    for month in  0; do
         echo "Running forecast for month_$month" >> ../../summary.log
         if ! ieasyhydroforecast_env_file_path=$ieasyhydroforecast_env_file_path lt_forecast_mode=month_$month python run_forecast.py --all; then
             echo "WARNING: month_$month forecast failed, continuing with next month" >> ../../summary.log
@@ -231,10 +232,10 @@ run_lt_forecasting() {
 
 
 # -- Preprocessing runoff data --
-run_preprocessing_runoff
+#run_preprocessing_runoff
 
 # -- Preprocessing gateway data
-run_preprocessing_gateway
+#run_preprocessing_gateway
 
 # long term forecasting
 run_lt_forecasting

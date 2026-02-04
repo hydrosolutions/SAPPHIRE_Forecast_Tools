@@ -99,3 +99,31 @@ def create_model_instance(
         raise ValueError(f"Unknown model type: {model_type}")
 
     return model
+
+
+def infer_q_columns(df: pd.DataFrame) -> list:
+    """
+    Automatically infer Q columns from the DataFrame.
+
+    Identifies columns that:
+    - Start with 'Q' followed by a digit (e.g., Q5, Q10, Q25, Q50, Q75, Q90, Q95)
+    - Start with 'Q_' (e.g., Q_MC_ALD, Q_loc)
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame containing forecast data
+
+    Returns
+    -------
+    list
+        List of Q column names found in the DataFrame
+    """
+    q_columns = []
+    for col in df.columns:
+        # Match Q followed by digit (Q5, Q10, etc.) or Q_ prefix (Q_MC_ALD, Q_loc, etc.)
+        if col.startswith('Q') and (len(col) > 1 and (col[1].isdigit() or col[1] == '_')):
+            if col not in ("Q_obs",):
+                q_columns.append(col)
+    return q_columns
+

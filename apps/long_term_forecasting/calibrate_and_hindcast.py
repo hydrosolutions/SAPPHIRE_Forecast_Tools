@@ -6,8 +6,6 @@
 # Set the environment variable ieasyhydroforecast_env_file_path to point to your .env file
 # Then run the script with:
 # ieasyhydroforecast_env_file_path="path_to_env" lt_forecast_mode=monthly python calibrate_and_hindcast.py
-
-
 from datetime import datetime
 import logging
 
@@ -30,9 +28,11 @@ from lt_forecasting.forecast_models.deep_models.uncertainty_mixture import (
     UncertaintyMixtureModel,
 )
 
+from __init__ import LT_FORECAST_BASE_COLUMNS
 from data_interface import DataInterface
 from config_forecast import ForecastConfig
 from lt_utils import create_model_instance
+from post_process_lt_forecast import post_process_lt_forecast
 
 # set lt_forecasting logger level
 logger_lt = logging.getLogger("lt_forecasting")
@@ -212,6 +212,18 @@ def calibrate_model(data_interface: DataInterface,
         # raise the full error
         logger.error(f"Error during calibration and hindcast for model {model_name}: {e}")
         return False
+
+    # keep only dates where the day == forecast issue day
+    forecast_issue_day = forecast_configs.get_operational_issue_day()
+    hindcast = hindcast[hindcast['date'].dt.day == forecast_issue_day].copy()
+
+    # Post-Process Hindcast to match calendar months
+    hindcast = post_process_lt_forecast(
+        hindcast=hindcast,
+        model_name=model_name,
+        forecast_configs=forecast_configs
+    )
+
 
     #################################################
     # This part will be replaced by a database query in future [DATABASE INTEGRATION]

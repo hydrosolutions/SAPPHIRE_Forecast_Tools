@@ -11,7 +11,7 @@ import numpy as np
 import json
 from typing import List, Dict, Any, Optional, Tuple
 
-from __init__ import logger 
+from __init__ import logger, initialize_today, get_today
 
 
 # Local libraries, installed with pip install -e ./iEasyHydroForecast
@@ -178,7 +178,7 @@ class DataInterface:
 
         # Calculate Time Offsets
         # This is usefull to check if we can run the forecast or if we are missing data
-        today = pd.Timestamp.now().normalize()
+        today = get_today()
         max_date_temporal = temporal_data["date"].max()
         offset_base = (today - max_date_temporal).days # we expect max_date_temporal to be in the future as we have forecasting data
         offset_discharge = (today - max_date_discharge).days # we expect max_date_discharge to be in the past as we do not have todays discharge yet
@@ -197,7 +197,7 @@ class DataInterface:
         assert len(HRUs_snow) == len(snow_variables), "Length of HRUs_snow must match length of snow_variables"
 
         temporal_data = base_data.copy()
-        today = pd.Timestamp.now().normalize()
+        today = get_today()
 
         if len(HRUs_snow) > 0:
             for HRU, variable in zip(HRUs_snow, snow_variables):
@@ -208,7 +208,7 @@ class DataInterface:
                 
                 offset_snow = (today - max_date).days
 
-                # remove dublicates based on date and code
+                # remove duplicates based on date and code
                 snow_data = snow_data.drop_duplicates(subset=["date", "code"])
 
                 temporal_data = pd.merge(temporal_data, snow_data, on=["date", "code"], how="left")
@@ -267,7 +267,7 @@ class DataInterface:
         # Step three - ensure time series is continuous - reindex
         # We expect that the data has EMCWF IFS Forecasts up to 15 days ahead
         emcwf_forecast_days_ahead = int(os.getenv('ieasyhydroforecast_ECMWF_IFS_lead_time'))
-        today = pd.Timestamp.now().normalize()
+        today = get_today()
         end_date = today + pd.Timedelta(days=emcwf_forecast_days_ahead)
         max_date_data = data["date"].max()
         if end_date > max_date_data:

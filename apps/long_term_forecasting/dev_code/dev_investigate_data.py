@@ -6,7 +6,7 @@
 ## How to run this script:
 # Set the environment variable ieasyhydroforecast_env_file_path to point to your .env file
 # Then run the script with:
-# ieasyhydroforecast_env_file_path="../../../kyg_data_forecast_tools/config/.env_develop_kghm" lt_forecast_mode=monthly python dev_investigate_data.py
+# ieasyhydroforecast_env_file_path="../../../your_env_path/.env" lt_forecast_mode=monthly python dev_investigate_data.py
 
 
 from datetime import datetime

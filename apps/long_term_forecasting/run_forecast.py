@@ -31,9 +31,10 @@ from lt_forecasting.forecast_models.deep_models.uncertainty_mixture import (
     UncertaintyMixtureModel,
 )
 
-from __init__ import logger 
+from __init__ import logger, initialize_today, get_today, LT_FORECAST_BASE_COLUMNS
 from data_interface import DataInterface, BasePredictorDataInterface
 from config_forecast import ForecastConfig
+from post_process_lt_forecast import post_process_lt_forecast
 from lt_utils import create_model_instance
 
 
@@ -155,7 +156,7 @@ def run_single_model(data_interface: DataInterface,
             logger.warning(f"Unknown data dependency type: {input_type}")
 
     if can_be_run:
-        today = datetime.now()
+        today = get_today()
         # Create model instance
         
         model_instance = create_model_instance(
@@ -180,7 +181,27 @@ def run_single_model(data_interface: DataInterface,
         forecast = pd.DataFrame()  # Empty DataFrame as placeholder
         forecast['flag'] = 2
         success = False
-    
+ 
+    # Compare when the forecast is issued and when it should be issued
+    forecast_issue_day = forecast_configs.get_operational_issue_day()
+    today = get_today()
+    day_offset = today.day - forecast_issue_day
+
+    if day_offset != 0:
+        direction = "before" if day_offset < 0 else "after"
+        days = abs(day_offset)
+        unit = "day" if days == 1 else "days"
+        logger.warning(
+            f"Forecast for model {model_name} issued {days} {unit} {direction} the scheduled issue day "
+            f"({forecast_issue_day}). Forecasts are normalized to calendar monthly values; "
+            f"off-schedule runs may lead to degradation in forecast quality."
+        )
+    # Postprocess the forecasts to calendar months.
+    forecast = post_process_lt_forecast(
+        forecast_config=forecast_configs,
+        observed_discharge_data=temporal_data,
+        raw_forecast=forecast,
+    )
     #################################################
     # This part will be replaced by a database query in future [DATABASE INTEGRATION]
     #################################################
@@ -334,13 +355,26 @@ Examples:
         metavar='MODEL_NAME',
         help='List of model names to forecast'
     )
+
+    group.add_argument(
+        '--today',
+        type=str,
+        help='Override the "today" date for the forecast in YYYY-MM-DD format (useful for testing or backtesting)'
+    )
     
     args = parser.parse_args()
     
     # Determine recalibrate_all flag and models to run
     recalibrate_all = args.all
     models_to_run = args.models if args.models else []
+
+    if args.today is None:
+        today = datetime.now().date()
+    else:
+        today = datetime.strptime(args.today, '%Y-%m-%d').date()
     
+    initialize_today(today)
+
     run_forecast(
         forecast_all=recalibrate_all,
         models_to_run=models_to_run

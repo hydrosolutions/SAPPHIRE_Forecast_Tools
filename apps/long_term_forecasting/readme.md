@@ -68,25 +68,101 @@ Each forecast mode (e.g., "monthly") requires a configuration folder containing:
 
 **Model ordering:** Models are automatically ordered using topological sorting based on their dependencies. This ensures that models are executed after all their dependencies are satisfied. Circular dependencies are detected and raise an error. Models without dependencies can run in parallel (same execution level).
 
-**Example configuration (`config_monthly.json`):**
+**Example configuration (`config_1.json`):**
 ```json
 {
-    "prediction_horizon" : 30,
-    "offset" : 30,
-    "forecast_days" :[ 10, 20, 25, "end"],
-    "model_folder" : "models_and_scalers/long_term_forecasting/monthly/",
-    "models_to_use" : {
-        "Base" : ["LR_Base", "GBT_Base"],
-        "SnowMapper" : ["LR_SM", "SM_GBT_LR"]
+    "prediction_horizon": 30,
+    "offset": 35,
+    "forecast_days": [
+        5,
+        10,
+        15,
+        20,
+        25,
+        "end"
+    ],
+    "operational_issue_day" : 10,
+    "operational_month_lead_time" : 1, 
+    "allowable_missing_value_operational": 3,
+    "model_folder": "models_and_scalers/long_term_forecasting/month_1/",
+    "models_to_use": {
+        "Base": [
+            "LR_Base",
+            "GBT"
+        ],
+        "SnowMapper": [
+            "LR_SM",
+            "LR_SM_DT",
+            "LR_SM_ROF",
+            "SM_GBT",
+            "SM_GBT_Norm",
+            "SM_GBT_LR"
+        ],
+        "Uncertainty": [
+            "MC_ALD"
+        ]
     },
-    "model_order" : ["Base", "SnowMapper"],
-    "model_dependencies" : {
-        "SM_GBT_LR" : ["LR_Base", "LR_SM"]
+    "model_dependencies": {
+        "SM_GBT_LR": [
+            "LR_Base",
+            "LR_SM",
+            "LR_SM_DT",
+            "LR_SM_ROF"
+        ],
+        "MC_ALD": [
+            "LR_Base",
+            "GBT",
+            "LR_SM",
+            "LR_SM_DT",
+            "LR_SM_ROF",
+            "SM_GBT",
+            "SM_GBT_Norm",
+            "SM_GBT_LR"
+        ]
     },
-    "data_dependencies" : {
-        "SM_GBT_LR" : {"SnowMapper": -5}
+    "data_dependencies": {
+        "LR_SM": {
+            "SnowMapper": 5
+        },
+        "LR_SM_DT": {
+            "SnowMapper": 5
+        },
+        "LR_SM_ROF": {
+            "SnowMapper": 5
+        },
+        "SM_GBT": {
+            "SnowMapper": -8
+        },
+        "SM_GBT_Norm": {
+            "SnowMapper": -8
+        },
+        "SM_GBT_LR": {
+            "SnowMapper": -8
+        }
     },
-    "forcing_HRU" : "00003"
+    "forcing_HRU": "00003",
+    "is_calibrated": {
+        "LR_Base": true,
+        "GBT": true,
+        "LR_SM": true,
+        "LR_SM_DT": true,
+        "LR_SM_ROF": true,
+        "SM_GBT": true,
+        "SM_GBT_Norm": true,
+        "SM_GBT_LR": true,
+        "MC_ALD": true
+    },
+    "is_hyperparameter_tuned": {
+        "LR_Base": true,
+        "GBT": true,
+        "LR_SM": true,
+        "LR_SM_DT": true,
+        "LR_SM_ROF": true,
+        "SM_GBT": true,
+        "SM_GBT_Norm": true,
+        "SM_GBT_LR": true,
+        "MC_ALD": true
+    }
 }
 ```
 The prediction_horizon and offset variable control what the model tries to predict. As in the code we compute features with:
@@ -108,8 +184,8 @@ $$
 where $t$ is today, $k$ is the offset and $H$ is the prediction Horizon. If $k=null$ it is set to $k=H$. If we want to issue a forecast which is only valid in 5 days (Issue date 10th, valid from 15th for the next 30 days) we can set: 
 $$
 prediction\,\,horizon = 30 \\
-offset = 34 \\
-[t+34 -30 + 1, t+34] = [t+5, t+34]
+offset = 35 \\
+[t+35 -30 + 1, t+35] = [t+5, t+35]
 $$
 
 or if we want to predict the period from April - September and issue the forecast in the beginning of March (we assume that all months have 30 days as for such long periods single days have very little influence even if we have a perfect model) it is:

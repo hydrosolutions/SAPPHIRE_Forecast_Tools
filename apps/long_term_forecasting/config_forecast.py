@@ -106,7 +106,7 @@ class ForecastConfig:
         except ValueError as e:
             logger.error(f"Failed to order models: {e}")
             raise
-
+            
 
         # Synchronize forecast horizon and offset across models
         self.synchronize_forecast_settings()
@@ -226,6 +226,11 @@ class ForecastConfig:
         with open(self.config_path, 'w') as f:
             json.dump(self.forecast_config, f, indent=4)
 
+    def get_operational_issue_day(self) -> List[int]:
+        return int(self.forecast_config["operational_issue_day"])
+    
+    def get_operational_month_lead_time(self) -> int:
+        return int(self.forecast_config["operational_month_lead_time"])
 
 
 def order_models_by_dependencies(all_models: List[str], 
