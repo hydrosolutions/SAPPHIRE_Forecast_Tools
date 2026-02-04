@@ -159,10 +159,13 @@ class DataInterface:
             Tuple[pd.DataFrame, pd.DataFrame]: The base temporal dataset and the static dataset.
         """
 
+        today = get_today()
 
         discharge = pd.read_csv(self.PATH_TO_PAST_DISCHARGE, parse_dates=['date'])
+        # filter discharge to only include dates before today
+        discharge = discharge[discharge["date"] <= today].reset_index(drop=True)
+        
         max_date_discharge = discharge["date"].max()
-
         discharge["code"] = discharge["code"].astype(int)
 
         forcing_data = self._load_forcing_data(HRU=forcing_HRU)
@@ -178,7 +181,6 @@ class DataInterface:
 
         # Calculate Time Offsets
         # This is usefull to check if we can run the forecast or if we are missing data
-        today = get_today()
         max_date_temporal = temporal_data["date"].max()
         offset_base = (today - max_date_temporal).days # we expect max_date_temporal to be in the future as we have forecasting data
         offset_discharge = (today - max_date_discharge).days # we expect max_date_discharge to be in the past as we do not have todays discharge yet
@@ -269,6 +271,8 @@ class DataInterface:
         emcwf_forecast_days_ahead = int(os.getenv('ieasyhydroforecast_ECMWF_IFS_lead_time'))
         today = get_today()
         end_date = today + pd.Timedelta(days=emcwf_forecast_days_ahead)
+        data = data[data["date"] <= end_date].reset_index(drop=True)
+        
         max_date_data = data["date"].max()
         if end_date > max_date_data:
             logger.warning(f"Data ends at {max_date_data}, but with EMCWF forecasts we expect data up to {end_date}. This indicates some missing data.")

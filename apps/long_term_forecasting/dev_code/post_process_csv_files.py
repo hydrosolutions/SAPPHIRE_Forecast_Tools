@@ -27,7 +27,7 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.join(script_dir, '..')
 sys.path.insert(0, parent_dir)
 
-from __init__ import logger, initialize_today, get_today
+from __init__ import logger, initialize_today, get_today, LT_FORECAST_BASE_COLUMNS
 from config_forecast import ForecastConfig
 from data_interface import DataInterface
 from post_process_lt_forecast import post_process_lt_forecast
@@ -109,6 +109,10 @@ def process_single_file(
             return False
 
         logger.info(f"Found Q columns: {q_columns}")
+
+        df_filtered = df_filtered[LT_FORECAST_BASE_COLUMNS + q_columns]
+
+        logger.info(f"Retained columns: {df_filtered.columns.tolist()}")
 
         # Apply post-processing
         df_processed = post_process_lt_forecast(

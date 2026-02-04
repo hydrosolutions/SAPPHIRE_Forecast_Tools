@@ -282,8 +282,9 @@ def map_forecasted_period_to_calendar_month(prediction_data: pd.DataFrame,
     mapped_data['year'] = mapped_data['date'].dt.year
 
     # Calculate target month: issue month + operational_month_lead_time
-    # Handle month overflow (e.g., month 11 + 3 = month 2 next year)
-    mapped_data['target_month'] = (mapped_data['date'].dt.month + operational_month_lead_time - 1) % 12 + 1
+    # Calculate target month and handle year rollover
+    issue_month = mapped_data['date'].dt.month
+    mapped_data['target_month'] = (issue_month + operational_month_lead_time - 1) % 12 + 1
 
     # Merge forecast period statistics
     fc_period_stats = fc_period_stats.copy()
@@ -304,6 +305,17 @@ def map_forecasted_period_to_calendar_month(prediction_data: pd.DataFrame,
         how='left'
     )
 
+    # Adjust the valid_from and valid_to to exactly match the start and end of the target month
+    # Set valid_from to first day of target month
+    mapped_data['valid_from'] = pd.to_datetime({
+        'year': mapped_data['valid_from'].dt.year,
+        'month': mapped_data['target_month'],
+        'day': 1
+    })
+
+    # Set valid_to to last day of target month (no subtraction needed!)
+    mapped_data['valid_to'] = mapped_data['valid_from'] + pd.offsets.MonthEnd(0)
+    
     return mapped_data
 
 

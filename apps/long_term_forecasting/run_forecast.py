@@ -235,7 +235,8 @@ def run_single_model(data_interface: DataInterface,
 
 def run_forecast(
         forecast_all: bool = True,
-        models_to_run: List[str] = []
+        models_to_run: List[str] = [],
+        forecast_mode: str = None,
 ):
 
     # Setup Environment
@@ -244,7 +245,9 @@ def run_forecast(
     # Now we setup the configurations
     forecast_config = ForecastConfig()
 
-    forecast_mode = os.getenv('lt_forecast_mode')
+    if forecast_mode is None:
+        forecast_mode = os.getenv('lt_forecast_mode')
+     
     forecast_config.load_forecast_config(forecast_mode=forecast_mode)
     forcing_HRU = forecast_config.get_forcing_HRU()
 
