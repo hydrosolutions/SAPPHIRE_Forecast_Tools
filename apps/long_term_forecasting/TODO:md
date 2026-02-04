@@ -18,9 +18,56 @@
 - [ ] Forecast and Hindcast writting to DataBase
 - [ ] Run Mock Forecasts
 - [ ] Run Mock Calibration
+- [ ] Bayesian Correction
 
 # Bulk 3 
 - [ ] Update Documentation
 - [ ] Release Stable LT-Forecast Version.
 - [ ] Testing
 - [ ] Commiting
+
+# Bayesian Ratio Correction for Seasonal Forecasts
+
+## Goal
+Enforce relative seasonal constraints (e.g., Sep < Aug) probabilistically, weighted by confidence in climatology.
+
+---
+
+## Steps
+
+### 1. Compute Historical Ratios
+For each month pair, calculate:
+$$R = Q_{curr} / Q_{prev}$$
+Store: mean ($\mu_R$), std ($\sigma_R$), sample size ($n$)
+
+### 2. Quantify Climatology Uncertainty
+With limited data, inflate prior variance:
+$$\sigma_{R,eff} = \sigma_R \times \sqrt{1 + 1/n}$$
+
+Compute constraint confidence:
+$$p_{constraint} = n / (n + 2)$$
+
+### 3. Convert Forecast to Ratio Space
+$$R_{fc} = Q_{curr}^{fc} / Q_{prev}$$
+$$\sigma_{R,fc} = \sigma_{curr}^{fc} / Q_{prev}$$
+
+### 4. Bayesian Update on Ratio
+Posterior precision:
+$$\tau_{post} = 1/\sigma_{R,eff}^2 + 1/\sigma_{R,fc}^2$$
+
+Posterior mean:
+$$\mu_{R,post} = \frac{\mu_R / \sigma_{R,eff}^2 + R_{fc} / \sigma_{R,fc}^2}{\tau_{post}}$$
+
+### 5. Apply Soft Bounds
+If constraint exists (e.g., all historical $R < 1$):
+$$\mu_{R,post} = p_{constraint} \cdot \min(\mu_{R,post}, R_{max}) + (1 - p_{constraint}) \cdot \mu_{R,post}$$
+
+### 6. Recover Corrected Forecast
+$$Q_{curr}^{corrected} = Q_{prev} \times \mu_{R,post}$$
+
+---
+
+## Key Properties
+- **Few years** → wide prior → forecast dominates → weak correction
+- **Many years** → tight prior → climatology dominates → strong correction
+- **Relative correction** → wet/dry year signal preserved
