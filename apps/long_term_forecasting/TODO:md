@@ -29,7 +29,7 @@
 # Bayesian Ratio Correction for Seasonal Forecasts
 
 ## Goal
-Enforce relative seasonal constraints (e.g., Sep < Aug) probabilistically, weighted by confidence in climatology.
+Enforce relative seasonal constraints (e.g., Sep < Aug) probabilistically, weighted by confidence in climatology. This is done per basin and month and lead time.
 
 ---
 

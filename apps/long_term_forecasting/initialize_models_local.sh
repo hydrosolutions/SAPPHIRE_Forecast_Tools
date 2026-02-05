@@ -14,7 +14,7 @@ run_lt_hparam_calibration() {
     echo "$start_time_readable - Running long term forecasting module for mode: $mode" >> ../../summary.log
     
     # Activate the virtual environment
-    source /Users/sandrohunziker/Documents/sapphire_venvs/sapphire_lt_forecasting/bin/activate
+    #source /Users/sandrohunziker/Documents/sapphire_venvs/sapphire_lt_forecasting/bin/activate
 
     #pip install -e "/Users/sandrohunziker/hydrosolutions Dropbox/Sandro Hunziker/SAPPHIRE_Central_Asia_Technical_Work/code/machine_learning_hydrology/monthly_forecasting"
     # Change directory to the location of the script
@@ -23,7 +23,7 @@ run_lt_hparam_calibration() {
 
     # Run the script
     ieasyhydroforecast_env_file_path=$ieasyhydroforecast_env_file_path \
-        lt_forecast_mode=$mode python calibrate_and_hindcast.py --all --tune_hyperparameters
+        lt_forecast_mode=$mode python calibrate_and_hindcast.py --models MC_ALD #--tune_hyperparameters
     
 
     # Capture exit status
@@ -43,8 +43,8 @@ run_lt_hparam_calibration() {
     return $exit_status
 }
 
-#modes_to_run=("month_0" "month_1" "month_2" "month_3" "month_4" "month_5" "month_6" "month_7" "month_8" "month_9")
-modes_to_run=("month_4" "month_5" "month_6" "month_7" "month_8" "month_9")
+modes_to_run=("month_0" "month_1" "month_2" "month_3" "month_4" "month_5" "month_6" "month_7" "month_8" "month_9")
+#modes_to_run=("month_4" "month_5" "month_6" "month_7" "month_8" "month_9")
 #modes_to_run=("month_1" "month_2" "month_3" "month_4" "month_5" "month_6")
 # Run calibration for each mode
 for mode in "${modes_to_run[@]}"; do

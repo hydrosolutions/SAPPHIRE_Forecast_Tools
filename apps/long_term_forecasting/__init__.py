@@ -33,7 +33,9 @@ def initialize_today(today_override=None):
     global today                                                                                                                                                   
     today = pd.to_datetime(today_override) if today_override else pd.Timestamp.now()                                                                               
     return today                                                                                                                                                   
-                                                                                                                                                                    
+
+today = initialize_today()  # Initialize today at module load time , can be overridden later if needed for synthetic forecasts
+
 def get_today():                                                                                                                                                   
     return today 
 
@@ -46,3 +48,21 @@ LT_FORECAST_BASE_COLUMNS = [
     'valid_to',
     'flag',
 ]
+
+
+# --------------------------------------------------------------------
+# SAPPHIRE API Client Imports
+# --------------------------------------------------------------------
+try:
+    from sapphire_api_client import (
+        SapphirePostprocessingClient,
+        SapphirePreprocessingClient,
+        SapphireAPIError
+    )
+    SAPPHIRE_API_AVAILABLE = True
+except ImportError:
+    SAPPHIRE_API_AVAILABLE = False
+    SapphirePostprocessingClient = None
+    SapphirePreprocessingClient = None
+    SapphireAPIError = Exception
+# --------------------------------------------------------------------

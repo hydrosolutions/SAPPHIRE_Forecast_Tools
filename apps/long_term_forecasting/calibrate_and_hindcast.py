@@ -28,7 +28,7 @@ from lt_forecasting.forecast_models.deep_models.uncertainty_mixture import (
     UncertaintyMixtureModel,
 )
 
-from __init__ import LT_FORECAST_BASE_COLUMNS
+from __init__ import LT_FORECAST_BASE_COLUMNS, today, initialize_today
 from data_interface import DataInterface
 from config_forecast import ForecastConfig
 from lt_utils import create_model_instance
@@ -219,9 +219,9 @@ def calibrate_model(data_interface: DataInterface,
 
     # Post-Process Hindcast to match calendar months
     hindcast = post_process_lt_forecast(
-        hindcast=hindcast,
-        model_name=model_name,
-        forecast_configs=forecast_configs
+        forecast_config=forecast_configs,
+        observed_discharge_data=temporal_data,
+        raw_forecast=hindcast,
     )
 
 
