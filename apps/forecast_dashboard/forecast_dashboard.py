@@ -25,8 +25,6 @@ import holoviews as hv
 # =========================
 # Local application imports
 # =========================
-from src.environment import load_configuration
-import src.gettext_config as localize
 from src.gettext_config import _
 import src.processing as processing
 from src.site import SapphireSite as Site
@@ -34,148 +32,30 @@ from src.bulletins import write_to_excel
 import src.layout as layout
 from src.file_downloader import FileDownloader
 from src import db
-from src.auth_utils import (
-    load_credentials,
-    check_current_user,
-    save_current_user,
-    remove_current_user,
-    log_auth_event,
-    clear_auth_logs,
-    check_auth_state,
-    log_user_activity,
-    clear_activity_log,
-    check_recent_activity
-)
+from src.auth_utils import load_credentials, check_current_user, save_current_user, remove_current_user, log_auth_event, clear_auth_logs, check_auth_state, log_user_activity, clear_activity_log, check_recent_activity
 
 from dashboard.logger import setup_logger
 from dashboard import widgets
-from dashboard.bulletin_manager import (
-    load_bulletin_from_csv, 
-    add_current_selection_to_bulletin, 
-    remove_selected_from_bulletin, 
-    handle_bulletin_write, 
-    create_bulletin_table
-)
+from dashboard.bulletin_manager import load_bulletin_from_csv, add_current_selection_to_bulletin, remove_selected_from_bulletin, handle_bulletin_write, create_bulletin_table
+from dashboard.config import import_tag_library, setup_panel, setup_directories, load_env_and_icons, setup_localization
 
-# Local libraries, installed with pip install -e ./iEasyHydroForecast
-# Get the absolute path of the directory containing the current script
-script_dir = os.path.dirname(os.path.abspath(__file__))
 
-# Construct the path to the iEasyHydroForecast directory
-forecast_dir = os.path.join(script_dir, '..', 'iEasyHydroForecast')
-# Test if the forecast dir exists and print a warning if it does not
-if not os.path.isdir(forecast_dir):
-    raise Exception("Directory not found: " + forecast_dir)
-
-# Add the forecast directory to the Python path
-sys.path.append(forecast_dir)
-# Import the modules from the forecast library
-import tag_library as tl
-
-# endregion
+tl = import_tag_library()
 
 logger = setup_logger()
 
-# region load_configuration
+setup_panel(pn)
 
-# Set primary color to be consistent with the icon color
-# Set the primary color to be consistent with the icon color
-# Trying to fix the issue with the checkbox label not wrapping
-# Loads the font-awesome icons (used for the language icon)
-pn.extension(
-    'tabulator',
-    raw_css=[
-        ':root { --design-primary-color: #307096; }',
-        """
-        .checkbox-label {
-            white-space: normal !important;
-            word-wrap: break-word !important;
-            width: 100%; /* Adjust as needed */
-        }
-        """
-    ]
-)
+env_file_path, in_docker_flag, icon_path = load_env_and_icons()
 
-# CSS for language widget text color
-language_button_css = """
-header .bk.pn-widget-button {
-    color: #307086 !important;  /* Change text color of button widget */
-}
-"""
-
-# Inject the custom CSS
-pn.config.raw_css.append(language_button_css)
-
-
-# Get path to .env file from the environment variable
-env_file_path = os.getenv("ieasyhydroforecast_env_file_path")
-
-# Load .env file
-# Read the environment varialbe IN_DOCKER_CONTAINER to determine which .env
-# file to use
-in_docker_flag = load_configuration(env_file_path)
-
-# Get icon path from config
-icon_path = processing.get_icon_path(in_docker_flag)
-
-# The current date is displayed as the title of each visualization.
-today = dt.datetime.now()
-
-# Get folder to store visible points for linear regression
-# Test if the path to the configuration folder is set
-if not os.getenv('ieasyforecast_configuration_path'):
-    raise ValueError("The path to the configuration folder is not set.")
-
-# Define the directory to save the data
-SAVE_DIRECTORY = os.path.join(
-    os.getenv('ieasyforecast_configuration_path'),
-    os.getenv('ieasyforecast_linreg_point_selection', 'linreg_point_selection')
-)
-os.makedirs(SAVE_DIRECTORY, exist_ok=True)
+SAVE_DIRECTORY = setup_directories()
 
 # Set time until user is logged out automatically
 minutes_inactive_until_logout = int(os.getenv('ieasyforecast_minutes_inactive_until_logout', 10))
 INACTIVITY_TIMEOUT = timedelta(minutes=minutes_inactive_until_logout)
 last_activity_time = None
-# endregion
 
-
-
-# region localization
-# We'll use pn.state.location to get query parameters from the URL
-# This allows us to pass the selected language via the URL
-
-# Default language from .env file
-default_locale = os.getenv("ieasyforecast_locale", "en_CH")
-print(f"INFO: Default locale: {default_locale}")
-
-# Get the language from the URL query parameter
-selected_language = pn.state.location.query_params.get('lang', default_locale)
-print(f"INFO: Selected language: {selected_language}")
-
-# Localization, translation to different languages.
-localedir = os.getenv("ieasyforecast_locale_dir")
-print(f"DEBUG: Translation directory: {localedir}")
-print(f"DEBUG: Translation directory exists: {os.path.exists(localedir)}")
-print(f"DEBUG: Files in translation directory: {os.listdir(localedir)}")
-
-# Set the locale directory in the translation manager
-localize.translation_manager.set_locale_dir(locale_dir=localedir)
-
-# Set the current language
-localize.translation_manager.language = selected_language
-
-# Load translations globally
-localize.translation_manager.load_translation_forecast_dashboard()
-print(f"DEBUG: Selected language: {selected_language}")
-print(f"DEBUG: Translation manager language: {localize.translation_manager.language}")
-
-print(f"DEBUG: Translation test - 'Hydropost:' translates to: {_('Hydropost:')}")
-print(f"DEBUG: Translation test - 'Forecast' translates to: {_('Forecast')}")
-
-# Check for cached translations
-if hasattr(pn.state, 'cache') and 'translations' in pn.state.cache:
-    print(f"DEBUG: Cached translations found.")
+setup_localization(pn)
 
 # Import visualization module after setting up localization
 import src.vizualization as viz
@@ -532,7 +412,8 @@ def get_pane_alert(msg):
 
 def get_predictors_warning(station):
     predictors_warning.objects = []  # clear old content
-    today_date = today.date()
+    # today_date = today.date()
+    today_date = dt.datetime.now().date()
     filtered = data["hydrograph_day_all"][
         (data["hydrograph_day_all"]["station_labels"] == station.value) &
         (data["hydrograph_day_all"]["date"] == pd.to_datetime(today_date))
@@ -942,9 +823,9 @@ logout_confirm, logout_yes, logout_no = widgets.create_logout_confirm_widgets()
 logout_button = widgets.create_logout_button()
 
 
-def update_last_activity():
-    global last_activity_time
-    last_activity_time = datetime.now()
+# def update_last_activity():
+#     global last_activity_time
+#     last_activity_time = datetime.now()
 
 
 def check_inactivity():
