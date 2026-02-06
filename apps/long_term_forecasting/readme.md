@@ -86,11 +86,35 @@ If you work on macOS you might need to install lightgbm via homebrew. Or use con
 
 ## Data Interface
 
-The `data_interface.py` module provides the `DataInterface` class for loading and managing forecast data. It retrieves forcing data (precipitation and temperature), discharge observations, static features, and optional snow data from the data gateway.
+The `data_interface.py` module provides three data access classes:
 
-**Key methods:**
-- `get_base_data(forcing_HRU, HRUs_snow, snow_variables)`: Returns temporal data (forcing + discharge + optional snow), static features, and date offsets for data freshness monitoring
-- `load_snow_data(HRU, variable)`: Loads snow variables (SWE, ROF, etc.) for a specific HRU from preprocessed data gateway files
+| Class | Data source | Use case |
+|-------|------------|----------|
+| `DataInterface` | CSV files | Default, works offline |
+| `DataInterfaceDB` | Direct SQL to preprocessing PostgreSQL DB | Bulk reads for training/calibration (faster than paginated API) |
+| `BasePredictorDataInterface` | Direct SQL to postprocessing PostgreSQL DB | Loading ensemble member predictions |
+
+### Current status: direct SQL for bulk reads
+
+`DataInterfaceDB` and `BasePredictorDataInterface` use **direct SQL via SQLAlchemy** (`sqlalchemy.create_engine`, `pd.read_sql`) to fetch large training datasets from the preprocessing and postprocessing databases. This bypasses the `sapphire-api-client` that all other SAPPHIRE modules use.
+
+**Why:** Performance. Loading decades of daily data for model training requires fetching hundreds of thousands of records. The API's paginated approach (10,000 records/page with multiple HTTP round-trips) is significantly slower than a single SQL query.
+
+**Known risks of this approach:**
+- Hardcoded default DB credentials in source code (must be moved to `.env` before production)
+- Tight coupling to database table/column names (bypasses API schema abstraction)
+- No Pydantic validation on returned data (bypasses API validation layer)
+- Requires direct PostgreSQL network access (not just HTTP)
+- Two DB connection strings to manage (preprocessing port 5433, postprocessing port 5434)
+
+**Planned migration:** Bulk-read endpoints are being added to the sapphire-api-client (see `doc/plans/bulk_read_endpoints_instructions.md`). Once available, `DataInterfaceDB` and `BasePredictorDataInterface` should be refactored to use `client.bulk_read_runoff()`, `client.bulk_read_meteo()`, `client.bulk_read_snow()`, and `client.bulk_read_long_forecasts()` instead of direct SQL.
+
+### Key methods
+
+- `get_base_data(forcing_HRU, start_date)`: Returns temporal data (forcing + discharge), static features, and date offsets for data freshness monitoring
+- `extend_base_data_with_snow(base_data, HRUs_snow, snow_variables)`: Extends base data with snow variables (SWE, ROF, HS)
+- `load_snow_data(HRU, variable)`: Loads snow variables for a specific HRU
+- `get_base_predictor_data_database(model_name, horizon_type, horizon_value)`: Loads ensemble member predictions from the postprocessing database
 
 **Testing:** Run tests with:
 ```bash
