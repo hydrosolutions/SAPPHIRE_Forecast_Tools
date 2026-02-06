@@ -631,6 +631,35 @@ class DataInterface:
 class BasePredictorDataInterface:
     def __init__(self):
         logger.info("Initialized BasePredictorDataInterface")
+        sl.load_environment()
+
+        # Postprocessing DB connection (port 5434 externally, 5432 in Docker)
+        self.postprocessing_connection_string = os.getenv(
+            'POSTPROCESSING_DB_CONNECTION_STRING',
+            "postgresql://postgres:password@localhost:5434/postprocessing_db"
+        )
+        self._postprocessing_engine = None
+
+    @property
+    def postprocessing_engine(self):
+        """Lazy initialization of the database engine."""
+        if self._postprocessing_engine is None:
+            self._postprocessing_engine = create_engine(
+                self.postprocessing_connection_string
+            )
+        return self._postprocessing_engine
+
+    def _execute_postprocessing_query(
+        self,
+        query: str,
+        params: dict = None
+    ) -> pd.DataFrame:
+        """Execute SQL query against the postprocessing database."""
+        start = time()
+        with self.postprocessing_engine.connect() as conn:
+            df = pd.read_sql(text(query), conn, params=params)
+        logger.debug(f"Postprocessing query executed in {time() - start:.3f}s")
+        return df
         
     def get_base_predictor_data_csv(self, 
                                     model_name: str,
@@ -682,14 +711,102 @@ class BasePredictorDataInterface:
         return base_data, base_models_cols
 
         
-    def get_base_predictor_data_database(self) -> pd.DataFrame:
+    def get_base_predictor_data_database(
+        self,
+        model_name: str,
+        horizon_type: str = "month",
+        horizon_value: int = 1
+    ) -> Tuple[pd.DataFrame, List[str]]:
         """
-        Retrieve the base predictor dataset from the database.
+        Retrieve the base predictor dataset from the postprocessing API.
+
+        Fetches from the /long-forecast/ endpoint and returns data in the same
+        format as get_base_predictor_data_csv for seamless integration.
+
+        Column Mapping (API -> DataFrame):
+            q -> {model_name}
+            q_xgb -> {model_name}_xgb
+            q_lgbm -> {model_name}_lgbm
+            q_catboost -> {model_name}_catboost
+            q_loc -> {model_name}_loc
+
+        Note: Quantile columns (q05-q95) are excluded to match CSV loading
+        behavior where filter "Q_" in col excludes quantiles.
+
+        Args:
+            model_name: Name of the model (e.g., "SM_GBT", "LR_Base")
+            horizon_type: Horizon type (default: "month")
+            horizon_value: Lead time value (default: 1)
 
         Returns:
-            pd.DataFrame: The base predictor dataset.
+            Tuple[pd.DataFrame, List[str]]: DataFrame with predictions and
+                list of model column names
         """
-        raise NotImplementedError("Database loading not implemented yet.")
+        today = get_today()
+
+        # Cast enum columns to text and use UPPER for case-insensitive comparison
+        # DB stores enums in uppercase (e.g., LR_BASE, MONTH)
+        query = """
+            SELECT
+                date, code, q, q_xgb, q_lgbm, q_catboost, q_loc
+            FROM long_forecasts
+            WHERE UPPER(model_type::text) = UPPER(:model_type)
+              AND UPPER(horizon_type::text) = UPPER(:horizon_type)
+              AND horizon_value = :horizon_value
+              AND date <= :today
+            ORDER BY code, date
+        """
+
+        params = {
+            "model_type": model_name,
+            "horizon_type": horizon_type,
+            "horizon_value": horizon_value,
+            "today": today.strftime("%Y-%m-%d")
+        }
+
+        df = self._execute_postprocessing_query(query, params)
+
+        if df.empty:
+            logger.warning(
+                f"No data found for model {model_name} "
+                f"(horizon_type={horizon_type}, horizon_value={horizon_value})"
+            )
+            return df, []
+
+        # Convert types
+        df['date'] = pd.to_datetime(df['date'])
+        df['code'] = df['code'].astype(int)
+
+        # Determine which model columns have data and build column mapping
+        # Maps DB column -> DataFrame column name
+        potential_columns = {
+            'q': model_name,
+            'q_xgb': f"{model_name}_xgb",
+            'q_lgbm': f"{model_name}_lgbm",
+            'q_catboost': f"{model_name}_catboost",
+            'q_loc': f"{model_name}_loc"
+        }
+
+        model_cols = []
+        rename_mapping = {}
+
+        for db_col, df_col in potential_columns.items():
+            if db_col in df.columns and df[db_col].notna().any():
+                rename_mapping[db_col] = df_col
+                model_cols.append(df_col)
+
+        # Rename columns
+        df = df.rename(columns=rename_mapping)
+
+        # Keep only date, code, and model columns
+        cols_to_keep = ['date', 'code'] + model_cols
+        df = df[cols_to_keep]
+
+        # Drop rows where all model columns are NaN
+        if model_cols:
+            df = df.dropna(subset=model_cols, how='all').reset_index(drop=True)
+
+        return df, model_cols
 
     def load_all_dependencies_csv(self,
                             all_dependencies_models: List[str],
@@ -723,13 +840,60 @@ class BasePredictorDataInterface:
             
         return all_predictions, all_model_cols
 
-    def load_all_dependencies_database(self,
-                            all_dependencies_models: List[str]
-                              ) -> Tuple[pd.DataFrame, List[str]]:
+    def load_all_dependencies_database(
+        self,
+        all_dependencies_models: List[str],
+        horizon_type: str = "month",
+        horizon_value: int = 1
+    ) -> Tuple[pd.DataFrame, List[str]]:
         """
         Loads all dependencies data from the database.
+
+        Iterates through all dependency models, loads each from the database,
+        and merges them using INNER JOIN on date and code (same as CSV version).
+
+        Args:
+            all_dependencies_models: List of model names to load as dependencies
+            horizon_type: Horizon type for all models (default: "month")
+            horizon_value: Lead time value for all models (default: 1)
+
+        Returns:
+            Tuple[pd.DataFrame, List[str]]: Merged DataFrame with all dependency
+                predictions and list of all model column names
         """
-        raise NotImplementedError("Database loading not implemented yet.")
+        all_predictions = None
+        all_model_cols = []
+
+        for model_name in all_dependencies_models:
+            base_data, base_model_cols = self.get_base_predictor_data_database(
+                model_name=model_name,
+                horizon_type=horizon_type,
+                horizon_value=horizon_value
+            )
+
+            if base_data.empty:
+                logger.warning(
+                    f"No database data found for dependency model {model_name}"
+                )
+                continue
+
+            if all_predictions is None:
+                all_predictions = base_data
+            else:
+                all_predictions = pd.merge(
+                    all_predictions,
+                    base_data,
+                    on=["date", "code"],
+                    how="inner"
+                )
+
+            all_model_cols.extend(base_model_cols)
+
+        if all_predictions is None:
+            logger.warning("No dependency data loaded from database")
+            all_predictions = pd.DataFrame()
+
+        return all_predictions, all_model_cols
     
 def convert_na_to_nan(df):
     """Convert pd.NA to np.nan and revert to numpy dtypes."""
@@ -746,70 +910,158 @@ def convert_na_to_nan(df):
 # ─────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     di = DataInterfaceDB()
+    tody = get_today()
+    logger.info(f"Today's date: {tody}")
+    # print("=" * 60)
+    # print("Testing DataInterfaceDB")
+    # print("=" * 60)
     
+    # # Test meteo data
+    # print("\n1. Testing get_meteo_data (Precipitation)...")
+    # t0 = time()
+    # rain = di.get_meteo_data(meteo_type="P")
+    # print(f"   Loaded {len(rain)} rows in {time()-t0:.3f}s")
+    # print(rain.head())
+    
+    # # Test temperature
+    # print("\n2. Testing get_meteo_data (Temperature)...")
+    # t0 = time()
+    # temp = di.get_meteo_data(meteo_type="T")
+    # print(f"   Loaded {len(temp)} rows in {time()-t0:.3f}s")
+    # print(temp.head())
+    
+    # # Test runoff
+    # print("\n3. Testing get_runoff_data...")
+    # t0 = time()
+    # runoff = di.get_runoff_data()
+    # print(f"   Loaded {len(runoff)} rows in {time()-t0:.3f}s")
+    # print(runoff.head())
+    
+    # # Test forcing data
+    # print("\n4. Testing _load_forcing_data...")
+    # t0 = time()
+    # forcing = di._load_forcing_data(HRU="00003")
+    # print(f"   Loaded {len(forcing)} rows in {time()-t0:.3f}s")
+    # print(forcing.head())
+    
+    # # Test full base data
+    # print("\n5. Testing get_base_data...")
+    # t0 = time()
+    # base_data = di.get_base_data(forcing_HRU="00003")
+    # print(f"   Loaded in {time()-t0:.3f}s")
+    # print(f"   Temporal shape: {base_data['temporal_data'].shape}")
+    # print(f"   Static shape: {base_data['static_data'].shape}")
+    # print(f"   Offset base: {base_data['offset_date_base']}")
+    # print(f"   Offset discharge: {base_data['offset_date_discharge']}")
+
+    # # Test extending with snow data
+    # print("\n6. Testing extend_base_data_with_snow...")
+    # t0 = time()
+    # extended_data = di.extend_base_data_with_snow(
+    #     base_data=base_data['temporal_data'],
+    #     HRUs_snow=["00003"],
+    #     snow_variables=["SWE"]
+    # )
+
+    # print(f"   Loaded in {time()-t0:.3f}s")
+    # print(f"   Extended temporal shape: {extended_data['temporal_data'].shape}")
+    # print(f" Head of extended data:")
+    # print(extended_data['temporal_data'].head())
+
+    # # Just test different snow variable
+    # print("\n7. Testing extend_base_data_with_snow with different variable...")
+    # t0 = time()
+    # swe = di.get_snow_data(
+    #     variable="SWE"
+    # )
+    # print(f"   Loaded in {time()-t0:.3f}s")
+    # print(f"   SWE shape: {swe.shape}")
+    # print(swe.head())
+    # print("Swe columns: ", swe.columns)
+
+    # ─────────────────────────────────────────────────────────────────
+    # Testing BasePredictorDataInterface (Database Loading)
+    # ─────────────────────────────────────────────────────────────────
+    print("\n" + "=" * 60)
+    print("Testing BasePredictorDataInterface (Database)")
     print("=" * 60)
-    print("Testing DataInterfaceDB")
-    print("=" * 60)
-    
-    # Test meteo data
-    print("\n1. Testing get_meteo_data (Precipitation)...")
-    t0 = time()
-    rain = di.get_meteo_data(meteo_type="P")
-    print(f"   Loaded {len(rain)} rows in {time()-t0:.3f}s")
-    print(rain.head())
-    
-    # Test temperature
-    print("\n2. Testing get_meteo_data (Temperature)...")
-    t0 = time()
-    temp = di.get_meteo_data(meteo_type="T")
-    print(f"   Loaded {len(temp)} rows in {time()-t0:.3f}s")
-    print(temp.head())
-    
-    # Test runoff
-    print("\n3. Testing get_runoff_data...")
-    t0 = time()
-    runoff = di.get_runoff_data()
-    print(f"   Loaded {len(runoff)} rows in {time()-t0:.3f}s")
-    print(runoff.head())
-    
-    # Test forcing data
-    print("\n4. Testing _load_forcing_data...")
-    t0 = time()
-    forcing = di._load_forcing_data(HRU="00003")
-    print(f"   Loaded {len(forcing)} rows in {time()-t0:.3f}s")
-    print(forcing.head())
-    
-    # Test full base data
-    print("\n5. Testing get_base_data...")
-    t0 = time()
-    base_data = di.get_base_data(forcing_HRU="00003")
-    print(f"   Loaded in {time()-t0:.3f}s")
-    print(f"   Temporal shape: {base_data['temporal_data'].shape}")
-    print(f"   Static shape: {base_data['static_data'].shape}")
-    print(f"   Offset base: {base_data['offset_date_base']}")
-    print(f"   Offset discharge: {base_data['offset_date_discharge']}")
 
-    # Test extending with snow data
-    print("\n6. Testing extend_base_data_with_snow...")
-    t0 = time()
-    extended_data = di.extend_base_data_with_snow(
-        base_data=base_data['temporal_data'],
-        HRUs_snow=["00003"],
-        snow_variables=["SWE"]
-    )
+    bpi = BasePredictorDataInterface()
 
-    print(f"   Loaded in {time()-t0:.3f}s")
-    print(f"   Extended temporal shape: {extended_data['temporal_data'].shape}")
-    print(f" Head of extended data:")
-    print(extended_data['temporal_data'].head())
-
-    # Just test different snow variable
-    print("\n7. Testing extend_base_data_with_snow with different variable...")
+    # Diagnostic query to see what data exists
+    print("\n7.5 Diagnostic: What data exists in long_forecasts?")
     t0 = time()
-    swe = di.get_snow_data(
-        variable="SWE"
-    )
-    print(f"   Loaded in {time()-t0:.3f}s")
-    print(f"   SWE shape: {swe.shape}")
-    print(swe.head())
-    print("Swe columns: ", swe.columns)
+    try:
+        diag_query = """
+            SELECT DISTINCT model_type::text, horizon_type::text, horizon_value
+            FROM long_forecasts
+            LIMIT 20
+        """
+        diag_df = bpi._execute_postprocessing_query(diag_query)
+        print(f"   Query executed in {time()-t0:.3f}s")
+        print(diag_df)
+    except Exception as e:
+        print(f"   Error: {e}")
+
+    # Test loading LR_Base from database
+    print("\n8. Testing get_base_predictor_data_database (LR_Base)...")
+    t0 = time()
+    try:
+        lr_data, lr_cols = bpi.get_base_predictor_data_database(
+            model_name="LR_Base",
+            horizon_type="month",
+            horizon_value=1
+        )
+        print(f"   Loaded in {time()-t0:.3f}s")
+        print(f"   Shape: {lr_data.shape}")
+        print(f"   Columns: {lr_cols}")
+        if not lr_data.empty:
+            print(f"   Date range: {lr_data['date'].min()} to {lr_data['date'].max()}")
+            print(f"   Unique codes: {lr_data['code'].nunique()}")
+            print(lr_data.head())
+        else:
+            print("   No data found for LR_Base")
+    except Exception as e:
+        print(f"   Error: {e}")
+
+    # Test loading MC_ALD from database
+    print("\n9. Testing get_base_predictor_data_database (MC_ALD)...")
+    t0 = time()
+    try:
+        mc_data, mc_cols = bpi.get_base_predictor_data_database(
+            model_name="MC_ALD",
+            horizon_type="month",
+            horizon_value=1
+        )
+        print(f"   Loaded in {time()-t0:.3f}s")
+        print(f"   Shape: {mc_data.shape}")
+        print(f"   Columns: {mc_cols}")
+        if not mc_data.empty:
+            print(f"   Date range: {mc_data['date'].min()} to {mc_data['date'].max()}")
+            print(f"   Unique codes: {mc_data['code'].nunique()}")
+            print(mc_data.head())
+        else:
+            print("   No data found for MC_ALD")
+    except Exception as e:
+        print(f"   Error: {e}")
+
+    # Test loading all dependencies from database
+    print("\n10. Testing load_all_dependencies_database (LR_Base + MC_ALD)...")
+    t0 = time()
+    try:
+        all_data, all_cols = bpi.load_all_dependencies_database(
+            all_dependencies_models=["LR_Base", "MC_ALD"],
+            horizon_type="month",
+            horizon_value=1
+        )
+        print(f"   Loaded in {time()-t0:.3f}s")
+        print(f"   Shape: {all_data.shape}")
+        print(f"   All columns: {all_cols}")
+        if not all_data.empty:
+            print(f"   Date range: {all_data['date'].min()} to {all_data['date'].max()}")
+            print(f"   Unique codes: {all_data['code'].nunique()}")
+            print(all_data.head())
+        else:
+            print("   No merged data found")
+    except Exception as e:
+        print(f"   Error: {e}")

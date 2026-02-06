@@ -243,8 +243,7 @@ def calibrate_model(data_interface: Union[DataInterface, DataInterfaceDB],
         output_path=output_path,
         horizon_type="month",
         horizon_value=horizon_value,
-        is_hindcast=True,
-        append_to_hindcast=False  # This is the full hindcast, not appending
+        is_hindcast=True
     )
 
     if not save_success:

@@ -31,7 +31,9 @@ today = None
                                                                                                                                                                     
 def initialize_today(today_override=None):                                                                                                                         
     global today                                                                                                                                                   
-    today = pd.to_datetime(today_override) if today_override else pd.Timestamp.now()                                                                               
+    today = pd.to_datetime(today_override) if today_override else pd.Timestamp.now()   
+    # only keep date part                                                                                                                                       
+    today = today.normalize()                                                                            
     return today                                                                                                                                                   
 
 today = initialize_today()  # Initialize today at module load time , can be overridden later if needed for synthetic forecasts

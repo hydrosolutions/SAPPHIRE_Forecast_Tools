@@ -1,8 +1,11 @@
 # Long Term Forecasting
 
-Core implementation in "lt-forecasting @ git+https://github.com/hydrosolutions/long-term-forecasting.git@v1.0.0"
-pip install git+https://github.com/hydrosolutions/long-term-forecasting.git@v1.0.0
+## LT Package
+Core implementation in "lt-forecasting @ git+https://github.com/hydrosolutions/long-term-forecasting.git@v1.1.1"
+pip install git+https://github.com/hydrosolutions/long-term-forecasting.git@v1.1.1
 
+
+### Fast Development
 For fast development use the local code base - for this do:
 pip uninstall -y lt-forecasting
 
@@ -17,6 +20,47 @@ Functions here act more like an interface.
 
 For more detailed implementation specifics refer to the [Long-Term-Forecasting](https://github.com/hydrosolutions/long-term-forecasting) Documentation and code base.
 
+
+## Run CLI Commands:
+
+### Run Forecast
+```bash
+# Run Forecast For All Models For Month 1
+ieasyhydroforecast_env_file_path=$ieasyhydroforecast_env_file_path lt_forecast_mode=month_1 python run_forecast.py --all
+
+# Run Forecast Only for Specific Model(s)
+ieasyhydroforecast_env_file_path=$ieasyhydroforecast_env_file_path lt_forecast_mode=month_1 python run_forecast.py --models LR_Base GBT LR_SM SM_GBT
+
+
+# Run forecasts for each month, continue even if one fails
+for month in  0 1 2 3 4 5 6 7 8 9; do
+    echo "Running forecast for month_$month" >> ../../summary.log
+    if ! ieasyhydroforecast_env_file_path=$ieasyhydroforecast_env_file_path lt_forecast_mode=month_$month python run_forecast.py --all; then
+        echo "WARNING: month_$month forecast failed, continuing with next month" >> ../../summary.log
+    fi
+done
+```
+
+### Calibrate and Hindcast
+
+```bash
+# Calibrate all models for a month lead time
+ieasyhydroforecast_env_file_path="path_to_env" lt_forecast_mode=month_1 python calibrate_and_hindcast.py --all
+
+# Calibrate only one model
+ieasyhydroforecast_env_file_path="path_to_env" lt_forecast_mode=month_1 python calibrate_and_hindcast.py --models LR_Base
+
+# Calibrate and Tune Hyperparameters
+ieasyhydroforecast_env_file_path="path_to_env" lt_forecast_mode=month_1 python calibrate_and_hindcast.py --all --tune_hyperparameters
+```
+
+### Simulate Past Forecasts
+
+```bash
+ieasyhydroforecast_env_file_path="your.env" lt_forecast_mode=month_1 python dev_code/simulate_forecasts.py --years 2025 --models GBT 
+```
+
+
 ## How to setup the Environment
 
 1. Create local python environment
@@ -25,17 +69,21 @@ python3.11 -m venv myenv
 # activate your environment (here macos)
 source myenv/bin/activate
 ```
-2. Download Custom Github packages
+2. Download Custom Github packages and Libraries
 ```bash  
 # iEasy Hydro SDK library
 pip install git+https://github.com/hydrosolutions/ieasyhydro-python-sdk
 # long term forecasting library (use latest version)
-pip install git+https://github.com/hydrosolutions/long-term-forecasting.git@v1.0.0
+pip install git+https://github.com/hydrosolutions/long-term-forecasting.git@v1.1.1
 
 # During Development - make changes directly in the codebase.
 pip install -e "path/to/lt_forecasting/dir"
+
+# SQL access
+pip install psycopg2-binary sqlalchemy
 ```
 If you work on macOS you might need to install lightgbm via homebrew. Or use conda to install the lightgbm package this should also handle the installation. On Windows and Linux system this should not be required.
+
 ## Data Interface
 
 The `data_interface.py` module provides the `DataInterface` class for loading and managing forecast data. It retrieves forcing data (precipitation and temperature), discharge observations, static features, and optional snow data from the data gateway.
