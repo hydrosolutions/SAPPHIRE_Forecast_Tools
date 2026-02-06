@@ -13,7 +13,7 @@ from calendar import month_abbr
 import holoviews as hv
 from holoviews import streams
 import panel as pn
-from bokeh.models import Label, Title, HoverTool, FixedTicker, FuncTickFormatter, CustomJSTickFormatter, LinearAxis, \
+from bokeh.models import Label, Title, HoverTool, FixedTicker, CustomJSTickFormatter, LinearAxis, \
     NumberFormatter, DateFormatter, CustomJS
 from bokeh.models.formatters import DatetimeTickFormatter
 from bokeh.models.widgets.tables import CheckboxEditor, BooleanFormatter
@@ -324,7 +324,7 @@ def add_custom_xticklabels_pentad(_, plot, element):
                 decade_number = i * 3 + j + 1
                 labels[decade_number] = f"{month_label}, {j + 1}" if j == 0 else f"{j + 1}"
 
-    # Create a FixedTicker and a FuncTickFormatter with the specified ticks and labels
+    # Create a FixedTicker and a CustomJSTickFormatter with the specified ticks and labels
     ticker = FixedTicker(ticks=ticks)
     formatter = CustomJSTickFormatter(code="""
         var labels = %s;
@@ -1133,7 +1133,11 @@ def plot_current_runoff_forecast_range_date_format(
     # Convert jitter width to timedelta
     jitter_timedelta = pd.to_timedelta(np.linspace(-jitter_width, jitter_width, len(data)), unit='h')
 
+    # Convert date_col to datetime if not already
+    data.loc[:, date_col] = pd.to_datetime(data[date_col])
+
     # Apply jitter to the datetime column
+    data[date_col] = pd.to_datetime(data[date_col], errors="coerce")
     data.loc[:, date_col] = data[date_col] + jitter_timedelta
 
     # Create the overlay
@@ -1279,6 +1283,10 @@ def plot_current_runoff_forecast_range_date_format_v2(
 
         lower_bound = fl.round_discharge(model_data[min_col].iloc[-1])
         upper_bound = fl.round_discharge(model_data[max_col].iloc[-1])
+        if lower_bound is None:
+            lower_bound = "N/A"
+        if upper_bound is None:
+            upper_bound = "N/A"
         range_legend_entry = model + " " + _("range") + ": " + lower_bound + "-" + upper_bound + " " + unit_string
         # print(f"Debug: model_data\n{model_data}")
         # print("MODEL: ", model)
@@ -1523,6 +1531,86 @@ def create_cached_vlines(_, for_dates=True, y_text=1):
 
     return combined
 
+def create_cached_vlines_hs_special_case(_, for_dates=True, y_text=0.01):
+    """Create and cache vertical lines for pentad markers"""
+    # Check if already in cache
+    cache_key = 'vlines_dates_hs_special_case' if for_dates else 'vlines_pentad_hs_special_case'
+
+    if PlotCache.contains(cache_key):
+        return PlotCache.get(cache_key)
+
+    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+    if for_dates:
+        if horizon == "pentad":
+            days = [1, 6, 11, 16, 21, 26]
+            labels_per_month = ['1', '2', '3', '4', '5', '6'] * 12
+            position = 2.2
+        else:
+            days = [1, 11, 21]
+            labels_per_month = ['1', '2', '3'] * 12
+            position = 5
+        # Create lines for date-based plots
+        year = dt.datetime.now().year
+        # Generate list of datetime objects for the chosen forecast horizon
+        time_horizons = [dt.datetime(year, month, day) for month in range(1, 13) for day in days]
+
+        # Create vertical lines
+        path_data = []
+        for i in range(len(time_horizons)):
+            if i % 2 == 0:
+                path_data.append((time_horizons[i], -1))  # Start at -1
+                path_data.append((time_horizons[i], 6))  # Move to 6
+            else:
+                path_data.append((time_horizons[i], 6))  # Stay at 6
+                path_data.append((time_horizons[i], -1))  # Move to -1
+        vlines = hv.Path(path_data).opts(
+            color='gray', line_width=1,
+            line_dash='dotted', line_alpha=0.5,
+            show_legend=False
+        )
+
+        # Add text labels
+        labels_df = pd.DataFrame({
+            'x': [date + dt.timedelta(days=position) for date in time_horizons],
+            'y': [y_text for _ in time_horizons],
+            'text': labels_per_month
+        })
+        text_overlay = hv.Labels(labels_df, ['x', 'y'], 'text').opts(
+            text_baseline='bottom', text_align='center',
+            text_font_size='9pt', text_color='gray',
+            text_alpha=0.5, text_font_style='italic',
+            show_legend=False
+        )
+
+    else:
+        # Create lines for pentad-number-based plots
+        pentad_numbers = range(1, 73)
+
+        # Create vertical lines
+        vlines = hv.Overlay([
+            hv.VLine(pentad).opts(color='gray', line_width=1,
+                                  line_dash='dotted', line_alpha=0.5,
+                                  show_legend=False)
+            for pentad in pentad_numbers
+        ])
+
+        # Add text labels
+        text_overlay = hv.Overlay([
+            hv.Text(pentad + 0.5, y_text, str((pentad - 1) % 6 + 1)).opts(
+                text_baseline='bottom', text_align='center',
+                text_font_size='9pt', text_color='gray',
+                text_alpha=0.5, text_font_style='italic',
+                show_legend=False)
+            for pentad in pentad_numbers
+        ])
+
+    # Combine lines and text
+    combined = vlines * text_overlay
+
+    # Store in cache
+    PlotCache.set(cache_key, combined)
+
+    return combined
 
 def update_pentad_text(date_picker, _):
     """
@@ -1587,6 +1675,8 @@ def create_date_picker_with_pentad_text(date_picker, _):
 # region predictor_tab
 def plot_daily_hydrograph_data(_, hydrograph_day_all, linreg_predictor, station, title_date):
     # print(f"\n\nDEBUG: plot_daily_hydrograph_data")
+    # print(f"station: {station}")
+    # print(f"hydrograph_day_all head:\n{hydrograph_day_all.head()}")
     # print(f"title_date: {title_date}")
 
     # Custom hover tool tip for the daily hydrograph
@@ -1610,6 +1700,10 @@ def plot_daily_hydrograph_data(_, hydrograph_day_all, linreg_predictor, station,
 
     # filter hydrograph_day_all & linreg_predictor by station
     linreg_predictor = processing.add_predictor_dates(linreg_predictor, station, title_date)
+
+    # print("hydrograph_day_all head before data assign: ", hydrograph_day_all.head())
+    # print("station: ", station)
+    # print("hydrgraph_day_all station_labels unique values: ", hydrograph_day_all['station_labels'].unique())
 
     data = hydrograph_day_all[hydrograph_day_all['station_labels'] == station].copy()
     # print("\n\n\ncolumns of data: ", data.columns)
@@ -1960,8 +2054,8 @@ def plot_daily_temperature_data(_, daily_rainfall, station, date_picker,
 
     # Plot the daily rainfall data using holoviews
     title_text = f"{_('Daily average temperature for basin of')} {station} {_('on')} {date_picker.strftime('%Y-%m-%d')}"
-    current_year_text = f"{_('Current year')}, {current_period}: {predictor_rainfall['T'].mean().round()} °C"
-    forecast_text = f"{_('Forecast')}, {forecast_period}: {forecasts['T'].mean().round()} °C"
+    current_year_text = f"{_('Current year')}, {current_period}: {predictor_rainfall['T'].mean()} °C"
+    forecast_text = f"{_('Forecast')}, {forecast_period}: {forecasts['T'].mean()} °C"
 
     hvspan_predictor = hv.VSpan(
         linreg_predictor['predictor_start_date'].values[0],
@@ -2043,6 +2137,173 @@ def plot_daily_temperature_data(_, daily_rainfall, station, date_picker,
 
     return figure
 
+def plot_daily_snow_data(_, snow_data, variable, station, date_picker, linreg_predictor):
+    """
+    Plot snow data for a specific variable.
+    """
+    # Get the data for this variable
+    daily_snow = snow_data.get(variable)
+    
+    # Return empty plot if no data for this variable
+    if daily_snow is None or daily_snow.empty:
+        return hv.Curve([]).opts(
+            title=_(f"No {variable} data available"),
+            hooks=[remove_bokeh_logo])
+    
+    # Variable-specific settings
+    variable_config = {
+        'SWE': {'label': _('Snow Water Equivalent'), 'unit': 'mm', 'ylabel': _('SWE (mm)'), 'decimals': 1},
+        'HS': {'label': _('Snow Height'), 'unit': 'm', 'ylabel': _('Snow Height (m)'), 'decimals': 2},
+        'RoF': {'label': _('Snowmelt Runoff & P Runoff'), 'unit': 'mm', 'ylabel': _('Snowmelt & P Runoff (mm)'), 'decimals': 1}
+    }
+    config = variable_config.get(variable, {'label': variable, 'unit': '', 'ylabel': variable, 'decimals': 1})
+    
+    # Extract code from station
+    station_code = station.split(' - ')[0]
+
+    # Convert date column to datetime
+    daily_snow['date'] = pd.to_datetime(daily_snow['date'])
+
+    # Convert date_picker to datetime[ns]
+    date_picker = pd.to_datetime(date_picker)
+
+    # Filter data for the selected station
+    station_data = daily_snow[daily_snow['code'] == station_code].copy()
+
+    # Return an empty plot if the data DataFrame is empty
+    if station_data.empty:
+        return hv.Curve([]).opts(
+            title=_("No data available for this station"),
+            hooks=[remove_bokeh_logo])
+
+    # Add year and day of year columns (do this once)
+    station_data['year'] = station_data['date'].dt.year
+    station_data['doy'] = station_data['date'].dt.dayofyear
+
+    # Get current year data
+    current_year = station_data[station_data['year'] == date_picker.year].copy()
+    current_year = current_year.sort_values('date')
+    norm_snow = current_year[['doy', 'norm', 'date']].copy()
+    norm_snow.rename(columns={"norm": variable}, inplace=True)
+
+    # Get the forecasts for the selected date
+    forecasts = current_year[current_year['date'] >= date_picker].copy()
+
+    # Calculate norm: mean by day-of-year, excluding current year
+    historical_data = station_data[station_data['year'] != date_picker.year]
+    # norm_snow = historical_data.groupby('doy')[variable].mean().reset_index()
+    
+    # Map doy back to dates in the current year for plotting
+    current_year_value = date_picker.year
+    # norm_snow['date'] = norm_snow['doy'].apply(
+    #     lambda x: pd.Timestamp(current_year_value, 1, 1) + pd.Timedelta(days=x - 1))
+    # norm_snow = norm_snow.sort_values('date')
+
+    # Get predictor period data
+    linreg_predictor = processing.add_predictor_dates(linreg_predictor, station, date_picker)
+    predictor_start_date = linreg_predictor['predictor_start_date'].values[0]
+    predictor_end_date = linreg_predictor['predictor_end_date'].values[0]
+    predictor_snow = current_year[(current_year['date'] >= predictor_start_date) &
+                                  (current_year['date'] <= predictor_end_date)].copy()
+
+    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
+    if horizon == "pentad":
+        current_period = _("3 day mean")
+        forecast_period = _("5 day mean")
+    else:
+        current_period = _("10 day mean")
+        forecast_period = _("10 day mean")
+
+    # Plot title and labels
+    title_text = f"{config['label']} {_('for basin of')} {station} {_('on')} {date_picker.strftime('%Y-%m-%d')}"
+    mean_value = predictor_snow[variable].mean()
+    decimals = config['decimals']
+    current_year_text = f"{_('Current year')}, {current_period}: {mean_value:.{decimals}f} {config['unit']}" if not pd.isna(mean_value) else _('Current year')
+
+    # Forecast label
+    forecast_mean = forecasts[variable].mean() if not forecasts.empty else float('nan')
+    forecast_text = f"{_('Forecast')}, {forecast_period}: {forecast_mean:.{decimals}f} {config['unit']}" if not pd.isna(forecast_mean) else _('Forecast')
+
+    hvspan_predictor = hv.VSpan(
+        linreg_predictor['predictor_start_date'].values[0],
+        linreg_predictor['predictor_end_date'].values[0]) \
+        .opts(color=runoff_current_year_color, alpha=0.2, line_width=0,
+              muted_alpha=0.05, show_legend=True)
+
+    hvspan_forecast = hv.VSpan(
+        linreg_predictor['forecast_start_date'].values[0],
+        linreg_predictor['forecast_end_date'].values[0]) \
+        .opts(color=runoff_forecast_color_list[3], alpha=0.2, line_width=0,
+              muted_alpha=0.05, show_legend=False)
+
+    # Calculate y-axis limits safely
+    all_values = pd.concat([current_year[variable], norm_snow[variable]]).dropna()
+    if not all_values.empty:
+        y_min = all_values.min() * 0.9
+        y_max = all_values.max() * 1.1
+    else:
+        y_min, y_max = 0, 1
+
+    if variable == 'HS':
+        vlines = create_cached_vlines_hs_special_case(_, for_dates=True)
+    else:
+        vlines = create_cached_vlines(_, for_dates=True, y_text=y_min * 1.05)
+
+    # Norm curve
+    hv_norm = hv.Curve(
+        norm_snow,
+        kdims='date',
+        vdims=variable,
+        label=_('Norm'))
+    hv_norm.opts(
+        interpolation='linear',
+        color=runoff_mean_color,
+        show_legend=True)
+
+    # Current year curve
+    hv_current_year = hv.Curve(
+        current_year,
+        kdims='date',
+        vdims=variable,
+        label=current_year_text)
+    hv_current_year.opts(
+        interpolation='linear',
+        color=runoff_current_year_color,
+        show_legend=True)
+
+    # Forecast curve (if forecasts exist)
+    if not forecasts.empty:
+        hv_forecast = hv.Curve(
+            forecasts,
+            kdims='date',
+            vdims=variable,
+            label=forecast_text)
+        hv_forecast.opts(
+            interpolation='linear',
+            color=runoff_forecast_color_list[3],
+            show_legend=True)
+        figure = hvspan_predictor * hvspan_forecast * vlines * hv_norm * hv_current_year * hv_forecast
+    else:
+        figure = hvspan_predictor * hvspan_forecast * vlines * hv_norm * hv_current_year
+
+    figure.opts(
+        title=title_text,
+        xlabel="",
+        ylabel=config['ylabel'],
+        height=400,
+        responsive=True,
+        show_grid=True,
+        show_legend=True,
+        hooks=[remove_bokeh_logo],
+        xformatter=DatetimeTickFormatter(days="%b %d", months="%b %d"),
+        ylim=(y_min, y_max),
+        xlim=(min(norm_snow['date']), max(norm_snow['date'])),
+        tools=['hover'],
+        toolbar='right',
+        shared_axes=False
+    )
+
+    return figure
 
 # endregion
 

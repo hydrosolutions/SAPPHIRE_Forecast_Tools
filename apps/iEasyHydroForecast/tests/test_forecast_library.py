@@ -645,7 +645,9 @@ class TestGetPredictorDatetimes(unittest.TestCase):
 
 class TestReadDailyDischargeDataFromCSV(unittest.TestCase):
     def setUp(self):
-        os.environ["ieasyforecast_intermediate_data_path"] = "iEasyHydroForecast/tests/test_data"
+        # Use absolute path based on test file location
+        test_data_path = os.path.join(os.path.dirname(__file__), 'test_data')
+        os.environ["ieasyforecast_intermediate_data_path"] = test_data_path
         os.environ["ieasyforecast_daily_discharge_file"] = "daily_discharge_data_test_file.csv"
         self.original_data_path = os.getenv("ieasyforecast_intermediate_data_path")
         self.original_discharge_file = os.getenv("ieasyforecast_daily_discharge_file")
@@ -667,7 +669,9 @@ class TestReadDailyDischargeDataFromCSV(unittest.TestCase):
 
 
     def test_file_exists(self):
-        os.environ["ieasyforecast_intermediate_data_path"] = "iEasyHydroForecast/tests/test_data"
+        # Use absolute path based on test file location
+        test_data_path = os.path.join(os.path.dirname(__file__), 'test_data')
+        os.environ["ieasyforecast_intermediate_data_path"] = test_data_path
         os.environ["ieasyforecast_daily_discharge_file"] = "daily_discharge_data_test_file.csv"
         expected_output = pd.DataFrame({
             'code': [19213, 19213, 19213, 19213, 19213, 19213, 19213, 19213,

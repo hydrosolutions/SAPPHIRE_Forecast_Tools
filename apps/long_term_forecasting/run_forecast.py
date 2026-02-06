@@ -22,7 +22,7 @@ import traceback
 import pandas as pd
 import numpy as np
 import json
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Union
 
 # Import forecast models
 from lt_forecasting.forecast_models.LINEAR_REGRESSION import LinearRegressionModel
@@ -31,15 +31,16 @@ from lt_forecasting.forecast_models.deep_models.uncertainty_mixture import (
     UncertaintyMixtureModel,
 )
 
-from __init__ import logger 
-from data_interface import DataInterface
+from __init__ import logger, initialize_today, get_today, LT_FORECAST_BASE_COLUMNS, SAPPHIRE_API_AVAILABLE
+from data_interface import DataInterface, DataInterfaceDB, BasePredictorDataInterface
 from config_forecast import ForecastConfig
-from lt_utils import create_model_instance
+from post_process_lt_forecast import post_process_lt_forecast
+from lt_utils import create_model_instance, save_forecast
 
 
 # set lt_forecasting logger level
 logger_lt = logging.getLogger("lt_forecasting")
-logger_lt.setLevel(logging.DEBUG)
+logger_lt.setLevel(logging.INFO)
 
 # Local libraries, installed with pip install -e ./iEasyHydroForecast
 # Get the absolute path of the directory containing the current script
@@ -55,7 +56,7 @@ sys.path.append(forecast_dir)
 import setup_library as sl
 
 
-def run_single_model(data_interface: DataInterface,
+def run_single_model(data_interface: Union[DataInterface, DataInterfaceDB],
                      forecast_configs: ForecastConfig,
                      model_name: str,
                      temporal_data: pd.DataFrame,
@@ -83,7 +84,9 @@ def run_single_model(data_interface: DataInterface,
     model_dependencies = forecast_configs.get_model_dependencies()
     all_dependencies_forecast_paths = []
     all_dependencies_hindcast_paths = []
+    all_dependencies_models = []
     for dep in model_dependencies.get(model_name, []):
+        all_dependencies_models.append(dep)
         dep_path = forecast_configs.get_output_path(model_name=dep)
         dep_file_forecast = os.path.join(dep_path, f"{dep}_forecast.csv")
         dep_file_hindcast = os.path.join(dep_path, f"{dep}_hindcast.csv")
@@ -102,7 +105,23 @@ def run_single_model(data_interface: DataInterface,
     # This is needed to compute the uncertainty based on past model errors
     configs["path_config"]["path_to_base_predictors"] = all_dependencies_hindcast_paths
 
-    logger.info(f"Running model: {model_name} of type {model_type}")
+    #################################################
+    if len(all_dependencies_models) > 0:
+        base_predictor_interface = BasePredictorDataInterface()
+        base_predictor_data, base_model_cols = base_predictor_interface.load_all_dependencies_csv(
+            all_dependencies_models=all_dependencies_models,
+            all_dependencies_paths=all_dependencies_hindcast_paths
+        )
+
+        logger.info(f"Loaded base predictor data for model {model_name} with columns: {base_model_cols}")
+        logger.info(f"Base predictor data shape: {base_predictor_data.shape}")
+        logger.info(f"Percentage of rows with NaN values in base predictor data: {base_predictor_data.isna().mean().mean() * 100:.2f}%")
+
+        logger.info(f"Running model: {model_name} of type {model_type}")
+    
+    else: 
+        base_predictor_data = None
+        base_model_cols = []
 
     data_dependencies = forecast_configs.get_data_dependencies(model_name=model_name)
     can_be_run = True
@@ -137,15 +156,19 @@ def run_single_model(data_interface: DataInterface,
             logger.warning(f"Unknown data dependency type: {input_type}")
 
     if can_be_run:
-        today = datetime.now()
+        today = get_today()
         # Create model instance
+        
         model_instance = create_model_instance(
             model_type=model_type,
             model_name=model_name,
             configs=configs,
             data=temporal_data,
             static_data=static_data,
+            base_predictors=base_predictor_data,
+            base_model_names=base_model_cols
         )
+
 
         # Run forecast
         forecast = model_instance.predict_operational(today=today)
@@ -158,53 +181,86 @@ def run_single_model(data_interface: DataInterface,
         forecast = pd.DataFrame()  # Empty DataFrame as placeholder
         forecast['flag'] = 2
         success = False
-    
+ 
+    # Compare when the forecast is issued and when it should be issued
+    forecast_issue_day = forecast_configs.get_operational_issue_day()
+    today = get_today()
+    day_offset = today.day - forecast_issue_day
 
+    if day_offset != 0:
+        direction = "before" if day_offset < 0 else "after"
+        days = abs(day_offset)
+        unit = "day" if days == 1 else "days"
+        logger.warning(
+            f"Forecast for model {model_name} issued {days} {unit} {direction} the scheduled issue day "
+            f"({forecast_issue_day}). Forecasts are normalized to calendar monthly values; "
+            f"off-schedule runs may lead to degradation in forecast quality."
+        )
+    # Postprocess the forecasts to calendar months.
+    forecast = post_process_lt_forecast(
+        forecast_config=forecast_configs,
+        observed_discharge_data=temporal_data,
+        raw_forecast=forecast,
+    )
     #################################################
-    # This part will be replaced by a database query in future [DATABASE INTEGRATION]
+    # Save Forecast to Database and CSV
     #################################################
-    # Save Forecast
     output_path = forecast_configs.get_output_path(model_name=model_name)
-    os.makedirs(output_path, exist_ok=True)
-    output_file = os.path.join(output_path, f"{model_name}_forecast.csv")
-    forecast.to_csv(output_file, index=False)
-    logger.info(f"Forecast for model {model_name} saved to {output_file}")
+    horizon_value = forecast_configs.get_operational_month_lead_time()
 
-    # Append the forecast to the hindcast files
-    hindcast_file = os.path.join(output_path, f"{model_name}_hindcast.csv")
-    if os.path.exists(hindcast_file):
-        df_hindcast = pd.read_csv(hindcast_file)
-        df_hindcast['date'] = pd.to_datetime(df_hindcast['date'])
-        df_hindcast['code'] = df_hindcast['code'].astype(int)
-        df_combined = pd.concat([df_hindcast, forecast], ignore_index=True)
-    else:
-        logger.info(f"Hindcast file {hindcast_file} does not exist. Can not append forecast.")
+    # Save forecast (DB + CSV parallel track)
+    save_success = save_forecast(
+        forecast_df=forecast,
+        model_name=model_name,
+        output_path=output_path,
+        horizon_type="month",
+        horizon_value=horizon_value,
+        is_hindcast=False,
+        append_to_hindcast=True  # Also append to hindcast file
+    )
+
+    if not save_success:
+        logger.warning(f"Forecast save had issues for model {model_name}")
 
     # Return success
     return success
 
 def run_forecast(
         forecast_all: bool = True,
-        models_to_run: List[str] = []
+        models_to_run: List[str] = [],
+        forecast_mode: str = None,
 ):
 
     # Setup Environment
     sl.load_environment()
 
+    # Now we setup the configurations
+    forecast_config = ForecastConfig()
+
+    if forecast_mode is None:
+        forecast_mode = os.getenv('lt_forecast_mode')
+     
+    forecast_config.load_forecast_config(forecast_mode=forecast_mode)
+    forcing_HRU = forecast_config.get_forcing_HRU()
+
+
     if forecast_all:
         if len(models_to_run) > 0:
             raise ValueError("If forecast_all is True, models_to_run should be empty.")
 
-    # Now we setup the configurations
-    forecast_config = ForecastConfig()
+        models_to_run = forecast_config.get_models_to_run()
+    
+    logger.info(f"Starting forecast run. Forecast all: {forecast_all}. Models to run: {models_to_run}")
 
-    forecast_mode = os.getenv('lt_forecast_mode')
-    forecast_config.load_forecast_config(forecast_mode=forecast_mode)
-    forcing_HRU = forecast_config.get_forcing_HRU()
-
-    # Data Interface
-    data_interface = DataInterface()
-    base_data_dict = data_interface.get_base_data(forcing_HRU=forcing_HRU)
+    # Data Interface - use DB interface if SAPPHIRE API is available
+    if SAPPHIRE_API_AVAILABLE:
+        logger.info("Using DataInterfaceDB (database backend)")
+        data_interface = DataInterfaceDB()
+    else:
+        logger.info("Using DataInterface (CSV backend)")
+        data_interface = DataInterface()
+    base_data_dict = data_interface.get_base_data(
+        forcing_HRU=forcing_HRU)
 
     temporal_data = base_data_dict["temporal_data"]
     static_data = base_data_dict["static_data"]
@@ -223,12 +279,16 @@ def run_forecast(
     else:
         ignore_initial_dependencies = False
 
+    
+
+
     for model_name in ordered_models:
         # Wait 5 seconds between model runs to avoid potential file access conflicts
         time.sleep(5)
         dependencies = model_dependencies.get(model_name, [])
         # Check if dependencies were successful
         deps_success = all(execution_is_success.get(dep, False) for dep in dependencies)
+        
         if not deps_success and not ignore_initial_dependencies:
             logger.error(f"Skipping model {model_name} due to failed dependencies: {dependencies}")
             execution_is_success[model_name] = False
@@ -264,7 +324,6 @@ def run_forecast(
     logger.info("Forecast run completed.")
 
 
-
 if __name__ == "__main__":
 
     import argparse
@@ -296,13 +355,26 @@ Examples:
         metavar='MODEL_NAME',
         help='List of model names to forecast'
     )
+
+    group.add_argument(
+        '--today',
+        type=str,
+        help='Override the "today" date for the forecast in YYYY-MM-DD format (useful for testing or backtesting)'
+    )
     
     args = parser.parse_args()
     
     # Determine recalibrate_all flag and models to run
     recalibrate_all = args.all
     models_to_run = args.models if args.models else []
+
+    if args.today is None:
+        today = datetime.now().date()
+    else:
+        today = datetime.strptime(args.today, '%Y-%m-%d').date()
     
+    initialize_today(today)
+
     run_forecast(
         forecast_all=recalibrate_all,
         models_to_run=models_to_run

@@ -6,8 +6,6 @@
 # Set the environment variable ieasyhydroforecast_env_file_path to point to your .env file
 # Then run the script with:
 # ieasyhydroforecast_env_file_path="path_to_env" lt_forecast_mode=monthly python calibrate_and_hindcast.py
-
-
 from datetime import datetime
 import logging
 
@@ -21,7 +19,7 @@ import glob
 import pandas as pd
 import numpy as np
 import json
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Union
 
 # Import forecast models
 from lt_forecasting.forecast_models.LINEAR_REGRESSION import LinearRegressionModel
@@ -30,14 +28,15 @@ from lt_forecasting.forecast_models.deep_models.uncertainty_mixture import (
     UncertaintyMixtureModel,
 )
 
-from __init__ import logger 
-from data_interface import DataInterface
+from __init__ import LT_FORECAST_BASE_COLUMNS, today, initialize_today, SAPPHIRE_API_AVAILABLE
+from data_interface import DataInterface, DataInterfaceDB
 from config_forecast import ForecastConfig
-from lt_utils import create_model_instance
+from lt_utils import create_model_instance, save_forecast
+from post_process_lt_forecast import post_process_lt_forecast
 
 # set lt_forecasting logger level
 logger_lt = logging.getLogger("lt_forecasting")
-logger_lt.setLevel(logging.DEBUG)
+logger_lt.setLevel(logging.INFO)
 
 # Local libraries, installed with pip install -e ./iEasyHydroForecast
 # Get the absolute path of the directory containing the current script
@@ -52,8 +51,95 @@ sys.path.append(forecast_dir)
 # Import the setup_library module from the iEasyHydroForecast package
 import setup_library as sl
 
+from __init__ import logger 
 
-def calibrate_model(data_interface: DataInterface,
+def tune_hyperparameters_model(
+        model_name: str,
+        forecast_configs: ForecastConfig,
+        temporal_data: pd.DataFrame,
+        static_data: pd.DataFrame,
+        data_interface: Union[DataInterface, DataInterfaceDB],
+) -> Tuple[bool, str]:
+    """
+    Tune hyperparameters for a given model instance.
+    Args:
+        model_name (str): The name of the forecast model.
+        forecast_configs (ForecastConfig): The forecast configuration object.
+        temporal_data (pd.DataFrame): The temporal data for the model.
+        static_data (pd.DataFrame): The static data for the model.
+        data_interface: The data interface object (CSV or DB backend).
+    Returns:
+        Tuple[bool, str]: A tuple containing a boolean indicating success and a message.
+    """
+    # Load configurations
+    configs = forecast_configs.get_model_specific_config(model_name=model_name)
+    model_type = configs["general_config"]["model_type"]
+
+    logger.info(f"Tuning hyperparameters for model: {model_name} of type {model_type}")
+
+    # Set the model path
+    model_path = forecast_configs.all_paths.get(model_name)
+    # move up one level to model home path
+    model_home_path = os.path.dirname(model_path)
+    configs["path_config"]["model_home_path"] = model_home_path
+
+    today = datetime.now()
+    this_year = today.year
+    hparam_tuning_years = [int(this_year - i) for i in range(0, 4)]  # Last 4 years
+    logger.info(f"Hyperparameter tuning years for model {model_name}: {hparam_tuning_years}")
+    configs["general_config"]["hparam_tuning_years"] = hparam_tuning_years
+
+    #################################################
+    # This part will be replaced by a database query in future [DATABASE INTEGRATION]
+    #################################################
+    model_dependencies = forecast_configs.get_model_dependencies()
+    all_dependencies_paths = []
+    for dep in model_dependencies.get(model_name, []):
+        dep_path = forecast_configs.get_output_path(model_name=dep)
+        dep_file = os.path.join(dep_path, f"{dep}_hindcast.csv")
+        if not os.path.exists(dep_file):
+            logger.error(f"Dependency file {dep_file} for model {model_name} not found.")
+        all_dependencies_paths.append(dep_file)
+
+    configs["path_config"]["path_to_lr_predictors"] = all_dependencies_paths
+    configs["path_config"]["path_to_base_predictors"] = all_dependencies_paths
+
+    data_dependencies = forecast_configs.get_data_dependencies(model_name=model_name)
+    
+    for input_type, offset in data_dependencies.items():
+        if input_type == "SnowMapper":
+            # Extend base data with snow data
+            snow_HRUs = configs["path_config"].get("snow_HRUs", [])
+            snow_variables = configs["path_config"].get("snow_variables", [])
+            snow_result = data_interface.extend_base_data_with_snow(
+                base_data=temporal_data,
+                HRUs_snow=snow_HRUs,
+                snow_variables=snow_variables
+            )
+            temporal_data = snow_result["temporal_data"]
+
+
+    # Create model instance
+    model_instance = create_model_instance(
+        model_type=model_type,
+        model_name=model_name,
+        configs=configs,
+        data=temporal_data,
+        static_data=static_data,
+    )
+
+    # Run hyperparameter tuning
+    try:
+        success, message = model_instance.tune_hyperparameters()
+    except Exception as e:
+        logger.error(f"Error during hyperparameter tuning for model {model_name}: {e}")
+        success = False
+        message = str(e)
+
+    return success, message
+
+
+def calibrate_model(data_interface: Union[DataInterface, DataInterfaceDB],
                     forecast_configs: ForecastConfig,
                     model_name: str,
                     temporal_data: pd.DataFrame,
@@ -106,6 +192,11 @@ def calibrate_model(data_interface: DataInterface,
             )
             temporal_data = snow_result["temporal_data"]
 
+    #################################################
+    logger.info(f"Colums in temporal data before calibration: {temporal_data.columns.tolist()}")
+    #################################################
+    logger.info(f"Calibrating model: {model_name}")
+
     # Create model instance
     model_instance = create_model_instance(
         model_type=model_type,
@@ -127,15 +218,37 @@ def calibrate_model(data_interface: DataInterface,
         logger.error(f"Error during calibration and hindcast for model {model_name}: {e}")
         return False
 
+    # keep only dates where the day == forecast issue day
+    forecast_issue_day = forecast_configs.get_operational_issue_day()
+    hindcast = hindcast[hindcast['date'].dt.day == forecast_issue_day].copy()
+
+    # Post-Process Hindcast to match calendar months
+    hindcast = post_process_lt_forecast(
+        forecast_config=forecast_configs,
+        observed_discharge_data=temporal_data,
+        raw_forecast=hindcast,
+    )
+
+
     #################################################
-    # This part will be replaced by a database query in future [DATABASE INTEGRATION]
+    # Save Hindcast to Database and CSV
     #################################################
-    # Save Forecast
     output_path = forecast_configs.get_output_path(model_name=model_name)
-    os.makedirs(output_path, exist_ok=True)
-    output_file = os.path.join(output_path, f"{model_name}_hindcast.csv")
-    hindcast.to_csv(output_file, index=False)
-    logger.info(f"Hindcast  for model {model_name} saved to {output_file}")
+    horizon_value = forecast_configs.get_operational_month_lead_time()
+
+    # Save hindcast (DB + CSV parallel track)
+    save_success = save_forecast(
+        forecast_df=hindcast,
+        model_name=model_name,
+        output_path=output_path,
+        horizon_type="month",
+        horizon_value=horizon_value,
+        is_hindcast=True,
+        append_to_hindcast=False  # This is the full hindcast, not appending
+    )
+
+    if not save_success:
+        logger.warning(f"Hindcast save had issues for model {model_name}")
 
     # Return success
     return success
@@ -144,15 +257,16 @@ def calibrate_model(data_interface: DataInterface,
 
 def calibrate_and_hindcast(
         recalibrate_all: bool,
-        models_to_run: List[str]) -> Dict[str, bool]:
+        models_to_run: List[str],
+        tune_hyperparameters: bool = False) -> Dict[str, bool]:
     
     """
     Calibrate and hindcast for all models in the specified mode.
     Args:
         models_to_run (List[str]): List of model names to run.
     """
-    if recalibrate_all and len(models_to_run) == 0:
-        raise ValueError("If recalibrate_all is True, models_to_run must be specified.")
+    if not recalibrate_all and len(models_to_run) == 0:
+        raise ValueError("If recalibrate_all is False, models_to_run must be specified.")
     
     # Setup Environment
     sl.load_environment()
@@ -173,15 +287,28 @@ def calibrate_and_hindcast(
             model_name=model_name,
             status=False
         )
+
+        if tune_hyperparameters:
+            forecast_config.update_hyperparameter_tuning_status(
+                model_name=model_name,
+                status=False
+            )
     
     # Write this to config
     forecast_config.write_updated_config()
 
     forcing_HRU = forecast_config.get_forcing_HRU()
 
-    # Data Interface
-    data_interface = DataInterface()
-    base_data_dict = data_interface.get_base_data(forcing_HRU=forcing_HRU)
+    # Data Interface - use DB interface if SAPPHIRE API is available
+    if SAPPHIRE_API_AVAILABLE:
+        logger.info("Using DataInterfaceDB (database backend)")
+        data_interface = DataInterfaceDB()
+    else:
+        logger.info("Using DataInterface (CSV backend)")
+        data_interface = DataInterface()
+    start_date = forecast_config.get_start_date()
+    logger.info(f"Using start date for base data: {start_date}")
+    base_data_dict = data_interface.get_base_data(forcing_HRU=forcing_HRU, start_date=start_date)
 
     temporal_data = base_data_dict["temporal_data"]
     static_data = base_data_dict["static_data"]
@@ -211,7 +338,41 @@ def calibrate_and_hindcast(
             if not calibration_status:
                 logger.error(f"Cannot run model {model_name} because dependency {dep} is not calibrated.")
                 execution_is_success[model_name] = False
-                break
+                continue
+
+        if tune_hyperparameters:
+            hparam_tuning_status = forecast_config.get_hyperparameter_tuning_status(model_name=model_name)
+            logger.info(f"Hyperparameter tuning status for model {model_name}: {hparam_tuning_status}")
+
+            if hparam_tuning_status:
+                logger.info(f"Model {model_name} hyperparameters already tuned. Re-doing tuning as per user request. To skip tuning, run without --tune_hyperparameters flag.")
+
+            logger.info(f"Tuning hyperparameters for model {model_name}.")
+            success, message = tune_hyperparameters_model(
+                model_name=model_name,
+                forecast_configs=forecast_config,
+                temporal_data=temporal_data,
+                static_data=static_data,
+                data_interface=data_interface,
+            )
+            if success:
+                logger.info(f"Hyperparameter tuning for model {model_name} completed successfully.")
+            else:
+                logger.error(f"Hyperparameter tuning for model {model_name} failed: {message}")
+                logger.error("Skipping calibration due to failed hyperparameter tuning.")
+                execution_is_success[model_name] = False
+                continue
+            
+            # Update hyperparameter tuning status
+            forecast_config.update_hyperparameter_tuning_status(
+                model_name=model_name,
+                status=success
+            )
+
+            # Write this to config
+            forecast_config.write_updated_config()
+
+            time.sleep(10)  # small delay to ensure output files are written properly
 
         success = calibrate_model(
             data_interface=data_interface,
@@ -234,6 +395,7 @@ def calibrate_and_hindcast(
         forecast_config.write_updated_config()
         
     logger.info("Calibration and hindcast run completed.")
+    
     
     return execution_is_success
 
@@ -282,18 +444,25 @@ Examples:
         metavar='MODEL_NAME',
         help='List of model names to calibrate'
     )
-    
+    parser.add_argument(
+        '--tune_hyperparameters',
+        action='store_true',
+        default=False,
+        help='Flag to indicate if hyperparameter tuning should be performed before calibration'
+    )
     args = parser.parse_args()
     
     # Determine recalibrate_all flag and models to run
     recalibrate_all = args.all
     models_to_run = args.models if args.models else []
+    tune_hyperparameters = args.tune_hyperparameters
     
     # Run calibration
     try:
         results = calibrate_and_hindcast(
             recalibrate_all=recalibrate_all,
-            models_to_run=models_to_run
+            models_to_run=models_to_run,
+            tune_hyperparameters=tune_hyperparameters
         )
         
         # Print summary
