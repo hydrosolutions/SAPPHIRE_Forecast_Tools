@@ -2,8 +2,16 @@
 
 ## LT Package
 Core implementation in "lt-forecasting @ git+https://github.com/hydrosolutions/long-term-forecasting.git@v1.1.1"
-pip install git+https://github.com/hydrosolutions/long-term-forecasting.git@v1.1.1
 
+Use:
+```bash
+pip install git+https://github.com/hydrosolutions/long-term-forecasting.git
+````
+
+or a specific version:
+```bash
+pip install git+https://github.com/hydrosolutions/long-term-forecasting.git@v1.1.1
+```
 
 ### Fast Development
 For fast development use the local code base - for this do:
@@ -30,7 +38,6 @@ ieasyhydroforecast_env_file_path=$ieasyhydroforecast_env_file_path lt_forecast_m
 
 # Run Forecast Only for Specific Model(s)
 ieasyhydroforecast_env_file_path=$ieasyhydroforecast_env_file_path lt_forecast_mode=month_1 python run_forecast.py --models LR_Base GBT LR_SM SM_GBT
-
 
 # Run forecasts for each month, continue even if one fails
 for month in  0 1 2 3 4 5 6 7 8 9; do
@@ -74,9 +81,9 @@ source myenv/bin/activate
 # iEasy Hydro SDK library
 pip install git+https://github.com/hydrosolutions/ieasyhydro-python-sdk
 # long term forecasting library (use latest version)
-pip install git+https://github.com/hydrosolutions/long-term-forecasting.git@v1.1.1
+pip install git+https://github.com/hydrosolutions/long-term-forecasting.git
 
-# During Development - make changes directly in the codebase.
+# During Development - make changes directly in the codebase (if code base is locally available)
 pip install -e "path/to/lt_forecasting/dir"
 
 # SQL access
@@ -86,37 +93,49 @@ If you work on macOS you might need to install lightgbm via homebrew. Or use con
 
 ## Data Interface
 
-The `data_interface.py` module provides three data access classes:
+The `data_interface.py` module provides three data interface classes for loading and managing forecast data:
 
-| Class | Data source | Use case |
-|-------|------------|----------|
-| `DataInterface` | CSV files | Default, works offline |
-| `DataInterfaceDB` | Direct SQL to preprocessing PostgreSQL DB | Bulk reads for training/calibration (faster than paginated API) |
-| `BasePredictorDataInterface` | Direct SQL to postprocessing PostgreSQL DB | Loading ensemble member predictions |
+### DataInterfaceDB (Primary - Database)
+Retrieves data from PostgreSQL database via SAPPHIRE services.
 
-### Current status: direct SQL for bulk reads
+**Environment Variables:**
+- `DB_POSTPROCESS_CONNECTION_STRING` - PostgreSQL connection string
+- `ieasyhydroforecast_models_and_scalers_path` - Path to models/scalers
+- `ieasyhydroforecast_ml_long_term_path_to_static` - Static features CSV path
+- `ieasyhydroforecast_SNOW_VARS` - Available snow variables (SWE, ROF, HS)
+- `ieasyhydroforecast_HRU_SNOW_DATA` - Available HRU codes for snow data
 
-`DataInterfaceDB` and `BasePredictorDataInterface` use **direct SQL via SQLAlchemy** (`sqlalchemy.create_engine`, `pd.read_sql`) to fetch large training datasets from the preprocessing and postprocessing databases. This bypasses the `sapphire-api-client` that all other SAPPHIRE modules use.
+**Key Methods:**
 
-**Why:** Performance. Loading decades of daily data for model training requires fetching hundreds of thousands of records. The API's paginated approach (10,000 records/page with multiple HTTP round-trips) is significantly slower than a single SQL query.
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `get_base_data(forcing_HRU, start_date)` | Dict | Merged temporal (discharge + forcing) + static data with offsets |
+| `extend_base_data_with_snow(base_data, HRUs_snow, snow_variables)` | Dict | Extends base data with snow variables |
+| `get_meteo_data(meteo_type, code, start_date, end_date)` | DataFrame | Precipitation (P) or Temperature (T) |
+| `get_runoff_data(code, start_date, end_date)` | DataFrame | Discharge observations |
+| `get_snow_data(variable, code, start_date, end_date)` | DataFrame | Snow variables (SWE, ROF, HS) |
 
-**Known risks of this approach:**
-- Hardcoded default DB credentials in source code (must be moved to `.env` before production)
-- Tight coupling to database table/column names (bypasses API schema abstraction)
-- No Pydantic validation on returned data (bypasses API validation layer)
-- Requires direct PostgreSQL network access (not just HTTP)
-- Two DB connection strings to manage (preprocessing port 5433, postprocessing port 5434)
+**Output from `get_base_data()`:**
+```python
+{
+    "temporal_data": DataFrame,        # merged discharge + forcing
+    "static_data": DataFrame,          # station characteristics
+    "offset_date_base": int,           # days from today to latest data
+    "offset_date_discharge": int       # days from today to latest discharge
+}
+```
 
-**Planned migration:** Bulk-read endpoints are being added to the sapphire-api-client (see `doc/plans/bulk_read_endpoints_instructions.md`). Once available, `DataInterfaceDB` and `BasePredictorDataInterface` should be refactored to use `client.bulk_read_runoff()`, `client.bulk_read_meteo()`, `client.bulk_read_snow()`, and `client.bulk_read_long_forecasts()` instead of direct SQL.
+### DataInterface (Legacy - CSV)
+CSV-based interface retained for backward compatibility; being phased out.
 
-### Key methods
+### BasePredictorDataInterface
+Retrieves forecast predictions from postprocessing database for models that depend on other models' outputs.
 
-- `get_base_data(forcing_HRU, start_date)`: Returns temporal data (forcing + discharge), static features, and date offsets for data freshness monitoring
-- `extend_base_data_with_snow(base_data, HRUs_snow, snow_variables)`: Extends base data with snow variables (SWE, ROF, HS)
-- `load_snow_data(HRU, variable)`: Loads snow variables for a specific HRU
-- `get_base_predictor_data_database(model_name, horizon_type, horizon_value)`: Loads ensemble member predictions from the postprocessing database
+**Key Methods:**
+- `get_base_predictor_data_database(model_name, horizon_type, horizon_value)` - Load predictions from `long_forecasts` table
+- `load_all_dependencies_database(models, horizon_type, horizon_value)` - Merge predictions from multiple base models
 
-**Testing:** Run tests with:
+**Testing:**
 ```bash
 ieasyhydroforecast_env_file_path="../../../forecast/config/.env_develop_xyxy" python -m tests.test_data_interface
 ```
@@ -125,153 +144,86 @@ ieasyhydroforecast_env_file_path="../../../forecast/config/.env_develop_xyxy" py
 
 The `config_forecast.py` module provides the `ForecastConfig` class for managing model configurations and execution dependencies.
 
-**Expected file structure:**
-Each forecast mode (e.g., "monthly") requires a configuration folder containing:
+### File Structure
+
 ```
-<forecast_mode>.json              # Main config: model paths, dependencies, forecast horizon
-└── model_folder/
+config_<mode>.json                    # Main config
+└── models_and_scalers/long_term_forecasting/<mode>/
     └── <family>/
         └── <model_name>/
-            ├── model_config.json      # Model-specific parameters
-            ├── general_config.json    # General settings
-            ├── feature_config.json    # Feature engineering specs
-            └── path_paths.json        # Data path configurations
+            ├── model_config.json     # Hyperparameters (GBT models)
+            ├── general_config.json   # Training/inference settings
+            ├── feature_config.json   # Feature engineering specs
+            └── data_paths.json       # Snow data paths
 ```
 
-**Model ordering:** Models are automatically ordered using topological sorting based on their dependencies. This ensures that models are executed after all their dependencies are satisfied. Circular dependencies are detected and raise an error. Models without dependencies can run in parallel (same execution level).
+### Main Config Parameters (`config_<mode>.json`)
 
-**Example configuration (`config_1.json`):**
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `prediction_horizon` | int | Forecast window in days |
+| `offset` | int | Days to offset forecast start; if null, equals horizon |
+| `forecast_days` | list | Days to issue forecasts during calibration (e.g., [5, 10, 15, 20, 25, "end"]) |
+| `operational_issue_day` | int | Day of month to issue operational forecasts |
+| `operational_month_lead_time` | int | Months ahead for operational forecast |
+| `allowable_missing_value_operational` | int | Max missing values before skipping forecast |
+| `model_folder` | str | Path to model storage |
+| `forcing_HRU` | str | HRU code for forcing data |
+| `models_to_use` | dict | Models grouped by family (Base, SnowMapper, Uncertainty) |
+| `model_dependencies` | dict | Model → list of dependency models |
+| `data_dependencies` | dict | Model → data source with lag offset |
+| `is_calibrated` | dict | Calibration status per model |
+| `is_hyperparameter_tuned` | dict | Tuning status per model |
+
+### Forecast Horizon & Offset Math
+
+Forecast period = `[t + offset - horizon + 1, t + offset]` where `t` = issue date.
+
+**Example:** `horizon=30, offset=35` predicts days `[t+6, t+35]` (issues on 10th, valid from 15th for 30 days).
+
+### Model-Specific Configs
+
+**`general_config.json`** - Training settings:
+| Parameter | Description |
+|-----------|-------------|
+| `model_type` | Model class (e.g., "sciregressor") |
+| `models` | Ensemble algorithms (xgb, lgbm, catboost) |
+| `feature_cols` | Features (discharge, P, T, SWE, ROF) |
+| `static_features` | Basin properties (LAT, LON, gl_fr, h_mean, aridity) |
+| `use_lr_predictors` | Include LR outputs as features |
+| `normalize` | Normalize features |
+| `test_years` | Years for validation |
+
+**`feature_config.json`** - Feature engineering:
 ```json
 {
-    "prediction_horizon": 30,
-    "offset": 35,
-    "forecast_days": [
-        5,
-        10,
-        15,
-        20,
-        25,
-        "end"
-    ],
-    "operational_issue_day" : 10,
-    "operational_month_lead_time" : 1, 
-    "allowable_missing_value_operational": 3,
-    "model_folder": "models_and_scalers/long_term_forecasting/month_1/",
-    "models_to_use": {
-        "Base": [
-            "LR_Base",
-            "GBT"
-        ],
-        "SnowMapper": [
-            "LR_SM",
-            "LR_SM_DT",
-            "LR_SM_ROF",
-            "SM_GBT",
-            "SM_GBT_Norm",
-            "SM_GBT_LR"
-        ],
-        "Uncertainty": [
-            "MC_ALD"
-        ]
-    },
-    "model_dependencies": {
-        "SM_GBT_LR": [
-            "LR_Base",
-            "LR_SM",
-            "LR_SM_DT",
-            "LR_SM_ROF"
-        ],
-        "MC_ALD": [
-            "LR_Base",
-            "GBT",
-            "LR_SM",
-            "LR_SM_DT",
-            "LR_SM_ROF",
-            "SM_GBT",
-            "SM_GBT_Norm",
-            "SM_GBT_LR"
-        ]
-    },
-    "data_dependencies": {
-        "LR_SM": {
-            "SnowMapper": 5
-        },
-        "LR_SM_DT": {
-            "SnowMapper": 5
-        },
-        "LR_SM_ROF": {
-            "SnowMapper": 5
-        },
-        "SM_GBT": {
-            "SnowMapper": -8
-        },
-        "SM_GBT_Norm": {
-            "SnowMapper": -8
-        },
-        "SM_GBT_LR": {
-            "SnowMapper": -8
-        }
-    },
-    "forcing_HRU": "00003",
-    "is_calibrated": {
-        "LR_Base": true,
-        "GBT": true,
-        "LR_SM": true,
-        "LR_SM_DT": true,
-        "LR_SM_ROF": true,
-        "SM_GBT": true,
-        "SM_GBT_Norm": true,
-        "SM_GBT_LR": true,
-        "MC_ALD": true
-    },
-    "is_hyperparameter_tuned": {
-        "LR_Base": true,
-        "GBT": true,
-        "LR_SM": true,
-        "LR_SM_DT": true,
-        "LR_SM_ROF": true,
-        "SM_GBT": true,
-        "SM_GBT_Norm": true,
-        "SM_GBT_LR": true,
-        "MC_ALD": true
-    }
+  "discharge": [{
+    "operation": "mean",           // mean, sum, slope, max
+    "windows": [15, 30],           // window sizes in days
+    "lags": {"30": [30, 60, 90]}   // lag values per window
+  }]
 }
 ```
-The prediction_horizon and offset variable control what the model tries to predict. As in the code we compute features with:
-```python
-future_avg = (
-    basin_data.rolling(
-        window=self.prediction_horizon, min_periods=min_periods
-    )
-    .mean()
-    .shift(-self.offset)
-)
-```
-The rolling window is always backward-looking so we need to shift the value forward in time. So if we want to predict the next 30 days from today: t+1 -> t+30 and t is today. This means that our target value is located 30 days later in our dataset, so we need to shift it by 30 days to make a proper target.
 
-In mathematical notation for accessing the target is:
-$$
-[t+k-H + 1, t+k]
-$$ 
-where $t$ is today, $k$ is the offset and $H$ is the prediction Horizon. If $k=null$ it is set to $k=H$. If we want to issue a forecast which is only valid in 5 days (Issue date 10th, valid from 15th for the next 30 days) we can set: 
-$$
-prediction\,\,horizon = 30 \\
-offset = 35 \\
-[t+35 -30 + 1, t+35] = [t+5, t+35]
-$$
+**`model_config.json`** - Hyperparameters (GBT models):
+- XGBoost: `n_estimators`, `learning_rate`, `max_depth`, `subsample`, etc.
+- LightGBM: `num_leaves`, `min_child_samples`, `lambda_l1`, `lambda_l2`, etc.
+- CatBoost: `iterations`, `depth`, `l2_leaf_reg`, `bagging_temperature`, etc.
 
-or if we want to predict the period from April - September and issue the forecast in the beginning of March (we assume that all months have 30 days as for such long periods single days have very little influence even if we have a perfect model) it is:
-$$
-prediction\,\,horizon = 180 \\
-offset = 210 \\
-[t+210 -180 + 1, t+210] = [t+31, t+210]
-$$
-In this example the first day of April is at t+31.
+**`data_paths.json`** - Snow data paths:
+| Parameter | Description |
+|-----------|-------------|
+| `model_home_path` | Base path (e.g., "SnowMapper") |
+| `snow_HRUs` | HRU identifiers for snow data |
+| `snow_variables` | Variables to load (SWE, RoF) |
 
+### Dependencies
 
-The data dependency checks the difference of the max date with the current date (here of the SnowMapper data (today - max_SM)). If the SnowMapper is up to date this value is -10 (10 days lead time), with values greater than -5 we say that we don't continue with forecasts because the information is not recent enough (As an example).
+**Model dependencies:** Models execute in topological order. Dependencies are auto-resolved; circular dependencies raise errors.
 
-The forecast days indicates on which date a forecast should be issued during calibration. Note that here we can have more forecast days than in the operational setting. This increases robustness in our ML models. 
+**Data dependencies:** Specifies lag offset for external data freshness:
+- Negative value: data expected recent (e.g., -5 = max 5 days old)
+- Positive value: older data acceptable
 
 **Key methods:**
 - `load_forecast_config(forecast_mode)`: Loads configuration for a specific forecast mode
@@ -467,4 +419,71 @@ LR_Base: SUCCESS
 GBT_Base: SUCCESS
 LR_SM: FAILED
 ==================================================
+```
+
+## Simulate Past Forecasts
+
+The `dev_code/simulate_forecasts.py` script runs forecasts retroactively for past dates to enable simulation and validation.
+
+### Purpose
+
+Test forecasting models against historical periods by simulating what forecasts would have been on specific dates.
+
+### Command-Line Arguments
+
+| Argument | Type | Required | Description |
+|----------|------|----------|-------------|
+| `--years` | int (multiple) | Yes | Years to simulate (e.g., `--years 2024 2025`) |
+| `--all` | flag | No | Run for all available models |
+| `--models` | str (multiple) | No | Specific models to run |
+| `--num_months` | int | No | Months per year to simulate (default: 12) |
+
+### Workflow
+
+1. Loads forecast config and determines operational issue day
+2. For each year/month combination:
+   - Sets "today" to the specified date (at operational issue day)
+   - Calls `run_forecast()` to generate forecasts
+3. Outputs forecast files via `run_forecast()`
+
+## Post-Processing Forecasts
+
+The `post_process_lt_forecast.py` module adjusts raw forecasts from forecast periods to calendar months using ratio-based scaling with long-term climatology.
+
+### Purpose
+
+Raw forecasts are generated over non-aligned forecast periods (e.g., May 31 - June 29), but agencies require calendar month values (June 1-30). This module performs the adjustment.
+
+### Processing Steps
+
+1. **Calculate Forecast Period Climatology**: Long-term mean/std for the forecast period day-range
+2. **Calculate Calendar Month Climatology**: Long-term mean/std for the target calendar month
+3. **Map Forecast to Calendar Month**: Determine target month from issue date + lead time
+4. **Adjust Forecast**: Apply ratio-based scaling with confidence interval bounds
+
+**Adjustment Formula:**
+```
+log_ratio = log(Q_forecast / fc_period_lt_mean)
+log_ratio_clipped = clip(log_ratio, bounds)
+Q_adjusted = calendar_month_lt_mean * exp(log_ratio_clipped)
+```
+
+### Key Features
+
+- **Leave-One-Out**: Excludes prediction year from climatology (prevents data leakage)
+- **Clipping**: ±2σ for N<5 years, Student's t 95% CI for N≥5
+- **Multi-Quantile**: Adjusts all Q columns (Q5, Q10, ..., Q95) independently
+- **Non-Negative**: Ensures all adjusted values ≥ 0
+
+### Usage
+
+Called automatically by `run_forecast.py`:
+```python
+from post_process_lt_forecast import post_process_lt_forecast
+
+forecast = post_process_lt_forecast(
+    forecast_config=forecast_configs,
+    observed_discharge_data=temporal_data,
+    raw_forecast=forecast,
+)
 ```

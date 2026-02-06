@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     api_base_url: str = "http://postprocessing-api:8003"
     batch_size: int = 1000
     csv_folder: str = "/intermediate_data/"
+    config_folder: str = "/config/"
 
     class Config:
         env_file = Path(__file__).parent.parent / ".env"

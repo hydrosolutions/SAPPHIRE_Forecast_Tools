@@ -1,26 +1,9 @@
 
-# Bulk 1 (04.02.2026)
-- [x] Only Keep Operational Forecast Days in the Hindcast files (~ 5x less storage)
-  - [x] Adjust configs file to have: operational_forecast_day, operational_lead_time_months 
-  - [x] Integrate those in the forecast (?) and in the hindcast script
-- [x] Strict about the columns saved.
-- [x] Copy current hindcasts to a different place in order to test the workflow.
-  - [x] Have a small script transforming all hindcast to only include operational_forecast_day.
-- [x] Change today to be used as a global variable for all code scripts. 
-- [x] Write a Mock Forecast script - run forecasts for 2024, 2025.
-- [x] Change Logging in the LT Forecast Package - less verbose - only relevant parts.
-- [x] run simple calibration to test everything works still.
-- [x] Evaluate the mock forecasts.
-
-# Bulk 2 (05.02.2026)
-- [x] Data Interface to DataBase - no CSV
-- [x] Forecast and Hindcast writting to DataBase
-- [x] Run Mock Forecasts
-- [x] Run Mock Calibration
-
-
-# Bulk 3 
 - [ ] Update Documentation
-- [x] Release Stable LT-Forecast Version.
+  - [x] How to run most important bits
+  - [ ] how to re-configure a model
+- [ ] Data Base migration of different Snowmapper HRU's.
+- [ ] Recalibration of Models using correct HRU.
+- [ ] ENV Linking
 - [ ] Testing
 - [ ] Commiting

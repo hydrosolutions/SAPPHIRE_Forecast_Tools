@@ -131,9 +131,11 @@ python app/data_migrator.py --type skillmetric --batch-size 1
 python app/data_migrator.py --type lrforecast
 python app/data_migrator.py --type combinedforecast
 python app/data_migrator.py --type forecast
+python app/data_migrator.py --type longforecast
 ```
 
 **Note:** The `--batch-size 1` flag for skill metrics is needed due to duplicate entry handling.
+**Note 2** `python app/data_migrator.py --type longforecast --modes month_1 --model-filter LR_Base,GBT` only migrates month_1 and filter for the selected models.  
 
 ### Migration Options
 
