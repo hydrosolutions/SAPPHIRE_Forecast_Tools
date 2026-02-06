@@ -50,6 +50,7 @@ def simulate_forecasts(
         years: List[int],
         forecast_all = True,
         models_to_run: List[str] = [],
+        num_months: int = 1,
 ) -> Dict[bool,  str]:
     
     # Setup environment
@@ -73,9 +74,9 @@ def simulate_forecasts(
     day_of_forecast = forecast_config.get_operational_issue_day()
 
     # 2. Iterate over years and run forecast for each year
-    total_iterations = len(years) * 12
+    total_iterations = len(years) * num_months
     for year, month in tqdm(
-        [(y, m) for y in years for m in range(1, 13)],
+        [(y, m) for y in years for m in range(1,  num_months + 1)],
         total=total_iterations,
         desc="Simulating forecasts"
     ):
@@ -113,6 +114,13 @@ if __name__ == "__main__":
         help="List of specific models to run (e.g., --models LR SciRegressor). If empty, all models will be run.",
     )
 
+    parser.add_argument(
+        "--num_months",
+        type=int,
+        default=12,
+        help="Number of months to simulate.",
+    )
+
     # all and models are mutually exclusive
     args = parser.parse_args()
     if args.all and args.models:
@@ -123,5 +131,6 @@ if __name__ == "__main__":
         years=args.years,
         forecast_all=args.all,
         models_to_run=args.models,
+        num_months=args.num_months
     )
 

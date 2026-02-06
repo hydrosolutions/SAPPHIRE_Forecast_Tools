@@ -108,18 +108,28 @@ def run_single_model(data_interface: Union[DataInterface, DataInterfaceDB],
     #################################################
     if len(all_dependencies_models) > 0:
         base_predictor_interface = BasePredictorDataInterface()
-        base_predictor_data, base_model_cols = base_predictor_interface.load_all_dependencies_csv(
-            all_dependencies_models=all_dependencies_models,
-            all_dependencies_paths=all_dependencies_hindcast_paths
-        )
 
-        logger.info(f"Loaded base predictor data for model {model_name} with columns: {base_model_cols}")
+        if SAPPHIRE_API_AVAILABLE:
+            base_predictor_data, base_model_cols = base_predictor_interface.load_all_dependencies_database(
+                all_dependencies_models=all_dependencies_models,
+                horizon_type="month",
+                horizon_value=forecast_configs.get_operational_month_lead_time()
+            )
+            logger.info(f"Loaded base predictor data from database for model {model_name}")
+        else:
+            base_predictor_data, base_model_cols = base_predictor_interface.load_all_dependencies_csv(
+                all_dependencies_models=all_dependencies_models,
+                all_dependencies_paths=all_dependencies_hindcast_paths
+            )
+            logger.info(f"Loaded base predictor data from CSV for model {model_name}")
+
+        logger.info(f"Base predictor columns: {base_model_cols}")
         logger.info(f"Base predictor data shape: {base_predictor_data.shape}")
         logger.info(f"Percentage of rows with NaN values in base predictor data: {base_predictor_data.isna().mean().mean() * 100:.2f}%")
 
         logger.info(f"Running model: {model_name} of type {model_type}")
-    
-    else: 
+
+    else:
         base_predictor_data = None
         base_model_cols = []
 
@@ -155,6 +165,8 @@ def run_single_model(data_interface: Union[DataInterface, DataInterfaceDB],
         else:
             logger.warning(f"Unknown data dependency type: {input_type}")
 
+    logger.info(f"Can model {model_name} be run? {'Yes' if can_be_run else 'No'}")
+
     if can_be_run:
         today = get_today()
         # Create model instance
@@ -182,6 +194,7 @@ def run_single_model(data_interface: Union[DataInterface, DataInterfaceDB],
         forecast['flag'] = 2
         success = False
  
+    logger.info(f"Forecast head before post-processing for model {model_name}:\n{forecast.head()}")
     # Compare when the forecast is issued and when it should be issued
     forecast_issue_day = forecast_configs.get_operational_issue_day()
     today = get_today()
@@ -202,6 +215,11 @@ def run_single_model(data_interface: Union[DataInterface, DataInterfaceDB],
         observed_discharge_data=temporal_data,
         raw_forecast=forecast,
     )
+    # Round all numeric columns to 2 decimals after post-processing
+    numeric_cols = forecast.select_dtypes(include=[np.number]).columns
+    forecast[numeric_cols] = forecast[numeric_cols].round(2)
+    
+    logger.info(f"Forecast head after post-processing for model {model_name}:\n{forecast.head()}")
     #################################################
     # Save Forecast to Database and CSV
     #################################################
@@ -215,8 +233,7 @@ def run_single_model(data_interface: Union[DataInterface, DataInterfaceDB],
         output_path=output_path,
         horizon_type="month",
         horizon_value=horizon_value,
-        is_hindcast=False,
-        append_to_hindcast=True  # Also append to hindcast file
+        is_hindcast=False
     )
 
     if not save_success:
