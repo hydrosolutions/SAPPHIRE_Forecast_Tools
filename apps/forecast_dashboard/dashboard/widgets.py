@@ -253,7 +253,7 @@ def create_basin_card(select_basin_widget, station):
 # Used inside sidebar_content
 def create_message_pane(data):
     stations_iehhf = None
-    
+
     # Test if we have sites in stations_iehhf which are not present in forecasts_all
     # Placeholder for a message pane
     message_pane = pn.pane.Markdown("", width=300)
@@ -271,7 +271,69 @@ def create_message_pane(data):
     return message_pane
 
 
+# ============================== Generic functions ==============================
+
+def get_pane_alert(msg):
+    return pn.pane.Alert(
+        "⚠️ Warning: " + msg,
+        alert_type="warning",
+        sizing_mode="stretch_width"
+    )
+
+# ============================== Widgets for Predictors Tab ==============================
+
+def get_predictors_warning(station, data):
+    # predictors_warning.objects = []  # clear old content
+    # today_date = today.date()
+    today_date = dt.datetime.now().date()
+    filtered = data["hydrograph_day_all"][
+        (data["hydrograph_day_all"]["station_labels"] == station.value) &
+        (data["hydrograph_day_all"]["date"] == pd.to_datetime(today_date))
+    ]
+
+    if not filtered.empty:
+        if pd.notna(filtered["2025"].iloc[0]):
+            print("2025 has a value:", filtered["2025"].iloc[0])
+            return
+        else:
+            print("2025 is NaN/empty")
+            # predictors_warning.append(get_pane_alert(f"No discharge record available today for {station.value}"))
+            return get_pane_alert(f"No discharge record available today for {station.value}")
+    else:
+        print("No record for today and given station")
+        # predictors_warning.append(get_pane_alert(f"No discharge record available today for {station.value}"))
+        return get_pane_alert(f"No discharge record available today for {station.value}")
+
+
 # ============================== Widgets for Forecast Tab ==============================
+
+
+def get_forecast_warning(station, data, date_picker_value):
+    # forecast_warning.objects = []  # clear old content
+    filtered = data["forecasts_all"][
+        (data["forecasts_all"]["station_labels"] == station.value) &
+        (data["forecasts_all"]["date"] == pd.to_datetime(date_picker_value))
+    ]
+    if not filtered.empty:
+        # filter rows where forecasted_discharge is NaN
+        missing_forecasts = filtered[filtered["forecasted_discharge"].isna()]
+
+        # collect the model_short values into a list
+        missing_models = missing_forecasts["model_short"].tolist()
+
+        if missing_models:
+            print("Missing forecasts for models:", missing_models)
+            # forecast_warning.append(get_pane_alert(
+            #     f"No forecast data available for models {', '.join(missing_models)} at {station.value} on {date_picker.value}."))
+            return get_pane_alert(
+                f"No forecast data available for models {', '.join(missing_models)} at {station.value} on {date_picker_value}.")
+        else:
+            print("All models have forecast data.")
+            return
+    else:
+        # forecast_warning.append(get_pane_alert(f"No forecast data available for {station.value} on {date_picker.value}."))
+        return get_pane_alert(f"No forecast data available for {station.value} on {date_picker_value}.")
+
 
 # Used for Summary table Plot (Forecast Tab)
 def create_add_to_bulletin_button():

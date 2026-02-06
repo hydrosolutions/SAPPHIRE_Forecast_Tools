@@ -37,6 +37,7 @@ from dashboard.logger import setup_logger
 from dashboard import widgets
 from dashboard.bulletin_manager import load_bulletin_from_csv, add_current_selection_to_bulletin, remove_selected_from_bulletin, handle_bulletin_write, create_bulletin_table
 from dashboard import config
+from dashboard import utils
 
 
 tl = config.import_tag_library()
@@ -61,7 +62,6 @@ display_weather_data, display_snow_data = config.display_weather_and_snow_data()
 
 valid_codes = ['16159', '16159', '16159', '16101', '16159', '16159', '15054', '16101', '16134', '16101', '16101', '16134', '16134', '15081', '15054', '16105', '16101', '16105', '16100', '16105', '15054', '16160', '15149', '15149', '15149', '15149', '15149', '16105', '15149', '16100', '16100', '16100', '16160', '16160', '16101', '16159', '16100', '15054', '15034', '16139', '16143', '16143', '15051', '15051', '15051', '15051', '16151', '15051', '15081', '15081', '16135', '16135', '16135', '15034', '15034', '16160', '16134', '16143', '16143', '16143', '16139', '16139', '16139', '16139', '16151', '16151', '16151', '16151', '16151', '15054', '15054', '15051', '16143', '16146', '16146', '16146', '16146', '16139', '16160', '15283', '16105', '15215', '15215', '15215', '15261', '16936', '15216', '15216', '15215', '15216', '15216', '15216', '15256', '15256', '15256', '15256', '16936', '15216', '15215', '15259', '15215', '15034', '15259', '15259', '16936', '16936', '16936', '16936', '15259', '15259', '15259', '15013', '15283', '15013', '15013', '15013', '15013', '15013', '15283', '16160', '15283', '15090', '16127', '16127', '16127', '16127', '16127', '16127', '16158', '16134', '16158', '16158', '16158', '16158', '15090', '15102', '15102', '16105', '16158', '16134', '15090', '15283', '15090', '16121', '16121', '16121', '16121', '16121', '16121', '15030', '15030', '15030', '15030', '15102', '15102', '15102', '15102', '15090', '15090', '15256', '15034', '15287', '15083', '16096', '16096', '16096', '16096', '16096', '15171', '16161', '15025', '15171', '15171', '15171', '15171', '16146', '15189', '15189', '15960', '15171', '16096', '16161', '16161', '15189', '16161', '16161', '16070', '16070', '16070', '16070', '16070', '16070', '16169', '16169', '16169', '16169', '16169', '16169', '15189', '16161', '15189', '15025', '15194', '15194', '16068', '15020', '16059', '15020', '15020', '15020', '16059', '16068', '16059', '15256', '16146', '17462', '17462', '17462', '17462', '17462', '16059', '16068', '16068', '16068', '16055', '16055', '16055', '16055', '16055', '16055', '16176', '16176', '16176', '16176', '16176', '16176', '15194', '16059', '16059', '16068', '15189', '15194', '15034', '15214', '15287', '16153', '16153', '16100', '15025', '15025', '15016', '15954', '16153', '15954', '15212', '15212', '15212', '15212', '15212', '16487', '16487', '15212', '16153', '16153', '16136', '15083', '15083', '15083', '15083', '15083', '16135', '16135', '16135', '16136', '15081', '15081', '15081', '16136', '16136', '16136', '16136', '16153', '16487', '15287', '16487', '16487', '16681', '15283', '15214', '15214', '15214', '15312', '15016', '16510', '15312', '15312', '15312', '15312', '15287', '15214', '15287', '15287', '15312', '16510', '16510', '16510', '15016', '15954', '15954', '15954', '15954', '15016', '15016', '15016', '15214', '15285', '15285', '15285', '15285', '15285', '15285', '16510', '16510', '16487', '17462']
 all_stations, station_dict = processing.get_all_stations_from_file(valid_codes)
-iehhf_warning = None
 
 data = db.get_data('15189', all_stations)
 
@@ -191,91 +191,13 @@ bulletin_tabulator = widgets.create_bulletin_tabulator()
 
 
 # region update_functions
-# @pn.depends(pentad_selector, decad_selector, watch=True)
-def update_site_attributes_with_hydrograph_statistics_for_selected_pentad(_,
-    sites=sites_list, df=data["hydrograph_pentad_all"], pentad=pentad_selector.value, decad=decad_selector.value):
-    """Update site attributes with hydrograph statistics for selected pentad"""
-    #print(f"\n\n\nDEBUG update_site_attributes_with_hydrograph_statistics_for_selected_pentad: pentad: {pentad}")
-    #print(f"column names: {df.columns}")
-    # Based on column names and date, figure out which column indicates the
-    # last year's Q for the selected pentad
-    current_year = dt.datetime.now().year
-    #print(f"current year: {current_year}")
-    if str(current_year) in df.columns:
-        last_year_column = str(current_year - 1)
-    else:
-        logger.info(f"Column for current year not found. Trying previous year.")
-        current_year -= 1
-        if str(current_year) in df.columns:
-            last_year_column = str(current_year - 1)
-        else:
-            current_year -= 1
-            if str(current_year) in df.columns:
-                last_year_column = str(current_year - 1)
-            else:
-                raise ValueError("No column found for last year's Q.")
-    #print(f"\n\nupdate site attributes hydrograph stats: dataframe: {df}")
-    # Filter the df for the selected pentad
-    if horizon == "pentad":
-        horizon_value = pentad
-    else:
-        horizon_value = decad
-    df = df[df[horizon_in_year] == horizon_value].copy()
-    # Add a column with the site code
-    df['site_code'] = df['station_labels'].str.split(' - ').str[0]
-    for site in sites:
-        #print(f"site: {site.code}")
-        # Test if site.code is in df['site_code']
-        if site.code not in df['site_code'].values:
-            site.hydrograph_mean = None
-            continue
-        # Get the hydrograph statistics for each site
-        row = df[df['site_code'] == site.code]
-        site.hydrograph_mean = row['mean'].values[0]
-        site.hydrograph_norm = row['norm'].values[0]
-        site.hydrograph_max = row['max'].values[0]
-        site.hydrograph_min = row['min'].values[0]
-        site.last_year_q_pentad_mean = row[last_year_column].values[0]
-        #print(f"site: {site.code}, mean: {site.hydrograph_mean}, max: {site.hydrograph_max}, min: {site.hydrograph_min}, last year mean: {site.last_year_q_pentad_mean}")
 
-    #print(f"Updated sites with hydrograph statistics from DataFrame.")
-    return sites
-
-
-@pn.depends(pentad_selector, watch=True)
-def update_site_attributes_with_linear_regression_predictor(_, sites=sites_list, df=data["linreg_predictor"], pentad=pentad_selector.value, decad=decad_selector.value):
-    """Update site attributes with linear regression predictor"""
-    # Print pentad
-    #print(f"\n\nDEBUGGING update_site_attributes_with_linear_regression_predictor: pentad: {pentad}")
-    if horizon == "pentad":
-        horizon_value = pentad
-    else:
-        horizon_value = decad
-    # Get row in def for selected pentad
-    df = df[df[horizon_in_year] == (horizon_value - 1)].copy()
-    #print("\n\nDEBUGGING update_site_attributes_with_linear_regression_predictor")
-    #print(f"linreg_predictor: \n{df[df['code'] == '15149']}.tail()")
-    # Only keep the last row for each site
-    #df = df.drop_duplicates(subset='code', keep='last')
-    df = df.sort_values('date').groupby('code').last().reset_index()
-    for site in sites:
-        #print(f"site: {site.code}")
-        # Test if site.code is in df['code']
-        if site.code not in df['code'].values:
-            site.linreg_predictor = None
-            continue
-        # Get the linear regression predictor for each site
-        row = df[df['code'] == site.code]
-        site.linreg_predictor = row['predictor'].values[0]
-        print(f"site: {site.code}, linreg predictor: {site.linreg_predictor}")
-
-    #print(f"Updated sites with linear regression predictor from DataFrame.")
-    return sites
-
-sites_list = update_site_attributes_with_hydrograph_statistics_for_selected_pentad(_=_, sites=sites_list, df=data["hydrograph_pentad_all"], pentad=pentad_selector.value, decad=decad_selector.value)
+# sites_list = update_site_attributes_with_hydrograph_statistics_for_selected_pentad(_=_, sites=sites_list, df=data["hydrograph_pentad_all"], pentad=pentad_selector.value, decad=decad_selector.value)
+sites_list = utils.update_site_attributes_with_hydrograph_statistics_for_selected_pentad(_=_, sites=sites_list, df=data["hydrograph_pentad_all"], pentad=pentad_selector.value, decad=decad_selector.value, horizon=horizon, horizon_in_year=horizon_in_year)
 
 #print(f"DEBUG: forecast_dashboard.py before update: linreg_predictor tail:\n{linreg_predictor.loc[linreg_predictor['code'] == '15149', ['date', 'code', 'predictor', 'pentad_in_year', 'pentad_in_month']].tail()}")
-sites_list = update_site_attributes_with_linear_regression_predictor(_, sites=sites_list, df=data["linreg_predictor"], pentad=pentad_selector.value, decad=decad_selector.value)
+# sites_list = update_site_attributes_with_linear_regression_predictor(_, sites=sites_list, df=data["linreg_predictor"], pentad=pentad_selector.value, decad=decad_selector.value)
+sites_list = utils.update_site_attributes_with_linear_regression_predictor(_, sites=sites_list, df=data["linreg_predictor"], pentad=pentad_selector.value, decad=decad_selector.value, horizon=horizon, horizon_in_year=horizon_in_year)
 
 
 # Adding the watcher logic for disabling the "Add to Bulletin" button
@@ -290,104 +212,22 @@ viz.app_state.param.watch(update_add_to_bulletin_button, 'pipeline_running')
 add_to_bulletin_button.disabled = viz.app_state.pipeline_running
 
 
-# Function to update the model select widget based on the selected station
-# Create a callback that only updates the widget when data has actually changed
-def create_widget_updater():
-    last_values = {'options': None, 'value': None}
-
-    def update_widget(options, values):
-        # Only update if there's an actual change
-        if (options != last_values['options'] or
-            values != last_values['value']):
-
-            # Force a complete widget reset
-            #model_checkbox.param.update(
-            #    options={},  # Clear options first
-            #    value=[]     # Clear values
-            #)
-
-            # Then set new values
-            model_checkbox.param.update(
-                options=options,
-                value=values
-            )
-
-            # Update last known state
-            last_values['options'] = options
-            last_values['value'] = values
-
-            print(f"\nDEBUG: Widget Update")
-            print(f"Setting options to: {options}")
-            print(f"Setting values to: {values}")
-            print(f"Widget state after update:")
-            print(f"  Options: {model_checkbox.options}")
-            print(f"  Value: {model_checkbox.value}")
-
-    return update_widget
-
-widget_updater = create_widget_updater()
-
-
-def get_pane_alert(msg):
-    return pn.pane.Alert(
-        "⚠️ Warning: " + msg,
-        alert_type="warning",
-        sizing_mode="stretch_width"
-    )
-
-
-def get_predictors_warning(station):
-    predictors_warning.objects = []  # clear old content
-    # today_date = today.date()
-    today_date = dt.datetime.now().date()
-    filtered = data["hydrograph_day_all"][
-        (data["hydrograph_day_all"]["station_labels"] == station.value) &
-        (data["hydrograph_day_all"]["date"] == pd.to_datetime(today_date))
-    ]
-
-    if not filtered.empty:
-        if pd.notna(filtered["2025"].iloc[0]):
-            print("2025 has a value:", filtered["2025"].iloc[0])
-        else:
-            print("2025 is NaN/empty")
-            predictors_warning.append(get_pane_alert(f"No discharge record available today for {station.value}"))
-    else:
-        print("No record for today and given station")
-        predictors_warning.append(get_pane_alert(f"No discharge record available today for {station.value}"))
-
-
-def get_forecast_warning(station):
-    forecast_warning.objects = []  # clear old content
-    filtered = data["forecasts_all"][
-        (data["forecasts_all"]["station_labels"] == station.value) &
-        (data["forecasts_all"]["date"] == pd.to_datetime(date_picker.value))
-    ]
-    if not filtered.empty:
-        # filter rows where forecasted_discharge is NaN
-        missing_forecasts = filtered[filtered["forecasted_discharge"].isna()]
-
-        # collect the model_short values into a list
-        missing_models = missing_forecasts["model_short"].tolist()
-
-        if missing_models:
-            print("Missing forecasts for models:", missing_models)
-            forecast_warning.append(get_pane_alert(
-                f"No forecast data available for models {', '.join(missing_models)} at {station.value} on {date_picker.value}."))
-        else:
-            print("All models have forecast data.")
-    else:
-        forecast_warning.append(get_pane_alert(f"No forecast data available for {station.value} on {date_picker.value}."))
-
-
 @pn.depends(station, pentad_selector, decad_selector, watch=True)
 def update_model_select(station_value, selected_pentad, selected_decad):
     global data
     data = db.get_data(station, all_stations)
 
-    update_site_attributes_with_hydrograph_statistics_for_selected_pentad(_=_, sites=sites_list, df=data["hydrograph_pentad_all"], pentad=pentad_selector.value, decad=decad_selector.value)
+    utils.update_site_attributes_with_hydrograph_statistics_for_selected_pentad(_=_, sites=sites_list, df=data["hydrograph_pentad_all"], pentad=pentad_selector.value, decad=decad_selector.value, horizon=horizon, horizon_in_year=horizon_in_year)
 
-    get_predictors_warning(station)
-    get_forecast_warning(station)
+    predictors_warning.objects = []  # clear old content
+    warning = widgets.get_predictors_warning(station, data)
+    if warning:
+        predictors_warning.append(warning)
+
+    forecast_warning.objects = []  # clear old content
+    warning = widgets.get_forecast_warning(station, data, date_picker.value)
+    if warning:
+        forecast_warning.append(warning)
     print("\n=== Starting Model Select Update ===")
     print(f"Initial widget state:")
     print(f"  Options: {model_checkbox.options}")
@@ -512,8 +352,8 @@ remove_bulletin_button.on_click(
 # Dynamically update figures
 # date_picker_with_pentad_text = viz.create_date_picker_with_pentad_text(date_picker, _)
 
-update_callback = viz.update_forecast_data(_, linreg_datatable, station, pentad_selector)
-pentad_selector.param.watch(update_callback, 'value')
+# update_callback = viz.update_forecast_data(_, linreg_datatable, station, pentad_selector)
+# pentad_selector.param.watch(update_callback, 'value')
 
 # Initial setup: populate the main area with the initial selection
 #update_callback(None)  # This does not seem to be needed
@@ -764,21 +604,6 @@ def check_inactivity():
             handle_logout_confirm(None)  # Use existing logout function
 
 
-def logout_user(user):
-    """Perform the logout actions: remove user CSV files, clear logs, show login form."""
-    if os.path.exists("current_user.csv"):
-        os.remove("current_user.csv")
-    if os.path.exists("auth_logs.csv"):
-        os.remove("auth_logs.csv")
-    if os.path.exists("user_activity.csv"):
-        os.remove("user_activity.csv")
-
-    # Hide dashboard and show login form
-    hide_dashboard()
-    show_login_form()
-    print(f"User {user} logged out due to inactivity.")
-
-
 def handle_login(event):
     """Handle login attempts."""
     global last_activity_time
@@ -822,8 +647,8 @@ def on_user_interaction(event=None):
 
 # Add watchers to widgets:
 station.param.watch(on_user_interaction, 'value')
-pentad_selector.param.watch(on_user_interaction, 'value')
-date_picker.param.watch(on_user_interaction, 'value')
+# pentad_selector.param.watch(on_user_interaction, 'value')
+# date_picker.param.watch(on_user_interaction, 'value')
 model_checkbox.param.watch(on_user_interaction, 'value')
 allowable_range_selection.param.watch(on_user_interaction, 'value')
 show_range_button.param.watch(on_user_interaction, 'value')
@@ -917,13 +742,16 @@ logout_no.on_click(handle_logout_cancel)
 login_form = widgets.create_login_form(username_input, password_input, login_submit_button, login_feedback)
 
 logout_panel = widgets.create_logout_panel(logout_confirm, logout_yes, logout_no)
+
 predictors_warning = pn.Column()
+warning = widgets.get_predictors_warning(station, data)
+if warning:
+    predictors_warning.append(warning)
+
 forecast_warning = pn.Column()
-get_predictors_warning(station)
-get_forecast_warning(station)
-if iehhf_warning is not None:
-    predictors_warning.append(get_pane_alert(iehhf_warning))
-    forecast_warning.append(get_pane_alert(iehhf_warning))
+warning = widgets.get_forecast_warning(station, data, date_picker.value)
+if warning:
+    forecast_warning.append(warning)
 
 # Create a placeholder for the dashboard content
 dashboard_content = layout.define_tabs_2(_, predictors_warning, forecast_warning,
@@ -969,14 +797,10 @@ dashboard_content.param.watch(update_active_tab, 'active')
 station.param.watch(update_active_tab, 'value')
 update_active_tab(None)
 
-dashboard_content.visible = False
-
 
 message_pane = widgets.create_message_pane(data)
 sidebar_content=layout.define_sidebar(_, station_card, forecast_card, basin_card,
                                   message_pane, reload_card)
-
-sidebar_content.visible = False
 
 
 # Handle language selection and session management
@@ -1030,8 +854,8 @@ def on_stations_loaded(fut):
             station.groups = _station_dict
 
             sites_list = Site.get_site_attribues_from_iehhf_dataframe(all_stations)
-            sites_list = update_site_attributes_with_hydrograph_statistics_for_selected_pentad(_=_, sites=sites_list, df=data["hydrograph_pentad_all"], pentad=pentad_selector.value, decad=decad_selector.value)
-            sites_list = update_site_attributes_with_linear_regression_predictor(_, sites=sites_list, df=data["linreg_predictor"], pentad=pentad_selector.value, decad=decad_selector.value)
+            sites_list = utils.update_site_attributes_with_hydrograph_statistics_for_selected_pentad(_=_, sites=sites_list, df=data["hydrograph_pentad_all"], pentad=pentad_selector.value, decad=decad_selector.value, horizon=horizon, horizon_in_year=horizon_in_year)
+            sites_list = utils.update_site_attributes_with_linear_regression_predictor(_, sites=sites_list, df=data["linreg_predictor"], pentad=pentad_selector.value, decad=decad_selector.value, horizon=horizon, horizon_in_year=horizon_in_year)
 
     except Exception as e:
         print(f"Failed to load stations: {e}")
