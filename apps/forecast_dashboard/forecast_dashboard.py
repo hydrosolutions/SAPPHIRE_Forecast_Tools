@@ -30,83 +30,34 @@ import src.processing as processing
 from src.site import SapphireSite as Site
 from src.bulletins import write_to_excel
 import src.layout as layout
-from src.file_downloader import FileDownloader
 from src import db
 from src.auth_utils import load_credentials, check_current_user, save_current_user, remove_current_user, log_auth_event, clear_auth_logs, check_auth_state, log_user_activity, clear_activity_log, check_recent_activity
 
 from dashboard.logger import setup_logger
 from dashboard import widgets
 from dashboard.bulletin_manager import load_bulletin_from_csv, add_current_selection_to_bulletin, remove_selected_from_bulletin, handle_bulletin_write, create_bulletin_table
-from dashboard.config import import_tag_library, setup_panel, setup_directories, load_env_and_icons, setup_localization
+from dashboard import config
 
 
-tl = import_tag_library()
+tl = config.import_tag_library()
 
 logger = setup_logger()
 
-setup_panel(pn)
+config.setup_panel(pn)
 
-env_file_path, in_docker_flag, icon_path = load_env_and_icons()
+env_file_path, in_docker_flag, icon_path = config.load_env_and_icons()
 
-SAVE_DIRECTORY = setup_directories()
+SAVE_DIRECTORY = config.setup_directories()
 
-# Set time until user is logged out automatically
-minutes_inactive_until_logout = int(os.getenv('ieasyforecast_minutes_inactive_until_logout', 10))
-INACTIVITY_TIMEOUT = timedelta(minutes=minutes_inactive_until_logout)
 last_activity_time = None
 
-setup_localization(pn)
+viz = config.setup_localization(pn)
 
-# Import visualization module after setting up localization
-import src.vizualization as viz
+horizon, horizon_in_year, dashboard_title = config.get_horizon()
 
-# Print forecast horizon variable from environment
-sapphire_forecast_horizon = os.getenv('sapphire_forecast_horizon')
-if sapphire_forecast_horizon:
-    print(f"INFO: Forecast horizon: {sapphire_forecast_horizon}")
-else:
-    print("WARNING: Forecast horizon not set. Assuming default 'decad'.")
-    sapphire_forecast_horizon = 'decad'
+downloader, bulletin_download_panel = widgets.create_downloader_and_panel(horizon)
 
-# Initialize the downloader with a specific directory
-bulletin_folder = os.path.join(
-    os.getenv('ieasyreports_report_output_path'),
-    'bulletins', sapphire_forecast_horizon)
-downloader = FileDownloader(bulletin_folder)
-bulletin_download_panel = downloader.panel()
-
-
-# endregion
-
-# region load_data
-
-# Find out which forecasts have to be displayed
-display_ML_forecasts = os.getenv('ieasyhydroforecast_run_ML_models', 'False').lower() in ('true', 'yes', '1', 't', 'y')
-display_CM_forecasts = os.getenv('ieasyhydroforecast_run_CM_models', 'False').lower() in ('true', 'yes', '1', 't', 'y')
-
-# If both display_ML_forecasts and display_CM_forecasts are False, we don't need 
-# to display data gateway results. 
-if not display_ML_forecasts and not display_CM_forecasts:
-    display_weather_data = False
-if display_ML_forecasts == False and display_CM_forecasts == False:
-    display_weather_data = False
-else:
-    display_weather_data = True
-
-print(f"Display ML forecasts: {display_ML_forecasts}")
-print(f"Display CM forecasts: {display_CM_forecasts}")
-print(f"Display weather data: {display_weather_data}")
-
-# Find out if snow data is configured and can be displayed
-display_snow_data = os.getenv('ieasyhydroforecast_HRU_SNOW_DATA_DASHBOARD', 'False')
-
-# If display_snow_data is not null or empty, and display_weather_data is True, we display snow data
-if display_snow_data and display_weather_data:
-    display_snow_data = True
-else:
-    display_snow_data = False
-
-stations_iehhf = None
+display_weather_data, display_snow_data = config.display_weather_and_snow_data()
 
 valid_codes = ['16159', '16159', '16159', '16101', '16159', '16159', '15054', '16101', '16134', '16101', '16101', '16134', '16134', '15081', '15054', '16105', '16101', '16105', '16100', '16105', '15054', '16160', '15149', '15149', '15149', '15149', '15149', '16105', '15149', '16100', '16100', '16100', '16160', '16160', '16101', '16159', '16100', '15054', '15034', '16139', '16143', '16143', '15051', '15051', '15051', '15051', '16151', '15051', '15081', '15081', '16135', '16135', '16135', '15034', '15034', '16160', '16134', '16143', '16143', '16143', '16139', '16139', '16139', '16139', '16151', '16151', '16151', '16151', '16151', '15054', '15054', '15051', '16143', '16146', '16146', '16146', '16146', '16139', '16160', '15283', '16105', '15215', '15215', '15215', '15261', '16936', '15216', '15216', '15215', '15216', '15216', '15216', '15256', '15256', '15256', '15256', '16936', '15216', '15215', '15259', '15215', '15034', '15259', '15259', '16936', '16936', '16936', '16936', '15259', '15259', '15259', '15013', '15283', '15013', '15013', '15013', '15013', '15013', '15283', '16160', '15283', '15090', '16127', '16127', '16127', '16127', '16127', '16127', '16158', '16134', '16158', '16158', '16158', '16158', '15090', '15102', '15102', '16105', '16158', '16134', '15090', '15283', '15090', '16121', '16121', '16121', '16121', '16121', '16121', '15030', '15030', '15030', '15030', '15102', '15102', '15102', '15102', '15090', '15090', '15256', '15034', '15287', '15083', '16096', '16096', '16096', '16096', '16096', '15171', '16161', '15025', '15171', '15171', '15171', '15171', '16146', '15189', '15189', '15960', '15171', '16096', '16161', '16161', '15189', '16161', '16161', '16070', '16070', '16070', '16070', '16070', '16070', '16169', '16169', '16169', '16169', '16169', '16169', '15189', '16161', '15189', '15025', '15194', '15194', '16068', '15020', '16059', '15020', '15020', '15020', '16059', '16068', '16059', '15256', '16146', '17462', '17462', '17462', '17462', '17462', '16059', '16068', '16068', '16068', '16055', '16055', '16055', '16055', '16055', '16055', '16176', '16176', '16176', '16176', '16176', '16176', '15194', '16059', '16059', '16068', '15189', '15194', '15034', '15214', '15287', '16153', '16153', '16100', '15025', '15025', '15016', '15954', '16153', '15954', '15212', '15212', '15212', '15212', '15212', '16487', '16487', '15212', '16153', '16153', '16136', '15083', '15083', '15083', '15083', '15083', '16135', '16135', '16135', '16136', '15081', '15081', '15081', '16136', '16136', '16136', '16136', '16153', '16487', '15287', '16487', '16487', '16681', '15283', '15214', '15214', '15214', '15312', '15016', '16510', '15312', '15312', '15312', '15312', '15287', '15214', '15287', '15287', '15312', '16510', '16510', '16510', '15016', '15954', '15954', '15954', '15954', '15016', '15016', '15016', '15214', '15285', '15285', '15285', '15285', '15285', '15285', '16510', '16510', '16487', '17462']
 all_stations, station_dict = processing.get_all_stations_from_file(valid_codes)
@@ -118,23 +69,9 @@ linreg_datatable = processing.shift_date_by_n_days(data["linreg_predictor"], 1)
 
 rram_forecast = None
 
-# Test if we have sites in stations_iehhf which are not present in forecasts_all
-# Placeholder for a message pane
-message_pane = pn.pane.Markdown("", width=300)
-if stations_iehhf is not None:
-    missing_sites = set(stations_iehhf) - set(data["forecasts_all"]['code'].unique())
-    if missing_sites:
-        missing_sites_message = f"_('WARNING: The following sites are missing from the forecast results:') {missing_sites}. _('No forecasts are currently available for these sites. Please make sure your forecast models are configured to produce results for these sites, re-run hindcasts manually and re-run the forecast.')"
-        message_pane.object = missing_sites_message
-
-# Add message to message_pane, depending on the status of recent data availability
-latest_data_is_current_year = True
-if not latest_data_is_current_year:
-    message_pane.object += "\n\n" + _("WARNING: The latest data available is not for the current year. Forecast Tools may not have access to iEasyHydro. Please contact the system administrator.")
+message_pane = widgets.create_message_pane(data)
 
 sites_list = Site.get_site_attribues_from_iehhf_dataframe(all_stations)
-
-tabs_container = pn.Column()
 
 # Create a dictionary of the model names and the corresponding model labels
 model_dict_all = data["forecasts_all"][['model_short', 'model_long']] \
@@ -155,14 +92,12 @@ current_pentad = tl.get_pentad_for_date(last_date)
 # The forecast is produced on the day before the first day of the forecast
 # pentad, therefore we add 1 to the forecast pentad in linreg_predictor to get
 # the pentad of the forecast period.
-horizon = os.getenv("sapphire_forecast_horizon", "pentad")
-horizon_in_year = "pentad_in_year" if horizon == "pentad" else "decad_in_year"
 forecast_horizon_for_saving_bulletin = int(data["linreg_predictor"][horizon_in_year].tail(1).values[0]) + 1
 forecast_year_for_saving_bulletin = last_date.year
 
 # Get information for bulletin headers into a dataframe that can be passed to
 # the bulletin writer.
-bulletin_header_info = processing.get_bulletin_header_info(last_date, sapphire_forecast_horizon)
+bulletin_header_info = processing.get_bulletin_header_info(last_date, horizon)
 #print(f"DEBUG: forecast_dashboard.py: bulletin_header_info:\n{bulletin_header_info}")
 
 # Create the dropdown widget for pentad selection
@@ -284,12 +219,9 @@ def update_site_attributes_with_hydrograph_statistics_for_selected_pentad(_,
                 raise ValueError("No column found for last year's Q.")
     #print(f"\n\nupdate site attributes hydrograph stats: dataframe: {df}")
     # Filter the df for the selected pentad
-    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
     if horizon == "pentad":
-        horizon_in_year = "pentad_in_year"
         horizon_value = pentad
     else:
-        horizon_in_year = "decad_in_year"
         horizon_value = decad
     df = df[df[horizon_in_year] == horizon_value].copy()
     # Add a column with the site code
@@ -318,12 +250,9 @@ def update_site_attributes_with_linear_regression_predictor(_, sites=sites_list,
     """Update site attributes with linear regression predictor"""
     # Print pentad
     #print(f"\n\nDEBUGGING update_site_attributes_with_linear_regression_predictor: pentad: {pentad}")
-    horizon = os.getenv("sapphire_forecast_horizon", "pentad")
     if horizon == "pentad":
-        horizon_in_year = "pentad_in_year"
         horizon_value = pentad
     else:
-        horizon_in_year = "decad_in_year"
         horizon_value = decad
     # Get row in def for selected pentad
     df = df[df[horizon_in_year] == (horizon_value - 1)].copy()
@@ -823,15 +752,14 @@ logout_confirm, logout_yes, logout_no = widgets.create_logout_confirm_widgets()
 logout_button = widgets.create_logout_button()
 
 
-# def update_last_activity():
-#     global last_activity_time
-#     last_activity_time = datetime.now()
-
-
 def check_inactivity():
     """Check if user has been inactive and logout if needed"""
     global last_activity_time
     current_user = check_current_user()
+
+    # Set time until user is logged out automatically
+    minutes_inactive_until_logout = int(os.getenv('ieasyforecast_minutes_inactive_until_logout', 10))
+    INACTIVITY_TIMEOUT = timedelta(minutes=minutes_inactive_until_logout)
 
     if current_user:
         if datetime.now() - last_activity_time > INACTIVITY_TIMEOUT:
@@ -1070,12 +998,6 @@ on_session_start()
 # ------------------END OF AUTHENTICATION---------------------
 # endregion
 
-# Define dashboard title
-if sapphire_forecast_horizon == 'pentad':
-    dashboard_title = _('SAPPHIRE Central Asia - Pentadal forecast dashboard')
-else:
-    dashboard_title = _('SAPPHIRE Central Asia - Decadal forecast dashboard')
-
 dashboard = pn.template.BootstrapTemplate(
     title=dashboard_title,
     logo=icon_path,
@@ -1102,8 +1024,7 @@ def on_stations_loaded(fut):
     try:
         global all_stations, sites_list
         _all_stations, _station_dict = fut.result()
-        print("@@@@@@@@@@ Stations loaded from iehhf")
-        print(f"Number of stations loaded: {len(_all_stations) if _all_stations is not None else 0}")
+        print(f"Stations loaded from iehhf: {len(_all_stations) if _all_stations is not None else 0}")
         # print(type(_all_stations))
         if _all_stations is not None:
             # print("Stations: ", _all_stations)

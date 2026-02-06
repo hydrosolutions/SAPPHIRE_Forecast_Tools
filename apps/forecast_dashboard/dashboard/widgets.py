@@ -1,8 +1,11 @@
+import os
 import panel as pn
 import pandas as pd
 import datetime as dt
-from src.gettext_config import _
 import calendar
+
+from src.file_downloader import FileDownloader
+from src.gettext_config import _
 from src.auth_utils import log_user_activity, check_current_user
 
 
@@ -247,6 +250,27 @@ def create_basin_card(select_basin_widget, station):
     return basin_card
 
 
+# Used inside sidebar_content
+def create_message_pane(data):
+    stations_iehhf = None
+    
+    # Test if we have sites in stations_iehhf which are not present in forecasts_all
+    # Placeholder for a message pane
+    message_pane = pn.pane.Markdown("", width=300)
+    if stations_iehhf is not None:
+        missing_sites = set(stations_iehhf) - set(data["forecasts_all"]['code'].unique())
+        if missing_sites:
+            missing_sites_message = f"_('WARNING: The following sites are missing from the forecast results:') {missing_sites}. _('No forecasts are currently available for these sites. Please make sure your forecast models are configured to produce results for these sites, re-run hindcasts manually and re-run the forecast.')"
+            message_pane.object = missing_sites_message
+
+    # Add message to message_pane, depending on the status of recent data availability
+    latest_data_is_current_year = True
+    if not latest_data_is_current_year:
+        message_pane.object += "\n\n" + _("WARNING: The latest data available is not for the current year. Forecast Tools may not have access to iEasyHydro. Please contact the system administrator.")
+    
+    return message_pane
+
+
 # ============================== Widgets for Forecast Tab ==============================
 
 # Used for Summary table Plot (Forecast Tab)
@@ -365,6 +389,16 @@ def create_bulletin_table(bulletin_tabulator, remove_bulletin_button, add_to_bul
     )
     return bulletin_table
 
+
+def create_downloader_and_panel(horizon):
+    # Initialize the downloader with a specific directory
+    bulletin_folder = os.path.join(
+        os.getenv('ieasyreports_report_output_path'),
+        'bulletins', horizon)
+    downloader = FileDownloader(bulletin_folder)
+    bulletin_download_panel = downloader.panel()
+
+    return downloader, bulletin_download_panel
 
 # ============================== Widgets for Language and Auth ==============================
 

@@ -129,3 +129,56 @@ def setup_localization(pn):
     # Check for cached translations
     if hasattr(pn.state, 'cache') and 'translations' in pn.state.cache:
         print(f"DEBUG: Cached translations found.")
+    
+    # Import visualization module after setting up localization
+    import src.vizualization as viz
+    return viz
+
+
+def display_weather_and_snow_data():
+    # Find out which forecasts have to be displayed
+    display_ML_forecasts = os.getenv('ieasyhydroforecast_run_ML_models', 'False').lower() in ('true', 'yes', '1', 't', 'y')
+    display_CM_forecasts = os.getenv('ieasyhydroforecast_run_CM_models', 'False').lower() in ('true', 'yes', '1', 't', 'y')
+
+    # If both display_ML_forecasts and display_CM_forecasts are False, we don't need 
+    # to display data gateway results. 
+    if not display_ML_forecasts and not display_CM_forecasts:
+        display_weather_data = False
+    if display_ML_forecasts == False and display_CM_forecasts == False:
+        display_weather_data = False
+    else:
+        display_weather_data = True
+
+    print(f"Display ML forecasts: {display_ML_forecasts}")
+    print(f"Display CM forecasts: {display_CM_forecasts}")
+    print(f"Display weather data: {display_weather_data}")
+
+    # Find out if snow data is configured and can be displayed
+    display_snow_data = os.getenv('ieasyhydroforecast_HRU_SNOW_DATA_DASHBOARD', 'False')
+
+    # If display_snow_data is not null or empty, and display_weather_data is True, we display snow data
+    if display_snow_data and display_weather_data:
+        display_snow_data = True
+    else:
+        display_snow_data = False
+    
+    return display_weather_data, display_snow_data
+
+
+def get_horizon():
+    # Print forecast horizon variable from environment
+    horizon = os.getenv('sapphire_forecast_horizon')
+    if horizon:
+        print(f"INFO: Forecast horizon: {horizon}")
+    else:
+        print("WARNING: Forecast horizon not set. Assuming default 'decad'.")
+        horizon = 'decad'
+    
+    if horizon == "pentad":
+        horizon_in_year = "pentad_in_year"
+        dashboard_title = _('SAPPHIRE Central Asia - Pentadal forecast dashboard')
+    else:
+        horizon_in_year = "decad_in_year"
+        dashboard_title = _('SAPPHIRE Central Asia - Decadal forecast dashboard')
+    
+    return horizon, horizon_in_year, dashboard_title
