@@ -69,8 +69,6 @@ linreg_datatable = processing.shift_date_by_n_days(data["linreg_predictor"], 1)
 
 rram_forecast = None
 
-message_pane = widgets.create_message_pane(data)
-
 sites_list = Site.get_site_attribues_from_iehhf_dataframe(all_stations)
 
 # Create a dictionary of the model names and the corresponding model labels
@@ -168,7 +166,6 @@ select_basin_widget = widgets.create_select_basin_widget(station_dict)
 
 # region forecast_card
 
-# update_forecast_button = pn.widgets.Button(name=_("Apply changes"), button_type="success")
 update_forecast_button = widgets.create_update_forecast_button()
 # Forecast card for sidepanel
 forecast_card = widgets.create_forecast_card(allowable_range_selection, manual_range, model_checkbox, show_range_button, update_forecast_button, station)
@@ -681,7 +678,7 @@ def on_data_needs_reload_changed(event):
         print("Triggered rerunning of forecasts.")
         try:
             #print("---loading data---")
-            load_data()
+            # load_data()
             #print("---data loaded---")
             #print("---updating viz---")
             update_visualizations()
@@ -929,15 +926,15 @@ if iehhf_warning is not None:
     forecast_warning.append(get_pane_alert(iehhf_warning))
 
 # Create a placeholder for the dashboard content
-dashboard_content = layout.define_tabs(_, predictors_warning, forecast_warning,
+dashboard_content = layout.define_tabs_2(_, predictors_warning, forecast_warning,
     daily_hydrograph_plot, daily_rainfall_plot, daily_temperature_plot, snow_plot_panes,
     forecast_data_and_plot,  
     forecast_summary_table, pentad_forecast_plot, forecast_skill_plot,
     bulletin_table, write_bulletin_button, bulletin_download_panel, disclaimer,
-    station_card, forecast_card, add_to_bulletin_button, basin_card,
-    pentad_card, reload_card, add_to_bulletin_popup, show_daily_data_widget,
+    add_to_bulletin_button, add_to_bulletin_popup, show_daily_data_widget,
     skill_table, skill_metrics_download_filename, skill_metrics_download_button
 )
+dashboard_content.param.watch(lambda event: viz.update_sidepane_card_visibility(dashboard_content, station_card, forecast_card, basin_card, pentad_card, reload_card, event), 'active')
 
 latest_predictors = None
 latest_forecast = None
@@ -975,6 +972,7 @@ update_active_tab(None)
 dashboard_content.visible = False
 
 
+message_pane = widgets.create_message_pane(data)
 sidebar_content=layout.define_sidebar(_, station_card, forecast_card, basin_card,
                                   message_pane, reload_card)
 

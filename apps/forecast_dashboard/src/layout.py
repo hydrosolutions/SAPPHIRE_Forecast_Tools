@@ -299,3 +299,117 @@ def define_tabs(_, predictors_warning, forecast_warning,
     return tabs
 
 
+def define_tabs_2(_, predictors_warning, forecast_warning,
+                daily_hydrograph_plot, rainfall_plot, temperature_plot, daily_snow_plot,
+                forecast_data_and_plot,forecast_summary_table, pentad_forecast_plot, effectiveness_plot,
+                bulletin_table, write_bulletin_button, bulletin_download_panel, disclaimer,
+                add_to_bulletin_button, add_to_bulletin_popup, show_daily_data_widget,
+                skill_table, skill_metrics_download_filename, skill_metrics_download_button):
+    tabs = pn.Tabs(
+        (_('Predictors'),
+            pn.Column(
+                predictors_warning,
+                pn.Row(
+                    pn.Card(daily_hydrograph_plot, title=_("Hydrograph")),
+                    sizing_mode='stretch_width',
+                    min_height=400,
+                ),
+                pn.Row(
+                    pn.Card(rainfall_plot, title=_("Precipitation")),
+                    sizing_mode='stretch_width',
+                    min_height=400 if not daily_hydrograph_plot.object.data.empty else 0,
+                ),  
+                pn.Row(
+                    pn.Card(temperature_plot, title=_("Temperature")),
+                    sizing_mode='stretch_width',
+                    min_height=400 if not daily_hydrograph_plot.object.data.empty else 0,
+                ), 
+                pn.Row(
+                    _create_snow_card(_, daily_snow_plot), 
+                    sizing_mode='stretch_both',
+                )
+            ),
+        ),
+        (_('Forecast'),
+            pn.Column(
+                forecast_warning,
+                pn.Card(
+                    pn.Row(
+                        forecast_data_and_plot
+                    ),
+                    title=_('Linear regression'),
+                    sizing_mode='stretch_width',
+                    collapsible=True,
+                    collapsed=False,
+                    min_height=560,
+                    max_height=560,
+                ),
+                pn.Card(
+                    pn.Row(
+                        add_to_bulletin_button, add_to_bulletin_popup
+                    ),
+                    forecast_summary_table,
+                    title=_('Summary table'),
+                    sizing_mode='stretch_both',
+                    min_height=500 if len(forecast_summary_table.value) > 1 else 240,
+                ),
+                pn.Card(
+                    pn.Column(
+                        pn.Row(
+                            pn.pane.Markdown(_("Show forecasts aggregated to pentadal values:")),
+                            show_daily_data_widget
+                        ),
+                        pentad_forecast_plot,
+                    ),
+                    title=_('Hydrograph'),
+                    height=600,
+                    #height=None,
+                    collapsible=True,
+                    collapsed=False
+                ),
+                pn.Card(
+                    pn.Row(
+                        effectiveness_plot,
+                    ),
+                    title=_("Forecast skill metrics"),
+                    height=800,
+                    collapsible=True,
+                ),
+                pn.Card(
+                    pn.Column(
+                        skill_table,
+                        skill_metrics_download_filename,
+                        skill_metrics_download_button,
+                    ),
+                    title=_("Table of forecast skill metrics"),
+                    height=600 ,
+                    collapsible=True,
+                    #sizing_mode='stretch_width',
+                ),
+            ),
+        ),  # end of Forecast tab
+        (_('Bulletin'),
+            pn.Column(
+                pn.Card(
+                    pn.Column(
+                        bulletin_table,
+                        write_bulletin_button,
+                    ),
+                    title=_('Forecast bulletin'),
+                    sizing_mode='stretch_width',
+                ),
+                pn.Card(
+                    pn.Row(
+                        bulletin_download_panel,
+                    ),
+                    title=_('Download bulletin'),
+                    sizing_mode='stretch_width',
+                    collapsed=True,
+                ),
+            )
+        ),
+        (_('Disclaimer'), disclaimer),
+        dynamic=True,
+        sizing_mode='stretch_both'
+    )
+    return tabs
