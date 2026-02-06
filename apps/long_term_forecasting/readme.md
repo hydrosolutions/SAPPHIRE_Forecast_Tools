@@ -2,8 +2,16 @@
 
 ## LT Package
 Core implementation in "lt-forecasting @ git+https://github.com/hydrosolutions/long-term-forecasting.git@v1.1.1"
-pip install git+https://github.com/hydrosolutions/long-term-forecasting.git@v1.1.1
 
+Use:
+```bash
+pip install git+https://github.com/hydrosolutions/long-term-forecasting.git
+````
+
+or a specific version:
+```bash
+pip install git+https://github.com/hydrosolutions/long-term-forecasting.git@v1.1.1
+```
 
 ### Fast Development
 For fast development use the local code base - for this do:
@@ -73,7 +81,7 @@ source myenv/bin/activate
 # iEasy Hydro SDK library
 pip install git+https://github.com/hydrosolutions/ieasyhydro-python-sdk
 # long term forecasting library (use latest version)
-pip install git+https://github.com/hydrosolutions/long-term-forecasting.git@v1.1.1
+pip install git+https://github.com/hydrosolutions/long-term-forecasting.git
 
 # During Development - make changes directly in the codebase (if code base is locally available)
 pip install -e "path/to/lt_forecasting/dir"
