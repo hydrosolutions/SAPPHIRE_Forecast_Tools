@@ -30,6 +30,8 @@ sys.path.append(forecast_dir)
 
 import setup_library as sl
 
+
+
 class DataInterfaceDB:
     """SQL-based data interface using PostgreSQL."""
     
@@ -60,41 +62,41 @@ class DataInterfaceDB:
     # ─────────────────────────────────────────────────────────────
     # METEO DATA (Precipitation & Temperature)
     # ─────────────────────────────────────────────────────────────
-    def get_meteo_data(self, 
+    def get_meteo_data(self,
                        meteo_type: str,
-                       code: Optional[int] = None,
+                       code: Optional[str] = None,
                        start_date: Optional[str] = None,
                        end_date: Optional[str] = None) -> pd.DataFrame:
         """
         Load meteo data (P or T) from the database.
-        
+
         Args:
             meteo_type: 'P' for precipitation, 'T' for temperature
-            code: Optional station code filter
+            code: Optional station code filter (string)
             start_date: Optional start date filter (YYYY-MM-DD)
             end_date: Optional end date filter (YYYY-MM-DD)
         """
         conditions = ["meteo_type = :meteo_type"]
         params = {"meteo_type": meteo_type}
-        
+
         if code is not None:
             conditions.append("code = :code")
-            params["code"] = code
+            params["code"] = str(code)
         if start_date:
             conditions.append("date >= :start_date")
             params["start_date"] = start_date
         if end_date:
             conditions.append("date <= :end_date")
             params["end_date"] = end_date
-            
+
         where_clause = " AND ".join(conditions)
         query = f"""
             SELECT date, code, value as {meteo_type}
-            FROM meteo 
+            FROM meteo
             WHERE {where_clause}
             ORDER BY code, date
         """
-        
+
         df = self._execute_query(query, params)
         df['date'] = pd.to_datetime(df['date'])
         df['code'] = df['code'].astype(int)
@@ -102,45 +104,50 @@ class DataInterfaceDB:
 
     def get_rain(self, station: Optional[str] = None) -> pd.DataFrame:
         """Get precipitation data."""
-        code = int(station) if station and station.isdigit() else None
-        df = self.get_meteo_data(meteo_type="P", code=code)
+        df = self.get_meteo_data(meteo_type="P", code=station)
         df.rename(columns={"P": "Precipitation"}, inplace=True)
         return df
 
     def get_temperature(self, station: Optional[str] = None) -> pd.DataFrame:
         """Get temperature data."""
-        code = int(station) if station and station.isdigit() else None
-        return self.get_meteo_data(meteo_type="T", code=code)
+        return self.get_meteo_data(meteo_type="T", code=station)
 
     # ─────────────────────────────────────────────────────────────
     # RUNOFF / DISCHARGE DATA
     # ─────────────────────────────────────────────────────────────
     def get_runoff_data(self,
-                        code: Optional[int] = None,
+                        code: Optional[str] = None,
                         start_date: Optional[str] = None,
                         end_date: Optional[str] = None) -> pd.DataFrame:
-        """Load runoff/discharge data from the database."""
+        """
+        Load runoff/discharge data from the database.
+
+        Args:
+            code: Optional station code filter (string)
+            start_date: Optional start date filter (YYYY-MM-DD)
+            end_date: Optional end date filter (YYYY-MM-DD)
+        """
         conditions = []
         params = {}
-        
+
         if code is not None:
             conditions.append("code = :code")
-            params["code"] = code
+            params["code"] = str(code)
         if start_date:
             conditions.append("date >= :start_date")
             params["start_date"] = start_date
         if end_date:
             conditions.append("date <= :end_date")
             params["end_date"] = end_date
-            
+
         where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         query = f"""
             SELECT date, code, discharge
-            FROM runoff 
+            FROM runoffs
             {where_clause}
             ORDER BY code, date
         """
-        
+
         df = self._execute_query(query, params)
         df['date'] = pd.to_datetime(df['date'])
         df['code'] = df['code'].astype(int)
@@ -151,64 +158,79 @@ class DataInterfaceDB:
     # ─────────────────────────────────────────────────────────────
     def get_snow_data(self,
                       variable: str,
-                      code: Optional[int] = None,
+                      code: Optional[str] = None,
                       start_date: Optional[str] = None,
                       end_date: Optional[str] = None) -> pd.DataFrame:
         """
         Load snow data from the database.
-        
+
         Args:
-            variable: Snow variable name (e.g., 'SWE', 'ROF', 'SD')
-            code: Optional station code filter
+            variable: Snow variable name (e.g., 'SWE', 'ROF', 'HS')
+            code: Optional station code filter (string)
             start_date: Optional start date filter
             end_date: Optional end date filter
         """
-        conditions = ["variable = :variable"]
-        params = {"variable": variable}
-        
+        conditions = ["snow_type = :snow_type"]
+        params = {"snow_type": variable}
+
         if code is not None:
             conditions.append("code = :code")
-            params["code"] = code
+            params["code"] = str(code)
         if start_date:
             conditions.append("date >= :start_date")
             params["start_date"] = start_date
         if end_date:
             conditions.append("date <= :end_date")
             params["end_date"] = end_date
-            
+
         where_clause = " AND ".join(conditions)
         query = f"""
             SELECT date, code, value as {variable}
-            FROM snow 
+            FROM snow
             WHERE {where_clause}
             ORDER BY code, date
         """
-        
+
         df = self._execute_query(query, params)
         df['date'] = pd.to_datetime(df['date'])
         df['code'] = df['code'].astype(int)
-        
+
         # Normalize column name
         if "RoF" in df.columns:
             df.rename(columns={"RoF": "ROF"}, inplace=True)
-            
+
         return df
 
-    def load_snow_data(self, 
+    def load_snow_data(self,
                        HRU: str,
                        variable: str) -> Tuple[pd.DataFrame, pd.Timestamp]:
-        """Load snow data for a specific HRU and variable."""
+        """Load snow data for a specific HRU and variable.
+
+        Note: HRU is used for validation only (to match CSV-based interface).
+        The database stores snow data by station codes, not HRU codes.
+        We load ALL snow data for the variable (no code filter).
+        """
         available_snow_vars = os.getenv('ieasyhydroforecast_SNOW_VARS', '').split(',')
         available_snow_hrus = os.getenv('ieasyhydroforecast_HRU_SNOW_DATA', '').split(',')
 
         assert variable in available_snow_vars, f"Variable {variable} not in {available_snow_vars}"
         assert HRU in available_snow_hrus, f"HRU {HRU} not in {available_snow_hrus}"
 
-        # Extract code from HRU (e.g., "00003" -> 3)
-        code = int(HRU)
-        df = self.get_snow_data(variable=variable, code=code)
+        # Load ALL snow data for this variable (no code filter)
+        # HRU is just used for validation, similar to CSV version where HRU is part of filename
+        df = self.get_snow_data(variable=variable)
+
+        # Normalize column names to uppercase
+        var_upper = variable.upper()
+        if var_upper not in df.columns:
+            var_col = [col for col in df.columns if col.upper() == var_upper]
+            if len(var_col) == 1:
+                df.rename(columns={var_col[0]: var_upper}, inplace=True)
+            else:
+                raise ValueError(f"{var_upper} column not found or ambiguous in snow data.")
+
         max_date = df["date"].max()
-        
+
         return df, max_date
 
     # ─────────────────────────────────────────────────────────────
@@ -221,9 +243,23 @@ class DataInterfaceDB:
         """        
         # Get precipitation
         df_p = self.get_meteo_data(meteo_type="P")
+        # ensure P is named "P" capital
+        if "P" not in df_p.columns:
+            p_col = [col for col in df_p.columns if col.lower() == "p"]
+            if len(p_col) == 1:
+                df_p.rename(columns={p_col[0]: "P"}, inplace=True)
+            else:
+                raise ValueError("Precipitation column not found or ambiguous in meteo data.")
         
         # Get temperature  
         df_t = self.get_meteo_data(meteo_type="T")
+        # ensure T is named "T" capital
+        if "T" not in df_t.columns:
+            t_col = [col for col in df_t.columns if col.lower() == "t"]
+            if len(t_col) == 1:
+                df_t.rename(columns={t_col[0]: "T"}, inplace=True)
+            else:
+                raise ValueError("Temperature column not found or ambiguous in meteo data.")
         
         # Merge P and T on date and code
         combined_df = pd.merge(df_p, df_t, on=["date", "code"], how="outer")
@@ -258,7 +294,8 @@ class DataInterfaceDB:
         
         # Load discharge from database
         discharge = self.get_runoff_data(end_date=today.strftime("%Y-%m-%d"))
-        max_date_discharge = discharge["date"].max()
+        # max date where discharge is not nan
+        max_date_discharge = discharge[discharge["discharge"].notna()]["date"].max()
         
         # Load forcing data from database
         forcing_data = self._load_forcing_data(HRU=forcing_HRU)
@@ -272,13 +309,13 @@ class DataInterfaceDB:
         
         static_data = self._prepare_static_data()
         
+        temporal_data = self._clean_data(temporal_data)
+
         # Calculate time offsets
         max_date_temporal = temporal_data["date"].max()
         offset_base = (today - max_date_temporal).days
         offset_discharge = (today - max_date_discharge).days
-        
-        temporal_data = self._clean_data(temporal_data)
-        
+
         return {
             "temporal_data": temporal_data,
             "static_data": static_data,
@@ -760,5 +797,19 @@ if __name__ == "__main__":
         HRUs_snow=["00003"],
         snow_variables=["SWE"]
     )
+
     print(f"   Loaded in {time()-t0:.3f}s")
     print(f"   Extended temporal shape: {extended_data['temporal_data'].shape}")
+    print(f" Head of extended data:")
+    print(extended_data['temporal_data'].head())
+
+    # Just test different snow variable
+    print("\n7. Testing extend_base_data_with_snow with different variable...")
+    t0 = time()
+    swe = di.get_snow_data(
+        variable="SWE"
+    )
+    print(f"   Loaded in {time()-t0:.3f}s")
+    print(f"   SWE shape: {swe.shape}")
+    print(swe.head())
+    print("Swe columns: ", swe.columns)

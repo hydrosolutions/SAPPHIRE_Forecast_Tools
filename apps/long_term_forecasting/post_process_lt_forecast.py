@@ -297,25 +297,34 @@ def map_forecasted_period_to_calendar_month(prediction_data: pd.DataFrame,
         how='left'
     )
 
-    # Merge calendar month statistics (including year for leave-one-out)
+    # Calculate the target year: if target_month < issue_month, we crossed into next year
+    # e.g., issue_month=11 (Nov), target_month=1 (Jan) → target_year = issue_year + 1
+    # Re-extract issue_month from current mapped_data to ensure index alignment after merge
+    issue_month_current = mapped_data['date'].dt.month
+    issue_year = mapped_data['date'].dt.year
+    mapped_data['target_year'] = issue_year + (mapped_data['target_month'] < issue_month_current).astype(int)
+
+    # Merge calendar month statistics (including target_year for leave-one-out)
+    # Use target_year instead of issue year to exclude the correct year from climatology
     mapped_data = mapped_data.merge(
         calendar_month_stats,
-        left_on=['code', 'target_month', 'year'],
+        left_on=['code', 'target_month', 'target_year'],
         right_on=['code', 'month', 'year'],
-        how='left'
+        how='left',
+        suffixes=('', '_cal')
     )
 
     # Adjust the valid_from and valid_to to exactly match the start and end of the target month
-    # Set valid_from to first day of target month
+    # Use target_year (not original valid_from year) to handle year boundary correctly
     mapped_data['valid_from'] = pd.to_datetime({
-        'year': mapped_data['valid_from'].dt.year,
+        'year': mapped_data['target_year'],
         'month': mapped_data['target_month'],
         'day': 1
     })
 
-    # Set valid_to to last day of target month (no subtraction needed!)
+    # Set valid_to to last day of target month
     mapped_data['valid_to'] = mapped_data['valid_from'] + pd.offsets.MonthEnd(0)
-    
+
     return mapped_data
 
 
@@ -464,11 +473,17 @@ def post_process_lt_forecast(forecast_config: ForecastConfig,
     # Access the necessary parameters from the forecast_config
     operational_month_lead_time = forecast_config.get_operational_month_lead_time()
 
-
-    # Get prediction years (to exclude from climatology calculation)
+    # Get TARGET years (to exclude from climatology calculation for leave-one-out)
+    # We need to exclude the target year, not the issue year, to prevent data leakage
+    # e.g., forecast issued Nov 2020 for Jan 2021 should exclude 2021 data
     raw_forecast_copy = raw_forecast.copy()
     raw_forecast_copy['date'] = pd.to_datetime(raw_forecast_copy['date'])
-    prediction_years = raw_forecast_copy['date'].dt.year.unique().tolist()
+    issue_month = raw_forecast_copy['date'].dt.month
+    issue_year = raw_forecast_copy['date'].dt.year
+    target_month = (issue_month + operational_month_lead_time - 1) % 12 + 1
+    # If target_month < issue_month, we crossed into the next year
+    target_year = issue_year + (target_month < issue_month).astype(int)
+    prediction_years = target_year.unique().tolist()
 
     # Step 1: Calculate long term statistics for the forecasted period (day-month)
     fc_period_lt_stats = calculate_lt_statistics_fc_period(

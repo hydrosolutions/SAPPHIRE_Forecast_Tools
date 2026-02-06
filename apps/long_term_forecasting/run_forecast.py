@@ -22,7 +22,7 @@ import traceback
 import pandas as pd
 import numpy as np
 import json
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Union
 
 # Import forecast models
 from lt_forecasting.forecast_models.LINEAR_REGRESSION import LinearRegressionModel
@@ -31,11 +31,11 @@ from lt_forecasting.forecast_models.deep_models.uncertainty_mixture import (
     UncertaintyMixtureModel,
 )
 
-from __init__ import logger, initialize_today, get_today, LT_FORECAST_BASE_COLUMNS
-from data_interface import DataInterface, BasePredictorDataInterface
+from __init__ import logger, initialize_today, get_today, LT_FORECAST_BASE_COLUMNS, SAPPHIRE_API_AVAILABLE
+from data_interface import DataInterface, DataInterfaceDB, BasePredictorDataInterface
 from config_forecast import ForecastConfig
 from post_process_lt_forecast import post_process_lt_forecast
-from lt_utils import create_model_instance
+from lt_utils import create_model_instance, save_forecast
 
 
 # set lt_forecasting logger level
@@ -56,7 +56,7 @@ sys.path.append(forecast_dir)
 import setup_library as sl
 
 
-def run_single_model(data_interface: DataInterface,
+def run_single_model(data_interface: Union[DataInterface, DataInterfaceDB],
                      forecast_configs: ForecastConfig,
                      model_name: str,
                      temporal_data: pd.DataFrame,
@@ -203,32 +203,24 @@ def run_single_model(data_interface: DataInterface,
         raw_forecast=forecast,
     )
     #################################################
-    # This part will be replaced by a database query in future [DATABASE INTEGRATION]
+    # Save Forecast to Database and CSV
     #################################################
-    # Save Forecast
     output_path = forecast_configs.get_output_path(model_name=model_name)
-    os.makedirs(output_path, exist_ok=True)
-    output_file = os.path.join(output_path, f"{model_name}_forecast.csv")
-    forecast.to_csv(output_file, index=False)
-    logger.info(f"Forecast for model {model_name} saved to {output_file}")
+    horizon_value = forecast_configs.get_operational_month_lead_time()
 
-    # Append the forecast to the hindcast files
-    hindcast_file = os.path.join(output_path, f"{model_name}_hindcast.csv")
-    if os.path.exists(hindcast_file):
-        df_hindcast = pd.read_csv(hindcast_file)
-        df_hindcast['date'] = pd.to_datetime(df_hindcast['date'], format='mixed')
-        df_hindcast['code'] = df_hindcast['code'].astype(int)
-        forecast['date'] = pd.to_datetime(forecast['date'], format='mixed')
-        forecast['code'] = forecast['code'].astype(int) 
-        df_combined = pd.concat([df_hindcast, forecast], ignore_index=True)
-        # remove duplicates based on date and code, keep the last (most recent forecast)
-        df_combined = df_combined.drop_duplicates(subset=['date', 'code'], keep='last')
-        # strf date to yyyy-mm-dd format
-        df_combined['date'] = df_combined['date'].dt.strftime('%Y-%m-%d')
-        df_combined.to_csv(hindcast_file, index=False)
-        logger.info(f"Appended forecast to hindcast file {hindcast_file}")
-    else:
-        logger.info(f"Hindcast file {hindcast_file} does not exist. Can not append forecast.")
+    # Save forecast (DB + CSV parallel track)
+    save_success = save_forecast(
+        forecast_df=forecast,
+        model_name=model_name,
+        output_path=output_path,
+        horizon_type="month",
+        horizon_value=horizon_value,
+        is_hindcast=False,
+        append_to_hindcast=True  # Also append to hindcast file
+    )
+
+    if not save_success:
+        logger.warning(f"Forecast save had issues for model {model_name}")
 
     # Return success
     return success
@@ -260,8 +252,13 @@ def run_forecast(
     
     logger.info(f"Starting forecast run. Forecast all: {forecast_all}. Models to run: {models_to_run}")
 
-    # Data Interface
-    data_interface = DataInterface()
+    # Data Interface - use DB interface if SAPPHIRE API is available
+    if SAPPHIRE_API_AVAILABLE:
+        logger.info("Using DataInterfaceDB (database backend)")
+        data_interface = DataInterfaceDB()
+    else:
+        logger.info("Using DataInterface (CSV backend)")
+        data_interface = DataInterface()
     base_data_dict = data_interface.get_base_data(
         forcing_HRU=forcing_HRU)
 

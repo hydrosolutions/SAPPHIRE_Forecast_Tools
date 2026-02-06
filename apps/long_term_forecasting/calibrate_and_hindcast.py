@@ -19,7 +19,7 @@ import glob
 import pandas as pd
 import numpy as np
 import json
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Union
 
 # Import forecast models
 from lt_forecasting.forecast_models.LINEAR_REGRESSION import LinearRegressionModel
@@ -28,10 +28,10 @@ from lt_forecasting.forecast_models.deep_models.uncertainty_mixture import (
     UncertaintyMixtureModel,
 )
 
-from __init__ import LT_FORECAST_BASE_COLUMNS, today, initialize_today
-from data_interface import DataInterface
+from __init__ import LT_FORECAST_BASE_COLUMNS, today, initialize_today, SAPPHIRE_API_AVAILABLE
+from data_interface import DataInterface, DataInterfaceDB
 from config_forecast import ForecastConfig
-from lt_utils import create_model_instance
+from lt_utils import create_model_instance, save_forecast
 from post_process_lt_forecast import post_process_lt_forecast
 
 # set lt_forecasting logger level
@@ -58,7 +58,7 @@ def tune_hyperparameters_model(
         forecast_configs: ForecastConfig,
         temporal_data: pd.DataFrame,
         static_data: pd.DataFrame,
-        data_interface: DataInterface,
+        data_interface: Union[DataInterface, DataInterfaceDB],
 ) -> Tuple[bool, str]:
     """
     Tune hyperparameters for a given model instance.
@@ -67,7 +67,7 @@ def tune_hyperparameters_model(
         forecast_configs (ForecastConfig): The forecast configuration object.
         temporal_data (pd.DataFrame): The temporal data for the model.
         static_data (pd.DataFrame): The static data for the model.
-        data_interface (DataInterface): The data interface object.
+        data_interface: The data interface object (CSV or DB backend).
     Returns:
         Tuple[bool, str]: A tuple containing a boolean indicating success and a message.
     """
@@ -139,7 +139,7 @@ def tune_hyperparameters_model(
     return success, message
 
 
-def calibrate_model(data_interface: DataInterface,
+def calibrate_model(data_interface: Union[DataInterface, DataInterfaceDB],
                     forecast_configs: ForecastConfig,
                     model_name: str,
                     temporal_data: pd.DataFrame,
@@ -192,6 +192,11 @@ def calibrate_model(data_interface: DataInterface,
             )
             temporal_data = snow_result["temporal_data"]
 
+    #################################################
+    logger.info(f"Colums in temporal data before calibration: {temporal_data.columns.tolist()}")
+    #################################################
+    logger.info(f"Calibrating model: {model_name}")
+
     # Create model instance
     model_instance = create_model_instance(
         model_type=model_type,
@@ -226,14 +231,24 @@ def calibrate_model(data_interface: DataInterface,
 
 
     #################################################
-    # This part will be replaced by a database query in future [DATABASE INTEGRATION]
+    # Save Hindcast to Database and CSV
     #################################################
-    # Save Forecast
     output_path = forecast_configs.get_output_path(model_name=model_name)
-    os.makedirs(output_path, exist_ok=True)
-    output_file = os.path.join(output_path, f"{model_name}_hindcast.csv")
-    hindcast.to_csv(output_file, index=False)
-    logger.info(f"Hindcast  for model {model_name} saved to {output_file}")
+    horizon_value = forecast_configs.get_operational_month_lead_time()
+
+    # Save hindcast (DB + CSV parallel track)
+    save_success = save_forecast(
+        forecast_df=hindcast,
+        model_name=model_name,
+        output_path=output_path,
+        horizon_type="month",
+        horizon_value=horizon_value,
+        is_hindcast=True,
+        append_to_hindcast=False  # This is the full hindcast, not appending
+    )
+
+    if not save_success:
+        logger.warning(f"Hindcast save had issues for model {model_name}")
 
     # Return success
     return success
@@ -284,8 +299,13 @@ def calibrate_and_hindcast(
 
     forcing_HRU = forecast_config.get_forcing_HRU()
 
-    # Data Interface
-    data_interface = DataInterface()
+    # Data Interface - use DB interface if SAPPHIRE API is available
+    if SAPPHIRE_API_AVAILABLE:
+        logger.info("Using DataInterfaceDB (database backend)")
+        data_interface = DataInterfaceDB()
+    else:
+        logger.info("Using DataInterface (CSV backend)")
+        data_interface = DataInterface()
     start_date = forecast_config.get_start_date()
     logger.info(f"Using start date for base data: {start_date}")
     base_data_dict = data_interface.get_base_data(forcing_HRU=forcing_HRU, start_date=start_date)

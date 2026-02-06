@@ -342,20 +342,27 @@ class TestMapForecastedPeriodToCalendarMonth:
         assert 'calendar_month_lt_mean' in result.columns
 
     def test_month_overflow(self):
-        """Test that month calculation handles year boundary."""
+        """Test that month calculation handles year boundary correctly.
+
+        Scenario: Forecast issued Nov 25, 2020 for January 2021 (lead_time=2)
+        - target_month should be 1 (January)
+        - target_year should be 2021 (crossed year boundary)
+        - valid_from should be 2021-01-01
+        - valid_to should be 2021-01-31
+        """
         prediction_data = pd.DataFrame({
             'date': pd.to_datetime(['2020-11-25']),
             'code': ['BASIN_A'],
-            'valid_from': pd.to_datetime(['2021-01-01']),
-            'valid_to': pd.to_datetime(['2021-01-30']),
+            'valid_from': pd.to_datetime(['2020-12-01']),  # Raw forecast period in Dec 2020
+            'valid_to': pd.to_datetime(['2020-12-30']),
             'Q50': [100.0]
         })
 
         fc_period_stats = pd.DataFrame({
             'code': ['BASIN_A'],
-            'valid_from': pd.to_datetime(['2021-01-01']),
-            'valid_to': pd.to_datetime(['2021-01-30']),
-            'year': [2020],
+            'valid_from': pd.to_datetime(['2020-12-01']),
+            'valid_to': pd.to_datetime(['2020-12-30']),
+            'year': [2020],  # Issue year for fc_period stats
             'fc_period_lt_mean': [50.0],
             'fc_period_lt_std': [5.0],
             'fc_period_lt_n': [10]
@@ -364,7 +371,7 @@ class TestMapForecastedPeriodToCalendarMonth:
         calendar_month_stats = pd.DataFrame({
             'code': ['BASIN_A'],
             'month': [1],  # January
-            'year': [2020],
+            'year': [2021],  # Target year for calendar month stats (excludes 2021 data)
             'calendar_month_lt_mean': [55.0],
             'calendar_month_lt_std': [8.0],
             'calendar_month_lt_n': [10]
@@ -377,6 +384,12 @@ class TestMapForecastedPeriodToCalendarMonth:
 
         # November (11) + 2 = January (1)
         assert result['target_month'].values[0] == 1
+        # Target year should be 2021 (crossed year boundary)
+        assert result['target_year'].values[0] == 2021
+        # valid_from should be adjusted to 2021-01-01
+        assert result['valid_from'].values[0] == pd.Timestamp('2021-01-01')
+        # valid_to should be adjusted to 2021-01-31
+        assert result['valid_to'].values[0] == pd.Timestamp('2021-01-31')
 
 
 class TestAdjustForecastToCalendarMonth:
