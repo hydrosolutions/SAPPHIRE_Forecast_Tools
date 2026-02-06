@@ -39,8 +39,7 @@ class DataInterfaceDB:
         sl.load_environment()
         
         self.connection_string = connection_string or os.getenv(
-            'DB_CONNECTION_STRING',
-            "postgresql://postgres:password@localhost:5433/preprocessing_db"
+            'DB_POSTPROCESS_CONNECTION_STRING'
         )
         self.engine = create_engine(self.connection_string)
         self._get_paths()
@@ -171,7 +170,8 @@ class DataInterfaceDB:
             end_date: Optional end date filter
         """
         conditions = ["snow_type = :snow_type"]
-        params = {"snow_type": variable}
+        variable_caps = variable.upper()
+        params = {"snow_type": variable_caps}
 
         if code is not None:
             conditions.append("code = :code")
@@ -185,7 +185,7 @@ class DataInterfaceDB:
 
         where_clause = " AND ".join(conditions)
         query = f"""
-            SELECT date, code, value as {variable}
+            SELECT date, code, value as {variable_caps}
             FROM snow
             WHERE {where_clause}
             ORDER BY code, date

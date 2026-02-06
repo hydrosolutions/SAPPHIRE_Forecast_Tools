@@ -186,6 +186,7 @@ services:
     volumes:
       - ./services/postprocessing:/code
       - /Users/sandrohunziker/hydrosolutions Dropbox/Sandro Hunziker/SAPPHIRE_Central_Asia_Technical_Work/data/kyg_data_forecast_tools/intermediate_data:/intermediate_data
+      - /Users/sandrohunziker/hydrosolutions Dropbox/Sandro Hunziker/SAPPHIRE_Central_Asia_Technical_Work/data/kyg_data_forecast_tools/config:/config
 
   user-api:
     build:
