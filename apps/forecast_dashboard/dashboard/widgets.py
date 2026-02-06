@@ -7,7 +7,10 @@ import calendar
 from src.file_downloader import FileDownloader
 from src.gettext_config import _
 from src.auth_utils import log_user_activity, check_current_user
+from dashboard.config import import_tag_library
 
+
+tl = import_tag_library()
 
 # Not used as widget
 def create_date_picker(forecast_df):
@@ -26,8 +29,12 @@ def create_date_picker(forecast_df):
 
 
 # Used inside pentad card
-def create_pentad_selector(current_pentad):
+def create_pentad_selector(last_date):
     """Create pentad selection widget."""
+    # Determine the corresponding pentad
+    current_pentad = tl.get_pentad_for_date(last_date)
+    print(f"   dbg: current_pentad: {current_pentad}")
+
     # Create a dictionary mapping each pentad description to its pentad_in_year value
     pentad_options = {
         f"{i+1}{_('st pentad of')} {calendar.month_name[month]}" if i == 0 else
@@ -65,8 +72,11 @@ def create_pentad_card(pentad_selector, station):
 
 
 # Not used as widget
-def create_decad_selector(current_decad):
+def create_decad_selector(last_date):
     """Create decad selection widget."""
+    current_decad = tl.get_decad_for_date(last_date)
+    print(f"   dbg: current_decad: {current_decad}")
+
     # Create a dictionary mapping each decade description to its decad_in_year value
     decad_options = {
         f"{i+1}{_('st decade of')} {calendar.month_name[month]}" if i == 0 else

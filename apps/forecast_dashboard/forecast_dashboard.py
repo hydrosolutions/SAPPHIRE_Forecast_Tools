@@ -40,8 +40,6 @@ from dashboard import config
 from dashboard import utils
 
 
-tl = config.import_tag_library()
-
 logger = setup_logger()
 
 config.setup_panel(pn)
@@ -85,8 +83,6 @@ date_picker = widgets.create_date_picker(data["forecasts_all"])
 # Get the last available date in the data
 last_date = data["forecasts_all"]['date'].max() + dt.timedelta(days=1)
 
-# Determine the corresponding pentad
-current_pentad = tl.get_pentad_for_date(last_date)
 # The forecast is produced on the day before the first day of the forecast
 # pentad, therefore we add 1 to the forecast pentad in linreg_predictor to get
 # the pentad of the forecast period.
@@ -99,13 +95,10 @@ bulletin_header_info = processing.get_bulletin_header_info(last_date, horizon)
 #print(f"DEBUG: forecast_dashboard.py: bulletin_header_info:\n{bulletin_header_info}")
 
 # Create the dropdown widget for pentad selection
-pentad_selector = widgets.create_pentad_selector(current_pentad)
+pentad_selector = widgets.create_pentad_selector(last_date)
 
-current_decad = tl.get_decad_for_date(last_date)
 # Create the dropdown widget for decad selection
-decad_selector = widgets.create_decad_selector(current_decad)
-print(f"   dbg: current_pentad: {current_pentad}")
-print(f"   dbg: current_decad: {current_decad}")
+decad_selector = widgets.create_decad_selector(last_date)
 
 # Widget for station selection, always visible
 #print(f"\n\nDEBUG: forecast_dashboard.py: station select name string: {_('Select discharge station:')}\n\n")
@@ -122,10 +115,7 @@ print(f"DEBUG: forecast_dashboard.py: model_dict: {model_dict}")
 # Model dict can be empty if no forecasts at all are available for the selected station
 
 
-#@pn.depends(station, pentad_selector, watch=True)
-def get_best_models_for_station_and_pentad(station_value, pentad_value, decad_value):
-    return processing.get_best_models_for_station_and_pentad(data["forecasts_all"], station_value, pentad_value, decad_value)
-current_model_pre_selection = get_best_models_for_station_and_pentad(station.value, pentad_selector.value, decad_selector.value)
+current_model_pre_selection = processing.get_best_models_for_station_and_pentad(data["forecasts_all"], station.value, pentad_selector.value, decad_selector.value)
 
 print(f"DEBUG: forecast_dashboard.py: model_dict: \n{model_dict}")
 print(f"DEBUG: forecast_dashboard.py: current_model_pre_selection: \n{current_model_pre_selection}")
@@ -162,10 +152,6 @@ forecast_tabulator = widgets.create_forecast_tabulator()
 
 select_basin_widget = widgets.create_select_basin_widget(station_dict)
 
-# endregion
-
-# region forecast_card
-
 update_forecast_button = widgets.create_update_forecast_button()
 # Forecast card for sidepanel
 forecast_card = widgets.create_forecast_card(allowable_range_selection, manual_range, model_checkbox, show_range_button, update_forecast_button, station)
@@ -185,18 +171,13 @@ add_to_bulletin_button = widgets.create_add_to_bulletin_button()
 
 # Initialize the bulletin_tabulator as a global Tabulator with predefined columns and grouping
 bulletin_tabulator = widgets.create_bulletin_tabulator()
-# endregion
-
-#endregion
 
 
 # region update_functions
 
-# sites_list = update_site_attributes_with_hydrograph_statistics_for_selected_pentad(_=_, sites=sites_list, df=data["hydrograph_pentad_all"], pentad=pentad_selector.value, decad=decad_selector.value)
 sites_list = utils.update_site_attributes_with_hydrograph_statistics_for_selected_pentad(_=_, sites=sites_list, df=data["hydrograph_pentad_all"], pentad=pentad_selector.value, decad=decad_selector.value, horizon=horizon, horizon_in_year=horizon_in_year)
 
 #print(f"DEBUG: forecast_dashboard.py before update: linreg_predictor tail:\n{linreg_predictor.loc[linreg_predictor['code'] == '15149', ['date', 'code', 'predictor', 'pentad_in_year', 'pentad_in_month']].tail()}")
-# sites_list = update_site_attributes_with_linear_regression_predictor(_, sites=sites_list, df=data["linreg_predictor"], pentad=pentad_selector.value, decad=decad_selector.value)
 sites_list = utils.update_site_attributes_with_linear_regression_predictor(_, sites=sites_list, df=data["linreg_predictor"], pentad=pentad_selector.value, decad=decad_selector.value, horizon=horizon, horizon_in_year=horizon_in_year)
 
 
@@ -296,7 +277,6 @@ def update_model_select(station_value, selected_pentad, selected_decad):
 
 
 # Create the pop-up notification pane (initially hidden)
-# add_to_bulletin_popup = pn.pane.Alert(_("Added to bulletin"), alert_type="success", visible=False)
 add_to_bulletin_popup = widgets.create_add_to_bulletin_popup()
 
 
@@ -332,7 +312,6 @@ add_to_bulletin_button.on_click(
 
 
 # Attach the remove function to the remove button click event
-# remove_bulletin_button.on_click(remove_selected_from_bulletin)
 remove_bulletin_button.on_click(
     partial(
         remove_selected_from_bulletin,
@@ -349,14 +328,9 @@ remove_bulletin_button.on_click(
 
 
 # region dashboard_layout
-# Dynamically update figures
-# date_picker_with_pentad_text = viz.create_date_picker_with_pentad_text(date_picker, _)
 
-# update_callback = viz.update_forecast_data(_, linreg_datatable, station, pentad_selector)
-# pentad_selector.param.watch(update_callback, 'value')
 
 # Initial setup: populate the main area with the initial selection
-#update_callback(None)  # This does not seem to be needed
 daily_hydrograph_plot = pn.pane.HoloViews(hv.Curve([]), sizing_mode="stretch_both")
 if data["rain"] is None: 
     daily_rainfall_plot = pn.pane.Markdown(_("No precipitation data from SAPPHIRE Data Gateway available."))
@@ -549,7 +523,6 @@ update_site_object = pn.bind(
 
 
 # Use the new handler
-# write_bulletin_button.on_click(handle_bulletin_write)
 write_bulletin_button.on_click(
     partial(
         handle_bulletin_write,
