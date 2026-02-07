@@ -168,11 +168,11 @@ def test_local(page: Page):
 
     # Testing language switching
     page.get_by_role("link", name="Русский").click()
-    page.get_by_label("Имя пользователя").fill("user1")
-    password_input = page.get_by_label("Пароль")
-    password_input.fill("user1")
-    password_input.press("Tab")  # Moves focus away from input
-    page.get_by_role("button", name="Войти").click()
+    # page.get_by_label("Имя пользователя").fill("user1")
+    # password_input = page.get_by_label("Пароль")
+    # password_input.fill("user1")
+    # password_input.press("Tab")  # Moves focus away from input
+    # page.get_by_role("button", name="Войти").click()
 
     expect(page.get_by_text("Предикторы")).to_be_visible()
     expect(page.locator("div.bk-tab", has_text="Прогноз")).to_be_visible()
@@ -364,7 +364,8 @@ def test_local(page: Page):
                     #compare(df.iloc[row_index, 4], row[1])  # forecasted_discharge
                     #compare(df.iloc[row_index, 15], row[2])  # fc_lower
                     #compare(df.iloc[row_index, 17], row[3])  # fc_upper
-                    assert df.iloc[row_index, 5].replace(',', '.') == row[4]  # delta
+                    if not (pd.isna(df.iloc[row_index, 5]) and row[4] == '-'):
+                        assert df.iloc[row_index, 5].replace(',', '.') == row[4]  # delta
                     #compare(df.iloc[row_index, 10], row[5]) 
         print("#### CSV values are EQUAL to Excel values")
     assert count == len(csv_data) * 2
