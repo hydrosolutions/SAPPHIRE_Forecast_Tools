@@ -645,7 +645,7 @@ dashboard = pn.template.BootstrapTemplate(
     )],
     sidebar=pn.Column(sidebar_content),
     collapsed_sidebar=False,
-    main=pn.Column(auth.login_form, dashboard_content),
+    main=pn.Column(auth._js_pane, auth.login_form, dashboard_content),
     favicon=icon_path
 )
 

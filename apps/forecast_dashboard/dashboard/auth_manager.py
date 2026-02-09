@@ -7,8 +7,21 @@ import panel as pn
 from dashboard import widgets
 
 
+# Cookie config
+_COOKIE_ACCESS  = "sapphire_access_token"
+_COOKIE_REFRESH = "sapphire_refresh_token"
+_COOKIE_MAX_AGE = 60 * 60 * 24  # 1 day (seconds)
+
+
 class AuthManager:
-    """Manages authentication state, login/logout UI, and inactivity timeout."""
+    """Manages authentication state, login/logout UI, and inactivity timeout.
+
+    Tokens are persisted in secure browser cookies so that a page reload
+    does *not* require re-login.  On ``initialize()`` the manager reads
+    any existing cookies, verifies the access token (refreshing if needed),
+    and restores the session automatically.
+    """
+
     def __init__(self):
         self._last_activity_time: datetime | None = None
         self._timeout = timedelta(
@@ -20,7 +33,7 @@ class AuthManager:
             "SAPPHIRE_AUTH_SERVICE_URL", "http://localhost:8000/api/auth"
         )
 
-        # In-memory token storage (per-session)
+        # In-memory token storage (per-session, backed by cookies)
         self._access_token: str | None = None
         self._refresh_token: str | None = None
         self._current_user: dict | None = None
@@ -41,6 +54,9 @@ class AuthManager:
         self.logout_panel = widgets.create_logout_panel(
             self.logout_confirm, self.logout_yes, self.logout_no,
         )
+
+        # Hidden pane used to execute client-side JS (cookie ops)
+        self._js_pane = pn.pane.HTML("", width=0, height=0, visible=False)
 
         # Panels toggled by show/hide — registered via `register_panels`
         self._managed_panels: dict[str, pn.viewable.Viewable] = {}
@@ -74,6 +90,60 @@ class AuthManager:
         return {}
 
     # ------------------------------------------------------------------
+    # Cookie helpers
+    # ------------------------------------------------------------------
+
+    def _run_js(self, js: str) -> None:
+        """Execute JavaScript on the client by injecting a <script> tag.
+
+        Uses a hidden HTML pane; each update replaces the previous script
+        so we add a unique nonce to guarantee the browser re-evaluates it.
+        """
+        import time
+        nonce = int(time.time() * 1000)
+        self._js_pane.object = f"<script nonce='{nonce}'>{js}</script>"
+
+    def _save_tokens_to_cookies(self) -> None:
+        """Persist tokens to browser cookies via JS execution."""
+        secure_flag = "Secure;" if os.getenv("SAPPHIRE_SECURE_COOKIES", "").lower() in ("1", "true") else ""
+        same_site = os.getenv("SAPPHIRE_COOKIE_SAMESITE", "Lax")
+        lines = []
+        if self._access_token:
+            lines.append(
+                f"document.cookie = '{_COOKIE_ACCESS}={self._access_token};"
+                f"path=/;max-age={_COOKIE_MAX_AGE};SameSite={same_site};{secure_flag}';"
+            )
+        if self._refresh_token:
+            lines.append(
+                f"document.cookie = '{_COOKIE_REFRESH}={self._refresh_token};"
+                f"path=/;max-age={_COOKIE_MAX_AGE};SameSite={same_site};{secure_flag}';"
+            )
+        if lines:
+            self._run_js("\n".join(lines))
+
+    def _clear_token_cookies(self) -> None:
+        """Delete token cookies from the browser."""
+        lines = [
+            f"document.cookie = '{name}=;path=/;max-age=0';"
+            for name in (_COOKIE_ACCESS, _COOKIE_REFRESH)
+        ]
+        self._run_js("\n".join(lines))
+
+    def _load_tokens_from_cookies(self) -> bool:
+        """Read token cookies sent with the current request.
+
+        Returns True if at least an access token was found.
+        """
+        cookies: dict = getattr(pn.state, "cookies", {}) or {}
+        access = cookies.get(_COOKIE_ACCESS)
+        refresh = cookies.get(_COOKIE_REFRESH)
+        if access:
+            self._access_token = access
+            self._refresh_token = refresh
+            return True
+        return False
+
+    # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
@@ -103,10 +173,25 @@ class AuthManager:
             self.track_widget(widget, param_name)
     
     def initialize(self) -> None:
-        """Set initial visibility. No persisted session restore — tokens
-        are kept in memory only, so a page reload requires re-login."""
-        self._set_auth_visibility(logged_in=False)
-        self._show_login_form()
+        """Set initial visibility.
+
+        If valid token cookies exist from a previous page load the session
+        is restored automatically — no re-login required.
+        """
+        if self._load_tokens_from_cookies() and self._verify_token():
+            self._last_activity_time = datetime.now()
+            self._show_dashboard()
+            # Re-persist (tokens may have been refreshed during verify)
+            self._save_tokens_to_cookies()
+            pn.state.add_periodic_callback(self._check_inactivity, 300_000)
+        else:
+            # Tokens absent or invalid — clean up and show login
+            self._access_token = None
+            self._refresh_token = None
+            self._current_user = None
+            self._clear_token_cookies()
+            self._set_auth_visibility(logged_in=False)
+            self._show_login_form()
 
     @property
     def current_user(self) -> dict | None:
@@ -131,6 +216,8 @@ class AuthManager:
                 data = resp.json()
                 self._access_token = data["access_token"]
                 self._refresh_token = data.get("refresh_token", self._refresh_token)
+                # Persist the rotated tokens
+                self._save_tokens_to_cookies()
                 return True
         except Exception as e:
             print(f"Token refresh failed: {e}")
@@ -185,6 +272,9 @@ class AuthManager:
             self._current_user = data.get("user")
             self._last_activity_time = datetime.now()
 
+            # Persist tokens to cookies for session retention
+            self._save_tokens_to_cookies()
+
             self.login_feedback.object = "Login successful!"
             self.login_feedback.visible = True
             self._show_dashboard()
@@ -221,6 +311,9 @@ class AuthManager:
         self._refresh_token = None
         self._current_user = None
         self._last_activity_time = None
+
+        # Clear browser cookies
+        self._clear_token_cookies()
 
         self._hide_logout_confirm()
         self._hide_dashboard()

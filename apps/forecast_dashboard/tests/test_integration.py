@@ -170,11 +170,11 @@ def test_local(page: Page):
 
     # Testing language switching
     page.get_by_role("link", name="Русский").click()
-    page.get_by_label("Имя пользователя").fill("user1")
-    password_input = page.get_by_label("Пароль")
-    password_input.fill("user1user1")
-    password_input.press("Tab")  # Moves focus away from input
-    page.get_by_role("button", name="Войти").click()
+    # page.get_by_label("Имя пользователя").fill("user1")
+    # password_input = page.get_by_label("Пароль")
+    # password_input.fill("user1user1")
+    # password_input.press("Tab")  # Moves focus away from input
+    # page.get_by_role("button", name="Войти").click()
 
     expect(page.get_by_text("Предикторы")).to_be_visible()
     expect(page.locator("div.bk-tab", has_text="Прогноз")).to_be_visible()
