@@ -96,13 +96,13 @@ def test_decad(page: Page):
     print("#### Decad.png is shown.")
     time.sleep(SLEEP)
 
-    # # Testing the page is in Russian
-    # expect(page).to_have_title(re.compile("SAPPHIRE Central Asia - Панель управления декадными прогнозами"))
-    # expect(page.get_by_text("Войти")).to_be_visible()
-    # expect(page.get_by_text("Имя пользователя")).to_be_visible()
-    # expect(page.get_by_text("Введите имя пользователя")).to_be_visible()
-    # print("#### Page is in Russian.")
-    # time.sleep(SLEEP)
+    # Testing the page is in Russian
+    expect(page).to_have_title(re.compile("SAPPHIRE Central Asia - Панель управления декадными прогнозами"))
+    expect(page.get_by_text("Войти")).to_be_visible()
+    expect(page.get_by_text("Имя пользователя")).to_be_visible()
+    expect(page.get_by_text("Введите имя пользователя")).to_be_visible()
+    print("#### Page is in Russian.")
+    time.sleep(SLEEP)
 
 
 def test_local(page: Page):
@@ -127,6 +127,8 @@ def test_local(page: Page):
     page.get_by_label("Password").fill("user111")
     assert page.get_by_label("Username").input_value() == "user1"
     assert page.get_by_label("Password").input_value() == "user111"
+    password_input = page.get_by_label("Password")
+    password_input.press("Tab")
     page.get_by_role("button", name="Login").click()
 
     expect(page.get_by_text("Invalid username or password")).to_be_visible()
@@ -137,7 +139,7 @@ def test_local(page: Page):
 
     # Testing login success with correct credentials
     password_input = page.get_by_label("Password")
-    password_input.fill("user1")
+    password_input.fill("user1user1")
     password_input.press("Tab")  # Moves focus away from input
     page.get_by_role("button", name="Login").click()
 
@@ -157,7 +159,7 @@ def test_local(page: Page):
     # Testing login after logout
     page.get_by_label("Username").fill("user1")
     password_input = page.get_by_label("Password")
-    password_input.fill("user1")
+    password_input.fill("user1user1")
     password_input.press("Tab")  # Moves focus away from input
     page.get_by_role("button", name="Login").click()
 
@@ -168,11 +170,11 @@ def test_local(page: Page):
 
     # Testing language switching
     page.get_by_role("link", name="Русский").click()
-    # page.get_by_label("Имя пользователя").fill("user1")
-    # password_input = page.get_by_label("Пароль")
-    # password_input.fill("user1")
-    # password_input.press("Tab")  # Moves focus away from input
-    # page.get_by_role("button", name="Войти").click()
+    page.get_by_label("Имя пользователя").fill("user1")
+    password_input = page.get_by_label("Пароль")
+    password_input.fill("user1user1")
+    password_input.press("Tab")  # Moves focus away from input
+    page.get_by_role("button", name="Войти").click()
 
     expect(page.get_by_text("Предикторы")).to_be_visible()
     expect(page.locator("div.bk-tab", has_text="Прогноз")).to_be_visible()
