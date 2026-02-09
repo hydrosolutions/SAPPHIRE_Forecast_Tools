@@ -482,11 +482,11 @@ def create_language_buttons():
         # Create a hyperlink styled as a button
         href = pn.state.location.pathname + f'?lang={lang_code}'
 
-        current_user = check_current_user()
+        # current_user = check_current_user()
 
-        if current_user:
-            # Log language change before redirecting
-            log_user_activity(current_user, 'language_change')
+        # if current_user:
+        #     # Log language change before redirecting
+        #     log_user_activity(current_user, 'language_change')
 
         link = f'<a href="{href}" style="margin-right: 10px; padding: 5px 10px; background-color: white; color: #307086; text-decoration: none; border-radius: 4px;">{lang_name}</a>'
         buttons.append(link)
