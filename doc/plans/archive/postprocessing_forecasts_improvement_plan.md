@@ -1,5 +1,9 @@
 # Postprocessing Forecasts Module Improvement Plan
 
+> **SUPERSEDED** — This plan has been merged into
+> [`postprocessing_unified_plan.md`](postprocessing_unified_plan.md).
+> Bugs 1–4 are already fixed on `main` (commit `a52597d`).
+
 ## Overview
 
 This plan covers the comprehensive refactoring of the `apps/postprocessing_forecasts` module to:

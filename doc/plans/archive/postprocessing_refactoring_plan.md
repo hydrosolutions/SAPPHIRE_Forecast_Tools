@@ -1,5 +1,8 @@
 # Postprocessing Forecasts Refactoring Plan
 
+> **SUPERSEDED** — This plan has been merged into
+> [`postprocessing_unified_plan.md`](postprocessing_unified_plan.md).
+
 ## Forecast Aggregation Schedule
 
 ### 1. Daily to Pentadal/Decadal Aggregation
