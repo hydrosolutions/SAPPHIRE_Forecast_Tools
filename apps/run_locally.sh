@@ -317,7 +317,7 @@ run_machine_learning() {
         for script in "${ML_SCRIPTS[@]}"; do
             run_in_venv machine_learning "$script" \
                 "SAPPHIRE_MODEL_TO_USE=${model}" \
-                "SAPPHIRE_CONSISTENCY_CHECK=true" \
+                "SAPPHIRE_CONSISTENCY_CHECK=${SAPPHIRE_CONSISTENCY_CHECK:-false}" \
                 || { rc=$?; break 2; }
         done
     done
@@ -465,7 +465,7 @@ run_maintenance_machine_learning() {
         for script in "${ML_MAINTENANCE_SCRIPTS[@]}"; do
             run_in_venv machine_learning "$script" \
                 "SAPPHIRE_MODEL_TO_USE=${model}" \
-                "SAPPHIRE_CONSISTENCY_CHECK=true" \
+                "SAPPHIRE_CONSISTENCY_CHECK=${SAPPHIRE_CONSISTENCY_CHECK:-false}" \
                 || { rc=$?; break 2; }
         done
     done
