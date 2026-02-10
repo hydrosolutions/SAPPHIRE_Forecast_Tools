@@ -7,44 +7,40 @@
 # Runs SAPPHIRE forecast modules locally using each module's uv-based .venv,
 # following the correct production dependency order.
 #
-# Usage:
-#   # Full short-term pipeline
+# Operational usage (daily forecasts):
 #   SAPPHIRE_PREDICTION_MODE=PENTAD \
 #     ieasyhydroforecast_env_file_path=/path/to/.env \
 #     bash apps/run_locally.sh short-term
 #
-#   # Long-term pipeline (all months 0-9)
 #   ieasyhydroforecast_env_file_path=/path/to/.env \
 #     bash apps/run_locally.sh long-term
 #
-#   # Everything
-#   SAPPHIRE_PREDICTION_MODE=PENTAD \
+# Maintenance usage (gap-fill, hindcast, recalculation):
+#   SAPPHIRE_PREDICTION_MODE=BOTH \
 #     ieasyhydroforecast_env_file_path=/path/to/.env \
-#     bash apps/run_locally.sh all
+#     bash apps/run_locally.sh maintenance
 #
-#   # Single module
-#   ieasyhydroforecast_env_file_path=/path/to/.env \
-#     SAPPHIRE_PREDICTION_MODE=PENTAD \
-#     bash apps/run_locally.sh linear_regression
+#   bash apps/run_locally.sh maintenance:linear_regression
+#   bash apps/run_locally.sh calibrate_long_term
 #
-#   # With flags
-#   bash apps/run_locally.sh --continue-on-error short-term
-#   bash apps/run_locally.sh --dry-run short-term
+# Operational targets:
+#   short-term                          Short-term forecast pipeline
+#   long-term                           Long-term forecast pipeline (months 0-9)
+#   all                                 Both pipelines
+#   <module>                            Single module by name
 #
-# Targets:
-#   short-term    Run the short-term forecast pipeline
-#   long-term     Run the long-term forecast pipeline
-#   all           Run both short-term and long-term pipelines
-#   <module>      Run a single module by name
-#
-# Modules:
-#   preprocessing_runoff, preprocessing_gateway, linear_regression,
-#   machine_learning, postprocessing_forecasts, long_term_forecasting
+# Maintenance targets:
+#   maintenance                         All maintenance tasks
+#   maintenance:preprocessing_runoff    Runoff gap-filling (30-day lookback)
+#   maintenance:preprocessing_gateway   Extend ERA5 reanalysis data
+#   maintenance:linear_regression       Linear regression hindcast
+#   maintenance:machine_learning        ML NaN recalc + gap-fill + new stations
+#   calibrate_long_term                 Calibrate and hindcast long-term models
 #
 # Flags:
 #   --continue-on-error   Don't abort on first module failure
 #   --dry-run             Validate environment and venvs without running
-#   --help                Show this help message
+#   --help                Show full help message
 #
 # Prerequisites:
 #   - Each module needs a .venv: cd apps/<module> && uv sync --all-extras
