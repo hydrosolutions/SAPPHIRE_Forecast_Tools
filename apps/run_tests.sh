@@ -90,9 +90,12 @@ run_module_tests() {
 MODULES=(
     "iEasyHydroForecast"
     "preprocessing_runoff"
+    "preprocessing_gateway"
     "linear_regression"
+    "machine_learning"
     "postprocessing_forecasts"
     "pipeline"
+    "long_term_forecasting"
     "forecast_dashboard"
 )
 
