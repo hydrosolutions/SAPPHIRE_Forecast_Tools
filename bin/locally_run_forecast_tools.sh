@@ -1,5 +1,23 @@
 #! /bin/bash
 
+# =============================================================================
+# DEPRECATED: Use apps/run_locally.sh instead.
+#
+# This script is outdated — it uses hardcoded paths and conda environments
+# that no longer exist. The replacement uses uv-based .venv per module.
+#
+# Usage of the new script:
+#   SAPPHIRE_PREDICTION_MODE=PENTAD \
+#     ieasyhydroforecast_env_file_path=/path/to/.env \
+#     bash apps/run_locally.sh short-term
+#
+# See: bash apps/run_locally.sh --help
+# =============================================================================
+
+echo "WARNING: This script is deprecated. Use apps/run_locally.sh instead."
+echo "  Run: bash apps/run_locally.sh --help"
+echo ""
+
 # This script runs the forecast tools locally on the server.
 #
 # Details:

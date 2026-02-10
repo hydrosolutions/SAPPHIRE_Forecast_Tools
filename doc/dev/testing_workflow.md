@@ -111,6 +111,56 @@ TEST_DECAD=true bash run_tests.sh forecast_dashboard   # Decad production
 
 ---
 
+## Stage 1b: Local Pipeline Run (Optional)
+
+**Purpose**: Run the full forecast pipeline locally using uv-based venvs, without Docker.
+
+This is useful for end-to-end validation against real data before building Docker images.
+
+### Running the Pipeline
+
+```bash
+# From repository root
+
+# Dry-run (validates env and venvs without executing)
+bash apps/run_locally.sh --dry-run short-term
+
+# Full short-term pipeline
+SAPPHIRE_PREDICTION_MODE=PENTAD \
+  ieasyhydroforecast_env_file_path=/path/to/.env \
+  bash apps/run_locally.sh short-term
+
+# Long-term pipeline (all months 0-9)
+ieasyhydroforecast_env_file_path=/path/to/.env \
+  bash apps/run_locally.sh long-term
+
+# Single module
+ieasyhydroforecast_env_file_path=/path/to/.env \
+  SAPPHIRE_PREDICTION_MODE=PENTAD \
+  bash apps/run_locally.sh linear_regression
+
+# Continue past failures
+bash apps/run_locally.sh --continue-on-error short-term
+```
+
+### What It Does
+
+1. Validates the environment (env file, prediction mode, venvs)
+2. Runs modules in production dependency order
+3. Logs all output to `apps/logs/run_locally_*.log`
+4. Prints a timing summary at the end
+
+For full usage details: `bash apps/run_locally.sh --help`
+
+### Success Criteria Checklist
+
+- [ ] `--dry-run` reports all venvs found and env valid
+- [ ] Pipeline completes with exit code 0
+- [ ] Summary shows all modules PASS
+- [ ] Log file created in `apps/logs/`
+
+---
+
 ## Stage 2: Local Docker Module Testing
 
 **Purpose**: Verify Docker containerization works correctly before CI/CD.
