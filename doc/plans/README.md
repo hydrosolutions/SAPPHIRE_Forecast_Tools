@@ -78,37 +78,24 @@ Each detailed issue plan (`gi_*.md`) should be:
 
 See the `issue-planning` skill for the full template and guidance.
 
-## Plan Tracker
+## Tracking
 
-### Active Plans
-
-| Plan | Purpose | Status | Priority | Next Action |
-|------|---------|--------|----------|-------------|
-| `archive/uv_migration_plan_COMPLETED_2026-01-29.md` | Python 3.11→3.12 + uv migration | ✅ Complete | - | Archived |
-| `phase7_package_upgrades.md` | Post-migration package upgrades | Not started | Low | Incremental during refactoring |
-| `documentation_improvement_plan.md` | Comprehensive doc overhaul | Phase 1 partial | Medium | Quick Start section |
-| `docker_health_score_improvement.md` | Docker security improvements | Phase 1 done | Low | Test updated uv.lock files |
-| `deployment_improvement_planning.md` | Local dev workflow + Makefile | Not started | Low | Create Makefile when needed |
-| `future_development_plans.md` | Future features roadmap | Reference doc | — | No action (roadmap) |
-
-### Active Issues
-
-| Issue | Module | Status | Priority | Blocking |
-|-------|--------|--------|----------|----------|
-| `gi_draft_preprunoff_operational_modes.md` | prepq | Implementation complete | **High** | py312 Phase 6 |
-| `gi_draft_linreg_bugfix.md` | lr | Implementation complete | **High** | py312 Phase 6 |
+All issues, decisions, and plans are tracked in **[`module_issues.md`](module_issues.md)** — the unified backlog. That file is the single source of truth for:
+- Blocking decisions
+- Active issues (prioritized by tier)
+- Completed issues
+- Active planning documents
 
 ### Priority Legend
 
 - **High**: Blocking other work or critical path
 - **Medium**: Important but not blocking
 - **Low**: Nice to have, do when convenient
-- **—**: Reference documents, no action needed
 
 ### Status Values
 
 For plans: `Not started` → `In progress` → `Complete`
-For issues: `Draft` → `Ready` → `In progress` → `Implementation complete` → `Verified` → `Closed`
+For issues: `Open` → `Draft` → `Ready` → `In Progress` → `Complete`
 
 ## Skill-Assisted Workflow
 

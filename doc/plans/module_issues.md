@@ -1,8 +1,21 @@
-# Module Issues Index
+# SAPPHIRE Unified Backlog
 
-This file is an **index** of known issues. For detailed implementation plans, see the corresponding file in `issues/`.
+This file is the **single source of truth** for all tracked work: bugs, features, infrastructure, API, documentation, and architectural decisions. For detailed implementation plans, see the corresponding file in `issues/`.
 
 For the full workflow, see [README.md](README.md).
+
+---
+
+## Decisions Needed
+
+These are blocking decisions — work downstream cannot advance until they are resolved.
+
+| ID | Decision | Impact | Context | Status |
+|----|----------|--------|---------|--------|
+| **D-001** | Prefect vs Airflow for orchestration replacement | Blocks all v2 orchestration work | `architecture_review_claude.md` recommends Prefect; `architecture_review_copilot.md` recommends Airflow | **Open** |
+| **D-002** | CSV fallback removal criteria (Phase 6) | Blocks API integration completion | `sapphire_api_integration_plan.md` Phase 6 has no acceptance criteria defined | **Open** |
+| **D-003** | Docker non-root user solution (Option A/B/C) | Blocks Docker security improvement | `docker_health_score_improvement.md` Phase 2 | **Open** |
+| **D-004** | Monitoring alert strategy (Option A/B/C/D) | Blocks monitoring improvement | `monitoring_improvement_plan.md` — 4 options, no decision | **Open** |
 
 ---
 
@@ -11,168 +24,170 @@ For the full workflow, see [README.md](README.md).
 | Status | Meaning |
 |--------|---------|
 | Open | Known issue, not yet planned |
-| Draft | Detailed plan in progress |
-| Ready | Plan complete, ready for GitHub publication |
+| Draft | Detailed plan in `issues/` directory |
+| Ready | Plan reviewed, ready for implementation |
 | In Progress | Being implemented |
-| Complete | Resolved and closed |
+| Complete | Resolved and verified |
+| Blocked | Cannot proceed (see notes) |
 
 ---
 
-## Pipeline Module (`p`)
+## Tier 1: Production Bugs & Orphaned Tasks
 
-### P-001: Marker files owned by root not cleaned up
-**Status**: Complete
-**Priority**: Medium
-**Discovered**: 2025-12-18
-**Resolved**: 2026-02-03
-**File**: —
-
-Marker files written by the Docker pipeline were accumulating over time.
-
-**Root cause**: Bug in `DeleteOldMarkerFiles` and `DeleteOldGatewayFiles` tasks where `_delete_old_files()` was called twice - first via `run_with_timeout()` (result discarded, files actually deleted), then again to get return values (files already deleted, returned 0). This made logs incorrectly show "Deleted 0 files".
-
-**Fix**: Capture return value from `run_with_timeout()` instead of calling the method twice. Files are now properly deleted and logged.
+| ID | Title | Module | Priority | Status | File |
+|----|-------|--------|----------|--------|------|
+| **ML-001** | Maintenance mode hindcast failure not handled, causes FileNotFoundError | ml | **High** | Draft | [`gi_draft_ml_maintenance_hindcast_file_not_found.md`](issues/gi_draft_ml_maintenance_hindcast_file_not_found.md) |
+| **ML-002** | Investigate hindcast subprocess root cause (why hindcast_ML_models.py fails) | ml | **High** | Open | — (requires investigation with Sandro; likely CSV→API migration gap) |
+| **SEC-005** | Verify bokeh>=3.8.2 compatibility post-merge | fd | **High** | Open | See `sapphire_v2_planning.md` post-merge checklist |
+| **PP-002** | Add missing `ieasyforecast_decadal_skill_metrics_file` to .env | pp | **High** | Open | — (discovered in `postprocessing_unified_plan.md` Section 1.5; quick fix) |
 
 ---
 
-## Preprocessing Runoff Module (`prepq`)
+## Tier 2: API Completion & Data Pipeline
 
-### PREPQ-001: Runoff data not updated in Docker container
-**Status**: Complete
-**Priority**: High
-**Discovered**: 2025-12-18
-**Resolved**: 2025-01-09
-**File**: [`issues/archive/gi_draft_preprunoff_operational_modes.md`](issues/archive/gi_draft_preprunoff_operational_modes.md)
-
-Module didn't update runoff data in Docker due to file timestamp check. Fixed by adding operational/maintenance modes. SDK limitations discovered during testing are tracked in PREPQ-003.
-
----
-
-### PREPQ-002: Slow data retrieval from iEasyHydro HF
-**Status**: Superseded by PREPQ-003
-**Priority**: Medium
-**Discovered**: 2025-01-05
-
-Initial diagnosis was incorrect (page_size=1000 is not valid - API limit is 10). Comprehensive fix tracked in PREPQ-003.
+| ID | Title | Module | Priority | Status | File | Blocked By |
+|----|-------|--------|----------|--------|------|------------|
+| **API-001** | Add bulk-read endpoints to preprocessing/postprocessing services | infra | **High** | Draft | [`gi_draft_api_bulk_read_endpoints.md`](issues/gi_draft_api_bulk_read_endpoints.md) | — |
+| **API-002** | Add missing params to sapphire-api-client (model, target, dates) | infra | **High** | Draft | [`gi_draft_api_client_missing_params.md`](issues/gi_draft_api_client_missing_params.md) | — |
+| **API-003** | Define CSV removal acceptance criteria per module | infra | **Medium** | Open | — (needs D-002 decision) | D-002 |
+| **API-004** | Migrate forecast_dashboard to use sapphire-api-client | fd | **Medium** | Open | — | API-002 |
+| **API-005** | Migrate long_term_forecasting from direct SQL to API client | infra | **Medium** | Open | — | API-001 |
 
 ---
 
-### PREPQ-003: iEasyHydro HF Data Retrieval Validation
-**Status**: Complete
-**Priority**: High
-**Discovered**: 2025-01-09
-**Resolved**: 2026-01-29
-**File**: [`issues/archive/gi_PR-002_data_retrieval_validation.md`](issues/archive/gi_PR-002_data_retrieval_validation.md)
-**GitHub**: —
+## Tier 3: Developer Infrastructure
 
-Comprehensive data retrieval improvements including:
-- SDK best practices (page_size=10 hard limit, use site_codes filter)
-- Parallel pagination for performance
-- Duplicate site code handling (prefer manual over automatic)
-- Data validation and logging
-- Site caching for operational mode
-- Reliability fixes (empty DataFrame check, undefined variable, stale cache warning)
-
-All 9 phases complete. Server deployment verified 2026-01-29 alongside PREPQ-005.
+| ID | Title | Module | Priority | Status | File | Blocked By |
+|----|-------|--------|----------|--------|------|------------|
+| **INFRA-001** | Create Makefile and local dev infrastructure | infra | **High** | Draft | [`gi_draft_infra_makefile_local_dev.md`](issues/gi_draft_infra_makefile_local_dev.md) | — |
+| **INFRA-002** | Update uv.lock files for all py312 modules (security) | infra | **Medium** | Open | See `security_updates.md` + `docker_health_score_improvement.md` | — |
+| **INFRA-003** | Add pytest-cov with threshold enforcement to CI | infra | **Medium** | Open | — (from `architecture_review_claude.md` gap #10) | — |
 
 ---
 
-### PREPQ-004: Swiss Data Source Integration & Module Refactoring
-**Status**: Not Started
-**Priority**: Medium
-**Discovered**: 2025-01-12
-**File**: [`issues/gi_PR-003_swiss_data_source_refactor.md`](issues/gi_PR-003_swiss_data_source_refactor.md)
-**GitHub**: —
+## Tier 4: Module Work
 
-Add Swiss demo data as a data source while refactoring `src/src.py` (~4037 lines) into logical modules:
-- Remove legacy iEasyHydro code (only HF supported going forward)
-- Extract API clients, processing, I/O into separate modules
-- Create abstract DataSource interface for multiple backends
-- Establish pattern for future data sources (Nepal)
+### Preprocessing Gateway (`prepg`)
 
-Blocked by: Swiss data source API documentation/access
+| ID | Title | Priority | Status | File | Blocked By |
+|----|-------|----------|--------|------|------------|
+| **PREPG-001** | Yearly norm recalculation for snow and meteo data | **Medium** | Draft | [`gi_draft_prepg_yearly_norm_recalculation.md`](issues/gi_draft_prepg_yearly_norm_recalculation.md) | Verify API snow endpoints exist |
 
----
+### Preprocessing Runoff (`prepq`)
 
-### PREPQ-005: Maintenance Mode Produces Data with Large Gaps
-**Status**: Complete
-**Priority**: High
-**Discovered**: 2026-01-27
-**Resolved**: 2026-01-29
-**File**: [`issues/archive/gi_PREPQ-005_maintenance_mode_data_gaps.md`](issues/archive/gi_PREPQ-005_maintenance_mode_data_gaps.md)
-**GitHub**: —
+| ID | Title | Priority | Status | File | Blocked By |
+|----|-------|----------|--------|------|------------|
+| **PREPQ-004** | Swiss data source integration & module refactoring | **Low** | Blocked | [`gi_PR-003_swiss_data_source_refactor.md`](issues/gi_PR-003_swiss_data_source_refactor.md) | Swiss API docs unavailable |
 
-**Two bugs found and fixed:**
+### Postprocessing Forecasts (`pp`)
 
-1. **API gap filling** - Working correctly; remaining gaps are real operational data gaps where iEasyHydro HF has no measurements
+| ID | Title | Priority | Status | File | Blocked By |
+|----|-------|----------|--------|------|------------|
+| **PP-003** | Implement batch upsert in postprocessing CRUD (Phase 2) | **Medium** | Open | See `postprocessing_unified_plan.md` Phase 2 | — |
+| **PP-004** | Replace iterrows() with vectorized operations (Phase 2) | **Medium** | Open | See `postprocessing_unified_plan.md` Phase 2 | — |
+| **PP-005** | Create operational/maintenance entry point split (Phase 3) | **Medium** | Open | See `postprocessing_unified_plan.md` Phase 3 | PP-003, PP-004 |
 
-2. **Seasonal filtering bug (CRITICAL)** - `filter_roughly_for_outliers()` was systematically removing valid March-November data due to flawed seasonal grouping + reindexing logic. Fixed by separating IQR filtering (per season) from reindexing (per station).
+### Forecast Dashboard (`fd`)
 
-**Test coverage**: 164 tests passing (74 new tests for comprehensive coverage)
+| ID | Title | Priority | Status | File | Blocked By |
+|----|-------|----------|--------|------|------------|
+| **FD-001** | Dashboard crashes when current year data missing | **Low** | Draft | [`gi_draft_dashboard_missing_current_year_data.md`](issues/gi_draft_dashboard_missing_current_year_data.md) | — |
 
-All modules verified on server (preprocessing, linreg, ML). Dashboard rendering issue is separate.
+### iEasyHydro HF Migration
 
----
-
-### PREPQ-006: Pagination Bug - Same Site Returns Different station_type Across Pages
-**Status**: Complete
-**Priority**: High
-**Discovered**: 2026-01-13
-**Resolved**: 2026-01-29
-**File**: [`issues/archive/gi_draft_PR-004_pagination_station_type_bug.md`](issues/archive/gi_draft_PR-004_pagination_station_type_bug.md)
-**GitHub**: —
-
-Sites with both hydro and meteo sensors can appear on different pages with different `station_type` values during paginated API requests. The original implementation processed each page independently, causing data loss when a site's hydro data appeared on a different page than expected.
-
-**Fix**: Aggregate ALL pages before classification (not per-page). A site is "meteo-only" only if it has NO hydro records across ALL pages.
-
-**Test coverage**: 9 pagination regression tests added.
+| ID | Title | Priority | Status | File | Blocked By |
+|----|-------|----------|--------|------|------------|
+| **iEHF-001** | Audit iEH vs iEH HF code paths across all modules | **Medium** | Open | See `ieasyhydro_hf_migration_plan.md` Phase 1 | — |
 
 ---
 
-## Conceptual Model Module (`cm`)
+## Tier 5: Configuration & Architecture
 
-### CM-001: CI/CD builds disabled - R dependencies broken
-**Status**: Closed (Module Being Phased Out)
-**Priority**: N/A
-**Discovered**: 2026-01-27
-**Closed**: 2026-02-03
-**File**: —
-
-R dependency installation fails during Docker build due to upstream rocker/tidyverse changes (urllib update incompatibility). CI builds disabled in `build_test.yml`, `deploy_main.yml`, and `scheduled_security_rebuild.yml`. Existing Docker images frozen at current state.
-
-**Resolution**: Module is in maintenance-only mode and being phased out in favor of `machine_learning` module. CI jobs will remain disabled. No fix planned unless customer demand requires it.
+| ID | Title | Module | Priority | Status | File | Blocked By |
+|----|-------|--------|----------|--------|------|------------|
+| **ARCH-001** | Implement ConfigManager with Pydantic schema | infra | **Medium** | Open | See `configuration_update_plan.md` Phase 1 | — |
+| **ARCH-002** | Separate demo_data from operational config | infra | **Medium** | Open | See `configuration_update_plan.md` Phase 0 | — |
+| **ARCH-003** | Design PostgreSQL + TimescaleDB schema for v2 | infra | **Medium** | Open | See `architecture_review_claude.md` gap #1 | D-001 |
 
 ---
 
-## Linear Regression Module (`lr`)
+## Tier 6: Documentation
 
-### LR-001: Leap year date handling and hindcast mode
-**Status**: Complete
-**Priority**: Medium
-**Discovered**: 2025-12-05
-**Resolved**: 2026-02-03
-**File**: [`issues/archive/gi_LR-001_linreg_bugfix_hindcast_COMPLETED_2026-02-03.md`](issues/archive/gi_LR-001_linreg_bugfix_hindcast_COMPLETED_2026-02-03.md)
-**GitHub**: —
-
-Multi-part improvement plan:
-- **Part 1 (Complete)**: Bug fixes for leap year day_of_year alignment, date reconstruction
-- **Part 2 (Complete)**: Hindcast mode with CLI interface
-- **Part 3 (Complete)**: Test coverage (20 new tests, all passing)
-- **Part 4 (Complete)**: Nightly maintenance script - verified on Zurich test server (2026-02-03)
-- **Part 5 (Planned)**: Future parallelization optimization (deferred)
+| ID | Title | Module | Priority | Status | File |
+|----|-------|--------|----------|--------|------|
+| **DOC-001** | Add Quick Start section to README | infra | **Medium** | Open | See `documentation_improvement_plan.md` Priority 1 |
+| **DOC-002** | Fix incomplete TODOs in doc/configuration.md | infra | **Low** | Open | See `documentation_improvement_plan.md` Priority 2 |
+| **DOC-003** | Create doc/modules/ documentation structure | infra | **Low** | Open | See `documentation_improvement_plan.md` Priority 3 |
 
 ---
 
-## Machine Learning Module (`ml`)
+## Completed Issues
 
-### ML-001: Maintenance mode hindcast failure not handled, causes FileNotFoundError
-**Status**: Draft
-**Priority**: High
-**Discovered**: 2026-02-11
-**File**: [`issues/gi_draft_ml_maintenance_hindcast_file_not_found.md`](issues/gi_draft_ml_maintenance_hindcast_file_not_found.md)
+### Pipeline Module (`p`)
 
-`recalculate_nan_forecasts.py` does not abort when the hindcast subprocess fails, then crashes trying to read a CSV that was never produced. Bash maintenance script also always reports "success" regardless of container exit codes.
+| ID | Title | Resolved | File |
+|----|-------|----------|------|
+| P-001 | Marker files owned by root not cleaned up | 2026-02-03 | — |
+
+### Preprocessing Runoff (`prepq`)
+
+| ID | Title | Resolved | File |
+|----|-------|----------|------|
+| PREPQ-001 | Runoff data not updated in Docker container | 2025-01-09 | [`archive/gi_draft_preprunoff_operational_modes.md`](issues/archive/gi_draft_preprunoff_operational_modes.md) |
+| PREPQ-002 | Slow data retrieval from iEasyHydro HF | Superseded by PREPQ-003 | — |
+| PREPQ-003 | iEasyHydro HF Data Retrieval Validation (9 phases) | 2026-01-29 | [`archive/gi_PR-002_data_retrieval_validation.md`](issues/archive/gi_PR-002_data_retrieval_validation.md) |
+| PREPQ-005 | Maintenance Mode Data Gaps (2 bugs, 164 tests) | 2026-01-29 | [`archive/gi_PREPQ-005_maintenance_mode_data_gaps.md`](issues/archive/gi_PREPQ-005_maintenance_mode_data_gaps.md) |
+| PREPQ-006 | Pagination bug — station_type across pages | 2026-01-29 | [`archive/gi_draft_PR-004_pagination_station_type_bug.md`](issues/archive/gi_draft_PR-004_pagination_station_type_bug.md) |
+
+### Conceptual Model (`cm`)
+
+| ID | Title | Resolved | Notes |
+|----|-------|----------|-------|
+| CM-001 | CI/CD builds disabled — R dependencies broken | 2026-02-03 | Module being phased out |
+
+### Linear Regression (`lr`)
+
+| ID | Title | Resolved | File |
+|----|-------|----------|------|
+| LR-001 | Leap year date handling and hindcast mode | 2026-02-03 | [`archive/gi_LR-001_linreg_bugfix_hindcast_COMPLETED_2026-02-03.md`](issues/archive/gi_LR-001_linreg_bugfix_hindcast_COMPLETED_2026-02-03.md) |
+
+### Postprocessing (`pp`)
+
+| ID | Title | Resolved | File |
+|----|-------|----------|------|
+| PP-001 | Duplicate Skill Metrics for Ensemble Mean | 2026-01-24 | [`archive/gi_duplicate_skill_metrics_RESOLVED_2026-01-24.md`](issues/archive/gi_duplicate_skill_metrics_RESOLVED_2026-01-24.md) |
+
+### Pipeline (`p`)
+
+| ID | Title | Resolved | File |
+|----|-------|----------|------|
+| P-002 | Gateway double-run | 2026-02-03 | [`archive/gi_P-002_gateway_double_run_RESOLVED_2026-02-03.md`](../archive/gi_P-002_gateway_double_run_RESOLVED_2026-02-03.md) |
+
+---
+
+## Active Planning Documents
+
+These documents contain context and specifications referenced by issues above.
+
+| Document | Purpose | Status |
+|----------|---------|--------|
+| `sapphire_api_integration_plan.md` | API integration roadmap (Phases 1-6) | Active — Phase 6 pending |
+| `postprocessing_unified_plan.md` | Postprocessing refactoring (Phases 1-4) | Active — Phase 1 done, 2-4 pending |
+| `configuration_update_plan.md` | Config refactor to Pydantic + feature flags | Planning — not started |
+| `deployment_improvement_planning.md` | Makefile + local dev workflow | Planning — design complete |
+| `documentation_improvement_plan.md` | Doc restructuring + MkDocs | Active — Phase 1.1 done |
+| `docker_health_score_improvement.md` | Docker image security | Planning — Phase 1 identified |
+| `monitoring_improvement_plan.md` | Alert strategy improvement | Planning — needs D-004 decision |
+| `security_updates.md` | Vulnerability tracking | Active — SEC-005 pending |
+| `ieasyhydro_hf_migration_plan.md` | Legacy iEH deprecation | Planning — Phase 1 audit needed |
+| `sapphire_v2_planning.md` | v2 architecture + demo milestones | Active |
+| `sub_daily_forecasting_architecture.md` | Sub-daily forecasting design | Blocked — API spec undefined |
+| `bulk_read_endpoints_instructions.md` | Bulk endpoint specification | Spec complete — implementation not started |
+| `forecast_dashboard_api_client_comparison.md` | Client gap analysis | Analysis complete — fixes not started |
+| `architecture_review_claude.md` | 10-dimension architecture assessment | Reference |
+| `architecture_review_copilot.md` | 10-step modernization roadmap | Reference |
+| `observations.md` | Running log of production issues | Active — triage weekly |
+| `Makefile.planned` | Makefile template | Template — ready for INFRA-001 |
 
 ---
 
