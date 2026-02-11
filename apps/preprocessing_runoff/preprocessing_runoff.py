@@ -478,6 +478,55 @@ def main():
                 target_timezone=None  # Uses UTC in SDK responses
             )
 
+    # When SAPPHIRE_DEBUG_VERIFY=true, compare CSV and API data
+    if os.getenv("SAPPHIRE_DEBUG_VERIFY", "false").lower() == "true":
+        logger.info(
+            "Running data consistency verification "
+            "(SAPPHIRE_DEBUG_VERIFY=true)..."
+        )
+
+        runoff_verification = src.verify_runoff_data_consistency()
+        if runoff_verification['status'] == 'match':
+            logger.info(f"Runoff: {runoff_verification['message']}")
+        elif runoff_verification['status'] == 'match_with_virtual_lag':
+            logger.info(f"Runoff: {runoff_verification['message']}")
+        elif runoff_verification['status'] == 'mismatch':
+            logger.warning(f"Runoff: {runoff_verification['message']}")
+            if 'sample_mismatches' in runoff_verification:
+                for m in runoff_verification['sample_mismatches']:
+                    logger.warning(f"  - {m}")
+        elif runoff_verification['status'] == 'error':
+            logger.error(
+                f"Runoff verification error: "
+                f"{runoff_verification['message']}"
+            )
+        else:
+            logger.info(f"Runoff: {runoff_verification['message']}")
+
+        hydrograph_verification = (
+            src.verify_hydrograph_data_consistency()
+        )
+        if hydrograph_verification['status'] == 'match':
+            logger.info(
+                f"Hydrograph: {hydrograph_verification['message']}"
+            )
+        elif hydrograph_verification['status'] == 'mismatch':
+            logger.warning(
+                f"Hydrograph: {hydrograph_verification['message']}"
+            )
+            if 'sample_mismatches' in hydrograph_verification:
+                for m in hydrograph_verification['sample_mismatches']:
+                    logger.warning(f"  - {m}")
+        elif hydrograph_verification['status'] == 'error':
+            logger.error(
+                f"Hydrograph verification error: "
+                f"{hydrograph_verification['message']}"
+            )
+        else:
+            logger.info(
+                f"Hydrograph: {hydrograph_verification['message']}"
+            )
+
     overall_end_time = time.time()
     total_time = overall_end_time - overall_start_time
     logger.info(f"[TIMING] Total: {total_time:.1f}s (config: {time_load_environment:.1f}s, "

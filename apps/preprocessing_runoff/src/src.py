@@ -30,6 +30,17 @@ profiling_enabled = _profiling_module.profiling_enabled
 
 from ieasyhydro_sdk.filters import BasicDataValueFilters
 
+try:
+    from sapphire_api_client import (
+        SapphirePreprocessingClient,
+        SapphireAPIError,
+    )
+    SAPPHIRE_API_AVAILABLE = True
+except ImportError:
+    SAPPHIRE_API_AVAILABLE = False
+    SapphirePreprocessingClient = None
+    SapphireAPIError = Exception
+
 import logging
 logger = logging.getLogger(__name__)
 
@@ -3557,6 +3568,270 @@ def add_dangerous_discharge(sdk, hydrograph_data: pd.DataFrame, code_col='code')
 
     return hydrograph_data
 
+
+# =============================================================================
+# API Write Functions
+# =============================================================================
+
+def _write_runoff_to_api(data: pd.DataFrame) -> bool:
+    """
+    Write daily runoff data to SAPPHIRE preprocessing API.
+
+    Supports different sync modes via SAPPHIRE_SYNC_MODE environment variable:
+    - operational (default): Only write the latest date's data
+    - maintenance: Write the last 30 days of data
+    - initial: Write all data (for first-time setup)
+
+    Args:
+        data: DataFrame with columns: code, date, discharge
+
+    Returns:
+        True if successful, False otherwise
+    """
+    if not SAPPHIRE_API_AVAILABLE:
+        logger.debug(
+            "sapphire-api-client not installed, skipping runoff API write"
+        )
+        return False
+
+    api_enabled = os.getenv(
+        "SAPPHIRE_API_ENABLED", "true"
+    ).lower() == "true"
+    if not api_enabled:
+        logger.info(
+            "SAPPHIRE API writing disabled via SAPPHIRE_API_ENABLED=false"
+        )
+        return False
+
+    api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
+    client = SapphirePreprocessingClient(base_url=api_url)
+
+    if not client.readiness_check():
+        logger.warning(
+            f"SAPPHIRE API at {api_url} is not ready, skipping runoff write"
+        )
+        return False
+
+    if data.empty:
+        logger.info("No runoff data to write to API")
+        return False
+
+    data = data.copy()
+    data['date'] = pd.to_datetime(data['date'])
+
+    # Filter data based on sync mode
+    sync_mode = os.getenv("SAPPHIRE_SYNC_MODE", "operational").lower()
+    logger.info(f"Runoff API sync mode: {sync_mode}")
+
+    if sync_mode == "operational":
+        latest_date = data['date'].max()
+        data_to_write = data[data['date'] == latest_date]
+    elif sync_mode == "maintenance":
+        cutoff = data['date'].max() - pd.Timedelta(days=30)
+        data_to_write = data[data['date'] >= cutoff]
+    elif sync_mode == "initial":
+        data_to_write = data
+    else:
+        logger.warning(
+            f"Unknown sync mode '{sync_mode}', defaulting to operational"
+        )
+        latest_date = data['date'].max()
+        data_to_write = data[data['date'] == latest_date]
+
+    if data_to_write.empty:
+        logger.info("No runoff data to write after sync-mode filtering")
+        return False
+
+    logger.info(
+        f"{sync_mode} mode: writing {len(data_to_write)} runoff records"
+    )
+
+    # Build records for the API
+    records = []
+    for _, row in data_to_write.iterrows():
+        date_obj = row['date']
+        if pd.isna(date_obj):
+            continue
+        records.append({
+            "horizon_type": "day",
+            "code": str(row['code']),
+            "date": date_obj.strftime('%Y-%m-%d'),
+            "discharge": (
+                float(row['discharge'])
+                if pd.notna(row.get('discharge')) else None
+            ),
+            "horizon_value": date_obj.day,
+            "horizon_in_year": date_obj.dayofyear,
+        })
+
+    if not records:
+        logger.info("No runoff records to write to API")
+        return False
+
+    count = client.write_runoff(records)
+    logger.info(
+        f"Successfully wrote {count} runoff records to SAPPHIRE API "
+        f"({sync_mode} mode)"
+    )
+    return True
+
+
+def _write_hydrograph_to_api(data: pd.DataFrame) -> bool:
+    """
+    Write daily hydrograph data to SAPPHIRE preprocessing API.
+
+    Supports different sync modes via SAPPHIRE_SYNC_MODE environment variable:
+    - operational (default): Only write today's rows (one per station)
+    - maintenance: Write the last 30 days of rows
+    - initial: Write all rows
+
+    Args:
+        data: DataFrame with hydrograph statistics. Expected columns include:
+            code, date, day_of_year, count, mean, std, min, max,
+            5%, 25%, 50%, 75%, 95%, and year columns (e.g. "2026", "2025")
+
+    Returns:
+        True if successful, False otherwise
+    """
+    if not SAPPHIRE_API_AVAILABLE:
+        logger.debug(
+            "sapphire-api-client not installed, "
+            "skipping hydrograph API write"
+        )
+        return False
+
+    api_enabled = os.getenv(
+        "SAPPHIRE_API_ENABLED", "true"
+    ).lower() == "true"
+    if not api_enabled:
+        logger.info(
+            "SAPPHIRE API writing disabled via SAPPHIRE_API_ENABLED=false"
+        )
+        return False
+
+    api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
+    client = SapphirePreprocessingClient(base_url=api_url)
+
+    if not client.readiness_check():
+        logger.warning(
+            f"SAPPHIRE API at {api_url} is not ready, "
+            "skipping hydrograph write"
+        )
+        return False
+
+    if data.empty:
+        logger.info("No hydrograph data to write to API")
+        return False
+
+    data = data.copy()
+    data['date'] = pd.to_datetime(data['date'])
+
+    # Filter data based on sync mode
+    sync_mode = os.getenv("SAPPHIRE_SYNC_MODE", "operational").lower()
+    logger.info(f"Hydrograph API sync mode: {sync_mode}")
+
+    today = pd.Timestamp.today().normalize()
+    if sync_mode == "operational":
+        data_to_write = data[data['date'] == today]
+    elif sync_mode == "maintenance":
+        cutoff = today - pd.Timedelta(days=30)
+        data_to_write = data[data['date'] >= cutoff]
+    elif sync_mode == "initial":
+        data_to_write = data
+    else:
+        logger.warning(
+            f"Unknown sync mode '{sync_mode}', defaulting to operational"
+        )
+        data_to_write = data[data['date'] == today]
+
+    if data_to_write.empty:
+        logger.info("No hydrograph data to write after sync-mode filtering")
+        return False
+
+    logger.info(
+        f"{sync_mode} mode: writing {len(data_to_write)} hydrograph records"
+    )
+
+    # Map percentile columns to API field names
+    pct_map = {
+        '5%': 'q05', '25%': 'q25', '50%': 'q50',
+        '75%': 'q75', '95%': 'q95',
+    }
+
+    # Detect year columns for current/previous mapping
+    current_year = dt.date.today().year
+    previous_year = current_year - 1
+    current_year_col = str(current_year)
+    previous_year_col = str(previous_year)
+
+    records = []
+    for _, row in data_to_write.iterrows():
+        date_obj = row['date']
+        if pd.isna(date_obj):
+            continue
+
+        doy = (
+            int(row['day_of_year'])
+            if 'day_of_year' in row.index and pd.notna(row.get('day_of_year'))
+            else date_obj.dayofyear
+        )
+
+        record = {
+            "horizon_type": "day",
+            "code": str(row['code']),
+            "date": date_obj.strftime('%Y-%m-%d'),
+            "day_of_year": doy,
+            "horizon_value": date_obj.day,
+            "horizon_in_year": doy,
+        }
+
+        # Statistical columns
+        for col in ('count', 'mean', 'std', 'min', 'max'):
+            record[col] = (
+                float(row[col])
+                if col in row.index and pd.notna(row.get(col))
+                else None
+            )
+
+        # Percentile columns
+        for src_col, api_col in pct_map.items():
+            record[api_col] = (
+                float(row[src_col])
+                if src_col in row.index and pd.notna(row.get(src_col))
+                else None
+            )
+
+        # Norm (50th percentile)
+        record['norm'] = record.get('q50')
+
+        # Current and previous year
+        record['current'] = (
+            float(row[current_year_col])
+            if current_year_col in row.index
+            and pd.notna(row.get(current_year_col))
+            else None
+        )
+        record['previous'] = (
+            float(row[previous_year_col])
+            if previous_year_col in row.index
+            and pd.notna(row.get(previous_year_col))
+            else None
+        )
+
+        records.append(record)
+
+    if not records:
+        logger.info("No hydrograph records to write to API")
+        return False
+
+    count = client.write_hydrograph(records)
+    logger.info(
+        f"Successfully wrote {count} hydrograph records to SAPPHIRE API "
+        f"({sync_mode} mode)"
+    )
+    return True
+
+
 def write_daily_time_series_data_to_csv(data: pd.DataFrame, column_list=["code", "date", "discharge"]):
     """
     Writes the data to a csv file for later reading by other forecast tools.
@@ -3616,6 +3891,12 @@ def write_daily_time_series_data_to_csv(data: pd.DataFrame, column_list=["code",
     # Ensure date is in %Y-%m-%d format
     if 'date' in data.columns:
         data['date'] = pd.to_datetime(data['date'], errors='coerce').dt.strftime('%Y-%m-%d')
+
+    # Attempt API write (non-blocking — CSV always written regardless)
+    try:
+        _write_runoff_to_api(data)
+    except Exception as e:
+        logger.warning(f"[OUTPUT] API runoff write failed: {e}")
 
     # Write the data to a csv file. Raise an error if this does not work.
     # Write data to CSV file
@@ -3679,6 +3960,12 @@ def write_daily_hydrograph_data_to_csv(data: pd.DataFrame, column_list=["code", 
 
     # Test if we have rows where count is 0. If so, drop these rows.
     data = data[data['count'] != 0]
+
+    # Attempt API write (non-blocking — CSV always written regardless)
+    try:
+        _write_hydrograph_to_api(data)
+    except Exception as e:
+        logger.warning(f"[OUTPUT] API hydrograph write failed: {e}")
 
     # Write data to CSV file
     logger.debug(f"[OUTPUT] Writing hydrograph to {output_file_path}")
@@ -3969,6 +4256,454 @@ def run_post_write_validation(
     log_validation_summary(validation_result, stats, reliability_threshold)
 
     return validation_result
+
+
+# =============================================================================
+# API Data Consistency Verification (SAPPHIRE_DEBUG_VERIFY)
+# =============================================================================
+
+def verify_runoff_data_consistency(csv_path: str | None = None) -> dict:
+    """
+    Verify consistency between runoff data in CSV file and SAPPHIRE API.
+
+    Compares runoff_day.csv with data in the preprocessing database.
+    Only runs when SAPPHIRE_API_ENABLED is true.
+
+    Handles virtual stations specially — they are calculated from weighted
+    sums of contributing stations and may have different sync timing.
+
+    Args:
+        csv_path: Path to CSV file. If None, uses environment variables.
+
+    Returns:
+        dict with verification results:
+            - 'status': 'match', 'match_with_virtual_lag', 'mismatch',
+              'error', or 'skipped'
+            - 'csv_count': number of records in CSV
+            - 'api_count': number of records in API for same date range
+            - 'message': human-readable summary
+    """
+    import requests as _requests
+
+    api_enabled = os.getenv(
+        "SAPPHIRE_API_ENABLED", "true"
+    ).lower() == "true"
+    if not api_enabled:
+        return {
+            'status': 'skipped',
+            'message': 'API disabled, skipping verification',
+        }
+
+    # Get virtual station codes from config (if available)
+    virtual_station_codes: set[str] = set()
+    try:
+        config_path = os.path.join(
+            os.getenv('ieasyforecast_configuration_path', ''),
+            os.getenv('ieasyforecast_virtual_stations', ''),
+        )
+        if os.path.exists(config_path):
+            with open(config_path, 'r') as f:
+                json_data = json.load(f)
+                virtual_station_codes = set(
+                    json_data.get('virtualStations', {}).keys()
+                )
+            logger.info(
+                f"Loaded {len(virtual_station_codes)} virtual station "
+                "codes for consistency check"
+            )
+    except Exception as e:
+        logger.warning(f"Could not load virtual station config: {e}")
+
+    # Resolve CSV path
+    if csv_path is None:
+        intermediate_data_path = os.getenv(
+            "ieasyforecast_intermediate_data_path"
+        )
+        csv_file = os.getenv("ieasyforecast_daily_discharge_file")
+        if not intermediate_data_path or not csv_file:
+            return {
+                'status': 'error',
+                'message': 'Environment variables not set for CSV path',
+            }
+        csv_path = os.path.join(intermediate_data_path, csv_file)
+
+    # Read CSV
+    try:
+        csv_df = pd.read_csv(csv_path)
+        csv_df['date'] = (
+            pd.to_datetime(csv_df['date']).dt.strftime('%Y-%m-%d')
+        )
+        csv_df['code'] = csv_df['code'].astype(str)
+    except Exception as e:
+        return {'status': 'error', 'message': f'Failed to read CSV: {e}'}
+
+    dates = pd.to_datetime(csv_df['date'])
+    start_date = dates.min().strftime('%Y-%m-%d')
+    end_date = dates.max().strftime('%Y-%m-%d')
+    codes = csv_df['code'].unique().tolist()
+
+    # Query API for each station
+    api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
+    all_api_records: list[dict] = []
+
+    try:
+        for code in codes:
+            params = {
+                'horizon': 'day',
+                'code': code,
+                'start_date': start_date,
+                'end_date': end_date,
+                'limit': 100000,
+            }
+            response = _requests.get(
+                f"{api_url}/api/preprocessing/runoff/",
+                params=params,
+                timeout=60,
+            )
+            if response.status_code == 200:
+                all_api_records.extend(response.json())
+            else:
+                logger.warning(
+                    f"API query failed for code {code}: "
+                    f"{response.status_code}"
+                )
+    except Exception as e:
+        return {'status': 'error', 'message': f'Failed to query API: {e}'}
+
+    if not all_api_records:
+        return {
+            'status': 'mismatch',
+            'csv_count': len(csv_df),
+            'api_count': 0,
+            'message': (
+                f'No data in API for date range {start_date} to {end_date}'
+            ),
+        }
+
+    api_df = pd.DataFrame(all_api_records)
+    api_df['date'] = (
+        pd.to_datetime(api_df['date']).dt.strftime('%Y-%m-%d')
+    )
+    api_df['code'] = api_df['code'].astype(str)
+
+    csv_count = len(csv_df)
+    api_count = len(api_df)
+
+    # Create comparison keys (code + date)
+    csv_df['key'] = csv_df['code'] + '_' + csv_df['date']
+    api_df['key'] = api_df['code'] + '_' + api_df['date']
+
+    csv_keys = set(csv_df['key'])
+    api_keys = set(api_df['key'])
+
+    missing_in_api = csv_keys - api_keys
+    extra_in_api = api_keys - csv_keys
+
+    # Separate virtual station missing records from regular ones
+    virtual_missing: set[str] = set()
+    regular_missing: set[str] = set()
+    for key in missing_in_api:
+        code = key.split('_')[0]
+        if code in virtual_station_codes:
+            virtual_missing.add(key)
+        else:
+            regular_missing.add(key)
+
+    # Compare discharge values for common keys
+    common_keys = csv_keys & api_keys
+    mismatches: list[dict] = []
+    virtual_mismatches: list[dict] = []
+
+    for key in list(common_keys)[:100]:
+        csv_row = csv_df[csv_df['key'] == key].iloc[0]
+        api_row = api_df[api_df['key'] == key].iloc[0]
+
+        csv_discharge = (
+            csv_row['discharge'] if pd.notna(csv_row['discharge']) else None
+        )
+        api_discharge = (
+            api_row['discharge'] if pd.notna(api_row['discharge']) else None
+        )
+
+        is_mismatch = False
+        if csv_discharge is not None and api_discharge is not None:
+            if abs(csv_discharge - api_discharge) > 0.001:
+                is_mismatch = True
+        elif csv_discharge != api_discharge:
+            is_mismatch = True
+
+        if is_mismatch:
+            mismatch_info = {
+                'key': key,
+                'csv_discharge': csv_discharge,
+                'api_discharge': api_discharge,
+            }
+            code = key.split('_')[0]
+            if code in virtual_station_codes:
+                virtual_mismatches.append(mismatch_info)
+            else:
+                mismatches.append(mismatch_info)
+
+    # Build result
+    has_regular_issues = bool(regular_missing or extra_in_api or mismatches)
+    has_virtual_issues = bool(virtual_missing or virtual_mismatches)
+
+    if not has_regular_issues and not has_virtual_issues:
+        status = 'match'
+        message = (
+            f'Data consistent: {csv_count} CSV records match '
+            f'{api_count} API records'
+        )
+    elif not has_regular_issues and has_virtual_issues:
+        status = 'match_with_virtual_lag'
+        parts = []
+        if virtual_missing:
+            parts.append(
+                f'{len(virtual_missing)} virtual station records pending sync'
+            )
+        if virtual_mismatches:
+            parts.append(
+                f'{len(virtual_mismatches)} virtual station value differences'
+            )
+        message = (
+            f'Regular stations consistent. '
+            f'Virtual stations: {", ".join(parts)}'
+        )
+    else:
+        status = 'mismatch'
+        parts = []
+        if regular_missing:
+            parts.append(
+                f'{len(regular_missing)} regular records missing in API'
+            )
+        if virtual_missing:
+            parts.append(
+                f'{len(virtual_missing)} virtual records missing in API'
+            )
+        if extra_in_api:
+            parts.append(f'{len(extra_in_api)} extra records in API')
+        if mismatches:
+            parts.append(f'{len(mismatches)} regular value mismatches')
+        if virtual_mismatches:
+            parts.append(
+                f'{len(virtual_mismatches)} virtual value mismatches'
+            )
+        message = f'Data inconsistent: {", ".join(parts)}'
+
+    result: dict = {
+        'status': status,
+        'csv_count': csv_count,
+        'api_count': api_count,
+        'missing_in_api': len(missing_in_api),
+        'missing_regular': len(regular_missing),
+        'missing_virtual': len(virtual_missing),
+        'extra_in_api': len(extra_in_api),
+        'value_mismatches': len(mismatches),
+        'virtual_value_mismatches': len(virtual_mismatches),
+        'message': message,
+        'virtual_stations': {
+            'codes': list(virtual_station_codes),
+            'missing_count': len(virtual_missing),
+            'mismatch_count': len(virtual_mismatches),
+        },
+    }
+
+    if mismatches:
+        result['sample_mismatches'] = mismatches[:5]
+    if virtual_mismatches:
+        result['sample_virtual_mismatches'] = virtual_mismatches[:5]
+    if regular_missing:
+        result['sample_missing_regular'] = list(regular_missing)[:5]
+    if virtual_missing:
+        result['sample_missing_virtual'] = list(virtual_missing)[:5]
+
+    return result
+
+
+def verify_hydrograph_data_consistency(
+    csv_path: str | None = None,
+) -> dict:
+    """
+    Verify consistency between hydrograph data in CSV file and SAPPHIRE API.
+
+    Compares hydrograph_day.csv with data in the preprocessing database.
+    Only runs when SAPPHIRE_API_ENABLED is true.
+
+    Args:
+        csv_path: Path to CSV file. If None, uses environment variables.
+
+    Returns:
+        dict with verification results:
+            - 'status': 'match', 'mismatch', 'error', or 'skipped'
+            - 'csv_count': number of records in CSV
+            - 'api_count': number of records in API
+            - 'message': human-readable summary
+    """
+    import requests as _requests
+
+    api_enabled = os.getenv(
+        "SAPPHIRE_API_ENABLED", "true"
+    ).lower() == "true"
+    if not api_enabled:
+        return {
+            'status': 'skipped',
+            'message': 'API disabled, skipping verification',
+        }
+
+    # Resolve CSV path
+    if csv_path is None:
+        intermediate_data_path = os.getenv(
+            "ieasyforecast_intermediate_data_path"
+        )
+        csv_file = os.getenv("ieasyforecast_hydrograph_day_file")
+        if not intermediate_data_path or not csv_file:
+            return {
+                'status': 'error',
+                'message': 'Environment variables not set for CSV path',
+            }
+        csv_path = os.path.join(intermediate_data_path, csv_file)
+
+    # Read CSV
+    try:
+        csv_df = pd.read_csv(csv_path)
+        csv_df['code'] = csv_df['code'].astype(str)
+        if 'day_of_year' not in csv_df.columns:
+            return {
+                'status': 'error',
+                'message': 'CSV missing day_of_year column',
+            }
+    except Exception as e:
+        return {'status': 'error', 'message': f'Failed to read CSV: {e}'}
+
+    codes = csv_df['code'].unique().tolist()
+
+    # Query API for each station
+    api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
+    all_api_records: list[dict] = []
+
+    try:
+        for code in codes:
+            params = {
+                'horizon': 'day',
+                'code': code,
+                'limit': 100000,
+            }
+            response = _requests.get(
+                f"{api_url}/api/preprocessing/hydrograph/",
+                params=params,
+                timeout=60,
+            )
+            if response.status_code == 200:
+                all_api_records.extend(response.json())
+            else:
+                logger.warning(
+                    f"Hydrograph API query failed for code {code}: "
+                    f"{response.status_code}"
+                )
+    except Exception as e:
+        return {'status': 'error', 'message': f'Failed to query API: {e}'}
+
+    if not all_api_records:
+        return {
+            'status': 'mismatch',
+            'csv_count': len(csv_df),
+            'api_count': 0,
+            'message': 'No hydrograph data in API',
+        }
+
+    api_df = pd.DataFrame(all_api_records)
+    api_df['code'] = api_df['code'].astype(str)
+
+    # Create comparison keys (code + day_of_year/horizon_in_year)
+    csv_df['key'] = (
+        csv_df['code'] + '_' + csv_df['day_of_year'].astype(str)
+    )
+    if 'horizon_in_year' in api_df.columns:
+        api_df['key'] = (
+            api_df['code'] + '_' + api_df['horizon_in_year'].astype(str)
+        )
+    else:
+        return {
+            'status': 'error',
+            'message': 'API response missing horizon_in_year column',
+        }
+
+    csv_count = len(csv_df)
+    api_count = len(api_df)
+
+    csv_keys = set(csv_df['key'])
+    api_keys = set(api_df['key'])
+
+    missing_in_api = csv_keys - api_keys
+    extra_in_api = api_keys - csv_keys
+
+    # Column mapping: CSV -> API
+    column_map = {
+        '5%': 'q05', '25%': 'q25', '50%': 'q50', '75%': 'q75',
+        '95%': 'q95', 'norm': 'norm', 'count': 'count', 'std': 'std',
+    }
+
+    # Compare values for common keys (sample check)
+    common_keys = csv_keys & api_keys
+    mismatches: list[dict] = []
+
+    for key in list(common_keys)[:50]:
+        csv_row = csv_df[csv_df['key'] == key].iloc[0]
+        api_row = api_df[api_df['key'] == key].iloc[0]
+
+        for csv_col, api_col in column_map.items():
+            if csv_col in csv_row and api_col in api_row:
+                csv_val = (
+                    csv_row[csv_col]
+                    if pd.notna(csv_row[csv_col]) else None
+                )
+                api_val = (
+                    api_row[api_col]
+                    if pd.notna(api_row[api_col]) else None
+                )
+                if csv_val is not None and api_val is not None:
+                    if abs(csv_val - api_val) > 0.001:
+                        mismatches.append({
+                            'key': key,
+                            'column': csv_col,
+                            'csv_value': csv_val,
+                            'api_value': api_val,
+                        })
+                        break  # One mismatch per key is enough
+
+    if not missing_in_api and not extra_in_api and not mismatches:
+        status = 'match'
+        message = (
+            f'Hydrograph data consistent: '
+            f'{csv_count} CSV records, {api_count} API records'
+        )
+    else:
+        status = 'mismatch'
+        parts = []
+        if missing_in_api:
+            parts.append(f'{len(missing_in_api)} records missing in API')
+        if extra_in_api:
+            parts.append(f'{len(extra_in_api)} extra records in API')
+        if mismatches:
+            parts.append(f'{len(mismatches)} value mismatches')
+        message = f'Hydrograph data inconsistent: {", ".join(parts)}'
+
+    result: dict = {
+        'status': status,
+        'csv_count': csv_count,
+        'api_count': api_count,
+        'missing_in_api': len(missing_in_api),
+        'extra_in_api': len(extra_in_api),
+        'value_mismatches': len(mismatches),
+        'message': message,
+    }
+
+    if mismatches:
+        result['sample_mismatches'] = mismatches[:5]
+    if missing_in_api:
+        result['sample_missing'] = list(missing_in_api)[:5]
+
+    return result
 
 
 # =============================================================================
