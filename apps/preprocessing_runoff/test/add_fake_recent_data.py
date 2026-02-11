@@ -68,11 +68,9 @@ def add_fake_runoff_data(data_path, target_date=None):
     elif isinstance(target_date, str):
         target_date = datetime.strptime(target_date, '%Y-%m-%d').date()
 
-    # Get last date and value for each station
-    last_data = df.groupby('code').agg({
-        'date': 'max',
-        'discharge': 'last'
-    }).reset_index()
+    # Get last date and corresponding discharge for each station
+    last_idx = df.groupby('code')['date'].idxmax()
+    last_data = df.loc[last_idx, ['code', 'date', 'discharge']].reset_index(drop=True)
 
     # Find global last date
     global_last_date = df['date'].max().date()
