@@ -17,7 +17,7 @@ This module is the first step in the operational forecast pipeline. It runs dail
 |--------|---------|
 | `Quantile_Mapping_OP.py` | Downloads and bias-corrects operational ECMWF IFS forecasts (control member + ensemble) |
 | `extend_era5_reanalysis.py` | Extends historical ERA5-Land reanalysis with recent operational data |
-| `snow_data_operational.py` | Processes operational snow data (SWE, snow depth, snow melt and direct presicipation runoff) |
+| `snow_data_operational.py` | Processes operational snow data (SWE, snow depth, snow melt and direct precipitation runoff) |
 | `dg_utils.py` | Utility functions for data gateway interactions and quantile mapping |
 
 ### Supporting Scripts (not run operationally)
