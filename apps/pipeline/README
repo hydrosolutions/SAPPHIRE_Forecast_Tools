@@ -20,7 +20,7 @@ The pipeline uses marker files to prevent expensive tasks from running multiple 
    - If yes: returns `ExternalPreprocessingGateway` (a lightweight task that just verifies the marker)
    - If no: returns `PreprocessingGatewayQuantileMapping` (runs the full preprocessing)
 
-3. Marker files are automatically cleaned up by the `DeleteOldMarkerFiles` task, which removes markers older than 7 days.
+3. Marker files are automatically cleaned up by the `DeleteOldMarkerFiles` task, which removes markers older than 3 days (by default).
 
 ### Key Functions
 

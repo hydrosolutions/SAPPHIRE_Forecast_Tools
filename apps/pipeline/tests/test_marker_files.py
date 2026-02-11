@@ -100,25 +100,29 @@ class TestGetGatewayDependency:
         result = get_gateway_dependency()
         assert isinstance(result, PreprocessingGatewayQuantileMapping)
 
-    def test_respects_time_slot_parameter(self, mock_env, clean_marker_dir):
-        """Time slot parameter should affect marker file check."""
+    def test_sub_daily_always_runs_preprocessing(self, mock_env, clean_marker_dir):
+        """Sub-daily runs should always return PreprocessingGatewayQuantileMapping.
+
+        ExternalPreprocessingGateway doesn't support time_slot, so sub-daily
+        runs must always execute preprocessing to produce the correct
+        slot-specific marker file.
+        """
         from pipeline_docker import (
             get_gateway_dependency,
             get_marker_filepath,
-            ExternalPreprocessingGateway,
             PreprocessingGatewayQuantileMapping
         )
 
-        # Create marker for slot 0 only
+        # Create marker for slot 0
         marker = get_marker_filepath('preprocessing_gateway', time_slot=0)
         Path(marker).parent.mkdir(parents=True, exist_ok=True)
         Path(marker).write_text("slot 0 marker")
 
-        # Slot 0 should return external task (marker exists)
+        # Even with marker present, sub-daily should always run preprocessing
         result_slot0 = get_gateway_dependency(time_slot=0)
-        assert isinstance(result_slot0, ExternalPreprocessingGateway)
+        assert isinstance(result_slot0, PreprocessingGatewayQuantileMapping)
 
-        # Slot 1 should return real task (no marker)
+        # Slot without marker should also run preprocessing
         result_slot1 = get_gateway_dependency(time_slot=1)
         assert isinstance(result_slot1, PreprocessingGatewayQuantileMapping)
 

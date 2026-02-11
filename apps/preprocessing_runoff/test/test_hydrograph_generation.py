@@ -20,12 +20,13 @@ import src
 
 def create_test_timeseries(start_date, end_date, station_code='99901', base_value=100.0):
     """Helper to create test time series data."""
+    rng = np.random.default_rng(seed=42)
     dates = pd.date_range(start=start_date, end=end_date, freq='D')
     n = len(dates)
     return pd.DataFrame({
         'date': dates,
         'code': [station_code] * n,
-        'discharge': base_value + np.random.randn(n) * 10,
+        'discharge': base_value + rng.standard_normal(n) * 10,
         'name': [f'Station {station_code}'] * n
     })
 
@@ -198,11 +199,11 @@ class TestHydrographMultipleStations:
         assert '99901' in result['code'].values
         assert '99902' in result['code'].values
 
-        # Stations should have different means (base values are 100 vs 200)
+        # With deterministic seed, both stations get identical noise so
+        # the difference in means equals the base_value difference (100).
         mean_99901 = result[result['code'] == '99901']['mean'].mean()
         mean_99902 = result[result['code'] == '99902']['mean'].mean()
-        # Allow for some variance but they should be clearly different
-        assert abs(mean_99901 - mean_99902) > 50
+        assert mean_99902 - mean_99901 == pytest.approx(100.0, abs=1e-10)
 
     def test_hydrograph_station_grouping(self):
         """Statistics should be grouped by station code."""

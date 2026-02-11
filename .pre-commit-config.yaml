@@ -5,7 +5,7 @@ repos:
         name: Run integration tests
         # Integration tests are skipped by default. Set TEST_LOCAL=true to run local tests.
         # Usage: TEST_LOCAL=true git commit -m "message"
-        entry: bash -c 'cd apps/forecast_dashboard && .venv/bin/pytest tests/test_integration.py -v'
+        entry: bash -c 'cd apps/forecast_dashboard && uv run pytest tests/test_integration.py -v'
         language: system
         types: [python]
         pass_filenames: false

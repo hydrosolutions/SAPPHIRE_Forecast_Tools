@@ -18,28 +18,16 @@ class TestLoadConfig:
         """Clear config cache before each test."""
         config._config = None
 
-    def test_load_config_defaults_when_file_missing(self):
+    def test_load_config_defaults_when_file_missing(self, tmp_path, monkeypatch):
         """Test that default values are returned when no config file exists."""
-        # Create a temporary directory without a config file
-        original_file = Path(__file__).parent.parent / 'config.yaml'
+        # Point the config loader at a non-existent file in a temp directory
+        monkeypatch.setattr(config, '_get_config_path', lambda: tmp_path / 'config.yaml')
 
-        # Temporarily rename the config file if it exists
-        backup_exists = False
-        if original_file.exists():
-            original_file.rename(original_file.with_suffix('.yaml.bak'))
-            backup_exists = True
+        cfg = config.load_config()
 
-        try:
-            cfg = config.load_config()
-
-            assert cfg['maintenance']['lookback_days'] == 30
-            assert cfg['operational']['fetch_yesterday'] is True
-            assert cfg['operational']['fetch_morning'] is True
-        finally:
-            # Restore the original file
-            backup_file = original_file.with_suffix('.yaml.bak')
-            if backup_exists and backup_file.exists():
-                backup_file.rename(original_file)
+        assert cfg['maintenance']['lookback_days'] == 30
+        assert cfg['operational']['fetch_yesterday'] is True
+        assert cfg['operational']['fetch_morning'] is True
 
     def test_load_config_from_actual_file(self):
         """Test loading configuration from the actual config.yaml file."""

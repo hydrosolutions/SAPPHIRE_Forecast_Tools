@@ -91,9 +91,7 @@ def add_fake_runoff_data(data_path, target_date=None):
             code = row['code']
             last_value = row['discharge']
 
-            # Get the last known value for this specific station
-            station_last = df[df['code'] == code]['discharge'].iloc[-1]
-            fake_value = generate_fake_value(station_last)
+            fake_value = generate_fake_value(last_value)
 
             new_rows.append({
                 'code': code,

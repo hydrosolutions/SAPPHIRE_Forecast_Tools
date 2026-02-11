@@ -121,29 +121,41 @@ def get_marker_filepath(task_name, date=None, time_slot=None):
 def get_gateway_dependency(time_slot=None):
     """Returns the appropriate gateway task based on whether it already ran.
 
-    This function checks if the preprocessing gateway has already run today by
-    looking for its marker file. If found, returns an ExternalPreprocessingGateway
-    task (which just checks the marker exists). Otherwise, returns a
-    PreprocessingGatewayQuantileMapping task to actually run the preprocessing.
+    For daily runs (time_slot is None), this function checks if the preprocessing
+    gateway has already run today by looking for its daily marker file. If found,
+    it returns an ExternalPreprocessingGateway task (which just checks the marker
+    exists). Otherwise, it returns a PreprocessingGatewayQuantileMapping task to
+    actually run the preprocessing.
+
+    For sub-daily runs (time_slot is not None), this function always returns
+    PreprocessingGatewayQuantileMapping so that the correct time-slot-specific
+    marker is produced and validated.
 
     Args:
         time_slot: Optional time slot for sub-daily forecasts (None for daily)
 
     Returns:
-        ExternalPreprocessingGateway if already ran, else PreprocessingGatewayQuantileMapping
+        ExternalPreprocessingGateway if already ran (daily runs only),
+        else PreprocessingGatewayQuantileMapping.
     """
     today = datetime.date.today()
-    marker_file = get_marker_filepath('preprocessing_gateway', date=today, time_slot=time_slot)
 
-    if os.path.exists(marker_file):
-        print(f"Using external gateway task (already run) for {today}" +
-              (f" slot {time_slot}" if time_slot is not None else ""))
-        return ExternalPreprocessingGateway(date=today)
-    else:
-        print(f"No gateway marker found for {today}" +
-              (f" slot {time_slot}" if time_slot is not None else "") +
-              ", running gateway preprocessing")
-        return PreprocessingGatewayQuantileMapping()
+    # Daily runs: allow reuse via ExternalPreprocessingGateway
+    if time_slot is None:
+        marker_file = get_marker_filepath('preprocessing_gateway', date=today)
+        if os.path.exists(marker_file):
+            print(f"Using external gateway task (already run) for {today}")
+            return ExternalPreprocessingGateway(date=today)
+        else:
+            print(f"No gateway marker found for {today}, running gateway preprocessing")
+            return PreprocessingGatewayQuantileMapping()
+
+    # Sub-daily runs: always run preprocessing to ensure correct slot-specific marker
+    print(
+        f"Sub-daily gateway run for {today} slot {time_slot}: "
+        "running gateway preprocessing"
+    )
+    return PreprocessingGatewayQuantileMapping()
 
 
 class DockerTaskBase(pu.TimeoutMixin, luigi.Task):
@@ -894,7 +906,7 @@ class DeleteOldGatewayFiles(pu.TimeoutMixin, luigi.Task):
                     f.write(f'Task timed out after {self.timeout_seconds} seconds')
 
                 with self.output().open('w') as f:
-                    f.write('Task timed out after {self.timeout_seconds} seconds')
+                    f.write(f'Task timed out after {self.timeout_seconds} seconds')
 
         except Exception as e:
             error_message = f"Unexpected error: {str(e)}"
@@ -1071,7 +1083,7 @@ class DeleteOldMarkerFiles(pu.TimeoutMixin, luigi.Task):
                     f.write(f'Task timed out after {self.timeout_seconds} seconds')
 
                 with self.output().open('w') as f:
-                    f.write('Task timed out after {self.timeout_seconds} seconds')
+                    f.write(f'Task timed out after {self.timeout_seconds} seconds')
 
         except Exception as e:
             error_message = f"Unexpected error: {str(e)}"
