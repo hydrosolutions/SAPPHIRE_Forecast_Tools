@@ -164,6 +164,18 @@ Multi-part improvement plan:
 
 ---
 
+## Machine Learning Module (`ml`)
+
+### ML-001: Maintenance mode hindcast failure not handled, causes FileNotFoundError
+**Status**: Draft
+**Priority**: High
+**Discovered**: 2026-02-11
+**File**: [`issues/gi_draft_ml_maintenance_hindcast_file_not_found.md`](issues/gi_draft_ml_maintenance_hindcast_file_not_found.md)
+
+`recalculate_nan_forecasts.py` does not abort when the hindcast subprocess fails, then crashes trying to read a CSV that was never produced. Bash maintenance script also always reports "success" regardless of container exit codes.
+
+---
+
 ## Module Abbreviations
 
 | Module | Abbreviation |
@@ -184,4 +196,4 @@ Multi-part improvement plan:
 
 ---
 
-*Last updated: 2026-02-03*
+*Last updated: 2026-02-11*
