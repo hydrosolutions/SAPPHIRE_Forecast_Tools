@@ -1,6 +1,6 @@
 # Testing Workflow for SAPPHIRE Forecast Tools
 
-This document describes the 4-stage testing workflow for validating changes before they reach production.
+This document describes the testing workflow for validating changes before they reach production.
 
 ## Prerequisites
 
@@ -35,13 +35,16 @@ This document describes the 4-stage testing workflow for validating changes befo
 ## Testing Workflow Overview
 
 ```
-┌─────────────────────┐     ┌─────────────────────┐     ┌─────────────────────┐     ┌─────────────────────┐
-│  Stage 1: Local     │────>│  Stage 2: Docker    │────>│  Stage 3: CI/CD     │────>│  Stage 4: Server    │
-│  Unit Tests         │     │  Module Testing     │     │  Automated Tests    │     │  Validation         │
-└─────────────────────┘     └─────────────────────┘     └─────────────────────┘     └─────────────────────┘
+Stage 1 ──> Stage 1b ──> Stage 2a ──> Stage 2b ──> Stage 3 ──> Stage 4
+ Unit        Local        Docker       Docker       CI/CD       Server
+ Tests       Pipeline     Smoke        Runs         Tests       Validation
+                          Tests        (server)
 ```
 
 All stages must pass before changes are considered production-ready.
+
+> **Don't have server access?** Stages 1 + 1b + 2a + 3 (CI) provide sufficient
+> pre-merge validation. Stage 2b and 4 require server infrastructure.
 
 ---
 
@@ -51,15 +54,19 @@ All stages must pass before changes are considered production-ready.
 
 ### Running Tests
 
-All tests are run from the `apps/` directory:
+All tests are run from the `apps/` directory.
+
+**Recommended** - run all module tests:
 
 ```bash
 cd apps
-
-# Run ALL module tests
 SAPPHIRE_TEST_ENV=True bash run_tests.sh
+```
 
-# Run single module tests
+To run a single module:
+
+```bash
+cd apps
 SAPPHIRE_TEST_ENV=True bash run_tests.sh <module_name>
 
 # Example: test preprocessing_runoff only
@@ -119,18 +126,40 @@ This is useful for end-to-end validation against real data before building Docke
 
 ### Running the Pipeline
 
-```bash
-# From repository root
+All commands are run from the repository root.
 
+**Recommended** - run the full pipeline (both pentad and decad) plus maintenance:
+
+```bash
+# 1. Operational pipeline (short-term + long-term, both prediction modes)
+SAPPHIRE_PREDICTION_MODE=BOTH \
+  ieasyhydroforecast_env_file_path=/path/to/.env \
+  bash apps/run_locally.sh all
+
+# 2. Maintenance pipeline (gap-fill + hindcast, both prediction modes)
+SAPPHIRE_PREDICTION_MODE=BOTH \
+  ieasyhydroforecast_env_file_path=/path/to/.env \
+  bash apps/run_locally.sh maintenance
+```
+
+> **Note**: `SAPPHIRE_PREDICTION_MODE=BOTH` is handled by `run_locally.sh`,
+> which runs PENTAD then DECAD sequentially. Individual modules receive only
+> `PENTAD` or `DECAD`. Do not pass `BOTH` directly to machine_learning scripts
+> — they only accept `PENTAD` or `DECAD` and will raise an error otherwise.
+> (`linear_regression` and `postprocessing_forecasts` do handle `BOTH` natively.)
+
+Selective runs:
+
+```bash
 # Dry-run (validates env and venvs without executing)
 bash apps/run_locally.sh --dry-run short-term
 
-# Full short-term pipeline
+# Short-term pipeline only (single mode)
 SAPPHIRE_PREDICTION_MODE=PENTAD \
   ieasyhydroforecast_env_file_path=/path/to/.env \
   bash apps/run_locally.sh short-term
 
-# Long-term pipeline (all months 0-9)
+# Long-term pipeline only (all months 0-9)
 ieasyhydroforecast_env_file_path=/path/to/.env \
   bash apps/run_locally.sh long-term
 
@@ -161,27 +190,98 @@ For full usage details: `bash apps/run_locally.sh --help`
 
 ---
 
-## Stage 2: Local Docker Module Testing
+## Stage 2a: Local Docker Smoke Tests
 
-**Purpose**: Verify Docker containerization works correctly before CI/CD.
+**Purpose**: Verify Docker images build and critical imports work, without needing server infrastructure. This mirrors the build + import checks that CI performs in `build_test.yml`.
+
+### Prerequisites
+
+1. Docker daemon running
+2. Run from the repository root (parent of `apps/`)
+
+No `.env` file, server access, or SSH tunnels required.
+
+### Running Smoke Tests
+
+**Recommended** - build all images and run smoke tests (skip ML to save time):
+
+```bash
+bash apps/run_docker_tests.sh --skip-ml
+```
+
+Full run including ML (~10+ min for ML image build):
+
+```bash
+bash apps/run_docker_tests.sh
+```
+
+Selective runs:
+
+```bash
+# Single target
+bash apps/run_docker_tests.sh preprunoff
+
+# Multiple targets
+bash apps/run_docker_tests.sh preprunoff linreg dashboard
+
+# Build only (no smoke tests)
+bash apps/run_docker_tests.sh --build-only
+
+# Smoke test existing images (no builds)
+bash apps/run_docker_tests.sh --skip-build
+```
+
+For full usage: `bash apps/run_docker_tests.sh --help`
+
+### What It Does
+
+1. **Build phase**: Builds the base image first (tags as `:local-test` and `:latest` so child Dockerfiles resolve), then builds each module image
+2. **Smoke test phase**: Runs `python -c "import ..."` inside each container to verify critical dependencies installed correctly
+3. Prints a colored summary with pass/fail/skip counts and timing
+
+### Targets
+
+| Target | Image | Smoke Test |
+|--------|-------|------------|
+| `base` | `mabesa/sapphire-pythonbaseimage` | `python --version` + `uv --version` |
+| `pipeline` | `mabesa/sapphire-pipeline` | `import luigi; import docker; import yaml; import requests; import tenacity` |
+| `preprunoff` | `mabesa/sapphire-preprunoff` | `import preprocessing_runoff` |
+| `prepgateway` | `mabesa/sapphire-prepgateway` | `import pandas; import numpy; import scipy; import sklearn; import luigi; import sapphire_dg_client` |
+| `linreg` | `mabesa/sapphire-linreg` | `import pandas; import numpy; import docker; from ieasyhydro_sdk.sdk import IEasyHydroSDK` |
+| `ml` | `mabesa/sapphire-ml` | `import torch; import darts; import pandas; import numpy` |
+| `dashboard` | `mabesa/sapphire-dashboard` | `import panel; import holoviews; import bokeh; import pandas; import numpy` |
+| `postprocessing` | `mabesa/sapphire-postprocessing` | `import pandas; import numpy; import openpyxl` |
+
+### Success Criteria Checklist
+
+- [ ] All builds pass (no FAIL in build summary)
+- [ ] All smoke tests pass (no FAIL in smoke summary)
+- [ ] Script exits with code 0
+
+### Common Issues
+
+| Symptom | Cause | Resolution |
+|---------|-------|------------|
+| "Docker daemon is not running" | Docker not started | Start Docker Desktop or `dockerd` |
+| "Must run from the repository root" | Wrong working directory | `cd` to repo root before running |
+| Base build fails | System dependency or network issue | Check `docker build` output manually |
+| Child build fails | Base image not available | Ensure base builds first (script handles this) |
+| Smoke test import fails | Missing dependency in `pyproject.toml` | Check `uv.lock` and rebuild |
+
+---
+
+## Stage 2b: Server Docker Pipeline Runs
+
+**Purpose**: Verify Docker containers run correctly with real data and server infrastructure.
+
+> **Note**: If you don't have server access, Stage 2a + CI (Stage 3) provides
+> sufficient pre-merge validation.
 
 ### Prerequisites
 
 1. Docker running locally
-2. Base image built:
-   ```bash
-   docker build -f apps/docker_base_image/Dockerfile \
-     -t mabesa/sapphire-pythonbaseimage:latest .
-   ```
-3. Valid `.env` file for your organization
-
-### Building Module Images
-
-```bash
-# From repository root
-docker build -f apps/<module>/Dockerfile \
-  -t mabesa/sapphire-<module>:local .
-```
+2. Valid `.env` file for your organization
+3. Server access (SSH tunnels, data volumes)
 
 ### Testing Each Module
 
@@ -259,7 +359,7 @@ open http://localhost:8082
 
 ## Stage 3: CI/CD Automated Testing
 
-**Purpose**: Automated gate ensuring tests pass on multiple Python versions before Docker images are built.
+**Purpose**: Automated gate ensuring tests pass before Docker images are built.
 
 ### Workflow Files
 
@@ -288,6 +388,9 @@ Summarize Builds
 - Python 3.12 tests (uv-based)
 - Docker image builds for all modules
 - Import verification for modules without tests
+
+> **Tip**: CI performs the same build + import tests as `run_docker_tests.sh`.
+> Running Stage 2a locally catches failures before pushing, saving CI time.
 
 ### Success Criteria Checklist
 
@@ -399,16 +502,24 @@ docker build -f ./apps/<module>/Dockerfile . 2>&1 | tee build.log
 
 | Action | Command |
 |--------|---------|
-| Run all tests | `cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh` |
+| **Run all tests (recommended)** | `cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh` |
 | Run single module | `cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh <module>` |
 | Run with verbose | `cd apps/<module> && SAPPHIRE_TEST_ENV=True .venv/bin/pytest test*/ -v` |
+| **Full local pipeline (recommended)** | `SAPPHIRE_PREDICTION_MODE=BOTH ieasyhydroforecast_env_file_path=<path> bash apps/run_locally.sh all` |
+| **Full maintenance (recommended)** | `SAPPHIRE_PREDICTION_MODE=BOTH ieasyhydroforecast_env_file_path=<path> bash apps/run_locally.sh maintenance` |
+| Dry-run validation | `bash apps/run_locally.sh --dry-run short-term` |
 
 ### Docker Commands
 
 | Action | Command |
 |--------|---------|
-| Build base image | `docker build -f apps/docker_base_image/Dockerfile -t mabesa/sapphire-pythonbaseimage:latest .` |
-| Build module | `docker build -f apps/<module>/Dockerfile -t mabesa/sapphire-<module>:local .` |
+| **Docker smoke tests (recommended)** | `bash apps/run_docker_tests.sh --skip-ml` |
+| Docker smoke tests (all) | `bash apps/run_docker_tests.sh` |
+| Single target smoke test | `bash apps/run_docker_tests.sh preprunoff` |
+| Build only (no smoke tests) | `bash apps/run_docker_tests.sh --build-only` |
+| Smoke test existing images | `bash apps/run_docker_tests.sh --skip-build` |
+| Build base image (manual) | `docker build -f apps/docker_base_image/Dockerfile -t mabesa/sapphire-pythonbaseimage:latest .` |
+| Build module (manual) | `docker build -f apps/<module>/Dockerfile -t mabesa/sapphire-<module>:local .` |
 | Verify Python version | `docker run --rm <image> python --version` |
 | Check imports | `docker run --rm <image> python -c "import pandas; print('OK')"` |
 
