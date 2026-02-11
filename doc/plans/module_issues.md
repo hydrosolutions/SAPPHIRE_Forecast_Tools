@@ -1,42 +1,199 @@
 # Module Issues Index
 
-This file tracks planned issues across SAPPHIRE modules.
+This file is an **index** of known issues. For detailed implementation plans, see the corresponding file in `issues/`.
+
+For the full workflow, see [README.md](README.md).
 
 ---
 
-## preprocessing_gateway (prepg)
+## Issue Statuses
 
-### Issue PREPG-001: Yearly Norm Recalculation for Snow and Meteo Data
-**Status**: Draft
+| Status | Meaning |
+|--------|---------|
+| Open | Known issue, not yet planned |
+| Draft | Detailed plan in progress |
+| Ready | Plan complete, ready for GitHub publication |
+| In Progress | Being implemented |
+| Complete | Resolved and closed |
+
+---
+
+## Pipeline Module (`p`)
+
+### P-001: Marker files owned by root not cleaned up
+**Status**: Complete
 **Priority**: Medium
-**File**: `issues/gi_draft_prepg_yearly_norm_recalculation.md`
-**GitHub**: (not yet published)
+**Discovered**: 2025-12-18
+**Resolved**: 2026-02-03
+**File**: —
 
-Extract norm calculation from daily processing and implement yearly maintenance task for snow (SWE, HS, RoF) and meteo (T, P) norms with configurable averaging window.
+Marker files written by the Docker pipeline were accumulating over time.
+
+**Root cause**: Bug in `DeleteOldMarkerFiles` and `DeleteOldGatewayFiles` tasks where `_delete_old_files()` was called twice - first via `run_with_timeout()` (result discarded, files actually deleted), then again to get return values (files already deleted, returned 0). This made logs incorrectly show "Deleted 0 files".
+
+**Fix**: Capture return value from `run_with_timeout()` instead of calling the method twice. Files are now properly deleted and logged.
 
 ---
 
-## postprocessing_forecasts (pp)
+## Preprocessing Runoff Module (`prepq`)
 
-### Plan: Postprocessing Module Improvement
+### PREPQ-001: Runoff data not updated in Docker container
+**Status**: Complete
+**Priority**: High
+**Discovered**: 2025-12-18
+**Resolved**: 2025-01-09
+**File**: [`issues/archive/gi_draft_preprunoff_operational_modes.md`](issues/archive/gi_draft_preprunoff_operational_modes.md)
+
+Module didn't update runoff data in Docker due to file timestamp check. Fixed by adding operational/maintenance modes. SDK limitations discovered during testing are tracked in PREPQ-003.
+
+---
+
+### PREPQ-002: Slow data retrieval from iEasyHydro HF
+**Status**: Superseded by PREPQ-003
+**Priority**: Medium
+**Discovered**: 2025-01-05
+
+Initial diagnosis was incorrect (page_size=1000 is not valid - API limit is 10). Comprehensive fix tracked in PREPQ-003.
+
+---
+
+### PREPQ-003: iEasyHydro HF Data Retrieval Validation
+**Status**: Complete
+**Priority**: High
+**Discovered**: 2025-01-09
+**Resolved**: 2026-01-29
+**File**: [`issues/archive/gi_PR-002_data_retrieval_validation.md`](issues/archive/gi_PR-002_data_retrieval_validation.md)
+**GitHub**: —
+
+Comprehensive data retrieval improvements including:
+- SDK best practices (page_size=10 hard limit, use site_codes filter)
+- Parallel pagination for performance
+- Duplicate site code handling (prefer manual over automatic)
+- Data validation and logging
+- Site caching for operational mode
+- Reliability fixes (empty DataFrame check, undefined variable, stale cache warning)
+
+All 9 phases complete. Server deployment verified 2026-01-29 alongside PREPQ-005.
+
+---
+
+### PREPQ-004: Swiss Data Source Integration & Module Refactoring
+**Status**: Not Started
+**Priority**: Medium
+**Discovered**: 2025-01-12
+**File**: [`issues/gi_PR-003_swiss_data_source_refactor.md`](issues/gi_PR-003_swiss_data_source_refactor.md)
+**GitHub**: —
+
+Add Swiss demo data as a data source while refactoring `src/src.py` (~4037 lines) into logical modules:
+- Remove legacy iEasyHydro code (only HF supported going forward)
+- Extract API clients, processing, I/O into separate modules
+- Create abstract DataSource interface for multiple backends
+- Establish pattern for future data sources (Nepal)
+
+Blocked by: Swiss data source API documentation/access
+
+---
+
+### PREPQ-005: Maintenance Mode Produces Data with Large Gaps
+**Status**: Complete
+**Priority**: High
+**Discovered**: 2026-01-27
+**Resolved**: 2026-01-29
+**File**: [`issues/archive/gi_PREPQ-005_maintenance_mode_data_gaps.md`](issues/archive/gi_PREPQ-005_maintenance_mode_data_gaps.md)
+**GitHub**: —
+
+**Two bugs found and fixed:**
+
+1. **API gap filling** - Working correctly; remaining gaps are real operational data gaps where iEasyHydro HF has no measurements
+
+2. **Seasonal filtering bug (CRITICAL)** - `filter_roughly_for_outliers()` was systematically removing valid March-November data due to flawed seasonal grouping + reindexing logic. Fixed by separating IQR filtering (per season) from reindexing (per station).
+
+**Test coverage**: 164 tests passing (74 new tests for comprehensive coverage)
+
+All modules verified on server (preprocessing, linreg, ML). Dashboard rendering issue is separate.
+
+---
+
+### PREPQ-006: Pagination Bug - Same Site Returns Different station_type Across Pages
+**Status**: Complete
+**Priority**: High
+**Discovered**: 2026-01-13
+**Resolved**: 2026-01-29
+**File**: [`issues/archive/gi_draft_PR-004_pagination_station_type_bug.md`](issues/archive/gi_draft_PR-004_pagination_station_type_bug.md)
+**GitHub**: —
+
+Sites with both hydro and meteo sensors can appear on different pages with different `station_type` values during paginated API requests. The original implementation processed each page independently, causing data loss when a site's hydro data appeared on a different page than expected.
+
+**Fix**: Aggregate ALL pages before classification (not per-page). A site is "meteo-only" only if it has NO hydro records across ALL pages.
+
+**Test coverage**: 9 pagination regression tests added.
+
+---
+
+## Conceptual Model Module (`cm`)
+
+### CM-001: CI/CD builds disabled - R dependencies broken
+**Status**: Closed (Module Being Phased Out)
+**Priority**: N/A
+**Discovered**: 2026-01-27
+**Closed**: 2026-02-03
+**File**: —
+
+R dependency installation fails during Docker build due to upstream rocker/tidyverse changes (urllib update incompatibility). CI builds disabled in `build_test.yml`, `deploy_main.yml`, and `scheduled_security_rebuild.yml`. Existing Docker images frozen at current state.
+
+**Resolution**: Module is in maintenance-only mode and being phased out in favor of `machine_learning` module. CI jobs will remain disabled. No fix planned unless customer demand requires it.
+
+---
+
+## Linear Regression Module (`lr`)
+
+### LR-001: Leap year date handling and hindcast mode
+**Status**: Complete
+**Priority**: Medium
+**Discovered**: 2025-12-05
+**Resolved**: 2026-02-03
+**File**: [`issues/archive/gi_LR-001_linreg_bugfix_hindcast_COMPLETED_2026-02-03.md`](issues/archive/gi_LR-001_linreg_bugfix_hindcast_COMPLETED_2026-02-03.md)
+**GitHub**: —
+
+Multi-part improvement plan:
+- **Part 1 (Complete)**: Bug fixes for leap year day_of_year alignment, date reconstruction
+- **Part 2 (Complete)**: Hindcast mode with CLI interface
+- **Part 3 (Complete)**: Test coverage (20 new tests, all passing)
+- **Part 4 (Complete)**: Nightly maintenance script - verified on Zurich test server (2026-02-03)
+- **Part 5 (Planned)**: Future parallelization optimization (deferred)
+
+---
+
+## Machine Learning Module (`ml`)
+
+### ML-001: Maintenance mode hindcast failure not handled, causes FileNotFoundError
 **Status**: Draft
 **Priority**: High
-**File**: `postprocessing_forecasts_improvement_plan.md`
-**GitHub**: (not yet published)
+**Discovered**: 2026-02-11
+**File**: [`issues/gi_draft_ml_maintenance_hindcast_file_not_found.md`](issues/gi_draft_ml_maintenance_hindcast_file_not_found.md)
 
-Comprehensive refactoring plan covering:
-- 5 critical bug fixes (return value tracking, uninitialized variables, unsafe array access, non-atomic writes, silent API failures)
-- Performance improvements (batch upsert, vectorized operations, client reuse)
-- Module separation into operational (real-time) and maintenance (overnight) components
-- Complete testing strategy with 60+ unit and integration tests
-
-### Issue PP-001: Duplicate Skill Metrics for Ensemble Mean
-**Status**: Draft (superseded by improvement plan)
-**Priority**: High
-**File**: `issues/gi_duplicate_skill_metrics_ensemble_composition.md`
-**GitHub**: (not yet published)
-
-Fix duplicate skill metrics entries for ENSEMBLE_MEAN by tracking ensemble model composition.
-Note: This issue is addressed as part of the comprehensive improvement plan.
+`recalculate_nan_forecasts.py` does not abort when the hindcast subprocess fails, then crashes trying to read a CSV that was never produced. Bash maintenance script also always reports "success" regardless of container exit codes.
 
 ---
+
+## Module Abbreviations
+
+| Module | Abbreviation |
+|--------|--------------|
+| conceptual_model | `cm` |
+| preprocessing_runoff | `prepq` |
+| preprocessing_gateway | `prepg` |
+| preprocessing_station_forcing | `prepf` |
+| linear_regression | `lr` |
+| machine_learning | `ml` |
+| postprocessing_forecasts | `pp` |
+| forecast_dashboard | `fd` |
+| configuration_dashboard | `cd` |
+| pipeline | `p` |
+| iEasyHydroForecast | `iEHF` |
+| reset_forecast_run_date | `r` |
+| cross-module/infrastructure | `infra` |
+
+---
+
+*Last updated: 2026-02-11*

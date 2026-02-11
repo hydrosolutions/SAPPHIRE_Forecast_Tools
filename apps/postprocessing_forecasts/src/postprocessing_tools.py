@@ -78,7 +78,13 @@ def log_most_recent_forecasts_pentad(modelled_data):
             code_data = modelled_data[modelled_data['code'] == code]
             if not code_data.empty:
                 most_recent_code_date = code_data['date'].max()
-                pentad = code_data[code_data['date'] == most_recent_code_date]['pentad_in_month'].iloc[0]
+                # Filter by the most recent date and check if result is non-empty
+                # (handles NaT dates or missing data scenarios)
+                filtered_by_date = code_data[code_data['date'] == most_recent_code_date]
+                if filtered_by_date.empty:
+                    logger.warning(f"No data found for code {code} on date {most_recent_code_date}")
+                    continue
+                pentad = filtered_by_date['pentad_in_month'].iloc[0]
 
                 # Create a row with just the code, date, and pentad
                 new_row = {'code': code, 'date': most_recent_date, 'pentad_in_month': pentad}
@@ -203,7 +209,13 @@ def log_most_recent_forecasts_decade(modelled_data):
             code_data = modelled_data[modelled_data['code'] == code]
             if not code_data.empty:
                 most_recent_code_date = code_data['date'].max()
-                decade = code_data[code_data['date'] == most_recent_code_date]['decad_in_month'].iloc[0]
+                # Filter by the most recent date and check if result is non-empty
+                # (handles NaT dates or missing data scenarios)
+                filtered_by_date = code_data[code_data['date'] == most_recent_code_date]
+                if filtered_by_date.empty:
+                    logger.warning(f"No data found for code {code} on date {most_recent_code_date}")
+                    continue
+                decade = filtered_by_date['decad_in_month'].iloc[0]
 
                 # Create a row with just the code, date, and decade
                 new_row = {'code': code, 'date': most_recent_date, 'decad_in_month': decade}

@@ -3548,7 +3548,8 @@ def select_and_plot_data(_, linreg_predictor, station_widget, pentad_selector, d
     popup = pn.pane.Alert(_("Changes Saved Successfully"), alert_type="success", visible=False)
 
     # Adjust the sizing modes of your components
-    forecast_data_table.sizing_mode = 'stretch_both'
+    # Note: Keep forecast_data_table.sizing_mode as 'stretch_width' (set in Tabulator init)
+    # Using 'stretch_both' causes column rendering issues with Panel's Tabulator
     plot_pane.sizing_mode = 'stretch_both'
 
     progress_bar = pn.indicators.Progress(name="Progress", value=0, width=300, visible=False)

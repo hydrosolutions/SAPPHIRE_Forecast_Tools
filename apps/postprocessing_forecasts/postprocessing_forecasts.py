@@ -120,6 +120,9 @@ def postprocessing_forecasts():
     logger.info(f"\n\n====== Post-processing forecasts =================")
     logger.debug(f"Script started at {dt.datetime.now()}.")
 
+    # Accumulate errors from all save operations (fixes return value masking bug)
+    errors = []
+
     with timer(timing_stats, 'total execution'):
 
         with timer(timing_stats, 'setup'):
@@ -164,10 +167,16 @@ def postprocessing_forecasts():
                 if ret is None:
                     logger.info(f"Pentadal forecast results for all models saved successfully.")
                 else:
-                    logger.error(f"Error saving the pentadal forecast results.")
+                    logger.error(f"Error saving the pentadal forecast results: {ret}")
+                    errors.append(f"Pentad forecast save failed: {ret}")
 
                 # Save the skill metrics to a CSV file
                 ret = fl.save_pentadal_skill_metrics(skill_metrics)
+                if ret is None:
+                    logger.info(f"Pentadal skill metrics saved successfully.")
+                else:
+                    logger.error(f"Error saving the pentadal skill metrics: {ret}")
+                    errors.append(f"Pentad skill metrics save failed: {ret}")
 
         if prediction_mode in ['DECAD', 'BOTH']:        
             with timer(timing_stats, 'reading decadal data'):
@@ -197,10 +206,16 @@ def postprocessing_forecasts():
                 if ret is None:
                     logger.info(f"Decadal forecast results for all models saved successfully.")
                 else:
-                    logger.error(f"Error saving the decadal forecast results.")
+                    logger.error(f"Error saving the decadal forecast results: {ret}")
+                    errors.append(f"Decade forecast save failed: {ret}")
 
                 # Save the skill metrics to a CSV file
                 ret = fl.save_decadal_skill_metrics(skill_metrics_decade)
+                if ret is None:
+                    logger.info(f"Decadal skill metrics saved successfully.")
+                else:
+                    logger.error(f"Error saving the decadal skill metrics: {ret}")
+                    errors.append(f"Decade skill metrics save failed: {ret}")
 
     # Print timing summary
     summary, total = timing_stats.summary()
@@ -214,12 +229,15 @@ def postprocessing_forecasts():
         logger.info(f"  Average time per call: {entry['avg_time']:.2f} seconds")
         logger.info(f"  Number of calls: {entry['calls']}")
 
-    if ret is None:
-        logger.info(f"Script finished at {dt.datetime.now()}.")
-        sys.exit(0) # Success
-    else:
-        logger.error(f"Error saving the skill metrics.")
+    # Check if any save operations failed
+    if errors:
+        logger.error(f"Script finished with {len(errors)} error(s):")
+        for error in errors:
+            logger.error(f"  - {error}")
         sys.exit(1)
+    else:
+        logger.info(f"Script finished successfully at {dt.datetime.now()}.")
+        sys.exit(0)
 
 
 if __name__ == "__main__":

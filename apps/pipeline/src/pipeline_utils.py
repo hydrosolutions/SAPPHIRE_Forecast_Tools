@@ -11,17 +11,27 @@ import signal
 
 
 
-def get_docker_hub_image_creation_date(namespace, image_name):
-    # Docker Hub API URL for fetching manifest data
-    # curl --location 'https://hub.docker.com//v2/namespaces/{namespace}/repositories/{image_name}/'
-    url = f"https://hub.docker.com//v2/namespaces/{namespace}/repositories/{image_name}/"
+def get_docker_hub_image_creation_date(namespace, image_name, tag):
+    """Fetch the creation/push date of a Docker Hub image tag.
 
-    # Get the docker image manifest data
+    Args:
+        namespace: Docker Hub namespace (e.g., "mabesa")
+        image_name: Image name (e.g., "sapphire-ml")
+        tag: Image tag (e.g., "latest", "py312")
+
+    Returns:
+        ISO 8601 date string or None if unavailable
+    """
+    # Docker Hub API URL for fetching tag-specific data
+    # curl --location 'https://hub.docker.com/v2/repositories/{namespace}/{image_name}/tags/{tag}'
+    url = f"https://hub.docker.com/v2/repositories/{namespace}/{image_name}/tags/{tag}"
+
+    # Get the docker image tag data
     try:
         response = requests.get(url, timeout=10)
         if response.status_code == 200:
-            manifest_data = response.json()
-            return manifest_data.get('last_updated')  # Use .get() for safety
+            tag_data = response.json()
+            return tag_data.get('tag_last_pushed')  # Tag-specific push date
         else:
             print(f"Failed to fetch image data from Docker Hub: {response.status_code}")
             return None
@@ -29,35 +39,148 @@ def get_docker_hub_image_creation_date(namespace, image_name):
         print(f"Failed to reach Docker Hub: {e}")
         return None
 
-def there_is_a_newer_image_on_docker_hub(client, repository, image_name, tag):
+
+def get_docker_hub_image_digest(namespace, image_name, tag):
+    """Fetch the digest (sha256 hash) of a Docker Hub image tag.
+
+    Args:
+        namespace: Docker Hub namespace (e.g., "mabesa")
+        image_name: Image name (e.g., "sapphire-ml")
+        tag: Image tag (e.g., "latest", "py312")
+
+    Returns:
+        Digest string (e.g., "sha256:78ce10fffe...") or None if unavailable
+    """
+    url = f"https://hub.docker.com/v2/repositories/{namespace}/{image_name}/tags/{tag}"
+
     try:
-        # Read the local images creation time
+        response = requests.get(url, timeout=10)
+        if response.status_code == 200:
+            tag_data = response.json()
+            return tag_data.get('digest')
+        else:
+            print(f"Failed to fetch image digest from Docker Hub: {response.status_code}")
+            return None
+    except requests.RequestException as e:
+        print(f"Failed to reach Docker Hub: {e}")
+        return None
+
+
+def get_local_image_digest(client, repository, image_name, tag):
+    """Extract the digest of a local Docker image from its RepoDigests.
+
+    Args:
+        client: Docker client instance
+        repository: Docker Hub namespace (e.g., "mabesa")
+        image_name: Image name (e.g., "sapphire-ml")
+        tag: Image tag (e.g., "latest")
+
+    Returns:
+        Digest string (e.g., "sha256:78ce10fffe...") or None if unavailable
+
+    Raises:
+        docker.errors.ImageNotFound: If the local image doesn't exist
+    """
+    full_name = f"{repository}/{image_name}:{tag}"
+    image = client.images.get(full_name)
+
+    repo_digests = image.attrs.get('RepoDigests', [])
+    if not repo_digests:
+        return None
+
+    # RepoDigests format: ['namespace/repo@sha256:abc123...']
+    # Extract digest from the first matching entry
+    expected_prefix = f"{repository}/{image_name}@"
+    for repo_digest in repo_digests:
+        if repo_digest.startswith(expected_prefix):
+            return repo_digest.split('@')[1]
+
+    # Fallback: return first available digest if prefix doesn't match
+    if '@' in repo_digests[0]:
+        return repo_digests[0].split('@')[1]
+
+    return None
+
+def _compare_by_timestamp(client, repository, image_name, tag):
+    """Fallback timestamp-based comparison (legacy behavior).
+
+    This is less reliable than digest comparison but provides backward
+    compatibility for images without RepoDigests (e.g., locally built images).
+
+    Returns:
+        True if Docker Hub image appears newer, False otherwise
+    """
+    try:
         local_image = client.images.get(f"{repository}/{image_name}:{tag}")
         local_image_creation_date = parse(local_image.attrs['Created'])
-        # Ensure the local image creation date is offset-aware
+
         if local_image_creation_date.tzinfo is None or local_image_creation_date.tzinfo.utcoffset(local_image_creation_date) is None:
             local_image_creation_date = local_image_creation_date.replace(tzinfo=pytz.UTC)
 
-        # Get the Docker Hub image creation time
-        hub_image_creation_date_str = get_docker_hub_image_creation_date(repository, image_name)
-        if not hub_image_creation_date_str:
-            print("Failed to fetch the Docker Hub image creation date.")
+        hub_date_str = get_docker_hub_image_creation_date(repository, image_name, tag)
+        if not hub_date_str:
+            print("Failed to fetch Docker Hub timestamp. Assuming local is current.")
             return False
 
-        hub_image_creation_date = parse(hub_image_creation_date_str)
-        # Ensure the Docker Hub image creation date is offset-aware
+        hub_image_creation_date = parse(hub_date_str)
         if hub_image_creation_date.tzinfo is None or hub_image_creation_date.tzinfo.utcoffset(hub_image_creation_date) is None:
             hub_image_creation_date = hub_image_creation_date.replace(tzinfo=pytz.UTC)
 
         if hub_image_creation_date > local_image_creation_date:
-            print("The Docker Hub image is newer than the local image.")
+            print("The Docker Hub image appears newer (timestamp fallback).")
             return True
         else:
-            print("The local image is up-to-date or newer than the Docker Hub image.")
+            print("The local image appears current (timestamp fallback).")
             return False
+
+    except docker.errors.ImageNotFound:
+        return True
+
+
+def there_is_a_newer_image_on_docker_hub(client, repository, image_name, tag):
+    """Check if Docker Hub has a different (newer) image than local.
+
+    Uses content-based digest comparison for reliable detection.
+    Falls back to timestamp comparison if digests are unavailable.
+
+    Args:
+        client: Docker client instance
+        repository: Docker Hub namespace (e.g., "mabesa")
+        image_name: Image name (e.g., "sapphire-ml")
+        tag: Image tag (e.g., "latest")
+
+    Returns:
+        True if Docker Hub image differs from local (or local doesn't exist)
+        False if images are identical or comparison fails
+    """
+    # Try to get local image digest
+    try:
+        local_digest = get_local_image_digest(client, repository, image_name, tag)
     except docker.errors.ImageNotFound:
         print("The local image does not exist.")
         return True
+
+    # Get Docker Hub digest
+    hub_digest = get_docker_hub_image_digest(repository, image_name, tag)
+
+    # Primary comparison: use digests if both available
+    if hub_digest and local_digest:
+        if hub_digest == local_digest:
+            print("The local image is up-to-date (digests match).")
+            return False
+        else:
+            print(f"The Docker Hub image differs from local (digest mismatch).")
+            print(f"  Local:  {local_digest[:27]}...")
+            print(f"  Remote: {hub_digest[:27]}...")
+            return True
+
+    # Fallback to timestamp comparison if digests unavailable
+    if not local_digest:
+        print("Warning: Local image has no RepoDigests, falling back to timestamp comparison.")
+    if not hub_digest:
+        print("Warning: Could not fetch Docker Hub digest, falling back to timestamp comparison.")
+
+    return _compare_by_timestamp(client, repository, image_name, tag)
 
 @contextmanager
 def timeout(seconds):

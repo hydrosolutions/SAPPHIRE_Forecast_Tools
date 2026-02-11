@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# clean_docker.sh is used to clean up Docker space by stopping and removing all 
-# containers and images, except those related to Nginx.
+# clean_docker.sh is used to clean up Docker space by stopping and removing all
+# containers and images, except those related to Nginx Proxy Manager.
 
 # Usage: ./clean_docker.sh [--execute]
 # The --execute flag is optional. If provided, the script will actually perform 
@@ -31,51 +31,51 @@ run_command() {
 
 # Function to get IDs of containers not related to Nginx
 get_non_nginx_containers() {
-    docker ps -a --format '{{.ID}} {{.Image}}' | grep -iv 'nginx|watchtower|nginx-proxy-manager' | awk '{print $1}'
+    docker ps -a --format '{{.ID}} {{.Image}}' | grep -iv 'nginx|nginx-proxy-manager' | awk '{print $1}'
 }
 
 # Function to get IDs of images not related to Nginx
 get_non_nginx_images() {
-    docker images --format '{{.ID}} {{.Repository}}' | grep -iv 'nginx|watchtower|nginx-proxy-manager' | awk '{print $1}'
+    docker images --format '{{.ID}} {{.Repository}}' | grep -iv 'nginx|nginx-proxy-manager' | awk '{print $1}'
 }
 
 # Stop all running containers except Nginx-related ones
-running_containers=$(docker ps --format '{{.ID}} {{.Image}}' | grep -iv 'nginx|watchtower' | awk '{print $1}')
+running_containers=$(docker ps --format '{{.ID}} {{.Image}}' | grep -iv 'nginx|nginx-proxy-manager' | awk '{print $1}')
 
 if [ -n "$running_containers" ]; then
-    echo "Stopping all running containers except Nginx..."
+    echo "Stopping all running containers except Nginx Proxy Manager..."
     for container in $running_containers; do
         run_command docker stop $container
     done
 else
-    echo "No running containers to stop (excluding Nginx, Watchtower)."
+    echo "No running containers to stop (excluding Nginx Proxy Manager)."
 fi
 
 # Tear down the Docker Compose service for the backend pipeline
 #run_command docker compose -f bin/docker-compose-luigi.yml down
 
 # Remove all stopped containers except Nginx-related ones
-stopped_containers=$(docker ps -a --filter "status=exited" --format '{{.ID}} {{.Image}}' | grep -iv 'nginx|watchtower' | awk '{print $1}')
+stopped_containers=$(docker ps -a --filter "status=exited" --format '{{.ID}} {{.Image}}' | grep -iv 'nginx|nginx-proxy-manager' | awk '{print $1}')
 
 if [ -n "$stopped_containers" ]; then
-    echo "Removing stopped containers (excluding Nginx, Watchtower)..."
+    echo "Removing stopped containers (excluding Nginx Proxy Manager)..."
     for container in $stopped_containers; do
         run_command docker rm $container
     done
 else
-    echo "No stopped containers to remove (excluding Nginx, Watchtower)."
+    echo "No stopped containers to remove (excluding Nginx Proxy Manager)."
 fi
 
 # Remove all images except Nginx-related ones
-image_ids=$(docker images --format '{{.ID}} {{.Repository}}' | grep -iv 'nginx|watchtower' | awk '{print $1}')
+image_ids=$(docker images --format '{{.ID}} {{.Repository}}' | grep -iv 'nginx|nginx-proxy-manager' | awk '{print $1}')
 
 if [ -n "$image_ids" ]; then
-    echo "Removing images (excluding Nginx, Watchtower)..."
+    echo "Removing images (excluding Nginx Proxy Manager)..."
     for image in $image_ids; do
         run_command docker rmi $image -f
     done
 else
-    echo "No Docker images to remove (excluding Nginx, Watchtower)."
+    echo "No Docker images to remove (excluding Nginx Proxy Manager)."
 fi
 
 # Prune the build cache to free up disk space

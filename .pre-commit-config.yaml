@@ -3,7 +3,9 @@ repos:
     hooks:
       - id: run-integration-tests
         name: Run integration tests
-        entry: bash -c 'pytest -s --slowmo 300 apps/forecast_dashboard/tests/test_integration.py'
+        # Integration tests are skipped by default. Set TEST_LOCAL=true to run local tests.
+        # Usage: TEST_LOCAL=true git commit -m "message"
+        entry: bash -c 'cd apps/forecast_dashboard && uv run pytest tests/test_integration.py -v'
         language: system
         types: [python]
         pass_filenames: false

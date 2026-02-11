@@ -71,7 +71,7 @@ def call_hindcast_script(start_date: str,
 
 
     # Prepare the command
-    command = ['python', 'hindcast_ML_models.py']
+    command = [sys.executable, 'hindcast_ML_models.py']
 
     # Call the script
     result = subprocess.run(command, capture_output=True, text=True, env=env)

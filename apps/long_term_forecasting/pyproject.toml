@@ -1,0 +1,81 @@
+[project]
+name = "long-term-forecasting"
+version = "0.1.0"
+description = "Long-term (monthly/seasonal) forecasting module for SAPPHIRE forecast tools"
+readme = "readme.md"
+requires-python = ">=3.11"
+authors = [
+    {name = "Beatrice Marti", url = "https://github.com/mabesa"},
+]
+dependencies = [
+    # ML frameworks
+    "catboost==1.2.3",
+    "lightgbm==4.5.0",
+    "xgboost==2.0.3",
+    "scikit-learn>=1.4.0",
+    # Deep learning
+    "torch>=2.9.0",
+    "pytorch-lightning>=2.5.0",
+    "torchmetrics>=1.8.0",
+    # Statistical models
+    "statsmodels>=0.14.5",
+    # Hydrological
+    "PE-Oudin>=0.3",
+    # Core data processing
+    "pandas>=2.2.0",
+    "numpy>=1.26.4",
+    "scipy>=1.15.0",
+    # Geospatial
+    "geopandas>=0.14.3",
+    "fiona>=1.9.5",
+    "pyproj>=3.7.2",
+    "shapely>=2.1.2",
+    # Visualization
+    "matplotlib>=3.8.2",
+    "seaborn>=0.13.2",
+    "plotly>=6.5.0",
+    # Optimization
+    "optuna>=3.5.0",
+    # Data formats
+    "pyarrow>=15.0.0",
+    # Configuration
+    "python-dotenv>=1.2.1",
+    "PyYAML>=6.0.3",
+    # Database
+    "SQLAlchemy>=2.0.40",
+    "psycopg2-binary>=2.9.11",
+    "alembic>=1.17.0",
+    # HTTP
+    "requests>=2.32.0",
+    "aiohttp>=3.13.0",
+    # External libraries
+    "lt-forecasting @ git+https://github.com/hydrosolutions/long-term-forecasting.git@4cb768213c093d6b3defa5a719dcb5495ac504ee",
+    "ieasyhydro-sdk",
+    "sapphire-api-client @ git+https://github.com/hydrosolutions/sapphire-api-client.git@f70a83d6b092b7c616239f50d061f7f03eabcbb2",
+    # Local library dependency
+    "iEasyHydroForecast @ file:///${PROJECT_ROOT}/../iEasyHydroForecast",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0.0",
+]
+
+[tool.uv]
+allow-insecure-host = []
+
+# Override lt-forecasting's hard pin on pandas==2.2.0
+# to be compatible with iEasyHydroForecast's pandas>=2.2.2
+override-dependencies = [
+    "pandas>=2.2.2",
+    "scikit-learn>=1.5.0",
+]
+
+[tool.uv.sources]
+iEasyHydroForecast = { path = "../iEasyHydroForecast", editable = true }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]

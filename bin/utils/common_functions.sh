@@ -116,7 +116,7 @@ read_configuration(){
     else
         if [ "$env_ending" == "kghm" ]; then
             export ieasyhydroforecast_url_pentad=kyg.fc.pentad.$ieasyhydroforecast_url
-            export ieasyhydroforecast_url_decad=kyg.fc.decade.$ieasyhydroforecast_url
+            export ieasyhydroforecast_url_decad=demo.fc.decade.$ieasyhydroforecast_url
         elif [ "$env_ending" == "tjhm" ]; then
             export ieasyhydroforecast_url_pentad=taj.fc.pentad.$ieasyhydroforecast_url
             export ieasyhydroforecast_url_decad=taj.fc.decade.$ieasyhydroforecast_url
@@ -147,15 +147,18 @@ clean_out_docker_space() {
     ieasyhydroforecast_data_root_dir=$ieasyhydroforecast_data_root_dir source ./bin/utils/clean_docker.sh --execute
 }
 
-# Function to stop and remove a container if it exists
+# Function to stop and remove containers matching a name pattern
+# Uses container IDs to handle dynamic container names (e.g., prepgateway_attempt_*)
 stop_and_remove_container() {
-    container_name=$1
-    if [ "$(docker ps -q -f name=$container_name)" ]; then
-        docker stop $container_name
-    fi
-    if [ "$(docker ps -a -q -f name=$container_name)" ]; then
-        docker rm $container_name
-    fi
+    name_pattern=$1
+    # Stop running containers matching the pattern
+    for cid in $(docker ps -q -f name=$name_pattern); do
+        docker stop $cid 2>/dev/null || true
+    done
+    # Remove all containers (running or stopped) matching the pattern
+    for cid in $(docker ps -a -q -f name=$name_pattern); do
+        docker rm $cid 2>/dev/null || true
+    done
 }
 
 # Function to clean out the backend for res-running of the forecasts

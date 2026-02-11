@@ -25,6 +25,9 @@ echo "| Luigi scheduler URL set to: http://${LUIGI_SCHEDULER_HOST}:${LUIGI_SCHED
 # Establish SSH tunnel (if required)
 establish_ssh_tunnel
 
+# Pull Docker images (ensures prepgateway image is available)
+pull_docker_images
+
 # Ensure a stable Compose project so services share the same network
 export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-sapphire}"
 
@@ -59,9 +62,9 @@ scheduler_port = ${LUIGI_SCHEDULER_PORT}
 EOF
 
 # Regular command
+# Note: PYTHONPATH=/app is set in docker-compose-luigi.yml for Luigi module resolution
 docker compose -f bin/docker-compose-luigi.yml run \
     -v $(pwd)/temp_luigi.cfg:/app/luigi.cfg \
-    -e PYTHONPATH="/home/appuser/.local/lib/python3.11/site-packages:${PYTHONPATH}" \
     --user root \
     --rm \
     preprocessing-gateway

@@ -1,4 +1,6 @@
 # docker compose file for running the sapphire forecast tools
+# Using Python 3.12 + uv (commands use 'uv run panel')
+#
 # build: ieasyhydroforecast_data_root_dir=<path> docker-compose -f /path/to/docker-compose.yml build --no-cache
 # run: ieasyhydroforecast_data_root_dir=<path> docker-compose -f /path/to/docker-compose.yml up -d
 # stop: docker-compose -f /path/to/docker-compose.yml down
@@ -25,8 +27,6 @@ services:
   #    - ${ieasyhydroforecast_data_ref_dir}/config:${ieasyhydroforecast_container_data_ref_dir}/config
   #    - ${ieasyhydroforecast_data_ref_dir}/GIS:${ieasyhydroforecast_container_data_ref_dir}/GIS
   #  container_name: sapphire-frontend-config
-  #  labels:
-  #    - com.centurylinklabs.watchtower.enable=true
 
   pentaddashboard:
     image: mabesa/sapphire-dashboard:${ieasyhydroforecast_frontend_docker_image_tag:-latest}
@@ -48,7 +48,7 @@ services:
     command: >
       bash -c "
       ORIGINS_ARGS=$(echo $${ieasyhydroforecast_url_pentad} | sed 's/,/ --allow-websocket-origin=/g' | sed 's/^/--allow-websocket-origin=/') &&
-      panel serve
+      uv run panel serve
       --address=0.0.0.0
       --port=5006
       $${ORIGINS_ARGS}
@@ -66,8 +66,6 @@ services:
       - ${ieasyhydroforecast_data_ref_dir}/bin:${ieasyhydroforecast_container_data_ref_dir}/bin
       - /var/run/docker.sock:/var/run/docker.sock
     container_name: sapphire-frontend-forecast-pentad
-    labels:
-      - com.centurylinklabs.watchtower.enable=true
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5006/pentad_dashboard"]
       interval: 30s
@@ -94,7 +92,7 @@ services:
     command: >
       bash -c "
       ORIGINS_ARGS=$(echo $${ieasyhydroforecast_url_decad} | sed 's/,/ --allow-websocket-origin=/g' | sed 's/^/--allow-websocket-origin=/') &&
-      panel serve
+      uv run panel serve
       --address=0.0.0.0
       --port=5007
       $${ORIGINS_ARGS}
@@ -112,29 +110,11 @@ services:
       - ${ieasyhydroforecast_data_ref_dir}/bin:${ieasyhydroforecast_container_data_ref_dir}/bin
       - /var/run/docker.sock:/var/run/docker.sock
     container_name: sapphire-frontend-forecast-decad
-    labels:
-      - com.centurylinklabs.watchtower.enable=true
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5007/decad_dashboard"]
       interval: 30s
       timeout: 5s
       retries: 3
-
-  watchtower:
-    image: containrrr/watchtower
-    container_name: watchtower
-    restart: always
-    command: --interval 30 --label-enable --cleanup
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-    environment:
-      - WATCHTOWER_NOTIFICATIONS=email
-      - WATCHTOWER_NOTIFICATION_EMAIL_FROM=${SAPPHIRE_PIPELINE_SENDER_EMAIL}
-      - WATCHTOWER_NOTIFICATION_EMAIL_TO=${SAPPHIRE_PIPELINE_EMAIL_RECIPIENTS}
-      - WATCHTOWER_NOTIFICATION_EMAIL_SERVER=${SAPPHIRE_PIPELINE_SMTP_SERVER}
-      - WATCHTOWER_NOTIFICATION_EMAIL_SERVER_PORT=${SAPPHIRE_PIPELINE_SMTP_PORT}
-      - WATCHTOWER_NOTIFICATION_EMAIL_SERVER_USER=${SAPPHIRE_PIPELINE_SMTP_USERNAME}
-      - WATCHTOWER_NOTIFICATION_EMAIL_SERVER_PASSWORD=${SAPPHIRE_PIPELINE_SMTP_PASSWORD}
 
 
 

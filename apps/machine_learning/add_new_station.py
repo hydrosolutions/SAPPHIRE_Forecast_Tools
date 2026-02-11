@@ -74,7 +74,7 @@ def call_hindcast_script(start_date: str,
         print('Running in Docker, calling command:', command)
         logger.info('Running in Docker, calling command: %s', command)
     else:
-        command = ['python', 'hindcast_ML_models.py']
+        command = [sys.executable, 'hindcast_ML_models.py']
         print('Running locally, calling command:', command)
         logger.info('Running locally, calling command: %s', command)
 

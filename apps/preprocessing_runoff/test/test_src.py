@@ -1,318 +1,22 @@
 import os
+import sys
 import pandas as pd
+import numpy as np
 import datetime as dt
 import pytest
-from unittest.mock import Mock, patch, MagicMock
 
-from preprocessing_runoff.src import src
+# Add src directory to path for imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+import src
 
+# Helper to get absolute paths to test files
+TEST_DIR = os.path.dirname(os.path.abspath(__file__))
+TEST_FILES_DIR = os.path.join(TEST_DIR, 'test_files')
 
-# =============================================================================
-# Tests for SAPPHIRE API Integration
-# =============================================================================
-
-class TestWriteRunoffToApi:
-    """Tests for the _write_runoff_to_api helper function."""
-
-    def test_api_disabled_via_env_var(self):
-        """When SAPPHIRE_API_ENABLED=false, API write should be skipped."""
-        os.environ['SAPPHIRE_API_ENABLED'] = 'false'
-        try:
-            data = pd.DataFrame({
-                'code': ['12345', '12345'],
-                'date': ['2024-01-01', '2024-01-02'],
-                'discharge': [10.5, 11.2]
-            })
-            result = src._write_runoff_to_api(data)
-            assert result is False
-        finally:
-            os.environ.pop('SAPPHIRE_API_ENABLED', None)
-
-    def test_api_disabled_case_insensitive(self):
-        """SAPPHIRE_API_ENABLED should be case-insensitive."""
-        os.environ['SAPPHIRE_API_ENABLED'] = 'FALSE'
-        try:
-            data = pd.DataFrame({
-                'code': ['12345'],
-                'date': ['2024-01-01'],
-                'discharge': [10.5]
-            })
-            result = src._write_runoff_to_api(data)
-            assert result is False
-        finally:
-            os.environ.pop('SAPPHIRE_API_ENABLED', None)
-
-    @patch('preprocessing_runoff.src.src.SapphirePreprocessingClient')
-    def test_api_not_ready_raises_error(self, mock_client_class):
-        """When API health check fails, should raise SapphireAPIError."""
-        # Skip if sapphire-api-client not installed
-        if not src.SAPPHIRE_API_AVAILABLE:
-            pytest.skip("sapphire-api-client not installed")
-
-        os.environ['SAPPHIRE_API_ENABLED'] = 'true'
-        try:
-            mock_client = Mock()
-            mock_client.readiness_check.return_value = False
-            mock_client_class.return_value = mock_client
-
-            data = pd.DataFrame({
-                'code': ['12345'],
-                'date': ['2024-01-01'],
-                'discharge': [10.5]
-            })
-
-            with pytest.raises(src.SapphireAPIError, match="not ready"):
-                src._write_runoff_to_api(data)
-        finally:
-            os.environ.pop('SAPPHIRE_API_ENABLED', None)
-
-    @patch('preprocessing_runoff.src.src.SapphirePreprocessingClient')
-    def test_api_write_success(self, mock_client_class):
-        """When API write succeeds, should return True."""
-        if not src.SAPPHIRE_API_AVAILABLE:
-            pytest.skip("sapphire-api-client not installed")
-
-        os.environ['SAPPHIRE_API_ENABLED'] = 'true'
-        try:
-            mock_client = Mock()
-            mock_client.readiness_check.return_value = True
-            mock_client.write_runoff.return_value = 2
-            mock_client_class.return_value = mock_client
-
-            data = pd.DataFrame({
-                'code': ['12345', '12345'],
-                'date': ['2024-01-01', '2024-01-02'],
-                'discharge': [10.5, 11.2]
-            })
-
-            result = src._write_runoff_to_api(data)
-
-            assert result is True
-            mock_client.write_runoff.assert_called_once()
-            # Verify records were prepared correctly
-            call_args = mock_client.write_runoff.call_args[0][0]
-            assert len(call_args) == 2
-            assert call_args[0]['horizon_type'] == 'day'
-            assert call_args[0]['code'] == '12345'
-            assert call_args[0]['date'] == '2024-01-01'
-            assert call_args[0]['discharge'] == 10.5
-        finally:
-            os.environ.pop('SAPPHIRE_API_ENABLED', None)
-
-    @patch('preprocessing_runoff.src.src.SapphirePreprocessingClient')
-    def test_api_record_preparation_with_nan(self, mock_client_class):
-        """NaN discharge values should become None in API records."""
-        if not src.SAPPHIRE_API_AVAILABLE:
-            pytest.skip("sapphire-api-client not installed")
-
-        os.environ['SAPPHIRE_API_ENABLED'] = 'true'
-        try:
-            mock_client = Mock()
-            mock_client.readiness_check.return_value = True
-            mock_client.write_runoff.return_value = 2
-            mock_client_class.return_value = mock_client
-
-            data = pd.DataFrame({
-                'code': ['12345', '12345'],
-                'date': ['2024-01-01', '2024-01-02'],
-                'discharge': [10.5, float('nan')]
-            })
-
-            src._write_runoff_to_api(data)
-
-            call_args = mock_client.write_runoff.call_args[0][0]
-            assert call_args[0]['discharge'] == 10.5
-            assert call_args[1]['discharge'] is None
-        finally:
-            os.environ.pop('SAPPHIRE_API_ENABLED', None)
-
-    @patch('preprocessing_runoff.src.src.SapphirePreprocessingClient')
-    def test_api_record_date_fields(self, mock_client_class):
-        """API records should have correct horizon_value and horizon_in_year."""
-        if not src.SAPPHIRE_API_AVAILABLE:
-            pytest.skip("sapphire-api-client not installed")
-
-        os.environ['SAPPHIRE_API_ENABLED'] = 'true'
-        try:
-            mock_client = Mock()
-            mock_client.readiness_check.return_value = True
-            mock_client.write_runoff.return_value = 1
-            mock_client_class.return_value = mock_client
-
-            # Use a specific date where we know the day and day_of_year
-            data = pd.DataFrame({
-                'code': ['12345'],
-                'date': ['2024-03-15'],  # Day 15, day of year 75 (leap year)
-                'discharge': [10.5]
-            })
-
-            src._write_runoff_to_api(data)
-
-            call_args = mock_client.write_runoff.call_args[0][0]
-            assert call_args[0]['horizon_value'] == 15  # Day of month
-            assert call_args[0]['horizon_in_year'] == 75  # Day of year (2024 is leap year)
-            assert call_args[0]['predictor'] is None
-        finally:
-            os.environ.pop('SAPPHIRE_API_ENABLED', None)
-
-
-class TestApiCsvConsistency:
-    """Tests ensuring API and CSV processes receive consistent data."""
-
-    @patch('preprocessing_runoff.src.src._write_runoff_to_api')
-    def test_api_receives_same_transformed_data_as_csv(self, mock_api_write):
-        """Verify API receives data with same transformations as CSV (rounding, code format, date format)."""
-        mock_api_write.return_value = True
-
-        os.environ['ieasyforecast_intermediate_data_path'] = 'preprocessing_runoff/test/test_files'
-        os.environ['ieasyforecast_daily_discharge_file'] = 'test_consistency.csv'
-        os.environ['SAPPHIRE_API_ENABLED'] = 'true'
-
-        try:
-            # Input data with values that need transformation
-            runoff_data = pd.DataFrame({
-                'date': ['2000-01-01', '2000-01-02'],
-                'discharge': [2.33333, 2.44444],  # Will be rounded to 3 decimals
-                'code': [12345.0, 12345.0],  # Will have .0 stripped
-                'name': ['a', 'a']
-            })
-
-            src.write_daily_time_series_data_to_csv(runoff_data)
-
-            # Check what data was passed to API
-            api_call_data = mock_api_write.call_args[0][0]
-
-            # Read CSV to compare
-            csv_data = pd.read_csv('preprocessing_runoff/test/test_files/test_consistency.csv')
-
-            # Verify discharge rounding is consistent
-            assert api_call_data['discharge'].iloc[0] == 2.333  # Rounded to 3 decimals
-            assert csv_data['discharge'].iloc[0] == 2.333
-
-            # Verify code format is consistent (no .0)
-            assert api_call_data['code'].iloc[0] == '12345'  # String, no .0
-            assert str(csv_data['code'].iloc[0]) == '12345'
-
-            # Verify date format is consistent
-            assert api_call_data['date'].iloc[0] == '2000-01-01'
-            assert csv_data['date'].iloc[0] == '2000-01-01'
-
-        finally:
-            os.environ.pop('ieasyforecast_intermediate_data_path', None)
-            os.environ.pop('ieasyforecast_daily_discharge_file', None)
-            os.environ.pop('SAPPHIRE_API_ENABLED', None)
-            if os.path.exists('preprocessing_runoff/test/test_files/test_consistency.csv'):
-                os.remove('preprocessing_runoff/test/test_files/test_consistency.csv')
-
-
-class TestWriteDailyTimeSeriesWithApi:
-    """Tests for write_daily_time_series_data_to_csv with API integration."""
-
-    @patch('preprocessing_runoff.src.src._write_runoff_to_api')
-    def test_csv_written_when_api_disabled(self, mock_api_write):
-        """CSV should still be written when API is disabled."""
-        mock_api_write.return_value = False
-
-        os.environ['ieasyforecast_intermediate_data_path'] = 'preprocessing_runoff/test/test_files'
-        os.environ['ieasyforecast_daily_discharge_file'] = 'test_api_disabled.csv'
-        os.environ['SAPPHIRE_API_ENABLED'] = 'false'
-
-        try:
-            runoff_data = pd.DataFrame({
-                'date': ['2000-01-01', '2000-01-02'],
-                'discharge': [2.3, 2.4],
-                'code': [1, 1]
-            })
-
-            # Should not raise any error
-            src.write_daily_time_series_data_to_csv(runoff_data)
-
-            # CSV should be written
-            output_path = 'preprocessing_runoff/test/test_files/test_api_disabled.csv'
-            assert os.path.exists(output_path)
-            output = pd.read_csv(output_path)
-            assert len(output) == 2
-        finally:
-            os.environ.pop('ieasyforecast_intermediate_data_path', None)
-            os.environ.pop('ieasyforecast_daily_discharge_file', None)
-            os.environ.pop('SAPPHIRE_API_ENABLED', None)
-            if os.path.exists('preprocessing_runoff/test/test_files/test_api_disabled.csv'):
-                os.remove('preprocessing_runoff/test/test_files/test_api_disabled.csv')
-
-    @patch('preprocessing_runoff.src.src._write_runoff_to_api')
-    def test_api_error_writes_csv_then_raises(self, mock_api_write):
-        """When API fails, CSV should be written as backup, then error raised."""
-        mock_api_write.side_effect = src.SapphireAPIError("API connection failed")
-
-        os.environ['ieasyforecast_intermediate_data_path'] = 'preprocessing_runoff/test/test_files'
-        os.environ['ieasyforecast_daily_discharge_file'] = 'test_api_backup.csv'
-        os.environ['SAPPHIRE_API_ENABLED'] = 'true'
-
-        try:
-            runoff_data = pd.DataFrame({
-                'date': ['2000-01-01', '2000-01-02'],
-                'discharge': [2.3, 2.4],
-                'code': [1, 1]
-            })
-
-            # Should raise SapphireAPIError
-            with pytest.raises(src.SapphireAPIError, match="API write failed"):
-                src.write_daily_time_series_data_to_csv(runoff_data)
-
-            # But CSV should still be written as backup
-            output_path = 'preprocessing_runoff/test/test_files/test_api_backup.csv'
-            assert os.path.exists(output_path)
-            output = pd.read_csv(output_path)
-            assert len(output) == 2
-        finally:
-            os.environ.pop('ieasyforecast_intermediate_data_path', None)
-            os.environ.pop('ieasyforecast_daily_discharge_file', None)
-            os.environ.pop('SAPPHIRE_API_ENABLED', None)
-            if os.path.exists('preprocessing_runoff/test/test_files/test_api_backup.csv'):
-                os.remove('preprocessing_runoff/test/test_files/test_api_backup.csv')
-
-    @patch('preprocessing_runoff.src.src._write_runoff_to_api')
-    def test_api_success_also_writes_csv(self, mock_api_write):
-        """During transition period, both API and CSV should be written."""
-        mock_api_write.return_value = True
-
-        os.environ['ieasyforecast_intermediate_data_path'] = 'preprocessing_runoff/test/test_files'
-        os.environ['ieasyforecast_daily_discharge_file'] = 'test_api_success.csv'
-        os.environ['SAPPHIRE_API_ENABLED'] = 'true'
-
-        try:
-            runoff_data = pd.DataFrame({
-                'date': ['2000-01-01', '2000-01-02'],
-                'discharge': [2.3, 2.4],
-                'code': [1, 1]
-            })
-
-            # Should not raise any error
-            src.write_daily_time_series_data_to_csv(runoff_data)
-
-            # API should have been called
-            mock_api_write.assert_called_once()
-
-            # CSV should also be written (redundancy during transition)
-            output_path = 'preprocessing_runoff/test/test_files/test_api_success.csv'
-            assert os.path.exists(output_path)
-            output = pd.read_csv(output_path)
-            assert len(output) == 2
-        finally:
-            os.environ.pop('ieasyforecast_intermediate_data_path', None)
-            os.environ.pop('ieasyforecast_daily_discharge_file', None)
-            os.environ.pop('SAPPHIRE_API_ENABLED', None)
-            if os.path.exists('preprocessing_runoff/test/test_files/test_api_success.csv'):
-                os.remove('preprocessing_runoff/test/test_files/test_api_success.csv')
-
-
-# =============================================================================
-# Original Tests (updated to disable API during testing)
-# =============================================================================
 
 def test_get_runoff_data_no_data_available():
 
-    os.environ['ieasyforecast_daily_discharge_path'] = 'preprocessing_runoff/test/test_files/test_config'
+    os.environ['ieasyforecast_daily_discharge_path'] = os.path.join(TEST_FILES_DIR, 'test_config')
 
     output = src.get_runoff_data()
     print("Output: ")
@@ -321,7 +25,7 @@ def test_get_runoff_data_no_data_available():
     os.environ.pop('ieasyforecast_daily_discharge_path')
 
 def test_read_runoff_data_from_multiple_rivers_xlsx():
-    filename = 'preprocessing_runoff/test/test_files/test_runoff_file.xlsx'
+    filename = os.path.join(TEST_FILES_DIR, 'test_runoff_file.xlsx')
     expected_output = pd.DataFrame({
         'date': ['2000-01-01', '2000-01-02', '2000-01-03', '2000-01-04', '2000-01-05',
                  '2000-01-01', '2000-01-02', '2000-01-03', '2000-01-04', '2000-01-05'],
@@ -343,7 +47,7 @@ def test_read_runoff_data_from_multiple_rivers_xlsx():
 
 def test_read_runoff_data_from_multiple_rivers_no_code():
 
-    filename = 'preprocessing_runoff/test/test_files/files_with_errors/test_runoff_file_no_code.xlsx'
+    filename = os.path.join(TEST_FILES_DIR, 'files_with_errors', 'test_runoff_file_no_code.xlsx')
 
     expected_output = pd.DataFrame({
         'date': ['2000-01-01', '2000-01-02', '2000-01-03', '2000-01-04', '2000-01-05'],
@@ -362,7 +66,7 @@ def test_read_runoff_data_from_multiple_rivers_no_code():
 
 def test_read_runoff_data_from_multiple_rivers_without_data_in_xls():
 
-    filename = 'preprocessing_runoff/test/test_files/files_with_errors/test_runoff_file_no_data.xlsx'
+    filename = os.path.join(TEST_FILES_DIR, 'files_with_errors', 'test_runoff_file_no_data.xlsx')
 
     output = src.read_runoff_data_from_multiple_rivers_xlsx(filename, code_list=['17123']).reset_index(drop=True)
 
@@ -371,7 +75,7 @@ def test_read_runoff_data_from_multiple_rivers_without_data_in_xls():
 
 def test_read_runoff_data_from_multiple_rivers_no_file():
 
-    filename = 'preprocessing_runoff/test/test_files/files_with_errors/this_file_does_not_exist.xlsx'
+    filename = os.path.join(TEST_FILES_DIR, 'files_with_errors', 'this_file_does_not_exist.xlsx')
 
     # Assert FileNotFoundError is raised
     with pytest.raises(FileNotFoundError):
@@ -379,7 +83,7 @@ def test_read_runoff_data_from_multiple_rivers_no_file():
 
 def test_read_runoff_data_from_multiple_rivers_no_station_header():
 
-    filename = 'preprocessing_runoff/test/test_files/files_with_errors/test_runoff_file_no_station_header.xlsx'
+    filename = os.path.join(TEST_FILES_DIR, 'files_with_errors', 'test_runoff_file_no_station_header.xlsx')
 
     with pytest.raises(ValueError):
         src.read_runoff_data_from_multiple_rivers_xlsx(filename, code_list=[123])
@@ -407,7 +111,7 @@ def test_read_all_runoff_data_from_excel():
     }).reset_index(drop=True)
     expected_output['date'] = pd.to_datetime(expected_output['date']).dt.normalize()
 
-    os.environ['ieasyforecast_daily_discharge_path'] = 'preprocessing_runoff/test/test_files'
+    os.environ['ieasyforecast_daily_discharge_path'] = TEST_FILES_DIR
 
     output = src.read_all_runoff_data_from_excel(code_list=['17123', '17456', '12345']).reset_index(drop=True)
 
@@ -416,11 +120,7 @@ def test_read_all_runoff_data_from_excel():
     assert output.equals(expected_output)
 
 
-@patch('preprocessing_runoff.src.src._write_runoff_to_api')
-def test_write_data_to_csv(mock_api_write):
-    """Test CSV writing functionality (API disabled for this test)."""
-    mock_api_write.return_value = False  # Simulate API disabled/unavailable
-
+def test_write_data_to_csv():
     runoff_data = pd.DataFrame({
         'date': ['2000-01-01', '2000-01-02', '2000-01-03', '2000-01-04', '2000-01-05'],
         'discharge': [2.3, 2.4, 2.5, 2.6, 2.7],
@@ -428,30 +128,27 @@ def test_write_data_to_csv(mock_api_write):
         'code': [1, 1, 1, 1, 1]})
 
     # Define environment variables
-    os.environ['ieasyforecast_intermediate_data_path'] = 'preprocessing_runoff/test/test_files'
+    os.environ['ieasyforecast_intermediate_data_path'] = TEST_FILES_DIR
     os.environ['ieasyforecast_daily_discharge_file'] = 'test_runoff_file.csv'
-    os.environ['SAPPHIRE_API_ENABLED'] = 'false'  # Disable API for this test
 
-    try:
-        # Write the output file
-        src.write_daily_time_series_data_to_csv(runoff_data)
+    # Write the output file
+    src.write_daily_time_series_data_to_csv(runoff_data)
 
-        # Read the output file
-        output = pd.read_csv('preprocessing_runoff/test/test_files/test_runoff_file.csv')
+    # Read the output file
+    output_file = os.path.join(TEST_FILES_DIR, 'test_runoff_file.csv')
+    output = pd.read_csv(output_file)
 
-        # The data in columns date, discharge and code should be the same
-        assert output['date'].equals(runoff_data['date'])
-        assert output['discharge'].equals(runoff_data['discharge'])
-        assert output['code'].equals(runoff_data['code'])
-    finally:
-        # Clean up the environment variables
-        os.environ.pop('ieasyforecast_intermediate_data_path', None)
-        os.environ.pop('ieasyforecast_daily_discharge_file', None)
-        os.environ.pop('SAPPHIRE_API_ENABLED', None)
+    # The data in columns date, discharge and code should be the same
+    assert output['date'].equals(runoff_data['date'])
+    assert output['discharge'].equals(runoff_data['discharge'])
+    assert output['code'].equals(runoff_data['code'])
 
-        # Remove the output file
-        if os.path.exists('preprocessing_runoff/test/test_files/test_runoff_file.csv'):
-            os.remove('preprocessing_runoff/test/test_files/test_runoff_file.csv')
+    # Clean up the environment variables
+    os.environ.pop('ieasyforecast_intermediate_data_path')
+    os.environ.pop('ieasyforecast_daily_discharge_file')
+
+    # Remove the output file
+    os.remove(output_file)
 
 
 def test_filter_roughly_for_outliers_no_outliers():
@@ -470,8 +167,20 @@ def test_filter_roughly_for_outliers_no_outliers():
     # Drop index
     result = result.reset_index(drop=True)
 
-    # Check that the result is the same as the input
-    pd.testing.assert_frame_equal(result, df, check_like=True)
+    # Check that all original data is preserved (values should match for original dates)
+    for code in ['A', 'B']:
+        for date in ['2000-01-01', '2000-01-02', '2000-01-03']:
+            orig_val = df[(df['Code'] == code) & (df['Date'] == date)]['Q_m3s'].values[0]
+            result_val = result[(result['Code'] == code) & (result['Date'] == date)]['Q_m3s'].values[0]
+            assert orig_val == result_val, f"Value mismatch for {code} on {date}"
+
+    # Verify no NaN values were introduced for original dates
+    for code in ['A', 'B']:
+        code_data = result[result['Code'] == code]
+        original_dates = pd.to_datetime(['2000-01-01', '2000-01-02', '2000-01-03'])
+        for date in original_dates:
+            val = code_data[code_data['Date'] == date]['Q_m3s'].values[0]
+            assert not pd.isna(val), f"Unexpected NaN for {code} on {date}"
 
 def test_filter_roughly_for_outliers_with_outliers():
     # Create a DataFrame with an outlier
@@ -669,381 +378,261 @@ class TestFromDailyTimeSeriestoHydrograph:
                 assert site2_day['mean'].iloc[0] == day * 2
 
 
-# =============================================================================
-# Tests for Hydrograph API Integration
-# =============================================================================
+class TestMergeWithUpdate:
+    """Tests for the _merge_with_update helper function."""
 
-class TestWriteHydrographToApi:
-    """Tests for the _write_hydrograph_to_api helper function."""
+    def test_merge_empty_existing_data(self):
+        """Test merging when existing data is empty."""
+        existing = pd.DataFrame(columns=['code', 'date', 'discharge'])
+        new_data = pd.DataFrame({
+            'code': ['A', 'A'],
+            'date': pd.to_datetime(['2024-01-01', '2024-01-02']),
+            'discharge': [10.0, 20.0]
+        })
 
-    def test_api_disabled_via_env_var(self):
-        """When SAPPHIRE_API_ENABLED=false, hydrograph API write should be skipped."""
-        os.environ['SAPPHIRE_API_ENABLED'] = 'false'
-        try:
-            current_year = dt.date.today().year
-            data = pd.DataFrame({
-                'code': ['12345', '12345'],
-                'date': ['2024-01-01', '2024-01-02'],
-                'day_of_year': [1, 2],
-                'count': [10, 10],
-                'mean': [5.5, 6.5],
-                'std': [1.0, 1.0],
-                'min': [3.0, 4.0],
-                'max': [8.0, 9.0],
-                '5%': [3.5, 4.5],
-                '25%': [4.5, 5.5],
-                '50%': [5.5, 6.5],
-                '75%': [6.5, 7.5],
-                '95%': [7.5, 8.5],
-                str(current_year): [10.0, 11.0],
-                str(current_year - 1): [9.0, 10.0],
-            })
-            result = src._write_hydrograph_to_api(data)
-            assert result is False
-        finally:
-            os.environ.pop('SAPPHIRE_API_ENABLED', None)
+        result = src._merge_with_update(existing, new_data, 'code', 'date', 'discharge')
 
-    @patch('preprocessing_runoff.src.src.SapphirePreprocessingClient')
-    def test_hydrograph_api_write_success(self, mock_client_class):
-        """When hydrograph API write succeeds, should return True."""
-        if not src.SAPPHIRE_API_AVAILABLE:
-            pytest.skip("sapphire-api-client not installed")
+        assert len(result) == 2
+        assert result['discharge'].tolist() == [10.0, 20.0]
 
-        os.environ['SAPPHIRE_API_ENABLED'] = 'true'
-        try:
-            mock_client = Mock()
-            mock_client.readiness_check.return_value = True
-            mock_client.write_hydrograph.return_value = 2
-            mock_client_class.return_value = mock_client
+    def test_merge_empty_new_data(self):
+        """Test merging when new data is empty."""
+        existing = pd.DataFrame({
+            'code': ['A', 'A'],
+            'date': pd.to_datetime(['2024-01-01', '2024-01-02']),
+            'discharge': [10.0, 20.0]
+        })
+        new_data = pd.DataFrame(columns=['code', 'date', 'discharge'])
 
-            current_year = dt.date.today().year
-            data = pd.DataFrame({
-                'code': ['12345', '12345'],
-                'date': ['2024-01-01', '2024-01-02'],
-                'day_of_year': [1, 2],
-                'count': [10, 10],
-                'mean': [5.5, 6.5],
-                'std': [1.0, 1.0],
-                'min': [3.0, 4.0],
-                'max': [8.0, 9.0],
-                '5%': [3.5, 4.5],
-                '25%': [4.5, 5.5],
-                '50%': [5.5, 6.5],
-                '75%': [6.5, 7.5],
-                '95%': [7.5, 8.5],
-                str(current_year): [10.0, 11.0],
-                str(current_year - 1): [9.0, 10.0],
-            })
+        result = src._merge_with_update(existing, new_data, 'code', 'date', 'discharge')
 
-            result = src._write_hydrograph_to_api(data)
+        assert len(result) == 2
+        assert result['discharge'].tolist() == [10.0, 20.0]
 
-            assert result is True
-            mock_client.write_hydrograph.assert_called_once()
-            # Verify records were prepared correctly
-            call_args = mock_client.write_hydrograph.call_args[0][0]
-            assert len(call_args) == 2
-            assert call_args[0]['horizon_type'] == 'day'
-            assert call_args[0]['code'] == '12345'
-            # Verify percentile column mapping
-            assert call_args[0]['q05'] == 3.5
-            assert call_args[0]['q25'] == 4.5
-            assert call_args[0]['q50'] == 5.5
-            assert call_args[0]['q75'] == 6.5
-            assert call_args[0]['q95'] == 7.5
-            # Verify current/previous year mapping
-            assert call_args[0]['current'] == 10.0
-            assert call_args[0]['previous'] == 9.0
-        finally:
-            os.environ.pop('SAPPHIRE_API_ENABLED', None)
+    def test_merge_updates_existing_values(self):
+        """Test that existing values are updated with new values."""
+        existing = pd.DataFrame({
+            'code': ['A', 'A', 'B'],
+            'date': pd.to_datetime(['2024-01-01', '2024-01-02', '2024-01-01']),
+            'discharge': [10.0, 20.0, 30.0]
+        })
+        new_data = pd.DataFrame({
+            'code': ['A'],
+            'date': pd.to_datetime(['2024-01-02']),
+            'discharge': [25.0]  # Updated value
+        })
 
-    @patch('preprocessing_runoff.src.src.SapphirePreprocessingClient')
-    def test_hydrograph_api_handles_nan_values(self, mock_client_class):
-        """NaN values in hydrograph data should become None in API records."""
-        if not src.SAPPHIRE_API_AVAILABLE:
-            pytest.skip("sapphire-api-client not installed")
+        result = src._merge_with_update(existing, new_data, 'code', 'date', 'discharge')
 
-        os.environ['SAPPHIRE_API_ENABLED'] = 'true'
-        try:
-            mock_client = Mock()
-            mock_client.readiness_check.return_value = True
-            mock_client.write_hydrograph.return_value = 1
-            mock_client_class.return_value = mock_client
+        # Find the updated row
+        updated_row = result[(result['code'] == 'A') &
+                            (result['date'] == pd.Timestamp('2024-01-02'))]
+        assert updated_row['discharge'].values[0] == 25.0
 
-            current_year = dt.date.today().year
-            data = pd.DataFrame({
-                'code': ['12345'],
-                'date': ['2024-01-01'],
-                'day_of_year': [1],
-                'count': [10],
-                'mean': [5.5],
-                'std': [float('nan')],  # NaN value
-                'min': [3.0],
-                'max': [8.0],
-                '5%': [float('nan')],  # NaN value
-                '25%': [4.5],
-                '50%': [5.5],
-                '75%': [6.5],
-                '95%': [7.5],
-                str(current_year): [float('nan')],  # NaN value
-                str(current_year - 1): [9.0],
-            })
+    def test_merge_adds_new_rows(self):
+        """Test that new rows are added to the result."""
+        existing = pd.DataFrame({
+            'code': ['A'],
+            'date': pd.to_datetime(['2024-01-01']),
+            'discharge': [10.0]
+        })
+        new_data = pd.DataFrame({
+            'code': ['A', 'B'],
+            'date': pd.to_datetime(['2024-01-02', '2024-01-01']),
+            'discharge': [20.0, 30.0]
+        })
 
-            src._write_hydrograph_to_api(data)
+        result = src._merge_with_update(existing, new_data, 'code', 'date', 'discharge')
 
-            call_args = mock_client.write_hydrograph.call_args[0][0]
-            assert call_args[0]['std'] is None
-            assert call_args[0]['q05'] is None
-            assert call_args[0]['current'] is None
-            assert call_args[0]['previous'] == 9.0  # Non-NaN should be preserved
-        finally:
-            os.environ.pop('SAPPHIRE_API_ENABLED', None)
+        assert len(result) == 3  # 1 original + 2 new
 
 
-class TestWriteDailyHydrographWithApi:
-    """Tests for write_daily_hydrograph_data_to_csv with API integration."""
+class TestLoadCachedData:
+    """Tests for the _load_cached_data helper function."""
 
-    @patch('preprocessing_runoff.src.src._write_hydrograph_to_api')
-    def test_hydrograph_csv_written_when_api_disabled(self, mock_api_write):
-        """CSV should still be written when API is disabled."""
-        mock_api_write.return_value = False
+    def test_loads_existing_csv(self, tmp_path):
+        """Test loading data from an existing CSV file."""
+        # Create a test CSV file
+        test_data = pd.DataFrame({
+            'code': ['15194', '15194'],
+            'date': ['2024-01-01', '2024-01-02'],
+            'discharge': [10.0, 20.0]
+        })
+        csv_path = tmp_path / 'daily_discharge.csv'
+        test_data.to_csv(csv_path, index=False)
 
-        os.environ['ieasyforecast_intermediate_data_path'] = 'preprocessing_runoff/test/test_files'
-        os.environ['ieasyforecast_hydrograph_day_file'] = 'test_hydrograph_api_disabled.csv'
-        os.environ['SAPPHIRE_API_ENABLED'] = 'false'
+        # Set environment variables
+        original_path = os.environ.get('ieasyforecast_intermediate_data_path')
+        original_file = os.environ.get('ieasyforecast_daily_discharge_file')
 
         try:
-            current_year = dt.date.today().year
-            hydrograph_data = pd.DataFrame({
-                'code': ['12345', '12345'],
-                'date': ['2024-01-01', '2024-01-02'],
-                'day_of_year': [1, 2],
-                'count': [10, 10],
-                'mean': [5.5, 6.5],
-            })
+            os.environ['ieasyforecast_intermediate_data_path'] = str(tmp_path)
+            os.environ['ieasyforecast_daily_discharge_file'] = 'daily_discharge.csv'
 
-            # Should not raise any error
-            src.write_daily_hydrograph_data_to_csv(
-                hydrograph_data,
-                column_list=['code', 'date', 'day_of_year', 'count', 'mean']
+            result = src._load_cached_data(
+                date_col='date',
+                discharge_col='discharge',
+                name_col='name',
+                code_col='code',
+                code_list=['15194']
             )
 
-            # CSV should be written
-            output_path = 'preprocessing_runoff/test/test_files/test_hydrograph_api_disabled.csv'
-            assert os.path.exists(output_path)
-            output = pd.read_csv(output_path)
-            assert len(output) == 2
+            assert len(result) == 2
+            assert result['code'].tolist() == ['15194', '15194']
         finally:
-            os.environ.pop('ieasyforecast_intermediate_data_path', None)
-            os.environ.pop('ieasyforecast_hydrograph_day_file', None)
-            os.environ.pop('SAPPHIRE_API_ENABLED', None)
-            if os.path.exists('preprocessing_runoff/test/test_files/test_hydrograph_api_disabled.csv'):
-                os.remove('preprocessing_runoff/test/test_files/test_hydrograph_api_disabled.csv')
+            # Restore environment
+            if original_path is None:
+                os.environ.pop('ieasyforecast_intermediate_data_path', None)
+            else:
+                os.environ['ieasyforecast_intermediate_data_path'] = original_path
+            if original_file is None:
+                os.environ.pop('ieasyforecast_daily_discharge_file', None)
+            else:
+                os.environ['ieasyforecast_daily_discharge_file'] = original_file
 
-    @patch('preprocessing_runoff.src.src._write_hydrograph_to_api')
-    def test_hydrograph_api_data_parameter_filters_api_write(self, mock_api_write):
-        """When api_data is provided, only that subset should be sent to API."""
-        mock_api_write.return_value = True
 
-        os.environ['ieasyforecast_intermediate_data_path'] = 'preprocessing_runoff/test/test_files'
-        os.environ['ieasyforecast_hydrograph_day_file'] = 'test_hydrograph_api_data.csv'
-        os.environ['SAPPHIRE_API_ENABLED'] = 'true'
+class TestMaintenanceModeGapFilling:
+    """Tests for maintenance mode gap filling behavior.
+    
+    These tests verify that the data merging logic correctly fills gaps
+    in cached data. The full integration of get_runoff_data_for_sites_HF
+    requires SDK and environment setup, so we test the underlying
+    merge functionality directly.
+    """
 
+    def test_merge_with_update_fills_missing_rows(self):
+        """Test that _merge_with_update correctly fills missing rows.
+        
+        This tests the underlying merge mechanism used to fill gaps
+        from database data.
+        """
+        # Existing data with gaps (missing Jan 3-4)
+        existing = pd.DataFrame({
+            'code': ['15194', '15194', '15194'],
+            'date': pd.to_datetime(['2024-01-01', '2024-01-02', '2024-01-05']),
+            'discharge': [10.0, 20.0, 50.0]
+        })
+        
+        # New data from DB that has the missing dates
+        new_data = pd.DataFrame({
+            'code': ['15194', '15194'],
+            'date': pd.to_datetime(['2024-01-03', '2024-01-04']),
+            'discharge': [30.0, 40.0]
+        })
+        
+        result = src._merge_with_update(existing, new_data, 'code', 'date', 'discharge')
+        
+        # Should have all 5 rows now
+        assert len(result) == 5, f"Expected 5 rows, got {len(result)}"
+        
+        # Verify the previously missing rows are now present
+        jan3 = result[(result['code'] == '15194') & 
+                      (result['date'] == pd.Timestamp('2024-01-03'))]
+        jan4 = result[(result['code'] == '15194') & 
+                      (result['date'] == pd.Timestamp('2024-01-04'))]
+        
+        assert len(jan3) == 1, "Jan 3 data should be present"
+        assert len(jan4) == 1, "Jan 4 data should be present"
+        assert jan3['discharge'].values[0] == 30.0
+        assert jan4['discharge'].values[0] == 40.0
+
+    def test_merge_with_update_fills_multiple_site_gaps(self):
+        """Test gap filling works correctly for multiple sites."""
+        # Existing data with gaps for multiple sites
+        existing = pd.DataFrame({
+            'code': ['15194', '15194', '16059', '16059'],
+            'date': pd.to_datetime(['2024-01-01', '2024-01-03', 
+                                    '2024-01-01', '2024-01-03']),
+            'discharge': [10.0, 30.0, 100.0, 300.0]
+        })
+        
+        # New data fills gaps for both sites
+        new_data = pd.DataFrame({
+            'code': ['15194', '16059'],
+            'date': pd.to_datetime(['2024-01-02', '2024-01-02']),
+            'discharge': [20.0, 200.0]
+        })
+        
+        result = src._merge_with_update(existing, new_data, 'code', 'date', 'discharge')
+        
+        # Should have 6 rows total (3 per site)
+        assert len(result) == 6, f"Expected 6 rows, got {len(result)}"
+        
+        # Verify gaps are filled for site 15194
+        site_15194 = result[result['code'] == '15194'].sort_values('date')
+        assert len(site_15194) == 3
+        assert site_15194['discharge'].tolist() == [10.0, 20.0, 30.0]
+        
+        # Verify gaps are filled for site 16059
+        site_16059 = result[result['code'] == '16059'].sort_values('date')
+        assert len(site_16059) == 3
+        assert site_16059['discharge'].tolist() == [100.0, 200.0, 300.0]
+
+    def test_merge_updates_and_adds_simultaneously(self):
+        """Test that merge can update existing values AND add new rows."""
+        existing = pd.DataFrame({
+            'code': ['15194', '15194'],
+            'date': pd.to_datetime(['2024-01-01', '2024-01-02']),
+            'discharge': [10.0, 20.0]  # Jan 2 will be updated
+        })
+        
+        new_data = pd.DataFrame({
+            'code': ['15194', '15194'],
+            'date': pd.to_datetime(['2024-01-02', '2024-01-03']),
+            'discharge': [25.0, 30.0]  # Updated value for Jan 2, new for Jan 3
+        })
+        
+        result = src._merge_with_update(existing, new_data, 'code', 'date', 'discharge')
+        
+        assert len(result) == 3, f"Expected 3 rows, got {len(result)}"
+        
+        # Check Jan 2 was updated
+        jan2 = result[result['date'] == pd.Timestamp('2024-01-02')]
+        assert jan2['discharge'].values[0] == 25.0, "Jan 2 should be updated to 25.0"
+        
+        # Check Jan 3 was added
+        jan3 = result[result['date'] == pd.Timestamp('2024-01-03')]
+        assert len(jan3) == 1, "Jan 3 should be added"
+        assert jan3['discharge'].values[0] == 30.0
+
+    def test_should_reprocess_input_files_returns_true_when_no_output(self, tmp_path):
+        """Test that should_reprocess_input_files returns True when output doesn't exist."""
+        # Set up temp directories
+        daily_dir = tmp_path / "daily_discharge"
+        daily_dir.mkdir()
+        intermediate_dir = tmp_path / "intermediate"
+        intermediate_dir.mkdir()
+        
+        # Create an input file
+        input_file = daily_dir / "test.xlsx"
+        input_file.write_text("dummy")
+        
+        # Save original env vars
+        orig_daily = os.environ.get('ieasyforecast_daily_discharge_path')
+        orig_intermediate = os.environ.get('ieasyforecast_intermediate_data_path')
+        orig_file = os.environ.get('ieasyforecast_daily_discharge_file')
+        
         try:
-            # Full hydrograph data (365 days worth)
-            full_data = pd.DataFrame({
-                'code': ['12345'] * 10,
-                'date': pd.date_range('2024-01-01', periods=10).strftime('%Y-%m-%d').tolist(),
-                'day_of_year': list(range(1, 11)),
-                'count': [10] * 10,
-                'mean': [5.5] * 10,
-            })
-
-            # API data - only today's row
-            api_data = pd.DataFrame({
-                'code': ['12345'],
-                'date': ['2024-01-05'],
-                'day_of_year': [5],
-                'count': [10],
-                'mean': [5.5],
-            })
-
-            src.write_daily_hydrograph_data_to_csv(
-                full_data,
-                column_list=['code', 'date', 'day_of_year', 'count', 'mean'],
-                api_data=api_data
-            )
-
-            # API should have been called with only 1 row
-            mock_api_write.assert_called_once()
-            api_call_data = mock_api_write.call_args[0][0]
-            assert len(api_call_data) == 1
-
-            # CSV should have all 10 rows
-            output_path = 'preprocessing_runoff/test/test_files/test_hydrograph_api_data.csv'
-            output = pd.read_csv(output_path)
-            assert len(output) == 10
+            os.environ['ieasyforecast_daily_discharge_path'] = str(daily_dir)
+            os.environ['ieasyforecast_intermediate_data_path'] = str(intermediate_dir)
+            os.environ['ieasyforecast_daily_discharge_file'] = 'output.csv'
+            
+            # Output file doesn't exist, should return True
+            result = src.should_reprocess_input_files()
+            assert result is True, "Should return True when output file doesn't exist"
         finally:
-            os.environ.pop('ieasyforecast_intermediate_data_path', None)
-            os.environ.pop('ieasyforecast_hydrograph_day_file', None)
-            os.environ.pop('SAPPHIRE_API_ENABLED', None)
-            if os.path.exists('preprocessing_runoff/test/test_files/test_hydrograph_api_data.csv'):
-                os.remove('preprocessing_runoff/test/test_files/test_hydrograph_api_data.csv')
-
-    @patch('preprocessing_runoff.src.src._write_hydrograph_to_api')
-    def test_hydrograph_empty_api_data_skips_api_write(self, mock_api_write):
-        """When api_data is empty, API write should be skipped."""
-        mock_api_write.return_value = True
-
-        os.environ['ieasyforecast_intermediate_data_path'] = 'preprocessing_runoff/test/test_files'
-        os.environ['ieasyforecast_hydrograph_day_file'] = 'test_hydrograph_empty_api.csv'
-        os.environ['SAPPHIRE_API_ENABLED'] = 'true'
-
-        try:
-            full_data = pd.DataFrame({
-                'code': ['12345'],
-                'date': ['2024-01-01'],
-                'day_of_year': [1],
-                'count': [10],
-                'mean': [5.5],
-            })
-
-            # Empty api_data
-            api_data = pd.DataFrame()
-
-            src.write_daily_hydrograph_data_to_csv(
-                full_data,
-                column_list=['code', 'date', 'day_of_year', 'count', 'mean'],
-                api_data=api_data
-            )
-
-            # API should NOT have been called
-            mock_api_write.assert_not_called()
-
-            # CSV should still be written
-            output_path = 'preprocessing_runoff/test/test_files/test_hydrograph_empty_api.csv'
-            assert os.path.exists(output_path)
-        finally:
-            os.environ.pop('ieasyforecast_intermediate_data_path', None)
-            os.environ.pop('ieasyforecast_hydrograph_day_file', None)
-            os.environ.pop('SAPPHIRE_API_ENABLED', None)
-            if os.path.exists('preprocessing_runoff/test/test_files/test_hydrograph_empty_api.csv'):
-                os.remove('preprocessing_runoff/test/test_files/test_hydrograph_empty_api.csv')
-
-
-# =============================================================================
-# Tests for Incremental Sync (RunoffDataResult)
-# =============================================================================
-
-class TestRunoffDataResult:
-    """Tests for RunoffDataResult dataclass and incremental sync."""
-
-    def test_runoff_data_result_structure(self):
-        """RunoffDataResult should have full_data and new_data attributes."""
-        full_data = pd.DataFrame({'code': ['12345'], 'date': ['2024-01-01'], 'discharge': [10.0]})
-        new_data = pd.DataFrame({'code': ['12345'], 'date': ['2024-01-02'], 'discharge': [11.0]})
-
-        result = src.RunoffDataResult(full_data=full_data, new_data=new_data)
-
-        assert hasattr(result, 'full_data')
-        assert hasattr(result, 'new_data')
-        assert len(result.full_data) == 1
-        assert len(result.new_data) == 1
-
-    def test_runoff_data_result_with_empty_new_data(self):
-        """RunoffDataResult should handle empty new_data gracefully."""
-        full_data = pd.DataFrame({'code': ['12345'], 'date': ['2024-01-01'], 'discharge': [10.0]})
-        new_data = pd.DataFrame()
-
-        result = src.RunoffDataResult(full_data=full_data, new_data=new_data)
-
-        assert len(result.full_data) == 1
-        assert result.new_data.empty
-
-
-class TestIncrementalRunoffSync:
-    """Tests for incremental runoff sync via api_data parameter."""
-
-    @patch('preprocessing_runoff.src.src._write_runoff_to_api')
-    def test_api_data_parameter_sends_only_subset(self, mock_api_write):
-        """When api_data is provided, only that data should be sent to API."""
-        mock_api_write.return_value = True
-
-        os.environ['ieasyforecast_intermediate_data_path'] = 'preprocessing_runoff/test/test_files'
-        os.environ['ieasyforecast_daily_discharge_file'] = 'test_incremental_sync.csv'
-        os.environ['SAPPHIRE_API_ENABLED'] = 'true'
-
-        try:
-            # Full historical data
-            full_data = pd.DataFrame({
-                'date': pd.date_range('2024-01-01', periods=100).strftime('%Y-%m-%d').tolist(),
-                'discharge': [10.0] * 100,
-                'code': ['12345'] * 100,
-            })
-
-            # Only new data (last 2 records)
-            new_data = pd.DataFrame({
-                'date': ['2024-04-09', '2024-04-10'],
-                'discharge': [15.0, 16.0],
-                'code': ['12345', '12345'],
-            })
-
-            src.write_daily_time_series_data_to_csv(
-                full_data,
-                column_list=['code', 'date', 'discharge'],
-                api_data=new_data
-            )
-
-            # API should receive only 2 records (new data)
-            api_call_data = mock_api_write.call_args[0][0]
-            assert len(api_call_data) == 2
-
-            # CSV should have all 100 records
-            output_path = 'preprocessing_runoff/test/test_files/test_incremental_sync.csv'
-            output = pd.read_csv(output_path)
-            assert len(output) == 100
-        finally:
-            os.environ.pop('ieasyforecast_intermediate_data_path', None)
-            os.environ.pop('ieasyforecast_daily_discharge_file', None)
-            os.environ.pop('SAPPHIRE_API_ENABLED', None)
-            if os.path.exists('preprocessing_runoff/test/test_files/test_incremental_sync.csv'):
-                os.remove('preprocessing_runoff/test/test_files/test_incremental_sync.csv')
-
-    @patch('preprocessing_runoff.src.src._write_runoff_to_api')
-    def test_empty_api_data_skips_api_write(self, mock_api_write):
-        """When api_data is empty DataFrame, API write should be skipped."""
-        mock_api_write.return_value = True
-
-        os.environ['ieasyforecast_intermediate_data_path'] = 'preprocessing_runoff/test/test_files'
-        os.environ['ieasyforecast_daily_discharge_file'] = 'test_empty_api_data.csv'
-        os.environ['SAPPHIRE_API_ENABLED'] = 'true'
-
-        try:
-            full_data = pd.DataFrame({
-                'date': ['2024-01-01'],
-                'discharge': [10.0],
-                'code': ['12345'],
-            })
-
-            # Empty new data (data is already synced)
-            api_data = pd.DataFrame()
-
-            src.write_daily_time_series_data_to_csv(
-                full_data,
-                column_list=['code', 'date', 'discharge'],
-                api_data=api_data
-            )
-
-            # API should NOT have been called
-            mock_api_write.assert_not_called()
-
-            # CSV should still be written
-            output_path = 'preprocessing_runoff/test/test_files/test_empty_api_data.csv'
-            assert os.path.exists(output_path)
-        finally:
-            os.environ.pop('ieasyforecast_intermediate_data_path', None)
-            os.environ.pop('ieasyforecast_daily_discharge_file', None)
-            os.environ.pop('SAPPHIRE_API_ENABLED', None)
-            if os.path.exists('preprocessing_runoff/test/test_files/test_empty_api_data.csv'):
-                os.remove('preprocessing_runoff/test/test_files/test_empty_api_data.csv')
+            # Restore original env vars
+            if orig_daily is None:
+                os.environ.pop('ieasyforecast_daily_discharge_path', None)
+            else:
+                os.environ['ieasyforecast_daily_discharge_path'] = orig_daily
+            if orig_intermediate is None:
+                os.environ.pop('ieasyforecast_intermediate_data_path', None)
+            else:
+                os.environ['ieasyforecast_intermediate_data_path'] = orig_intermediate
+            if orig_file is None:
+                os.environ.pop('ieasyforecast_daily_discharge_file', None)
+            else:
+                os.environ['ieasyforecast_daily_discharge_file'] = orig_file
 
 

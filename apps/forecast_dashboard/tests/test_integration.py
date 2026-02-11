@@ -1,3 +1,35 @@
+"""
+Integration tests for the forecast dashboard.
+
+These tests use Playwright to test the dashboard UI in a real browser.
+By default, integration tests are SKIPPED to allow CI/CD to pass without
+requiring external services.
+
+Environment Variables:
+    TEST_LOCAL  - Set to 'true' to run local dashboard tests (requires local
+                  server running at localhost:5055 and data connection)
+    TEST_PENTAD - Set to 'true' to run pentad production server tests
+    TEST_DECAD  - Set to 'true' to run decad production server tests
+
+Usage Examples:
+    # Run only unit tests (integration tests skipped)
+    pytest test_integration.py
+
+    # Run local integration tests (requires local server + data)
+    TEST_LOCAL=true pytest test_integration.py
+
+    # Run pentad production tests
+    TEST_PENTAD=true pytest test_integration.py
+
+    # Run all integration tests
+    TEST_LOCAL=true TEST_PENTAD=true TEST_DECAD=true pytest test_integration.py
+
+Requirements for TEST_LOCAL=true:
+    - Local dashboard server running at http://localhost:5055/forecast_dashboard
+    - Valid credentials: user1 / user1
+    - Data connection available (ieasyhydroforecast_data_dir environment variable set)
+"""
+
 import os
 import time
 import csv
@@ -8,9 +40,18 @@ import tag_library as tl
 import datetime as dt
 
 
-TEST_PENTAD = False
-TEST_DECAD = False
-TEST_LOCAL = True
+def get_test_flag(env_var: str, default: bool) -> bool:
+    """Get test flag from environment variable or use default."""
+    value = os.getenv(env_var, "").lower()
+    if value in ("true", "1", "yes"):
+        return True
+    elif value in ("false", "0", "no"):
+        return False
+    return default
+
+TEST_PENTAD = get_test_flag("TEST_PENTAD", False)
+TEST_DECAD = get_test_flag("TEST_DECAD", False)
+TEST_LOCAL = get_test_flag("TEST_LOCAL", False)
 LOCAL_URL = "http://localhost:5055/forecast_dashboard"
 PENTAD_URL = "https://kyg.fc.pentad.ieasyhydro.org/forecast_dashboard"
 DECAD_URL = "https://demo.fc.decade.ieasyhydro.org/forecast_dashboard"
