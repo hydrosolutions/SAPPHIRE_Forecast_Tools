@@ -16,7 +16,7 @@ env:
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "merge_main_into_develop_lt" ]
   #pull_request:
   #  branches: [ "main" ]
 
