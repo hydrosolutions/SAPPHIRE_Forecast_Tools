@@ -282,6 +282,31 @@ For full usage: `bash apps/run_docker_tests.sh --help`
 1. Docker running locally
 2. Valid `.env` file for your organization
 3. Server access (SSH tunnels, data volumes)
+4. Updated Docker images on DockerHub (see below)
+
+### Pushing Images to DockerHub from a Feature Branch
+
+The server pulls images from DockerHub, so your branch's images must be pushed
+there before you can test on the server. By default, only pushes to `main`
+trigger `deploy_main.yml` (which builds and pushes to DockerHub).
+
+To test a feature branch on the server **before merging to main**:
+
+1. **Temporarily edit** `.github/workflows/deploy_main.yml` to add your branch:
+   ```yaml
+   on:
+     push:
+       branches:
+         - main
+         - your-branch-name   # TEMPORARY — remove before merging
+   ```
+2. Push the commit. CI will build and push images to DockerHub with the `:latest` tag.
+3. On the server, `docker pull` the updated images.
+4. **Remove the branch trigger** from `deploy_main.yml` before merging to main.
+
+> **Important**: This is a temporary edit. Do not merge the branch trigger into
+> main — it would cause every push to that branch to overwrite production images
+> after the merge.
 
 ### Testing Each Module
 
