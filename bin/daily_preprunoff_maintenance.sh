@@ -110,7 +110,7 @@ if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
 fi
 
 # Run the preprocessing runoff container in maintenance mode
-# PREPROCESSING_MODE=maintenance triggers:
+# SAPPHIRE_SYNC_MODE=maintenance triggers:
 # - 30-day lookback window (configurable via PREPROCESSING_MAINTENANCE_LOOKBACK_DAYS)
 # - Gap filling and value updates from database
 # - Excel/CSV file change detection
@@ -122,7 +122,7 @@ docker run \
     -e ieasyhydroforecast_env_file_path=${ieasyhydroforecast_env_file_path} \
     -e SAPPHIRE_OPDEV_ENV=True \
     -e IN_DOCKER=True \
-    -e PREPROCESSING_MODE=maintenance \
+    -e SAPPHIRE_SYNC_MODE=maintenance \
     ${DOCKER_HOST_OVERRIDE} \
     -v ${ieasyhydroforecast_data_ref_dir}/config:${ieasyhydroforecast_container_data_ref_dir}/config \
     -v ${ieasyhydroforecast_data_ref_dir}/daily_runoff:${ieasyhydroforecast_container_data_ref_dir}/daily_runoff \

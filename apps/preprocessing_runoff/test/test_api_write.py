@@ -29,8 +29,11 @@ import src
 
 @pytest.fixture
 def runoff_data():
-    """Sample daily runoff DataFrame."""
-    dates = pd.date_range("2026-01-01", periods=40, freq="D")
+    """Sample daily runoff DataFrame centred on today."""
+    today = pd.Timestamp.today().normalize()
+    dates = pd.date_range(
+        end=today, periods=40, freq="D"
+    )
     rows = []
     for code in ["15101", "15102"]:
         for d in dates:
@@ -119,11 +122,13 @@ class TestWriteRunoffToApi:
             empty = pd.DataFrame(columns=["code", "date", "discharge"])
             assert src._write_runoff_to_api(empty) is False
 
-    def test_operational_mode_writes_latest_date(self, runoff_data):
-        """Operational sync mode only writes the latest date."""
+    def test_operational_mode_writes_today_only(self, runoff_data):
+        """Operational sync mode only writes today's date."""
         mock_client = MagicMock()
         mock_client.readiness_check.return_value = True
         mock_client.write_runoff.return_value = 2
+
+        today_str = pd.Timestamp.today().normalize().strftime('%Y-%m-%d')
 
         with patch.object(src, "SAPPHIRE_API_AVAILABLE", True), \
              patch.object(src, "SapphirePreprocessingClient",
@@ -136,16 +141,16 @@ class TestWriteRunoffToApi:
             result = src._write_runoff_to_api(runoff_data)
             assert result is True
             records = mock_client.write_runoff.call_args[0][0]
-            # Should only have records for the latest date (2 stations)
+            # Should only have records for today (2 stations)
             assert len(records) == 2
             dates = {r["date"] for r in records}
-            assert len(dates) == 1  # all same date
+            assert dates == {today_str}
 
     def test_maintenance_mode_writes_last_30_days(self, runoff_data):
-        """Maintenance sync mode writes last 30 days."""
+        """Maintenance sync mode writes last 30 days from today."""
         mock_client = MagicMock()
         mock_client.readiness_check.return_value = True
-        mock_client.write_runoff.return_value = 60
+        mock_client.write_runoff.return_value = 62
 
         with patch.object(src, "SAPPHIRE_API_AVAILABLE", True), \
              patch.object(src, "SapphirePreprocessingClient",
@@ -158,9 +163,9 @@ class TestWriteRunoffToApi:
             result = src._write_runoff_to_api(runoff_data)
             assert result is True
             records = mock_client.write_runoff.call_args[0][0]
-            # 40 days of data, last 30 days = 31 days * 2 stations = 62
-            assert len(records) <= 62
-            assert len(records) > 2  # more than just latest
+            # Cutoff = today - 30 days → 31 days * 2 stations = 62
+            assert len(records) == 62
+            assert len(records) > 2  # more than just today
 
     def test_initial_mode_writes_all_data(self, runoff_data):
         """Initial sync mode writes all data."""
@@ -206,6 +211,75 @@ class TestWriteRunoffToApi:
             assert isinstance(rec["horizon_value"], int)
             assert isinstance(rec["horizon_in_year"], int)
 
+    def test_nan_discharge_becomes_none(self):
+        """NaN discharge values are sent as None to the API."""
+        today = pd.Timestamp.today().normalize()
+        data = pd.DataFrame([{
+            "code": "15101",
+            "date": today,
+            "discharge": np.nan,
+        }])
+        mock_client = MagicMock()
+        mock_client.readiness_check.return_value = True
+        mock_client.write_runoff.return_value = 1
+
+        with patch.object(src, "SAPPHIRE_API_AVAILABLE", True), \
+             patch.object(src, "SapphirePreprocessingClient",
+                          return_value=mock_client), \
+             patch.dict(os.environ, {
+                 "SAPPHIRE_API_ENABLED": "true",
+                 "SAPPHIRE_API_URL": "http://test:8000",
+                 "SAPPHIRE_SYNC_MODE": "operational",
+             }):
+            src._write_runoff_to_api(data)
+            rec = mock_client.write_runoff.call_args[0][0][0]
+            assert rec["discharge"] is None
+
+    def test_string_date_input(self):
+        """String dates (production path via CSV) are handled correctly."""
+        today = pd.Timestamp.today().normalize()
+        data = pd.DataFrame([{
+            "code": "15101",
+            "date": today.strftime('%Y-%m-%d'),
+            "discharge": 12.5,
+        }])
+        mock_client = MagicMock()
+        mock_client.readiness_check.return_value = True
+        mock_client.write_runoff.return_value = 1
+
+        with patch.object(src, "SAPPHIRE_API_AVAILABLE", True), \
+             patch.object(src, "SapphirePreprocessingClient",
+                          return_value=mock_client), \
+             patch.dict(os.environ, {
+                 "SAPPHIRE_API_ENABLED": "true",
+                 "SAPPHIRE_API_URL": "http://test:8000",
+                 "SAPPHIRE_SYNC_MODE": "operational",
+             }):
+            result = src._write_runoff_to_api(data)
+            assert result is True
+            rec = mock_client.write_runoff.call_args[0][0][0]
+            assert rec["date"] == today.strftime('%Y-%m-%d')
+
+    def test_mode_parameter_overrides_env_var(self, runoff_data):
+        """mode parameter takes precedence over SAPPHIRE_SYNC_MODE env var."""
+        mock_client = MagicMock()
+        mock_client.readiness_check.return_value = True
+        mock_client.write_runoff.return_value = 80
+
+        with patch.object(src, "SAPPHIRE_API_AVAILABLE", True), \
+             patch.object(src, "SapphirePreprocessingClient",
+                          return_value=mock_client), \
+             patch.dict(os.environ, {
+                 "SAPPHIRE_API_ENABLED": "true",
+                 "SAPPHIRE_API_URL": "http://test:8000",
+                 "SAPPHIRE_SYNC_MODE": "operational",
+             }):
+            # Env says operational, but mode param says initial → all data
+            result = src._write_runoff_to_api(runoff_data, mode="initial")
+            assert result is True
+            records = mock_client.write_runoff.call_args[0][0]
+            assert len(records) == 80  # all 40 days × 2 stations
+
 
 # ---------------------------------------------------------------------------
 # _write_hydrograph_to_api tests
@@ -244,6 +318,27 @@ class TestWriteHydrographToApi:
             records = mock_client.write_hydrograph.call_args[0][0]
             # 2 stations, 1 day each = 2 records
             assert len(records) == 2
+
+    def test_maintenance_mode_writes_last_30_days(self, hydrograph_data):
+        """Maintenance sync mode writes last 30 days from today."""
+        mock_client = MagicMock()
+        mock_client.readiness_check.return_value = True
+        mock_client.write_hydrograph.return_value = 62
+
+        with patch.object(src, "SAPPHIRE_API_AVAILABLE", True), \
+             patch.object(src, "SapphirePreprocessingClient",
+                          return_value=mock_client), \
+             patch.dict(os.environ, {
+                 "SAPPHIRE_API_ENABLED": "true",
+                 "SAPPHIRE_API_URL": "http://test:8000",
+                 "SAPPHIRE_SYNC_MODE": "maintenance",
+             }):
+            result = src._write_hydrograph_to_api(hydrograph_data)
+            assert result is True
+            records = mock_client.write_hydrograph.call_args[0][0]
+            # Cutoff = today - 30 days → 31 days * 2 stations = 62
+            assert len(records) == 62
+            assert len(records) > 2  # more than just today
 
     def test_initial_mode_writes_all(self, hydrograph_data):
         """Initial mode writes all rows."""
@@ -332,6 +427,47 @@ class TestWriteHydrographToApi:
             assert rec["horizon_type"] == "day"
             assert rec["norm"] == rec["q50"]
 
+    def test_count_field_is_int(self, hydrograph_data):
+        """Count field must be int, not float."""
+        mock_client = MagicMock()
+        mock_client.readiness_check.return_value = True
+        mock_client.write_hydrograph.return_value = 2
+
+        with patch.object(src, "SAPPHIRE_API_AVAILABLE", True), \
+             patch.object(src, "SapphirePreprocessingClient",
+                          return_value=mock_client), \
+             patch.dict(os.environ, {
+                 "SAPPHIRE_API_ENABLED": "true",
+                 "SAPPHIRE_API_URL": "http://test:8000",
+                 "SAPPHIRE_SYNC_MODE": "operational",
+             }):
+            src._write_hydrograph_to_api(hydrograph_data)
+            rec = mock_client.write_hydrograph.call_args[0][0][0]
+            assert isinstance(rec["count"], int)
+            assert rec["count"] == 10
+
+    def test_mode_parameter_overrides_env_var(self, hydrograph_data):
+        """mode parameter takes precedence over SAPPHIRE_SYNC_MODE env var."""
+        mock_client = MagicMock()
+        mock_client.readiness_check.return_value = True
+        mock_client.write_hydrograph.return_value = 80
+
+        with patch.object(src, "SAPPHIRE_API_AVAILABLE", True), \
+             patch.object(src, "SapphirePreprocessingClient",
+                          return_value=mock_client), \
+             patch.dict(os.environ, {
+                 "SAPPHIRE_API_ENABLED": "true",
+                 "SAPPHIRE_API_URL": "http://test:8000",
+                 "SAPPHIRE_SYNC_MODE": "operational",
+             }):
+            # Env says operational, but mode param says initial → all data
+            result = src._write_hydrograph_to_api(
+                hydrograph_data, mode="initial"
+            )
+            assert result is True
+            records = mock_client.write_hydrograph.call_args[0][0]
+            assert len(records) == 80  # all 40 days × 2 stations
+
 
 # ---------------------------------------------------------------------------
 # Integration: public write functions handle API errors gracefully
@@ -382,3 +518,47 @@ class TestPublicWriteFunctionsApiGraceful:
             )
             assert ret is None
             assert output_file.exists()
+
+    def test_mode_passed_through_to_runoff_api(self, runoff_data, tmp_path):
+        """write_daily_time_series_data_to_csv passes mode to _write_runoff_to_api."""
+        output_file = tmp_path / "daily_discharge.csv"
+        with patch.object(src, "SAPPHIRE_API_AVAILABLE", True), \
+             patch.object(src, "_write_runoff_to_api",
+                          return_value=True) as mock_api, \
+             patch.dict(os.environ, {
+                 "ieasyforecast_intermediate_data_path": str(tmp_path),
+                 "ieasyforecast_daily_discharge_file": "daily_discharge.csv",
+             }):
+            src.write_daily_time_series_data_to_csv(
+                runoff_data,
+                column_list=["code", "date", "discharge"],
+                mode="maintenance",
+            )
+            mock_api.assert_called_once()
+            _, kwargs = mock_api.call_args
+            assert kwargs["mode"] == "maintenance"
+
+    def test_mode_passed_through_to_hydrograph_api(
+        self, hydrograph_data, tmp_path
+    ):
+        """write_daily_hydrograph_data_to_csv passes mode to _write_hydrograph_to_api."""
+        current_year = dt.date.today().year
+        previous_year = current_year - 1
+        col_list = [
+            "code", "date", "day_of_year", "count", "mean", "std",
+            "min", "max", "5%", "25%", "50%", "75%", "95%",
+            str(current_year), str(previous_year),
+        ]
+        with patch.object(src, "SAPPHIRE_API_AVAILABLE", True), \
+             patch.object(src, "_write_hydrograph_to_api",
+                          return_value=True) as mock_api, \
+             patch.dict(os.environ, {
+                 "ieasyforecast_intermediate_data_path": str(tmp_path),
+                 "ieasyforecast_hydrograph_day_file": "hydrograph_day.csv",
+             }):
+            src.write_daily_hydrograph_data_to_csv(
+                hydrograph_data, column_list=col_list, mode="maintenance",
+            )
+            mock_api.assert_called_once()
+            _, kwargs = mock_api.call_args
+            assert kwargs["mode"] == "maintenance"

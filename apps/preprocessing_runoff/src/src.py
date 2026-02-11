@@ -3573,17 +3573,21 @@ def add_dangerous_discharge(sdk, hydrograph_data: pd.DataFrame, code_col='code')
 # API Write Functions
 # =============================================================================
 
-def _write_runoff_to_api(data: pd.DataFrame) -> bool:
+def _write_runoff_to_api(
+    data: pd.DataFrame,
+    mode: str | None = None,
+) -> bool:
     """
     Write daily runoff data to SAPPHIRE preprocessing API.
 
-    Supports different sync modes via SAPPHIRE_SYNC_MODE environment variable:
-    - operational (default): Only write the latest date's data
+    Supports different sync modes:
+    - operational (default): Only write today's data
     - maintenance: Write the last 30 days of data
     - initial: Write all data (for first-time setup)
 
     Args:
         data: DataFrame with columns: code, date, discharge
+        mode: Sync mode override. If None, reads SAPPHIRE_SYNC_MODE env var.
 
     Returns:
         True if successful, False otherwise
@@ -3619,15 +3623,18 @@ def _write_runoff_to_api(data: pd.DataFrame) -> bool:
     data = data.copy()
     data['date'] = pd.to_datetime(data['date'])
 
-    # Filter data based on sync mode
-    sync_mode = os.getenv("SAPPHIRE_SYNC_MODE", "operational").lower()
+    # Filter data based on sync mode (parameter > env var > default)
+    if mode is not None:
+        sync_mode = mode.lower()
+    else:
+        sync_mode = os.getenv("SAPPHIRE_SYNC_MODE", "operational").lower()
     logger.info(f"Runoff API sync mode: {sync_mode}")
 
+    today = pd.Timestamp.today().normalize()
     if sync_mode == "operational":
-        latest_date = data['date'].max()
-        data_to_write = data[data['date'] == latest_date]
+        data_to_write = data[data['date'] == today]
     elif sync_mode == "maintenance":
-        cutoff = data['date'].max() - pd.Timedelta(days=30)
+        cutoff = today - pd.Timedelta(days=30)
         data_to_write = data[data['date'] >= cutoff]
     elif sync_mode == "initial":
         data_to_write = data
@@ -3635,8 +3642,7 @@ def _write_runoff_to_api(data: pd.DataFrame) -> bool:
         logger.warning(
             f"Unknown sync mode '{sync_mode}', defaulting to operational"
         )
-        latest_date = data['date'].max()
-        data_to_write = data[data['date'] == latest_date]
+        data_to_write = data[data['date'] == today]
 
     if data_to_write.empty:
         logger.info("No runoff data to write after sync-mode filtering")
@@ -3676,11 +3682,14 @@ def _write_runoff_to_api(data: pd.DataFrame) -> bool:
     return True
 
 
-def _write_hydrograph_to_api(data: pd.DataFrame) -> bool:
+def _write_hydrograph_to_api(
+    data: pd.DataFrame,
+    mode: str | None = None,
+) -> bool:
     """
     Write daily hydrograph data to SAPPHIRE preprocessing API.
 
-    Supports different sync modes via SAPPHIRE_SYNC_MODE environment variable:
+    Supports different sync modes:
     - operational (default): Only write today's rows (one per station)
     - maintenance: Write the last 30 days of rows
     - initial: Write all rows
@@ -3689,6 +3698,7 @@ def _write_hydrograph_to_api(data: pd.DataFrame) -> bool:
         data: DataFrame with hydrograph statistics. Expected columns include:
             code, date, day_of_year, count, mean, std, min, max,
             5%, 25%, 50%, 75%, 95%, and year columns (e.g. "2026", "2025")
+        mode: Sync mode override. If None, reads SAPPHIRE_SYNC_MODE env var.
 
     Returns:
         True if successful, False otherwise
@@ -3726,8 +3736,11 @@ def _write_hydrograph_to_api(data: pd.DataFrame) -> bool:
     data = data.copy()
     data['date'] = pd.to_datetime(data['date'])
 
-    # Filter data based on sync mode
-    sync_mode = os.getenv("SAPPHIRE_SYNC_MODE", "operational").lower()
+    # Filter data based on sync mode (parameter > env var > default)
+    if mode is not None:
+        sync_mode = mode.lower()
+    else:
+        sync_mode = os.getenv("SAPPHIRE_SYNC_MODE", "operational").lower()
     logger.info(f"Hydrograph API sync mode: {sync_mode}")
 
     today = pd.Timestamp.today().normalize()
@@ -3785,8 +3798,15 @@ def _write_hydrograph_to_api(data: pd.DataFrame) -> bool:
             "horizon_in_year": doy,
         }
 
-        # Statistical columns
-        for col in ('count', 'mean', 'std', 'min', 'max'):
+        # Count must be int (not float)
+        record['count'] = (
+            int(row['count'])
+            if 'count' in row.index and pd.notna(row.get('count'))
+            else None
+        )
+
+        # Statistical columns (float)
+        for col in ('mean', 'std', 'min', 'max'):
             record[col] = (
                 float(row[col])
                 if col in row.index and pd.notna(row.get(col))
@@ -3832,7 +3852,11 @@ def _write_hydrograph_to_api(data: pd.DataFrame) -> bool:
     return True
 
 
-def write_daily_time_series_data_to_csv(data: pd.DataFrame, column_list=["code", "date", "discharge"]):
+def write_daily_time_series_data_to_csv(
+    data: pd.DataFrame,
+    column_list=["code", "date", "discharge"],
+    mode: str | None = None,
+):
     """
     Writes the data to a csv file for later reading by other forecast tools.
 
@@ -3842,6 +3866,8 @@ def write_daily_time_series_data_to_csv(data: pd.DataFrame, column_list=["code",
     data (pd.DataFrame): The data to be written to a csv file.
     column_list (list, optional): The list of columns to be written to the csv file.
         Default is ["code", "date", "discharge"].
+    mode (str, optional): Sync mode for API writes. If None, reads
+        SAPPHIRE_SYNC_MODE env var. Passed through to _write_runoff_to_api.
 
     Returns:
     None upon success.
@@ -3894,9 +3920,9 @@ def write_daily_time_series_data_to_csv(data: pd.DataFrame, column_list=["code",
 
     # Attempt API write (non-blocking — CSV always written regardless)
     try:
-        _write_runoff_to_api(data)
+        _write_runoff_to_api(data, mode=mode)
     except Exception as e:
-        logger.warning(f"[OUTPUT] API runoff write failed: {e}")
+        logger.error(f"[OUTPUT] API runoff write failed: {e}")
 
     # Write the data to a csv file. Raise an error if this does not work.
     # Write data to CSV file
@@ -3912,7 +3938,11 @@ def write_daily_time_series_data_to_csv(data: pd.DataFrame, column_list=["code",
         logger.error(f"[OUTPUT] Failed to write time series: {output_file_path} - {e}")
         raise e
 
-def write_daily_hydrograph_data_to_csv(data: pd.DataFrame, column_list=["code", "date", "discharge"]):
+def write_daily_hydrograph_data_to_csv(
+    data: pd.DataFrame,
+    column_list=["code", "date", "discharge"],
+    mode: str | None = None,
+):
     """
     Writes the data to a csv file for later reading by other forecast tools.
 
@@ -3922,6 +3952,8 @@ def write_daily_hydrograph_data_to_csv(data: pd.DataFrame, column_list=["code", 
     data (pd.DataFrame): The data to be written to a csv file.
     column_list (list, optional): The list of columns to be written to the csv file.
         Default is ["code", "date", "discharge"].
+    mode (str, optional): Sync mode for API writes. If None, reads
+        SAPPHIRE_SYNC_MODE env var. Passed through to _write_hydrograph_to_api.
 
     Returns:
     None upon success.
@@ -3929,6 +3961,7 @@ def write_daily_hydrograph_data_to_csv(data: pd.DataFrame, column_list=["code", 
     Raises:
     Exception: If the data cannot be written to the csv file.
     """
+    data = data.copy()
 
     # Get the path to the intermediate data folder from the environmental
     # variables and the name of the ieasyforecast_analysis_daily_file.
@@ -3963,9 +3996,9 @@ def write_daily_hydrograph_data_to_csv(data: pd.DataFrame, column_list=["code", 
 
     # Attempt API write (non-blocking — CSV always written regardless)
     try:
-        _write_hydrograph_to_api(data)
+        _write_hydrograph_to_api(data, mode=mode)
     except Exception as e:
-        logger.warning(f"[OUTPUT] API hydrograph write failed: {e}")
+        logger.error(f"[OUTPUT] API hydrograph write failed: {e}")
 
     # Write data to CSV file
     logger.debug(f"[OUTPUT] Writing hydrograph to {output_file_path}")
@@ -4577,6 +4610,12 @@ def verify_hydrograph_data_consistency(
 
     codes = csv_df['code'].unique().tolist()
 
+    # Filter to current year to avoid false key collisions from
+    # multi-year data (day_of_year repeats across years)
+    current_year = dt.date.today().year
+    start_date = f"{current_year}-01-01"
+    end_date = f"{current_year}-12-31"
+
     # Query API for each station
     api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
     all_api_records: list[dict] = []
@@ -4586,6 +4625,8 @@ def verify_hydrograph_data_consistency(
             params = {
                 'horizon': 'day',
                 'code': code,
+                'start_date': start_date,
+                'end_date': end_date,
                 'limit': 100000,
             }
             response = _requests.get(
@@ -4638,10 +4679,21 @@ def verify_hydrograph_data_consistency(
     extra_in_api = api_keys - csv_keys
 
     # Column mapping: CSV -> API
+    # Note: CSV has no 'norm' column (API derives it from q50).
+    # Year columns (e.g. "2026", "2025") map to current/previous.
     column_map = {
         '5%': 'q05', '25%': 'q25', '50%': 'q50', '75%': 'q75',
-        '95%': 'q95', 'norm': 'norm', 'count': 'count', 'std': 'std',
+        '95%': 'q95', 'count': 'count', 'std': 'std',
+        'mean': 'mean', 'min': 'min', 'max': 'max',
     }
+    # Add dynamic year column mapping
+    current_year = dt.date.today().year
+    current_year_col = str(current_year)
+    previous_year_col = str(current_year - 1)
+    if current_year_col in csv_df.columns:
+        column_map[current_year_col] = 'current'
+    if previous_year_col in csv_df.columns:
+        column_map[previous_year_col] = 'previous'
 
     # Compare values for common keys (sample check)
     common_keys = csv_keys & api_keys

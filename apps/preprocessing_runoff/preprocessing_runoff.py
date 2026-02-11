@@ -179,7 +179,7 @@ def get_mode(args) -> str:
     """
     if args.maintenance:
         return 'maintenance'
-    return os.getenv('PREPROCESSING_MODE', 'operational').lower()
+    return os.getenv('SAPPHIRE_SYNC_MODE', 'operational').lower()
 
 
 def main():
@@ -426,7 +426,8 @@ def main():
     start_time = time.time()
     ret = src.write_daily_time_series_data_to_csv(
         data=filtered_data,
-        column_list=['code', 'date', 'discharge'])
+        column_list=['code', 'date', 'discharge'],
+        mode=mode)
     if ret is None:
         logger.info("Daily time series data written successfully.")
     else:
@@ -439,7 +440,8 @@ def main():
     start_time = time.time()
     ret = src.write_daily_hydrograph_data_to_csv(
         data=hydrograph,
-        column_list=hydrograph.columns.tolist())
+        column_list=hydrograph.columns.tolist(),
+        mode=mode)
     if ret is None:
         logger.info("Daily hydrograph data written successfully.")
     else:

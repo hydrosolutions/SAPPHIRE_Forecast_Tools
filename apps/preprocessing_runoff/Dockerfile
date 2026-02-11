@@ -32,5 +32,5 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 EXPOSE 8881
 
 # Run the application using uv run (activates the virtual environment automatically)
-# Default is operational mode; use PREPROCESSING_MODE=maintenance for maintenance mode
+# Default is operational mode; use SAPPHIRE_SYNC_MODE=maintenance for maintenance mode
 CMD ["uv", "run", "preprocessing_runoff.py"]

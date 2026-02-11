@@ -85,7 +85,7 @@ docker run --rm --network host \
   -e SAPPHIRE_OPDEV_ENV=True \
   -e IN_DOCKER=True \
   -e IEASYHYDROHF_HOST=http://host.docker.internal:5555/api/v1/ \
-  -e PREPROCESSING_MODE=maintenance \
+  -e SAPPHIRE_SYNC_MODE=maintenance \
   -v /path/to/kyg_data_forecast_tools/config:/kyg_data_forecast_tools/config \
   -v /path/to/kyg_data_forecast_tools/daily_runoff:/kyg_data_forecast_tools/daily_runoff \
   -v /path/to/kyg_data_forecast_tools/intermediate_data:/kyg_data_forecast_tools/intermediate_data \
@@ -229,7 +229,7 @@ uv run preprocessing_runoff.py
 ```bash
 uv run preprocessing_runoff.py --maintenance
 # Or via environment variable
-PREPROCESSING_MODE=maintenance uv run preprocessing_runoff.py
+SAPPHIRE_SYNC_MODE=maintenance uv run preprocessing_runoff.py
 ```
 
 ### Configuration
@@ -336,7 +336,7 @@ uv run pytest test/ -v
 | `IEASYHYDROHF_HOST` | iEasyHydro HF API endpoint URL | .env file |
 | `IEASYHYDROHF_USERNAME` | API username | .env file |
 | `IEASYHYDROHF_PASSWORD` | API password | .env file |
-| `PREPROCESSING_MODE` | Operating mode: `operational` (default) or `maintenance` | optional |
+| `SAPPHIRE_SYNC_MODE` | Operating mode: `operational` (default), `maintenance`, or `initial` | optional |
 | `PREPROCESSING_MAINTENANCE_LOOKBACK_DAYS` | Number of days to fetch in maintenance mode (default: 50) | optional |
 | `IEASYHYDRO_SPOTCHECK_SITES` | Comma-separated site codes for spot-check validation (e.g., `15166,16159,15189`) | optional |
 | `PREPROCESSING_PROFILING` | Set to `true` to enable performance profiling output | optional |
