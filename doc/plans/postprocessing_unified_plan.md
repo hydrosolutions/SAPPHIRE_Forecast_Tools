@@ -27,27 +27,26 @@
 
 | Item | Status |
 |------|--------|
-| Bugs 1–4 (return value masking, uninitialized var, unsafe `.iloc[0]`, non-atomic writes) | **DONE on `main`** (commit `a52597d`, 22 tests) |
-| Bug 5 (silent API failures) | TODO |
+| Bugs 1–4 (return value masking, uninitialized var, unsafe `.iloc[0]`, non-atomic writes) | **DONE** (commit `a52597d`, merged via PR #290) |
+| Bug 5 (silent API failures) | **DONE** — `SAPPHIRE_API_FAILURE_MODE` env var (warn/fail/ignore), 7 tests |
+| Config fix: missing `ieasyforecast_decadal_skill_metrics_file` | **DONE** — added to `apps/config/.env` |
+| API read tests (postprocessing) | **DONE** — 45 tests in `test_api_read.py`, 16 tests in `test_api_integration.py` |
+| API write test fix | **DONE** — `test_api_read.py` mocks corrected to use `SapphirePreprocessingClient` (commit `ca29b5d`) |
+| `sapphire-api-client` dependency | **DONE** — added to `iEasyHydroForecast/pyproject.toml` and `postprocessing_forecasts/pyproject.toml` |
 | Module separation (daily vs maintenance) | TODO — both original plans agree on this |
 | Server-side batch upsert (CRUD) | TODO |
 | Client-side vectorization | TODO |
 | Skill metrics single-pass optimization | TODO |
 | Quarterly/seasonal aggregation | TODO (future) |
-| Comprehensive test suite (50+ unit, 12+ integration) | TODO (22 tests exist from Tier 1 fixes) |
+| Comprehensive test suite (50+ unit, 12+ integration) | **IN PROGRESS** — 79 postprocessing tests + 206 iEasyHydroForecast tests pass |
 | Bulk-read API endpoints (for `long_term_forecasting`) | Planned — see `doc/plans/bulk_read_endpoints_instructions.md` |
 | API integration | **DONE** — see `doc/plans/sapphire_api_integration_plan.md` |
 | Duplicate skill metrics / ensemble composition issue | **RESOLVED** — see `doc/plans/issues/gi_duplicate_skill_metrics_ensemble_composition.md` |
 
-### Pre-requisites before starting
+### Pre-requisites (all completed)
 
-1. **Merge `main` into `develop_long_term`** to pick up:
-   - Tier 1 bug fixes (commit `a52597d`) — Bugs 1–4 with 22 tests
-   - Python 3.12 + uv migration
-   - Gateway double-run fix
-   - Protobuf dependency update
-   - Architecture review notes
-2. Verify Tier 1 fixes pass on merged branch before proceeding.
+1. ~~**Merge `main` into `develop_long_term`**~~ — Done (PR #290, commit `ab1e2ab`)
+2. ~~Verify Tier 1 fixes pass on merged branch~~ — All 79 postprocessing + 206 iEasyHydroForecast tests pass
 
 ---
 
@@ -59,21 +58,28 @@
 apps/postprocessing_forecasts/
 ├── postprocessing_forecasts.py      # Main entry point (monolithic)
 ├── src/
+│   ├── __init__.py                  # Package init
 │   └── postprocessing_tools.py      # Logging utilities
 ├── tests/
+│   ├── test_api_integration.py      # 16 tests (API write: skill metrics, combined forecasts)
+│   ├── test_api_read.py             # 45 tests (API read: LR, ML, observed data, fallback)
 │   ├── test_error_accumulation.py   # 9 tests (Tier 1: return value tracking)
 │   ├── test_postprocessing_tools.py # 8 tests (3 existing + 5 Tier 1: safe .iloc[0])
 │   └── test_mock_postprocessing_forecasts.py  # 1 integration test
+├── pyproject.toml                   # Includes sapphire-api-client dependency
 ├── Dockerfile
 └── requirements.txt
 
 # Core logic lives in iEasyHydroForecast:
 apps/iEasyHydroForecast/
 ├── forecast_library.py              # ~8100 lines, skill metrics, API writes
-├── setup_library.py                 # Configuration, data loading
+│   ├── _get_api_failure_mode()      # Bug 5: configurable API failure mode
+│   └── _handle_api_write_error()    # Bug 5: centralized error handler (4 call sites)
+├── setup_library.py                 # Configuration, data loading, API reads
 ├── tag_library.py                   # Date utilities (pentad, decad)
+├── pyproject.toml                   # Includes sapphire-api-client dependency
 └── tests/
-    └── test_forecast_library.py     # Includes 5 atomic write tests (Tier 1)
+    └── test_forecast_library.py     # 206 tests (includes 5 atomic write + 7 API failure mode)
 ```
 
 ### Current Execution Flow (Monolithic)
@@ -109,42 +115,35 @@ postprocessing_forecasts.py
 - [x] **Bug 3: Unsafe `.iloc[0]` access** — empty check before `.iloc[0]`, 5 tests
 - [x] **Bug 4: Non-atomic file operations** — `atomic_write_csv()` helper with temp file + rename, 6 tests
 
-### Still TODO
+### Bug 5: Silent API failures — DONE
 
-- [ ] **Bug 5: Silent API failures**
+**Implementation:** Two helper functions added to `forecast_library.py`:
+- `_get_api_failure_mode()` — reads `SAPPHIRE_API_FAILURE_MODE` env var (default: `"warn"`)
+- `_handle_api_write_error(e, description)` — centralized handler used at 4 API write sites
 
-**Location:** `forecast_library.py:6140-6143, 6216-6221, 6355-6360`
+**Call sites updated:**
+- `save_pentadal_skill_metrics()` (line ~6223)
+- `save_decadal_skill_metrics()` (line ~6295)
+- `save_forecast_data_pentad()` (line ~6434)
+- `save_forecast_data_decade()` (line ~6509)
 
-**Problem:** API write errors are caught but swallowed; function returns success.
-
-```python
-try:
-    _write_skill_metrics_to_api(data, "pentad")
-except Exception as e:
-    logger.error(f"Failed to write: {e}")
-    # No re-raise, no return error indicator
-# Function continues and returns None (success)
-```
-
-**Fix:** Make API failure behavior configurable via environment variable:
-
-```python
-api_failure_mode = os.getenv("SAPPHIRE_API_FAILURE_MODE", "warn")  # "warn", "fail", "ignore"
-```
-
+**Modes:**
 - `"fail"` — re-raise exception, caller sees failure
-- `"warn"` — log warning, continue (current behavior but explicit)
+- `"warn"` — log error, continue (default, preserves existing behavior)
 - `"ignore"` — silent
 
-**Tests:**
-- `test_api_error_propagated_when_fail_mode`
-- `test_api_error_logged_when_warn_mode`
-- `test_api_error_silent_when_ignore_mode`
+**Tests (7 in `TestApiFailureMode` class):**
+- `test_get_api_failure_mode_defaults_to_warn`
+- `test_get_api_failure_mode_reads_env`
+- `test_get_api_failure_mode_case_insensitive`
+- `test_get_api_failure_mode_invalid_defaults_to_warn`
+- `test_handle_api_write_error_fail_mode_reraises`
+- `test_handle_api_write_error_warn_mode_logs`
+- `test_handle_api_write_error_ignore_mode_silent`
 
-### Configuration Bug Fix
+### Configuration Bug Fix — DONE
 
-- [ ] **Missing env variable:** `ieasyforecast_decadal_skill_metrics_file` is not defined in `.env`
-  - Add: `ieasyforecast_decadal_skill_metrics_file=skill_metrics_decad.csv`
+- [x] ~~**Missing env variable:** `ieasyforecast_decadal_skill_metrics_file`~~ — added to `apps/config/.env`
 
 ---
 
@@ -389,13 +388,16 @@ def get_api_client() -> SapphirePostprocessingClient:
 
 ## Phase 5: Testing Strategy
 
-### Existing Tests (22 from Tier 1 bug fixes on `main`)
+### Existing Tests (79 postprocessing + 206 iEasyHydroForecast, all passing)
 
 | File | Tests | Covers |
 |------|-------|--------|
+| `postprocessing_forecasts/tests/test_api_read.py` | 45 | API read: LR/ML/observed, pagination, CSV fallback, data consistency, edge cases |
+| `postprocessing_forecasts/tests/test_api_integration.py` | 16 | API write: skill metrics, combined forecasts, field mapping, NaN handling |
 | `postprocessing_forecasts/tests/test_error_accumulation.py` | 9 | Error accumulation, exit codes |
-| `postprocessing_forecasts/tests/test_postprocessing_tools.py` | 8 (3 existing + 5 new) | Safe `.iloc[0]`, NaT dates, missing codes |
-| `iEasyHydroForecast/tests/test_forecast_library.py` | 5 new (in larger file) | Atomic file writes |
+| `postprocessing_forecasts/tests/test_postprocessing_tools.py` | 8 | Safe `.iloc[0]`, NaT dates, missing codes |
+| `postprocessing_forecasts/tests/test_mock_postprocessing_forecasts.py` | 1 | Combined forecast consistency |
+| `iEasyHydroForecast/tests/test_forecast_library.py` | 206 total | Includes 5 atomic write + 7 API failure mode tests (Bug 5) |
 
 ### New Tests Needed
 
@@ -434,9 +436,9 @@ def get_api_client() -> SapphirePostprocessingClient:
 - [x] ~~Bug 1+2: Return value masking~~ (on `main`, commit `a52597d`)
 - [x] ~~Bug 3: Unsafe `.iloc[0]` access~~ (on `main`, commit `a52597d`)
 - [x] ~~Bug 4: Non-atomic file operations~~ (on `main`, commit `a52597d`)
-- [ ] **Merge `main` into `develop_long_term`** to pick up the above
-- [ ] Bug 5: Silent API failures (configurable fail/warn/ignore)
-- [ ] Config fix: Add `ieasyforecast_decadal_skill_metrics_file` to `.env`
+- [x] ~~**Merge `main` into `develop_long_term`**~~ (PR #290, commit `ab1e2ab`)
+- [x] ~~Bug 5: Silent API failures~~ (`SAPPHIRE_API_FAILURE_MODE` env var, `_handle_api_write_error()` helper, 7 tests)
+- [x] ~~Config fix: Add `ieasyforecast_decadal_skill_metrics_file` to `.env`~~
 
 ### Phase 2: Module Separation
 
@@ -510,17 +512,17 @@ def get_api_client() -> SapphirePostprocessingClient:
 
 ## Migration Strategy
 
-### Step 1: Merge Main (No New Code)
+### Step 1: Merge Main (No New Code) — DONE
 
-1. Merge `main` into `develop_long_term`
-2. Verify Tier 1 bug fixes and 22 tests pass
-3. Resolve any merge conflicts (expect conflicts in `forecast_library.py` from API integration)
+1. ~~Merge `main` into `develop_long_term`~~ — PR #290, commit `ab1e2ab`
+2. ~~Verify Tier 1 bug fixes and tests pass~~ — 79 postprocessing + 206 iEasyHydroForecast tests pass
+3. ~~Resolve merge conflicts~~ — Done
 
-### Step 2: Bug 5 Fix (No Breaking Changes)
+### Step 2: Bug 5 Fix (No Breaking Changes) — DONE
 
-1. Add `SAPPHIRE_API_FAILURE_MODE` env var support
-2. Default to `"warn"` (preserves current behavior)
-3. Test with all three modes
+1. ~~Add `SAPPHIRE_API_FAILURE_MODE` env var support~~ — `_get_api_failure_mode()` + `_handle_api_write_error()`
+2. ~~Default to `"warn"` (preserves current behavior)~~ — Yes
+3. ~~Test with all three modes~~ — 7 tests in `TestApiFailureMode`
 
 ### Step 3: Module Separation (Gradual Rollout)
 
@@ -714,3 +716,4 @@ The following plans are **superseded** by this unified plan (moved to `archive/`
 | 2026-01-27 | Claude | Original refactoring plan created |
 | 2026-02-06 | Claude | Unified plan: integrated both plans, marked Tier 1 bugs as done, aligned module separation approach |
 | 2026-02-06 | Claude | Review fixes: corrected test file names/counts, added Docker/pipeline integration, DB prerequisites, rollback strategy, code reference appendix |
+| 2026-02-12 | Claude | Phase 1 complete: updated all status fields, Bug 5 done (7 tests), config fix done, API read tests (45) + write tests (16) documented, test counts updated (79 postprocessing + 206 iEasyHydroForecast), migration steps 1–2 marked done, `sapphire-api-client` dependency added to pyproject.toml files |

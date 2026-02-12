@@ -24,6 +24,8 @@ dependencies = [
     "pytz>=2024.1",
     # External SDK (brings in requests as transitive dependency)
     "ieasyhydro-sdk @ git+https://github.com/hydrosolutions/ieasyhydro-python-sdk@master",
+    # SAPPHIRE API client for database-backed I/O
+    "sapphire-api-client @ git+https://github.com/hydrosolutions/sapphire-api-client.git@f70a83d6b092b7c616239f50d061f7f03eabcbb2",
 ]
 
 [project.optional-dependencies]

@@ -140,6 +140,10 @@ def upsert_record(db: Session, model: Type[Base], data: dict, unique_keys: list[
 
 **Tests must pass before committing or moving to a new topic.**
 
+### Zero Skips Policy
+
+**No tests may be skipped.** All tests must run and pass. If any tests are skipped or fail to collect, treat this as a red flag requiring investigation before proceeding. Skipped tests often hide real bugs (e.g., missing dependencies causing `SAPPHIRE_API_AVAILABLE = False`). Do not accept "0 collected" or `pytest.skip()` as normal — find and fix the root cause.
+
 ### Test Coverage Requirements
 
 1. **Unit tests**: Each new method should have adequate unit tests
@@ -147,6 +151,22 @@ def upsert_record(db: Session, model: Type[Base], data: dict, unique_keys: list[
 3. **End-to-end tests**: Tests verifying complete system behavior
 
 ### Running Tests
+
+Follow the full testing workflow in [`doc/dev/testing_workflow.md`](doc/dev/testing_workflow.md). The recommended way to run all module tests is:
+
+```bash
+cd apps
+SAPPHIRE_TEST_ENV=True bash run_tests.sh
+```
+
+To run a single module:
+
+```bash
+cd apps
+SAPPHIRE_TEST_ENV=True bash run_tests.sh <module_name>
+```
+
+Always use `run_tests.sh` rather than running pytest manually for individual modules — it handles test directory inconsistencies (`test/` vs `tests/`) and ensures nothing is forgotten.
 
 #### Application Module Tests
 

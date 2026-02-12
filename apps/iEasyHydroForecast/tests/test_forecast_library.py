@@ -2282,5 +2282,62 @@ class TestAtomicWriteCSV(unittest.TestCase):
         self.assertEqual(files[0], "test_output.csv")
 
 
+class TestApiFailureMode(unittest.TestCase):
+    """Tests for Bug 5: configurable API failure mode via SAPPHIRE_API_FAILURE_MODE."""
+
+    def test_get_api_failure_mode_defaults_to_warn(self):
+        """Default mode is 'warn' when env var is not set."""
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("SAPPHIRE_API_FAILURE_MODE", None)
+            self.assertEqual(fl._get_api_failure_mode(), "warn")
+
+    def test_get_api_failure_mode_reads_env(self):
+        """Mode is read from SAPPHIRE_API_FAILURE_MODE env var."""
+        for mode in ("warn", "fail", "ignore"):
+            with patch.dict(os.environ, {"SAPPHIRE_API_FAILURE_MODE": mode}):
+                self.assertEqual(fl._get_api_failure_mode(), mode)
+
+    def test_get_api_failure_mode_case_insensitive(self):
+        """Mode parsing is case-insensitive."""
+        with patch.dict(os.environ, {"SAPPHIRE_API_FAILURE_MODE": "FAIL"}):
+            self.assertEqual(fl._get_api_failure_mode(), "fail")
+
+    def test_get_api_failure_mode_invalid_defaults_to_warn(self):
+        """Invalid mode value falls back to 'warn'."""
+        with patch.dict(os.environ, {"SAPPHIRE_API_FAILURE_MODE": "invalid"}):
+            self.assertEqual(fl._get_api_failure_mode(), "warn")
+
+    def test_handle_api_write_error_fail_mode_reraises(self):
+        """In 'fail' mode, the original exception is re-raised."""
+        with patch.dict(os.environ, {"SAPPHIRE_API_FAILURE_MODE": "fail"}):
+            with self.assertRaises(ValueError):
+                try:
+                    raise ValueError("API connection refused")
+                except Exception as e:
+                    fl._handle_api_write_error(e, "test data")
+
+    def test_handle_api_write_error_warn_mode_logs(self):
+        """In 'warn' mode, error is logged but not raised."""
+        with patch.dict(os.environ, {"SAPPHIRE_API_FAILURE_MODE": "warn"}):
+            with patch("iEasyHydroForecast.forecast_library.logger") as mock_logger:
+                try:
+                    raise ValueError("API timeout")
+                except Exception as e:
+                    fl._handle_api_write_error(e, "pentadal skill metrics")
+                mock_logger.error.assert_called_once()
+                self.assertIn("pentadal skill metrics",
+                              mock_logger.error.call_args[0][0])
+
+    def test_handle_api_write_error_ignore_mode_silent(self):
+        """In 'ignore' mode, error is not logged and not raised."""
+        with patch.dict(os.environ, {"SAPPHIRE_API_FAILURE_MODE": "ignore"}):
+            with patch("iEasyHydroForecast.forecast_library.logger") as mock_logger:
+                try:
+                    raise ValueError("API error")
+                except Exception as e:
+                    fl._handle_api_write_error(e, "test data")
+                mock_logger.error.assert_not_called()
+
+
 if __name__ == '__main__':
     unittest.main()

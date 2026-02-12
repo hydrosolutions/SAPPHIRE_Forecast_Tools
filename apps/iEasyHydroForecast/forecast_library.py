@@ -35,6 +35,40 @@ import tag_library as tl
 logger = logging.getLogger(__name__)
 
 
+def _get_api_failure_mode() -> str:
+    """Return the API failure mode from environment.
+
+    Returns one of "warn", "fail", or "ignore".
+    Default is "warn" (log error, continue execution).
+    """
+    mode = os.getenv("SAPPHIRE_API_FAILURE_MODE", "warn").lower()
+    if mode not in ("warn", "fail", "ignore"):
+        logger.warning(
+            f"Invalid SAPPHIRE_API_FAILURE_MODE='{mode}', defaulting to 'warn'"
+        )
+        return "warn"
+    return mode
+
+
+def _handle_api_write_error(e: Exception, description: str) -> None:
+    """Handle an API write error according to SAPPHIRE_API_FAILURE_MODE.
+
+    Args:
+        e: The exception that was raised.
+        description: Human-readable description of the failed operation.
+
+    Raises:
+        Exception: Re-raises the original exception if mode is "fail".
+    """
+    mode = _get_api_failure_mode()
+    if mode == "fail":
+        logger.error(f"Failed to write {description} to API: {e}")
+        raise
+    elif mode == "warn":
+        logger.error(f"Failed to write {description} to API: {e}")
+    # mode == "ignore": silently continue
+
+
 def atomic_write_csv(data: pd.DataFrame, filepath: str, **to_csv_kwargs) -> None:
     """
     Write a DataFrame to CSV atomically using temp file + rename pattern.
@@ -6187,7 +6221,7 @@ def save_pentadal_skill_metrics(data: pd.DataFrame):
         try:
             _write_skill_metrics_to_api(data, "pentad")
         except Exception as e:
-            logger.error(f"Failed to write pentadal skill metrics to API: {e}")
+            _handle_api_write_error(e, "pentadal skill metrics")
 
     # --- Consistency Check ---
     consistency_check = os.getenv("SAPPHIRE_CONSISTENCY_CHECK", "false").lower() == "true"
@@ -6259,7 +6293,7 @@ def save_decadal_skill_metrics(data: pd.DataFrame):
         try:
             _write_skill_metrics_to_api(data, "decade")
         except Exception as e:
-            logger.error(f"Failed to write decadal skill metrics to API: {e}")
+            _handle_api_write_error(e, "decadal skill metrics")
 
     # --- Consistency Check ---
     consistency_check = os.getenv("SAPPHIRE_CONSISTENCY_CHECK", "false").lower() == "true"
@@ -6398,7 +6432,7 @@ def save_forecast_data_pentad(simulated: pd.DataFrame):
         try:
             _write_combined_forecast_to_api(simulated_latest, "pentad")
         except Exception as e:
-            logger.error(f"Failed to write pentadal combined forecasts to API: {e}")
+            _handle_api_write_error(e, "pentadal combined forecasts")
 
     # --- Consistency Check ---
     consistency_check = os.getenv("SAPPHIRE_CONSISTENCY_CHECK", "false").lower() == "true"
@@ -6473,7 +6507,7 @@ def save_forecast_data_decade(simulated: pd.DataFrame):
         try:
             _write_combined_forecast_to_api(simulated_latest, "decade")
         except Exception as e:
-            logger.error(f"Failed to write decadal combined forecasts to API: {e}")
+            _handle_api_write_error(e, "decadal combined forecasts")
 
     # --- Consistency Check ---
     consistency_check = os.getenv("SAPPHIRE_CONSISTENCY_CHECK", "false").lower() == "true"
