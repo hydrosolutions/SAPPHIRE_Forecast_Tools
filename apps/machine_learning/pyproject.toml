@@ -26,6 +26,7 @@ dependencies = [
     "sapphire-api-client @ git+https://github.com/hydrosolutions/sapphire-api-client.git@f70a83d6b092b7c616239f50d061f7f03eabcbb2",
     # Local library dependency
     "iEasyHydroForecast @ file:///${PROJECT_ROOT}/../iEasyHydroForecast",
+    "pillow>=12.1.1",
 ]
 
 [project.optional-dependencies]
