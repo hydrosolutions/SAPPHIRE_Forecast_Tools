@@ -103,6 +103,20 @@ def create_mock_hydrograph_data():
     })
 
 
+def create_mock_runoff_data(horizon_type='pentad'):
+    """Create sample runoff data matching SapphirePreprocessingClient.read_runoff() response."""
+    return pd.DataFrame({
+        'id': [1, 2],
+        'horizon_type': [horizon_type, horizon_type],
+        'code': ['12345', '12346'],
+        'date': pd.to_datetime(['2024-01-05', '2024-01-05']),
+        'discharge': [100.0, 150.0],
+        'predictor': [80.0, 120.0],
+        'horizon_value': [1, 1],
+        'horizon_in_year': [1, 1],
+    })
+
+
 # =============================================================================
 # Tests for _read_lr_forecasts_from_api
 # =============================================================================
@@ -865,50 +879,72 @@ class TestReadObservedDataApiIntegration:
         finally:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 
-    @patch('setup_library.fl.read_hydrograph_data')
-    def test_pentad_api_enabled_uses_fl_read_hydrograph_data(self, mock_read_hydro, temp_csv_env):
-        """When SAPPHIRE_API_ENABLED=true, should use fl.read_hydrograph_data()."""
+    @patch('setup_library.SapphirePreprocessingClient')
+    def test_pentad_api_enabled_uses_preprocessing_client(self, mock_client_class, temp_csv_env):
+        """When SAPPHIRE_API_ENABLED=true, should use SapphirePreprocessingClient.read_runoff()."""
         if not SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
 
         os.environ['SAPPHIRE_API_ENABLED'] = 'true'
         try:
-            mock_read_hydro.return_value = create_mock_hydrograph_data()
+            mock_client = Mock()
+            mock_client.readiness_check.return_value = True
+            mock_client.read_runoff.side_effect = [
+                create_mock_runoff_data('pentad'),
+                pd.DataFrame(),  # end pagination
+            ]
+            mock_client_class.return_value = mock_client
 
             result = sl.read_observed_pentadal_data()
 
-            mock_read_hydro.assert_called_once_with(horizon_type="pentad")
+            mock_client.read_runoff.assert_called()
+            # First call should have horizon="pentad"
+            first_call_kwargs = mock_client.read_runoff.call_args_list[0].kwargs
+            assert first_call_kwargs['horizon'] == 'pentad'
             assert 'model_short' in result.columns
             assert result['model_short'].iloc[0] == 'Obs'
+            # discharge should be renamed to discharge_avg
+            assert 'discharge_avg' in result.columns
         finally:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 
-    @patch('setup_library.fl.read_hydrograph_data')
-    def test_decadal_api_enabled_uses_fl_read_hydrograph_data(self, mock_read_hydro, temp_csv_env):
-        """When SAPPHIRE_API_ENABLED=true, should use fl.read_hydrograph_data() for decadal."""
+    @patch('setup_library.SapphirePreprocessingClient')
+    def test_decadal_api_enabled_uses_preprocessing_client(self, mock_client_class, temp_csv_env):
+        """When SAPPHIRE_API_ENABLED=true, should use SapphirePreprocessingClient.read_runoff() for decadal."""
         if not SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
 
         os.environ['SAPPHIRE_API_ENABLED'] = 'true'
         try:
-            mock_read_hydro.return_value = create_mock_hydrograph_data()
+            mock_client = Mock()
+            mock_client.readiness_check.return_value = True
+            mock_client.read_runoff.side_effect = [
+                create_mock_runoff_data('decade'),
+                pd.DataFrame(),  # end pagination
+            ]
+            mock_client_class.return_value = mock_client
 
             result = sl.read_observed_decadal_data()
 
-            mock_read_hydro.assert_called_once_with(horizon_type="decade")
+            mock_client.read_runoff.assert_called()
+            first_call_kwargs = mock_client.read_runoff.call_args_list[0].kwargs
+            assert first_call_kwargs['horizon'] == 'decade'
             assert result['model_short'].iloc[0] == 'Obs'
+            assert 'discharge_avg' in result.columns
         finally:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 
-    @patch('setup_library.fl.read_hydrograph_data')
-    def test_pentad_api_fail_falls_back_to_csv(self, mock_read_hydro, temp_csv_env):
+    @patch('setup_library.SapphirePreprocessingClient')
+    def test_pentad_api_fail_falls_back_to_csv(self, mock_client_class, temp_csv_env):
         """When API fails, should fall back to CSV."""
         if not SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
 
         os.environ['SAPPHIRE_API_ENABLED'] = 'true'
         try:
-            mock_read_hydro.side_effect = Exception("API error")
+            mock_client = Mock()
+            mock_client.readiness_check.side_effect = Exception("API error")
+            mock_client_class.return_value = mock_client
 
             result = sl.read_observed_pentadal_data()
 
@@ -917,17 +953,23 @@ class TestReadObservedDataApiIntegration:
         finally:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 
-    @patch('setup_library.fl.read_hydrograph_data')
-    def test_pentad_renames_pentad_to_pentad_in_month(self, mock_read_hydro, temp_csv_env):
+    @patch('setup_library.SapphirePreprocessingClient')
+    def test_pentad_renames_pentad_to_pentad_in_month(self, mock_client_class, temp_csv_env):
         """Should rename 'pentad' column to 'pentad_in_month' for consistency."""
         if not SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
 
         os.environ['SAPPHIRE_API_ENABLED'] = 'true'
         try:
-            mock_data = create_mock_hydrograph_data()
+            # Use data with 'pentad' instead of 'horizon_value' to test rename
+            mock_data = create_mock_runoff_data('pentad')
+            mock_data = mock_data.drop(columns=['horizon_value'])
             mock_data['pentad'] = [1, 1]
-            mock_read_hydro.return_value = mock_data
+
+            mock_client = Mock()
+            mock_client.readiness_check.return_value = True
+            mock_client.read_runoff.side_effect = [mock_data, pd.DataFrame()]
+            mock_client_class.return_value = mock_client
 
             result = sl.read_observed_pentadal_data()
 
