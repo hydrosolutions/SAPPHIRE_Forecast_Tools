@@ -3814,9 +3814,6 @@ def _write_lr_forecast_to_api(data: pd.DataFrame, horizon_type: str) -> bool:
 
     Returns:
         True if successful, False otherwise
-
-    Raises:
-        SapphireAPIError: If API write fails after retries
     """
     if not SAPPHIRE_API_AVAILABLE:
         logger.warning("sapphire-api-client not installed, skipping API write")
@@ -3833,9 +3830,15 @@ def _write_lr_forecast_to_api(data: pd.DataFrame, horizon_type: str) -> bool:
 
     client = SapphirePostprocessingClient(base_url=api_url)
 
-    # Health check first - fail fast if API unavailable
+    # Health check - non-blocking, skip if API unavailable
     if not client.readiness_check():
-        raise SapphireAPIError(f"SAPPHIRE API at {api_url} is not ready")
+        logger.warning(
+            f"SAPPHIRE API at {api_url} is not ready, "
+            "skipping LR forecast write"
+        )
+        return False
+
+    data = data.copy()
 
     # Determine column names based on horizon_type
     if horizon_type == "pentad":
@@ -3907,9 +3910,6 @@ def _write_hydrograph_to_api(data: pd.DataFrame, horizon_type: str) -> bool:
 
     Returns:
         True if successful, False otherwise
-
-    Raises:
-        SapphireAPIError: If API write fails after retries
     """
     if not SAPPHIRE_API_AVAILABLE:
         logger.warning("sapphire-api-client not installed, skipping hydrograph API write")
@@ -3924,9 +3924,15 @@ def _write_hydrograph_to_api(data: pd.DataFrame, horizon_type: str) -> bool:
     api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
     client = SapphirePreprocessingClient(base_url=api_url)
 
-    # Health check first - fail fast if API unavailable
+    # Health check - non-blocking, skip if API unavailable
     if not client.readiness_check():
-        raise SapphireAPIError(f"SAPPHIRE API at {api_url} is not ready")
+        logger.warning(
+            f"SAPPHIRE API at {api_url} is not ready, "
+            "skipping hydrograph write"
+        )
+        return False
+
+    data = data.copy()
 
     # Determine column names based on horizon type
     if horizon_type == "pentad":
@@ -4011,12 +4017,16 @@ def _write_hydrograph_to_api(data: pd.DataFrame, horizon_type: str) -> bool:
         return False
 
 
-def _write_runoff_to_api(data: pd.DataFrame, horizon_type: str) -> pd.DataFrame | None:
+def _write_runoff_to_api(
+    data: pd.DataFrame,
+    horizon_type: str,
+    mode: str | None = None,
+) -> pd.DataFrame | None:
     """
     Write pentad or decad runoff/discharge data to SAPPHIRE preprocessing API.
 
-    Supports different sync modes via SAPPHIRE_SYNC_MODE environment variable:
-    - operational (default): Only write the latest data (most recent date per station)
+    Supports different sync modes:
+    - operational (default): Only write today's data
     - maintenance: Write the last 30 days of data
     - initial: Write all data (for first-time setup)
 
@@ -4037,13 +4047,11 @@ def _write_runoff_to_api(data: pd.DataFrame, horizon_type: str) -> pd.DataFrame 
                 - discharge_avg: average discharge
                 - predictor: predictor value
         horizon_type: Either "pentad" or "decade"
+        mode: Sync mode override. If None, reads SAPPHIRE_SYNC_MODE env var.
 
     Returns:
         DataFrame of data that was written to API, or None if nothing was written
         (API disabled, no data, or error)
-
-    Raises:
-        SapphireAPIError: If API write fails after retries
     """
     if not SAPPHIRE_API_AVAILABLE:
         logger.warning("sapphire-api-client not installed, skipping runoff API write")
@@ -4058,12 +4066,19 @@ def _write_runoff_to_api(data: pd.DataFrame, horizon_type: str) -> pd.DataFrame 
     api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
     client = SapphirePreprocessingClient(base_url=api_url)
 
-    # Health check first - fail fast if API unavailable
+    # Health check - non-blocking, skip if API unavailable
     if not client.readiness_check():
-        raise SapphireAPIError(f"SAPPHIRE API at {api_url} is not ready")
+        logger.warning(
+            f"SAPPHIRE API at {api_url} is not ready, "
+            "skipping runoff write"
+        )
+        return None
 
-    # Determine sync mode
-    sync_mode = os.getenv("SAPPHIRE_SYNC_MODE", "operational").lower()
+    # Determine sync mode (parameter > env var > default)
+    if mode is not None:
+        sync_mode = mode.lower()
+    else:
+        sync_mode = os.getenv("SAPPHIRE_SYNC_MODE", "operational").lower()
     logger.info(f"Runoff API sync mode: {sync_mode}")
 
     # Filter data based on sync mode
@@ -4075,24 +4090,23 @@ def _write_runoff_to_api(data: pd.DataFrame, horizon_type: str) -> pd.DataFrame 
     data = data.copy()
     data['date'] = pd.to_datetime(data['date'])
 
+    today = pd.Timestamp.today().normalize()
     if sync_mode == "operational":
-        # Only write the latest date's data (most recent per station)
-        latest_date = data['date'].max()
-        data_to_write = data[data['date'] == latest_date]
-        logger.info(f"Operational mode: writing {len(data_to_write)} records for date {latest_date}")
+        # Only write today's data
+        data_to_write = data[data['date'] == today]
+        logger.info(f"Operational mode: writing {len(data_to_write)} records for date {today}")
     elif sync_mode == "maintenance":
         # Write the last 30 days of data
-        cutoff_date = data['date'].max() - pd.Timedelta(days=30)
-        data_to_write = data[data['date'] >= cutoff_date]
-        logger.info(f"Maintenance mode: writing {len(data_to_write)} records from {cutoff_date} to {data['date'].max()}")
+        cutoff = today - pd.Timedelta(days=30)
+        data_to_write = data[data['date'] >= cutoff]
+        logger.info(f"Maintenance mode: writing {len(data_to_write)} records from {cutoff} to {today}")
     elif sync_mode == "initial":
         # Write all data
         data_to_write = data
         logger.info(f"Initial mode: writing all {len(data_to_write)} records")
     else:
         logger.warning(f"Unknown sync mode '{sync_mode}', defaulting to operational")
-        latest_date = data['date'].max()
-        data_to_write = data[data['date'] == latest_date]
+        data_to_write = data[data['date'] == today]
 
     if data_to_write.empty:
         logger.info(f"No runoff data to write after filtering ({horizon_type})")
@@ -4165,9 +4179,6 @@ def _write_combined_forecast_to_api(data: pd.DataFrame, horizon_type: str) -> bo
 
     Returns:
         bool: True if successful, False otherwise
-
-    Raises:
-        SapphireAPIError: If API write fails after retries
     """
     if not SAPPHIRE_API_AVAILABLE:
         logger.warning("sapphire-api-client not installed, skipping combined forecast API write")
@@ -4184,9 +4195,15 @@ def _write_combined_forecast_to_api(data: pd.DataFrame, horizon_type: str) -> bo
 
     client = SapphirePostprocessingClient(base_url=api_url)
 
-    # Health check first - fail fast if API unavailable
+    # Health check - non-blocking, skip if API unavailable
     if not client.readiness_check():
-        raise SapphireAPIError(f"SAPPHIRE API at {api_url} is not ready")
+        logger.warning(
+            f"SAPPHIRE API at {api_url} is not ready, "
+            "skipping combined forecast write"
+        )
+        return False
+
+    data = data.copy()
 
     # Determine column names based on horizon_type
     if horizon_type == "pentad":
@@ -4283,9 +4300,6 @@ def _write_skill_metrics_to_api(data: pd.DataFrame, horizon_type: str) -> bool:
 
     Returns:
         bool: True if successful, False otherwise
-
-    Raises:
-        SapphireAPIError: If API write fails after retries
     """
     if not SAPPHIRE_API_AVAILABLE:
         logger.warning("sapphire-api-client not installed, skipping skill metrics API write")
@@ -4302,9 +4316,15 @@ def _write_skill_metrics_to_api(data: pd.DataFrame, horizon_type: str) -> bool:
 
     client = SapphirePostprocessingClient(base_url=api_url)
 
-    # Health check first - fail fast if API unavailable
+    # Health check - non-blocking, skip if API unavailable
     if not client.readiness_check():
-        raise SapphireAPIError(f"SAPPHIRE API at {api_url} is not ready")
+        logger.warning(
+            f"SAPPHIRE API at {api_url} is not ready, "
+            "skipping skill metrics write"
+        )
+        return False
+
+    data = data.copy()
 
     # Determine column names based on horizon_type
     if horizon_type == "pentad":
@@ -4326,7 +4346,7 @@ def _write_skill_metrics_to_api(data: pd.DataFrame, horizon_type: str) -> bool:
     }
 
     # Use today's date for the skill metrics (they are calculated on run day)
-    today = pd.Timestamp.now().strftime('%Y-%m-%d')
+    today = pd.Timestamp.today().normalize().strftime('%Y-%m-%d')
 
     # Prepare records for API
     records = []

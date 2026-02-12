@@ -72,8 +72,8 @@ class TestWriteLrForecastToApi:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 
     @patch('forecast_library.SapphirePostprocessingClient')
-    def test_api_not_ready_raises_error(self, mock_client_class):
-        """When API health check fails, should raise SapphireAPIError."""
+    def test_api_not_ready_returns_false(self, mock_client_class):
+        """When API health check fails, should return False (non-blocking)."""
         if not fl.SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
 
@@ -99,8 +99,8 @@ class TestWriteLrForecastToApi:
                 'rsquared': [0.85]
             })
 
-            with pytest.raises(fl.SapphireAPIError, match="not ready"):
-                fl._write_lr_forecast_to_api(data, "pentad")
+            result = fl._write_lr_forecast_to_api(data, "pentad")
+            assert result is False
         finally:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 
@@ -1150,8 +1150,8 @@ class TestWriteHydrographToApi:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 
     @patch('forecast_library.SapphirePreprocessingClient')
-    def test_api_not_ready_raises_error(self, mock_client_class, sample_pentad_hydrograph_data):
-        """When API health check fails, should raise SapphireAPIError."""
+    def test_api_not_ready_returns_false(self, mock_client_class, sample_pentad_hydrograph_data):
+        """When API health check fails, should return False (non-blocking)."""
         if not fl.SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
 
@@ -1161,8 +1161,8 @@ class TestWriteHydrographToApi:
             mock_client.readiness_check.return_value = False
             mock_client_class.return_value = mock_client
 
-            with pytest.raises(fl.SapphireAPIError, match="not ready"):
-                fl._write_hydrograph_to_api(sample_pentad_hydrograph_data, "pentad")
+            result = fl._write_hydrograph_to_api(sample_pentad_hydrograph_data, "pentad")
+            assert result is False
         finally:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 
@@ -1330,8 +1330,8 @@ class TestWriteRunoffToApi:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 
     @patch('forecast_library.SapphirePreprocessingClient')
-    def test_api_not_ready_raises_error(self, mock_client_class, sample_pentad_runoff_data):
-        """When API health check fails, should raise SapphireAPIError."""
+    def test_api_not_ready_returns_none(self, mock_client_class, sample_pentad_runoff_data):
+        """When API health check fails, should return None (non-blocking)."""
         if not fl.SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
 
@@ -1341,16 +1341,23 @@ class TestWriteRunoffToApi:
             mock_client.readiness_check.return_value = False
             mock_client_class.return_value = mock_client
 
-            with pytest.raises(fl.SapphireAPIError, match="not ready"):
-                fl._write_runoff_to_api(sample_pentad_runoff_data, "pentad")
+            result = fl._write_runoff_to_api(sample_pentad_runoff_data, "pentad")
+            assert result is None
         finally:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 
+    @patch('forecast_library.pd.Timestamp')
     @patch('forecast_library.SapphirePreprocessingClient')
-    def test_operational_mode_writes_latest_only(self, mock_client_class, sample_pentad_runoff_data):
-        """Operational mode should only write the latest date's data."""
+    def test_operational_mode_writes_today_only(self, mock_client_class, mock_timestamp):
+        """Operational mode should only write today's data."""
         if not fl.SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
+
+        # Mock today to match data dates
+        fake_today = pd.Timestamp('2024-02-14')
+        mock_timestamp.today.return_value = fake_today
+        # Preserve pd.to_datetime behavior
+        mock_timestamp.side_effect = lambda *a, **kw: pd.Timestamp(*a, **kw)
 
         os.environ['SAPPHIRE_API_ENABLED'] = 'true'
         os.environ['SAPPHIRE_SYNC_MODE'] = 'operational'
@@ -1360,12 +1367,22 @@ class TestWriteRunoffToApi:
             mock_client.write_runoff.return_value = 2
             mock_client_class.return_value = mock_client
 
-            result = fl._write_runoff_to_api(sample_pentad_runoff_data, "pentad")
+            # Create data with one date matching "today"
+            data = pd.DataFrame({
+                'code': ['12345', '67890', '12345', '67890'],
+                'date': pd.to_datetime(['2024-02-09', '2024-02-09', '2024-02-14', '2024-02-14']),
+                'pentad': [2, 2, 3, 3],
+                'pentad_in_year': [8, 8, 9, 9],
+                'discharge_avg': [100.0, 101.0, 102.0, 103.0],
+                'predictor': [50.0, 51.0, 52.0, 53.0],
+            })
 
-            # Should return DataFrame
+            result = fl._write_runoff_to_api(data, "pentad")
+
+            # Should return DataFrame with only today's records
             assert isinstance(result, pd.DataFrame)
-            # Should only have 2 records (one per station for latest date)
             assert len(result) == 2
+            assert all(result['date'] == fake_today)
 
             # Verify API was called with only 2 records
             call_args = mock_client.write_runoff.call_args[0][0]
@@ -1374,11 +1391,17 @@ class TestWriteRunoffToApi:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
             os.environ.pop('SAPPHIRE_SYNC_MODE', None)
 
+    @patch('forecast_library.pd.Timestamp')
     @patch('forecast_library.SapphirePreprocessingClient')
-    def test_maintenance_mode_writes_last_30_days(self, mock_client_class, sample_pentad_runoff_data):
-        """Maintenance mode should write the last 30 days of data."""
+    def test_maintenance_mode_writes_last_30_days(self, mock_client_class, mock_timestamp):
+        """Maintenance mode should write the last 30 days from today."""
         if not fl.SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
+
+        # Mock today
+        fake_today = pd.Timestamp('2024-02-19')
+        mock_timestamp.today.return_value = fake_today
+        mock_timestamp.side_effect = lambda *a, **kw: pd.Timestamp(*a, **kw)
 
         os.environ['SAPPHIRE_API_ENABLED'] = 'true'
         os.environ['SAPPHIRE_SYNC_MODE'] = 'maintenance'
@@ -1388,17 +1411,24 @@ class TestWriteRunoffToApi:
             mock_client.write_runoff.return_value = 14
             mock_client_class.return_value = mock_client
 
-            result = fl._write_runoff_to_api(sample_pentad_runoff_data, "pentad")
+            # Create data spanning more than 30 days
+            dates = pd.date_range('2024-01-01', periods=10, freq='5D')
+            data = pd.DataFrame({
+                'code': ['12345'] * len(dates) + ['67890'] * len(dates),
+                'date': list(dates) * 2,
+                'pentad': [1, 2, 3, 4, 5, 6, 1, 2, 3, 4] * 2,
+                'pentad_in_year': [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] * 2,
+                'discharge_avg': [100.0 + i for i in range(20)],
+                'predictor': [50.0 + i for i in range(20)],
+            })
+
+            result = fl._write_runoff_to_api(data, "pentad")
 
             # Should return DataFrame
             assert isinstance(result, pd.DataFrame)
-            # Data spans 45 days (10 dates * 5 days apart), last 30 days should include multiple records
-            # Cutoff is max_date - 30 days
-            max_date = sample_pentad_runoff_data['date'].max()
-            cutoff_date = max_date - pd.Timedelta(days=30)
-            expected_records = sample_pentad_runoff_data[
-                pd.to_datetime(sample_pentad_runoff_data['date']) >= cutoff_date
-            ]
+            # Cutoff is today - 30 days = 2024-01-20
+            cutoff = fake_today - pd.Timedelta(days=30)
+            expected_records = data[pd.to_datetime(data['date']) >= cutoff]
             assert len(result) == len(expected_records)
         finally:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
@@ -1460,20 +1490,29 @@ class TestWriteRunoffToApi:
             os.environ.pop('SAPPHIRE_SYNC_MODE', None)
 
     @patch('forecast_library.SapphirePreprocessingClient')
-    def test_returns_dataframe_for_consistency_checking(self, mock_client_class, sample_pentad_runoff_data):
+    def test_returns_dataframe_for_consistency_checking(self, mock_client_class):
         """Should return DataFrame of written data for consistency checking."""
         if not fl.SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
 
         os.environ['SAPPHIRE_API_ENABLED'] = 'true'
-        os.environ['SAPPHIRE_SYNC_MODE'] = 'operational'
         try:
             mock_client = Mock()
             mock_client.readiness_check.return_value = True
-            mock_client.write_runoff.return_value = 2
+            mock_client.write_runoff.return_value = 4
             mock_client_class.return_value = mock_client
 
-            result = fl._write_runoff_to_api(sample_pentad_runoff_data, "pentad")
+            data = pd.DataFrame({
+                'code': ['12345', '67890', '12345', '67890'],
+                'date': pd.to_datetime(['2024-01-01', '2024-01-01', '2024-01-05', '2024-01-05']),
+                'pentad': [1, 1, 1, 1],
+                'pentad_in_year': [1, 1, 1, 1],
+                'discharge_avg': [100.0, 101.0, 102.0, 103.0],
+                'predictor': [50.0, 51.0, 52.0, 53.0],
+            })
+
+            # Use initial mode to write all data (avoids date dependency on today)
+            result = fl._write_runoff_to_api(data, "pentad", mode="initial")
 
             # Should be a DataFrame, not a bool
             assert isinstance(result, pd.DataFrame)
@@ -1483,7 +1522,6 @@ class TestWriteRunoffToApi:
             assert 'discharge_avg' in result.columns
         finally:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
-            os.environ.pop('SAPPHIRE_SYNC_MODE', None)
 
     def test_empty_data_returns_none(self):
         """Empty DataFrame should return None without API call."""
@@ -1527,11 +1565,17 @@ class TestWriteRunoffToApi:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
             os.environ.pop('SAPPHIRE_SYNC_MODE', None)
 
+    @patch('forecast_library.pd.Timestamp')
     @patch('forecast_library.SapphirePreprocessingClient')
-    def test_default_sync_mode_is_operational(self, mock_client_class, sample_pentad_runoff_data):
-        """Default sync mode should be operational (only latest)."""
+    def test_default_sync_mode_is_operational(self, mock_client_class, mock_timestamp):
+        """Default sync mode should be operational (only today's data)."""
         if not fl.SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
+
+        # Mock today to match data dates
+        fake_today = pd.Timestamp('2024-01-05')
+        mock_timestamp.today.return_value = fake_today
+        mock_timestamp.side_effect = lambda *a, **kw: pd.Timestamp(*a, **kw)
 
         os.environ['SAPPHIRE_API_ENABLED'] = 'true'
         os.environ.pop('SAPPHIRE_SYNC_MODE', None)  # Ensure not set
@@ -1541,10 +1585,53 @@ class TestWriteRunoffToApi:
             mock_client.write_runoff.return_value = 2
             mock_client_class.return_value = mock_client
 
-            result = fl._write_runoff_to_api(sample_pentad_runoff_data, "pentad")
+            # Create data with one date matching "today"
+            data = pd.DataFrame({
+                'code': ['12345', '67890', '12345', '67890'],
+                'date': pd.to_datetime(['2024-01-01', '2024-01-01', '2024-01-05', '2024-01-05']),
+                'pentad': [1, 1, 1, 1],
+                'pentad_in_year': [1, 1, 1, 1],
+                'discharge_avg': [100.0, 101.0, 102.0, 103.0],
+                'predictor': [50.0, 51.0, 52.0, 53.0],
+            })
 
-            # Should only write 2 records (one per station for latest date)
+            result = fl._write_runoff_to_api(data, "pentad")
+
+            # Should only write 2 records (one per station for today)
             call_args = mock_client.write_runoff.call_args[0][0]
             assert len(call_args) == 2
         finally:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
+
+    @patch('forecast_library.SapphirePreprocessingClient')
+    def test_mode_parameter_overrides_env_var(self, mock_client_class):
+        """mode parameter should override SAPPHIRE_SYNC_MODE env var."""
+        if not fl.SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        os.environ['SAPPHIRE_API_ENABLED'] = 'true'
+        os.environ['SAPPHIRE_SYNC_MODE'] = 'operational'  # Env says operational
+        try:
+            mock_client = Mock()
+            mock_client.readiness_check.return_value = True
+            mock_client.write_runoff.return_value = 4
+            mock_client_class.return_value = mock_client
+
+            data = pd.DataFrame({
+                'code': ['12345', '67890', '12345', '67890'],
+                'date': pd.to_datetime(['2024-01-01', '2024-01-01', '2024-01-05', '2024-01-05']),
+                'pentad': [1, 1, 1, 1],
+                'pentad_in_year': [1, 1, 1, 1],
+                'discharge_avg': [100.0, 101.0, 102.0, 103.0],
+                'predictor': [50.0, 51.0, 52.0, 53.0],
+            })
+
+            # Pass mode='initial' to override env var
+            result = fl._write_runoff_to_api(data, "pentad", mode="initial")
+
+            # initial mode writes ALL data
+            assert isinstance(result, pd.DataFrame)
+            assert len(result) == 4
+        finally:
+            os.environ.pop('SAPPHIRE_API_ENABLED', None)
+            os.environ.pop('SAPPHIRE_SYNC_MODE', None)

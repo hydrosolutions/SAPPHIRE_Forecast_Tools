@@ -54,8 +54,8 @@ class TestWriteCombinedForecastToApi:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 
     @patch('forecast_library.SapphirePostprocessingClient')
-    def test_api_not_ready_raises_error(self, mock_client_class):
-        """When API health check fails, should raise SapphireAPIError."""
+    def test_api_not_ready_returns_false(self, mock_client_class):
+        """When API health check fails, should return False (non-blocking)."""
         if not SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
 
@@ -74,8 +74,8 @@ class TestWriteCombinedForecastToApi:
                 'model_short': ['LR'],
             })
 
-            with pytest.raises(Exception):  # SapphireAPIError
-                _write_combined_forecast_to_api(data, "pentad")
+            result = _write_combined_forecast_to_api(data, "pentad")
+            assert result is False
         finally:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 
@@ -324,8 +324,8 @@ class TestWriteSkillMetricsToApi:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 
     @patch('forecast_library.SapphirePostprocessingClient')
-    def test_api_not_ready_raises_error(self, mock_client_class):
-        """When API health check fails, should raise SapphireAPIError."""
+    def test_api_not_ready_returns_false(self, mock_client_class):
+        """When API health check fails, should return False (non-blocking)."""
         if not SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
 
@@ -347,8 +347,8 @@ class TestWriteSkillMetricsToApi:
                 'n_pairs': [100],
             })
 
-            with pytest.raises(Exception):  # SapphireAPIError
-                _write_skill_metrics_to_api(data, "pentad")
+            result = _write_skill_metrics_to_api(data, "pentad")
+            assert result is False
         finally:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 
