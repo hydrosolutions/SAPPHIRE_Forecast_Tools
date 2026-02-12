@@ -8,12 +8,10 @@
 # region Libraries
 import os
 import sys
-import pandas as pd
+import warnings
 import datetime as dt
 import logging
 from logging.handlers import TimedRotatingFileHandler
-import time
-from contextlib import contextmanager
 
 # Local libraries, installed with pip install -e ./iEasyHydroForecast
 # Get the absolute path of the directory containing the current script
@@ -31,58 +29,8 @@ import forecast_library as fl
 import tag_library as tl
 
 from src import postprocessing_tools as pt
+from src.postprocessing_tools import TimingStats, timer
 
-# endregion
-
-# region Timing Tools
-class TimingStats:
-    def __init__(self):
-        self.timings = {}
-        self.start_times = {}
-
-    def start(self, section):
-        self.start_times[section] = time.time()
-
-    def end(self, section):
-        if section in self.start_times:
-            elapsed = time.time() - self.start_times[section]
-            if section not in self.timings:
-                self.timings[section] = []
-            self.timings[section].append(elapsed)
-            del self.start_times[section]
-
-    def summary(self):
-        results = []
-        total_time = 0
-        for section, times in self.timings.items():
-            total = sum(times)
-            total_time += total
-            avg = total / len(times) if times else 0
-            results.append({
-                'section': section,
-                'total_time': total,
-                'avg_time': avg,
-                'calls': len(times)
-            })
-
-        # Sort by total time
-        results.sort(key=lambda x: x['total_time'], reverse=True)
-
-        # Calculate percentages
-        for result in results:
-            result['percentage'] = (result['total_time'] / total_time) * 100 if total_time else 0
-
-        return results, total_time
-
-@contextmanager
-def timer(stats, section):
-    if stats is not None:
-        stats.start(section)
-    try:
-        yield
-    finally:
-        if stats is not None:
-            stats.end(section)
 # endregion
 
 # region Logging
@@ -116,6 +64,15 @@ timing_stats = TimingStats()
 
 def postprocessing_forecasts():
     global timing_stats
+
+    warnings.warn(
+        "postprocessing_forecasts.py is deprecated. Use "
+        "postprocessing_operational.py (daily), "
+        "postprocessing_maintenance.py (gap-fill), or "
+        "recalculate_skill_metrics.py (yearly).",
+        DeprecationWarning,
+        stacklevel=2,
+    )
 
     logger.info(f"\n\n====== Post-processing forecasts =================")
     logger.debug(f"Script started at {dt.datetime.now()}.")

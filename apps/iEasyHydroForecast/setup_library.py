@@ -1155,7 +1155,12 @@ def _read_lr_forecasts_from_api(
         logger.warning(f"No LR forecast data ({horizon_type}) returned from API")
         return pd.DataFrame()
 
-    # Combine all pages
+    # Combine all pages (drop all-NA columns from each frame to avoid FutureWarning)
+    all_data = [df.dropna(how='all', axis=1) for df in all_data]
+    all_data = [df for df in all_data if not df.empty]
+    if not all_data:
+        logger.warning(f"No non-empty LR forecast data ({horizon_type}) after filtering")
+        return pd.DataFrame()
     forecast_data = pd.concat(all_data, ignore_index=True)
 
     # Remove duplicates (defensive)
@@ -1298,7 +1303,12 @@ def _read_ml_forecasts_from_api(
         logger.warning(f"No {model} forecast data ({horizon_type}) returned from API")
         return pd.DataFrame()
 
-    # Combine all pages
+    # Combine all pages (drop all-NA columns from each frame to avoid FutureWarning)
+    all_data = [df.dropna(how='all', axis=1) for df in all_data]
+    all_data = [df for df in all_data if not df.empty]
+    if not all_data:
+        logger.warning(f"No non-empty {model} forecast data ({horizon_type}) after filtering")
+        return pd.DataFrame()
     forecast_data = pd.concat(all_data, ignore_index=True)
 
     # Remove duplicates (defensive)
@@ -1312,6 +1322,23 @@ def _read_ml_forecasts_from_api(
     # Add model columns
     forecast_data["model_long"] = model_long
     forecast_data["model_short"] = model_short
+
+    # Compute horizon columns from dates (matching read_linreg_forecasts_pentad)
+    if 'date' in forecast_data.columns and not forecast_data.empty:
+        if horizon_type == "pentad":
+            forecast_data["pentad_in_month"] = (
+                forecast_data["date"] + pd.Timedelta(days=1)
+            ).apply(tl.get_pentad)
+            forecast_data["pentad_in_year"] = (
+                forecast_data["date"] + pd.Timedelta(days=1)
+            ).apply(tl.get_pentad_in_year)
+        elif horizon_type == "decade":
+            forecast_data["decad_in_month"] = (
+                forecast_data["date"] + pd.Timedelta(days=1)
+            ).apply(tl.get_decad_in_month)
+            forecast_data["decad_in_year"] = (
+                forecast_data["date"] + pd.Timedelta(days=1)
+            ).apply(tl.get_decad_in_year)
 
     # Sort by code and date
     forecast_data = forecast_data.sort_values(by=['code', 'date'])
@@ -1381,6 +1408,9 @@ def read_observed_pentadal_data():
                     break
                 skip += page_size
 
+            # Drop all-NA columns from each frame to avoid FutureWarning
+            all_data = [df.dropna(how='all', axis=1) for df in all_data]
+            all_data = [df for df in all_data if not df.empty]
             if all_data:
                 data = pd.concat(all_data, ignore_index=True)
 
@@ -1498,6 +1528,9 @@ def read_observed_decadal_data():
                     break
                 skip += page_size
 
+            # Drop all-NA columns from each frame to avoid FutureWarning
+            all_data = [df.dropna(how='all', axis=1) for df in all_data]
+            all_data = [df for df in all_data if not df.empty]
             if all_data:
                 data = pd.concat(all_data, ignore_index=True)
 

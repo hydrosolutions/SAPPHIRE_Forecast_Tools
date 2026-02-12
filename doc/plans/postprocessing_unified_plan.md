@@ -10,9 +10,9 @@
 1. [Status Summary](#status-summary)
 2. [Current Architecture](#current-architecture)
 3. [Phase 1: Bug Fixes](#phase-1-bug-fixes-merge-main)
-4. [Phase 2: Module Separation (Daily vs Maintenance)](#phase-2-module-separation)
+4. [Phase 2: Module Separation (Operational / Nightly / Yearly)](#phase-2-module-separation)
 5. [Phase 3: Performance Improvements](#phase-3-performance-improvements)
-6. [Phase 4: Quarterly & Seasonal Aggregation](#phase-4-quarterly--seasonal-aggregation)
+6. [Phase 4: Monthly, Quarterly & Seasonal Skill Metrics](#phase-4-monthly-quarterly--seasonal-skill-metrics)
 7. [Phase 5: Testing Strategy](#phase-5-testing-strategy)
 8. [Implementation Checklist](#implementation-checklist)
 9. [Files Affected](#files-affected)
@@ -33,12 +33,12 @@
 | API read tests (postprocessing) | **DONE** — 45 tests in `test_api_read.py`, 16 tests in `test_api_integration.py` |
 | API write test fix | **DONE** — `test_api_read.py` mocks corrected to use `SapphirePreprocessingClient` (commit `ca29b5d`) |
 | `sapphire-api-client` dependency | **DONE** — added to `iEasyHydroForecast/pyproject.toml` and `postprocessing_forecasts/pyproject.toml` |
-| Module separation (daily vs maintenance) | TODO — both original plans agree on this |
+| Module separation (operational / nightly gap-fill / yearly recalc) | **DONE** — 3 entry points + 4 src modules + 2 shell scripts, 130 tests |
 | Server-side batch upsert (CRUD) | TODO |
 | Client-side vectorization | TODO |
 | Skill metrics single-pass optimization | TODO |
-| Quarterly/seasonal aggregation | TODO (future) |
-| Comprehensive test suite (50+ unit, 12+ integration) | **IN PROGRESS** — 79 postprocessing tests + 206 iEasyHydroForecast tests pass |
+| Monthly/quarterly/seasonal skill metrics | TODO — Phase 4 (point + CRPS, configurable season) |
+| Comprehensive test suite (50+ unit, 12+ integration) | **IN PROGRESS** — 130 postprocessing tests + 206 iEasyHydroForecast tests pass |
 | Bulk-read API endpoints (for `long_term_forecasting`) | Planned — see `doc/plans/bulk_read_endpoints_instructions.md` |
 | API integration | **DONE** — see `doc/plans/sapphire_api_integration_plan.md` |
 | Duplicate skill metrics / ensemble composition issue | **RESOLVED** — see `doc/plans/issues/gi_duplicate_skill_metrics_ensemble_composition.md` |
@@ -107,7 +107,7 @@ postprocessing_forecasts.py
 
 ---
 
-## Phase 1: Bug Fixes (Merge Main)
+## Phase 1: Bug Fixes (Merge Main) - DONE 
 
 ### Already Fixed on `main` (commit `a52597d`)
 
@@ -149,7 +149,7 @@ postprocessing_forecasts.py
 
 ## Phase 2: Module Separation
 
-Both original plans agree: split the monolithic script into **daily (operational)** and **yearly (maintenance)** entry points.
+Split the monolithic script into three entry points: **operational (daily)**, **nightly gap-fill (maintenance)**, and **yearly skill recalculation**.
 
 ### Target Architecture
 
@@ -168,7 +168,21 @@ Both original plans agree: split the monolithic script into **daily (operational
 └─────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────┐
-│  MAINTENANCE (recalculate_skill_metrics.py)                     │
+│  MAINTENANCE — NIGHTLY GAP-FILL (postprocessing_maintenance.py)│
+│  ├── Scan recent window (e.g. last 7 days) for missing         │
+│  │   ensemble forecasts (data arrived late)                    │
+│  ├── Read EXISTING skill metrics (same as operational)         │
+│  ├── For each gap: calculate ensemble from now-available data  │
+│  ├── Write filled forecasts + ensembles to API (batch upsert)  │
+│  └── Log what was filled for audit trail                       │
+│                                                                │
+│  Schedule: Nightly (e.g. 02:00), after all data feeds close   │
+│  Target execution: < 2 minutes                                 │
+│  Priority: Data completeness for recent dates                  │
+└─────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────┐
+│  MAINTENANCE — YEARLY RECALC (recalculate_skill_metrics.py)    │
 │  ├── Read FULL historical data (2010–present)                  │
 │  ├── Calculate ALL skill metrics (vectorized, single-pass)     │
 │  ├── Recalculate ALL ensemble compositions                     │
@@ -187,13 +201,15 @@ Both original plans agree: split the monolithic script into **daily (operational
 ```
 apps/postprocessing_forecasts/
 ├── postprocessing_operational.py      # NEW: Daily entry point
-├── recalculate_skill_metrics.py       # NEW: Yearly maintenance entry point
+├── postprocessing_maintenance.py      # NEW: Nightly gap-fill entry point
+├── recalculate_skill_metrics.py       # NEW: Yearly skill recalculation entry point
 ├── postprocessing_forecasts.py        # DEPRECATED: Legacy entry point (keep as fallback)
 ├── src/
 │   ├── api_writer.py                  # NEW: Shared API write logic (batch upsert)
 │   ├── skill_metrics.py               # NEW: Vectorized skill metric calculations
 │   ├── ensemble_calculator.py         # NEW: EM/NE ensemble logic
 │   ├── data_reader.py                 # NEW: Data loading utilities
+│   ├── gap_detector.py                # NEW: Detect missing ensembles in recent window
 │   ├── file_writer.py                 # NEW: Atomic CSV writing (extracted from forecast_library)
 │   └── postprocessing_tools.py        # Existing logging utilities
 ├── tests/
@@ -202,22 +218,28 @@ apps/postprocessing_forecasts/
 │   │   ├── test_skill_metrics.py
 │   │   ├── test_ensemble_calculator.py
 │   │   ├── test_data_reader.py
+│   │   ├── test_gap_detector.py
 │   │   └── test_file_writer.py
 │   └── integration/
 │       ├── test_operational_workflow.py
-│       └── test_maintenance_workflow.py
-└── Dockerfile                         # Update for dual entry points
+│       ├── test_maintenance_workflow.py
+│       └── test_yearly_recalc_workflow.py
+└── Dockerfile                         # Update for triple entry points
 ```
 
 ### Key Design Decisions
 
-1. **Maintenance runs yearly, not nightly.** Skill metrics only change when you have a full new year of forecast-observation pairs. Running more often is wasted computation.
+1. **Three workflows, not two.** Maintenance is split into nightly gap-fill and yearly recalculation. They serve different purposes and run at very different frequencies.
 
-2. **Daily script reads existing skill metrics, does NOT recalculate.** The ensemble composition for each pentad/decad is determined by the pre-calculated skill metrics.
+2. **Nightly gap-fill catches late-arriving data.** External data feeds sometimes deliver observations a day late. The nightly script scans a recent window (configurable, default 7 days) for dates where forecast data exists but ensembles are missing, then fills them. It does NOT recalculate skill metrics — it uses the same pre-calculated metrics as the operational script.
 
-3. **Shared modules minimize code duplication.** Both entry points import from `src/`.
+3. **Yearly recalculation updates skill metrics once per year.** Skill metrics only meaningfully change when you accumulate a full new year of forecast-observation pairs. Running in November/December ensures the new metrics are ready before the next water year's forecast season.
 
-4. **Legacy script preserved as fallback** with deprecation warning, removed after 1–2 release cycles.
+4. **Daily script reads existing skill metrics, does NOT recalculate.** The ensemble composition for each pentad/decad is determined by the pre-calculated skill metrics.
+
+5. **Shared modules minimize code duplication.** All three entry points import from `src/`. The gap-fill script reuses the same ensemble calculation and API write logic as the operational script.
+
+6. **Legacy script preserved as fallback** with deprecation warning, removed after 1–2 release cycles.
 
 ### Docker & Pipeline Integration
 
@@ -230,16 +252,45 @@ apps/postprocessing_forecasts/
    # Default to operational (daily) mode
    CMD ["python", "postprocessing_operational.py"]
    ```
-   For maintenance: `docker run sapphire-postprocessing python recalculate_skill_metrics.py`
+   For nightly gap-fill: `docker run sapphire-postprocessing python postprocessing_maintenance.py`
+   For yearly recalc: `docker run sapphire-postprocessing python recalculate_skill_metrics.py`
 
-2. **Luigi pipeline changes:**
-   - Update `PostProcessingForecasts` task to run `postprocessing_operational.py` (fast, daily)
-   - Add a new `RecalculateSkillMetrics` task for yearly maintenance, or run manually via SSH:
-     ```bash
-     docker run sapphire-postprocessing python recalculate_skill_metrics.py
-     ```
+2. **Luigi pipeline:** Only the operational entry point runs through the Luigi pipeline. Update the existing `PostProcessingForecasts` task to run `postprocessing_operational.py`. No new Luigi tasks needed for maintenance or yearly recalculation.
 
-3. **PYTHONPATH:** The current Dockerfile sets `PYTHONPATH=/app/apps/iEasyHydroForecast`. The new `src/` modules should be self-contained where possible, importing from `iEasyHydroForecast` only for functions not yet extracted. This dependency shrinks as extraction progresses.
+3. **Maintenance shell scripts** (in `bin/`, following the pattern of `daily_preprunoff_maintenance.sh`):
+
+   - **`bin/daily_postprc_maintenance.sh`** — nightly gap-fill. Structure:
+     - Source `bin/utils/common_functions.sh` (banner, config, SSH tunnel, cleanup)
+     - Read configuration from `.env` file passed as argument
+     - Validate required env vars
+     - Create timestamped log directory under `${ieasyhydroforecast_data_root_dir}/logs/postprc_maintenance/`
+     - Verify Docker is running, pull image if needed
+     - Establish SSH tunnel (if required for DB access)
+     - Run `sapphire-postprocessing` container with `SAPPHIRE_SYNC_MODE=maintenance` and appropriate volume mounts
+     - Capture exit code, log result, clean up container
+     - Prune logs older than 15 days
+     - Scheduled via cron (e.g. `0 2 * * *`)
+
+   - **`bin/yearly_skill_metrics_recalculation.sh`** — yearly full recalculation. Same structure as above, but:
+     - Log directory: `${ieasyhydroforecast_data_root_dir}/logs/skill_metrics_recalc/`
+     - Container name: `postprc-skill-recalc`
+     - Runs `python recalculate_skill_metrics.py` as the Docker command override
+     - No `SAPPHIRE_SYNC_MODE` needed (the script itself is the full recalculation)
+     - Run manually or scheduled once in November/December:
+       ```bash
+       bash bin/yearly_skill_metrics_recalculation.sh /path/to/config/.env
+       ```
+
+4. **PYTHONPATH:** The current Dockerfile sets `PYTHONPATH=/app/apps/iEasyHydroForecast`. The new `src/` modules should be self-contained where possible, importing from `iEasyHydroForecast` only for functions not yet extracted. This dependency shrinks as extraction progresses.
+
+5. **Gap-fill configuration:** A `config.yaml` in `apps/postprocessing_forecasts/` controls the lookback window, following the same pattern as `preprocessing_runoff/config.yaml`:
+   ```yaml
+   maintenance:
+     # Number of days to look back for missing ensembles
+     # Override with: POSTPROCESSING_GAPFILL_WINDOW_DAYS
+     lookback_days: 7
+   ```
+   The nightly shell script passes the env var override to the container if set; otherwise the Python code reads `config.yaml` directly.
 
 ### Dependency: Skill Metrics → Ensemble
 
@@ -342,9 +393,56 @@ def get_api_client() -> SapphirePostprocessingClient:
 
 ---
 
-## Phase 4: Quarterly & Seasonal Aggregation
+## Phase 4: Monthly, Quarterly & Seasonal Skill Metrics
 
-> Future work. Not needed for immediate refactoring but planned.
+### Scope
+
+Extend `postprocessing_forecasts` to calculate skill metrics for all temporal resolutions produced by the forecast system:
+
+| Resolution | Forecasts produced by | Point metrics | CRPS |
+|------------|----------------------|---------------|------|
+| Pentadal (5-day) | `linear_regression`, `machine_learning` | **Done** | Blocked — quantile columns not yet populated |
+| Decadal (10-day) | `linear_regression`, `machine_learning` | **Done** | Blocked — quantile columns not yet populated |
+| Monthly | `long_term_forecasting` | **TODO** | **TODO** — quantiles available |
+| Quarterly | Aggregated from monthly, or direct from `long_term_forecasting` | **TODO** | **TODO** — quantiles available |
+| Seasonal | Aggregated from monthly, or direct from `long_term_forecasting` | **TODO** | **TODO** — quantiles available |
+
+### Key Design Decisions
+
+1. **Skill metrics calculated in `postprocessing_forecasts`**, consistent with pentad/decad. The module reads long-term forecasts from the postprocessing API and daily observations from the preprocessing API.
+
+2. **CRPS as a cross-cutting metric for all resolutions where quantile information is available.** CRPS (Continuous Ranked Probability Score) is not limited to long-term forecasts — it applies wherever we have a quantile distribution to evaluate against observations:
+   - **Monthly/quarterly/seasonal:** Quantiles (Q5–Q95) are produced by `long_term_forecasting`. CRPS is always calculated.
+   - **Pentad/decad:** The `Forecast` table already has quantile columns (q05, q25, q50, q75, q95) but they are **not yet populated** by `linear_regression` / `machine_learning`. Once these modules produce prediction intervals or ensemble quantiles, CRPS can be calculated for short-term forecasts too. Until then, pentad/decad use traditional metrics only.
+   - **Traditional (point-based):** Always calculated for all resolutions. For long-term forecasts, Q50 (median) is used as the point forecast for NSE, MAE, sdivsigma, accuracy.
+
+3. **Aggregation-first for quarterly/seasonal, with direct forecast support.** Start by averaging monthly forecast quantiles to produce quarterly (3-month) and seasonal values. However, `long_term_forecasting` may already produce forecasts with `horizon_type='season'` directly (target horizon of 1 season). If such records exist in the `long_forecasts` table, `postprocessing_forecasts` uses them directly instead of aggregating from monthly. The same applies to quarterly forecasts.
+
+   > **Note:** The `long_term_forecasting` module is still under active development. The exact output structure (which horizon types are produced, whether seasonal records exist directly) needs to be verified by inspecting the module's CSV output once it is complete. **Refine this integration plan once `long_term_forecasting` is finalized.**
+
+4. **Configurable season definition.** Season start/end months are defined in `config.yaml` (not hardcoded), supporting different deployments (Central Asia Apr–Sep, Nepal Jun–Sep, Switzerland Apr–Oct, etc.).
+
+5. **Monthly observations aggregated on-the-fly.** Daily discharge from the preprocessing API (`runoffs` table) is grouped by year/month. A month requires ≥50% non-missing days to be valid (same rule as `long_term_forecasting/post_process_lt_forecast.py:calculate_lt_statistics_calendar_month()`).
+
+### Infrastructure Already in Place
+
+| Component | Status | Location |
+|-----------|--------|----------|
+| `HorizonType` enum (MONTH, QUARTER, SEASON) | Exists | `sapphire/services/postprocessing/app/models.py` |
+| `SkillMetric` table supports all horizon types | Exists | Same file |
+| `LongForecast` table with quantile columns (Q5–Q95) | Exists | Same file |
+| `Forecast` table with quantile columns (q05–q95) | Schema exists, **columns not yet populated** | Same file |
+| `ForecastFlags.month`, `.season` | Exists | `setup_library.py:3773` |
+| `PredictorDates.month`, `.season` | Exists | `forecast_library.py:8373` |
+| Monthly aggregation logic (daily → monthly mean) | Exists | `long_term_forecasting/post_process_lt_forecast.py:168` |
+
+**Gaps to fill:**
+- `ForecastFlags` and `PredictorDates` lack a `quarter` field
+- `tag_library.py` has no quarterly/seasonal date utilities
+- No skill metric functions for monthly/quarterly/seasonal
+- No CRPS implementation
+- Pentad/decad quantile columns not populated (CRPS for short-term blocked on this)
+- `long_term_forecasting` output needs inspection for direct seasonal/quarterly records
 
 ### Quarterly Forecasts (Average runoff over next 3 months)
 
@@ -355,34 +453,129 @@ def get_api_client() -> SapphirePostprocessingClient:
 | Jun 25 | Jul–Aug–Sep (Q3) |
 | Sep 25 | Oct–Nov–Dec (Q4) |
 
-### Seasonal Forecasts (Average runoff April–September)
+### Seasonal Forecasts (Configurable period, default April–September)
 
 | Forecast Date | Period Covered |
 |---------------|----------------|
-| Jan 10 | Apr–Sep |
+| Jan 10 | Apr–Sep (default) |
 | Feb 10 | Apr–Sep |
 | Mar 10 | Apr–Sep |
 | Apr 10 | Apr–Sep |
 | May 10 | Apr–Sep |
 
+Season months configured via `config.yaml`:
+```yaml
+seasonal:
+  # Configurable per deployment region
+  start_month: 4   # April (Central Asia default)
+  end_month: 9     # September
+  # Forecast issue dates: 10th of each month from Jan to start_month+1
+```
+
+### Data Flow
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│  INPUTS                                                          │
+│                                                                  │
+│  long_forecasts table ──→ Monthly forecasts (Q5–Q95 quantiles)  │
+│    (via postprocessing API)   per station, per model, per month  │
+│                                                                  │
+│  runoffs table ──→ Daily observed discharge                      │
+│    (via preprocessing API)   aggregated to monthly means         │
+│                              (≥50% non-missing days required)    │
+└──────────────────────┬───────────────────────────────────────────┘
+                       │
+                       ▼
+┌──────────────────────────────────────────────────────────────────┐
+│  MONTHLY SKILL METRICS                                           │
+│                                                                  │
+│  Group by: [month_in_year, code, model_type]                    │
+│                                                                  │
+│  Point metrics (Q50 vs observed):                                │
+│    NSE, sdivsigma, MAE, accuracy                                │
+│                                                                  │
+│  Probabilistic metrics (full quantile distribution vs observed): │
+│    CRPS                                                          │
+│                                                                  │
+│  → Write to skill_metrics table (horizon_type='month')          │
+└──────────────────────┬───────────────────────────────────────────┘
+                       │
+                       ▼
+┌──────────────────────────────────────────────────────────────────┐
+│  QUARTERLY / SEASONAL                                            │
+│                                                                  │
+│  Step 1: Check long_forecasts table for direct records with      │
+│    horizon_type='quarter' or 'season'. If present, use those.    │
+│                                                                  │
+│  Step 2 (fallback): If no direct records, aggregate from monthly:│
+│    Quarterly: average 3 monthly forecast quantiles + 3 monthly   │
+│      observed means → skill metrics per quarter                  │
+│    Seasonal: average N monthly forecast quantiles (configurable  │
+│      months) + N monthly observed means → skill metrics          │
+│                                                                  │
+│  Both paths → same skill metrics (point + CRPS)                  │
+│  → Write to skill_metrics table (horizon_type='quarter'/'season')│
+└──────────────────────────────────────────────────────────────────┘
+
+  ⚠ long_term_forecasting integration note:
+  The long_term_forecasting module is under active development.
+  Whether it produces direct seasonal/quarterly records needs to be
+  verified once the module is complete. Refine this integration
+  plan at that point.
+```
+
+### Integration with Phase 2 Entry Points
+
+- **Operational (daily):** No change. Monthly/quarterly/seasonal skill metrics are NOT recalculated daily — they are pre-calculated and read from the API, same as pentad/decad.
+- **Nightly gap-fill:** Extended to check for missing monthly ensemble calculations when monthly forecast data arrives late.
+- **Yearly recalculation (`recalculate_skill_metrics.py`):** Extended to recalculate monthly, quarterly, and seasonal skill metrics alongside pentad/decad.
+
 ### Implementation Steps
 
 1. **Date utilities** — Add to `tag_library.py`:
-   - `get_quarter(date)`, `is_quarterly_forecast_date(date)`
-   - `is_seasonal_forecast_date(date)`, `get_season_months()`
+   - `get_quarter(date)` → 1–4
+   - `get_quarter_months(quarter)` → (start_month, end_month)
+   - `is_quarterly_forecast_date(date)` → True on 25th of Dec/Mar/Jun/Sep
+   - `is_seasonal_forecast_date(date, config)` → True on 10th of relevant months
+   - `get_season_months(config)` → (start_month, end_month) from config
 
-2. **Aggregation functions** — Add to `forecast_library.py`:
-   - `aggregate_monthly_to_quarterly()`
-   - `calculate_seasonal_discharge_avg()`
+2. **Monthly observation aggregation** — Add to `src/data_reader.py`:
+   - `read_monthly_observations(codes, start_year, end_year)` — reads daily discharge from preprocessing API, aggregates to monthly means with ≥50% coverage filter
+   - Reuse logic from `long_term_forecasting/post_process_lt_forecast.py:calculate_lt_statistics_calendar_month()`
 
-3. **Skill metrics** — Extend:
-   - `calculate_skill_metrics_quarterly()`
-   - `calculate_skill_metrics_seasonal()`
+3. **CRPS implementation** — Add to `src/skill_metrics.py`:
+   - `calculate_crps(quantiles, quantile_levels, observed)` — CRPS from quantile forecast
+   - Quantile levels: [0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95]
+   - Cross-cutting: used for monthly/quarterly/seasonal now; will also apply to pentad/decad once those modules populate quantile columns in the `Forecast` table
 
-4. **Pipeline** — Add Luigi tasks:
-   - `RunQuarterlyWorkflow`, `RunSeasonalWorkflow`
+4. **Monthly skill metrics** — Add to `src/skill_metrics.py`:
+   - `calculate_monthly_skill_metrics(forecasts_df, observations_df)` — both point (Q50) and probabilistic (CRPS) metrics
+   - Grouping: `[month_in_year, code, model_type]` (12 months × N stations × M models)
 
-5. **Configuration** — Add env vars for quarterly/seasonal output file paths.
+5. **Quarterly/seasonal aggregation** — Add to `src/skill_metrics.py`:
+   - `aggregate_monthly_to_quarterly(monthly_forecasts, monthly_obs)` — average quantiles over 3 months
+   - `aggregate_monthly_to_seasonal(monthly_forecasts, monthly_obs, config)` — average over configurable season months
+   - `calculate_quarterly_skill_metrics(...)`, `calculate_seasonal_skill_metrics(...)`
+
+6. **Update data classes:**
+   - Add `quarter` field to `ForecastFlags` (`setup_library.py`)
+   - Add `quarter` field to `PredictorDates` (`forecast_library.py`)
+
+7. **Configuration** — Add to `postprocessing_forecasts/config.yaml`:
+   ```yaml
+   seasonal:
+     start_month: 4
+     end_month: 9
+   ```
+   Add env vars for output file paths:
+   ```
+   ieasyforecast_monthly_skill_metrics_file
+   ieasyforecast_quarterly_skill_metrics_file
+   ieasyforecast_seasonal_skill_metrics_file
+   ```
+
+8. **Extend yearly recalculation** — Update `recalculate_skill_metrics.py` to call monthly/quarterly/seasonal skill metric functions after pentad/decad.
 
 ---
 
@@ -409,6 +602,7 @@ def get_api_client() -> SapphirePostprocessingClient:
 | Skill metrics | `test_skill_metrics.py` | 12 | NSE, MAE, sdivsigma, accuracy, single-pass, edge cases |
 | Ensemble | `test_ensemble_calculator.py` | 8 | EM/NE calculation, composition tracking, threshold filtering |
 | Data reader | `test_data_reader.py` | 5 | Latest-only reads, full historical, missing files |
+| Gap detector | `test_gap_detector.py` | 6 | Window scanning, missing ensemble detection, late data scenarios, no-gap case |
 | File writer | `test_file_writer.py` | 5 | Atomic writes, directory creation, column order |
 
 #### Integration Tests (target: 12+)
@@ -416,7 +610,8 @@ def get_api_client() -> SapphirePostprocessingClient:
 | Test File | Tests | Coverage |
 |-----------|-------|----------|
 | `test_operational_workflow.py` | 6 | Pentad/decad/both modes, API failure, empty data, timing |
-| `test_maintenance_workflow.py` | 6 | Full pentad/decad, CSV-API consistency, ensemble recalc |
+| `test_maintenance_workflow.py` | 6 | Gap-fill window scanning, late data fill, no-gaps idempotency, audit logging |
+| `test_yearly_recalc_workflow.py` | 6 | Full pentad/decad recalc, CSV-API consistency, ensemble recomposition |
 
 #### Performance Benchmarks
 
@@ -446,10 +641,14 @@ def get_api_client() -> SapphirePostprocessingClient:
 - [ ] Create `src/ensemble_calculator.py` (extract from `forecast_library.py`)
 - [ ] Create `src/data_reader.py` (extract from `setup_library.py`)
 - [ ] Create `src/api_writer.py` (extract from `forecast_library.py`)
+- [ ] Create `src/gap_detector.py` (scan recent window for missing ensembles)
 - [ ] Create `src/file_writer.py` (extract `atomic_write_csv` + CSV save logic)
 - [ ] Create `postprocessing_operational.py` (daily entry point)
-- [ ] Create `recalculate_skill_metrics.py` (yearly maintenance entry point)
-- [ ] Update Dockerfile for dual entry points
+- [ ] Create `postprocessing_maintenance.py` (nightly gap-fill entry point)
+- [ ] Create `recalculate_skill_metrics.py` (yearly skill recalculation entry point)
+- [ ] Create `bin/daily_postprc_maintenance.sh` (nightly gap-fill runner)
+- [ ] Create `bin/yearly_skill_metrics_recalculation.sh` (yearly recalc runner)
+- [ ] Update Dockerfile for triple entry points
 - [ ] Add deprecation warning to legacy `postprocessing_forecasts.py`
 
 ### Phase 3: Performance Improvements
@@ -462,13 +661,18 @@ def get_api_client() -> SapphirePostprocessingClient:
 - [ ] Replace multiple `.isin()` with merge
 - [ ] Implement API client singleton
 
-### Phase 4: Quarterly & Seasonal (Future)
+### Phase 4: Monthly, Quarterly & Seasonal Skill Metrics
 
-- [ ] Date utilities in `tag_library.py`
-- [ ] Aggregation functions
-- [ ] Quarterly/seasonal skill metrics
-- [ ] Pipeline tasks
-- [ ] Configuration updates
+- [ ] Date utilities in `tag_library.py` (`get_quarter`, `is_quarterly_forecast_date`, `is_seasonal_forecast_date`, `get_season_months`)
+- [ ] Monthly observation aggregation in `src/data_reader.py` (daily → monthly means, ≥50% coverage filter)
+- [ ] CRPS implementation in `src/skill_metrics.py`
+- [ ] Monthly skill metrics: point (Q50 → NSE/MAE/accuracy) + probabilistic (CRPS)
+- [ ] Quarterly aggregation + skill metrics (average 3 monthly quantiles)
+- [ ] Seasonal aggregation + skill metrics (configurable month range)
+- [ ] Add `quarter` field to `ForecastFlags` and `PredictorDates`
+- [ ] Seasonal config in `postprocessing_forecasts/config.yaml` (`start_month`, `end_month`)
+- [ ] Env vars for monthly/quarterly/seasonal output file paths
+- [ ] Extend `recalculate_skill_metrics.py` for monthly/quarterly/seasonal
 
 ### Phase 5: Testing
 
@@ -501,9 +705,13 @@ def get_api_client() -> SapphirePostprocessingClient:
 | `src/skill_metrics.py` | Vectorized skill calculations |
 | `src/ensemble_calculator.py` | EM/NE ensemble logic |
 | `src/data_reader.py` | Data loading utilities |
+| `src/gap_detector.py` | Detect missing ensembles in recent window |
 | `src/file_writer.py` | Atomic CSV writing |
 | `postprocessing_operational.py` | Daily operational entry point |
-| `recalculate_skill_metrics.py` | Yearly maintenance entry point |
+| `postprocessing_maintenance.py` | Nightly gap-fill entry point |
+| `recalculate_skill_metrics.py` | Yearly skill recalculation entry point |
+| `bin/daily_postprc_maintenance.sh` | Shell runner for nightly gap-fill (cron) |
+| `bin/yearly_skill_metrics_recalculation.sh` | Shell runner for yearly skill recalculation |
 | `tests/unit/*.py` | Unit tests |
 | `tests/integration/*.py` | Integration tests |
 | `tests/conftest.py` | Test fixtures |
@@ -528,10 +736,14 @@ def get_api_client() -> SapphirePostprocessingClient:
 
 1. Create shared `src/` modules (extract, don't rewrite)
 2. Create `postprocessing_operational.py` alongside existing code
-3. Create `recalculate_skill_metrics.py` alongside existing code
-4. Run new operational script in parallel with legacy in staging
-5. Compare outputs
-6. Switch over when confident
+3. Create `postprocessing_maintenance.py` (nightly gap-fill) alongside existing code
+4. Create `recalculate_skill_metrics.py` (yearly recalc) alongside existing code
+5. Create `bin/daily_postprc_maintenance.sh` (modelled on `bin/daily_preprunoff_maintenance.sh`)
+6. Create `bin/yearly_skill_metrics_recalculation.sh` (same pattern)
+7. Run new operational script in parallel with legacy in staging
+8. Compare outputs
+9. Add `daily_postprc_maintenance.sh` to cron schedule
+10. Switch over when confident
 
 ### Step 4: Performance (Independent)
 
@@ -551,9 +763,9 @@ def get_api_client() -> SapphirePostprocessingClient:
 Each phase can be rolled back independently:
 
 - **Phase 1 (Bug 5):** Revert to `"warn"` mode (default) — no data impact.
-- **Phase 2 (Module separation):** Legacy `postprocessing_forecasts.py` is preserved. To rollback: repoint the Luigi task / Docker CMD back to the legacy script. No schema changes involved.
+- **Phase 2 (Module separation):** Legacy `postprocessing_forecasts.py` is preserved. To rollback: repoint the Luigi task / Docker CMD back to the legacy script. No schema changes involved. The nightly gap-fill can be disabled independently by commenting out its cron entry — no impact on operational or yearly recalculation. The yearly script is run manually, so there's nothing to disable.
 - **Phase 3 (Batch upsert):** The new CRUD endpoint is additive. To rollback: revert the API server code; the client-side changes (vectorization) are independent and harmless.
-- **Phase 4 (Quarterly/seasonal):** Entirely additive — new tables, new functions. Rollback = stop running the new tasks.
+- **Phase 4 (Monthly/quarterly/seasonal skill metrics):** Entirely additive — new skill metric records in existing tables, new functions. Rollback = remove the new records from `skill_metrics` table (filter by `horizon_type IN ('month', 'quarter', 'season')`) and revert code.
 
 For database-level issues: PostgreSQL WAL-based point-in-time recovery can restore to any moment before a bad write.
 
@@ -607,20 +819,32 @@ ieasyhydroforecast_accuracy_threshold=0.8     # accuracy
 ieasyhydroforecast_nse_threshold=0.8          # NSE
 ```
 
-### Yearly Maintenance Workflow
+### Operational & Maintenance Workflows
 
 ```
-November/December:
-  1. Run recalculate_skill_metrics.py
-  2. New skill_metrics_pentad.csv and skill_metrics_decad.csv generated
-  3. Write updated skill metrics to API
-  4. These are used for ensemble selection throughout the next year
-
-Daily:
+Daily (operational — postprocessing_operational.py):
   1. Generate new forecasts (upstream modules)
   2. Read existing skill metrics (from CSV or API)
   3. Use pentad-specific skill to select models for ensemble
   4. Save forecast + ensemble to API and CSV
+
+Nightly (gap-fill — postprocessing_maintenance.py):
+  1. Scan last N days (default 7) for dates with forecast data
+     but missing ensemble calculations
+  2. Common cause: data feed delivered observations a day late,
+     so ensemble couldn't be calculated during operational run
+  3. Read existing skill metrics (same as operational)
+  4. Calculate ensembles for gap dates using now-available data
+  5. Write filled forecasts + ensembles to API
+  6. Log what was filled (dates, stations, models) for audit
+
+November/December (yearly recalc — recalculate_skill_metrics.py):
+  1. Read FULL historical data (2010–present)
+  2. Calculate ALL skill metrics (vectorized, single-pass)
+  3. New skill_metrics_pentad.csv and skill_metrics_decad.csv generated
+  4. Write updated skill metrics to API
+  5. Recalculate ALL ensemble compositions
+  6. These are used for ensemble selection throughout the next year
 ```
 
 ---
@@ -717,3 +941,5 @@ The following plans are **superseded** by this unified plan (moved to `archive/`
 | 2026-02-06 | Claude | Unified plan: integrated both plans, marked Tier 1 bugs as done, aligned module separation approach |
 | 2026-02-06 | Claude | Review fixes: corrected test file names/counts, added Docker/pipeline integration, DB prerequisites, rollback strategy, code reference appendix |
 | 2026-02-12 | Claude | Phase 1 complete: updated all status fields, Bug 5 done (7 tests), config fix done, API read tests (45) + write tests (16) documented, test counts updated (79 postprocessing + 206 iEasyHydroForecast), migration steps 1–2 marked done, `sapphire-api-client` dependency added to pyproject.toml files |
+| 2026-02-12 | Bea/Claude | Phase 2 target architecture: split maintenance into nightly gap-fill (postprocessing_maintenance.py) and yearly recalculation (recalculate_skill_metrics.py). Added gap_detector module, POSTPROCESSING_GAPFILL_WINDOW_DAYS env var, updated file structure/tests/rollback for three entry points. Shell runners (`bin/daily_postprc_maintenance.sh`, `bin/yearly_skill_metrics_recalculation.sh`) instead of Luigi tasks for maintenance, following `daily_preprunoff_maintenance.sh` pattern |
+| 2026-02-12 | Bea/Claude | Phase 4 expanded: renamed to "Monthly, Quarterly & Seasonal Skill Metrics". Monthly skill metrics calculated in postprocessing_forecasts (reads long_forecasts from API). Dual metrics: Q50-based traditional (NSE/MAE/accuracy) + CRPS. CRPS is cross-cutting — applies to pentad/decad too once quantile columns are populated (currently blocked). Quarterly/seasonal: use direct records from long_term_forecasting if available, otherwise aggregate from monthly. Note added: refine long_term_forecasting integration once module is finalized. Configurable season definition via config.yaml. Monthly observations aggregated on-the-fly from daily discharge (≥50% coverage) |

@@ -81,6 +81,7 @@ class TestErrorAccumulation:
                 sys.modules['setup_library'] = mock_sl
                 sys.modules['forecast_library'] = mock_fl
                 sys.modules['tag_library'] = MagicMock()
+                mock_pt.TimingStats.return_value.summary.return_value = ([], 0)
                 sys.modules['src'] = MagicMock()
                 sys.modules['src.postprocessing_tools'] = mock_pt
 
@@ -117,6 +118,7 @@ class TestErrorAccumulation:
                 sys.modules['setup_library'] = mock_sl
                 sys.modules['forecast_library'] = mock_fl
                 sys.modules['tag_library'] = MagicMock()
+                mock_pt.TimingStats.return_value.summary.return_value = ([], 0)
                 sys.modules['src'] = MagicMock()
                 sys.modules['src.postprocessing_tools'] = mock_pt
 
@@ -152,6 +154,7 @@ class TestErrorAccumulation:
                 sys.modules['setup_library'] = mock_sl
                 sys.modules['forecast_library'] = mock_fl
                 sys.modules['tag_library'] = MagicMock()
+                mock_pt.TimingStats.return_value.summary.return_value = ([], 0)
                 sys.modules['src'] = MagicMock()
                 sys.modules['src.postprocessing_tools'] = mock_pt
 
@@ -187,6 +190,7 @@ class TestErrorAccumulation:
                 sys.modules['setup_library'] = mock_sl
                 sys.modules['forecast_library'] = mock_fl
                 sys.modules['tag_library'] = MagicMock()
+                mock_pt.TimingStats.return_value.summary.return_value = ([], 0)
                 sys.modules['src'] = MagicMock()
                 sys.modules['src.postprocessing_tools'] = mock_pt
 
@@ -222,6 +226,7 @@ class TestErrorAccumulation:
                 sys.modules['setup_library'] = mock_sl
                 sys.modules['forecast_library'] = mock_fl
                 sys.modules['tag_library'] = MagicMock()
+                mock_pt.TimingStats.return_value.summary.return_value = ([], 0)
                 sys.modules['src'] = MagicMock()
                 sys.modules['src.postprocessing_tools'] = mock_pt
 
@@ -258,6 +263,7 @@ class TestPredictionModes:
                 sys.modules['setup_library'] = mock_sl
                 sys.modules['forecast_library'] = mock_fl
                 sys.modules['tag_library'] = MagicMock()
+                mock_pt.TimingStats.return_value.summary.return_value = ([], 0)
                 sys.modules['src'] = MagicMock()
                 sys.modules['src.postprocessing_tools'] = mock_pt
 
@@ -295,6 +301,7 @@ class TestPredictionModes:
                 sys.modules['setup_library'] = mock_sl
                 sys.modules['forecast_library'] = mock_fl
                 sys.modules['tag_library'] = MagicMock()
+                mock_pt.TimingStats.return_value.summary.return_value = ([], 0)
                 sys.modules['src'] = MagicMock()
                 sys.modules['src.postprocessing_tools'] = mock_pt
 
@@ -337,6 +344,7 @@ class TestPredictionModes:
                 sys.modules['setup_library'] = mock_sl
                 sys.modules['forecast_library'] = mock_fl
                 sys.modules['tag_library'] = MagicMock()
+                mock_pt.TimingStats.return_value.summary.return_value = ([], 0)
                 sys.modules['src'] = MagicMock()
                 sys.modules['src.postprocessing_tools'] = mock_pt
 

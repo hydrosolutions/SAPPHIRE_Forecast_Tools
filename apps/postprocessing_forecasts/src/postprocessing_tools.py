@@ -1,8 +1,64 @@
 import pandas as pd
 import os
+import time
 import logging
+from contextlib import contextmanager
 
 logger = logging.getLogger(__name__)
+
+
+class TimingStats:
+    def __init__(self):
+        self.timings = {}
+        self.start_times = {}
+
+    def start(self, section):
+        self.start_times[section] = time.time()
+
+    def end(self, section):
+        if section in self.start_times:
+            elapsed = time.time() - self.start_times[section]
+            if section not in self.timings:
+                self.timings[section] = []
+            self.timings[section].append(elapsed)
+            del self.start_times[section]
+
+    def summary(self):
+        results = []
+        total_time = 0
+        for section, times in self.timings.items():
+            total = sum(times)
+            total_time += total
+            avg = total / len(times) if times else 0
+            results.append({
+                'section': section,
+                'total_time': total,
+                'avg_time': avg,
+                'calls': len(times)
+            })
+
+        # Sort by total time
+        results.sort(key=lambda x: x['total_time'], reverse=True)
+
+        # Calculate percentages
+        for result in results:
+            result['percentage'] = (
+                (result['total_time'] / total_time) * 100
+                if total_time else 0
+            )
+
+        return results, total_time
+
+
+@contextmanager
+def timer(stats, section):
+    if stats is not None:
+        stats.start(section)
+    try:
+        yield
+    finally:
+        if stats is not None:
+            stats.end(section)
 
 def log_most_recent_forecasts_pentad(modelled_data):
     """
@@ -89,9 +145,9 @@ def log_most_recent_forecasts_pentad(modelled_data):
                 # Create a row with just the code, date, and pentad
                 new_row = {'code': code, 'date': most_recent_date, 'pentad_in_month': pentad}
 
-                # Add None for all model columns
+                # Add NaN (float) for all model columns so dtypes match
                 for model in all_models:
-                    new_row[model] = None
+                    new_row[model] = float('nan')
 
                 missing_rows.append(new_row)
 
@@ -220,9 +276,9 @@ def log_most_recent_forecasts_decade(modelled_data):
                 # Create a row with just the code, date, and decade
                 new_row = {'code': code, 'date': most_recent_date, 'decad_in_month': decade}
 
-                # Add None for all model columns
+                # Add NaN (float) for all model columns so dtypes match
                 for model in all_models:
-                    new_row[model] = None
+                    new_row[model] = float('nan')
 
                 missing_rows.append(new_row)
 

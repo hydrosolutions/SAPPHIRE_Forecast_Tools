@@ -64,10 +64,10 @@ def create_forecast(bulk_data: ForecastBulkCreate, db: Session = Depends(get_db)
     """Create or update multiple forecasts in bulk"""
     try:
         return crud.create_forecast(db=db, bulk_data=bulk_data)
-    except SQLAlchemyError:
+    except SQLAlchemyError as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to create or update forecasts in bulk"
+            detail=f"Failed to create or update forecasts in bulk: {str(e)}"
         )
 
 
@@ -116,10 +116,10 @@ def create_long_forecast(bulk_data: LongForecastBulkCreate, db: Session = Depend
     """Create or update multiple long forecasts in bulk"""
     try:
         return crud.create_long_forecast(db=db, bulk_data=bulk_data)
-    except SQLAlchemyError:
+    except SQLAlchemyError as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to create or update long forecasts in bulk"
+            detail=f"Failed to create or update long forecasts in bulk: {str(e)}"
         )
 
 
@@ -168,10 +168,10 @@ def create_lr_forecast(bulk_data: LRForecastBulkCreate, db: Session = Depends(ge
     """Create or update multiple LR forecasts in bulk"""
     try:
         return crud.create_lr_forecast(db=db, bulk_data=bulk_data)
-    except SQLAlchemyError:
+    except SQLAlchemyError as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to create or update LR forecasts in bulk"
+            detail=f"Failed to create or update LR forecasts in bulk: {str(e)}"
         )
 
 
@@ -212,10 +212,10 @@ def create_skill_metric(bulk_data: SkillMetricBulkCreate, db: Session = Depends(
     """Create or update multiple skill metrics in bulk"""
     try:
         return crud.create_skill_metric(db=db, bulk_data=bulk_data)
-    except SQLAlchemyError:
+    except SQLAlchemyError as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to create or update skill metrics in bulk"
+            detail=f"Failed to create or update skill metrics in bulk: {str(e)}"
         )
 
 

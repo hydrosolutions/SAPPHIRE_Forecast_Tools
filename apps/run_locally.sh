@@ -7,7 +7,11 @@
 # Runs SAPPHIRE forecast modules locally using each module's uv-based .venv,
 # following the correct production dependency order.
 #
-# Operational usage (daily forecasts):
+# Daily run (recommended — does everything):
+#   ieasyhydroforecast_env_file_path=/path/to/.env \
+#     bash apps/run_locally.sh daily
+#
+# Operational usage (individual horizon):
 #   SAPPHIRE_PREDICTION_MODE=PENTAD \
 #     ieasyhydroforecast_env_file_path=/path/to/.env \
 #     bash apps/run_locally.sh short-term
@@ -21,7 +25,12 @@
 #     bash apps/run_locally.sh maintenance
 #
 #   bash apps/run_locally.sh maintenance:linear_regression
+#   bash apps/run_locally.sh maintenance:postprocessing_forecasts
+#   bash apps/run_locally.sh recalculate_skill_metrics
 #   bash apps/run_locally.sh calibrate_long_term
+#
+# Combined targets:
+#   daily                                Full daily run (PENTAD + DECAD + maintenance)
 #
 # Operational targets:
 #   short-term                          Short-term forecast pipeline
@@ -30,12 +39,14 @@
 #   <module>                            Single module by name
 #
 # Maintenance targets:
-#   maintenance                         All maintenance tasks
-#   maintenance:preprocessing_runoff    Runoff gap-filling (30-day lookback)
-#   maintenance:preprocessing_gateway   Extend ERA5 reanalysis data
-#   maintenance:linear_regression       Linear regression hindcast
-#   maintenance:machine_learning        ML NaN recalc + gap-fill + new stations
-#   calibrate_long_term                 Calibrate and hindcast long-term models
+#   maintenance                              All maintenance tasks
+#   maintenance:preprocessing_runoff         Runoff gap-filling (30-day lookback)
+#   maintenance:preprocessing_gateway        Extend ERA5 reanalysis data
+#   maintenance:linear_regression            Linear regression hindcast
+#   maintenance:machine_learning             ML NaN recalc + gap-fill + new stations
+#   maintenance:postprocessing_forecasts     Fill missing ensemble forecasts
+#   calibrate_long_term                      Calibrate and hindcast long-term models
+#   recalculate_skill_metrics                Full skill metrics rebuild (yearly)
 #
 # Flags:
 #   --continue-on-error   Don't abort on first module failure
@@ -108,6 +119,7 @@ MAINTENANCE_MODULES=(
     preprocessing_gateway
     linear_regression
     machine_learning
+    postprocessing_forecasts
 )
 
 # Colors
@@ -334,11 +346,11 @@ run_machine_learning() {
 }
 
 run_postprocessing_forecasts() {
-    banner "Module: postprocessing_forecasts"
+    banner "Module: postprocessing_forecasts (operational)"
     local start
     start=$(get_timestamp)
 
-    run_in_venv postprocessing_forecasts postprocessing_forecasts.py
+    run_in_venv postprocessing_forecasts postprocessing_operational.py
     local rc=$?
 
     local elapsed=$(( $(get_timestamp) - start ))
@@ -481,6 +493,45 @@ run_maintenance_machine_learning() {
     return $rc
 }
 
+run_maintenance_postprocessing_forecasts() {
+    banner "Maintenance: postprocessing_forecasts (gap-fill)"
+    local start
+    start=$(get_timestamp)
+
+    run_in_venv postprocessing_forecasts postprocessing_maintenance.py \
+        "POSTPROCESSING_GAPFILL_WINDOW_DAYS=${POSTPROCESSING_GAPFILL_WINDOW_DAYS:-7}"
+    local rc=$?
+
+    local elapsed=$(( $(get_timestamp) - start ))
+    if [ $rc -eq 0 ]; then
+        log OK "postprocessing_forecasts maintenance completed in $(format_duration $elapsed)"
+        record_result "postprocessing_forecasts (maintenance)" "PASS" "$elapsed"
+    else
+        log ERROR "postprocessing_forecasts maintenance failed (exit $rc) after $(format_duration $elapsed)"
+        record_result "postprocessing_forecasts (maintenance)" "FAIL" "$elapsed"
+    fi
+    return $rc
+}
+
+run_recalculate_skill_metrics() {
+    banner "Recalculate: postprocessing_forecasts (full skill metrics rebuild)"
+    local start
+    start=$(get_timestamp)
+
+    run_in_venv postprocessing_forecasts recalculate_skill_metrics.py
+    local rc=$?
+
+    local elapsed=$(( $(get_timestamp) - start ))
+    if [ $rc -eq 0 ]; then
+        log OK "skill metrics recalculation completed in $(format_duration $elapsed)"
+        record_result "postprocessing_forecasts (recalculate)" "PASS" "$elapsed"
+    else
+        log ERROR "skill metrics recalculation failed (exit $rc) after $(format_duration $elapsed)"
+        record_result "postprocessing_forecasts (recalculate)" "FAIL" "$elapsed"
+    fi
+    return $rc
+}
+
 run_calibrate_long_term() {
     banner "Calibrate: long_term_forecasting"
     local start
@@ -587,8 +638,54 @@ run_maintenance_pipeline() {
 
         run_maintenance_linear_regression || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
         run_maintenance_machine_learning || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+        run_maintenance_postprocessing_forecasts || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
     done
 
+    export SAPPHIRE_PREDICTION_MODE="$original_mode"
+}
+
+run_daily_pipeline() {
+    banner "DAILY PIPELINE (PENTAD + DECAD + maintenance)"
+
+    local original_mode="${SAPPHIRE_PREDICTION_MODE:-}"
+
+    # --- Phase 1: Operational preprocessing (runs once) ---
+    log INFO "Phase 1: Preprocessing (shared across all horizons)"
+    run_preprocessing_runoff || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+    run_preprocessing_gateway || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+
+    # --- Phase 2: ML forecasting (runs once — produces 10-day forecasts) ---
+    log INFO "Phase 2: Machine learning forecasts (horizon-independent)"
+    run_machine_learning || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+
+    # --- Phase 3: LR + postprocessing per horizon ---
+    for mode in PENTAD DECAD; do
+        export SAPPHIRE_PREDICTION_MODE="$mode"
+        log INFO "Phase 3: Linear regression + postprocessing (${mode})"
+
+        run_linear_regression || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+        run_postprocessing_forecasts || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+    done
+
+    # --- Phase 4: Maintenance preprocessing (runs once) ---
+    log INFO "Phase 4: Maintenance preprocessing"
+    run_maintenance_preprocessing_runoff || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+    run_maintenance_preprocessing_gateway || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+
+    # --- Phase 5: ML maintenance (runs once — horizon-independent) ---
+    log INFO "Phase 5: ML maintenance (horizon-independent)"
+    run_maintenance_machine_learning || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+
+    # --- Phase 6: LR + postprocessing maintenance per horizon ---
+    for mode in PENTAD DECAD; do
+        export SAPPHIRE_PREDICTION_MODE="$mode"
+        log INFO "Phase 6: LR + postprocessing maintenance (${mode})"
+
+        run_maintenance_linear_regression || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+        run_maintenance_postprocessing_forecasts || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+    done
+
+    # Restore original mode
     export SAPPHIRE_PREDICTION_MODE="$original_mode"
 }
 
@@ -614,13 +711,17 @@ validate_env() {
     fi
 
     # Check prediction mode for targets that need it
+    # (daily sets its own mode, so no warning needed)
     case "$target" in
-        short-term|all|maintenance|maintenance:linear_regression|maintenance:machine_learning)
+        short-term|all|maintenance|maintenance:linear_regression|maintenance:machine_learning|maintenance:postprocessing_forecasts|recalculate_skill_metrics)
             if [ -z "${SAPPHIRE_PREDICTION_MODE:-}" ]; then
                 log WARN "SAPPHIRE_PREDICTION_MODE not set (will default to PENTAD)"
             else
                 log OK "Prediction mode: ${SAPPHIRE_PREDICTION_MODE}"
             fi
+            ;;
+        daily)
+            log OK "Prediction mode: PENTAD + DECAD (daily)"
             ;;
     esac
 
@@ -630,9 +731,11 @@ validate_env() {
         short-term)                      modules_to_check=("${SHORT_TERM_MODULES[@]}") ;;
         long-term)                       modules_to_check=(long_term_forecasting) ;;
         all)                             modules_to_check=("${ALL_MODULES[@]}") ;;
+        daily)                           modules_to_check=("${SHORT_TERM_MODULES[@]}") ;;
         maintenance)                     modules_to_check=("${MAINTENANCE_MODULES[@]}") ;;
         maintenance:*)                   modules_to_check=("${target#maintenance:}") ;;
         calibrate_long_term)             modules_to_check=(long_term_forecasting) ;;
+        recalculate_skill_metrics)       modules_to_check=(postprocessing_forecasts) ;;
         *)                               modules_to_check=("$target") ;;
     esac
 
@@ -701,6 +804,10 @@ print_usage() {
     cat <<'USAGE'
 Usage: bash apps/run_locally.sh [FLAGS] TARGET
 
+Combined targets:
+  daily                   Full daily run: PENTAD + DECAD + maintenance
+                          (preprocessing runs once, shared across horizons)
+
 Operational targets:
   short-term              Run the short-term forecast pipeline
   long-term               Run the long-term forecast pipeline (months 0-9)
@@ -713,7 +820,9 @@ Maintenance targets:
   maintenance:preprocessing_gateway   Extend ERA5 reanalysis data
   maintenance:linear_regression       Linear regression hindcast
   maintenance:machine_learning        ML NaN recalc + gap-fill + new stations
+  maintenance:postprocessing_forecasts  Fill missing ensemble forecasts
   calibrate_long_term     Calibrate and hindcast long-term models
+  recalculate_skill_metrics  Full skill metrics rebuild (run yearly)
 
 Modules (for single-module operational runs):
   preprocessing_runoff    Process runoff data
@@ -734,12 +843,16 @@ Environment variables:
   lt_forecast_mode                   Specific month for long-term (e.g. month_3)
 
 Examples:
-  # Operational
+  # Full daily run (PENTAD + DECAD + maintenance)
+  ieasyhydroforecast_env_file_path=~/config/.env \
+    bash apps/run_locally.sh daily
+
+  # Single horizon operational run
   SAPPHIRE_PREDICTION_MODE=PENTAD \
     ieasyhydroforecast_env_file_path=~/config/.env \
     bash apps/run_locally.sh short-term
 
-  # Maintenance (all modules)
+  # Maintenance only (all modules)
   SAPPHIRE_PREDICTION_MODE=BOTH \
     ieasyhydroforecast_env_file_path=~/config/.env \
     bash apps/run_locally.sh maintenance
@@ -748,6 +861,16 @@ Examples:
   SAPPHIRE_PREDICTION_MODE=PENTAD \
     ieasyhydroforecast_env_file_path=~/config/.env \
     bash apps/run_locally.sh maintenance:linear_regression
+
+  # Postprocessing gap-fill
+  SAPPHIRE_PREDICTION_MODE=BOTH \
+    ieasyhydroforecast_env_file_path=~/config/.env \
+    bash apps/run_locally.sh maintenance:postprocessing_forecasts
+
+  # Yearly skill metrics recalculation
+  SAPPHIRE_PREDICTION_MODE=BOTH \
+    ieasyhydroforecast_env_file_path=~/config/.env \
+    bash apps/run_locally.sh recalculate_skill_metrics
 
   # Long-term calibration
   ieasyhydroforecast_env_file_path=~/config/.env \
@@ -796,7 +919,7 @@ main() {
     fi
 
     # Validate target
-    local valid_targets="short-term long-term all maintenance calibrate_long_term"
+    local valid_targets="daily short-term long-term all maintenance calibrate_long_term recalculate_skill_metrics"
     local is_valid=false
     for t in $valid_targets; do
         [ "$target" = "$t" ] && is_valid=true
@@ -845,6 +968,10 @@ main() {
     # Dispatch
     local exit_code=0
     case "$target" in
+        # Combined target
+        daily)
+            run_daily_pipeline || exit_code=$?
+            ;;
         # Pipeline targets
         short-term)
             run_short_term_pipeline || exit_code=$?
@@ -870,6 +997,12 @@ main() {
             ;;
         maintenance:machine_learning)
             run_maintenance_machine_learning || exit_code=$?
+            ;;
+        maintenance:postprocessing_forecasts)
+            run_maintenance_postprocessing_forecasts || exit_code=$?
+            ;;
+        recalculate_skill_metrics)
+            run_recalculate_skill_metrics || exit_code=$?
             ;;
         calibrate_long_term)
             run_calibrate_long_term || exit_code=$?

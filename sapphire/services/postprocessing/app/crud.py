@@ -32,6 +32,7 @@ def create_forecast(db: Session, bulk_data: ForecastBulkCreate) -> List[Forecast
                 # Create new record
                 new_forecast = Forecast(**item.model_dump())
                 db.add(new_forecast)
+                db.flush()  # Flush so subsequent queries find this pending record
                 db_forecasts.append(new_forecast)
                 logger.info(f"Created forecast: {item.horizon_type}, {item.code}, {item.model_type}, {item.date}, {item.target}")
 
@@ -117,6 +118,7 @@ def create_long_forecast(db: Session, bulk_data: LongForecastBulkCreate) -> List
                 # Create new record
                 new_long_forecast = LongForecast(**item.model_dump())
                 db.add(new_long_forecast)
+                db.flush()  # Flush so subsequent queries find this pending record
                 db_long_forecasts.append(new_long_forecast)
                 logger.info(f"Created long forecast: {item.horizon_type}, {item.horizon_value}, {item.code}, {item.date}, {item.model_type}, {item.valid_from}, {item.valid_to}")
 
@@ -198,6 +200,7 @@ def create_lr_forecast(db: Session, bulk_data: LRForecastBulkCreate) -> List[LRF
                 # Create new record
                 new_lr_forecast = LRForecast(**item.model_dump())
                 db.add(new_lr_forecast)
+                db.flush()  # Flush so subsequent queries find this pending record
                 db_lr_forecasts.append(new_lr_forecast)
                 logger.info(f"Created LR forecast: {item.horizon_type}, {item.code}, {item.date}")
 

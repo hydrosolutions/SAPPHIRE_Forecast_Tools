@@ -60,6 +60,11 @@ def _handle_api_write_error(e: Exception, description: str) -> None:
     Raises:
         Exception: Re-raises the original exception if mode is "fail".
     """
+    # Log the server response body if available (for diagnosis)
+    response_body = getattr(e, 'response', None)
+    if response_body:
+        logger.error(f"API error response for {description}: {response_body[:1000]}")
+
     mode = _get_api_failure_mode()
     if mode == "fail":
         logger.error(f"Failed to write {description} to API: {e}")
@@ -4261,11 +4266,54 @@ def _write_combined_forecast_to_api(data: pd.DataFrame, horizon_type: str) -> bo
         "RRAM": "RRAM"
     }
 
+    # Compute missing horizon values from dates before iterating.
+    # Virtual station outer merges and ML API reads can produce rows
+    # with valid dates but NaN pentad_in_month/pentad_in_year.
+    repaired_count = 0
+    if horizon_type == "pentad":
+        get_period_func = tl.get_pentad
+        get_period_in_year_func = tl.get_pentad_in_year
+    else:  # decade
+        get_period_func = tl.get_decad_in_month
+        get_period_in_year_func = tl.get_decad_in_year
+
+    if horizon_value_col in data.columns:
+        missing_hv = data[horizon_value_col].isna()
+    else:
+        missing_hv = pd.Series(True, index=data.index)
+        data[horizon_value_col] = None
+
+    if horizon_in_year_col in data.columns:
+        missing_hiy = data[horizon_in_year_col].isna()
+    else:
+        missing_hiy = pd.Series(True, index=data.index)
+        data[horizon_in_year_col] = None
+
+    need_repair = missing_hv | missing_hiy
+    if need_repair.any():
+        dates_for_repair = pd.to_datetime(data.loc[need_repair, 'date'], errors='coerce')
+        valid_dates = dates_for_repair.notna()
+        if valid_dates.any():
+            repair_idx = dates_for_repair[valid_dates].index
+            first_day = dates_for_repair[valid_dates] + pd.Timedelta(days=1)
+            # tl functions return strings; convert to int for float64 columns
+            data.loc[repair_idx, horizon_value_col] = pd.to_numeric(
+                first_day.apply(get_period_func), errors='coerce'
+            )
+            data.loc[repair_idx, horizon_in_year_col] = pd.to_numeric(
+                first_day.apply(get_period_in_year_func), errors='coerce'
+            )
+            repaired_count = len(repair_idx)
+            logger.info(
+                f"Computed missing horizon values from dates for "
+                f"{repaired_count} forecast records ({horizon_type})"
+            )
+
     # Prepare records for API
     records = []
     skipped_count = 0
     for _, row in data.iterrows():
-        # Skip rows with missing required fields (horizon_value and horizon_in_year are required)
+        # Skip rows where horizon values are still missing (date was NaT)
         if pd.isna(row.get(horizon_value_col)) or pd.isna(row.get(horizon_in_year_col)):
             skipped_count += 1
             continue
@@ -4287,25 +4335,43 @@ def _write_combined_forecast_to_api(data: pd.DataFrame, horizon_type: str) -> bo
                 composition = match.group(1).strip()
 
         date_obj = pd.to_datetime(row['date'])
+        horizon_value = row[horizon_value_col]
+        horizon_in_year = row[horizon_in_year_col]
         record = {
             "horizon_type": horizon_type,
             "code": str(row['code']),
             "model_type": api_model_type,
             "date": date_obj.strftime('%Y-%m-%d'),
             "target": date_obj.strftime('%Y-%m-%d'),  # For combined forecasts, date is the target
-            "horizon_value": int(row[horizon_value_col]),
-            "horizon_in_year": int(row[horizon_in_year_col]),
+            "horizon_value": int(float(horizon_value)),
+            "horizon_in_year": int(float(horizon_in_year)),
             "composition": composition,
             "forecasted_discharge": float(row['forecasted_discharge']) if pd.notna(row.get('forecasted_discharge')) else None,
         }
         records.append(record)
 
     if skipped_count > 0:
-        logger.warning(f"Skipped {skipped_count} forecast records with missing horizon values")
+        logger.warning(
+            f"Skipped {skipped_count} forecast records with missing horizon "
+            f"values and invalid dates ({horizon_type})"
+        )
 
     # Write to API
     if records:
-        count = client.write_forecasts(records)
+        logger.debug(
+            f"Sample record being sent to API ({horizon_type}): {records[0]}"
+        )
+        try:
+            count = client.write_forecasts(records)
+        except Exception as e:
+            # Log server response body for diagnosis
+            response_body = getattr(e, 'response', None)
+            if response_body:
+                logger.error(
+                    f"API response body for {horizon_type} write: "
+                    f"{response_body[:1000]}"
+                )
+            raise
         logger.info(f"Successfully wrote {count} combined forecast records to SAPPHIRE API ({horizon_type})")
         print(f"SAPPHIRE API: Successfully wrote {count} combined forecast records ({horizon_type})")
         return True

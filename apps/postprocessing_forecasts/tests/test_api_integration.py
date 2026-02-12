@@ -206,8 +206,8 @@ class TestWriteCombinedForecastToApi:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 
     @patch('forecast_library.SapphirePostprocessingClient')
-    def test_rows_with_missing_required_fields_are_skipped(self, mock_client_class):
-        """Test that rows with missing horizon values are skipped."""
+    def test_missing_horizon_values_repaired_from_date(self, mock_client_class):
+        """Test that missing horizon values are computed from valid dates."""
         if not SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
 
@@ -215,9 +215,10 @@ class TestWriteCombinedForecastToApi:
         try:
             mock_client = Mock()
             mock_client.readiness_check.return_value = True
+            mock_client.write_forecasts.return_value = 1
             mock_client_class.return_value = mock_client
 
-            # Row with NaN required fields should be skipped
+            # Row with NaN horizon values but a valid date — should be repaired
             data = pd.DataFrame({
                 'code': [12345],
                 'date': pd.to_datetime(['2024-01-06']),
@@ -228,9 +229,44 @@ class TestWriteCombinedForecastToApi:
             })
 
             result = _write_combined_forecast_to_api(data, "pentad")
-            assert result is False  # No records to write
+            assert result is True
 
-            # write_forecasts should not be called for skipped data
+            call_args = mock_client.write_forecasts.call_args[0][0]
+            record = call_args[0]
+            # Horizon values should be computed from the date
+            assert record['horizon_value'] is not None
+            assert record['horizon_in_year'] is not None
+
+        finally:
+            os.environ.pop('SAPPHIRE_API_ENABLED', None)
+
+    @patch('forecast_library.SapphirePostprocessingClient')
+    def test_rows_with_invalid_date_and_missing_horizon_are_skipped(
+        self, mock_client_class
+    ):
+        """Test that rows with NaT date AND missing horizon are skipped."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        os.environ['SAPPHIRE_API_ENABLED'] = 'true'
+        try:
+            mock_client = Mock()
+            mock_client.readiness_check.return_value = True
+            mock_client_class.return_value = mock_client
+
+            # Row with NaT date and NaN horizon — cannot be repaired
+            data = pd.DataFrame({
+                'code': [12345],
+                'date': [pd.NaT],
+                'pentad_in_month': [np.nan],
+                'pentad_in_year': [np.nan],
+                'forecasted_discharge': [100.0],
+                'model_short': ['LR'],
+            })
+
+            result = _write_combined_forecast_to_api(data, "pentad")
+            assert result is False
+
             mock_client.write_forecasts.assert_not_called()
 
         finally:

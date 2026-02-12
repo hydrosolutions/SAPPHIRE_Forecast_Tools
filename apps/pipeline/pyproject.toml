@@ -43,3 +43,7 @@ iEasyHydroForecast = { path = "../iEasyHydroForecast", editable = true }
 [tool.pytest.ini_options]
 pythonpath = [".."]
 testpaths = ["tests"]
+filterwarnings = [
+    # luigi 3.6.0 uses deprecated datetime.utcfromtimestamp(); unfixed upstream
+    "ignore:datetime.datetime.utcfromtimestamp:DeprecationWarning:luigi",
+]

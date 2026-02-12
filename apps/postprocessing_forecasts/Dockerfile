@@ -28,5 +28,9 @@ WORKDIR /app/apps/postprocessing_forecasts
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev
 
-# Run the application using uv run (activates the virtual environment automatically)
-CMD ["uv", "run", "postprocessing_forecasts.py"]
+# Default: daily operational mode (fast, reads pre-calculated skill metrics)
+# Override for other entry points:
+#   docker run <image> uv run postprocessing_maintenance.py
+#   docker run <image> uv run recalculate_skill_metrics.py
+#   docker run <image> uv run postprocessing_forecasts.py  # legacy (deprecated)
+CMD ["uv", "run", "postprocessing_operational.py"]
