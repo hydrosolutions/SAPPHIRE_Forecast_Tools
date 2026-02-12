@@ -47,6 +47,21 @@ These items are **not bugs or blockers** - they represent potential enhancements
 
 ---
 
+### 2. Integration of monthly, quarterly, and seasonal hydrological forecasting
+Currently being tested on laptops. Module machine_learning_monthly. 
+
+### 3. Development and integration of sub-daily forecasting capabilities
+Independent of iEasyHydro HF. Module yet to be designed and developed. Will get operational data through new API client (API details not yet known).  
+
+### 4. Sapphire 2.0 - Next Generation Hydrological Forecasting System
+Coupling database services with the modules and an API client for easier access and management.
+Currently being developed in branch maxat_sapphire_2. Ses also doc/plans/sapphire_v2_planning.md for more details.
+
+
+---
+
+
+
 ## How to Use This Document
 
 1. **Adding new items:** When you identify a feature that's "nice to have" but not urgent, add it here instead of creating issues or TODOs that might be forgotten.

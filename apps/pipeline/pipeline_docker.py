@@ -91,14 +91,59 @@ def setup_docker_volumes(env, paths=None):
     return volumes
 
 # Define global paths for marker files
+# Note: Use get_bind_path() because this code runs INSIDE a Docker container.
+# get_bind_path() returns the container-internal path that matches the volume mount.
+# get_absolute_path() would return the HOST path which doesn't exist inside the container.
 MARKER_DIR = f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/marker_files"
 os.makedirs(MARKER_DIR, exist_ok=True)  # Ensure directory exists
 
-def get_marker_filepath(task_name, date=None):
-    """Generate consistent marker filepath for a given task and date"""
+def get_marker_filepath(task_name, date=None, time_slot=None):
+    """Generate consistent marker filepath for a given task, date, and optional time slot.
+
+    Args:
+        task_name: Name of the task (e.g., 'preprocessing_gateway')
+        date: Date for the marker (defaults to today)
+        time_slot: Optional time slot for sub-daily tasks (0, 1, 2, 3 for 4x daily)
+
+    Returns:
+        Path to marker file, e.g.:
+        - Daily: preprocessing_gateway_2026-02-02.marker
+        - Sub-daily: preprocessing_gateway_2026-02-02_slot0.marker
+    """
     if date is None:
         date = datetime.date.today()
+
+    if time_slot is not None:
+        return f"{MARKER_DIR}/{task_name}_{date}_slot{time_slot}.marker"
     return f"{MARKER_DIR}/{task_name}_{date}.marker"
+
+
+def get_gateway_dependency(time_slot=None):
+    """Returns the appropriate gateway task based on whether it already ran.
+
+    This function checks if the preprocessing gateway has already run today by
+    looking for its marker file. If found, returns an ExternalPreprocessingGateway
+    task (which just checks the marker exists). Otherwise, returns a
+    PreprocessingGatewayQuantileMapping task to actually run the preprocessing.
+
+    Args:
+        time_slot: Optional time slot for sub-daily forecasts (None for daily)
+
+    Returns:
+        ExternalPreprocessingGateway if already ran, else PreprocessingGatewayQuantileMapping
+    """
+    today = datetime.date.today()
+    marker_file = get_marker_filepath('preprocessing_gateway', date=today, time_slot=time_slot)
+
+    if os.path.exists(marker_file):
+        print(f"Using external gateway task (already run) for {today}" +
+              (f" slot {time_slot}" if time_slot is not None else ""))
+        return ExternalPreprocessingGateway(date=today)
+    else:
+        print(f"No gateway marker found for {today}" +
+              (f" slot {time_slot}" if time_slot is not None else "") +
+              ", running gateway preprocessing")
+        return PreprocessingGatewayQuantileMapping()
 
 
 class DockerTaskBase(pu.TimeoutMixin, luigi.Task):
@@ -524,8 +569,9 @@ class ConceptualModel(DockerTaskBase):
     docker_logs_file_path = f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/docker_logs/log_conceptmod_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
 
     def requires(self):
-        # Always run preprocessing - fast enough now and ensures fresh data
-        return [PreprocessingRunoff(), PreprocessingGatewayQuantileMapping()]
+        # PreprocessingRunoff runs every time (fast enough after py312 migration)
+        # Gateway uses marker file check to prevent double runs
+        return [PreprocessingRunoff(), get_gateway_dependency()]
 
     def output(self):
         return luigi.LocalTarget(f'/app/log_conceptmod.txt')
@@ -580,8 +626,9 @@ class RunMLModel(DockerTaskBase):
         return f"{get_bind_path(env.get('ieasyforecast_intermediate_data_path'))}/docker_logs/log_ml_{self.model_type}_{self.prediction_mode}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
 
     def requires(self):
-        # Always run preprocessing - fast enough now and ensures fresh data
-        return [PreprocessingRunoff(), PreprocessingGatewayQuantileMapping()]
+        # PreprocessingRunoff runs every time (fast enough after py312 migration)
+        # Gateway uses marker file check to prevent double runs
+        return [PreprocessingRunoff(), get_gateway_dependency()]
 
     def output(self):
         return luigi.LocalTarget(f'/app/log_ml_{self.model_type}_{self.prediction_mode}.txt')
@@ -620,9 +667,10 @@ class RunAllMLModels(luigi.WrapperTask):
     prediction_mode = luigi.Parameter(default='ALL')
 
     def requires(self):
-        # Always run preprocessing - fast enough now and ensures fresh data
+        # PreprocessingRunoff runs every time (fast enough after py312 migration)
+        # Gateway uses marker file check to prevent double runs
         yield PreprocessingRunoff()
-        yield PreprocessingGatewayQuantileMapping()
+        yield get_gateway_dependency()
 
         # Get the list of available ML models from .env file
         models = env.get('ieasyhydroforecast_available_ML_models').split(',')
@@ -806,9 +854,10 @@ class DeleteOldGatewayFiles(pu.TimeoutMixin, luigi.Task):
         try:
             # Run with timeout protection
             try:
-                # Using a lambda here to call our method with self's timeout
-                self.run_with_timeout(lambda: self._delete_old_files())
-                deleted_count, deleted_files, errors = self._delete_old_files()
+                # Run deletion with timeout protection and capture result
+                deleted_count, deleted_files, errors = self.run_with_timeout(
+                    lambda: self._delete_old_files()
+                )
 
                 # Format results for the log file
                 result_details = [
@@ -982,9 +1031,10 @@ class DeleteOldMarkerFiles(pu.TimeoutMixin, luigi.Task):
         try:
             # Run with timeout protection
             try:
-                # Using a lambda here to call our method with self's timeout
-                self.run_with_timeout(lambda: self._delete_old_files())
-                deleted_count, deleted_files, errors = self._delete_old_files()
+                # Run deletion with timeout protection and capture result
+                deleted_count, deleted_files, errors = self.run_with_timeout(
+                    lambda: self._delete_old_files()
+                )
 
                 # Format results for the log file
                 result_details = [
