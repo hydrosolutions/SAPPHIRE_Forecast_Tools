@@ -33,12 +33,12 @@
 | API read tests (postprocessing) | **DONE** — 45 tests in `test_api_read.py`, 16 tests in `test_api_integration.py` |
 | API write test fix | **DONE** — `test_api_read.py` mocks corrected to use `SapphirePreprocessingClient` (commit `ca29b5d`) |
 | `sapphire-api-client` dependency | **DONE** — added to `iEasyHydroForecast/pyproject.toml` and `postprocessing_forecasts/pyproject.toml` |
-| Module separation (operational / nightly gap-fill / yearly recalc) | **DONE** — 3 entry points + 4 src modules + 2 shell scripts, 130 tests |
+| Module separation (operational / nightly gap-fill / yearly recalc) | **DONE** — 3 entry points + 4 src modules + 2 shell scripts, 131 tests (commit `9ce63c8`) |
 | Server-side batch upsert (CRUD) | TODO |
 | Client-side vectorization | TODO |
 | Skill metrics single-pass optimization | TODO |
 | Monthly/quarterly/seasonal skill metrics | TODO — Phase 4 (point + CRPS, configurable season) |
-| Comprehensive test suite (50+ unit, 12+ integration) | **IN PROGRESS** — 130 postprocessing tests + 206 iEasyHydroForecast tests pass |
+| Comprehensive test suite (50+ unit, 12+ integration) | **IN PROGRESS** — 131 postprocessing tests + 206 iEasyHydroForecast tests pass |
 | Bulk-read API endpoints (for `long_term_forecasting`) | Planned — see `doc/plans/bulk_read_endpoints_instructions.md` |
 | API integration | **DONE** — see `doc/plans/sapphire_api_integration_plan.md` |
 | Duplicate skill metrics / ensemble composition issue | **RESOLVED** — see `doc/plans/issues/gi_duplicate_skill_metrics_ensemble_composition.md` |
@@ -581,37 +581,32 @@ seasonal:
 
 ## Phase 5: Testing Strategy
 
-### Existing Tests (79 postprocessing + 206 iEasyHydroForecast, all passing)
+### Current Tests (131 postprocessing + 206 iEasyHydroForecast, all passing)
 
 | File | Tests | Covers |
 |------|-------|--------|
 | `postprocessing_forecasts/tests/test_api_read.py` | 45 | API read: LR/ML/observed, pagination, CSV fallback, data consistency, edge cases |
 | `postprocessing_forecasts/tests/test_api_integration.py` | 16 | API write: skill metrics, combined forecasts, field mapping, NaN handling |
-| `postprocessing_forecasts/tests/test_error_accumulation.py` | 9 | Error accumulation, exit codes |
+| `postprocessing_forecasts/tests/test_error_accumulation.py` | 9 | Error accumulation, exit codes (legacy entry point) |
 | `postprocessing_forecasts/tests/test_postprocessing_tools.py` | 8 | Safe `.iloc[0]`, NaT dates, missing codes |
-| `postprocessing_forecasts/tests/test_mock_postprocessing_forecasts.py` | 1 | Combined forecast consistency |
-| `iEasyHydroForecast/tests/test_forecast_library.py` | 206 total | Includes 5 atomic write + 7 API failure mode tests (Bug 5) |
+| `postprocessing_forecasts/tests/test_mock_postprocessing_forecasts.py` | 1 | Combined forecast consistency (legacy entry point) |
+| `postprocessing_forecasts/tests/test_ensemble_calculator.py` | 15 | Helper functions, threshold filtering, ensemble creation, NE exclusion, single-model discard, composition string, decad |
+| `postprocessing_forecasts/tests/test_data_reader.py` | 8 | CSV read, API fallback, model mapping, empty/corrupt files |
+| `postprocessing_forecasts/tests/test_gap_detector.py` | 6 | Missing EM detection, lookback window, multi-code gaps, date conversion |
+| `postprocessing_forecasts/tests/test_operational_workflow.py` | 5 | Pentad/decad/both modes, error accumulation, empty skill metrics |
+| `postprocessing_forecasts/tests/test_maintenance_workflow.py` | 4 | Gap detection, no-gap idempotency, lookback window, empty combined forecasts |
+| `postprocessing_forecasts/tests/test_recalc_workflow.py` | 4 | Calls calculate_skill_metrics, saves skill metrics, both mode, error accumulation |
+| `iEasyHydroForecast/tests/test_forecast_library.py` | 206 total | Includes ~15 sdivsigma_nse, ~15 MAE, ~8 accuracy, 5 atomic write, 7 API failure mode tests |
 
-### New Tests Needed
+### Remaining Test Gaps
 
-#### Unit Tests (target: 50+)
-
-| Module | Test File | Tests | Coverage |
-|--------|-----------|-------|----------|
-| API writer | `test_api_writer.py` | 12 | Record building, vectorization, API error handling, singleton |
-| Skill metrics | `test_skill_metrics.py` | 12 | NSE, MAE, sdivsigma, accuracy, single-pass, edge cases |
-| Ensemble | `test_ensemble_calculator.py` | 8 | EM/NE calculation, composition tracking, threshold filtering |
-| Data reader | `test_data_reader.py` | 5 | Latest-only reads, full historical, missing files |
-| Gap detector | `test_gap_detector.py` | 6 | Window scanning, missing ensemble detection, late data scenarios, no-gap case |
-| File writer | `test_file_writer.py` | 5 | Atomic writes, directory creation, column order |
-
-#### Integration Tests (target: 12+)
-
-| Test File | Tests | Coverage |
-|-----------|-------|----------|
-| `test_operational_workflow.py` | 6 | Pentad/decad/both modes, API failure, empty data, timing |
-| `test_maintenance_workflow.py` | 6 | Gap-fill window scanning, late data fill, no-gaps idempotency, audit logging |
-| `test_yearly_recalc_workflow.py` | 6 | Full pentad/decad recalc, CSV-API consistency, ensemble recomposition |
+| Gap | Priority | Notes |
+|-----|----------|-------|
+| Ensemble skill metric numerical verification | Medium | No test checks actual NSE/MAE/accuracy *values* for EM — only checks that EM rows exist. Should add a test that asserts specific skill values given known observed + ensemble forecasts. |
+| `_calculate_ensemble_skill()` unit test | Low | Only tested indirectly via `create_ensemble_forecasts`. The groupby wiring (column names, merge of 3 metric results) is not tested in isolation. |
+| `src/api_writer.py` tests | Deferred | Module not yet extracted (Phase 3) |
+| `src/skill_metrics.py` tests | Deferred | Module not yet extracted (Phase 3) |
+| `src/file_writer.py` tests | Deferred | Module not yet extracted (Phase 3) |
 
 #### Performance Benchmarks
 
@@ -637,19 +632,19 @@ seasonal:
 
 ### Phase 2: Module Separation
 
-- [ ] Create `src/skill_metrics.py` (extract from `forecast_library.py`)
-- [ ] Create `src/ensemble_calculator.py` (extract from `forecast_library.py`)
-- [ ] Create `src/data_reader.py` (extract from `setup_library.py`)
-- [ ] Create `src/api_writer.py` (extract from `forecast_library.py`)
-- [ ] Create `src/gap_detector.py` (scan recent window for missing ensembles)
-- [ ] Create `src/file_writer.py` (extract `atomic_write_csv` + CSV save logic)
-- [ ] Create `postprocessing_operational.py` (daily entry point)
-- [ ] Create `postprocessing_maintenance.py` (nightly gap-fill entry point)
-- [ ] Create `recalculate_skill_metrics.py` (yearly skill recalculation entry point)
-- [ ] Create `bin/daily_postprc_maintenance.sh` (nightly gap-fill runner)
-- [ ] Create `bin/yearly_skill_metrics_recalculation.sh` (yearly recalc runner)
-- [ ] Update Dockerfile for triple entry points
-- [ ] Add deprecation warning to legacy `postprocessing_forecasts.py`
+- [x] ~~Create `src/ensemble_calculator.py`~~ (extracted ensemble creation from `forecast_library.py`, commit `9ce63c8`)
+- [x] ~~Create `src/data_reader.py`~~ (reads pre-calculated skill metrics from CSV/API, commit `9ce63c8`)
+- [x] ~~Create `src/gap_detector.py`~~ (scan recent window for missing ensembles, commit `9ce63c8`)
+- [x] ~~Create `postprocessing_operational.py`~~ (daily entry point, commit `9ce63c8`)
+- [x] ~~Create `postprocessing_maintenance.py`~~ (nightly gap-fill entry point, commit `9ce63c8`)
+- [x] ~~Create `recalculate_skill_metrics.py`~~ (yearly skill recalculation entry point, commit `9ce63c8`)
+- [x] ~~Create `bin/daily_postprc_maintenance.sh`~~ (nightly gap-fill runner, commit `9ce63c8`)
+- [x] ~~Create `bin/yearly_skill_metrics_recalculation.sh`~~ (yearly recalc runner, commit `9ce63c8`)
+- [x] ~~Update Dockerfile for triple entry points~~ (default CMD → `postprocessing_operational.py`, commit `9ce63c8`)
+- [x] ~~Add deprecation warning to legacy `postprocessing_forecasts.py`~~ (commit `9ce63c8`)
+- [ ] Create `src/skill_metrics.py` (extract from `forecast_library.py`) — deferred to Phase 3
+- [ ] Create `src/api_writer.py` (extract from `forecast_library.py`) — deferred to Phase 3
+- [ ] Create `src/file_writer.py` (extract `atomic_write_csv` + CSV save logic) — deferred to Phase 3
 
 ### Phase 3: Performance Improvements
 
@@ -676,11 +671,16 @@ seasonal:
 
 ### Phase 5: Testing
 
-- [ ] Unit test structure (`tests/unit/`, `tests/integration/`)
-- [ ] Unit tests for all new `src/` modules (50+ tests)
-- [ ] Integration tests for both workflows (12+ tests)
+- [x] ~~Unit tests for `src/ensemble_calculator.py`~~ (15 tests)
+- [x] ~~Unit tests for `src/data_reader.py`~~ (8 tests)
+- [x] ~~Unit tests for `src/gap_detector.py`~~ (6 tests)
+- [x] ~~Integration tests for operational workflow~~ (5 tests)
+- [x] ~~Integration tests for maintenance workflow~~ (4 tests)
+- [x] ~~Integration tests for recalc workflow~~ (4 tests)
+- [ ] Add numerical verification test for ensemble skill metrics (EM NSE/MAE/accuracy values)
+- [ ] Unit test structure (`tests/unit/`, `tests/integration/`) — not adopted; tests kept flat in `tests/`
 - [ ] Performance benchmarks
-- [ ] Test fixtures and `conftest.py`
+- [ ] Unit tests for deferred `src/` modules (`api_writer`, `skill_metrics`, `file_writer`)
 
 ---
 
@@ -943,3 +943,4 @@ The following plans are **superseded** by this unified plan (moved to `archive/`
 | 2026-02-12 | Claude | Phase 1 complete: updated all status fields, Bug 5 done (7 tests), config fix done, API read tests (45) + write tests (16) documented, test counts updated (79 postprocessing + 206 iEasyHydroForecast), migration steps 1–2 marked done, `sapphire-api-client` dependency added to pyproject.toml files |
 | 2026-02-12 | Bea/Claude | Phase 2 target architecture: split maintenance into nightly gap-fill (postprocessing_maintenance.py) and yearly recalculation (recalculate_skill_metrics.py). Added gap_detector module, POSTPROCESSING_GAPFILL_WINDOW_DAYS env var, updated file structure/tests/rollback for three entry points. Shell runners (`bin/daily_postprc_maintenance.sh`, `bin/yearly_skill_metrics_recalculation.sh`) instead of Luigi tasks for maintenance, following `daily_preprunoff_maintenance.sh` pattern |
 | 2026-02-12 | Bea/Claude | Phase 4 expanded: renamed to "Monthly, Quarterly & Seasonal Skill Metrics". Monthly skill metrics calculated in postprocessing_forecasts (reads long_forecasts from API). Dual metrics: Q50-based traditional (NSE/MAE/accuracy) + CRPS. CRPS is cross-cutting — applies to pentad/decad too once quantile columns are populated (currently blocked). Quarterly/seasonal: use direct records from long_term_forecasting if available, otherwise aggregate from monthly. Note added: refine long_term_forecasting integration once module is finalized. Configurable season definition via config.yaml. Monthly observations aggregated on-the-fly from daily discharge (≥50% coverage) |
+| 2026-02-12 | Bea/Claude | Post-implementation review: updated Phase 2 checklist (10 items done, 3 deferred to Phase 3). Updated Phase 5 test inventory to actual counts (131 postprocessing tests). Documented remaining test gaps: ensemble skill metric numerical verification, `_calculate_ensemble_skill()` isolation test. Updated status summary test counts. |
