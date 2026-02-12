@@ -4063,6 +4063,16 @@ def _write_runoff_to_api(
         logger.info("SAPPHIRE API writing disabled via SAPPHIRE_API_ENABLED=false")
         return None
 
+    # Validate horizon_type early (before network calls)
+    if horizon_type == "pentad":
+        horizon_value_col = "pentad"
+        horizon_in_year_col = "pentad_in_year"
+    elif horizon_type == "decade":
+        horizon_value_col = "decad_in_month"
+        horizon_in_year_col = "decad_in_year"
+    else:
+        raise ValueError(f"Invalid horizon_type: {horizon_type}. Must be 'pentad' or 'decade'")
+
     api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
     client = SapphirePreprocessingClient(base_url=api_url)
 
@@ -4111,16 +4121,6 @@ def _write_runoff_to_api(
     if data_to_write.empty:
         logger.info(f"No runoff data to write after filtering ({horizon_type})")
         return None
-
-    # Determine column names based on horizon type
-    if horizon_type == "pentad":
-        horizon_value_col = "pentad"
-        horizon_in_year_col = "pentad_in_year"
-    elif horizon_type == "decade":
-        horizon_value_col = "decad_in_month"
-        horizon_in_year_col = "decad_in_year"
-    else:
-        raise ValueError(f"Invalid horizon_type: {horizon_type}. Must be 'pentad' or 'decade'")
 
     # Prepare records for API
     records = []

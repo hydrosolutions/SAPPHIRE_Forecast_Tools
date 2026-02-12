@@ -1346,18 +1346,14 @@ class TestWriteRunoffToApi:
         finally:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 
-    @patch('forecast_library.pd.Timestamp')
     @patch('forecast_library.SapphirePreprocessingClient')
-    def test_operational_mode_writes_today_only(self, mock_client_class, mock_timestamp):
+    def test_operational_mode_writes_today_only(self, mock_client_class):
         """Operational mode should only write today's data."""
         if not fl.SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
 
-        # Mock today to match data dates
-        fake_today = pd.Timestamp('2024-02-14')
-        mock_timestamp.today.return_value = fake_today
-        # Preserve pd.to_datetime behavior
-        mock_timestamp.side_effect = lambda *a, **kw: pd.Timestamp(*a, **kw)
+        today = pd.Timestamp.today().normalize()
+        yesterday = today - pd.Timedelta(days=5)
 
         os.environ['SAPPHIRE_API_ENABLED'] = 'true'
         os.environ['SAPPHIRE_SYNC_MODE'] = 'operational'
@@ -1367,10 +1363,10 @@ class TestWriteRunoffToApi:
             mock_client.write_runoff.return_value = 2
             mock_client_class.return_value = mock_client
 
-            # Create data with one date matching "today"
+            # Create data with one date matching today
             data = pd.DataFrame({
                 'code': ['12345', '67890', '12345', '67890'],
-                'date': pd.to_datetime(['2024-02-09', '2024-02-09', '2024-02-14', '2024-02-14']),
+                'date': [yesterday, yesterday, today, today],
                 'pentad': [2, 2, 3, 3],
                 'pentad_in_year': [8, 8, 9, 9],
                 'discharge_avg': [100.0, 101.0, 102.0, 103.0],
@@ -1382,7 +1378,7 @@ class TestWriteRunoffToApi:
             # Should return DataFrame with only today's records
             assert isinstance(result, pd.DataFrame)
             assert len(result) == 2
-            assert all(result['date'] == fake_today)
+            assert all(result['date'] == today)
 
             # Verify API was called with only 2 records
             call_args = mock_client.write_runoff.call_args[0][0]
@@ -1391,17 +1387,13 @@ class TestWriteRunoffToApi:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
             os.environ.pop('SAPPHIRE_SYNC_MODE', None)
 
-    @patch('forecast_library.pd.Timestamp')
     @patch('forecast_library.SapphirePreprocessingClient')
-    def test_maintenance_mode_writes_last_30_days(self, mock_client_class, mock_timestamp):
+    def test_maintenance_mode_writes_last_30_days(self, mock_client_class):
         """Maintenance mode should write the last 30 days from today."""
         if not fl.SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
 
-        # Mock today
-        fake_today = pd.Timestamp('2024-02-19')
-        mock_timestamp.today.return_value = fake_today
-        mock_timestamp.side_effect = lambda *a, **kw: pd.Timestamp(*a, **kw)
+        today = pd.Timestamp.today().normalize()
 
         os.environ['SAPPHIRE_API_ENABLED'] = 'true'
         os.environ['SAPPHIRE_SYNC_MODE'] = 'maintenance'
@@ -1411,8 +1403,10 @@ class TestWriteRunoffToApi:
             mock_client.write_runoff.return_value = 14
             mock_client_class.return_value = mock_client
 
-            # Create data spanning more than 30 days
-            dates = pd.date_range('2024-01-01', periods=10, freq='5D')
+            # Create data spanning more than 30 days from today
+            dates = pd.date_range(
+                end=today, periods=10, freq='5D'
+            )
             data = pd.DataFrame({
                 'code': ['12345'] * len(dates) + ['67890'] * len(dates),
                 'date': list(dates) * 2,
@@ -1426,8 +1420,8 @@ class TestWriteRunoffToApi:
 
             # Should return DataFrame
             assert isinstance(result, pd.DataFrame)
-            # Cutoff is today - 30 days = 2024-01-20
-            cutoff = fake_today - pd.Timedelta(days=30)
+            # Cutoff is today - 30 days
+            cutoff = today - pd.Timedelta(days=30)
             expected_records = data[pd.to_datetime(data['date']) >= cutoff]
             assert len(result) == len(expected_records)
         finally:
@@ -1565,17 +1559,14 @@ class TestWriteRunoffToApi:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
             os.environ.pop('SAPPHIRE_SYNC_MODE', None)
 
-    @patch('forecast_library.pd.Timestamp')
     @patch('forecast_library.SapphirePreprocessingClient')
-    def test_default_sync_mode_is_operational(self, mock_client_class, mock_timestamp):
+    def test_default_sync_mode_is_operational(self, mock_client_class):
         """Default sync mode should be operational (only today's data)."""
         if not fl.SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
 
-        # Mock today to match data dates
-        fake_today = pd.Timestamp('2024-01-05')
-        mock_timestamp.today.return_value = fake_today
-        mock_timestamp.side_effect = lambda *a, **kw: pd.Timestamp(*a, **kw)
+        today = pd.Timestamp.today().normalize()
+        other_day = today - pd.Timedelta(days=5)
 
         os.environ['SAPPHIRE_API_ENABLED'] = 'true'
         os.environ.pop('SAPPHIRE_SYNC_MODE', None)  # Ensure not set
@@ -1585,10 +1576,10 @@ class TestWriteRunoffToApi:
             mock_client.write_runoff.return_value = 2
             mock_client_class.return_value = mock_client
 
-            # Create data with one date matching "today"
+            # Create data with one date matching today
             data = pd.DataFrame({
                 'code': ['12345', '67890', '12345', '67890'],
-                'date': pd.to_datetime(['2024-01-01', '2024-01-01', '2024-01-05', '2024-01-05']),
+                'date': [other_day, other_day, today, today],
                 'pentad': [1, 1, 1, 1],
                 'pentad_in_year': [1, 1, 1, 1],
                 'discharge_avg': [100.0, 101.0, 102.0, 103.0],
