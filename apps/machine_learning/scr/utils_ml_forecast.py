@@ -486,9 +486,6 @@ def _write_ml_forecast_to_api(data: pd.DataFrame, horizon_type: str, model_type:
 
     Returns:
         bool: True if successful, False otherwise
-
-    Raises:
-        SapphireAPIError: If API write fails after retries
     """
     if not SAPPHIRE_API_AVAILABLE:
         logger.warning("sapphire-api-client not installed, skipping ML forecast API write")
@@ -505,9 +502,13 @@ def _write_ml_forecast_to_api(data: pd.DataFrame, horizon_type: str, model_type:
 
     client = SapphirePostprocessingClient(base_url=api_url)
 
-    # Health check first - fail fast if API unavailable
+    # Health check - non-blocking, skip if API unavailable
     if not client.readiness_check():
-        raise SapphireAPIError(f"SAPPHIRE API at {api_url} is not ready")
+        logger.warning(
+            f"SAPPHIRE API at {api_url} is not ready, "
+            "skipping ML forecast write"
+        )
+        return False
 
     # Map model type to API format
     model_type_map = {

@@ -173,8 +173,8 @@ class TestWriteMLForecastToApi:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 
     @patch('scr.utils_ml_forecast.SapphirePostprocessingClient')
-    def test_api_not_ready_raises_error(self, mock_client_class):
-        """When API health check fails, should raise SapphireAPIError."""
+    def test_api_not_ready_returns_false(self, mock_client_class):
+        """When API health check fails, should return False (non-blocking)."""
         if not SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
 
@@ -196,8 +196,8 @@ class TestWriteMLForecastToApi:
                 'Q95': [150.0],
             })
 
-            with pytest.raises(Exception):  # SapphireAPIError
-                _write_ml_forecast_to_api(data, "pentad", "TFT")
+            result = _write_ml_forecast_to_api(data, "pentad", "TFT")
+            assert result is False
         finally:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 
