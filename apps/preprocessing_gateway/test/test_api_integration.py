@@ -55,8 +55,8 @@ class TestWriteSnowToApi:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 
     @patch('snow_data_operational.SapphirePreprocessingClient')
-    def test_api_not_ready_raises_error(self, mock_client_class):
-        """When API health check fails, should raise SapphireAPIError."""
+    def test_api_not_ready_returns_false(self, mock_client_class):
+        """When API health check fails, should return False (non-blocking)."""
         if not sdo.SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
 
@@ -72,16 +72,22 @@ class TestWriteSnowToApi:
                 'SWE': [100.5],
             })
 
-            with pytest.raises(Exception):  # SapphireAPIError
-                sdo._write_snow_to_api(data, "SWE")
+            result = sdo._write_snow_to_api(data, "SWE")
+            assert result is False
         finally:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 
+    @patch('snow_data_operational.pd.Timestamp')
     @patch('snow_data_operational.SapphirePreprocessingClient')
-    def test_writes_latest_date_only(self, mock_client_class):
-        """Only the latest date's data should be written (operational behavior)."""
+    def test_writes_today_only(self, mock_client_class, mock_timestamp):
+        """Only today's data should be written (operational behavior)."""
         if not sdo.SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
+
+        # Mock today to match one of the data dates
+        fake_today = pd.Timestamp('2024-01-03')
+        mock_timestamp.today.return_value = fake_today
+        mock_timestamp.side_effect = lambda *a, **kw: pd.Timestamp(*a, **kw)
 
         os.environ['SAPPHIRE_API_ENABLED'] = 'true'
         try:
@@ -103,17 +109,22 @@ class TestWriteSnowToApi:
             mock_client.write_snow.assert_called_once()
             # Get the records that were passed
             call_args = mock_client.write_snow.call_args[0][0]
-            # Should only have 1 record (latest date)
+            # Should only have 1 record (today's date)
             assert len(call_args) == 1
             assert call_args[0]['date'] == '2024-01-03'
         finally:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 
+    @patch('snow_data_operational.pd.Timestamp')
     @patch('snow_data_operational.SapphirePreprocessingClient')
-    def test_elevation_band_values(self, mock_client_class):
+    def test_elevation_band_values(self, mock_client_class, mock_timestamp):
         """Test that elevation band values (SWE_1, SWE_2, etc.) are correctly mapped."""
         if not sdo.SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
+
+        fake_today = pd.Timestamp('2024-01-01')
+        mock_timestamp.today.return_value = fake_today
+        mock_timestamp.side_effect = lambda *a, **kw: pd.Timestamp(*a, **kw)
 
         os.environ['SAPPHIRE_API_ENABLED'] = 'true'
         try:
@@ -145,11 +156,16 @@ class TestWriteSnowToApi:
         finally:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 
+    @patch('snow_data_operational.pd.Timestamp')
     @patch('snow_data_operational.SapphirePreprocessingClient')
-    def test_nan_values_are_none(self, mock_client_class):
+    def test_nan_values_are_none(self, mock_client_class, mock_timestamp):
         """Test that NaN values are converted to None."""
         if not sdo.SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
+
+        fake_today = pd.Timestamp('2024-01-01')
+        mock_timestamp.today.return_value = fake_today
+        mock_timestamp.side_effect = lambda *a, **kw: pd.Timestamp(*a, **kw)
 
         os.environ['SAPPHIRE_API_ENABLED'] = 'true'
         try:
@@ -182,11 +198,16 @@ class TestWriteSnowToApi:
         finally:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 
+    @patch('snow_data_operational.pd.Timestamp')
     @patch('snow_data_operational.SapphirePreprocessingClient')
-    def test_snow_type_uppercase(self, mock_client_class):
+    def test_snow_type_uppercase(self, mock_client_class, mock_timestamp):
         """Test that snow_type is converted to uppercase for API."""
         if not sdo.SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
+
+        fake_today = pd.Timestamp('2024-01-01')
+        mock_timestamp.today.return_value = fake_today
+        mock_timestamp.side_effect = lambda *a, **kw: pd.Timestamp(*a, **kw)
 
         os.environ['SAPPHIRE_API_ENABLED'] = 'true'
         try:
@@ -235,8 +256,8 @@ class TestWriteSnowToApiMaintenance:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 
     @patch('snow_data_renalysis.SapphirePreprocessingClient')
-    def test_api_not_ready_raises_error(self, mock_client_class):
-        """When API health check fails, should raise SapphireAPIError."""
+    def test_api_not_ready_returns_false(self, mock_client_class):
+        """When API health check fails, should return False (non-blocking)."""
         if not sdr.SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
 
@@ -252,8 +273,8 @@ class TestWriteSnowToApiMaintenance:
                 'SWE': [100.5],
             })
 
-            with pytest.raises(Exception):  # SapphireAPIError
-                sdr._write_snow_to_api(data, "SWE")
+            result = sdr._write_snow_to_api(data, "SWE")
+            assert result is False
         finally:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 
@@ -461,8 +482,8 @@ class TestWriteMeteoToApi:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 
     @patch('extend_era5_reanalysis.SapphirePreprocessingClient')
-    def test_api_not_ready_raises_error(self, mock_client_class):
-        """When API health check fails, should raise SapphireAPIError."""
+    def test_api_not_ready_returns_false(self, mock_client_class):
+        """When API health check fails, should return False (non-blocking)."""
         if not eer.SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
 
@@ -479,8 +500,8 @@ class TestWriteMeteoToApi:
                 'T_norm': [12.0],
             })
 
-            with pytest.raises(Exception):  # SapphireAPIError
-                eer._write_meteo_to_api(data, "T")
+            result = eer._write_meteo_to_api(data, "T")
+            assert result is False
         finally:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 
@@ -817,8 +838,8 @@ class TestQuantileMappingWriteMeteoToApi:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 
     @patch('Quantile_Mapping_OP.SapphirePreprocessingClient')
-    def test_api_not_ready_raises_error(self, mock_client_class):
-        """When API health check fails, should raise SapphireAPIError."""
+    def test_api_not_ready_returns_false(self, mock_client_class):
+        """When API health check fails, should return False (non-blocking)."""
         if not qm.SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
 
@@ -834,16 +855,22 @@ class TestQuantileMappingWriteMeteoToApi:
                 'T': [15.5],
             })
 
-            with pytest.raises(Exception):  # SapphireAPIError
-                qm._write_meteo_to_api(data, "T", "HRU001")
+            result = qm._write_meteo_to_api(data, "T", "HRU001")
+            assert result is False
         finally:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 
+    @patch('Quantile_Mapping_OP.pd.Timestamp')
     @patch('Quantile_Mapping_OP.SapphirePreprocessingClient')
-    def test_writes_latest_date_only(self, mock_client_class):
-        """Only the latest date's data should be written (operational behavior)."""
+    def test_writes_today_only(self, mock_client_class, mock_timestamp):
+        """Only today's data should be written (operational behavior)."""
         if not qm.SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
+
+        # Mock today to be 2024-01-03
+        fake_today = pd.Timestamp('2024-01-03')
+        mock_timestamp.today.return_value = fake_today
+        mock_timestamp.side_effect = lambda *a, **kw: pd.Timestamp(*a, **kw)
 
         os.environ['SAPPHIRE_API_ENABLED'] = 'true'
         try:
@@ -852,7 +879,7 @@ class TestQuantileMappingWriteMeteoToApi:
             mock_client.write_meteo.return_value = 1
             mock_client_class.return_value = mock_client
 
-            # Data spanning multiple dates
+            # Data spanning multiple dates - only 2024-01-03 matches "today"
             data = pd.DataFrame({
                 'date': pd.to_datetime(['2024-01-01', '2024-01-02', '2024-01-03']),
                 'code': [12345, 12345, 12345],
@@ -866,18 +893,23 @@ class TestQuantileMappingWriteMeteoToApi:
             mock_client.write_meteo.assert_called_once()
             # Get the records that were passed
             call_args = mock_client.write_meteo.call_args[0][0]
-            # Should only have 1 record (latest date)
+            # Should only have 1 record (today's date)
             assert len(call_args) == 1
             assert call_args[0]['date'] == '2024-01-03'
             assert call_args[0]['value'] == 20.0
         finally:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 
+    @patch('Quantile_Mapping_OP.pd.Timestamp')
     @patch('Quantile_Mapping_OP.SapphirePreprocessingClient')
-    def test_temperature_type(self, mock_client_class):
+    def test_temperature_type(self, mock_client_class, mock_timestamp):
         """Test writing temperature (T) data."""
         if not qm.SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
+
+        fake_today = pd.Timestamp('2024-01-15')
+        mock_timestamp.today.return_value = fake_today
+        mock_timestamp.side_effect = lambda *a, **kw: pd.Timestamp(*a, **kw)
 
         os.environ['SAPPHIRE_API_ENABLED'] = 'true'
         try:
@@ -905,11 +937,16 @@ class TestQuantileMappingWriteMeteoToApi:
         finally:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 
+    @patch('Quantile_Mapping_OP.pd.Timestamp')
     @patch('Quantile_Mapping_OP.SapphirePreprocessingClient')
-    def test_precipitation_type(self, mock_client_class):
+    def test_precipitation_type(self, mock_client_class, mock_timestamp):
         """Test writing precipitation (P) data."""
         if not qm.SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
+
+        fake_today = pd.Timestamp('2024-06-01')
+        mock_timestamp.today.return_value = fake_today
+        mock_timestamp.side_effect = lambda *a, **kw: pd.Timestamp(*a, **kw)
 
         os.environ['SAPPHIRE_API_ENABLED'] = 'true'
         try:
@@ -936,11 +973,16 @@ class TestQuantileMappingWriteMeteoToApi:
         finally:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 
+    @patch('Quantile_Mapping_OP.pd.Timestamp')
     @patch('Quantile_Mapping_OP.SapphirePreprocessingClient')
-    def test_nan_values_are_none(self, mock_client_class):
+    def test_nan_values_are_none(self, mock_client_class, mock_timestamp):
         """Test that NaN values are converted to None."""
         if not qm.SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
+
+        fake_today = pd.Timestamp('2024-01-01')
+        mock_timestamp.today.return_value = fake_today
+        mock_timestamp.side_effect = lambda *a, **kw: pd.Timestamp(*a, **kw)
 
         os.environ['SAPPHIRE_API_ENABLED'] = 'true'
         try:

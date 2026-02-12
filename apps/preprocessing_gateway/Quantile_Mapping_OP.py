@@ -258,9 +258,6 @@ def _write_meteo_to_api(data: pd.DataFrame, meteo_type: str, hru_code: str) -> b
 
     Returns:
         True if successful, False otherwise
-
-    Raises:
-        SapphireAPIError: If API write fails after retries
     """
     if not SAPPHIRE_API_AVAILABLE:
         logger.warning("sapphire-api-client not installed, skipping meteo API write")
@@ -275,9 +272,13 @@ def _write_meteo_to_api(data: pd.DataFrame, meteo_type: str, hru_code: str) -> b
     api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
     client = SapphirePreprocessingClient(base_url=api_url)
 
-    # Health check first - fail fast if API unavailable
+    # Health check - non-blocking, skip if API unavailable
     if not client.readiness_check():
-        raise SapphireAPIError(f"SAPPHIRE API at {api_url} is not ready")
+        logger.warning(
+            f"SAPPHIRE API at {api_url} is not ready, "
+            "skipping meteo write"
+        )
+        return False
 
     if data.empty:
         logger.info(f"No meteo data to write to API ({meteo_type}) for HRU {hru_code}")
@@ -287,10 +288,10 @@ def _write_meteo_to_api(data: pd.DataFrame, meteo_type: str, hru_code: str) -> b
     data = data.copy()
     data['date'] = pd.to_datetime(data['date'])
 
-    # Operational mode: write only the latest date's data
-    latest_date = data['date'].max()
-    data_to_write = data[data['date'] == latest_date]
-    logger.info(f"Writing {len(data_to_write)} meteo records for date {latest_date} ({meteo_type}, HRU {hru_code})")
+    # Operational mode: write only today's data
+    today = pd.Timestamp.today().normalize()
+    data_to_write = data[data['date'] == today]
+    logger.info(f"Writing {len(data_to_write)} meteo records for date {today} ({meteo_type}, HRU {hru_code})")
 
     if data_to_write.empty:
         logger.info(f"No meteo data to write ({meteo_type}) for HRU {hru_code}")

@@ -99,9 +99,6 @@ def _write_snow_to_api(data: pd.DataFrame, snow_type: str) -> bool:
 
     Returns:
         True if successful, False otherwise
-
-    Raises:
-        SapphireAPIError: If API write fails after retries
     """
     if not SAPPHIRE_API_AVAILABLE:
         logger.warning("sapphire-api-client not installed, skipping snow API write")
@@ -116,9 +113,13 @@ def _write_snow_to_api(data: pd.DataFrame, snow_type: str) -> bool:
     api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
     client = SapphirePreprocessingClient(base_url=api_url)
 
-    # Health check first - fail fast if API unavailable
+    # Health check - non-blocking, skip if API unavailable
     if not client.readiness_check():
-        raise SapphireAPIError(f"SAPPHIRE API at {api_url} is not ready")
+        logger.warning(
+            f"SAPPHIRE API at {api_url} is not ready, "
+            "skipping snow write"
+        )
+        return False
 
     if data.empty:
         logger.info(f"No snow data to write to API ({snow_type})")
@@ -128,10 +129,10 @@ def _write_snow_to_api(data: pd.DataFrame, snow_type: str) -> bool:
     data = data.copy()
     data['date'] = pd.to_datetime(data['date'])
 
-    # Operational mode: write only the latest date's data
-    latest_date = data['date'].max()
-    data_to_write = data[data['date'] == latest_date]
-    logger.info(f"Writing {len(data_to_write)} snow records for date {latest_date}")
+    # Operational mode: write only today's data
+    today = pd.Timestamp.today().normalize()
+    data_to_write = data[data['date'] == today]
+    logger.info(f"Writing {len(data_to_write)} snow records for date {today}")
 
     if data_to_write.empty:
         logger.info(f"No snow data to write ({snow_type})")

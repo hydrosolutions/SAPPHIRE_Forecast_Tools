@@ -109,9 +109,6 @@ def _write_snow_to_api(data: pd.DataFrame, snow_type: str) -> bool:
 
     Returns:
         True if successful, False otherwise
-
-    Raises:
-        SapphireAPIError: If API write fails after retries
     """
     if not SAPPHIRE_API_AVAILABLE:
         logger.warning("sapphire-api-client not installed, skipping snow API write")
@@ -126,9 +123,13 @@ def _write_snow_to_api(data: pd.DataFrame, snow_type: str) -> bool:
     api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
     client = SapphirePreprocessingClient(base_url=api_url)
 
-    # Health check first - fail fast if API unavailable
+    # Health check - non-blocking, skip if API unavailable
     if not client.readiness_check():
-        raise SapphireAPIError(f"SAPPHIRE API at {api_url} is not ready")
+        logger.warning(
+            f"SAPPHIRE API at {api_url} is not ready, "
+            "skipping snow write"
+        )
+        return False
 
     if data.empty:
         logger.info(f"No snow data to write to API ({snow_type})")
@@ -138,8 +139,10 @@ def _write_snow_to_api(data: pd.DataFrame, snow_type: str) -> bool:
     data = data.copy()
     data['date'] = pd.to_datetime(data['date'])
 
-    # Maintenance mode: write the last 30 days of data
-    cutoff_date = data['date'].max() - timedelta(days=30)
+    # Maintenance mode: write the last 30 days of data relative to the
+    # data's own timeframe (reanalysis data is historical, not today)
+    latest_date = data['date'].max()
+    cutoff_date = latest_date - pd.Timedelta(days=30)
     data_to_write = data[data['date'] >= cutoff_date]
     logger.info(f"Writing {len(data_to_write)} snow records for last 30 days ({snow_type})")
 

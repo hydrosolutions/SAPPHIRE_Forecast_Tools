@@ -104,9 +104,6 @@ def _write_meteo_to_api(data: pd.DataFrame, meteo_type: str) -> bool:
 
     Returns:
         True if successful, False otherwise
-
-    Raises:
-        SapphireAPIError: If API write fails after retries
     """
     if not SAPPHIRE_API_AVAILABLE:
         logger.warning("sapphire-api-client not installed, skipping meteo API write")
@@ -121,9 +118,13 @@ def _write_meteo_to_api(data: pd.DataFrame, meteo_type: str) -> bool:
     api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
     client = SapphirePreprocessingClient(base_url=api_url)
 
-    # Health check first - fail fast if API unavailable
+    # Health check - non-blocking, skip if API unavailable
     if not client.readiness_check():
-        raise SapphireAPIError(f"SAPPHIRE API at {api_url} is not ready")
+        logger.warning(
+            f"SAPPHIRE API at {api_url} is not ready, "
+            "skipping meteo write"
+        )
+        return False
 
     if data.empty:
         logger.info(f"No meteo data to write to API ({meteo_type})")
