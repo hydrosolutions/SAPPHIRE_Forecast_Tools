@@ -28,6 +28,7 @@ class TestDetectMissingEnsembles:
         })
         result = detect_missing_ensembles(df, lookback_days=7)
         assert result.empty
+        assert list(result.columns) == ['date', 'code']
 
     def test_missing_em(self):
         """One (date, code) pair has LR+TFT but no EM."""
@@ -39,6 +40,7 @@ class TestDetectMissingEnsembles:
         result = detect_missing_ensembles(df, lookback_days=7)
         assert len(result) == 1
         assert result.iloc[0]['code'] == '10001'
+        assert result.iloc[0]['date'] == pd.Timestamp('2024-01-05')
 
     def test_lookback_window(self):
         """Only dates within lookback window are checked."""
@@ -82,6 +84,8 @@ class TestDetectMissingEnsembles:
         })
         result = detect_missing_ensembles(df, lookback_days=7)
         assert len(result) == 1
+        assert pd.api.types.is_datetime64_any_dtype(result['date'])
+        assert result.iloc[0]['code'] == '10001'
 
 
 # ---------------------------------------------------------------------------

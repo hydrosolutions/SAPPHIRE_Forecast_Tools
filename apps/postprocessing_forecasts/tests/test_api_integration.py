@@ -635,3 +635,70 @@ class TestWriteSkillMetricsToApi:
 
         finally:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
+
+    @patch('forecast_library.SapphirePostprocessingClient')
+    def test_skill_metrics_api_exception_propagates(
+        self, mock_client_class
+    ):
+        """API client raises RuntimeError -> exception propagates.
+
+        Unlike the combined forecast writer, _write_skill_metrics_to_api
+        does NOT catch exceptions from client.write_skill_metrics(). The
+        caller is responsible for handling the failure mode via
+        SAPPHIRE_API_FAILURE_MODE.
+        """
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        os.environ['SAPPHIRE_API_ENABLED'] = 'true'
+        try:
+            mock_client = Mock()
+            mock_client.readiness_check.return_value = True
+            mock_client.write_skill_metrics.side_effect = RuntimeError(
+                "API connection failed"
+            )
+            mock_client_class.return_value = mock_client
+
+            data = pd.DataFrame({
+                'code': [12345],
+                'pentad_in_year': [1],
+                'model_short': ['LR'],
+                'sdivsigma': [0.5],
+                'nse': [0.8],
+                'delta': [0.1],
+                'accuracy': [0.9],
+                'mae': [5.0],
+                'n_pairs': [100],
+            })
+
+            with pytest.raises(RuntimeError, match="API connection failed"):
+                _write_skill_metrics_to_api(data, "pentad")
+
+        finally:
+            os.environ.pop('SAPPHIRE_API_ENABLED', None)
+
+    @patch('forecast_library.SapphirePostprocessingClient')
+    def test_skill_metrics_empty_data_returns_false(
+        self, mock_client_class
+    ):
+        """Empty DataFrame returns False, API client never called."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        os.environ['SAPPHIRE_API_ENABLED'] = 'true'
+        try:
+            mock_client = Mock()
+            mock_client.readiness_check.return_value = True
+            mock_client_class.return_value = mock_client
+
+            data = pd.DataFrame(columns=[
+                'code', 'pentad_in_year', 'model_short',
+                'sdivsigma', 'nse', 'delta', 'accuracy', 'mae', 'n_pairs',
+            ])
+
+            result = _write_skill_metrics_to_api(data, "pentad")
+            assert result is False
+            mock_client.write_skill_metrics.assert_not_called()
+
+        finally:
+            os.environ.pop('SAPPHIRE_API_ENABLED', None)

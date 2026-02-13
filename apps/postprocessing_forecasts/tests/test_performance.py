@@ -144,7 +144,10 @@ class TestTripleGroupbyVsSinglePass:
 
         elapsed = time.perf_counter() - t0
         print(f"\n  Triple groupby: {elapsed:.3f}s ({len(result)} groups)")
-        assert len(result) > 0
+        assert len(result) == 14400, (
+            f"Expected 14400 groups (72 pentads x 50 stations x 4 models), "
+            f"got {len(result)}"
+        )
 
     def test_bench_single_pass(self):
         """After optimization: single groupby with calculate_all_skill_metrics.
@@ -164,7 +167,9 @@ class TestTripleGroupbyVsSinglePass:
             ).reset_index()
             elapsed = time.perf_counter() - t0
             print(f"\n  Single pass (placeholder): {elapsed:.3f}s ({len(skill_stats)} groups)")
-            assert len(skill_stats) > 0
+            assert len(skill_stats) == 14400, (
+                f"Expected 14400 groups, got {len(skill_stats)}"
+            )
             return
 
         t0 = time.perf_counter()
@@ -180,7 +185,9 @@ class TestTripleGroupbyVsSinglePass:
 
         elapsed = time.perf_counter() - t0
         print(f"\n  Single pass: {elapsed:.3f}s ({len(result)} groups)")
-        assert len(result) > 0
+        assert len(result) == 14400, (
+            f"Expected 14400 groups, got {len(result)}"
+        )
 
 
 @pytest.mark.benchmark
@@ -212,7 +219,11 @@ class TestIsinVsMerge:
 
         elapsed = time.perf_counter() - t0
         print(f"\n  .isin() filter: {elapsed:.3f}s ({len(result)} rows)")
-        assert len(result) > 0
+        # isin is column-independent (checks each column separately), so it
+        # matches at least as many rows as the composite-key merge.
+        assert len(result) >= 72000, (
+            f"isin should match at least 72000 rows, got {len(result)}"
+        )
 
     def test_bench_merge_filter(self):
         """Optimized: inner merge on composite key."""
@@ -228,7 +239,10 @@ class TestIsinVsMerge:
 
         elapsed = time.perf_counter() - t0
         print(f"\n  Merge filter: {elapsed:.3f}s ({len(result)} rows)")
-        assert len(result) > 0
+        # 50% of 14,400 groups = 7,200 keys, each matching 10 rows = 72,000.
+        assert len(result) == 72000, (
+            f"Expected 72000 rows from inner merge, got {len(result)}"
+        )
 
 
 @pytest.mark.benchmark

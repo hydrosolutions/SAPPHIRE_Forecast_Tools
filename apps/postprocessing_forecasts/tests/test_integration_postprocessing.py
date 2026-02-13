@@ -20,6 +20,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 sys.path.insert(
     0, os.path.join(os.path.dirname(__file__), '..', '..', 'iEasyHydroForecast')
 )
+sys.path.insert(0, os.path.dirname(__file__))
 
 from src import data_reader
 from src import gap_detector
@@ -27,15 +28,15 @@ from src import ensemble_calculator
 import forecast_library as fl
 import tag_library as tl
 
+from test_constants import MODEL_LONG_NAMES
+
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 STATIONS = ['15001', '15002']
 MODELS_LONG = {
-    'LR': 'Linear regression (LR)',
-    'TFT': 'Temporal Fusion Transformer (TFT)',
-    'TiDE': 'Time-series Dense Encoder (TiDE)',
+    k: MODEL_LONG_NAMES[k] for k in ('LR', 'TFT', 'TiDE')
 }
 PENTAD_DATES = pd.to_datetime(['2026-01-05', '2026-01-10'])
 PENTAD_IN_YEAR = [1, 2]
@@ -563,6 +564,160 @@ class TestOperationalDataRouting:
 
         joint, _ = _make_ensemble(forecasts, boundary_skill, pentad_observed)
         assert 'EM' not in joint['model_short'].values
+
+    def test_three_stations_heterogeneous_outcomes(
+        self, pentad_observed, env_setup,
+    ):
+        """Station A: LR+TFT pass -> EM. Station B: only LR -> no EM.
+        Station C: no models pass -> no EM."""
+        # Skill stats: A gets LR+TFT, B gets only LR, C gets nothing
+        skill = pd.DataFrame([
+            # Station 15001 (A): LR+TFT pass
+            {'pentad_in_year': 1, 'code': '15001',
+             'model_long': MODELS_LONG['LR'], 'model_short': 'LR',
+             'sdivsigma': 0.3, 'nse': 0.95, 'delta': 5.0,
+             'accuracy': 0.95, 'mae': 2.0, 'n_pairs': 10},
+            {'pentad_in_year': 1, 'code': '15001',
+             'model_long': MODELS_LONG['TFT'], 'model_short': 'TFT',
+             'sdivsigma': 0.4, 'nse': 0.9, 'delta': 5.0,
+             'accuracy': 0.88, 'mae': 3.0, 'n_pairs': 10},
+            # Station 15002 (B): only LR passes
+            {'pentad_in_year': 1, 'code': '15002',
+             'model_long': MODELS_LONG['LR'], 'model_short': 'LR',
+             'sdivsigma': 0.3, 'nse': 0.95, 'delta': 5.0,
+             'accuracy': 0.95, 'mae': 2.0, 'n_pairs': 10},
+            {'pentad_in_year': 1, 'code': '15002',
+             'model_long': MODELS_LONG['TFT'], 'model_short': 'TFT',
+             'sdivsigma': 0.9, 'nse': 0.5, 'delta': 5.0,
+             'accuracy': 0.6, 'mae': 8.0, 'n_pairs': 10},
+            # Station 15003 (C): no models pass
+            {'pentad_in_year': 1, 'code': '15003',
+             'model_long': MODELS_LONG['LR'], 'model_short': 'LR',
+             'sdivsigma': 0.9, 'nse': 0.5, 'delta': 5.0,
+             'accuracy': 0.6, 'mae': 8.0, 'n_pairs': 10},
+        ])
+        date = pd.to_datetime('2026-01-05')
+        forecasts = pd.DataFrame([
+            {'code': '15001', 'date': date, 'pentad_in_year': 1,
+             'pentad_in_month': '1', 'forecasted_discharge': 100.0,
+             'model_long': MODELS_LONG['LR'], 'model_short': 'LR'},
+            {'code': '15001', 'date': date, 'pentad_in_year': 1,
+             'pentad_in_month': '1', 'forecasted_discharge': 110.0,
+             'model_long': MODELS_LONG['TFT'], 'model_short': 'TFT'},
+            {'code': '15002', 'date': date, 'pentad_in_year': 1,
+             'pentad_in_month': '1', 'forecasted_discharge': 200.0,
+             'model_long': MODELS_LONG['LR'], 'model_short': 'LR'},
+            {'code': '15002', 'date': date, 'pentad_in_year': 1,
+             'pentad_in_month': '1', 'forecasted_discharge': 210.0,
+             'model_long': MODELS_LONG['TFT'], 'model_short': 'TFT'},
+            {'code': '15003', 'date': date, 'pentad_in_year': 1,
+             'pentad_in_month': '1', 'forecasted_discharge': 300.0,
+             'model_long': MODELS_LONG['LR'], 'model_short': 'LR'},
+        ])
+        observed = pd.DataFrame({
+            'code': ['15001', '15002', '15003'],
+            'date': [date] * 3,
+            'discharge_avg': [105.0, 205.0, 305.0],
+            'delta': [5.0, 5.0, 5.0],
+        })
+
+        joint, _ = _make_ensemble(forecasts, skill, observed)
+        em_rows = joint[joint['model_short'] == 'EM']
+        em_stations = set(em_rows['code'].unique())
+        assert em_stations == {'15001'}, (
+            f"Only station 15001 should get EM, got {em_stations}"
+        )
+        # Verify EM discharge = mean(LR=100, TFT=110) = 105
+        assert abs(
+            em_rows.iloc[0]['forecasted_discharge'] - 105.0
+        ) < 0.01
+        # Total rows = 5 base + 1 EM = 6
+        assert len(joint) == 6, f"Expected 6 rows, got {len(joint)}"
+
+    def test_non_em_rows_preserved_after_outer_join(
+        self, pentad_skill_csv, pentad_forecasts, pentad_observed,
+        env_setup,
+    ):
+        """Non-EM rows in output match input exactly (outer join safe)."""
+        skill_metrics = data_reader.read_skill_metrics('pentad')
+        joint, _ = _make_ensemble(
+            pentad_forecasts, skill_metrics, pentad_observed
+        )
+
+        non_em_out = joint[joint['model_short'] != 'EM'].sort_values(
+            ['code', 'date', 'model_short']
+        ).reset_index(drop=True)
+        original_sorted = pentad_forecasts.sort_values(
+            ['code', 'date', 'model_short']
+        ).reset_index(drop=True)
+
+        # Same number of non-EM rows
+        assert len(non_em_out) == len(original_sorted), (
+            f"Non-EM rows changed: {len(non_em_out)} vs {len(original_sorted)}"
+        )
+        # Discharge values match
+        pd.testing.assert_series_equal(
+            non_em_out['forecasted_discharge'].reset_index(drop=True),
+            original_sorted['forecasted_discharge'].reset_index(drop=True),
+            check_names=False,
+        )
+
+    def test_gap_fill_full_pipeline(self, env_setup):
+        """Write combined CSV with gap, detect gap, verify detection."""
+        tmp_path = env_setup
+        rows = []
+        # Station A: has LR, TFT, and EM
+        for ms in ('LR', 'TFT', 'EM'):
+            rows.append({
+                'code': '15001', 'date': '2026-01-05',
+                'pentad_in_year': 1, 'pentad_in_month': '1',
+                'forecasted_discharge': 105.0 if ms == 'EM' else 100.0,
+                'model_long': MODELS_LONG.get(ms, f'Ens. Mean with LR, TFT ({ms})'),
+                'model_short': ms,
+            })
+        # Station B: has LR, TFT but NO EM
+        for ms in ('LR', 'TFT'):
+            rows.append({
+                'code': '15002', 'date': '2026-01-05',
+                'pentad_in_year': 1, 'pentad_in_month': '1',
+                'forecasted_discharge': 200.0,
+                'model_long': MODELS_LONG[ms], 'model_short': ms,
+            })
+
+        df = pd.DataFrame(rows)
+        filepath = os.path.join(str(tmp_path), 'combined_pentad.csv')
+        _write_csv(df, filepath)
+
+        combined = gap_detector.read_combined_forecasts('pentad')
+        gaps = gap_detector.detect_missing_ensembles(
+            combined, lookback_days=10,
+        )
+        # Only station B should have a gap
+        assert len(gaps) == 1
+        assert str(gaps.iloc[0]['code']) == '15002'
+        # Station A's data unchanged
+        a_data = combined[combined['code'] == '15001']
+        assert 'EM' in a_data['model_short'].values
+
+    def test_ensemble_composition_string_preserved_in_csv_roundtrip(
+        self, pentad_skill_csv, pentad_forecasts, pentad_observed,
+        env_setup,
+    ):
+        """Save EM to CSV, read back, verify exact composition string."""
+        skill_metrics = data_reader.read_skill_metrics('pentad')
+        joint, _ = _make_ensemble(
+            pentad_forecasts, skill_metrics, pentad_observed
+        )
+        fl.save_forecast_data_pentad(joint)
+
+        csv_path = os.path.join(str(env_setup), 'combined_pentad.csv')
+        saved = pd.read_csv(csv_path)
+        em_saved = saved[saved['model_short'] == 'EM']
+        assert not em_saved.empty
+        comp = em_saved.iloc[0]['model_long']
+        assert comp == 'Ens. Mean with LR, TFT (EM)', (
+            f"Expected exact composition string, got {comp!r}"
+        )
 
 
 # ---------------------------------------------------------------------------

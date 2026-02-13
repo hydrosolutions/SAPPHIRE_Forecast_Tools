@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 sys.path.insert(
     0, os.path.join(os.path.dirname(__file__), '..', '..', 'iEasyHydroForecast')
 )
+sys.path.insert(0, os.path.dirname(__file__))
 
 from src.ensemble_calculator import (
     extract_first_parentheses_content,
@@ -23,6 +24,8 @@ from src.ensemble_calculator import (
 )
 import forecast_library as fl
 import tag_library as tl
+
+from test_constants import MODEL_LONG_NAMES
 
 
 # ---------------------------------------------------------------------------
@@ -36,9 +39,9 @@ def skill_stats_pentad():
         'pentad_in_year': [1, 1, 1],
         'code': ['10001', '10001', '10001'],
         'model_long': [
-            'Linear regression (LR)',
-            'Temporal Fusion Transformer (TFT)',
-            'Time-series Dense Encoder (TiDE)',
+            MODEL_LONG_NAMES['LR'],
+            MODEL_LONG_NAMES['TFT'],
+            MODEL_LONG_NAMES['TiDE'],
         ],
         'model_short': ['LR', 'TFT', 'TiDE'],
         'sdivsigma': [0.3, 0.4, 0.9],  # TiDE fails sdivsigma threshold
@@ -62,8 +65,8 @@ def forecasts_pentad():
         'pentad_in_month': ['1', '1', '2', '2'],  # string like tl.get_pentad
         'forecasted_discharge': [100.0, 110.0, 120.0, 130.0],
         'model_long': [
-            'Linear regression (LR)', 'Temporal Fusion Transformer (TFT)',
-            'Linear regression (LR)', 'Temporal Fusion Transformer (TFT)',
+            MODEL_LONG_NAMES['LR'], MODEL_LONG_NAMES['TFT'],
+            MODEL_LONG_NAMES['LR'], MODEL_LONG_NAMES['TFT'],
         ],
         'model_short': ['LR', 'TFT', 'LR', 'TFT'],
     })
@@ -128,6 +131,57 @@ class TestHelpers:
 
     def test_is_multi_model_empty(self):
         assert _is_multi_model_ensemble('Ens. Mean with  (EM)') is False
+
+    def test_is_multi_model_no_match(self):
+        """Random string with no 'with ... (EM)' pattern -> False."""
+        assert _is_multi_model_ensemble('Some random string') is False
+
+    def test_is_multi_model_empty_string(self):
+        """Empty string -> False."""
+        assert _is_multi_model_ensemble('') is False
+
+    def test_is_multi_model_four_models(self):
+        """Four models in composition -> True."""
+        assert _is_multi_model_ensemble(
+            'Ens. Mean with A, B, C, D (EM)'
+        ) is True
+
+    def test_model_long_agg_duplicate_models(self):
+        """Duplicate model entries are uniquified via .unique()."""
+        series = pd.Series([
+            'Linear regression (LR)',
+            'Linear regression (LR)',
+        ])
+        result = model_long_agg(series)
+        assert result == 'Ens. Mean with LR (EM)'
+
+    def test_model_long_agg_three_models(self):
+        """Three models sorted alphabetically."""
+        series = pd.Series([
+            MODEL_LONG_NAMES['TiDE'],
+            MODEL_LONG_NAMES['LR'],
+            MODEL_LONG_NAMES['TFT'],
+        ])
+        result = model_long_agg(series)
+        assert result == 'Ens. Mean with LR, TFT, TiDE (EM)'
+
+    def test_model_long_agg_single_model(self):
+        """Single model -> 'Ens. Mean with LR (EM)' (filtered later)."""
+        series = pd.Series([MODEL_LONG_NAMES['LR']])
+        result = model_long_agg(series)
+        assert result == 'Ens. Mean with LR (EM)'
+
+    def test_extract_no_parentheses(self):
+        """Input with no parentheses -> empty string."""
+        result = extract_first_parentheses_content(['ModelName'])
+        assert result == ['']
+
+    def test_extract_nested_parentheses(self):
+        """Multiple parenthesised groups -> first match extracted."""
+        result = extract_first_parentheses_content(
+            ['Outer (Inner) more (Second)']
+        )
+        assert result == ['Inner']
 
 
 # ---------------------------------------------------------------------------

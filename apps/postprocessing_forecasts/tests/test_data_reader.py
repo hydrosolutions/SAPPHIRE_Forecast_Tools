@@ -49,6 +49,9 @@ class TestReadSkillMetricsCsv:
             assert result is not None
             assert len(result) == 2
             assert result['code'].dtype == object  # string
+            assert result.iloc[0]['sdivsigma'] == 0.3
+            assert result.iloc[0]['code'] == '10001'
+            assert result.iloc[0]['pentad_in_year'] == 1
 
     def test_reads_decad_csv(self, tmp_path):
         """Decadal CSV is read using the correct env var."""
@@ -69,6 +72,8 @@ class TestReadSkillMetricsCsv:
             result = _read_skill_metrics_csv('decad')
             assert result is not None
             assert result['code'].iloc[0] == '10001'
+            assert result.iloc[0]['sdivsigma'] == 0.3
+            assert result.iloc[0]['decad_in_year'] == 1
 
     def test_missing_env_vars_returns_none(self):
         """Returns None when env vars are not set."""
