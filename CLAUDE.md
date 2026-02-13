@@ -162,6 +162,17 @@ Isolated tests for individual functions with all external dependencies mocked. E
 - A happy-path test with typical input
 - An error-path test (invalid input, exception handling)
 
+#### Assertion Quality
+
+**Tests must verify correctness, not just existence.** A test that checks "an EM row exists" is not sufficient — it must also check that the EM row has the correct discharge value, station code, date, and row count. Weak assertions let bugs pass silently.
+
+Rules:
+- Use **exact counts** (`assert len(em_rows) == 2`) not vague checks (`assert len(em_rows) > 0`)
+- **Spot-check at least one record's values** (e.g., `assert record['forecasted_discharge'] == 105.0`)
+- For DataFrames, prefer `pd.testing.assert_frame_equal` over row-count comparisons
+- For API records, verify field values (not just key existence) for at least one representative record
+- Avoid ambiguous `or` in assertions (`assert x.empty or 'EM' not in x` can mask bugs — be explicit about which condition you expect)
+
 **File naming**: `test_<module_or_topic>.py`
 
 #### 2. Edge Case Tests (required for DataFrame, date, or numeric code)

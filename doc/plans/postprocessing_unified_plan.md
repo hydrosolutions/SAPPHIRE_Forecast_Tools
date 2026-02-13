@@ -690,40 +690,105 @@ READ all observed + modelled data → CALCULATE all skill metrics
 | Vectorized `_write_combined_forecast_to_api()` | Yes (comprehensive) | No | Existing unit tests cover the vectorized version |
 | Vectorized `_write_skill_metrics_to_api()` | Yes (comprehensive) | No | Existing unit tests cover the vectorized version |
 
-### Missing Integration Tests
+### Critical Review Findings (2026-02-13)
+
+Full review of integration test quality, edge case coverage, and branch coverage identified the following issues. Fixes are tracked as missing tests below.
+
+#### Assertion Quality Issues
+
+8 tests in `test_integration_postprocessing.py` have weak assertions that would pass with broken code:
+
+| Test | Problem | Fix |
+|------|---------|-----|
+| `test_ensemble_created_and_written_to_csv` | Only checks `'EM' in model_short` | Add exact EM row count, station, discharge values |
+| `test_api_receives_correct_forecast_records` | Checks keys exist, not values | Spot-check one record's discharge, date, code |
+| `test_two_stations_independent_filtering` | No EM row count or discharge check | Add `len(em_rows) == 2` and discharge assertion |
+| `test_gap_detected_and_filled` | Checks gap count and code, not date | Add gap date assertion |
+| `test_gap_fill_preserves_existing_data` | Row count only | Use `pd.testing.assert_frame_equal` |
+| `test_api_records_contain_target_date` | `target == date` but dates not verified | Assert specific dates present |
+| `test_warn_mode_continues_after_api_error` | Checks CSV exists, not content | Read CSV back and verify values |
+| `test_empty_forecasts_returns_unchanged` | Ambiguous `or` in assertion | Replace with explicit expected condition |
+
+#### Missing Edge Case Categories
+
+| Category | Status | What to add |
+|----------|--------|-------------|
+| **Value boundaries** | MISSING | Zero discharge, very small (0.001), very large (10000+), negative values |
+| **Leap year** | MISSING | Feb 29 → Mar 1 pentad/decad numbering |
+| **Single-row DataFrame** | MISSING | Boundary case for groupby (n=1 → no std → NaN metrics) |
+| **All-NaN columns** | MISSING | Column of all-NaN discharge, delta, or skill metrics |
+| **Duplicate (date, code, model) rows** | MISSING | Would double a model's weight in ensemble mean |
+| **NaN/zero/negative delta** | MISSING | Crashes or invalid accuracy calculation |
+| **Missing required columns** | MISSING | No validation in data_reader/gap_detector/ensemble_calculator — KeyError crashes |
+| **NaT dates in gap_detector** | MISSING | `max_date` becomes NaT → crashes on timedelta subtraction |
+
+#### Untested Workflow Branches
+
+| Branch | Entry point | Line | What to add |
+|--------|------------|------|-------------|
+| `load_environment()` failure | All three | op:70, maint:77, recalc:68 | Exception propagates with no sys.exit — test crash behavior |
+| Invalid `SAPPHIRE_PREDICTION_MODE` | All three | op:73, maint:79, recalc:70 | Test `sys.exit(1)` on invalid mode |
+| Maintenance `BOTH` mode | maintenance | 91-115 | Only PENTAD tested; BOTH and DECAD untested |
+| Maintenance gap-fill save error | maintenance | 228-237 | Error accumulation → `sys.exit(1)` untested |
+| Maintenance: gap dates but empty forecast data | maintenance | 200-205 | `modelled_filtered.empty` after filtering |
+| Maintenance: gap dates but empty skill metrics | maintenance | 210-214 | `skill_metrics.empty` in gap-fill path |
+| Default lookback (7 days) | maintenance | 66-68 | Only custom value (14) tested |
+| Empty data from read functions (with non-empty skill) | operational | 89-91 | Could call `create_ensemble_forecasts()` with empty data |
+| Save success path (returns None) | All three | various | Only error returns tested |
+
+#### Test Infrastructure Issues
+
+| Issue | Files affected | Fix |
+|-------|---------------|-----|
+| 60+ tests use `os.environ[k] = v` / try-finally instead of `patch.dict` | `test_api_integration.py`, `test_api_read.py` | Migrate to `@patch.dict(os.environ, {...})` |
+| `SAPPHIRE_TEST_ENV` not set | `test_api_integration.py`, `test_api_read.py` | Add to fixtures to prevent accidental real API calls |
+
+### Missing Tests (Updated)
 
 Tests below are ordered by priority. Each test should use real logic for everything inside the boundary and only mock external API clients and filesystem paths.
 
-#### High Priority — Gaps in data flow coverage
+#### High Priority — Assertion quality + data flow gaps
 
 | # | Test | File | Description |
 |---|------|------|-------------|
-| 1 | **Decadal operational pipeline** | `test_integration_postprocessing.py` | Mirror `TestOperationalDataRouting.test_ensemble_created_and_written_to_csv` but for decad: read decadal skill CSV, create ensemble with `period_col='decad_in_year'`, verify EM rows and CSV output. Uses `tl.get_decad_in_month`, different column names (`decad_in_year`, `decad_in_month`). |
-| 2 | **Maintenance full gap-fill pipeline** | `test_integration_postprocessing.py` | End-to-end: write combined CSV with one date missing EM → detect gap → read data for gap dates → create ensemble → verify EM rows appended to CSV + API write called. Currently tests stop at gap detection. |
-| 3 | **Recalculate with realistic data** | `test_integration_postprocessing.py` | Feed small but realistic observed + modelled DataFrames (5 stations × 3 pentads × 2 models, ~30 rows) into `calculate_skill_metrics_pentad()` with real logic. Verify: (a) skill_stats has correct shape, (b) EM rows created for qualifying models, (c) CSV written, (d) API write called with correct records. |
-| 4 | **Skill metric save path (CSV + API)** | `test_integration_postprocessing.py` | Call `save_pentadal_skill_metrics()` with known skill_stats DataFrame. Verify CSV written with correct columns/sort order. Mock API client and verify `write_skill_metrics()` called with correctly mapped records (model_short → API model_type, NaN → None). |
+| 1 | **Strengthen 8 weak assertions** | `test_integration_postprocessing.py` | Fix the 8 tests listed in "Assertion Quality Issues" above: add exact row counts, spot-check record values, use `pd.testing.assert_frame_equal`, remove ambiguous `or`. |
+| 2 | **Value boundary edge cases** | `test_integration_postprocessing.py` | New `TestValueBoundaries` class: (a) zero discharge → EM = 0.0, (b) very small discharge (0.001) → EM preserves precision, (c) very large discharge (10000+) → no overflow, (d) negative discharge → handled (invalid, should warn or drop). |
+| 3 | **Duplicate forecast rows** | `test_integration_postprocessing.py` | New test: duplicate (date, code, model) rows in forecasts input → verify ensemble mean is NOT skewed (duplicates should be deduplicated or the test documents current behavior). |
+| 4 | **NaN/zero delta values** | `test_integration_postprocessing.py` | New test: (a) delta=NaN → accuracy metric is NaN, not crash, (b) delta=0 → accuracy=1.0 only if forecast==observed, (c) delta<0 → handled gracefully. |
 | 5 | **`calculate_all_skill_metrics()` unit tests** | `test_forecast_library.py` | Dedicated test class with known inputs/outputs: (a) happy path — verify all 6 metric values against hand-calculated results, (b) single data point — MAE/accuracy calculated, sdivsigma/NSE return NaN, (c) all-NaN input — returns nan_result, (d) missing column — raises ValueError, (e) constant observations — denominator near zero, sdivsigma/NSE return NaN. |
+| 6 | **Decadal operational pipeline** | `test_integration_postprocessing.py` | Mirror `TestOperationalDataRouting.test_ensemble_created_and_written_to_csv` but for decad: read decadal skill CSV, create ensemble with `period_col='decad_in_year'`, verify EM rows and CSV output. |
+| 7 | **Maintenance full gap-fill pipeline** | `test_integration_postprocessing.py` | End-to-end: write combined CSV with one date missing EM → detect gap → read data for gap dates → create ensemble → verify EM rows appended to CSV + API write called. Currently tests stop at gap detection. |
+| 8 | **Recalculate with realistic data** | `test_integration_postprocessing.py` | Feed small but realistic observed + modelled DataFrames (5 stations × 3 pentads × 2 models, ~30 rows) into `calculate_skill_metrics_pentad()` with real logic. Verify: (a) skill_stats has correct shape, (b) EM rows created for qualifying models, (c) CSV written, (d) API write called with correct records. |
+| 9 | **Skill metric save path (CSV + API)** | `test_integration_postprocessing.py` | Call `save_pentadal_skill_metrics()` with known skill_stats DataFrame. Verify CSV written with correct columns/sort order. Mock API client and verify `write_skill_metrics()` called with correctly mapped records (model_short → API model_type, NaN → None). |
 
-#### Medium Priority — Edge cases and new functions
-
-| # | Test | File | Description |
-|---|------|------|-------------|
-| 6 | **Ensemble skill metric numerical verification** | `test_integration_postprocessing.py` | Given known observed (100, 110) and ensemble forecast (105, 108), assert specific NSE, MAE, accuracy, sdivsigma values for the EM row. Currently only checks EM rows *exist*. |
-| 7 | **Leap year boundary** | `test_integration_postprocessing.py` | Forecasts on Feb 29 (pentad 12) and Mar 1 (pentad 13) in a leap year → ensemble created for both dates with correct pentad_in_year values. |
-| 8 | **API client singleton behavior** | `test_forecast_library.py` | (a) `_get_preprocessing_client()` returns same object on 2nd call, (b) `_reset_api_clients()` causes next call to create a new object, (c) returns `None` when `SAPPHIRE_API_AVAILABLE=False`. |
-| 9 | **Decadal maintenance gap-fill** | `test_integration_postprocessing.py` | Same as #2 but for decad: combined CSV with `decad_in_year` column, gap detection uses decadal period, ensemble created with `period_col='decad_in_year'`. |
-| 10 | **Decadal recalculate pipeline** | `test_integration_postprocessing.py` | Same as #3 but for decad: feed data into `calculate_skill_metrics_decade()`, verify decadal skill_stats shape and EM rows. |
-
-#### Lower Priority — Server-side CRUD tests
+#### Medium Priority — Edge cases, workflow branches, new functions
 
 | # | Test | File | Description |
 |---|------|------|-------------|
-| 11 | **`_bulk_upsert` insert-only** | `sapphire/services/postprocessing/tests/test_crud.py` (new file) | Insert 10 new forecast records via `create_forecast()`, verify all 10 returned and queryable. |
-| 12 | **`_bulk_upsert` update-only** | `test_crud.py` | Insert 5 records, then upsert same 5 with changed `forecasted_discharge` → verify updated values. |
-| 13 | **`_bulk_upsert` mixed insert+update** | `test_crud.py` | Insert 3 records, then upsert 5 (3 existing + 2 new) → verify 5 total records with correct values. |
-| 14 | **`_bulk_upsert` empty batch** | `test_crud.py` | Call `create_forecast()` with empty `data` list → returns empty list, no DB error. |
-| 15 | **`_fallback_upsert` (SQLite path)** | `test_crud.py` | Force `PG_AVAILABLE=False` or use SQLite backend. Verify insert, update, and mixed insert+update all work correctly via the N+1 ORM path. |
-| 16 | **CRUD get with filters** | `test_crud.py` | Insert forecasts with varied horizon/code/date, then query with different filter combinations. Verify correct records returned. |
+| 10 | **Ensemble skill metric numerical verification** | `test_integration_postprocessing.py` | Given known observed (100, 110) and ensemble forecast (105, 108), assert specific NSE, MAE, accuracy, sdivsigma values for the EM row. |
+| 11 | **Leap year boundary** | `test_integration_postprocessing.py` | Forecasts on Feb 29 (pentad 12) and Mar 1 (pentad 13) in a leap year → ensemble created for both dates with correct pentad_in_year values. |
+| 12 | **Single-row DataFrame** | `test_integration_postprocessing.py` | Single forecast row per (code, model) → groupby returns 1 group → skill metrics have n_pairs=1, sdivsigma=NaN, NSE=NaN, MAE calculated. |
+| 13 | **All-NaN column** | `test_integration_postprocessing.py` | Forecasts with all-NaN `forecasted_discharge` → no EM rows created, no crash. |
+| 14 | **Missing required columns** | `test_data_reader.py`, `test_gap_detector.py` | (a) CSV missing `code` column → returns None or empty, not KeyError. (b) gap_detector missing `model_short` → returns empty, not KeyError. |
+| 15 | **NaT dates in gap_detector** | `test_gap_detector.py` | Combined forecasts with NaT dates after `pd.to_datetime` → no crash, NaT rows dropped or handled gracefully. |
+| 16 | **API client singleton behavior** | `test_forecast_library.py` | (a) `_get_preprocessing_client()` returns same object on 2nd call, (b) `_reset_api_clients()` causes next call to create a new object, (c) returns `None` when `SAPPHIRE_API_AVAILABLE=False`. |
+| 17 | **Invalid SAPPHIRE_PREDICTION_MODE** | `test_operational_workflow.py`, `test_maintenance_workflow.py`, `test_recalc_workflow.py` | Invalid mode value → `sys.exit(1)`. |
+| 18 | **Maintenance BOTH and DECAD modes** | `test_maintenance_workflow.py` | BOTH processes both pentad and decad; DECAD-only path works correctly. |
+| 19 | **Maintenance gap-fill save error** | `test_maintenance_workflow.py` | Save function returns error string → errors accumulate → `sys.exit(1)`. |
+| 20 | **Decadal maintenance gap-fill** | `test_integration_postprocessing.py` | Same as #7 but for decad. |
+| 21 | **Decadal recalculate pipeline** | `test_integration_postprocessing.py` | Same as #8 but for decad. |
+
+#### Lower Priority — Infrastructure + CRUD
+
+| # | Test | File | Description |
+|---|------|------|-------------|
+| 22 | **Migrate API tests to patch.dict** | `test_api_integration.py`, `test_api_read.py` | Replace 60+ `os.environ[k]=v` / try-finally patterns with `@patch.dict(os.environ, {...})`. Add `SAPPHIRE_TEST_ENV=True` to fixtures. |
+| 23 | **`_bulk_upsert` insert-only** | `sapphire/services/postprocessing/tests/test_crud.py` (new file) | Insert 10 new forecast records via `create_forecast()`, verify all 10 returned and queryable. |
+| 24 | **`_bulk_upsert` update-only** | `test_crud.py` | Insert 5 records, then upsert same 5 with changed `forecasted_discharge` → verify updated values. |
+| 25 | **`_bulk_upsert` mixed insert+update** | `test_crud.py` | Insert 3 records, then upsert 5 (3 existing + 2 new) → verify 5 total records with correct values. |
+| 26 | **`_bulk_upsert` empty batch** | `test_crud.py` | Call `create_forecast()` with empty `data` list → returns empty list, no DB error. |
+| 27 | **`_fallback_upsert` (SQLite path)** | `test_crud.py` | Force `PG_AVAILABLE=False` or use SQLite backend. Verify insert, update, and mixed insert+update all work correctly via the N+1 ORM path. |
+| 28 | **CRUD get with filters** | `test_crud.py` | Insert forecasts with varied horizon/code/date, then query with different filter combinations. Verify correct records returned. |
 
 ### Remaining Test Gaps (non-integration)
 
@@ -808,24 +873,35 @@ Tests below are ordered by priority. Each test should use real logic for everyth
 - [x] ~~Integration test hardening~~ (35 tests in `test_integration_postprocessing.py` — 14 original + 21 new: single-model ensemble bug (3), extended operational routing (7), edge case inputs (3), year/month boundaries (4), quantile fields (2), recalc entry point (2))
 - [x] ~~Bug 6 fix: single-model ensemble filter~~ (`_is_multi_model_ensemble()` helper in `ensemble_calculator.py`, unit + integration tests)
 
-#### High Priority — Data flow gaps
+#### High Priority — Assertion quality + data flow gaps (#1–#9)
 
-- [ ] Decadal operational pipeline integration test (mirror pentad tests for decad mode)
-- [ ] Maintenance full gap-fill pipeline (detect → read → ensemble → save, currently stops at detection)
-- [ ] Recalculate with realistic data (currently mocks return empty DataFrames)
-- [ ] Skill metric save path integration test (CSV write + API write with field mapping)
-- [ ] `calculate_all_skill_metrics()` unit tests (edge cases, numerical correctness, branch logic)
+- [ ] Strengthen 8 weak assertions (exact counts, spot-check values, `assert_frame_equal`)
+- [ ] Value boundary edge cases (zero, 0.001, 10000+, negative discharge)
+- [ ] Duplicate forecast rows (verify ensemble mean not skewed)
+- [ ] NaN/zero delta values (graceful handling, no crash)
+- [ ] `calculate_all_skill_metrics()` unit tests (6 metrics, edge cases, branch logic)
+- [ ] Decadal operational pipeline integration test
+- [ ] Maintenance full gap-fill pipeline (detect → read → ensemble → save)
+- [ ] Recalculate with realistic data
+- [ ] Skill metric save path integration test (CSV + API)
 
-#### Medium Priority — Edge cases and new functions
+#### Medium Priority — Edge cases, branches, new functions (#10–#21)
 
 - [ ] Ensemble skill metric numerical verification (assert specific NSE/MAE/accuracy values for EM)
 - [ ] Leap year boundary (Feb 29 pentad/decad handling)
-- [ ] API client singleton behavior tests (`_get_*_client()`, `_reset_api_clients()`)
-- [ ] Decadal maintenance gap-fill integration test
-- [ ] Decadal recalculate pipeline integration test
+- [ ] Single-row DataFrame edge case
+- [ ] All-NaN column edge case
+- [ ] Missing required columns validation (data_reader, gap_detector)
+- [ ] NaT dates in gap_detector
+- [ ] API client singleton behavior tests
+- [ ] Invalid SAPPHIRE_PREDICTION_MODE → sys.exit(1)
+- [ ] Maintenance BOTH and DECAD modes
+- [ ] Maintenance gap-fill save error
+- [ ] Decadal maintenance and recalculate pipelines
 
-#### Lower Priority — Server-side CRUD
+#### Lower Priority — Infrastructure + CRUD (#22–#28)
 
+- [ ] Migrate 60+ API tests from os.environ/try-finally to patch.dict
 - [ ] `_bulk_upsert` tests: insert-only, update-only, mixed, empty batch (`test_crud.py`)
 - [ ] `_fallback_upsert` tests: SQLite N+1 path
 - [ ] CRUD get with filter combinations
@@ -1095,3 +1171,4 @@ The following plans are **superseded** by this unified plan (moved to `archive/`
 | 2026-02-12 | Bea/Claude | Post-implementation review: updated Phase 2 checklist (10 items done, 3 deferred to Phase 3). Updated Phase 5 test inventory to actual counts (131 postprocessing tests). Documented remaining test gaps: ensemble skill metric numerical verification, `_calculate_ensemble_skill()` isolation test. Updated status summary test counts. |
 | 2026-02-13 | Bea/Claude | Bug 6 fix: single-model ensemble filter in `ensemble_calculator.py` — added `_is_multi_model_ensemble()` helper replacing hardcoded LR-only rejection. Integration test hardening: 21 new tests across 6 classes (single-model bug e2e, extended data routing, edge case inputs, year/month boundaries, quantile fields, recalc entry point). Model name consistency tests added. Total: 180 postprocessing tests, all passing. |
 | 2026-02-13 | Bea/Claude | Phase 3 performance items marked DONE (batch upsert, vectorized writes, single-pass metrics, concat fixes, .isin→merge, API singletons). Phase 5 rewritten: full data flow audit per entry point (operational/maintenance/recalc), coverage matrix showing 35 covered steps and 16 missing integration tests prioritised into high/medium/lower tiers. Key gaps: decadal mode (all entry points), maintenance full write path, recalc with realistic data, calculate_all_skill_metrics unit tests, crud.py tests (zero coverage). |
+| 2026-02-13 | Bea/Claude | Critical review of integration test quality (6-agent audit). Found: 8 tests with weak assertions that pass with broken code, 8 missing edge case categories (value boundaries completely untested, leap year, single-row, all-NaN, duplicates, NaN delta, missing columns, NaT dates), 11 untested workflow branches (load_environment failure, invalid mode, maintenance BOTH/DECAD, save error paths). Test infrastructure: 60+ API tests use unsafe os.environ pattern. Updated CLAUDE.md with assertion quality requirements. Expanded missing tests from 16 to 28 items across 3 priority tiers. |
