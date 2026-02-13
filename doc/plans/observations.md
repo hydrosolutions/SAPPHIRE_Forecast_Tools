@@ -14,6 +14,20 @@ Periodically review and triage into formal issues in `module_issues.md` or GitHu
 
 ---
 
+## 2026-02-13
+
+### Linear Regression: No Pentadal Forecasts Produced in February 2026
+
+**Source**: Production observation
+**Date**: 2026-02-13
+
+The linear regression module did not produce any forecasts for the pentadal prediction horizon in February 2026, despite data being available. Decadal forecasts appear to work correctly.
+
+**Assessment**: Needs a proper bug report and investigation. Likely a date/period calculation or data selection issue specific to pentadal horizons. Should also create a proper integration test that verifies forecasts are produced for all prediction horizons when input data is available.
+**Status**: Needs investigation and bug report
+
+---
+
 ## 2026-02-02
 
 ### Dashboard: Stale Forecast Data and Data Gaps (Ubuntu Server)
@@ -354,4 +368,4 @@ FileNotFoundError: [Errno 2] No such file or directory:
 
 ---
 
-*Last updated: 2026-02-02 (Docker image comparison fix)*
+*Last updated: 2026-02-13 (Linear regression pentadal forecast gap)*

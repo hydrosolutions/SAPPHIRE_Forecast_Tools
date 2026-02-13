@@ -1452,13 +1452,22 @@ class TestCalculateSkillMetricsPentad(unittest.TestCase):
         self.assertTrue(all(skill_stats['mae'] >= 0))
 
     def test_ensemble_creation(self):
-        """Test that ensemble forecasts are created correctly"""
+        """Test that ensemble forecasts are created correctly.
+
+        Uses relaxed thresholds so that both models clearly qualify for
+        all (pentad, code) combinations — the test data only has 2 points
+        per group so skill metrics are borderline at strict thresholds.
+        """
+        # Use relaxed thresholds so both models clearly qualify
+        os.environ['ieasyhydroforecast_efficiency_threshold'] = '2.0'
+        os.environ['ieasyhydroforecast_accuracy_threshold'] = '0.0'
+        os.environ['ieasyhydroforecast_nse_threshold'] = '-1.0'
 
         skill_stats, joint_forecasts, _ = fl.calculate_skill_metrics_pentad(self.observed, self.simulated)
 
         print("\n\nDEBUG: test_ensemble_creation: joint_forecasts.columns: \n", joint_forecasts.columns)
         print("\n\nDEBUG: test_ensemble_creation: joint_forecasts: \n", joint_forecasts)
-        
+
         # Check that ensemble model exists in results
         self.assertTrue(any(joint_forecasts['model_short'] == 'EM'))
 

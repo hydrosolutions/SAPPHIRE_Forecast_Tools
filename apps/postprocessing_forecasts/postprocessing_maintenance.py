@@ -221,9 +221,7 @@ def _fill_gaps_for_horizon(
             period_col=period_col,
             period_in_month_col=period_in_month_col,
             get_period_in_month_func=get_period_in_month_func,
-            sdivsigma_nse_func=fl.sdivsigma_nse,
-            mae_func=fl.mae,
-            forecast_accuracy_hydromet_func=fl.forecast_accuracy_hydromet,
+            calculate_all_metrics_func=fl.calculate_all_skill_metrics,
         )
 
     with timer(timing_stats, f'saving {label} gap-fill results'):

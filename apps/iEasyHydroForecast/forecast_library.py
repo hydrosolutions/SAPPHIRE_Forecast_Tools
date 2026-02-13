@@ -35,6 +35,52 @@ import tag_library as tl
 logger = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# API client singletons — avoid creating a new client per function call
+# ---------------------------------------------------------------------------
+_preprocessing_client = None
+_postprocessing_client = None
+
+
+def _get_preprocessing_client():
+    """Return a cached SapphirePreprocessingClient (singleton).
+
+    The client is created lazily on first call, using SAPPHIRE_API_URL.
+    Returns None if sapphire-api-client is not installed.
+    """
+    global _preprocessing_client
+    if _preprocessing_client is not None:
+        return _preprocessing_client
+    if not SAPPHIRE_API_AVAILABLE or SapphirePreprocessingClient is None:
+        return None
+    api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
+    _preprocessing_client = SapphirePreprocessingClient(base_url=api_url)
+    return _preprocessing_client
+
+
+def _get_postprocessing_client():
+    """Return a cached SapphirePostprocessingClient (singleton).
+
+    The client is created lazily on first call, using SAPPHIRE_API_URL.
+    Returns None if sapphire-api-client is not installed.
+    """
+    global _postprocessing_client
+    if _postprocessing_client is not None:
+        return _postprocessing_client
+    if not SAPPHIRE_API_AVAILABLE or SapphirePostprocessingClient is None:
+        return None
+    api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
+    _postprocessing_client = SapphirePostprocessingClient(base_url=api_url)
+    return _postprocessing_client
+
+
+def _reset_api_clients():
+    """Reset cached API clients (for testing)."""
+    global _preprocessing_client, _postprocessing_client
+    _preprocessing_client = None
+    _postprocessing_client = None
+
+
 def _get_api_failure_mode() -> str:
     """Return the API failure mode from environment.
 
@@ -1754,6 +1800,118 @@ def mae(data: pd.DataFrame, observed_col: str, simulated_col: str):
         logger.debug(f"Numerical computation error in mae: {str(e)}")
         return pd.Series([np.nan, 0], index=['mae', 'n_pairs'])
 
+
+def calculate_all_skill_metrics(
+    data: pd.DataFrame,
+    observed_col: str,
+    simulated_col: str,
+    delta_col: str,
+) -> pd.Series:
+    """Calculate all 6 skill metrics in a single pass over the data.
+
+    Combines sdivsigma_nse(), mae(), and forecast_accuracy_hydromet()
+    into one function to avoid repeated groupby/merge overhead.
+
+    Args:
+        data: DataFrame containing observed, simulated, and delta columns.
+        observed_col: Column name for observed values.
+        simulated_col: Column name for simulated values.
+        delta_col: Column name for delta (tolerance) values.
+
+    Returns:
+        pd.Series with keys:
+            sdivsigma, nse, mae, n_pairs, delta, accuracy
+    """
+    nan_result = pd.Series(
+        [np.nan, np.nan, np.nan, 0, np.nan, np.nan],
+        index=['sdivsigma', 'nse', 'mae', 'n_pairs', 'delta', 'accuracy'],
+    )
+
+    # Validate required columns
+    required = [observed_col, simulated_col, delta_col]
+    if not all(col in data.columns for col in required):
+        raise ValueError(
+            f'DataFrame is missing required columns: {required}'
+        )
+
+    # Convert to numpy arrays (float64 for numerical stability)
+    observed = data[observed_col].to_numpy(dtype=np.float64)
+    simulated = data[simulated_col].to_numpy(dtype=np.float64)
+    delta_values = data[delta_col].to_numpy(dtype=np.float64)
+
+    # Common NaN/inf mask for all metrics
+    mask = (
+        ~np.isnan(observed) & ~np.isnan(simulated) & ~np.isnan(delta_values)
+        & ~np.isinf(observed) & ~np.isinf(simulated) & ~np.isinf(delta_values)
+    )
+    if not np.any(mask):
+        return nan_result
+
+    obs = observed[mask]
+    sim = simulated[mask]
+    deltas = delta_values[mask]
+    n = len(obs)
+
+    # --- MAE + n_pairs (need >= 1 point) ---
+    if n < 1:
+        return nan_result
+
+    differences = obs - sim
+    abs_diff = np.abs(differences)
+
+    try:
+        mae_value = float(np.mean(abs_diff))
+        if not (0 <= mae_value < np.inf):
+            mae_value = np.nan
+    except (RuntimeWarning, FloatingPointError):
+        mae_value = np.nan
+
+    # --- Accuracy + delta (need >= 1 point) ---
+    try:
+        accuracy = float(np.mean(abs_diff <= deltas))
+        delta = float(deltas[-1])
+        if not (0 <= accuracy <= 1) or not (0 <= delta < np.inf):
+            accuracy = np.nan
+            delta = np.nan
+    except (RuntimeWarning, FloatingPointError):
+        accuracy = np.nan
+        delta = np.nan
+
+    # --- sdivsigma + NSE (need >= 2 points for std) ---
+    if n < 2:
+        return pd.Series(
+            [np.nan, np.nan, mae_value, n, delta, accuracy],
+            index=['sdivsigma', 'nse', 'mae', 'n_pairs', 'delta', 'accuracy'],
+        )
+
+    try:
+        obs_mean = np.mean(obs)
+        denominator_nse = np.sum((obs - obs_mean) ** 2)
+        denominator_sdivsigma = np.std(obs, ddof=1)
+
+        if denominator_nse < 1e-10 or denominator_sdivsigma < 1e-10:
+            sdivsigma = np.nan
+            nse_value = np.nan
+        else:
+            numerator_nse = np.sum(differences ** 2)
+            nse_value = 1 - (numerator_nse / denominator_nse)
+            numerator_sdivsigma = np.sqrt(np.sum(differences ** 2) / (n - 1))
+            sdivsigma = numerator_sdivsigma / denominator_sdivsigma
+
+            if (not (-np.inf < nse_value < np.inf)
+                    or not (0 <= sdivsigma < np.inf)):
+                sdivsigma = np.nan
+                nse_value = np.nan
+    except (RuntimeWarning, FloatingPointError):
+        sdivsigma = np.nan
+        nse_value = np.nan
+
+    return pd.Series(
+        [sdivsigma, nse_value, mae_value, n, delta, accuracy],
+        index=['sdivsigma', 'nse', 'mae', 'n_pairs', 'delta', 'accuracy'],
+    )
+
+
 def calculate_forecast_skill_deprecating(data_df: pd.DataFrame, station_col: str,
                              pentad_col: str, observation_col: str,
                              simulation_col: str) -> pd.DataFrame:
@@ -2015,59 +2173,17 @@ def calculate_skill_metrics_pentad(
         #logger.debug(f"DEBUG: skill_metrics_df.tail()\n{skill_metrics_df.tail(5)}")
         test_for_tuples(skill_metrics_df)
 
-    # Calculate the skill metrics for each group based on the 'pentad_in_year', 'code' and 'model' columns
-    # Select only the columns needed for the apply functions to avoid duplicate column issues with reset_index()
-    with timer(timing_stats, 'calculate_skill_metrics_pentad - Calculate sdivsigma_nse'):
+    # Calculate all skill metrics in a single pass per group
+    with timer(timing_stats, 'calculate_skill_metrics_pentad - Calculate all skill metrics'):
         skill_stats = skill_metrics_df. \
-            groupby(['pentad_in_year', 'code', 'model_long', 'model_short'])[['discharge_avg', 'forecasted_discharge']]. \
-            apply(
-                sdivsigma_nse,
-                observed_col='discharge_avg',
-                simulated_col='forecasted_discharge'). \
-            reset_index()
-        test_for_tuples(skill_stats)
-        # Print dimensions of skill_metrics_df and skill_stats
-        #print(f"\n\nDEBUG: skill_metrics_df.shape: {skill_metrics_df.shape}")
-        #print(f"DEBUG: skill_stats.shape: {skill_stats.shape}\n\n")
-        #print(f"DEBUG: nse: skill_stats.columns\n{skill_stats.columns}")
-        #print(f"DEBUG: skill_stats.head()\n{skill_stats.head(8)}")
-
-    with timer(timing_stats, 'calculate_skill_metrics_pentad - Calculate mae'):
-        mae_stats = skill_metrics_df. \
-            groupby(['pentad_in_year', 'code', 'model_long', 'model_short'])[['discharge_avg', 'forecasted_discharge']]. \
-            apply(
-                mae,
-                observed_col='discharge_avg',
-                simulated_col='forecasted_discharge'). \
-            reset_index()
-        #print("DEBUG: mae_stats\n", mae_stats.columns)
-        test_for_tuples(mae_stats)
-
-    with timer(timing_stats, 'calculate_skill_metrics_pentad - Calculate forecast_accuracy_hydromet'):
-        accuracy_stats = skill_metrics_df. \
             groupby(['pentad_in_year', 'code', 'model_long', 'model_short'])[['discharge_avg', 'forecasted_discharge', 'delta']]. \
             apply(
-                forecast_accuracy_hydromet,
+                calculate_all_skill_metrics,
                 observed_col='discharge_avg',
                 simulated_col='forecasted_discharge',
-                delta_col='delta').\
+                delta_col='delta'). \
             reset_index()
-        test_for_tuples(accuracy_stats)
-        #print("DEBUG: accuracy_stats\n", accuracy_stats.columns)
-
-    with timer(timing_stats, 'calculate_skill_metrics_pentad - merge all skill stats'):
-        # Merge the skill metrics with the accuracy stats
-        #print("DEBUG: skill_stats.columns\n", skill_stats.columns)
-        #print("DEBUG: accuracy_stats.columns\n", accuracy_stats.columns)
-        skill_stats = pd.merge(skill_stats, accuracy_stats, on=['pentad_in_year', 'code', 'model_long', 'model_short'])
         test_for_tuples(skill_stats)
-
-        #print("DEBUG: skill_stats.columns\n", skill_stats.columns)
-        #print("DEBUG: mae_stats.columns\n", mae_stats.columns)
-        skill_stats = pd.merge(skill_stats, mae_stats, on=['pentad_in_year', 'code', 'model_long', 'model_short'])
-        test_for_tuples(skill_stats)
-        #print("DEBUG: skill_stats.columns\n", skill_stats.columns)
-        #print("DEBUG: skill_stats.head()\n", skill_stats.head(20))
 
     with timer(timing_stats, 'calculate_skill_metrics_pentad - Calculate ensemble skill metrics for highly skilled forecasts'):
         skill_stats_ensemble = filter_for_highly_skilled_forecasts(skill_stats)
@@ -2076,11 +2192,12 @@ def calculate_skill_metrics_pentad(
 
         # Now we get the rows from the skill_metrics_df where pentad_in_year, code,
         # model_long and model_short are the same as in skill_stats_ensemble
-        skill_metrics_df_ensemble = skill_metrics_df[
-            skill_metrics_df['pentad_in_year'].isin(skill_stats_ensemble['pentad_in_year']) &
-            skill_metrics_df['code'].isin(skill_stats_ensemble['code']) &
-            skill_metrics_df['model_long'].isin(skill_stats_ensemble['model_long']) &
-            skill_metrics_df['model_short'].isin(skill_stats_ensemble['model_short'])].copy()
+        merge_keys = ['pentad_in_year', 'code', 'model_long', 'model_short']
+        skill_metrics_df_ensemble = skill_metrics_df.merge(
+            skill_stats_ensemble[merge_keys].drop_duplicates(),
+            on=merge_keys,
+            how='inner',
+        )
         # Filter out rows where forecasted_discharge is NaN
         skill_metrics_df_ensemble = skill_metrics_df_ensemble.dropna(subset=['forecasted_discharge']).copy()
         #print("DEBUG: skill_metrics_df_ensemble\n", skill_metrics_df_ensemble.columns)
@@ -2117,50 +2234,18 @@ def calculate_skill_metrics_pentad(
         number_of_models = simulated['model_long'].nunique()
         print("DEBUG: number_of_models\n", number_of_models)
         if number_of_models > 1:
-            # Select only the columns needed for the apply functions to avoid
-            # duplicate column issues with reset_index()
+            # Single-pass ensemble skill metrics
             ensemble_skill_stats = ensemble_skill_metrics_df. \
-                groupby(['pentad_in_year', 'code', 'model_long', 'model_short'])[['discharge_avg', 'forecasted_discharge']]. \
-                apply(
-                    sdivsigma_nse,
-                    observed_col='discharge_avg',
-                    simulated_col='forecasted_discharge'). \
-                reset_index()
-            #print("DEBUG: ensemble_skill_stats\n", ensemble_skill_stats.columns)
-            #print("DEBUG: ensemble_skill_stats\n", ensemble_skill_stats.head(20))
-
-            ensemble_mae_stats = ensemble_skill_metrics_df. \
-                groupby(['pentad_in_year', 'code', 'model_long', 'model_short'])[['discharge_avg', 'forecasted_discharge']]. \
-                apply(
-                    mae,
-                    observed_col='discharge_avg',
-                    simulated_col='forecasted_discharge').\
-                reset_index()
-
-            ensemble_accuracy_stats = ensemble_skill_metrics_df. \
                 groupby(['pentad_in_year', 'code', 'model_long', 'model_short'])[['discharge_avg', 'forecasted_discharge', 'delta']]. \
                 apply(
-                    forecast_accuracy_hydromet,
+                    calculate_all_skill_metrics,
                     observed_col='discharge_avg',
                     simulated_col='forecasted_discharge',
-                    delta_col='delta').\
+                    delta_col='delta'). \
                 reset_index()
-
-            ensemble_skill_stats = pd.merge(
-                ensemble_skill_stats, ensemble_mae_stats, on=['pentad_in_year', 'code', 'model_long', 'model_short'])
-            ensemble_skill_stats = pd.merge(
-                ensemble_skill_stats, ensemble_accuracy_stats, on=['pentad_in_year', 'code', 'model_long', 'model_short'])
 
             # Append the ensemble skill metrics to the skill metrics
             skill_stats = pd.concat([skill_stats, ensemble_skill_stats], ignore_index=True)
-
-            # Add ensemble mean forecasts to simulated dataframe
-            #logger.debug(f"DEBUG: simulated.columns\n{simulated.columns}")
-            #logger.debug(f"DEBUG: simulated.head()\n{simulated.head(5)}")
-            #logger.debug(f"DEBUG: unique models in simulated: {simulated['model_long'].unique()}")
-            #print(f"DEBUG: simulated.columns\n{ensemble_skill_metrics_df.columns}")
-            #print("DEBUG: head of ensemble_skill_metrics_df: \n", ensemble_skill_metrics_df.head(5))
-            #print("DEBUG: unique models in ensemble_skill_metrics_df: ", ensemble_skill_metrics_df['model_long'].unique())
 
             # Calculate pentad in month (add 1 day to date)
             ensemble_skill_metrics_df['pentad_in_month'] = (ensemble_skill_metrics_df['date']+dt.timedelta(days=1.0)).apply(tl.get_pentad)
@@ -2323,59 +2408,17 @@ def calculate_skill_metrics_decade(
         #logger.debug(f"DEBUG: skill_metrics_df.tail()\n{skill_metrics_df.tail(5)}")
         test_for_tuples(skill_metrics_df)
 
-    # Calculate the skill metrics for each group based on the 'decad_in_year', 'code' and 'model' columns
-    # Select only the columns needed for the apply functions to avoid duplicate column issues with reset_index()
-    with timer(timing_stats, 'calculate_skill_metrics_decade - Calculate sdivsigma_nse'):
+    # Calculate all skill metrics in a single pass per group
+    with timer(timing_stats, 'calculate_skill_metrics_decad - Calculate all skill metrics'):
         skill_stats = skill_metrics_df. \
-            groupby(['decad_in_year', 'code', 'model_long', 'model_short'])[['discharge_avg', 'forecasted_discharge']]. \
-            apply(
-                sdivsigma_nse,
-                observed_col='discharge_avg',
-                simulated_col='forecasted_discharge'). \
-            reset_index()
-        test_for_tuples(skill_stats)
-        # Print dimensions of skill_metrics_df and skill_stats
-        #print(f"\n\nDEBUG: skill_metrics_df.shape: {skill_metrics_df.shape}")
-        #print(f"DEBUG: skill_stats.shape: {skill_stats.shape}\n\n")
-        #print(f"DEBUG: nse: skill_stats.columns\n{skill_stats.columns}")
-        #print(f"DEBUG: skill_stats.head()\n{skill_stats.head(8)}")
-
-    with timer(timing_stats, 'calculate_skill_metrics_decad - Calculate mae'):
-        mae_stats = skill_metrics_df. \
-            groupby(['decad_in_year', 'code', 'model_long', 'model_short'])[['discharge_avg', 'forecasted_discharge']]. \
-            apply(
-                mae,
-                observed_col='discharge_avg',
-                simulated_col='forecasted_discharge'). \
-            reset_index()
-        #print("DEBUG: mae_stats\n", mae_stats.columns)
-        test_for_tuples(mae_stats)
-
-    with timer(timing_stats, 'calculate_skill_metrics_decad - Calculate forecast_accuracy_hydromet'):
-        accuracy_stats = skill_metrics_df. \
             groupby(['decad_in_year', 'code', 'model_long', 'model_short'])[['discharge_avg', 'forecasted_discharge', 'delta']]. \
             apply(
-                forecast_accuracy_hydromet,
+                calculate_all_skill_metrics,
                 observed_col='discharge_avg',
                 simulated_col='forecasted_discharge',
-                delta_col='delta').\
+                delta_col='delta'). \
             reset_index()
-        test_for_tuples(accuracy_stats)
-        #print("DEBUG: accuracy_stats\n", accuracy_stats.columns)
-
-    with timer(timing_stats, 'calculate_skill_metrics_decad - merge all skill stats'):
-        # Merge the skill metrics with the accuracy stats
-        #print("DEBUG: skill_stats.columns\n", skill_stats.columns)
-        #print("DEBUG: accuracy_stats.columns\n", accuracy_stats.columns)
-        skill_stats = pd.merge(skill_stats, accuracy_stats, on=['decad_in_year', 'code', 'model_long', 'model_short'])
         test_for_tuples(skill_stats)
-
-        #print("DEBUG: skill_stats.columns\n", skill_stats.columns)
-        #print("DEBUG: mae_stats.columns\n", mae_stats.columns)
-        skill_stats = pd.merge(skill_stats, mae_stats, on=['decad_in_year', 'code', 'model_long', 'model_short'])
-        test_for_tuples(skill_stats)
-        #print("DEBUG: skill_stats.columns\n", skill_stats.columns)
-        #print("DEBUG: skill_stats.head()\n", skill_stats.head(20))
 
     with timer(timing_stats, 'calculate_skill_metrics_decad - Calculate ensemble skill metrics for highly skilled forecasts'):
         skill_stats_ensemble = filter_for_highly_skilled_forecasts(skill_stats)
@@ -2384,11 +2427,12 @@ def calculate_skill_metrics_decade(
 
         # Now we get the rows from the skill_metrics_df where decad_in_year, code,
         # model_long and model_short are the same as in skill_stats_ensemble
-        skill_metrics_df_ensemble = skill_metrics_df[
-            skill_metrics_df['decad_in_year'].isin(skill_stats_ensemble['decad_in_year']) &
-            skill_metrics_df['code'].isin(skill_stats_ensemble['code']) &
-            skill_metrics_df['model_long'].isin(skill_stats_ensemble['model_long']) &
-            skill_metrics_df['model_short'].isin(skill_stats_ensemble['model_short'])].copy()
+        merge_keys = ['decad_in_year', 'code', 'model_long', 'model_short']
+        skill_metrics_df_ensemble = skill_metrics_df.merge(
+            skill_stats_ensemble[merge_keys].drop_duplicates(),
+            on=merge_keys,
+            how='inner',
+        )
         #print("DEBUG: skill_metrics_df_ensemble\n", skill_metrics_df_ensemble.columns)
         #print("DEBUG: skill_metrics_df_ensemble\n", skill_metrics_df_ensemble.head(20))
 
@@ -2423,50 +2467,18 @@ def calculate_skill_metrics_decade(
         number_of_models = simulated['model_long'].nunique()
         print("DEBUG: number_of_models\n", number_of_models)
         if number_of_models > 1:
-            # Select only the columns needed for the apply functions to avoid
-            # duplicate column issues with reset_index()
+            # Single-pass ensemble skill metrics
             ensemble_skill_stats = ensemble_skill_metrics_df. \
-                groupby(['decad_in_year', 'code', 'model_long', 'model_short'])[['discharge_avg', 'forecasted_discharge']]. \
-                apply(
-                    sdivsigma_nse,
-                    observed_col='discharge_avg',
-                    simulated_col='forecasted_discharge'). \
-                reset_index()
-            #print("DEBUG: ensemble_skill_stats\n", ensemble_skill_stats.columns)
-            #print("DEBUG: ensemble_skill_stats\n", ensemble_skill_stats.head(20))
-
-            ensemble_mae_stats = ensemble_skill_metrics_df. \
-                groupby(['decad_in_year', 'code', 'model_long', 'model_short'])[['discharge_avg', 'forecasted_discharge']]. \
-                apply(
-                    mae,
-                    observed_col='discharge_avg',
-                    simulated_col='forecasted_discharge').\
-                reset_index()
-
-            ensemble_accuracy_stats = ensemble_skill_metrics_df. \
                 groupby(['decad_in_year', 'code', 'model_long', 'model_short'])[['discharge_avg', 'forecasted_discharge', 'delta']]. \
                 apply(
-                    forecast_accuracy_hydromet,
+                    calculate_all_skill_metrics,
                     observed_col='discharge_avg',
                     simulated_col='forecasted_discharge',
-                    delta_col='delta').\
+                    delta_col='delta'). \
                 reset_index()
-
-            ensemble_skill_stats = pd.merge(
-                ensemble_skill_stats, ensemble_mae_stats, on=['decad_in_year', 'code', 'model_long', 'model_short'])
-            ensemble_skill_stats = pd.merge(
-                ensemble_skill_stats, ensemble_accuracy_stats, on=['decad_in_year', 'code', 'model_long', 'model_short'])
 
             # Append the ensemble skill metrics to the skill metrics
             skill_stats = pd.concat([skill_stats, ensemble_skill_stats], ignore_index=True)
-
-            # Add ensemble mean forecasts to simulated dataframe
-            logger.debug(f"DEBUG: simulated.columns\n{simulated.columns}")
-            logger.debug(f"DEBUG: simulated.tail()\n{simulated.head(5)}")
-            #logger.debug(f"DEBUG: unique models in simulated: {simulated['model_long'].unique()}")
-            print(f"DEBUG: simulated.columns\n{ensemble_skill_metrics_df.columns}")
-            print("DEBUG: head of ensemble_skill_metrics_df: \n", ensemble_skill_metrics_df.head(5))
-            #print("DEBUG: unique models in ensemble_skill_metrics_df: ", ensemble_skill_metrics_df['model_long'].unique())
 
             # Calculate pentad in month (add 1 day to date)
             ensemble_skill_metrics_df['decad_in_month'] = (ensemble_skill_metrics_df['date']+dt.timedelta(days=1.0)).apply(tl.get_decad_in_month)
@@ -2893,7 +2905,7 @@ def _read_daily_discharge_from_api(
     # Get API URL from environment, default to localhost
     api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
 
-    client = SapphirePreprocessingClient(base_url=api_url)
+    client = _get_preprocessing_client()
 
     # Health check first - fail fast if API unavailable
     if not client.readiness_check():
@@ -3218,7 +3230,7 @@ def _read_meteo_data_from_api(
         )
 
     api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
-    client = SapphirePreprocessingClient(base_url=api_url)
+    client = _get_preprocessing_client()
 
     # Health check first - fail fast if API unavailable
     if not client.readiness_check():
@@ -3466,7 +3478,7 @@ def _read_hydrograph_data_from_api(
         )
 
     api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
-    client = SapphirePreprocessingClient(base_url=api_url)
+    client = _get_preprocessing_client()
 
     # Health check first - fail fast if API unavailable
     if not client.readiness_check():
@@ -3867,7 +3879,7 @@ def _write_lr_forecast_to_api(data: pd.DataFrame, horizon_type: str) -> bool:
         logger.info("SAPPHIRE API writing disabled via SAPPHIRE_API_ENABLED=false")
         return False
 
-    client = SapphirePostprocessingClient(base_url=api_url)
+    client = _get_postprocessing_client()
 
     # Health check - non-blocking, skip if API unavailable
     if not client.readiness_check():
@@ -3889,27 +3901,40 @@ def _write_lr_forecast_to_api(data: pd.DataFrame, horizon_type: str) -> bool:
     else:
         raise ValueError(f"Invalid horizon_type: {horizon_type}. Must be 'pentad' or 'decade'.")
 
-    # Prepare records for API
-    records = []
-    for _, row in data.iterrows():
-        date_obj = pd.to_datetime(row['date'])
-        record = {
-            "horizon_type": horizon_type,
-            "code": str(row['code']),
-            "date": date_obj.strftime('%Y-%m-%d'),
-            "horizon_value": int(row[horizon_value_col]) if pd.notna(row.get(horizon_value_col)) else None,
-            "horizon_in_year": int(row[horizon_in_year_col]) if pd.notna(row.get(horizon_in_year_col)) else None,
-            "discharge_avg": float(row['discharge_avg']) if pd.notna(row.get('discharge_avg')) else None,
-            "predictor": float(row['predictor']) if pd.notna(row.get('predictor')) else None,
-            "slope": float(row['slope']) if pd.notna(row.get('slope')) else None,
-            "intercept": float(row['intercept']) if pd.notna(row.get('intercept')) else None,
-            "forecasted_discharge": float(row['forecasted_discharge']) if pd.notna(row.get('forecasted_discharge')) else None,
-            "q_mean": float(row['q_mean']) if pd.notna(row.get('q_mean')) else None,
-            "q_std_sigma": float(row['q_std_sigma']) if pd.notna(row.get('q_std_sigma')) else None,
-            "delta": float(row['delta']) if pd.notna(row.get('delta')) else None,
-            "rsquared": float(row['rsquared']) if pd.notna(row.get('rsquared')) else None,
-        }
-        records.append(record)
+    # Prepare records for API (vectorized)
+    df_rec = data.copy()
+    df_rec['date'] = pd.to_datetime(df_rec['date'])
+
+    # Build optional float columns, preserving NaN → None
+    def _opt_col(df, col):
+        return df[col].where(df[col].notna()) if col in df.columns else None
+
+    records_df = pd.DataFrame({
+        'horizon_type': horizon_type,
+        'code': df_rec['code'].astype(str),
+        'date': df_rec['date'].dt.strftime('%Y-%m-%d'),
+        'horizon_value': _opt_col(df_rec, horizon_value_col),
+        'horizon_in_year': _opt_col(df_rec, horizon_in_year_col),
+        'discharge_avg': _opt_col(df_rec, 'discharge_avg'),
+        'predictor': _opt_col(df_rec, 'predictor'),
+        'slope': _opt_col(df_rec, 'slope'),
+        'intercept': _opt_col(df_rec, 'intercept'),
+        'forecasted_discharge': _opt_col(df_rec, 'forecasted_discharge'),
+        'q_mean': _opt_col(df_rec, 'q_mean'),
+        'q_std_sigma': _opt_col(df_rec, 'q_std_sigma'),
+        'delta': _opt_col(df_rec, 'delta'),
+        'rsquared': _opt_col(df_rec, 'rsquared'),
+    })
+    # Convert to records, replacing NaN/NaT with None
+    records = [
+        {k: (None if pd.isna(v) else v) for k, v in row_dict.items()}
+        for row_dict in records_df.to_dict('records')
+    ]
+    # Ensure int fields are actually int
+    for r in records:
+        for k in ('horizon_value', 'horizon_in_year'):
+            if r.get(k) is not None:
+                r[k] = int(r[k])
 
     # Write to API
     if records:
@@ -3961,7 +3986,7 @@ def _write_hydrograph_to_api(data: pd.DataFrame, horizon_type: str) -> bool:
         return False
 
     api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
-    client = SapphirePreprocessingClient(base_url=api_url)
+    client = _get_preprocessing_client()
 
     # Health check - non-blocking, skip if API unavailable
     if not client.readiness_check():
@@ -4113,7 +4138,7 @@ def _write_runoff_to_api(
         raise ValueError(f"Invalid horizon_type: {horizon_type}. Must be 'pentad' or 'decade'")
 
     api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
-    client = SapphirePreprocessingClient(base_url=api_url)
+    client = _get_preprocessing_client()
 
     # Health check - non-blocking, skip if API unavailable
     if not client.readiness_check():
@@ -4161,34 +4186,37 @@ def _write_runoff_to_api(
         logger.info(f"No runoff data to write after filtering ({horizon_type})")
         return None
 
-    # Prepare records for API
-    records = []
-    for _, row in data_to_write.iterrows():
-        # Parse date
-        date_obj = pd.to_datetime(row['date']) if pd.notna(row.get('date')) else None
-        if date_obj is None:
-            logger.warning(f"Skipping row with missing date: {row.to_dict()}")
-            continue
+    # Prepare records for API (vectorized)
+    df_rec = data_to_write.copy()
+    # Drop rows with missing dates or horizon values
+    df_rec['date'] = pd.to_datetime(df_rec['date'], errors='coerce')
+    n_before = len(df_rec)
+    df_rec = df_rec.dropna(subset=['date'])
+    if horizon_value_col in df_rec.columns:
+        df_rec = df_rec.dropna(subset=[horizon_value_col])
+    if horizon_in_year_col in df_rec.columns:
+        df_rec = df_rec.dropna(subset=[horizon_in_year_col])
+    n_dropped = n_before - len(df_rec)
+    if n_dropped > 0:
+        logger.warning(f"Skipped {n_dropped} rows with missing date or horizon values")
 
-        # Get horizon values
-        horizon_value = int(row[horizon_value_col]) if horizon_value_col in row and pd.notna(row.get(horizon_value_col)) else None
-        horizon_in_year = int(row[horizon_in_year_col]) if horizon_in_year_col in row and pd.notna(row.get(horizon_in_year_col)) else None
+    if df_rec.empty:
+        logger.info(f"No runoff records to write to API ({horizon_type})")
+        return None
 
-        if horizon_value is None or horizon_in_year is None:
-            logger.warning(f"Skipping row with missing horizon values: {row.to_dict()}")
-            continue
-
-        record = {
-            "horizon_type": horizon_type,
-            "code": str(row['code']),
-            "date": date_obj.strftime('%Y-%m-%d'),
-            "horizon_value": horizon_value,
-            "horizon_in_year": horizon_in_year,
-            # Discharge values
-            "discharge": float(row['discharge_avg']) if 'discharge_avg' in row and pd.notna(row.get('discharge_avg')) else None,
-            "predictor": float(row['predictor']) if 'predictor' in row and pd.notna(row.get('predictor')) else None,
-        }
-        records.append(record)
+    records_df = pd.DataFrame({
+        'horizon_type': horizon_type,
+        'code': df_rec['code'].astype(str),
+        'date': df_rec['date'].dt.strftime('%Y-%m-%d'),
+        'horizon_value': df_rec[horizon_value_col].astype(int) if horizon_value_col in df_rec.columns else None,
+        'horizon_in_year': df_rec[horizon_in_year_col].astype(int) if horizon_in_year_col in df_rec.columns else None,
+        'discharge': df_rec['discharge_avg'].where(df_rec['discharge_avg'].notna()) if 'discharge_avg' in df_rec.columns else None,
+        'predictor': df_rec['predictor'].where(df_rec['predictor'].notna()) if 'predictor' in df_rec.columns else None,
+    })
+    records = [
+        {k: (None if pd.isna(v) else v) for k, v in row_dict.items()}
+        for row_dict in records_df.to_dict('records')
+    ]
 
     # Write to API
     if records:
@@ -4232,7 +4260,7 @@ def _write_combined_forecast_to_api(data: pd.DataFrame, horizon_type: str) -> bo
     # Get API URL from environment
     api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
 
-    client = SapphirePostprocessingClient(base_url=api_url)
+    client = _get_postprocessing_client()
 
     # Health check - non-blocking, skip if API unavailable
     if not client.readiness_check():
@@ -4309,52 +4337,65 @@ def _write_combined_forecast_to_api(data: pd.DataFrame, horizon_type: str) -> bo
                 f"{repaired_count} forecast records ({horizon_type})"
             )
 
-    # Prepare records for API
-    records = []
-    skipped_count = 0
-    for _, row in data.iterrows():
-        # Skip rows where horizon values are still missing (date was NaT)
-        if pd.isna(row.get(horizon_value_col)) or pd.isna(row.get(horizon_in_year_col)):
-            skipped_count += 1
-            continue
-
-        model_short = str(row.get('model_short', ''))
-        api_model_type = model_type_map.get(model_short.upper(), model_short)
-
-        # Get composition for ensemble models (EM, NE)
-        # First check if composition column exists, otherwise extract from model_long
-        composition = None
-        if 'composition' in row.index and pd.notna(row.get('composition')):
-            composition = str(row['composition'])
-        elif model_short.upper() in ('EM', 'NE') and 'model_long' in row.index and pd.notna(row.get('model_long')):
-            # Extract model names from model_long like "Ens. Mean with TFT, TiDE, TSMixer (EM)"
-            model_long = str(row['model_long'])
-            # Pattern: "Ens. Mean with <models> (EM)" or "... (NE)"
-            match = re.search(r'with\s+(.+?)\s+\([EN][ME]\)', model_long)
-            if match:
-                composition = match.group(1).strip()
-
-        date_obj = pd.to_datetime(row['date'])
-        horizon_value = row[horizon_value_col]
-        horizon_in_year = row[horizon_in_year_col]
-        record = {
-            "horizon_type": horizon_type,
-            "code": str(row['code']),
-            "model_type": api_model_type,
-            "date": date_obj.strftime('%Y-%m-%d'),
-            "target": date_obj.strftime('%Y-%m-%d'),  # For combined forecasts, date is the target
-            "horizon_value": int(float(horizon_value)),
-            "horizon_in_year": int(float(horizon_in_year)),
-            "composition": composition,
-            "forecasted_discharge": float(row['forecasted_discharge']) if pd.notna(row.get('forecasted_discharge')) else None,
-        }
-        records.append(record)
+    # Prepare records for API (vectorized)
+    df_rec = data.copy()
+    # Drop rows with missing horizon values
+    n_before = len(df_rec)
+    df_rec = df_rec.dropna(subset=[horizon_value_col, horizon_in_year_col])
+    skipped_count = n_before - len(df_rec)
 
     if skipped_count > 0:
         logger.warning(
             f"Skipped {skipped_count} forecast records with missing horizon "
             f"values and invalid dates ({horizon_type})"
         )
+
+    if df_rec.empty:
+        records = []
+    else:
+        # Map model_short to API model_type
+        df_rec = df_rec.copy()
+        df_rec['model_type'] = (
+            df_rec['model_short'].astype(str).str.upper()
+            .map(model_type_map)
+            .fillna(df_rec['model_short'].astype(str))
+        )
+        df_rec['date_str'] = pd.to_datetime(df_rec['date']).dt.strftime('%Y-%m-%d')
+
+        # Vectorize composition extraction
+        is_ensemble = df_rec['model_short'].astype(str).str.upper().isin(['EM', 'NE'])
+        df_rec['composition'] = None
+        # First use explicit composition column if available
+        if 'composition' in df_rec.columns:
+            df_rec['composition'] = df_rec['composition'].where(df_rec['composition'].notna())
+        # For ensemble rows without composition, extract from model_long
+        needs_extract = is_ensemble & df_rec['composition'].isna()
+        if 'model_long' in df_rec.columns and needs_extract.any():
+            extracted = (
+                df_rec.loc[needs_extract, 'model_long'].astype(str)
+                .str.extract(r'with\s+(.+?)\s+\([EN][ME]\)', expand=False)
+                .str.strip()
+            )
+            df_rec.loc[needs_extract, 'composition'] = extracted
+
+        records_df = pd.DataFrame({
+            'horizon_type': horizon_type,
+            'code': df_rec['code'].astype(str),
+            'model_type': df_rec['model_type'],
+            'date': df_rec['date_str'],
+            'target': df_rec['date_str'],
+            'horizon_value': df_rec[horizon_value_col].astype(float).astype(int),
+            'horizon_in_year': df_rec[horizon_in_year_col].astype(float).astype(int),
+            'composition': df_rec['composition'],
+            'forecasted_discharge': df_rec['forecasted_discharge'].where(
+                df_rec['forecasted_discharge'].notna()
+            ),
+        })
+        # Convert to records, replacing NaN/NaT with None
+        records = [
+            {k: (None if pd.isna(v) else v) for k, v in row_dict.items()}
+            for row_dict in records_df.to_dict('records')
+        ]
 
     # Write to API
     if records:
@@ -4414,7 +4455,7 @@ def _write_skill_metrics_to_api(data: pd.DataFrame, horizon_type: str) -> bool:
     # Get API URL from environment
     api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
 
-    client = SapphirePostprocessingClient(base_url=api_url)
+    client = _get_postprocessing_client()
 
     # Health check - non-blocking, skip if API unavailable
     if not client.readiness_check():
@@ -4448,49 +4489,68 @@ def _write_skill_metrics_to_api(data: pd.DataFrame, horizon_type: str) -> bool:
     # Use today's date for the skill metrics (they are calculated on run day)
     today = pd.Timestamp.today().normalize().strftime('%Y-%m-%d')
 
-    # Prepare records for API
-    records = []
-    skipped_count = 0
-    for _, row in data.iterrows():
-        # Skip rows with missing required field (horizon_in_year is required)
-        if pd.isna(row.get(horizon_in_year_col)):
-            skipped_count += 1
-            continue
-
-        model_short = str(row.get('model_short', ''))
-        api_model_type = model_type_map.get(model_short.upper(), model_short)
-
-        # Get composition for ensemble models (EM, NE)
-        # First check if composition column exists, otherwise extract from model_long
-        composition = None
-        if 'composition' in row.index and pd.notna(row.get('composition')):
-            composition = str(row['composition'])
-        elif model_short.upper() in ('EM', 'NE') and 'model_long' in row.index and pd.notna(row.get('model_long')):
-            # Extract model names from model_long like "Ens. Mean with TFT, TiDE, TSMixer (EM)"
-            model_long = str(row['model_long'])
-            # Pattern: "Ens. Mean with <models> (EM)" or "... (NE)"
-            match = re.search(r'with\s+(.+?)\s+\([EN][ME]\)', model_long)
-            if match:
-                composition = match.group(1).strip()
-
-        record = {
-            "horizon_type": horizon_type,
-            "code": str(row['code']),
-            "model_type": api_model_type,
-            "date": today,
-            "horizon_in_year": int(row[horizon_in_year_col]),
-            "composition": composition,
-            "sdivsigma": float(row['sdivsigma']) if pd.notna(row.get('sdivsigma')) else None,
-            "nse": float(row['nse']) if pd.notna(row.get('nse')) else None,
-            "delta": float(row['delta']) if pd.notna(row.get('delta')) else None,
-            "accuracy": float(row['accuracy']) if pd.notna(row.get('accuracy')) else None,
-            "mae": float(row['mae']) if pd.notna(row.get('mae')) else None,
-            "n_pairs": int(row['n_pairs']) if pd.notna(row.get('n_pairs')) else None,
-        }
-        records.append(record)
+    # Prepare records for API (vectorized)
+    df_rec = data.copy()
+    n_before = len(df_rec)
+    df_rec = df_rec.dropna(subset=[horizon_in_year_col])
+    skipped_count = n_before - len(df_rec)
 
     if skipped_count > 0:
         logger.warning(f"Skipped {skipped_count} skill metric records with missing horizon_in_year")
+
+    if df_rec.empty:
+        records = []
+    else:
+        # Map model_short to API model_type
+        df_rec['model_type'] = (
+            df_rec['model_short'].astype(str).str.upper()
+            .map(model_type_map)
+            .fillna(df_rec['model_short'].astype(str))
+        )
+
+        # Vectorize composition extraction
+        is_ensemble = df_rec['model_short'].astype(str).str.upper().isin(['EM', 'NE'])
+        df_rec['_composition'] = None
+        if 'composition' in df_rec.columns:
+            df_rec['_composition'] = df_rec['composition'].where(df_rec['composition'].notna())
+        needs_extract = is_ensemble & df_rec['_composition'].isna()
+        if 'model_long' in df_rec.columns and needs_extract.any():
+            extracted = (
+                df_rec.loc[needs_extract, 'model_long'].astype(str)
+                .str.extract(r'with\s+(.+?)\s+\([EN][ME]\)', expand=False)
+                .str.strip()
+            )
+            df_rec.loc[needs_extract, '_composition'] = extracted
+
+        # Build nullable float columns
+        metric_cols = {}
+        for col in ('sdivsigma', 'nse', 'delta', 'accuracy', 'mae'):
+            if col in df_rec.columns:
+                metric_cols[col] = df_rec[col].where(df_rec[col].notna())
+            else:
+                metric_cols[col] = None
+        n_pairs_col = df_rec['n_pairs'].where(df_rec['n_pairs'].notna()) if 'n_pairs' in df_rec.columns else None
+
+        records_df = pd.DataFrame({
+            'horizon_type': horizon_type,
+            'code': df_rec['code'].astype(str),
+            'model_type': df_rec['model_type'],
+            'date': today,
+            'horizon_in_year': df_rec[horizon_in_year_col].astype(int),
+            'composition': df_rec['_composition'],
+            **metric_cols,
+        })
+        if n_pairs_col is not None:
+            records_df['n_pairs'] = n_pairs_col
+        # Convert to records, replacing NaN/NaT with None
+        records = [
+            {k: (None if pd.isna(v) else v) for k, v in row_dict.items()}
+            for row_dict in records_df.to_dict('records')
+        ]
+        # Ensure n_pairs is int where not None
+        for r in records:
+            if r.get('n_pairs') is not None:
+                r['n_pairs'] = int(r['n_pairs'])
 
     # Write to API
     if records:

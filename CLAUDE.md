@@ -138,17 +138,142 @@ def upsert_record(db: Session, model: Type[Base], data: dict, unique_keys: list[
 
 ### Before Committing or Moving to New Topic
 
-**Tests must pass before committing or moving to a new topic.**
+**All tests must pass with zero skips before committing or moving to a new topic.** The full pre-commit validation has three stages:
+
+1. **Unit/integration tests** (always): `cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh`
+2. **Local pipeline run** (after major changes): `bash apps/run_locally.sh all` — runs the full forecast pipeline against real data using local venvs, confirming nothing is broken end-to-end
+3. **Docker smoke tests** (after major changes): `bash apps/run_docker_tests.sh --skip-ml` — builds all Docker images and verifies critical imports, catching dependency and packaging regressions
+
+Stage 1 is required before every commit. Stages 2 and 3 are required after changes that affect module dependencies, entry points, Docker configuration, or cross-module data flow. See [`doc/dev/testing_workflow.md`](doc/dev/testing_workflow.md) for full details on all stages.
 
 ### Zero Skips Policy
 
-**No tests may be skipped.** All tests must run and pass. If any tests are skipped or fail to collect, treat this as a red flag requiring investigation before proceeding. Skipped tests often hide real bugs (e.g., missing dependencies causing `SAPPHIRE_API_AVAILABLE = False`). Do not accept "0 collected" or `pytest.skip()` as normal — find and fix the root cause.
+**No tests may be skipped without justification.** If any tests are skipped or fail to collect, treat this as a red flag requiring investigation before proceeding. Do not accept "0 collected" or `pytest.skip()` as normal — find and fix the root cause.
 
-### Test Coverage Requirements
+**One exception**: dependency-gated skips are acceptable when `sapphire-api-client` is not installed. These tests guard on `SAPPHIRE_API_AVAILABLE` and skip with an explicit message like `pytest.skip("sapphire-api-client not installed")`. This is the only valid skip pattern — all other skips indicate hidden bugs.
 
-1. **Unit tests**: Each new method should have adequate unit tests
-2. **Workflow tests**: Tests covering entire processing workflows
-3. **End-to-end tests**: Tests verifying complete system behavior
+### Test Categories
+
+Every new feature or bug fix must include tests. The required categories depend on what changed:
+
+#### 1. Unit Tests (always required)
+
+Isolated tests for individual functions with all external dependencies mocked. Each new or modified public function needs at least:
+- A happy-path test with typical input
+- An error-path test (invalid input, exception handling)
+
+**File naming**: `test_<module_or_topic>.py`
+
+#### 2. Edge Case Tests (required for DataFrame, date, or numeric code)
+
+Any code that processes DataFrames, dates, or numeric values must have edge case tests covering these scenarios:
+
+| Category | Scenarios to test |
+|----------|-------------------|
+| **Empty data** | Empty DataFrame, single-row DataFrame, all-NaN columns |
+| **NaN handling** | All NaN values, mixed NaN/valid, NaN-to-None conversion for API |
+| **Date boundaries** | Year transitions (Dec 31 → Jan 1), leap year Feb 29, month boundaries |
+| **Value boundaries** | Zero values, very small positives (0.001), very large values (10000+) |
+| **Duplicates** | Duplicate date-station combinations |
+| **Multi-entity** | Single station many dates, many stations single date |
+
+See `preprocessing_runoff/test/test_edge_cases.py` as the reference implementation — it covers all of these categories in dedicated test classes.
+
+**File naming**: `test_edge_cases.py` or edge case classes within the relevant test file.
+
+#### 3. Integration Tests (required for multi-step workflows)
+
+Tests that exercise the real logic across multiple internal functions, only mocking external boundaries (API clients, file I/O). Required when:
+- A function calls multiple internal modules in sequence
+- Data flows through a pipeline (read → transform → write)
+- Entry points orchestrate multiple steps
+
+Integration tests should:
+- Use real logic for everything inside the boundary
+- Only mock the external API client and filesystem
+- Validate the full data flow, not just final output
+
+See `postprocessing_forecasts/tests/test_integration_postprocessing.py` as the reference — it tests the full pipeline: skill CSV read → threshold filter → ensemble create → CSV + API write.
+
+**File naming**: `test_integration_<topic>.py`
+
+#### 4. API Failure Tests (required for any code using `sapphire_api_client`)
+
+Any function that reads from or writes to the SAPPHIRE API must have tests for all failure modes:
+
+```python
+class TestWriteToApi:
+    def test_returns_false_when_api_unavailable(self, data):
+        """When sapphire_api_client is not installed."""
+        with patch.object(module, "SAPPHIRE_API_AVAILABLE", False):
+            assert module._write_to_api(data) is False
+
+    def test_returns_false_when_api_disabled(self, data):
+        """When SAPPHIRE_API_ENABLED=false."""
+        with patch.object(module, "SAPPHIRE_API_AVAILABLE", True), \
+             patch.dict(os.environ, {"SAPPHIRE_API_ENABLED": "false"}):
+            assert module._write_to_api(data) is False
+
+    def test_returns_false_when_api_not_ready(self, data):
+        """When readiness_check fails."""
+        mock_client = MagicMock()
+        mock_client.readiness_check.return_value = False
+        # ... assert returns False, no exception
+
+    def test_csv_still_written_on_api_failure(self, data, tmp_path):
+        """CSV fallback works when API fails."""
+        # ... verify CSV written even when API raises
+```
+
+The full pattern is documented in `preprocessing_runoff/test/test_api_write.py`.
+
+#### 5. Performance Benchmarks (optional, for optimization work)
+
+Mark with `@pytest.mark.benchmark`. Skipped by default, run explicitly:
+```bash
+pytest <module>/tests/test_performance.py -v -k bench
+```
+
+See `postprocessing_forecasts/tests/test_performance.py` for the pattern.
+
+### Required conftest.py Pattern
+
+Any module that imports `forecast_library` or `setup_library` (directly or transitively) **must** have a `conftest.py` with the API singleton reset fixture:
+
+```python
+"""Shared fixtures for <module> tests."""
+import os, sys
+import pytest
+
+sys.path.insert(
+    0, os.path.join(os.path.dirname(__file__), '..', '..', 'iEasyHydroForecast')
+)
+import forecast_library as fl
+
+@pytest.fixture(autouse=True)
+def _reset_api_singletons():
+    """Reset forecast_library API client singletons between tests.
+
+    Without this, a mock injected by one test leaks into subsequent tests
+    because the singleton caches the first client instance it creates.
+    """
+    fl._reset_api_clients()
+    yield
+    fl._reset_api_clients()
+```
+
+This fixture is already present in `iEasyHydroForecast`, `postprocessing_forecasts`, and `linear_regression`. Any new module using the API must add it.
+
+### Test File Naming Conventions
+
+| File name pattern | Contents |
+|-------------------|----------|
+| `test_<topic>.py` | Unit tests for a specific topic or module |
+| `test_edge_cases.py` | Edge case and boundary condition tests |
+| `test_api_write.py` / `test_api_read.py` | API integration tests (write/read paths) |
+| `test_api_integration.py` | Combined API read/write tests |
+| `test_integration_<topic>.py` | Multi-step workflow integration tests |
+| `test_performance.py` | Performance benchmarks (`@pytest.mark.benchmark`) |
 
 ### Running Tests
 
@@ -196,34 +321,6 @@ python -m pytest tests/ -v
 # Postprocessing service tests
 cd sapphire/services/postprocessing
 python -m pytest tests/ -v
-```
-
-### Test Patterns
-
-```python
-import pytest
-from unittest.mock import Mock, patch
-
-class TestForecastCalculation:
-    """Tests for forecast calculation functions."""
-
-    def test_basic_forecast(self):
-        """Test basic forecast calculation."""
-        result = calculate_forecast(sample_data, horizon=5)
-        assert len(result) == 5
-        assert "forecast" in result.columns
-
-    def test_invalid_horizon_raises_error(self):
-        """Test that negative horizon raises ValueError."""
-        with pytest.raises(ValueError, match="horizon"):
-            calculate_forecast(sample_data, horizon=-1)
-
-    @patch("module.external_api_call")
-    def test_with_mocked_api(self, mock_api):
-        """Test with mocked external API."""
-        mock_api.return_value = {"data": [1, 2, 3]}
-        result = function_using_api()
-        mock_api.assert_called_once()
 ```
 
 ### Environment Variables for Testing

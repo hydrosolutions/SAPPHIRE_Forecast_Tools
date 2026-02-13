@@ -3188,17 +3188,22 @@ def add_hydroposts(combined_data, check_hydroposts):
     earliest_date = combined_data['date'].min()
 
     # Check if the virtual hydroposts are in the combined_data
+    # Collect missing rows first, then concat once (avoid O(N²) loop concat)
+    missing_rows = []
+    existing_codes = set(combined_data['code'].values)
     for hydropost in check_hydroposts:
-        if hydropost not in combined_data['code'].values:
+        if hydropost not in existing_codes:
             logger.debug(f"Adding virtual hydropost {hydropost} to the list of stations.")
-            # Add the virtual hydropost to the combined_data
-            new_row = pd.DataFrame({
-                'code': [hydropost],
-                'date': [earliest_date],
-                'discharge': [np.nan],
-                #'name': [f'Virtual hydropost {hydropost}']
+            missing_rows.append({
+                'code': hydropost,
+                'date': earliest_date,
+                'discharge': np.nan,
             })
-            combined_data = pd.concat([combined_data, new_row], ignore_index=True)
+
+    if missing_rows:
+        combined_data = pd.concat(
+            [combined_data, pd.DataFrame(missing_rows)], ignore_index=True
+        )
 
     return combined_data
 
@@ -3278,6 +3283,7 @@ def calculate_virtual_stations_data(data_df: pd.DataFrame,
         # dataframe and fill gaps with data_virtual_station
         if station in data_df[code_col].values:
 
+            parts_to_add = []
             for model in models:
                 # Get the data for the virtual station
                 data_station = data_df[(data_df[code_col] == station) & (data_df[model_col] == model)].copy()
@@ -3288,8 +3294,11 @@ def calculate_virtual_stations_data(data_df: pd.DataFrame,
                 # Get the data for the date from the other stations
                 data_virtual_station = data_virtual_station[data_virtual_station[date_col] >= last_date_station].copy()
 
-                # Merge the data for the virtual station with the data_df
-                data_df = pd.concat([data_df, data_virtual_station], ignore_index=True)
+                parts_to_add.append(data_virtual_station.copy())
+
+            # Concat once after loop instead of per-model (avoid O(N²) loop concat)
+            if parts_to_add:
+                data_df = pd.concat([data_df] + parts_to_add, ignore_index=True)
 
         # Delete data_virtual_station
         del data_virtual_station

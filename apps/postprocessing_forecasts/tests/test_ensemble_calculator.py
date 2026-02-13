@@ -17,6 +17,7 @@ from src.ensemble_calculator import (
     extract_first_parentheses_content,
     model_long_agg,
     model_short_agg,
+    _is_multi_model_ensemble,
     filter_for_highly_skilled_forecasts,
     create_ensemble_forecasts,
 )
@@ -114,6 +115,20 @@ class TestHelpers:
         series = pd.Series(['LR', 'TFT'])
         assert model_short_agg(series) == 'EM'
 
+    def test_is_multi_model_two_models(self):
+        assert _is_multi_model_ensemble('Ens. Mean with LR, TFT (EM)') is True
+
+    def test_is_multi_model_three_models(self):
+        assert _is_multi_model_ensemble(
+            'Ens. Mean with LR, TFT, TiDE (EM)'
+        ) is True
+
+    def test_is_multi_model_single(self):
+        assert _is_multi_model_ensemble('Ens. Mean with TFT (EM)') is False
+
+    def test_is_multi_model_empty(self):
+        assert _is_multi_model_ensemble('Ens. Mean with  (EM)') is False
+
 
 # ---------------------------------------------------------------------------
 # Filter tests
@@ -179,9 +194,7 @@ class TestCreateEnsembleForecasts:
                 period_col='pentad_in_year',
                 period_in_month_col='pentad_in_month',
                 get_period_in_month_func=tl.get_pentad,
-                sdivsigma_nse_func=fl.sdivsigma_nse,
-                mae_func=fl.mae,
-                forecast_accuracy_hydromet_func=fl.forecast_accuracy_hydromet,
+                calculate_all_metrics_func=fl.calculate_all_skill_metrics,
             )
         else:
             return create_ensemble_forecasts(
@@ -191,9 +204,7 @@ class TestCreateEnsembleForecasts:
                 period_col='decad_in_year',
                 period_in_month_col='decad_in_month',
                 get_period_in_month_func=tl.get_decad_in_month,
-                sdivsigma_nse_func=fl.sdivsigma_nse,
-                mae_func=fl.mae,
-                forecast_accuracy_hydromet_func=fl.forecast_accuracy_hydromet,
+                calculate_all_metrics_func=fl.calculate_all_skill_metrics,
             )
 
     def test_ensemble_created_for_qualified_models(
@@ -408,3 +419,89 @@ class TestCreateEnsembleForecasts:
                 assert model_long.endswith(' (EM)')
                 assert 'LR' in model_long
                 assert 'TFT' in model_long
+
+    def test_single_tft_ensemble_discarded(self, observed_pentad):
+        """Ensemble with only TFT (single model) is discarded."""
+        skill_stats = pd.DataFrame({
+            'pentad_in_year': [1],
+            'code': ['10001'],
+            'model_long': ['Temporal Fusion Transformer (TFT)'],
+            'model_short': ['TFT'],
+            'sdivsigma': [0.3], 'nse': [0.95],
+            'delta': [5.0], 'accuracy': [0.95],
+            'mae': [2.0], 'n_pairs': [10],
+        })
+        forecasts = pd.DataFrame({
+            'code': ['10001'],
+            'date': pd.to_datetime(['2024-01-05']),
+            'pentad_in_year': [1],
+            'pentad_in_month': ['1'],
+            'forecasted_discharge': [110.0],
+            'model_long': ['Temporal Fusion Transformer (TFT)'],
+            'model_short': ['TFT'],
+        })
+        with patch.dict(os.environ, {
+            'ieasyhydroforecast_efficiency_threshold': '0.6',
+            'ieasyhydroforecast_accuracy_threshold': '0.8',
+            'ieasyhydroforecast_nse_threshold': '0.8',
+        }):
+            joint, _ = self._make_ensemble(
+                forecasts, skill_stats, observed_pentad
+            )
+            assert 'EM' not in joint['model_short'].values
+
+    def test_single_tide_ensemble_discarded(self, observed_pentad):
+        """Ensemble with only TiDE (single model) is discarded."""
+        skill_stats = pd.DataFrame({
+            'pentad_in_year': [1],
+            'code': ['10001'],
+            'model_long': ['Time-series Dense Encoder (TiDE)'],
+            'model_short': ['TiDE'],
+            'sdivsigma': [0.3], 'nse': [0.95],
+            'delta': [5.0], 'accuracy': [0.95],
+            'mae': [2.0], 'n_pairs': [10],
+        })
+        forecasts = pd.DataFrame({
+            'code': ['10001'],
+            'date': pd.to_datetime(['2024-01-05']),
+            'pentad_in_year': [1],
+            'pentad_in_month': ['1'],
+            'forecasted_discharge': [90.0],
+            'model_long': ['Time-series Dense Encoder (TiDE)'],
+            'model_short': ['TiDE'],
+        })
+        with patch.dict(os.environ, {
+            'ieasyhydroforecast_efficiency_threshold': '0.6',
+            'ieasyhydroforecast_accuracy_threshold': '0.8',
+            'ieasyhydroforecast_nse_threshold': '0.8',
+        }):
+            joint, _ = self._make_ensemble(
+                forecasts, skill_stats, observed_pentad
+            )
+            assert 'EM' not in joint['model_short'].values
+
+
+# ---------------------------------------------------------------------------
+# Model name consistency tests
+# ---------------------------------------------------------------------------
+
+class TestModelNameConsistency:
+    """Verify that model name mappings in data_reader cover all core types."""
+
+    def test_model_short_to_long_covers_core_types(self):
+        """MODEL_SHORT_TO_LONG covers LR, TFT, TiDE, TSMixer, EM, NE, RRAM."""
+        from src.data_reader import MODEL_SHORT_TO_LONG
+        expected = {'LR', 'TFT', 'TiDE', 'TSMixer', 'EM', 'NE', 'RRAM'}
+        assert expected.issubset(set(MODEL_SHORT_TO_LONG.keys()))
+
+    def test_api_model_type_mapping_consistent(self):
+        """API_MODEL_TYPE_TO_SHORT keys are a subset of MODEL_SHORT_TO_LONG."""
+        from src.data_reader import (
+            MODEL_SHORT_TO_LONG, API_MODEL_TYPE_TO_SHORT,
+        )
+        for api_key in API_MODEL_TYPE_TO_SHORT:
+            short = API_MODEL_TYPE_TO_SHORT[api_key]
+            assert short in MODEL_SHORT_TO_LONG, (
+                f"API_MODEL_TYPE_TO_SHORT[{api_key!r}] = {short!r} "
+                f"not in MODEL_SHORT_TO_LONG"
+            )

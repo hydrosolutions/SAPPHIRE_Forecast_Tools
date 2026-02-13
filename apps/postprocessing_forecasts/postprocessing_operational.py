@@ -116,10 +116,8 @@ def postprocessing_operational():
                             period_col='pentad_in_year',
                             period_in_month_col='pentad_in_month',
                             get_period_in_month_func=tl.get_pentad,
-                            sdivsigma_nse_func=fl.sdivsigma_nse,
-                            mae_func=fl.mae,
-                            forecast_accuracy_hydromet_func=(
-                                fl.forecast_accuracy_hydromet
+                            calculate_all_metrics_func=(
+                                fl.calculate_all_skill_metrics
                             ),
                         )
                     )
@@ -177,10 +175,8 @@ def postprocessing_operational():
                             period_col='decad_in_year',
                             period_in_month_col='decad_in_month',
                             get_period_in_month_func=tl.get_decad_in_month,
-                            sdivsigma_nse_func=fl.sdivsigma_nse,
-                            mae_func=fl.mae,
-                            forecast_accuracy_hydromet_func=(
-                                fl.forecast_accuracy_hydromet
+                            calculate_all_metrics_func=(
+                                fl.calculate_all_skill_metrics
                             ),
                         )
                     )

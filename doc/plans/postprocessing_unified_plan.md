@@ -38,7 +38,8 @@
 | Client-side vectorization | TODO |
 | Skill metrics single-pass optimization | TODO |
 | Monthly/quarterly/seasonal skill metrics | TODO — Phase 4 (point + CRPS, configurable season) |
-| Comprehensive test suite (50+ unit, 12+ integration) | **IN PROGRESS** — 131 postprocessing tests + 206 iEasyHydroForecast tests pass |
+| Bug 6: Single-model ensemble filter only rejects LR | **DONE** — `_is_multi_model_ensemble()` helper replaces hardcoded check |
+| Comprehensive test suite (50+ unit, 12+ integration) | **DONE** — 180 postprocessing tests + 206 iEasyHydroForecast tests pass |
 | Bulk-read API endpoints (for `long_term_forecasting`) | Planned — see `doc/plans/bulk_read_endpoints_instructions.md` |
 | API integration | **DONE** — see `doc/plans/sapphire_api_integration_plan.md` |
 | Duplicate skill metrics / ensemble composition issue | **RESOLVED** — see `doc/plans/issues/gi_duplicate_skill_metrics_ensemble_composition.md` |
@@ -140,6 +141,20 @@ postprocessing_forecasts.py
 - `test_handle_api_write_error_fail_mode_reraises`
 - `test_handle_api_write_error_warn_mode_logs`
 - `test_handle_api_write_error_ignore_mode_silent`
+
+### Bug 6: Single-model ensemble filter only rejects LR — DONE
+
+**File:** `src/ensemble_calculator.py`
+
+**Problem (lines 198-202):** The single-model ensemble filter was hardcoded to reject only `'Ens. Mean with LR (EM)'`. Single-TFT, single-TiDE, or single-TSMixer ensembles could slip through and create meaningless "ensemble" rows containing only one model's forecast.
+
+**Fix:** Added `_is_multi_model_ensemble()` helper near line 48 that uses regex to extract the model list from `'Ens. Mean with X, Y (EM)'` and checks for a comma (indicating 2+ models). Replaced the hardcoded string comparison with `.apply(_is_multi_model_ensemble)`.
+
+**Tests (10 new):**
+- `TestHelpers`: `test_is_multi_model_two_models`, `test_is_multi_model_three_models`, `test_is_multi_model_single`, `test_is_multi_model_empty`
+- `TestCreateEnsembleForecasts`: `test_single_tft_ensemble_discarded`, `test_single_tide_ensemble_discarded`
+- `TestSingleModelEnsembleBug` (integration): `test_single_tft_rejected`, `test_single_tide_rejected`, `test_two_ml_models_accepted`
+- `TestModelNameConsistency`: `test_model_short_to_long_covers_core_types`, `test_api_model_type_mapping_consistent`
 
 ### Configuration Bug Fix — DONE
 
@@ -581,7 +596,7 @@ seasonal:
 
 ## Phase 5: Testing Strategy
 
-### Current Tests (131 postprocessing + 206 iEasyHydroForecast, all passing)
+### Current Tests (180 postprocessing + 206 iEasyHydroForecast, all passing)
 
 | File | Tests | Covers |
 |------|-------|--------|
@@ -590,12 +605,14 @@ seasonal:
 | `postprocessing_forecasts/tests/test_error_accumulation.py` | 9 | Error accumulation, exit codes (legacy entry point) |
 | `postprocessing_forecasts/tests/test_postprocessing_tools.py` | 8 | Safe `.iloc[0]`, NaT dates, missing codes |
 | `postprocessing_forecasts/tests/test_mock_postprocessing_forecasts.py` | 1 | Combined forecast consistency (legacy entry point) |
-| `postprocessing_forecasts/tests/test_ensemble_calculator.py` | 15 | Helper functions, threshold filtering, ensemble creation, NE exclusion, single-model discard, composition string, decad |
+| `postprocessing_forecasts/tests/test_ensemble_calculator.py` | 25 | Helper functions, threshold filtering, ensemble creation, NE exclusion, single-model discard (LR/TFT/TiDE), composition string, decad, `_is_multi_model_ensemble` helper, model name consistency |
 | `postprocessing_forecasts/tests/test_data_reader.py` | 8 | CSV read, API fallback, model mapping, empty/corrupt files |
 | `postprocessing_forecasts/tests/test_gap_detector.py` | 6 | Missing EM detection, lookback window, multi-code gaps, date conversion |
 | `postprocessing_forecasts/tests/test_operational_workflow.py` | 5 | Pentad/decad/both modes, error accumulation, empty skill metrics |
 | `postprocessing_forecasts/tests/test_maintenance_workflow.py` | 4 | Gap detection, no-gap idempotency, lookback window, empty combined forecasts |
 | `postprocessing_forecasts/tests/test_recalc_workflow.py` | 4 | Calls calculate_skill_metrics, saves skill metrics, both mode, error accumulation |
+| `postprocessing_forecasts/tests/test_integration_postprocessing.py` | 35 | Data routing (operational/maintenance/API fallback/failure modes), single-model ensemble bug, edge case inputs, year/month boundaries, quantile fields, recalc entry point |
+| `postprocessing_forecasts/tests/test_performance.py` | 6 | Benchmarks: triple-groupby vs single-pass, isin vs merge, iterrows vs vectorized |
 | `iEasyHydroForecast/tests/test_forecast_library.py` | 206 total | Includes ~15 sdivsigma_nse, ~15 MAE, ~8 accuracy, 5 atomic write, 7 API failure mode tests |
 
 ### Remaining Test Gaps
@@ -628,6 +645,7 @@ seasonal:
 - [x] ~~Bug 4: Non-atomic file operations~~ (on `main`, commit `a52597d`)
 - [x] ~~**Merge `main` into `develop_long_term`**~~ (PR #290, commit `ab1e2ab`)
 - [x] ~~Bug 5: Silent API failures~~ (`SAPPHIRE_API_FAILURE_MODE` env var, `_handle_api_write_error()` helper, 7 tests)
+- [x] ~~Bug 6: Single-model ensemble filter~~ (`_is_multi_model_ensemble()` helper, 10 tests)
 - [x] ~~Config fix: Add `ieasyforecast_decadal_skill_metrics_file` to `.env`~~
 
 ### Phase 2: Module Separation
@@ -671,12 +689,14 @@ seasonal:
 
 ### Phase 5: Testing
 
-- [x] ~~Unit tests for `src/ensemble_calculator.py`~~ (15 tests)
+- [x] ~~Unit tests for `src/ensemble_calculator.py`~~ (25 tests — 15 original + 4 `_is_multi_model_ensemble` + 2 single-TFT/TiDE discard + 2 model name consistency + 2 existing)
 - [x] ~~Unit tests for `src/data_reader.py`~~ (8 tests)
 - [x] ~~Unit tests for `src/gap_detector.py`~~ (6 tests)
 - [x] ~~Integration tests for operational workflow~~ (5 tests)
 - [x] ~~Integration tests for maintenance workflow~~ (4 tests)
 - [x] ~~Integration tests for recalc workflow~~ (4 tests)
+- [x] ~~Integration test hardening~~ (35 tests in `test_integration_postprocessing.py` — 14 original + 21 new: single-model ensemble bug (3), extended operational routing (7), edge case inputs (3), year/month boundaries (4), quantile fields (2), recalc entry point (2))
+- [x] ~~Bug 6 fix: single-model ensemble filter~~ (`_is_multi_model_ensemble()` helper in `ensemble_calculator.py`, unit + integration tests)
 - [ ] Add numerical verification test for ensemble skill metrics (EM NSE/MAE/accuracy values)
 - [ ] Unit test structure (`tests/unit/`, `tests/integration/`) — not adopted; tests kept flat in `tests/`
 - [ ] Performance benchmarks
@@ -944,3 +964,4 @@ The following plans are **superseded** by this unified plan (moved to `archive/`
 | 2026-02-12 | Bea/Claude | Phase 2 target architecture: split maintenance into nightly gap-fill (postprocessing_maintenance.py) and yearly recalculation (recalculate_skill_metrics.py). Added gap_detector module, POSTPROCESSING_GAPFILL_WINDOW_DAYS env var, updated file structure/tests/rollback for three entry points. Shell runners (`bin/daily_postprc_maintenance.sh`, `bin/yearly_skill_metrics_recalculation.sh`) instead of Luigi tasks for maintenance, following `daily_preprunoff_maintenance.sh` pattern |
 | 2026-02-12 | Bea/Claude | Phase 4 expanded: renamed to "Monthly, Quarterly & Seasonal Skill Metrics". Monthly skill metrics calculated in postprocessing_forecasts (reads long_forecasts from API). Dual metrics: Q50-based traditional (NSE/MAE/accuracy) + CRPS. CRPS is cross-cutting — applies to pentad/decad too once quantile columns are populated (currently blocked). Quarterly/seasonal: use direct records from long_term_forecasting if available, otherwise aggregate from monthly. Note added: refine long_term_forecasting integration once module is finalized. Configurable season definition via config.yaml. Monthly observations aggregated on-the-fly from daily discharge (≥50% coverage) |
 | 2026-02-12 | Bea/Claude | Post-implementation review: updated Phase 2 checklist (10 items done, 3 deferred to Phase 3). Updated Phase 5 test inventory to actual counts (131 postprocessing tests). Documented remaining test gaps: ensemble skill metric numerical verification, `_calculate_ensemble_skill()` isolation test. Updated status summary test counts. |
+| 2026-02-13 | Bea/Claude | Bug 6 fix: single-model ensemble filter in `ensemble_calculator.py` — added `_is_multi_model_ensemble()` helper replacing hardcoded LR-only rejection. Integration test hardening: 21 new tests across 6 classes (single-model bug e2e, extended data routing, edge case inputs, year/month boundaries, quantile fields, recalc entry point). Model name consistency tests added. Total: 180 postprocessing tests, all passing. |

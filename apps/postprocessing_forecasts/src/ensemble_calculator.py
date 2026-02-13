@@ -46,6 +46,24 @@ def model_short_agg(x: pd.Series) -> str:
     return 'EM'
 
 
+def _is_multi_model_ensemble(model_long_str: str) -> bool:
+    """True if the composition string contains 2+ models.
+
+    Parses 'Ens. Mean with X, Y (EM)' and checks for a comma
+    in the model list, indicating multiple contributing models.
+
+    >>> _is_multi_model_ensemble('Ens. Mean with LR, TFT (EM)')
+    True
+    >>> _is_multi_model_ensemble('Ens. Mean with TFT (EM)')
+    False
+    """
+    match = re.search(r'with\s+(.+?)\s+\(EM\)', model_long_str)
+    if not match:
+        return False
+    model_list = match.group(1).strip()
+    return bool(model_list) and ',' in model_list
+
+
 # ---------------------------------------------------------------------------
 # Main public functions
 # ---------------------------------------------------------------------------
@@ -112,9 +130,11 @@ def create_ensemble_forecasts(
     period_col: str,
     period_in_month_col: str,
     get_period_in_month_func,
-    sdivsigma_nse_func,
-    mae_func,
-    forecast_accuracy_hydromet_func,
+    calculate_all_metrics_func,
+    # Deprecated params kept for backward compatibility
+    sdivsigma_nse_func=None,
+    mae_func=None,
+    forecast_accuracy_hydromet_func=None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Create ensemble mean (EM) forecasts using pre-calculated skill metrics.
 
@@ -142,9 +162,10 @@ def create_ensemble_forecasts(
         period_in_month_col: 'pentad_in_month' or 'decad_in_month'.
         get_period_in_month_func: Function to compute period in month
             from a date (e.g. tl.get_pentad or tl.get_decad_in_month).
-        sdivsigma_nse_func: forecast_library.sdivsigma_nse
-        mae_func: forecast_library.mae
-        forecast_accuracy_hydromet_func: forecast_library.forecast_accuracy_hydromet
+        calculate_all_metrics_func: forecast_library.calculate_all_skill_metrics
+        sdivsigma_nse_func: Deprecated, ignored.
+        mae_func: Deprecated, ignored.
+        forecast_accuracy_hydromet_func: Deprecated, ignored.
 
     Returns:
         joint_forecasts: forecasts with ensemble rows appended.
@@ -194,8 +215,7 @@ def create_ensemble_forecasts(
 
     # Step 5+6: discard single-model or empty ensembles
     ensemble_avg = ensemble_avg[
-        (ensemble_avg['model_long'] != 'Ens. Mean with  (EM)') &
-        (ensemble_avg['model_long'] != 'Ens. Mean with LR (EM)')
+        ensemble_avg['model_long'].apply(_is_multi_model_ensemble)
     ].copy()
 
     if ensemble_avg.empty:
@@ -214,9 +234,7 @@ def create_ensemble_forecasts(
         ensemble_skill_stats = _calculate_ensemble_skill(
             ensemble_merged,
             period_col,
-            sdivsigma_nse_func,
-            mae_func,
-            forecast_accuracy_hydromet_func,
+            calculate_all_metrics_func,
         )
         skill_stats_out = pd.concat(
             [skill_stats, ensemble_skill_stats], ignore_index=True
@@ -248,38 +266,21 @@ def create_ensemble_forecasts(
 def _calculate_ensemble_skill(
     ensemble_df: pd.DataFrame,
     period_col: str,
-    sdivsigma_nse_func,
-    mae_func,
-    forecast_accuracy_hydromet_func,
+    calculate_all_metrics_func,
 ) -> pd.DataFrame:
-    """Calculate skill metrics for ensemble forecasts.
+    """Calculate skill metrics for ensemble forecasts in a single pass.
 
-    Mirrors the ensemble skill calculation in
-    forecast_library.py:2117-2147.
+    Uses calculate_all_skill_metrics to compute all 6 metrics
+    (sdivsigma, nse, mae, n_pairs, delta, accuracy) in one groupby.
     """
     group_cols = [period_col, 'code', 'model_long', 'model_short']
-    obs_sim_cols = ['discharge_avg', 'forecasted_discharge']
+    needed_cols = ['discharge_avg', 'forecasted_discharge', 'delta']
 
-    skill = ensemble_df.groupby(group_cols)[obs_sim_cols].apply(
-        sdivsigma_nse_func,
-        observed_col='discharge_avg',
-        simulated_col='forecasted_discharge',
-    ).reset_index()
-
-    mae_stats = ensemble_df.groupby(group_cols)[obs_sim_cols].apply(
-        mae_func,
-        observed_col='discharge_avg',
-        simulated_col='forecasted_discharge',
-    ).reset_index()
-
-    acc_cols = ['discharge_avg', 'forecasted_discharge', 'delta']
-    accuracy_stats = ensemble_df.groupby(group_cols)[acc_cols].apply(
-        forecast_accuracy_hydromet_func,
+    skill = ensemble_df.groupby(group_cols)[needed_cols].apply(
+        calculate_all_metrics_func,
         observed_col='discharge_avg',
         simulated_col='forecasted_discharge',
         delta_col='delta',
     ).reset_index()
 
-    skill = pd.merge(skill, mae_stats, on=group_cols)
-    skill = pd.merge(skill, accuracy_stats, on=group_cols)
     return skill
