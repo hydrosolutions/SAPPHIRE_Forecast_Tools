@@ -277,6 +277,9 @@ class TestOperationalDataRouting:
         mock_client.write_forecasts.assert_called_once()
         records = mock_client.write_forecasts.call_args[0][0]
 
+        # 2 stations x 2 dates x 3 models = 12, + 2 EM (station 15001 only)
+        assert len(records) == 14
+
         # EM model type present
         model_types = {r['model_type'] for r in records}
         assert 'EM' in model_types
@@ -288,12 +291,21 @@ class TestOperationalDataRouting:
             assert 'date' in r
             assert r['forecasted_discharge'] is not None
 
-        # EM records have composition
+        # EM records: exactly 2 (one per date, station 15001 only)
         em_records = [r for r in records if r['model_type'] == 'EM']
-        assert len(em_records) > 0
+        assert len(em_records) == 2
         for r in em_records:
+            assert r['code'] == '15001'
             assert r.get('composition') is not None
             assert 'LR' in r['composition']
+
+        # Spot-check EM discharge for 2026-01-05: mean(LR=100, TFT=110) = 105
+        em_jan05 = [
+            r for r in em_records
+            if '2026-01-05' in str(r['date'])
+        ]
+        assert len(em_jan05) == 1
+        assert abs(em_jan05[0]['forecasted_discharge'] - 105.0) < 0.01
 
     def test_csv_still_written_when_api_disabled(
         self, pentad_skill_csv, pentad_forecasts, pentad_observed,
@@ -378,17 +390,14 @@ class TestOperationalDataRouting:
         em_rows = joint[
             (joint['model_short'] == 'EM') & (joint['code'] == '15001')
         ]
-        assert not em_rows.empty
+        assert len(em_rows) == 2, f"Expected 2 EM rows, got {len(em_rows)}"
 
-        # EM discharge should be mean of all three models
-        for _, row in em_rows.iterrows():
-            date = row['date']
-            vals = pentad_forecasts[
-                (pentad_forecasts['date'] == date)
-                & (pentad_forecasts['code'] == '15001')
-            ]['forecasted_discharge'].tolist()
-            expected_mean = np.mean(vals)
-            assert abs(row['forecasted_discharge'] - expected_mean) < 0.01
+        # EM discharge = mean of all three models
+        em_sorted = em_rows.sort_values('date').reset_index(drop=True)
+        # Date 2026-01-05: mean(LR=100, TFT=110, TiDE=90) = 100.0
+        assert abs(em_sorted.iloc[0]['forecasted_discharge'] - 100.0) < 0.01
+        # Date 2026-01-10: mean(LR=120, TFT=130, TiDE=95) = 115.0
+        assert abs(em_sorted.iloc[1]['forecasted_discharge'] - 115.0) < 0.01
 
         # Composition includes all three
         comp = em_rows.iloc[0]['model_long']
@@ -439,12 +448,9 @@ class TestOperationalDataRouting:
 
         records = mock_client.write_forecasts.call_args[0][0]
         em_records = [r for r in records if r['model_type'] == 'EM']
-        assert len(em_records) > 0
+        assert len(em_records) == 2
         for r in em_records:
-            assert r.get('composition') is not None
-            # Should list the contributing models
-            assert 'LR' in r['composition']
-            assert 'TFT' in r['composition']
+            assert r['composition'] == 'LR, TFT'
 
     def test_api_records_contain_target_date(
         self, pentad_skill_csv, pentad_forecasts, pentad_observed,
@@ -518,19 +524,14 @@ class TestOperationalDataRouting:
             forecasts_nan, skill_all_pass, pentad_observed
         )
         em_rows = joint[joint['model_short'] == 'EM']
-        assert not em_rows.empty
+        assert len(em_rows) == 2, f"Expected 2 EM rows, got {len(em_rows)}"
+
         # EM = mean(LR, TFT) since TiDE NaN was dropped
-        for _, row in em_rows.iterrows():
-            date = row['date']
-            lr = forecasts_nan[
-                (forecasts_nan['date'] == date)
-                & (forecasts_nan['model_short'] == 'LR')
-            ]['forecasted_discharge'].iloc[0]
-            tft = forecasts_nan[
-                (forecasts_nan['date'] == date)
-                & (forecasts_nan['model_short'] == 'TFT')
-            ]['forecasted_discharge'].iloc[0]
-            assert abs(row['forecasted_discharge'] - (lr + tft) / 2) < 0.01
+        em_sorted = em_rows.sort_values('date').reset_index(drop=True)
+        # Date 2026-01-05: mean(LR=100.0, TFT=110.0) = 105.0
+        assert abs(em_sorted.iloc[0]['forecasted_discharge'] - 105.0) < 0.01
+        # Date 2026-01-10: mean(LR=120.0, TFT=130.0) = 125.0
+        assert abs(em_sorted.iloc[1]['forecasted_discharge'] - 125.0) < 0.01
 
     def test_threshold_boundary_values_excluded(
         self, pentad_observed, env_setup,
@@ -635,6 +636,10 @@ class TestMaintenanceDataRouting:
         )
         assert len(gaps) == 1
         assert str(gaps.iloc[0]['code']) == '15001'
+        gap_date_str = pd.Timestamp(
+            gaps.iloc[0]['date']
+        ).strftime('%Y-%m-%d')
+        assert gap_date_str == '2026-01-05'
 
     def test_no_gaps_returns_empty(self, env_setup):
         """All dates have EM -> no gaps detected."""
@@ -942,7 +947,8 @@ class TestEdgeCaseInputs:
             'delta': [5.0],
         })
         joint, skill_out = _make_ensemble(empty_fc, skill, observed)
-        assert joint.empty or 'EM' not in joint['model_short'].values
+        assert joint.empty, "Empty input forecasts should produce empty output"
+        assert skill_out is not None
 
     def test_empty_skill_stats_no_ensemble(self, env_setup):
         """Empty skill_stats -> no ensemble created."""
@@ -1171,6 +1177,12 @@ class TestQuantileFields:
             assert qcol in non_em.columns
             assert non_em[qcol].notna().all()
 
+        # Verify actual quantile values for LR and TFT
+        lr_row = non_em[non_em['model_short'] == 'LR'].iloc[0]
+        tft_row = non_em[non_em['model_short'] == 'TFT'].iloc[0]
+        assert lr_row['q05'] == 80.0
+        assert tft_row['q05'] == 90.0
+
     def test_ensemble_rows_lack_quantiles(self, env_setup):
         """EM rows have NaN/missing for quantile columns (current behavior)."""
         skill = pd.DataFrame({
@@ -1201,7 +1213,11 @@ class TestQuantileFields:
         })
         joint, _ = _make_ensemble(forecasts, skill, observed)
         em_rows = joint[joint['model_short'] == 'EM']
-        assert not em_rows.empty
+        assert len(em_rows) == 1, f"Expected 1 EM row, got {len(em_rows)}"
+        # EM discharge = mean(LR=100, TFT=110) = 105.0
+        assert abs(
+            em_rows.iloc[0]['forecasted_discharge'] - 105.0
+        ) < 0.01
         # EM rows should have NaN for quantile columns
         for qcol in ('q05', 'q95'):
             if qcol in em_rows.columns:

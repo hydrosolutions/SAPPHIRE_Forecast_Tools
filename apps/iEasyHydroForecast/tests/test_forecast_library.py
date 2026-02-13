@@ -2348,5 +2348,136 @@ class TestApiFailureMode(unittest.TestCase):
                 mock_logger.error.assert_not_called()
 
 
+class TestCalculateAllSkillMetrics(unittest.TestCase):
+    """Unit tests for calculate_all_skill_metrics().
+
+    This single-pass function replaced 3 separate metric functions
+    (sdivsigma_nse, mae, forecast_accuracy_hydromet). Tests cover
+    all branches: perfect match, offsets, NaN/inf filtering, single
+    point, constant observed, and missing columns.
+    """
+
+    def test_perfect_match(self):
+        """obs == sim -> mae=0, sdivsigma=0, nse=1, accuracy=1.0."""
+        df = pd.DataFrame({
+            'observed': [100.0, 200.0, 300.0],
+            'simulated': [100.0, 200.0, 300.0],
+            'delta': [5.0, 5.0, 5.0],
+        })
+        result = fl.calculate_all_skill_metrics(
+            df, 'observed', 'simulated', 'delta'
+        )
+        self.assertAlmostEqual(result['mae'], 0.0, places=5)
+        self.assertAlmostEqual(result['sdivsigma'], 0.0, places=5)
+        self.assertAlmostEqual(result['nse'], 1.0, places=5)
+        self.assertAlmostEqual(result['accuracy'], 1.0, places=5)
+        self.assertEqual(result['n_pairs'], 3)
+
+    def test_constant_offset(self):
+        """sim = obs + 2 -> mae=2.0, accuracy=1.0 (|diff|=2 <= delta=5)."""
+        df = pd.DataFrame({
+            'observed': [100.0, 200.0, 300.0],
+            'simulated': [102.0, 202.0, 302.0],
+            'delta': [5.0, 5.0, 5.0],
+        })
+        result = fl.calculate_all_skill_metrics(
+            df, 'observed', 'simulated', 'delta'
+        )
+        self.assertAlmostEqual(result['mae'], 2.0, places=5)
+        self.assertAlmostEqual(result['accuracy'], 1.0, places=5)
+        self.assertEqual(result['n_pairs'], 3)
+        # sdivsigma and nse should be finite
+        self.assertFalse(np.isnan(result['sdivsigma']))
+        self.assertFalse(np.isnan(result['nse']))
+
+    def test_missing_column_raises(self):
+        """Missing required column -> ValueError."""
+        df = pd.DataFrame({
+            'observed': [100.0, 200.0],
+            'simulated': [100.0, 200.0],
+            # 'delta' column missing
+        })
+        with self.assertRaises(ValueError):
+            fl.calculate_all_skill_metrics(
+                df, 'observed', 'simulated', 'delta'
+            )
+
+    def test_all_nan_returns_nan_result(self):
+        """All NaN obs -> nan_result with n_pairs=0."""
+        df = pd.DataFrame({
+            'observed': [np.nan, np.nan],
+            'simulated': [1.0, 2.0],
+            'delta': [5.0, 5.0],
+        })
+        result = fl.calculate_all_skill_metrics(
+            df, 'observed', 'simulated', 'delta'
+        )
+        self.assertEqual(result['n_pairs'], 0)
+        self.assertTrue(np.isnan(result['mae']))
+        self.assertTrue(np.isnan(result['nse']))
+        self.assertTrue(np.isnan(result['sdivsigma']))
+        self.assertTrue(np.isnan(result['accuracy']))
+
+    def test_single_point_returns_mae_accuracy_only(self):
+        """n=1 -> sdivsigma=NaN, nse=NaN, mae and accuracy computed."""
+        df = pd.DataFrame({
+            'observed': [100.0],
+            'simulated': [102.0],
+            'delta': [5.0],
+        })
+        result = fl.calculate_all_skill_metrics(
+            df, 'observed', 'simulated', 'delta'
+        )
+        self.assertAlmostEqual(result['mae'], 2.0, places=5)
+        self.assertEqual(result['n_pairs'], 1)
+        self.assertAlmostEqual(result['accuracy'], 1.0, places=5)
+        # Need >= 2 points for std-based metrics
+        self.assertTrue(np.isnan(result['sdivsigma']))
+        self.assertTrue(np.isnan(result['nse']))
+
+    def test_constant_observed_returns_nan_sdivsigma(self):
+        """All obs identical -> std=0 -> sdivsigma=NaN, nse=NaN."""
+        df = pd.DataFrame({
+            'observed': [100.0, 100.0, 100.0],
+            'simulated': [100.0, 102.0, 98.0],
+            'delta': [5.0, 5.0, 5.0],
+        })
+        result = fl.calculate_all_skill_metrics(
+            df, 'observed', 'simulated', 'delta'
+        )
+        self.assertTrue(np.isnan(result['sdivsigma']))
+        self.assertTrue(np.isnan(result['nse']))
+        # mae should still be computed
+        self.assertFalse(np.isnan(result['mae']))
+        self.assertEqual(result['n_pairs'], 3)
+
+    def test_mixed_nan_filters_correctly(self):
+        """Some NaN, some valid -> metrics computed on valid subset only."""
+        df = pd.DataFrame({
+            'observed': [100.0, np.nan, 300.0],
+            'simulated': [102.0, 200.0, 298.0],
+            'delta': [5.0, 5.0, 5.0],
+        })
+        result = fl.calculate_all_skill_metrics(
+            df, 'observed', 'simulated', 'delta'
+        )
+        self.assertEqual(result['n_pairs'], 2)
+        # mae = mean(|100-102|, |300-298|) = mean(2, 2) = 2.0
+        self.assertAlmostEqual(result['mae'], 2.0, places=5)
+
+    def test_inf_values_filtered(self):
+        """inf in data -> filtered out, metrics on valid subset."""
+        df = pd.DataFrame({
+            'observed': [100.0, np.inf, 300.0],
+            'simulated': [102.0, 200.0, 298.0],
+            'delta': [5.0, 5.0, 5.0],
+        })
+        result = fl.calculate_all_skill_metrics(
+            df, 'observed', 'simulated', 'delta'
+        )
+        self.assertEqual(result['n_pairs'], 2)
+        self.assertAlmostEqual(result['mae'], 2.0, places=5)
+
+
 if __name__ == '__main__':
     unittest.main()
