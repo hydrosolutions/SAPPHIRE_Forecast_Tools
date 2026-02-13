@@ -33,10 +33,10 @@
 | API read tests (postprocessing) | **DONE** — 45 tests in `test_api_read.py`, 16 tests in `test_api_integration.py` |
 | API write test fix | **DONE** — `test_api_read.py` mocks corrected to use `SapphirePreprocessingClient` (commit `ca29b5d`) |
 | `sapphire-api-client` dependency | **DONE** — added to `iEasyHydroForecast/pyproject.toml` and `postprocessing_forecasts/pyproject.toml` |
-| Module separation (operational / nightly gap-fill / yearly recalc) | **DONE** — 3 entry points + 4 src modules + 2 shell scripts, 131 tests (commit `9ce63c8`) |
-| Server-side batch upsert (CRUD) | TODO |
-| Client-side vectorization | TODO |
-| Skill metrics single-pass optimization | TODO |
+| Module separation (operational / nightly gap-fill / yearly recalc) | **DONE** — 3 entry points + 4 src modules + 2 shell scripts, 180 tests (commit `9ce63c8`, `eae7158`) |
+| Server-side batch upsert (CRUD) | **DONE** — `_bulk_upsert()` with PG ON CONFLICT + N+1 fallback (commit `eae7158`) |
+| Client-side vectorization | **DONE** — vectorized record building in 4 `_write_*_to_api()` functions (commit `eae7158`) |
+| Skill metrics single-pass optimization | **DONE** — `calculate_all_skill_metrics()` replaces triple groupby+merge (commit `eae7158`) |
 | Monthly/quarterly/seasonal skill metrics | TODO — Phase 4 (point + CRPS, configurable season) |
 | Bug 6: Single-model ensemble filter only rejects LR | **DONE** — `_is_multi_model_ensemble()` helper replaces hardcoded check |
 | Comprehensive test suite (50+ unit, 12+ integration) | **DONE** — 180 postprocessing tests + 206 iEasyHydroForecast tests pass |
@@ -615,12 +615,120 @@ seasonal:
 | `postprocessing_forecasts/tests/test_performance.py` | 6 | Benchmarks: triple-groupby vs single-pass, isin vs merge, iterrows vs vectorized |
 | `iEasyHydroForecast/tests/test_forecast_library.py` | 206 total | Includes ~15 sdivsigma_nse, ~15 MAE, ~8 accuracy, 5 atomic write, 7 API failure mode tests |
 
-### Remaining Test Gaps
+### Integration Test Data Flow Coverage Audit
+
+The integration tests in `test_integration_postprocessing.py` must cover every step of the three entry points. This section maps the full data flow for each entry point and identifies what is covered vs missing.
+
+#### Operational Entry Point (`postprocessing_operational.py`)
+
+```
+READ skill_metrics CSV/API → FILTER by thresholds → CREATE ensemble mean
+→ WRITE combined forecasts CSV + API
+```
+
+| Step | Covered? | Test class/method |
+|------|----------|-------------------|
+| Read skill metrics from CSV | Yes | `TestOperationalDataRouting.test_skill_metrics_read_from_csv` |
+| Read skill metrics from API (fallback) | Yes | `TestSkillMetricsFallback.test_api_fallback_when_csv_missing` |
+| Threshold filtering (models pass/fail) | Yes | `TestOperationalDataRouting.test_two_stations_independent_filtering`, `test_no_ensemble_when_all_models_fail_threshold`, `test_threshold_boundary_values_excluded` |
+| Ensemble mean calculation | Yes | `TestOperationalDataRouting.test_ensemble_created_and_written_to_csv`, `test_three_models_all_pass_ensemble` |
+| Single-model ensemble rejection | Yes | `TestSingleModelEnsembleBug.test_single_tft_rejected`, `test_single_tide_rejected` |
+| NaN discharge in averaging | Yes | `TestOperationalDataRouting.test_nan_discharge_dropped_before_averaging` |
+| Composition string generation | Yes | `TestOperationalDataRouting.test_composition_survives_csv_roundtrip`, `test_composition_in_api_records` |
+| CSV write (combined forecasts) | Yes | `TestOperationalDataRouting.test_ensemble_created_and_written_to_csv` |
+| API write (combined forecasts) | Yes | `TestOperationalDataRouting.test_api_receives_correct_forecast_records` |
+| CSV write when API disabled | Yes | `TestOperationalDataRouting.test_csv_still_written_when_api_disabled` |
+| API failure modes (warn/fail/ignore) | Yes | `TestApiFailureModes` (3 tests) |
+| Empty inputs (forecasts/skill/observed) | Yes | `TestEdgeCaseInputs` (3 tests) |
+| **Decadal mode (entire operational path)** | **NO** | All tests use pentad only |
+| **Ensemble skill metric recalculation** | **Partial** | EM rows exist but metric *values* (NSE/MAE/accuracy) are not numerically verified |
+
+#### Maintenance Entry Point (`postprocessing_maintenance.py`)
+
+```
+READ combined_forecasts CSV → DETECT gaps → READ data for gap dates
+→ CREATE ensemble for gaps → WRITE gap-filled forecasts CSV + API
+```
+
+| Step | Covered? | Test class/method |
+|------|----------|-------------------|
+| Read combined forecasts CSV | Yes | `TestMaintenanceDataRouting.test_gap_detected_and_filled` |
+| Detect missing ensembles | Yes | `TestMaintenanceDataRouting.test_gap_detected_and_filled`, `test_no_gaps_returns_empty` |
+| Lookback window limits scope | Yes | `TestMaintenanceDataRouting.test_lookback_window_limits_scope` |
+| Preserve existing data | Yes | `TestMaintenanceDataRouting.test_gap_fill_preserves_existing_data` |
+| Year boundary gap detection | Yes | `TestYearAndMonthBoundaries.test_year_boundary_gap_detection`, `test_year_boundary_lookback_window` |
+| **Full gap-fill write path (detect → read → ensemble → save)** | **NO** | Tests stop at gap detection; do not exercise ensemble creation + CSV/API write for gap dates |
+| **Decadal mode (entire maintenance path)** | **NO** | All tests use pentad only |
+
+#### Recalculate Entry Point (`recalculate_skill_metrics.py`)
+
+```
+READ all observed + modelled data → CALCULATE all skill metrics
+→ CREATE ensembles → WRITE skill metrics CSV + API → WRITE forecasts CSV + API
+```
+
+| Step | Covered? | Test class/method |
+|------|----------|-------------------|
+| Entry point calls correct functions (pentad) | Yes | `TestRecalculateSkillMetricsIntegration.test_pentad_mode_calls_correct_functions` |
+| Error exit code on save failure | Yes | `TestRecalculateSkillMetricsIntegration.test_save_error_exits_with_error_code` |
+| **Full recalc pipeline with realistic data** | **NO** | `read_observed_and_modelled_data_pentade()` is mocked to return empty DataFrames |
+| **Skill metric save path (CSV + API)** | **NO** | `save_pentadal_skill_metrics()` is mocked, never tested with real logic |
+| **Decadal mode (entire recalc path)** | **NO** | Only pentad mode tested |
+
+#### Cross-cutting: New Phase 3 Functions
+
+| Function | Unit tests | Integration tests | Notes |
+|----------|-----------|-------------------|-------|
+| `calculate_all_skill_metrics()` | **NO** | Indirect only | Called via `create_ensemble_forecasts` but no dedicated tests for edge cases, numerical correctness, or branch logic (n<1, n<2) |
+| `_get_preprocessing_client()` | **NO** | **NO** | Singleton behavior untested: lazy init, env var read, `SAPPHIRE_API_AVAILABLE=False` |
+| `_get_postprocessing_client()` | **NO** | **NO** | Same as above |
+| `_reset_api_clients()` | **NO** | Indirect only | Called in conftest fixtures but no test verifies globals are cleared |
+| `_bulk_upsert()` (crud.py) | **NO** | **NO** | PG ON CONFLICT path, SQLite fallback, empty batch, mixed insert+update — all untested |
+| `_fallback_upsert()` (crud.py) | **NO** | **NO** | N+1 ORM pattern for non-PG backends — untested |
+| Vectorized `_write_lr_forecast_to_api()` | Yes (comprehensive) | No | Existing unit tests cover the vectorized version |
+| Vectorized `_write_runoff_to_api()` | Yes (comprehensive) | No | Existing unit tests cover the vectorized version |
+| Vectorized `_write_combined_forecast_to_api()` | Yes (comprehensive) | No | Existing unit tests cover the vectorized version |
+| Vectorized `_write_skill_metrics_to_api()` | Yes (comprehensive) | No | Existing unit tests cover the vectorized version |
+
+### Missing Integration Tests
+
+Tests below are ordered by priority. Each test should use real logic for everything inside the boundary and only mock external API clients and filesystem paths.
+
+#### High Priority — Gaps in data flow coverage
+
+| # | Test | File | Description |
+|---|------|------|-------------|
+| 1 | **Decadal operational pipeline** | `test_integration_postprocessing.py` | Mirror `TestOperationalDataRouting.test_ensemble_created_and_written_to_csv` but for decad: read decadal skill CSV, create ensemble with `period_col='decad_in_year'`, verify EM rows and CSV output. Uses `tl.get_decad_in_month`, different column names (`decad_in_year`, `decad_in_month`). |
+| 2 | **Maintenance full gap-fill pipeline** | `test_integration_postprocessing.py` | End-to-end: write combined CSV with one date missing EM → detect gap → read data for gap dates → create ensemble → verify EM rows appended to CSV + API write called. Currently tests stop at gap detection. |
+| 3 | **Recalculate with realistic data** | `test_integration_postprocessing.py` | Feed small but realistic observed + modelled DataFrames (5 stations × 3 pentads × 2 models, ~30 rows) into `calculate_skill_metrics_pentad()` with real logic. Verify: (a) skill_stats has correct shape, (b) EM rows created for qualifying models, (c) CSV written, (d) API write called with correct records. |
+| 4 | **Skill metric save path (CSV + API)** | `test_integration_postprocessing.py` | Call `save_pentadal_skill_metrics()` with known skill_stats DataFrame. Verify CSV written with correct columns/sort order. Mock API client and verify `write_skill_metrics()` called with correctly mapped records (model_short → API model_type, NaN → None). |
+| 5 | **`calculate_all_skill_metrics()` unit tests** | `test_forecast_library.py` | Dedicated test class with known inputs/outputs: (a) happy path — verify all 6 metric values against hand-calculated results, (b) single data point — MAE/accuracy calculated, sdivsigma/NSE return NaN, (c) all-NaN input — returns nan_result, (d) missing column — raises ValueError, (e) constant observations — denominator near zero, sdivsigma/NSE return NaN. |
+
+#### Medium Priority — Edge cases and new functions
+
+| # | Test | File | Description |
+|---|------|------|-------------|
+| 6 | **Ensemble skill metric numerical verification** | `test_integration_postprocessing.py` | Given known observed (100, 110) and ensemble forecast (105, 108), assert specific NSE, MAE, accuracy, sdivsigma values for the EM row. Currently only checks EM rows *exist*. |
+| 7 | **Leap year boundary** | `test_integration_postprocessing.py` | Forecasts on Feb 29 (pentad 12) and Mar 1 (pentad 13) in a leap year → ensemble created for both dates with correct pentad_in_year values. |
+| 8 | **API client singleton behavior** | `test_forecast_library.py` | (a) `_get_preprocessing_client()` returns same object on 2nd call, (b) `_reset_api_clients()` causes next call to create a new object, (c) returns `None` when `SAPPHIRE_API_AVAILABLE=False`. |
+| 9 | **Decadal maintenance gap-fill** | `test_integration_postprocessing.py` | Same as #2 but for decad: combined CSV with `decad_in_year` column, gap detection uses decadal period, ensemble created with `period_col='decad_in_year'`. |
+| 10 | **Decadal recalculate pipeline** | `test_integration_postprocessing.py` | Same as #3 but for decad: feed data into `calculate_skill_metrics_decade()`, verify decadal skill_stats shape and EM rows. |
+
+#### Lower Priority — Server-side CRUD tests
+
+| # | Test | File | Description |
+|---|------|------|-------------|
+| 11 | **`_bulk_upsert` insert-only** | `sapphire/services/postprocessing/tests/test_crud.py` (new file) | Insert 10 new forecast records via `create_forecast()`, verify all 10 returned and queryable. |
+| 12 | **`_bulk_upsert` update-only** | `test_crud.py` | Insert 5 records, then upsert same 5 with changed `forecasted_discharge` → verify updated values. |
+| 13 | **`_bulk_upsert` mixed insert+update** | `test_crud.py` | Insert 3 records, then upsert 5 (3 existing + 2 new) → verify 5 total records with correct values. |
+| 14 | **`_bulk_upsert` empty batch** | `test_crud.py` | Call `create_forecast()` with empty `data` list → returns empty list, no DB error. |
+| 15 | **`_fallback_upsert` (SQLite path)** | `test_crud.py` | Force `PG_AVAILABLE=False` or use SQLite backend. Verify insert, update, and mixed insert+update all work correctly via the N+1 ORM path. |
+| 16 | **CRUD get with filters** | `test_crud.py` | Insert forecasts with varied horizon/code/date, then query with different filter combinations. Verify correct records returned. |
+
+### Remaining Test Gaps (non-integration)
 
 | Gap | Priority | Notes |
 |-----|----------|-------|
-| Ensemble skill metric numerical verification | Medium | No test checks actual NSE/MAE/accuracy *values* for EM — only checks that EM rows exist. Should add a test that asserts specific skill values given known observed + ensemble forecasts. |
-| `_calculate_ensemble_skill()` unit test | Low | Only tested indirectly via `create_ensemble_forecasts`. The groupby wiring (column names, merge of 3 metric results) is not tested in isolation. |
 | `src/api_writer.py` tests | Deferred | Module not yet extracted (Phase 3) |
 | `src/skill_metrics.py` tests | Deferred | Module not yet extracted (Phase 3) |
 | `src/file_writer.py` tests | Deferred | Module not yet extracted (Phase 3) |
@@ -666,13 +774,13 @@ seasonal:
 
 ### Phase 3: Performance Improvements
 
-- [ ] Batch upsert in CRUD (server-side)
-- [ ] Replace `iterrows()` with vectorized operations (client-side)
-- [ ] Combine triple `groupby.apply()` into single-pass
-- [ ] Fix concat-in-loop patterns (`setup_library.py`)
-- [ ] Fix nested loops in virtual station calculation
-- [ ] Replace multiple `.isin()` with merge
-- [ ] Implement API client singleton
+- [x] ~~Batch upsert in CRUD (server-side)~~ — `_bulk_upsert()` with PG `ON CONFLICT DO UPDATE` + N+1 fallback for SQLite (commit `eae7158`)
+- [x] ~~Replace `iterrows()` with vectorized operations (client-side)~~ — vectorized record building in `_write_lr_forecast_to_api`, `_write_runoff_to_api`, `_write_combined_forecast_to_api`, `_write_skill_metrics_to_api` (commit `eae7158`)
+- [x] ~~Combine triple `groupby.apply()` into single-pass~~ — `calculate_all_skill_metrics()` in pentad + decad + ensemble paths (commit `eae7158`)
+- [x] ~~Fix concat-in-loop patterns (`setup_library.py`)~~ — `add_hydroposts()` + `calculate_virtual_stations_data()` (commit `eae7158`)
+- [ ] Fix nested loops in virtual station calculation — further vectorization with merge/pivot (deferred)
+- [x] ~~Replace multiple `.isin()` with merge~~ — ensemble filtering in pentad + decad (commit `eae7158`)
+- [x] ~~Implement API client singleton~~ — `_get_preprocessing_client()` + `_get_postprocessing_client()` + `_reset_api_clients()` (commit `eae7158`)
 
 ### Phase 4: Monthly, Quarterly & Seasonal Skill Metrics
 
@@ -689,6 +797,8 @@ seasonal:
 
 ### Phase 5: Testing
 
+#### Completed
+
 - [x] ~~Unit tests for `src/ensemble_calculator.py`~~ (25 tests — 15 original + 4 `_is_multi_model_ensemble` + 2 single-TFT/TiDE discard + 2 model name consistency + 2 existing)
 - [x] ~~Unit tests for `src/data_reader.py`~~ (8 tests)
 - [x] ~~Unit tests for `src/gap_detector.py`~~ (6 tests)
@@ -697,9 +807,28 @@ seasonal:
 - [x] ~~Integration tests for recalc workflow~~ (4 tests)
 - [x] ~~Integration test hardening~~ (35 tests in `test_integration_postprocessing.py` — 14 original + 21 new: single-model ensemble bug (3), extended operational routing (7), edge case inputs (3), year/month boundaries (4), quantile fields (2), recalc entry point (2))
 - [x] ~~Bug 6 fix: single-model ensemble filter~~ (`_is_multi_model_ensemble()` helper in `ensemble_calculator.py`, unit + integration tests)
-- [ ] Add numerical verification test for ensemble skill metrics (EM NSE/MAE/accuracy values)
-- [ ] Unit test structure (`tests/unit/`, `tests/integration/`) — not adopted; tests kept flat in `tests/`
-- [ ] Performance benchmarks
+
+#### High Priority — Data flow gaps
+
+- [ ] Decadal operational pipeline integration test (mirror pentad tests for decad mode)
+- [ ] Maintenance full gap-fill pipeline (detect → read → ensemble → save, currently stops at detection)
+- [ ] Recalculate with realistic data (currently mocks return empty DataFrames)
+- [ ] Skill metric save path integration test (CSV write + API write with field mapping)
+- [ ] `calculate_all_skill_metrics()` unit tests (edge cases, numerical correctness, branch logic)
+
+#### Medium Priority — Edge cases and new functions
+
+- [ ] Ensemble skill metric numerical verification (assert specific NSE/MAE/accuracy values for EM)
+- [ ] Leap year boundary (Feb 29 pentad/decad handling)
+- [ ] API client singleton behavior tests (`_get_*_client()`, `_reset_api_clients()`)
+- [ ] Decadal maintenance gap-fill integration test
+- [ ] Decadal recalculate pipeline integration test
+
+#### Lower Priority — Server-side CRUD
+
+- [ ] `_bulk_upsert` tests: insert-only, update-only, mixed, empty batch (`test_crud.py`)
+- [ ] `_fallback_upsert` tests: SQLite N+1 path
+- [ ] CRUD get with filter combinations
 - [ ] Unit tests for deferred `src/` modules (`api_writer`, `skill_metrics`, `file_writer`)
 
 ---
@@ -965,3 +1094,4 @@ The following plans are **superseded** by this unified plan (moved to `archive/`
 | 2026-02-12 | Bea/Claude | Phase 4 expanded: renamed to "Monthly, Quarterly & Seasonal Skill Metrics". Monthly skill metrics calculated in postprocessing_forecasts (reads long_forecasts from API). Dual metrics: Q50-based traditional (NSE/MAE/accuracy) + CRPS. CRPS is cross-cutting — applies to pentad/decad too once quantile columns are populated (currently blocked). Quarterly/seasonal: use direct records from long_term_forecasting if available, otherwise aggregate from monthly. Note added: refine long_term_forecasting integration once module is finalized. Configurable season definition via config.yaml. Monthly observations aggregated on-the-fly from daily discharge (≥50% coverage) |
 | 2026-02-12 | Bea/Claude | Post-implementation review: updated Phase 2 checklist (10 items done, 3 deferred to Phase 3). Updated Phase 5 test inventory to actual counts (131 postprocessing tests). Documented remaining test gaps: ensemble skill metric numerical verification, `_calculate_ensemble_skill()` isolation test. Updated status summary test counts. |
 | 2026-02-13 | Bea/Claude | Bug 6 fix: single-model ensemble filter in `ensemble_calculator.py` — added `_is_multi_model_ensemble()` helper replacing hardcoded LR-only rejection. Integration test hardening: 21 new tests across 6 classes (single-model bug e2e, extended data routing, edge case inputs, year/month boundaries, quantile fields, recalc entry point). Model name consistency tests added. Total: 180 postprocessing tests, all passing. |
+| 2026-02-13 | Bea/Claude | Phase 3 performance items marked DONE (batch upsert, vectorized writes, single-pass metrics, concat fixes, .isin→merge, API singletons). Phase 5 rewritten: full data flow audit per entry point (operational/maintenance/recalc), coverage matrix showing 35 covered steps and 16 missing integration tests prioritised into high/medium/lower tiers. Key gaps: decadal mode (all entry points), maintenance full write path, recalc with realistic data, calculate_all_skill_metrics unit tests, crud.py tests (zero coverage). |
