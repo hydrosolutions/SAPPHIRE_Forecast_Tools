@@ -206,3 +206,98 @@ class TestMaintenanceWorkflow:
 
                 assert exc_info.value.code == 0
                 mocks['gap_detector'].detect_missing_ensembles.assert_not_called()
+
+    def test_invalid_mode_exits_with_error(self, mock_data, mock_skill):
+        """Invalid SAPPHIRE_PREDICTION_MODE exits with code 1."""
+        with patch.dict(os.environ, {'SAPPHIRE_PREDICTION_MODE': 'INVALID'}):
+            with patch.dict(sys.modules, {}):
+                mocks = _setup_mocks(mock_data, mock_skill)
+
+                module, spec = import_maintenance_module()
+                spec.loader.exec_module(module)
+
+                with pytest.raises(SystemExit) as exc_info:
+                    module.postprocessing_maintenance()
+
+                assert exc_info.value.code == 1
+                mocks['gap_detector'].read_combined_forecasts.assert_not_called()
+
+    def test_both_mode_processes_both(self, mock_data, mock_skill):
+        """BOTH mode processes pentad and decad gap detection."""
+        combined = pd.DataFrame({
+            'date': pd.to_datetime(['2024-01-05']),
+            'code': ['10001'],
+            'model_short': ['EM'],
+        })
+        with patch.dict(os.environ, {'SAPPHIRE_PREDICTION_MODE': 'BOTH'}):
+            with patch.dict(sys.modules, {}):
+                mocks = _setup_mocks(
+                    mock_data, mock_skill, combined=combined,
+                )
+
+                module, spec = import_maintenance_module()
+                spec.loader.exec_module(module)
+
+                with pytest.raises(SystemExit) as exc_info:
+                    module.postprocessing_maintenance()
+
+                assert exc_info.value.code == 0
+                # Both pentad and decad combined forecasts should be read
+                calls = mocks['gap_detector'].read_combined_forecasts.call_args_list
+                horizons = [c[0][0] for c in calls]
+                assert 'pentad' in horizons
+                assert 'decad' in horizons
+
+    def test_decad_mode_only(self, mock_data, mock_skill):
+        """DECAD mode only reads decad combined forecasts."""
+        combined = pd.DataFrame({
+            'date': pd.to_datetime(['2024-01-05']),
+            'code': ['10001'],
+            'model_short': ['EM'],
+        })
+        with patch.dict(os.environ, {'SAPPHIRE_PREDICTION_MODE': 'DECAD'}):
+            with patch.dict(sys.modules, {}):
+                mocks = _setup_mocks(
+                    mock_data, mock_skill, combined=combined,
+                )
+
+                module, spec = import_maintenance_module()
+                spec.loader.exec_module(module)
+
+                with pytest.raises(SystemExit) as exc_info:
+                    module.postprocessing_maintenance()
+
+                assert exc_info.value.code == 0
+                calls = mocks['gap_detector'].read_combined_forecasts.call_args_list
+                horizons = [c[0][0] for c in calls]
+                assert 'decad' in horizons
+                assert 'pentad' not in horizons
+
+    def test_save_error_causes_exit_1(self, mock_data, mock_skill):
+        """Save failure during gap-fill causes exit code 1."""
+        combined = pd.DataFrame({
+            'date': pd.to_datetime(['2024-01-05'] * 2),
+            'code': ['10001'] * 2,
+            'model_short': ['LR', 'TFT'],
+        })
+        gaps = pd.DataFrame({
+            'date': pd.to_datetime(['2024-01-05']),
+            'code': ['10001'],
+        })
+        with patch.dict(os.environ, {'SAPPHIRE_PREDICTION_MODE': 'PENTAD'}):
+            with patch.dict(sys.modules, {}):
+                mocks = _setup_mocks(
+                    mock_data, mock_skill,
+                    combined=combined, gaps=gaps,
+                )
+                mocks['fl'].save_forecast_data_pentad.return_value = (
+                    "Error: disk full"
+                )
+
+                module, spec = import_maintenance_module()
+                spec.loader.exec_module(module)
+
+                with pytest.raises(SystemExit) as exc_info:
+                    module.postprocessing_maintenance()
+
+                assert exc_info.value.code == 1

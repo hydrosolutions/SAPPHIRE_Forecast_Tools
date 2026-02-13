@@ -192,9 +192,15 @@ def test_log_most_recent_forecasts_pentad_nat_dates(mock_to_csv, mock_getenv, mo
     # This should NOT raise IndexError with the fix
     result = log_most_recent_forecasts_pentad(combined_data)
 
-    # The result should include the valid station
-    assert len(result) >= 1
-    assert '15102' in result['code'].values
+    # The result should include the valid station with exact count
+    assert len(result) == 1, (
+        f"Only station 15102 has valid dates, expected 1 row, got {len(result)}"
+    )
+    assert result.iloc[0]['code'] == '15102'
+    # Verify model discharge values for valid station
+    assert result.iloc[0]['LR'] == pytest.approx(125.4)
+    assert result.iloc[0]['TFT'] == pytest.approx(130.2)
+    assert result.iloc[0]['EM'] == pytest.approx(129.1)
 
 
 @patch('os.makedirs')
@@ -238,8 +244,20 @@ def test_log_most_recent_forecasts_pentad_missing_code_no_matching_date(mock_to_
     # This should NOT raise IndexError
     result = log_most_recent_forecasts_pentad(combined_data)
 
-    # The valid station should be in the result
+    # Both stations present: 15102 with forecasts, 15999 as missing-code row
+    assert len(result) == 2, (
+        f"Expected 2 rows (1 active + 1 missing-code), got {len(result)}"
+    )
     assert '15102' in result['code'].values
+    assert '15999' in result['code'].values
+    # Active station has real forecasts
+    row_15102 = result[result['code'] == '15102'].iloc[0]
+    assert row_15102['LR'] == pytest.approx(125.4)
+    assert row_15102['TFT'] == pytest.approx(130.2)
+    # Missing-code station has NaN placeholders for all models
+    row_15999 = result[result['code'] == '15999'].iloc[0]
+    assert pd.isna(row_15999['LR'])
+    assert pd.isna(row_15999['TFT'])
 
 
 # ============================================================================
@@ -274,16 +292,26 @@ def test_log_most_recent_forecasts_decade(mock_to_csv, mock_getenv, mock_makedir
 
     result = log_most_recent_forecasts_decade(sample_decade_data)
 
-    # Verify the result is a DataFrame
+    # Verify the result is a DataFrame with correct shape
     assert isinstance(result, pd.DataFrame)
-
-    # Check that we have the expected number of stations
     assert len(result) == 3
 
     # Check that required columns exist
     assert 'code' in result.columns
     assert 'date' in result.columns
     assert 'decad_in_month' in result.columns
+
+    # Verify model columns present and spot-check values
+    for model in ['LR', 'TFT', 'TIDE', 'EM']:
+        assert model in result.columns, f"Model column {model} missing"
+    # Spot-check station 15102 discharge values
+    row_15102 = result[result['code'] == '15102'].iloc[0]
+    assert row_15102['LR'] == pytest.approx(125.4)
+    assert row_15102['TFT'] == pytest.approx(130.2)
+    assert row_15102['EM'] == pytest.approx(129.1)
+    # All dates are the sample date
+    sample_date = dt.datetime(2023, 5, 25)
+    assert all(d == sample_date for d in result['date'])
 
 
 @patch('os.makedirs')
@@ -340,5 +368,12 @@ def test_log_most_recent_forecasts_decade_nat_dates(mock_to_csv, mock_getenv, mo
     # Should NOT raise IndexError
     result = log_most_recent_forecasts_decade(combined_data)
 
-    assert len(result) >= 1
-    assert '15102' in result['code'].values
+    # Exact count: only station 15102 has valid dates
+    assert len(result) == 1, (
+        f"Only station 15102 has valid dates, expected 1 row, got {len(result)}"
+    )
+    assert result.iloc[0]['code'] == '15102'
+    # Verify model discharge values
+    assert result.iloc[0]['LR'] == pytest.approx(125.4)
+    assert result.iloc[0]['TFT'] == pytest.approx(130.2)
+    assert result.iloc[0]['EM'] == pytest.approx(129.1)

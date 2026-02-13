@@ -236,3 +236,68 @@ class TestReadSkillMetricsIntegration:
                 result = read_skill_metrics('pentad')
                 assert isinstance(result, pd.DataFrame)
                 assert result.empty
+
+    def test_corrupted_csv_falls_back_to_api(self, tmp_path):
+        """CSV exists but contains garbled/binary content -> falls back to API.
+
+        Operational scenario: disk corruption or partial write during crash.
+        """
+        csv_file = tmp_path / "pentad_skill.csv"
+        csv_file.write_bytes(b'\x00\x01\x02\xff\xfe garbled content')
+
+        api_df = pd.DataFrame({
+            'pentad_in_year': [1, 2],
+            'code': ['10001', '10002'],
+            'model_short': ['LR', 'TFT'],
+            'model_long': [
+                'Linear regression (LR)',
+                'Temporal Fusion Transformer (TFT)',
+            ],
+            'sdivsigma': [0.3, 0.4],
+            'nse': [0.9, 0.85],
+            'delta': [5.0, 6.0],
+            'accuracy': [0.95, 0.88],
+            'mae': [2.1, 3.2],
+            'n_pairs': [10, 12],
+        })
+
+        with patch.dict(os.environ, {
+            'ieasyforecast_intermediate_data_path': str(tmp_path),
+            'ieasyforecast_pentadal_skill_metrics_file': 'pentad_skill.csv',
+        }):
+            with patch(
+                'src.data_reader._read_skill_metrics_api',
+                return_value=api_df,
+            ) as mock_api:
+                result = read_skill_metrics('pentad')
+                # CSV read fails -> API fallback called
+                mock_api.assert_called_once()
+                assert len(result) == 2
+                assert result.iloc[0]['code'] == '10001'
+                assert result.iloc[0]['sdivsigma'] == 0.3
+
+    def test_truncated_csv_with_partial_rows_falls_back(self, tmp_path):
+        """CSV with headers + truncated row (no newline) -> exception -> API.
+
+        Operational scenario: process killed mid-write.
+        """
+        csv_file = tmp_path / "pentad_skill.csv"
+        # Write a valid header but a truncated data row
+        csv_file.write_text(
+            "pentad_in_year,code,model_short,sdivsigma\n"
+            "1,10001,LR,0.3\n"
+        )
+
+        # This CSV is actually valid (1 row), so CSV read succeeds
+        with patch.dict(os.environ, {
+            'ieasyforecast_intermediate_data_path': str(tmp_path),
+            'ieasyforecast_pentadal_skill_metrics_file': 'pentad_skill.csv',
+        }):
+            with patch(
+                'src.data_reader._read_skill_metrics_api'
+            ) as mock_api:
+                result = read_skill_metrics('pentad')
+                # CSV was valid so API should NOT be called
+                mock_api.assert_not_called()
+                assert len(result) == 1
+                assert result.iloc[0]['code'] == '10001'

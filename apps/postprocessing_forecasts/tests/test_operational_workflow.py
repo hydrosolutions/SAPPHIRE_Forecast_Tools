@@ -177,3 +177,20 @@ class TestOperationalWorkflow:
 
                 assert exc_info.value.code == 0
                 mocks['ensemble_calc'].create_ensemble_forecasts.assert_not_called()
+
+    def test_invalid_mode_exits_with_error(self, mock_data, mock_skill):
+        """Invalid SAPPHIRE_PREDICTION_MODE exits with code 1."""
+        with patch.dict(os.environ, {'SAPPHIRE_PREDICTION_MODE': 'INVALID'}):
+            with patch.dict(sys.modules, {}):
+                mocks = _setup_mocks('INVALID', mock_data, mock_skill)
+
+                module, spec = import_operational_module()
+                spec.loader.exec_module(module)
+
+                with pytest.raises(SystemExit) as exc_info:
+                    module.postprocessing_operational()
+
+                assert exc_info.value.code == 1
+                # No data processing should have occurred
+                mocks['sl'].read_observed_and_modelled_data_pentade.assert_not_called()
+                mocks['sl'].read_observed_and_modelled_data_decade.assert_not_called()

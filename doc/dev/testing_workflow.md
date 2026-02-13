@@ -14,13 +14,18 @@ This document describes the testing workflow for validating changes before they 
 ### Initial Setup (One-Time)
 
 1. Clone the repository
-2. Set up virtual environments for modules you'll be testing:
+2. Set up virtual environments for app modules you'll be testing:
    ```bash
    cd apps/<module_name>
    uv sync --all-extras
    ```
+3. Set up virtual environments for sapphire services you'll be testing:
+   ```bash
+   cd sapphire/services/<service_name>
+   uv sync --all-extras
+   ```
 
-> **Note**: Each module has its own `.venv/` - they are NOT shared.
+> **Note**: Each module and service has its own `.venv/` - they are NOT shared.
 
 ### Key Environment Variables
 
@@ -54,16 +59,17 @@ All stages must pass before changes are considered production-ready.
 
 ### Running Tests
 
-All tests are run from the `apps/` directory.
+All tests are run from the `apps/` directory. The `run_tests.sh` script runs both
+app module tests and sapphire service tests.
 
-**Recommended** - run all module tests:
+**Recommended** - run all tests (app modules + services):
 
 ```bash
 cd apps
 SAPPHIRE_TEST_ENV=True bash run_tests.sh
 ```
 
-To run a single module:
+To run a single app module:
 
 ```bash
 cd apps
@@ -73,7 +79,20 @@ SAPPHIRE_TEST_ENV=True bash run_tests.sh <module_name>
 SAPPHIRE_TEST_ENV=True bash run_tests.sh preprocessing_runoff
 ```
 
-### Modules with Tests
+To run a single sapphire service (use the `service:` prefix):
+
+```bash
+cd apps
+bash run_tests.sh service:<service_name>
+
+# Example: test postprocessing service only
+bash run_tests.sh service:postprocessing
+```
+
+> **Note**: Service tests do not require `SAPPHIRE_TEST_ENV` — they use SQLite
+> in-memory databases and are fully self-contained.
+
+### App Modules with Tests
 
 | Module | Test Framework | Test Directory | Notes |
 |--------|---------------|----------------|-------|
@@ -85,6 +104,12 @@ SAPPHIRE_TEST_ENV=True bash run_tests.sh preprocessing_runoff
 | linear_regression | pytest | `test/` | Forecasting models |
 
 > **Note**: Test directories are named inconsistently (`test/` vs `tests/`). The `run_tests.sh` script handles both.
+
+### Sapphire Services with Tests
+
+| Service | Location | Test Directory | Notes |
+|---------|----------|----------------|-------|
+| postprocessing | `sapphire/services/postprocessing/` | `tests/` | CRUD, endpoint, and data migrator tests (SQLite in-memory) |
 
 ### Dashboard Integration Tests (Optional)
 
@@ -112,9 +137,10 @@ TEST_DECAD=true bash run_tests.sh forecast_dashboard   # Decad production
 
 | Symptom | Cause | Resolution |
 |---------|-------|------------|
-| "No .venv found" | Missing virtual environment | Run `uv sync --all-extras` in module directory |
-| Tests connect to production | Missing env var | Ensure `SAPPHIRE_TEST_ENV=True` is set |
+| "No .venv found" | Missing virtual environment | Run `uv sync --all-extras` in the module or service directory |
+| Tests connect to production | Missing env var | Ensure `SAPPHIRE_TEST_ENV=True` is set (app modules only) |
 | Import errors | Wrong directory | Run from `apps/` directory |
+| "Unknown module" | Typo or missing `service:` prefix | Use `service:<name>` for services, plain name for app modules |
 
 ---
 
@@ -528,7 +554,8 @@ docker build -f ./apps/<module>/Dockerfile . 2>&1 | tee build.log
 | Action | Command |
 |--------|---------|
 | **Run all tests (recommended)** | `cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh` |
-| Run single module | `cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh <module>` |
+| Run single app module | `cd apps && SAPPHIRE_TEST_ENV=True bash run_tests.sh <module>` |
+| Run single service | `cd apps && bash run_tests.sh service:<service>` |
 | Run with verbose | `cd apps/<module> && SAPPHIRE_TEST_ENV=True .venv/bin/pytest test*/ -v` |
 | **Full local pipeline (recommended)** | `SAPPHIRE_PREDICTION_MODE=BOTH ieasyhydroforecast_env_file_path=<path> bash apps/run_locally.sh all` |
 | **Full maintenance (recommended)** | `SAPPHIRE_PREDICTION_MODE=BOTH ieasyhydroforecast_env_file_path=<path> bash apps/run_locally.sh maintenance` |

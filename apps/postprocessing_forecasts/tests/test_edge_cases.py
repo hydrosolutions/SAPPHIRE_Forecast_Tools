@@ -221,6 +221,95 @@ class TestNaNHandling:
             "All-NaN discharge should produce no ensemble"
         )
 
+    def test_all_nan_discharge_preserves_original_rows(self):
+        """All NaN discharge: no EM created AND original rows returned
+        unchanged (count + values preserved)."""
+        skill = pd.DataFrame([
+            _make_skill_row('10001', 1, 'LR'),
+            _make_skill_row('10001', 1, 'TFT'),
+        ])
+        forecasts = pd.DataFrame([
+            _make_forecast_row(
+                '10001', '2024-01-05', 1, '1', 'LR', np.nan
+            ),
+            _make_forecast_row(
+                '10001', '2024-01-05', 1, '1', 'TFT', np.nan
+            ),
+        ])
+        observed = pd.DataFrame({
+            'code': ['10001'],
+            'date': pd.to_datetime(['2024-01-05']),
+            'discharge_avg': [105.0],
+            'delta': [5.0],
+        })
+        with patch.dict(os.environ, DEFAULT_THRESHOLDS):
+            joint, skill_out = _make_ensemble_pentad(
+                forecasts, skill, observed,
+            )
+        assert 'EM' not in joint['model_short'].values
+        assert len(joint) == 2, (
+            f"Original 2 rows must be preserved, got {len(joint)}"
+        )
+        assert set(joint['model_short'].values) == {'LR', 'TFT'}
+        # Discharge values preserved (both NaN)
+        assert joint['forecasted_discharge'].isna().all(), (
+            "Original NaN discharges must not be altered"
+        )
+        # Skill stats returned unchanged (no EM appended)
+        assert 'EM' not in skill_out['model_short'].values
+
+    def test_multi_station_all_nan_one_valid_other(self):
+        """Station A: all NaN discharge -> no EM.
+        Station B: valid discharge -> EM created.
+
+        Operational scenario: one station's sensor fails while others work.
+        """
+        skill = pd.DataFrame([
+            _make_skill_row('10001', 1, 'LR'),
+            _make_skill_row('10001', 1, 'TFT'),
+            _make_skill_row('10002', 1, 'LR'),
+            _make_skill_row('10002', 1, 'TFT'),
+        ])
+        forecasts = pd.DataFrame([
+            # Station 10001: all NaN (sensor failure)
+            _make_forecast_row(
+                '10001', '2024-01-05', 1, '1', 'LR', np.nan
+            ),
+            _make_forecast_row(
+                '10001', '2024-01-05', 1, '1', 'TFT', np.nan
+            ),
+            # Station 10002: valid data
+            _make_forecast_row(
+                '10002', '2024-01-05', 1, '1', 'LR', 100.0
+            ),
+            _make_forecast_row(
+                '10002', '2024-01-05', 1, '1', 'TFT', 110.0
+            ),
+        ])
+        observed = pd.DataFrame({
+            'code': ['10001', '10002'],
+            'date': pd.to_datetime(['2024-01-05', '2024-01-05']),
+            'discharge_avg': [105.0, 105.0],
+            'delta': [5.0, 5.0],
+        })
+        with patch.dict(os.environ, DEFAULT_THRESHOLDS):
+            joint, _ = _make_ensemble_pentad(
+                forecasts, skill, observed,
+            )
+        em_rows = joint[joint['model_short'] == 'EM']
+        assert len(em_rows) == 1, (
+            f"Expected 1 EM row (station 10002 only), got {len(em_rows)}"
+        )
+        assert em_rows.iloc[0]['code'] == '10002'
+        assert abs(em_rows.iloc[0]['forecasted_discharge'] - 105.0) < 0.01, (
+            "EM = mean(100, 110) = 105.0"
+        )
+        # Station 10001 original rows preserved
+        s1_rows = joint[joint['code'] == '10001']
+        assert len(s1_rows) == 2
+        assert set(s1_rows['model_short'].values) == {'LR', 'TFT'}
+        assert s1_rows['forecasted_discharge'].isna().all()
+
     def test_ensemble_mixed_nan_discharge(self):
         """LR=100, TFT=NaN, TiDE=90 all pass skill -> EM = mean(100,90) = 95."""
         skill = pd.DataFrame([
@@ -314,6 +403,16 @@ class TestDischargeValueBoundaries:
         assert abs(
             em.iloc[0]['forecasted_discharge'] - 11000.0
         ) < 0.01
+
+    def test_negative_discharge_ensemble(self, _two_model_skill, _observed):
+        """Negative discharge: LR=-5.0, TFT=10.0 -> EM = 2.5.
+
+        Negative discharge is physically meaningless but should not crash.
+        Models may produce negative values during low-flow extrapolation.
+        """
+        em = self._run_ensemble(-5.0, 10.0, _two_model_skill, _observed)
+        assert len(em) == 1
+        assert abs(em.iloc[0]['forecasted_discharge'] - 2.5) < 0.01
 
     def test_identical_discharge_all_models(self):
         """LR=TFT=TiDE=105.0 (3 models pass) -> EM = 105.0."""
@@ -581,6 +680,128 @@ class TestThresholdBehavior:
             "Failing any single threshold should exclude the model"
         )
 
+    def test_custom_relaxed_thresholds_include_all(self):
+        """Relaxed thresholds (sdivsigma=1.0, accuracy=0.5, nse=0.4)
+        include TiDE that normally fails default thresholds."""
+        df = pd.DataFrame([
+            _make_skill_row('10001', 1, 'LR', sdivsigma=0.3, nse=0.95,
+                            accuracy=0.95),
+            _make_skill_row('10001', 1, 'TFT', sdivsigma=0.4, nse=0.9,
+                            accuracy=0.88),
+            _make_skill_row('10001', 1, 'TiDE', sdivsigma=0.9, nse=0.5,
+                            accuracy=0.6),
+        ])
+        result = filter_for_highly_skilled_forecasts(
+            df, threshold_sdivsigma=1.0,
+            threshold_accuracy=0.5, threshold_nse=0.4,
+        )
+        assert len(result) == 3, (
+            "Relaxed thresholds should include all 3 models"
+        )
+        assert set(result['model_short']) == {'LR', 'TFT', 'TiDE'}
+
+    def test_custom_strict_sdivsigma_only(self):
+        """Very strict sdivsigma (0.2) with relaxed others: only LR passes
+        (sdivsigma=0.15), TFT (0.4) excluded."""
+        df = pd.DataFrame([
+            _make_skill_row('10001', 1, 'LR', sdivsigma=0.15, nse=0.85,
+                            accuracy=0.82),
+            _make_skill_row('10001', 1, 'TFT', sdivsigma=0.4, nse=0.9,
+                            accuracy=0.88),
+        ])
+        result = filter_for_highly_skilled_forecasts(
+            df, threshold_sdivsigma=0.2,
+            threshold_accuracy=0.0, threshold_nse=0.0,
+        )
+        assert len(result) == 1
+        assert result.iloc[0]['model_short'] == 'LR'
+
+    def test_custom_thresholds_via_env_vars(self):
+        """Thresholds set via environment variables (not parameters)."""
+        df = pd.DataFrame([
+            _make_skill_row('10001', 1, 'LR', sdivsigma=0.3, nse=0.95,
+                            accuracy=0.95),
+            _make_skill_row('10001', 1, 'TFT', sdivsigma=0.4, nse=0.9,
+                            accuracy=0.88),
+            _make_skill_row('10001', 1, 'TiDE', sdivsigma=0.9, nse=0.5,
+                            accuracy=0.6),
+        ])
+        custom_env = {
+            'ieasyhydroforecast_efficiency_threshold': '1.0',
+            'ieasyhydroforecast_accuracy_threshold': '0.5',
+            'ieasyhydroforecast_nse_threshold': '0.4',
+        }
+        with patch.dict(os.environ, custom_env):
+            result = filter_for_highly_skilled_forecasts(df)
+        assert len(result) == 3, (
+            "Relaxed env-var thresholds should include all models"
+        )
+
+    def test_custom_thresholds_change_ensemble_composition(self):
+        """Relaxed thresholds include TiDE -> EM = mean(LR, TFT, TiDE)
+        instead of default EM = mean(LR, TFT)."""
+        skill = pd.DataFrame([
+            _make_skill_row('10001', 1, 'LR', sdivsigma=0.3, nse=0.95,
+                            accuracy=0.95),
+            _make_skill_row('10001', 1, 'TFT', sdivsigma=0.4, nse=0.9,
+                            accuracy=0.88),
+            _make_skill_row('10001', 1, 'TiDE', sdivsigma=0.9, nse=0.5,
+                            accuracy=0.6),
+        ])
+        forecasts = pd.DataFrame([
+            _make_forecast_row('10001', '2024-01-05', 1, '1', 'LR', 100.0),
+            _make_forecast_row('10001', '2024-01-05', 1, '1', 'TFT', 110.0),
+            _make_forecast_row('10001', '2024-01-05', 1, '1', 'TiDE', 90.0),
+        ])
+        observed = pd.DataFrame({
+            'code': ['10001'],
+            'date': pd.to_datetime(['2024-01-05']),
+            'discharge_avg': [100.0],
+            'delta': [5.0],
+        })
+        relaxed_env = {
+            'ieasyhydroforecast_efficiency_threshold': '1.0',
+            'ieasyhydroforecast_accuracy_threshold': '0.5',
+            'ieasyhydroforecast_nse_threshold': '0.4',
+        }
+        with patch.dict(os.environ, relaxed_env):
+            joint, skill_out = _make_ensemble_pentad(
+                forecasts, skill, observed,
+            )
+        em_rows = joint[joint['model_short'] == 'EM']
+        assert len(em_rows) == 1
+        # EM = mean(100, 110, 90) = 100.0 (3 models, not 2)
+        assert abs(em_rows.iloc[0]['forecasted_discharge'] - 100.0) < 0.01, (
+            "With relaxed thresholds, EM should include TiDE: "
+            f"mean(100, 110, 90) = 100.0, got "
+            f"{em_rows.iloc[0]['forecasted_discharge']}"
+        )
+        # Composition string should include all 3 models
+        comp = em_rows.iloc[0]['model_long']
+        assert 'LR' in comp and 'TFT' in comp and 'TiDE' in comp, (
+            f"Composition should include all 3 models, got: {comp}"
+        )
+
+    def test_mixed_threshold_disabling(self):
+        """Disable sdivsigma but keep strict accuracy+nse: only models
+        with good accuracy and nse pass regardless of sdivsigma."""
+        df = pd.DataFrame([
+            _make_skill_row('10001', 1, 'LR', sdivsigma=0.9, nse=0.95,
+                            accuracy=0.95),   # bad sdivsigma, good others
+            _make_skill_row('10001', 1, 'TFT', sdivsigma=0.8, nse=0.9,
+                            accuracy=0.88),   # bad sdivsigma, good others
+            _make_skill_row('10001', 1, 'TiDE', sdivsigma=0.1, nse=0.5,
+                            accuracy=0.6),    # good sdivsigma, bad others
+        ])
+        result = filter_for_highly_skilled_forecasts(
+            df, threshold_sdivsigma='False',
+            threshold_accuracy=0.8, threshold_nse=0.8,
+        )
+        assert len(result) == 2, (
+            "sdivsigma disabled: LR+TFT pass on accuracy+nse, TiDE fails"
+        )
+        assert set(result['model_short']) == {'LR', 'TFT'}
+
 
 # ---------------------------------------------------------------------------
 # TestPeriodColCoercion
@@ -725,3 +946,170 @@ class TestCodeNormalization:
         }):
             result = read_combined_forecasts('pentad')
         assert result.iloc[0]['code'] == '10001'
+
+
+# ---------------------------------------------------------------------------
+# TestDeltaEdgeCases
+# ---------------------------------------------------------------------------
+class TestDeltaEdgeCases:
+    """Edge cases for delta values in skill metrics and ensemble creation.
+
+    Delta represents the measurement uncertainty tolerance band (m^3/s).
+    accuracy = fraction of forecasts within observed +/- delta.
+    """
+
+    def test_nan_delta_excluded_from_skill_metrics(self):
+        """NaN delta: calculate_all_skill_metrics filters row via NaN mask.
+
+        Row 0: delta=NaN -> filtered
+        Row 1-2: valid -> n_pairs=2, metrics computed from those only.
+        """
+        data = pd.DataFrame({
+            'obs': [100.0, 110.0, 105.0],
+            'sim': [102.0, 108.0, 106.0],
+            'delta': [np.nan, 5.0, 5.0],
+        })
+        result = fl.calculate_all_skill_metrics(
+            data, 'obs', 'sim', 'delta'
+        )
+        assert result['n_pairs'] == 2, (
+            "NaN delta row should be filtered, leaving 2 valid pairs"
+        )
+        # MAE from valid rows: mean(|110-108|, |105-106|) = mean(2, 1) = 1.5
+        assert abs(result['mae'] - 1.5) < 1e-10
+        # Both within delta=5: accuracy = 1.0
+        assert result['accuracy'] == 1.0
+
+    def test_zero_delta_strict_matching(self):
+        """delta=0: only exact matches count as within tolerance.
+
+        obs = [100, 110], sim = [100, 108]
+        abs_diff = [0, 2]
+        abs_diff <= 0 -> [True, False] -> accuracy = 0.5
+        """
+        data = pd.DataFrame({
+            'obs': [100.0, 110.0],
+            'sim': [100.0, 108.0],
+            'delta': [0.0, 0.0],
+        })
+        result = fl.calculate_all_skill_metrics(
+            data, 'obs', 'sim', 'delta'
+        )
+        assert result['n_pairs'] == 2
+        assert result['accuracy'] == 0.5, (
+            "delta=0: only exact match (row 0) counts, accuracy = 0.5"
+        )
+        assert result['delta'] == 0.0
+
+    def test_zero_delta_all_exact(self):
+        """delta=0 with perfect forecasts: accuracy = 1.0."""
+        data = pd.DataFrame({
+            'obs': [100.0, 110.0],
+            'sim': [100.0, 110.0],
+            'delta': [0.0, 0.0],
+        })
+        result = fl.calculate_all_skill_metrics(
+            data, 'obs', 'sim', 'delta'
+        )
+        assert result['accuracy'] == 1.0
+        assert result['mae'] == 0.0
+
+    def test_negative_delta_produces_nan(self):
+        """Negative delta: fails validation, accuracy and delta -> NaN.
+
+        delta < 0 is physically meaningless. The function validates
+        0 <= delta < inf; negative delta fails this check, so both
+        accuracy and delta are set to NaN. Does not crash.
+        """
+        data = pd.DataFrame({
+            'obs': [100.0, 110.0],
+            'sim': [100.0, 110.0],  # perfect forecast
+            'delta': [-5.0, -5.0],
+        })
+        result = fl.calculate_all_skill_metrics(
+            data, 'obs', 'sim', 'delta'
+        )
+        assert result['n_pairs'] == 2
+        assert np.isnan(result['delta']), (
+            "Negative delta fails 0 <= delta validation -> NaN"
+        )
+        assert np.isnan(result['accuracy']), (
+            "When delta is invalid, accuracy is also set to NaN"
+        )
+        # MAE is independent of delta and should still be computed
+        assert result['mae'] == 0.0
+
+    def test_varying_delta_per_row(self):
+        """Different delta values per row (realistic: delta depends on flow).
+
+        obs = [100, 500], sim = [108, 490], delta = [5, 20]
+        abs_diff = [8, 10]
+        within delta: [8<=5 -> False, 10<=20 -> True] -> accuracy = 0.5
+        """
+        data = pd.DataFrame({
+            'obs': [100.0, 500.0],
+            'sim': [108.0, 490.0],
+            'delta': [5.0, 20.0],
+        })
+        result = fl.calculate_all_skill_metrics(
+            data, 'obs', 'sim', 'delta'
+        )
+        assert result['n_pairs'] == 2
+        assert result['accuracy'] == 0.5
+        # delta is the last row's value
+        assert result['delta'] == 20.0
+        # MAE = mean(8, 10) = 9.0
+        assert result['mae'] == 9.0
+
+
+# ---------------------------------------------------------------------------
+# TestNaTDatesInGapDetector
+# ---------------------------------------------------------------------------
+class TestNaTDatesInGapDetector:
+    """NaT dates in gap detection should not crash."""
+
+    def test_nat_dates_dropped_gracefully(self):
+        """Combined forecasts with NaT dates: NaT rows ignored."""
+        df = pd.DataFrame({
+            'date': pd.to_datetime(
+                ['2024-01-05', pd.NaT, '2024-01-10']
+            ),
+            'code': ['10001', '10001', '10001'],
+            'model_short': ['LR', 'TFT', 'EM'],
+        })
+        # Should not crash even though one date is NaT
+        gaps = detect_missing_ensembles(df, lookback_days=7)
+        # Only 2024-01-05 has models but no EM for that date
+        # 2024-01-10 has EM, NaT row is malformed
+        assert isinstance(gaps, pd.DataFrame)
+
+    def test_all_nat_dates_returns_empty(self):
+        """All NaT dates -> empty gap result."""
+        df = pd.DataFrame({
+            'date': pd.to_datetime([pd.NaT, pd.NaT]),
+            'code': ['10001', '10001'],
+            'model_short': ['LR', 'TFT'],
+        })
+        gaps = detect_missing_ensembles(df, lookback_days=7)
+        assert gaps.empty
+
+
+# ---------------------------------------------------------------------------
+# TestMissingRequiredColumns
+# ---------------------------------------------------------------------------
+class TestMissingRequiredColumns:
+    """Missing required columns should not crash with KeyError."""
+
+    def test_gap_detector_missing_model_short_raises(self):
+        """gap_detector with missing model_short column raises KeyError.
+
+        Documents current behavior: detect_missing_ensembles requires
+        model_short column and raises KeyError if missing.
+        """
+        df = pd.DataFrame({
+            'date': pd.to_datetime(['2024-01-05']),
+            'code': ['10001'],
+            # model_short missing
+        })
+        with pytest.raises(KeyError):
+            detect_missing_ensembles(df, lookback_days=7)

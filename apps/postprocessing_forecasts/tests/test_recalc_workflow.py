@@ -144,3 +144,37 @@ class TestRecalcWorkflow:
                     module.recalculate_skill_metrics()
 
                 assert exc_info.value.code == 1
+
+    def test_invalid_mode_exits_with_error(self, mock_data, mock_skill):
+        """Invalid SAPPHIRE_PREDICTION_MODE exits with code 1."""
+        with patch.dict(os.environ, {'SAPPHIRE_PREDICTION_MODE': 'INVALID'}):
+            with patch.dict(sys.modules, {}):
+                mocks = _setup_mocks(mock_data, mock_skill)
+
+                module, spec = import_recalc_module()
+                spec.loader.exec_module(module)
+
+                with pytest.raises(SystemExit) as exc_info:
+                    module.recalculate_skill_metrics()
+
+                assert exc_info.value.code == 1
+                # No calculation should have occurred
+                mocks['fl'].calculate_skill_metrics_pentad.assert_not_called()
+                mocks['fl'].calculate_skill_metrics_decade.assert_not_called()
+
+    def test_decad_only_mode(self, mock_data, mock_skill):
+        """DECAD mode only recalculates decad metrics."""
+        with patch.dict(os.environ, {'SAPPHIRE_PREDICTION_MODE': 'DECAD'}):
+            with patch.dict(sys.modules, {}):
+                mocks = _setup_mocks(mock_data, mock_skill)
+
+                module, spec = import_recalc_module()
+                spec.loader.exec_module(module)
+
+                with pytest.raises(SystemExit) as exc_info:
+                    module.recalculate_skill_metrics()
+
+                assert exc_info.value.code == 0
+                mocks['fl'].calculate_skill_metrics_pentad.assert_not_called()
+                mocks['fl'].calculate_skill_metrics_decade.assert_called_once()
+                mocks['fl'].save_decadal_skill_metrics.assert_called_once()

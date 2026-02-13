@@ -288,21 +288,28 @@ This fixture is already present in `iEasyHydroForecast`, `postprocessing_forecas
 
 ### Running Tests
 
-Follow the full testing workflow in [`doc/dev/testing_workflow.md`](doc/dev/testing_workflow.md). The recommended way to run all module tests is:
+Follow the full testing workflow in [`doc/dev/testing_workflow.md`](doc/dev/testing_workflow.md). The recommended way to run all tests (app modules + sapphire services) is:
 
 ```bash
 cd apps
 SAPPHIRE_TEST_ENV=True bash run_tests.sh
 ```
 
-To run a single module:
+To run a single app module:
 
 ```bash
 cd apps
 SAPPHIRE_TEST_ENV=True bash run_tests.sh <module_name>
 ```
 
-Always use `run_tests.sh` rather than running pytest manually for individual modules — it handles test directory inconsistencies (`test/` vs `tests/`) and ensures nothing is forgotten.
+To run a single sapphire service (use the `service:` prefix):
+
+```bash
+cd apps
+bash run_tests.sh service:<service_name>
+```
+
+Always use `run_tests.sh` rather than running pytest manually — it handles test directory inconsistencies (`test/` vs `tests/`), path resolution for services, and ensures nothing is forgotten.
 
 #### Application Module Tests
 
@@ -322,17 +329,19 @@ SAPPHIRE_TEST_ENV=True python -m unittest discover -s iEasyHydroForecast/tests -
 
 #### SAPPHIRE Service Tests
 
-Tests are run from the service directory:
+Services are integrated into `run_tests.sh` and run automatically. They can also be run individually via the `service:` prefix or directly from the service directory:
 
 ```bash
-# Preprocessing service tests
-cd sapphire/services/preprocessing
-python -m pytest tests/ -v
+# Via run_tests.sh (preferred)
+cd apps
+bash run_tests.sh service:postprocessing
 
-# Postprocessing service tests
+# Directly from the service directory
 cd sapphire/services/postprocessing
-python -m pytest tests/ -v
+.venv/bin/python -m pytest tests/ -v
 ```
+
+Service tests use SQLite in-memory databases and do not require `SAPPHIRE_TEST_ENV`. Each service needs its own `.venv` created with `uv sync --all-extras`.
 
 ### Environment Variables for Testing
 

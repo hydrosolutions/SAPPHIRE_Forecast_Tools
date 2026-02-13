@@ -7,9 +7,10 @@
 #   cd to the apps directory and run the script with the following command:
 #   $ bash run_tests.sh
 #
-#   Or run tests for a specific module:
+#   Or run tests for a specific module or service:
 #   $ bash run_tests.sh iEasyHydroForecast
 #   $ bash run_tests.sh pipeline
+#   $ bash run_tests.sh service:postprocessing
 #
 # Integration Tests (forecast_dashboard):
 #   By default, dashboard integration tests are SKIPPED. To run them, set
@@ -28,7 +29,8 @@
 #       Runs both local and pentad tests
 #
 # Prerequisites:
-#   - Each module needs a .venv with pytest installed: cd <module> && uv sync --all-extras
+#   - Each app module needs a .venv: cd <module> && uv sync --all-extras
+#   - Each service needs a .venv: cd sapphire/services/<service> && uv sync --all-extras
 #   - For dashboard tests: playwright install chromium
 
 set -e  # Exit on first error
@@ -86,7 +88,47 @@ run_module_tests() {
     fi
 }
 
-# List of all modules with tests
+run_service_tests() {
+    local service=$1
+    local service_dir="../sapphire/services/${service}"
+    local venv_path="${service_dir}/.venv/bin/pytest"
+    local display_name="service:${service}"
+
+    echo ""
+    echo "========================================"
+    echo -e "${YELLOW}Testing: ${display_name}${NC}"
+    echo "========================================"
+
+    # Check if venv exists
+    if [ ! -f "$venv_path" ]; then
+        echo -e "${YELLOW}⚠ Skipping ${display_name}: No .venv found. Run 'cd sapphire/services/${service} && uv sync --all-extras' first.${NC}"
+        SKIPPED+=("$display_name")
+        return 0
+    fi
+
+    # Find test directory
+    local test_dir=""
+    if [ -d "${service_dir}/tests" ]; then
+        test_dir="${service_dir}/tests"
+    elif [ -d "${service_dir}/test" ]; then
+        test_dir="${service_dir}/test"
+    else
+        echo -e "${YELLOW}⚠ Skipping ${display_name}: No test directory found${NC}"
+        SKIPPED+=("$display_name")
+        return 0
+    fi
+
+    # Run tests (services don't need SAPPHIRE_TEST_ENV)
+    if "$venv_path" "$test_dir" -v; then
+        echo -e "${GREEN}✓ ${display_name} tests passed${NC}"
+        PASSED+=("$display_name")
+    else
+        echo -e "${RED}✗ ${display_name} tests failed${NC}"
+        FAILED+=("$display_name")
+    fi
+}
+
+# List of all app modules with tests
 MODULES=(
     "iEasyHydroForecast"
     "preprocessing_runoff"
@@ -99,31 +141,68 @@ MODULES=(
     "forecast_dashboard"
 )
 
+# List of sapphire services with tests (in sapphire/services/<name>/)
+SERVICE_MODULES=(
+    "postprocessing"
+)
+
 # If a specific module is provided as argument, only run that one
 if [ -n "$1" ]; then
-    # Check if module is valid
-    valid_module=false
-    for mod in "${MODULES[@]}"; do
-        if [ "$1" == "$mod" ]; then
-            valid_module=true
-            break
-        fi
-    done
+    # Check for service:name syntax
+    if [[ "$1" == service:* ]]; then
+        service_name="${1#service:}"
+        valid_service=false
+        for svc in "${SERVICE_MODULES[@]}"; do
+            if [ "$service_name" == "$svc" ]; then
+                valid_service=true
+                break
+            fi
+        done
 
-    if [ "$valid_module" = true ]; then
-        run_module_tests "$1"
+        if [ "$valid_service" = true ]; then
+            run_service_tests "$service_name"
+        else
+            echo "Unknown service: $service_name"
+            echo "Available services: ${SERVICE_MODULES[*]}"
+            exit 1
+        fi
     else
-        echo "Unknown module: $1"
-        echo "Available modules: ${MODULES[*]}"
-        exit 1
+        # Check app modules
+        valid_module=false
+        for mod in "${MODULES[@]}"; do
+            if [ "$1" == "$mod" ]; then
+                valid_module=true
+                break
+            fi
+        done
+
+        if [ "$valid_module" = true ]; then
+            run_module_tests "$1"
+        else
+            echo "Unknown module: $1"
+            echo "Available modules: ${MODULES[*]}"
+            echo "Available services: ${SERVICE_MODULES[*]} (use 'service:<name>' syntax)"
+            exit 1
+        fi
     fi
 else
-    # Run all module tests
-    echo "Running tests for all modules..."
+    # Run all app module tests
+    echo "Running tests for all app modules..."
     echo ""
 
     for module in "${MODULES[@]}"; do
         run_module_tests "$module"
+    done
+
+    # Run all service tests
+    echo ""
+    echo ""
+    echo "========================================"
+    echo "SAPPHIRE SERVICE TESTS"
+    echo "========================================"
+
+    for service in "${SERVICE_MODULES[@]}"; do
+        run_service_tests "$service"
     done
 fi
 

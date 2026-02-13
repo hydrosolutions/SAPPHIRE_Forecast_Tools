@@ -341,8 +341,21 @@ class TestOperationalDataRouting:
 
         em_rows = joint[joint['model_short'] == 'EM']
         em_stations = set(em_rows['code'].unique())
-        assert '15001' in em_stations
-        assert '15002' not in em_stations
+        assert em_stations == {'15001'}, (
+            f"Only station 15001 should get EM, got {em_stations}"
+        )
+        # Exactly 2 EM rows: 1 per date for station 15001
+        assert len(em_rows) == 2, (
+            f"Expected 2 EM rows (2 dates x 1 station), got {len(em_rows)}"
+        )
+        # Spot-check EM discharge for 2026-01-05: mean(LR=100, TFT=110) = 105
+        em_jan05 = em_rows[
+            em_rows['date'] == pd.Timestamp('2026-01-05')
+        ]
+        assert len(em_jan05) == 1
+        assert abs(
+            em_jan05.iloc[0]['forecasted_discharge'] - 105.0
+        ) < 0.01
 
     def test_no_ensemble_when_all_models_fail_threshold(
         self, pentad_forecasts, pentad_observed, env_setup
@@ -457,7 +470,7 @@ class TestOperationalDataRouting:
         self, pentad_skill_csv, pentad_forecasts, pentad_observed,
         env_setup,
     ):
-        """All API records have 'target' key, equal to 'date'."""
+        """All API records have 'target' == 'date', both dates present."""
         skill_metrics = data_reader.read_skill_metrics('pentad')
         joint, _ = _make_ensemble(
             pentad_forecasts, skill_metrics, pentad_observed
@@ -479,6 +492,15 @@ class TestOperationalDataRouting:
         for r in records:
             assert 'target' in r
             assert r['target'] == r['date']
+
+        # Both input dates appear in API records
+        api_dates = {str(r['date'])[:10] for r in records}
+        assert '2026-01-05' in api_dates, (
+            f"2026-01-05 should appear in API records, got {api_dates}"
+        )
+        assert '2026-01-10' in api_dates, (
+            f"2026-01-10 should appear in API records, got {api_dates}"
+        )
 
     def test_nan_discharge_dropped_before_averaging(
         self, pentad_skill_csv, pentad_observed, env_setup,
@@ -721,6 +743,209 @@ class TestOperationalDataRouting:
 
 
 # ---------------------------------------------------------------------------
+# TestDecadalOperationalPipeline
+# ---------------------------------------------------------------------------
+class TestDecadalOperationalPipeline:
+    """Mirrors pentad operational tests but for decadal data.
+
+    Verifies the full decadal pipeline: skill CSV read -> threshold filter
+    -> ensemble create -> CSV + API write.
+    """
+
+    DECAD_DATES = pd.to_datetime(['2026-01-10', '2026-01-20'])
+    DECAD_IN_YEAR = [1, 2]
+    DECAD_IN_MONTH = ['1', '2']
+
+    @pytest.fixture
+    def decad_env_setup(self, tmp_path):
+        """Set env vars for decadal mode, yield, restore."""
+        overrides = {
+            'ieasyforecast_intermediate_data_path': str(tmp_path),
+            'ieasyforecast_combined_forecast_pentad_file': 'combined_pentad.csv',
+            'ieasyforecast_combined_forecast_decad_file': 'combined_decad.csv',
+            'ieasyforecast_pentadal_skill_metrics_file': 'skill_pentad.csv',
+            'ieasyforecast_decadal_skill_metrics_file': 'skill_decad.csv',
+            'ieasyhydroforecast_efficiency_threshold': '0.6',
+            'ieasyhydroforecast_accuracy_threshold': '0.8',
+            'ieasyhydroforecast_nse_threshold': '0.8',
+            'SAPPHIRE_API_ENABLED': 'false',
+            'SAPPHIRE_CONSISTENCY_CHECK': 'false',
+            'SAPPHIRE_TEST_ENV': 'True',
+        }
+        with patch.dict(os.environ, overrides):
+            yield tmp_path
+
+    @pytest.fixture
+    def decad_skill_csv(self, decad_env_setup):
+        """Write decadal skill metrics CSV.
+
+        Station 15001: LR + TFT pass -> eligible for EM.
+        Station 15002: Only LR passes -> no EM.
+        """
+        tmp_path = decad_env_setup
+        rows = []
+        for station in STATIONS:
+            for decad in self.DECAD_IN_YEAR:
+                # LR passes at both stations
+                rows.append({
+                    'decad_in_year': decad, 'code': station,
+                    'model_long': MODELS_LONG['LR'], 'model_short': 'LR',
+                    'sdivsigma': 0.3, 'nse': 0.95, 'delta': 5.0,
+                    'accuracy': 0.95, 'mae': 2.0, 'n_pairs': 10,
+                })
+                # TFT: passes at 15001, fails at 15002
+                tft_skilled = station == '15001'
+                rows.append({
+                    'decad_in_year': decad, 'code': station,
+                    'model_long': MODELS_LONG['TFT'], 'model_short': 'TFT',
+                    'sdivsigma': 0.4 if tft_skilled else 0.7,
+                    'nse': 0.9 if tft_skilled else 0.7,
+                    'delta': 5.0,
+                    'accuracy': 0.88 if tft_skilled else 0.7,
+                    'mae': 3.0 if tft_skilled else 6.0,
+                    'n_pairs': 10,
+                })
+
+        df = pd.DataFrame(rows)
+        filepath = os.path.join(str(tmp_path), 'skill_decad.csv')
+        _write_csv(df, filepath)
+        return df
+
+    @pytest.fixture
+    def decad_forecasts(self):
+        """2 models x 2 dates x 2 stations = 8 decadal forecast rows."""
+        rows = []
+        discharges = {
+            ('15001', 0): {'LR': 100.0, 'TFT': 110.0},
+            ('15001', 1): {'LR': 120.0, 'TFT': 130.0},
+            ('15002', 0): {'LR': 200.0, 'TFT': 210.0},
+            ('15002', 1): {'LR': 220.0, 'TFT': 230.0},
+        }
+        for station in STATIONS:
+            for i, (date, decad, dim) in enumerate(
+                zip(
+                    self.DECAD_DATES,
+                    self.DECAD_IN_YEAR,
+                    self.DECAD_IN_MONTH,
+                )
+            ):
+                for ms in ('LR', 'TFT'):
+                    rows.append({
+                        'code': station,
+                        'date': date,
+                        'decad_in_year': decad,
+                        'decad_in_month': dim,
+                        'forecasted_discharge': discharges[
+                            (station, i)
+                        ][ms],
+                        'model_long': MODELS_LONG[ms],
+                        'model_short': ms,
+                    })
+        return pd.DataFrame(rows)
+
+    @pytest.fixture
+    def decad_observed(self):
+        """Observed discharge for decadal dates."""
+        rows = []
+        obs_vals = {
+            ('15001', 0): 105.0, ('15001', 1): 125.0,
+            ('15002', 0): 205.0, ('15002', 1): 225.0,
+        }
+        for station in STATIONS:
+            for i, date in enumerate(self.DECAD_DATES):
+                rows.append({
+                    'code': station, 'date': date,
+                    'discharge_avg': obs_vals[(station, i)], 'delta': 5.0,
+                })
+        return pd.DataFrame(rows)
+
+    def test_decadal_ensemble_created_and_written_to_csv(
+        self, decad_skill_csv, decad_forecasts, decad_observed,
+        decad_env_setup,
+    ):
+        """Full decadal pipeline: read skills -> ensemble -> save CSV.
+
+        Station 15001: LR + TFT pass -> EM = mean(LR, TFT).
+        Station 15002: Only LR passes -> no EM (single-model rejected).
+        """
+        skill_metrics = data_reader.read_skill_metrics('decad')
+        joint, _ = ensemble_calculator.create_ensemble_forecasts(
+            forecasts=decad_forecasts,
+            skill_stats=skill_metrics,
+            observed=decad_observed,
+            period_col='decad_in_year',
+            period_in_month_col='decad_in_month',
+            get_period_in_month_func=tl.get_decad_in_month,
+            calculate_all_metrics_func=fl.calculate_all_skill_metrics,
+        )
+
+        # EM only for station 15001 (2 dates)
+        em_rows = joint[joint['model_short'] == 'EM']
+        assert len(em_rows) == 2, f"Expected 2 EM rows, got {len(em_rows)}"
+        assert set(em_rows['code'].unique()) == {'15001'}
+
+        # Verify EM discharge: mean(LR, TFT)
+        em_sorted = em_rows.sort_values('date').reset_index(drop=True)
+        # Date 2026-01-10: mean(100, 110) = 105
+        assert abs(
+            em_sorted.iloc[0]['forecasted_discharge'] - 105.0
+        ) < 0.01
+        # Date 2026-01-20: mean(120, 130) = 125
+        assert abs(
+            em_sorted.iloc[1]['forecasted_discharge'] - 125.0
+        ) < 0.01
+
+        # Save to CSV
+        fl.save_forecast_data_decade(joint)
+        csv_path = os.path.join(
+            str(decad_env_setup), 'combined_decad.csv'
+        )
+        assert os.path.exists(csv_path)
+        saved = pd.read_csv(csv_path)
+        assert 'EM' in saved['model_short'].values
+
+    def test_decadal_api_records_correct(
+        self, decad_skill_csv, decad_forecasts, decad_observed,
+        decad_env_setup,
+    ):
+        """Decadal API records have correct fields and EM records."""
+        skill_metrics = data_reader.read_skill_metrics('decad')
+        joint, _ = ensemble_calculator.create_ensemble_forecasts(
+            forecasts=decad_forecasts,
+            skill_stats=skill_metrics,
+            observed=decad_observed,
+            period_col='decad_in_year',
+            period_in_month_col='decad_in_month',
+            get_period_in_month_func=tl.get_decad_in_month,
+            calculate_all_metrics_func=fl.calculate_all_skill_metrics,
+        )
+
+        mock_client = MagicMock()
+        mock_client.readiness_check.return_value = True
+        mock_client.write_forecasts.return_value = len(joint)
+
+        with patch.object(fl, 'SAPPHIRE_API_AVAILABLE', True), \
+             patch.object(
+                 fl, '_get_postprocessing_client',
+                 return_value=mock_client,
+             ), \
+             patch.dict(os.environ, {'SAPPHIRE_API_ENABLED': 'true'}):
+            fl.save_forecast_data_decade(joint)
+
+        mock_client.write_forecasts.assert_called_once()
+        records = mock_client.write_forecasts.call_args[0][0]
+
+        # 2 stations x 2 dates x 2 models = 8, + 2 EM (station 15001)
+        assert len(records) == 10, f"Expected 10 records, got {len(records)}"
+
+        em_records = [r for r in records if r['model_type'] == 'EM']
+        assert len(em_records) == 2
+        for r in em_records:
+            assert r['code'] == '15001'
+            assert r.get('composition') is not None
+
+
+# ---------------------------------------------------------------------------
 # TestMaintenanceDataRouting
 # ---------------------------------------------------------------------------
 class TestMaintenanceDataRouting:
@@ -864,6 +1089,114 @@ class TestMaintenanceDataRouting:
 
 
 # ---------------------------------------------------------------------------
+# TestMaintenanceFullGapFill
+# ---------------------------------------------------------------------------
+class TestMaintenanceFullGapFill:
+    """End-to-end gap-fill: detect gap -> create ensemble -> verify EM rows.
+
+    Unlike TestMaintenanceDataRouting which stops at gap detection, these
+    tests exercise the full pipeline: detect -> read data -> ensemble -> save.
+    """
+
+    def test_gap_detected_ensemble_created_and_saved(self, env_setup):
+        """Full pipeline: missing EM -> detect gap -> ensemble -> CSV saved.
+
+        Combined CSV has 2 dates: Jan 5 has EM, Jan 10 is missing EM.
+        After gap-fill, Jan 10 should have an EM row in the output.
+        """
+        tmp_path = env_setup
+
+        # 1. Write combined CSV with gap (Jan 10 missing EM)
+        rows = []
+        for date_str, has_em in [('2026-01-05', True), ('2026-01-10', False)]:
+            for ms in ('LR', 'TFT'):
+                rows.append({
+                    'code': '15001', 'date': date_str,
+                    'pentad_in_year': 1, 'pentad_in_month': '1',
+                    'forecasted_discharge': 100.0 if ms == 'LR' else 110.0,
+                    'model_long': MODELS_LONG[ms], 'model_short': ms,
+                })
+            if has_em:
+                rows.append({
+                    'code': '15001', 'date': date_str,
+                    'pentad_in_year': 1, 'pentad_in_month': '1',
+                    'forecasted_discharge': 105.0,
+                    'model_long': 'Ens. Mean with LR, TFT (EM)',
+                    'model_short': 'EM',
+                })
+        combined_df = pd.DataFrame(rows)
+        _write_csv(
+            combined_df,
+            os.path.join(str(tmp_path), 'combined_pentad.csv'),
+        )
+
+        # 2. Write skill CSV (both models pass)
+        skill_rows = []
+        for ms in ('LR', 'TFT'):
+            skill_rows.append({
+                'pentad_in_year': 1, 'code': '15001',
+                'model_long': MODELS_LONG[ms], 'model_short': ms,
+                'sdivsigma': 0.3, 'nse': 0.95, 'delta': 5.0,
+                'accuracy': 0.95, 'mae': 2.0, 'n_pairs': 10,
+            })
+        skill_df = pd.DataFrame(skill_rows)
+        _write_csv(
+            skill_df,
+            os.path.join(str(tmp_path), 'skill_pentad.csv'),
+        )
+
+        # 3. Detect gap
+        combined = gap_detector.read_combined_forecasts('pentad')
+        gaps = gap_detector.detect_missing_ensembles(combined, lookback_days=10)
+        assert len(gaps) == 1
+        gap_date_str = pd.Timestamp(
+            gaps.iloc[0]['date']
+        ).strftime('%Y-%m-%d')
+        assert gap_date_str == '2026-01-10'
+
+        # 4. Build gap data fresh (matching production flow where
+        # modelled data is read separately, not from combined CSV)
+        gap_data = pd.DataFrame([
+            {
+                'code': '15001', 'date': pd.Timestamp('2026-01-10'),
+                'pentad_in_year': 1, 'pentad_in_month': '1',
+                'forecasted_discharge': 100.0,
+                'model_long': MODELS_LONG['LR'], 'model_short': 'LR',
+            },
+            {
+                'code': '15001', 'date': pd.Timestamp('2026-01-10'),
+                'pentad_in_year': 1, 'pentad_in_month': '1',
+                'forecasted_discharge': 110.0,
+                'model_long': MODELS_LONG['TFT'], 'model_short': 'TFT',
+            },
+        ])
+
+        skill_metrics = data_reader.read_skill_metrics('pentad')
+        observed = pd.DataFrame({
+            'code': ['15001'],
+            'date': pd.to_datetime(['2026-01-10']),
+            'discharge_avg': [105.0],
+            'delta': [5.0],
+        })
+
+        joint, _ = _make_ensemble(gap_data, skill_metrics, observed)
+
+        # 5. Verify EM rows created for gap date
+        em_rows = joint[joint['model_short'] == 'EM']
+        assert len(em_rows) == 1, f"Expected 1 EM row, got {len(em_rows)}"
+        assert abs(
+            em_rows.iloc[0]['forecasted_discharge'] - 105.0
+        ) < 0.01, "EM = mean(LR=100, TFT=110) = 105.0"
+
+        # 6. Save to CSV and verify
+        fl.save_forecast_data_pentad(joint)
+        csv_path = os.path.join(str(tmp_path), 'combined_pentad.csv')
+        saved = pd.read_csv(csv_path)
+        saved_em = saved[saved['model_short'] == 'EM']
+        assert len(saved_em) >= 1, "EM rows should be in saved CSV"
+
+
+# ---------------------------------------------------------------------------
 # TestSkillMetricsFallback
 # ---------------------------------------------------------------------------
 class TestSkillMetricsFallback:
@@ -904,7 +1237,7 @@ class TestSkillMetricsFallback:
         with patch.object(data_reader, 'SAPPHIRE_API_AVAILABLE', True), \
              patch.object(
                  data_reader, 'SapphirePostprocessingClient',
-                 mock_client_cls,
+                 mock_client_cls, create=True,
              ), \
              patch.dict(os.environ, {'SAPPHIRE_API_ENABLED': 'true'}):
             df = data_reader.read_skill_metrics('pentad')
@@ -965,10 +1298,18 @@ class TestApiFailureModes:
         return raised, os.path.exists(csv_path)
 
     def test_warn_mode_continues_after_api_error(self, env_setup):
-        """mode=warn: no exception raised, CSV still written."""
+        """mode=warn: no exception raised, CSV written with correct data."""
         raised, csv_exists = self._save_with_api_error(env_setup, 'warn')
         assert not raised
         assert csv_exists
+
+        # Verify CSV content: correct columns and values
+        csv_path = os.path.join(str(env_setup), 'combined_pentad.csv')
+        saved = pd.read_csv(csv_path)
+        assert len(saved) == 1
+        assert str(saved.iloc[0]['code']) == '15001'
+        assert saved.iloc[0]['model_short'] == 'LR'
+        assert abs(saved.iloc[0]['forecasted_discharge'] - 100.0) < 0.01
 
     def test_fail_mode_raises_after_api_error(self, env_setup):
         """mode=fail: exception propagated to caller."""
