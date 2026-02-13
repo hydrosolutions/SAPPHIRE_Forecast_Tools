@@ -46,3 +46,11 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+markers = [
+    "benchmark: performance benchmarks (run explicitly, skipped by default)",
+]
+filterwarnings = [
+    # Tests in test_error_accumulation.py and test_mock_postprocessing_forecasts.py
+    # intentionally exercise the deprecated postprocessing_forecasts() entry point.
+    "ignore:postprocessing_forecasts.py is deprecated:DeprecationWarning",
+]
