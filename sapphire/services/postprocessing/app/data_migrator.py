@@ -177,11 +177,11 @@ class CombinedForecastDataMigrator(DataMigrator):
                     "flag": int(row['flag']) if pd.notna(row['flag']) else None,
                     "horizon_value": int(row['pentad_in_month']),
                     "horizon_in_year": int(row['pentad_in_year']),
-                    "q05": float(row['Q5']) if pd.notna(row['Q5']) else None,
-                    "q25": float(row['Q25']) if pd.notna(row['Q25']) else None,
+                    "q05": float(row['q05']) if pd.notna(row['q05']) else None,
+                    "q25": float(row['q25']) if pd.notna(row['q25']) else None,
                     "q50": None,
-                    "q75": float(row['Q75']) if pd.notna(row['Q75']) else None,
-                    "q95": float(row['Q95']) if pd.notna(row['Q95']) else None,
+                    "q75": float(row['q75']) if pd.notna(row['q75']) else None,
+                    "q95": float(row['q95']) if pd.notna(row['q95']) else None,
                     "forecasted_discharge": float(row['forecasted_discharge']) if pd.notna(row['forecasted_discharge']) else None
                 }
                 records.append(record)
@@ -207,11 +207,11 @@ class CombinedForecastDataMigrator(DataMigrator):
                     "flag": int(row['flag']) if pd.notna(row['flag']) else None,
                     "horizon_value": int(row['decad']),
                     "horizon_in_year": int(row['decad_in_year']),
-                    "q05": float(row['Q5']) if pd.notna(row['Q5']) else None,
-                    "q25": float(row['Q25']) if pd.notna(row['Q25']) else None,
+                    "q05": float(row['q05']) if pd.notna(row['q05']) else None,
+                    "q25": float(row['q25']) if pd.notna(row['q25']) else None,
                     "q50": None,
-                    "q75": float(row['Q75']) if pd.notna(row['Q75']) else None,
-                    "q95": float(row['Q95']) if pd.notna(row['Q95']) else None,
+                    "q75": float(row['q75']) if pd.notna(row['q75']) else None,
+                    "q95": float(row['q95']) if pd.notna(row['q95']) else None,
                     "forecasted_discharge": float(row['forecasted_discharge']) if pd.notna(row['forecasted_discharge']) else None
                 }
                 records.append(record)
