@@ -301,3 +301,120 @@ class TestReadSkillMetricsIntegration:
                 mock_api.assert_not_called()
                 assert len(result) == 1
                 assert result.iloc[0]['code'] == '10001'
+
+
+class TestDataReaderMissingColumns:
+    """Tests for data_reader handling of CSVs with missing/extra columns (#14).
+
+    Operational scenarios: CSV was written by an older version of the code
+    (missing new columns) or by a newer version (extra columns).
+    """
+
+    def test_csv_missing_code_column_still_readable(self, tmp_path):
+        """CSV without 'code' column is read but code cleanup is skipped.
+
+        When a CSV has no 'code' column, _read_skill_metrics_csv should
+        still return the DataFrame (with whatever columns exist).
+        """
+        csv_file = tmp_path / "pentad_skill.csv"
+        pd.DataFrame({
+            'pentad_in_year': [1, 2],
+            'model_short': ['LR', 'TFT'],
+            'sdivsigma': [0.3, 0.4],
+        }).to_csv(csv_file, index=False)
+
+        with patch.dict(os.environ, {
+            'ieasyforecast_intermediate_data_path': str(tmp_path),
+            'ieasyforecast_pentadal_skill_metrics_file': 'pentad_skill.csv',
+        }):
+            result = _read_skill_metrics_csv('pentad')
+            assert result is not None
+            assert len(result) == 2
+            assert 'code' not in result.columns
+            assert result.iloc[0]['sdivsigma'] == 0.3
+
+    def test_csv_with_extra_columns_preserved(self, tmp_path):
+        """CSV with extra columns beyond expected set is read fully.
+
+        Operational scenario: newer code adds columns; older reader
+        should not break.
+        """
+        csv_file = tmp_path / "pentad_skill.csv"
+        pd.DataFrame({
+            'pentad_in_year': [1],
+            'code': ['10001'],
+            'model_short': ['LR'],
+            'sdivsigma': [0.3],
+            'nse': [0.9],
+            'extra_metric': [42.0],  # not in the expected schema
+        }).to_csv(csv_file, index=False)
+
+        with patch.dict(os.environ, {
+            'ieasyforecast_intermediate_data_path': str(tmp_path),
+            'ieasyforecast_pentadal_skill_metrics_file': 'pentad_skill.csv',
+        }):
+            result = _read_skill_metrics_csv('pentad')
+            assert result is not None
+            assert 'extra_metric' in result.columns
+            assert result.iloc[0]['extra_metric'] == 42.0
+
+    def test_csv_numeric_code_cleaned(self, tmp_path):
+        """Code column with float codes (15001.0) is cleaned to '15001'."""
+        csv_file = tmp_path / "pentad_skill.csv"
+        pd.DataFrame({
+            'pentad_in_year': [1],
+            'code': [15001.0],  # float from CSV round-trip
+            'model_short': ['LR'],
+            'sdivsigma': [0.3],
+        }).to_csv(csv_file, index=False)
+
+        with patch.dict(os.environ, {
+            'ieasyforecast_intermediate_data_path': str(tmp_path),
+            'ieasyforecast_pentadal_skill_metrics_file': 'pentad_skill.csv',
+        }):
+            result = _read_skill_metrics_csv('pentad')
+            assert result is not None
+            assert result.iloc[0]['code'] == '15001'
+
+    def test_normalize_api_missing_model_type_graceful(self):
+        """API response missing model_type → no model_short/model_long columns.
+
+        Documents current behavior: _normalize_api_skill_metrics uses
+        df.rename() which silently skips missing columns. If model_type
+        is absent, model_short won't exist and model_long won't be derived.
+        """
+        df = pd.DataFrame({
+            'horizon_in_year': [1],
+            'code': ['10001'],
+            # 'model_type' is missing
+            'sdivsigma': [0.3],
+        })
+        result = _normalize_api_skill_metrics(df, 'pentad')
+        # horizon_in_year → pentad_in_year rename still works
+        assert 'pentad_in_year' in result.columns
+        # model_short and model_long not derived
+        assert 'model_short' not in result.columns
+        assert 'model_long' not in result.columns
+        # Other columns preserved
+        assert result.iloc[0]['sdivsigma'] == 0.3
+
+    def test_normalize_api_missing_horizon_graceful(self):
+        """API response missing horizon_in_year → no period column created.
+
+        Documents current behavior: rename silently skips, so the period
+        column (pentad_in_year) won't exist in output.
+        """
+        df = pd.DataFrame({
+            'model_type': ['LR'],
+            'code': ['10001'],
+            # 'horizon_in_year' is missing
+            'sdivsigma': [0.3],
+        })
+        result = _normalize_api_skill_metrics(df, 'pentad')
+        # pentad_in_year not created (source column was missing)
+        assert 'pentad_in_year' not in result.columns
+        # model_type → model_short rename still works
+        assert 'model_short' in result.columns
+        assert result.iloc[0]['model_short'] == 'LR'
+        # model_long derived from model_short
+        assert result.iloc[0]['model_long'] == 'Linear regression (LR)'

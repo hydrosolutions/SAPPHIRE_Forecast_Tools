@@ -2479,5 +2479,147 @@ class TestCalculateAllSkillMetrics(unittest.TestCase):
         self.assertAlmostEqual(result['mae'], 2.0, places=5)
 
 
+class TestApiClientSingleton(unittest.TestCase):
+    """Tests for API client singleton behavior (#16).
+
+    Validates lazy initialization, caching, reset, and behavior
+    when sapphire-api-client is unavailable.
+    """
+
+    def setUp(self):
+        """Reset singletons before each test."""
+        fl._reset_api_clients()
+
+    def tearDown(self):
+        """Reset singletons after each test."""
+        fl._reset_api_clients()
+
+    def test_reset_clears_both_clients(self):
+        """_reset_api_clients sets both globals to None."""
+        # Manually inject fake clients
+        fl._preprocessing_client = "fake_pre"
+        fl._postprocessing_client = "fake_post"
+        fl._reset_api_clients()
+        self.assertIsNone(fl._preprocessing_client)
+        self.assertIsNone(fl._postprocessing_client)
+
+    def test_preprocessing_returns_none_when_api_unavailable(self):
+        """_get_preprocessing_client returns None when package not installed."""
+        with patch.object(fl, 'SAPPHIRE_API_AVAILABLE', False):
+            result = fl._get_preprocessing_client()
+        self.assertIsNone(result)
+
+    def test_postprocessing_returns_none_when_api_unavailable(self):
+        """_get_postprocessing_client returns None when package not installed."""
+        with patch.object(fl, 'SAPPHIRE_API_AVAILABLE', False):
+            result = fl._get_postprocessing_client()
+        self.assertIsNone(result)
+
+    def test_preprocessing_returns_none_when_class_is_none(self):
+        """_get_preprocessing_client returns None when class is None."""
+        with patch.object(fl, 'SAPPHIRE_API_AVAILABLE', True), \
+             patch.object(fl, 'SapphirePreprocessingClient', None):
+            result = fl._get_preprocessing_client()
+        self.assertIsNone(result)
+
+    def test_postprocessing_returns_none_when_class_is_none(self):
+        """_get_postprocessing_client returns None when class is None."""
+        with patch.object(fl, 'SAPPHIRE_API_AVAILABLE', True), \
+             patch.object(fl, 'SapphirePostprocessingClient', None):
+            result = fl._get_postprocessing_client()
+        self.assertIsNone(result)
+
+    def test_preprocessing_lazy_init_creates_client(self):
+        """First call creates client with SAPPHIRE_API_URL."""
+        mock_cls = MagicMock()
+        mock_instance = mock_cls.return_value
+
+        with patch.object(fl, 'SAPPHIRE_API_AVAILABLE', True), \
+             patch.object(fl, 'SapphirePreprocessingClient', mock_cls), \
+             patch.dict(os.environ, {
+                 'SAPPHIRE_API_URL': 'http://test:9000',
+             }):
+            result = fl._get_preprocessing_client()
+
+        mock_cls.assert_called_once_with(base_url='http://test:9000')
+        self.assertEqual(result, mock_instance)
+
+    def test_postprocessing_lazy_init_creates_client(self):
+        """First call creates client with SAPPHIRE_API_URL."""
+        mock_cls = MagicMock()
+        mock_instance = mock_cls.return_value
+
+        with patch.object(fl, 'SAPPHIRE_API_AVAILABLE', True), \
+             patch.object(fl, 'SapphirePostprocessingClient', mock_cls), \
+             patch.dict(os.environ, {
+                 'SAPPHIRE_API_URL': 'http://test:9000',
+             }):
+            result = fl._get_postprocessing_client()
+
+        mock_cls.assert_called_once_with(base_url='http://test:9000')
+        self.assertEqual(result, mock_instance)
+
+    def test_preprocessing_singleton_returns_cached(self):
+        """Second call returns same instance without creating new client."""
+        mock_cls = MagicMock()
+
+        with patch.object(fl, 'SAPPHIRE_API_AVAILABLE', True), \
+             patch.object(fl, 'SapphirePreprocessingClient', mock_cls), \
+             patch.dict(os.environ, {
+                 'SAPPHIRE_API_URL': 'http://test:9000',
+             }):
+            first = fl._get_preprocessing_client()
+            second = fl._get_preprocessing_client()
+
+        # Constructor called only once
+        mock_cls.assert_called_once()
+        self.assertIs(first, second)
+
+    def test_postprocessing_singleton_returns_cached(self):
+        """Second call returns same instance without creating new client."""
+        mock_cls = MagicMock()
+
+        with patch.object(fl, 'SAPPHIRE_API_AVAILABLE', True), \
+             patch.object(fl, 'SapphirePostprocessingClient', mock_cls), \
+             patch.dict(os.environ, {
+                 'SAPPHIRE_API_URL': 'http://test:9000',
+             }):
+            first = fl._get_postprocessing_client()
+            second = fl._get_postprocessing_client()
+
+        mock_cls.assert_called_once()
+        self.assertIs(first, second)
+
+    def test_reset_then_new_instance(self):
+        """After reset, next call creates a fresh instance."""
+        mock_cls = MagicMock()
+        mock_cls.side_effect = [MagicMock(name='first'), MagicMock(name='second')]
+
+        with patch.object(fl, 'SAPPHIRE_API_AVAILABLE', True), \
+             patch.object(fl, 'SapphirePostprocessingClient', mock_cls), \
+             patch.dict(os.environ, {
+                 'SAPPHIRE_API_URL': 'http://test:9000',
+             }):
+            first = fl._get_postprocessing_client()
+            fl._reset_api_clients()
+            second = fl._get_postprocessing_client()
+
+        self.assertEqual(mock_cls.call_count, 2)
+        self.assertIsNot(first, second)
+
+    def test_default_api_url(self):
+        """Default URL is http://localhost:8000 when env var not set."""
+        mock_cls = MagicMock()
+
+        with patch.object(fl, 'SAPPHIRE_API_AVAILABLE', True), \
+             patch.object(fl, 'SapphirePostprocessingClient', mock_cls), \
+             patch.dict(os.environ, {}, clear=False):
+            # Remove SAPPHIRE_API_URL if present
+            os.environ.pop('SAPPHIRE_API_URL', None)
+            fl._get_postprocessing_client()
+
+        mock_cls.assert_called_once_with(base_url='http://localhost:8000')
+
+
 if __name__ == '__main__':
     unittest.main()
