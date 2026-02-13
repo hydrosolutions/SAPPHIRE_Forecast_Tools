@@ -2303,3 +2303,617 @@ class TestRecalculateSkillMetricsIntegration:
             with pytest.raises(SystemExit) as exc_info:
                 recalculate_skill_metrics()
             assert exc_info.value.code == 1
+
+
+# ---------------------------------------------------------------------------
+# TestEnsembleSkillMetricVerification (#10)
+# ---------------------------------------------------------------------------
+class TestEnsembleSkillMetricVerification:
+    """Verify exact numerical values of ensemble skill metrics.
+
+    Uses 3 dates in pentad 1 with known LR, TFT, observed, and delta
+    values so the EM (= mean of LR, TFT) and its skill metrics can be
+    hand-calculated and verified exactly.
+
+    Hand calculations (see inline comments for derivation):
+        EM forecasts : [105, 110, 120]   (mean of LR, TFT)
+        Observed     : [100, 106, 118]
+        Delta        : [5, 5, 5]
+
+        differences  = obs - sim = [-5, -4, -2]
+        abs_diff     = [5, 4, 2]
+        MAE          = (5 + 4 + 2) / 3 = 11/3 ≈ 3.6667
+        accuracy     = all abs_diff <= 5  =>  1.0
+        delta        = 5.0
+        n_pairs      = 3
+
+        obs_mean     = (100 + 106 + 118) / 3 = 108.0
+        SS_obs       = (100-108)^2 + (106-108)^2 + (118-108)^2
+                     = 64 + 4 + 100 = 168
+        SS_res       = 25 + 16 + 4 = 45
+        NSE          = 1 - 45/168 = 123/168 ≈ 0.732143
+
+        sigma_obs    = sqrt(168 / 2) = sqrt(84) ≈ 9.16515
+        RMSE_ddof1   = sqrt(45 / 2) = sqrt(22.5) ≈ 4.74342
+        sdivsigma    = sqrt(22.5) / sqrt(84) = sqrt(22.5/84) ≈ 0.51755
+    """
+
+    @pytest.fixture
+    def metric_env(self, tmp_path):
+        """Env vars for ensemble skill metric test."""
+        overrides = {
+            'ieasyforecast_intermediate_data_path': str(tmp_path),
+            'ieasyforecast_pentadal_skill_metrics_file': 'skill_pentad.csv',
+            'ieasyforecast_combined_forecast_pentad_file': 'combined.csv',
+            'ieasyhydroforecast_efficiency_threshold': '0.6',
+            'ieasyhydroforecast_accuracy_threshold': '0.8',
+            'ieasyhydroforecast_nse_threshold': '0.8',
+            'SAPPHIRE_API_ENABLED': 'false',
+            'SAPPHIRE_CONSISTENCY_CHECK': 'false',
+            'SAPPHIRE_TEST_ENV': 'True',
+        }
+        with patch.dict(os.environ, overrides):
+            yield tmp_path
+
+    def test_ensemble_skill_metrics_exact_values(self, metric_env):
+        """EM row skill metrics match hand-calculated values.
+
+        Setup: 3 dates in pentad 1, station 15001.
+        LR and TFT both pass thresholds; EM = mean(LR, TFT).
+        """
+        dates = pd.to_datetime([
+            '2026-01-01', '2026-01-02', '2026-01-03',
+        ])
+        # LR and TFT chosen so mean(LR, TFT) gives target EM values
+        # EM targets: [105, 110, 120]
+        forecasts = pd.DataFrame([
+            # LR
+            {'code': '15001', 'date': dates[0], 'pentad_in_year': 1,
+             'pentad_in_month': '1', 'forecasted_discharge': 100.0,
+             'model_long': MODEL_LONG_NAMES['LR'], 'model_short': 'LR'},
+            {'code': '15001', 'date': dates[1], 'pentad_in_year': 1,
+             'pentad_in_month': '1', 'forecasted_discharge': 105.0,
+             'model_long': MODEL_LONG_NAMES['LR'], 'model_short': 'LR'},
+            {'code': '15001', 'date': dates[2], 'pentad_in_year': 1,
+             'pentad_in_month': '1', 'forecasted_discharge': 115.0,
+             'model_long': MODEL_LONG_NAMES['LR'], 'model_short': 'LR'},
+            # TFT
+            {'code': '15001', 'date': dates[0], 'pentad_in_year': 1,
+             'pentad_in_month': '1', 'forecasted_discharge': 110.0,
+             'model_long': MODEL_LONG_NAMES['TFT'], 'model_short': 'TFT'},
+            {'code': '15001', 'date': dates[1], 'pentad_in_year': 1,
+             'pentad_in_month': '1', 'forecasted_discharge': 115.0,
+             'model_long': MODEL_LONG_NAMES['TFT'], 'model_short': 'TFT'},
+            {'code': '15001', 'date': dates[2], 'pentad_in_year': 1,
+             'pentad_in_month': '1', 'forecasted_discharge': 125.0,
+             'model_long': MODEL_LONG_NAMES['TFT'], 'model_short': 'TFT'},
+        ])
+        # Both models pass all thresholds
+        skill = pd.DataFrame([
+            {'pentad_in_year': 1, 'code': '15001',
+             'model_long': MODEL_LONG_NAMES['LR'], 'model_short': 'LR',
+             'sdivsigma': 0.3, 'nse': 0.95, 'delta': 5.0,
+             'accuracy': 0.95, 'mae': 2.0, 'n_pairs': 10},
+            {'pentad_in_year': 1, 'code': '15001',
+             'model_long': MODEL_LONG_NAMES['TFT'], 'model_short': 'TFT',
+             'sdivsigma': 0.4, 'nse': 0.9, 'delta': 5.0,
+             'accuracy': 0.88, 'mae': 3.0, 'n_pairs': 10},
+        ])
+        observed = pd.DataFrame({
+            'code': ['15001'] * 3,
+            'date': dates,
+            'discharge_avg': [100.0, 106.0, 118.0],
+            'delta': [5.0, 5.0, 5.0],
+        })
+
+        joint, skill_out = _make_ensemble(forecasts, skill, observed)
+
+        # --- Verify EM forecast values ---
+        em_fc = joint[joint['model_short'] == 'EM'].sort_values('date')
+        assert len(em_fc) == 3, f"Expected 3 EM rows, got {len(em_fc)}"
+        em_vals = em_fc['forecasted_discharge'].tolist()
+        assert abs(em_vals[0] - 105.0) < 0.01  # mean(100, 110)
+        assert abs(em_vals[1] - 110.0) < 0.01  # mean(105, 115)
+        assert abs(em_vals[2] - 120.0) < 0.01  # mean(115, 125)
+
+        # --- Verify EM skill metrics ---
+        em_skill = skill_out[
+            (skill_out['model_short'] == 'EM')
+            & (skill_out['code'] == '15001')
+            & (skill_out['pentad_in_year'] == 1)
+        ]
+        assert len(em_skill) == 1, (
+            f"Expected 1 EM skill row, got {len(em_skill)}"
+        )
+        row = em_skill.iloc[0]
+
+        # n_pairs = 3 (3 dates in pentad 1)
+        assert row['n_pairs'] == 3
+
+        # MAE = (5 + 4 + 2) / 3 = 11/3
+        expected_mae = 11.0 / 3.0
+        assert abs(row['mae'] - expected_mae) < 1e-6, (
+            f"MAE: expected {expected_mae}, got {row['mae']}"
+        )
+
+        # accuracy = 1.0 (all abs_diff <= 5)
+        assert abs(row['accuracy'] - 1.0) < 1e-6, (
+            f"accuracy: expected 1.0, got {row['accuracy']}"
+        )
+
+        # delta = 5.0
+        assert abs(row['delta'] - 5.0) < 1e-6
+
+        # NSE = 1 - 45/168 = 123/168
+        expected_nse = 1.0 - 45.0 / 168.0
+        assert abs(row['nse'] - expected_nse) < 1e-4, (
+            f"NSE: expected {expected_nse:.6f}, got {row['nse']}"
+        )
+
+        # sdivsigma = sqrt(22.5 / 84)
+        expected_sdivsigma = np.sqrt(22.5 / 84.0)
+        assert abs(row['sdivsigma'] - expected_sdivsigma) < 1e-4, (
+            f"sdivsigma: expected {expected_sdivsigma:.6f}, "
+            f"got {row['sdivsigma']}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# TestLeapYearBoundary (#11)
+# ---------------------------------------------------------------------------
+class TestLeapYearBoundary:
+    """Leap year date handling: Feb 29 and Mar 1 get correct pentad values.
+
+    Feb 29 in a leap year:
+        pentad_in_month = min((29-1)//5 + 1, 6) = min(6, 6) = 6
+        pentad_in_year  = (2-1)*6 + 6 = 12
+
+    Mar 1:
+        pentad_in_month = min((1-1)//5 + 1, 6) = min(1, 6) = 1
+        pentad_in_year  = (3-1)*6 + 1 = 13
+    """
+
+    def test_leap_year_ensemble_created_both_dates(self, env_setup):
+        """Forecasts on Feb 29 and Mar 1 of leap year get EM rows."""
+        # 2024 is a leap year
+        dates = pd.to_datetime(['2024-02-29', '2024-03-01'])
+        pentads = [12, 13]
+        pims = ['6', '1']
+
+        frows = []
+        srows = []
+        orows = []
+
+        for date, pentad, pim in zip(dates, pentads, pims):
+            for ms, ml in [('LR', MODEL_LONG_NAMES['LR']),
+                           ('TFT', MODEL_LONG_NAMES['TFT'])]:
+                frows.append({
+                    'code': '15001', 'date': date,
+                    'pentad_in_year': pentad, 'pentad_in_month': pim,
+                    'forecasted_discharge': 100.0 if ms == 'LR' else 110.0,
+                    'model_long': ml, 'model_short': ms,
+                })
+            for ms, ml in [('LR', MODEL_LONG_NAMES['LR']),
+                           ('TFT', MODEL_LONG_NAMES['TFT'])]:
+                srows.append({
+                    'pentad_in_year': pentad, 'code': '15001',
+                    'model_long': ml, 'model_short': ms,
+                    'sdivsigma': 0.3, 'nse': 0.95, 'delta': 5.0,
+                    'accuracy': 0.95, 'mae': 2.0, 'n_pairs': 10,
+                })
+            orows.append({
+                'code': '15001', 'date': date,
+                'discharge_avg': 105.0, 'delta': 5.0,
+            })
+
+        forecasts = pd.DataFrame(frows)
+        skill = pd.DataFrame(srows)
+        observed = pd.DataFrame(orows)
+
+        joint, _ = _make_ensemble(forecasts, skill, observed)
+        em_rows = joint[joint['model_short'] == 'EM']
+
+        # EM created for both dates
+        assert len(em_rows) == 2, (
+            f"Expected 2 EM rows (Feb 29 + Mar 1), got {len(em_rows)}"
+        )
+
+        # Correct pentad_in_year values
+        em_pentads = sorted(em_rows['pentad_in_year'].tolist())
+        assert em_pentads == [12, 13], (
+            f"Expected pentads [12, 13], got {em_pentads}"
+        )
+
+        # EM discharge = mean(LR=100, TFT=110) = 105.0
+        for _, row in em_rows.iterrows():
+            assert abs(row['forecasted_discharge'] - 105.0) < 0.01
+
+    def test_leap_year_pentad_values_from_tag_library(self, env_setup):
+        """tag_library.get_pentad_in_year agrees with our expectation."""
+        # Feb 29, 2024 → pentad 12
+        assert tl.get_pentad_in_year('2024-02-29') == '12'
+        # Mar 1, 2024 → pentad 13
+        assert tl.get_pentad_in_year('2024-03-01') == '13'
+        # Feb 28 (non-leap) → pentad_in_month = min((28-1)//5+1,6) = min(6,6) = 6
+        # pentad_in_year = 1*6 + 6 = 12
+        assert tl.get_pentad_in_year('2025-02-28') == '12'
+
+    def test_leap_year_pentad_in_month_from_tag_library(self, env_setup):
+        """tag_library.get_pentad agrees on leap year dates."""
+        assert tl.get_pentad('2024-02-29') == '6'
+        assert tl.get_pentad('2024-03-01') == '1'
+
+
+# ---------------------------------------------------------------------------
+# TestDecadalMaintenanceFullGapFill (#20)
+# ---------------------------------------------------------------------------
+class TestDecadalMaintenanceFullGapFill:
+    """End-to-end decadal gap-fill: detect → ensemble → verify.
+
+    Mirrors TestMaintenanceFullGapFill but uses decad columns and functions.
+    """
+
+    @pytest.fixture
+    def decad_gap_env(self, tmp_path):
+        """Env vars for decadal gap-fill test."""
+        overrides = {
+            'ieasyforecast_intermediate_data_path': str(tmp_path),
+            'ieasyforecast_combined_forecast_decad_file': 'combined_decad.csv',
+            'ieasyforecast_decadal_skill_metrics_file': 'skill_decad.csv',
+            'ieasyforecast_combined_forecast_pentad_file': 'combined_pentad.csv',
+            'ieasyhydroforecast_efficiency_threshold': '0.6',
+            'ieasyhydroforecast_accuracy_threshold': '0.8',
+            'ieasyhydroforecast_nse_threshold': '0.8',
+            'SAPPHIRE_API_ENABLED': 'false',
+            'SAPPHIRE_CONSISTENCY_CHECK': 'false',
+            'SAPPHIRE_TEST_ENV': 'True',
+        }
+        with patch.dict(os.environ, overrides):
+            yield tmp_path
+
+    def test_decadal_gap_detected_ensemble_created_and_saved(
+        self, decad_gap_env,
+    ):
+        """Full pipeline: missing EM in decadal CSV → detect → ensemble → save.
+
+        Combined CSV has 2 dates: Jan 10 has EM, Jan 20 is missing EM.
+        After gap-fill, Jan 20 should have an EM row.
+        """
+        tmp_path = decad_gap_env
+
+        # 1. Write combined CSV with gap (Jan 20 missing EM)
+        rows = []
+        for date_str, has_em in [('2026-01-10', True), ('2026-01-20', False)]:
+            for ms in ('LR', 'TFT'):
+                rows.append({
+                    'code': '15001', 'date': date_str,
+                    'decad_in_year': 1, 'decad_in_month': '1',
+                    'forecasted_discharge': 100.0 if ms == 'LR' else 110.0,
+                    'model_long': MODEL_LONG_NAMES[ms], 'model_short': ms,
+                })
+            if has_em:
+                rows.append({
+                    'code': '15001', 'date': date_str,
+                    'decad_in_year': 1, 'decad_in_month': '1',
+                    'forecasted_discharge': 105.0,
+                    'model_long': 'Ens. Mean with LR, TFT (EM)',
+                    'model_short': 'EM',
+                })
+        combined_df = pd.DataFrame(rows)
+        _write_csv(
+            combined_df,
+            os.path.join(str(tmp_path), 'combined_decad.csv'),
+        )
+
+        # 2. Write decadal skill CSV (both models pass)
+        skill_rows = []
+        for ms in ('LR', 'TFT'):
+            skill_rows.append({
+                'decad_in_year': 1, 'code': '15001',
+                'model_long': MODEL_LONG_NAMES[ms], 'model_short': ms,
+                'sdivsigma': 0.3, 'nse': 0.95, 'delta': 5.0,
+                'accuracy': 0.95, 'mae': 2.0, 'n_pairs': 10,
+            })
+        skill_df = pd.DataFrame(skill_rows)
+        _write_csv(
+            skill_df,
+            os.path.join(str(tmp_path), 'skill_decad.csv'),
+        )
+
+        # 3. Detect gap
+        combined = gap_detector.read_combined_forecasts('decad')
+        gaps = gap_detector.detect_missing_ensembles(
+            combined, lookback_days=15,
+        )
+        assert len(gaps) == 1
+        gap_date_str = pd.Timestamp(
+            gaps.iloc[0]['date']
+        ).strftime('%Y-%m-%d')
+        assert gap_date_str == '2026-01-20'
+
+        # 4. Build gap data for the missing date
+        gap_data = pd.DataFrame([
+            {
+                'code': '15001', 'date': pd.Timestamp('2026-01-20'),
+                'decad_in_year': 1, 'decad_in_month': '1',
+                'forecasted_discharge': 100.0,
+                'model_long': MODEL_LONG_NAMES['LR'], 'model_short': 'LR',
+            },
+            {
+                'code': '15001', 'date': pd.Timestamp('2026-01-20'),
+                'decad_in_year': 1, 'decad_in_month': '1',
+                'forecasted_discharge': 110.0,
+                'model_long': MODEL_LONG_NAMES['TFT'], 'model_short': 'TFT',
+            },
+        ])
+
+        skill_metrics = data_reader.read_skill_metrics('decad')
+        observed = pd.DataFrame({
+            'code': ['15001'],
+            'date': pd.to_datetime(['2026-01-20']),
+            'discharge_avg': [105.0],
+            'delta': [5.0],
+        })
+
+        joint, _ = ensemble_calculator.create_ensemble_forecasts(
+            forecasts=gap_data,
+            skill_stats=skill_metrics,
+            observed=observed,
+            period_col='decad_in_year',
+            period_in_month_col='decad_in_month',
+            get_period_in_month_func=tl.get_decad_in_month,
+            calculate_all_metrics_func=fl.calculate_all_skill_metrics,
+        )
+
+        # 5. Verify EM rows created for gap date
+        em_rows = joint[joint['model_short'] == 'EM']
+        assert len(em_rows) == 1, f"Expected 1 EM row, got {len(em_rows)}"
+        assert abs(
+            em_rows.iloc[0]['forecasted_discharge'] - 105.0
+        ) < 0.01, "EM = mean(LR=100, TFT=110) = 105.0"
+
+        # 6. Save to CSV and verify
+        fl.save_forecast_data_decade(joint)
+        csv_path = os.path.join(str(tmp_path), 'combined_decad.csv')
+        saved = pd.read_csv(csv_path)
+        saved_em = saved[saved['model_short'] == 'EM']
+        assert len(saved_em) >= 1, "EM rows should be in saved CSV"
+
+
+# ---------------------------------------------------------------------------
+# TestDecadalRecalculateWithRealisticData (#21)
+# ---------------------------------------------------------------------------
+class TestDecadalRecalculateWithRealisticData:
+    """Test #21: Feed realistic data through calculate_skill_metrics_decade().
+
+    Mirrors TestRecalculateWithRealisticData but for decadal resolution.
+    3 stations x 2 decads x 2 models, with known observed values.
+    """
+
+    @pytest.fixture
+    def decad_recalc_env(self, tmp_path):
+        """Env vars for decadal recalculate integration test."""
+        overrides = {
+            'ieasyforecast_intermediate_data_path': str(tmp_path),
+            'ieasyforecast_combined_forecast_decad_file': 'combined_decad.csv',
+            'ieasyforecast_decadal_skill_metrics_file': 'skill_decad.csv',
+            'ieasyhydroforecast_efficiency_threshold': '0.6',
+            'ieasyhydroforecast_accuracy_threshold': '0.8',
+            'ieasyhydroforecast_nse_threshold': '0.8',
+            'SAPPHIRE_API_ENABLED': 'false',
+            'SAPPHIRE_CONSISTENCY_CHECK': 'false',
+            'SAPPHIRE_TEST_ENV': 'True',
+        }
+        with patch.dict(os.environ, overrides):
+            yield tmp_path
+
+    @pytest.fixture
+    def decad_realistic_data(self):
+        """3 stations x 2 decads x 2 models, 5 dates per decad.
+
+        Station 15001: LR good, TFT good -> EM expected
+        Station 15002: LR good, TFT bad  -> no EM (single-model)
+        Station 15003: LR bad,  TFT bad  -> no EM
+        """
+        stations = ['15001', '15002', '15003']
+        # 5 dates in decad 1, 5 in decad 2
+        dates_d1 = pd.to_datetime([
+            '2026-01-01', '2026-01-03', '2026-01-05',
+            '2026-01-07', '2026-01-09',
+        ])
+        dates_d2 = pd.to_datetime([
+            '2026-01-11', '2026-01-13', '2026-01-15',
+            '2026-01-17', '2026-01-19',
+        ])
+
+        obs_base = {
+            '15001': [98, 102, 100, 104, 96],
+            '15002': [200, 210, 205, 195, 190],
+            '15003': [50, 55, 52, 48, 45],
+        }
+        lr_base = {
+            '15001': [99, 101, 100, 103, 97],    # close to obs
+            '15002': [201, 209, 204, 196, 191],   # close to obs
+            '15003': [80, 85, 82, 78, 75],        # far from obs
+        }
+        tft_base = {
+            '15001': [99, 103, 100, 105, 96],     # close to obs
+            '15002': [150, 160, 155, 145, 140],   # far from obs
+            '15003': [80, 85, 82, 78, 75],        # far from obs
+        }
+
+        sim_rows = []
+        obs_rows = []
+
+        for dates, decad_num in [(dates_d1, 1), (dates_d2, 2)]:
+            dim = str(tl.get_decad_in_month(
+                dates[0] + pd.Timedelta(days=1)
+            ))
+            for i, date in enumerate(dates):
+                for station in stations:
+                    obs_val = obs_base[station][i]
+                    obs_rows.append({
+                        'code': station, 'date': date,
+                        'discharge_avg': float(obs_val),
+                        'delta': 5.0,
+                        'model_long': 'observed',
+                        'model_short': 'obs',
+                    })
+
+                    lr_val = lr_base[station][i]
+                    sim_rows.append({
+                        'code': station, 'date': date,
+                        'decad_in_year': decad_num,
+                        'decad_in_month': dim,
+                        'forecasted_discharge': float(lr_val),
+                        'model_long': MODEL_LONG_NAMES['LR'],
+                        'model_short': 'LR',
+                    })
+
+                    tft_val = tft_base[station][i]
+                    sim_rows.append({
+                        'code': station, 'date': date,
+                        'decad_in_year': decad_num,
+                        'decad_in_month': dim,
+                        'forecasted_discharge': float(tft_val),
+                        'model_long': MODEL_LONG_NAMES['TFT'],
+                        'model_short': 'TFT',
+                    })
+
+        observed = pd.DataFrame(obs_rows)
+        simulated = pd.DataFrame(sim_rows)
+        return observed, simulated
+
+    def test_decad_skill_stats_shape(
+        self, decad_recalc_env, decad_realistic_data,
+    ):
+        """Skill stats has correct groups: 3 stations x 2 decads x 2 models.
+
+        n_pairs should be 5 for each group (5 dates per decad).
+        """
+        observed, simulated = decad_realistic_data
+
+        skill_stats, joint, _ = fl.calculate_skill_metrics_decade(
+            observed, simulated
+        )
+
+        # Base: 3 stations x 2 decads x 2 models = 12
+        base_groups = skill_stats[skill_stats['model_short'] != 'EM']
+        assert len(base_groups) == 12, (
+            f"Expected 12 base skill rows, got {len(base_groups)}"
+        )
+
+        for col in ['sdivsigma', 'nse', 'mae', 'n_pairs', 'delta',
+                     'accuracy']:
+            assert col in skill_stats.columns, f"Missing column: {col}"
+
+        assert (base_groups['n_pairs'] == 5).all(), (
+            "Each group should have 5 data points"
+        )
+
+    def test_decad_em_created_for_good_station(
+        self, decad_recalc_env, decad_realistic_data,
+    ):
+        """Station 15001 gets EM rows (both LR and TFT close to observed)."""
+        observed, simulated = decad_realistic_data
+
+        skill_stats, joint, _ = fl.calculate_skill_metrics_decade(
+            observed, simulated
+        )
+
+        em_rows = skill_stats[
+            (skill_stats['code'] == '15001')
+            & (skill_stats['model_short'] == 'EM')
+        ]
+        assert len(em_rows) >= 1, (
+            f"Station 15001 should have EM skill rows, got {len(em_rows)}"
+        )
+
+    def test_decad_no_em_for_bad_station(
+        self, decad_recalc_env, decad_realistic_data,
+    ):
+        """Station 15003 has no EM (both models far from observed)."""
+        observed, simulated = decad_realistic_data
+
+        skill_stats, joint, _ = fl.calculate_skill_metrics_decade(
+            observed, simulated
+        )
+
+        em_15003 = skill_stats[
+            (skill_stats['code'] == '15003')
+            & (skill_stats['model_short'] == 'EM')
+        ]
+        assert len(em_15003) == 0, (
+            f"Station 15003 should have no EM rows, got {len(em_15003)}"
+        )
+
+    def test_decad_joint_forecasts_em_discharge(
+        self, decad_recalc_env, decad_realistic_data,
+    ):
+        """EM discharge in joint forecasts = mean(LR, TFT)."""
+        observed, simulated = decad_realistic_data
+
+        skill_stats, joint, _ = fl.calculate_skill_metrics_decade(
+            observed, simulated
+        )
+
+        em_rows = joint[joint['model_short'] == 'EM']
+        assert len(em_rows) > 0, "EM rows should be in joint forecasts"
+
+        for _, em in em_rows.iterrows():
+            date = em['date']
+            code = em['code']
+            lr_val = simulated[
+                (simulated['date'] == date)
+                & (simulated['code'] == code)
+                & (simulated['model_short'] == 'LR')
+            ]['forecasted_discharge'].iloc[0]
+            tft_val = simulated[
+                (simulated['date'] == date)
+                & (simulated['code'] == code)
+                & (simulated['model_short'] == 'TFT')
+            ]['forecasted_discharge'].iloc[0]
+            expected_em = (lr_val + tft_val) / 2.0
+            assert abs(em['forecasted_discharge'] - expected_em) < 0.01, (
+                f"EM for {code} on {date}: expected {expected_em}, "
+                f"got {em['forecasted_discharge']}"
+            )
+
+    def test_decad_save_writes_csv(
+        self, decad_recalc_env, decad_realistic_data,
+    ):
+        """Full pipeline: calculate → save skill + forecasts to CSV."""
+        observed, simulated = decad_realistic_data
+        tmp_path = decad_recalc_env
+
+        skill_stats, joint, _ = fl.calculate_skill_metrics_decade(
+            observed, simulated
+        )
+
+        # Save skill metrics
+        with patch.object(fl, 'SAPPHIRE_API_AVAILABLE', False):
+            fl.save_decadal_skill_metrics(skill_stats)
+
+        skill_csv = os.path.join(str(tmp_path), 'skill_decad.csv')
+        assert os.path.exists(skill_csv), "Skill metrics CSV not created"
+        saved_skill = pd.read_csv(skill_csv)
+        assert len(saved_skill) >= 12, (
+            f"Skill CSV should have >= 12 rows, got {len(saved_skill)}"
+        )
+
+        # Save combined forecasts
+        joint_with_dim = joint.copy()
+        if 'decad_in_month' not in joint_with_dim.columns:
+            joint_with_dim['decad_in_month'] = (
+                pd.to_datetime(joint_with_dim['date'])
+                + pd.Timedelta(days=1)
+            ).apply(tl.get_decad_in_month)
+        with patch.object(fl, 'SAPPHIRE_API_AVAILABLE', False):
+            fl.save_forecast_data_decade(joint_with_dim)
+
+        forecast_csv = os.path.join(str(tmp_path), 'combined_decad.csv')
+        assert os.path.exists(forecast_csv), "Forecast CSV not created"
+        saved_fc = pd.read_csv(forecast_csv)
+        assert 'EM' in saved_fc['model_short'].values, (
+            "EM rows should be in saved forecast CSV"
+        )
