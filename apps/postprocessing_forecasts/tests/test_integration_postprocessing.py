@@ -1721,6 +1721,497 @@ class TestQuantileFields:
 
 
 # ---------------------------------------------------------------------------
+# TestRecalculateWithRealisticData
+# ---------------------------------------------------------------------------
+class TestRecalculateWithRealisticData:
+    """Test #8: Feed realistic data through calculate_skill_metrics_pentad().
+
+    Uses real logic for skill metric calculation and ensemble creation.
+    3 stations x 2 pentads x 2 models, with known observed values so
+    we can verify metric correctness.
+    """
+
+    @pytest.fixture
+    def recalc_env(self, tmp_path):
+        """Env vars for recalculate integration test."""
+        overrides = {
+            'ieasyforecast_intermediate_data_path': str(tmp_path),
+            'ieasyforecast_combined_forecast_pentad_file': 'combined_pentad.csv',
+            'ieasyforecast_pentadal_skill_metrics_file': 'skill_pentad.csv',
+            'ieasyhydroforecast_efficiency_threshold': '0.6',
+            'ieasyhydroforecast_accuracy_threshold': '0.8',
+            'ieasyhydroforecast_nse_threshold': '0.8',
+            'SAPPHIRE_API_ENABLED': 'false',
+            'SAPPHIRE_CONSISTENCY_CHECK': 'false',
+            'SAPPHIRE_TEST_ENV': 'True',
+        }
+        with patch.dict(os.environ, overrides):
+            yield tmp_path
+
+    @pytest.fixture
+    def realistic_data(self):
+        """3 stations x 2 pentads x 2 models, 5 dates per pentad.
+
+        Station 15001: LR good, TFT good -> EM expected
+        Station 15002: LR good, TFT bad  -> no EM (single-model)
+        Station 15003: LR bad,  TFT bad  -> no EM
+        """
+        stations = ['15001', '15002', '15003']
+        # 5 dates in pentad 1, 5 dates in pentad 2
+        dates_p1 = pd.to_datetime([
+            '2026-01-01', '2026-01-02', '2026-01-03',
+            '2026-01-04', '2026-01-05',
+        ])
+        dates_p2 = pd.to_datetime([
+            '2026-01-06', '2026-01-07', '2026-01-08',
+            '2026-01-09', '2026-01-10',
+        ])
+
+        # Observed discharge: around 100 m3/s with some variation
+        obs_base = {
+            '15001': [98, 102, 100, 104, 96],
+            '15002': [200, 210, 205, 195, 190],
+            '15003': [50, 55, 52, 48, 45],
+        }
+
+        # LR forecasts: good for 15001/15002, bad for 15003
+        lr_base = {
+            '15001': [99, 101, 100, 103, 97],   # close to obs
+            '15002': [201, 209, 204, 196, 191],  # close to obs
+            '15003': [80, 85, 82, 78, 75],       # far from obs
+        }
+
+        # TFT forecasts: good for 15001, bad for 15002/15003
+        tft_base = {
+            '15001': [99, 103, 100, 105, 96],     # close to obs (NSE>0.8)
+            '15002': [150, 160, 155, 145, 140],   # far from obs
+            '15003': [80, 85, 82, 78, 75],        # far from obs
+        }
+
+        sim_rows = []
+        obs_rows = []
+
+        for pentad_idx, (dates, pentad_num) in enumerate(
+            [(dates_p1, 1), (dates_p2, 2)]
+        ):
+            pim = str(tl.get_pentad(dates[0] + pd.Timedelta(days=1)))
+            for i, date in enumerate(dates):
+                for station in stations:
+                    obs_val = obs_base[station][i]
+                    # Observed: one row per (date, station) — the
+                    # function only uses [code, date, discharge_avg,
+                    # delta] from observed, but requires model_long
+                    # and model_short columns to exist.
+                    obs_rows.append({
+                        'code': station, 'date': date,
+                        'discharge_avg': float(obs_val),
+                        'delta': 5.0,
+                        'model_long': 'observed',
+                        'model_short': 'obs',
+                    })
+
+                    # Simulated — LR
+                    lr_val = lr_base[station][i]
+                    sim_rows.append({
+                        'code': station, 'date': date,
+                        'pentad_in_year': pentad_num,
+                        'pentad_in_month': pim,
+                        'forecasted_discharge': float(lr_val),
+                        'model_long': MODEL_LONG_NAMES['LR'],
+                        'model_short': 'LR',
+                    })
+
+                    # Simulated — TFT
+                    tft_val = tft_base[station][i]
+                    sim_rows.append({
+                        'code': station, 'date': date,
+                        'pentad_in_year': pentad_num,
+                        'pentad_in_month': pim,
+                        'forecasted_discharge': float(tft_val),
+                        'model_long': MODEL_LONG_NAMES['TFT'],
+                        'model_short': 'TFT',
+                    })
+
+        observed = pd.DataFrame(obs_rows)
+        simulated = pd.DataFrame(sim_rows)
+        return observed, simulated
+
+    def test_skill_stats_shape_and_groups(self, recalc_env, realistic_data):
+        """Skill stats has correct groups: 3 stations x 2 pentads x 2 models.
+
+        Plus EM rows for station 15001 (both LR and TFT pass).
+        """
+        observed, simulated = realistic_data
+
+        skill_stats, joint, _ = fl.calculate_skill_metrics_pentad(
+            observed, simulated
+        )
+
+        # Base: 3 stations x 2 pentads x 2 models = 12
+        base_groups = skill_stats[skill_stats['model_short'] != 'EM']
+        assert len(base_groups) == 12, (
+            f"Expected 12 base skill rows, got {len(base_groups)}"
+        )
+
+        # Each row should have all 6 metrics
+        for col in ['sdivsigma', 'nse', 'mae', 'n_pairs', 'delta',
+                     'accuracy']:
+            assert col in skill_stats.columns, f"Missing column: {col}"
+
+        # n_pairs should be 5 for each group (5 dates per pentad)
+        assert (base_groups['n_pairs'] == 5).all(), (
+            "Each group should have 5 data points"
+        )
+
+    def test_highly_skilled_models_get_em(
+        self, recalc_env, realistic_data,
+    ):
+        """Station 15001 has both LR and TFT with good forecasts.
+
+        Skill metrics should pass thresholds and EM rows should appear.
+        """
+        observed, simulated = realistic_data
+
+        skill_stats, joint, _ = fl.calculate_skill_metrics_pentad(
+            observed, simulated
+        )
+
+        # Check 15001 LR skill — forecasts are close to observed
+        lr_15001_p1 = skill_stats[
+            (skill_stats['code'] == '15001') &
+            (skill_stats['pentad_in_year'] == 1) &
+            (skill_stats['model_short'] == 'LR')
+        ]
+        assert len(lr_15001_p1) == 1
+        # LR errors are small (1-3 m3/s), MAE should be < 3
+        assert lr_15001_p1.iloc[0]['mae'] < 3.0
+        # NSE should be high for good forecasts
+        assert lr_15001_p1.iloc[0]['nse'] > 0.8
+
+        # EM rows should exist for 15001
+        em_rows = skill_stats[
+            (skill_stats['code'] == '15001') &
+            (skill_stats['model_short'] == 'EM')
+        ]
+        assert len(em_rows) >= 1, (
+            f"Station 15001 should have EM skill rows, got {len(em_rows)}"
+        )
+
+    def test_poorly_skilled_station_no_em(
+        self, recalc_env, realistic_data,
+    ):
+        """Station 15003: both LR and TFT have bad forecasts.
+
+        Neither model should pass thresholds, so no EM rows.
+        """
+        observed, simulated = realistic_data
+
+        skill_stats, joint, _ = fl.calculate_skill_metrics_pentad(
+            observed, simulated
+        )
+
+        # 15003 LR errors are large (~30 m3/s vs obs ~50)
+        lr_15003 = skill_stats[
+            (skill_stats['code'] == '15003') &
+            (skill_stats['model_short'] == 'LR')
+        ]
+        assert len(lr_15003) == 2  # 2 pentads
+        # MAE should be high
+        assert (lr_15003['mae'] > 20).all(), (
+            "Bad forecasts should have high MAE"
+        )
+
+        # No EM for 15003
+        em_15003 = skill_stats[
+            (skill_stats['code'] == '15003') &
+            (skill_stats['model_short'] == 'EM')
+        ]
+        assert len(em_15003) == 0, (
+            f"Station 15003 should have no EM rows, got {len(em_15003)}"
+        )
+
+    def test_joint_forecasts_contain_em_rows(
+        self, recalc_env, realistic_data,
+    ):
+        """Joint forecasts include original + EM rows for qualifying stations.
+
+        Original: 3 stations x 2 pentads x 5 dates x 2 models = 60 rows.
+        Plus EM rows for station 15001 (10 dates x 1 EM).
+        """
+        observed, simulated = realistic_data
+
+        skill_stats, joint, _ = fl.calculate_skill_metrics_pentad(
+            observed, simulated
+        )
+
+        # Original rows preserved
+        original_count = len(simulated)
+        assert original_count == 60
+        non_em = joint[joint['model_short'] != 'EM']
+        assert len(non_em) == 60, (
+            f"Original 60 rows should be preserved, got {len(non_em)}"
+        )
+
+        # EM rows added for 15001
+        em_rows = joint[joint['model_short'] == 'EM']
+        assert len(em_rows) > 0, "EM rows should be in joint forecasts"
+
+        # EM discharge should be mean of LR and TFT
+        for _, em in em_rows.iterrows():
+            date = em['date']
+            code = em['code']
+            lr_val = simulated[
+                (simulated['date'] == date) &
+                (simulated['code'] == code) &
+                (simulated['model_short'] == 'LR')
+            ]['forecasted_discharge'].iloc[0]
+            tft_val = simulated[
+                (simulated['date'] == date) &
+                (simulated['code'] == code) &
+                (simulated['model_short'] == 'TFT')
+            ]['forecasted_discharge'].iloc[0]
+            expected_em = (lr_val + tft_val) / 2.0
+            assert abs(em['forecasted_discharge'] - expected_em) < 0.01, (
+                f"EM for {code} on {date}: expected {expected_em}, "
+                f"got {em['forecasted_discharge']}"
+            )
+
+    def test_save_writes_csv_and_api(self, recalc_env, realistic_data):
+        """Full pipeline: calculate → save skill metrics + forecasts to CSV.
+
+        Verify CSV files created with correct content.
+        """
+        observed, simulated = realistic_data
+        tmp_path = recalc_env
+
+        skill_stats, joint, _ = fl.calculate_skill_metrics_pentad(
+            observed, simulated
+        )
+
+        # Save skill metrics
+        with patch.object(fl, 'SAPPHIRE_API_AVAILABLE', False):
+            fl.save_pentadal_skill_metrics(skill_stats)
+
+        # Verify skill metrics CSV
+        skill_csv = os.path.join(str(tmp_path), 'skill_pentad.csv')
+        assert os.path.exists(skill_csv), "Skill metrics CSV not created"
+        saved_skill = pd.read_csv(skill_csv)
+
+        # Should have all base groups + EM groups
+        assert len(saved_skill) >= 12, (
+            f"Skill CSV should have >= 12 rows, got {len(saved_skill)}"
+        )
+        # Sorted by pentad_in_year, code, model_short
+        assert saved_skill.iloc[0]['pentad_in_year'] <= \
+            saved_skill.iloc[-1]['pentad_in_year']
+
+        # Required columns present
+        for col in ['pentad_in_year', 'code', 'model_short', 'sdivsigma',
+                     'nse', 'delta', 'accuracy', 'mae', 'n_pairs']:
+            assert col in saved_skill.columns, (
+                f"Missing column in skill CSV: {col}"
+            )
+
+        # Save combined forecasts
+        # Need pentad_in_month for save_forecast_data_pentad
+        joint_with_pim = joint.copy()
+        if 'pentad_in_month' not in joint_with_pim.columns:
+            joint_with_pim['pentad_in_month'] = (
+                pd.to_datetime(joint_with_pim['date'])
+                + pd.Timedelta(days=1)
+            ).apply(tl.get_pentad)
+        with patch.object(fl, 'SAPPHIRE_API_AVAILABLE', False):
+            fl.save_forecast_data_pentad(joint_with_pim)
+
+        # Verify combined forecasts CSV
+        forecast_csv = os.path.join(str(tmp_path), 'combined_pentad.csv')
+        assert os.path.exists(forecast_csv), "Forecast CSV not created"
+        saved_fc = pd.read_csv(forecast_csv)
+        # Should have original + EM rows
+        assert len(saved_fc) >= 60, (
+            f"Forecast CSV should have >= 60 rows, got {len(saved_fc)}"
+        )
+        # EM rows present in CSV
+        assert 'EM' in saved_fc['model_short'].values, (
+            "EM rows should be in saved forecast CSV"
+        )
+
+
+# ---------------------------------------------------------------------------
+# TestSkillMetricSavePath
+# ---------------------------------------------------------------------------
+class TestSkillMetricSavePath:
+    """Test #9: Verify save_pentadal_skill_metrics() writes CSV correctly
+    and calls API with properly mapped records."""
+
+    @pytest.fixture
+    def save_env(self, tmp_path):
+        """Set env vars for save path test."""
+        overrides = {
+            'ieasyforecast_intermediate_data_path': str(tmp_path),
+            'ieasyforecast_pentadal_skill_metrics_file': 'skill_pentad.csv',
+            'SAPPHIRE_API_ENABLED': 'true',
+            'SAPPHIRE_CONSISTENCY_CHECK': 'false',
+            'SAPPHIRE_TEST_ENV': 'True',
+        }
+        with patch.dict(os.environ, overrides):
+            yield tmp_path
+
+    @pytest.fixture
+    def known_skill_stats(self):
+        """Known skill stats DataFrame for verifying save output."""
+        return pd.DataFrame({
+            'pentad_in_year': [1, 1, 1, 2, 2, 2],
+            'code': ['15001', '15001', '15001',
+                      '15002', '15002', '15002'],
+            'model_short': ['LR', 'TFT', 'EM', 'LR', 'TFT', 'EM'],
+            'model_long': [
+                MODEL_LONG_NAMES['LR'],
+                MODEL_LONG_NAMES['TFT'],
+                'Ens. Mean with LR, TFT (EM)',
+                MODEL_LONG_NAMES['LR'],
+                MODEL_LONG_NAMES['TFT'],
+                'Ens. Mean with LR, TFT (EM)',
+            ],
+            'sdivsigma': [0.3456, 0.4123, 0.2987,
+                           0.5012, 0.3678, 0.3234],
+            'nse': [0.9234, 0.8876, 0.9456,
+                     0.8123, 0.9012, 0.8678],
+            'delta': [5.0, 5.0, 5.0, 5.0, 5.0, 5.0],
+            'accuracy': [0.92, 0.88, 0.95, 0.85, 0.91, 0.89],
+            'mae': [2.1234, 3.4567, 1.8901,
+                     4.5678, 2.3456, 3.0123],
+            'n_pairs': [10, 10, 10, 8, 8, 8],
+            'date': pd.to_datetime([
+                '2026-01-05', '2026-01-05', '2026-01-05',
+                '2026-01-10', '2026-01-10', '2026-01-10',
+            ]),
+        })
+
+    def test_csv_columns_and_sort_order(
+        self, save_env, known_skill_stats,
+    ):
+        """CSV has correct columns and is sorted by
+        (pentad_in_year, code, model_short)."""
+        with patch.object(fl, 'SAPPHIRE_API_AVAILABLE', False):
+            fl.save_pentadal_skill_metrics(known_skill_stats)
+
+        csv_path = os.path.join(str(save_env), 'skill_pentad.csv')
+        saved = pd.read_csv(csv_path)
+
+        # Required columns
+        for col in ['pentad_in_year', 'code', 'model_short',
+                     'sdivsigma', 'nse', 'delta', 'accuracy',
+                     'mae', 'n_pairs']:
+            assert col in saved.columns, f"Missing column: {col}"
+
+        # Sort order: pentad_in_year ascending, then code, then model_short
+        assert saved.iloc[0]['pentad_in_year'] == 1
+        assert saved.iloc[-1]['pentad_in_year'] == 2
+
+        # Within pentad 1, sorted by code then model_short
+        p1 = saved[saved['pentad_in_year'] == 1]
+        model_shorts = list(p1['model_short'])
+        assert model_shorts == sorted(model_shorts), (
+            f"Within pentad, model_short should be sorted: {model_shorts}"
+        )
+
+    def test_values_rounded_to_4_decimals(
+        self, save_env, known_skill_stats,
+    ):
+        """Float values are rounded to 4 decimal places."""
+        with patch.object(fl, 'SAPPHIRE_API_AVAILABLE', False):
+            fl.save_pentadal_skill_metrics(known_skill_stats)
+
+        csv_path = os.path.join(str(save_env), 'skill_pentad.csv')
+        saved = pd.read_csv(csv_path, dtype={'code': str})
+
+        # Check sdivsigma rounding — 0.3456 should stay 0.3456
+        row = saved[
+            (saved['code'] == '15001') &
+            (saved['model_short'] == 'LR') &
+            (saved['pentad_in_year'] == 1)
+        ]
+        assert len(row) == 1
+        assert abs(row.iloc[0]['sdivsigma'] - 0.3456) < 1e-5
+
+        # Check mae rounding — 2.1234 stays 2.1234
+        assert abs(row.iloc[0]['mae'] - 2.1234) < 1e-5
+
+    def test_code_cleaned_no_dot_zero(self, save_env):
+        """Code values like '15001.0' are cleaned to '15001'."""
+        data = pd.DataFrame({
+            'pentad_in_year': [1],
+            'code': [15001.0],  # float code
+            'model_short': ['LR'],
+            'model_long': [MODEL_LONG_NAMES['LR']],
+            'sdivsigma': [0.3], 'nse': [0.9], 'delta': [5.0],
+            'accuracy': [0.9], 'mae': [2.0], 'n_pairs': [10],
+            'date': pd.to_datetime(['2026-01-05']),
+        })
+        with patch.object(fl, 'SAPPHIRE_API_AVAILABLE', False):
+            fl.save_pentadal_skill_metrics(data)
+
+        csv_path = os.path.join(str(save_env), 'skill_pentad.csv')
+        saved = pd.read_csv(csv_path, dtype={'code': str})
+        assert saved.iloc[0]['code'] == '15001', (
+            f"Code should be '15001', got '{saved.iloc[0]['code']}'"
+        )
+
+    def test_api_write_called_with_correct_args(
+        self, save_env, known_skill_stats,
+    ):
+        """When API is available, _write_skill_metrics_to_api is called
+        with the DataFrame and 'pentad' horizon type."""
+        with patch.object(fl, 'SAPPHIRE_API_AVAILABLE', True), \
+             patch.object(
+                 fl, '_write_skill_metrics_to_api'
+             ) as mock_api_write:
+            fl.save_pentadal_skill_metrics(known_skill_stats)
+
+            mock_api_write.assert_called_once()
+            call_args = mock_api_write.call_args
+            # First positional arg is the DataFrame
+            api_data = call_args[0][0]
+            assert isinstance(api_data, pd.DataFrame)
+            assert len(api_data) == 6
+            # Second arg is horizon_type
+            assert call_args[0][1] == 'pentad'
+
+    def test_api_failure_does_not_prevent_csv(
+        self, save_env, known_skill_stats,
+    ):
+        """API failure should not prevent CSV from being written."""
+        with patch.object(fl, 'SAPPHIRE_API_AVAILABLE', True), \
+             patch.object(
+                 fl, '_write_skill_metrics_to_api',
+                 side_effect=Exception("API connection refused"),
+             ), \
+             patch.object(fl, '_handle_api_write_error'):
+            fl.save_pentadal_skill_metrics(known_skill_stats)
+
+        # CSV should still exist
+        csv_path = os.path.join(str(save_env), 'skill_pentad.csv')
+        assert os.path.exists(csv_path), (
+            "CSV should be written even when API fails"
+        )
+        saved = pd.read_csv(csv_path)
+        assert len(saved) == 6
+
+    def test_date_formatted_as_yyyy_mm_dd(
+        self, save_env, known_skill_stats,
+    ):
+        """Date column is formatted as YYYY-MM-DD string in CSV."""
+        with patch.object(fl, 'SAPPHIRE_API_AVAILABLE', False):
+            fl.save_pentadal_skill_metrics(known_skill_stats)
+
+        csv_path = os.path.join(str(save_env), 'skill_pentad.csv')
+        saved = pd.read_csv(csv_path)
+        # Date should be string in YYYY-MM-DD format
+        assert saved.iloc[0]['date'] == '2026-01-05'
+
+
+# ---------------------------------------------------------------------------
 # TestRecalculateSkillMetricsIntegration
 # ---------------------------------------------------------------------------
 class TestRecalculateSkillMetricsIntegration:

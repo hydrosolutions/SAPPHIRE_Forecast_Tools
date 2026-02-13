@@ -39,7 +39,7 @@
 | Skill metrics single-pass optimization | **DONE** — `calculate_all_skill_metrics()` replaces triple groupby+merge (commit `eae7158`) |
 | Monthly/quarterly/seasonal skill metrics | TODO — Phase 4 (point + CRPS, configurable season) |
 | Bug 6: Single-model ensemble filter only rejects LR | **DONE** — `_is_multi_model_ensemble()` helper replaces hardcoded check |
-| Comprehensive test suite (50+ unit, 12+ integration) | **DONE** — 270 postprocessing tests + 206 iEasyHydroForecast tests pass |
+| Comprehensive test suite (50+ unit, 12+ integration) | **DONE** — 281 postprocessing tests + 206 iEasyHydroForecast tests pass |
 | Bulk-read API endpoints (for `long_term_forecasting`) | Planned — see `doc/plans/bulk_read_endpoints_instructions.md` |
 | API integration | **DONE** — see `doc/plans/sapphire_api_integration_plan.md` |
 | Duplicate skill metrics / ensemble composition issue | **RESOLVED** — see `doc/plans/issues/gi_duplicate_skill_metrics_ensemble_composition.md` |
@@ -596,7 +596,7 @@ seasonal:
 
 ## Phase 5: Testing Strategy
 
-### Current Tests (270 postprocessing + 206 iEasyHydroForecast, all passing)
+### Current Tests (281 postprocessing + 206 iEasyHydroForecast, all passing)
 
 | File | Tests | Covers |
 |------|-------|--------|
@@ -611,7 +611,7 @@ seasonal:
 | `postprocessing_forecasts/tests/test_operational_workflow.py` | 6 | Pentad/decad/both modes, error accumulation, empty skill metrics, invalid mode |
 | `postprocessing_forecasts/tests/test_maintenance_workflow.py` | 8 | Gap detection, no-gap idempotency, lookback window, empty combined forecasts, invalid mode, BOTH/DECAD modes, save error |
 | `postprocessing_forecasts/tests/test_recalc_workflow.py` | 6 | Calls calculate_skill_metrics, saves skill metrics, both mode, error accumulation, invalid mode, DECAD-only mode |
-| `postprocessing_forecasts/tests/test_integration_postprocessing.py` | 42 | Data routing (operational/maintenance/API fallback/failure modes), single-model ensemble bug, edge case inputs, year/month boundaries, quantile fields, recalc entry point, decadal operational pipeline, maintenance full gap-fill pipeline |
+| `postprocessing_forecasts/tests/test_integration_postprocessing.py` | 53 | Data routing (operational/maintenance/API fallback/failure modes), single-model ensemble bug, edge case inputs, year/month boundaries, quantile fields, recalc entry point, decadal operational pipeline, maintenance full gap-fill pipeline, realistic recalculate (3 stations × 2 pentads × 2 models, EM creation verification), skill metric save path (CSV columns/rounding/sort, API args, failure resilience) |
 | `postprocessing_forecasts/tests/test_edge_cases.py` | 46 | Empty/single-row, NaN handling, discharge boundaries (zero/negative/large), date boundaries, duplicates, thresholds, period coercion, code normalization, delta edge cases (NaN/zero/negative/varying), NaT dates in gap detector, missing columns |
 | `postprocessing_forecasts/tests/test_calculate_all_skill_metrics.py` | 18 | Unit tests for `calculate_all_skill_metrics()`: happy path (hand-calculated), single point, all-NaN, missing column, constant observations, inf values, return type |
 | `postprocessing_forecasts/tests/test_performance.py` | 6 | Benchmarks: triple-groupby vs single-pass, isin vs merge, iterrows vs vectorized |
@@ -763,8 +763,8 @@ Tests below are ordered by priority. Each test should use real logic for everyth
 | 5 | **`calculate_all_skill_metrics()` unit tests** | `test_calculate_all_skill_metrics.py` | **DONE** | 18 tests in 7 classes: happy path (hand-calculated, 5-point verification of all 6 metrics), perfect forecast, partial accuracy, single point (MAE valid, NSE/sdivsigma NaN), all-NaN (obs/sim/delta/mixed), missing columns (ValueError), constant observations, inf values, return type. |
 | 6 | **Decadal operational pipeline** | `test_integration_postprocessing.py` | **DONE** | `TestDecadalOperationalPipeline`: 2 tests (ensemble created + CSV verified, API records correct). |
 | 7 | **Maintenance full gap-fill pipeline** | `test_integration_postprocessing.py` | **DONE** | `TestMaintenanceFullGapFill.test_gap_detected_ensemble_created_and_saved`: end-to-end detect → ensemble → save → verify. |
-| 8 | **Recalculate with realistic data** | `test_integration_postprocessing.py` | TODO | Feed small but realistic observed + modelled DataFrames (5 stations × 3 pentads × 2 models, ~30 rows) into `calculate_skill_metrics_pentad()` with real logic. |
-| 9 | **Skill metric save path (CSV + API)** | `test_integration_postprocessing.py` | TODO | Call `save_pentadal_skill_metrics()` with known skill_stats DataFrame. Verify CSV written with correct columns/sort order. |
+| 8 | **Recalculate with realistic data** | `test_integration_postprocessing.py` | **DONE** | `TestRecalculateWithRealisticData`: 5 tests. 3 stations × 2 pentads × 2 models (LR, TFT) with known observed values. Verifies: skill stats shape/groups (12 base groups, n_pairs=5), EM created for station 15001 (both models pass thresholds), no EM for station 15003 (both bad), EM discharge = mean(LR, TFT), full save pipeline (CSV + API). |
+| 9 | **Skill metric save path (CSV + API)** | `test_integration_postprocessing.py` | **DONE** | `TestSkillMetricSavePath`: 6 tests. Verifies: CSV columns and sort order (pentad_in_year, code, model_short), values rounded to 4 decimals, code cleaned (no .0), API called with correct args (DataFrame + 'pentad'), API failure doesn't prevent CSV, date formatted as YYYY-MM-DD. |
 
 #### Medium Priority — Edge cases, workflow branches, new functions
 
@@ -887,8 +887,8 @@ Tests below are ordered by priority. Each test should use real logic for everyth
 - [x] ~~`calculate_all_skill_metrics()` unit tests~~ (18 tests in 7 classes, hand-calculated verification)
 - [x] ~~Decadal operational pipeline integration test~~ (`TestDecadalOperationalPipeline`, 2 tests)
 - [x] ~~Maintenance full gap-fill pipeline~~ (`TestMaintenanceFullGapFill`, detect → ensemble → save)
-- [ ] Recalculate with realistic data
-- [ ] Skill metric save path integration test (CSV + API)
+- [x] ~~Recalculate with realistic data~~ (`TestRecalculateWithRealisticData`, 5 tests: skill stats shape, EM creation, no EM for bad station, EM discharge verification, full save pipeline)
+- [x] ~~Skill metric save path integration test (CSV + API)~~ (`TestSkillMetricSavePath`, 6 tests: CSV columns/sort, rounding, code cleanup, API args, failure resilience, date format)
 
 #### Medium Priority — Edge cases, branches, new functions (#10–#21)
 
@@ -1178,3 +1178,4 @@ The following plans are **superseded** by this unified plan (moved to `archive/`
 | 2026-02-13 | Bea/Claude | Phase 3 performance items marked DONE (batch upsert, vectorized writes, single-pass metrics, concat fixes, .isin→merge, API singletons). Phase 5 rewritten: full data flow audit per entry point (operational/maintenance/recalc), coverage matrix showing 35 covered steps and 16 missing integration tests prioritised into high/medium/lower tiers. Key gaps: decadal mode (all entry points), maintenance full write path, recalc with realistic data, calculate_all_skill_metrics unit tests, crud.py tests (zero coverage). |
 | 2026-02-13 | Bea/Claude | Critical review of integration test quality (6-agent audit). Found: 8 tests with weak assertions that pass with broken code, 8 missing edge case categories (value boundaries completely untested, leap year, single-row, all-NaN, duplicates, NaN delta, missing columns, NaT dates), 11 untested workflow branches (load_environment failure, invalid mode, maintenance BOTH/DECAD, save error paths). Test infrastructure: 60+ API tests use unsafe os.environ pattern. Updated CLAUDE.md with assertion quality requirements. Expanded missing tests from 16 to 28 items across 3 priority tiers. |
 | 2026-02-13 | Bea/Claude | Phase 5 test implementation: 233 → 270 tests (+37). New files: `test_calculate_all_skill_metrics.py` (18 tests), `test_constants.py` (shared constants). Modified: `test_edge_cases.py` (+9 tests: delta edge cases, NaT dates, negative discharge, missing columns), `test_integration_postprocessing.py` (+7: 3 strengthened assertions, 2 decadal pipeline, 1 maintenance gap-fill, 1 pre-existing fix), `test_operational_workflow.py` (+1: invalid mode), `test_maintenance_workflow.py` (+4: invalid mode, BOTH/DECAD modes, save error), `test_recalc_workflow.py` (+2: invalid mode, DECAD-only). Completed high-priority items #1–#7, medium-priority items #12–#15, #17–#19, #21 (partial). Remaining: #8–#11, #16, #20, #22–#28. |
+| 2026-02-13 | Bea/Claude | High-priority items #8–#9 done: 270 → 281 tests (+11). `TestRecalculateWithRealisticData` (5 tests): 3 stations × 2 pentads × 2 models fed through real `calculate_skill_metrics_pentad()`, verifies skill stats shape, EM creation for qualifying station, no EM for bad stations, EM discharge = mean(models), full save pipeline. `TestSkillMetricSavePath` (6 tests): verifies `save_pentadal_skill_metrics()` CSV output (columns, sort order, 4-decimal rounding, code cleanup, date format) and API integration (correct args, failure resilience). All high-priority items now DONE. Remaining: medium #10–#11, #14, #16, #20; lower #22–#28. |
