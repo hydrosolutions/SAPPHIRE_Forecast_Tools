@@ -257,50 +257,9 @@ effectiveness_plot = pn.pane.HoloViews(hv.Curve([]), sizing_mode="stretch_both")
 accuracy_plot = pn.pane.HoloViews(hv.Curve([]), sizing_mode="stretch_both")
 forecast_skill_plot = pn.Column(effectiveness_plot, accuracy_plot)
 
-def update_forecast_hydrograph(selected_option, _, hydrograph_day_all,
-                               hydrograph_pentad_all, linreg_predictor,
-                               forecasts_all, station, title_date,
-                               model_selection, range_type, range_slider,
-                               range_visibility, rram_forecast, ml_forecast):
-    if selected_option == _('Yes'):
-        # Show forecasts aggregated to pentadal values
-        return viz.plot_pentad_forecast_hydrograph_data(
-            _,
-            hydrograph_pentad_all=hydrograph_pentad_all,
-            forecasts_all=forecasts_all,
-            station=station,
-            title_date=title_date,
-            model_selection=model_selection,
-            range_type=range_type,
-            range_slider=range_slider,
-            range_visibility=range_visibility
-        )
-    else:
-        # Show daily forecasts
-        return viz.plot_pentad_forecast_hydrograph_data_v2(
-            _,
-            hydrograph_day_all=hydrograph_day_all,
-            linreg_predictor=linreg_predictor,
-            forecasts_all=forecasts_all,
-            station=station,
-            title_date=title_date,
-            model_selection=model_selection,
-            range_type=range_type,
-            range_slider=range_slider,
-            range_visibility=range_visibility,
-            rram_forecast=rram_forecast,
-            ml_forecast=ml_forecast
-        )
-
-
-def update_forecast_plots(event):
-    """Updates 2nd, 3rd and 4th plots on Forecast tab"""
-    pentad_forecast_plot.object = update_forecast_hydrograph(
-        show_daily_data_widget.value,
-        _,
-        hydrograph_day_all=dm.hydrograph_day_all,
-        hydrograph_pentad_all=dm.hydrograph_pentad_all,
-        linreg_predictor=dm.linreg_predictor,
+def _build_forecast_hydrograph():
+    """Build the forecast hydrograph based on current widget state."""
+    common = dict(
         forecasts_all=dm.forecasts_all,
         station=station.value,
         title_date=date_picker.value,
@@ -308,10 +267,26 @@ def update_forecast_plots(event):
         range_type=allowable_range_selection.value,
         range_slider=manual_range.value,
         range_visibility=show_range_button.value,
-        rram_forecast=dm.rram_forecast,
-        ml_forecast=dm.ml_forecast
     )
-    temp = viz.plot_forecast_skill(
+    if show_daily_data_widget.value == _('Yes'):
+        return viz.plot_pentad_forecast_hydrograph_data(
+            _, hydrograph_pentad_all=dm.hydrograph_pentad_all, **common,
+        )
+    else:
+        return viz.plot_pentad_forecast_hydrograph_data_v2(
+            _,
+            hydrograph_day_all=dm.hydrograph_day_all,
+            linreg_predictor=dm.linreg_predictor,
+            rram_forecast=dm.rram_forecast,
+            ml_forecast=dm.ml_forecast,
+            **common,
+        )
+
+
+def update_forecast_plots(event):
+    """Updates 2nd, 3rd and 4th plots on Forecast tab"""
+    pentad_forecast_plot.object = _build_forecast_hydrograph()
+    eff, acc = viz.plot_forecast_skill(
         _,
         dm.hydrograph_pentad_all,
         dm.forecasts_all,
@@ -322,10 +297,10 @@ def update_forecast_plots(event):
         manual_range_widget=manual_range.value,
         show_range_button=show_range_button.value
     )
-    effectiveness_plot.object = temp[0].object
-    accuracy_plot.object = temp[1].object
+    effectiveness_plot.object = eff.object
+    accuracy_plot.object = acc.object
 
-    forecast_summary_table.object = update_forecast_tabulator(station, model_checkbox, allowable_range_selection, manual_range)
+    _update_forecast_tabulator()
 
 update_forecast_button.on_click(update_forecast_plots)
 
@@ -339,8 +314,7 @@ skill_metrics_download_filename, skill_metrics_download_button = skill_table.dow
 )
 
 
-# @pn.depends(station, model_checkbox, allowable_range_selection, manual_range, watch=True)
-def update_forecast_tabulator(station, model_checkbox, allowable_range_selection, manual_range):
+def _update_forecast_tabulator():
     viz.create_forecast_summary_tabulator(
         _, dm.forecasts_all, station, date_picker,
         model_checkbox, allowable_range_selection, manual_range,
@@ -348,67 +322,7 @@ def update_forecast_tabulator(station, model_checkbox, allowable_range_selection
     )
 
 # Initial update
-update_forecast_tabulator(station, model_checkbox, allowable_range_selection, manual_range)
-
-
-def update_visualizations():
-    # Re-bind the plots to use the updated data
-    #print('---   ---plot_pentad_forecast_hydrograph_data---   ---')
-    viz.plot_pentad_forecast_hydrograph_data(
-        _,
-        hydrograph_pentad_all=dm.hydrograph_pentad_all,
-        forecasts_all=dm.forecasts_all,
-        station=station.value,
-        title_date=date_picker.value,
-        model_selection=model_checkbox.value,
-        range_type=allowable_range_selection.value,
-        range_slider=manual_range.value,
-        range_visibility=show_range_button.value
-    )
-    #print('---   ---done with plot_pentad_forecast_hydrograph_data---   ---')
-
-    #print('---   ---plot_pentad_forecast_hydrograph_data_v2---   ---')
-    viz.plot_pentad_forecast_hydrograph_data_v2(
-        _,
-        hydrograph_day_all=dm.hydrograph_day_all,
-        linreg_predictor=dm.linreg_predictor,
-        forecasts_all=dm.forecasts_all,
-        station=station.value,
-        title_date=date_picker.value,
-        model_selection=model_checkbox.value,
-        range_type=allowable_range_selection.value,
-        range_slider=manual_range.value,
-        range_visibility=show_range_button.value,
-        rram_forecast=dm.rram_forecast,
-        ml_forecast=dm.ml_forecast
-    )
-    #print('---   ---done with plot_pentad_forecast_hydrograph_data_v2---   ---')
-
-    #print('---   ---update_forecast_tabulator---   ---')
-    update_forecast_tabulator(station, model_checkbox, allowable_range_selection, manual_range)
-    #print('---   ---done with update_forecast_tabulator---   ---')
-
-
-def on_data_needs_reload_changed(event):
-    if event.new:
-        print("Triggered rerunning of forecasts.")
-        try:
-            #print("---loading data---")
-            # load_data()
-            #print("---data loaded---")
-            #print("---updating viz---")
-            update_visualizations()
-            #print("---viz updated---")
-            #print("Forecasts produced and visualizations updated successfully.")
-        except Exception as e:
-            print(f"Error during forecast rerun: {e}")
-        finally:
-            processing.data_reloader.data_needs_reload = False  # Reset the flag
-
-# Attach watcher only once
-if not hasattr(processing.data_reloader, 'watcher_attached'):
-    processing.data_reloader.param.watch(on_data_needs_reload_changed, 'data_needs_reload')
-    processing.data_reloader.watcher_attached = True
+_update_forecast_tabulator()
 
 # Same Tabulator in both tabs
 forecast_summary_table = widgets.create_forecast_summary_table(forecast_tabulator)
@@ -422,9 +336,65 @@ update_site_object = pn.bind(
     site_selection=station,
     tabulator=forecast_summary_table)
 
+# =====================================================================
+# 8. Data reload watcher
+# =====================================================================
+
+def _update_visualizations():
+    # Re-bind the plots to use the updated data
+    common = dict(
+        forecasts_all=dm.forecasts_all,
+        station=station.value,
+        title_date=date_picker.value,
+        model_selection=model_checkbox.value,
+        range_type=allowable_range_selection.value,
+        range_slider=manual_range.value,
+        range_visibility=show_range_button.value,
+    )
+    #print('---   ---plot_pentad_forecast_hydrograph_data---   ---')
+    viz.plot_pentad_forecast_hydrograph_data(
+        _, hydrograph_pentad_all=dm.hydrograph_pentad_all, **common,
+    )
+    #print('---   ---done with plot_pentad_forecast_hydrograph_data---   ---')
+
+    #print('---   ---plot_pentad_forecast_hydrograph_data_v2---   ---')
+    viz.plot_pentad_forecast_hydrograph_data_v2(
+        _, hydrograph_day_all=dm.hydrograph_day_all,
+        linreg_predictor=dm.linreg_predictor,
+        rram_forecast=dm.rram_forecast,
+        ml_forecast=dm.ml_forecast, **common,
+    )
+    #print('---   ---done with plot_pentad_forecast_hydrograph_data_v2---   ---')
+
+    #print('---   ---update_forecast_tabulator---   ---')
+    _update_forecast_tabulator()
+    #print('---   ---done with update_forecast_tabulator---   ---')
 
 
-# Use the new handler
+def on_data_needs_reload_changed(event):
+    if event.new:
+        print("Triggered rerunning of forecasts.")
+        try:
+            #print("---loading data---")
+            # load_data()
+            #print("---data loaded---")
+            #print("---updating viz---")
+            _update_visualizations()
+            #print("---viz updated---")
+            #print("Forecasts produced and visualizations updated successfully.")
+        except Exception as e:
+            print(f"Error during forecast rerun: {e}")
+        finally:
+            processing.data_reloader.data_needs_reload = False  # Reset the flag
+
+# Attach watcher only once
+if not hasattr(processing.data_reloader, 'watcher_attached'):
+    processing.data_reloader.param.watch(on_data_needs_reload_changed, 'data_needs_reload')
+    processing.data_reloader.watcher_attached = True
+
+# =====================================================================
+# 9. Bulletin writer
+# =====================================================================
 write_bulletin_button.on_click(
     partial(
         handle_bulletin_write,
@@ -438,11 +408,12 @@ write_bulletin_button.on_click(
     )
 )
 
+# =====================================================================
+# 10. Layout
+# =====================================================================
 # Define the disclaimer of the dashboard
 disclaimer = layout.define_disclaimer(_, in_docker_flag)
 
-
-# Update the layout
 
 # Update the widgets conditional on the active tab
 allowable_range_selection.param.watch(lambda event: viz.update_range_slider_visibility(
@@ -473,17 +444,11 @@ dashboard_content = layout.define_tabs_2(_, predictors_warning, forecast_warning
 )
 dashboard_content.param.watch(lambda event: viz.update_sidepane_card_visibility(dashboard_content, station_card, forecast_card, basin_card, pentad_card, reload_card, event), 'active')
 
-latest_predictors = None
-latest_forecast = None
-
 
 def update_active_tab(event):
-    """Callback function to handle tab and station changes"""
-    global latest_predictors
-    global latest_forecast
+    """Render plots only when the tab is first activated for a station."""
     active_tab = dashboard_content.active  # 0: Predictors tab, 1: Forecast tab
-    if active_tab == 0 and latest_predictors != station.value:
-        latest_predictors = station.value
+    if active_tab == 0 and dm.should_render_predictors(station.value):
         daily_hydrograph_plot.object = viz.plot_daily_hydrograph_data(_, dm.hydrograph_day_all, dm.linreg_predictor, station.value, date_picker.value)
         if display_weather_data == True: 
             daily_rainfall_plot.object = viz.plot_daily_rainfall_data(_, dm.rain, station.value, date_picker.value, dm.linreg_predictor)
@@ -494,8 +459,7 @@ def update_active_tab(event):
                     snow_plot_panes[var].object = viz.plot_daily_snow_data(_, dm.snow_data, var, station.value, date_picker.value, dm.linreg_predictor)
                 else: 
                     snow_plot_panes[var].object = pn.pane.Markdown(_("No snow data from SAPPHIRE Data Gateway available."))
-    elif active_tab == 1 and latest_forecast != station.value:
-        latest_forecast = station.value
+    elif active_tab == 1 and dm.should_render_forecast(station.value):
         plot = viz.select_and_plot_data(_, dm.linreg_predictor, station.value, pentad_selector.value, decad_selector.value, SAVE_DIRECTORY)
         forecast_data_and_plot[:] = plot.objects
         update_forecast_plots(None)
@@ -511,7 +475,9 @@ message_pane = widgets.create_message_pane(dm._data)
 sidebar_content=layout.define_sidebar(_, station_card, forecast_card, basin_card,
                                   message_pane, reload_card)
 
-#------------------AUTHENTICATION-----------------------------
+# =====================================================================
+# 11. Authentication
+# =====================================================================
 from dashboard.auth_manager import AuthManager
 
 # --- Create the auth manager ---
@@ -557,28 +523,21 @@ dashboard = pn.template.BootstrapTemplate(
 # --- Initialize auth (sets visibility, restores session) ---
 auth.initialize()
 
-# ------------------END OF AUTHENTICATION---------------------
-
 # Make the dashboard servable
 dashboard.servable()
-# endregion
 
+# =====================================================================
+# 12. Background station loading
+# =====================================================================
 def on_stations_loaded(fut):
     try:
-        global all_stations#, sites_list
-        _all_stations, _station_dict = fut.result()
-        print(f"Stations loaded from iehhf: {len(_all_stations) if _all_stations is not None else 0}")
-        # print(type(_all_stations))
-        if _all_stations is not None:
-            # print("Stations: ", _all_stations)
-            all_stations = _all_stations
-            station.groups = _station_dict
-
-            dm._sites_list = Site.get_site_attribues_from_iehhf_dataframe(all_stations)
-            # sites_list = utils.update_site_attributes_with_hydrograph_statistics_for_selected_pentad(_=_, sites=sites_list, df=dm.hydrograph_pentad_all, pentad=pentad_selector.value, decad=decad_selector.value, horizon=horizon, horizon_in_year=horizon_in_year)
-            # sites_list = utils.update_site_attributes_with_linear_regression_predictor(_, sites=sites_list, df=dm.linreg_predictor, pentad=pentad_selector.value, decad=decad_selector.value, horizon=horizon, horizon_in_year=horizon_in_year)
-            dm.update_sites_for_pentad(_, pentad_selector.value, decad_selector.value)
-
+        new_all_stations, new_station_dict = fut.result()
+        print(f"Stations loaded from iehhf: {len(new_all_stations) if new_all_stations is not None else 0}")
+        # print(type(new_all_stations))
+        if new_all_stations is not None:
+            # print("Stations: ", new_all_stations)
+            dm.replace_stations(new_all_stations, new_station_dict, station,
+                                _, pentad_selector.value, decad_selector.value)
     except Exception as e:
         print(f"Failed to load stations: {e}")
 
