@@ -176,9 +176,17 @@ def _write_combined_forecast_to_api(data: pd.DataFrame, horizon_type: str) -> bo
     skipped_count = n_before - len(df_rec)
 
     if skipped_count > 0:
+        # Identify which codes/dates were dropped so operators can investigate
+        dropped = data[data[horizon_value_col].isna() | data[horizon_in_year_col].isna()]
+        dropped_detail = (
+            dropped[['code', 'date']].drop_duplicates()
+            .head(10)
+            .to_dict('records')
+        )
         logger.warning(
-            f"Skipped {skipped_count} forecast records with missing horizon "
-            f"values and invalid dates ({horizon_type})"
+            "Dropped %d forecast records with missing horizon values "
+            "after repair attempt (%s). Sample codes/dates: %s",
+            skipped_count, horizon_type, dropped_detail,
         )
 
     if df_rec.empty:
@@ -327,7 +335,17 @@ def _write_skill_metrics_to_api(data: pd.DataFrame, horizon_type: str) -> bool:
     skipped_count = n_before - len(df_rec)
 
     if skipped_count > 0:
-        logger.warning(f"Skipped {skipped_count} skill metric records with missing horizon_in_year")
+        dropped = data[data[horizon_in_year_col].isna()]
+        dropped_detail = (
+            dropped[['code', 'model_short']].drop_duplicates()
+            .head(10)
+            .to_dict('records')
+        )
+        logger.warning(
+            "Dropped %d skill metric records with missing %s. "
+            "Sample codes/models: %s",
+            skipped_count, horizon_in_year_col, dropped_detail,
+        )
 
     if df_rec.empty:
         records = []

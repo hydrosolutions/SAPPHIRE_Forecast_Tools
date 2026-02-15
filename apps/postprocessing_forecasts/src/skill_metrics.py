@@ -452,18 +452,14 @@ def calculate_skill_metrics_pentad(
 
         return skill_stats_ensemble
 
-    # Debugging prints:
-    print(f"\n\n\n\n\n||||  DEBUGGING  - calculating skill metrics  ||||")
-    # Print the latest date in the DataFrame
     latest_date_temp = simulated['date'].max()
-    print(f"Latest date in simulated_df: {latest_date_temp}")
-    # Print all unique forecast models (model_short) in the DataFrame
     unique_models = simulated['model_short'].unique()
-    print(f"Unique forecast models in simulated_df: {unique_models}")
-    # Print unique forecast models available for latest date
     latest_models = simulated[simulated['date'] == latest_date_temp]['model_short'].unique()
-    print(f"Unique forecast models available for latest date ({latest_date_temp}): {latest_models}")
-    print(f"\n\n\n\n\n\n")
+    logger.debug(
+        "Calculating pentad skill metrics — latest date: %s, "
+        "models: %s, models at latest date: %s",
+        latest_date_temp, unique_models, latest_models,
+    )
 
 
     with timer(timing_stats, 'calculate_skill_metrics_pentad - Filter data'):
@@ -527,11 +523,13 @@ def calculate_skill_metrics_pentad(
             skill_metrics_df_ensemble_avg,
             observed[['code', 'date', 'discharge_avg', 'delta']],
             on=['code', 'date'])
-        print("DEBUG: ensemble_skill_metrics_df\n", ensemble_skill_metrics_df.columns)
-        print("DEBUG: ensemble_skill_metrics_df\n", ensemble_skill_metrics_df.head(20))
+        logger.debug(
+            "Pentad ensemble skill metrics columns: %s",
+            ensemble_skill_metrics_df.columns.tolist(),
+        )
 
         number_of_models = simulated['model_long'].nunique()
-        print("DEBUG: number_of_models\n", number_of_models)
+        logger.debug("Pentad number_of_models: %d", number_of_models)
         if number_of_models > 1:
             # Single-pass ensemble skill metrics
             ensemble_skill_stats = ensemble_skill_metrics_df. \
@@ -732,7 +730,7 @@ def calculate_skill_metrics_decade(
             on=['code', 'date'])
 
         number_of_models = simulated['model_long'].nunique()
-        print("DEBUG: number_of_models\n", number_of_models)
+        logger.debug("Decad number_of_models: %d", number_of_models)
         if number_of_models > 1:
             # Single-pass ensemble skill metrics
             ensemble_skill_stats = ensemble_skill_metrics_df. \

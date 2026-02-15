@@ -91,18 +91,14 @@ def get_latest_forecasts(simulated_df, horizon_column_name='pentad_in_year'):
     if simulated_df.empty:
         return pd.DataFrame()
 
-    # Debugging prints:
-    print(f"\n\n\n\n\n||||  DEBUGGING  -  getting latest forecasts  ||||")
-    # Print the latest date in the DataFrame
     latest_date_temp = simulated_df['date'].max()
-    print(f"Latest date in simulated_df: {latest_date_temp}")
-    # Print all unique forecast models (model_short) in the DataFrame
     unique_models = simulated_df['model_short'].unique()
-    print(f"Unique forecast models in simulated_df: {unique_models}")
-    # Print unique forecast models available for latest date
     latest_models = simulated_df[simulated_df['date'] == latest_date_temp]['model_short'].unique()
-    print(f"Unique forecast models available for latest date ({latest_date_temp}): {latest_models}")
-    print(f"\n\n\n\n\n\n")
+    logger.debug(
+        "Getting latest forecasts — latest date: %s, "
+        "models: %s, models at latest date: %s",
+        latest_date_temp, unique_models, latest_models,
+    )
 
     # Ensure date is in datetime format
     if not pd.api.types.is_datetime64_any_dtype(simulated_df['date']):
@@ -121,9 +117,10 @@ def get_latest_forecasts(simulated_df, horizon_column_name='pentad_in_year'):
     latest_forecasts.loc[:, 'year'] = latest_forecasts['date'].dt.year
     latest_forecasts = latest_forecasts[latest_forecasts['year'] >= (latest_year - 1)]
 
-    # Debugging prints. In Taj hydromet, if operational data is missing, this can go wrong.
-    print(f"latest_year: {latest_year}")
-    print(f"latest_forecasts['year'].unique(): {latest_forecasts['year'].unique()}")
+    logger.debug(
+        "Latest year filter: %d, years in result: %s",
+        latest_year, latest_forecasts['year'].unique(),
+    )
 
     # Drop the 'year' column
     latest_forecasts = latest_forecasts.drop(columns=['year'])
@@ -186,7 +183,6 @@ def save_forecast_data_pentad(simulated: pd.DataFrame):
     consistency_check = os.getenv("SAPPHIRE_CONSISTENCY_CHECK", "false").lower() == "true"
     if consistency_check:
         logger.info("SAPPHIRE_CONSISTENCY_CHECK: Verifying write consistency for pentad combined forecasts")
-        print("SAPPHIRE_CONSISTENCY_CHECK: Verifying pentad combined forecasts write consistency...")
 
         is_consistent, message = fl._verify_preprocessing_write_consistency(
             written_data=simulated_latest,
@@ -197,12 +193,9 @@ def save_forecast_data_pentad(simulated: pd.DataFrame):
         )
 
         if is_consistent:
-            logger.info(f"CONSISTENCY CHECK PASSED: {message}")
-            print(f"SAPPHIRE_CONSISTENCY_CHECK: PASSED - {message}")
+            logger.info("CONSISTENCY CHECK PASSED: %s", message)
         else:
-            logger.error(f"CONSISTENCY CHECK FAILED: {message}")
-            print(f"SAPPHIRE_CONSISTENCY_CHECK: FAILED - {message}")
-            # Log warning but don't raise
+            logger.error("CONSISTENCY CHECK FAILED: %s", message)
 
     return ret
 
@@ -256,7 +249,6 @@ def save_forecast_data_decade(simulated: pd.DataFrame):
     consistency_check = os.getenv("SAPPHIRE_CONSISTENCY_CHECK", "false").lower() == "true"
     if consistency_check:
         logger.info("SAPPHIRE_CONSISTENCY_CHECK: Verifying write consistency for decad combined forecasts")
-        print("SAPPHIRE_CONSISTENCY_CHECK: Verifying decad combined forecasts write consistency...")
 
         is_consistent, message = fl._verify_preprocessing_write_consistency(
             written_data=simulated_latest,
@@ -267,12 +259,9 @@ def save_forecast_data_decade(simulated: pd.DataFrame):
         )
 
         if is_consistent:
-            logger.info(f"CONSISTENCY CHECK PASSED: {message}")
-            print(f"SAPPHIRE_CONSISTENCY_CHECK: PASSED - {message}")
+            logger.info("CONSISTENCY CHECK PASSED: %s", message)
         else:
-            logger.error(f"CONSISTENCY CHECK FAILED: {message}")
-            print(f"SAPPHIRE_CONSISTENCY_CHECK: FAILED - {message}")
-            # Log warning but don't raise
+            logger.error("CONSISTENCY CHECK FAILED: %s", message)
 
     return ret
 
@@ -332,7 +321,6 @@ def save_pentadal_skill_metrics(data: pd.DataFrame):
     consistency_check = os.getenv("SAPPHIRE_CONSISTENCY_CHECK", "false").lower() == "true"
     if consistency_check:
         logger.info("SAPPHIRE_CONSISTENCY_CHECK: Verifying write consistency for pentad skill metrics")
-        print("SAPPHIRE_CONSISTENCY_CHECK: Verifying pentad skill metrics write consistency...")
 
         is_consistent, message = fl._verify_preprocessing_write_consistency(
             written_data=data,
@@ -343,12 +331,9 @@ def save_pentadal_skill_metrics(data: pd.DataFrame):
         )
 
         if is_consistent:
-            logger.info(f"CONSISTENCY CHECK PASSED: {message}")
-            print(f"SAPPHIRE_CONSISTENCY_CHECK: PASSED - {message}")
+            logger.info("CONSISTENCY CHECK PASSED: %s", message)
         else:
-            logger.error(f"CONSISTENCY CHECK FAILED: {message}")
-            print(f"SAPPHIRE_CONSISTENCY_CHECK: FAILED - {message}")
-            # Log warning but don't raise - skill metrics overwrites entire file
+            logger.error("CONSISTENCY CHECK FAILED: %s", message)
 
     return None
 
@@ -403,7 +388,6 @@ def save_decadal_skill_metrics(data: pd.DataFrame):
     consistency_check = os.getenv("SAPPHIRE_CONSISTENCY_CHECK", "false").lower() == "true"
     if consistency_check:
         logger.info("SAPPHIRE_CONSISTENCY_CHECK: Verifying write consistency for decad skill metrics")
-        print("SAPPHIRE_CONSISTENCY_CHECK: Verifying decad skill metrics write consistency...")
 
         is_consistent, message = fl._verify_preprocessing_write_consistency(
             written_data=data,
@@ -414,11 +398,8 @@ def save_decadal_skill_metrics(data: pd.DataFrame):
         )
 
         if is_consistent:
-            logger.info(f"CONSISTENCY CHECK PASSED: {message}")
-            print(f"SAPPHIRE_CONSISTENCY_CHECK: PASSED - {message}")
+            logger.info("CONSISTENCY CHECK PASSED: %s", message)
         else:
-            logger.error(f"CONSISTENCY CHECK FAILED: {message}")
-            print(f"SAPPHIRE_CONSISTENCY_CHECK: FAILED - {message}")
-            # Log warning but don't raise - skill metrics overwrites entire file
+            logger.error("CONSISTENCY CHECK FAILED: %s", message)
 
     return None
