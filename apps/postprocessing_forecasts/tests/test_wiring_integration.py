@@ -6,7 +6,7 @@ logic against CSV files written to tmp_path.  Only external boundaries
 (setup_library, forecast_library save/load, tag_library) are mocked.
 
 This catches bugs in how the entry-point scripts wire internal modules
-together — a class of defect that all-mock workflow tests miss.
+together - a class of defect that all-mock workflow tests miss.
 """
 
 import os
@@ -172,20 +172,18 @@ def _setup_real_internal_mocks(
 ):
     """Set up sys.modules with real src.* modules and mocked externals.
 
-    Real: data_reader, ensemble_calculator, gap_detector
-    Mocked: setup_library, forecast_library, tag_library
+    Real: data_reader, ensemble_calculator, gap_detector, skill_metrics
+    Mocked: setup_library, file_writer (save functions)
     """
     from src import data_reader as real_data_reader
     from src import ensemble_calculator as real_ensemble_calc
     from src import gap_detector as real_gap_detector
     from src import postprocessing_tools as real_pt
+    from src import skill_metrics as real_skill_metrics
     import tag_library as real_tl
-    import forecast_library as real_fl
 
     mock_sl = MagicMock()
-    mock_fl = MagicMock()
-    # Wire calculate_all_skill_metrics to the real implementation
-    mock_fl.calculate_all_skill_metrics = real_fl.calculate_all_skill_metrics
+    mock_file_writer = MagicMock()
 
     mock_sl.load_environment.return_value = None
 
@@ -206,11 +204,10 @@ def _setup_real_internal_mocks(
             pd.DataFrame(), pd.DataFrame()
         )
 
-    mock_fl.save_forecast_data_pentad.return_value = None
-    mock_fl.save_forecast_data_decade.return_value = None
+    mock_file_writer.save_forecast_data_pentad.return_value = None
+    mock_file_writer.save_forecast_data_decade.return_value = None
 
     sys.modules['setup_library'] = mock_sl
-    sys.modules['forecast_library'] = mock_fl
     sys.modules['tag_library'] = real_tl
 
     # Use real src submodules
@@ -219,14 +216,18 @@ def _setup_real_internal_mocks(
     real_src.data_reader = real_data_reader
     real_src.ensemble_calculator = real_ensemble_calc
     real_src.gap_detector = real_gap_detector
+    real_src.skill_metrics = real_skill_metrics
+    real_src.file_writer = mock_file_writer
 
     sys.modules['src'] = real_src
     sys.modules['src.postprocessing_tools'] = real_pt
     sys.modules['src.data_reader'] = real_data_reader
     sys.modules['src.ensemble_calculator'] = real_ensemble_calc
     sys.modules['src.gap_detector'] = real_gap_detector
+    sys.modules['src.skill_metrics'] = real_skill_metrics
+    sys.modules['src.file_writer'] = mock_file_writer
 
-    return {'sl': mock_sl, 'fl': mock_fl}
+    return {'sl': mock_sl, 'file_writer': mock_file_writer}
 
 
 # ---------------------------------------------------------------------------
@@ -289,9 +290,9 @@ class TestOperationalWiringIntegration:
                 assert exc_info.value.code == 0
 
                 # Verify save was called
-                mocks['fl'].save_forecast_data_pentad.assert_called_once()
+                mocks['file_writer'].save_forecast_data_pentad.assert_called_once()
                 saved_df = (
-                    mocks['fl'].save_forecast_data_pentad.call_args[0][0]
+                    mocks['file_writer'].save_forecast_data_pentad.call_args[0][0]
                 )
 
                 # Real ensemble should have been created
@@ -337,9 +338,9 @@ class TestOperationalWiringIntegration:
                 assert exc_info.value.code == 0
 
                 # Save is called with the original modelled (no EM)
-                mocks['fl'].save_forecast_data_pentad.assert_called_once()
+                mocks['file_writer'].save_forecast_data_pentad.assert_called_once()
                 saved_df = (
-                    mocks['fl'].save_forecast_data_pentad.call_args[0][0]
+                    mocks['file_writer'].save_forecast_data_pentad.call_args[0][0]
                 )
                 em_rows = saved_df[saved_df['model_short'] == 'EM']
                 assert len(em_rows) == 0
@@ -379,12 +380,12 @@ class TestOperationalWiringIntegration:
                 assert exc_info.value.code == 0
 
                 # Both save functions called
-                mocks['fl'].save_forecast_data_pentad.assert_called_once()
-                mocks['fl'].save_forecast_data_decade.assert_called_once()
+                mocks['file_writer'].save_forecast_data_pentad.assert_called_once()
+                mocks['file_writer'].save_forecast_data_decade.assert_called_once()
 
                 # Pentad EM
                 pentad_df = (
-                    mocks['fl'].save_forecast_data_pentad.call_args[0][0]
+                    mocks['file_writer'].save_forecast_data_pentad.call_args[0][0]
                 )
                 pentad_em = pentad_df[pentad_df['model_short'] == 'EM']
                 assert len(pentad_em) == 1
@@ -394,7 +395,7 @@ class TestOperationalWiringIntegration:
 
                 # Decad EM
                 decad_df = (
-                    mocks['fl'].save_forecast_data_decade.call_args[0][0]
+                    mocks['file_writer'].save_forecast_data_decade.call_args[0][0]
                 )
                 decad_em = decad_df[decad_df['model_short'] == 'EM']
                 assert len(decad_em) == 1
@@ -419,7 +420,7 @@ class TestOperationalWiringIntegration:
                     observed_pentad=observed,
                     modelled_pentad=modelled,
                 )
-                mocks['fl'].save_forecast_data_pentad.return_value = (
+                mocks['file_writer'].save_forecast_data_pentad.return_value = (
                     "Error: disk full"
                 )
 
@@ -486,9 +487,9 @@ class TestMaintenanceWiringIntegration:
 
                 assert exc_info.value.code == 0
 
-                mocks['fl'].save_forecast_data_pentad.assert_called_once()
+                mocks['file_writer'].save_forecast_data_pentad.assert_called_once()
                 saved_df = (
-                    mocks['fl'].save_forecast_data_pentad.call_args[0][0]
+                    mocks['file_writer'].save_forecast_data_pentad.call_args[0][0]
                 )
                 em_rows = saved_df[saved_df['model_short'] == 'EM']
                 assert len(em_rows) == 1, (
@@ -572,7 +573,7 @@ class TestMaintenanceWiringIntegration:
                 mocks['sl'].read_observed_and_modelled_data_pentade \
                     .assert_called_once()
                 # Early return — no save
-                mocks['fl'].save_forecast_data_pentad.assert_not_called()
+                mocks['file_writer'].save_forecast_data_pentad.assert_not_called()
 
     def test_both_mode_fills_pentad_and_decad_gaps(self, env_setup):
         """BOTH mode with gaps in both horizons => both filled."""
@@ -640,12 +641,12 @@ class TestMaintenanceWiringIntegration:
                 assert exc_info.value.code == 0
 
                 # Both saved
-                mocks['fl'].save_forecast_data_pentad.assert_called_once()
-                mocks['fl'].save_forecast_data_decade.assert_called_once()
+                mocks['file_writer'].save_forecast_data_pentad.assert_called_once()
+                mocks['file_writer'].save_forecast_data_decade.assert_called_once()
 
                 # Pentad EM
                 pentad_df = (
-                    mocks['fl'].save_forecast_data_pentad.call_args[0][0]
+                    mocks['file_writer'].save_forecast_data_pentad.call_args[0][0]
                 )
                 pentad_em = pentad_df[pentad_df['model_short'] == 'EM']
                 assert len(pentad_em) == 1
@@ -655,7 +656,7 @@ class TestMaintenanceWiringIntegration:
 
                 # Decad EM
                 decad_df = (
-                    mocks['fl'].save_forecast_data_decade.call_args[0][0]
+                    mocks['file_writer'].save_forecast_data_decade.call_args[0][0]
                 )
                 decad_em = decad_df[decad_df['model_short'] == 'EM']
                 assert len(decad_em) == 1
@@ -754,7 +755,7 @@ class TestMismatchedInputShapes:
                     module.postprocessing_operational()
 
                 assert exc_info.value.code == 0
-                mocks['fl'].save_forecast_data_pentad.assert_called_once()
+                mocks['file_writer'].save_forecast_data_pentad.assert_called_once()
 
     def test_operational_nonempty_observed_empty_modelled(self, env_setup):
         """Real observed + empty modelled => no crash, save called."""
@@ -782,9 +783,9 @@ class TestMismatchedInputShapes:
                     module.postprocessing_operational()
 
                 assert exc_info.value.code == 0
-                mocks['fl'].save_forecast_data_pentad.assert_called_once()
+                mocks['file_writer'].save_forecast_data_pentad.assert_called_once()
                 saved_df = (
-                    mocks['fl'].save_forecast_data_pentad.call_args[0][0]
+                    mocks['file_writer'].save_forecast_data_pentad.call_args[0][0]
                 )
                 # No modelled data => saved DF is empty (no rows to process)
                 assert saved_df.empty, (
@@ -811,28 +812,15 @@ def _setup_recalc_mocks(
 ):
     """Set up sys.modules for recalc with real calculate_skill_metrics_*.
 
-    Real: forecast_library.calculate_skill_metrics_pentad,
-          forecast_library.calculate_skill_metrics_decade,
-          forecast_library.calculate_all_skill_metrics,
-          postprocessing_tools
-    Mocked: setup_library (data reading), save functions
+    Real: src.skill_metrics (calculate_skill_metrics_pentad/decade,
+          calculate_all_skill_metrics), postprocessing_tools
+    Mocked: setup_library (data reading), file_writer (save functions)
     """
     from src import postprocessing_tools as real_pt
-    import forecast_library as real_fl
+    from src import skill_metrics as real_skill_metrics
 
     mock_sl = MagicMock()
-    mock_fl = MagicMock()
-
-    # Wire the real calculation functions
-    mock_fl.calculate_skill_metrics_pentad = (
-        real_fl.calculate_skill_metrics_pentad
-    )
-    mock_fl.calculate_skill_metrics_decade = (
-        real_fl.calculate_skill_metrics_decade
-    )
-    mock_fl.calculate_all_skill_metrics = (
-        real_fl.calculate_all_skill_metrics
-    )
+    mock_file_writer = MagicMock()
 
     mock_sl.load_environment.return_value = None
 
@@ -853,21 +841,24 @@ def _setup_recalc_mocks(
             pd.DataFrame(), pd.DataFrame()
         )
 
-    mock_fl.save_forecast_data_pentad.return_value = None
-    mock_fl.save_forecast_data_decade.return_value = None
-    mock_fl.save_pentadal_skill_metrics.return_value = None
-    mock_fl.save_decadal_skill_metrics.return_value = None
+    mock_file_writer.save_forecast_data_pentad.return_value = None
+    mock_file_writer.save_forecast_data_decade.return_value = None
+    mock_file_writer.save_pentadal_skill_metrics.return_value = None
+    mock_file_writer.save_decadal_skill_metrics.return_value = None
 
     sys.modules['setup_library'] = mock_sl
-    sys.modules['forecast_library'] = mock_fl
     sys.modules['tag_library'] = MagicMock()
 
     real_src = MagicMock()
     real_src.postprocessing_tools = real_pt
+    real_src.skill_metrics = real_skill_metrics
+    real_src.file_writer = mock_file_writer
     sys.modules['src'] = real_src
     sys.modules['src.postprocessing_tools'] = real_pt
+    sys.modules['src.skill_metrics'] = real_skill_metrics
+    sys.modules['src.file_writer'] = mock_file_writer
 
-    return {'sl': mock_sl, 'fl': mock_fl}
+    return {'sl': mock_sl, 'file_writer': mock_file_writer}
 
 
 def _make_recalc_observed(stations, dates, base_values):
@@ -1006,12 +997,12 @@ class TestRecalcWiringIntegration:
                 assert exc_info.value.code == 0
 
                 # Both save functions called
-                mocks['fl'].save_forecast_data_pentad.assert_called_once()
-                mocks['fl'].save_pentadal_skill_metrics.assert_called_once()
+                mocks['file_writer'].save_forecast_data_pentad.assert_called_once()
+                mocks['file_writer'].save_pentadal_skill_metrics.assert_called_once()
 
                 # Verify skill metrics have correct structure
                 saved_skill = (
-                    mocks['fl'].save_pentadal_skill_metrics.call_args[0][0]
+                    mocks['file_writer'].save_pentadal_skill_metrics.call_args[0][0]
                 )
                 assert not saved_skill.empty, (
                     "Skill metrics should not be empty"
@@ -1060,7 +1051,7 @@ class TestRecalcWiringIntegration:
                 assert exc_info.value.code == 0
 
                 saved_fc = (
-                    mocks['fl'].save_forecast_data_pentad.call_args[0][0]
+                    mocks['file_writer'].save_forecast_data_pentad.call_args[0][0]
                 )
                 em_rows = saved_fc[saved_fc['model_short'] == 'EM']
                 assert len(em_rows) == 5, (
@@ -1117,7 +1108,7 @@ class TestRecalcWiringIntegration:
                     observed_pentad=observed,
                     modelled_pentad=modelled,
                 )
-                mocks['fl'].save_pentadal_skill_metrics.return_value = (
+                mocks['file_writer'].save_pentadal_skill_metrics.return_value = (
                     "Error: write failed"
                 )
 
@@ -1128,3 +1119,413 @@ class TestRecalcWiringIntegration:
                     module.recalculate_skill_metrics()
 
                 assert exc_info.value.code == 1
+
+
+# ===================================================================
+# TestMaintenanceSurplusData (#30)
+# ===================================================================
+class TestMaintenanceSurplusData:
+    """Gap detection with surplus data — only gap dates should be filled."""
+
+    def test_fills_only_gap_dates_not_surplus(self, env_setup):
+        """Combined CSV has 3 dates, 2 already have EM.
+
+        Only the 1 gap date should get an EM row; the 2 existing EM rows
+        should NOT be duplicated.
+        """
+        tmp_path = env_setup
+        _make_skill_csv(tmp_path, 'pentad')
+
+        combined_rows = []
+        # Date 1 (Jan 5): LR + TFT + EM — already complete
+        for ms in ['LR', 'TFT', 'EM']:
+            combined_rows.append({
+                'date': '2024-01-05', 'code': '15001',
+                'model_short': ms, 'forecasted_discharge': 100.0,
+                'pentad_in_year': 1,
+            })
+        # Date 2 (Jan 10): LR + TFT + EM — already complete
+        for ms in ['LR', 'TFT', 'EM']:
+            combined_rows.append({
+                'date': '2024-01-10', 'code': '15001',
+                'model_short': ms, 'forecasted_discharge': 200.0,
+                'pentad_in_year': 2,
+            })
+        # Date 3 (Jan 15): LR + TFT but NO EM — gap
+        for ms in ['LR', 'TFT']:
+            combined_rows.append({
+                'date': '2024-01-15', 'code': '15001',
+                'model_short': ms, 'forecasted_discharge': 300.0,
+                'pentad_in_year': 3,
+            })
+        _make_combined_csv(tmp_path, 'pentad', rows_data=combined_rows)
+
+        observed = _make_observed_df(
+            dates=[pd.Timestamp('2024-01-15')]
+        )
+        modelled = _make_modelled_df(
+            dates=[pd.Timestamp('2024-01-15')],
+            discharge_values={'LR': 300.0, 'TFT': 310.0},
+        )
+
+        with patch.dict(os.environ, {
+            'SAPPHIRE_PREDICTION_MODE': 'PENTAD',
+            'POSTPROCESSING_GAPFILL_WINDOW_DAYS': '30',
+        }):
+            with patch.dict(sys.modules, {}):
+                mocks = _setup_real_internal_mocks(
+                    tmp_path, 'PENTAD',
+                    observed_pentad=observed,
+                    modelled_pentad=modelled,
+                )
+
+                module, spec = _import_maintenance()
+                spec.loader.exec_module(module)
+
+                with pytest.raises(SystemExit) as exc_info:
+                    module.postprocessing_maintenance()
+
+                assert exc_info.value.code == 0
+
+                mocks['file_writer'].save_forecast_data_pentad.assert_called_once()
+                saved_df = (
+                    mocks['file_writer'].save_forecast_data_pentad.call_args[0][0]
+                )
+                em_rows = saved_df[saved_df['model_short'] == 'EM']
+                # Only 1 EM from gap-fill (Jan 15), not 3
+                assert len(em_rows) == 1, (
+                    f"Expected 1 gap-fill EM row (Jan 15 only), "
+                    f"got {len(em_rows)}"
+                )
+                em_date = pd.to_datetime(
+                    em_rows['date'].iloc[0]
+                ).strftime('%Y-%m-%d')
+                assert em_date == '2024-01-15', (
+                    f"EM should be for gap date Jan 15, got {em_date}"
+                )
+
+
+# ===================================================================
+# TestNEExclusionIntegration (#32)
+# ===================================================================
+class TestNEExclusionIntegration:
+    """NE passes thresholds but is excluded from EM composition."""
+
+    def test_ne_passing_thresholds_excluded_from_em(self, env_setup):
+        """NE with good skill metrics is NOT used in ensemble mean.
+
+        Skill CSV: LR + TFT + NE all pass thresholds.
+        Modelled: LR=100, TFT=110, NE=120.
+        Expected EM = mean(LR, TFT) = 105 (not 110 = mean with NE).
+        """
+        tmp_path = env_setup
+        _make_skill_csv(
+            tmp_path, 'pentad', models=['LR', 'TFT', 'NE']
+        )
+
+        modelled = _make_modelled_df(
+            models=['LR', 'TFT', 'NE'],
+            discharge_values={
+                'LR': 100.0, 'TFT': 110.0, 'NE': 120.0,
+            },
+        )
+        observed = _make_observed_df()
+
+        with patch.dict(os.environ, {'SAPPHIRE_PREDICTION_MODE': 'PENTAD'}):
+            with patch.dict(sys.modules, {}):
+                mocks = _setup_real_internal_mocks(
+                    tmp_path, 'PENTAD',
+                    observed_pentad=observed,
+                    modelled_pentad=modelled,
+                )
+
+                module, spec = _import_operational()
+                spec.loader.exec_module(module)
+
+                with pytest.raises(SystemExit) as exc_info:
+                    module.postprocessing_operational()
+
+                assert exc_info.value.code == 0
+
+                saved_df = (
+                    mocks['file_writer'].save_forecast_data_pentad.call_args[0][0]
+                )
+                em_rows = saved_df[saved_df['model_short'] == 'EM']
+                assert len(em_rows) == 1, (
+                    f"Expected 1 EM row, got {len(em_rows)}"
+                )
+                em_discharge = em_rows['forecasted_discharge'].iloc[0]
+                # EM = mean(LR=100, TFT=110) = 105, NOT mean(100,110,120)
+                assert em_discharge == pytest.approx(105.0), (
+                    f"EM should be mean(LR,TFT)=105, got {em_discharge}. "
+                    f"NE was not excluded from ensemble."
+                )
+                # Verify composition string does NOT contain NE
+                composition = em_rows['model_long'].iloc[0]
+                assert 'NE' not in composition or 'Neural' not in composition
+
+
+# ===================================================================
+# TestCrossWorkflowRoundtrip (#33)
+# ===================================================================
+class TestCrossWorkflowRoundtrip:
+    """Save skill metrics from recalc → read back via data_reader."""
+
+    def test_recalc_saves_skill_csv_data_reader_reads_it(self, env_setup):
+        """Recalculate writes skill CSV, operational reads it back.
+
+        This tests the seam between recalc and operational entry points:
+        recalc writes skill_metrics CSV → operational reads it via
+        data_reader.read_skill_metrics().
+        """
+        tmp_path = env_setup
+        from src import data_reader
+
+        # Step 1: Build test data with known skill outcomes
+        stations = ['15001']
+        dates = pd.to_datetime([
+            '2026-01-01', '2026-01-02', '2026-01-03',
+            '2026-01-04', '2026-01-05',
+        ])
+        orows = []
+        for date, obs_val in zip(dates, [80, 90, 100, 110, 120]):
+            orows.append({
+                'code': '15001', 'date': date,
+                'discharge_avg': float(obs_val),
+                'delta': 5.0,
+                'model_long': 'observed',
+                'model_short': 'obs',
+            })
+        observed = pd.DataFrame(orows)
+
+        import tag_library as tl
+        frows = []
+        for date, obs_val in zip(dates, [80, 90, 100, 110, 120]):
+            pim = str(tl.get_pentad(date + pd.Timedelta(days=1)))
+            frows.append({
+                'code': '15001', 'date': date,
+                'pentad_in_year': 1,
+                'pentad_in_month': pim,
+                'forecasted_discharge': float(obs_val + 1),
+                'model_long': MODEL_LONG_NAMES['LR'],
+                'model_short': 'LR',
+            })
+            frows.append({
+                'code': '15001', 'date': date,
+                'pentad_in_year': 1,
+                'pentad_in_month': pim,
+                'forecasted_discharge': float(obs_val - 1),
+                'model_long': MODEL_LONG_NAMES['TFT'],
+                'model_short': 'TFT',
+            })
+        modelled = pd.DataFrame(frows)
+
+        # Step 2: Run recalc — capture skill CSV write
+        saved_skills = {}
+
+        def capture_save_skill(df):
+            """Intercept save_pentadal_skill_metrics to write CSV."""
+            csv_path = os.path.join(
+                str(tmp_path), 'skill_pentad.csv',
+            )
+            df.to_csv(csv_path, index=False)
+            saved_skills['pentad'] = df
+            return None
+
+        with patch.dict(os.environ, {'SAPPHIRE_PREDICTION_MODE': 'PENTAD'}):
+            with patch.dict(sys.modules, {}):
+                mocks = _setup_recalc_mocks(
+                    tmp_path,
+                    observed_pentad=observed,
+                    modelled_pentad=modelled,
+                )
+                mocks['file_writer'].save_pentadal_skill_metrics.side_effect = (
+                    capture_save_skill
+                )
+
+                module, spec = _import_recalc()
+                spec.loader.exec_module(module)
+
+                with pytest.raises(SystemExit) as exc_info:
+                    module.recalculate_skill_metrics()
+                assert exc_info.value.code == 0
+
+        # Step 3: Read back via data_reader
+        skill_df = data_reader.read_skill_metrics('pentad')
+        assert not skill_df.empty, (
+            "data_reader should read back the skill CSV written by recalc"
+        )
+
+        # Verify key columns match what recalc wrote
+        assert set(skill_df['model_short'].unique()) >= {'LR', 'TFT'}
+        assert '15001' in skill_df['code'].values
+
+
+# ===================================================================
+# TestVaryingDelta (#34)
+# ===================================================================
+class TestVaryingDelta:
+    """Accuracy with per-station varying delta values."""
+
+    def test_accuracy_with_varying_delta(self, env_setup):
+        """Recalc computes accuracy correctly when delta varies.
+
+        Station 15001: delta=3.0
+        Station 15002: delta=8.0
+
+        LR forecasts are obs+2 for both stations.
+        Accuracy = fraction where |forecast - observed| <= delta.
+
+        Station 15001 (delta=3): |+2| <= 3 → all accurate → accuracy=1.0
+        Station 15002 (delta=8): |+2| <= 8 → all accurate → accuracy=1.0
+
+        Now make LR forecasts obs+5:
+        Station 15001 (delta=3): |+5| > 3 → all inaccurate → accuracy=0.0
+        Station 15002 (delta=8): |+5| <= 8 → all accurate → accuracy=1.0
+        """
+        tmp_path = env_setup
+
+        stations = ['15001', '15002']
+        dates = pd.to_datetime([
+            '2026-01-01', '2026-01-02', '2026-01-03',
+            '2026-01-04', '2026-01-05',
+        ])
+        obs_values = [80.0, 90.0, 100.0, 110.0, 120.0]
+        deltas = {'15001': 3.0, '15002': 8.0}
+
+        # Build observed
+        orows = []
+        for date, obs_val in zip(dates, obs_values):
+            for station in stations:
+                orows.append({
+                    'code': station, 'date': date,
+                    'discharge_avg': obs_val,
+                    'delta': deltas[station],
+                    'model_long': 'observed',
+                    'model_short': 'obs',
+                })
+        observed = pd.DataFrame(orows)
+
+        # Build modelled: LR = obs + 5 (exceeds delta=3, within delta=8)
+        import tag_library as tl
+        frows = []
+        for date, obs_val in zip(dates, obs_values):
+            pim = str(tl.get_pentad(date + pd.Timedelta(days=1)))
+            for station in stations:
+                frows.append({
+                    'code': station, 'date': date,
+                    'pentad_in_year': 1,
+                    'pentad_in_month': pim,
+                    'forecasted_discharge': obs_val + 5.0,
+                    'model_long': MODEL_LONG_NAMES['LR'],
+                    'model_short': 'LR',
+                })
+        modelled = pd.DataFrame(frows)
+
+        with patch.dict(os.environ, {'SAPPHIRE_PREDICTION_MODE': 'PENTAD'}):
+            with patch.dict(sys.modules, {}):
+                mocks = _setup_recalc_mocks(
+                    tmp_path,
+                    observed_pentad=observed,
+                    modelled_pentad=modelled,
+                )
+
+                module, spec = _import_recalc()
+                spec.loader.exec_module(module)
+
+                with pytest.raises(SystemExit) as exc_info:
+                    module.recalculate_skill_metrics()
+
+                assert exc_info.value.code == 0
+
+                saved_skill = (
+                    mocks['file_writer'].save_pentadal_skill_metrics.call_args[0][0]
+                )
+
+                lr_15001 = saved_skill[
+                    (saved_skill['code'] == '15001')
+                    & (saved_skill['model_short'] == 'LR')
+                ]
+                lr_15002 = saved_skill[
+                    (saved_skill['code'] == '15002')
+                    & (saved_skill['model_short'] == 'LR')
+                ]
+
+                assert len(lr_15001) == 1, (
+                    f"Expected 1 skill row for 15001/LR, got {len(lr_15001)}"
+                )
+                assert len(lr_15002) == 1, (
+                    f"Expected 1 skill row for 15002/LR, got {len(lr_15002)}"
+                )
+
+                # 15001: |+5| > delta=3 → accuracy=0.0
+                assert lr_15001['accuracy'].iloc[0] == pytest.approx(
+                    0.0, abs=0.01
+                ), (
+                    f"Station 15001 (delta=3): forecast off by 5 should "
+                    f"have accuracy=0, got {lr_15001['accuracy'].iloc[0]}"
+                )
+                # 15002: |+5| <= delta=8 → accuracy=1.0
+                assert lr_15002['accuracy'].iloc[0] == pytest.approx(
+                    1.0, abs=0.01
+                ), (
+                    f"Station 15002 (delta=8): forecast off by 5 should "
+                    f"have accuracy=1, got {lr_15002['accuracy'].iloc[0]}"
+                )
+
+
+# ===================================================================
+# TestLogMostRecentForecasts (#35)
+# ===================================================================
+class TestLogMostRecentForecasts:
+    """log_most_recent_forecasts_pentad/decade doesn't crash."""
+
+    def test_pentad_log_no_crash_with_em(self, env_setup):
+        """log_most_recent_forecasts_pentad on typical data + EM rows."""
+        from src import postprocessing_tools as pt
+
+        tmp_path = env_setup
+        modelled = _make_modelled_df(
+            stations=['15001', '15002'],
+            models=['LR', 'TFT'],
+            dates=[pd.Timestamp('2024-01-05')],
+        )
+        # Add EM rows
+        em_rows = pd.DataFrame([{
+            'code': '15001',
+            'date': pd.Timestamp('2024-01-05'),
+            'pentad_in_year': 1,
+            'pentad_in_month': '1',
+            'forecasted_discharge': 105.0,
+            'model_long': MODEL_LONG_NAMES['EM'],
+            'model_short': 'EM',
+        }])
+        modelled = pd.concat([modelled, em_rows], ignore_index=True)
+
+        result = pt.log_most_recent_forecasts_pentad(modelled)
+        assert isinstance(result, pd.DataFrame)
+        assert not result.empty
+
+    def test_pentad_log_empty_df(self, env_setup):
+        """log_most_recent_forecasts_pentad on empty DataFrame."""
+        from src import postprocessing_tools as pt
+
+        result = pt.log_most_recent_forecasts_pentad(pd.DataFrame())
+        assert isinstance(result, pd.DataFrame)
+        assert result.empty
+
+    def test_decade_log_no_crash(self, env_setup):
+        """log_most_recent_forecasts_decade on typical decad data."""
+        from src import postprocessing_tools as pt
+
+        tmp_path = env_setup
+        modelled = _make_modelled_df(
+            stations=['15001'],
+            models=['LR', 'TFT'],
+            horizon_type='decad',
+            dates=[pd.Timestamp('2024-01-10')],
+        )
+
+        result = pt.log_most_recent_forecasts_decade(modelled)
+        assert isinstance(result, pd.DataFrame)
+        assert not result.empty

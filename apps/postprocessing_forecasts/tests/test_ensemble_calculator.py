@@ -22,7 +22,7 @@ from src.ensemble_calculator import (
     filter_for_highly_skilled_forecasts,
     create_ensemble_forecasts,
 )
-import forecast_library as fl
+from src import skill_metrics
 import tag_library as tl
 
 from test_constants import MODEL_LONG_NAMES
@@ -248,7 +248,7 @@ class TestCreateEnsembleForecasts:
                 period_col='pentad_in_year',
                 period_in_month_col='pentad_in_month',
                 get_period_in_month_func=tl.get_pentad,
-                calculate_all_metrics_func=fl.calculate_all_skill_metrics,
+                calculate_all_metrics_func=skill_metrics.calculate_all_skill_metrics,
             )
         else:
             return create_ensemble_forecasts(
@@ -258,7 +258,7 @@ class TestCreateEnsembleForecasts:
                 period_col='decad_in_year',
                 period_in_month_col='decad_in_month',
                 get_period_in_month_func=tl.get_decad_in_month,
-                calculate_all_metrics_func=fl.calculate_all_skill_metrics,
+                calculate_all_metrics_func=skill_metrics.calculate_all_skill_metrics,
             )
 
     def test_ensemble_created_for_qualified_models(

@@ -20,7 +20,7 @@ sys.path.insert(
     0, os.path.join(os.path.dirname(__file__), '..', '..', 'iEasyHydroForecast')
 )
 
-import forecast_library as fl
+from src import skill_metrics
 from src.ensemble_calculator import _calculate_ensemble_skill
 
 
@@ -117,7 +117,7 @@ class TestTripleGroupbyVsSinglePass:
         skill_stats = self.df.groupby(self.group_keys)[
             ['discharge_avg', 'forecasted_discharge']
         ].apply(
-            fl.sdivsigma_nse,
+            skill_metrics.sdivsigma_nse,
             observed_col='discharge_avg',
             simulated_col='forecasted_discharge',
         ).reset_index()
@@ -125,7 +125,7 @@ class TestTripleGroupbyVsSinglePass:
         mae_stats = self.df.groupby(self.group_keys)[
             ['discharge_avg', 'forecasted_discharge']
         ].apply(
-            fl.mae,
+            skill_metrics.mae,
             observed_col='discharge_avg',
             simulated_col='forecasted_discharge',
         ).reset_index()
@@ -133,7 +133,7 @@ class TestTripleGroupbyVsSinglePass:
         accuracy_stats = self.df.groupby(self.group_keys)[
             ['discharge_avg', 'forecasted_discharge', 'delta']
         ].apply(
-            fl.forecast_accuracy_hydromet,
+            skill_metrics.forecast_accuracy_hydromet,
             observed_col='discharge_avg',
             simulated_col='forecasted_discharge',
             delta_col='delta',
@@ -155,13 +155,13 @@ class TestTripleGroupbyVsSinglePass:
         Updated automatically once the function is implemented (Step 2).
         Until then, runs the triple-groupby baseline as a placeholder.
         """
-        if not hasattr(fl, 'calculate_all_skill_metrics'):
+        if not hasattr(skill_metrics, 'calculate_all_skill_metrics'):
             # Placeholder: run triple-groupby baseline until Step 2
             t0 = time.perf_counter()
             skill_stats = self.df.groupby(self.group_keys)[
                 ['discharge_avg', 'forecasted_discharge']
             ].apply(
-                fl.sdivsigma_nse,
+                skill_metrics.sdivsigma_nse,
                 observed_col='discharge_avg',
                 simulated_col='forecasted_discharge',
             ).reset_index()
@@ -177,7 +177,7 @@ class TestTripleGroupbyVsSinglePass:
         result = self.df.groupby(self.group_keys)[
             ['discharge_avg', 'forecasted_discharge', 'delta']
         ].apply(
-            fl.calculate_all_skill_metrics,
+            skill_metrics.calculate_all_skill_metrics,
             observed_col='discharge_avg',
             simulated_col='forecasted_discharge',
             delta_col='delta',

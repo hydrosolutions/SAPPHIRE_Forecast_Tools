@@ -528,12 +528,12 @@ def test_combined_forecast_consistency(setup_test_paths, sample_data, tmp_path):
     with patch("postprocessing_forecasts.postprocessing_forecasts.sl.load_environment"), \
          patch("postprocessing_forecasts.postprocessing_forecasts.sl.read_observed_and_modelled_data_pentade") as mock_read, \
          patch("postprocessing_forecasts.postprocessing_forecasts.sl.read_observed_and_modelled_data_decade") as mock_read_decade, \
-         patch("postprocessing_forecasts.postprocessing_forecasts.fl.calculate_skill_metrics_pentad") as mock_calc, \
-         patch("postprocessing_forecasts.postprocessing_forecasts.fl.calculate_skill_metrics_decade") as mock_calc_decade, \
-         patch("postprocessing_forecasts.postprocessing_forecasts.fl.save_forecast_data_pentad") as mock_save, \
-         patch("postprocessing_forecasts.postprocessing_forecasts.fl.save_forecast_data_decade") as mock_save_decade, \
-         patch("postprocessing_forecasts.postprocessing_forecasts.fl.save_pentadal_skill_metrics"), \
-         patch("postprocessing_forecasts.postprocessing_forecasts.fl.save_decadal_skill_metrics"), \
+         patch("postprocessing_forecasts.postprocessing_forecasts.skill_metrics.calculate_skill_metrics_pentad") as mock_calc, \
+         patch("postprocessing_forecasts.postprocessing_forecasts.skill_metrics.calculate_skill_metrics_decade") as mock_calc_decade, \
+         patch("postprocessing_forecasts.postprocessing_forecasts.file_writer.save_forecast_data_pentad") as mock_save, \
+         patch("postprocessing_forecasts.postprocessing_forecasts.file_writer.save_forecast_data_decade") as mock_save_decade, \
+         patch("postprocessing_forecasts.postprocessing_forecasts.file_writer.save_pentadal_skill_metrics"), \
+         patch("postprocessing_forecasts.postprocessing_forecasts.file_writer.save_decadal_skill_metrics"), \
          patch("postprocessing_forecasts.postprocessing_forecasts.pt.log_most_recent_forecasts_pentad"), \
          patch("postprocessing_forecasts.postprocessing_forecasts.pt.log_most_recent_forecasts_decade"):
 

@@ -45,11 +45,12 @@ def mock_skill():
 def _setup_mocks(prediction_mode, mock_data, mock_skill):
     """Set up mocks for the operational module."""
     mock_sl = MagicMock()
-    mock_fl = MagicMock()
     mock_pt = MagicMock()
     mock_tl = MagicMock()
     mock_data_reader = MagicMock()
     mock_ensemble_calc = MagicMock()
+    mock_skill_metrics = MagicMock()
+    mock_file_writer = MagicMock()
 
     mock_sl.load_environment.return_value = None
     mock_sl.read_observed_and_modelled_data_pentade.return_value = (
@@ -64,8 +65,8 @@ def _setup_mocks(prediction_mode, mock_data, mock_skill):
         mock_data, mock_skill
     )
 
-    mock_fl.save_forecast_data_pentad.return_value = None
-    mock_fl.save_forecast_data_decade.return_value = None
+    mock_file_writer.save_forecast_data_pentad.return_value = None
+    mock_file_writer.save_forecast_data_decade.return_value = None
 
     mock_pt_module = MagicMock()
     mock_pt_module.TimingStats.return_value.summary.return_value = ([], 0)
@@ -74,19 +75,24 @@ def _setup_mocks(prediction_mode, mock_data, mock_skill):
     mock_src.postprocessing_tools = mock_pt_module
     mock_src.data_reader = mock_data_reader
     mock_src.ensemble_calculator = mock_ensemble_calc
+    mock_src.skill_metrics = mock_skill_metrics
+    mock_src.file_writer = mock_file_writer
 
     sys.modules['setup_library'] = mock_sl
-    sys.modules['forecast_library'] = mock_fl
     sys.modules['tag_library'] = mock_tl
     sys.modules['src'] = mock_src
     sys.modules['src.postprocessing_tools'] = mock_pt_module
     sys.modules['src.data_reader'] = mock_data_reader
     sys.modules['src.ensemble_calculator'] = mock_ensemble_calc
+    sys.modules['src.skill_metrics'] = mock_skill_metrics
+    sys.modules['src.file_writer'] = mock_file_writer
 
     return {
-        'sl': mock_sl, 'fl': mock_fl, 'pt': mock_pt_module,
+        'sl': mock_sl, 'pt': mock_pt_module,
         'data_reader': mock_data_reader,
         'ensemble_calc': mock_ensemble_calc,
+        'skill_metrics': mock_skill_metrics,
+        'file_writer': mock_file_writer,
     }
 
 
@@ -107,7 +113,7 @@ class TestOperationalWorkflow:
 
                 assert exc_info.value.code == 0
                 # Key assertion: no skill metric recalculation
-                mocks['fl'].calculate_skill_metrics_pentad.assert_not_called()
+                mocks['skill_metrics'].calculate_skill_metrics_pentad.assert_not_called()
                 # But skill metrics were READ
                 mocks['data_reader'].read_skill_metrics.assert_called()
 
@@ -147,7 +153,7 @@ class TestOperationalWorkflow:
         with patch.dict(os.environ, {'SAPPHIRE_PREDICTION_MODE': 'PENTAD'}):
             with patch.dict(sys.modules, {}):
                 mocks = _setup_mocks('PENTAD', mock_data, mock_skill)
-                mocks['fl'].save_forecast_data_pentad.return_value = (
+                mocks['file_writer'].save_forecast_data_pentad.return_value = (
                     "Error: write failed"
                 )
 
@@ -206,10 +212,10 @@ class TestOperationalConcurrentErrors:
         with patch.dict(os.environ, {'SAPPHIRE_PREDICTION_MODE': 'BOTH'}):
             with patch.dict(sys.modules, {}):
                 mocks = _setup_mocks('BOTH', mock_data, mock_skill)
-                mocks['fl'].save_forecast_data_pentad.return_value = (
+                mocks['file_writer'].save_forecast_data_pentad.return_value = (
                     "Error: pentad write failed"
                 )
-                mocks['fl'].save_forecast_data_decade.return_value = None
+                mocks['file_writer'].save_forecast_data_decade.return_value = None
 
                 module, spec = import_operational_module()
                 spec.loader.exec_module(module)
@@ -226,8 +232,8 @@ class TestOperationalConcurrentErrors:
         with patch.dict(os.environ, {'SAPPHIRE_PREDICTION_MODE': 'BOTH'}):
             with patch.dict(sys.modules, {}):
                 mocks = _setup_mocks('BOTH', mock_data, mock_skill)
-                mocks['fl'].save_forecast_data_pentad.return_value = None
-                mocks['fl'].save_forecast_data_decade.return_value = (
+                mocks['file_writer'].save_forecast_data_pentad.return_value = None
+                mocks['file_writer'].save_forecast_data_decade.return_value = (
                     "Error: decad write failed"
                 )
 
@@ -244,10 +250,10 @@ class TestOperationalConcurrentErrors:
         with patch.dict(os.environ, {'SAPPHIRE_PREDICTION_MODE': 'BOTH'}):
             with patch.dict(sys.modules, {}):
                 mocks = _setup_mocks('BOTH', mock_data, mock_skill)
-                mocks['fl'].save_forecast_data_pentad.return_value = (
+                mocks['file_writer'].save_forecast_data_pentad.return_value = (
                     "Error: pentad write failed"
                 )
-                mocks['fl'].save_forecast_data_decade.return_value = (
+                mocks['file_writer'].save_forecast_data_decade.return_value = (
                     "Error: decad write failed"
                 )
 
@@ -311,4 +317,4 @@ class TestOperationalEdgeCases:
                     module.postprocessing_operational()
 
                 assert exc_info.value.code == 0
-                mocks['fl'].save_forecast_data_pentad.assert_called_once()
+                mocks['file_writer'].save_forecast_data_pentad.assert_called_once()

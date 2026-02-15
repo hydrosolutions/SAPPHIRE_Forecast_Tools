@@ -22,7 +22,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'iEasyHydroForecast'))
 
 # Import the functions under test
-from forecast_library import (
+from src.api_writer import (
     _write_combined_forecast_to_api,
     _write_skill_metrics_to_api,
     SAPPHIRE_API_AVAILABLE,
@@ -53,7 +53,7 @@ class TestWriteCombinedForecastToApi:
         finally:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 
-    @patch('forecast_library.SapphirePostprocessingClient')
+    @patch('src.api_writer.SapphirePostprocessingClient')
     def test_api_not_ready_returns_false(self, mock_client_class):
         """When API health check fails, should return False (non-blocking)."""
         if not SAPPHIRE_API_AVAILABLE:
@@ -79,7 +79,7 @@ class TestWriteCombinedForecastToApi:
         finally:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 
-    @patch('forecast_library.SapphirePostprocessingClient')
+    @patch('src.api_writer.SapphirePostprocessingClient')
     def test_pentad_forecast_correct_fields(self, mock_client_class):
         """Test that pentadal forecast records have correct field mapping."""
         if not SAPPHIRE_API_AVAILABLE:
@@ -125,7 +125,7 @@ class TestWriteCombinedForecastToApi:
         finally:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 
-    @patch('forecast_library.SapphirePostprocessingClient')
+    @patch('src.api_writer.SapphirePostprocessingClient')
     def test_decade_forecast_correct_fields(self, mock_client_class):
         """Test that decadal forecast records have correct field mapping."""
         if not SAPPHIRE_API_AVAILABLE:
@@ -166,7 +166,7 @@ class TestWriteCombinedForecastToApi:
         finally:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 
-    @patch('forecast_library.SapphirePostprocessingClient')
+    @patch('src.api_writer.SapphirePostprocessingClient')
     def test_model_type_mapping(self, mock_client_class):
         """Test that model types are correctly mapped to API format."""
         if not SAPPHIRE_API_AVAILABLE:
@@ -205,7 +205,7 @@ class TestWriteCombinedForecastToApi:
         finally:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 
-    @patch('forecast_library.SapphirePostprocessingClient')
+    @patch('src.api_writer.SapphirePostprocessingClient')
     def test_missing_horizon_values_repaired_from_date(self, mock_client_class):
         """Test that missing horizon values are computed from valid dates."""
         if not SAPPHIRE_API_AVAILABLE:
@@ -240,7 +240,7 @@ class TestWriteCombinedForecastToApi:
         finally:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 
-    @patch('forecast_library.SapphirePostprocessingClient')
+    @patch('src.api_writer.SapphirePostprocessingClient')
     def test_rows_with_invalid_date_and_missing_horizon_are_skipped(
         self, mock_client_class
     ):
@@ -272,7 +272,7 @@ class TestWriteCombinedForecastToApi:
         finally:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 
-    @patch('forecast_library.SapphirePostprocessingClient')
+    @patch('src.api_writer.SapphirePostprocessingClient')
     def test_nan_optional_values_converted_to_none(self, mock_client_class):
         """Test that NaN optional values (forecasted_discharge) are converted to None."""
         if not SAPPHIRE_API_AVAILABLE:
@@ -309,7 +309,7 @@ class TestWriteCombinedForecastToApi:
         finally:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 
-    @patch('forecast_library.SapphirePostprocessingClient')
+    @patch('src.api_writer.SapphirePostprocessingClient')
     def test_empty_data_returns_false(self, mock_client_class):
         """Test that empty data returns False without calling API."""
         if not SAPPHIRE_API_AVAILABLE:
@@ -359,7 +359,7 @@ class TestWriteSkillMetricsToApi:
         finally:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 
-    @patch('forecast_library.SapphirePostprocessingClient')
+    @patch('src.api_writer.SapphirePostprocessingClient')
     def test_api_not_ready_returns_false(self, mock_client_class):
         """When API health check fails, should return False (non-blocking)."""
         if not SAPPHIRE_API_AVAILABLE:
@@ -388,7 +388,7 @@ class TestWriteSkillMetricsToApi:
         finally:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 
-    @patch('forecast_library.SapphirePostprocessingClient')
+    @patch('src.api_writer.SapphirePostprocessingClient')
     def test_pentad_skill_metrics_correct_fields(self, mock_client_class):
         """Test that pentadal skill metric records have correct field mapping."""
         if not SAPPHIRE_API_AVAILABLE:
@@ -440,7 +440,7 @@ class TestWriteSkillMetricsToApi:
         finally:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 
-    @patch('forecast_library.SapphirePostprocessingClient')
+    @patch('src.api_writer.SapphirePostprocessingClient')
     def test_decade_skill_metrics_correct_fields(self, mock_client_class):
         """Test that decadal skill metric records have correct field mapping."""
         if not SAPPHIRE_API_AVAILABLE:
@@ -481,7 +481,7 @@ class TestWriteSkillMetricsToApi:
         finally:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 
-    @patch('forecast_library.SapphirePostprocessingClient')
+    @patch('src.api_writer.SapphirePostprocessingClient')
     def test_model_type_mapping(self, mock_client_class):
         """Test that model types are correctly mapped to API format."""
         if not SAPPHIRE_API_AVAILABLE:
@@ -522,7 +522,7 @@ class TestWriteSkillMetricsToApi:
         finally:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 
-    @patch('forecast_library.SapphirePostprocessingClient')
+    @patch('src.api_writer.SapphirePostprocessingClient')
     def test_nan_values_converted_to_none(self, mock_client_class):
         """Test that NaN values are converted to None."""
         if not SAPPHIRE_API_AVAILABLE:
@@ -563,7 +563,7 @@ class TestWriteSkillMetricsToApi:
         finally:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 
-    @patch('forecast_library.SapphirePostprocessingClient')
+    @patch('src.api_writer.SapphirePostprocessingClient')
     def test_empty_data_returns_false(self, mock_client_class):
         """Test that empty data returns False without calling API."""
         if not SAPPHIRE_API_AVAILABLE:
@@ -586,7 +586,7 @@ class TestWriteSkillMetricsToApi:
         finally:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 
-    @patch('forecast_library.SapphirePostprocessingClient')
+    @patch('src.api_writer.SapphirePostprocessingClient')
     def test_composition_extracted_from_model_long(self, mock_client_class):
         """Test that composition is extracted from model_long for ensemble models."""
         if not SAPPHIRE_API_AVAILABLE:
@@ -636,7 +636,7 @@ class TestWriteSkillMetricsToApi:
         finally:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 
-    @patch('forecast_library.SapphirePostprocessingClient')
+    @patch('src.api_writer.SapphirePostprocessingClient')
     def test_skill_metrics_api_exception_propagates(
         self, mock_client_class
     ):
@@ -677,7 +677,7 @@ class TestWriteSkillMetricsToApi:
         finally:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 
-    @patch('forecast_library.SapphirePostprocessingClient')
+    @patch('src.api_writer.SapphirePostprocessingClient')
     def test_skill_metrics_empty_data_returns_false(
         self, mock_client_class
     ):

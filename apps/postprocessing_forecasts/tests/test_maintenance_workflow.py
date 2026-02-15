@@ -46,7 +46,8 @@ def mock_skill():
 def _setup_mocks(mock_data, mock_skill, combined=None, gaps=None):
     """Set up mocks for the maintenance module."""
     mock_sl = MagicMock()
-    mock_fl = MagicMock()
+    mock_skill_metrics = MagicMock()
+    mock_file_writer = MagicMock()
     mock_tl = MagicMock()
     mock_gap_detector = MagicMock()
     mock_data_reader = MagicMock()
@@ -73,8 +74,8 @@ def _setup_mocks(mock_data, mock_skill, combined=None, gaps=None):
         mock_data, mock_skill
     )
 
-    mock_fl.save_forecast_data_pentad.return_value = None
-    mock_fl.save_forecast_data_decade.return_value = None
+    mock_file_writer.save_forecast_data_pentad.return_value = None
+    mock_file_writer.save_forecast_data_decade.return_value = None
 
     mock_pt_module = MagicMock()
     mock_pt_module.TimingStats.return_value.summary.return_value = ([], 0)
@@ -84,18 +85,23 @@ def _setup_mocks(mock_data, mock_skill, combined=None, gaps=None):
     mock_src.data_reader = mock_data_reader
     mock_src.ensemble_calculator = mock_ensemble_calc
     mock_src.gap_detector = mock_gap_detector
+    mock_src.skill_metrics = mock_skill_metrics
+    mock_src.file_writer = mock_file_writer
 
     sys.modules['setup_library'] = mock_sl
-    sys.modules['forecast_library'] = mock_fl
     sys.modules['tag_library'] = mock_tl
     sys.modules['src'] = mock_src
     sys.modules['src.postprocessing_tools'] = mock_pt_module
     sys.modules['src.data_reader'] = mock_data_reader
     sys.modules['src.ensemble_calculator'] = mock_ensemble_calc
     sys.modules['src.gap_detector'] = mock_gap_detector
+    sys.modules['src.skill_metrics'] = mock_skill_metrics
+    sys.modules['src.file_writer'] = mock_file_writer
 
     return {
-        'sl': mock_sl, 'fl': mock_fl,
+        'sl': mock_sl,
+        'skill_metrics': mock_skill_metrics,
+        'file_writer': mock_file_writer,
         'gap_detector': mock_gap_detector,
         'data_reader': mock_data_reader,
         'ensemble_calc': mock_ensemble_calc,
@@ -295,7 +301,7 @@ class TestMaintenanceWorkflow:
                     mock_data, mock_skill,
                     combined=combined, gaps=gaps,
                 )
-                mocks['fl'].save_forecast_data_pentad.return_value = (
+                mocks['file_writer'].save_forecast_data_pentad.return_value = (
                     "Error: disk full"
                 )
 
@@ -334,10 +340,10 @@ class TestMaintenanceConcurrentErrors:
         with patch.dict(os.environ, {'SAPPHIRE_PREDICTION_MODE': 'BOTH'}):
             with patch.dict(sys.modules, {}):
                 mocks = self._make_gaps_setup(mock_data, mock_skill)
-                mocks['fl'].save_forecast_data_pentad.return_value = (
+                mocks['file_writer'].save_forecast_data_pentad.return_value = (
                     "Error: pentad write failed"
                 )
-                mocks['fl'].save_forecast_data_decade.return_value = None
+                mocks['file_writer'].save_forecast_data_decade.return_value = None
 
                 module, spec = import_maintenance_module()
                 spec.loader.exec_module(module)
@@ -354,8 +360,8 @@ class TestMaintenanceConcurrentErrors:
         with patch.dict(os.environ, {'SAPPHIRE_PREDICTION_MODE': 'BOTH'}):
             with patch.dict(sys.modules, {}):
                 mocks = self._make_gaps_setup(mock_data, mock_skill)
-                mocks['fl'].save_forecast_data_pentad.return_value = None
-                mocks['fl'].save_forecast_data_decade.return_value = (
+                mocks['file_writer'].save_forecast_data_pentad.return_value = None
+                mocks['file_writer'].save_forecast_data_decade.return_value = (
                     "Error: decad write failed"
                 )
 
@@ -475,4 +481,4 @@ class TestMaintenanceEdgeCases:
                     module.postprocessing_maintenance()
 
                 assert exc_info.value.code == 0
-                mocks['fl'].save_forecast_data_pentad.assert_called_once()
+                mocks['file_writer'].save_forecast_data_pentad.assert_called_once()

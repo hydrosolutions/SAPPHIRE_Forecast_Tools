@@ -27,7 +27,7 @@ from src.ensemble_calculator import (
     _is_multi_model_ensemble,
 )
 from src.gap_detector import detect_missing_ensembles
-import forecast_library as fl
+from src import skill_metrics
 import tag_library as tl
 
 from test_constants import MODEL_LONG_NAMES, DEFAULT_THRESHOLDS, DEFAULT_DELTA
@@ -42,7 +42,7 @@ def _make_ensemble_pentad(forecasts, skill_stats, observed):
         period_col='pentad_in_year',
         period_in_month_col='pentad_in_month',
         get_period_in_month_func=tl.get_pentad,
-        calculate_all_metrics_func=fl.calculate_all_skill_metrics,
+        calculate_all_metrics_func=skill_metrics.calculate_all_skill_metrics,
     )
 
 
@@ -969,7 +969,7 @@ class TestDeltaEdgeCases:
             'sim': [102.0, 108.0, 106.0],
             'delta': [np.nan, 5.0, 5.0],
         })
-        result = fl.calculate_all_skill_metrics(
+        result = skill_metrics.calculate_all_skill_metrics(
             data, 'obs', 'sim', 'delta'
         )
         assert result['n_pairs'] == 2, (
@@ -992,7 +992,7 @@ class TestDeltaEdgeCases:
             'sim': [100.0, 108.0],
             'delta': [0.0, 0.0],
         })
-        result = fl.calculate_all_skill_metrics(
+        result = skill_metrics.calculate_all_skill_metrics(
             data, 'obs', 'sim', 'delta'
         )
         assert result['n_pairs'] == 2
@@ -1008,7 +1008,7 @@ class TestDeltaEdgeCases:
             'sim': [100.0, 110.0],
             'delta': [0.0, 0.0],
         })
-        result = fl.calculate_all_skill_metrics(
+        result = skill_metrics.calculate_all_skill_metrics(
             data, 'obs', 'sim', 'delta'
         )
         assert result['accuracy'] == 1.0
@@ -1026,7 +1026,7 @@ class TestDeltaEdgeCases:
             'sim': [100.0, 110.0],  # perfect forecast
             'delta': [-5.0, -5.0],
         })
-        result = fl.calculate_all_skill_metrics(
+        result = skill_metrics.calculate_all_skill_metrics(
             data, 'obs', 'sim', 'delta'
         )
         assert result['n_pairs'] == 2
@@ -1051,7 +1051,7 @@ class TestDeltaEdgeCases:
             'sim': [108.0, 490.0],
             'delta': [5.0, 20.0],
         })
-        result = fl.calculate_all_skill_metrics(
+        result = skill_metrics.calculate_all_skill_metrics(
             data, 'obs', 'sim', 'delta'
         )
         assert result['n_pairs'] == 2

@@ -19,13 +19,14 @@ forecast_dir = os.path.join(script_dir, '..', 'iEasyHydroForecast')
 sys.path.append(forecast_dir)
 
 import setup_library as sl
-import forecast_library as fl
 import tag_library as tl
 
 from src import postprocessing_tools as pt
 from src.postprocessing_tools import TimingStats, timer
 from src import data_reader
 from src import ensemble_calculator
+from src import skill_metrics
+from src import file_writer
 
 # region Logging
 logging.basicConfig(level=logging.DEBUG)
@@ -95,9 +96,9 @@ def postprocessing_operational():
                     "\n\n------ Reading pre-calculated pentadal skill "
                     "metrics ----"
                 )
-                skill_metrics = data_reader.read_skill_metrics('pentad')
+                skill_stats_pentad = data_reader.read_skill_metrics('pentad')
 
-            if skill_metrics.empty:
+            if skill_stats_pentad.empty:
                 logger.warning(
                     "No pentadal skill metrics available. "
                     "Skipping ensemble creation. "
@@ -108,16 +109,16 @@ def postprocessing_operational():
                     logger.info(
                         "\n\n------ Creating pentadal ensemble forecasts ----"
                     )
-                    modelled, skill_metrics = (
+                    modelled, skill_stats_pentad = (
                         ensemble_calculator.create_ensemble_forecasts(
                             forecasts=modelled,
-                            skill_stats=skill_metrics,
+                            skill_stats=skill_stats_pentad,
                             observed=observed,
                             period_col='pentad_in_year',
                             period_in_month_col='pentad_in_month',
                             get_period_in_month_func=tl.get_pentad,
                             calculate_all_metrics_func=(
-                                fl.calculate_all_skill_metrics
+                                skill_metrics.calculate_all_skill_metrics
                             ),
                         )
                     )
@@ -126,7 +127,7 @@ def postprocessing_operational():
                 logger.info(
                     "\n\n------ Saving pentad results --------------------"
                 )
-                ret = fl.save_forecast_data_pentad(modelled)
+                ret = file_writer.save_forecast_data_pentad(modelled)
                 if ret is None:
                     logger.info(
                         "Pentadal forecast results saved successfully."
@@ -176,7 +177,7 @@ def postprocessing_operational():
                             period_in_month_col='decad_in_month',
                             get_period_in_month_func=tl.get_decad_in_month,
                             calculate_all_metrics_func=(
-                                fl.calculate_all_skill_metrics
+                                skill_metrics.calculate_all_skill_metrics
                             ),
                         )
                     )
@@ -185,7 +186,7 @@ def postprocessing_operational():
                 logger.info(
                     "\n\n------ Saving decade results --------------------"
                 )
-                ret = fl.save_forecast_data_decade(modelled_decade)
+                ret = file_writer.save_forecast_data_decade(modelled_decade)
                 if ret is None:
                     logger.info(
                         "Decadal forecast results saved successfully."

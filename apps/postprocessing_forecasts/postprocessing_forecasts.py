@@ -25,11 +25,12 @@ sys.path.append(forecast_dir)
 
 # Import the setup_library module from the iEasyHydroForecast package
 import setup_library as sl
-import forecast_library as fl
 import tag_library as tl
 
 from src import postprocessing_tools as pt
 from src.postprocessing_tools import TimingStats, timer
+from src import skill_metrics
+from src import file_writer
 
 # endregion
 
@@ -108,7 +109,7 @@ def postprocessing_forecasts():
                 original_timing_stats = timing_stats
 
                 # Calculate forecast skill metrics, adds ensemble forecast to modelled
-                skill_metrics, modelled, returned_timing_stats = fl.calculate_skill_metrics_pentad(
+                skill_metrics_result, modelled, returned_timing_stats = skill_metrics.calculate_skill_metrics_pentad(
                     observed, modelled, timing_stats)
             
                 # Use returned timing_stats only if it's not None
@@ -120,7 +121,7 @@ def postprocessing_forecasts():
             with timer(timing_stats, 'saving pentad results'):
                 logger.info(f"\n\n------ Saving pentad results ----------------------")
                 # Save the observed and modelled data to CSV files
-                ret = fl.save_forecast_data_pentad(modelled)
+                ret = file_writer.save_forecast_data_pentad(modelled)
                 if ret is None:
                     logger.info(f"Pentadal forecast results for all models saved successfully.")
                 else:
@@ -128,7 +129,7 @@ def postprocessing_forecasts():
                     errors.append(f"Pentad forecast save failed: {ret}")
 
                 # Save the skill metrics to a CSV file
-                ret = fl.save_pentadal_skill_metrics(skill_metrics)
+                ret = file_writer.save_pentadal_skill_metrics(skill_metrics_result)
                 if ret is None:
                     logger.info(f"Pentadal skill metrics saved successfully.")
                 else:
@@ -147,7 +148,7 @@ def postprocessing_forecasts():
                 original_timing_stats = timing_stats
 
                 # Calculate forecast skill metrics, adds ensemble forecast to modelled
-                skill_metrics_decade, modelled_decade, returned_timing_stats = fl.calculate_skill_metrics_decade(
+                skill_metrics_decade, modelled_decade, returned_timing_stats = skill_metrics.calculate_skill_metrics_decade(
                     observed_decade, modelled_decade, timing_stats)
 
                 # Use returned timing_stats only if it's not None
@@ -159,7 +160,7 @@ def postprocessing_forecasts():
             with timer(timing_stats, 'saving decade results'):
                 logger.info(f"\n\n------ Saving decade results ----------------------")
                 # Save the observed and modelled data to CSV files
-                ret = fl.save_forecast_data_decade(modelled_decade)
+                ret = file_writer.save_forecast_data_decade(modelled_decade)
                 if ret is None:
                     logger.info(f"Decadal forecast results for all models saved successfully.")
                 else:
@@ -167,7 +168,7 @@ def postprocessing_forecasts():
                     errors.append(f"Decade forecast save failed: {ret}")
 
                 # Save the skill metrics to a CSV file
-                ret = fl.save_decadal_skill_metrics(skill_metrics_decade)
+                ret = file_writer.save_decadal_skill_metrics(skill_metrics_decade)
                 if ret is None:
                     logger.info(f"Decadal skill metrics saved successfully.")
                 else:

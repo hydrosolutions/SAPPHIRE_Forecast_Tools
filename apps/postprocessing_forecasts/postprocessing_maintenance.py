@@ -21,7 +21,6 @@ forecast_dir = os.path.join(script_dir, '..', 'iEasyHydroForecast')
 sys.path.append(forecast_dir)
 
 import setup_library as sl
-import forecast_library as fl
 import tag_library as tl
 
 from src import postprocessing_tools as pt
@@ -29,6 +28,8 @@ from src.postprocessing_tools import TimingStats, timer
 from src import data_reader
 from src import ensemble_calculator
 from src import gap_detector
+from src import skill_metrics
+from src import file_writer
 
 # region Logging
 logging.basicConfig(level=logging.DEBUG)
@@ -92,7 +93,7 @@ def postprocessing_maintenance():
             _fill_gaps_for_horizon(
                 horizon_type='pentad',
                 read_data_func=sl.read_observed_and_modelled_data_pentade,
-                save_func=fl.save_forecast_data_pentad,
+                save_func=file_writer.save_forecast_data_pentad,
                 log_func=pt.log_most_recent_forecasts_pentad,
                 period_col='pentad_in_year',
                 period_in_month_col='pentad_in_month',
@@ -105,7 +106,7 @@ def postprocessing_maintenance():
             _fill_gaps_for_horizon(
                 horizon_type='decad',
                 read_data_func=sl.read_observed_and_modelled_data_decade,
-                save_func=fl.save_forecast_data_decade,
+                save_func=file_writer.save_forecast_data_decade,
                 log_func=pt.log_most_recent_forecasts_decade,
                 period_col='decad_in_year',
                 period_in_month_col='decad_in_month',
@@ -205,9 +206,9 @@ def _fill_gaps_for_horizon(
         return
 
     with timer(timing_stats, f'reading {label} skill metrics'):
-        skill_metrics = data_reader.read_skill_metrics(horizon_type)
+        skill_stats = data_reader.read_skill_metrics(horizon_type)
 
-    if skill_metrics.empty:
+    if skill_stats.empty:
         logger.warning(
             f"No {label} skill metrics available. Cannot create ensembles."
         )
@@ -216,12 +217,12 @@ def _fill_gaps_for_horizon(
     with timer(timing_stats, f'creating {label} gap-fill ensembles'):
         joint, _ = ensemble_calculator.create_ensemble_forecasts(
             forecasts=modelled_filtered,
-            skill_stats=skill_metrics,
+            skill_stats=skill_stats,
             observed=observed,
             period_col=period_col,
             period_in_month_col=period_in_month_col,
             get_period_in_month_func=get_period_in_month_func,
-            calculate_all_metrics_func=fl.calculate_all_skill_metrics,
+            calculate_all_metrics_func=skill_metrics.calculate_all_skill_metrics,
         )
 
     with timer(timing_stats, f'saving {label} gap-fill results'):

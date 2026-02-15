@@ -31,8 +31,8 @@ def mock_data():
 
 
 @pytest.fixture
-def mock_skill_metrics():
-    """Create minimal mock skill metrics for testing."""
+def mock_skill_data():
+    """Create minimal mock skill metrics data for testing."""
     return pd.DataFrame({
         'code': ['15102'],
         'nse': [0.85],
@@ -51,41 +51,49 @@ def import_postprocessing_module():
     return module, spec
 
 
+def _setup_mocks(mock_sl, mock_sm, mock_fw, mock_pt):
+    """Inject mocks into sys.modules for the entry point."""
+    mock_src = MagicMock()
+    mock_src.postprocessing_tools = mock_pt
+    mock_src.skill_metrics = mock_sm
+    mock_src.file_writer = mock_fw
+
+    sys.modules['setup_library'] = mock_sl
+    sys.modules['tag_library'] = MagicMock()
+    sys.modules['src'] = mock_src
+    sys.modules['src.postprocessing_tools'] = mock_pt
+    sys.modules['src.skill_metrics'] = mock_sm
+    sys.modules['src.file_writer'] = mock_fw
+
+
 class TestErrorAccumulation:
     """Tests for the error accumulation pattern in postprocessing_forecasts."""
 
-    def test_all_saves_succeed_returns_exit_0(self, mock_data, mock_skill_metrics):
+    def test_all_saves_succeed_returns_exit_0(self, mock_data, mock_skill_data):
         """When all save operations succeed, script should exit with code 0."""
-        # We need to patch before the module is fully loaded
         with patch.dict(os.environ, {'SAPPHIRE_PREDICTION_MODE': 'BOTH'}):
-            with patch.dict(sys.modules, {}):  # Clear cached modules
-                # Set up mocks for imported modules
+            with patch.dict(sys.modules, {}):
                 mock_sl = MagicMock()
-                mock_fl = MagicMock()
+                mock_sm = MagicMock()
+                mock_fw = MagicMock()
                 mock_pt = MagicMock()
 
                 mock_sl.load_environment.return_value = None
                 mock_sl.read_observed_and_modelled_data_pentade.return_value = (mock_data, mock_data)
                 mock_sl.read_observed_and_modelled_data_decade.return_value = (mock_data, mock_data)
 
-                mock_fl.calculate_skill_metrics_pentad.return_value = (mock_skill_metrics, mock_data, None)
-                mock_fl.calculate_skill_metrics_decade.return_value = (mock_skill_metrics, mock_data, None)
+                mock_sm.calculate_skill_metrics_pentad.return_value = (mock_skill_data, mock_data, None)
+                mock_sm.calculate_skill_metrics_decade.return_value = (mock_skill_data, mock_data, None)
 
                 # All saves succeed (return None)
-                mock_fl.save_forecast_data_pentad.return_value = None
-                mock_fl.save_pentadal_skill_metrics.return_value = None
-                mock_fl.save_forecast_data_decade.return_value = None
-                mock_fl.save_decadal_skill_metrics.return_value = None
+                mock_fw.save_forecast_data_pentad.return_value = None
+                mock_fw.save_pentadal_skill_metrics.return_value = None
+                mock_fw.save_forecast_data_decade.return_value = None
+                mock_fw.save_decadal_skill_metrics.return_value = None
 
-                # Pre-populate sys.modules with our mocks
-                sys.modules['setup_library'] = mock_sl
-                sys.modules['forecast_library'] = mock_fl
-                sys.modules['tag_library'] = MagicMock()
                 mock_pt.TimingStats.return_value.summary.return_value = ([], 0)
-                sys.modules['src'] = MagicMock()
-                sys.modules['src.postprocessing_tools'] = mock_pt
+                _setup_mocks(mock_sl, mock_sm, mock_fw, mock_pt)
 
-                # Import and run
                 module, spec = import_postprocessing_module()
                 spec.loader.exec_module(module)
 
@@ -94,33 +102,30 @@ class TestErrorAccumulation:
 
                 assert exc_info.value.code == 0
 
-    def test_first_save_fails_returns_exit_1(self, mock_data, mock_skill_metrics):
+    def test_first_save_fails_returns_exit_1(self, mock_data, mock_skill_data):
         """When the first save operation fails, script should exit with code 1."""
         with patch.dict(os.environ, {'SAPPHIRE_PREDICTION_MODE': 'BOTH'}):
             with patch.dict(sys.modules, {}):
                 mock_sl = MagicMock()
-                mock_fl = MagicMock()
+                mock_sm = MagicMock()
+                mock_fw = MagicMock()
                 mock_pt = MagicMock()
 
                 mock_sl.load_environment.return_value = None
                 mock_sl.read_observed_and_modelled_data_pentade.return_value = (mock_data, mock_data)
                 mock_sl.read_observed_and_modelled_data_decade.return_value = (mock_data, mock_data)
 
-                mock_fl.calculate_skill_metrics_pentad.return_value = (mock_skill_metrics, mock_data, None)
-                mock_fl.calculate_skill_metrics_decade.return_value = (mock_skill_metrics, mock_data, None)
+                mock_sm.calculate_skill_metrics_pentad.return_value = (mock_skill_data, mock_data, None)
+                mock_sm.calculate_skill_metrics_decade.return_value = (mock_skill_data, mock_data, None)
 
                 # FIRST save fails, rest succeed
-                mock_fl.save_forecast_data_pentad.return_value = "Error: Could not write file"
-                mock_fl.save_pentadal_skill_metrics.return_value = None
-                mock_fl.save_forecast_data_decade.return_value = None
-                mock_fl.save_decadal_skill_metrics.return_value = None
+                mock_fw.save_forecast_data_pentad.return_value = "Error: Could not write file"
+                mock_fw.save_pentadal_skill_metrics.return_value = None
+                mock_fw.save_forecast_data_decade.return_value = None
+                mock_fw.save_decadal_skill_metrics.return_value = None
 
-                sys.modules['setup_library'] = mock_sl
-                sys.modules['forecast_library'] = mock_fl
-                sys.modules['tag_library'] = MagicMock()
                 mock_pt.TimingStats.return_value.summary.return_value = ([], 0)
-                sys.modules['src'] = MagicMock()
-                sys.modules['src.postprocessing_tools'] = mock_pt
+                _setup_mocks(mock_sl, mock_sm, mock_fw, mock_pt)
 
                 module, spec = import_postprocessing_module()
                 spec.loader.exec_module(module)
@@ -130,33 +135,30 @@ class TestErrorAccumulation:
 
                 assert exc_info.value.code == 1
 
-    def test_middle_save_fails_returns_exit_1(self, mock_data, mock_skill_metrics):
+    def test_middle_save_fails_returns_exit_1(self, mock_data, mock_skill_data):
         """When a middle save operation fails, script should exit with code 1."""
         with patch.dict(os.environ, {'SAPPHIRE_PREDICTION_MODE': 'BOTH'}):
             with patch.dict(sys.modules, {}):
                 mock_sl = MagicMock()
-                mock_fl = MagicMock()
+                mock_sm = MagicMock()
+                mock_fw = MagicMock()
                 mock_pt = MagicMock()
 
                 mock_sl.load_environment.return_value = None
                 mock_sl.read_observed_and_modelled_data_pentade.return_value = (mock_data, mock_data)
                 mock_sl.read_observed_and_modelled_data_decade.return_value = (mock_data, mock_data)
 
-                mock_fl.calculate_skill_metrics_pentad.return_value = (mock_skill_metrics, mock_data, None)
-                mock_fl.calculate_skill_metrics_decade.return_value = (mock_skill_metrics, mock_data, None)
+                mock_sm.calculate_skill_metrics_pentad.return_value = (mock_skill_data, mock_data, None)
+                mock_sm.calculate_skill_metrics_decade.return_value = (mock_skill_data, mock_data, None)
 
                 # MIDDLE save (pentad skill metrics) fails, rest succeed
-                mock_fl.save_forecast_data_pentad.return_value = None
-                mock_fl.save_pentadal_skill_metrics.return_value = "Error: Skill metrics write failed"
-                mock_fl.save_forecast_data_decade.return_value = None
-                mock_fl.save_decadal_skill_metrics.return_value = None
+                mock_fw.save_forecast_data_pentad.return_value = None
+                mock_fw.save_pentadal_skill_metrics.return_value = "Error: Skill metrics write failed"
+                mock_fw.save_forecast_data_decade.return_value = None
+                mock_fw.save_decadal_skill_metrics.return_value = None
 
-                sys.modules['setup_library'] = mock_sl
-                sys.modules['forecast_library'] = mock_fl
-                sys.modules['tag_library'] = MagicMock()
                 mock_pt.TimingStats.return_value.summary.return_value = ([], 0)
-                sys.modules['src'] = MagicMock()
-                sys.modules['src.postprocessing_tools'] = mock_pt
+                _setup_mocks(mock_sl, mock_sm, mock_fw, mock_pt)
 
                 module, spec = import_postprocessing_module()
                 spec.loader.exec_module(module)
@@ -166,33 +168,30 @@ class TestErrorAccumulation:
 
                 assert exc_info.value.code == 1
 
-    def test_last_save_fails_returns_exit_1(self, mock_data, mock_skill_metrics):
+    def test_last_save_fails_returns_exit_1(self, mock_data, mock_skill_data):
         """When the last save operation fails, script should exit with code 1."""
         with patch.dict(os.environ, {'SAPPHIRE_PREDICTION_MODE': 'BOTH'}):
             with patch.dict(sys.modules, {}):
                 mock_sl = MagicMock()
-                mock_fl = MagicMock()
+                mock_sm = MagicMock()
+                mock_fw = MagicMock()
                 mock_pt = MagicMock()
 
                 mock_sl.load_environment.return_value = None
                 mock_sl.read_observed_and_modelled_data_pentade.return_value = (mock_data, mock_data)
                 mock_sl.read_observed_and_modelled_data_decade.return_value = (mock_data, mock_data)
 
-                mock_fl.calculate_skill_metrics_pentad.return_value = (mock_skill_metrics, mock_data, None)
-                mock_fl.calculate_skill_metrics_decade.return_value = (mock_skill_metrics, mock_data, None)
+                mock_sm.calculate_skill_metrics_pentad.return_value = (mock_skill_data, mock_data, None)
+                mock_sm.calculate_skill_metrics_decade.return_value = (mock_skill_data, mock_data, None)
 
                 # LAST save fails, rest succeed
-                mock_fl.save_forecast_data_pentad.return_value = None
-                mock_fl.save_pentadal_skill_metrics.return_value = None
-                mock_fl.save_forecast_data_decade.return_value = None
-                mock_fl.save_decadal_skill_metrics.return_value = "Error: Decade skill metrics failed"
+                mock_fw.save_forecast_data_pentad.return_value = None
+                mock_fw.save_pentadal_skill_metrics.return_value = None
+                mock_fw.save_forecast_data_decade.return_value = None
+                mock_fw.save_decadal_skill_metrics.return_value = "Error: Decade skill metrics failed"
 
-                sys.modules['setup_library'] = mock_sl
-                sys.modules['forecast_library'] = mock_fl
-                sys.modules['tag_library'] = MagicMock()
                 mock_pt.TimingStats.return_value.summary.return_value = ([], 0)
-                sys.modules['src'] = MagicMock()
-                sys.modules['src.postprocessing_tools'] = mock_pt
+                _setup_mocks(mock_sl, mock_sm, mock_fw, mock_pt)
 
                 module, spec = import_postprocessing_module()
                 spec.loader.exec_module(module)
@@ -202,33 +201,30 @@ class TestErrorAccumulation:
 
                 assert exc_info.value.code == 1
 
-    def test_multiple_saves_fail_logs_all_errors(self, mock_data, mock_skill_metrics):
+    def test_multiple_saves_fail_logs_all_errors(self, mock_data, mock_skill_data):
         """When multiple saves fail, all errors should be logged and exit code 1."""
         with patch.dict(os.environ, {'SAPPHIRE_PREDICTION_MODE': 'BOTH'}):
             with patch.dict(sys.modules, {}):
                 mock_sl = MagicMock()
-                mock_fl = MagicMock()
+                mock_sm = MagicMock()
+                mock_fw = MagicMock()
                 mock_pt = MagicMock()
 
                 mock_sl.load_environment.return_value = None
                 mock_sl.read_observed_and_modelled_data_pentade.return_value = (mock_data, mock_data)
                 mock_sl.read_observed_and_modelled_data_decade.return_value = (mock_data, mock_data)
 
-                mock_fl.calculate_skill_metrics_pentad.return_value = (mock_skill_metrics, mock_data, None)
-                mock_fl.calculate_skill_metrics_decade.return_value = (mock_skill_metrics, mock_data, None)
+                mock_sm.calculate_skill_metrics_pentad.return_value = (mock_skill_data, mock_data, None)
+                mock_sm.calculate_skill_metrics_decade.return_value = (mock_skill_data, mock_data, None)
 
                 # Multiple saves fail
-                mock_fl.save_forecast_data_pentad.return_value = "Error 1: Pentad forecast failed"
-                mock_fl.save_pentadal_skill_metrics.return_value = "Error 2: Pentad skill metrics failed"
-                mock_fl.save_forecast_data_decade.return_value = None  # This one succeeds
-                mock_fl.save_decadal_skill_metrics.return_value = "Error 3: Decade skill metrics failed"
+                mock_fw.save_forecast_data_pentad.return_value = "Error 1: Pentad forecast failed"
+                mock_fw.save_pentadal_skill_metrics.return_value = "Error 2: Pentad skill metrics failed"
+                mock_fw.save_forecast_data_decade.return_value = None  # This one succeeds
+                mock_fw.save_decadal_skill_metrics.return_value = "Error 3: Decade skill metrics failed"
 
-                sys.modules['setup_library'] = mock_sl
-                sys.modules['forecast_library'] = mock_fl
-                sys.modules['tag_library'] = MagicMock()
                 mock_pt.TimingStats.return_value.summary.return_value = ([], 0)
-                sys.modules['src'] = MagicMock()
-                sys.modules['src.postprocessing_tools'] = mock_pt
+                _setup_mocks(mock_sl, mock_sm, mock_fw, mock_pt)
 
                 module, spec = import_postprocessing_module()
                 spec.loader.exec_module(module)
@@ -243,29 +239,26 @@ class TestErrorAccumulation:
 class TestPredictionModes:
     """Tests for different SAPPHIRE_PREDICTION_MODE values."""
 
-    def test_pentad_only_mode_works(self, mock_data, mock_skill_metrics):
+    def test_pentad_only_mode_works(self, mock_data, mock_skill_data):
         """PENTAD mode should only process pentad data and exit successfully."""
         with patch.dict(os.environ, {'SAPPHIRE_PREDICTION_MODE': 'PENTAD'}):
             with patch.dict(sys.modules, {}):
                 mock_sl = MagicMock()
-                mock_fl = MagicMock()
+                mock_sm = MagicMock()
+                mock_fw = MagicMock()
                 mock_pt = MagicMock()
 
                 mock_sl.load_environment.return_value = None
                 mock_sl.read_observed_and_modelled_data_pentade.return_value = (mock_data, mock_data)
 
-                mock_fl.calculate_skill_metrics_pentad.return_value = (mock_skill_metrics, mock_data, None)
+                mock_sm.calculate_skill_metrics_pentad.return_value = (mock_skill_data, mock_data, None)
 
                 # Pentad saves succeed
-                mock_fl.save_forecast_data_pentad.return_value = None
-                mock_fl.save_pentadal_skill_metrics.return_value = None
+                mock_fw.save_forecast_data_pentad.return_value = None
+                mock_fw.save_pentadal_skill_metrics.return_value = None
 
-                sys.modules['setup_library'] = mock_sl
-                sys.modules['forecast_library'] = mock_fl
-                sys.modules['tag_library'] = MagicMock()
                 mock_pt.TimingStats.return_value.summary.return_value = ([], 0)
-                sys.modules['src'] = MagicMock()
-                sys.modules['src.postprocessing_tools'] = mock_pt
+                _setup_mocks(mock_sl, mock_sm, mock_fw, mock_pt)
 
                 module, spec = import_postprocessing_module()
                 spec.loader.exec_module(module)
@@ -277,33 +270,30 @@ class TestPredictionModes:
 
                 # Decade functions should NOT be called
                 mock_sl.read_observed_and_modelled_data_decade.assert_not_called()
-                mock_fl.calculate_skill_metrics_decade.assert_not_called()
-                mock_fl.save_forecast_data_decade.assert_not_called()
-                mock_fl.save_decadal_skill_metrics.assert_not_called()
+                mock_sm.calculate_skill_metrics_decade.assert_not_called()
+                mock_fw.save_forecast_data_decade.assert_not_called()
+                mock_fw.save_decadal_skill_metrics.assert_not_called()
 
-    def test_decad_only_mode_no_name_error(self, mock_data, mock_skill_metrics):
+    def test_decad_only_mode_no_name_error(self, mock_data, mock_skill_data):
         """DECAD mode should work without NameError for uninitialized variables."""
         with patch.dict(os.environ, {'SAPPHIRE_PREDICTION_MODE': 'DECAD'}):
             with patch.dict(sys.modules, {}):
                 mock_sl = MagicMock()
-                mock_fl = MagicMock()
+                mock_sm = MagicMock()
+                mock_fw = MagicMock()
                 mock_pt = MagicMock()
 
                 mock_sl.load_environment.return_value = None
                 mock_sl.read_observed_and_modelled_data_decade.return_value = (mock_data, mock_data)
 
-                mock_fl.calculate_skill_metrics_decade.return_value = (mock_skill_metrics, mock_data, None)
+                mock_sm.calculate_skill_metrics_decade.return_value = (mock_skill_data, mock_data, None)
 
                 # Decade saves succeed
-                mock_fl.save_forecast_data_decade.return_value = None
-                mock_fl.save_decadal_skill_metrics.return_value = None
+                mock_fw.save_forecast_data_decade.return_value = None
+                mock_fw.save_decadal_skill_metrics.return_value = None
 
-                sys.modules['setup_library'] = mock_sl
-                sys.modules['forecast_library'] = mock_fl
-                sys.modules['tag_library'] = MagicMock()
                 mock_pt.TimingStats.return_value.summary.return_value = ([], 0)
-                sys.modules['src'] = MagicMock()
-                sys.modules['src.postprocessing_tools'] = mock_pt
+                _setup_mocks(mock_sl, mock_sm, mock_fw, mock_pt)
 
                 module, spec = import_postprocessing_module()
                 spec.loader.exec_module(module)
@@ -316,37 +306,34 @@ class TestPredictionModes:
 
                 # Pentad functions should NOT be called
                 mock_sl.read_observed_and_modelled_data_pentade.assert_not_called()
-                mock_fl.calculate_skill_metrics_pentad.assert_not_called()
-                mock_fl.save_forecast_data_pentad.assert_not_called()
-                mock_fl.save_pentadal_skill_metrics.assert_not_called()
+                mock_sm.calculate_skill_metrics_pentad.assert_not_called()
+                mock_fw.save_forecast_data_pentad.assert_not_called()
+                mock_fw.save_pentadal_skill_metrics.assert_not_called()
 
-    def test_both_mode_works(self, mock_data, mock_skill_metrics):
+    def test_both_mode_works(self, mock_data, mock_skill_data):
         """BOTH mode should process both pentad and decade data."""
         with patch.dict(os.environ, {'SAPPHIRE_PREDICTION_MODE': 'BOTH'}):
             with patch.dict(sys.modules, {}):
                 mock_sl = MagicMock()
-                mock_fl = MagicMock()
+                mock_sm = MagicMock()
+                mock_fw = MagicMock()
                 mock_pt = MagicMock()
 
                 mock_sl.load_environment.return_value = None
                 mock_sl.read_observed_and_modelled_data_pentade.return_value = (mock_data, mock_data)
                 mock_sl.read_observed_and_modelled_data_decade.return_value = (mock_data, mock_data)
 
-                mock_fl.calculate_skill_metrics_pentad.return_value = (mock_skill_metrics, mock_data, None)
-                mock_fl.calculate_skill_metrics_decade.return_value = (mock_skill_metrics, mock_data, None)
+                mock_sm.calculate_skill_metrics_pentad.return_value = (mock_skill_data, mock_data, None)
+                mock_sm.calculate_skill_metrics_decade.return_value = (mock_skill_data, mock_data, None)
 
                 # All saves succeed
-                mock_fl.save_forecast_data_pentad.return_value = None
-                mock_fl.save_pentadal_skill_metrics.return_value = None
-                mock_fl.save_forecast_data_decade.return_value = None
-                mock_fl.save_decadal_skill_metrics.return_value = None
+                mock_fw.save_forecast_data_pentad.return_value = None
+                mock_fw.save_pentadal_skill_metrics.return_value = None
+                mock_fw.save_forecast_data_decade.return_value = None
+                mock_fw.save_decadal_skill_metrics.return_value = None
 
-                sys.modules['setup_library'] = mock_sl
-                sys.modules['forecast_library'] = mock_fl
-                sys.modules['tag_library'] = MagicMock()
                 mock_pt.TimingStats.return_value.summary.return_value = ([], 0)
-                sys.modules['src'] = MagicMock()
-                sys.modules['src.postprocessing_tools'] = mock_pt
+                _setup_mocks(mock_sl, mock_sm, mock_fw, mock_pt)
 
                 module, spec = import_postprocessing_module()
                 spec.loader.exec_module(module)
@@ -359,10 +346,10 @@ class TestPredictionModes:
                 # Both pentad and decade functions SHOULD be called
                 mock_sl.read_observed_and_modelled_data_pentade.assert_called_once()
                 mock_sl.read_observed_and_modelled_data_decade.assert_called_once()
-                mock_fl.save_forecast_data_pentad.assert_called_once()
-                mock_fl.save_pentadal_skill_metrics.assert_called_once()
-                mock_fl.save_forecast_data_decade.assert_called_once()
-                mock_fl.save_decadal_skill_metrics.assert_called_once()
+                mock_fw.save_forecast_data_pentad.assert_called_once()
+                mock_fw.save_pentadal_skill_metrics.assert_called_once()
+                mock_fw.save_forecast_data_decade.assert_called_once()
+                mock_fw.save_decadal_skill_metrics.assert_called_once()
 
     def test_invalid_mode_exits_with_error(self):
         """Invalid SAPPHIRE_PREDICTION_MODE should exit with code 1."""
@@ -371,11 +358,11 @@ class TestPredictionModes:
                 mock_sl = MagicMock()
                 mock_sl.load_environment.return_value = None
 
-                sys.modules['setup_library'] = mock_sl
-                sys.modules['forecast_library'] = MagicMock()
-                sys.modules['tag_library'] = MagicMock()
-                sys.modules['src'] = MagicMock()
-                sys.modules['src.postprocessing_tools'] = MagicMock()
+                mock_sm = MagicMock()
+                mock_fw = MagicMock()
+                mock_pt = MagicMock()
+                mock_pt.TimingStats.return_value.summary.return_value = ([], 0)
+                _setup_mocks(mock_sl, mock_sm, mock_fw, mock_pt)
 
                 module, spec = import_postprocessing_module()
                 spec.loader.exec_module(module)

@@ -20,10 +20,11 @@ forecast_dir = os.path.join(script_dir, '..', 'iEasyHydroForecast')
 sys.path.append(forecast_dir)
 
 import setup_library as sl
-import forecast_library as fl
 
 from src import postprocessing_tools as pt
 from src.postprocessing_tools import TimingStats, timer
+from src import skill_metrics
+from src import file_writer
 
 # region Logging
 logging.basicConfig(level=logging.DEBUG)
@@ -94,8 +95,8 @@ def recalculate_skill_metrics():
                     "\n\n------ Calculating skill metrics pentads --------"
                 )
                 original_timing_stats = timing_stats
-                skill_metrics, modelled, returned_timing_stats = (
-                    fl.calculate_skill_metrics_pentad(
+                skill_metrics_result, modelled, returned_timing_stats = (
+                    skill_metrics.calculate_skill_metrics_pentad(
                         observed, modelled, timing_stats
                     )
                 )
@@ -108,7 +109,7 @@ def recalculate_skill_metrics():
                 logger.info(
                     "\n\n------ Saving pentad results --------------------"
                 )
-                ret = fl.save_forecast_data_pentad(modelled)
+                ret = file_writer.save_forecast_data_pentad(modelled)
                 if ret is None:
                     logger.info(
                         "Pentadal forecast results saved successfully."
@@ -119,7 +120,7 @@ def recalculate_skill_metrics():
                     )
                     errors.append(f"Pentad forecast save failed: {ret}")
 
-                ret = fl.save_pentadal_skill_metrics(skill_metrics)
+                ret = file_writer.save_pentadal_skill_metrics(skill_metrics_result)
                 if ret is None:
                     logger.info(
                         "Pentadal skill metrics saved successfully."
@@ -150,7 +151,7 @@ def recalculate_skill_metrics():
                 )
                 original_timing_stats = timing_stats
                 skill_metrics_decade, modelled_decade, returned_timing_stats = (
-                    fl.calculate_skill_metrics_decade(
+                    skill_metrics.calculate_skill_metrics_decade(
                         observed_decade, modelled_decade, timing_stats
                     )
                 )
@@ -163,7 +164,7 @@ def recalculate_skill_metrics():
                 logger.info(
                     "\n\n------ Saving decade results --------------------"
                 )
-                ret = fl.save_forecast_data_decade(modelled_decade)
+                ret = file_writer.save_forecast_data_decade(modelled_decade)
                 if ret is None:
                     logger.info(
                         "Decadal forecast results saved successfully."
@@ -174,7 +175,7 @@ def recalculate_skill_metrics():
                     )
                     errors.append(f"Decade forecast save failed: {ret}")
 
-                ret = fl.save_decadal_skill_metrics(skill_metrics_decade)
+                ret = file_writer.save_decadal_skill_metrics(skill_metrics_decade)
                 if ret is None:
                     logger.info(
                         "Decadal skill metrics saved successfully."

@@ -1,4 +1,4 @@
-"""Unit tests for calculate_all_skill_metrics() in forecast_library.
+"""Unit tests for calculate_all_skill_metrics().
 
 Verifies all 6 metric values against hand-calculated results, edge cases
 (single point, all-NaN, missing column, constant observations), and
@@ -16,7 +16,7 @@ sys.path.insert(
     0, os.path.join(os.path.dirname(__file__), '..', '..', 'iEasyHydroForecast')
 )
 
-import forecast_library as fl
+from src import skill_metrics
 
 
 class TestCalculateAllSkillMetricsHappyPath:
@@ -50,7 +50,7 @@ class TestCalculateAllSkillMetricsHappyPath:
             'sim': [102.0, 108.0, 106.0, 112.0, 110.0],
             'delta': [5.0, 5.0, 5.0, 5.0, 5.0],
         })
-        result = fl.calculate_all_skill_metrics(
+        result = skill_metrics.calculate_all_skill_metrics(
             data, 'obs', 'sim', 'delta'
         )
 
@@ -68,7 +68,7 @@ class TestCalculateAllSkillMetricsHappyPath:
             'sim': [100.0, 110.0, 120.0],
             'delta': [5.0, 5.0, 5.0],
         })
-        result = fl.calculate_all_skill_metrics(
+        result = skill_metrics.calculate_all_skill_metrics(
             data, 'obs', 'sim', 'delta'
         )
         assert result['mae'] == 0.0
@@ -89,7 +89,7 @@ class TestCalculateAllSkillMetricsHappyPath:
             'sim': [102.0, 108.0, 130.0],
             'delta': [5.0, 5.0, 5.0],
         })
-        result = fl.calculate_all_skill_metrics(
+        result = skill_metrics.calculate_all_skill_metrics(
             data, 'obs', 'sim', 'delta'
         )
         assert abs(result['accuracy'] - 2.0 / 3.0) < 1e-10
@@ -108,7 +108,7 @@ class TestCalculateAllSkillMetricsSinglePoint:
             'sim': [103.0],
             'delta': [5.0],
         })
-        result = fl.calculate_all_skill_metrics(
+        result = skill_metrics.calculate_all_skill_metrics(
             data, 'obs', 'sim', 'delta'
         )
         assert result['n_pairs'] == 1
@@ -125,7 +125,7 @@ class TestCalculateAllSkillMetricsSinglePoint:
             'sim': [110.0],
             'delta': [5.0],
         })
-        result = fl.calculate_all_skill_metrics(
+        result = skill_metrics.calculate_all_skill_metrics(
             data, 'obs', 'sim', 'delta'
         )
         assert result['n_pairs'] == 1
@@ -143,7 +143,7 @@ class TestCalculateAllSkillMetricsAllNaN:
             'sim': [100.0, 110.0],
             'delta': [5.0, 5.0],
         })
-        result = fl.calculate_all_skill_metrics(
+        result = skill_metrics.calculate_all_skill_metrics(
             data, 'obs', 'sim', 'delta'
         )
         assert result['n_pairs'] == 0
@@ -160,7 +160,7 @@ class TestCalculateAllSkillMetricsAllNaN:
             'sim': [np.nan, np.nan],
             'delta': [5.0, 5.0],
         })
-        result = fl.calculate_all_skill_metrics(
+        result = skill_metrics.calculate_all_skill_metrics(
             data, 'obs', 'sim', 'delta'
         )
         assert result['n_pairs'] == 0
@@ -173,7 +173,7 @@ class TestCalculateAllSkillMetricsAllNaN:
             'sim': [102.0, 108.0],
             'delta': [np.nan, np.nan],
         })
-        result = fl.calculate_all_skill_metrics(
+        result = skill_metrics.calculate_all_skill_metrics(
             data, 'obs', 'sim', 'delta'
         )
         assert result['n_pairs'] == 0
@@ -194,7 +194,7 @@ class TestCalculateAllSkillMetricsAllNaN:
             'sim': [102.0, 108.0, 106.0],
             'delta': [5.0, 5.0, 5.0],
         })
-        result = fl.calculate_all_skill_metrics(
+        result = skill_metrics.calculate_all_skill_metrics(
             data, 'obs', 'sim', 'delta'
         )
         assert result['n_pairs'] == 2
@@ -212,7 +212,7 @@ class TestCalculateAllSkillMetricsMissingColumn:
             'delta': [5.0],
         })
         with pytest.raises(ValueError, match="missing required columns"):
-            fl.calculate_all_skill_metrics(
+            skill_metrics.calculate_all_skill_metrics(
                 data, 'obs', 'sim', 'delta'
             )
 
@@ -223,7 +223,7 @@ class TestCalculateAllSkillMetricsMissingColumn:
             'delta': [5.0],
         })
         with pytest.raises(ValueError, match="missing required columns"):
-            fl.calculate_all_skill_metrics(
+            skill_metrics.calculate_all_skill_metrics(
                 data, 'obs', 'sim', 'delta'
             )
 
@@ -234,7 +234,7 @@ class TestCalculateAllSkillMetricsMissingColumn:
             'sim': [102.0],
         })
         with pytest.raises(ValueError, match="missing required columns"):
-            fl.calculate_all_skill_metrics(
+            skill_metrics.calculate_all_skill_metrics(
                 data, 'obs', 'sim', 'delta'
             )
 
@@ -250,7 +250,7 @@ class TestCalculateAllSkillMetricsConstantObservations:
             'sim': [102.0, 98.0, 101.0],
             'delta': [5.0, 5.0, 5.0],
         })
-        result = fl.calculate_all_skill_metrics(
+        result = skill_metrics.calculate_all_skill_metrics(
             data, 'obs', 'sim', 'delta'
         )
         assert result['n_pairs'] == 3
@@ -272,7 +272,7 @@ class TestCalculateAllSkillMetricsConstantObservations:
             'sim': [100.0, 100.0001],
             'delta': [5.0, 5.0],
         })
-        result = fl.calculate_all_skill_metrics(
+        result = skill_metrics.calculate_all_skill_metrics(
             data, 'obs', 'sim', 'delta'
         )
         assert result['n_pairs'] == 2
@@ -292,7 +292,7 @@ class TestCalculateAllSkillMetricsInfValues:
             'sim': [102.0, 108.0, 106.0],
             'delta': [5.0, 5.0, 5.0],
         })
-        result = fl.calculate_all_skill_metrics(
+        result = skill_metrics.calculate_all_skill_metrics(
             data, 'obs', 'sim', 'delta'
         )
         assert result['n_pairs'] == 2
@@ -304,7 +304,7 @@ class TestCalculateAllSkillMetricsInfValues:
             'sim': [-np.inf, 108.0],
             'delta': [5.0, 5.0],
         })
-        result = fl.calculate_all_skill_metrics(
+        result = skill_metrics.calculate_all_skill_metrics(
             data, 'obs', 'sim', 'delta'
         )
         assert result['n_pairs'] == 1
@@ -321,7 +321,7 @@ class TestCalculateAllSkillMetricsReturnType:
             'sim': [102.0, 108.0],
             'delta': [5.0, 5.0],
         })
-        result = fl.calculate_all_skill_metrics(
+        result = skill_metrics.calculate_all_skill_metrics(
             data, 'obs', 'sim', 'delta'
         )
         assert isinstance(result, pd.Series)
@@ -333,7 +333,7 @@ class TestCalculateAllSkillMetricsReturnType:
     def test_empty_dataframe_returns_nan_result(self):
         """Empty DataFrame returns nan_result with n_pairs=0."""
         data = pd.DataFrame(columns=['obs', 'sim', 'delta'])
-        result = fl.calculate_all_skill_metrics(
+        result = skill_metrics.calculate_all_skill_metrics(
             data, 'obs', 'sim', 'delta'
         )
         assert result['n_pairs'] == 0
