@@ -52,13 +52,18 @@ class TestWriteLrForecastToApi:
         finally:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 
-    def test_invalid_horizon_type_raises_error(self):
+    @patch('forecast_library.SapphirePostprocessingClient')
+    def test_invalid_horizon_type_raises_error(self, mock_client_class):
         """Invalid horizon_type should raise ValueError."""
         if not fl.SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
 
         os.environ['SAPPHIRE_API_ENABLED'] = 'true'
         try:
+            mock_client = Mock()
+            mock_client.readiness_check.return_value = True
+            mock_client_class.return_value = mock_client
+
             data = pd.DataFrame({
                 'code': ['12345'],
                 'date': pd.to_datetime(['2024-01-01']),
@@ -1137,13 +1142,18 @@ class TestWriteHydrographToApi:
         finally:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 
-    def test_invalid_horizon_type_raises_error(self, sample_pentad_hydrograph_data):
+    @patch('forecast_library.SapphirePreprocessingClient')
+    def test_invalid_horizon_type_raises_error(self, mock_client_class, sample_pentad_hydrograph_data):
         """Invalid horizon_type should raise ValueError."""
         if not fl.SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
 
         os.environ['SAPPHIRE_API_ENABLED'] = 'true'
         try:
+            mock_client = Mock()
+            mock_client.readiness_check.return_value = True
+            mock_client_class.return_value = mock_client
+
             with pytest.raises(ValueError, match="Invalid horizon_type"):
                 fl._write_hydrograph_to_api(sample_pentad_hydrograph_data, "invalid")
         finally:

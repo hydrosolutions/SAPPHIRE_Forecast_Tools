@@ -86,6 +86,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | **PP-003** | Implement batch upsert in postprocessing CRUD (Phase 2) | **Medium** | Open | See `postprocessing_unified_plan.md` Phase 2 | — |
 | **PP-004** | Replace iterrows() with vectorized operations (Phase 2) | **Medium** | Open | See `postprocessing_unified_plan.md` Phase 2 | — |
 | **PP-005** | Create operational/maintenance entry point split (Phase 3) | **Medium** | Open | See `postprocessing_unified_plan.md` Phase 3 | PP-003, PP-004 |
+| **PP-006** | Add config.yaml to postprocessing_forecasts (deduplicate defaults) | **Low** | Draft | [`gi_draft_pp_config_yaml.md`](issues/gi_draft_pp_config_yaml.md) | — |
 
 ### Forecast Dashboard (`fd`)
 
