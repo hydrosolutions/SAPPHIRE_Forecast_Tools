@@ -1197,6 +1197,157 @@ class TestMaintenanceFullGapFill:
 
 
 # ---------------------------------------------------------------------------
+# TestMultiStationMultiGapMaintenance (Gap #3)
+# ---------------------------------------------------------------------------
+class TestMultiStationMultiGapMaintenance:
+    """Multi-station gap-fill: station A gap on date X, station B gap on Y.
+
+    Verifies that the date+code filtering in _fill_gaps_for_horizon
+    (modelled['date'].isin(gap_dates) & modelled['code'].isin(gap_codes))
+    correctly selects the right rows for each station's gap.
+    """
+
+    def test_two_stations_different_gap_dates(self, env_setup):
+        """Station A missing EM on Jan 5, Station B missing on Jan 10.
+
+        Combined CSV:
+        - 15001: LR+TFT+EM on Jan 10, LR+TFT (no EM) on Jan 5
+        - 15002: LR+TFT+EM on Jan 5,  LR+TFT (no EM) on Jan 10
+        Gap detection should find: (Jan 5, 15001) and (Jan 10, 15002).
+        Ensemble fill should create EM for each.
+        """
+        tmp_path = env_setup
+        rows = []
+        # Station 15001: gap on Jan 5, EM on Jan 10
+        for date_str, has_em in [('2026-01-05', False), ('2026-01-10', True)]:
+            for ms in ('LR', 'TFT'):
+                rows.append({
+                    'code': '15001', 'date': date_str,
+                    'pentad_in_year': 1, 'pentad_in_month': '1',
+                    'forecasted_discharge': 100.0 if ms == 'LR' else 110.0,
+                    'model_long': MODELS_LONG[ms], 'model_short': ms,
+                })
+            if has_em:
+                rows.append({
+                    'code': '15001', 'date': date_str,
+                    'pentad_in_year': 1, 'pentad_in_month': '1',
+                    'forecasted_discharge': 105.0,
+                    'model_long': 'Ens. Mean with LR, TFT (EM)',
+                    'model_short': 'EM',
+                })
+
+        # Station 15002: EM on Jan 5, gap on Jan 10
+        for date_str, has_em in [('2026-01-05', True), ('2026-01-10', False)]:
+            for ms in ('LR', 'TFT'):
+                rows.append({
+                    'code': '15002', 'date': date_str,
+                    'pentad_in_year': 1, 'pentad_in_month': '1',
+                    'forecasted_discharge': 200.0 if ms == 'LR' else 220.0,
+                    'model_long': MODELS_LONG[ms], 'model_short': ms,
+                })
+            if has_em:
+                rows.append({
+                    'code': '15002', 'date': date_str,
+                    'pentad_in_year': 1, 'pentad_in_month': '1',
+                    'forecasted_discharge': 210.0,
+                    'model_long': 'Ens. Mean with LR, TFT (EM)',
+                    'model_short': 'EM',
+                })
+
+        _write_csv(
+            pd.DataFrame(rows),
+            os.path.join(str(tmp_path), 'combined_pentad.csv'),
+        )
+
+        # 1. Detect gaps
+        combined = gap_detector.read_combined_forecasts('pentad')
+        gaps = gap_detector.detect_missing_ensembles(
+            combined, lookback_days=10,
+        )
+        assert len(gaps) == 2, f"Expected 2 gaps, got {len(gaps)}"
+
+        gap_pairs = set(
+            (pd.Timestamp(r['date']).strftime('%Y-%m-%d'), str(r['code']))
+            for _, r in gaps.iterrows()
+        )
+        assert ('2026-01-05', '15001') in gap_pairs
+        assert ('2026-01-10', '15002') in gap_pairs
+
+        # 2. Build skill CSV (both models pass for both stations)
+        skill_rows = []
+        for station in ['15001', '15002']:
+            for ms in ('LR', 'TFT'):
+                skill_rows.append({
+                    'pentad_in_year': 1, 'code': station,
+                    'model_long': MODELS_LONG[ms], 'model_short': ms,
+                    'sdivsigma': 0.3, 'nse': 0.95, 'delta': 5.0,
+                    'accuracy': 0.95, 'mae': 2.0, 'n_pairs': 10,
+                })
+        _write_csv(
+            pd.DataFrame(skill_rows),
+            os.path.join(str(tmp_path), 'skill_pentad.csv'),
+        )
+        skill_metrics = data_reader.read_skill_metrics('pentad')
+
+        # 3. Build gap data matching production: filter by gap dates+codes
+        gap_dates = set(gaps['date'].unique())
+        gap_codes = set(gaps['code'].unique())
+        # Simulate: all modelled data for both stations, both dates
+        all_modelled = pd.DataFrame([
+            {'code': '15001', 'date': pd.Timestamp('2026-01-05'),
+             'pentad_in_year': 1, 'pentad_in_month': '1',
+             'forecasted_discharge': 100.0,
+             'model_long': MODELS_LONG['LR'], 'model_short': 'LR'},
+            {'code': '15001', 'date': pd.Timestamp('2026-01-05'),
+             'pentad_in_year': 1, 'pentad_in_month': '1',
+             'forecasted_discharge': 110.0,
+             'model_long': MODELS_LONG['TFT'], 'model_short': 'TFT'},
+            {'code': '15002', 'date': pd.Timestamp('2026-01-10'),
+             'pentad_in_year': 1, 'pentad_in_month': '1',
+             'forecasted_discharge': 200.0,
+             'model_long': MODELS_LONG['LR'], 'model_short': 'LR'},
+            {'code': '15002', 'date': pd.Timestamp('2026-01-10'),
+             'pentad_in_year': 1, 'pentad_in_month': '1',
+             'forecasted_discharge': 220.0,
+             'model_long': MODELS_LONG['TFT'], 'model_short': 'TFT'},
+        ])
+        # Filter to gap dates/codes (mirrors postprocessing_maintenance.py)
+        modelled_filtered = all_modelled[
+            all_modelled['date'].isin(gap_dates)
+            & all_modelled['code'].isin(gap_codes)
+        ].copy()
+
+        observed = pd.DataFrame({
+            'code': ['15001', '15002'],
+            'date': pd.to_datetime(['2026-01-05', '2026-01-10']),
+            'discharge_avg': [105.0, 210.0],
+            'delta': [5.0, 5.0],
+        })
+
+        # 4. Create ensemble
+        joint, _ = _make_ensemble(
+            modelled_filtered, skill_metrics, observed,
+        )
+
+        # 5. Verify: EM for each station on their gap date
+        em_rows = joint[joint['model_short'] == 'EM']
+        assert len(em_rows) == 2, (
+            f"Expected 2 EM rows (one per station gap), got {len(em_rows)}"
+        )
+        em_15001 = em_rows[em_rows['code'] == '15001']
+        assert len(em_15001) == 1
+        assert abs(
+            em_15001.iloc[0]['forecasted_discharge'] - 105.0
+        ) < 0.01, "15001 EM = mean(100, 110) = 105"
+
+        em_15002 = em_rows[em_rows['code'] == '15002']
+        assert len(em_15002) == 1
+        assert abs(
+            em_15002.iloc[0]['forecasted_discharge'] - 210.0
+        ) < 0.01, "15002 EM = mean(200, 220) = 210"
+
+
+# ---------------------------------------------------------------------------
 # TestSkillMetricsFallback
 # ---------------------------------------------------------------------------
 class TestSkillMetricsFallback:
@@ -1250,6 +1401,82 @@ class TestSkillMetricsFallback:
         # Derived model_long
         assert 'model_long' in df.columns
         assert df.iloc[0]['model_long'] == 'Linear regression (LR)'
+
+    def test_api_fallback_produces_correct_ensemble(self, env_setup):
+        """No CSV -> API data -> normalize -> ensemble pipeline produces EM.
+
+        This end-to-end test verifies that when skill metrics come from the
+        API (not CSV), the column normalization (horizon_in_year -> pentad_in_year,
+        model_type -> model_short, derived model_long) produces data that the
+        ensemble_calculator can merge correctly with forecasts.
+
+        If _normalize_api_skill_metrics produces wrong column names or types,
+        the merge in ensemble_calculator would silently produce 0 EM rows.
+        """
+        # env_setup points to tmp_path with NO skill CSV
+        api_response = pd.DataFrame({
+            'horizon_in_year': [1, 1],
+            'code': ['15001', '15001'],
+            'model_type': ['LR', 'TFT'],
+            'sdivsigma': [0.3, 0.4],
+            'nse': [0.95, 0.9],
+            'delta': [5.0, 5.0],
+            'accuracy': [0.95, 0.88],
+            'mae': [2.0, 3.0],
+            'n_pairs': [10, 10],
+        })
+
+        mock_client_cls = MagicMock()
+        mock_instance = mock_client_cls.return_value
+        mock_instance.is_ready.return_value = True
+        mock_instance.read_skill_metrics.return_value = api_response
+
+        with patch.object(data_reader, 'SAPPHIRE_API_AVAILABLE', True), \
+             patch.object(
+                 data_reader, 'SapphirePostprocessingClient',
+                 mock_client_cls, create=True,
+             ), \
+             patch.dict(os.environ, {'SAPPHIRE_API_ENABLED': 'true'}):
+            skill_metrics = data_reader.read_skill_metrics('pentad')
+
+        # Skill metrics should be normalized
+        assert not skill_metrics.empty
+        assert 'pentad_in_year' in skill_metrics.columns
+        assert 'model_short' in skill_metrics.columns
+        assert 'model_long' in skill_metrics.columns
+
+        # Now feed into ensemble_calculator with matching forecasts
+        forecasts = pd.DataFrame({
+            'code': ['15001', '15001'],
+            'date': pd.to_datetime(['2026-01-05', '2026-01-05']),
+            'pentad_in_year': [1, 1],
+            'pentad_in_month': ['1', '1'],
+            'forecasted_discharge': [100.0, 110.0],
+            'model_long': [MODELS_LONG['LR'], MODELS_LONG['TFT']],
+            'model_short': ['LR', 'TFT'],
+        })
+        observed = pd.DataFrame({
+            'code': ['15001'],
+            'date': pd.to_datetime(['2026-01-05']),
+            'discharge_avg': [105.0],
+            'delta': [5.0],
+        })
+
+        joint, skill_out = _make_ensemble(forecasts, skill_metrics, observed)
+
+        # EM should be created: mean(LR=100, TFT=110) = 105
+        em_rows = joint[joint['model_short'] == 'EM']
+        assert len(em_rows) == 1, (
+            f"Expected 1 EM row from API-sourced skill metrics, "
+            f"got {len(em_rows)}"
+        )
+        assert abs(em_rows.iloc[0]['forecasted_discharge'] - 105.0) < 0.01
+
+        # EM skill row should also exist
+        em_skill = skill_out[skill_out['model_short'] == 'EM']
+        assert len(em_skill) >= 1, (
+            "EM skill metric row should exist in skill_out"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1414,6 +1641,101 @@ class TestSingleModelEnsembleBug:
         comp = em_rows.iloc[0]['model_long']
         assert 'TFT' in comp and 'TiDE' in comp
         assert 'LR' not in comp
+
+
+# ---------------------------------------------------------------------------
+# TestNeuralEnsembleExclusion (Gap #5)
+# ---------------------------------------------------------------------------
+class TestNeuralEnsembleExclusion:
+    """NE (Neural Ensemble) must be excluded from EM candidate pool.
+
+    ensemble_calculator.py line 202 filters out model_short == 'NE'.
+    This integration test verifies the full pipeline handles NE correctly:
+    NE passes skill thresholds but is NOT included in EM computation.
+    """
+
+    def test_ne_excluded_from_em_with_lr_and_tft(
+        self, pentad_observed, env_setup,
+    ):
+        """LR+TFT+NE all pass thresholds, but EM = mean(LR, TFT) only.
+
+        NE should not appear in the ensemble composition string.
+        """
+        skill = pd.DataFrame([
+            {'pentad_in_year': 1, 'code': '15001',
+             'model_long': MODELS_LONG['LR'], 'model_short': 'LR',
+             'sdivsigma': 0.3, 'nse': 0.95, 'delta': 5.0,
+             'accuracy': 0.95, 'mae': 2.0, 'n_pairs': 10},
+            {'pentad_in_year': 1, 'code': '15001',
+             'model_long': MODELS_LONG['TFT'], 'model_short': 'TFT',
+             'sdivsigma': 0.4, 'nse': 0.9, 'delta': 5.0,
+             'accuracy': 0.88, 'mae': 3.0, 'n_pairs': 10},
+            {'pentad_in_year': 1, 'code': '15001',
+             'model_long': MODEL_LONG_NAMES['NE'], 'model_short': 'NE',
+             'sdivsigma': 0.2, 'nse': 0.98, 'delta': 5.0,
+             'accuracy': 0.99, 'mae': 1.0, 'n_pairs': 10},
+        ])
+        forecasts = pd.DataFrame([
+            {'code': '15001', 'date': pd.Timestamp('2026-01-05'),
+             'pentad_in_year': 1, 'pentad_in_month': '1',
+             'forecasted_discharge': 100.0,
+             'model_long': MODELS_LONG['LR'], 'model_short': 'LR'},
+            {'code': '15001', 'date': pd.Timestamp('2026-01-05'),
+             'pentad_in_year': 1, 'pentad_in_month': '1',
+             'forecasted_discharge': 110.0,
+             'model_long': MODELS_LONG['TFT'], 'model_short': 'TFT'},
+            {'code': '15001', 'date': pd.Timestamp('2026-01-05'),
+             'pentad_in_year': 1, 'pentad_in_month': '1',
+             'forecasted_discharge': 120.0,
+             'model_long': MODEL_LONG_NAMES['NE'], 'model_short': 'NE'},
+        ])
+
+        joint, _ = _make_ensemble(forecasts, skill, pentad_observed)
+
+        em_rows = joint[joint['model_short'] == 'EM']
+        assert len(em_rows) == 1, f"Expected 1 EM row, got {len(em_rows)}"
+
+        # EM = mean(LR=100, TFT=110) = 105, NOT mean(100, 110, 120) = 110
+        assert abs(em_rows.iloc[0]['forecasted_discharge'] - 105.0) < 0.01, (
+            f"EM should be mean(LR, TFT)=105, got "
+            f"{em_rows.iloc[0]['forecasted_discharge']}"
+        )
+
+        # Composition should include LR and TFT, but NOT NE
+        comp = em_rows.iloc[0]['model_long']
+        assert 'LR' in comp
+        assert 'TFT' in comp
+        assert 'NE' not in comp
+
+    def test_ne_only_qualifying_model_no_ensemble(
+        self, pentad_observed, env_setup,
+    ):
+        """Only NE passes thresholds -> no EM (NE excluded, no candidates)."""
+        skill = pd.DataFrame([
+            {'pentad_in_year': 1, 'code': '15001',
+             'model_long': MODELS_LONG['LR'], 'model_short': 'LR',
+             'sdivsigma': 0.9, 'nse': 0.5, 'delta': 5.0,
+             'accuracy': 0.6, 'mae': 8.0, 'n_pairs': 10},
+            {'pentad_in_year': 1, 'code': '15001',
+             'model_long': MODEL_LONG_NAMES['NE'], 'model_short': 'NE',
+             'sdivsigma': 0.2, 'nse': 0.98, 'delta': 5.0,
+             'accuracy': 0.99, 'mae': 1.0, 'n_pairs': 10},
+        ])
+        forecasts = pd.DataFrame([
+            {'code': '15001', 'date': pd.Timestamp('2026-01-05'),
+             'pentad_in_year': 1, 'pentad_in_month': '1',
+             'forecasted_discharge': 100.0,
+             'model_long': MODELS_LONG['LR'], 'model_short': 'LR'},
+            {'code': '15001', 'date': pd.Timestamp('2026-01-05'),
+             'pentad_in_year': 1, 'pentad_in_month': '1',
+             'forecasted_discharge': 120.0,
+             'model_long': MODEL_LONG_NAMES['NE'], 'model_short': 'NE'},
+        ])
+
+        joint, _ = _make_ensemble(forecasts, skill, pentad_observed)
+        assert 'EM' not in joint['model_short'].values, (
+            "NE alone should not produce an EM row"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -2456,6 +2778,164 @@ class TestEnsembleSkillMetricVerification:
             f"sdivsigma: expected {expected_sdivsigma:.6f}, "
             f"got {row['sdivsigma']}"
         )
+
+
+# ---------------------------------------------------------------------------
+# TestMultiEntityEnsembleSkillStats (Gap #4)
+# ---------------------------------------------------------------------------
+class TestMultiEntityEnsembleSkillStats:
+    """Verify skill_stats_with_ensemble has correct EM rows for multi-entity.
+
+    When 2 stations x 2 pentads are processed, the second return value
+    (skill_stats_with_ensemble) should contain EM skill rows only for
+    stations/pentads that actually qualify for ensemble.
+    """
+
+    def test_multi_station_multi_pentad_em_skill_rows(self, env_setup):
+        """Station A qualifies for EM in pentad 1+2; station B does not.
+
+        skill_out should have exactly 2 EM rows (A pentad 1, A pentad 2).
+        Station B's skill rows should be unchanged (no EM added).
+        """
+        dates_p1 = pd.to_datetime(['2026-01-01', '2026-01-03'])
+        dates_p2 = pd.to_datetime(['2026-01-06', '2026-01-08'])
+
+        # Both models pass for station 15001, only LR for 15002
+        skill_rows = []
+        for pentad in [1, 2]:
+            for station in ['15001', '15002']:
+                # LR passes everywhere
+                skill_rows.append({
+                    'pentad_in_year': pentad, 'code': station,
+                    'model_long': MODELS_LONG['LR'], 'model_short': 'LR',
+                    'sdivsigma': 0.3, 'nse': 0.95, 'delta': 5.0,
+                    'accuracy': 0.95, 'mae': 2.0, 'n_pairs': 5,
+                })
+                # TFT: passes for 15001, fails for 15002
+                tft_ok = station == '15001'
+                skill_rows.append({
+                    'pentad_in_year': pentad, 'code': station,
+                    'model_long': MODELS_LONG['TFT'], 'model_short': 'TFT',
+                    'sdivsigma': 0.4 if tft_ok else 0.9,
+                    'nse': 0.9 if tft_ok else 0.5,
+                    'delta': 5.0,
+                    'accuracy': 0.88 if tft_ok else 0.6,
+                    'mae': 3.0 if tft_ok else 8.0,
+                    'n_pairs': 5,
+                })
+        skill = pd.DataFrame(skill_rows)
+
+        # Forecasts: 2 models x 2 stations x 4 dates (2 per pentad)
+        # Use varying values so observed has nonzero variance per pentad
+        # (required for finite sdivsigma)
+        fc_vals = {
+            # (date_index, model) -> discharge
+            (0, 'LR'): 98.0, (0, 'TFT'): 108.0,
+            (1, 'LR'): 102.0, (1, 'TFT'): 112.0,
+        }
+        obs_vals = [100.0, 110.0]  # per date index within pentad
+
+        frows = []
+        for dates, pentad, pim in [
+            (dates_p1, 1, '1'), (dates_p2, 2, '2'),
+        ]:
+            for di, date in enumerate(dates):
+                for station in ['15001', '15002']:
+                    for ms, ml in [
+                        ('LR', MODELS_LONG['LR']),
+                        ('TFT', MODELS_LONG['TFT']),
+                    ]:
+                        frows.append({
+                            'code': station, 'date': date,
+                            'pentad_in_year': pentad,
+                            'pentad_in_month': pim,
+                            'forecasted_discharge': fc_vals[(di, ms)],
+                            'model_long': ml, 'model_short': ms,
+                        })
+        forecasts = pd.DataFrame(frows)
+
+        # Observed for both stations and all dates — varying per date
+        orows = []
+        for dates in [dates_p1, dates_p2]:
+            for di, date in enumerate(dates):
+                for station in ['15001', '15002']:
+                    orows.append({
+                        'code': station, 'date': date,
+                        'discharge_avg': obs_vals[di], 'delta': 5.0,
+                    })
+        observed = pd.DataFrame(orows)
+
+        joint, skill_out = _make_ensemble(forecasts, skill, observed)
+
+        # --- Verify skill_out EM rows ---
+        em_skill = skill_out[skill_out['model_short'] == 'EM']
+        # Station 15001 qualifies in pentad 1 and 2 -> 2 EM skill rows
+        em_15001 = em_skill[em_skill['code'] == '15001']
+        assert len(em_15001) == 2, (
+            f"Expected 2 EM skill rows for 15001, got {len(em_15001)}"
+        )
+        em_pentads = sorted(em_15001['pentad_in_year'].tolist())
+        assert em_pentads == [1, 2], (
+            f"Expected EM skill for pentads [1, 2], got {em_pentads}"
+        )
+
+        # Station 15002 should have NO EM skill rows (single-model)
+        em_15002 = em_skill[em_skill['code'] == '15002']
+        assert len(em_15002) == 0, (
+            f"Station 15002 should have 0 EM skill rows, got {len(em_15002)}"
+        )
+
+        # --- Verify base skill rows preserved ---
+        base_skill = skill_out[skill_out['model_short'] != 'EM']
+        assert len(base_skill) == len(skill), (
+            f"Base skill rows changed: {len(base_skill)} vs {len(skill)}"
+        )
+
+        # --- Verify EM skill metric values are plausible ---
+        for _, row in em_15001.iterrows():
+            assert row['n_pairs'] == 2, (
+                f"Expected n_pairs=2 (2 dates per pentad), got {row['n_pairs']}"
+            )
+            assert 0 <= row['accuracy'] <= 1.0
+            assert row['mae'] >= 0
+            assert row['sdivsigma'] >= 0
+
+    def test_skill_stats_em_row_model_long_has_composition(self, env_setup):
+        """EM skill row has composition string in model_long."""
+        skill = pd.DataFrame([
+            {'pentad_in_year': 1, 'code': '15001',
+             'model_long': MODELS_LONG['LR'], 'model_short': 'LR',
+             'sdivsigma': 0.3, 'nse': 0.95, 'delta': 5.0,
+             'accuracy': 0.95, 'mae': 2.0, 'n_pairs': 10},
+            {'pentad_in_year': 1, 'code': '15001',
+             'model_long': MODELS_LONG['TFT'], 'model_short': 'TFT',
+             'sdivsigma': 0.4, 'nse': 0.9, 'delta': 5.0,
+             'accuracy': 0.88, 'mae': 3.0, 'n_pairs': 10},
+        ])
+        forecasts = pd.DataFrame({
+            'code': ['15001', '15001'],
+            'date': pd.to_datetime(['2026-01-05', '2026-01-05']),
+            'pentad_in_year': [1, 1],
+            'pentad_in_month': ['1', '1'],
+            'forecasted_discharge': [100.0, 110.0],
+            'model_long': [MODELS_LONG['LR'], MODELS_LONG['TFT']],
+            'model_short': ['LR', 'TFT'],
+        })
+        observed = pd.DataFrame({
+            'code': ['15001'],
+            'date': pd.to_datetime(['2026-01-05']),
+            'discharge_avg': [105.0],
+            'delta': [5.0],
+        })
+
+        _, skill_out = _make_ensemble(forecasts, skill, observed)
+        em_skill = skill_out[skill_out['model_short'] == 'EM']
+        assert len(em_skill) == 1
+        model_long = em_skill.iloc[0]['model_long']
+        assert model_long.startswith('Ens. Mean with ')
+        assert model_long.endswith(' (EM)')
+        assert 'LR' in model_long
+        assert 'TFT' in model_long
 
 
 # ---------------------------------------------------------------------------

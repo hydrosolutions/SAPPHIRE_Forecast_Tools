@@ -786,8 +786,345 @@ class TestMismatchedInputShapes:
                 saved_df = (
                     mocks['fl'].save_forecast_data_pentad.call_args[0][0]
                 )
-                # No modelled data => no EM rows
-                assert saved_df.empty or (
-                    'model_short' not in saved_df.columns
-                    or saved_df[saved_df['model_short'] == 'EM'].empty
+                # No modelled data => saved DF is empty (no rows to process)
+                assert saved_df.empty, (
+                    f"Empty modelled input should produce empty saved DF, "
+                    f"got {len(saved_df)} rows"
                 )
+
+
+# ===================================================================
+# TestRecalcWiringIntegration (Gap #1)
+# ===================================================================
+def _import_recalc():
+    spec = importlib.util.spec_from_file_location(
+        "recalculate_skill_metrics_module",
+        os.path.join(SCRIPT_DIR, "recalculate_skill_metrics.py"),
+    )
+    module = importlib.util.module_from_spec(spec)
+    return module, spec
+
+
+def _setup_recalc_mocks(
+    tmp_path, observed_pentad=None, modelled_pentad=None,
+    observed_decad=None, modelled_decad=None,
+):
+    """Set up sys.modules for recalc with real calculate_skill_metrics_*.
+
+    Real: forecast_library.calculate_skill_metrics_pentad,
+          forecast_library.calculate_skill_metrics_decade,
+          forecast_library.calculate_all_skill_metrics,
+          postprocessing_tools
+    Mocked: setup_library (data reading), save functions
+    """
+    from src import postprocessing_tools as real_pt
+    import forecast_library as real_fl
+
+    mock_sl = MagicMock()
+    mock_fl = MagicMock()
+
+    # Wire the real calculation functions
+    mock_fl.calculate_skill_metrics_pentad = (
+        real_fl.calculate_skill_metrics_pentad
+    )
+    mock_fl.calculate_skill_metrics_decade = (
+        real_fl.calculate_skill_metrics_decade
+    )
+    mock_fl.calculate_all_skill_metrics = (
+        real_fl.calculate_all_skill_metrics
+    )
+
+    mock_sl.load_environment.return_value = None
+
+    if observed_pentad is not None:
+        mock_sl.read_observed_and_modelled_data_pentade.return_value = (
+            observed_pentad, modelled_pentad
+        )
+    else:
+        mock_sl.read_observed_and_modelled_data_pentade.return_value = (
+            pd.DataFrame(), pd.DataFrame()
+        )
+    if observed_decad is not None:
+        mock_sl.read_observed_and_modelled_data_decade.return_value = (
+            observed_decad, modelled_decad
+        )
+    else:
+        mock_sl.read_observed_and_modelled_data_decade.return_value = (
+            pd.DataFrame(), pd.DataFrame()
+        )
+
+    mock_fl.save_forecast_data_pentad.return_value = None
+    mock_fl.save_forecast_data_decade.return_value = None
+    mock_fl.save_pentadal_skill_metrics.return_value = None
+    mock_fl.save_decadal_skill_metrics.return_value = None
+
+    sys.modules['setup_library'] = mock_sl
+    sys.modules['forecast_library'] = mock_fl
+    sys.modules['tag_library'] = MagicMock()
+
+    real_src = MagicMock()
+    real_src.postprocessing_tools = real_pt
+    sys.modules['src'] = real_src
+    sys.modules['src.postprocessing_tools'] = real_pt
+
+    return {'sl': mock_sl, 'fl': mock_fl}
+
+
+def _make_recalc_observed(stations, dates, base_values):
+    """Build observed DF with required columns for calculate_skill_metrics_*."""
+    rows = []
+    for date in dates:
+        for station in stations:
+            rows.append({
+                'code': station, 'date': date,
+                'discharge_avg': base_values[station],
+                'delta': 5.0,
+                'model_long': 'observed',
+                'model_short': 'obs',
+            })
+    return pd.DataFrame(rows)
+
+
+def _make_recalc_modelled(
+    stations, dates, model_values, horizon_type='pentad',
+):
+    """Build modelled DF with required columns for calculate_skill_metrics_*."""
+    import tag_library as tl
+
+    period_col = (
+        'pentad_in_year' if horizon_type == 'pentad' else 'decad_in_year'
+    )
+    period_in_month_col = (
+        'pentad_in_month' if horizon_type == 'pentad' else 'decad_in_month'
+    )
+    get_period_func = (
+        tl.get_pentad if horizon_type == 'pentad' else tl.get_decad_in_month
+    )
+    rows = []
+    for date in dates:
+        pim = str(get_period_func(date + pd.Timedelta(days=1)))
+        for station in stations:
+            for ms, ml in model_values.keys():
+                rows.append({
+                    'code': station, 'date': date,
+                    period_col: 1,
+                    period_in_month_col: pim,
+                    'forecasted_discharge': model_values[(ms, ml)][station],
+                    'model_long': ml, 'model_short': ms,
+                })
+    return pd.DataFrame(rows)
+
+
+class TestRecalcWiringIntegration:
+    """Entry point calls real calculate_skill_metrics_pentad.
+
+    Unlike operational/maintenance wiring tests that exercise
+    data_reader + ensemble_calculator, recalc wiring tests exercise
+    the full calculate_skill_metrics path inside forecast_library.
+    """
+
+    def _build_test_data(self):
+        """Build realistic test data: 1 station, 5 dates, 2 models.
+
+        Observed values have large spread so that both models
+        easily pass all skill thresholds (sdivsigma<0.6, accuracy>0.8,
+        NSE>0.8). Both LR and TFT closely track observed.
+
+        Hand-check for LR:
+            obs  = [80, 90, 100, 110, 120]  (mean=100, SS_obs=1000)
+            LR   = [81, 91, 101, 111, 121]  (bias=+1)
+            diff = [1, 1, 1, 1, 1]          MAE=1, all<=5 → accuracy=1.0
+            SS_res = 5, NSE = 1 - 5/1000 = 0.995, sdivsigma ≈ 0.071
+        """
+        stations = ['15001']
+        dates = pd.to_datetime([
+            '2026-01-01', '2026-01-02', '2026-01-03',
+            '2026-01-04', '2026-01-05',
+        ])
+        obs_values = [80.0, 90.0, 100.0, 110.0, 120.0]
+
+        orows = []
+        for date, obs_val in zip(dates, obs_values):
+            for station in stations:
+                orows.append({
+                    'code': station, 'date': date,
+                    'discharge_avg': obs_val,
+                    'delta': 5.0,
+                    'model_long': 'observed',
+                    'model_short': 'obs',
+                })
+        observed = pd.DataFrame(orows)
+
+        # LR: obs + 1, TFT: obs - 1
+        # EM will be mean(LR, TFT) = obs (perfectly)
+        import tag_library as tl
+        frows = []
+        for date, obs_val in zip(dates, obs_values):
+            pim = str(tl.get_pentad(date + pd.Timedelta(days=1)))
+            for station in stations:
+                frows.append({
+                    'code': station, 'date': date,
+                    'pentad_in_year': 1,
+                    'pentad_in_month': pim,
+                    'forecasted_discharge': obs_val + 1.0,
+                    'model_long': MODEL_LONG_NAMES['LR'],
+                    'model_short': 'LR',
+                })
+                frows.append({
+                    'code': station, 'date': date,
+                    'pentad_in_year': 1,
+                    'pentad_in_month': pim,
+                    'forecasted_discharge': obs_val - 1.0,
+                    'model_long': MODEL_LONG_NAMES['TFT'],
+                    'model_short': 'TFT',
+                })
+        modelled = pd.DataFrame(frows)
+        return observed, modelled
+
+    def test_pentad_real_skill_calculated_and_saved(self, env_setup):
+        """Real calculate_skill_metrics_pentad runs, saves both outputs.
+
+        Verifies the full chain: read → calculate → save forecasts + skills.
+        """
+        tmp_path = env_setup
+        observed, modelled = self._build_test_data()
+
+        with patch.dict(os.environ, {'SAPPHIRE_PREDICTION_MODE': 'PENTAD'}):
+            with patch.dict(sys.modules, {}):
+                mocks = _setup_recalc_mocks(
+                    tmp_path,
+                    observed_pentad=observed,
+                    modelled_pentad=modelled,
+                )
+
+                module, spec = _import_recalc()
+                spec.loader.exec_module(module)
+
+                with pytest.raises(SystemExit) as exc_info:
+                    module.recalculate_skill_metrics()
+
+                assert exc_info.value.code == 0
+
+                # Both save functions called
+                mocks['fl'].save_forecast_data_pentad.assert_called_once()
+                mocks['fl'].save_pentadal_skill_metrics.assert_called_once()
+
+                # Verify skill metrics have correct structure
+                saved_skill = (
+                    mocks['fl'].save_pentadal_skill_metrics.call_args[0][0]
+                )
+                assert not saved_skill.empty, (
+                    "Skill metrics should not be empty"
+                )
+                for col in ['pentad_in_year', 'code', 'model_short',
+                            'sdivsigma', 'nse', 'mae', 'n_pairs']:
+                    assert col in saved_skill.columns, (
+                        f"Skill metrics missing column: {col}"
+                    )
+
+                # LR and TFT should both have skill rows
+                skill_models = set(saved_skill['model_short'].unique())
+                assert 'LR' in skill_models
+                assert 'TFT' in skill_models
+
+                # n_pairs = 5 (5 dates in pentad 1)
+                for _, row in saved_skill.iterrows():
+                    if row['model_short'] in ('LR', 'TFT'):
+                        assert row['n_pairs'] == 5, (
+                            f"Expected n_pairs=5, got {row['n_pairs']}"
+                        )
+
+    def test_pentad_em_in_saved_forecasts(self, env_setup):
+        """Real recalc produces EM rows in joint forecasts.
+
+        Both LR and TFT are close to observed (bias ~2), so both should
+        pass thresholds, and EM = mean(LR, TFT) should be created.
+        """
+        tmp_path = env_setup
+        observed, modelled = self._build_test_data()
+
+        with patch.dict(os.environ, {'SAPPHIRE_PREDICTION_MODE': 'PENTAD'}):
+            with patch.dict(sys.modules, {}):
+                mocks = _setup_recalc_mocks(
+                    tmp_path,
+                    observed_pentad=observed,
+                    modelled_pentad=modelled,
+                )
+
+                module, spec = _import_recalc()
+                spec.loader.exec_module(module)
+
+                with pytest.raises(SystemExit) as exc_info:
+                    module.recalculate_skill_metrics()
+
+                assert exc_info.value.code == 0
+
+                saved_fc = (
+                    mocks['fl'].save_forecast_data_pentad.call_args[0][0]
+                )
+                em_rows = saved_fc[saved_fc['model_short'] == 'EM']
+                assert len(em_rows) == 5, (
+                    f"Expected 5 EM rows (5 dates), got {len(em_rows)}"
+                )
+
+                # EM = mean(LR=obs+1, TFT=obs-1) = obs
+                obs_values = [80.0, 90.0, 100.0, 110.0, 120.0]
+                em_sorted = em_rows.sort_values('date')
+                for em_val, obs_val in zip(
+                    em_sorted['forecasted_discharge'], obs_values
+                ):
+                    assert abs(em_val - obs_val) < 0.01, (
+                        f"EM discharge should be {obs_val}, got {em_val}"
+                    )
+
+    def test_timing_stats_handoff(self, env_setup):
+        """timing_stats returned by calculate_skill_metrics is used.
+
+        recalculate_skill_metrics.py has a pattern where it checks
+        returned_timing_stats is not None. This test verifies the
+        handoff works without error.
+        """
+        tmp_path = env_setup
+        observed, modelled = self._build_test_data()
+
+        with patch.dict(os.environ, {'SAPPHIRE_PREDICTION_MODE': 'PENTAD'}):
+            with patch.dict(sys.modules, {}):
+                mocks = _setup_recalc_mocks(
+                    tmp_path,
+                    observed_pentad=observed,
+                    modelled_pentad=modelled,
+                )
+
+                module, spec = _import_recalc()
+                spec.loader.exec_module(module)
+
+                # Should complete without error; timing_stats handoff
+                # is exercised internally
+                with pytest.raises(SystemExit) as exc_info:
+                    module.recalculate_skill_metrics()
+
+                assert exc_info.value.code == 0
+
+    def test_save_error_in_skill_metrics_causes_exit_1(self, env_setup):
+        """Skill metrics save error → exit code 1."""
+        tmp_path = env_setup
+        observed, modelled = self._build_test_data()
+
+        with patch.dict(os.environ, {'SAPPHIRE_PREDICTION_MODE': 'PENTAD'}):
+            with patch.dict(sys.modules, {}):
+                mocks = _setup_recalc_mocks(
+                    tmp_path,
+                    observed_pentad=observed,
+                    modelled_pentad=modelled,
+                )
+                mocks['fl'].save_pentadal_skill_metrics.return_value = (
+                    "Error: write failed"
+                )
+
+                module, spec = _import_recalc()
+                spec.loader.exec_module(module)
+
+                with pytest.raises(SystemExit) as exc_info:
+                    module.recalculate_skill_metrics()
+
+                assert exc_info.value.code == 1

@@ -178,3 +178,41 @@ class TestRecalcWorkflow:
                 mocks['fl'].calculate_skill_metrics_pentad.assert_not_called()
                 mocks['fl'].calculate_skill_metrics_decade.assert_called_once()
                 mocks['fl'].save_decadal_skill_metrics.assert_called_once()
+
+
+class TestRecalcEdgeCases:
+    """Edge case tests for recalculate entry point branches."""
+
+    def test_load_environment_failure_propagates(self, mock_data, mock_skill):
+        """When load_environment() raises, exception propagates uncaught."""
+        with patch.dict(os.environ, {'SAPPHIRE_PREDICTION_MODE': 'PENTAD'}):
+            with patch.dict(sys.modules, {}):
+                mocks = _setup_mocks(mock_data, mock_skill)
+                mocks['sl'].load_environment.side_effect = (
+                    FileNotFoundError("missing .env")
+                )
+
+                module, spec = import_recalc_module()
+                spec.loader.exec_module(module)
+
+                with pytest.raises(FileNotFoundError, match="missing .env"):
+                    module.recalculate_skill_metrics()
+
+    def test_save_success_path(self, mock_data, mock_skill):
+        """All saves return None → exit 0, all four saves called."""
+        with patch.dict(os.environ, {'SAPPHIRE_PREDICTION_MODE': 'BOTH'}):
+            with patch.dict(sys.modules, {}):
+                mocks = _setup_mocks(mock_data, mock_skill)
+
+                module, spec = import_recalc_module()
+                spec.loader.exec_module(module)
+
+                with pytest.raises(SystemExit) as exc_info:
+                    module.recalculate_skill_metrics()
+
+                assert exc_info.value.code == 0
+                # All four save functions called
+                mocks['fl'].save_forecast_data_pentad.assert_called_once()
+                mocks['fl'].save_pentadal_skill_metrics.assert_called_once()
+                mocks['fl'].save_forecast_data_decade.assert_called_once()
+                mocks['fl'].save_decadal_skill_metrics.assert_called_once()
