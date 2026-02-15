@@ -39,7 +39,7 @@
 | Skill metrics single-pass optimization | **DONE** — `calculate_all_skill_metrics()` replaces triple groupby+merge (commit `eae7158`) |
 | Monthly/quarterly/seasonal skill metrics | TODO — Phase 4 (point + CRPS, configurable season) |
 | Bug 6: Single-model ensemble filter only rejects LR | **DONE** — `_is_multi_model_ensemble()` helper replaces hardcoded check |
-| Comprehensive test suite (50+ unit, 12+ integration) | **DONE** — 296 postprocessing tests + 225 iEasyHydroForecast tests pass (521 total collected) |
+| Comprehensive test suite (50+ unit, 12+ integration) | **DONE** — 305 postprocessing tests + 225 iEasyHydroForecast tests pass (530 total collected) |
 | Bulk-read API endpoints (for `long_term_forecasting`) | Planned — see `doc/plans/bulk_read_endpoints_instructions.md` |
 | API integration | **DONE** — see `doc/plans/sapphire_api_integration_plan.md` |
 | Duplicate skill metrics / ensemble composition issue | **RESOLVED** — see `doc/plans/issues/gi_duplicate_skill_metrics_ensemble_composition.md` |
@@ -717,7 +717,7 @@ Of the 8 tests originally flagged, 3 had genuinely weak assertions that were str
 | Category | Status | Tests |
 |----------|--------|-------|
 | **Value boundaries** | **DONE** | `test_edge_cases.py`: zero, near-zero (0.001), large (10000+), negative discharge |
-| **Leap year** | MISSING | Feb 29 → Mar 1 pentad/decad numbering |
+| **Leap year** | **DONE** | `test_integration_postprocessing.py::TestLeapYearBoundary` (3 tests: ensemble on Feb 29/Mar 1, pentad_in_year verification, pentad_in_month verification) |
 | **Single-row DataFrame** | **DONE** | `test_edge_cases.py::TestEmptyAndSingleRowData`, `test_calculate_all_skill_metrics.py::TestCalculateAllSkillMetricsSinglePoint` |
 | **All-NaN columns** | **DONE** | `test_edge_cases.py::TestNaNHandling`, `test_calculate_all_skill_metrics.py::TestCalculateAllSkillMetricsAllNaN` |
 | **Duplicate (date, code, model) rows** | **DONE** | `test_edge_cases.py::TestDuplicateHandling` |
@@ -729,24 +729,17 @@ Of the 8 tests originally flagged, 3 had genuinely weak assertions that were str
 
 | Branch | Entry point | Status | Tests |
 |--------|------------|--------|-------|
-| `load_environment()` failure | All three | MISSING | Exception propagates with no sys.exit — test crash behavior |
+| `load_environment()` failure | All three | **DONE** | `TestOperationalEdgeCases::test_load_environment_failure_propagates`, `TestMaintenanceEdgeCases::test_load_environment_failure_propagates`, `TestRecalcEdgeCases::test_load_environment_failure_propagates` — all verify FileNotFoundError propagates uncaught |
 | Invalid `SAPPHIRE_PREDICTION_MODE` | All three | **DONE** | `test_operational_workflow.py`, `test_maintenance_workflow.py`, `test_recalc_workflow.py` — all verify `sys.exit(1)` |
 | Maintenance `BOTH` mode | maintenance | **DONE** | `test_maintenance_workflow.py::test_both_mode_processes_both` |
 | Maintenance `DECAD` mode | maintenance | **DONE** | `test_maintenance_workflow.py::test_decad_mode_only` |
 | Maintenance gap-fill save error | maintenance | **DONE** | `test_maintenance_workflow.py::test_save_error_causes_exit_1` |
 | Recalc `DECAD`-only mode | recalc | **DONE** | `test_recalc_workflow.py::test_decad_only_mode` |
-| Maintenance: gap dates but empty forecast data | maintenance | MISSING | `modelled_filtered.empty` after filtering |
-| Maintenance: gap dates but empty skill metrics | maintenance | MISSING | `skill_metrics.empty` in gap-fill path |
-| Default lookback (7 days) | maintenance | MISSING | Only custom value (14) tested |
-| Empty data from read functions (with non-empty skill) | operational | MISSING | Could call `create_ensemble_forecasts()` with empty data |
-| Save success path (returns None) | All three | MISSING | Only error returns tested |
-
-#### Test Infrastructure Issues
-
-| Issue | Files affected | Fix |
-|-------|---------------|-----|
-| 60+ tests use `os.environ[k] = v` / try-finally instead of `patch.dict` | `test_api_integration.py`, `test_api_read.py` | Migrate to `@patch.dict(os.environ, {...})` |
-| `SAPPHIRE_TEST_ENV` not set | `test_api_integration.py`, `test_api_read.py` | Add to fixtures to prevent accidental real API calls |
+| Maintenance: gap dates but empty forecast data | maintenance | **DONE** | `TestMaintenanceEdgeCases::test_gap_dates_no_matching_forecast_data` — verifies early return, no skill read or ensemble creation |
+| Maintenance: gap dates but empty skill metrics | maintenance | **DONE** | `TestMaintenanceEdgeCases::test_gap_dates_empty_skill_metrics` — verifies skill read called but empty → no ensemble creation |
+| Default lookback (7 days) | maintenance | DEFERRED | Only custom value (14) tested. Tracked in PP-006 (`gi_draft_pp_config_yaml.md`) — adding config.yaml will include tests for default, yaml override, and env override. |
+| Empty data from read functions (with non-empty skill) | operational | **DONE** | `TestOperationalEdgeCases::test_empty_modelled_with_nonempty_skill` — verifies `create_ensemble_forecasts()` still called with empty data |
+| Save success path (returns None) | All three | **DONE** | `TestOperationalEdgeCases::test_save_success_path`, `TestMaintenanceEdgeCases::test_save_success_path`, `TestRecalcEdgeCases::test_save_success_path` — verify save called + exit 0 |
 
 ### Missing Tests (Updated)
 
@@ -787,13 +780,71 @@ Tests below are ordered by priority. Each test should use real logic for everyth
 
 | # | Test | File | Description |
 |---|------|------|-------------|
-| 22 | **Migrate API tests to patch.dict** | `test_api_integration.py`, `test_api_read.py` | Replace 60+ `os.environ[k]=v` / try-finally patterns with `@patch.dict(os.environ, {...})`. Add `SAPPHIRE_TEST_ENV=True` to fixtures. |
 | 23 | **`_bulk_upsert` insert-only** | `sapphire/services/postprocessing/tests/test_crud.py` (new file) | Insert 10 new forecast records via `create_forecast()`, verify all 10 returned and queryable. |
 | 24 | **`_bulk_upsert` update-only** | `test_crud.py` | Insert 5 records, then upsert same 5 with changed `forecasted_discharge` → verify updated values. |
 | 25 | **`_bulk_upsert` mixed insert+update** | `test_crud.py` | Insert 3 records, then upsert 5 (3 existing + 2 new) → verify 5 total records with correct values. |
 | 26 | **`_bulk_upsert` empty batch** | `test_crud.py` | Call `create_forecast()` with empty `data` list → returns empty list, no DB error. |
 | 27 | **`_fallback_upsert` (SQLite path)** | `test_crud.py` | Force `PG_AVAILABLE=False` or use SQLite backend. Verify insert, update, and mixed insert+update all work correctly via the N+1 ORM path. |
 | 28 | **CRUD get with filters** | `test_crud.py` | Insert forecasts with varied horizon/code/date, then query with different filter combinations. Verify correct records returned. |
+
+### Integration Depth Review (2026-02-15)
+
+A critical review of whether the integration tests give confidence that the module does what it's intended to do. The test suite is large (~520 tests) and covers the right *scenarios*, but several gaps exist at the *wiring depth* level — code paths that are tested in isolation but never exercised through the actual entry point with real internal modules.
+
+#### Summary
+
+| Area | Confidence | Key Gap |
+|------|-----------|---------|
+| Ensemble creation logic | **High** | NE exclusion not integration-tested |
+| Threshold filtering | **High** | — |
+| Skill metric calculation | **High** | Only tested outside the recalculate entry point |
+| Gap detection | **High** | — |
+| Operational entry point wiring | **High** | — |
+| Maintenance entry point wiring | **Medium** | Filter-to-gap-dates not exercised with surplus data |
+| Recalculate entry point wiring | **Low** | No wiring integration test at all |
+| CSV/API save correctness | **Medium** | Maintenance partial-save behavior unknown |
+| Cross-workflow compatibility | **Not tested** | Recalculate → Operational → Maintenance |
+
+#### Gap Details
+
+**G1: Recalculate entry point has no wiring integration test.**
+`test_recalc_workflow.py` mocks `forecast_library` entirely — it verifies `calculate_skill_metrics_pentad()` is *called* but never that it produces correct results when wired through the entry point. `TestRecalculateWithRealisticData` calls `fl.calculate_skill_metrics_pentad()` directly, bypassing the entry point's setup, error accumulation, `timing_stats` reassignment (lines 96-105 of `recalculate_skill_metrics.py`), and save sequencing. There is no `TestRecalculateWiringIntegration` equivalent to the operational and maintenance wiring tests in `test_wiring_integration.py`.
+
+**G2: Maintenance "filter to gap dates" logic is untested through the entry point.**
+`_fill_gaps_for_horizon()` at `postprocessing_maintenance.py:193-198` filters modelled data to only gap dates/codes. The wiring test provides modelled data that already matches the gap dates, so the filter is never exercised under realistic conditions where modelled data has more dates than the gaps. A date-type mismatch bug (string vs Timestamp) would return empty and silently skip gap-fill.
+
+**G3: Weak `or`-chain assertion in `test_wiring_integration.py:790-793`.**
+```python
+assert saved_df.empty or (
+    'model_short' not in saved_df.columns
+    or saved_df[saved_df['model_short'] == 'EM'].empty
+)
+```
+This masks which condition actually holds. CLAUDE.md explicitly warns: "Avoid ambiguous `or` in assertions — be explicit about which condition you expect."
+
+**G4: NE (Neural Ensemble) exclusion not tested at integration level.**
+`ensemble_calculator.py:202` excludes NE from ensemble candidates. Unit tests cover this, but no integration test verifies that NE rows passing all thresholds are still excluded when the full pipeline runs. All integration tests use only LR, TFT, and TiDE.
+
+**G5: No cross-workflow sequential test.**
+In production: yearly recalculate writes skill metrics → daily operational reads them → nightly maintenance gap-fills based on them. No test runs this sequence, so a schema drift between write and read (column renaming, type coercion) would go undetected.
+
+**G6: Uniform delta values hide potential correctness issues.**
+Every test uses `delta=5.0`. In production, delta varies by station and affects accuracy calculation. No integration test verifies ensemble accuracy when component models have different delta values.
+
+**G7: `log_most_recent_forecasts_*` is a silent crash risk.**
+All three entry points call `pt.log_most_recent_forecasts_pentad/decade()` after saving. No integration test verifies this doesn't crash. A crash there after successful saves would produce a confusing failure mode in production.
+
+#### New Test Items
+
+| # | Test | File | Priority | Description |
+|---|------|------|----------|-------------|
+| 29 | **Recalculate wiring integration** | `test_wiring_integration.py` | High | Add `TestRecalculateWiringIntegration` using the same `_setup_real_internal_mocks` pattern. Wire real `fl.calculate_skill_metrics_pentad` through the entry point. Verify: (a) skill metrics saved with correct shape and values, (b) forecast data saved with EM rows, (c) exit code 0. Use the same 1-station 1-pentad LR+TFT fixture from existing wiring tests for simplicity. |
+| 30 | **Maintenance filter-to-gap-dates with surplus data** | `test_wiring_integration.py` | High | Extend `TestMaintenanceWiringIntegration` with a test where `setup_library` returns modelled data for 3 dates but only 1 date has a gap. Verify: (a) only the gap date's EM appears in saved output, (b) non-gap dates are not in saved output. |
+| 31 | **Fix weak `or`-chain assertion** | `test_wiring_integration.py` | High | Replace the assertion at line 790-793 with an explicit check: `assert saved_df.empty` (since empty modelled → save receives the unchanged empty DF). |
+| 32 | **NE exclusion integration test** | `test_integration_postprocessing.py` | Medium | Add to `TestOperationalDataRouting`: skill metrics where LR, TFT, and NE all pass thresholds, forecasts include NE rows. Verify EM = mean(LR, TFT) only, NE excluded from composition string. |
+| 33 | **Cross-workflow roundtrip** | `test_integration_postprocessing.py` | Medium | Write skill metrics via `fl.save_pentadal_skill_metrics()`, then read them back via `data_reader.read_skill_metrics('pentad')`. Verify: column names match, types compatible with `ensemble_calculator`, row count preserved, values round-trip correctly (float precision, code as string). |
+| 34 | **Varying delta in ensemble accuracy** | `test_integration_postprocessing.py` | Low | Add to `TestEnsembleSkillMetricVerification`: 3 dates with delta values [3.0, 5.0, 8.0]. Hand-calculate expected accuracy and verify the ensemble metric matches. |
+| 35 | **`log_most_recent_forecasts` no-crash** | `test_wiring_integration.py` | Low | After a successful operational wiring test, verify `pt.log_most_recent_forecasts_pentad` was called (it's already called in the real entry point). If it's mocked away in `_setup_real_internal_mocks`, switch to using the real implementation and verify no exception. |
 
 ### Remaining Test Gaps (non-integration)
 
@@ -892,17 +943,27 @@ Tests below are ordered by priority. Each test should use real logic for everyth
 
 #### Medium Priority — Edge cases, branches, new functions (#10–#21)
 
-- [ ] Ensemble skill metric numerical verification (assert specific NSE/MAE/accuracy values for EM)
-- [ ] Leap year boundary (Feb 29 pentad/decad handling)
+- [x] ~~Ensemble skill metric numerical verification~~ (`TestEnsembleSkillMetricVerification`: hand-calculated MAE, accuracy, NSE, sdivsigma verified to 4+ decimal places)
+- [x] ~~Leap year boundary~~ (`TestLeapYearBoundary`: 3 tests, Feb 29/Mar 1 pentad values, ensemble creation)
 - [x] ~~Single-row DataFrame edge case~~ (edge cases + skill metrics unit tests)
 - [x] ~~All-NaN column edge case~~ (`TestNaNHandling` + `TestCalculateAllSkillMetricsAllNaN`)
 - [x] ~~Missing required columns validation~~ (partial: skill metrics ValueError, gap_detector KeyError documented)
 - [x] ~~NaT dates in gap_detector~~ (`TestNaTDatesInGapDetector`, 2 tests)
-- [ ] API client singleton behavior tests
+- [x] ~~API client singleton behavior tests~~ (`TestApiClientSingleton`: 11 tests in `test_forecast_library.py`)
 - [x] ~~Invalid SAPPHIRE_PREDICTION_MODE → sys.exit(1)~~ (all 3 entry points)
 - [x] ~~Maintenance BOTH and DECAD modes~~ (`test_both_mode_processes_both`, `test_decad_mode_only`)
 - [x] ~~Maintenance gap-fill save error~~ (`test_save_error_causes_exit_1`)
-- [ ] Decadal maintenance gap-fill (integration test with realistic data)
+- [x] ~~Decadal maintenance gap-fill~~ (`TestDecadalMaintenanceFullGapFill`: end-to-end detect → ensemble → save for decad)
+
+#### Integration Depth — Wiring + cross-workflow gaps (#29–#35)
+
+- [ ] Recalculate wiring integration test (`TestRecalculateWiringIntegration` in `test_wiring_integration.py`)
+- [ ] Maintenance filter-to-gap-dates with surplus data (extend `TestMaintenanceWiringIntegration`)
+- [ ] Fix weak `or`-chain assertion (`test_wiring_integration.py:790-793`)
+- [ ] NE exclusion integration test (NE passes thresholds but excluded from EM)
+- [ ] Cross-workflow roundtrip (save skill metrics → read back via `data_reader`)
+- [ ] Varying delta in ensemble accuracy (hand-calculated accuracy with delta [3, 5, 8])
+- [ ] `log_most_recent_forecasts` no-crash test
 
 #### Lower Priority — Infrastructure + CRUD (#22–#28)
 
@@ -1179,3 +1240,4 @@ The following plans are **superseded** by this unified plan (moved to `archive/`
 | 2026-02-13 | Bea/Claude | Critical review of integration test quality (6-agent audit). Found: 8 tests with weak assertions that pass with broken code, 8 missing edge case categories (value boundaries completely untested, leap year, single-row, all-NaN, duplicates, NaN delta, missing columns, NaT dates), 11 untested workflow branches (load_environment failure, invalid mode, maintenance BOTH/DECAD, save error paths). Test infrastructure: 60+ API tests use unsafe os.environ pattern. Updated CLAUDE.md with assertion quality requirements. Expanded missing tests from 16 to 28 items across 3 priority tiers. |
 | 2026-02-13 | Bea/Claude | Phase 5 test implementation: 233 → 270 tests (+37). New files: `test_calculate_all_skill_metrics.py` (18 tests), `test_constants.py` (shared constants). Modified: `test_edge_cases.py` (+9 tests: delta edge cases, NaT dates, negative discharge, missing columns), `test_integration_postprocessing.py` (+7: 3 strengthened assertions, 2 decadal pipeline, 1 maintenance gap-fill, 1 pre-existing fix), `test_operational_workflow.py` (+1: invalid mode), `test_maintenance_workflow.py` (+4: invalid mode, BOTH/DECAD modes, save error), `test_recalc_workflow.py` (+2: invalid mode, DECAD-only). Completed high-priority items #1–#7, medium-priority items #12–#15, #17–#19, #21 (partial). Remaining: #8–#11, #16, #20, #22–#28. |
 | 2026-02-13 | Bea/Claude | High-priority items #8–#9 done: 270 → 281 tests (+11). `TestRecalculateWithRealisticData` (5 tests): 3 stations × 2 pentads × 2 models fed through real `calculate_skill_metrics_pentad()`, verifies skill stats shape, EM creation for qualifying station, no EM for bad stations, EM discharge = mean(models), full save pipeline. `TestSkillMetricSavePath` (6 tests): verifies `save_pentadal_skill_metrics()` CSV output (columns, sort order, 4-decimal rounding, code cleanup, date format) and API integration (correct args, failure resilience). All high-priority items now DONE. Remaining: medium #10–#11, #14, #16, #20; lower #22–#28. |
+| 2026-02-15 | Bea/Claude | Integration depth review: critical review of whether integration tests give confidence the module works as intended. Found 7 gaps (G1–G7) at the wiring/cross-workflow level: recalculate entry point has no wiring integration test (G1), maintenance filter-to-gap-dates never exercised with surplus data (G2), weak `or`-chain assertion in `test_wiring_integration.py:790` (G3), NE exclusion untested at integration level (G4), no cross-workflow sequential test (G5), uniform delta masks accuracy issues (G6), `log_most_recent_forecasts` crash risk untested (G7). Added 7 new test items (#29–#35) across high/medium/low priority. Fixed 4 stale checkboxes (#10, #11, #16, #20 — already DONE but still unchecked). Confidence assessment: High for core logic, Medium for entry-point wiring, Low for recalculate wiring and cross-workflow compatibility. |
