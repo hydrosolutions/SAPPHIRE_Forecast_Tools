@@ -185,9 +185,14 @@ class TestMaintenanceWorkflow:
 
                 assert exc_info.value.code == 0
                 # Verify lookback was passed to detect_missing_ensembles
+                # _fill_gaps_for_horizon passes lookback as positional arg
                 call_args = mocks['gap_detector'].detect_missing_ensembles.call_args
-                assert call_args[1].get('lookback_days', call_args[0][1] if len(call_args[0]) > 1 else None) == 14 or \
-                    (len(call_args[0]) > 1 and call_args[0][1] == 14)
+                assert len(call_args[0]) >= 2, (
+                    "lookback should be passed as positional arg"
+                )
+                assert call_args[0][1] == 14, (
+                    f"Expected lookback=14, got {call_args[0][1]}"
+                )
 
     def test_empty_combined_forecasts_skips(self, mock_data, mock_skill):
         """When no combined forecasts file exists, skips gracefully."""
@@ -301,3 +306,173 @@ class TestMaintenanceWorkflow:
                     module.postprocessing_maintenance()
 
                 assert exc_info.value.code == 1
+
+
+class TestMaintenanceConcurrentErrors:
+    """BOTH mode where one horizon's gap-fill save fails."""
+
+    def _make_gaps_setup(self, mock_data, mock_skill):
+        """Set up mocks with gaps found in both horizons."""
+        combined = pd.DataFrame({
+            'date': pd.to_datetime(['2024-01-05'] * 2),
+            'code': ['10001'] * 2,
+            'model_short': ['LR', 'TFT'],
+        })
+        gaps = pd.DataFrame({
+            'date': pd.to_datetime(['2024-01-05']),
+            'code': ['10001'],
+        })
+        return _setup_mocks(
+            mock_data, mock_skill,
+            combined=combined, gaps=gaps,
+        )
+
+    def test_both_mode_pentad_gap_fill_fails_decad_succeeds(
+        self, mock_data, mock_skill
+    ):
+        """BOTH mode: pentad save fails, decad succeeds => exit 1."""
+        with patch.dict(os.environ, {'SAPPHIRE_PREDICTION_MODE': 'BOTH'}):
+            with patch.dict(sys.modules, {}):
+                mocks = self._make_gaps_setup(mock_data, mock_skill)
+                mocks['fl'].save_forecast_data_pentad.return_value = (
+                    "Error: pentad write failed"
+                )
+                mocks['fl'].save_forecast_data_decade.return_value = None
+
+                module, spec = import_maintenance_module()
+                spec.loader.exec_module(module)
+
+                with pytest.raises(SystemExit) as exc_info:
+                    module.postprocessing_maintenance()
+
+                assert exc_info.value.code == 1
+
+    def test_both_mode_pentad_succeeds_decad_gap_fill_fails(
+        self, mock_data, mock_skill
+    ):
+        """BOTH mode: pentad succeeds, decad save fails => exit 1."""
+        with patch.dict(os.environ, {'SAPPHIRE_PREDICTION_MODE': 'BOTH'}):
+            with patch.dict(sys.modules, {}):
+                mocks = self._make_gaps_setup(mock_data, mock_skill)
+                mocks['fl'].save_forecast_data_pentad.return_value = None
+                mocks['fl'].save_forecast_data_decade.return_value = (
+                    "Error: decad write failed"
+                )
+
+                module, spec = import_maintenance_module()
+                spec.loader.exec_module(module)
+
+                with pytest.raises(SystemExit) as exc_info:
+                    module.postprocessing_maintenance()
+
+                assert exc_info.value.code == 1
+
+
+class TestMaintenanceEdgeCases:
+    """Edge case tests for maintenance gap-fill branches."""
+
+    def test_load_environment_failure_propagates(self, mock_data, mock_skill):
+        """When load_environment() raises, exception propagates uncaught."""
+        with patch.dict(os.environ, {'SAPPHIRE_PREDICTION_MODE': 'PENTAD'}):
+            with patch.dict(sys.modules, {}):
+                mocks = _setup_mocks(mock_data, mock_skill)
+                mocks['sl'].load_environment.side_effect = (
+                    FileNotFoundError("missing .env")
+                )
+
+                module, spec = import_maintenance_module()
+                spec.loader.exec_module(module)
+
+                with pytest.raises(FileNotFoundError, match="missing .env"):
+                    module.postprocessing_maintenance()
+
+    def test_gap_dates_no_matching_forecast_data(self, mock_data, mock_skill):
+        """Gaps found but modelled data doesn't match gap dates → skip."""
+        combined = pd.DataFrame({
+            'date': pd.to_datetime(['2024-01-05', '2024-01-10']),
+            'code': ['10001', '10001'],
+            'model_short': ['LR', 'LR'],
+        })
+        # Gap at Jan 10, but mock_data only has date Jan 5
+        gaps = pd.DataFrame({
+            'date': pd.to_datetime(['2024-01-10']),
+            'code': ['10001'],
+        })
+        with patch.dict(os.environ, {'SAPPHIRE_PREDICTION_MODE': 'PENTAD'}):
+            with patch.dict(sys.modules, {}):
+                mocks = _setup_mocks(
+                    mock_data, mock_skill,
+                    combined=combined, gaps=gaps,
+                )
+
+                module, spec = import_maintenance_module()
+                spec.loader.exec_module(module)
+
+                with pytest.raises(SystemExit) as exc_info:
+                    module.postprocessing_maintenance()
+
+                assert exc_info.value.code == 0
+                # Data was read but no rows match gap dates
+                mocks['sl'].read_observed_and_modelled_data_pentade.assert_called_once()
+                # Early return before skill read or ensemble creation
+                mocks['data_reader'].read_skill_metrics.assert_not_called()
+                mocks['ensemble_calc'].create_ensemble_forecasts.assert_not_called()
+
+    def test_gap_dates_empty_skill_metrics(self, mock_data, mock_skill):
+        """Gaps + matching forecast data but empty skill metrics → skip."""
+        combined = pd.DataFrame({
+            'date': pd.to_datetime(['2024-01-05'] * 2),
+            'code': ['10001'] * 2,
+            'model_short': ['LR', 'TFT'],
+        })
+        gaps = pd.DataFrame({
+            'date': pd.to_datetime(['2024-01-05']),
+            'code': ['10001'],
+        })
+        with patch.dict(os.environ, {'SAPPHIRE_PREDICTION_MODE': 'PENTAD'}):
+            with patch.dict(sys.modules, {}):
+                mocks = _setup_mocks(
+                    mock_data, mock_skill,
+                    combined=combined, gaps=gaps,
+                )
+                mocks['data_reader'].read_skill_metrics.return_value = (
+                    pd.DataFrame()
+                )
+
+                module, spec = import_maintenance_module()
+                spec.loader.exec_module(module)
+
+                with pytest.raises(SystemExit) as exc_info:
+                    module.postprocessing_maintenance()
+
+                assert exc_info.value.code == 0
+                # Skill metrics read but empty → no ensemble
+                mocks['data_reader'].read_skill_metrics.assert_called_once()
+                mocks['ensemble_calc'].create_ensemble_forecasts.assert_not_called()
+
+    def test_save_success_path(self, mock_data, mock_skill):
+        """Save returning None → exit 0, save was called."""
+        combined = pd.DataFrame({
+            'date': pd.to_datetime(['2024-01-05'] * 2),
+            'code': ['10001'] * 2,
+            'model_short': ['LR', 'TFT'],
+        })
+        gaps = pd.DataFrame({
+            'date': pd.to_datetime(['2024-01-05']),
+            'code': ['10001'],
+        })
+        with patch.dict(os.environ, {'SAPPHIRE_PREDICTION_MODE': 'PENTAD'}):
+            with patch.dict(sys.modules, {}):
+                mocks = _setup_mocks(
+                    mock_data, mock_skill,
+                    combined=combined, gaps=gaps,
+                )
+
+                module, spec = import_maintenance_module()
+                spec.loader.exec_module(module)
+
+                with pytest.raises(SystemExit) as exc_info:
+                    module.postprocessing_maintenance()
+
+                assert exc_info.value.code == 0
+                mocks['fl'].save_forecast_data_pentad.assert_called_once()

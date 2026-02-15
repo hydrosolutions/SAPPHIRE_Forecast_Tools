@@ -1,4 +1,4 @@
-from pydantic import BaseModel, computed_field
+from pydantic import BaseModel, ConfigDict, computed_field
 from datetime import date as DateType
 from typing import Optional, List
 from app.models import HorizonType, ModelType
@@ -33,15 +33,14 @@ class ForecastBulkCreate(BaseModel):
 
 
 class ForecastResponse(ForecastBase):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
 
     @computed_field
     @property
     def model_type_description(self) -> str:
         return self.model_type.description
-
-    class Config:
-        from_attributes = True
 
 
 class LongForecastBase(BaseModel):
@@ -110,15 +109,14 @@ class LongForecastBulkCreate(BaseModel):
 
 
 class LongForecastResponse(LongForecastBase):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
 
     @computed_field
     @property
     def model_type_description(self) -> str:
         return self.model_type.description
-
-    class Config:
-        from_attributes = True
 
 
 class LRForecastBase(BaseModel):
@@ -151,10 +149,9 @@ class LRForecastBulkCreate(BaseModel):
 
 
 class LRForecastResponse(LRForecastBase):
-    id: int
+    model_config = ConfigDict(from_attributes=True)
 
-    class Config:
-        from_attributes = True
+    id: int
 
 
 class SkillMetricBase(BaseModel):
@@ -182,12 +179,11 @@ class SkillMetricBulkCreate(BaseModel):
 
 
 class SkillMetricResponse(SkillMetricBase):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
 
     @computed_field
     @property
     def model_type_description(self) -> str:
         return self.model_type.description
-
-    class Config:
-        from_attributes = True

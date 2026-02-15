@@ -194,3 +194,121 @@ class TestOperationalWorkflow:
                 # No data processing should have occurred
                 mocks['sl'].read_observed_and_modelled_data_pentade.assert_not_called()
                 mocks['sl'].read_observed_and_modelled_data_decade.assert_not_called()
+
+
+class TestOperationalConcurrentErrors:
+    """BOTH mode where one or both horizons fail."""
+
+    def test_both_mode_pentad_fails_decad_succeeds(
+        self, mock_data, mock_skill
+    ):
+        """BOTH mode: pentad save fails, decad succeeds => exit 1."""
+        with patch.dict(os.environ, {'SAPPHIRE_PREDICTION_MODE': 'BOTH'}):
+            with patch.dict(sys.modules, {}):
+                mocks = _setup_mocks('BOTH', mock_data, mock_skill)
+                mocks['fl'].save_forecast_data_pentad.return_value = (
+                    "Error: pentad write failed"
+                )
+                mocks['fl'].save_forecast_data_decade.return_value = None
+
+                module, spec = import_operational_module()
+                spec.loader.exec_module(module)
+
+                with pytest.raises(SystemExit) as exc_info:
+                    module.postprocessing_operational()
+
+                assert exc_info.value.code == 1
+
+    def test_both_mode_pentad_succeeds_decad_fails(
+        self, mock_data, mock_skill
+    ):
+        """BOTH mode: pentad succeeds, decad save fails => exit 1."""
+        with patch.dict(os.environ, {'SAPPHIRE_PREDICTION_MODE': 'BOTH'}):
+            with patch.dict(sys.modules, {}):
+                mocks = _setup_mocks('BOTH', mock_data, mock_skill)
+                mocks['fl'].save_forecast_data_pentad.return_value = None
+                mocks['fl'].save_forecast_data_decade.return_value = (
+                    "Error: decad write failed"
+                )
+
+                module, spec = import_operational_module()
+                spec.loader.exec_module(module)
+
+                with pytest.raises(SystemExit) as exc_info:
+                    module.postprocessing_operational()
+
+                assert exc_info.value.code == 1
+
+    def test_both_mode_both_fail(self, mock_data, mock_skill):
+        """BOTH mode: both saves fail => exit 1."""
+        with patch.dict(os.environ, {'SAPPHIRE_PREDICTION_MODE': 'BOTH'}):
+            with patch.dict(sys.modules, {}):
+                mocks = _setup_mocks('BOTH', mock_data, mock_skill)
+                mocks['fl'].save_forecast_data_pentad.return_value = (
+                    "Error: pentad write failed"
+                )
+                mocks['fl'].save_forecast_data_decade.return_value = (
+                    "Error: decad write failed"
+                )
+
+                module, spec = import_operational_module()
+                spec.loader.exec_module(module)
+
+                with pytest.raises(SystemExit) as exc_info:
+                    module.postprocessing_operational()
+
+                assert exc_info.value.code == 1
+
+
+class TestOperationalEdgeCases:
+    """Edge case tests for operational entry point branches."""
+
+    def test_load_environment_failure_propagates(self, mock_data, mock_skill):
+        """When load_environment() raises, exception propagates uncaught."""
+        with patch.dict(os.environ, {'SAPPHIRE_PREDICTION_MODE': 'PENTAD'}):
+            with patch.dict(sys.modules, {}):
+                mocks = _setup_mocks('PENTAD', mock_data, mock_skill)
+                mocks['sl'].load_environment.side_effect = (
+                    FileNotFoundError("missing .env")
+                )
+
+                module, spec = import_operational_module()
+                spec.loader.exec_module(module)
+
+                with pytest.raises(FileNotFoundError, match="missing .env"):
+                    module.postprocessing_operational()
+
+    def test_empty_modelled_with_nonempty_skill(self, mock_data, mock_skill):
+        """Empty observed/modelled + non-empty skill → ensemble still called."""
+        empty_df = pd.DataFrame()
+        with patch.dict(os.environ, {'SAPPHIRE_PREDICTION_MODE': 'PENTAD'}):
+            with patch.dict(sys.modules, {}):
+                mocks = _setup_mocks('PENTAD', mock_data, mock_skill)
+                mocks['sl'].read_observed_and_modelled_data_pentade.return_value = (
+                    empty_df, empty_df
+                )
+
+                module, spec = import_operational_module()
+                spec.loader.exec_module(module)
+
+                with pytest.raises(SystemExit) as exc_info:
+                    module.postprocessing_operational()
+
+                assert exc_info.value.code == 0
+                # Ensemble creation called despite empty modelled data
+                mocks['ensemble_calc'].create_ensemble_forecasts.assert_called_once()
+
+    def test_save_success_path(self, mock_data, mock_skill):
+        """Save returning None → exit 0, save was called."""
+        with patch.dict(os.environ, {'SAPPHIRE_PREDICTION_MODE': 'PENTAD'}):
+            with patch.dict(sys.modules, {}):
+                mocks = _setup_mocks('PENTAD', mock_data, mock_skill)
+
+                module, spec = import_operational_module()
+                spec.loader.exec_module(module)
+
+                with pytest.raises(SystemExit) as exc_info:
+                    module.postprocessing_operational()
+
+                assert exc_info.value.code == 0
+                mocks['fl'].save_forecast_data_pentad.assert_called_once()
