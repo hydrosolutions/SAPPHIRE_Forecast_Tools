@@ -25,7 +25,7 @@ dependencies = [
     # SAPPHIRE Data Gateway client (private repo - requires access)
     "sapphire-dg-client @ git+https://github.com/hydrosolutions/sapphire-dg-client.git@main",
     # SAPPHIRE API client (for writing to preprocessing service)
-    "sapphire-api-client @ git+https://github.com/hydrosolutions/sapphire-api-client.git@f70a83d6b092b7c616239f50d061f7f03eabcbb2",
+    "sapphire-api-client @ git+https://github.com/hydrosolutions/sapphire-api-client.git@bbae41bb155864aa9b1f6c8e11c9bbfb8c822c66",
     # Local library dependency
     "iEasyHydroForecast",
 ]
