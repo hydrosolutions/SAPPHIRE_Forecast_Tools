@@ -934,6 +934,66 @@ class TestReadDailyProbabilisticMLForecastsDecade(unittest.TestCase):
                         self.assertAlmostEqual(mean[col], test_data_code[col].values[0], places=2)
 
 
+class TestModelLongDeprecation(unittest.TestCase):
+    """Tests for INFRA-005: model_long parameter deprecation."""
+
+    def setUp(self):
+        self.file_path = os.path.join(
+            os.path.dirname(__file__),
+            "test_data/test_probabil_forecast.csv"
+        )
+
+    def test_ml_pentad_emits_deprecation_warning(self):
+        """Passing model_long emits DeprecationWarning."""
+        with self.assertWarns(DeprecationWarning) as cm:
+            sl.read_daily_probabilistic_ml_forecasts_pentad(
+                self.file_path, "TIDE",
+                model_long="TIDE model (TIDE)",
+                model_short="TIDE",
+            )
+        self.assertIn("model_long", str(cm.warning))
+
+    def test_ml_pentad_no_warning_without_model_long(self):
+        """Omitting model_long produces no DeprecationWarning."""
+        import warnings
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            sl.read_daily_probabilistic_ml_forecasts_pentad(
+                self.file_path, "TIDE", model_short="TIDE",
+            )
+        deprecation_warnings = [
+            x for x in w if issubclass(x.category, DeprecationWarning)
+            and "model_long" in str(x.message)
+        ]
+        self.assertEqual(len(deprecation_warnings), 0)
+
+    def test_ml_pentad_output_lacks_model_long(self):
+        """Output DataFrame has model_short but not model_long."""
+        result = sl.read_daily_probabilistic_ml_forecasts_pentad(
+            self.file_path, "TIDE", model_short="TIDE",
+        )
+        self.assertIn("model_short", result.columns)
+        self.assertNotIn("model_long", result.columns)
+        self.assertEqual(result["model_short"].unique()[0], "TIDE")
+
+    def test_ml_decade_emits_deprecation_warning(self):
+        """Passing model_long to decade function emits DeprecationWarning."""
+        with self.assertWarns(DeprecationWarning):
+            sl.read_daily_probabilistic_ml_forecasts_decade(
+                self.file_path, "TIDE",
+                model_long="TIDE model (TIDE)",
+                model_short="TIDE",
+            )
+
+    def test_ml_decade_output_lacks_model_long(self):
+        """Decade output has model_short but not model_long."""
+        result = sl.read_daily_probabilistic_ml_forecasts_decade(
+            self.file_path, "TIDE", model_short="TIDE",
+        )
+        self.assertIn("model_short", result.columns)
+        self.assertNotIn("model_long", result.columns)
+
+
 class TestGetPentadalForecastSitesFromHFSdk(unittest.TestCase):
 
     def setUp(self):

@@ -1,5 +1,6 @@
 import os
 import logging
+import warnings
 import pandas as pd
 import numpy as np
 import json
@@ -1880,6 +1881,13 @@ def read_daily_probabilistic_ml_forecasts_pentad(filepath, model, model_long=Non
     Reads in forecast results from probabilistic machine learning models for the pentadal forecast.
     Added robust error handling.
     """
+    if model_long is not None:
+        warnings.warn(
+            "model_long parameter is deprecated and ignored. "
+            "Use model_short only.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
     import logging
     logger = logging.getLogger(__name__)
 
@@ -2032,6 +2040,13 @@ def read_daily_probabilistic_ml_forecasts_decade(filepath, model, model_long=Non
     Returns:
         forecast (pandas.DataFrame): The forecast results or an empty DataFrame if error occurs.
     """
+    if model_long is not None:
+        warnings.warn(
+            "model_long parameter is deprecated and ignored. "
+            "Use model_short only.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
     import logging
     logger = logging.getLogger(__name__)
 
@@ -2186,6 +2201,13 @@ def read_daily_probabilistic_conceptmod_forecasts_pentad(filepath, code, model_l
     Returns:
         forecast (pandas.DataFrame): The forecast results or an empty DataFrame if error occurs.
     """
+    if model_long is not None:
+        warnings.warn(
+            "model_long parameter is deprecated and ignored. "
+            "Use model_short only.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
     import logging
     logger = logging.getLogger(__name__)
 
@@ -2290,6 +2312,13 @@ def read_daily_probabilistic_conceptmod_forecasts_decade(filepath, code, model_l
     Returns:
         forecast (pandas.DataFrame): The forecast results or an empty DataFrame if error occurs.
     """
+    if model_long is not None:
+        warnings.warn(
+            "model_long parameter is deprecated and ignored. "
+            "Use model_short only.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
     import logging
     logger = logging.getLogger(__name__)
 

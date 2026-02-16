@@ -215,21 +215,52 @@ class TestEnsembleCalculatorCharacterization:
             125.0, abs=1e-5
         )
 
-    def test_create_ensemble_skill_metrics_correct(
-        self, forecasts_two_models, skill_stats_two_models, observed_two_dates
-    ):
-        """BEHAVIORAL ANCHOR: EM skill stats are appended with valid values."""
+    def test_create_ensemble_skill_metrics_correct(self):
+        """BEHAVIORAL ANCHOR: EM skill stats have correct metric values.
+
+        Uses 2 years of data per pentad so NSE/sdivsigma are computable.
+        Pentad 1 (2023 + 2024): LR/TFT both match observed exactly
+        → EM = observed → nse=1, sdivsigma=0, mae=0, accuracy=1.
+        """
+        # 2 years × 1 pentad × 1 station × 2 models = 4 forecast rows
+        forecasts = pd.DataFrame({
+            'code': ['10001'] * 4,
+            'date': pd.to_datetime([
+                '2023-01-05', '2024-01-05',
+                '2023-01-05', '2024-01-05',
+            ]),
+            'pentad_in_year': [1, 1, 1, 1],
+            'pentad_in_month': ['1', '1', '1', '1'],
+            'forecasted_discharge': [100.0, 120.0, 110.0, 130.0],
+            'model_short': ['LR', 'LR', 'TFT', 'TFT'],
+        })
+        skill_stats = pd.DataFrame({
+            'pentad_in_year': [1, 1],
+            'code': ['10001', '10001'],
+            'model_short': ['LR', 'TFT'],
+            'sdivsigma': [0.3, 0.4], 'nse': [0.95, 0.90],
+            'delta': [5.0, 5.0], 'accuracy': [0.95, 0.88],
+            'mae': [2.0, 3.0], 'n_pairs': [10, 10],
+        })
+        # Observed: EM = mean(LR,TFT). 2023: mean(100,110)=105.
+        # 2024: mean(120,130)=125.
+        observed = pd.DataFrame({
+            'code': ['10001', '10001'],
+            'date': pd.to_datetime(['2023-01-05', '2024-01-05']),
+            'discharge_avg': [105.0, 125.0],
+            'delta': [5.0, 5.0],
+        })
         _, skill_out = _make_pentad_ensemble(
-            forecasts_two_models, skill_stats_two_models, observed_two_dates
+            forecasts, skill_stats, observed
         )
         em_skill = skill_out[skill_out['model_short'] == 'EM']
-        assert not em_skill.empty
-        # EM forecast matches observed exactly (105=105, 125=125)
-        # so metrics should be perfect or near-perfect
-        for _, row in em_skill.iterrows():
-            assert row['model_short'] == 'EM'
-            assert 'sdivsigma' in row.index
-            assert 'nse' in row.index
+        assert len(em_skill) == 1
+        row = em_skill.iloc[0]
+        assert row['nse'] == pytest.approx(1.0, abs=1e-5)
+        assert row['sdivsigma'] == pytest.approx(0.0, abs=1e-5)
+        assert row['mae'] == pytest.approx(0.0, abs=1e-5)
+        assert row['accuracy'] == pytest.approx(1.0, abs=1e-5)
+        assert row['n_pairs'] == 2
 
     def test_single_model_ensemble_discarded(self, observed_two_dates):
         """Single qualifying model → no EM row produced."""
@@ -419,6 +450,64 @@ class TestSkillMetricsCharacterization:
         )
         assert not skill_stats.empty
         assert 'model_short' in skill_stats.columns
+
+    def test_decade_multi_model_ensemble(self, monkeypatch):
+        """Decade: 2 models → EM created with correct discharge and composition.
+
+        Station 123, decad 1, 2 years of data:
+          Observed:  100.0 (2022), 120.0 (2023)
+          MA:        100.0, 120.0  (perfect)
+          MB:        100.0, 120.0  (perfect)
+        → EM = mean(MA, MB) = 100.0, 120.0  (also perfect)
+        → NSE=1, MAE=0 for EM
+        """
+        monkeypatch.setenv('ieasyhydroforecast_efficiency_threshold', '2.0')
+        monkeypatch.setenv('ieasyhydroforecast_accuracy_threshold', '0.0')
+        monkeypatch.setenv('ieasyhydroforecast_nse_threshold', '-1.0')
+
+        observed = pd.DataFrame({
+            'code': ['123', '123'],
+            'date': pd.to_datetime(['2022-01-01', '2023-01-01']),
+            'discharge_avg': [100.0, 120.0],
+            'model_short': ['Obs', 'Obs'],
+            'delta': [5.0, 5.0],
+        })
+        simulated = pd.DataFrame({
+            'code': ['123'] * 4,
+            'date': pd.to_datetime([
+                '2022-01-01', '2023-01-01',
+                '2022-01-01', '2023-01-01',
+            ]),
+            'decad_in_year': ['1', '1', '1', '1'],
+            'decad_in_month': ['1', '1', '1', '1'],
+            'forecasted_discharge': [100.0, 120.0, 100.0, 120.0],
+            'model_short': ['MA', 'MA', 'MB', 'MB'],
+        })
+        skill_stats, joint, _ = skill_metrics.calculate_skill_metrics_decade(
+            observed, simulated
+        )
+        # EM rows exist in joint forecasts
+        em_rows = joint[joint['model_short'] == 'EM']
+        assert len(em_rows) == 2
+
+        # EM discharge = mean(MA, MB) = mean(100, 100) = 100.0 for 2022
+        em_2022 = em_rows[em_rows['date'] == pd.Timestamp('2022-01-01')]
+        assert em_2022.iloc[0]['forecasted_discharge'] == pytest.approx(
+            100.0, abs=1e-5
+        )
+
+        # EM skill stats exist with correct metrics (perfect forecast)
+        em_skill = skill_stats[skill_stats['model_short'] == 'EM']
+        assert len(em_skill) == 1
+        row = em_skill.iloc[0]
+        assert row['nse'] == pytest.approx(1.0, abs=1e-5)
+        assert row['mae'] == pytest.approx(0.0, abs=1e-5)
+        assert row['n_pairs'] == 2
+
+        # Composition column present on EM rows
+        assert 'composition' in em_rows.columns
+        comp = em_rows.iloc[0]['composition']
+        assert 'MA' in comp and 'MB' in comp
 
 
 class TestDataReaderCharacterization:

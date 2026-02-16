@@ -167,6 +167,83 @@ class TestWriteCombinedForecastToApi:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 
     @patch('src.api_writer.SapphirePostprocessingClient')
+    def test_em_forecast_includes_composition(self, mock_client_class):
+        """EM forecast record includes composition from DataFrame column."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        os.environ['SAPPHIRE_API_ENABLED'] = 'true'
+        try:
+            mock_client = Mock()
+            mock_client.readiness_check.return_value = True
+            mock_client.write_forecasts.return_value = 2
+            mock_client_class.return_value = mock_client
+
+            data = pd.DataFrame({
+                'code': [12345, 12345],
+                'date': pd.to_datetime(['2024-01-06', '2024-01-06']),
+                'pentad_in_month': [2, 2],
+                'pentad_in_year': [2, 2],
+                'forecasted_discharge': [100.0, 105.0],
+                'model_short': ['LR', 'EM'],
+                'composition': ['', 'LR, TFT'],
+            })
+
+            result = _write_combined_forecast_to_api(data, "pentad")
+            assert result is True
+
+            call_args = mock_client.write_forecasts.call_args[0][0]
+            assert len(call_args) == 2
+
+            # LR record: empty composition → None
+            lr_rec = [r for r in call_args if r['model_type'] == 'LR'][0]
+            assert lr_rec['composition'] is None or lr_rec['composition'] == ''
+
+            # EM record: composition = 'LR, TFT'
+            em_rec = [r for r in call_args if r['model_type'] == 'EM'][0]
+            assert em_rec['composition'] == 'LR, TFT'
+            assert em_rec['forecasted_discharge'] == 105.0
+        finally:
+            os.environ.pop('SAPPHIRE_API_ENABLED', None)
+
+    @patch('src.api_writer.SapphirePostprocessingClient')
+    def test_em_forecast_warns_on_missing_composition(self, mock_client_class):
+        """EM row without composition column logs a warning."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        os.environ['SAPPHIRE_API_ENABLED'] = 'true'
+        try:
+            mock_client = Mock()
+            mock_client.readiness_check.return_value = True
+            mock_client.write_forecasts.return_value = 1
+            mock_client_class.return_value = mock_client
+
+            # EM row with NO composition column
+            data = pd.DataFrame({
+                'code': [12345],
+                'date': pd.to_datetime(['2024-01-06']),
+                'pentad_in_month': [2],
+                'pentad_in_year': [2],
+                'forecasted_discharge': [105.0],
+                'model_short': ['EM'],
+            })
+
+            import logging
+            with patch.object(
+                logging.getLogger('src.api_writer'), 'warning'
+            ) as mock_warn:
+                result = _write_combined_forecast_to_api(data, "pentad")
+                assert result is True
+                # Should warn about missing composition
+                mock_warn.assert_called_once()
+                assert 'ensemble forecast rows' in str(
+                    mock_warn.call_args
+                )
+        finally:
+            os.environ.pop('SAPPHIRE_API_ENABLED', None)
+
+    @patch('src.api_writer.SapphirePostprocessingClient')
     def test_model_type_mapping(self, mock_client_class):
         """Test that model types are correctly mapped to API format."""
         if not SAPPHIRE_API_AVAILABLE:

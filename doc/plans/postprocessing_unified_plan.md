@@ -37,12 +37,12 @@
 | Server-side batch upsert (CRUD) | **DONE** — `_bulk_upsert()` with PG ON CONFLICT + N+1 fallback (commit `eae7158`) |
 | Client-side vectorization | **DONE** — vectorized record building in 4 `_write_*_to_api()` functions (commit `eae7158`) |
 | Skill metrics single-pass optimization | **DONE** — `calculate_all_skill_metrics()` replaces triple groupby+merge (commit `eae7158`) |
-| Remove `model_long` from apps (INFRA-005, revised) | **PLANNED** — incremental refactoring, see [`gi_draft_infra_model_registry.md`](issues/gi_draft_infra_model_registry.md). Apps use `model_short` only; `model_type_description` stays server-side |
+| Remove `model_long` from apps (INFRA-005, revised) | **DONE** — `model_long` removed from `postprocessing_forecasts/src/`, `setup_library.py`, and all test data. Apps use `model_short` + `composition` column. 405 postprocessing tests pass, 161 iEasyHydroForecast tests pass. Commit `2c52d2a`. |
 | Metrics registry refactoring | **PLANNED** — restructure `calculate_all_skill_metrics()` into `METRIC_REGISTRY` dict pattern. Pre-requisite for Phase 4a (issue to be created) |
 | Monthly skill metrics (Phase 4a) | **PLANNED** — detailed plan in [`postprocessing_unified_plan_detailMonthlyForecasts.md`](postprocessing_unified_plan_detailMonthlyForecasts.md) (7 steps + LLM instructions for sapphire-api-client pre-requisite) |
 | Quarterly + seasonal skill metrics (Phase 4b) | TODO — deferred, depends on 4a |
 | Bug 6: Single-model ensemble filter only rejects LR | **DONE** — `_is_multi_model_ensemble()` helper replaces hardcoded check |
-| Comprehensive test suite (50+ unit, 12+ integration) | **DONE** — 375 postprocessing tests, 0 skips (all 49 API tests now pass via module venv). CRUD service: 86 tests. |
+| Comprehensive test suite (50+ unit, 12+ integration) | **DONE** — 405 postprocessing tests, 0 skips (all 49 API tests now pass via module venv). CRUD service: 86 tests. |
 | Bulk-read API endpoints (for `long_term_forecasting`) | Planned — see `doc/plans/bulk_read_endpoints_instructions.md` |
 | API integration | **DONE** — see `doc/plans/sapphire_api_integration_plan.md` |
 | Duplicate skill metrics / ensemble composition issue | **RESOLVED** — see `doc/plans/issues/gi_duplicate_skill_metrics_ensemble_composition.md` |
@@ -94,6 +94,7 @@ apps/postprocessing_forecasts/
 │   ├── test_performance.py            # 6 benchmarks (groupby, filter, vectorized)
 │   ├── test_postprocessing_tools.py   # 8 tests (logging, safe .iloc[0])
 │   ├── test_recalc_workflow.py        # 8 tests (yearly recalc entry point)
+│   ├── test_model_long_removal.py     # 30 tests (INFRA-005 characterization + target tests)
 │   ├── test_skill_metrics.py          # 7 tests (pentad calculation, ensemble creation)
 │   ├── test_wiring_integration.py     # 23 tests (entry point wiring with real internals)
 │   ├── test_workflow_integration.py   # 16 tests (full E2E with real CSV I/O)
@@ -406,11 +407,11 @@ All Phase 3 items are complete. The extracted `src/` modules in `postprocessing_
 
 Phase 4a has two pre-requisites that must be completed **before** implementation begins:
 
-1. **INFRA-005 (revised): Remove `model_long` from apps modules.** Instead of consolidating scattered model-name mapping dicts into a registry, **remove `model_long` from the app pipeline entirely**. Apps use `model_short` only. The server-side `model_type_description` field (in `models.py ModelType.description`) is the single source of truth for long names, resolved at presentation boundaries (API responses, dashboard display). This is an incremental refactoring — each module is cleaned up when next touched. See [`gi_draft_infra_model_registry.md`](issues/gi_draft_infra_model_registry.md) for the per-module checklist (13+ locations across 6 modules).
+1. ~~**INFRA-005 (revised): Remove `model_long` from apps modules.**~~ **DONE** (commit `2c52d2a`). Removed `model_long` from `postprocessing_forecasts/src/` (ensemble_calculator, skill_metrics, data_reader, api_writer), `setup_library.py` (~18 assignments across ~14 functions), and all test data/fixtures. Replaced with `model_short` + `composition` column for ensemble composition info. `model_type_description` stays server-side. 405 postprocessing tests + 161 iEasyHydroForecast tests pass. Residuals: `forecast_dashboard/` (separate cleanup), 4 deprecated `model_long=None` function parameters in `setup_library.py`.
 
 2. **Metrics registry refactoring** (new task). Restructure `calculate_all_skill_metrics()` in `src/skill_metrics.py` into a `METRIC_REGISTRY` dict pattern (see [metrics registry note](#implementation-steps) below). This must be done before Phase 4a so that CRPS is added as a registry entry rather than a 7th hardcoded metric.
 
-**Implementation order:** INFRA-005 (remove `model_long`) → metrics registry → Phase 4a (monthly skill metrics).
+**Implementation order:** ~~INFRA-005 (remove `model_long`)~~ DONE → metrics registry → Phase 4a (monthly skill metrics).
 
 ### Scope
 
@@ -963,7 +964,7 @@ Split into sub-phases: **4a (monthly)** is fully planned, **4b (quarterly + seas
 
 #### Pre-requisites for Phase 4a (must be completed first)
 
-- [ ] **INFRA-005 (revised): Remove `model_long` from apps** — incremental per-module cleanup, apps use `model_short` only ([`gi_draft_infra_model_registry.md`](issues/gi_draft_infra_model_registry.md))
+- [x] **INFRA-005 (revised): Remove `model_long` from apps** — DONE (commit `2c52d2a`). `postprocessing_forecasts/src/`, `setup_library.py`, all test data cleaned. 405 + 161 tests pass.
 - [ ] **Metrics registry refactoring** — restructure `calculate_all_skill_metrics()` into `METRIC_REGISTRY` dict pattern (issue to be created in `doc/plans/issues/`)
 - [ ] `sapphire-api-client`: `read_long_forecasts()` + `write_long_forecasts()` (separate repo, LLM instructions provided) → bump pinned hash
 
@@ -1147,9 +1148,9 @@ For database-level issues: PostgreSQL WAL-based point-in-time recovery can resto
 
 Skill metrics are calculated **per model, per station, per pentad/decad of the year** — NOT a single value per model.
 
-**Grouping keys** (current — `model_long` will be removed per INFRA-005):
-- Pentadal: `['pentad_in_year', 'code', 'model_long', 'model_short']` → after INFRA-005: `['pentad_in_year', 'code', 'model_short']`
-- Decadal: `['decad_in_year', 'code', 'model_long', 'model_short']` → after INFRA-005: `['decad_in_year', 'code', 'model_short']`
+**Grouping keys** (INFRA-005 complete):
+- Pentadal: `['pentad_in_year', 'code', 'model_short']`
+- Decadal: `['decad_in_year', 'code', 'model_short']`
 
 **Example:** 72 pentads × 50 stations × 4 models = **14,400 skill metric records**
 
@@ -1324,4 +1325,5 @@ The following plans are **superseded** by this unified plan (moved to `archive/`
 | 2026-02-15 | Bea/Claude | Phase 3 Batch 1 complete: all integration depth items (#29–#35) and CRUD tests (#22–#28) done. CRUD service: 23 → 38 tests (+15): `TestFallbackUpsertDirect` (6), `TestCombinedFilters` (6), `TestLargeBatch` (2), plus pre-existing. Wiring integration: 16 → 23 tests (+7): `TestRecalcWiringIntegration` (4), `TestMaintenanceSurplusData` (1), `TestNEExclusionIntegration` (1), `TestCrossWorkflowRoundtrip` (1), `TestVaryingDelta` (1), `TestLogMostRecentForecasts` (3). Item #31 (or-chain assertion) already fixed in prior session. Updated confidence: High across all areas except maintenance partial-save (Medium). Remaining Phase 3 work: module extractions (`src/skill_metrics.py`, `src/api_writer.py`, `src/file_writer.py`) + virtual station vectorization (deferred). |
 | 2026-02-16 | Bea/Claude | Critical data-flow review of postprocessing module. Findings: (1) High confidence in data flow — three layers of integration tests (workflow E2E, wiring, pipeline) all use real logic for internal transformations, only mocking external boundaries. 375 tests pass with 0 skips when run via module venv. (2) Debug `print()` cleanup: replaced all 16 `print()` calls in `src/skill_metrics.py` and `src/file_writer.py` with `logger.debug()` or removed redundant `print()` alongside existing `logger.info/error`. Also fixed f-string logger calls to use lazy `%s` formatting. (3) API data-loss warnings improved: `api_writer.py` `dropna` warnings now say "after repair attempt" and log up to 10 dropped (code, date) or (code, model) pairs for operator investigation. (4) `sapphire-api-client` confirmed installed in module `.venv` — the 49 "skipped" tests only appeared when running bare `pytest` instead of `run_tests.sh`. Updated status summary, Current Architecture (file structure now reflects extracted `src/` modules and 24 test files), Phase 3 (marked DONE with checkbox cleanup), Phase 5 test counts. Commit `41d782e`. |
 | 2026-02-16 | Bea/Claude | Unified cross-references between master plan and Phase 4a detail document. Phase 4a status summary now links to detail doc with content summary. Phase 4a checklist clarifies sapphire-api-client is a separate repo (LLM instructions provided, not implemented here). Detail document (`postprocessing_unified_plan_detailMonthlyForecasts.md`) restructured: added Quick Reference table for fast agent navigation, parent document link, pre-requisite section rewritten as LLM instructions for the separate `hydrosolutions/sapphire-api-client` repo, Files Modified table marks api-client as out of scope. Added detail doc to Related Documents table. |
+| 2026-02-16 | Bea/Claude | **INFRA-005 complete** (commit `2c52d2a`). Removed `model_long` from entire app pipeline in 7 steps: (1) characterization tests, (2) `composition_agg`/`is_multi_model_composition` helpers, (3) `ensemble_calculator.py` refactored to `model_short`+`composition`, (4) `skill_metrics.py` refactored, (5) `data_reader.py`/`api_writer.py` cleaned, (6) `setup_library.py` ~18 assignments removed across ~14 functions, (7) all test data/fixtures/CSVs cleaned. 405 postprocessing + 161 iEasyHydroForecast tests pass. Residuals: `forecast_dashboard/` (separate cleanup), 4 deprecated `model_long=None` params in `setup_library.py`. Test coverage review identified 4 gaps to address: ensemble skill metric value assertions, decade ensemble via `calculate_skill_metrics_decade`, API writer composition in combined forecasts, setup_library deprecated param coverage. Updated status summary, Phase 4 pre-requisites, grouping keys appendix, test count (375→405). |
 | 2026-02-16 | Bea/Claude | Phase 4 refinement — 5 decisions recorded: (1) **INFRA-005 revised**: instead of consolidating model-name dicts into a registry, **remove `model_long` from apps modules entirely**. Apps use `model_short` only; `model_type_description` stays server-side for API consumers. This eliminates the 5 scattered mapping dicts rather than consolidating them. Must be done before Phase 4a. (2) **Delta/accuracy for monthly**: compute `delta = 0.674 * std(monthly_obs)` on-the-fly per (station, month); accuracy metric supported at all resolutions (Central Asian hydromet standard). (3) **Metrics registry before Phase 4a**: restructure `calculate_all_skill_metrics()` into `METRIC_REGISTRY` pattern as a separate pre-requisite task, so CRPS is added as a registry entry. (4) **Skilled Mean / Naive Mean**: computed in postprocessing as reference baselines (not produced by `long_term_forecasting`). Naive Mean = climatological mean, Skilled Mean = skill-weighted model average. (5) **SAPPHIRE_PREDICTION_MODE**: `BOTH` stays pentad+decad (backward compat), add `MONTHLY` and `ALL` (= everything). Recalculate entry point supports all modes; operational/maintenance for monthly is an open question. Updated: Phase 4 key design decisions (added #6–#8), pre-requisite ordering section, Phase 4a checklist (3 pre-reqs + env var + baselines), prediction mode semantics table. |
