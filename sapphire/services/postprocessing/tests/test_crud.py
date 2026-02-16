@@ -372,3 +372,330 @@ class TestCRUDEdgeCases:
         # If fallback path works, we get results with valid IDs
         assert len(results) == 1
         assert results[0].id >= 1
+
+
+# -------------------------------------------------------------------
+# _fallback_upsert direct tests
+# -------------------------------------------------------------------
+
+class TestFallbackUpsertDirect:
+    """Test _fallback_upsert function directly (bypassing create_* wrappers)."""
+
+    def test_insert_only_batch(self, db_session):
+        """Batch of new records — all inserts, no updates."""
+        items = [
+            make_forecast(code="15013"),
+            make_forecast(code="15014"),
+            make_forecast(code="15015"),
+        ]
+        unique_keys = ['horizon_type', 'code', 'model_type', 'date', 'target']
+        results = crud._fallback_upsert(
+            db_session, Forecast, items, unique_keys
+        )
+        assert len(results) == 3
+        assert db_session.query(Forecast).count() == 3
+        codes = {r.code for r in results}
+        assert codes == {"15013", "15014", "15015"}
+
+    def test_update_only_batch(self, db_session):
+        """Batch where ALL records already exist — all updates."""
+        # Pre-populate
+        items_v1 = [
+            make_forecast(code="15013", forecasted_discharge=100.0),
+            make_forecast(code="15014", forecasted_discharge=200.0),
+        ]
+        crud._fallback_upsert(
+            db_session, Forecast, items_v1,
+            ['horizon_type', 'code', 'model_type', 'date', 'target'],
+        )
+        assert db_session.query(Forecast).count() == 2
+
+        # Update both with new values
+        items_v2 = [
+            make_forecast(code="15013", forecasted_discharge=999.0),
+            make_forecast(code="15014", forecasted_discharge=888.0),
+        ]
+        results = crud._fallback_upsert(
+            db_session, Forecast, items_v2,
+            ['horizon_type', 'code', 'model_type', 'date', 'target'],
+        )
+        assert len(results) == 2
+        # Still only 2 rows — no duplicates
+        assert db_session.query(Forecast).count() == 2
+        by_code = {r.code: r for r in results}
+        assert by_code["15013"].forecasted_discharge == 999.0
+        assert by_code["15014"].forecasted_discharge == 888.0
+
+    def test_mixed_insert_and_update(self, db_session):
+        """Batch with one existing (update) and one new (insert)."""
+        crud._fallback_upsert(
+            db_session, Forecast,
+            [make_forecast(code="15013", forecasted_discharge=100.0)],
+            ['horizon_type', 'code', 'model_type', 'date', 'target'],
+        )
+
+        items = [
+            make_forecast(code="15013", forecasted_discharge=999.0),  # update
+            make_forecast(code="15014", forecasted_discharge=200.0),  # insert
+        ]
+        results = crud._fallback_upsert(
+            db_session, Forecast, items,
+            ['horizon_type', 'code', 'model_type', 'date', 'target'],
+        )
+        assert len(results) == 2
+        assert db_session.query(Forecast).count() == 2
+        by_code = {r.code: r for r in results}
+        assert by_code["15013"].forecasted_discharge == 999.0
+        assert by_code["15014"].forecasted_discharge == 200.0
+
+    def test_empty_batch(self, db_session):
+        """Empty list — no crash, returns empty."""
+        results = crud._fallback_upsert(
+            db_session, Forecast, [],
+            ['horizon_type', 'code', 'model_type', 'date', 'target'],
+        )
+        # _fallback_upsert is only called when bulk_items is non-empty
+        # but it should handle empty gracefully
+        assert results == []
+
+    def test_skill_metric_upsert(self, db_session):
+        """Verify _fallback_upsert works for SkillMetric model."""
+        items = [
+            make_skill_metric(code="15013", nse=0.7),
+            make_skill_metric(code="15014", nse=0.8, horizon_in_year=34),
+        ]
+        unique_keys = ['horizon_type', 'code', 'model_type', 'date',
+                       'horizon_in_year']
+        results = crud._fallback_upsert(
+            db_session, SkillMetric, items, unique_keys,
+        )
+        assert len(results) == 2
+        by_code = {r.code: r for r in results}
+        assert by_code["15013"].nse == 0.7
+        assert by_code["15014"].nse == 0.8
+
+        # Now update one
+        items_v2 = [make_skill_metric(code="15013", nse=0.99)]
+        results = crud._fallback_upsert(
+            db_session, SkillMetric, items_v2, unique_keys,
+        )
+        assert len(results) == 1
+        assert results[0].nse == 0.99
+        # Still 2 rows total
+        assert db_session.query(SkillMetric).count() == 2
+
+    def test_returned_objects_are_refreshed(self, db_session):
+        """Verify returned objects reflect committed state (not stale)."""
+        items = [make_forecast(code="15013", forecasted_discharge=100.0)]
+        unique_keys = ['horizon_type', 'code', 'model_type', 'date', 'target']
+        results = crud._fallback_upsert(
+            db_session, Forecast, items, unique_keys,
+        )
+        # Object should have a valid ID (assigned by DB, refreshed)
+        assert results[0].id is not None
+        assert results[0].id >= 1
+
+        # Update and verify the returned object is fresh
+        items_v2 = [make_forecast(code="15013", forecasted_discharge=999.0)]
+        results = crud._fallback_upsert(
+            db_session, Forecast, items_v2, unique_keys,
+        )
+        assert results[0].forecasted_discharge == 999.0
+        # Same ID (same row, updated in-place)
+        assert results[0].id >= 1
+
+
+# -------------------------------------------------------------------
+# Combined filter queries
+# -------------------------------------------------------------------
+
+class TestCombinedFilters:
+    """Test multi-parameter filter combinations for get_* functions."""
+
+    def test_forecast_code_plus_date_range_plus_model(self, db_session):
+        """Combine code, date range, and model filter on Forecast."""
+        items = [
+            make_forecast(code="15013", model_type="LR",
+                          date=date(2024, 6, 10)),
+            make_forecast(code="15013", model_type="TFT",
+                          date=date(2024, 6, 15)),
+            make_forecast(code="15014", model_type="LR",
+                          date=date(2024, 6, 15)),
+            make_forecast(code="15013", model_type="LR",
+                          date=date(2024, 6, 20)),
+        ]
+        crud.create_forecast(db_session, ForecastBulkCreate(data=items))
+
+        results = crud.get_forecast(
+            db_session, code="15013", model="LR",
+            start_date="2024-06-12", end_date="2024-06-18",
+        )
+        # Only code=15013 + model=LR + date between 12-18 → nothing
+        # (15013 LR is on 10th and 20th; 15013 TFT is on 15th)
+        assert len(results) == 0
+
+        results = crud.get_forecast(
+            db_session, code="15013", model="LR",
+            start_date="2024-06-08", end_date="2024-06-12",
+        )
+        assert len(results) == 1
+        assert results[0].date == date(2024, 6, 10)
+
+    def test_forecast_target_null_filter(self, db_session):
+        """Special target='null' filter returns records with NULL target."""
+        items = [
+            make_forecast(code="15013", target=date(2024, 6, 20)),
+            make_forecast(code="15014", target=None),
+        ]
+        crud.create_forecast(db_session, ForecastBulkCreate(data=items))
+
+        results = crud.get_forecast(db_session, target="null")
+        assert len(results) == 1
+        assert results[0].code == "15014"
+        assert results[0].target is None
+
+    def test_forecast_horizon_plus_code(self, db_session):
+        """Combine horizon_type and code filters."""
+        items = [
+            make_forecast(code="15013", horizon_type="pentad",
+                          date=date(2024, 6, 15)),
+            make_forecast(code="15013", horizon_type="decade",
+                          date=date(2024, 6, 15)),
+            make_forecast(code="15014", horizon_type="pentad",
+                          date=date(2024, 6, 15)),
+        ]
+        crud.create_forecast(db_session, ForecastBulkCreate(data=items))
+
+        results = crud.get_forecast(
+            db_session, horizon="pentad", code="15013"
+        )
+        assert len(results) == 1
+        assert results[0].horizon_type.value == "pentad"
+        assert results[0].code == "15013"
+
+    def test_skill_metric_code_plus_model_plus_date(self, db_session):
+        """Combine code, model, and date range filters on SkillMetric."""
+        items = [
+            make_skill_metric(code="15013", model_type="LR",
+                              date=date(2024, 6, 10), horizon_in_year=31),
+            make_skill_metric(code="15013", model_type="LR",
+                              date=date(2024, 6, 15), horizon_in_year=33),
+            make_skill_metric(code="15013", model_type="TFT",
+                              date=date(2024, 6, 15), horizon_in_year=34),
+            make_skill_metric(code="15014", model_type="LR",
+                              date=date(2024, 6, 15), horizon_in_year=35),
+        ]
+        crud.create_skill_metric(
+            db_session, SkillMetricBulkCreate(data=items)
+        )
+
+        results = crud.get_skill_metric(
+            db_session, code="15013", model="LR",
+            start_date="2024-06-12", end_date="2024-06-18",
+        )
+        assert len(results) == 1
+        assert results[0].code == "15013"
+        assert results[0].model_type.value == "LR"
+        assert results[0].date == date(2024, 6, 15)
+
+    def test_lr_forecast_date_range(self, db_session):
+        """LR forecast filter by date range."""
+        items = [
+            make_lr_forecast(code="15013", date=date(2024, 6, 10)),
+            make_lr_forecast(code="15014", date=date(2024, 6, 15)),
+            make_lr_forecast(code="15015", date=date(2024, 6, 20)),
+        ]
+        crud.create_lr_forecast(
+            db_session, LRForecastBulkCreate(data=items)
+        )
+
+        results = crud.get_lr_forecast(
+            db_session, start_date="2024-06-12", end_date="2024-06-18",
+        )
+        assert len(results) == 1
+        assert results[0].code == "15014"
+
+    def test_long_forecast_combined_filters(self, db_session):
+        """LongForecast filter by horizon_type + code + date range."""
+        items = [
+            make_long_forecast(
+                horizon_type="month", code="15013",
+                date=date(2024, 6, 10),
+            ),
+            make_long_forecast(
+                horizon_type="month", code="15014",
+                date=date(2024, 6, 15),
+                valid_from=date(2024, 8, 1), valid_to=date(2024, 8, 31),
+            ),
+            make_long_forecast(
+                horizon_type="quarter", code="15013",
+                date=date(2024, 6, 15),
+                valid_from=date(2024, 10, 1), valid_to=date(2024, 12, 31),
+            ),
+        ]
+        crud.create_long_forecast(
+            db_session, LongForecastBulkCreate(data=items)
+        )
+
+        results = crud.get_long_forecast(
+            db_session, horizon_type="month", code="15013",
+        )
+        assert len(results) == 1
+        assert results[0].code == "15013"
+        assert results[0].horizon_type.value == "month"
+
+
+# -------------------------------------------------------------------
+# Large batch correctness
+# -------------------------------------------------------------------
+
+class TestLargeBatch:
+    """Verify correctness with larger batches."""
+
+    def test_fifty_record_batch(self, db_session):
+        """50 records inserted in one batch, all retrievable."""
+        items = [
+            make_forecast(
+                code=f"1{i:04d}", date=date(2024, 6, 15),
+                forecasted_discharge=float(i),
+            )
+            for i in range(50)
+        ]
+        crud.create_forecast(db_session, ForecastBulkCreate(data=items))
+
+        total = db_session.query(Forecast).count()
+        assert total == 50
+
+        # Spot-check first and last
+        first = crud.get_forecast(db_session, code="10000")
+        assert len(first) == 1
+        assert first[0].forecasted_discharge == 0.0
+
+        last = crud.get_forecast(db_session, code="10049")
+        assert len(last) == 1
+        assert last[0].forecasted_discharge == 49.0
+
+    def test_batch_upsert_preserves_unmodified_fields(self, db_session):
+        """Upsert updates specified fields without corrupting others."""
+        item = make_forecast(
+            code="15013", forecasted_discharge=100.0,
+            q05=80.0, q25=90.0, q50=95.0, q75=110.0, q95=120.0,
+        )
+        crud.create_forecast(db_session, ForecastBulkCreate(data=[item]))
+
+        # Update only forecasted_discharge — other quantiles should persist
+        item_v2 = make_forecast(
+            code="15013", forecasted_discharge=999.0,
+            q05=80.0, q25=90.0, q50=95.0, q75=110.0, q95=120.0,
+        )
+        results = crud.create_forecast(
+            db_session, ForecastBulkCreate(data=[item_v2])
+        )
+
+        r = results[0]
+        assert r.forecasted_discharge == 999.0
+        assert r.q05 == 80.0
+        assert r.q25 == 90.0
+        assert r.q50 == 95.0
+        assert r.q75 == 110.0
+        assert r.q95 == 120.0

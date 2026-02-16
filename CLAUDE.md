@@ -50,6 +50,9 @@ CSV I/O will be removed once API integration is fully tested.
 
 ## Code Style Conventions
 
+### Sensitive Data
+No passwords, no sensitive data like station codes or runoff data can ever be committed to GitHub. Before every commit, the changed files must be checked to make sure they don't contain any sensitive data.  
+
 ### Python Style
 
 - **Line length**: 79-100 characters (prefer 79 for docstrings)
