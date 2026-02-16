@@ -444,6 +444,239 @@ def calculate_crps(
 
 
 # ---------------------------------------------------------------------------
+# Monthly skill metric pipeline
+# ---------------------------------------------------------------------------
+
+# Quantile columns and levels for long-term forecasts
+_QUANTILE_COLS = ['q05', 'q10', 'q25', 'q50', 'q75', 'q90', 'q95']
+_QUANTILE_LEVELS = np.array([0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95])
+
+
+def calculate_monthly_skill_metrics(
+    observations: pd.DataFrame,
+    forecasts: pd.DataFrame,
+    timing_stats=None,
+) -> tuple:
+    """Calculate monthly skill metrics for long-term forecasts.
+
+    Point metrics (Q50 vs observed): NSE, MAE, accuracy, sdivsigma.
+    Probabilistic metric: CRPS (using Q05-Q95 quantile distribution).
+
+    Args:
+        observations: [code, year, month, month_in_year,
+                       discharge_avg, delta]
+        forecasts: [code, year, month, model_short,
+                    q50, q05, q10, q25, q75, q90, q95]
+        timing_stats: Optional timing collector (passed through).
+
+    Returns:
+        (skill_stats_df, joint_forecasts_df, timing_stats)
+        skill_stats_df columns: [month_in_year, code, model_short,
+            sdivsigma, nse, delta, accuracy, mae, n_pairs, crps]
+    """
+    from src.ensemble_calculator import (
+        composition_agg, is_multi_model_composition,
+    )
+
+    empty_stats = pd.DataFrame(
+        columns=['month_in_year', 'code', 'model_short']
+        + METRIC_ORDER + ['crps']
+    )
+    empty_joint = pd.DataFrame()
+
+    # Guard: empty inputs
+    if observations.empty or forecasts.empty:
+        return empty_stats, empty_joint, timing_stats
+
+    # --- 1. Merge forecasts with observations on [code, year, month] ---
+    merged = pd.merge(
+        forecasts,
+        observations[['code', 'year', 'month', 'month_in_year',
+                       'discharge_avg', 'delta']],
+        on=['code', 'year', 'month'],
+        how='inner',
+    )
+    merged['forecasted_discharge'] = merged['q50'].astype(float)
+
+    if merged.empty:
+        # No overlap — but Naive Mean may still be computable
+        return _add_naive_mean(
+            empty_stats, observations, timing_stats, empty_joint
+        )
+
+    # --- 2. Point metrics per (month_in_year, code, model_short) ---
+    skill_stats = merged.groupby(
+        ['month_in_year', 'code', 'model_short']
+    )[['discharge_avg', 'forecasted_discharge', 'delta']].apply(
+        calculate_all_skill_metrics,
+        observed_col='discharge_avg',
+        simulated_col='forecasted_discharge',
+        delta_col='delta',
+    ).reset_index()
+
+    # --- 3. CRPS per group ---
+    crps_records = []
+    for (miy, code, model), grp in merged.groupby(
+        ['month_in_year', 'code', 'model_short']
+    ):
+        obs_arr = grp['discharge_avg'].to_numpy(dtype=np.float64)
+        qf_cols = [c for c in _QUANTILE_COLS if c in grp.columns]
+        if len(qf_cols) == len(_QUANTILE_COLS):
+            qf = grp[qf_cols].to_numpy(dtype=np.float64)
+            crps_val = calculate_crps(obs_arr, qf, _QUANTILE_LEVELS)
+        else:
+            crps_val = np.nan
+        crps_records.append({
+            'month_in_year': miy, 'code': code,
+            'model_short': model, 'crps': crps_val,
+        })
+
+    crps_df = pd.DataFrame(crps_records)
+    skill_stats = skill_stats.merge(
+        crps_df, on=['month_in_year', 'code', 'model_short'], how='left',
+    )
+
+    # --- 4. Ensemble mean (EM) ---
+    joint_forecasts = forecasts.copy()
+    skill_stats_filtered = filter_for_highly_skilled_forecasts(skill_stats)
+
+    merge_keys = ['month_in_year', 'code', 'model_short']
+    skilled_merged = merged.merge(
+        skill_stats_filtered[merge_keys].drop_duplicates(),
+        on=merge_keys,
+        how='inner',
+    )
+    # Exclude existing EM / Naive Mean from ensemble input
+    skilled_merged = skilled_merged[
+        ~skilled_merged['model_short'].isin(['EM', 'Naive Mean'])
+    ].copy()
+    skilled_merged = skilled_merged.dropna(
+        subset=['forecasted_discharge']
+    ).copy()
+
+    n_models = forecasts['model_short'].nunique()
+    if n_models > 1 and not skilled_merged.empty:
+        em_avg = skilled_merged.groupby(
+            ['year', 'month', 'code']
+        ).agg({
+            'month_in_year': 'first',
+            'forecasted_discharge': 'mean',
+            'model_short': composition_agg,
+        }).reset_index()
+        em_avg = em_avg.rename(columns={'model_short': 'composition'})
+        em_avg['model_short'] = 'EM'
+
+        # Discard single-model "ensembles"
+        em_avg = em_avg[
+            em_avg['composition'].apply(is_multi_model_composition)
+        ].copy()
+
+        if not em_avg.empty:
+            # Compute EM skill metrics
+            em_with_obs = pd.merge(
+                em_avg,
+                observations[['code', 'year', 'month', 'month_in_year',
+                               'discharge_avg', 'delta']],
+                on=['code', 'year', 'month'],
+                how='inner',
+                suffixes=('', '_obs'),
+            )
+            # Resolve month_in_year collision
+            if 'month_in_year_obs' in em_with_obs.columns:
+                em_with_obs = em_with_obs.drop(
+                    columns=['month_in_year_obs']
+                )
+
+            em_skill = em_with_obs.groupby(
+                ['month_in_year', 'code', 'model_short', 'composition']
+            )[['discharge_avg', 'forecasted_discharge', 'delta']].apply(
+                calculate_all_skill_metrics,
+                observed_col='discharge_avg',
+                simulated_col='forecasted_discharge',
+                delta_col='delta',
+            ).reset_index()
+            em_skill['crps'] = np.nan  # EM has no quantile distribution
+
+            skill_stats = pd.concat(
+                [skill_stats, em_skill], ignore_index=True
+            )
+
+            # Add EM rows to joint_forecasts
+            em_joint_cols = [
+                c for c in ['code', 'year', 'month', 'month_in_year',
+                             'forecasted_discharge', 'model_short',
+                             'composition']
+                if c in em_avg.columns
+            ]
+            if 'composition' not in joint_forecasts.columns:
+                joint_forecasts = joint_forecasts.copy()
+                joint_forecasts['composition'] = ''
+            joint_forecasts = pd.concat(
+                [joint_forecasts, em_avg[em_joint_cols]],
+                ignore_index=True,
+            )
+
+    # --- 5. Naive Mean baseline ---
+    return _add_naive_mean(
+        skill_stats, observations, timing_stats, joint_forecasts
+    )
+
+
+def _add_naive_mean(
+    skill_stats: pd.DataFrame,
+    observations: pd.DataFrame,
+    timing_stats,
+    joint_forecasts: pd.DataFrame,
+) -> tuple:
+    """Add Naive Mean (climatological baseline) to skill_stats.
+
+    Naive Mean q50 = mean(discharge_avg) per (code, month_in_year)
+    across all years. CRPS is NaN (point forecast only).
+    """
+    if observations.empty:
+        return skill_stats, joint_forecasts, timing_stats
+
+    # Climatological mean per (code, month_in_year)
+    clim = observations.groupby(['code', 'month_in_year']).agg(
+        clim_mean=('discharge_avg', 'mean'),
+    ).reset_index()
+
+    # Create one "forecast" row per (code, year, month)
+    naive_rows = observations[
+        ['code', 'year', 'month', 'month_in_year',
+         'discharge_avg', 'delta']
+    ].copy()
+    naive_rows = naive_rows.merge(clim, on=['code', 'month_in_year'])
+    naive_rows['forecasted_discharge'] = naive_rows['clim_mean']
+    naive_rows['model_short'] = 'Naive Mean'
+
+    if naive_rows.empty:
+        return skill_stats, joint_forecasts, timing_stats
+
+    # Compute point metrics
+    naive_skill = naive_rows.groupby(
+        ['month_in_year', 'code', 'model_short']
+    )[['discharge_avg', 'forecasted_discharge', 'delta']].apply(
+        calculate_all_skill_metrics,
+        observed_col='discharge_avg',
+        simulated_col='forecasted_discharge',
+        delta_col='delta',
+    ).reset_index()
+    naive_skill['crps'] = np.nan  # point forecast, no quantiles
+
+    parts = [
+        df for df in [skill_stats, naive_skill]
+        if not df.empty
+    ]
+    if parts:
+        skill_stats = pd.concat(parts, ignore_index=True)
+    else:
+        skill_stats = naive_skill
+
+    return skill_stats, joint_forecasts, timing_stats
+
+
+# ---------------------------------------------------------------------------
 # Threshold filtering
 # ---------------------------------------------------------------------------
 

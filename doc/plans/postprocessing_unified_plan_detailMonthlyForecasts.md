@@ -658,8 +658,8 @@ Extend `SAPPHIRE_PREDICTION_MODE`: add `MONTHLY` and `ALL`. `BOTH` stays = penta
 2. ~~**[This repo]** Bump pinned hash in `pyproject.toml` → `uv sync`~~ — **DONE** (hash `a457728`, all 7 modules synced)
 3. ~~`data_reader.py`: `read_monthly_observations()` + `read_monthly_forecasts()` + tests~~ — **DONE** (25 unit + 35 edge case + 17 integration tests)
 4. ~~`skill_metrics.py`: `calculate_crps()` + tests~~ — **DONE** (17 tests: basic, hand-calculated, edge cases)
-5. `skill_metrics.py`: `calculate_monthly_skill_metrics()` + tests ← **NEXT**
-6. `api_writer.py`: extend horizon/model mappings + tests
+5. ~~`skill_metrics.py`: `calculate_monthly_skill_metrics()` + tests~~ — **DONE** (21 tests: basic, multi-model, ensemble, Naive Mean, edge cases)
+6. `api_writer.py`: extend horizon/model mappings + tests ← **NEXT**
 7. `file_writer.py`: `save_monthly_skill_metrics()` + tests
 8. `recalculate_skill_metrics.py`: monthly block + integration tests
 9. Full test suite — zero skips
@@ -687,3 +687,4 @@ Zero skips except `SAPPHIRE_API_AVAILABLE` guards.
 | 2026-02-16 | Applied 5 decisions from unified plan review: (1) Delta/accuracy: `read_monthly_observations()` now computes `delta = 0.674 * std` on-the-fly, returns it as a column. Step 4 delta guidance updated. (2) Removed `model_long` from all function signatures, return types, and groupby keys per INFRA-005. (3) Added `Skilled Mean` and `Naive Mean` to model mapping table with computation notes. (4) Added LR_SM, LR_SM_DT, LR_SM_ROF to model table (were missing). (5) Step 7: added entry point scope note (recalculate supports MONTHLY/ALL; operational/maintenance monthly is open question). |
 | 2026-02-16 | Marked Step 1 (sapphire-api-client LT support) as DONE. Next: Step 2 (bump pinned hash + uv sync). |
 | 2026-02-16 | Marked Steps 3–4 as DONE. Step 3: monthly readers (77 tests). Step 4: CRPS (17 tests). Next: Step 5. |
+| 2026-02-16 | Marked Step 5 as DONE. calculate_monthly_skill_metrics: point metrics + CRPS + EM ensemble + Naive Mean baseline (21 tests). |
