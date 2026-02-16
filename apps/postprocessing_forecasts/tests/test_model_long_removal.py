@@ -23,10 +23,6 @@ sys.path.insert(
 sys.path.insert(0, os.path.dirname(__file__))
 
 from src.ensemble_calculator import (
-    extract_first_parentheses_content,
-    model_long_agg,
-    model_short_agg,
-    _is_multi_model_ensemble,
     composition_agg,
     is_multi_model_composition,
     filter_for_highly_skilled_forecasts,
@@ -36,14 +32,6 @@ from src import skill_metrics
 from src import data_reader
 from src import api_writer
 import tag_library as tl
-
-# MODEL_LONG_NAMES removed from test_constants (INFRA-005).
-# Keep local copy only for testing deprecated model_long_agg function.
-_LEGACY_MODEL_LONG_NAMES = {
-    'LR': 'Linear regression (LR)',
-    'TFT': 'Temporal Fusion Transformer (TFT)',
-    'TiDE': 'Time-series Dense Encoder (TiDE)',
-}
 
 
 # ---------------------------------------------------------------------------
@@ -141,27 +129,6 @@ def _make_pentad_ensemble(forecasts, skill_stats, observed):
 
 class TestEnsembleCalculatorCharacterization:
     """Verify ensemble_calculator uses model_short + composition."""
-
-    def test_model_long_agg_builds_composition_from_long_names(self):
-        """model_long_agg (legacy) extracts short names from parentheses."""
-        series = pd.Series([
-            'Linear regression (LR)',
-            'Temporal Fusion Transformer (TFT)',
-        ])
-        result = model_long_agg(series)
-        assert result == 'Ens. Mean with LR, TFT (EM)'
-
-    def test_extract_first_parentheses_content(self):
-        result = extract_first_parentheses_content([
-            'Linear regression (LR)',
-        ])
-        assert result == ['LR']
-
-    def test_is_multi_model_ensemble_with_two_models(self):
-        assert _is_multi_model_ensemble('Ens. Mean with LR, TFT (EM)') is True
-
-    def test_is_multi_model_ensemble_with_one_model(self):
-        assert _is_multi_model_ensemble('Ens. Mean with TFT (EM)') is False
 
     def test_create_ensemble_works_without_model_long_input(
         self, forecasts_two_models, skill_stats_two_models, observed_two_dates

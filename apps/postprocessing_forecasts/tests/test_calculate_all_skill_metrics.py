@@ -17,6 +17,11 @@ sys.path.insert(
 )
 
 from src import skill_metrics
+from src.skill_metrics import (
+    METRIC_REGISTRY,
+    METRIC_ORDER,
+    THRESHOLD_METRICS,
+)
 
 
 class TestCalculateAllSkillMetricsHappyPath:
@@ -338,3 +343,34 @@ class TestCalculateAllSkillMetricsReturnType:
         )
         assert result['n_pairs'] == 0
         assert np.isnan(result['mae'])
+
+
+class TestMetricRegistry:
+    """Verify METRIC_REGISTRY structure and backward compatibility."""
+
+    def test_metric_order_matches_legacy(self):
+        """Index order must match legacy for backward compat."""
+        assert METRIC_ORDER == [
+            'sdivsigma', 'nse', 'mae', 'n_pairs', 'delta', 'accuracy',
+        ]
+
+    def test_all_metrics_have_required_keys(self):
+        """Every registry entry has min_points, higher_is_better, env_var."""
+        for name, entry in METRIC_REGISTRY.items():
+            assert 'min_points' in entry, f"{name} missing min_points"
+            assert 'higher_is_better' in entry, (
+                f"{name} missing higher_is_better"
+            )
+            assert 'env_var' in entry, f"{name} missing env_var"
+
+    def test_threshold_metrics_excludes_metadata(self):
+        """Metadata metrics (n_pairs, delta, mae) not in THRESHOLD_METRICS."""
+        assert 'n_pairs' not in THRESHOLD_METRICS
+        assert 'delta' not in THRESHOLD_METRICS
+        assert 'mae' not in THRESHOLD_METRICS
+
+    def test_threshold_metrics_includes_filterable(self):
+        """Filterable metrics (sdivsigma, nse, accuracy) in THRESHOLD_METRICS."""
+        assert 'sdivsigma' in THRESHOLD_METRICS
+        assert 'nse' in THRESHOLD_METRICS
+        assert 'accuracy' in THRESHOLD_METRICS

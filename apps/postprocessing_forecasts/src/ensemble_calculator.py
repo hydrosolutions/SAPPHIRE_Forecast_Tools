@@ -6,7 +6,6 @@ WITHOUT recalculating skill metrics from scratch.
 """
 
 import os
-import re
 import logging
 import datetime as dt
 
@@ -16,35 +15,8 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Helper functions (extracted from inner scope of calculate_skill_metrics_*)
+# Helper functions
 # ---------------------------------------------------------------------------
-
-def extract_first_parentheses_content(string_list: list[str]) -> list[str]:
-    """Extract first parenthesised text from each string.
-
-    >>> extract_first_parentheses_content(["Linear regression (LR)"])
-    ['LR']
-    """
-    pattern = r'\((.*?)\)'
-    result = []
-    for string in string_list:
-        match = re.search(pattern, string)
-        result.append(match.group(1) if match else '')
-    return result
-
-
-def model_long_agg(x: pd.Series) -> str:
-    """Aggregate model_long values into ensemble composition string."""
-    model_list = x.unique()
-    short_model_list = extract_first_parentheses_content(model_list)
-    unique_models = ', '.join(sorted(short_model_list))
-    return f'Ens. Mean with {unique_models} (EM)'
-
-
-def model_short_agg(x: pd.Series) -> str:
-    """Return 'EM' for ensemble mean."""
-    return 'EM'
-
 
 def composition_agg(model_shorts: pd.Series) -> str:
     """Build composition string from model_short values.
@@ -66,24 +38,6 @@ def is_multi_model_composition(composition: str) -> bool:
     return bool(composition) and ',' in composition
 
 
-def _is_multi_model_ensemble(model_long_str: str) -> bool:
-    """True if the composition string contains 2+ models.
-
-    Parses 'Ens. Mean with X, Y (EM)' and checks for a comma
-    in the model list, indicating multiple contributing models.
-
-    >>> _is_multi_model_ensemble('Ens. Mean with LR, TFT (EM)')
-    True
-    >>> _is_multi_model_ensemble('Ens. Mean with TFT (EM)')
-    False
-    """
-    match = re.search(r'with\s+(.+?)\s+\(EM\)', model_long_str)
-    if not match:
-        return False
-    model_list = match.group(1).strip()
-    return bool(model_list) and ',' in model_list
-
-
 # ---------------------------------------------------------------------------
 # Main public functions
 # ---------------------------------------------------------------------------
@@ -94,53 +48,21 @@ def filter_for_highly_skilled_forecasts(
     threshold_accuracy: float | str | None = None,
     threshold_nse: float | str | None = None,
 ) -> pd.DataFrame:
-    """Filter skill metrics to models passing all thresholds.
+    """Filter skill metrics — delegates to skill_metrics module.
 
-    Extracted from forecast_library.py:1944-1974.
-
-    Thresholds are read from env vars if not explicitly provided.
-    A threshold set to the string 'False' disables that filter.
-
-    Args:
-        skill_stats: DataFrame with sdivsigma, accuracy, nse columns.
-        threshold_sdivsigma: Max acceptable s/sigma (lower is better).
-        threshold_accuracy: Min acceptable accuracy (higher is better).
-        threshold_nse: Min acceptable NSE (higher is better).
-
-    Returns:
-        Filtered DataFrame containing only highly-skilled rows.
+    Preserved for backward compatibility with existing callers.
     """
-    if threshold_sdivsigma is None:
-        threshold_sdivsigma = os.getenv(
-            'ieasyhydroforecast_efficiency_threshold', 0.6
-        )
-    if threshold_accuracy is None:
-        threshold_accuracy = os.getenv(
-            'ieasyhydroforecast_accuracy_threshold', 0.8
-        )
-    if threshold_nse is None:
-        threshold_nse = os.getenv(
-            'ieasyhydroforecast_nse_threshold', 0.8
-        )
-
-    result = skill_stats.copy()
-
-    if str(threshold_sdivsigma) != 'False':
-        result = result[
-            result['sdivsigma'] < float(threshold_sdivsigma)
-        ].copy()
-
-    if str(threshold_accuracy) != 'False':
-        result = result[
-            result['accuracy'] > float(threshold_accuracy)
-        ].copy()
-
-    if str(threshold_nse) != 'False':
-        result = result[
-            result['nse'] > float(threshold_nse)
-        ].copy()
-
-    return result
+    from src.skill_metrics import (
+        filter_for_highly_skilled_forecasts as _canonical,
+    )
+    overrides = {}
+    if threshold_sdivsigma is not None:
+        overrides['sdivsigma'] = threshold_sdivsigma
+    if threshold_accuracy is not None:
+        overrides['accuracy'] = threshold_accuracy
+    if threshold_nse is not None:
+        overrides['nse'] = threshold_nse
+    return _canonical(skill_stats, **overrides)
 
 
 def create_ensemble_forecasts(

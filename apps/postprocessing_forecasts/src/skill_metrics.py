@@ -18,6 +18,57 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# Metric registry — single source of truth for all point metrics
+# ---------------------------------------------------------------------------
+
+METRIC_REGISTRY = {
+    'sdivsigma': {
+        'min_points': 2,
+        'higher_is_better': False,
+        'env_var': 'ieasyhydroforecast_efficiency_threshold',
+        'default_threshold': 0.6,
+    },
+    'nse': {
+        'min_points': 2,
+        'higher_is_better': True,
+        'env_var': 'ieasyhydroforecast_nse_threshold',
+        'default_threshold': 0.8,
+    },
+    'mae': {
+        'min_points': 1,
+        'higher_is_better': False,
+        'env_var': None,  # no threshold filtering
+        'default_threshold': None,
+    },
+    'n_pairs': {
+        'min_points': 1,
+        'higher_is_better': None,  # metadata, not a skill metric
+        'env_var': None,
+        'default_threshold': None,
+    },
+    'delta': {
+        'min_points': 1,
+        'higher_is_better': None,  # metadata
+        'env_var': None,
+        'default_threshold': None,
+    },
+    'accuracy': {
+        'min_points': 1,
+        'higher_is_better': True,
+        'env_var': 'ieasyhydroforecast_accuracy_threshold',
+        'default_threshold': 0.8,
+    },
+}
+
+METRIC_ORDER = list(METRIC_REGISTRY.keys())
+
+THRESHOLD_METRICS = {
+    name: entry for name, entry in METRIC_REGISTRY.items()
+    if entry['env_var'] is not None
+}
+
+
+# ---------------------------------------------------------------------------
 # Individual metric helpers
 # ---------------------------------------------------------------------------
 
@@ -247,8 +298,8 @@ def calculate_all_skill_metrics(
             sdivsigma, nse, mae, n_pairs, delta, accuracy
     """
     nan_result = pd.Series(
-        [np.nan, np.nan, np.nan, 0, np.nan, np.nan],
-        index=['sdivsigma', 'nse', 'mae', 'n_pairs', 'delta', 'accuracy'],
+        [0 if name == 'n_pairs' else np.nan for name in METRIC_ORDER],
+        index=METRIC_ORDER,
     )
 
     # Validate required columns
@@ -305,7 +356,7 @@ def calculate_all_skill_metrics(
     if n < 2:
         return pd.Series(
             [np.nan, np.nan, mae_value, n, delta, accuracy],
-            index=['sdivsigma', 'nse', 'mae', 'n_pairs', 'delta', 'accuracy'],
+            index=METRIC_ORDER,
         )
 
     try:
@@ -332,8 +383,41 @@ def calculate_all_skill_metrics(
 
     return pd.Series(
         [sdivsigma, nse_value, mae_value, n, delta, accuracy],
-        index=['sdivsigma', 'nse', 'mae', 'n_pairs', 'delta', 'accuracy'],
+        index=METRIC_ORDER,
     )
+
+
+# ---------------------------------------------------------------------------
+# Threshold filtering
+# ---------------------------------------------------------------------------
+
+def filter_for_highly_skilled_forecasts(
+    skill_stats: pd.DataFrame,
+    **overrides,
+) -> pd.DataFrame:
+    """Filter skill metrics to models passing all thresholds.
+
+    Thresholds read from env vars per THRESHOLD_METRICS registry.
+    A threshold set to 'False' disables that filter.
+
+    Args:
+        skill_stats: DataFrame with metric columns.
+        **overrides: metric_name=value to override env var lookup.
+            E.g. filter_for_highly_skilled_forecasts(df, sdivsigma=0.5)
+    """
+    result = skill_stats.copy()
+    for name, entry in THRESHOLD_METRICS.items():
+        threshold = overrides.get(name)
+        if threshold is None:
+            threshold = os.getenv(entry['env_var'], entry['default_threshold'])
+        if str(threshold) == 'False':
+            continue
+        threshold = float(threshold)
+        if entry['higher_is_better']:
+            result = result[result[name] > threshold].copy()
+        else:
+            result = result[result[name] < threshold].copy()
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -393,37 +477,6 @@ def calculate_skill_metrics_pentad(
             logger.debug(rows_with_tuples)
         else:
             logger.debug("No tuples found after the merge.")
-
-    def filter_for_highly_skilled_forecasts(skill_stats):
-        """
-        Filter the skill_stats DataFrame for highly skilled forecasts based on
-        the thresholds set in the environment.
-        """
-        # Get thresholds from environment
-        threshold_sdivsigma = os.getenv('ieasyhydroforecast_efficiency_threshold', 0.6)
-        threshold_accuracy = os.getenv('ieasyhydroforecast_accuracy_threshold', 0.8)
-        threshold_nse = os.getenv('ieasyhydroforecast_nse_threshold', 0.8)
-
-        # Test if threshold_sdivsigma is equal to False
-        if threshold_sdivsigma != 'False':
-            # Filter for rows where sdivsigma is smaller than the threshold
-            skill_stats_ensemble = skill_stats[skill_stats['sdivsigma'] < float(threshold_sdivsigma)].copy()
-        else:
-            skill_stats_ensemble = skill_stats.copy()
-
-        if threshold_accuracy != 'False':
-            # Filter for rows where accuracy is larger than the threshold
-            skill_stats_ensemble = skill_stats_ensemble[skill_stats_ensemble['accuracy'] > float(threshold_accuracy)].copy()
-        else:
-            skill_stats_ensemble = skill_stats_ensemble.copy()
-
-        if threshold_nse != 'False':
-            # Filter for rows where nse is larger than the threshold
-            skill_stats_ensemble = skill_stats_ensemble[skill_stats_ensemble['nse'] > float(threshold_nse)].copy()
-        else:
-            skill_stats_ensemble = skill_stats_ensemble.copy()
-
-        return skill_stats_ensemble
 
     latest_date_temp = simulated['date'].max()
     unique_models = simulated['model_short'].unique()
@@ -598,33 +651,6 @@ def calculate_skill_metrics_decade(
             logger.debug(rows_with_tuples)
         else:
             logger.debug("No tuples found after the merge.")
-
-    def filter_for_highly_skilled_forecasts(skill_stats):
-        # Get thresholds from environment
-        threshold_sdivsigma = os.getenv('ieasyhydroforecast_efficiency_threshold', 0.6)
-        threshold_accuracy = os.getenv('ieasyhydroforecast_accuracy_threshold', 0.8)
-        threshold_nse = os.getenv('ieasyhydroforecast_nse_threshold', 0.8)
-
-        # Test if threshold_sdivsigma is equal to False
-        if threshold_sdivsigma != 'False':
-            # Filter for rows where sdivsigma is smaller than the threshold
-            skill_stats_ensemble = skill_stats[skill_stats['sdivsigma'] < float(threshold_sdivsigma)].copy()
-        else:
-            skill_stats_ensemble = skill_stats.copy()
-
-        if threshold_accuracy != 'False':
-            # Filter for rows where accuracy is larger than the threshold
-            skill_stats_ensemble = skill_stats_ensemble[skill_stats_ensemble['accuracy'] > float(threshold_accuracy)].copy()
-        else:
-            skill_stats_ensemble = skill_stats_ensemble.copy()
-
-        if threshold_nse != 'False':
-            # Filter for rows where nse is larger than the threshold
-            skill_stats_ensemble = skill_stats_ensemble[skill_stats_ensemble['nse'] > float(threshold_nse)].copy()
-        else:
-            skill_stats_ensemble = skill_stats_ensemble.copy()
-
-        return skill_stats_ensemble
 
     with timer(timing_stats, 'calculate_skill_metrics_decade - Filter data'):
         # We calculate skill metrics only on forecasts after 2010

@@ -24,7 +24,6 @@ sys.path.insert(0, os.path.dirname(__file__))
 from src.ensemble_calculator import (
     filter_for_highly_skilled_forecasts,
     create_ensemble_forecasts,
-    _is_multi_model_ensemble,
 )
 from src.gap_detector import detect_missing_ensembles
 from src import skill_metrics

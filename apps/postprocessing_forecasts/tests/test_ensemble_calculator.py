@@ -15,10 +15,6 @@ sys.path.insert(
 sys.path.insert(0, os.path.dirname(__file__))
 
 from src.ensemble_calculator import (
-    extract_first_parentheses_content,
-    model_long_agg,
-    model_short_agg,
-    _is_multi_model_ensemble,
     filter_for_highly_skilled_forecasts,
     create_ensemble_forecasts,
 )
@@ -71,111 +67,6 @@ def observed_pentad():
         'discharge_avg': [105.0, 125.0],
         'delta': [5.0, 5.0],
     })
-
-
-# ---------------------------------------------------------------------------
-# Helper function tests
-# ---------------------------------------------------------------------------
-
-class TestHelpers:
-    def test_extract_parentheses_content(self):
-        result = extract_first_parentheses_content([
-            'Linear regression (LR)',
-            'Temporal Fusion Transformer (TFT)',
-            'No parentheses',
-        ])
-        assert result == ['LR', 'TFT', '']
-
-    # Tests deprecated function — remove when model_long_agg is deleted
-    def test_model_long_agg(self):
-        series = pd.Series([
-            'Linear regression (LR)',
-            'Temporal Fusion Transformer (TFT)',
-        ])
-        result = model_long_agg(series)
-        assert result == 'Ens. Mean with LR, TFT (EM)'
-
-    # Tests deprecated function — remove when model_long_agg is deleted
-    def test_model_long_agg_sorted(self):
-        """Models are sorted alphabetically in composition."""
-        series = pd.Series([
-            'Temporal Fusion Transformer (TFT)',
-            'Linear regression (LR)',
-        ])
-        result = model_long_agg(series)
-        assert 'LR, TFT' in result
-
-    def test_model_short_agg(self):
-        series = pd.Series(['LR', 'TFT'])
-        assert model_short_agg(series) == 'EM'
-
-    def test_is_multi_model_two_models(self):
-        assert _is_multi_model_ensemble('Ens. Mean with LR, TFT (EM)') is True
-
-    def test_is_multi_model_three_models(self):
-        assert _is_multi_model_ensemble(
-            'Ens. Mean with LR, TFT, TiDE (EM)'
-        ) is True
-
-    def test_is_multi_model_single(self):
-        assert _is_multi_model_ensemble('Ens. Mean with TFT (EM)') is False
-
-    def test_is_multi_model_empty(self):
-        assert _is_multi_model_ensemble('Ens. Mean with  (EM)') is False
-
-    def test_is_multi_model_no_match(self):
-        """Random string with no 'with ... (EM)' pattern -> False."""
-        assert _is_multi_model_ensemble('Some random string') is False
-
-    def test_is_multi_model_empty_string(self):
-        """Empty string -> False."""
-        assert _is_multi_model_ensemble('') is False
-
-    def test_is_multi_model_four_models(self):
-        """Four models in composition -> True."""
-        assert _is_multi_model_ensemble(
-            'Ens. Mean with A, B, C, D (EM)'
-        ) is True
-
-    # Tests deprecated function — remove when model_long_agg is deleted
-    def test_model_long_agg_duplicate_models(self):
-        """Duplicate model entries are uniquified via .unique()."""
-        series = pd.Series([
-            'Linear regression (LR)',
-            'Linear regression (LR)',
-        ])
-        result = model_long_agg(series)
-        assert result == 'Ens. Mean with LR (EM)'
-
-    # Tests deprecated function — remove when model_long_agg is deleted
-    def test_model_long_agg_three_models(self):
-        """Three models sorted alphabetically."""
-        series = pd.Series([
-            'Time-series Dense Encoder (TiDE)',
-            'Linear regression (LR)',
-            'Temporal Fusion Transformer (TFT)',
-        ])
-        result = model_long_agg(series)
-        assert result == 'Ens. Mean with LR, TFT, TiDE (EM)'
-
-    # Tests deprecated function — remove when model_long_agg is deleted
-    def test_model_long_agg_single_model(self):
-        """Single model -> 'Ens. Mean with LR (EM)' (filtered later)."""
-        series = pd.Series(['Linear regression (LR)'])
-        result = model_long_agg(series)
-        assert result == 'Ens. Mean with LR (EM)'
-
-    def test_extract_no_parentheses(self):
-        """Input with no parentheses -> empty string."""
-        result = extract_first_parentheses_content(['ModelName'])
-        assert result == ['']
-
-    def test_extract_nested_parentheses(self):
-        """Multiple parenthesised groups -> first match extracted."""
-        result = extract_first_parentheses_content(
-            ['Outer (Inner) more (Second)']
-        )
-        assert result == ['Inner']
 
 
 # ---------------------------------------------------------------------------
