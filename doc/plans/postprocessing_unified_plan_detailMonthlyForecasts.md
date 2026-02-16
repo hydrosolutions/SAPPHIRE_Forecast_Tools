@@ -654,8 +654,8 @@ Extend `SAPPHIRE_PREDICTION_MODE`: add `MONTHLY` and `ALL`. `BOTH` stays = penta
 
 ## Implementation Order
 
-1. **[Separate repo]** `sapphire-api-client`: `read_long_forecasts` + `write_long_forecasts` + tests → use LLM instructions from [Pre-requisite](#pre-requisite-sapphire-api-client-llm-instructions) in the `hydrosolutions/sapphire-api-client` repo
-2. **[This repo]** Bump pinned hash in `pyproject.toml` → `uv sync`
+1. ~~**[Separate repo]** `sapphire-api-client`: `read_long_forecasts` + `write_long_forecasts` + tests~~ — **DONE** (LT forecast support added to sapphire-api-client)
+2. ~~**[This repo]** Bump pinned hash in `pyproject.toml` → `uv sync`~~ — **DONE** (hash `a457728`, all 7 modules synced)
 3. `data_reader.py`: `read_monthly_observations()` + `read_monthly_forecasts()` + tests
 4. `skill_metrics.py`: `calculate_crps()` + tests
 5. `skill_metrics.py`: `calculate_monthly_skill_metrics()` + tests
@@ -685,3 +685,4 @@ Zero skips except `SAPPHIRE_API_AVAILABLE` guards.
 | 2026-02-16 | Initial detailed plan created |
 | 2026-02-16 | Clarified sapphire-api-client is out of scope — section rewritten as comprehensive LLM instructions for separate repo. Added: Quick Reference table, cross-references to master document, full server-side API reference (GET/POST endpoints, query params, filter behavior, request/response schemas), complete LongForecast record field documentation (all 20+ columns with types and constraints), exact existing client code as template, complete implementation code for all 3 methods (read/write/prepare), critical differences callout (horizon_type vs horizon, is not None for int params), file placement instructions, 6 required test cases, verification commands. |
 | 2026-02-16 | Applied 5 decisions from unified plan review: (1) Delta/accuracy: `read_monthly_observations()` now computes `delta = 0.674 * std` on-the-fly, returns it as a column. Step 4 delta guidance updated. (2) Removed `model_long` from all function signatures, return types, and groupby keys per INFRA-005. (3) Added `Skilled Mean` and `Naive Mean` to model mapping table with computation notes. (4) Added LR_SM, LR_SM_DT, LR_SM_ROF to model table (were missing). (5) Step 7: added entry point scope note (recalculate supports MONTHLY/ALL; operational/maintenance monthly is open question). |
+| 2026-02-16 | Marked Step 1 (sapphire-api-client LT support) as DONE. Next: Step 2 (bump pinned hash + uv sync). |

@@ -38,11 +38,11 @@
 | Client-side vectorization | **DONE** — vectorized record building in 4 `_write_*_to_api()` functions (commit `eae7158`) |
 | Skill metrics single-pass optimization | **DONE** — `calculate_all_skill_metrics()` replaces triple groupby+merge (commit `eae7158`) |
 | Remove `model_long` from apps (INFRA-005, revised) | **DONE** — `model_long` removed from `postprocessing_forecasts/src/`, `setup_library.py`, and all test data. Apps use `model_short` + `composition` column. 405 postprocessing tests pass, 161 iEasyHydroForecast tests pass. Commit `2c52d2a`. |
-| Metrics registry refactoring | **PLANNED** — restructure `calculate_all_skill_metrics()` into `METRIC_REGISTRY` dict pattern. Pre-requisite for Phase 4a (issue to be created) |
-| Monthly skill metrics (Phase 4a) | **PLANNED** — detailed plan in [`postprocessing_unified_plan_detailMonthlyForecasts.md`](postprocessing_unified_plan_detailMonthlyForecasts.md) (7 steps + LLM instructions for sapphire-api-client pre-requisite) |
+| Metrics registry refactoring | **DONE** — `METRIC_REGISTRY`, `METRIC_ORDER`, `THRESHOLD_METRICS` in `skill_metrics.py`. Consolidated 3 copies of `filter_for_highly_skilled_forecasts()`. Deleted 4 dead `model_long`-era functions from `ensemble_calculator.py`. 392 postprocessing tests pass, 0 skips. Commit `f70b29f`. |
+| Monthly skill metrics (Phase 4a) | **IN PROGRESS** — pre-req done (sapphire-api-client LT support). **Next:** bump pinned hash + `uv sync`, then Steps 1–7. Detailed plan in [`postprocessing_unified_plan_detailMonthlyForecasts.md`](postprocessing_unified_plan_detailMonthlyForecasts.md) |
 | Quarterly + seasonal skill metrics (Phase 4b) | TODO — deferred, depends on 4a |
 | Bug 6: Single-model ensemble filter only rejects LR | **DONE** — `_is_multi_model_ensemble()` helper replaces hardcoded check |
-| Comprehensive test suite (50+ unit, 12+ integration) | **DONE** — 405 postprocessing tests, 0 skips (all 49 API tests now pass via module venv). CRUD service: 86 tests. |
+| Comprehensive test suite (50+ unit, 12+ integration) | **DONE** — 392 postprocessing tests, 0 skips (all 49 API tests now pass via module venv). CRUD service: 86 tests. |
 | Bulk-read API endpoints (for `long_term_forecasting`) | Planned — see `doc/plans/bulk_read_endpoints_instructions.md` |
 | API integration | **DONE** — see `doc/plans/sapphire_api_integration_plan.md` |
 | Duplicate skill metrics / ensemble composition issue | **RESOLVED** — see `doc/plans/issues/gi_duplicate_skill_metrics_ensemble_composition.md` |
@@ -79,11 +79,11 @@ apps/postprocessing_forecasts/
 │   ├── conftest.py                    # API singleton reset fixture
 │   ├── test_api_integration.py        # 17 tests (API write: forecasts + skill metrics)
 │   ├── test_api_read.py               # 32 tests (API read: LR, ML, observed, fallback)
-│   ├── test_calculate_all_skill_metrics.py  # 18 tests (single-pass metrics, hand-calculated)
+│   ├── test_calculate_all_skill_metrics.py  # 22 tests (single-pass metrics, hand-calculated, registry)
 │   ├── test_constants.py              # Shared test constants (model names, thresholds)
 │   ├── test_data_reader.py            # 21 tests (CSV read, API fallback, normalization)
 │   ├── test_edge_cases.py             # 46 tests (empty, NaN, boundaries, duplicates, delta)
-│   ├── test_ensemble_calculator.py    # 25 tests (helpers, filtering, creation, NE exclusion)
+│   ├── test_ensemble_calculator.py    # 9 tests (filtering, creation, NE exclusion, model name consistency)
 │   ├── test_error_accumulation.py     # 9 tests (return value tracking, legacy entry point)
 │   ├── test_file_writer.py            # 6 tests (atomic write, latest extraction)
 │   ├── test_gap_detector.py           # 6 tests (missing EM detection, lookback window)
@@ -94,7 +94,7 @@ apps/postprocessing_forecasts/
 │   ├── test_performance.py            # 6 benchmarks (groupby, filter, vectorized)
 │   ├── test_postprocessing_tools.py   # 8 tests (logging, safe .iloc[0])
 │   ├── test_recalc_workflow.py        # 8 tests (yearly recalc entry point)
-│   ├── test_model_long_removal.py     # 30 tests (INFRA-005 characterization + target tests)
+│   ├── test_model_long_removal.py     # 26 tests (INFRA-005 characterization + target tests)
 │   ├── test_skill_metrics.py          # 7 tests (pentad calculation, ensemble creation)
 │   ├── test_wiring_integration.py     # 23 tests (entry point wiring with real internals)
 │   ├── test_workflow_integration.py   # 16 tests (full E2E with real CSV I/O)
@@ -965,7 +965,7 @@ Split into sub-phases: **4a (monthly)** is fully planned, **4b (quarterly + seas
 #### Pre-requisites for Phase 4a (must be completed first)
 
 - [x] **INFRA-005 (revised): Remove `model_long` from apps** — DONE (commit `2c52d2a`). `postprocessing_forecasts/src/`, `setup_library.py`, all test data cleaned. 405 + 161 tests pass.
-- [ ] **Metrics registry refactoring** — restructure `calculate_all_skill_metrics()` into `METRIC_REGISTRY` dict pattern (issue to be created in `doc/plans/issues/`)
+- [x] **Metrics registry refactoring** — DONE (commit `f70b29f`). `METRIC_REGISTRY`/`METRIC_ORDER`/`THRESHOLD_METRICS` added to `skill_metrics.py`. 3 copies of `filter_for_highly_skilled_forecasts()` consolidated. 4 dead `model_long`-era functions removed from `ensemble_calculator.py`. 392 tests pass, 0 skips.
 - [ ] `sapphire-api-client`: `read_long_forecasts()` + `write_long_forecasts()` (separate repo, LLM instructions provided) → bump pinned hash
 
 #### Phase 4a: Monthly Skill Metrics
@@ -1000,7 +1000,7 @@ Split into sub-phases: **4a (monthly)** is fully planned, **4b (quarterly + seas
 
 #### Completed
 
-- [x] ~~Unit tests for `src/ensemble_calculator.py`~~ (25 tests — 15 original + 4 `_is_multi_model_ensemble` + 2 single-TFT/TiDE discard + 2 model name consistency + 2 existing)
+- [x] ~~Unit tests for `src/ensemble_calculator.py`~~ (9 tests — 4 filter + 8 creation + 2 model name consistency; 16 dead-code `TestHelpers` tests removed in metrics registry refactoring)
 - [x] ~~Unit tests for `src/data_reader.py`~~ (8 tests)
 - [x] ~~Unit tests for `src/gap_detector.py`~~ (6 tests)
 - [x] ~~Integration tests for operational workflow~~ (5 tests)
@@ -1327,3 +1327,4 @@ The following plans are **superseded** by this unified plan (moved to `archive/`
 | 2026-02-16 | Bea/Claude | Unified cross-references between master plan and Phase 4a detail document. Phase 4a status summary now links to detail doc with content summary. Phase 4a checklist clarifies sapphire-api-client is a separate repo (LLM instructions provided, not implemented here). Detail document (`postprocessing_unified_plan_detailMonthlyForecasts.md`) restructured: added Quick Reference table for fast agent navigation, parent document link, pre-requisite section rewritten as LLM instructions for the separate `hydrosolutions/sapphire-api-client` repo, Files Modified table marks api-client as out of scope. Added detail doc to Related Documents table. |
 | 2026-02-16 | Bea/Claude | **INFRA-005 complete** (commit `2c52d2a`). Removed `model_long` from entire app pipeline in 7 steps: (1) characterization tests, (2) `composition_agg`/`is_multi_model_composition` helpers, (3) `ensemble_calculator.py` refactored to `model_short`+`composition`, (4) `skill_metrics.py` refactored, (5) `data_reader.py`/`api_writer.py` cleaned, (6) `setup_library.py` ~18 assignments removed across ~14 functions, (7) all test data/fixtures/CSVs cleaned. 405 postprocessing + 161 iEasyHydroForecast tests pass. Residuals: `forecast_dashboard/` (separate cleanup), 4 deprecated `model_long=None` params in `setup_library.py`. Test coverage review identified 4 gaps to address: ensemble skill metric value assertions, decade ensemble via `calculate_skill_metrics_decade`, API writer composition in combined forecasts, setup_library deprecated param coverage. Updated status summary, Phase 4 pre-requisites, grouping keys appendix, test count (375→405). |
 | 2026-02-16 | Bea/Claude | Phase 4 refinement — 5 decisions recorded: (1) **INFRA-005 revised**: instead of consolidating model-name dicts into a registry, **remove `model_long` from apps modules entirely**. Apps use `model_short` only; `model_type_description` stays server-side for API consumers. This eliminates the 5 scattered mapping dicts rather than consolidating them. Must be done before Phase 4a. (2) **Delta/accuracy for monthly**: compute `delta = 0.674 * std(monthly_obs)` on-the-fly per (station, month); accuracy metric supported at all resolutions (Central Asian hydromet standard). (3) **Metrics registry before Phase 4a**: restructure `calculate_all_skill_metrics()` into `METRIC_REGISTRY` pattern as a separate pre-requisite task, so CRPS is added as a registry entry. (4) **Skilled Mean / Naive Mean**: computed in postprocessing as reference baselines (not produced by `long_term_forecasting`). Naive Mean = climatological mean, Skilled Mean = skill-weighted model average. (5) **SAPPHIRE_PREDICTION_MODE**: `BOTH` stays pentad+decad (backward compat), add `MONTHLY` and `ALL` (= everything). Recalculate entry point supports all modes; operational/maintenance for monthly is an open question. Updated: Phase 4 key design decisions (added #6–#8), pre-requisite ordering section, Phase 4a checklist (3 pre-reqs + env var + baselines), prediction mode semantics table. |
+| 2026-02-16 | Bea/Claude | **Metrics registry refactoring complete** (commit `f70b29f`). Added `METRIC_REGISTRY`, `METRIC_ORDER`, `THRESHOLD_METRICS` to `skill_metrics.py` as single source of truth for metric metadata (`min_points`, `higher_is_better`, `env_var`, `default_threshold`). `calculate_all_skill_metrics()` return index now uses `METRIC_ORDER`. Consolidated 3 copies of `filter_for_highly_skilled_forecasts()` into one module-level function driven by `THRESHOLD_METRICS`; `ensemble_calculator.py` version now a thin wrapper. Deleted 4 dead `model_long`-era functions (`extract_first_parentheses_content`, `model_long_agg`, `model_short_agg`, `_is_multi_model_ensemble`) and `re` import from `ensemble_calculator.py`. Cleaned up 3 test files: deleted `TestHelpers` class (16 tests), 4 characterization tests, `_LEGACY_MODEL_LONG_NAMES`, dead imports. Added `TestMetricRegistry` (4 tests). Test count: 405→392 (net -16: removed 20 dead, added 4 registry). All Phase 4a pre-requisites except `sapphire-api-client` long-forecast endpoints are now complete. **Next up:** Phase 4a monthly skill metrics implementation (pending `sapphire-api-client` `read_long_forecasts()`/`write_long_forecasts()` endpoints). |
