@@ -129,7 +129,6 @@ class HydroTestDataGenerator:
                     'date': date,
                     'code': code,
                     'discharge_avg': round(discharge, 3),
-                    'model_long': 'Observed (Obs)',
                     'model_short': 'Obs',
                     'pentad_in_month': self._get_pentad_in_month(date),
                     'pentad_in_year': self._get_pentad_in_year(date),
@@ -197,19 +196,15 @@ class HydroTestDataGenerator:
         """Generate ML model forecasts with specific characteristics"""
         model_info = {
             'TFT': {
-                'model_long': 'Temporal-Fusion Transformer (TFT)',
                 'model_short': 'TFT'
             },
             'TIDE': {
-                'model_long': 'Time-Series Dense Encoder (TiDE)',
                 'model_short': 'TiDE'
             },
             'TSMIXER': {
-                'model_long': 'Time-Series Mixer (TSMixer)',
                 'model_short': 'TSMixer'
             },
             'ARIMA': {
-                'model_long': 'AutoRegressive Integrated Moving Average (ARIMA)',
                 'model_short': 'ARIMA'
             }
         }
@@ -240,7 +235,6 @@ class HydroTestDataGenerator:
                     'forecast_date': forecast_date,
                     #'pentad_in_month': row['pentad_in_month'],
                     #'pentad_in_year': row['pentad_in_year'],
-                    #'model_long': model_info[model_name]['model_long'],
                     #'model_short': model_info[model_name]['model_short'],
                     'forecasted_discharge': round(forecasted, 3)
                 }
@@ -301,21 +295,13 @@ class HydroTestDataGenerator:
         for code in site_codes:
             for pentad in pentads_in_year:
                 for model in models:
-                    # For ensemble models, generate appropriate model_long name
+                    # For ensemble models, generate composition string
                     if model == 'EM':
-                        model_long = "Ens. Mean with LR, TFT, TSMixer, TiDE (EM)"
+                        composition = 'LR, TFT, TiDE, TSMixer'
                     elif model == 'NE':
-                        model_long = "Neural Ensemble with TiDE, TFT, TSMixer (NE)"
+                        composition = 'TFT, TiDE, TSMixer'
                     else:
-                        # For regular models, use standard names
-                        model_map = {
-                            'LR': 'Linear regression (LR)',
-                            'TFT': 'Temporal-Fusion Transformer (TFT)',
-                            'TiDE': 'Time-Series Dense Encoder (TiDE)',
-                            'TSMixer': 'Time-Series Mixer (TSMixer)',
-                            'ARIMA': 'AutoRegressive Integrated Moving Average (ARIMA)'
-                        }
-                        model_long = model_map.get(model, model)
+                        composition = ''
 
                     # Generate metrics with predictable patterns based on inputs
                     # This makes verification easy
@@ -357,8 +343,8 @@ class HydroTestDataGenerator:
                     data.append({
                         'pentad_in_year': pentad,
                         'code': code,
-                        'model_long': model_long,
                         'model_short': model,
+                        'composition': composition,
                         'sdivsigma': round(sdivsigma, 4),
                         'nse': round(nse, 4),
                         'delta': round(delta, 3),
@@ -381,7 +367,6 @@ class HydroTestDataGenerator:
 
         # Add LR data
         lr_data = linreg_df.copy()
-        lr_data['model_long'] = 'Linear regression (LR)'
         lr_data['model_short'] = 'LR'
         data.append(lr_data)
 
@@ -423,8 +408,8 @@ class HydroTestDataGenerator:
                 'code': combo['code'],
                 'pentad_in_month': combo['pentad_in_month'],
                 'pentad_in_year': combo['pentad_in_year'],
-                'model_long': "Ens. Mean with LR, TFT, TSMixer, TiDE (EM)",
                 'model_short': "EM",
+                'composition': 'LR, TFT, TiDE, TSMixer',
                 'forecasted_discharge': em_discharge
             })
 
@@ -434,8 +419,8 @@ class HydroTestDataGenerator:
                 'code': combo['code'],
                 'pentad_in_month': combo['pentad_in_month'],
                 'pentad_in_year': combo['pentad_in_year'],
-                'model_long': "Neural Ensemble with TiDE, TFT, TSMixer (NE)",
                 'model_short': "NE",
+                'composition': 'TFT, TiDE, TSMixer',
                 'forecasted_discharge': ne_discharge
             })
 

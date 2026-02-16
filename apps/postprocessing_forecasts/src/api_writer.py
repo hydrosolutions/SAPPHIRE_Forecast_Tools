@@ -15,6 +15,17 @@ import tag_library as tl
 
 logger = logging.getLogger(__name__)
 
+# Map uppercased model_short to API model_type format
+MODEL_TYPE_MAP = {
+    "LR": "LR",
+    "TFT": "TFT",
+    "TIDE": "TiDE",
+    "TSMIXER": "TSMixer",
+    "EM": "EM",
+    "NE": "NE",
+    "RRAM": "RRAM",
+}
+
 # ---------------------------------------------------------------------------
 # API client availability
 # ---------------------------------------------------------------------------
@@ -114,17 +125,6 @@ def _write_combined_forecast_to_api(data: pd.DataFrame, horizon_type: str) -> bo
     else:
         raise ValueError(f"Invalid horizon_type: {horizon_type}. Must be 'pentad' or 'decade'.")
 
-    # Map model_short to API model_type format
-    model_type_map = {
-        "LR": "LR",
-        "TFT": "TFT",
-        "TIDE": "TiDE",
-        "TSMIXER": "TSMixer",
-        "EM": "EM",
-        "NE": "NE",
-        "RRAM": "RRAM"
-    }
-
     # Compute missing horizon values from dates before iterating.
     # Virtual station outer merges and ML API reads can produce rows
     # with valid dates but NaN pentad_in_month/pentad_in_year.
@@ -196,26 +196,26 @@ def _write_combined_forecast_to_api(data: pd.DataFrame, horizon_type: str) -> bo
         df_rec = df_rec.copy()
         df_rec['model_type'] = (
             df_rec['model_short'].astype(str).str.upper()
-            .map(model_type_map)
+            .map(MODEL_TYPE_MAP)
             .fillna(df_rec['model_short'].astype(str))
         )
         df_rec['date_str'] = pd.to_datetime(df_rec['date']).dt.strftime('%Y-%m-%d')
 
-        # Vectorize composition extraction
+        # Ensure composition column exists
+        if 'composition' not in df_rec.columns:
+            df_rec['composition'] = None
+        # Warn about ensemble rows missing composition
         is_ensemble = df_rec['model_short'].astype(str).str.upper().isin(['EM', 'NE'])
-        df_rec['composition'] = None
-        # First use explicit composition column if available
-        if 'composition' in df_rec.columns:
-            df_rec['composition'] = df_rec['composition'].where(df_rec['composition'].notna())
-        # For ensemble rows without composition, extract from model_long
-        needs_extract = is_ensemble & df_rec['composition'].isna()
-        if 'model_long' in df_rec.columns and needs_extract.any():
-            extracted = (
-                df_rec.loc[needs_extract, 'model_long'].astype(str)
-                .str.extract(r'with\s+(.+?)\s+\([EN][ME]\)', expand=False)
-                .str.strip()
+        missing_comp = is_ensemble & (
+            df_rec['composition'].isna()
+            | (df_rec['composition'].astype(str).str.strip() == '')
+        )
+        if missing_comp.any():
+            logger.warning(
+                "%d ensemble forecast rows have no composition column; "
+                "these will be written with composition=None",
+                missing_comp.sum(),
             )
-            df_rec.loc[needs_extract, 'composition'] = extracted
 
         records_df = pd.DataFrame({
             'horizon_type': horizon_type,
@@ -314,17 +314,6 @@ def _write_skill_metrics_to_api(data: pd.DataFrame, horizon_type: str) -> bool:
     else:
         raise ValueError(f"Invalid horizon_type: {horizon_type}. Must be 'pentad' or 'decade'.")
 
-    # Map model_short to API model_type format
-    model_type_map = {
-        "LR": "LR",
-        "TFT": "TFT",
-        "TIDE": "TiDE",
-        "TSMIXER": "TSMixer",
-        "EM": "EM",
-        "NE": "NE",
-        "RRAM": "RRAM"
-    }
-
     # Use today's date for the skill metrics (they are calculated on run day)
     today = pd.Timestamp.today().normalize().strftime('%Y-%m-%d')
 
@@ -353,23 +342,27 @@ def _write_skill_metrics_to_api(data: pd.DataFrame, horizon_type: str) -> bool:
         # Map model_short to API model_type
         df_rec['model_type'] = (
             df_rec['model_short'].astype(str).str.upper()
-            .map(model_type_map)
+            .map(MODEL_TYPE_MAP)
             .fillna(df_rec['model_short'].astype(str))
         )
 
-        # Vectorize composition extraction
-        is_ensemble = df_rec['model_short'].astype(str).str.upper().isin(['EM', 'NE'])
-        df_rec['_composition'] = None
+        # Extract composition from existing column
         if 'composition' in df_rec.columns:
-            df_rec['_composition'] = df_rec['composition'].where(df_rec['composition'].notna())
-        needs_extract = is_ensemble & df_rec['_composition'].isna()
-        if 'model_long' in df_rec.columns and needs_extract.any():
-            extracted = (
-                df_rec.loc[needs_extract, 'model_long'].astype(str)
-                .str.extract(r'with\s+(.+?)\s+\([EN][ME]\)', expand=False)
-                .str.strip()
+            df_rec['_composition'] = df_rec['composition'].where(
+                df_rec['composition'].notna()
+                & (df_rec['composition'].astype(str).str.strip() != '')
             )
-            df_rec.loc[needs_extract, '_composition'] = extracted
+        else:
+            df_rec['_composition'] = None
+        # Warn about ensemble rows missing composition
+        is_ensemble = df_rec['model_short'].astype(str).str.upper().isin(['EM', 'NE'])
+        missing_comp = is_ensemble & df_rec['_composition'].isna()
+        if missing_comp.any():
+            logger.warning(
+                "%d ensemble skill metric rows have no composition; "
+                "these will be written with composition=None",
+                missing_comp.sum(),
+            )
 
         # Build nullable float columns
         metric_cols = {}

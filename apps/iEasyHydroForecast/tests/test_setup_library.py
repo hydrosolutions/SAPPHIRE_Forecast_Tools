@@ -334,8 +334,7 @@ class TestReadDailyProbabilisticMlForecastsPentad(unittest.TestCase):
         result = sl.read_daily_probabilistic_ml_forecasts_pentad(
             self.tide_test_file,
             "TIDE",
-            "TIDE model (TIDE)",
-            "TIDE"
+            model_short="TIDE"
         )
         print(f"\n\nresult:\n{result}")
         
@@ -344,7 +343,6 @@ class TestReadDailyProbabilisticMlForecastsPentad(unittest.TestCase):
         self.assertIn("forecasted_discharge", result.columns)
         self.assertIn("model_short", result.columns)
         self.assertEqual(result["model_short"].unique()[0], "TIDE")
-        self.assertEqual(result["model_long"].unique()[0], "TIDE model (TIDE)")
         
         # Verify the Q50 column was renamed correctly to forecasted_discharge
         # We may have no forecasts for certain forecast dates
@@ -374,8 +372,7 @@ class TestReadDailyProbabilisticMlForecastsPentad(unittest.TestCase):
         result = sl.read_daily_probabilistic_ml_forecasts_pentad(
             self.arima_test_file,
             "ARIMA",
-            "ARIMA Model (ARIMA)",
-            "ARIMA"
+            model_short="ARIMA"
         )
         
         # Assert
@@ -522,9 +519,8 @@ class TestReadDailyProbabilisticMlForecastsPentad(unittest.TestCase):
         try:
             # Call the function
             result = sl.read_daily_probabilistic_ml_forecasts_pentad(
-                filepath, 
+                filepath,
                 model="TEST",
-                model_long="Test Model", 
                 model_short="TM"
             )
             print(f"\n\nresult:\n{result}")
@@ -574,7 +570,6 @@ class TestReadDailyProbabilisticMlForecastsPentad(unittest.TestCase):
                     )
             
             # Verify all required columns exist with correct types
-            self.assertIn('model_long', result.columns)
             self.assertIn('model_short', result.columns)
             self.assertIn('pentad_in_month', result.columns)
             self.assertIn('pentad_in_year', result.columns)
@@ -605,9 +600,8 @@ class TestReadDailyProbabilisticMlForecastsPentad(unittest.TestCase):
         try:
             # Call the function
             result = sl.read_daily_probabilistic_ml_forecasts_pentad(
-                filepath, 
+                filepath,
                 model="ARIMA",
-                model_long="ARIMA Model", 
                 model_short="AR"
             )
                 
@@ -657,14 +651,13 @@ class TestReadDailyProbabilisticMlForecastsPentad(unittest.TestCase):
                     )
             
             # Check for required columns
-            required_columns = ['code', 'date', 'forecasted_discharge', 
-                                'model_long', 'model_short', 
+            required_columns = ['code', 'date', 'forecasted_discharge',
+                                'model_short',
                                 'pentad_in_month', 'pentad_in_year']
             for col in required_columns:
                 self.assertIn(col, result.columns)
-            
+
             # Check if model info is correctly added
-            self.assertEqual(result['model_long'].iloc[0], "ARIMA Model")
             self.assertEqual(result['model_short'].iloc[0], "AR")
             
             # Verify pentad calculations are correct
@@ -693,9 +686,8 @@ class TestReadDailyProbabilisticMlForecastsPentad(unittest.TestCase):
         try:
             # Call the function
             result = sl.read_daily_probabilistic_ml_forecasts_pentad(
-                filepath, 
+                filepath,
                 model="TEST",
-                model_long="Test Model", 
                 model_short="TM"
             )
                 
@@ -748,14 +740,13 @@ class TestReadDailyProbabilisticMlForecastsPentad(unittest.TestCase):
                              f"Missing result for code {code} and date {date}")
             
             # Check for required columns
-            required_columns = ['code', 'date', 'forecasted_discharge', 
-                               'model_long', 'model_short', 
+            required_columns = ['code', 'date', 'forecasted_discharge',
+                               'model_short',
                                'pentad_in_month', 'pentad_in_year']
             for col in required_columns:
                 self.assertIn(col, result.columns)
-            
+
             # Check if model info is correctly added
-            self.assertEqual(result['model_long'].iloc[0], "Test Model")
             self.assertEqual(result['model_short'].iloc[0], "TM")
             
             # Verify that each station's data is correctly aggregated
@@ -803,7 +794,7 @@ class TestReadDailyProbabilisticMLForecastsPentad(unittest.TestCase):
 
         # Process using the function to test
         self.test_data = sl.read_daily_probabilistic_ml_forecasts_pentad(
-            self.file_path, 'test', 't', 'test')
+            self.file_path, 'test', model_short='test')
         # Cast code column to string
         self.test_data['code'] = self.test_data['code'].astype(str)
         self.test_data['date'] = pd.to_datetime(self.test_data['date']).dt.date
@@ -878,7 +869,7 @@ class TestReadDailyProbabilisticMLForecastsDecade(unittest.TestCase):
 
         # Process using the function to test
         self.test_data = sl.read_daily_probabilistic_ml_forecasts_decade(
-            self.file_path, 'test', 't', 'test')
+            self.file_path, 'test', model_short='test')
         # Cast code column to string
         self.test_data['code'] = self.test_data['code'].astype(str)
         self.test_data['date'] = pd.to_datetime(self.test_data['date']).dt.date

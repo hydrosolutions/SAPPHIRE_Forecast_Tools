@@ -24,8 +24,6 @@ sys.path.insert(
 )
 sys.path.insert(0, os.path.dirname(__file__))
 
-from test_constants import MODEL_LONG_NAMES
-
 SCRIPT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 
 
@@ -76,7 +74,6 @@ def _make_skill_csv(
             rows.append({
                 period_col: 1,
                 'code': station,
-                'model_long': MODEL_LONG_NAMES[model_short],
                 'model_short': model_short,
                 'sdivsigma': 0.3,
                 'nse': 0.9,
@@ -127,7 +124,6 @@ def _make_modelled_df(
                     'forecasted_discharge': discharge_values.get(
                         model_short, 100.0
                     ),
-                    'model_long': MODEL_LONG_NAMES[model_short],
                     'model_short': model_short,
                 })
     return pd.DataFrame(rows)
@@ -310,7 +306,7 @@ class TestOperationalWiringIntegration:
         tmp_path = env_setup
         # Write an empty skill CSV (header only)
         empty_skill = pd.DataFrame(columns=[
-            'pentad_in_year', 'code', 'model_long', 'model_short',
+            'pentad_in_year', 'code', 'model_short',
             'sdivsigma', 'nse', 'delta', 'accuracy', 'mae', 'n_pairs',
         ])
         _write_csv(
@@ -765,7 +761,7 @@ class TestMismatchedInputShapes:
         observed = _make_observed_df()
         empty_modelled = pd.DataFrame(columns=[
             'code', 'date', 'pentad_in_year', 'pentad_in_month',
-            'forecasted_discharge', 'model_long', 'model_short',
+            'forecasted_discharge', 'model_short',
         ])
 
         with patch.dict(os.environ, {'SAPPHIRE_PREDICTION_MODE': 'PENTAD'}):
@@ -870,7 +866,6 @@ def _make_recalc_observed(stations, dates, base_values):
                 'code': station, 'date': date,
                 'discharge_avg': base_values[station],
                 'delta': 5.0,
-                'model_long': 'observed',
                 'model_short': 'obs',
             })
     return pd.DataFrame(rows)
@@ -879,7 +874,11 @@ def _make_recalc_observed(stations, dates, base_values):
 def _make_recalc_modelled(
     stations, dates, model_values, horizon_type='pentad',
 ):
-    """Build modelled DF with required columns for calculate_skill_metrics_*."""
+    """Build modelled DF with required columns for calculate_skill_metrics_*.
+
+    Args:
+        model_values: dict mapping model_short -> {station: discharge}.
+    """
     import tag_library as tl
 
     period_col = (
@@ -895,13 +894,13 @@ def _make_recalc_modelled(
     for date in dates:
         pim = str(get_period_func(date + pd.Timedelta(days=1)))
         for station in stations:
-            for ms, ml in model_values.keys():
+            for ms in model_values.keys():
                 rows.append({
                     'code': station, 'date': date,
                     period_col: 1,
                     period_in_month_col: pim,
-                    'forecasted_discharge': model_values[(ms, ml)][station],
-                    'model_long': ml, 'model_short': ms,
+                    'forecasted_discharge': model_values[ms][station],
+                    'model_short': ms,
                 })
     return pd.DataFrame(rows)
 
@@ -941,7 +940,6 @@ class TestRecalcWiringIntegration:
                     'code': station, 'date': date,
                     'discharge_avg': obs_val,
                     'delta': 5.0,
-                    'model_long': 'observed',
                     'model_short': 'obs',
                 })
         observed = pd.DataFrame(orows)
@@ -958,7 +956,6 @@ class TestRecalcWiringIntegration:
                     'pentad_in_year': 1,
                     'pentad_in_month': pim,
                     'forecasted_discharge': obs_val + 1.0,
-                    'model_long': MODEL_LONG_NAMES['LR'],
                     'model_short': 'LR',
                 })
                 frows.append({
@@ -966,7 +963,6 @@ class TestRecalcWiringIntegration:
                     'pentad_in_year': 1,
                     'pentad_in_month': pim,
                     'forecasted_discharge': obs_val - 1.0,
-                    'model_long': MODEL_LONG_NAMES['TFT'],
                     'model_short': 'TFT',
                 })
         modelled = pd.DataFrame(frows)
@@ -1260,9 +1256,11 @@ class TestNEExclusionIntegration:
                     f"EM should be mean(LR,TFT)=105, got {em_discharge}. "
                     f"NE was not excluded from ensemble."
                 )
-                # Verify composition string does NOT contain NE
-                composition = em_rows['model_long'].iloc[0]
-                assert 'NE' not in composition or 'Neural' not in composition
+                # Verify composition does NOT contain NE
+                comp = em_rows['composition'].iloc[0]
+                assert 'NE' not in comp, (
+                    f"NE should be excluded from composition, got: {comp}"
+                )
 
 
 # ===================================================================
@@ -1293,7 +1291,6 @@ class TestCrossWorkflowRoundtrip:
                 'code': '15001', 'date': date,
                 'discharge_avg': float(obs_val),
                 'delta': 5.0,
-                'model_long': 'observed',
                 'model_short': 'obs',
             })
         observed = pd.DataFrame(orows)
@@ -1307,7 +1304,6 @@ class TestCrossWorkflowRoundtrip:
                 'pentad_in_year': 1,
                 'pentad_in_month': pim,
                 'forecasted_discharge': float(obs_val + 1),
-                'model_long': MODEL_LONG_NAMES['LR'],
                 'model_short': 'LR',
             })
             frows.append({
@@ -1315,7 +1311,6 @@ class TestCrossWorkflowRoundtrip:
                 'pentad_in_year': 1,
                 'pentad_in_month': pim,
                 'forecasted_discharge': float(obs_val - 1),
-                'model_long': MODEL_LONG_NAMES['TFT'],
                 'model_short': 'TFT',
             })
         modelled = pd.DataFrame(frows)
@@ -1401,7 +1396,6 @@ class TestVaryingDelta:
                     'code': station, 'date': date,
                     'discharge_avg': obs_val,
                     'delta': deltas[station],
-                    'model_long': 'observed',
                     'model_short': 'obs',
                 })
         observed = pd.DataFrame(orows)
@@ -1417,7 +1411,6 @@ class TestVaryingDelta:
                     'pentad_in_year': 1,
                     'pentad_in_month': pim,
                     'forecasted_discharge': obs_val + 5.0,
-                    'model_long': MODEL_LONG_NAMES['LR'],
                     'model_short': 'LR',
                 })
         modelled = pd.DataFrame(frows)
@@ -1497,7 +1490,6 @@ class TestLogMostRecentForecasts:
             'pentad_in_year': 1,
             'pentad_in_month': '1',
             'forecasted_discharge': 105.0,
-            'model_long': MODEL_LONG_NAMES['EM'],
             'model_short': 'EM',
         }])
         modelled = pd.concat([modelled, em_rows], ignore_index=True)

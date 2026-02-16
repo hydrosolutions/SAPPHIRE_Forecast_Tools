@@ -46,6 +46,26 @@ def model_short_agg(x: pd.Series) -> str:
     return 'EM'
 
 
+def composition_agg(model_shorts: pd.Series) -> str:
+    """Build composition string from model_short values.
+
+    >>> composition_agg(pd.Series(["LR", "TFT", "TiDE"]))
+    'LR, TFT, TiDE'
+    """
+    return ', '.join(sorted(model_shorts.unique()))
+
+
+def is_multi_model_composition(composition: str) -> bool:
+    """True if composition contains 2+ models.
+
+    >>> is_multi_model_composition('LR, TFT')
+    True
+    >>> is_multi_model_composition('TFT')
+    False
+    """
+    return bool(composition) and ',' in composition
+
+
 def _is_multi_model_ensemble(model_long_str: str) -> bool:
     """True if the composition string contains 2+ models.
 
@@ -152,9 +172,9 @@ def create_ensemble_forecasts(
     Args:
         forecasts: Simulated/modelled forecasts with columns
             [code, date, <period_col>, forecasted_discharge,
-             model_long, model_short, <period_in_month_col>].
+             model_short, <period_in_month_col>].
         skill_stats: Pre-calculated skill metrics with columns
-            [<period_col>, code, model_long, model_short, sdivsigma,
+            [<period_col>, code, model_short, sdivsigma,
              nse, delta, accuracy, mae, n_pairs].
         observed: Observed data with columns
             [code, date, discharge_avg, delta].
@@ -187,9 +207,7 @@ def create_ensemble_forecasts(
             df['code'] = df['code'].astype(str)
 
     # Step 2: use merge to get qualifying forecast rows
-    # We need forecasts that match (period_col, code, model_long, model_short)
-    # with the highly-skilled skill_stats
-    merge_keys = [period_col, 'code', 'model_long', 'model_short']
+    merge_keys = [period_col, 'code', 'model_short']
     qualifying = forecasts.merge(
         skill_stats_ensemble[merge_keys].drop_duplicates(),
         on=merge_keys,
@@ -209,13 +227,17 @@ def create_ensemble_forecasts(
     ensemble_avg = qualifying.groupby(['date', 'code']).agg({
         period_col: 'first',
         'forecasted_discharge': 'mean',
-        'model_long': model_long_agg,
-        'model_short': model_short_agg,
+        'model_short': composition_agg,
     }).reset_index()
+    # model_short now holds the composition string (e.g. "LR, TFT")
+    ensemble_avg = ensemble_avg.rename(
+        columns={'model_short': 'composition'}
+    )
+    ensemble_avg['model_short'] = 'EM'
 
     # Step 5+6: discard single-model or empty ensembles
     ensemble_avg = ensemble_avg[
-        ensemble_avg['model_long'].apply(_is_multi_model_ensemble)
+        ensemble_avg['composition'].apply(is_multi_model_composition)
     ].copy()
 
     if ensemble_avg.empty:
@@ -229,7 +251,7 @@ def create_ensemble_forecasts(
         on=['code', 'date'],
     )
 
-    number_of_models = forecasts['model_long'].nunique()
+    number_of_models = forecasts['model_short'].nunique()
     if number_of_models > 1 and not ensemble_merged.empty:
         ensemble_skill_stats = _calculate_ensemble_skill(
             ensemble_merged,
@@ -246,9 +268,13 @@ def create_ensemble_forecasts(
         ).apply(get_period_in_month_func)
 
         # Step 8: outer join ensemble rows into forecasts
+        # Ensure forecasts has composition column for the outer merge
+        if 'composition' not in forecasts.columns:
+            forecasts = forecasts.copy()
+            forecasts['composition'] = ''
         join_cols = [
             'code', 'date', period_in_month_col, period_col,
-            'forecasted_discharge', 'model_long', 'model_short',
+            'forecasted_discharge', 'model_short', 'composition',
         ]
         joint_forecasts = pd.merge(
             forecasts,
@@ -273,7 +299,7 @@ def _calculate_ensemble_skill(
     Uses calculate_all_skill_metrics to compute all 6 metrics
     (sdivsigma, nse, mae, n_pairs, delta, accuracy) in one groupby.
     """
-    group_cols = [period_col, 'code', 'model_long', 'model_short']
+    group_cols = [period_col, 'code', 'model_short', 'composition']
     needed_cols = ['discharge_avg', 'forecasted_discharge', 'delta']
 
     skill = ensemble_df.groupby(group_cols)[needed_cols].apply(

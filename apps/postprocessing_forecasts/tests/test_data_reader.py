@@ -17,7 +17,6 @@ from src.data_reader import (
     read_skill_metrics,
     _read_skill_metrics_csv,
     _normalize_api_skill_metrics,
-    MODEL_SHORT_TO_LONG,
 )
 
 
@@ -30,7 +29,6 @@ class TestReadSkillMetricsCsv:
         df = pd.DataFrame({
             'pentad_in_year': [1, 2],
             'code': ['10001', '10002'],
-            'model_long': ['Linear regression (LR)', 'Linear regression (LR)'],
             'model_short': ['LR', 'LR'],
             'sdivsigma': [0.3, 0.4],
             'nse': [0.9, 0.85],
@@ -137,7 +135,6 @@ class TestNormalizeApiSkillMetrics:
         assert 'pentad_in_year' in result.columns
         assert 'horizon_in_year' not in result.columns
         assert 'model_short' in result.columns
-        assert 'model_long' in result.columns
 
     def test_renames_api_columns_decad(self):
         """API column horizon_in_year -> decad_in_year."""
@@ -149,27 +146,29 @@ class TestNormalizeApiSkillMetrics:
         result = _normalize_api_skill_metrics(df, 'decad')
         assert 'decad_in_year' in result.columns
 
-    def test_reconstructs_model_long(self):
-        """model_long is reconstructed from model_short via mapping."""
+    def test_model_type_becomes_model_short(self):
+        """model_type is renamed to model_short."""
         df = pd.DataFrame({
             'horizon_in_year': [1, 2, 3],
             'model_type': ['LR', 'TFT', 'EM'],
             'code': ['10001'] * 3,
         })
         result = _normalize_api_skill_metrics(df, 'pentad')
-        assert result.loc[0, 'model_long'] == 'Linear regression (LR)'
-        assert result.loc[1, 'model_long'] == 'Temporal Fusion Transformer (TFT)'
-        assert result.loc[2, 'model_long'] == 'Ensemble Mean (EM)'
+        assert result.loc[0, 'model_short'] == 'LR'
+        assert result.loc[1, 'model_short'] == 'TFT'
+        assert result.loc[2, 'model_short'] == 'EM'
+        assert 'model_long' not in result.columns
 
-    def test_unknown_model_gets_fallback(self):
-        """Unknown model types get 'Unknown (<type>)' as model_long."""
+    def test_unknown_model_passthrough(self):
+        """Unknown model types pass through as model_short."""
         df = pd.DataFrame({
             'horizon_in_year': [1],
             'model_type': ['NEWMODEL'],
             'code': ['10001'],
         })
         result = _normalize_api_skill_metrics(df, 'pentad')
-        assert result.loc[0, 'model_long'] == 'Unknown (NEWMODEL)'
+        assert result.loc[0, 'model_short'] == 'NEWMODEL'
+        assert 'model_long' not in result.columns
 
 
 class TestReadSkillMetricsIntegration:
@@ -210,7 +209,6 @@ class TestReadSkillMetricsIntegration:
             'pentad_in_year': [1],
             'code': ['10001'],
             'model_short': ['LR'],
-            'model_long': ['Linear regression (LR)'],
             'sdivsigma': [0.3],
         })
 
@@ -249,10 +247,6 @@ class TestReadSkillMetricsIntegration:
             'pentad_in_year': [1, 2],
             'code': ['10001', '10002'],
             'model_short': ['LR', 'TFT'],
-            'model_long': [
-                'Linear regression (LR)',
-                'Temporal Fusion Transformer (TFT)',
-            ],
             'sdivsigma': [0.3, 0.4],
             'nse': [0.9, 0.85],
             'delta': [5.0, 6.0],
@@ -377,11 +371,11 @@ class TestDataReaderMissingColumns:
             assert result.iloc[0]['code'] == '15001'
 
     def test_normalize_api_missing_model_type_graceful(self):
-        """API response missing model_type → no model_short/model_long columns.
+        """API response missing model_type → no model_short column.
 
         Documents current behavior: _normalize_api_skill_metrics uses
         df.rename() which silently skips missing columns. If model_type
-        is absent, model_short won't exist and model_long won't be derived.
+        is absent, model_short won't exist.
         """
         df = pd.DataFrame({
             'horizon_in_year': [1],
@@ -392,9 +386,8 @@ class TestDataReaderMissingColumns:
         result = _normalize_api_skill_metrics(df, 'pentad')
         # horizon_in_year → pentad_in_year rename still works
         assert 'pentad_in_year' in result.columns
-        # model_short and model_long not derived
+        # model_short not derived
         assert 'model_short' not in result.columns
-        assert 'model_long' not in result.columns
         # Other columns preserved
         assert result.iloc[0]['sdivsigma'] == 0.3
 
@@ -416,5 +409,3 @@ class TestDataReaderMissingColumns:
         # model_type → model_short rename still works
         assert 'model_short' in result.columns
         assert result.iloc[0]['model_short'] == 'LR'
-        # model_long derived from model_short
-        assert result.iloc[0]['model_long'] == 'Linear regression (LR)'

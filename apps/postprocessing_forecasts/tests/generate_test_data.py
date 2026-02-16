@@ -67,15 +67,6 @@ BIASES = {
     'TSMixer': {'99001': -0.2, '99002': 20.0, '99003': 35.0},
 }
 
-MODEL_LONG_NAMES = {
-    'LR': 'Linear regression (LR)',
-    'TFT': 'Temporal Fusion Transformer (TFT)',
-    'TiDE': 'Time-series Dense Encoder (TiDE)',
-    'TSMixer': 'Time-Series Mixer (TSMixer)',
-    'EM': 'Ensemble Mean (EM)',
-    'NE': 'Neural Ensemble (NE)',
-}
-
 YEARS = range(2022, 2027)
 
 # Pentad dates: Jan 5, 10, 15, 20, 25 each year
@@ -377,7 +368,6 @@ def generate_skill_metrics_pentad():
                 rows.append({
                     'pentad_in_year': piy,
                     'code': station,
-                    'model_long': MODEL_LONG_NAMES[model],
                     'model_short': model,
                     **metrics,
                 })
@@ -410,7 +400,6 @@ def generate_skill_metrics_decad():
                 rows.append({
                     'decad_in_year': diy,
                     'code': station,
-                    'model_long': MODEL_LONG_NAMES[model],
                     'model_short': model,
                     **metrics,
                 })
@@ -477,7 +466,6 @@ def generate_combined_forecasts_pentad():
                     'forecasted_discharge': fc,
                     'rsquared': 0.95,
                     'id': '',
-                    'model_long': MODEL_LONG_NAMES[model],
                     'model_short': model,
                     'pentad_in_month': pim,
                     'pentad_in_year': piy,
@@ -490,7 +478,6 @@ def generate_combined_forecasts_pentad():
                     'q50': fc,
                     'q75': fc * 1.05,
                     'q95': fc * 1.1,
-                    'model_type_description': MODEL_LONG_NAMES[model],
                     'discharge': fc,
                 })
 
@@ -513,7 +500,6 @@ def generate_combined_forecasts_pentad():
                     'forecasted_discharge': round(em_val, 3),
                     'rsquared': '',
                     'id': '',
-                    'model_long': 'Ens. Mean with LR, TFT, TiDE (EM)',
                     'model_short': 'EM',
                     'pentad_in_month': pim,
                     'pentad_in_year': piy,
@@ -526,7 +512,6 @@ def generate_combined_forecasts_pentad():
                     'q50': '',
                     'q75': '',
                     'q95': '',
-                    'model_type_description': 'Ensemble Mean (EM)',
                     'discharge': round(em_val, 3),
                 })
 
@@ -572,7 +557,6 @@ def generate_combined_forecasts_decad():
                     'forecasted_discharge': fc,
                     'rsquared': 0.95,
                     'id': '',
-                    'model_long': MODEL_LONG_NAMES[model],
                     'model_short': model,
                     'decad_in_month': dim,
                     'decad_in_year': diy,
@@ -585,7 +569,6 @@ def generate_combined_forecasts_decad():
                     'q50': fc,
                     'q75': fc * 1.05,
                     'q95': fc * 1.1,
-                    'model_type_description': MODEL_LONG_NAMES[model],
                     'discharge': fc,
                 })
 
@@ -606,7 +589,6 @@ def generate_combined_forecasts_decad():
                     'forecasted_discharge': round(em_val, 3),
                     'rsquared': '',
                     'id': '',
-                    'model_long': 'Ens. Mean with LR, TFT, TiDE (EM)',
                     'model_short': 'EM',
                     'decad_in_month': dim,
                     'decad_in_year': diy,
@@ -619,7 +601,6 @@ def generate_combined_forecasts_decad():
                     'q50': '',
                     'q75': '',
                     'q95': '',
-                    'model_type_description': 'Ensemble Mean (EM)',
                     'discharge': round(em_val, 3),
                 })
 

@@ -33,8 +33,6 @@ sys.path.insert(
 )
 sys.path.insert(0, os.path.dirname(__file__))
 
-from test_constants import MODEL_LONG_NAMES
-
 SCRIPT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 TEST_DATA_DIR = os.path.join(os.path.dirname(__file__), 'test_data')
 
@@ -355,7 +353,7 @@ class TestOperationalIntegration:
         # Replace skill CSV with header-only
         skill_path = os.path.join(data_dir, 'skill_metrics_pentad.csv')
         empty_skill = pd.DataFrame(columns=[
-            'pentad_in_year', 'code', 'model_long', 'model_short',
+            'pentad_in_year', 'code', 'model_short',
             'sdivsigma', 'nse', 'delta', 'accuracy', 'mae', 'n_pairs',
         ])
         empty_skill.to_csv(skill_path, index=False)
@@ -510,7 +508,7 @@ class TestMaintenanceIntegration:
             if not existing.empty:
                 em_row = existing.iloc[0].copy()
                 em_row['model_short'] = 'EM'
-                em_row['model_long'] = 'Ens. Mean with LR, TFT (EM)'
+                em_row['composition'] = 'LR, TFT'
                 em_row['forecasted_discharge'] = 100.0
                 gap_rows.append(em_row)
         if gap_rows:
@@ -895,7 +893,7 @@ class TestRecalcIntegration:
 
         skill = _read_output_csv(data_dir, 'skill_metrics_pentad.csv')
         expected_cols = {
-            'pentad_in_year', 'code', 'model_long', 'model_short',
+            'pentad_in_year', 'code', 'model_short',
             'sdivsigma', 'nse', 'delta', 'accuracy', 'mae', 'n_pairs',
         }
         actual_cols = set(skill.columns)
@@ -944,10 +942,10 @@ class TestEdgeCases:
 
         # NE should NOT be in any EM composition
         em = output[output['model_short'] == 'EM']
-        if not em.empty and 'model_long' in em.columns:
+        if not em.empty and 'composition' in em.columns:
             for _, row in em.iterrows():
-                composition = str(row.get('model_long', ''))
-                assert 'NE' not in composition and 'Neural' not in composition, (
+                composition = str(row.get('composition', ''))
+                assert 'NE' not in composition, (
                     f"NE should not be in EM composition: {composition}"
                 )
 
@@ -1052,7 +1050,7 @@ class TestEdgeCases:
         if not existing.empty:
             em_row = existing.iloc[0].copy()
             em_row['model_short'] = 'EM'
-            em_row['model_long'] = 'Ens. Mean with LR, TFT (EM)'
+            em_row['composition'] = 'LR, TFT'
             df = pd.concat(
                 [df, pd.DataFrame([em_row])], ignore_index=True
             )

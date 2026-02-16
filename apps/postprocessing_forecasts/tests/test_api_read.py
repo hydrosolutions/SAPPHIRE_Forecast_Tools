@@ -173,10 +173,8 @@ class TestReadLRForecastsFromApi:
         assert 'code' in result.columns
         assert 'date' in result.columns
         assert 'forecasted_discharge' in result.columns
-        assert 'model_long' in result.columns
         assert 'model_short' in result.columns
         assert result['model_short'].iloc[0] == 'LR'
-        assert result['model_long'].iloc[0] == 'Linear regression (LR)'
 
     @patch('setup_library.SapphirePostprocessingClient')
     def test_decade_read_success(self, mock_client_class):
@@ -382,7 +380,6 @@ class TestReadMLForecastsFromApi:
         assert isinstance(result, pd.DataFrame)
         assert len(result) == 2
         assert result['model_short'].iloc[0] == 'TFT'
-        assert result['model_long'].iloc[0] == 'Temporal Fusion Transformer (TFT)'
 
     @patch('setup_library.SapphirePostprocessingClient')
     def test_tide_model_mapping(self, mock_client_class):
@@ -401,7 +398,6 @@ class TestReadMLForecastsFromApi:
         result = sl._read_ml_forecasts_from_api(model="TIDE", horizon_type="pentad")
 
         assert result['model_short'].iloc[0] == 'TiDE'
-        assert 'TiDE' in result['model_long'].iloc[0]
 
     @patch('setup_library.SapphirePostprocessingClient')
     def test_tsmixer_model_mapping(self, mock_client_class):
@@ -420,7 +416,6 @@ class TestReadMLForecastsFromApi:
         result = sl._read_ml_forecasts_from_api(model="TSMIXER", horizon_type="pentad")
 
         assert result['model_short'].iloc[0] == 'TSMixer'
-        assert 'TSMixer' in result['model_long'].iloc[0]
 
     @patch('setup_library.SapphirePostprocessingClient')
     def test_arima_model_mapping(self, mock_client_class):
@@ -439,7 +434,6 @@ class TestReadMLForecastsFromApi:
         result = sl._read_ml_forecasts_from_api(model="ARIMA", horizon_type="pentad")
 
         assert result['model_short'].iloc[0] == 'ARIMA'
-        assert 'ARIMA' in result['model_long'].iloc[0]
 
     @patch('setup_library.SapphirePostprocessingClient')
     def test_decade_horizon(self, mock_client_class):
@@ -538,7 +532,6 @@ class TestReadLinregForecastsApiIntegration:
             assert isinstance(forecasts, pd.DataFrame)
             assert isinstance(stats, pd.DataFrame)
             assert len(forecasts) == 2
-            assert 'model_long' in forecasts.columns
             assert 'model_short' in forecasts.columns
             assert forecasts['model_short'].iloc[0] == 'LR'
         finally:
@@ -566,7 +559,7 @@ class TestReadLinregForecastsApiIntegration:
         os.environ['SAPPHIRE_API_ENABLED'] = 'true'
         try:
             mock_api_data = create_mock_lr_forecast_data()
-            mock_api_data['model_long'] = 'Linear regression (LR)'
+            # model_long removed (INFRA-005)
             mock_api_data['model_short'] = 'LR'
             mock_api_read.return_value = mock_api_data
 
@@ -588,7 +581,7 @@ class TestReadLinregForecastsApiIntegration:
         try:
             mock_api_data = create_mock_lr_forecast_data()
             mock_api_data['horizon_type'] = 'decade'
-            mock_api_data['model_long'] = 'Linear regression (LR)'
+            # model_long removed (INFRA-005)
             mock_api_data['model_short'] = 'LR'
             mock_api_read.return_value = mock_api_data
 
@@ -643,7 +636,7 @@ class TestReadLinregForecastsApiIntegration:
         os.environ['SAPPHIRE_API_ENABLED'] = 'true'
         try:
             mock_api_data = create_mock_lr_forecast_data()
-            mock_api_data['model_long'] = 'Linear regression (LR)'
+            # model_long removed (INFRA-005)
             mock_api_data['model_short'] = 'LR'
             mock_api_read.return_value = mock_api_data
 
@@ -721,7 +714,7 @@ class TestReadMLForecastsApiIntegration:
         os.environ['SAPPHIRE_API_ENABLED'] = 'true'
         try:
             mock_api_data = create_mock_ml_forecast_data()
-            mock_api_data['model_long'] = 'Temporal Fusion Transformer (TFT)'
+            # model_long removed (INFRA-005)
             mock_api_data['model_short'] = 'TFT'
             mock_api_read.return_value = mock_api_data
 
@@ -744,7 +737,7 @@ class TestReadMLForecastsApiIntegration:
         try:
             mock_api_data = create_mock_ml_forecast_data()
             mock_api_data['horizon_type'] = 'decade'
-            mock_api_data['model_long'] = 'Temporal Fusion Transformer (TFT)'
+            # model_long removed (INFRA-005)
             mock_api_data['model_short'] = 'TFT'
             mock_api_read.return_value = mock_api_data
 
@@ -861,7 +854,6 @@ class TestReadObservedDataApiIntegration:
 
             assert isinstance(result, pd.DataFrame)
             assert len(result) == 2
-            assert 'model_long' in result.columns
             assert 'model_short' in result.columns
             assert result['model_short'].iloc[0] == 'Obs'
         finally:
@@ -1021,7 +1013,7 @@ class TestDefaultApiBehavior:
 
         try:
             mock_api_data = create_mock_lr_forecast_data()
-            mock_api_data['model_long'] = 'Linear regression (LR)'
+            # model_long removed (INFRA-005)
             mock_api_data['model_short'] = 'LR'
             mock_api_read.return_value = mock_api_data
 
@@ -1109,14 +1101,14 @@ class TestDataConsistency:
         os.environ['SAPPHIRE_API_ENABLED'] = 'true'
         try:
             mock_api_data = create_mock_lr_forecast_data()
-            mock_api_data['model_long'] = 'Linear regression (LR)'
+            # model_long removed (INFRA-005)
             mock_api_data['model_short'] = 'LR'
             mock_api_read.return_value = mock_api_data
 
             api_forecasts, api_stats = sl.read_linreg_forecasts_pentad()
 
             # Key columns should be present in both
-            key_columns = ['code', 'date', 'forecasted_discharge', 'model_short', 'model_long']
+            key_columns = ['code', 'date', 'forecasted_discharge', 'model_short']
             for col in key_columns:
                 assert col in csv_forecasts.columns, f"CSV missing column: {col}"
                 assert col in api_forecasts.columns, f"API missing column: {col}"

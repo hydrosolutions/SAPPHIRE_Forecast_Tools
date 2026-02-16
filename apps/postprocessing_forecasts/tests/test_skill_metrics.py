@@ -31,7 +31,6 @@ def observed():
         ]),
         'discharge_avg': [10.0, 12.0, 10.0, 12.0,
                           20.0, 22.0, 20.0, 22.0],
-        'model_long': ['Observed (Obs)'] * 8,
         'model_short': ['Obs'] * 8,
         'delta': [1.0, 1.0, 1.0, 1.0, 2.0, 2.0, 2.0, 2.0],
     })
@@ -52,7 +51,6 @@ def simulated():
             10.2, 10.3, 9.8, 11.9, 20.2, 22.3, 20.1, 21.7,
             10.1, 12.1, 10.05, 11.9, 20.1, 22.3, 19.9, 21.7,
         ],
-        'model_long': ['Model A (MA)'] * 8 + ['Model B (MB)'] * 8,
         'model_short': ['MA'] * 8 + ['MB'] * 8,
     })
     df['pentad_in_month'] = df['pentad_in_month'].astype(str)
@@ -104,7 +102,7 @@ class TestCalculateSkillMetricsPentad:
         )
         output = (
             merged.groupby(
-                ['pentad_in_year', 'code', 'model_long', 'model_short']
+                ['pentad_in_year', 'code', 'model_short']
             )[merged.columns]
             .apply(
                 skill_metrics.sdivsigma_nse,
@@ -121,7 +119,7 @@ class TestCalculateSkillMetricsPentad:
             observed, simulated
         )
         expected_columns = [
-            'pentad_in_year', 'code', 'model_long', 'model_short',
+            'pentad_in_year', 'code', 'model_short',
             'sdivsigma', 'nse', 'mae', 'n_pairs', 'delta', 'accuracy',
         ]
         for col in expected_columns:

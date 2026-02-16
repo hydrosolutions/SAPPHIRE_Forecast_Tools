@@ -1090,7 +1090,7 @@ def _read_lr_forecasts_from_api(
     pandas.DataFrame
         The LR forecast data with columns: code, date, forecasted_discharge,
         predictor, slope, intercept, horizon_value, horizon_in_year,
-        discharge_avg, q_mean, q_std_sigma, delta, rsquared, model_long, model_short.
+        discharge_avg, q_mean, q_std_sigma, delta, rsquared, model_short.
 
     Raises:
     -------
@@ -1171,8 +1171,7 @@ def _read_lr_forecasts_from_api(
         forecast_data['date'] = fl.parse_dates_robust(forecast_data['date'], 'date')
     forecast_data['code'] = forecast_data['code'].astype(str).str.replace(r'\.0$', '', regex=True)
 
-    # Add model columns
-    forecast_data["model_long"] = "Linear regression (LR)"
+    # Add model column
     forecast_data["model_short"] = "LR"
 
     # Sort by code and date
@@ -1212,7 +1211,7 @@ def _read_ml_forecasts_from_api(
     --------
     pandas.DataFrame
         The ML forecast data with columns: code, date, forecasted_discharge,
-        flag, q05, q25, q50, q75, q95, model_long, model_short.
+        flag, q05, q25, q50, q75, q95, model_short.
 
     Raises:
     -------
@@ -1226,22 +1225,20 @@ def _read_ml_forecasts_from_api(
     if horizon_type not in ('pentad', 'decade'):
         raise ValueError(f"horizon_type must be 'pentad' or 'decade', got: {horizon_type}")
 
-    # Model type mapping: API model_type -> (model_long, model_short)
-    # - model_long: Full descriptive name for display
-    # - model_short: Abbreviated name for column headers and compact display
+    # Model type mapping: API model_type -> model_short
     model_mapping = {
-        'TFT': ('Temporal Fusion Transformer (TFT)', 'TFT'),
-        'TIDE': ('Time-series Dense Encoder (TiDE)', 'TiDE'),
-        'TSMIXER': ('Time-Series Mixer (TSMixer)', 'TSMixer'),
-        'ARIMA': ('AutoRegressive Integrated Moving Average (ARIMA)', 'ARIMA'),
-        'RRMAMBA': ('Rainfall-Runoff Mamba (RRMAMBA)', 'RRMAMBA'),
+        'TFT': 'TFT',
+        'TIDE': 'TiDE',
+        'TSMIXER': 'TSMixer',
+        'ARIMA': 'ARIMA',
+        'RRMAMBA': 'RRMAMBA',
     }
 
     model_upper = model.upper()
     if model_upper not in model_mapping:
         raise ValueError(f"model must be one of {list(model_mapping.keys())}, got: {model}")
 
-    model_long, model_short = model_mapping[model_upper]
+    model_short = model_mapping[model_upper]
 
     if not SAPPHIRE_API_AVAILABLE:
         raise RuntimeError(
@@ -1319,8 +1316,7 @@ def _read_ml_forecasts_from_api(
         forecast_data['date'] = fl.parse_dates_robust(forecast_data['date'], 'date')
     forecast_data['code'] = forecast_data['code'].astype(str).str.replace(r'\.0$', '', regex=True)
 
-    # Add model columns
-    forecast_data["model_long"] = model_long
+    # Add model column
     forecast_data["model_short"] = model_short
 
     # Compute horizon columns from dates (matching read_linreg_forecasts_pentad)
@@ -1363,7 +1359,6 @@ def read_observed_pentadal_data():
         - code: station code
         - date: observation date
         - discharge_avg: observed discharge value
-        - model_long: "Observed (Obs)"
         - model_short: "Obs"
         - pentad_in_month: pentad within the month (1-6)
         - pentad_in_year: pentad within the year (1-72)
@@ -1436,8 +1431,7 @@ def read_observed_pentadal_data():
             else:
                 data = pd.DataFrame(columns=['code', 'date', 'discharge_avg'])
 
-            # Add model columns for observed data
-            data["model_long"] = "Observed (Obs)"
+            # Add model column for observed data
             data["model_short"] = "Obs"
 
             logger.info(f"Read {len(data)} rows of observed data for the pentadal forecast horizon from API.")
@@ -1462,7 +1456,6 @@ def read_observed_pentadal_data():
         data['code'] = data['code'].astype(str).str.replace(r'\.0$', '', regex=True)
 
     # Add a column model to the dataframe
-    data["model_long"] = "Observed (Obs)"
     data["model_short"] = "Obs"
 
     # If there is a column name 'pentad', rename it to 'pentad_in_month'
@@ -1484,7 +1477,6 @@ def read_observed_decadal_data():
         - code: station code
         - date: observation date
         - discharge_avg: observed discharge value
-        - model_long: "Observed (Obs)"
         - model_short: "Obs"
         - decad_in_month: decade within the month (1-3)
         - decad_in_year: decade within the year (1-36)
@@ -1552,8 +1544,7 @@ def read_observed_decadal_data():
             else:
                 data = pd.DataFrame(columns=['code', 'date', 'discharge_avg'])
 
-            # Add model columns for observed data
-            data["model_long"] = "Observed (Obs)"
+            # Add model column for observed data
             data["model_short"] = "Obs"
 
             logger.info(f"Read {len(data)} rows of observed data for the decadal forecast horizon from API.")
@@ -1578,7 +1569,6 @@ def read_observed_decadal_data():
         data['code'] = data['code'].astype(str).str.replace(r'\.0$', '', regex=True)
 
     # Add a column model to the dataframe
-    data["model_long"] = "Observed (Obs)"
     data["model_short"] = "Obs"
 
     logger.info(f"Read {len(data)} rows of observed data for the decadal forecast horizon from CSV.")
@@ -1598,7 +1588,7 @@ def read_linreg_forecasts_pentad():
 
     Returns:
     forecasts (pandas.DataFrame): The linear regression forecasts for the
-        pentadal forecast horizon with added model_long and model_short columns.
+        pentadal forecast horizon with added model_short column.
     stats (pandas.DataFrame): The statistics of the observed data for the
         pentadal forecast horizon.
 
@@ -1702,7 +1692,6 @@ def read_linreg_forecasts_pentad():
     data.drop_duplicates(subset=["date", "code"], keep="last", inplace=True)
 
     # Add a column model to the dataframe
-    data["model_long"] = "Linear regression (LR)"
     data["model_short"] = "LR"
 
     # Split the data into forecasts and statistics
@@ -1749,7 +1738,7 @@ def read_linreg_forecasts_decade():
 
     Returns:
     forecasts (pandas.DataFrame): The linear regression forecasts for the
-        decadal forecast horizon with added model_long and model_short columns.
+        decadal forecast horizon with added model_short column.
     stats (pandas.DataFrame): The statistics of the observed data for the
         decadal forecast horizon.
 
@@ -1853,7 +1842,6 @@ def read_linreg_forecasts_decade():
     data.drop_duplicates(subset=["date", "code"], keep="last", inplace=True)
 
     # Add a column model to the dataframe
-    data["model_long"] = "Linear regression (LR)"
     data["model_short"] = "LR"
 
     # Split the data into forecasts and statistics
@@ -1887,7 +1875,7 @@ def read_linreg_forecasts_decade():
 
     return forecasts, stats
 
-def read_daily_probabilistic_ml_forecasts_pentad(filepath, model, model_long, model_short):
+def read_daily_probabilistic_ml_forecasts_pentad(filepath, model, model_long=None, *, model_short):
     """
     Reads in forecast results from probabilistic machine learning models for the pentadal forecast.
     Added robust error handling.
@@ -2011,7 +1999,6 @@ def read_daily_probabilistic_ml_forecasts_pentad(filepath, model, model_long, mo
         forecast.rename(columns=columns_to_rename, inplace=True)
 
         # Add model information
-        forecast["model_long"] = model_long
         forecast["model_short"] = model_short
 
         # Recalculate pentad in month and pentad in year if date column exists
@@ -2031,7 +2018,7 @@ def read_daily_probabilistic_ml_forecasts_pentad(filepath, model, model_long, mo
         logger.warning(f"Error processing {model} forecast data from {filepath}: {e}")
         return pd.DataFrame()
 
-def read_daily_probabilistic_ml_forecasts_decade(filepath, model, model_long, model_short):
+def read_daily_probabilistic_ml_forecasts_decade(filepath, model, model_long=None, *, model_short):
     """
     Reads in forecast results from probabilistic machine learning models for the decadal forecast.
     Added robust error handling.
@@ -2039,7 +2026,7 @@ def read_daily_probabilistic_ml_forecasts_decade(filepath, model, model_long, mo
     Args:
         filepath (str): The path to the file with the forecast results.
         model (str): The model to read the forecast results from.
-        model_long (str): The long name of the model.
+        model_long (str): Deprecated, unused. Will be removed in a future release.
         model_short (str): The short name of the model.
 
     Returns:
@@ -2094,7 +2081,6 @@ def read_daily_probabilistic_ml_forecasts_decade(filepath, model, model_long, mo
         forecast.rename(columns=columns_to_rename, inplace=True)
 
         # Add model information
-        forecast["model_long"] = model_long
         forecast["model_short"] = model_short
 
         # Recalculate pentad in month and pentad in year if date column exists
@@ -2186,7 +2172,7 @@ def read_csv_with_multiple_date_formats(filepath):
         logger.warning(f"Error reading CSV file {filepath}: {e}")
         return pd.DataFrame()
 
-def read_daily_probabilistic_conceptmod_forecasts_pentad(filepath, code, model_long, model_short):
+def read_daily_probabilistic_conceptmod_forecasts_pentad(filepath, code, model_long=None, *, model_short):
     """
     Reads in forecast results from probabilistic conceptual models for the pentadal forecast.
     Added robust error handling.
@@ -2194,7 +2180,7 @@ def read_daily_probabilistic_conceptmod_forecasts_pentad(filepath, code, model_l
     Args:
         filepath (str): The path to the file with the forecast results.
         code (str): The code of the hydropost for which to read the forecast results.
-        model_long (str): The long name of the model.
+        model_long (str): Deprecated, unused. Will be removed in a future release.
         model_short (str): The short name of the model.
 
     Returns:
@@ -2267,7 +2253,6 @@ def read_daily_probabilistic_conceptmod_forecasts_pentad(filepath, code, model_l
         forecast.rename(columns=columns_to_rename, inplace=True)
 
         # Add model information
-        forecast.loc[:, "model_long"] = model_long
         forecast.loc[:, "model_short"] = model_short
 
         # Recalculate pentad in month and pentad in year
@@ -2291,7 +2276,7 @@ def read_daily_probabilistic_conceptmod_forecasts_pentad(filepath, code, model_l
         logger.warning(f"Error processing conceptual model forecast data from {filepath}: {e}")
         return pd.DataFrame()
     
-def read_daily_probabilistic_conceptmod_forecasts_decade(filepath, code, model_long, model_short):
+def read_daily_probabilistic_conceptmod_forecasts_decade(filepath, code, model_long=None, *, model_short):
     """
     Reads in forecast results from probabilistic conceptual models for the pentadal forecast.
     Added robust error handling.
@@ -2299,7 +2284,7 @@ def read_daily_probabilistic_conceptmod_forecasts_decade(filepath, code, model_l
     Args:
         filepath (str): The path to the file with the forecast results.
         code (str): The code of the hydropost for which to read the forecast results.
-        model_long (str): The long name of the model.
+        model_long (str): Deprecated, unused. Will be removed in a future release.
         model_short (str): The short name of the model.
 
     Returns:
@@ -2372,7 +2357,6 @@ def read_daily_probabilistic_conceptmod_forecasts_decade(filepath, code, model_l
         forecast.rename(columns=columns_to_rename, inplace=True)
 
         # Add model information
-        forecast.loc[:, "model_long"] = model_long
         forecast.loc[:, "model_short"] = model_short
 
         # Recalculate pentad in month and pentad in year
@@ -2459,7 +2443,6 @@ def read_conceptual_model_forecast_pentad(filepath):
         forecast = read_daily_probabilistic_conceptmod_forecasts_pentad(
             filepath,
             code=code,
-            model_long="Rainfall runoff assimilation model (RRAM)",
             model_short="RRAM"
         )
 
@@ -2509,7 +2492,6 @@ def read_conceptual_model_forecast_decade(filepath):
         forecast = read_daily_probabilistic_conceptmod_forecasts_decade(
             filepath,
             code=code,
-            model_long="Rainfall runoff assimilation model (RRAM)",
             model_short="RRAM"
         )
 
@@ -2796,22 +2778,18 @@ def read_machine_learning_forecasts_pentad(model):
     if model == 'TFT':
         filename = f"pentad_{model}_forecast.csv".format(model=model)
         hindcast_filename = f"{model}_PENTAD_hindcast_daily*.csv".format(model=model)
-        model_long = "Temporal Fusion Transformer (TFT)"
         model_short = "TFT"
     elif model == 'TIDE':
         filename = f"pentad_{model}_forecast.csv".format(model=model)
         hindcast_filename = f"{model}_PENTAD_hindcast_daily*.csv".format(model=model)
-        model_long = "Time-series Dense Encoder (TiDE)"
         model_short = "TiDE"
     elif model == 'TSMIXER':
         filename = f"pentad_{model}_forecast.csv".format(model=model)
         hindcast_filename = f"{model}_PENTAD_hindcast_daily*.csv".format(model=model)
-        model_long = "Time-Series Mixer (TSMixer)"
         model_short = "TSMixer"
     elif model == 'ARIMA':
         filename = f"pentad_{model}_forecast.csv".format(model=model)
         hindcast_filename = f"{model}_PENTAD_hindcast_daily*.csv".format(model=model)
-        model_long = "AutoRegressive Integrated Moving Average (ARIMA)"
         model_short = "ARIMA"
     else:
         logger.warning(f"Invalid model: {model}. Valid models are: 'TFT', 'TIDE', 'TSMIXER', 'ARIMA'")
@@ -2870,7 +2848,7 @@ def read_machine_learning_forecasts_pentad(model):
     logger.debug(f"{filepath}")
 
     try:
-        forecast = read_daily_probabilistic_ml_forecasts_pentad(filepath, model, model_long, model_short)
+        forecast = read_daily_probabilistic_ml_forecasts_pentad(filepath, model, model_short=model_short)
         # Save the most recent forecasts to CSV for comparison
         try:
             save_most_recent_forecasts(forecast, model_short)
@@ -2907,22 +2885,18 @@ def read_machine_learning_forecasts_decade(model):
     if model == 'TFT':
         filename = f"decad_{model}_forecast.csv".format(model=model)
         hindcast_filename = f"{model}_DECAD_hindcast_daily*.csv".format(model=model)
-        model_long = "Temporal Fusion Transformer (TFT)"
         model_short = "TFT"
     elif model == 'TIDE':
         filename = f"decad_{model}_forecast.csv".format(model=model)
         hindcast_filename = f"{model}_DECAD_hindcast_daily*.csv".format(model=model)
-        model_long = "Time-series Dense Encoder (TiDE)"
         model_short = "TiDE"
     elif model == 'TSMIXER':
         filename = f"decad_{model}_forecast.csv".format(model=model)
         hindcast_filename = f"{model}_DECAD_hindcast_daily*.csv".format(model=model)
-        model_long = "Time-Series Mixer (TSMixer)"
         model_short = "TSMixer"
     elif model == 'ARIMA':
         filename = f"decad_{model}_forecast.csv".format(model=model)
         hindcast_filename = f"{model}_DECAD_hindcast_daily*.csv".format(model=model)
-        model_long = "AutoRegressive Integrated Moving Average (ARIMA)"
         model_short = "ARIMA"
     else:
         logger.warning(f"Invalid model: {model}. Valid models are: 'TFT', 'TIDE', 'TSMIXER', 'ARIMA'")
@@ -2981,7 +2955,7 @@ def read_machine_learning_forecasts_decade(model):
     logger.debug(f"{filepath}")
 
     try:
-        forecast = read_daily_probabilistic_ml_forecasts_decade(filepath, model, model_long, model_short)
+        forecast = read_daily_probabilistic_ml_forecasts_decade(filepath, model, model_short=model_short)
         # Save the most recent forecasts to CSV for comparison
         try:
             save_most_recent_forecasts_decade(forecast, model_short)
@@ -3002,11 +2976,9 @@ def deprecated_read_linreg_forecasts_pentad_dummy(model):
     """
     if model == "A":
         filename = os.getenv("ieasyforecast_modelA_pentad_file")
-        model_long = "Model A (MA)"
         model_short = "MA"
     elif model == "B":
         filename = os.getenv("ieasyforecast_modelB_pentad_file")
-        model_long = "Model B (MB)"
         model_short = "MB"
     else:
         raise ValueError("Invalid model")
@@ -3028,7 +3000,6 @@ def deprecated_read_linreg_forecasts_pentad_dummy(model):
     data.drop_duplicates(subset=["date", "code"], keep="last", inplace=True)
 
     # Add a column model to the dataframe
-    data["model_long"] = model_long
     data["model_short"] = model_short
 
     # Split the data into forecasts and statistics
@@ -3064,10 +3035,10 @@ def calculate_neural_ensemble_forecast(forecasts):
     ensemble_mean = filtered_forecasts[["date", "code", "pentad_in_month", "pentad_in_year"]]\
         .drop_duplicates(keep='last').copy()
 
-    # Add model_long and model_short columns to the ensemble_mean dataframe
-    model_names = ', '.join(available_target_models)
-    ensemble_mean['model_long'] = f"Neural Ensemble with {model_names} (NE)"
-    ensemble_mean['model_short'] = f"NE"
+    # Add model columns to the ensemble_mean dataframe
+    model_names = ', '.join(sorted(set(available_target_models)))
+    ensemble_mean['model_short'] = "NE"
+    ensemble_mean['composition'] = model_names
 
     # Calculate the ensemble mean over the filtered models
     ensemble_mean_q = filtered_forecasts \
@@ -3086,9 +3057,9 @@ def calculate_neural_ensemble_forecast(forecasts):
 
     logger.info(f"Calculated ensemble forecast for models: {model_names}")
     logger.debug(f"Columns of forecasts:\n{forecasts.columns}")
-    logger.debug(f"Forecasts:\n{forecasts.loc[:,['date', 'code', 'model_long', 'forecasted_discharge']].head()}")
-    logger.debug(f"Forecasts:\n{forecasts.loc[:,['date', 'code', 'model_long', 'forecasted_discharge']].tail()}")
-    logger.debug(f"Unique models in forecasts:\n{forecasts['model_long'].unique()}")
+    logger.debug(f"Forecasts:\n{forecasts.loc[:,['date', 'code', 'model_short', 'forecasted_discharge']].head()}")
+    logger.debug(f"Forecasts:\n{forecasts.loc[:,['date', 'code', 'model_short', 'forecasted_discharge']].tail()}")
+    logger.debug(f"Unique models in forecasts:\n{forecasts['model_short'].unique()}")
 
     return forecasts
 
@@ -3109,10 +3080,10 @@ def calculate_neural_ensemble_forecast_decade(forecasts):
     ensemble_mean = filtered_forecasts[["date", "code", "decad_in_month", "decad_in_year"]]\
         .drop_duplicates(keep='last').copy()
 
-    # Add model_long and model_short columns to the ensemble_mean dataframe
-    model_names = ', '.join(available_target_models)
-    ensemble_mean['model_long'] = f"Neural Ensemble with {model_names} (NE)"
-    ensemble_mean['model_short'] = f"NE"
+    # Add model columns to the ensemble_mean dataframe
+    model_names = ', '.join(sorted(set(available_target_models)))
+    ensemble_mean['model_short'] = "NE"
+    ensemble_mean['composition'] = model_names
 
     # Calculate the ensemble mean over the filtered models
     ensemble_mean_q = filtered_forecasts \
@@ -3131,9 +3102,9 @@ def calculate_neural_ensemble_forecast_decade(forecasts):
 
     logger.info(f"Calculated decadal ensemble forecast for models: {model_names}")
     logger.debug(f"Columns of forecasts:\n{forecasts.columns}")
-    logger.debug(f"Forecasts:\n{forecasts.loc[:,['date', 'code', 'model_long', 'forecasted_discharge']].head()}")
-    logger.debug(f"Forecasts:\n{forecasts.loc[:,['date', 'code', 'model_long', 'forecasted_discharge']].tail()}")
-    logger.debug(f"Unique models in forecasts:\n{forecasts['model_long'].unique()}")
+    logger.debug(f"Forecasts:\n{forecasts.loc[:,['date', 'code', 'model_short', 'forecasted_discharge']].head()}")
+    logger.debug(f"Forecasts:\n{forecasts.loc[:,['date', 'code', 'model_short', 'forecasted_discharge']].tail()}")
+    logger.debug(f"Unique models in forecasts:\n{forecasts['model_short'].unique()}")
 
     return forecasts
 
@@ -3142,8 +3113,7 @@ def calculate_ensemble_forecast(forecasts):
     ensemble_mean = forecasts[["date", "code", "pentad_in_month", "pentad_in_year"]]\
         .drop_duplicates(keep='last').copy()
 
-    # Add model_long and model_short columns to the ensemble_mean dataframe
-    ensemble_mean['model_long'] = "Ensemble mean (EM)"
+    # Add model columns to the ensemble_mean dataframe
     ensemble_mean['model_short'] = "EM"
 
     # Calculate the ensemble mean over all models
@@ -3162,9 +3132,9 @@ def calculate_ensemble_forecast(forecasts):
     forecasts = pd.concat([forecasts, ensemble_mean])
     logger.info(f"Calculated ensemble forecast for the pentadal forecast horizon.")
     logger.debug(f"Columns of forecasts:\n{forecasts.columns}")
-    logger.debug(f"Forecasts:\n{forecasts.loc[:,['date', 'code', 'model_long', 'forecasted_discharge']].head()}")
-    logger.debug(f"Forecasts:\n{forecasts.loc[:,['date', 'code', 'model_long', 'forecasted_discharge']].tail()}")
-    logger.debug(f"Unique models in forecasts:\n{forecasts['model_long'].unique()}")
+    logger.debug(f"Forecasts:\n{forecasts.loc[:,['date', 'code', 'model_short', 'forecasted_discharge']].head()}")
+    logger.debug(f"Forecasts:\n{forecasts.loc[:,['date', 'code', 'model_short', 'forecasted_discharge']].tail()}")
+    logger.debug(f"Unique models in forecasts:\n{forecasts['model_short'].unique()}")
 
     return forecasts
 
@@ -3303,8 +3273,8 @@ def calculate_virtual_stations_data(data_df: pd.DataFrame,
         # Delete data_virtual_station
         del data_virtual_station
 
-        # Remove rows where the model_long column is nan
-        data_df = data_df[data_df['model_long'].notna()]
+        # Remove rows where the model_short column is nan
+        data_df = data_df[data_df['model_short'].notna()]
 
     return data_df
 
@@ -3349,7 +3319,7 @@ def save_most_recent_forecasts(forecasts, model_name):
 
     # Save relevant columns only
     columns_to_save = ['code', 'date', 'pentad_in_month', 'pentad_in_year',
-                     'forecasted_discharge', 'model_short', 'model_long']
+                     'forecasted_discharge', 'model_short']
 
     # Only keep columns that exist in the DataFrame
     columns_to_save = [col for col in columns_to_save if col in recent_forecasts.columns]
@@ -3400,7 +3370,7 @@ def save_most_recent_forecasts_decade(forecasts, model_name):
 
     # Save relevant columns only
     columns_to_save = ['code', 'date', 'pentad_in_month', 'pentad_in_year',
-                     'forecasted_discharge', 'model_short', 'model_long']
+                     'forecasted_discharge', 'model_short']
 
     # Only keep columns that exist in the DataFrame
     columns_to_save = [col for col in columns_to_save if col in recent_forecasts.columns]
@@ -3512,49 +3482,49 @@ def read_observed_and_modelled_data_pentade():
     else: 
         logger.warning("Environment variable ieasyhydroforecast_run_CM_models is set to an invalid value. Assuming no CM forecasts to be read.")
     
-    # Only check for NaN values in the model_long column if the DataFrame is not empty
+    # Only check for NaN values in the model_short column if the DataFrame is not empty
     available_forecasts = []
 
     # Test if there are any nans in the model long column of either linreg, tide, tft, tsmixer, arima and cm
     if not linreg.empty:
-        if 'model_long' in linreg.columns and linreg['model_long'].isnull().values.any():
-            logger.error("There are nans in the model_long column of linreg.")
+        if 'model_short' in linreg.columns and linreg['model_short'].isnull().values.any():
+            logger.error("There are nans in the model_short column of linreg.")
         else:
             available_forecasts.append(linreg)
             
     if not tide.empty:
-        if 'model_long' in tide.columns and tide['model_long'].isnull().values.any():
-            logger.error("There are nans in the model_long column of tide.")
+        if 'model_short' in tide.columns and tide['model_short'].isnull().values.any():
+            logger.error("There are nans in the model_short column of tide.")
         else:
             available_forecasts.append(tide)
             
     if not tft.empty:
-        if 'model_long' in tft.columns and tft['model_long'].isnull().values.any():
-            logger.error("There are nans in the model_long column of tft.")
+        if 'model_short' in tft.columns and tft['model_short'].isnull().values.any():
+            logger.error("There are nans in the model_short column of tft.")
         else:
             available_forecasts.append(tft)
             
     if not tsmixer.empty:
-        if 'model_long' in tsmixer.columns and tsmixer['model_long'].isnull().values.any():
-            logger.error("There are nans in the model_long column of tsmixer.")
+        if 'model_short' in tsmixer.columns and tsmixer['model_short'].isnull().values.any():
+            logger.error("There are nans in the model_short column of tsmixer.")
         else:
             available_forecasts.append(tsmixer)
             
     if not arima.empty:
-        if 'model_long' in arima.columns and arima['model_long'].isnull().values.any():
-            logger.error("There are nans in the model_long column of arima.")
+        if 'model_short' in arima.columns and arima['model_short'].isnull().values.any():
+            logger.error("There are nans in the model_short column of arima.")
         else:
             available_forecasts.append(arima)
-            
+
     if not rrmamba.empty:
-        if 'model_long' in rrmamba.columns and rrmamba['model_long'].isnull().values.any():
-            logger.error("There are nans in the model_long column of rrmamba.")
+        if 'model_short' in rrmamba.columns and rrmamba['model_short'].isnull().values.any():
+            logger.error("There are nans in the model_short column of rrmamba.")
         else:
             available_forecasts.append(rrmamba)
-            
+
     if not cm.empty:
-        if 'model_long' in cm.columns and cm['model_long'].isnull().values.any():
-            logger.error("There are nans in the model_long column of cm.")
+        if 'model_short' in cm.columns and cm['model_short'].isnull().values.any():
+            logger.error("There are nans in the model_short column of cm.")
         else:
             available_forecasts.append(cm)
 
@@ -3562,15 +3532,15 @@ def read_observed_and_modelled_data_pentade():
     if available_forecasts:
         forecasts = pd.concat(available_forecasts)
         logger.debug(f"columns of forecasts concatenated:\n{forecasts.columns}")
-        logger.debug(f"forecasts concatenated:\n{forecasts.loc[:, ['date', 'code', 'model_long']].head()}\n{forecasts.loc[:, ['date', 'code', 'model_long']].tail()}")
+        logger.debug(f"forecasts concatenated:\n{forecasts.loc[:, ['date', 'code', 'model_short']].head()}\n{forecasts.loc[:, ['date', 'code', 'model_short']].tail()}")
 
         # Calculate virtual stations forecasts if needed
         forecasts = calculate_virtual_stations_data(forecasts)
-        
-        # Test if we have any nans in the model_long column
-        if 'model_long' in forecasts.columns and forecasts['model_long'].isnull().values.any():
-            logger.error("There are nans in the model_long column of forecasts.")
-            
+
+        # Test if we have any nans in the model_short column
+        if 'model_short' in forecasts.columns and forecasts['model_short'].isnull().values.any():
+            logger.error("There are nans in the model_short column of forecasts.")
+
         forecasts = calculate_neural_ensemble_forecast(forecasts)
     else: 
         logger.warning("No forecasts available to concatenate. Skipping concatenation.")
@@ -3667,49 +3637,49 @@ def read_observed_and_modelled_data_decade():
     else: 
         logger.warning("Environment variable ieasyhydroforecast_run_CM_models is set to an invalid value. Assuming no CM forecasts to be read.")
     
-    # Only check for NaN values in the model_long column if the DataFrame is not empty
+    # Only check for NaN values in the model_short column if the DataFrame is not empty
     available_forecasts = []
 
-    # Test if there are any nans in the model long column of either linreg, tide, tft, tsmixer, arima and cm
+    # Test if there are any nans in the model_short column of each model
     if not linreg.empty:
-        if 'model_long' in linreg.columns and linreg['model_long'].isnull().values.any():
-            logger.error("There are nans in the model_long column of linreg.")
+        if 'model_short' in linreg.columns and linreg['model_short'].isnull().values.any():
+            logger.error("There are nans in the model_short column of linreg.")
         else:
             available_forecasts.append(linreg)
-            
+
     if not tide.empty:
-        if 'model_long' in tide.columns and tide['model_long'].isnull().values.any():
-            logger.error("There are nans in the model_long column of tide.")
+        if 'model_short' in tide.columns and tide['model_short'].isnull().values.any():
+            logger.error("There are nans in the model_short column of tide.")
         else:
             available_forecasts.append(tide)
-            
+
     if not tft.empty:
-        if 'model_long' in tft.columns and tft['model_long'].isnull().values.any():
-            logger.error("There are nans in the model_long column of tft.")
+        if 'model_short' in tft.columns and tft['model_short'].isnull().values.any():
+            logger.error("There are nans in the model_short column of tft.")
         else:
             available_forecasts.append(tft)
-            
+
     if not tsmixer.empty:
-        if 'model_long' in tsmixer.columns and tsmixer['model_long'].isnull().values.any():
-            logger.error("There are nans in the model_long column of tsmixer.")
+        if 'model_short' in tsmixer.columns and tsmixer['model_short'].isnull().values.any():
+            logger.error("There are nans in the model_short column of tsmixer.")
         else:
             available_forecasts.append(tsmixer)
-            
+
     if not arima.empty:
-        if 'model_long' in arima.columns and arima['model_long'].isnull().values.any():
-            logger.error("There are nans in the model_long column of arima.")
+        if 'model_short' in arima.columns and arima['model_short'].isnull().values.any():
+            logger.error("There are nans in the model_short column of arima.")
         else:
             available_forecasts.append(arima)
-            
+
     if not rrmamba.empty:
-        if 'model_long' in rrmamba.columns and rrmamba['model_long'].isnull().values.any():
-            logger.error("There are nans in the model_long column of rrmamba.")
+        if 'model_short' in rrmamba.columns and rrmamba['model_short'].isnull().values.any():
+            logger.error("There are nans in the model_short column of rrmamba.")
         else:
             available_forecasts.append(rrmamba)
-            
+
     if not cm.empty:
-        if 'model_long' in cm.columns and cm['model_long'].isnull().values.any():
-            logger.error("There are nans in the model_long column of cm.")
+        if 'model_short' in cm.columns and cm['model_short'].isnull().values.any():
+            logger.error("There are nans in the model_short column of cm.")
         else:
             available_forecasts.append(cm)
 
@@ -3717,15 +3687,15 @@ def read_observed_and_modelled_data_decade():
     if available_forecasts:
         forecasts = pd.concat(available_forecasts)
         logger.debug(f"columns of forecasts concatenated:\n{forecasts.columns}")
-        logger.debug(f"forecasts concatenated:\n{forecasts.loc[:, ['date', 'code', 'model_long']].head()}\n{forecasts.loc[:, ['date', 'code', 'model_long']].tail()}")
+        logger.debug(f"forecasts concatenated:\n{forecasts.loc[:, ['date', 'code', 'model_short']].head()}\n{forecasts.loc[:, ['date', 'code', 'model_short']].tail()}")
 
         # Calculate virtual stations forecasts if needed
         forecasts = calculate_virtual_stations_data(forecasts)
-        
-        # Test if we have any nans in the model_long column
-        if 'model_long' in forecasts.columns and forecasts['model_long'].isnull().values.any():
-            logger.error("There are nans in the model_long column of forecasts.")
-            
+
+        # Test if we have any nans in the model_short column
+        if 'model_short' in forecasts.columns and forecasts['model_short'].isnull().values.any():
+            logger.error("There are nans in the model_short column of forecasts.")
+
         forecasts = calculate_neural_ensemble_forecast_decade(forecasts)
     else: 
         logger.warning("No forecasts available to concatenate. Skipping concatenation.")
@@ -3737,75 +3707,6 @@ def read_observed_and_modelled_data_decade():
 
     return observed, forecasts
 
-'''def read_observed_and_modelled_data_decade():
-    """
-    Reads results from all forecast methods into a dataframe.
-
-    Returns:
-    forecasts (pandas.DataFrame): The forecasts from all methods.
-    """
-    # Read the observed data
-    observed = read_observed_decadal_data()
-
-    # Read the linear regression forecasts for the pentadal forecast horizon
-    linreg, stats_linreg = read_linreg_forecasts_decade()
-
-    # Read the forecasts from the other methods
-    tide = read_machine_learning_forecasts_decade(model='TIDE')
-    tft = read_machine_learning_forecasts_decade(model='TFT')
-    tsmixer = read_machine_learning_forecasts_decade(model='TSMIXER')
-    arima = read_machine_learning_forecasts_decade(model='ARIMA')
-    cm = read_all_conceptual_model_forecasts_decade()
-
-    #logger.debug(f"type of code in linreg: {linreg['code'].dtype}")
-    #logger.debug(f"type of code in tide: {tide['code'].dtype}")
-    #logger.debug(f"type of code in cm: {cm['code'].dtype}")
-
-    # Test if there are any nans in the model long column of either linreg, tide, tft, tsmixer, arima and cm
-    if linreg['model_long'].isnull().values.any():
-        logger.error("There are nans in the model_long column of linreg.")
-        exit()
-    if tide['model_long'].isnull().values.any():
-        logger.error("There are nans in the model_long column of tide.")
-        exit()
-    if tft['model_long'].isnull().values.any():
-        logger.error("There are nans in the model_long column of tft.")
-        exit()
-    if tsmixer['model_long'].isnull().values.any():
-        logger.error("There are nans in the model_long column of tsmixer.")
-        exit()
-    if arima['model_long'].isnull().values.any():
-        logger.error("There are nans in the model_long column of arima.")
-        exit()
-    if cm['model_long'].isnull().values.any():
-        logger.error("There are nans in the model_long column of cm.")
-        exit()
-
-    # Merge tide, tft, tsmixer and arima into linreg.
-    # same columns are: date, code, pentad_in_month, pentad_in_year,
-    # forecasted_discharge, model_long and model_short
-    forecasts = pd.concat([linreg, tide, tft, tsmixer, arima, cm])
-    #logger.debug(f"columns of forecasts concatenated:\n{forecasts.columns}")
-    #logger.debug(f"forecasts concatenated:\n{forecasts.loc[:, ['date', 'code', 'model_long']].head()}\n{forecasts.loc[:, ['date', 'code', 'model_long']].tail()}")
-    
-    # Calculate virtual stations forecasts if needed
-    forecasts = calculate_virtual_stations_data(forecasts)
-    # Test if we have any nans in the model_long column
-    if forecasts['model_long'].isnull().values.any():
-        logger.error("There are nans in the model_long column of forecasts.")
-        exit()
-
-    stats = stats_linreg
-    #logger.debug(f"columns of stats concatenated:\n{stats.columns}")
-    #logger.debug(f"stats concatenated:\n{stats.head()}\n{stats.tail()}")
-    #logger.info(f"Concatenated forecast results from all methods for the pentadal forecast horizon.")
-
-    forecasts = calculate_neural_ensemble_forecast_decade(forecasts)
-
-    # Merge the general runoff statistics to the observed DataFrame
-    observed = pd.merge(observed, stats, on=["date", "code"], how="left")
-
-    return observed, forecasts'''
 
 # endregion
 

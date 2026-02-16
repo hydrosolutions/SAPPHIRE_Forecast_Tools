@@ -5,7 +5,6 @@ used by postprocessing_forecasts.
 """
 
 import os
-import re
 import logging
 import datetime as dt
 from contextlib import contextmanager
@@ -372,11 +371,14 @@ def calculate_skill_metrics_pentad(
             finally:
                 stats.end(section)
 
+    # Import composition helpers from ensemble_calculator
+    from src.ensemble_calculator import composition_agg, is_multi_model_composition
+
     # Test the input. Make sure that the DataFrames contain the required columns
-    if not all(column in observed.columns for column in ['code', 'date', 'discharge_avg', 'model_long', 'model_short', 'delta']):
-        raise ValueError(f'Observed DataFrame is missing one or more required columns: {["code", "date", "discharge_avg", "model_long", "model_short", "delta"]}')
-    if not all(column in simulated.columns for column in ['code', 'date', 'pentad_in_year', 'forecasted_discharge', 'model_long', 'model_short']):
-        raise ValueError(f'Simulated DataFrame is missing one or more required columns: {["code", "date", "pentad_in_year", "forecasted_discharge", "model_long", "model_short"]}')
+    if not all(column in observed.columns for column in ['code', 'date', 'discharge_avg', 'model_short', 'delta']):
+        raise ValueError(f'Observed DataFrame is missing one or more required columns: {["code", "date", "discharge_avg", "model_short", "delta"]}')
+    if not all(column in simulated.columns for column in ['code', 'date', 'pentad_in_year', 'forecasted_discharge', 'model_short']):
+        raise ValueError(f'Simulated DataFrame is missing one or more required columns: {["code", "date", "pentad_in_year", "forecasted_discharge", "model_short"]}')
 
     # Local functions
     def test_for_tuples(df):
@@ -387,39 +389,10 @@ def calculate_skill_metrics_pentad(
         # Test if there are any tuples in the DataFrame
         if contains_tuples:
             logger.debug("There are tuples after the merge.")
-
-            # Step 2: Filter rows that contain any tuples
             rows_with_tuples = df[is_tuple.any(axis=1)]
-
-            # Print rows with tuples
             logger.debug(rows_with_tuples)
         else:
             logger.debug("No tuples found after the merge.")
-
-    def extract_first_parentheses_content(string_list):
-        pattern = r'\((.*?)\)'
-
-        result = []
-        for string in string_list:
-            match = re.search(pattern, string)
-            if match:
-                result.append(match.group(1))
-            else:
-                result.append('')  # or None, or any other placeholder
-
-        return result
-
-    def model_long_agg(x):
-        # Get unique models
-        model_list = x.unique()
-        # Only keep strings within brackets (), discard the rest of the string and the brackets
-        short_model_list = extract_first_parentheses_content(model_list)
-        # Concatenat the model names
-        unique_models = ', '.join(sorted(short_model_list))
-        return f'Ens. Mean with {unique_models} (EM)'
-
-    def model_short_agg(x):
-        return f'EM'
 
     def filter_for_highly_skilled_forecasts(skill_stats):
         """
@@ -479,7 +452,7 @@ def calculate_skill_metrics_pentad(
     # Calculate all skill metrics in a single pass per group
     with timer(timing_stats, 'calculate_skill_metrics_pentad - Calculate all skill metrics'):
         skill_stats = skill_metrics_df. \
-            groupby(['pentad_in_year', 'code', 'model_long', 'model_short'])[['discharge_avg', 'forecasted_discharge', 'delta']]. \
+            groupby(['pentad_in_year', 'code', 'model_short'])[['discharge_avg', 'forecasted_discharge', 'delta']]. \
             apply(
                 calculate_all_skill_metrics,
                 observed_col='discharge_avg',
@@ -491,9 +464,7 @@ def calculate_skill_metrics_pentad(
     with timer(timing_stats, 'calculate_skill_metrics_pentad - Calculate ensemble skill metrics for highly skilled forecasts'):
         skill_stats_ensemble = filter_for_highly_skilled_forecasts(skill_stats)
 
-        # Now we get the rows from the skill_metrics_df where pentad_in_year, code,
-        # model_long and model_short are the same as in skill_stats_ensemble
-        merge_keys = ['pentad_in_year', 'code', 'model_long', 'model_short']
+        merge_keys = ['pentad_in_year', 'code', 'model_short']
         skill_metrics_df_ensemble = skill_metrics_df.merge(
             skill_stats_ensemble[merge_keys].drop_duplicates(),
             on=merge_keys,
@@ -509,14 +480,20 @@ def calculate_skill_metrics_pentad(
         skill_metrics_df_ensemble_avg = skill_metrics_df_ensemble.groupby(['date', 'code']).agg({
             'pentad_in_year': 'first',
             'forecasted_discharge': 'mean',
-            'model_long': model_long_agg,
-            'model_short': model_short_agg
+            'model_short': composition_agg,
         }).reset_index()
+        # model_short now holds the composition string
+        skill_metrics_df_ensemble_avg = skill_metrics_df_ensemble_avg.rename(
+            columns={'model_short': 'composition'}
+        )
+        skill_metrics_df_ensemble_avg['model_short'] = 'EM'
 
-        # Discard rows with model_long equal to 'Ensemble Mean with  (EM)' or equal to Ensemble Mean with LR (EM)
+        # Discard single-model or empty ensembles
         skill_metrics_df_ensemble_avg = skill_metrics_df_ensemble_avg[
-            (skill_metrics_df_ensemble_avg['model_long'] != 'Ens. Mean with  (EM)') &
-            (skill_metrics_df_ensemble_avg['model_long'] != 'Ens. Mean with LR (EM)')].copy()
+            skill_metrics_df_ensemble_avg['composition'].apply(
+                is_multi_model_composition
+            )
+        ].copy()
 
         # Now recalculate the skill metrics for the ensemble
         ensemble_skill_metrics_df = pd.merge(
@@ -528,12 +505,12 @@ def calculate_skill_metrics_pentad(
             ensemble_skill_metrics_df.columns.tolist(),
         )
 
-        number_of_models = simulated['model_long'].nunique()
+        number_of_models = simulated['model_short'].nunique()
         logger.debug("Pentad number_of_models: %d", number_of_models)
         if number_of_models > 1:
             # Single-pass ensemble skill metrics
             ensemble_skill_stats = ensemble_skill_metrics_df. \
-                groupby(['pentad_in_year', 'code', 'model_long', 'model_short'])[['discharge_avg', 'forecasted_discharge', 'delta']]. \
+                groupby(['pentad_in_year', 'code', 'model_short', 'composition'])[['discharge_avg', 'forecasted_discharge', 'delta']]. \
                 apply(
                     calculate_all_skill_metrics,
                     observed_col='discharge_avg',
@@ -547,11 +524,17 @@ def calculate_skill_metrics_pentad(
             # Calculate pentad in month (add 1 day to date)
             ensemble_skill_metrics_df['pentad_in_month'] = (ensemble_skill_metrics_df['date']+dt.timedelta(days=1.0)).apply(tl.get_pentad)
 
+            # Ensure simulated has composition column for the outer merge
+            if 'composition' not in simulated.columns:
+                simulated = simulated.copy()
+                simulated['composition'] = ''
+
             # Join the two dataframes
+            join_cols = ['code', 'date', 'pentad_in_month', 'pentad_in_year', 'forecasted_discharge', 'model_short', 'composition']
             joint_forecasts = pd.merge(
                 simulated,
-                ensemble_skill_metrics_df[['code', 'date', 'pentad_in_month', 'pentad_in_year', 'forecasted_discharge', 'model_long', 'model_short']],
-                on=['code', 'date', 'pentad_in_month', 'pentad_in_year', 'model_long', 'model_short', 'forecasted_discharge'],
+                ensemble_skill_metrics_df[join_cols],
+                on=join_cols,
                 how='outer')
         else:
             joint_forecasts = simulated.copy()
@@ -590,11 +573,14 @@ def calculate_skill_metrics_decade(
             finally:
                 stats.end(section)
 
+    # Import composition helpers from ensemble_calculator
+    from src.ensemble_calculator import composition_agg, is_multi_model_composition
+
     # Test the input. Make sure that the DataFrames contain the required columns
-    if not all(column in observed.columns for column in ['code', 'date', 'discharge_avg', 'model_long', 'model_short', 'delta']):
-        raise ValueError(f'Observed DataFrame is missing one or more required columns: {["code", "date", "discharge_avg", "model_long", "model_short", "delta"]}')
-    if not all(column in simulated.columns for column in ['code', 'date', 'decad_in_year', 'forecasted_discharge', 'model_long', 'model_short']):
-        raise ValueError(f'Simulated DataFrame is missing one or more required columns: {["code", "date", "decad_in_year", "forecasted_discharge", "model_long", "model_short"]}')
+    if not all(column in observed.columns for column in ['code', 'date', 'discharge_avg', 'model_short', 'delta']):
+        raise ValueError(f'Observed DataFrame is missing one or more required columns: {["code", "date", "discharge_avg", "model_short", "delta"]}')
+    if not all(column in simulated.columns for column in ['code', 'date', 'decad_in_year', 'forecasted_discharge', 'model_short']):
+        raise ValueError(f'Simulated DataFrame is missing one or more required columns: {["code", "date", "decad_in_year", "forecasted_discharge", "model_short"]}')
 
     # Print column names of simulated
     logger.debug(f"DEBUG: simulated.columns\n{simulated.columns}")
@@ -608,39 +594,10 @@ def calculate_skill_metrics_decade(
         # Test if there are any tuples in the DataFrame
         if contains_tuples:
             logger.debug("There are tuples after the merge.")
-
-            # Step 2: Filter rows that contain any tuples
             rows_with_tuples = df[is_tuple.any(axis=1)]
-
-            # Print rows with tuples
             logger.debug(rows_with_tuples)
         else:
             logger.debug("No tuples found after the merge.")
-
-    def extract_first_parentheses_content(string_list):
-        pattern = r'\((.*?)\)'
-
-        result = []
-        for string in string_list:
-            match = re.search(pattern, string)
-            if match:
-                result.append(match.group(1))
-            else:
-                result.append('')  # or None, or any other placeholder
-
-        return result
-
-    def model_long_agg(x):
-        # Get unique models
-        model_list = x.unique()
-        # Only keep strings within brackets (), discard the rest of the string and the brackets
-        short_model_list = extract_first_parentheses_content(model_list)
-        # Concatenat the model names
-        unique_models = ', '.join(sorted(short_model_list))
-        return f'Ens. Mean with {unique_models} (EM)'
-
-    def model_short_agg(x):
-        return f'EM'
 
     def filter_for_highly_skilled_forecasts(skill_stats):
         # Get thresholds from environment
@@ -686,7 +643,7 @@ def calculate_skill_metrics_decade(
     # Calculate all skill metrics in a single pass per group
     with timer(timing_stats, 'calculate_skill_metrics_decad - Calculate all skill metrics'):
         skill_stats = skill_metrics_df. \
-            groupby(['decad_in_year', 'code', 'model_long', 'model_short'])[['discharge_avg', 'forecasted_discharge', 'delta']]. \
+            groupby(['decad_in_year', 'code', 'model_short'])[['discharge_avg', 'forecasted_discharge', 'delta']]. \
             apply(
                 calculate_all_skill_metrics,
                 observed_col='discharge_avg',
@@ -698,9 +655,7 @@ def calculate_skill_metrics_decade(
     with timer(timing_stats, 'calculate_skill_metrics_decad - Calculate ensemble skill metrics for highly skilled forecasts'):
         skill_stats_ensemble = filter_for_highly_skilled_forecasts(skill_stats)
 
-        # Now we get the rows from the skill_metrics_df where decad_in_year, code,
-        # model_long and model_short are the same as in skill_stats_ensemble
-        merge_keys = ['decad_in_year', 'code', 'model_long', 'model_short']
+        merge_keys = ['decad_in_year', 'code', 'model_short']
         skill_metrics_df_ensemble = skill_metrics_df.merge(
             skill_stats_ensemble[merge_keys].drop_duplicates(),
             on=merge_keys,
@@ -714,14 +669,20 @@ def calculate_skill_metrics_decade(
         skill_metrics_df_ensemble_avg = skill_metrics_df_ensemble.groupby(['date', 'code']).agg({
             'decad_in_year': 'first',
             'forecasted_discharge': 'mean',
-            'model_long': model_long_agg,
-            'model_short': model_short_agg
+            'model_short': composition_agg,
         }).reset_index()
+        # model_short now holds the composition string
+        skill_metrics_df_ensemble_avg = skill_metrics_df_ensemble_avg.rename(
+            columns={'model_short': 'composition'}
+        )
+        skill_metrics_df_ensemble_avg['model_short'] = 'EM'
 
-        # Discard rows with model_long equal to 'Ensemble Mean with  (EM)' or equal to Ensemble Mean with LR (EM)
+        # Discard single-model or empty ensembles
         skill_metrics_df_ensemble_avg = skill_metrics_df_ensemble_avg[
-            (skill_metrics_df_ensemble_avg['model_long'] != 'Ens. Mean with  (EM)') &
-            (skill_metrics_df_ensemble_avg['model_long'] != 'Ens. Mean with LR (EM)')].copy()
+            skill_metrics_df_ensemble_avg['composition'].apply(
+                is_multi_model_composition
+            )
+        ].copy()
 
         # Now recalculate the skill metrics for the ensemble
         ensemble_skill_metrics_df = pd.merge(
@@ -729,12 +690,12 @@ def calculate_skill_metrics_decade(
             observed[['code', 'date', 'discharge_avg', 'delta']],
             on=['code', 'date'])
 
-        number_of_models = simulated['model_long'].nunique()
+        number_of_models = simulated['model_short'].nunique()
         logger.debug("Decad number_of_models: %d", number_of_models)
         if number_of_models > 1:
             # Single-pass ensemble skill metrics
             ensemble_skill_stats = ensemble_skill_metrics_df. \
-                groupby(['decad_in_year', 'code', 'model_long', 'model_short'])[['discharge_avg', 'forecasted_discharge', 'delta']]. \
+                groupby(['decad_in_year', 'code', 'model_short', 'composition'])[['discharge_avg', 'forecasted_discharge', 'delta']]. \
                 apply(
                     calculate_all_skill_metrics,
                     observed_col='discharge_avg',
@@ -745,14 +706,20 @@ def calculate_skill_metrics_decade(
             # Append the ensemble skill metrics to the skill metrics
             skill_stats = pd.concat([skill_stats, ensemble_skill_stats], ignore_index=True)
 
-            # Calculate pentad in month (add 1 day to date)
+            # Calculate decad in month (add 1 day to date)
             ensemble_skill_metrics_df['decad_in_month'] = (ensemble_skill_metrics_df['date']+dt.timedelta(days=1.0)).apply(tl.get_decad_in_month)
 
+            # Ensure simulated has composition column for the outer merge
+            if 'composition' not in simulated.columns:
+                simulated = simulated.copy()
+                simulated['composition'] = ''
+
             # Join the two dataframes
+            join_cols = ['code', 'date', 'decad_in_month', 'decad_in_year', 'forecasted_discharge', 'model_short', 'composition']
             joint_forecasts = pd.merge(
                 simulated,
-                ensemble_skill_metrics_df[['code', 'date', 'decad_in_month', 'decad_in_year', 'forecasted_discharge', 'model_long', 'model_short']],
-                on=['code', 'date', 'decad_in_month', 'decad_in_year', 'model_long', 'model_short', 'forecasted_discharge'],
+                ensemble_skill_metrics_df[join_cols],
+                on=join_cols,
                 how='outer')
 
         else:

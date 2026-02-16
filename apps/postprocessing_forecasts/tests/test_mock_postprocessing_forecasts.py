@@ -335,7 +335,6 @@ def create_combined_forecast(lr_data, tft_data, tide_data, tsmixer_data, arima_d
                     'intercept': lr_row['intercept'].values[0],
                     'forecasted_discharge': lr_forecast,
                     'rsquared': lr_row['rsquared'].values[0],
-                    'model_long': 'Linear regression (LR)',
                     'model_short': 'LR'
                 })
 
@@ -357,7 +356,6 @@ def create_combined_forecast(lr_data, tft_data, tide_data, tsmixer_data, arima_d
                     'pentad_in_month': pentad_in_month,
                     'pentad_in_year': pentad_in_year,
                     'forecasted_discharge': tft_forecast,
-                    'model_long': 'Temporal-Fusion Transformer (TFT)',
                     'model_short': 'TFT'
                 }
                 tft_dict.update(quantiles)
@@ -381,7 +379,6 @@ def create_combined_forecast(lr_data, tft_data, tide_data, tsmixer_data, arima_d
                     'pentad_in_month': pentad_in_month,
                     'pentad_in_year': pentad_in_year,
                     'forecasted_discharge': tide_forecast,
-                    'model_long': 'Time-Series Dense Encoder (TiDE)',
                     'model_short': 'TiDE'
                 }
                 tide_dict.update(quantiles)
@@ -405,7 +402,6 @@ def create_combined_forecast(lr_data, tft_data, tide_data, tsmixer_data, arima_d
                     'pentad_in_month': pentad_in_month,
                     'pentad_in_year': pentad_in_year,
                     'forecasted_discharge': tsmixer_forecast,
-                    'model_long': 'Time-Series Mixer (TSMixer)',
                     'model_short': 'TSMixer'
                 }
                 tsmixer_dict.update(quantiles)
@@ -423,7 +419,6 @@ def create_combined_forecast(lr_data, tft_data, tide_data, tsmixer_data, arima_d
                     'pentad_in_month': pentad_in_month,
                     'pentad_in_year': pentad_in_year,
                     'forecasted_discharge': arima_forecast,
-                    'model_long': 'AutoRegressive Integrated Moving Average (ARIMA)',
                     'model_short': 'ARIMA',
                     'day_of_year': arima_row['day_of_year'].values[0],
                 })
@@ -449,8 +444,8 @@ def create_combined_forecast(lr_data, tft_data, tide_data, tsmixer_data, arima_d
                     'pentad_in_month': pentad_in_month,
                     'pentad_in_year': pentad_in_year,
                     'forecasted_discharge': ensemble_forecast,
-                    'model_long': 'Ens. Mean with LR, TFT, TSMixer, TiDE (EM)',
-                    'model_short': 'EM'
+                    'model_short': 'EM',
+                    'composition': 'ARIMA, LR, TFT, TiDE, TSMixer'
                 })
 
             # Calculate neural ensemble (just the ML models)
@@ -470,8 +465,8 @@ def create_combined_forecast(lr_data, tft_data, tide_data, tsmixer_data, arima_d
                     'pentad_in_month': pentad_in_month,
                     'pentad_in_year': pentad_in_year,
                     'forecasted_discharge': neural_forecast,
-                    'model_long': 'Neural Ensemble with TiDE, TFT, TSMixer (NE)',
-                    'model_short': 'NE'
+                    'model_short': 'NE',
+                    'composition': 'TFT, TiDE, TSMixer'
                 })
 
     # Create DataFrame and save to file
@@ -509,7 +504,6 @@ def test_combined_forecast_consistency(setup_test_paths, sample_data, tmp_path):
         'date': pd.to_datetime(sample_data["dates"]),
         'code': [sample_data["codes"][0]] * len(sample_data["dates"]),
         'discharge_avg': [1.5] * len(sample_data["dates"]),
-        'model_long': 'Observed (Obs)',
         'model_short': 'Obs',
         'delta': [0.2] * len(sample_data["dates"])
     })

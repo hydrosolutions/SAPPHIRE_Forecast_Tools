@@ -26,11 +26,7 @@ def sample_data():
         'forecasted_discharge': [125.4, 45.7, 67.8, 130.2, 47.2, 65.1,
                                  128.7, 46.9, 66.5, 129.1, 47.0, 66.3],
         'model_short': ['LR', 'LR', 'LR', 'TFT', 'TFT', 'TFT',
-                        'TIDE', 'TIDE', 'TIDE', 'EM', 'EM', 'EM'],
-        'model_long': ['Linear Regression (LR)', 'Linear Regression (LR)', 'Linear Regression (LR)',
-                      'Temporal-Fusion Transformer (TFT)', 'Temporal-Fusion Transformer (TFT)', 'Temporal-Fusion Transformer (TFT)',
-                      'Time-Series Dense Encoder (TiDE)', 'Time-Series Dense Encoder (TiDE)', 'Time-Series Dense Encoder (TiDE)',
-                      'Ensemble Mean (EM)', 'Ensemble Mean (EM)', 'Ensemble Mean (EM)']
+                        'TIDE', 'TIDE', 'TIDE', 'EM', 'EM', 'EM']
     })
     return data
 
@@ -169,8 +165,7 @@ def test_log_most_recent_forecasts_pentad_nat_dates(mock_to_csv, mock_getenv, mo
         'pentad_in_month': [5] * 4,
         'pentad_in_year': [30] * 4,
         'forecasted_discharge': [125.4, 130.2, 128.7, 129.1],
-        'model_short': ['LR', 'TFT', 'TIDE', 'EM'],
-        'model_long': ['LR', 'TFT', 'TIDE', 'EM']
+        'model_short': ['LR', 'TFT', 'TIDE', 'EM']
     })
 
     # "Missing" station with NaT date - this station won't appear in recent forecasts
@@ -181,8 +176,7 @@ def test_log_most_recent_forecasts_pentad_nat_dates(mock_to_csv, mock_getenv, mo
         'pentad_in_month': [5] * 4,
         'pentad_in_year': [30] * 4,
         'forecasted_discharge': [100.0, 110.0, 105.0, 107.5],
-        'model_short': ['LR', 'TFT', 'TIDE', 'EM'],
-        'model_long': ['LR', 'TFT', 'TIDE', 'EM']
+        'model_short': ['LR', 'TFT', 'TIDE', 'EM']
     })
 
     combined_data = pd.concat([valid_data, nat_data], ignore_index=True)
@@ -222,8 +216,7 @@ def test_log_most_recent_forecasts_pentad_missing_code_no_matching_date(mock_to_
         'pentad_in_month': [5] * 4,
         'pentad_in_year': [30] * 4,
         'forecasted_discharge': [125.4, 130.2, 128.7, 129.1],
-        'model_short': ['LR', 'TFT', 'TIDE', 'EM'],
-        'model_long': ['LR', 'TFT', 'TIDE', 'EM']
+        'model_short': ['LR', 'TFT', 'TIDE', 'EM']
     })
 
     # Station 15999 only has older data - will be a "missing code" in recent forecasts
@@ -233,8 +226,7 @@ def test_log_most_recent_forecasts_pentad_missing_code_no_matching_date(mock_to_
         'pentad_in_month': [4] * 4,
         'pentad_in_year': [29] * 4,
         'forecasted_discharge': [100.0, 110.0, 105.0, 107.5],
-        'model_short': ['LR', 'TFT', 'TIDE', 'EM'],
-        'model_long': ['LR', 'TFT', 'TIDE', 'EM']
+        'model_short': ['LR', 'TFT', 'TIDE', 'EM']
     })
 
     combined_data = pd.concat([recent_data, old_data], ignore_index=True)
@@ -277,8 +269,7 @@ def sample_decade_data():
         'forecasted_discharge': [125.4, 45.7, 67.8, 130.2, 47.2, 65.1,
                                  128.7, 46.9, 66.5, 129.1, 47.0, 66.3],
         'model_short': ['LR', 'LR', 'LR', 'TFT', 'TFT', 'TFT',
-                        'TIDE', 'TIDE', 'TIDE', 'EM', 'EM', 'EM'],
-        'model_long': ['LR', 'TFT', 'TIDE', 'EM'] * 3
+                        'TIDE', 'TIDE', 'TIDE', 'EM', 'EM', 'EM']
     })
     return data
 
@@ -346,8 +337,7 @@ def test_log_most_recent_forecasts_decade_nat_dates(mock_to_csv, mock_getenv, mo
         'decad_in_month': [3] * 4,
         'decad_in_year': [15] * 4,
         'forecasted_discharge': [125.4, 130.2, 128.7, 129.1],
-        'model_short': ['LR', 'TFT', 'TIDE', 'EM'],
-        'model_long': ['LR', 'TFT', 'TIDE', 'EM']
+        'model_short': ['LR', 'TFT', 'TIDE', 'EM']
     })
 
     # Station with NaT dates
@@ -357,8 +347,7 @@ def test_log_most_recent_forecasts_decade_nat_dates(mock_to_csv, mock_getenv, mo
         'decad_in_month': [3] * 4,
         'decad_in_year': [15] * 4,
         'forecasted_discharge': [100.0, 110.0, 105.0, 107.5],
-        'model_short': ['LR', 'TFT', 'TIDE', 'EM'],
-        'model_long': ['LR', 'TFT', 'TIDE', 'EM']
+        'model_short': ['LR', 'TFT', 'TIDE', 'EM']
     })
 
     combined_data = pd.concat([valid_data, nat_data], ignore_index=True)

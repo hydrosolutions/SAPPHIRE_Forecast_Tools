@@ -31,16 +31,11 @@ from src import api_writer
 import forecast_library as fl
 import tag_library as tl
 
-from test_constants import MODEL_LONG_NAMES
-
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 STATIONS = ['15001', '15002']
-MODELS_LONG = {
-    k: MODEL_LONG_NAMES[k] for k in ('LR', 'TFT', 'TiDE')
-}
 PENTAD_DATES = pd.to_datetime(['2026-01-05', '2026-01-10'])
 PENTAD_IN_YEAR = [1, 2]
 PENTAD_IN_MONTH = ['1', '2']
@@ -105,7 +100,7 @@ def pentad_skill_csv(env_setup):
             # LR passes at both stations
             rows.append({
                 'pentad_in_year': pentad, 'code': station,
-                'model_long': MODELS_LONG['LR'], 'model_short': 'LR',
+                'model_short': 'LR',
                 'sdivsigma': 0.3, 'nse': 0.95, 'delta': 5.0,
                 'accuracy': 0.95, 'mae': 2.0, 'n_pairs': 10,
             })
@@ -113,7 +108,7 @@ def pentad_skill_csv(env_setup):
             tft_skilled = station == '15001'
             rows.append({
                 'pentad_in_year': pentad, 'code': station,
-                'model_long': MODELS_LONG['TFT'], 'model_short': 'TFT',
+                'model_short': 'TFT',
                 'sdivsigma': 0.4 if tft_skilled else 0.7,
                 'nse': 0.9 if tft_skilled else 0.7,
                 'delta': 5.0,
@@ -124,7 +119,7 @@ def pentad_skill_csv(env_setup):
             # TiDE fails at both stations
             rows.append({
                 'pentad_in_year': pentad, 'code': station,
-                'model_long': MODELS_LONG['TiDE'], 'model_short': 'TiDE',
+                'model_short': 'TiDE',
                 'sdivsigma': 0.9, 'nse': 0.5, 'delta': 5.0,
                 'accuracy': 0.6, 'mae': 8.0, 'n_pairs': 10,
             })
@@ -149,7 +144,7 @@ def pentad_forecasts():
         for i, (date, pentad, pim) in enumerate(
             zip(PENTAD_DATES, PENTAD_IN_YEAR, PENTAD_IN_MONTH)
         ):
-            for model_short, model_long in MODELS_LONG.items():
+            for model_short in ('LR', 'TFT', 'TiDE'):
                 rows.append({
                     'code': station,
                     'date': date,
@@ -158,7 +153,6 @@ def pentad_forecasts():
                     'forecasted_discharge': discharges[
                         (station, i)
                     ][model_short],
-                    'model_long': model_long,
                     'model_short': model_short,
                 })
     return pd.DataFrame(rows)
@@ -196,7 +190,7 @@ class TestOperationalDataRouting:
         df = data_reader.read_skill_metrics('pentad')
         assert not df.empty
         expected_cols = {
-            'pentad_in_year', 'code', 'model_long', 'model_short',
+            'pentad_in_year', 'code', 'model_short',
             'sdivsigma', 'nse', 'delta', 'accuracy', 'mae', 'n_pairs',
         }
         assert expected_cols.issubset(set(df.columns))
@@ -238,10 +232,8 @@ class TestOperationalDataRouting:
             ]['forecasted_discharge'].iloc[0]
             assert abs(row['forecasted_discharge'] - (lr + tft) / 2) < 0.01
 
-        # Composition string
-        comp = em_rows.iloc[0]['model_long']
-        assert comp.startswith('Ens. Mean with ')
-        assert comp.endswith(' (EM)')
+        # Composition column
+        comp = em_rows.iloc[0]['composition']
         assert 'LR' in comp and 'TFT' in comp
 
         # Save to CSV (API disabled via env_setup)
@@ -367,7 +359,6 @@ class TestOperationalDataRouting:
         all_fail = pd.DataFrame({
             'pentad_in_year': [1, 1, 1],
             'code': ['15001', '15001', '15001'],
-            'model_long': list(MODELS_LONG.values()),
             'model_short': ['LR', 'TFT', 'TiDE'],
             'sdivsigma': [0.9, 0.9, 0.9],
             'nse': [0.5, 0.5, 0.5],
@@ -391,7 +382,6 @@ class TestOperationalDataRouting:
         all_pass = pd.DataFrame({
             'pentad_in_year': [1, 1, 1, 2, 2, 2],
             'code': ['15001'] * 6,
-            'model_long': list(MODELS_LONG.values()) * 2,
             'model_short': ['LR', 'TFT', 'TiDE'] * 2,
             'sdivsigma': [0.3, 0.4, 0.3, 0.3, 0.4, 0.3],
             'nse': [0.95, 0.9, 0.95, 0.95, 0.9, 0.95],
@@ -417,7 +407,7 @@ class TestOperationalDataRouting:
         assert abs(em_sorted.iloc[1]['forecasted_discharge'] - 115.0) < 0.01
 
         # Composition includes all three
-        comp = em_rows.iloc[0]['model_long']
+        comp = em_rows.iloc[0]['composition']
         assert 'LR' in comp
         assert 'TFT' in comp
         assert 'TiDE' in comp
@@ -437,9 +427,8 @@ class TestOperationalDataRouting:
         saved = pd.read_csv(csv_path)
         em_saved = saved[saved['model_short'] == 'EM']
         assert not em_saved.empty
-        comp = em_saved.iloc[0]['model_long']
-        assert comp.startswith('Ens. Mean with ')
-        assert comp.endswith(' (EM)')
+        comp = em_saved.iloc[0]['composition']
+        assert 'LR' in str(comp) and 'TFT' in str(comp)
 
     def test_composition_in_api_records(
         self, pentad_skill_csv, pentad_forecasts, pentad_observed,
@@ -512,10 +501,10 @@ class TestOperationalDataRouting:
         # Build skill stats where all 3 pass for station 15001
         rows = []
         for pentad in PENTAD_IN_YEAR:
-            for ms, ml in MODELS_LONG.items():
+            for ms in ('LR', 'TFT', 'TiDE'):
                 rows.append({
                     'pentad_in_year': pentad, 'code': '15001',
-                    'model_long': ml, 'model_short': ms,
+                    'model_short': ms,
                     'sdivsigma': 0.3, 'nse': 0.95, 'delta': 5.0,
                     'accuracy': 0.95, 'mae': 2.0, 'n_pairs': 10,
                 })
@@ -530,19 +519,19 @@ class TestOperationalDataRouting:
                 'code': '15001', 'date': date,
                 'pentad_in_year': pentad, 'pentad_in_month': pim,
                 'forecasted_discharge': 100.0 + i * 20,
-                'model_long': MODELS_LONG['LR'], 'model_short': 'LR',
+                'model_short': 'LR',
             })
             frows.append({
                 'code': '15001', 'date': date,
                 'pentad_in_year': pentad, 'pentad_in_month': pim,
                 'forecasted_discharge': 110.0 + i * 20,
-                'model_long': MODELS_LONG['TFT'], 'model_short': 'TFT',
+                'model_short': 'TFT',
             })
             frows.append({
                 'code': '15001', 'date': date,
                 'pentad_in_year': pentad, 'pentad_in_month': pim,
                 'forecasted_discharge': np.nan,  # TiDE NaN
-                'model_long': MODELS_LONG['TiDE'], 'model_short': 'TiDE',
+                'model_short': 'TiDE',
             })
         forecasts_nan = pd.DataFrame(frows)
 
@@ -568,7 +557,6 @@ class TestOperationalDataRouting:
         boundary_skill = pd.DataFrame({
             'pentad_in_year': [1, 1],
             'code': ['15001', '15001'],
-            'model_long': [MODELS_LONG['LR'], MODELS_LONG['TFT']],
             'model_short': ['LR', 'TFT'],
             'sdivsigma': [0.6, 0.6],   # exactly at threshold
             'nse': [0.8, 0.8],         # exactly at threshold
@@ -583,7 +571,6 @@ class TestOperationalDataRouting:
             'pentad_in_year': [1, 1],
             'pentad_in_month': ['1', '1'],
             'forecasted_discharge': [100.0, 110.0],
-            'model_long': [MODELS_LONG['LR'], MODELS_LONG['TFT']],
             'model_short': ['LR', 'TFT'],
         })
 
@@ -599,25 +586,25 @@ class TestOperationalDataRouting:
         skill = pd.DataFrame([
             # Station 15001 (A): LR+TFT pass
             {'pentad_in_year': 1, 'code': '15001',
-             'model_long': MODELS_LONG['LR'], 'model_short': 'LR',
+             'model_short': 'LR',
              'sdivsigma': 0.3, 'nse': 0.95, 'delta': 5.0,
              'accuracy': 0.95, 'mae': 2.0, 'n_pairs': 10},
             {'pentad_in_year': 1, 'code': '15001',
-             'model_long': MODELS_LONG['TFT'], 'model_short': 'TFT',
+             'model_short': 'TFT',
              'sdivsigma': 0.4, 'nse': 0.9, 'delta': 5.0,
              'accuracy': 0.88, 'mae': 3.0, 'n_pairs': 10},
             # Station 15002 (B): only LR passes
             {'pentad_in_year': 1, 'code': '15002',
-             'model_long': MODELS_LONG['LR'], 'model_short': 'LR',
+             'model_short': 'LR',
              'sdivsigma': 0.3, 'nse': 0.95, 'delta': 5.0,
              'accuracy': 0.95, 'mae': 2.0, 'n_pairs': 10},
             {'pentad_in_year': 1, 'code': '15002',
-             'model_long': MODELS_LONG['TFT'], 'model_short': 'TFT',
+             'model_short': 'TFT',
              'sdivsigma': 0.9, 'nse': 0.5, 'delta': 5.0,
              'accuracy': 0.6, 'mae': 8.0, 'n_pairs': 10},
             # Station 15003 (C): no models pass
             {'pentad_in_year': 1, 'code': '15003',
-             'model_long': MODELS_LONG['LR'], 'model_short': 'LR',
+             'model_short': 'LR',
              'sdivsigma': 0.9, 'nse': 0.5, 'delta': 5.0,
              'accuracy': 0.6, 'mae': 8.0, 'n_pairs': 10},
         ])
@@ -625,19 +612,19 @@ class TestOperationalDataRouting:
         forecasts = pd.DataFrame([
             {'code': '15001', 'date': date, 'pentad_in_year': 1,
              'pentad_in_month': '1', 'forecasted_discharge': 100.0,
-             'model_long': MODELS_LONG['LR'], 'model_short': 'LR'},
+             'model_short': 'LR'},
             {'code': '15001', 'date': date, 'pentad_in_year': 1,
              'pentad_in_month': '1', 'forecasted_discharge': 110.0,
-             'model_long': MODELS_LONG['TFT'], 'model_short': 'TFT'},
+             'model_short': 'TFT'},
             {'code': '15002', 'date': date, 'pentad_in_year': 1,
              'pentad_in_month': '1', 'forecasted_discharge': 200.0,
-             'model_long': MODELS_LONG['LR'], 'model_short': 'LR'},
+             'model_short': 'LR'},
             {'code': '15002', 'date': date, 'pentad_in_year': 1,
              'pentad_in_month': '1', 'forecasted_discharge': 210.0,
-             'model_long': MODELS_LONG['TFT'], 'model_short': 'TFT'},
+             'model_short': 'TFT'},
             {'code': '15003', 'date': date, 'pentad_in_year': 1,
              'pentad_in_month': '1', 'forecasted_discharge': 300.0,
-             'model_long': MODELS_LONG['LR'], 'model_short': 'LR'},
+             'model_short': 'LR'},
         ])
         observed = pd.DataFrame({
             'code': ['15001', '15002', '15003'],
@@ -693,20 +680,22 @@ class TestOperationalDataRouting:
         rows = []
         # Station A: has LR, TFT, and EM
         for ms in ('LR', 'TFT', 'EM'):
-            rows.append({
+            row = {
                 'code': '15001', 'date': '2026-01-05',
                 'pentad_in_year': 1, 'pentad_in_month': '1',
                 'forecasted_discharge': 105.0 if ms == 'EM' else 100.0,
-                'model_long': MODELS_LONG.get(ms, f'Ens. Mean with LR, TFT ({ms})'),
                 'model_short': ms,
-            })
+            }
+            if ms == 'EM':
+                row['composition'] = 'LR, TFT'
+            rows.append(row)
         # Station B: has LR, TFT but NO EM
         for ms in ('LR', 'TFT'):
             rows.append({
                 'code': '15002', 'date': '2026-01-05',
                 'pentad_in_year': 1, 'pentad_in_month': '1',
                 'forecasted_discharge': 200.0,
-                'model_long': MODELS_LONG[ms], 'model_short': ms,
+                'model_short': ms,
             })
 
         df = pd.DataFrame(rows)
@@ -739,9 +728,9 @@ class TestOperationalDataRouting:
         saved = pd.read_csv(csv_path)
         em_saved = saved[saved['model_short'] == 'EM']
         assert not em_saved.empty
-        comp = em_saved.iloc[0]['model_long']
-        assert comp == 'Ens. Mean with LR, TFT (EM)', (
-            f"Expected exact composition string, got {comp!r}"
+        comp = em_saved.iloc[0]['composition']
+        assert 'LR' in str(comp) and 'TFT' in str(comp), (
+            f"Expected composition with LR and TFT, got {comp!r}"
         )
 
 
@@ -792,7 +781,7 @@ class TestDecadalOperationalPipeline:
                 # LR passes at both stations
                 rows.append({
                     'decad_in_year': decad, 'code': station,
-                    'model_long': MODELS_LONG['LR'], 'model_short': 'LR',
+                    'model_short': 'LR',
                     'sdivsigma': 0.3, 'nse': 0.95, 'delta': 5.0,
                     'accuracy': 0.95, 'mae': 2.0, 'n_pairs': 10,
                 })
@@ -800,7 +789,7 @@ class TestDecadalOperationalPipeline:
                 tft_skilled = station == '15001'
                 rows.append({
                     'decad_in_year': decad, 'code': station,
-                    'model_long': MODELS_LONG['TFT'], 'model_short': 'TFT',
+                    'model_short': 'TFT',
                     'sdivsigma': 0.4 if tft_skilled else 0.7,
                     'nse': 0.9 if tft_skilled else 0.7,
                     'delta': 5.0,
@@ -841,7 +830,6 @@ class TestDecadalOperationalPipeline:
                         'forecasted_discharge': discharges[
                             (station, i)
                         ][ms],
-                        'model_long': MODELS_LONG[ms],
                         'model_short': ms,
                     })
         return pd.DataFrame(rows)
@@ -984,15 +972,15 @@ class TestMaintenanceDataRouting:
                     'code': station, 'date': date,
                     'pentad_in_year': pentad, 'pentad_in_month': pim,
                     'forecasted_discharge': 100.0 if ms == 'LR' else 110.0,
-                    'model_long': MODELS_LONG[ms], 'model_short': ms,
+                    'model_short': ms,
                 })
             if date in include_em_dates:
                 rows.append({
                     'code': station, 'date': date,
                     'pentad_in_year': pentad, 'pentad_in_month': pim,
                     'forecasted_discharge': 105.0,
-                    'model_long': 'Ens. Mean with LR, TFT (EM)',
                     'model_short': 'EM',
+                    'composition': 'LR, TFT',
                 })
 
         df = pd.DataFrame(rows)
@@ -1117,15 +1105,15 @@ class TestMaintenanceFullGapFill:
                     'code': '15001', 'date': date_str,
                     'pentad_in_year': 1, 'pentad_in_month': '1',
                     'forecasted_discharge': 100.0 if ms == 'LR' else 110.0,
-                    'model_long': MODELS_LONG[ms], 'model_short': ms,
+                    'model_short': ms,
                 })
             if has_em:
                 rows.append({
                     'code': '15001', 'date': date_str,
                     'pentad_in_year': 1, 'pentad_in_month': '1',
                     'forecasted_discharge': 105.0,
-                    'model_long': 'Ens. Mean with LR, TFT (EM)',
                     'model_short': 'EM',
+                    'composition': 'LR, TFT',
                 })
         combined_df = pd.DataFrame(rows)
         _write_csv(
@@ -1138,7 +1126,7 @@ class TestMaintenanceFullGapFill:
         for ms in ('LR', 'TFT'):
             skill_rows.append({
                 'pentad_in_year': 1, 'code': '15001',
-                'model_long': MODELS_LONG[ms], 'model_short': ms,
+                'model_short': ms,
                 'sdivsigma': 0.3, 'nse': 0.95, 'delta': 5.0,
                 'accuracy': 0.95, 'mae': 2.0, 'n_pairs': 10,
             })
@@ -1164,13 +1152,13 @@ class TestMaintenanceFullGapFill:
                 'code': '15001', 'date': pd.Timestamp('2026-01-10'),
                 'pentad_in_year': 1, 'pentad_in_month': '1',
                 'forecasted_discharge': 100.0,
-                'model_long': MODELS_LONG['LR'], 'model_short': 'LR',
+                'model_short': 'LR',
             },
             {
                 'code': '15001', 'date': pd.Timestamp('2026-01-10'),
                 'pentad_in_year': 1, 'pentad_in_month': '1',
                 'forecasted_discharge': 110.0,
-                'model_long': MODELS_LONG['TFT'], 'model_short': 'TFT',
+                'model_short': 'TFT',
             },
         ])
 
@@ -1228,15 +1216,15 @@ class TestMultiStationMultiGapMaintenance:
                     'code': '15001', 'date': date_str,
                     'pentad_in_year': 1, 'pentad_in_month': '1',
                     'forecasted_discharge': 100.0 if ms == 'LR' else 110.0,
-                    'model_long': MODELS_LONG[ms], 'model_short': ms,
+                    'model_short': ms,
                 })
             if has_em:
                 rows.append({
                     'code': '15001', 'date': date_str,
                     'pentad_in_year': 1, 'pentad_in_month': '1',
                     'forecasted_discharge': 105.0,
-                    'model_long': 'Ens. Mean with LR, TFT (EM)',
                     'model_short': 'EM',
+                    'composition': 'LR, TFT',
                 })
 
         # Station 15002: EM on Jan 5, gap on Jan 10
@@ -1246,15 +1234,15 @@ class TestMultiStationMultiGapMaintenance:
                     'code': '15002', 'date': date_str,
                     'pentad_in_year': 1, 'pentad_in_month': '1',
                     'forecasted_discharge': 200.0 if ms == 'LR' else 220.0,
-                    'model_long': MODELS_LONG[ms], 'model_short': ms,
+                    'model_short': ms,
                 })
             if has_em:
                 rows.append({
                     'code': '15002', 'date': date_str,
                     'pentad_in_year': 1, 'pentad_in_month': '1',
                     'forecasted_discharge': 210.0,
-                    'model_long': 'Ens. Mean with LR, TFT (EM)',
                     'model_short': 'EM',
+                    'composition': 'LR, TFT',
                 })
 
         _write_csv(
@@ -1282,7 +1270,7 @@ class TestMultiStationMultiGapMaintenance:
             for ms in ('LR', 'TFT'):
                 skill_rows.append({
                     'pentad_in_year': 1, 'code': station,
-                    'model_long': MODELS_LONG[ms], 'model_short': ms,
+                    'model_short': ms,
                     'sdivsigma': 0.3, 'nse': 0.95, 'delta': 5.0,
                     'accuracy': 0.95, 'mae': 2.0, 'n_pairs': 10,
                 })
@@ -1300,19 +1288,19 @@ class TestMultiStationMultiGapMaintenance:
             {'code': '15001', 'date': pd.Timestamp('2026-01-05'),
              'pentad_in_year': 1, 'pentad_in_month': '1',
              'forecasted_discharge': 100.0,
-             'model_long': MODELS_LONG['LR'], 'model_short': 'LR'},
+             'model_short': 'LR'},
             {'code': '15001', 'date': pd.Timestamp('2026-01-05'),
              'pentad_in_year': 1, 'pentad_in_month': '1',
              'forecasted_discharge': 110.0,
-             'model_long': MODELS_LONG['TFT'], 'model_short': 'TFT'},
+             'model_short': 'TFT'},
             {'code': '15002', 'date': pd.Timestamp('2026-01-10'),
              'pentad_in_year': 1, 'pentad_in_month': '1',
              'forecasted_discharge': 200.0,
-             'model_long': MODELS_LONG['LR'], 'model_short': 'LR'},
+             'model_short': 'LR'},
             {'code': '15002', 'date': pd.Timestamp('2026-01-10'),
              'pentad_in_year': 1, 'pentad_in_month': '1',
              'forecasted_discharge': 220.0,
-             'model_long': MODELS_LONG['TFT'], 'model_short': 'TFT'},
+             'model_short': 'TFT'},
         ])
         # Filter to gap dates/codes (mirrors postprocessing_maintenance.py)
         modelled_filtered = all_modelled[
@@ -1401,16 +1389,14 @@ class TestSkillMetricsFallback:
         assert 'pentad_in_year' in df.columns
         # Normalized from model_type -> model_short
         assert 'model_short' in df.columns
-        # Derived model_long
-        assert 'model_long' in df.columns
-        assert df.iloc[0]['model_long'] == 'Linear regression (LR)'
+        assert df.iloc[0]['model_short'] == 'LR'
 
     def test_api_fallback_produces_correct_ensemble(self, env_setup):
         """No CSV -> API data -> normalize -> ensemble pipeline produces EM.
 
         This end-to-end test verifies that when skill metrics come from the
         API (not CSV), the column normalization (horizon_in_year -> pentad_in_year,
-        model_type -> model_short, derived model_long) produces data that the
+        model_type -> model_short) produces data that the
         ensemble_calculator can merge correctly with forecasts.
 
         If _normalize_api_skill_metrics produces wrong column names or types,
@@ -1446,7 +1432,6 @@ class TestSkillMetricsFallback:
         assert not skill_stats.empty
         assert 'pentad_in_year' in skill_stats.columns
         assert 'model_short' in skill_stats.columns
-        assert 'model_long' in skill_stats.columns
 
         # Now feed into ensemble_calculator with matching forecasts
         forecasts = pd.DataFrame({
@@ -1455,7 +1440,6 @@ class TestSkillMetricsFallback:
             'pentad_in_year': [1, 1],
             'pentad_in_month': ['1', '1'],
             'forecasted_discharge': [100.0, 110.0],
-            'model_long': [MODELS_LONG['LR'], MODELS_LONG['TFT']],
             'model_short': ['LR', 'TFT'],
         })
         observed = pd.DataFrame({
@@ -1501,7 +1485,6 @@ class TestApiFailureModes:
             'pentad_in_year': [1],
             'pentad_in_month': ['1'],
             'forecasted_discharge': [100.0],
-            'model_long': ['Linear regression (LR)'],
             'model_short': ['LR'],
         })
 
@@ -1570,7 +1553,6 @@ class TestSingleModelEnsembleBug:
         skill = pd.DataFrame({
             'pentad_in_year': [1],
             'code': ['15001'],
-            'model_long': [MODELS_LONG['TFT']],
             'model_short': ['TFT'],
             'sdivsigma': [0.3], 'nse': [0.95], 'delta': [5.0],
             'accuracy': [0.95], 'mae': [2.0], 'n_pairs': [10],
@@ -1581,7 +1563,6 @@ class TestSingleModelEnsembleBug:
             'pentad_in_year': [1],
             'pentad_in_month': ['1'],
             'forecasted_discharge': [110.0],
-            'model_long': [MODELS_LONG['TFT']],
             'model_short': ['TFT'],
         })
         joint, _ = _make_ensemble(forecasts, skill, pentad_observed)
@@ -1592,7 +1573,6 @@ class TestSingleModelEnsembleBug:
         skill = pd.DataFrame({
             'pentad_in_year': [1],
             'code': ['15001'],
-            'model_long': [MODELS_LONG['TiDE']],
             'model_short': ['TiDE'],
             'sdivsigma': [0.3], 'nse': [0.95], 'delta': [5.0],
             'accuracy': [0.95], 'mae': [2.0], 'n_pairs': [10],
@@ -1603,7 +1583,6 @@ class TestSingleModelEnsembleBug:
             'pentad_in_year': [1],
             'pentad_in_month': ['1'],
             'forecasted_discharge': [90.0],
-            'model_long': [MODELS_LONG['TiDE']],
             'model_short': ['TiDE'],
         })
         joint, _ = _make_ensemble(forecasts, skill, pentad_observed)
@@ -1614,9 +1593,6 @@ class TestSingleModelEnsembleBug:
         skill = pd.DataFrame({
             'pentad_in_year': [1, 1, 1],
             'code': ['15001'] * 3,
-            'model_long': [
-                MODELS_LONG['LR'], MODELS_LONG['TFT'], MODELS_LONG['TiDE'],
-            ],
             'model_short': ['LR', 'TFT', 'TiDE'],
             'sdivsigma': [0.9, 0.3, 0.3],   # LR fails
             'nse': [0.5, 0.95, 0.95],        # LR fails
@@ -1631,9 +1607,6 @@ class TestSingleModelEnsembleBug:
             'pentad_in_year': [1, 1, 1],
             'pentad_in_month': ['1', '1', '1'],
             'forecasted_discharge': [100.0, 110.0, 90.0],
-            'model_long': [
-                MODELS_LONG['LR'], MODELS_LONG['TFT'], MODELS_LONG['TiDE'],
-            ],
             'model_short': ['LR', 'TFT', 'TiDE'],
         })
         joint, _ = _make_ensemble(forecasts, skill, pentad_observed)
@@ -1641,7 +1614,7 @@ class TestSingleModelEnsembleBug:
         assert not em_rows.empty
         # EM = mean(TFT=110, TiDE=90) = 100.0
         assert abs(em_rows.iloc[0]['forecasted_discharge'] - 100.0) < 0.01
-        comp = em_rows.iloc[0]['model_long']
+        comp = em_rows.iloc[0]['composition']
         assert 'TFT' in comp and 'TiDE' in comp
         assert 'LR' not in comp
 
@@ -1666,15 +1639,15 @@ class TestNeuralEnsembleExclusion:
         """
         skill = pd.DataFrame([
             {'pentad_in_year': 1, 'code': '15001',
-             'model_long': MODELS_LONG['LR'], 'model_short': 'LR',
+             'model_short': 'LR',
              'sdivsigma': 0.3, 'nse': 0.95, 'delta': 5.0,
              'accuracy': 0.95, 'mae': 2.0, 'n_pairs': 10},
             {'pentad_in_year': 1, 'code': '15001',
-             'model_long': MODELS_LONG['TFT'], 'model_short': 'TFT',
+             'model_short': 'TFT',
              'sdivsigma': 0.4, 'nse': 0.9, 'delta': 5.0,
              'accuracy': 0.88, 'mae': 3.0, 'n_pairs': 10},
             {'pentad_in_year': 1, 'code': '15001',
-             'model_long': MODEL_LONG_NAMES['NE'], 'model_short': 'NE',
+             'model_short': 'NE',
              'sdivsigma': 0.2, 'nse': 0.98, 'delta': 5.0,
              'accuracy': 0.99, 'mae': 1.0, 'n_pairs': 10},
         ])
@@ -1682,15 +1655,15 @@ class TestNeuralEnsembleExclusion:
             {'code': '15001', 'date': pd.Timestamp('2026-01-05'),
              'pentad_in_year': 1, 'pentad_in_month': '1',
              'forecasted_discharge': 100.0,
-             'model_long': MODELS_LONG['LR'], 'model_short': 'LR'},
+             'model_short': 'LR'},
             {'code': '15001', 'date': pd.Timestamp('2026-01-05'),
              'pentad_in_year': 1, 'pentad_in_month': '1',
              'forecasted_discharge': 110.0,
-             'model_long': MODELS_LONG['TFT'], 'model_short': 'TFT'},
+             'model_short': 'TFT'},
             {'code': '15001', 'date': pd.Timestamp('2026-01-05'),
              'pentad_in_year': 1, 'pentad_in_month': '1',
              'forecasted_discharge': 120.0,
-             'model_long': MODEL_LONG_NAMES['NE'], 'model_short': 'NE'},
+             'model_short': 'NE'},
         ])
 
         joint, _ = _make_ensemble(forecasts, skill, pentad_observed)
@@ -1705,7 +1678,7 @@ class TestNeuralEnsembleExclusion:
         )
 
         # Composition should include LR and TFT, but NOT NE
-        comp = em_rows.iloc[0]['model_long']
+        comp = em_rows.iloc[0]['composition']
         assert 'LR' in comp
         assert 'TFT' in comp
         assert 'NE' not in comp
@@ -1716,11 +1689,11 @@ class TestNeuralEnsembleExclusion:
         """Only NE passes thresholds -> no EM (NE excluded, no candidates)."""
         skill = pd.DataFrame([
             {'pentad_in_year': 1, 'code': '15001',
-             'model_long': MODELS_LONG['LR'], 'model_short': 'LR',
+             'model_short': 'LR',
              'sdivsigma': 0.9, 'nse': 0.5, 'delta': 5.0,
              'accuracy': 0.6, 'mae': 8.0, 'n_pairs': 10},
             {'pentad_in_year': 1, 'code': '15001',
-             'model_long': MODEL_LONG_NAMES['NE'], 'model_short': 'NE',
+             'model_short': 'NE',
              'sdivsigma': 0.2, 'nse': 0.98, 'delta': 5.0,
              'accuracy': 0.99, 'mae': 1.0, 'n_pairs': 10},
         ])
@@ -1728,11 +1701,11 @@ class TestNeuralEnsembleExclusion:
             {'code': '15001', 'date': pd.Timestamp('2026-01-05'),
              'pentad_in_year': 1, 'pentad_in_month': '1',
              'forecasted_discharge': 100.0,
-             'model_long': MODELS_LONG['LR'], 'model_short': 'LR'},
+             'model_short': 'LR'},
             {'code': '15001', 'date': pd.Timestamp('2026-01-05'),
              'pentad_in_year': 1, 'pentad_in_month': '1',
              'forecasted_discharge': 120.0,
-             'model_long': MODEL_LONG_NAMES['NE'], 'model_short': 'NE'},
+             'model_short': 'NE'},
         ])
 
         joint, _ = _make_ensemble(forecasts, skill, pentad_observed)
@@ -1751,12 +1724,11 @@ class TestEdgeCaseInputs:
         """Empty forecasts DF -> returns (empty, skill_stats), no crash."""
         empty_fc = pd.DataFrame(columns=[
             'code', 'date', 'pentad_in_year', 'pentad_in_month',
-            'forecasted_discharge', 'model_long', 'model_short',
+            'forecasted_discharge', 'model_short',
         ])
         skill = pd.DataFrame({
             'pentad_in_year': [1],
             'code': ['15001'],
-            'model_long': [MODELS_LONG['LR']],
             'model_short': ['LR'],
             'sdivsigma': [0.3], 'nse': [0.95], 'delta': [5.0],
             'accuracy': [0.95], 'mae': [2.0], 'n_pairs': [10],
@@ -1774,7 +1746,7 @@ class TestEdgeCaseInputs:
     def test_empty_skill_stats_no_ensemble(self, env_setup):
         """Empty skill_stats -> no ensemble created."""
         empty_skill = pd.DataFrame(columns=[
-            'pentad_in_year', 'code', 'model_long', 'model_short',
+            'pentad_in_year', 'code', 'model_short',
             'sdivsigma', 'nse', 'delta', 'accuracy', 'mae', 'n_pairs',
         ])
         forecasts = pd.DataFrame({
@@ -1783,7 +1755,6 @@ class TestEdgeCaseInputs:
             'pentad_in_year': [1],
             'pentad_in_month': ['1'],
             'forecasted_discharge': [100.0],
-            'model_long': [MODELS_LONG['LR']],
             'model_short': ['LR'],
         })
         observed = pd.DataFrame({
@@ -1801,7 +1772,6 @@ class TestEdgeCaseInputs:
         skill = pd.DataFrame({
             'pentad_in_year': [1, 1],
             'code': ['15001', '15001'],
-            'model_long': [MODELS_LONG['LR'], MODELS_LONG['TFT']],
             'model_short': ['LR', 'TFT'],
             'sdivsigma': [0.3, 0.4], 'nse': [0.95, 0.9],
             'delta': [5.0, 5.0], 'accuracy': [0.95, 0.88],
@@ -1813,7 +1783,6 @@ class TestEdgeCaseInputs:
             'pentad_in_year': [1, 1],
             'pentad_in_month': ['1', '1'],
             'forecasted_discharge': [100.0, 110.0],
-            'model_long': [MODELS_LONG['LR'], MODELS_LONG['TFT']],
             'model_short': ['LR', 'TFT'],
         })
         empty_obs = pd.DataFrame(columns=[
@@ -1836,19 +1805,17 @@ class TestYearAndMonthBoundaries:
         srows = []
         orows = []
         for date, pentad, pim in zip(dates, pentads, pims):
-            for ms, ml in [('LR', MODELS_LONG['LR']),
-                           ('TFT', MODELS_LONG['TFT'])]:
+            for ms in ('LR', 'TFT'):
                 frows.append({
                     'code': station, 'date': date,
                     'pentad_in_year': pentad, 'pentad_in_month': pim,
                     'forecasted_discharge': 100.0 if ms == 'LR' else 110.0,
-                    'model_long': ml, 'model_short': ms,
+                    'model_short': ms,
                 })
-            for ms, ml in [('LR', MODELS_LONG['LR']),
-                           ('TFT', MODELS_LONG['TFT'])]:
+            for ms in ('LR', 'TFT'):
                 srows.append({
                     'pentad_in_year': pentad, 'code': station,
-                    'model_long': ml, 'model_short': ms,
+                    'model_short': ms,
                     'sdivsigma': 0.3, 'nse': 0.95, 'delta': 5.0,
                     'accuracy': 0.95, 'mae': 2.0, 'n_pairs': 10,
                 })
@@ -1890,15 +1857,15 @@ class TestYearAndMonthBoundaries:
                     'code': '15001', 'date': date_str,
                     'pentad_in_year': pentad, 'pentad_in_month': pim,
                     'forecasted_discharge': 100.0 if ms == 'LR' else 110.0,
-                    'model_long': MODELS_LONG[ms], 'model_short': ms,
+                    'model_short': ms,
                 })
             if has_em:
                 rows.append({
                     'code': '15001', 'date': date_str,
                     'pentad_in_year': pentad, 'pentad_in_month': pim,
                     'forecasted_discharge': 105.0,
-                    'model_long': 'Ens. Mean with LR, TFT (EM)',
                     'model_short': 'EM',
+                    'composition': 'LR, TFT',
                 })
         df = pd.DataFrame(rows)
         filepath = os.path.join(str(tmp_path), 'combined_pentad.csv')
@@ -1925,7 +1892,7 @@ class TestYearAndMonthBoundaries:
                     'code': '15001', 'date': date_str,
                     'pentad_in_year': pentad, 'pentad_in_month': pim,
                     'forecasted_discharge': 100.0 if ms == 'LR' else 110.0,
-                    'model_long': MODELS_LONG[ms], 'model_short': ms,
+                    'model_short': ms,
                 })
         df = pd.DataFrame(rows)
         filepath = os.path.join(str(tmp_path), 'combined_pentad.csv')
@@ -1967,7 +1934,6 @@ class TestQuantileFields:
         skill = pd.DataFrame({
             'pentad_in_year': [1, 1],
             'code': ['15001', '15001'],
-            'model_long': [MODELS_LONG['LR'], MODELS_LONG['TFT']],
             'model_short': ['LR', 'TFT'],
             'sdivsigma': [0.3, 0.4], 'nse': [0.95, 0.9],
             'delta': [5.0, 5.0], 'accuracy': [0.95, 0.88],
@@ -1979,7 +1945,6 @@ class TestQuantileFields:
             'pentad_in_year': [1, 1],
             'pentad_in_month': ['1', '1'],
             'forecasted_discharge': [100.0, 110.0],
-            'model_long': [MODELS_LONG['LR'], MODELS_LONG['TFT']],
             'model_short': ['LR', 'TFT'],
             'q05': [80.0, 90.0],
             'q25': [90.0, 100.0],
@@ -2009,7 +1974,6 @@ class TestQuantileFields:
         skill = pd.DataFrame({
             'pentad_in_year': [1, 1],
             'code': ['15001', '15001'],
-            'model_long': [MODELS_LONG['LR'], MODELS_LONG['TFT']],
             'model_short': ['LR', 'TFT'],
             'sdivsigma': [0.3, 0.4], 'nse': [0.95, 0.9],
             'delta': [5.0, 5.0], 'accuracy': [0.95, 0.88],
@@ -2021,7 +1985,6 @@ class TestQuantileFields:
             'pentad_in_year': [1, 1],
             'pentad_in_month': ['1', '1'],
             'forecasted_discharge': [100.0, 110.0],
-            'model_long': [MODELS_LONG['LR'], MODELS_LONG['TFT']],
             'model_short': ['LR', 'TFT'],
             'q05': [80.0, 90.0],
             'q95': [120.0, 130.0],
@@ -2125,13 +2088,11 @@ class TestRecalculateWithRealisticData:
                     obs_val = obs_base[station][i]
                     # Observed: one row per (date, station) — the
                     # function only uses [code, date, discharge_avg,
-                    # delta] from observed, but requires model_long
-                    # and model_short columns to exist.
+                    # delta] from observed.
                     obs_rows.append({
                         'code': station, 'date': date,
                         'discharge_avg': float(obs_val),
                         'delta': 5.0,
-                        'model_long': 'observed',
                         'model_short': 'obs',
                     })
 
@@ -2142,7 +2103,6 @@ class TestRecalculateWithRealisticData:
                         'pentad_in_year': pentad_num,
                         'pentad_in_month': pim,
                         'forecasted_discharge': float(lr_val),
-                        'model_long': MODEL_LONG_NAMES['LR'],
                         'model_short': 'LR',
                     })
 
@@ -2153,7 +2113,6 @@ class TestRecalculateWithRealisticData:
                         'pentad_in_year': pentad_num,
                         'pentad_in_month': pim,
                         'forecasted_discharge': float(tft_val),
-                        'model_long': MODEL_LONG_NAMES['TFT'],
                         'model_short': 'TFT',
                     })
 
@@ -2390,13 +2349,9 @@ class TestSkillMetricSavePath:
             'code': ['15001', '15001', '15001',
                       '15002', '15002', '15002'],
             'model_short': ['LR', 'TFT', 'EM', 'LR', 'TFT', 'EM'],
-            'model_long': [
-                MODEL_LONG_NAMES['LR'],
-                MODEL_LONG_NAMES['TFT'],
-                'Ens. Mean with LR, TFT (EM)',
-                MODEL_LONG_NAMES['LR'],
-                MODEL_LONG_NAMES['TFT'],
-                'Ens. Mean with LR, TFT (EM)',
+            'composition': [
+                '', '', 'LR, TFT',
+                '', '', 'LR, TFT',
             ],
             'sdivsigma': [0.3456, 0.4123, 0.2987,
                            0.5012, 0.3678, 0.3234],
@@ -2469,7 +2424,6 @@ class TestSkillMetricSavePath:
             'pentad_in_year': [1],
             'code': [15001.0],  # float code
             'model_short': ['LR'],
-            'model_long': [MODEL_LONG_NAMES['LR']],
             'sdivsigma': [0.3], 'nse': [0.9], 'delta': [5.0],
             'accuracy': [0.9], 'mae': [2.0], 'n_pairs': [10],
             'date': pd.to_datetime(['2026-01-05']),
@@ -2554,7 +2508,7 @@ class TestRecalculateSkillMetricsIntegration:
                      pd.DataFrame(columns=[
                          'code', 'date', 'pentad_in_year',
                          'pentad_in_month', 'forecasted_discharge',
-                         'model_long', 'model_short',
+                         'model_short',
                      ]),
                  ),
              ) as mock_read, \
@@ -2601,7 +2555,7 @@ class TestRecalculateSkillMetricsIntegration:
                      pd.DataFrame(columns=[
                          'code', 'date', 'pentad_in_year',
                          'pentad_in_month', 'forecasted_discharge',
-                         'model_long', 'model_short',
+                         'model_short',
                      ]),
                  ),
              ), \
@@ -2695,32 +2649,32 @@ class TestEnsembleSkillMetricVerification:
             # LR
             {'code': '15001', 'date': dates[0], 'pentad_in_year': 1,
              'pentad_in_month': '1', 'forecasted_discharge': 100.0,
-             'model_long': MODEL_LONG_NAMES['LR'], 'model_short': 'LR'},
+             'model_short': 'LR'},
             {'code': '15001', 'date': dates[1], 'pentad_in_year': 1,
              'pentad_in_month': '1', 'forecasted_discharge': 105.0,
-             'model_long': MODEL_LONG_NAMES['LR'], 'model_short': 'LR'},
+             'model_short': 'LR'},
             {'code': '15001', 'date': dates[2], 'pentad_in_year': 1,
              'pentad_in_month': '1', 'forecasted_discharge': 115.0,
-             'model_long': MODEL_LONG_NAMES['LR'], 'model_short': 'LR'},
+             'model_short': 'LR'},
             # TFT
             {'code': '15001', 'date': dates[0], 'pentad_in_year': 1,
              'pentad_in_month': '1', 'forecasted_discharge': 110.0,
-             'model_long': MODEL_LONG_NAMES['TFT'], 'model_short': 'TFT'},
+             'model_short': 'TFT'},
             {'code': '15001', 'date': dates[1], 'pentad_in_year': 1,
              'pentad_in_month': '1', 'forecasted_discharge': 115.0,
-             'model_long': MODEL_LONG_NAMES['TFT'], 'model_short': 'TFT'},
+             'model_short': 'TFT'},
             {'code': '15001', 'date': dates[2], 'pentad_in_year': 1,
              'pentad_in_month': '1', 'forecasted_discharge': 125.0,
-             'model_long': MODEL_LONG_NAMES['TFT'], 'model_short': 'TFT'},
+             'model_short': 'TFT'},
         ])
         # Both models pass all thresholds
         skill = pd.DataFrame([
             {'pentad_in_year': 1, 'code': '15001',
-             'model_long': MODEL_LONG_NAMES['LR'], 'model_short': 'LR',
+             'model_short': 'LR',
              'sdivsigma': 0.3, 'nse': 0.95, 'delta': 5.0,
              'accuracy': 0.95, 'mae': 2.0, 'n_pairs': 10},
             {'pentad_in_year': 1, 'code': '15001',
-             'model_long': MODEL_LONG_NAMES['TFT'], 'model_short': 'TFT',
+             'model_short': 'TFT',
              'sdivsigma': 0.4, 'nse': 0.9, 'delta': 5.0,
              'accuracy': 0.88, 'mae': 3.0, 'n_pairs': 10},
         ])
@@ -2810,7 +2764,7 @@ class TestMultiEntityEnsembleSkillStats:
                 # LR passes everywhere
                 skill_rows.append({
                     'pentad_in_year': pentad, 'code': station,
-                    'model_long': MODELS_LONG['LR'], 'model_short': 'LR',
+                    'model_short': 'LR',
                     'sdivsigma': 0.3, 'nse': 0.95, 'delta': 5.0,
                     'accuracy': 0.95, 'mae': 2.0, 'n_pairs': 5,
                 })
@@ -2818,7 +2772,7 @@ class TestMultiEntityEnsembleSkillStats:
                 tft_ok = station == '15001'
                 skill_rows.append({
                     'pentad_in_year': pentad, 'code': station,
-                    'model_long': MODELS_LONG['TFT'], 'model_short': 'TFT',
+                    'model_short': 'TFT',
                     'sdivsigma': 0.4 if tft_ok else 0.9,
                     'nse': 0.9 if tft_ok else 0.5,
                     'delta': 5.0,
@@ -2844,16 +2798,13 @@ class TestMultiEntityEnsembleSkillStats:
         ]:
             for di, date in enumerate(dates):
                 for station in ['15001', '15002']:
-                    for ms, ml in [
-                        ('LR', MODELS_LONG['LR']),
-                        ('TFT', MODELS_LONG['TFT']),
-                    ]:
+                    for ms in ('LR', 'TFT'):
                         frows.append({
                             'code': station, 'date': date,
                             'pentad_in_year': pentad,
                             'pentad_in_month': pim,
                             'forecasted_discharge': fc_vals[(di, ms)],
-                            'model_long': ml, 'model_short': ms,
+                            'model_short': ms,
                         })
         forecasts = pd.DataFrame(frows)
 
@@ -2903,15 +2854,15 @@ class TestMultiEntityEnsembleSkillStats:
             assert row['mae'] >= 0
             assert row['sdivsigma'] >= 0
 
-    def test_skill_stats_em_row_model_long_has_composition(self, env_setup):
-        """EM skill row has composition string in model_long."""
+    def test_skill_stats_em_row_has_composition(self, env_setup):
+        """EM skill row has composition column with model names."""
         skill = pd.DataFrame([
             {'pentad_in_year': 1, 'code': '15001',
-             'model_long': MODELS_LONG['LR'], 'model_short': 'LR',
+             'model_short': 'LR',
              'sdivsigma': 0.3, 'nse': 0.95, 'delta': 5.0,
              'accuracy': 0.95, 'mae': 2.0, 'n_pairs': 10},
             {'pentad_in_year': 1, 'code': '15001',
-             'model_long': MODELS_LONG['TFT'], 'model_short': 'TFT',
+             'model_short': 'TFT',
              'sdivsigma': 0.4, 'nse': 0.9, 'delta': 5.0,
              'accuracy': 0.88, 'mae': 3.0, 'n_pairs': 10},
         ])
@@ -2921,7 +2872,6 @@ class TestMultiEntityEnsembleSkillStats:
             'pentad_in_year': [1, 1],
             'pentad_in_month': ['1', '1'],
             'forecasted_discharge': [100.0, 110.0],
-            'model_long': [MODELS_LONG['LR'], MODELS_LONG['TFT']],
             'model_short': ['LR', 'TFT'],
         })
         observed = pd.DataFrame({
@@ -2934,11 +2884,9 @@ class TestMultiEntityEnsembleSkillStats:
         _, skill_out = _make_ensemble(forecasts, skill, observed)
         em_skill = skill_out[skill_out['model_short'] == 'EM']
         assert len(em_skill) == 1
-        model_long = em_skill.iloc[0]['model_long']
-        assert model_long.startswith('Ens. Mean with ')
-        assert model_long.endswith(' (EM)')
-        assert 'LR' in model_long
-        assert 'TFT' in model_long
+        comp = em_skill.iloc[0]['composition']
+        assert 'LR' in comp
+        assert 'TFT' in comp
 
 
 # ---------------------------------------------------------------------------
@@ -2968,19 +2916,17 @@ class TestLeapYearBoundary:
         orows = []
 
         for date, pentad, pim in zip(dates, pentads, pims):
-            for ms, ml in [('LR', MODEL_LONG_NAMES['LR']),
-                           ('TFT', MODEL_LONG_NAMES['TFT'])]:
+            for ms in ('LR', 'TFT'):
                 frows.append({
                     'code': '15001', 'date': date,
                     'pentad_in_year': pentad, 'pentad_in_month': pim,
                     'forecasted_discharge': 100.0 if ms == 'LR' else 110.0,
-                    'model_long': ml, 'model_short': ms,
+                    'model_short': ms,
                 })
-            for ms, ml in [('LR', MODEL_LONG_NAMES['LR']),
-                           ('TFT', MODEL_LONG_NAMES['TFT'])]:
+            for ms in ('LR', 'TFT'):
                 srows.append({
                     'pentad_in_year': pentad, 'code': '15001',
-                    'model_long': ml, 'model_short': ms,
+                    'model_short': ms,
                     'sdivsigma': 0.3, 'nse': 0.95, 'delta': 5.0,
                     'accuracy': 0.95, 'mae': 2.0, 'n_pairs': 10,
                 })
@@ -3072,15 +3018,15 @@ class TestDecadalMaintenanceFullGapFill:
                     'code': '15001', 'date': date_str,
                     'decad_in_year': 1, 'decad_in_month': '1',
                     'forecasted_discharge': 100.0 if ms == 'LR' else 110.0,
-                    'model_long': MODEL_LONG_NAMES[ms], 'model_short': ms,
+                    'model_short': ms,
                 })
             if has_em:
                 rows.append({
                     'code': '15001', 'date': date_str,
                     'decad_in_year': 1, 'decad_in_month': '1',
                     'forecasted_discharge': 105.0,
-                    'model_long': 'Ens. Mean with LR, TFT (EM)',
                     'model_short': 'EM',
+                    'composition': 'LR, TFT',
                 })
         combined_df = pd.DataFrame(rows)
         _write_csv(
@@ -3093,7 +3039,7 @@ class TestDecadalMaintenanceFullGapFill:
         for ms in ('LR', 'TFT'):
             skill_rows.append({
                 'decad_in_year': 1, 'code': '15001',
-                'model_long': MODEL_LONG_NAMES[ms], 'model_short': ms,
+                'model_short': ms,
                 'sdivsigma': 0.3, 'nse': 0.95, 'delta': 5.0,
                 'accuracy': 0.95, 'mae': 2.0, 'n_pairs': 10,
             })
@@ -3120,13 +3066,13 @@ class TestDecadalMaintenanceFullGapFill:
                 'code': '15001', 'date': pd.Timestamp('2026-01-20'),
                 'decad_in_year': 1, 'decad_in_month': '1',
                 'forecasted_discharge': 100.0,
-                'model_long': MODEL_LONG_NAMES['LR'], 'model_short': 'LR',
+                'model_short': 'LR',
             },
             {
                 'code': '15001', 'date': pd.Timestamp('2026-01-20'),
                 'decad_in_year': 1, 'decad_in_month': '1',
                 'forecasted_discharge': 110.0,
-                'model_long': MODEL_LONG_NAMES['TFT'], 'model_short': 'TFT',
+                'model_short': 'TFT',
             },
         ])
 
@@ -3239,7 +3185,6 @@ class TestDecadalRecalculateWithRealisticData:
                         'code': station, 'date': date,
                         'discharge_avg': float(obs_val),
                         'delta': 5.0,
-                        'model_long': 'observed',
                         'model_short': 'obs',
                     })
 
@@ -3249,7 +3194,6 @@ class TestDecadalRecalculateWithRealisticData:
                         'decad_in_year': decad_num,
                         'decad_in_month': dim,
                         'forecasted_discharge': float(lr_val),
-                        'model_long': MODEL_LONG_NAMES['LR'],
                         'model_short': 'LR',
                     })
 
@@ -3259,7 +3203,6 @@ class TestDecadalRecalculateWithRealisticData:
                         'decad_in_year': decad_num,
                         'decad_in_month': dim,
                         'forecasted_discharge': float(tft_val),
-                        'model_long': MODEL_LONG_NAMES['TFT'],
                         'model_short': 'TFT',
                     })
 

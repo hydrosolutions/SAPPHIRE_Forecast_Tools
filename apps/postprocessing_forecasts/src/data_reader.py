@@ -11,32 +11,6 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-# Reverse mapping: model_short -> model_long
-# Matches the model_mapping in setup_library.py and model_type_map in
-# forecast_library.py so that API records get a model_long column.
-MODEL_SHORT_TO_LONG = {
-    "LR": "Linear regression (LR)",
-    "TFT": "Temporal Fusion Transformer (TFT)",
-    "TiDE": "Time-series Dense Encoder (TiDE)",
-    "TSMixer": "Time-Series Mixer (TSMixer)",
-    "ARIMA": "AutoRegressive Integrated Moving Average (ARIMA)",
-    "RRMAMBA": "Rainfall-Runoff Mamba (RRMAMBA)",
-    "RRAM": "Rainfall-Runoff Mamba (RRAM)",
-    "EM": "Ensemble Mean (EM)",
-    "NE": "Neural Ensemble (NE)",
-}
-
-# API model_type -> CSV model_short (inverted model_type_map)
-API_MODEL_TYPE_TO_SHORT = {
-    "LR": "LR",
-    "TFT": "TFT",
-    "TiDE": "TiDE",
-    "TSMixer": "TSMixer",
-    "EM": "EM",
-    "NE": "NE",
-    "RRAM": "RRAM",
-}
-
 try:
     from sapphire_api_client.postprocessing import (
         SapphirePostprocessingClient,
@@ -54,8 +28,7 @@ def read_skill_metrics(horizon_type: str) -> pd.DataFrame:
 
     Returns:
         DataFrame with columns: [pentad_in_year|decad_in_year, code,
-        model_long, model_short, sdivsigma, nse, delta, accuracy, mae,
-        n_pairs]
+        model_short, sdivsigma, nse, delta, accuracy, mae, n_pairs]
 
     Raises:
         ValueError: If horizon_type is invalid.
@@ -182,7 +155,7 @@ def _normalize_api_skill_metrics(
 
     API returns: horizon_in_year, model_type, code, sdivsigma, nse,
                  delta, accuracy, mae, n_pairs
-    CSV expects: pentad_in_year|decad_in_year, model_short, model_long,
+    CSV expects: pentad_in_year|decad_in_year, model_short,
                  code, sdivsigma, nse, delta, accuracy, mae, n_pairs
     """
     period_col = (
@@ -195,16 +168,6 @@ def _normalize_api_skill_metrics(
         "model_type": "model_short",
     }
     df = df.rename(columns=rename_map)
-
-    # Map model_short to model_long (API doesn't return model_long)
-    if "model_short" in df.columns:
-        df["model_long"] = df["model_short"].map(MODEL_SHORT_TO_LONG)
-        # Fall back to "Unknown (<short>)" for unmapped models
-        mask = df["model_long"].isna()
-        if mask.any():
-            df.loc[mask, "model_long"] = df.loc[mask, "model_short"].apply(
-                lambda s: f"Unknown ({s})"
-            )
 
     # Ensure code is string
     if "code" in df.columns:

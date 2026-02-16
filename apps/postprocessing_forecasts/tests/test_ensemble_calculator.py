@@ -25,8 +25,6 @@ from src.ensemble_calculator import (
 from src import skill_metrics
 import tag_library as tl
 
-from test_constants import MODEL_LONG_NAMES
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -38,11 +36,6 @@ def skill_stats_pentad():
     return pd.DataFrame({
         'pentad_in_year': [1, 1, 1],
         'code': ['10001', '10001', '10001'],
-        'model_long': [
-            MODEL_LONG_NAMES['LR'],
-            MODEL_LONG_NAMES['TFT'],
-            MODEL_LONG_NAMES['TiDE'],
-        ],
         'model_short': ['LR', 'TFT', 'TiDE'],
         'sdivsigma': [0.3, 0.4, 0.9],  # TiDE fails sdivsigma threshold
         'nse': [0.95, 0.9, 0.5],         # TiDE fails nse threshold
@@ -64,10 +57,6 @@ def forecasts_pentad():
         'pentad_in_year': [1, 1, 2, 2],
         'pentad_in_month': ['1', '1', '2', '2'],  # string like tl.get_pentad
         'forecasted_discharge': [100.0, 110.0, 120.0, 130.0],
-        'model_long': [
-            MODEL_LONG_NAMES['LR'], MODEL_LONG_NAMES['TFT'],
-            MODEL_LONG_NAMES['LR'], MODEL_LONG_NAMES['TFT'],
-        ],
         'model_short': ['LR', 'TFT', 'LR', 'TFT'],
     })
 
@@ -97,6 +86,7 @@ class TestHelpers:
         ])
         assert result == ['LR', 'TFT', '']
 
+    # Tests deprecated function — remove when model_long_agg is deleted
     def test_model_long_agg(self):
         series = pd.Series([
             'Linear regression (LR)',
@@ -105,6 +95,7 @@ class TestHelpers:
         result = model_long_agg(series)
         assert result == 'Ens. Mean with LR, TFT (EM)'
 
+    # Tests deprecated function — remove when model_long_agg is deleted
     def test_model_long_agg_sorted(self):
         """Models are sorted alphabetically in composition."""
         series = pd.Series([
@@ -146,6 +137,7 @@ class TestHelpers:
             'Ens. Mean with A, B, C, D (EM)'
         ) is True
 
+    # Tests deprecated function — remove when model_long_agg is deleted
     def test_model_long_agg_duplicate_models(self):
         """Duplicate model entries are uniquified via .unique()."""
         series = pd.Series([
@@ -155,19 +147,21 @@ class TestHelpers:
         result = model_long_agg(series)
         assert result == 'Ens. Mean with LR (EM)'
 
+    # Tests deprecated function — remove when model_long_agg is deleted
     def test_model_long_agg_three_models(self):
         """Three models sorted alphabetically."""
         series = pd.Series([
-            MODEL_LONG_NAMES['TiDE'],
-            MODEL_LONG_NAMES['LR'],
-            MODEL_LONG_NAMES['TFT'],
+            'Time-series Dense Encoder (TiDE)',
+            'Linear regression (LR)',
+            'Temporal Fusion Transformer (TFT)',
         ])
         result = model_long_agg(series)
         assert result == 'Ens. Mean with LR, TFT, TiDE (EM)'
 
+    # Tests deprecated function — remove when model_long_agg is deleted
     def test_model_long_agg_single_model(self):
         """Single model -> 'Ens. Mean with LR (EM)' (filtered later)."""
-        series = pd.Series([MODEL_LONG_NAMES['LR']])
+        series = pd.Series(['Linear regression (LR)'])
         result = model_long_agg(series)
         assert result == 'Ens. Mean with LR (EM)'
 
@@ -315,13 +309,11 @@ class TestCreateEnsembleForecasts:
             'pentad_in_year': [1],
             'pentad_in_month': ['1'],
             'forecasted_discharge': [999.0],
-            'model_long': ['Neural Ensemble (NE)'],
             'model_short': ['NE'],
         })
         ne_skill = pd.DataFrame({
             'pentad_in_year': [1],
             'code': ['10001'],
-            'model_long': ['Neural Ensemble (NE)'],
             'model_short': ['NE'],
             'sdivsigma': [0.1], 'nse': [0.99],
             'delta': [5.0], 'accuracy': [0.99],
@@ -352,7 +344,6 @@ class TestCreateEnsembleForecasts:
         skill_stats = pd.DataFrame({
             'pentad_in_year': [1],
             'code': ['10001'],
-            'model_long': ['Linear regression (LR)'],
             'model_short': ['LR'],
             'sdivsigma': [0.9], 'nse': [0.5],
             'delta': [5.0], 'accuracy': [0.6],
@@ -364,7 +355,6 @@ class TestCreateEnsembleForecasts:
             'pentad_in_year': [1],
             'pentad_in_month': ['1'],
             'forecasted_discharge': [100.0],
-            'model_long': ['Linear regression (LR)'],
             'model_short': ['LR'],
         })
         with patch.dict(os.environ, {
@@ -382,7 +372,6 @@ class TestCreateEnsembleForecasts:
         skill_stats = pd.DataFrame({
             'pentad_in_year': [1],
             'code': ['10001'],
-            'model_long': ['Linear regression (LR)'],
             'model_short': ['LR'],
             'sdivsigma': [0.3], 'nse': [0.95],
             'delta': [5.0], 'accuracy': [0.95],
@@ -394,7 +383,6 @@ class TestCreateEnsembleForecasts:
             'pentad_in_year': [1],
             'pentad_in_month': ['1'],
             'forecasted_discharge': [100.0],
-            'model_long': ['Linear regression (LR)'],
             'model_short': ['LR'],
         })
         with patch.dict(os.environ, {
@@ -413,10 +401,6 @@ class TestCreateEnsembleForecasts:
         skill_stats = pd.DataFrame({
             'decad_in_year': [1, 1],
             'code': ['10001', '10001'],
-            'model_long': [
-                'Linear regression (LR)',
-                'Temporal Fusion Transformer (TFT)',
-            ],
             'model_short': ['LR', 'TFT'],
             'sdivsigma': [0.3, 0.4],
             'nse': [0.95, 0.9],
@@ -432,10 +416,6 @@ class TestCreateEnsembleForecasts:
             'decad_in_year': [1, 1],
             'decad_in_month': ['1', '1'],  # string like tl.get_decad_in_month
             'forecasted_discharge': [100.0, 110.0],
-            'model_long': [
-                'Linear regression (LR)',
-                'Temporal Fusion Transformer (TFT)',
-            ],
             'model_short': ['LR', 'TFT'],
         })
         observed = pd.DataFrame({
@@ -457,7 +437,7 @@ class TestCreateEnsembleForecasts:
     def test_composition_string_format(
         self, forecasts_pentad, skill_stats_pentad, observed_pentad
     ):
-        """Composition string is 'Ens. Mean with LR, TFT (EM)'."""
+        """Composition column contains 'LR, TFT' for ensemble rows."""
         with patch.dict(os.environ, {
             'ieasyhydroforecast_efficiency_threshold': '0.6',
             'ieasyhydroforecast_accuracy_threshold': '0.8',
@@ -468,18 +448,15 @@ class TestCreateEnsembleForecasts:
             )
             em_rows = joint[joint['model_short'] == 'EM']
             if not em_rows.empty:
-                model_long = em_rows.iloc[0]['model_long']
-                assert model_long.startswith('Ens. Mean with ')
-                assert model_long.endswith(' (EM)')
-                assert 'LR' in model_long
-                assert 'TFT' in model_long
+                composition = em_rows.iloc[0]['composition']
+                assert 'LR' in composition
+                assert 'TFT' in composition
 
     def test_single_tft_ensemble_discarded(self, observed_pentad):
         """Ensemble with only TFT (single model) is discarded."""
         skill_stats = pd.DataFrame({
             'pentad_in_year': [1],
             'code': ['10001'],
-            'model_long': ['Temporal Fusion Transformer (TFT)'],
             'model_short': ['TFT'],
             'sdivsigma': [0.3], 'nse': [0.95],
             'delta': [5.0], 'accuracy': [0.95],
@@ -491,7 +468,6 @@ class TestCreateEnsembleForecasts:
             'pentad_in_year': [1],
             'pentad_in_month': ['1'],
             'forecasted_discharge': [110.0],
-            'model_long': ['Temporal Fusion Transformer (TFT)'],
             'model_short': ['TFT'],
         })
         with patch.dict(os.environ, {
@@ -509,7 +485,6 @@ class TestCreateEnsembleForecasts:
         skill_stats = pd.DataFrame({
             'pentad_in_year': [1],
             'code': ['10001'],
-            'model_long': ['Time-series Dense Encoder (TiDE)'],
             'model_short': ['TiDE'],
             'sdivsigma': [0.3], 'nse': [0.95],
             'delta': [5.0], 'accuracy': [0.95],
@@ -521,7 +496,6 @@ class TestCreateEnsembleForecasts:
             'pentad_in_year': [1],
             'pentad_in_month': ['1'],
             'forecasted_discharge': [90.0],
-            'model_long': ['Time-series Dense Encoder (TiDE)'],
             'model_short': ['TiDE'],
         })
         with patch.dict(os.environ, {
@@ -540,22 +514,18 @@ class TestCreateEnsembleForecasts:
 # ---------------------------------------------------------------------------
 
 class TestModelNameConsistency:
-    """Verify that model name mappings in data_reader cover all core types."""
+    """Verify that MODEL_TYPE_MAP in api_writer covers all core types."""
 
-    def test_model_short_to_long_covers_core_types(self):
-        """MODEL_SHORT_TO_LONG covers LR, TFT, TiDE, TSMixer, EM, NE, RRAM."""
-        from src.data_reader import MODEL_SHORT_TO_LONG
-        expected = {'LR', 'TFT', 'TiDE', 'TSMixer', 'EM', 'NE', 'RRAM'}
-        assert expected.issubset(set(MODEL_SHORT_TO_LONG.keys()))
+    def test_model_type_map_covers_core_types(self):
+        """MODEL_TYPE_MAP covers LR, TFT, TIDE, TSMIXER, EM, NE, RRAM."""
+        from src.api_writer import MODEL_TYPE_MAP
+        expected = {'LR', 'TFT', 'TIDE', 'TSMIXER', 'EM', 'NE', 'RRAM'}
+        assert expected.issubset(set(MODEL_TYPE_MAP.keys()))
 
-    def test_api_model_type_mapping_consistent(self):
-        """API_MODEL_TYPE_TO_SHORT keys are a subset of MODEL_SHORT_TO_LONG."""
-        from src.data_reader import (
-            MODEL_SHORT_TO_LONG, API_MODEL_TYPE_TO_SHORT,
-        )
-        for api_key in API_MODEL_TYPE_TO_SHORT:
-            short = API_MODEL_TYPE_TO_SHORT[api_key]
-            assert short in MODEL_SHORT_TO_LONG, (
-                f"API_MODEL_TYPE_TO_SHORT[{api_key!r}] = {short!r} "
-                f"not in MODEL_SHORT_TO_LONG"
+    def test_model_type_map_values_are_valid(self):
+        """MODEL_TYPE_MAP values are valid API model type strings."""
+        from src.api_writer import MODEL_TYPE_MAP
+        for key, value in MODEL_TYPE_MAP.items():
+            assert isinstance(value, str), (
+                f"MODEL_TYPE_MAP[{key!r}] = {value!r} is not a string"
             )

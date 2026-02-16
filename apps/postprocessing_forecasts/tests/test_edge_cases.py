@@ -30,7 +30,7 @@ from src.gap_detector import detect_missing_ensembles
 from src import skill_metrics
 import tag_library as tl
 
-from test_constants import MODEL_LONG_NAMES, DEFAULT_THRESHOLDS, DEFAULT_DELTA
+from test_constants import DEFAULT_THRESHOLDS, DEFAULT_DELTA
 
 
 def _make_ensemble_pentad(forecasts, skill_stats, observed):
@@ -53,7 +53,6 @@ def _make_skill_row(code, pentad, model_short, sdivsigma=0.3,
     return {
         'pentad_in_year': pentad,
         'code': code,
-        'model_long': MODEL_LONG_NAMES[model_short],
         'model_short': model_short,
         'sdivsigma': sdivsigma,
         'nse': nse,
@@ -72,7 +71,6 @@ def _make_forecast_row(code, date, pentad, pim, model_short, discharge):
         'pentad_in_year': pentad,
         'pentad_in_month': pim,
         'forecasted_discharge': discharge,
-        'model_long': MODEL_LONG_NAMES[model_short],
         'model_short': model_short,
     }
 
@@ -87,7 +85,7 @@ class TestEmptyAndSingleRowData:
     def test_filter_empty_skill_stats(self):
         """Empty skill stats returns empty DF with columns preserved."""
         empty = pd.DataFrame(columns=[
-            'pentad_in_year', 'code', 'model_long', 'model_short',
+            'pentad_in_year', 'code', 'model_short',
             'sdivsigma', 'nse', 'delta', 'accuracy', 'mae', 'n_pairs',
         ])
         result = filter_for_highly_skilled_forecasts(
@@ -776,8 +774,8 @@ class TestThresholdBehavior:
             f"mean(100, 110, 90) = 100.0, got "
             f"{em_rows.iloc[0]['forecasted_discharge']}"
         )
-        # Composition string should include all 3 models
-        comp = em_rows.iloc[0]['model_long']
+        # Composition column should include all 3 models
+        comp = em_rows.iloc[0]['composition']
         assert 'LR' in comp and 'TFT' in comp and 'TiDE' in comp, (
             f"Composition should include all 3 models, got: {comp}"
         )
