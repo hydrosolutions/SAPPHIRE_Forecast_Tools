@@ -139,6 +139,63 @@ def upsert_record(db: Session, model: Type[Base], data: dict, unique_keys: list[
 
 ## Testing Requirements
 
+### Testing Philosophy
+
+Good tests describe contracts — what must stay true even if the implementation changes. If a test breaks after a refactor that doesn't change behavior, the test was wrong.
+
+**Golden Rules:**
+
+1. **Test behavior, not implementation** — assert on outputs and public APIs. Do not inspect private attributes (`._internal_state`) unless no public API exists.
+2. **Prefer fast, deterministic tests** — no `sleep()`, no uncontrolled `datetime.now()` or `random`. Pass the forecast date as a parameter (see "The Forecast Date Rule" below).
+3. **Use fakes over mocks where practical** — a fake implementation (e.g., an in-memory store) is easier to read and more resilient than a chain of `MagicMock` assertions. Reserve `MagicMock` for external boundaries (API clients, file I/O, external services).
+4. **Structure tests as Arrange → Act → Assert** — setup the data, call the function, check the result. Name fixtures descriptively (`pentad_skill_csv`, `df_with_missing_values`), not generically (`data`, `fixture1`).
+
+#### The Forecast Date Rule
+
+The forecast date is a **domain concept** — the date a forecast is being produced for. It must be captured once at the pipeline entry point and passed as a parameter to all functions that need it. Do not scatter `date.today()` calls through business logic.
+
+**Why this matters operationally:**
+
+1. **Clock-tick bug**: If a pipeline runs across midnight, modules that independently call `date.today()` disagree on what "today" is.
+2. **Year/month boundary bugs**: Default arguments like `year=datetime.now().year` are evaluated at import time — if the module is imported on Dec 31 and the function is called on Jan 1, the year is wrong.
+3. **Hindcast/backtest support**: When re-running forecasts for historical dates, scattered `date.today()` calls return the current date instead of the target forecast date.
+
+**Pattern — capture once, pass everywhere:**
+
+```python
+# Entry point (main.py, pipeline orchestrator):
+forecast_date = date.today()  # single source of truth
+
+# All downstream functions receive it as a parameter:
+def process_pentad(data: pd.DataFrame, forecast_date: date) -> pd.DataFrame:
+    current_year = forecast_date.year
+    pentad = get_pentad_in_year(forecast_date)
+    ...
+
+# NEVER use date.today() in a default argument:
+# WRONG — evaluated once at import time, stale at year boundary
+def get_date_for_pentad(pentad, year=datetime.now().year): ...
+
+# CORRECT — caller passes explicitly
+def get_date_for_pentad(pentad: int, year: int) -> date: ...
+```
+
+**Acceptable uses of `datetime.now()`**: Logging timestamps, file naming, and performance timers — these should reflect actual wall-clock time.
+
+**Reference implementation**: `long_term_forecasting/__init__.py` already follows this pattern with `initialize_today()` / `get_today()`.
+
+**Testing benefit**: Boundary-date testing becomes trivial — no datetime mocking or `freezegun` needed:
+
+```python
+def test_pentad_at_year_boundary():
+    result = process_forecast(forecast_date=date(2025, 12, 31), ...)
+    assert result.pentad_in_year == 73
+
+def test_leap_year_feb29():
+    result = process_forecast(forecast_date=date(2024, 2, 29), ...)
+    assert result.pentad_in_year == 12
+```
+
 ### Before Committing or Moving to New Topic
 
 **All tests must pass with zero skips before committing or moving to a new topic.** The full pre-commit validation has three stages:
@@ -165,6 +222,13 @@ Isolated tests for individual functions with all external dependencies mocked. E
 - A happy-path test with typical input
 - An error-path test (invalid input, exception handling)
 
+For error-path tests, always assert both **exception type** and **message fragment**:
+
+```python
+with pytest.raises(ValueError, match="horizon must be positive"):
+    calculate_forecast(data, horizon=-1)
+```
+
 #### Assertion Quality
 
 **Tests must verify correctness, not just existence.** A test that checks "an EM row exists" is not sufficient — it must also check that the EM row has the correct discharge value, station code, date, and row count. Weak assertions let bugs pass silently.
@@ -190,6 +254,7 @@ Any code that processes DataFrames, dates, or numeric values must have edge case
 | **Value boundaries** | Zero values, very small positives (0.001), very large values (10000+) |
 | **Duplicates** | Duplicate date-station combinations |
 | **Multi-entity** | Single station many dates, many stations single date |
+| **Data preservation** | Non-transformed columns, schema, and row order remain intact after processing |
 
 See `preprocessing_runoff/test/test_edge_cases.py` as the reference implementation — it covers all of these categories in dedicated test classes.
 
@@ -204,8 +269,10 @@ Tests that exercise the real logic across multiple internal functions, only mock
 
 Integration tests should:
 - Use real logic for everything inside the boundary
-- Only mock the external API client and filesystem
-- Validate the full data flow, not just final output
+- Only mock the external API client and filesystem — prefer fakes (e.g., a temp directory with real CSVs) over `MagicMock` chains for file I/O
+- Validate the full data flow, not just final output — check intermediate state at each pipeline stage
+- Verify data preservation: columns not touched by the pipeline must survive unchanged
+- Include at least one test that exercises the CSV-fallback path (API disabled) and one that exercises the API path (API enabled with mocked client)
 
 See `postprocessing_forecasts/tests/test_integration_postprocessing.py` as the reference — it tests the full pipeline: skill CSV read → threshold filter → ensemble create → CSV + API write.
 
@@ -352,6 +419,17 @@ Service tests use SQLite in-memory databases and do not require `SAPPHIRE_TEST_E
 SAPPHIRE_TEST_ENV=True      # Use test database / test mode
 SAPPHIRE_OPDEV_ENV=True     # Development/testing mode for apps/
 ```
+
+### Test Anti-Patterns (avoid these)
+
+- **Asserting on private attributes** (`._steps`, `._internal_cache`) — test public behavior instead
+- **Giant integration tests covering all cases** — push variation into unit tests; integration tests cover the happy-path pipeline and one or two failure modes
+- **Hiding critical setup in deeply nested fixtures** — if a test is hard to understand without reading three conftest files, flatten the setup
+- **Bare `except:` in test helpers** — let unexpected exceptions propagate so they surface as test failures
+- **`MagicMock` chains for internal modules** — if you're mocking three internal functions to test a fourth, the test is too coupled to implementation; restructure or test at a higher level
+- **Tests that pass regardless of correctness** — e.g., `assert len(result) > 0` when the function could return garbage rows. Always verify values, not just shapes (see Assertion Quality above)
+- **Non-deterministic time dependence** — tests that break on Jan 1 or Feb 29 because they call `date.today()` instead of receiving the forecast date as a parameter (see "The Forecast Date Rule" above)
+- **`datetime.now()` in default arguments** — `def f(year=datetime.now().year)` is evaluated once at import time and goes stale at year boundaries; always require explicit arguments
 
 ---
 

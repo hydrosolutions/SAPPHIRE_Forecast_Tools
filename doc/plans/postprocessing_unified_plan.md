@@ -37,7 +37,9 @@
 | Server-side batch upsert (CRUD) | **DONE** — `_bulk_upsert()` with PG ON CONFLICT + N+1 fallback (commit `eae7158`) |
 | Client-side vectorization | **DONE** — vectorized record building in 4 `_write_*_to_api()` functions (commit `eae7158`) |
 | Skill metrics single-pass optimization | **DONE** — `calculate_all_skill_metrics()` replaces triple groupby+merge (commit `eae7158`) |
-| Monthly/quarterly/seasonal skill metrics | TODO — Phase 4 (point + CRPS, configurable season) |
+| Model name registry (cross-module) | **PLANNED** — separate issue [`gi_draft_infra_model_registry.md`](issues/gi_draft_infra_model_registry.md) (INFRA-005). Consolidate 5 duplicate model mapping dicts into single `model_registry.py` |
+| Monthly skill metrics (Phase 4a) | **PLANNED** — detailed plan in [`postprocessing_unified_plan_detailMonthlyForecasts.md`](postprocessing_unified_plan_detailMonthlyForecasts.md) (7 steps + LLM instructions for sapphire-api-client pre-requisite) |
+| Quarterly + seasonal skill metrics (Phase 4b) | TODO — deferred, depends on 4a |
 | Bug 6: Single-model ensemble filter only rejects LR | **DONE** — `_is_multi_model_ensemble()` helper replaces hardcoded check |
 | Comprehensive test suite (50+ unit, 12+ integration) | **DONE** — 375 postprocessing tests, 0 skips (all 49 API tests now pass via module venv). CRUD service: 86 tests. |
 | Bulk-read API endpoints (for `long_term_forecasting`) | Planned — see `doc/plans/bulk_read_endpoints_instructions.md` |
@@ -553,6 +555,36 @@ seasonal:
    - Quantile levels: [0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95]
    - Cross-cutting: used for monthly/quarterly/seasonal now; will also apply to pentad/decad once those modules populate quantile columns in the `Forecast` table
 
+   > **Skill metrics registry (to implement alongside CRPS):**
+   > Adding CRPS is the natural trigger to introduce a lightweight metrics registry
+   > pattern. Rather than a full plugin system (over-engineered for our rate of change),
+   > restructure `calculate_all_skill_metrics()` as follows:
+   >
+   > - Extract each metric into its own named function with a uniform signature
+   >   `(obs, sim, **kw) -> float` (already partially done for `sdivsigma_nse`, `mae`,
+   >   `forecast_accuracy_hydromet`).
+   > - Add a `METRIC_REGISTRY` dict mapping metric name -> callable + metadata
+   >   (`min_points`, `higher_is_better`).
+   > - `calculate_all_skill_metrics()` iterates the registry instead of hardcoding
+   >   the 6 metrics. Shared intermediates (NaN mask, `obs - sim`, `abs_diff`) are
+   >   computed once and passed via a context dict.
+   > - `filter_for_highly_skilled_forecasts()` reads `higher_is_better` from the
+   >   registry to apply thresholds generically (replacing the current hardcoded
+   >   `< threshold_sdivsigma` vs `> threshold_accuracy`).
+   > - Threshold env var naming convention: `ieasyhydroforecast_{metric_name}_threshold`.
+   >
+   > **What this does NOT include** (intentionally):
+   > - No dynamic plugin loading or entry points — metrics are registered in Python code
+   > - No automatic API schema changes — adding a metric to the registry still requires
+   >   updating the postprocessing API model/migration (this is the real bottleneck, and
+   >   a registry doesn't change that)
+   >
+   > **Benefits:** Adding a new point metric becomes: write the function, add one
+   > `register_metric()` call, add the API column. The compositor, ensemble filter,
+   > CSV writer, and tests all pick it up automatically.
+   >
+   > **Detail plan to be refined here before implementation.**
+
 4. **Monthly skill metrics** — Add to `src/skill_metrics.py`:
    - `calculate_monthly_skill_metrics(forecasts_df, observations_df)` — both point (Q50) and probabilistic (CRPS) metrics
    - Grouping: `[month_in_year, code, model_type]` (12 months × N stations × M models)
@@ -891,16 +923,34 @@ The assertion was already a clean `assert saved_df.empty` when reviewed — no `
 
 ### Phase 4: Monthly, Quarterly & Seasonal Skill Metrics
 
+Split into sub-phases: **4a (monthly)** is fully planned, **4b (quarterly + seasonal)** deferred.
+
+#### Phase 4a: Monthly Skill Metrics
+
+> **Detailed plan:** [`postprocessing_unified_plan_detailMonthlyForecasts.md`](postprocessing_unified_plan_detailMonthlyForecasts.md)
+> Contains: step-by-step implementation (7 steps), function signatures, data flow, model mappings, test requirements, and LLM instructions for the sapphire-api-client pre-requisite.
+
+**Pre-requisite**: `sapphire-api-client` must add `read_long_forecasts()` + `write_long_forecasts()` — this is done in the **separate** `hydrosolutions/sapphire-api-client` repo, not here. See [LLM instructions in the detail plan](postprocessing_unified_plan_detailMonthlyForecasts.md#pre-requisite-sapphire-api-client-llm-instructions).
+
+- [ ] `sapphire-api-client`: `read_long_forecasts()` + `write_long_forecasts()` (separate repo, LLM instructions provided) → bump pinned hash
+- [ ] `src/data_reader.py`: `read_monthly_observations()` — daily→monthly aggregation (≥50% coverage), reuse logic from `calculate_lt_statistics_calendar_month()`
+- [ ] `src/data_reader.py`: `read_monthly_forecasts()` — read from `long_forecasts` table via API
+- [ ] `src/skill_metrics.py`: `calculate_crps()` — quantile-based CRPS (pinball loss + trapezoidal integration)
+- [ ] `src/skill_metrics.py`: `calculate_monthly_skill_metrics()` — point (Q50→NSE/MAE/accuracy/sdivsigma) + CRPS
+- [ ] `src/api_writer.py`: extend horizon_type mapping to "month" + add LT model types
+- [ ] `src/file_writer.py`: `save_monthly_skill_metrics()` (env var: `ieasyforecast_monthly_skill_metrics_file`)
+- [ ] `recalculate_skill_metrics.py`: add monthly block (`SAPPHIRE_PREDICTION_MODE=MONTHLY|ALL`)
+- [ ] Tests: unit + edge case + integration + API failure (see detailed plan)
+
+#### Phase 4b: Quarterly & Seasonal Skill Metrics (deferred)
+
 - [ ] Date utilities in `tag_library.py` (`get_quarter`, `is_quarterly_forecast_date`, `is_seasonal_forecast_date`, `get_season_months`)
-- [ ] Monthly observation aggregation in `src/data_reader.py` (daily → monthly means, ≥50% coverage filter)
-- [ ] CRPS implementation in `src/skill_metrics.py`
-- [ ] Monthly skill metrics: point (Q50 → NSE/MAE/accuracy) + probabilistic (CRPS)
 - [ ] Quarterly aggregation + skill metrics (average 3 monthly quantiles)
 - [ ] Seasonal aggregation + skill metrics (configurable month range)
 - [ ] Add `quarter` field to `ForecastFlags` and `PredictorDates`
 - [ ] Seasonal config in `postprocessing_forecasts/config.yaml` (`start_month`, `end_month`)
-- [ ] Env vars for monthly/quarterly/seasonal output file paths
-- [ ] Extend `recalculate_skill_metrics.py` for monthly/quarterly/seasonal
+- [ ] Env vars for quarterly/seasonal output file paths
+- [ ] Extend `recalculate_skill_metrics.py` for quarterly/seasonal
 
 ### Phase 5: Testing
 
@@ -1195,6 +1245,7 @@ class PredictorDates:
 
 | Document | Status |
 |----------|--------|
+| [`postprocessing_unified_plan_detailMonthlyForecasts.md`](postprocessing_unified_plan_detailMonthlyForecasts.md) | Phase 4a detail plan — monthly skill metrics implementation steps + sapphire-api-client LLM instructions |
 | `doc/plans/sapphire_api_integration_plan.md` | COMPLETE (Phase 6 pending: remove CSV fallback) |
 | `doc/plans/postprocessing_api_integration_test_plan.md` | COMPLETE (all 7 tests passed) |
 | `doc/plans/issues/gi_duplicate_skill_metrics_ensemble_composition.md` | RESOLVED |
@@ -1229,3 +1280,4 @@ The following plans are **superseded** by this unified plan (moved to `archive/`
 | 2026-02-15 | Bea/Claude | Integration depth review: critical review of whether integration tests give confidence the module works as intended. Found 7 gaps (G1–G7) at the wiring/cross-workflow level: recalculate entry point has no wiring integration test (G1), maintenance filter-to-gap-dates never exercised with surplus data (G2), weak `or`-chain assertion in `test_wiring_integration.py:790` (G3), NE exclusion untested at integration level (G4), no cross-workflow sequential test (G5), uniform delta masks accuracy issues (G6), `log_most_recent_forecasts` crash risk untested (G7). Added 7 new test items (#29–#35) across high/medium/low priority. Fixed 4 stale checkboxes (#10, #11, #16, #20 — already DONE but still unchecked). Confidence assessment: High for core logic, Medium for entry-point wiring, Low for recalculate wiring and cross-workflow compatibility. |
 | 2026-02-15 | Bea/Claude | Phase 3 Batch 1 complete: all integration depth items (#29–#35) and CRUD tests (#22–#28) done. CRUD service: 23 → 38 tests (+15): `TestFallbackUpsertDirect` (6), `TestCombinedFilters` (6), `TestLargeBatch` (2), plus pre-existing. Wiring integration: 16 → 23 tests (+7): `TestRecalcWiringIntegration` (4), `TestMaintenanceSurplusData` (1), `TestNEExclusionIntegration` (1), `TestCrossWorkflowRoundtrip` (1), `TestVaryingDelta` (1), `TestLogMostRecentForecasts` (3). Item #31 (or-chain assertion) already fixed in prior session. Updated confidence: High across all areas except maintenance partial-save (Medium). Remaining Phase 3 work: module extractions (`src/skill_metrics.py`, `src/api_writer.py`, `src/file_writer.py`) + virtual station vectorization (deferred). |
 | 2026-02-16 | Bea/Claude | Critical data-flow review of postprocessing module. Findings: (1) High confidence in data flow — three layers of integration tests (workflow E2E, wiring, pipeline) all use real logic for internal transformations, only mocking external boundaries. 375 tests pass with 0 skips when run via module venv. (2) Debug `print()` cleanup: replaced all 16 `print()` calls in `src/skill_metrics.py` and `src/file_writer.py` with `logger.debug()` or removed redundant `print()` alongside existing `logger.info/error`. Also fixed f-string logger calls to use lazy `%s` formatting. (3) API data-loss warnings improved: `api_writer.py` `dropna` warnings now say "after repair attempt" and log up to 10 dropped (code, date) or (code, model) pairs for operator investigation. (4) `sapphire-api-client` confirmed installed in module `.venv` — the 49 "skipped" tests only appeared when running bare `pytest` instead of `run_tests.sh`. Updated status summary, Current Architecture (file structure now reflects extracted `src/` modules and 24 test files), Phase 3 (marked DONE with checkbox cleanup), Phase 5 test counts. Commit `41d782e`. |
+| 2026-02-16 | Bea/Claude | Unified cross-references between master plan and Phase 4a detail document. Phase 4a status summary now links to detail doc with content summary. Phase 4a checklist clarifies sapphire-api-client is a separate repo (LLM instructions provided, not implemented here). Detail document (`postprocessing_unified_plan_detailMonthlyForecasts.md`) restructured: added Quick Reference table for fast agent navigation, parent document link, pre-requisite section rewritten as LLM instructions for the separate `hydrosolutions/sapphire-api-client` repo, Files Modified table marks api-client as out of scope. Added detail doc to Related Documents table. |

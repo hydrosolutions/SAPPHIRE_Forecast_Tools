@@ -62,6 +62,8 @@ These are blocking decisions — work downstream cannot advance until they are r
 | **INFRA-001** | Create Makefile and local dev infrastructure | infra | **High** | Draft | [`gi_draft_infra_makefile_local_dev.md`](issues/gi_draft_infra_makefile_local_dev.md) | — |
 | **INFRA-002** | Update uv.lock files for all py312 modules (security) | infra | **Medium** | Open | See `security_updates.md` + `docker_health_score_improvement.md` | — |
 | **INFRA-003** | Add pytest-cov with threshold enforcement to CI | infra | **Medium** | Open | — (from `architecture_review_claude.md` gap #10) | — |
+| **INFRA-004** | Enforce Forecast Date Rule — eliminate scattered `date.today()` calls | infra | **High** | Draft | [`gi_draft_infra_forecast_date_rule.md`](issues/gi_draft_infra_forecast_date_rule.md) | — |
+| **INFRA-005** | Single source of truth for model name mappings | infra | **Medium** | Draft | [`gi_draft_infra_model_registry.md`](issues/gi_draft_infra_model_registry.md) | — |
 
 ---
 
@@ -212,4 +214,4 @@ These documents contain context and specifications referenced by issues above.
 
 ---
 
-*Last updated: 2026-02-11*
+*Last updated: 2026-02-16*

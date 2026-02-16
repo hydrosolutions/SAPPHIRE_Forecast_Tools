@@ -36,7 +36,15 @@ class ModelType(str, Enum):
 
     @property
     def description(self) -> str:
-        """Get the long description for the model type"""
+        """Get the long description for the model type.
+
+        TODO: Add descriptions for long-term models (GBT, LR_Base,
+        LR_SM, LR_SM_DT, LR_SM_ROF, MC_ALD, SM_GBT, SM_GBT_LR,
+        SM_GBT_Norm, Skilled Mean, Naive Mean). This dict should be
+        the single source of truth for short→long model name mapping,
+        used by both the API response and sapphire-api-client.
+        Models without an entry here fall through to self.value.
+        """
         descriptions = {
             "TSMixer": "Time-Series Mixer (TSMixer)",
             "TiDE": "Time-Series Dense Encoder (TIDE)",
