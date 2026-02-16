@@ -39,7 +39,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | **ML-001** | Maintenance mode hindcast failure not handled, causes FileNotFoundError | ml | **High** | Draft | [`gi_draft_ml_maintenance_hindcast_file_not_found.md`](issues/gi_draft_ml_maintenance_hindcast_file_not_found.md) |
 | **ML-002** | Investigate hindcast subprocess root cause (why hindcast_ML_models.py fails) | ml | **High** | Open | — (requires investigation with Sandro; likely CSV→API migration gap) |
 | **SEC-005** | Verify bokeh>=3.8.2 compatibility post-merge | fd | **High** | Open | See `sapphire_v2_planning.md` post-merge checklist |
-| **PP-002** | Add missing `ieasyforecast_decadal_skill_metrics_file` to .env | pp | **High** | Open | — (discovered in `postprocessing_unified_plan.md` Section 1.5; quick fix) |
+| ~~**PP-002**~~ | ~~Add missing `ieasyforecast_decadal_skill_metrics_file` to .env~~ | ~~pp~~ | | Complete | Moved to Completed Issues |
 
 ---
 
@@ -85,9 +85,9 @@ These are blocking decisions — work downstream cannot advance until they are r
 
 | ID | Title | Priority | Status | File | Blocked By |
 |----|-------|----------|--------|------|------------|
-| **PP-003** | Implement batch upsert in postprocessing CRUD (Phase 2) | **Medium** | Open | See `postprocessing_unified_plan.md` Phase 2 | — |
-| **PP-004** | Replace iterrows() with vectorized operations (Phase 2) | **Medium** | Open | See `postprocessing_unified_plan.md` Phase 2 | — |
-| **PP-005** | Create operational/maintenance entry point split (Phase 3) | **Medium** | Open | See `postprocessing_unified_plan.md` Phase 3 | PP-003, PP-004 |
+| ~~**PP-003**~~ | ~~Implement batch upsert in postprocessing CRUD~~ | | Complete | See `postprocessing_unified_plan.md` Phase 3 | — |
+| ~~**PP-004**~~ | ~~Replace iterrows() with vectorized operations~~ | | Complete | See `postprocessing_unified_plan.md` Phase 3 | — |
+| ~~**PP-005**~~ | ~~Create operational/maintenance entry point split~~ | | Complete | See `postprocessing_unified_plan.md` Phase 2 | — |
 | **PP-006** | Add config.yaml to postprocessing_forecasts (deduplicate defaults) | **Low** | Draft | [`gi_draft_pp_config_yaml.md`](issues/gi_draft_pp_config_yaml.md) | — |
 
 ### Forecast Dashboard (`fd`)
@@ -159,6 +159,10 @@ These are blocking decisions — work downstream cannot advance until they are r
 | ID | Title | Resolved | File |
 |----|-------|----------|------|
 | PP-001 | Duplicate Skill Metrics for Ensemble Mean | 2026-01-24 | [`archive/gi_duplicate_skill_metrics_RESOLVED_2026-01-24.md`](issues/archive/gi_duplicate_skill_metrics_RESOLVED_2026-01-24.md) |
+| PP-002 | Add missing `ieasyforecast_decadal_skill_metrics_file` to .env | 2026-02-12 | See `postprocessing_unified_plan.md` Phase 1 |
+| PP-003 | Implement batch upsert in postprocessing CRUD | 2026-02-15 | See `postprocessing_unified_plan.md` Phase 3 |
+| PP-004 | Replace iterrows() with vectorized operations | 2026-02-15 | See `postprocessing_unified_plan.md` Phase 3 |
+| PP-005 | Create operational/maintenance entry point split | 2026-02-15 | See `postprocessing_unified_plan.md` Phase 2 |
 
 ### Pipeline (`p`)
 
@@ -175,7 +179,7 @@ These documents contain context and specifications referenced by issues above.
 | Document | Purpose | Status |
 |----------|---------|--------|
 | `sapphire_api_integration_plan.md` | API integration roadmap (Phases 1-6) | Active — Phase 6 pending |
-| `postprocessing_unified_plan.md` | Postprocessing refactoring (Phases 1-4) | Active — Phase 1 done, 2-4 pending |
+| `postprocessing_unified_plan.md` | Postprocessing refactoring (Phases 1-5) | Active — Phases 1-3 done, Phase 4 planned |
 | `configuration_update_plan.md` | Config refactor to Pydantic + feature flags | Planning — not started |
 | `deployment_improvement_planning.md` | Makefile + local dev workflow | Planning — design complete |
 | `documentation_improvement_plan.md` | Doc restructuring + MkDocs | Active — Phase 1.1 done |
