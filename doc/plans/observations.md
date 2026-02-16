@@ -14,6 +14,25 @@ Periodically review and triage into formal issues in `module_issues.md` or GitHu
 
 ---
 
+## 2026-02-16
+
+### Pipeline: Decadal Forecasts Not Run by run_locally.sh
+
+**Source**: Observation during development
+**Date**: 2026-02-16
+
+Decadal forecasts have not been run with `apps/run_locally.sh`. Needs investigation to determine whether this is a configuration issue, a missing pipeline step, or whether decadal runs were never wired into the local execution script.
+
+**Questions to answer**:
+- Does `run_locally.sh` include decadal forecast steps at all?
+- If not, was this intentional (e.g., decadal only runs in Docker/production)?
+- Are there any decadal-specific modules or flags that need to be added?
+
+**Assessment**: Potential gap in local testing coverage — if decadal forecasts aren't exercised locally, regressions could go undetected until deployment.
+**Status**: Needs investigation
+
+---
+
 ## 2026-02-13
 
 ### Linear Regression: No Pentadal Forecasts Produced in February 2026
@@ -368,4 +387,4 @@ FileNotFoundError: [Errno 2] No such file or directory:
 
 ---
 
-*Last updated: 2026-02-13 (Linear regression pentadal forecast gap)*
+*Last updated: 2026-02-16 (Decadal forecasts not run by run_locally.sh)*
