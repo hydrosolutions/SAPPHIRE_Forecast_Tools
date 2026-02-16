@@ -656,7 +656,7 @@ Extend `SAPPHIRE_PREDICTION_MODE`: add `MONTHLY` and `ALL`. `BOTH` stays = penta
 
 1. ~~**[Separate repo]** `sapphire-api-client`: `read_long_forecasts` + `write_long_forecasts` + tests~~ — **DONE** (LT forecast support added to sapphire-api-client)
 2. ~~**[This repo]** Bump pinned hash in `pyproject.toml` → `uv sync`~~ — **DONE** (hash `a457728`, all 7 modules synced)
-3. `data_reader.py`: `read_monthly_observations()` + `read_monthly_forecasts()` + tests
+3. `data_reader.py`: `read_monthly_observations()` + `read_monthly_forecasts()` + tests ← **NEXT**
 4. `skill_metrics.py`: `calculate_crps()` + tests
 5. `skill_metrics.py`: `calculate_monthly_skill_metrics()` + tests
 6. `api_writer.py`: extend horizon/model mappings + tests

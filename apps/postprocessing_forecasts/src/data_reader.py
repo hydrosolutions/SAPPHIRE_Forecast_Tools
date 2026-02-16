@@ -1,12 +1,14 @@
-"""Read pre-calculated skill metrics from CSV or API.
+"""Read pre-calculated skill metrics and monthly data from CSV or API.
 
 Used by the operational and maintenance entry points to avoid
-recalculating skill metrics from scratch.
+recalculating skill metrics from scratch, and by the yearly
+recalculation entry point to read monthly observations and forecasts.
 """
 
 import os
 import logging
 
+import numpy as np
 import pandas as pd
 
 logger = logging.getLogger(__name__)
@@ -14,6 +16,9 @@ logger = logging.getLogger(__name__)
 try:
     from sapphire_api_client.postprocessing import (
         SapphirePostprocessingClient,
+    )
+    from sapphire_api_client.preprocessing import (
+        SapphirePreprocessingClient,
     )
     SAPPHIRE_API_AVAILABLE = True
 except ImportError:
@@ -168,6 +173,265 @@ def _normalize_api_skill_metrics(
         "model_type": "model_short",
     }
     df = df.rename(columns=rename_map)
+
+    # Ensure code is string
+    if "code" in df.columns:
+        df["code"] = df["code"].astype(str).str.replace(
+            r"\.0$", "", regex=True
+        )
+
+    return df
+
+
+# ===================================================================
+# Monthly observations (daily runoff → monthly mean)
+# ===================================================================
+
+
+def read_monthly_observations(
+    codes: list[str],
+    start_year: int,
+    end_year: int,
+) -> pd.DataFrame:
+    """Aggregate daily runoff to monthly mean discharge.
+
+    Reads daily runoff via preprocessing API. Requires >= 50%
+    non-missing days per month.
+
+    Args:
+        codes: Station codes to read.
+        start_year: First year (inclusive).
+        end_year: Last year (inclusive).
+
+    Returns:
+        DataFrame with columns: [code, year, month, month_in_year,
+        discharge_avg, delta]. Empty DataFrame if no data available.
+    """
+    empty = pd.DataFrame(
+        columns=["code", "year", "month", "month_in_year",
+                 "discharge_avg", "delta"]
+    )
+
+    try:
+        daily = _read_daily_runoff_api(codes, start_year, end_year)
+    except Exception as e:
+        logger.error("Failed to read daily runoff: %s", e)
+        return empty
+
+    if daily is None or daily.empty:
+        logger.warning("No daily runoff data available")
+        return empty
+
+    return _aggregate_daily_to_monthly(daily)
+
+
+def _read_daily_runoff_api(
+    codes: list[str],
+    start_year: int,
+    end_year: int,
+) -> pd.DataFrame:
+    """Read daily runoff from preprocessing API with pagination.
+
+    Returns combined DataFrame or empty DataFrame if unavailable.
+    """
+    if not SAPPHIRE_API_AVAILABLE:
+        logger.debug("sapphire-api-client not installed, skipping")
+        return pd.DataFrame()
+
+    api_enabled = os.getenv("SAPPHIRE_API_ENABLED", "true").lower()
+    if api_enabled == "false":
+        logger.debug("SAPPHIRE_API_ENABLED=false, skipping")
+        return pd.DataFrame()
+
+    api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
+    client = SapphirePreprocessingClient(base_url=api_url)
+
+    all_records = []
+    start_date = f"{start_year}-01-01"
+    end_date = f"{end_year}-12-31"
+
+    for code in codes:
+        skip = 0
+        batch_size = 1000
+        while True:
+            df_batch = client.read_runoff(
+                horizon="day",
+                code=code,
+                start_date=start_date,
+                end_date=end_date,
+                skip=skip,
+                limit=batch_size,
+            )
+            if df_batch is None or df_batch.empty:
+                break
+            all_records.append(df_batch)
+            if len(df_batch) < batch_size:
+                break
+            skip += batch_size
+
+    if not all_records:
+        return pd.DataFrame()
+
+    return pd.concat(all_records, ignore_index=True)
+
+
+def _aggregate_daily_to_monthly(daily: pd.DataFrame) -> pd.DataFrame:
+    """Aggregate daily runoff to monthly means with 50% coverage filter.
+
+    Args:
+        daily: DataFrame with columns [code, date, discharge_avg].
+
+    Returns:
+        DataFrame with columns [code, year, month, month_in_year,
+        discharge_avg, delta].
+    """
+    df = daily.copy()
+    df["date"] = pd.to_datetime(df["date"])
+    df["year"] = df["date"].dt.year
+    df["month"] = df["date"].dt.month
+    df["days_in_month"] = df["date"].dt.days_in_month
+
+    # Aggregate to monthly means per (code, year, month)
+    monthly = df.groupby(["code", "year", "month"]).agg(
+        discharge_avg=("discharge_avg", "mean"),
+        non_missing_days=("discharge_avg", "count"),
+        days_in_month=("days_in_month", "first"),
+    ).reset_index()
+
+    # Filter: require >= 50% non-missing days
+    monthly = monthly[
+        monthly["non_missing_days"] >= monthly["days_in_month"] * 0.5
+    ].copy()
+
+    if monthly.empty:
+        return pd.DataFrame(
+            columns=["code", "year", "month", "month_in_year",
+                     "discharge_avg", "delta"]
+        )
+
+    monthly["month_in_year"] = monthly["month"]
+
+    # Compute delta per (code, month_in_year): 0.674 * std across years
+    delta_df = monthly.groupby(["code", "month_in_year"]).agg(
+        std_discharge=("discharge_avg", "std"),
+    ).reset_index()
+    # Single year -> std is NaN -> delta = 0
+    delta_df["delta"] = 0.674 * delta_df["std_discharge"].fillna(0.0)
+
+    monthly = monthly.merge(
+        delta_df[["code", "month_in_year", "delta"]],
+        on=["code", "month_in_year"],
+        how="left",
+    )
+
+    # Drop intermediate columns
+    monthly = monthly.drop(
+        columns=["non_missing_days", "days_in_month"], errors="ignore"
+    )
+
+    return monthly
+
+
+# ===================================================================
+# Monthly forecasts (from long_forecasts table)
+# ===================================================================
+
+
+def read_monthly_forecasts(
+    codes: list[str],
+    start_year: int,
+    end_year: int,
+) -> pd.DataFrame:
+    """Read monthly long-term forecasts from postprocessing API.
+
+    Args:
+        codes: Station codes to read.
+        start_year: First year (inclusive).
+        end_year: Last year (inclusive).
+
+    Returns:
+        DataFrame with columns: [code, year, month, model_short,
+        q50, q05, q10, q25, q75, q90, q95, valid_from, valid_to,
+        date, flag]. Empty DataFrame if no data available.
+    """
+    empty = pd.DataFrame()
+
+    try:
+        raw = _read_long_forecasts_api(codes, start_year, end_year)
+    except Exception as e:
+        logger.error("Failed to read monthly forecasts: %s", e)
+        return empty
+
+    if raw is None or raw.empty:
+        logger.warning("No monthly forecast data available")
+        return empty
+
+    return _normalize_monthly_forecasts(raw)
+
+
+def _read_long_forecasts_api(
+    codes: list[str],
+    start_year: int,
+    end_year: int,
+) -> pd.DataFrame:
+    """Read long-term forecasts from postprocessing API with pagination."""
+    if not SAPPHIRE_API_AVAILABLE:
+        logger.debug("sapphire-api-client not installed, skipping")
+        return pd.DataFrame()
+
+    api_enabled = os.getenv("SAPPHIRE_API_ENABLED", "true").lower()
+    if api_enabled == "false":
+        logger.debug("SAPPHIRE_API_ENABLED=false, skipping")
+        return pd.DataFrame()
+
+    api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
+    client = SapphirePostprocessingClient(base_url=api_url)
+
+    all_records = []
+    start_date = f"{start_year}-01-01"
+    end_date = f"{end_year}-12-31"
+
+    for code in codes:
+        skip = 0
+        batch_size = 1000
+        while True:
+            df_batch = client.read_long_term_forecasts(
+                horizon_type="month",
+                code=code,
+                start_date=start_date,
+                end_date=end_date,
+                skip=skip,
+                limit=batch_size,
+            )
+            if df_batch is None or df_batch.empty:
+                break
+            all_records.append(df_batch)
+            if len(df_batch) < batch_size:
+                break
+            skip += batch_size
+
+    if not all_records:
+        return pd.DataFrame()
+
+    return pd.concat(all_records, ignore_index=True)
+
+
+def _normalize_monthly_forecasts(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize API response to expected column format.
+
+    Extracts year and month from valid_from, renames model_type
+    to model_short.
+    """
+    df = df.copy()
+
+    # Extract year and month from valid_from
+    df["valid_from"] = pd.to_datetime(df["valid_from"])
+    df["year"] = df["valid_from"].dt.year
+    df["month"] = df["valid_from"].dt.month
+
+    # Rename model_type -> model_short
+    if "model_type" in df.columns:
+        df = df.rename(columns={"model_type": "model_short"})
 
     # Ensure code is string
     if "code" in df.columns:
