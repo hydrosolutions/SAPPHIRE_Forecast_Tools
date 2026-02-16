@@ -89,6 +89,23 @@ def calculate_forecast(
 - **Constants**: `UPPER_SNAKE_CASE`
 - **Private methods**: `_single_leading_underscore`
 
+### Model Name Convention
+
+`model_short` (e.g., `"TFT"`, `"LR"`) is the working identifier throughout the pipeline.
+`model_long` (e.g., `"Temporal Fusion Transformer (TFT)"`) is a **display concern** defined
+only in sapphire services (`ModelType.description` in
+`sapphire/services/postprocessing/app/models.py`).
+
+When refactoring a module:
+- Do not add `model_long` to DataFrames or internal data flow
+- Remove existing `model_long` assignments if the code is being touched
+- Presentation boundaries (CSV output, dashboard display) should resolve long names
+  from the API response field `model_type_description`, not from local dicts
+- See `doc/plans/issues/gi_draft_infra_model_registry.md` for the per-module checklist
+
+Note: `RRMAMBA` (Rainfall-Runoff Mamba, ML model) and `RRAM` (Rainfall runoff assimilation
+model, conceptual model) are **different models** — do not treat them as aliases.
+
 ### API Patterns
 
 FastAPI services follow these patterns:

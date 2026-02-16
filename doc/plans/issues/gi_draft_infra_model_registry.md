@@ -1,218 +1,144 @@
-# INFRA-005: Single source of truth for model name mappings
+# INFRA-005: Remove `model_long` from app pipeline
 
 **Status**: Draft
 **Module**: infra (cross-module)
 **Priority**: Medium
-**Labels**: `refactoring`, `cross-module`, `maintainability`
+**Labels**: `refactoring`, `cross-module`, `maintainability`, `incremental`
 
 ---
 
 ## Summary
 
-Consolidate the 5 independent model-name mapping dictionaries (scattered across `postprocessing_forecasts`, `iEasyHydroForecast`, `forecast_dashboard`, and test constants) into a single canonical registry in `iEasyHydroForecast/model_registry.py`. Adding a new model should require editing one file, not five.
+Remove `model_long` from the internal data flow of all app modules. Long display names should be defined only in sapphire services (`ModelType.description`) and resolved at presentation boundaries (API responses, dashboard display). App modules work with `model_short` exclusively.
 
-## Context
+This is an **incremental** refactoring — each module is cleaned up when it is next refactored for other reasons.
 
-Model names appear as two columns throughout the pipeline: `model_short` (e.g., `"TFT"`) and `model_long` (e.g., `"Temporal Fusion Transformer (TFT)"`). These mappings are currently duplicated in multiple places, and they are already drifting — for example, `data_reader.py` knows about both `RRMAMBA` and `RRAM`, while `setup_library.py` only knows `RRMAMBA`, and the dashboard only knows 4 ML models.
+## Architectural Decision
+
+Three approaches were evaluated:
+
+| Approach | Verdict | Reason |
+|----------|---------|--------|
+| Python registry module (`model_registry.py`) | Rejected | Consolidates the dicts but keeps `model_long` flowing through the pipeline — treats a symptom, not the cause |
+| Shared `config.yaml` | Rejected | Still version-controlled, adds file I/O complexity, no type safety |
+| Database table / sapphire services | **Adopted** | `model_long` is a display concern; the server-side `ModelType.description` is the single source of truth |
+
+**Key principle:** `model_long` is display metadata, not data. It should not be carried through the pipeline as a DataFrame column. When a presentation boundary needs it, it gets it from the API response (`model_type_description` field) or from `ModelType.description` on the server side.
 
 ## Problem
 
-Five independent copies of the mapping exist:
+13+ independent locations define or carry `model_long`:
 
 | # | Location | Form | Models covered |
 |---|----------|------|----------------|
-| 1 | `postprocessing_forecasts/src/data_reader.py:17-27` | `MODEL_SHORT_TO_LONG` dict | 9 (LR, TFT, TiDE, TSMixer, ARIMA, RRMAMBA, RRAM, EM, NE) |
-| 2 | `postprocessing_forecasts/src/data_reader.py:30-38` | `API_MODEL_TYPE_TO_SHORT` dict | 7 (LR, TFT, TiDE, TSMixer, EM, NE, RRAM) |
-| 3 | `iEasyHydroForecast/setup_library.py:1232-1238` | `model_mapping` dict (local variable) | 5 ML models only (TFT, TIDE, TSMIXER, ARIMA, RRMAMBA) |
-| 4 | `forecast_dashboard/src/processing.py:189-206` | if/elif chain with hardcoded strings | 4 ML models (TFT, TIDE, TSMIXER, ARIMA) |
-| 5 | `postprocessing_forecasts/tests/test_constants.py:8-15` | `MODEL_LONG_NAMES` dict | 6 (LR, TFT, TiDE, TSMixer, EM, NE) |
+| 1 | `postprocessing_forecasts/src/data_reader.py:14-27` | `MODEL_SHORT_TO_LONG` dict | 9 (LR, TFT, TiDE, TSMixer, ARIMA, RRMAMBA, RRAM, EM, NE) |
+| 2 | `postprocessing_forecasts/src/data_reader.py:30-38` | `API_MODEL_TYPE_TO_SHORT` dict | 7 (unused in production) |
+| 3 | `postprocessing_forecasts/src/api_writer.py:118-126` | `model_type_map` dict | 7 (duplicate of #4) |
+| 4 | `postprocessing_forecasts/src/api_writer.py:318-326` | `model_type_map` dict | 7 (duplicate of #3) |
+| 5 | `iEasyHydroForecast/setup_library.py:1232-1238` | `model_mapping` dict | 5 ML models |
+| 6 | `iEasyHydroForecast/setup_library.py` (6 inline sites) | Hardcoded strings | LR, Obs, RRAM |
+| 7 | `iEasyHydroForecast/setup_library.py:2796-2929` | Two if/elif chains | 4 ML models × 2 (pentad + decad) |
+| 8 | `forecast_dashboard/src/processing.py:189-206` | if/elif chain | 4 ML models |
+| 9 | `forecast_dashboard/src/processing.py:277` | Inline string | NE |
+| 10 | `forecast_dashboard/src/db.py:276-277, 348-349` | Inline strings | NE, LR |
+| 11 | `forecast_dashboard/src/vizualization.py:2471` | Inline string | RRAM |
+| 12 | `postprocessing_forecasts/tests/test_constants.py:8-15` | `MODEL_LONG_NAMES` dict | 6 |
+| 13 | `postprocessing_forecasts/tests/generate_test_data.py:70` | Local `MODEL_LONG_NAMES` | 6 |
 
-Additionally, inline string literals are used in:
-- `setup_library.py:1175-1176` — `"Linear regression (LR)"` / `"LR"` (pentad LR)
-- `setup_library.py:1705-1706` — same (pentad observed→LR format)
-- `setup_library.py:1855-1857` — same (decad observed→LR format)
-- `forecast_dashboard/src/processing.py:261` — `"Neural Ensemble (NE)"` / `"NE"`
+**Known bugs in current mappings:**
 
-**Consequences of current state:**
-- Adding a new model requires editing 3–5 files across different modules
-- Drift has already happened (RRMAMBA/RRAM inconsistency; dashboard missing models)
-- The dashboard if/elif chain raises `ValueError` for any model it doesn't know — adding an upstream model without updating the dashboard causes a crash
-
-## Desired Outcome
-
-- One canonical file defines all model names
-- All consumers import from that file
-- Adding a new model = adding one entry to one dict
-- The dashboard handles unknown models gracefully (or discovers them from the registry)
-- Tests validate registry completeness (all models in registry have both short and long names)
+| Bug | Current (wrong) | Correct |
+|-----|-----------------|---------|
+| RRAM mislabeled in `data_reader.py` | "Rainfall-Runoff Mamba (RRAM)" | "Rainfall runoff assimilation model (RRAM)" |
+| TFT hyphenated in dashboard `processing.py` | "Temporal-Fusion Transformer (TFT)" | "Temporal Fusion Transformer (TFT)" |
+| RRMAMBA/RRAM conflated as aliases | Treated as same model | Different models: RRMAMBA = Rainfall-Runoff Mamba (ML), RRAM = Rainfall runoff assimilation model (conceptual) |
 
 ---
 
-## Technical Design
+## Per-Module Removal Checklist
 
-### New file: `iEasyHydroForecast/model_registry.py`
+Each entry is addressed when that module is next refactored. Check off items as they are completed.
 
-```python
-"""Single source of truth for model name mappings.
+### `iEasyHydroForecast/setup_library.py` (~10 locations)
 
-Every module that needs to map between model_short, model_long, and
-API model_type values should import from here.
-"""
+- [ ] Lines 1175-1176: `_read_lr_forecasts_from_api()` — remove `model_long = "Linear regression (LR)"`
+- [ ] Lines 1232-1238: `_read_ml_forecasts_from_api()` — remove `model_mapping` dict, stop setting `model_long`
+- [ ] Lines 1440-1441, 1465-1466: observed data readers (pentad) — remove `model_long = "Observed (Obs)"`
+- [ ] Lines 1556-1557, 1581-1582: observed data readers (decade) — same
+- [ ] Lines 1705, 1856: `read_forecast_data_pentad/decade()` — remove `model_long = "Linear regression (LR)"`
+- [ ] Lines 2462, 2512: conceptual model readers — remove `model_long = "Rainfall runoff assimilation model (RRAM)"`
+- [ ] Lines 2796-2818, 2907-2929: `read_probabilistic_forecast_pentad/decade()` — simplify if/elif chains, remove model_long assignment
 
-# Canonical mapping: model_short -> model_long
-MODEL_REGISTRY: dict[str, str] = {
-    "LR":      "Linear regression (LR)",
-    "TFT":     "Temporal Fusion Transformer (TFT)",
-    "TiDE":    "Time-series Dense Encoder (TiDE)",
-    "TSMixer": "Time-Series Mixer (TSMixer)",
-    "ARIMA":   "AutoRegressive Integrated Moving Average (ARIMA)",
-    "RRAM":    "Rainfall-Runoff Mamba (RRAM)",
-    "EM":      "Ensemble Mean (EM)",
-    "NE":      "Neural Ensemble (NE)",
-    "Obs":     "Observed (Obs)",
-}
+### `postprocessing_forecasts/src/data_reader.py`
 
-# API model_type values that differ from the canonical short name.
-# Used when reading from the SAPPHIRE API, which may use uppercase
-# or legacy names.
-API_TYPE_ALIASES: dict[str, str] = {
-    "RRMAMBA": "RRAM",
-    "TIDE":    "TiDE",
-    "TSMIXER": "TSMixer",
-}
+- [ ] Lines 14-27: Remove `MODEL_SHORT_TO_LONG` dict
+- [ ] Lines 30-38: Remove `API_MODEL_TYPE_TO_SHORT` dict (unused in production)
+- [ ] Line 201: Remove `.map(MODEL_SHORT_TO_LONG)` — stop adding model_long column after API read
 
+### `postprocessing_forecasts/src/api_writer.py`
 
-def short_to_long(short: str) -> str:
-    """Return the long display name for a model short name.
+- [ ] Lines 118-126, 318-326: Deduplicate `model_type_map` (two identical dicts). Note: these map `model_short` → API `model_type` (case normalization for TiDE/TSMixer), NOT `model_long`. Keep the mapping but move to module level as a single constant.
 
-    Raises:
-        KeyError: If short is not in MODEL_REGISTRY.
-    """
-    return MODEL_REGISTRY[short]
+### `postprocessing_forecasts/src/skill_metrics.py`
 
+- [ ] Remove `model_long` from `groupby` — group by `model_short` only
+- [ ] Lines 516-519, 721-724: Refactor malformed ensemble name filters to use `model_short`
 
-def api_type_to_short(api_type: str) -> str:
-    """Normalize an API model_type to the canonical short name.
+### `postprocessing_forecasts/src/ensemble_calculator.py`
 
-    Handles case differences and legacy names (e.g., RRMAMBA -> RRAM).
-    Returns the input unchanged if no alias exists and the value is
-    already a valid short name.
-    """
-    return API_TYPE_ALIASES.get(api_type, api_type)
-```
+- [ ] `model_long_agg()`: Refactor to build composition string from `model_short` directly instead of regex-extracting short names from `model_long`
 
-**Why `iEasyHydroForecast/`**: All active modules already import from this package (`forecast_library`, `setup_library`, `tag_library`). No new cross-module dependency is introduced.
+### `forecast_dashboard/src/processing.py`
 
-### Migration: file-by-file changes
+- [ ] Lines 189-206: Remove if/elif chain setting model_long — dashboard gets `model_type_description` from API response instead
+- [ ] Line 277: Remove hardcoded `"Neural Ensemble (NE)"`
 
-#### 1. `postprocessing_forecasts/src/data_reader.py`
+### `forecast_dashboard/src/db.py`
 
-**Before:**
-```python
-MODEL_SHORT_TO_LONG = {
-    "LR": "Linear regression (LR)",
-    ...
-}
-API_MODEL_TYPE_TO_SHORT = {
-    "LR": "LR",
-    ...
-}
-```
+- [ ] Lines 276-277: Remove hardcoded `"Neural Ensemble (NE)"` — use API `model_type_description`
+- [ ] Lines 348-349: Remove hardcoded `"Linear regression (LR)"` — same
 
-**After:**
-```python
-from model_registry import MODEL_REGISTRY as MODEL_SHORT_TO_LONG
-from model_registry import API_TYPE_ALIASES, api_type_to_short
-```
+### `forecast_dashboard/src/vizualization.py`
 
-The local names `MODEL_SHORT_TO_LONG` stay the same so callers within the file don't change. `API_MODEL_TYPE_TO_SHORT` is replaced by `api_type_to_short()` at the call site (only used in `_normalize_api_skill_metrics()`).
+- [ ] Line 2471: Remove hardcoded `"Rainfall runoff assimilation model (RRAM)"`
 
-#### 2. `iEasyHydroForecast/setup_library.py:1232-1238`
+### `postprocessing_forecasts/tests/`
 
-**Before:** Local `model_mapping` dict with `(model_long, model_short)` tuples.
+- [ ] `test_constants.py:8-15`: Remove `MODEL_LONG_NAMES` dict — tests assert on `model_short`
+- [ ] `generate_test_data.py:70`: Remove local `MODEL_LONG_NAMES`
+- [ ] `test_ensemble_calculator.py`: Update `TestModelNameConsistency` tests
 
-**After:**
-```python
-from model_registry import MODEL_REGISTRY, api_type_to_short
+### `long_term_forecasting/lt_utils.py`
 
-# In read_daily_probabilistic_ml_forecasts_pentad_from_api():
-model_short = api_type_to_short(model.upper())
-model_long = MODEL_REGISTRY[model_short]
-```
-
-Also replace inline `"Linear regression (LR)"` at lines 1175, 1705, 1855 with `MODEL_REGISTRY["LR"]`.
-
-#### 3. `forecast_dashboard/src/processing.py:189-206`
-
-**Before:** if/elif chain mapping model name to `model_long`/`model_short`.
-
-**After:**
-```python
-from model_registry import MODEL_REGISTRY, api_type_to_short
-
-model_short = api_type_to_short(model.upper())
-if model_short not in MODEL_REGISTRY:
-    raise ValueError(
-        f"Unknown model '{model}'. Known models: "
-        f"{list(MODEL_REGISTRY.keys())}"
-    )
-model_long = MODEL_REGISTRY[model_short]
-```
-
-Also replace the inline `"Neural Ensemble (NE)"` at line 261 with `MODEL_REGISTRY["NE"]`.
-
-#### 4. `postprocessing_forecasts/tests/test_constants.py`
-
-**Before:** Duplicate `MODEL_LONG_NAMES` dict.
-
-**After:**
-```python
-from model_registry import MODEL_REGISTRY
-
-# Subset used in tests (EM, NE are generated, not input models)
-MODEL_LONG_NAMES = {
-    k: v for k, v in MODEL_REGISTRY.items()
-    if k in ('LR', 'TFT', 'TiDE', 'TSMixer', 'EM', 'NE')
-}
-```
-
-#### 5. Deprecation of `RRMAMBA`
-
-The API alias `RRMAMBA -> RRAM` handles backward compatibility. The canonical short name is `RRAM`. Remove `RRMAMBA` from `MODEL_REGISTRY` (it only exists in the alias table). Grep for any remaining `RRMAMBA` references and update them.
+- [ ] Lines 134-145: `MODEL_NAME_TO_MODEL_TYPE` — identity mapping, no model_long (low priority, no change needed unless module is refactored)
 
 ---
 
-## Implementation Steps
+## Server-Side Updates Needed
 
-1. Create `iEasyHydroForecast/model_registry.py` with the registry dict, alias dict, and two helper functions
-2. Add unit tests in `iEasyHydroForecast/tests/test_model_registry.py`:
-   - `short_to_long()` returns correct long name for each model
-   - `short_to_long()` raises `KeyError` for unknown model
-   - `api_type_to_short()` resolves aliases (`RRMAMBA` -> `RRAM`, `TIDE` -> `TiDE`)
-   - `api_type_to_short()` passes through known short names unchanged
-   - Registry completeness: every value matches the pattern `"<Name> (<SHORT>)"`
-3. Migrate `data_reader.py` — delete local dicts, import from registry
-4. Migrate `setup_library.py` — replace local `model_mapping` and inline strings
-5. Migrate `forecast_dashboard/src/processing.py` — replace if/elif chain
-6. Migrate `test_constants.py` — import from registry
-7. Run full test suite (`SAPPHIRE_TEST_ENV=True bash run_tests.sh`) — no test changes expected beyond imports
-8. Grep for any remaining hardcoded model name strings; update stragglers
+`sapphire/services/postprocessing/app/models.py` — `ModelType.description` must be complete before apps can rely on it:
 
-## Acceptance Criteria
+- [ ] Add long-term model descriptions (GBT, LR_Base, LR_SM, LR_SM_DT, LR_SM_ROF, MC_ALD, SM_GBT, SM_GBT_LR, SM_GBT_Norm, Skilled Mean, Naive Mean)
+- [ ] Fix RRAM description: add "(RRAM)" suffix for consistency
+- [ ] Add RRMAMBA as separate ModelType if ML model needs to be stored in API
+- [ ] Fix TiDE description: currently "(TIDE)" should be "(TiDE)"
+- [ ] Verify Obs model has a ModelType entry
 
-- [ ] `model_registry.py` is the only file that defines model short/long name mappings
-- [ ] All 5 former locations import from the registry (no local dicts or inline strings)
-- [ ] `api_type_to_short()` handles legacy API names (RRMAMBA, TIDE, TSMIXER)
-- [ ] Adding a test model to the registry makes it available in all consumers without further changes
-- [ ] All existing tests pass with 0 skips
-- [ ] New unit tests for the registry (at least 5 tests covering happy path, error, aliases, completeness)
+---
+
+## Acceptance Criteria (long-term)
+
+- [ ] No `model_long` string literals or mapping dicts in any app module source code
+- [ ] No `model_long` column in internal DataFrames (only added at CSV write time or dashboard display, sourced from API)
+- [ ] `ModelType.description` in sapphire services is complete and is the single source for all long names
+- [ ] All existing tests pass with 0 skips after each module cleanup
 
 ## Risks
 
-- **Low**: All modules already depend on `iEasyHydroForecast`, so no new dependency edges
-- **Low**: The mappings are string constants — import-time failures would be caught immediately by any test run
-- **Watch**: The `forecast_dashboard` uses `internationalize_forecast_model_names()` which applies `_()` (gettext) to model names. Verify that i18n still works after the migration (the translated strings are in `.po` files keyed on the English long names, which don't change)
+- **Medium**: CSV backward compatibility — external consumers may expect `model_long` column. Mitigation: keep writing it to CSV during transition, but source the value from API response rather than local dicts.
+- **Low**: Dashboard CSV fallback — when API is down, dashboard reads CSVs. If CSVs still have `model_long`, no impact. Long-term, dashboard should get long names from API only.
+- **Watch**: i18n in dashboard — `internationalize_forecast_model_names()` applies gettext to model_long strings. Translation `.po` files are keyed on English long names. Verify i18n still works when source of long names changes from local dicts to API.
 
 ---
 
-*Estimated effort: ~2 hours (mostly mechanical find-and-replace + test verification)*
+*This is an incremental refactoring tracked per module, not a single implementation task.*

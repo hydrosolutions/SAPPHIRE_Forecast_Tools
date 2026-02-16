@@ -37,7 +37,8 @@
 | Server-side batch upsert (CRUD) | **DONE** — `_bulk_upsert()` with PG ON CONFLICT + N+1 fallback (commit `eae7158`) |
 | Client-side vectorization | **DONE** — vectorized record building in 4 `_write_*_to_api()` functions (commit `eae7158`) |
 | Skill metrics single-pass optimization | **DONE** — `calculate_all_skill_metrics()` replaces triple groupby+merge (commit `eae7158`) |
-| Model name registry (cross-module) | **PLANNED** — separate issue [`gi_draft_infra_model_registry.md`](issues/gi_draft_infra_model_registry.md) (INFRA-005). Consolidate 5 duplicate model mapping dicts into single `model_registry.py` |
+| Remove `model_long` from apps (INFRA-005, revised) | **PLANNED** — incremental refactoring, see [`gi_draft_infra_model_registry.md`](issues/gi_draft_infra_model_registry.md). Apps use `model_short` only; `model_type_description` stays server-side |
+| Metrics registry refactoring | **PLANNED** — restructure `calculate_all_skill_metrics()` into `METRIC_REGISTRY` dict pattern. Pre-requisite for Phase 4a (issue to be created) |
 | Monthly skill metrics (Phase 4a) | **PLANNED** — detailed plan in [`postprocessing_unified_plan_detailMonthlyForecasts.md`](postprocessing_unified_plan_detailMonthlyForecasts.md) (7 steps + LLM instructions for sapphire-api-client pre-requisite) |
 | Quarterly + seasonal skill metrics (Phase 4b) | TODO — deferred, depends on 4a |
 | Bug 6: Single-model ensemble filter only rejects LR | **DONE** — `_is_multi_model_ensemble()` helper replaces hardcoded check |
@@ -401,6 +402,16 @@ All Phase 3 items are complete. The extracted `src/` modules in `postprocessing_
 
 ## Phase 4: Monthly, Quarterly & Seasonal Skill Metrics
 
+### Pre-requisite Ordering (decided 2026-02-16)
+
+Phase 4a has two pre-requisites that must be completed **before** implementation begins:
+
+1. **INFRA-005 (revised): Remove `model_long` from apps modules.** Instead of consolidating scattered model-name mapping dicts into a registry, **remove `model_long` from the app pipeline entirely**. Apps use `model_short` only. The server-side `model_type_description` field (in `models.py ModelType.description`) is the single source of truth for long names, resolved at presentation boundaries (API responses, dashboard display). This is an incremental refactoring — each module is cleaned up when next touched. See [`gi_draft_infra_model_registry.md`](issues/gi_draft_infra_model_registry.md) for the per-module checklist (13+ locations across 6 modules).
+
+2. **Metrics registry refactoring** (new task). Restructure `calculate_all_skill_metrics()` in `src/skill_metrics.py` into a `METRIC_REGISTRY` dict pattern (see [metrics registry note](#implementation-steps) below). This must be done before Phase 4a so that CRPS is added as a registry entry rather than a 7th hardcoded metric.
+
+**Implementation order:** INFRA-005 (remove `model_long`) → metrics registry → Phase 4a (monthly skill metrics).
+
 ### Scope
 
 Extend `postprocessing_forecasts` to calculate skill metrics for all temporal resolutions produced by the forecast system:
@@ -429,6 +440,15 @@ Extend `postprocessing_forecasts` to calculate skill metrics for all temporal re
 4. **Configurable season definition.** Season start/end months are defined in `config.yaml` (not hardcoded), supporting different deployments (Central Asia Apr–Sep, Nepal Jun–Sep, Switzerland Apr–Oct, etc.).
 
 5. **Monthly observations aggregated on-the-fly.** Daily discharge from the preprocessing API (`runoffs` table) is grouped by year/month. A month requires ≥50% non-missing days to be valid (same rule as `long_term_forecasting/post_process_lt_forecast.py:calculate_lt_statistics_calendar_month()`).
+
+6. **Accuracy + delta computed for all resolutions, including monthly (decided 2026-02-16).** The accuracy metric (fraction of forecasts within ±delta of observed) is the standard method used by Central Asian hydromet services and must be supported at all temporal resolutions. For monthly metrics, delta is computed on-the-fly: `delta = 0.674 * std(monthly_observed_discharge)` per (station, month_in_year), using the same observations aggregated in step 5. This is self-contained — no cross-module dependency on `long_term_forecasting`.
+
+7. **`Skilled Mean` and `Naive Mean` computed in postprocessing (decided 2026-02-16).** These reference baselines exist in the API schema (`ModelType` enum) but are not produced by `long_term_forecasting`. Phase 4a computes them during skill metric calculation:
+   - **Naive Mean**: Climatological mean monthly discharge (mean of all years' observations for that station+month). This is the no-skill baseline.
+   - **Skilled Mean**: Weighted average of individual model forecasts, weighted by their skill scores. The exact weighting scheme (inverse MAE, NSE-weighted, etc.) to be defined in the Phase 4a detail plan.
+   Both are written to the `long_forecasts` table and evaluated alongside individual models.
+
+8. **CRPS supported as an additional metric wherever quantile information is available (decided 2026-02-16).** Both accuracy+delta (point-based, hydromet standard) and CRPS (probabilistic) are computed. They serve different audiences: accuracy for operational hydromet reporting, CRPS for scientific forecast verification.
 
 ### Infrastructure Already in Place
 
@@ -531,10 +551,25 @@ seasonal:
   plan at that point.
 ```
 
+### `SAPPHIRE_PREDICTION_MODE` Semantics (decided 2026-02-16)
+
+| Value | Resolutions | Backward compatible? |
+|-------|-------------|---------------------|
+| `PENTAD` | Pentad only | Yes (unchanged) |
+| `DECAD` | Decad only | Yes (unchanged) |
+| `BOTH` | Pentad + decad | Yes (unchanged, short-term only) |
+| `MONTHLY` | Monthly only | **New in Phase 4a** |
+| `ALL` | Pentad + decad + monthly (+ quarterly + seasonal when Phase 4b is done) | **New in Phase 4a** |
+
+**Entry point support:**
+- **`recalculate_skill_metrics.py`:** Supports all modes including `MONTHLY` and `ALL`. This is the definite entry point for monthly skill metric recalculation.
+- **`postprocessing_operational.py`:** Supports `PENTAD`, `DECAD`, `BOTH` only for now. Whether monthly postprocessing needs its own operational entry point (running ~2x/month) is an **open question** — monthly forecasts arrive less frequently than pentad/decad, so the operational/maintenance patterns may differ. To be decided when Phase 4a implementation begins.
+- **`postprocessing_maintenance.py`:** Same as operational — pentad/decad only for now. Monthly gap-fill may not be needed if the recalculation is fast enough. To be verified.
+
 ### Integration with Phase 2 Entry Points
 
-- **Operational (daily):** No change. Monthly/quarterly/seasonal skill metrics are NOT recalculated daily — they are pre-calculated and read from the API, same as pentad/decad.
-- **Nightly gap-fill:** Extended to check for missing monthly ensemble calculations when monthly forecast data arrives late.
+- **Operational (daily):** No change for pentad/decad. Monthly operational postprocessing is an open question (see above).
+- **Nightly gap-fill:** No change for pentad/decad. Monthly gap-fill deferred pending speed verification.
 - **Yearly recalculation (`recalculate_skill_metrics.py`):** Extended to recalculate monthly, quarterly, and seasonal skill metrics alongside pentad/decad.
 
 ### Implementation Steps
@@ -555,11 +590,12 @@ seasonal:
    - Quantile levels: [0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95]
    - Cross-cutting: used for monthly/quarterly/seasonal now; will also apply to pentad/decad once those modules populate quantile columns in the `Forecast` table
 
-   > **Skill metrics registry (to implement alongside CRPS):**
-   > Adding CRPS is the natural trigger to introduce a lightweight metrics registry
-   > pattern. Rather than a full plugin system (over-engineered for our rate of change),
-   > restructure `calculate_all_skill_metrics()` as follows:
+   > **Skill metrics registry (pre-requisite — implement BEFORE Phase 4a, decided 2026-02-16):**
+   > The metrics registry must be built as a separate task before Phase 4a begins,
+   > so that CRPS is added as a registry entry rather than a 7th hardcoded metric.
+   > This is listed as pre-requisite #2 in the [Pre-requisite Ordering](#pre-requisite-ordering-decided-2026-02-16) section above.
    >
+   > **Design:**
    > - Extract each metric into its own named function with a uniform signature
    >   `(obs, sim, **kw) -> float` (already partially done for `sdivsigma_nse`, `mae`,
    >   `forecast_accuracy_hydromet`).
@@ -583,7 +619,7 @@ seasonal:
    > `register_metric()` call, add the API column. The compositor, ensemble filter,
    > CSV writer, and tests all pick it up automatically.
    >
-   > **Detail plan to be refined here before implementation.**
+   > **Detailed issue to be created in `doc/plans/issues/` before implementation.**
 
 4. **Monthly skill metrics** — Add to `src/skill_metrics.py`:
    - `calculate_monthly_skill_metrics(forecasts_df, observations_df)` — both point (Q50) and probabilistic (CRPS) metrics
@@ -925,20 +961,27 @@ The assertion was already a clean `assert saved_df.empty` when reviewed — no `
 
 Split into sub-phases: **4a (monthly)** is fully planned, **4b (quarterly + seasonal)** deferred.
 
+#### Pre-requisites for Phase 4a (must be completed first)
+
+- [ ] **INFRA-005 (revised): Remove `model_long` from apps** — incremental per-module cleanup, apps use `model_short` only ([`gi_draft_infra_model_registry.md`](issues/gi_draft_infra_model_registry.md))
+- [ ] **Metrics registry refactoring** — restructure `calculate_all_skill_metrics()` into `METRIC_REGISTRY` dict pattern (issue to be created in `doc/plans/issues/`)
+- [ ] `sapphire-api-client`: `read_long_forecasts()` + `write_long_forecasts()` (separate repo, LLM instructions provided) → bump pinned hash
+
 #### Phase 4a: Monthly Skill Metrics
 
 > **Detailed plan:** [`postprocessing_unified_plan_detailMonthlyForecasts.md`](postprocessing_unified_plan_detailMonthlyForecasts.md)
 > Contains: step-by-step implementation (7 steps), function signatures, data flow, model mappings, test requirements, and LLM instructions for the sapphire-api-client pre-requisite.
+>
+> **Note:** The detail plan needs updating to reflect decisions made 2026-02-16: delta computed on-the-fly, `Skilled Mean`/`Naive Mean` computed in postprocessing, metrics registry as pre-requisite.
 
-**Pre-requisite**: `sapphire-api-client` must add `read_long_forecasts()` + `write_long_forecasts()` — this is done in the **separate** `hydrosolutions/sapphire-api-client` repo, not here. See [LLM instructions in the detail plan](postprocessing_unified_plan_detailMonthlyForecasts.md#pre-requisite-sapphire-api-client-llm-instructions).
-
-- [ ] `sapphire-api-client`: `read_long_forecasts()` + `write_long_forecasts()` (separate repo, LLM instructions provided) → bump pinned hash
-- [ ] `src/data_reader.py`: `read_monthly_observations()` — daily→monthly aggregation (≥50% coverage), reuse logic from `calculate_lt_statistics_calendar_month()`
+- [ ] `src/data_reader.py`: `read_monthly_observations()` — daily→monthly aggregation (≥50% coverage), also compute `delta = 0.674 * std` per (station, month)
 - [ ] `src/data_reader.py`: `read_monthly_forecasts()` — read from `long_forecasts` table via API
-- [ ] `src/skill_metrics.py`: `calculate_crps()` — quantile-based CRPS (pinball loss + trapezoidal integration)
+- [ ] `src/skill_metrics.py`: `calculate_crps()` — quantile-based CRPS (registered in `METRIC_REGISTRY`)
 - [ ] `src/skill_metrics.py`: `calculate_monthly_skill_metrics()` — point (Q50→NSE/MAE/accuracy/sdivsigma) + CRPS
-- [ ] `src/api_writer.py`: extend horizon_type mapping to "month" + add LT model types
+- [ ] `src/skill_metrics.py`: compute `Naive Mean` (climatological mean) and `Skilled Mean` (skill-weighted model average) baselines
+- [ ] `src/api_writer.py`: extend horizon_type mapping to "month" (LT model types come from model registry)
 - [ ] `src/file_writer.py`: `save_monthly_skill_metrics()` (env var: `ieasyforecast_monthly_skill_metrics_file`)
+- [ ] `apps/config/.env`: add `ieasyforecast_monthly_skill_metrics_file` env var
 - [ ] `recalculate_skill_metrics.py`: add monthly block (`SAPPHIRE_PREDICTION_MODE=MONTHLY|ALL`)
 - [ ] Tests: unit + edge case + integration + API failure (see detailed plan)
 
@@ -1104,9 +1147,9 @@ For database-level issues: PostgreSQL WAL-based point-in-time recovery can resto
 
 Skill metrics are calculated **per model, per station, per pentad/decad of the year** — NOT a single value per model.
 
-**Grouping keys:**
-- Pentadal: `['pentad_in_year', 'code', 'model_long', 'model_short']`
-- Decadal: `['decad_in_year', 'code', 'model_long', 'model_short']`
+**Grouping keys** (current — `model_long` will be removed per INFRA-005):
+- Pentadal: `['pentad_in_year', 'code', 'model_long', 'model_short']` → after INFRA-005: `['pentad_in_year', 'code', 'model_short']`
+- Decadal: `['decad_in_year', 'code', 'model_long', 'model_short']` → after INFRA-005: `['decad_in_year', 'code', 'model_short']`
 
 **Example:** 72 pentads × 50 stations × 4 models = **14,400 skill metric records**
 
@@ -1281,3 +1324,4 @@ The following plans are **superseded** by this unified plan (moved to `archive/`
 | 2026-02-15 | Bea/Claude | Phase 3 Batch 1 complete: all integration depth items (#29–#35) and CRUD tests (#22–#28) done. CRUD service: 23 → 38 tests (+15): `TestFallbackUpsertDirect` (6), `TestCombinedFilters` (6), `TestLargeBatch` (2), plus pre-existing. Wiring integration: 16 → 23 tests (+7): `TestRecalcWiringIntegration` (4), `TestMaintenanceSurplusData` (1), `TestNEExclusionIntegration` (1), `TestCrossWorkflowRoundtrip` (1), `TestVaryingDelta` (1), `TestLogMostRecentForecasts` (3). Item #31 (or-chain assertion) already fixed in prior session. Updated confidence: High across all areas except maintenance partial-save (Medium). Remaining Phase 3 work: module extractions (`src/skill_metrics.py`, `src/api_writer.py`, `src/file_writer.py`) + virtual station vectorization (deferred). |
 | 2026-02-16 | Bea/Claude | Critical data-flow review of postprocessing module. Findings: (1) High confidence in data flow — three layers of integration tests (workflow E2E, wiring, pipeline) all use real logic for internal transformations, only mocking external boundaries. 375 tests pass with 0 skips when run via module venv. (2) Debug `print()` cleanup: replaced all 16 `print()` calls in `src/skill_metrics.py` and `src/file_writer.py` with `logger.debug()` or removed redundant `print()` alongside existing `logger.info/error`. Also fixed f-string logger calls to use lazy `%s` formatting. (3) API data-loss warnings improved: `api_writer.py` `dropna` warnings now say "after repair attempt" and log up to 10 dropped (code, date) or (code, model) pairs for operator investigation. (4) `sapphire-api-client` confirmed installed in module `.venv` — the 49 "skipped" tests only appeared when running bare `pytest` instead of `run_tests.sh`. Updated status summary, Current Architecture (file structure now reflects extracted `src/` modules and 24 test files), Phase 3 (marked DONE with checkbox cleanup), Phase 5 test counts. Commit `41d782e`. |
 | 2026-02-16 | Bea/Claude | Unified cross-references between master plan and Phase 4a detail document. Phase 4a status summary now links to detail doc with content summary. Phase 4a checklist clarifies sapphire-api-client is a separate repo (LLM instructions provided, not implemented here). Detail document (`postprocessing_unified_plan_detailMonthlyForecasts.md`) restructured: added Quick Reference table for fast agent navigation, parent document link, pre-requisite section rewritten as LLM instructions for the separate `hydrosolutions/sapphire-api-client` repo, Files Modified table marks api-client as out of scope. Added detail doc to Related Documents table. |
+| 2026-02-16 | Bea/Claude | Phase 4 refinement — 5 decisions recorded: (1) **INFRA-005 revised**: instead of consolidating model-name dicts into a registry, **remove `model_long` from apps modules entirely**. Apps use `model_short` only; `model_type_description` stays server-side for API consumers. This eliminates the 5 scattered mapping dicts rather than consolidating them. Must be done before Phase 4a. (2) **Delta/accuracy for monthly**: compute `delta = 0.674 * std(monthly_obs)` on-the-fly per (station, month); accuracy metric supported at all resolutions (Central Asian hydromet standard). (3) **Metrics registry before Phase 4a**: restructure `calculate_all_skill_metrics()` into `METRIC_REGISTRY` pattern as a separate pre-requisite task, so CRPS is added as a registry entry. (4) **Skilled Mean / Naive Mean**: computed in postprocessing as reference baselines (not produced by `long_term_forecasting`). Naive Mean = climatological mean, Skilled Mean = skill-weighted model average. (5) **SAPPHIRE_PREDICTION_MODE**: `BOTH` stays pentad+decad (backward compat), add `MONTHLY` and `ALL` (= everything). Recalculate entry point supports all modes; operational/maintenance for monthly is an open question. Updated: Phase 4 key design decisions (added #6–#8), pre-requisite ordering section, Phase 4a checklist (3 pre-reqs + env var + baselines), prediction mode semantics table. |
