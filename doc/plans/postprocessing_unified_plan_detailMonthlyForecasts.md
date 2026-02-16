@@ -418,7 +418,7 @@ def read_monthly_observations(
     Requires >= 50% non-missing days per month.
 
     Returns:
-        DataFrame: [code, year, month, month_in_year, discharge_avg]
+        DataFrame: [code, year, month, month_in_year, discharge_avg, delta]
     """
 ```
 
@@ -428,7 +428,8 @@ def read_monthly_observations(
 1. Parse dates → extract year, month, days_in_month
 2. `groupby(['code', 'year', 'month']).agg(mean, count, first)`
 3. Filter: `non_missing_days >= days_in_month * 0.5`
-4. Return with `month_in_year = month`
+4. Compute delta per (code, month_in_year): `delta = 0.674 * std(discharge_avg)` across all years for that station+month. This matches the pentad/decad convention (`forecast_library.py:1519`).
+5. Return with `month_in_year = month`
 
 ---
 
@@ -445,7 +446,7 @@ def read_monthly_forecasts(
     """Read monthly long-term forecasts from postprocessing API.
 
     Returns:
-        DataFrame: [code, year, month, model_type, model_short, model_long,
+        DataFrame: [code, year, month, model_type, model_short,
                      q50, q05, q10, q25, q75, q90, q95,
                      valid_from, valid_to, date, flag]
     """
@@ -453,16 +454,25 @@ def read_monthly_forecasts(
 
 **Data source**: `SapphirePostprocessingClient.read_long_forecasts(horizon_type="month", code=code, ...)` with paginated reads (batch_size=1000).
 
-**Normalization**: Map API `model_type` (LR_Base, SM_GBT, MC_ALD, etc.) to `model_short` and `model_long`. Long-term model mapping:
+**Normalization**: The API `model_type` value is used directly as `model_short`. No `model_long` mapping is needed — long display names are resolved server-side via `ModelType.description` (see INFRA-005 decision). Long-term model types:
 
-| API model_type | model_short | model_long |
-|----------------|-------------|------------|
-| LR_Base | LR_Base | Linear Regression Base (LR_Base) |
-| SM_GBT | SM_GBT | SciRegressor GBT (SM_GBT) |
-| MC_ALD | MC_ALD | Uncertainty Mixture ALD (MC_ALD) |
-| SM_GBT_LR | SM_GBT_LR | SciRegressor GBT+LR (SM_GBT_LR) |
-| SM_GBT_Norm | SM_GBT_Norm | SciRegressor GBT Norm (SM_GBT_Norm) |
-| GBT | GBT | Gradient Boosted Trees (GBT) |
+| API model_type / model_short | Source | Notes |
+|------------------------------|--------|-------|
+| LR_Base | `long_term_forecasting` | Linear Regression Base |
+| LR_SM | `long_term_forecasting` | LR with Snow/Meteo |
+| LR_SM_DT | `long_term_forecasting` | LR with Snow/Meteo/DT |
+| LR_SM_ROF | `long_term_forecasting` | LR with Snow/Meteo/Runoff |
+| SM_GBT | `long_term_forecasting` | SciRegressor GBT |
+| SM_GBT_LR | `long_term_forecasting` | SciRegressor GBT+LR |
+| SM_GBT_Norm | `long_term_forecasting` | SciRegressor GBT Norm |
+| MC_ALD | `long_term_forecasting` | Uncertainty Mixture ALD |
+| GBT | `long_term_forecasting` | Gradient Boosted Trees |
+| Naive Mean | **Computed in postprocessing** | Climatological mean monthly discharge (no-skill baseline) |
+| Skilled Mean | **Computed in postprocessing** | Skill-weighted average of individual model forecasts |
+
+**`Naive Mean` and `Skilled Mean` (decided 2026-02-16):** These reference baselines are not produced by `long_term_forecasting`. They are computed during skill metric calculation in Step 4:
+- **Naive Mean**: For each (station, month), the mean of all years' monthly observed discharge. Written to `long_forecasts` table with `model_type="Naive Mean"` and `q50 = climatological_mean`. Quantile columns are not populated (CRPS not applicable for a point baseline).
+- **Skilled Mean**: Weighted average of individual model Q50 forecasts, weighted by their skill scores. The exact weighting scheme (inverse MAE, NSE-weighted, etc.) to be defined during implementation. Written with `model_type="Skilled Mean"`.
 
 **Extract month**: From `valid_from` date → month (1–12).
 
@@ -514,13 +524,13 @@ def calculate_monthly_skill_metrics(
     Probabilistic metric: CRPS (using Q05–Q95)
 
     Args:
-        observations: [code, year, month, month_in_year, discharge_avg]
-        forecasts: [code, year, month, model_short, model_long,
+        observations: [code, year, month, month_in_year, discharge_avg, delta]
+        forecasts: [code, year, month, model_short,
                     q50, q05, q10, q25, q75, q90, q95]
 
     Returns:
         (skill_stats_df, joint_forecasts_df, timing_stats)
-        skill_stats_df: [month_in_year, code, model_long, model_short,
+        skill_stats_df: [month_in_year, code, model_short,
                          sdivsigma, nse, delta, accuracy, mae, n_pairs, crps]
     """
 ```
@@ -528,12 +538,12 @@ def calculate_monthly_skill_metrics(
 **Pattern** (follows `calculate_skill_metrics_pentad()`):
 1. Merge forecasts with observations on `[code, year, month]`
 2. Use `q50` as point forecast → rename to `forecasted_discharge`
-3. GroupBy `[month_in_year, code, model_long, model_short]`
+3. GroupBy `[month_in_year, code, model_short]`
 4. Apply `calculate_all_skill_metrics()` — **reuse existing function**
 5. Compute CRPS per group using quantile columns
 6. Ensemble creation: threshold filtering + ensemble mean (reuse logic from pentad/decad)
 
-**Delta for accuracy metric**: Use long-term std from `calculate_lt_statistics_calendar_month()`. If unavailable, skip accuracy for that group.
+**Delta for accuracy metric (decided 2026-02-16)**: Computed on-the-fly inside `read_monthly_observations()` as `delta = 0.674 * std(discharge_avg)` per (station, month_in_year), using all available years of monthly observations. This is self-contained — no cross-module dependency on `long_term_forecasting`. Consistent with how pentad/decad delta is computed in `forecast_library.py:1519`.
 
 **Key differences from pentad/decad**:
 - Uses `month_in_year` (1–12) instead of `pentad_in_year` (1–72)
@@ -584,6 +594,10 @@ if prediction_mode in ("MONTHLY", "ALL"):
 ```
 
 Extend `SAPPHIRE_PREDICTION_MODE`: add `MONTHLY` and `ALL`. `BOTH` stays = pentad + decad (backward compat).
+
+**Entry point scope (decided 2026-02-16):**
+- **`recalculate_skill_metrics.py`:** Supports `MONTHLY` and `ALL`. This is the definite entry point for monthly skill metric recalculation.
+- **`postprocessing_operational.py` / `postprocessing_maintenance.py`:** Pentad/decad only for now. Whether monthly postprocessing needs its own operational entry point (~2x/month) or gap-fill is an **open question** to be decided when Phase 4a implementation begins.
 
 ---
 
@@ -670,3 +684,4 @@ Zero skips except `SAPPHIRE_API_AVAILABLE` guards.
 |------|---------|
 | 2026-02-16 | Initial detailed plan created |
 | 2026-02-16 | Clarified sapphire-api-client is out of scope — section rewritten as comprehensive LLM instructions for separate repo. Added: Quick Reference table, cross-references to master document, full server-side API reference (GET/POST endpoints, query params, filter behavior, request/response schemas), complete LongForecast record field documentation (all 20+ columns with types and constraints), exact existing client code as template, complete implementation code for all 3 methods (read/write/prepare), critical differences callout (horizon_type vs horizon, is not None for int params), file placement instructions, 6 required test cases, verification commands. |
+| 2026-02-16 | Applied 5 decisions from unified plan review: (1) Delta/accuracy: `read_monthly_observations()` now computes `delta = 0.674 * std` on-the-fly, returns it as a column. Step 4 delta guidance updated. (2) Removed `model_long` from all function signatures, return types, and groupby keys per INFRA-005. (3) Added `Skilled Mean` and `Naive Mean` to model mapping table with computation notes. (4) Added LR_SM, LR_SM_DT, LR_SM_ROF to model table (were missing). (5) Step 7: added entry point scope note (recalculate supports MONTHLY/ALL; operational/maintenance monthly is open question). |
