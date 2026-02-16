@@ -388,6 +388,62 @@ def calculate_all_skill_metrics(
 
 
 # ---------------------------------------------------------------------------
+# CRPS (Continuous Ranked Probability Score)
+# ---------------------------------------------------------------------------
+
+def calculate_crps(
+    observed: np.ndarray,
+    quantile_forecasts: np.ndarray,
+    quantile_levels: np.ndarray,
+) -> float:
+    """Continuous Ranked Probability Score from quantile forecasts.
+
+    Uses trapezoidal integration of quantile (pinball) losses:
+        CRPS = (1/N) * sum_i trapz(rho_tau(y_i - q_ij), tau_j)
+    where rho_tau(u) = u * (tau - 1{u<0}) is the pinball loss.
+
+    Args:
+        observed: shape (N,) — observed values.
+        quantile_forecasts: shape (N, K) — forecasted quantiles.
+        quantile_levels: shape (K,) — e.g. [0.05, 0.10, ..., 0.95].
+
+    Returns:
+        Mean CRPS across valid observations (lower is better).
+        Returns NaN if no valid observations.
+    """
+    observed = np.asarray(observed, dtype=np.float64)
+    quantile_forecasts = np.asarray(quantile_forecasts, dtype=np.float64)
+    quantile_levels = np.asarray(quantile_levels, dtype=np.float64)
+
+    # Mask out NaN observations
+    valid = ~np.isnan(observed)
+    if not np.any(valid):
+        return np.nan
+
+    obs = observed[valid]
+    qf = quantile_forecasts[valid]
+
+    n = len(obs)
+    # Compute pinball loss for each (observation, quantile_level) pair
+    # errors shape: (N, K)
+    errors = obs[:, np.newaxis] - qf
+
+    # rho_tau(u) = u * tau  if u >= 0
+    #            = u * (tau - 1)  if u < 0
+    pinball = np.where(
+        errors >= 0,
+        errors * quantile_levels[np.newaxis, :],
+        errors * (quantile_levels[np.newaxis, :] - 1.0),
+    )
+
+    # Integrate pinball loss over quantile levels for each observation
+    # using trapezoidal rule
+    crps_per_obs = np.trapezoid(pinball, quantile_levels, axis=1)
+
+    return float(np.mean(crps_per_obs))
+
+
+# ---------------------------------------------------------------------------
 # Threshold filtering
 # ---------------------------------------------------------------------------
 
