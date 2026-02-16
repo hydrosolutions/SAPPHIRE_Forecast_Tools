@@ -117,8 +117,12 @@ class TestMonthlyMetricsBasic:
     def test_point_metrics_use_q50(self, basic_data):
         """Point metrics use q50 as forecasted_discharge.
 
-        Month 1: q50=[102, 108], obs=[100, 110]
-        MAE = mean(|100-102|, |110-108|) = 2.0
+        Month 1: q50=[102, 108], obs=[100, 110], delta=0.674*std=4.766
+        diff = [-2, 2]
+        MAE = mean(2, 2) = 2.0
+        sdivsigma = sqrt(8/1) / std(obs,ddof=1) = 2.828/7.071 = 0.4
+        NSE = 1 - 8/50 = 0.84
+        accuracy: |2|,|2| both <= 4.766 -> 1.0
         """
         obs, fcst = basic_data
         skill_stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
@@ -128,6 +132,11 @@ class TestMonthlyMetricsBasic:
         ].iloc[0]
         assert row['mae'] == pytest.approx(2.0, rel=1e-6)
         assert row['n_pairs'] == 2
+        assert row['sdivsigma'] == pytest.approx(0.4, rel=1e-6)
+        assert row['nse'] == pytest.approx(0.84, rel=1e-6)
+        assert row['accuracy'] == pytest.approx(1.0, rel=1e-6)
+        expected_delta = 0.674 * np.std([100.0, 110.0], ddof=1)
+        assert row['delta'] == pytest.approx(expected_delta, rel=1e-6)
 
     def test_crps_computed_and_nonnegative(self, basic_data):
         """CRPS is present and non-negative for models with quantiles."""
@@ -258,6 +267,34 @@ class TestMonthlyMetricsEnsemble:
         ].iloc[0]
         assert em_row['mae'] == pytest.approx(1.5, rel=1e-6)
 
+    def test_em_all_metrics_verified(self, two_skilled_models):
+        """Verify all EM metrics numerically.
+
+        EM = [101.5, 108.5], obs = [100, 110], delta = 4.766
+        diff = [-1.5, 1.5]
+        sdivsigma = sqrt(4.5/1) / 7.071 = 2.121/7.071 = 0.3
+        NSE = 1 - 4.5/50 = 0.91
+        accuracy: |1.5|,|1.5| both <= 4.766 -> 1.0
+        """
+        obs, fcst = two_skilled_models
+        skill_stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
+        em_row = skill_stats[
+            skill_stats['model_short'] == 'EM'
+        ].iloc[0]
+        assert em_row['n_pairs'] == 2
+        assert em_row['sdivsigma'] == pytest.approx(0.3, rel=1e-6)
+        assert em_row['nse'] == pytest.approx(0.91, rel=1e-6)
+        assert em_row['accuracy'] == pytest.approx(1.0, rel=1e-6)
+
+    def test_em_crps_is_nan(self, two_skilled_models):
+        """EM has no quantile distribution, CRPS = NaN."""
+        obs, fcst = two_skilled_models
+        skill_stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
+        em_row = skill_stats[
+            skill_stats['model_short'] == 'EM'
+        ].iloc[0]
+        assert np.isnan(em_row['crps'])
+
     def test_no_em_single_skilled(self):
         """No EM when only one model passes threshold."""
         obs = _make_obs([
@@ -283,6 +320,34 @@ class TestMonthlyMetricsEnsemble:
         assert 'EM' in models
         assert 'M1' in models
         assert 'M2' in models
+
+    def test_em_three_models_partial_pass(self):
+        """EM from 2 of 3 models when only 2 pass thresholds.
+
+        M1 and M2 have good q50, Bad has q50=150/160 (far from obs).
+        EM = mean(M1, M2) only. Bad excluded from composition.
+        EM MAE = 1.5 (same as two_skilled_models fixture).
+        """
+        obs = _make_obs([
+            ('S1', 2020, 1, 100.0),
+            ('S1', 2021, 1, 110.0),
+        ])
+        fcst = _make_fcst([
+            ('S1', 2020, 1, 'M1', 80, 85, 92, 102, 112, 118, 125),
+            ('S1', 2021, 1, 'M1', 88, 93, 100, 108, 116, 123, 130),
+            ('S1', 2020, 1, 'M2', 82, 87, 94, 101, 108, 114, 120),
+            ('S1', 2021, 1, 'M2', 90, 95, 102, 109, 117, 124, 131),
+            ('S1', 2020, 1, 'Bad', 120, 130, 140, 150, 160, 170, 180),
+            ('S1', 2021, 1, 'Bad', 130, 140, 150, 160, 170, 180, 190),
+        ])
+        skill_stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
+        em_rows = skill_stats[skill_stats['model_short'] == 'EM']
+        assert len(em_rows) == 1
+        em_row = em_rows.iloc[0]
+        assert 'M1' in em_row['composition']
+        assert 'M2' in em_row['composition']
+        assert 'Bad' not in em_row['composition']
+        assert em_row['mae'] == pytest.approx(1.5, rel=1e-6)
 
 
 # ===================================================================
@@ -334,6 +399,40 @@ class TestNaiveMeanBaseline:
         ].iloc[0]
         assert np.isnan(naive['crps'])
 
+    def test_naive_mean_nse_zero(self, data_three_years):
+        """Naive Mean NSE = 0 — the no-skill reference by definition.
+
+        obs = [100, 110, 105], mean = 105
+        SS_res = (100-105)^2 + (110-105)^2 + (105-105)^2 = 50
+        SS_tot = same = 50
+        NSE = 1 - 50/50 = 0.0
+        """
+        obs, fcst = data_three_years
+        skill_stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
+        naive = skill_stats[
+            skill_stats['model_short'] == 'Naive Mean'
+        ].iloc[0]
+        assert naive['nse'] == pytest.approx(0.0, abs=1e-10)
+
+    def test_naive_mean_all_metrics(self, data_three_years):
+        """All Naive Mean metrics verified.
+
+        obs = [100, 110, 105], clim_mean = 105
+        sdivsigma: s = sigma -> sdivsigma = 1.0
+        accuracy: |5|,|5| > delta(3.37), |0| <= delta -> 1/3
+        n_pairs = 3
+        """
+        obs, fcst = data_three_years
+        skill_stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
+        naive = skill_stats[
+            skill_stats['model_short'] == 'Naive Mean'
+        ].iloc[0]
+        assert naive['n_pairs'] == 3
+        assert naive['sdivsigma'] == pytest.approx(1.0, rel=1e-6)
+        assert naive['accuracy'] == pytest.approx(1.0 / 3.0, rel=1e-6)
+        expected_delta = 0.674 * np.std([100.0, 110.0, 105.0], ddof=1)
+        assert naive['delta'] == pytest.approx(expected_delta, rel=1e-6)
+
 
 # ===================================================================
 # Edge cases
@@ -383,7 +482,12 @@ class TestMonthlyMetricsEdgeCases:
         assert len(real) == 0
 
     def test_multi_station_independent(self):
-        """Stations get independent metrics."""
+        """Stations get independent metrics with correct values.
+
+        S1: obs=[100,110], q50=[102,108], MAE=2.0, sdivsigma=0.4
+        S2: obs=[200,220], q50=[205,218], MAE=3.5
+            diff=[-5,2], s=sqrt(29/1)=5.385, sigma=std([200,220],ddof=1)
+        """
         obs = _make_obs([
             ('S1', 2020, 1, 100.0),
             ('S1', 2021, 1, 110.0),
@@ -401,8 +505,69 @@ class TestMonthlyMetricsEdgeCases:
         assert len(model_rows) == 2
         assert set(model_rows['code'].values) == {'S1', 'S2'}
 
+        # S1: obs=[100,110], q50=[102,108]
+        s1 = model_rows[model_rows['code'] == 'S1'].iloc[0]
+        assert s1['mae'] == pytest.approx(2.0, rel=1e-6)
+        assert s1['sdivsigma'] == pytest.approx(0.4, rel=1e-6)
+
+        # S2: obs=[200,220], q50=[205,218], MAE=mean(5,2)=3.5
+        s2 = model_rows[model_rows['code'] == 'S2'].iloc[0]
+        assert s2['mae'] == pytest.approx(3.5, rel=1e-6)
+        # sdivsigma = sqrt(sum([-5,2]^2)/(2-1)) / std([200,220],ddof=1)
+        assert s2['sdivsigma'] == pytest.approx(
+            np.sqrt(29.0) / np.std([200.0, 220.0], ddof=1), rel=1e-6
+        )
+
+    def test_single_year_npairs_one(self):
+        """Single year: n_pairs=1, sdivsigma/NSE=NaN, MAE still valid.
+
+        min_points=2 for sdivsigma/NSE not met with one obs-fcst pair.
+        delta=0 (single year std=NaN -> fillna(0)), accuracy=0.
+        """
+        obs = _make_obs([
+            ('S1', 2020, 1, 100.0),
+        ])
+        fcst = _make_fcst([
+            ('S1', 2020, 1, 'M1', 80, 85, 92, 102, 112, 118, 125),
+        ])
+        skill_stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
+        row = skill_stats[skill_stats['model_short'] == 'M1'].iloc[0]
+        assert row['n_pairs'] == 1
+        assert row['mae'] == pytest.approx(2.0, rel=1e-6)
+        assert np.isnan(row['sdivsigma'])
+        assert np.isnan(row['nse'])
+        assert row['delta'] == pytest.approx(0.0, abs=1e-10)
+        assert row['accuracy'] == pytest.approx(0.0, abs=1e-10)
+
+    def test_no_em_when_all_models_fail_thresholds(self):
+        """No EM when all models fail skill thresholds.
+
+        Both M1 and M2 have terrible q50 (150/160 and 200/210).
+        Neither passes -> no EM. Model rows and Naive Mean still present.
+        """
+        obs = _make_obs([
+            ('S1', 2020, 1, 100.0),
+            ('S1', 2021, 1, 110.0),
+        ])
+        fcst = _make_fcst([
+            ('S1', 2020, 1, 'M1', 120, 130, 140, 150, 160, 170, 180),
+            ('S1', 2021, 1, 'M1', 130, 140, 150, 160, 170, 180, 190),
+            ('S1', 2020, 1, 'M2', 170, 180, 190, 200, 210, 220, 230),
+            ('S1', 2021, 1, 'M2', 180, 190, 200, 210, 220, 230, 240),
+        ])
+        skill_stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
+        em_rows = skill_stats[skill_stats['model_short'] == 'EM']
+        assert len(em_rows) == 0
+        assert 'M1' in skill_stats['model_short'].values
+        assert 'M2' in skill_stats['model_short'].values
+        assert 'Naive Mean' in skill_stats['model_short'].values
+
     def test_nan_quantiles_point_metrics_still_computed(self):
-        """NaN quantiles don't break point metrics (q50 still valid)."""
+        """NaN quantiles don't break point metrics (q50 still valid).
+
+        obs=[100,110], q50=[102,108] — same as basic month 1.
+        Point metrics computed from q50. CRPS = NaN (NaN quantiles).
+        """
         obs = _make_obs([
             ('S1', 2020, 1, 100.0),
             ('S1', 2021, 1, 110.0),
@@ -416,3 +581,6 @@ class TestMonthlyMetricsEdgeCases:
         skill_stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
         row = skill_stats[skill_stats['model_short'] == 'M1'].iloc[0]
         assert row['mae'] == pytest.approx(2.0, rel=1e-6)
+        assert row['sdivsigma'] == pytest.approx(0.4, rel=1e-6)
+        assert row['nse'] == pytest.approx(0.84, rel=1e-6)
+        assert np.isnan(row['crps'])
