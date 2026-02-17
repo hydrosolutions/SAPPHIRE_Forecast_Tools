@@ -471,6 +471,32 @@ def calculate_crps(
 _QUANTILE_COLS = ['q05', 'q10', 'q25', 'q50', 'q75', 'q90', 'q95']
 _QUANTILE_LEVELS = np.array([0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95])
 
+# Columns carried through when appending ensemble rows to joint_forecasts
+_ENSEMBLE_JOINT_COLS = [
+    'code', 'year', 'month', 'month_in_year',
+    'forecasted_discharge', 'model_short', 'composition',
+] + _QUANTILE_COLS + ['valid_from', 'valid_to', 'date', 'flag']
+
+
+def _append_to_joint(
+    joint_forecasts: pd.DataFrame,
+    ensemble_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """Append ensemble rows to joint_forecasts, carrying quantile + date cols.
+
+    Only includes columns that actually exist in ensemble_df.  Adds
+    a 'composition' column to joint_forecasts if missing.
+    """
+    cols = [c for c in _ENSEMBLE_JOINT_COLS if c in ensemble_df.columns]
+    if not cols:
+        return joint_forecasts
+    if 'composition' not in joint_forecasts.columns:
+        joint_forecasts = joint_forecasts.copy()
+        joint_forecasts['composition'] = ''
+    return pd.concat(
+        [joint_forecasts, ensemble_df[cols]], ignore_index=True,
+    )
+
 
 def calculate_monthly_skill_metrics(
     observations: pd.DataFrame,
@@ -519,9 +545,11 @@ def calculate_monthly_skill_metrics(
     merged['forecasted_discharge'] = merged['q50'].astype(float)
 
     if merged.empty:
-        # No overlap — but Naive Mean may still be computable
+        # No overlap — Naive Mean needs merged data (forecast+obs pairs)
+        merged_empty = pd.DataFrame()
         return _add_naive_mean(
-            empty_stats, observations, timing_stats, empty_joint
+            empty_stats, merged_empty, observations, timing_stats,
+            empty_joint,
         )
 
     # --- 2. Point metrics per (month_in_year, code, model_short) ---
@@ -582,13 +610,22 @@ def calculate_monthly_skill_metrics(
 
     n_models = forecasts['model_short'].nunique()
     if n_models > 1 and not skilled_merged.empty:
-        em_avg = skilled_merged.groupby(
-            ['year', 'month', 'code']
-        ).agg({
+        # Build aggregation: mean of q50 + all available quantile cols
+        em_agg_dict = {
             'month_in_year': 'first',
             'forecasted_discharge': 'mean',
             'model_short': composition_agg,
-        }).reset_index()
+        }
+        for qcol in _QUANTILE_COLS:
+            if qcol in skilled_merged.columns:
+                em_agg_dict[qcol] = 'mean'
+        for dcol in ('valid_from', 'valid_to', 'date'):
+            if dcol in skilled_merged.columns:
+                em_agg_dict[dcol] = 'first'
+
+        em_avg = skilled_merged.groupby(
+            ['year', 'month', 'code']
+        ).agg(em_agg_dict).reset_index()
         em_avg = em_avg.rename(columns={'model_short': 'composition'})
         em_avg['model_short'] = 'EM'
 
@@ -621,25 +658,44 @@ def calculate_monthly_skill_metrics(
                 simulated_col='forecasted_discharge',
                 delta_col='delta',
             ).reset_index()
-            em_skill['crps'] = np.nan  # EM has no quantile distribution
+
+            # Compute CRPS from aggregated quantiles
+            qf_cols = [
+                c for c in _QUANTILE_COLS if c in em_with_obs.columns
+            ]
+            if len(qf_cols) == len(_QUANTILE_COLS):
+                em_crps = []
+                for (miy, code, model), grp in em_with_obs.groupby(
+                    ['month_in_year', 'code', 'model_short']
+                ):
+                    obs_arr = grp['discharge_avg'].to_numpy(
+                        dtype=np.float64
+                    )
+                    qf = grp[qf_cols].to_numpy(dtype=np.float64)
+                    crps_val = calculate_crps(
+                        obs_arr, qf, _QUANTILE_LEVELS
+                    )
+                    em_crps.append({
+                        'month_in_year': miy, 'code': code,
+                        'model_short': model, 'crps': crps_val,
+                    })
+                em_crps_df = pd.DataFrame(em_crps)
+                em_skill = em_skill.merge(
+                    em_crps_df,
+                    on=['month_in_year', 'code', 'model_short'],
+                    how='left',
+                )
+            else:
+                em_skill['crps'] = np.nan
 
             skill_stats = pd.concat(
                 [skill_stats, em_skill], ignore_index=True
             )
 
             # Add EM rows to joint_forecasts
-            em_joint_cols = [
-                c for c in ['code', 'year', 'month', 'month_in_year',
-                             'forecasted_discharge', 'model_short',
-                             'composition']
-                if c in em_avg.columns
-            ]
-            if 'composition' not in joint_forecasts.columns:
-                joint_forecasts = joint_forecasts.copy()
-                joint_forecasts['composition'] = ''
-            joint_forecasts = pd.concat(
-                [joint_forecasts, em_avg[em_joint_cols]],
-                ignore_index=True,
+            em_avg['flag'] = 0
+            joint_forecasts = _append_to_joint(
+                joint_forecasts, em_avg
             )
 
     # --- 4b. Skilled Mean baseline ---
@@ -649,51 +705,115 @@ def calculate_monthly_skill_metrics(
 
     # --- 5. Naive Mean baseline ---
     return _add_naive_mean(
-        skill_stats, observations, timing_stats, joint_forecasts
+        skill_stats, merged, observations, timing_stats, joint_forecasts
     )
 
 
 def _add_naive_mean(
     skill_stats: pd.DataFrame,
+    merged: pd.DataFrame,
     observations: pd.DataFrame,
     timing_stats,
     joint_forecasts: pd.DataFrame,
 ) -> tuple:
-    """Add Naive Mean (climatological baseline) to skill_stats.
+    """Add Naive Mean (unweighted model average) to skill_stats.
 
-    Naive Mean q50 = mean(discharge_avg) per (code, month_in_year)
-    across all years. CRPS is NaN (point forecast only).
+    Naive Mean = simple average of ALL model forecasts, regardless of
+    skill thresholds (unlike EM/Skilled Mean which filter).  Baselines
+    (EM, Naive Mean, Skilled Mean) are excluded from the model pool.
+    Single-model groups are discarded.
+
+    Quantiles (q05-q95) are averaged across models (same as EM).
+    CRPS is computed from the aggregated quantile distribution.
     """
-    if observations.empty:
+    from src.ensemble_calculator import (
+        composition_agg, is_multi_model_composition,
+    )
+
+    if merged.empty or observations.empty:
         return skill_stats, joint_forecasts, timing_stats
 
-    # Climatological mean per (code, month_in_year)
-    clim = observations.groupby(['code', 'month_in_year']).agg(
-        clim_mean=('discharge_avg', 'mean'),
-    ).reset_index()
+    # Exclude baselines from the model pool
+    excluded = {'EM', 'Naive Mean', 'Skilled Mean'}
+    pool = merged[~merged['model_short'].isin(excluded)].copy()
+    pool = pool.dropna(subset=['forecasted_discharge']).copy()
 
-    # Create one "forecast" row per (code, year, month)
-    naive_rows = observations[
-        ['code', 'year', 'month', 'month_in_year',
-         'discharge_avg', 'delta']
+    if pool.empty:
+        return skill_stats, joint_forecasts, timing_stats
+
+    # Build aggregation dict: mean of q50 + all available quantile cols
+    agg_dict = {
+        'month_in_year': 'first',
+        'forecasted_discharge': 'mean',
+        'model_short': composition_agg,
+    }
+    for qcol in _QUANTILE_COLS:
+        if qcol in pool.columns:
+            agg_dict[qcol] = 'mean'
+    for dcol in ('valid_from', 'valid_to', 'date'):
+        if dcol in pool.columns:
+            agg_dict[dcol] = 'first'
+
+    naive_avg = pool.groupby(
+        ['year', 'month', 'code']
+    ).agg(agg_dict).reset_index()
+    naive_avg = naive_avg.rename(columns={'model_short': 'composition'})
+    naive_avg['model_short'] = 'Naive Mean'
+
+    # Discard single-model groups (need >=2 models)
+    naive_avg = naive_avg[
+        naive_avg['composition'].apply(is_multi_model_composition)
     ].copy()
-    naive_rows = naive_rows.merge(clim, on=['code', 'month_in_year'])
-    naive_rows['forecasted_discharge'] = naive_rows['clim_mean']
-    naive_rows['model_short'] = 'Naive Mean'
 
-    if naive_rows.empty:
+    if naive_avg.empty:
+        return skill_stats, joint_forecasts, timing_stats
+
+    # Merge with observations to compute point metrics
+    naive_with_obs = pd.merge(
+        naive_avg,
+        observations[['code', 'year', 'month', 'month_in_year',
+                       'discharge_avg', 'delta']],
+        on=['code', 'year', 'month'],
+        how='inner',
+        suffixes=('', '_obs'),
+    )
+    if 'month_in_year_obs' in naive_with_obs.columns:
+        naive_with_obs = naive_with_obs.drop(columns=['month_in_year_obs'])
+
+    if naive_with_obs.empty:
         return skill_stats, joint_forecasts, timing_stats
 
     # Compute point metrics
-    naive_skill = naive_rows.groupby(
-        ['month_in_year', 'code', 'model_short']
+    naive_skill = naive_with_obs.groupby(
+        ['month_in_year', 'code', 'model_short', 'composition']
     )[['discharge_avg', 'forecasted_discharge', 'delta']].apply(
         calculate_all_skill_metrics,
         observed_col='discharge_avg',
         simulated_col='forecasted_discharge',
         delta_col='delta',
     ).reset_index()
-    naive_skill['crps'] = np.nan  # point forecast, no quantiles
+
+    # Compute CRPS from aggregated quantiles
+    qf_cols = [c for c in _QUANTILE_COLS if c in naive_with_obs.columns]
+    if len(qf_cols) == len(_QUANTILE_COLS):
+        crps_records = []
+        for (miy, code, model), grp in naive_with_obs.groupby(
+            ['month_in_year', 'code', 'model_short']
+        ):
+            obs_arr = grp['discharge_avg'].to_numpy(dtype=np.float64)
+            qf = grp[qf_cols].to_numpy(dtype=np.float64)
+            crps_val = calculate_crps(obs_arr, qf, _QUANTILE_LEVELS)
+            crps_records.append({
+                'month_in_year': miy, 'code': code,
+                'model_short': model, 'crps': crps_val,
+            })
+        crps_df = pd.DataFrame(crps_records)
+        naive_skill = naive_skill.merge(
+            crps_df, on=['month_in_year', 'code', 'model_short'],
+            how='left',
+        )
+    else:
+        naive_skill['crps'] = np.nan
 
     parts = [
         df for df in [skill_stats, naive_skill]
@@ -703,6 +823,10 @@ def _add_naive_mean(
         skill_stats = pd.concat(parts, ignore_index=True)
     else:
         skill_stats = naive_skill
+
+    # Add Naive Mean rows to joint_forecasts
+    naive_avg['flag'] = 0
+    joint_forecasts = _append_to_joint(joint_forecasts, naive_avg)
 
     return skill_stats, joint_forecasts, timing_stats
 
@@ -776,20 +900,40 @@ def _add_skilled_mean(
         how='left',
     )
 
-    # 5. Compute weighted mean per (code, year, month)
-    def _weighted_mean(group):
-        w = group['weight'].to_numpy()
-        d = group['forecasted_discharge'].to_numpy()
+    # 5. Compute weighted mean per (code, year, month) — vincentization
+    #    for forecasted_discharge and all available quantile cols
+    def _weighted_mean_col(group, col):
+        w = sm_merged.loc[group.index, 'weight'].to_numpy()
+        d = group.to_numpy()
         return np.average(d, weights=w)
 
+    sm_agg_dict = {
+        'month_in_year': ('month_in_year', 'first'),
+        'forecasted_discharge': (
+            'forecasted_discharge',
+            lambda x: _weighted_mean_col(x, 'forecasted_discharge'),
+        ),
+        'composition': ('model_short', composition_agg),
+    }
+
+    # Weighted mean for each quantile column (vincentization)
+    available_qcols = [
+        qc for qc in _QUANTILE_COLS if qc in sm_merged.columns
+    ]
+    for qcol in available_qcols:
+        sm_agg_dict[qcol] = (
+            qcol,
+            lambda x, _c=qcol: _weighted_mean_col(x, _c),
+        )
+
+    # Carry date columns through (take first — same target period)
+    for dcol in ('valid_from', 'valid_to', 'date'):
+        if dcol in sm_merged.columns:
+            sm_agg_dict[dcol] = (dcol, 'first')
+
     sm_avg = sm_merged.groupby(['year', 'month', 'code']).agg(
-        month_in_year=('month_in_year', 'first'),
-        forecasted_discharge=('forecasted_discharge',
-                              lambda x: _weighted_mean(
-                                  sm_merged.loc[x.index])),
-        model_short=('model_short', composition_agg),
+        **sm_agg_dict,
     ).reset_index()
-    sm_avg = sm_avg.rename(columns={'model_short': 'composition'})
     sm_avg['model_short'] = 'Skilled Mean'
 
     # 6. Discard single-model groups
@@ -821,8 +965,27 @@ def _add_skilled_mean(
         delta_col='delta',
     ).reset_index()
 
-    # 8. CRPS = NaN (point forecast, no quantiles)
-    sm_skill['crps'] = np.nan
+    # 8. Compute CRPS from aggregated quantiles (vincentized)
+    qf_cols = [c for c in _QUANTILE_COLS if c in sm_with_obs.columns]
+    if len(qf_cols) == len(_QUANTILE_COLS):
+        sm_crps = []
+        for (miy, code, model), grp in sm_with_obs.groupby(
+            ['month_in_year', 'code', 'model_short']
+        ):
+            obs_arr = grp['discharge_avg'].to_numpy(dtype=np.float64)
+            qf = grp[qf_cols].to_numpy(dtype=np.float64)
+            crps_val = calculate_crps(obs_arr, qf, _QUANTILE_LEVELS)
+            sm_crps.append({
+                'month_in_year': miy, 'code': code,
+                'model_short': model, 'crps': crps_val,
+            })
+        sm_crps_df = pd.DataFrame(sm_crps)
+        sm_skill = sm_skill.merge(
+            sm_crps_df, on=['month_in_year', 'code', 'model_short'],
+            how='left',
+        )
+    else:
+        sm_skill['crps'] = np.nan
 
     # 9. Append to skill_stats
     skill_stats = pd.concat(
@@ -830,19 +993,8 @@ def _add_skilled_mean(
     )
 
     # Add Skilled Mean rows to joint_forecasts
-    sm_joint_cols = [
-        c for c in ['code', 'year', 'month', 'month_in_year',
-                     'forecasted_discharge', 'model_short',
-                     'composition']
-        if c in sm_avg.columns
-    ]
-    if 'composition' not in joint_forecasts.columns:
-        joint_forecasts = joint_forecasts.copy()
-        joint_forecasts['composition'] = ''
-    joint_forecasts = pd.concat(
-        [joint_forecasts, sm_avg[sm_joint_cols]],
-        ignore_index=True,
-    )
+    sm_avg['flag'] = 0
+    joint_forecasts = _append_to_joint(joint_forecasts, sm_avg)
 
     return skill_stats, joint_forecasts
 

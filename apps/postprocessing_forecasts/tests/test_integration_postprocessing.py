@@ -2441,12 +2441,14 @@ class TestSkillMetricSavePath:
         self, save_env, known_skill_stats,
     ):
         """When API is available, _write_skill_metrics_to_api is called
-        with the DataFrame and 'pentad' horizon type."""
+        with the DataFrame, 'pentad' horizon type, and year."""
         with patch.object(api_writer, 'SAPPHIRE_API_AVAILABLE', True), \
              patch.object(
                  api_writer, '_write_skill_metrics_to_api'
              ) as mock_api_write:
-            file_writer.save_pentadal_skill_metrics(known_skill_stats)
+            file_writer.save_pentadal_skill_metrics(
+                known_skill_stats, year=2024
+            )
 
             mock_api_write.assert_called_once()
             call_args = mock_api_write.call_args
@@ -2456,6 +2458,8 @@ class TestSkillMetricSavePath:
             assert len(api_data) == 6
             # Second arg is horizon_type
             assert call_args[0][1] == 'pentad'
+            # Third arg is year
+            assert call_args[0][2] == 2024
 
     def test_api_failure_does_not_prevent_csv(
         self, save_env, known_skill_stats,

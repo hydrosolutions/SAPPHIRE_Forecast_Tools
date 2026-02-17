@@ -108,6 +108,13 @@ def recalculate_skill_metrics():
             f"{prediction_mode}"
         )
 
+        skill_metrics_year = int(os.getenv(
+            'SAPPHIRE_SKILL_METRICS_YEAR', dt.date.today().year
+        ))
+        logger.info(
+            f"Skill metrics target year: {skill_metrics_year}"
+        )
+
         if prediction_mode in ['PENTAD', 'BOTH', 'ALL']:
             with timer(timing_stats, 'reading pentadal data'):
                 logger.info(
@@ -148,7 +155,9 @@ def recalculate_skill_metrics():
                     )
                     errors.append(f"Pentad forecast save failed: {ret}")
 
-                ret = file_writer.save_pentadal_skill_metrics(skill_metrics_result)
+                ret = file_writer.save_pentadal_skill_metrics(
+                    skill_metrics_result, year=skill_metrics_year
+                )
                 if ret is None:
                     logger.info(
                         "Pentadal skill metrics saved successfully."
@@ -203,7 +212,9 @@ def recalculate_skill_metrics():
                     )
                     errors.append(f"Decade forecast save failed: {ret}")
 
-                ret = file_writer.save_decadal_skill_metrics(skill_metrics_decade)
+                ret = file_writer.save_decadal_skill_metrics(
+                    skill_metrics_decade, year=skill_metrics_year
+                )
                 if ret is None:
                     logger.info(
                         "Decadal skill metrics saved successfully."
@@ -272,7 +283,9 @@ def recalculate_skill_metrics():
                         f"Monthly forecast data save failed: {ret}"
                     )
 
-                ret = file_writer.save_monthly_skill_metrics(monthly_skill)
+                ret = file_writer.save_monthly_skill_metrics(
+                    monthly_skill, year=skill_metrics_year
+                )
                 if ret is None:
                     logger.info(
                         "Monthly skill metrics saved successfully."

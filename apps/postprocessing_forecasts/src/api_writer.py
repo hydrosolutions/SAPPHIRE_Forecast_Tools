@@ -6,6 +6,7 @@ used by postprocessing_forecasts.
 Follows the same singleton pattern as data_reader.py.
 """
 
+import datetime as dt_module
 import os
 import logging
 
@@ -294,7 +295,9 @@ def _write_combined_forecast_to_api(data: pd.DataFrame, horizon_type: str) -> bo
         return False
 
 
-def _write_skill_metrics_to_api(data: pd.DataFrame, horizon_type: str) -> bool:
+def _write_skill_metrics_to_api(
+    data: pd.DataFrame, horizon_type: str, year: int
+) -> bool:
     """
     Write skill metrics to SAPPHIRE postprocessing API.
 
@@ -312,6 +315,9 @@ def _write_skill_metrics_to_api(data: pd.DataFrame, horizon_type: str) -> bool:
             - composition (optional): for ensemble models, which models compose it
         horizon_type: "pentad", "decad", or "month"
             (translated to API enum at boundary)
+        year: The target year for skill metrics dates. Each row gets a
+            date corresponding to the first day of its period (pentad,
+            decad, or month) in this year.
 
     Returns:
         bool: True if successful, False otherwise
@@ -362,9 +368,6 @@ def _write_skill_metrics_to_api(data: pd.DataFrame, horizon_type: str) -> bool:
             "Must be 'pentad', 'decad', or 'month'."
         )
 
-    # Use today's date for the skill metrics (they are calculated on run day)
-    today = pd.Timestamp.today().normalize().strftime('%Y-%m-%d')
-
     # Prepare records for API (vectorized)
     df_rec = data.copy()
     n_before = len(df_rec)
@@ -412,6 +415,20 @@ def _write_skill_metrics_to_api(data: pd.DataFrame, horizon_type: str) -> bool:
                 missing_comp.sum(),
             )
 
+        # Compute per-row date from the period index and target year
+        if horizon_type == "pentad":
+            df_rec['_date'] = df_rec[horizon_in_year_col].astype(int).apply(
+                lambda p: tl.get_date_for_pentad(p, year)
+            )
+        elif horizon_type == "decad":
+            df_rec['_date'] = df_rec[horizon_in_year_col].astype(int).apply(
+                lambda d: tl.get_date_for_decad(d, year)
+            )
+        else:  # month
+            df_rec['_date'] = df_rec[horizon_in_year_col].astype(int).apply(
+                lambda m: dt_module.date(year, m, 1).strftime('%Y-%m-%d')
+            )
+
         # Build nullable float columns
         metric_cols = {}
         for col in ('sdivsigma', 'nse', 'delta', 'accuracy', 'mae'):
@@ -425,7 +442,7 @@ def _write_skill_metrics_to_api(data: pd.DataFrame, horizon_type: str) -> bool:
             'horizon_type': api_horizon_type,
             'code': df_rec['code'].astype(str),
             'model_type': df_rec['model_type'],
-            'date': today,
+            'date': df_rec['_date'],
             'horizon_in_year': df_rec[horizon_in_year_col].astype(int),
             'composition': df_rec['_composition'],
             **metric_cols,
@@ -450,4 +467,142 @@ def _write_skill_metrics_to_api(data: pd.DataFrame, horizon_type: str) -> bool:
         return True
     else:
         logger.info(f"No skill metric records to write to API ({horizon_type})")
+        return False
+
+
+def _write_monthly_ensemble_to_api(data: pd.DataFrame) -> bool:
+    """Write monthly ensemble forecasts (EM, Naive Mean, Skilled Mean)
+    to the SAPPHIRE long_forecasts table.
+
+    Filters data to ensemble rows, builds LongForecast-compatible records,
+    and upserts via client.write_long_forecasts().
+
+    Args:
+        data: DataFrame with monthly joint forecasts. Expects columns:
+            code, year, month, forecasted_discharge, model_short,
+            and optionally q05-q95, valid_from, valid_to, composition.
+
+    Returns:
+        True if successful, False otherwise (never raises).
+    """
+    import calendar
+
+    ensemble_models = {'EM', 'Naive Mean', 'Skilled Mean'}
+
+    if data is None or data.empty:
+        logger.info("No monthly ensemble data to write to API")
+        return False
+
+    if not SAPPHIRE_API_AVAILABLE:
+        logger.warning(
+            "sapphire-api-client not installed, skipping monthly "
+            "ensemble API write"
+        )
+        return False
+
+    api_enabled = (
+        os.getenv("SAPPHIRE_API_ENABLED", "true").lower() == "true"
+    )
+    if not api_enabled:
+        logger.info(
+            "SAPPHIRE API writing disabled via SAPPHIRE_API_ENABLED=false"
+        )
+        return False
+
+    api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
+
+    try:
+        client = _get_postprocessing_client()
+
+        if not client.readiness_check():
+            logger.warning(
+                f"SAPPHIRE API at {api_url} is not ready, "
+                "skipping monthly ensemble write"
+            )
+            return False
+
+        # Filter to ensemble rows only
+        ens_mask = data['model_short'].isin(ensemble_models)
+        ens_data = data[ens_mask].copy()
+        if ens_data.empty:
+            logger.info("No ensemble rows in monthly forecast data")
+            return False
+
+        records = []
+        for _, row in ens_data.iterrows():
+            year = int(row['year'])
+            month = int(row['month'])
+            code = str(row['code']).replace('.0', '')
+
+            # Synthesize valid_from/valid_to from year+month if missing
+            if pd.notna(row.get('valid_from')):
+                valid_from = str(row['valid_from'])[:10]
+            else:
+                valid_from = f"{year}-{month:02d}-01"
+
+            if pd.notna(row.get('valid_to')):
+                valid_to = str(row['valid_to'])[:10]
+            else:
+                last_day = calendar.monthrange(year, month)[1]
+                valid_to = f"{year}-{month:02d}-{last_day:02d}"
+
+            # Map model_short to API model_type
+            model_upper = str(row['model_short']).upper()
+            model_type = MODEL_TYPE_MAP.get(
+                model_upper, str(row['model_short'])
+            )
+
+            record = {
+                "horizon_type": "month",
+                "horizon_value": 0,
+                "code": code,
+                "date": valid_from,
+                "model_type": model_type,
+                "valid_from": valid_from,
+                "valid_to": valid_to,
+                "flag": 0,
+                "q": (
+                    float(row['forecasted_discharge'])
+                    if pd.notna(row.get('forecasted_discharge'))
+                    else None
+                ),
+            }
+
+            # Add quantile columns if present and not NaN
+            for qcol in (
+                'q05', 'q10', 'q25', 'q50', 'q75', 'q90', 'q95'
+            ):
+                if qcol in row.index and pd.notna(row.get(qcol)):
+                    record[qcol] = float(row[qcol])
+
+            # Add composition if present
+            comp = row.get('composition', '')
+            if pd.notna(comp) and str(comp).strip():
+                record['composition'] = str(comp)
+
+            records.append(record)
+
+        if not records:
+            logger.info("No monthly ensemble records to write to API")
+            return False
+
+        logger.debug(
+            "Sample monthly ensemble record: %s", records[0]
+        )
+        count = client.write_long_forecasts(records)
+        logger.info(
+            "Successfully wrote %d monthly ensemble forecast records "
+            "to SAPPHIRE API", count,
+        )
+        print(
+            f"SAPPHIRE API: Successfully wrote {count} monthly "
+            f"ensemble forecast records"
+        )
+        return True
+
+    except Exception as e:
+        logger.error(
+            "Failed to write monthly ensemble forecasts to API: %s",
+            str(e),
+        )
         return False

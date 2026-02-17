@@ -432,7 +432,7 @@ class TestWriteSkillMetricsToApi:
                 'mae': [5.0],
                 'n_pairs': [100],
             })
-            result = _write_skill_metrics_to_api(data, "pentad")
+            result = _write_skill_metrics_to_api(data, "pentad", 2024)
             assert result is False
         finally:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
@@ -461,7 +461,7 @@ class TestWriteSkillMetricsToApi:
                 'n_pairs': [100],
             })
 
-            result = _write_skill_metrics_to_api(data, "pentad")
+            result = _write_skill_metrics_to_api(data, "pentad", 2024)
             assert result is False
         finally:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
@@ -491,7 +491,7 @@ class TestWriteSkillMetricsToApi:
                 'n_pairs': [150],
             })
 
-            result = _write_skill_metrics_to_api(data, "pentad")
+            result = _write_skill_metrics_to_api(data, "pentad", 2024)
             assert result is True
 
             # Check that write_skill_metrics was called
@@ -506,7 +506,7 @@ class TestWriteSkillMetricsToApi:
             assert record['horizon_type'] == 'pentad'
             assert record['code'] == '12345'
             assert record['model_type'] == 'LR'
-            assert 'date' in record  # Today's date
+            assert record['date'] == '2024-01-21'  # pentad 5, year 2024
             assert record['horizon_in_year'] == 5
             assert record['sdivsigma'] == 0.5
             assert record['nse'] == 0.85
@@ -543,7 +543,7 @@ class TestWriteSkillMetricsToApi:
                 'n_pairs': [120],
             })
 
-            result = _write_skill_metrics_to_api(data, "decad")
+            result = _write_skill_metrics_to_api(data, "decad", 2024)
             assert result is True
 
             # Get the records that were passed
@@ -554,6 +554,7 @@ class TestWriteSkillMetricsToApi:
             assert record['horizon_type'] == 'decade'
             assert record['code'] == '12345'
             assert record['model_type'] == 'TFT'
+            assert record['date'] == '2024-04-01'  # decad 10, year 2024
             assert record['horizon_in_year'] == 10
 
         finally:
@@ -584,7 +585,7 @@ class TestWriteSkillMetricsToApi:
                 'n_pairs': [100] * 6,
             })
 
-            _write_skill_metrics_to_api(data, "pentad")
+            _write_skill_metrics_to_api(data, "pentad", 2024)
 
             call_args = mock_client.write_skill_metrics.call_args[0][0]
 
@@ -596,6 +597,10 @@ class TestWriteSkillMetricsToApi:
             assert 'TSMixer' in model_types  # TSMIXER -> TSMixer
             assert 'EM' in model_types
             assert 'NE' in model_types
+
+            # All records should have pentad 1 date
+            for record in call_args:
+                assert record['date'] == '2024-01-01'
 
         finally:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
@@ -625,7 +630,7 @@ class TestWriteSkillMetricsToApi:
                 'n_pairs': [np.nan],
             })
 
-            _write_skill_metrics_to_api(data, "pentad")
+            _write_skill_metrics_to_api(data, "pentad", 2024)
 
             call_args = mock_client.write_skill_metrics.call_args[0][0]
             record = call_args[0]
@@ -655,7 +660,7 @@ class TestWriteSkillMetricsToApi:
 
             data = pd.DataFrame(columns=['code', 'pentad_in_year', 'model_short', 'sdivsigma', 'nse', 'delta', 'accuracy', 'mae', 'n_pairs'])
 
-            result = _write_skill_metrics_to_api(data, "pentad")
+            result = _write_skill_metrics_to_api(data, "pentad", 2024)
             assert result is False
 
             # write_skill_metrics should not be called for empty data
@@ -695,7 +700,7 @@ class TestWriteSkillMetricsToApi:
                 'n_pairs': [100, 100, 100],
             })
 
-            _write_skill_metrics_to_api(data, "pentad")
+            _write_skill_metrics_to_api(data, "pentad", 2024)
 
             call_args = mock_client.write_skill_metrics.call_args[0][0]
 
@@ -750,7 +755,7 @@ class TestWriteSkillMetricsToApi:
             })
 
             with pytest.raises(RuntimeError, match="API connection failed"):
-                _write_skill_metrics_to_api(data, "pentad")
+                _write_skill_metrics_to_api(data, "pentad", 2024)
 
         finally:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
@@ -773,7 +778,7 @@ class TestWriteSkillMetricsToApi:
         })
 
         with pytest.raises(ValueError, match="Invalid horizon_type"):
-            _write_skill_metrics_to_api(data, "weekly")
+            _write_skill_metrics_to_api(data, "weekly", 2024)
 
     @patch('src.api_writer.SapphirePostprocessingClient')
     def test_skill_metrics_empty_data_returns_false(
@@ -794,10 +799,122 @@ class TestWriteSkillMetricsToApi:
                 'sdivsigma', 'nse', 'delta', 'accuracy', 'mae', 'n_pairs',
             ])
 
-            result = _write_skill_metrics_to_api(data, "pentad")
+            result = _write_skill_metrics_to_api(data, "pentad", 2024)
             assert result is False
             mock_client.write_skill_metrics.assert_not_called()
 
+        finally:
+            os.environ.pop('SAPPHIRE_API_ENABLED', None)
+
+    @patch('src.api_writer.SapphirePostprocessingClient')
+    def test_multi_pentad_rows_get_different_dates(
+        self, mock_client_class
+    ):
+        """Rows with different pentad_in_year values get different dates."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        os.environ['SAPPHIRE_API_ENABLED'] = 'true'
+        try:
+            mock_client = Mock()
+            mock_client.readiness_check.return_value = True
+            mock_client.write_skill_metrics.return_value = 3
+            mock_client_class.return_value = mock_client
+
+            data = pd.DataFrame({
+                'code': ['15001', '15001', '15001'],
+                'pentad_in_year': [1, 5, 72],
+                'model_short': ['LR', 'LR', 'LR'],
+                'sdivsigma': [0.5, 0.5, 0.5],
+                'nse': [0.8, 0.8, 0.8],
+                'delta': [5.0, 5.0, 5.0],
+                'accuracy': [0.9, 0.9, 0.9],
+                'mae': [3.0, 3.0, 3.0],
+                'n_pairs': [50, 50, 50],
+            })
+
+            _write_skill_metrics_to_api(data, "pentad", 2024)
+
+            records = mock_client.write_skill_metrics.call_args[0][0]
+            dates = [r['date'] for r in records]
+            assert dates[0] == '2024-01-01'   # pentad 1
+            assert dates[1] == '2024-01-21'   # pentad 5
+            assert dates[2] == '2024-12-26'   # pentad 72
+            assert len(set(dates)) == 3       # all different
+        finally:
+            os.environ.pop('SAPPHIRE_API_ENABLED', None)
+
+    @patch('src.api_writer.SapphirePostprocessingClient')
+    def test_multi_decad_rows_get_different_dates(
+        self, mock_client_class
+    ):
+        """Rows with different decad_in_year values get different dates."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        os.environ['SAPPHIRE_API_ENABLED'] = 'true'
+        try:
+            mock_client = Mock()
+            mock_client.readiness_check.return_value = True
+            mock_client.write_skill_metrics.return_value = 2
+            mock_client_class.return_value = mock_client
+
+            data = pd.DataFrame({
+                'code': ['15001', '15001'],
+                'decad_in_year': [1, 36],
+                'model_short': ['LR', 'LR'],
+                'sdivsigma': [0.5, 0.5],
+                'nse': [0.8, 0.8],
+                'delta': [5.0, 5.0],
+                'accuracy': [0.9, 0.9],
+                'mae': [3.0, 3.0],
+                'n_pairs': [50, 50],
+            })
+
+            _write_skill_metrics_to_api(data, "decad", 2024)
+
+            records = mock_client.write_skill_metrics.call_args[0][0]
+            assert records[0]['date'] == '2024-01-01'   # decad 1
+            assert records[1]['date'] == '2024-12-21'   # decad 36
+        finally:
+            os.environ.pop('SAPPHIRE_API_ENABLED', None)
+
+    @patch('src.api_writer.SapphirePostprocessingClient')
+    def test_multi_month_rows_get_different_dates(
+        self, mock_client_class
+    ):
+        """Rows with different month_in_year values get different dates."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        os.environ['SAPPHIRE_API_ENABLED'] = 'true'
+        try:
+            mock_client = Mock()
+            mock_client.readiness_check.return_value = True
+            mock_client.write_skill_metrics.return_value = 12
+            mock_client_class.return_value = mock_client
+
+            data = pd.DataFrame({
+                'code': ['15001'] * 12,
+                'month_in_year': list(range(1, 13)),
+                'model_short': ['GBT'] * 12,
+                'sdivsigma': [0.5] * 12,
+                'nse': [0.8] * 12,
+                'delta': [5.0] * 12,
+                'accuracy': [0.9] * 12,
+                'mae': [3.0] * 12,
+                'n_pairs': [50] * 12,
+            })
+
+            _write_skill_metrics_to_api(data, "month", 2024)
+
+            records = mock_client.write_skill_metrics.call_args[0][0]
+            assert len(records) == 12
+            for i, rec in enumerate(records):
+                expected = f'2024-{i + 1:02d}-01'
+                assert rec['date'] == expected, (
+                    f"month {i + 1}: {rec['date']} != {expected}"
+                )
         finally:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 
@@ -878,7 +995,7 @@ class TestWriteMonthlySkillMetricsToApi:
                 'crps': [15.2],
             })
 
-            result = _write_skill_metrics_to_api(data, "month")
+            result = _write_skill_metrics_to_api(data, "month", 2024)
             assert result is True
 
             mock_client.write_skill_metrics.assert_called_once()
@@ -889,6 +1006,7 @@ class TestWriteMonthlySkillMetricsToApi:
             assert record['horizon_type'] == 'month'
             assert record['code'] == '15013'
             assert record['model_type'] == 'GBT'
+            assert record['date'] == '2024-06-01'  # month 6, year 2024
             assert record['horizon_in_year'] == 6
             assert record['sdivsigma'] == 0.45
             assert record['nse'] == 0.82
@@ -923,11 +1041,12 @@ class TestWriteMonthlySkillMetricsToApi:
                 'crps': [12.0],
             })
 
-            _write_skill_metrics_to_api(data, "month")
+            _write_skill_metrics_to_api(data, "month", 2024)
 
             call_args = mock_client.write_skill_metrics.call_args[0][0]
             record = call_args[0]
             assert 'crps' not in record
+            assert record['date'] == '2024-03-01'  # month 3, year 2024
         finally:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 
@@ -958,7 +1077,7 @@ class TestWriteMonthlySkillMetricsToApi:
                 'n_pairs': [10] * 5,
             })
 
-            _write_skill_metrics_to_api(data, "month")
+            _write_skill_metrics_to_api(data, "month", 2024)
 
             call_args = mock_client.write_skill_metrics.call_args[0][0]
             model_types = {r['model_type'] for r in call_args}
@@ -996,7 +1115,7 @@ class TestWriteMonthlySkillMetricsToApi:
                 'n_pairs': [10],
             })
 
-            _write_skill_metrics_to_api(data, "month")
+            _write_skill_metrics_to_api(data, "month", 2024)
 
             call_args = mock_client.write_skill_metrics.call_args[0][0]
             record = call_args[0]
@@ -1030,15 +1149,17 @@ class TestWriteMonthlySkillMetricsToApi:
                 'n_pairs': [10, 10],
             })
 
-            _write_skill_metrics_to_api(data, "month")
+            _write_skill_metrics_to_api(data, "month", 2024)
 
             call_args = mock_client.write_skill_metrics.call_args[0][0]
 
             em_rec = next(r for r in call_args if r['model_type'] == 'EM')
             assert em_rec['composition'] == 'GBT, LR_Base, SM_GBT'
+            assert em_rec['date'] == '2024-06-01'
 
             gbt_rec = next(r for r in call_args if r['model_type'] == 'GBT')
             assert gbt_rec['composition'] is None
+            assert gbt_rec['date'] == '2024-06-01'
         finally:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 
@@ -1059,7 +1180,7 @@ class TestWriteMonthlySkillMetricsToApi:
                 'sdivsigma', 'nse', 'delta', 'accuracy', 'mae', 'n_pairs',
             ])
 
-            result = _write_skill_metrics_to_api(data, "month")
+            result = _write_skill_metrics_to_api(data, "month", 2024)
             assert result is False
             mock_client.write_skill_metrics.assert_not_called()
         finally:
@@ -1091,7 +1212,7 @@ class TestWriteMonthlySkillMetricsToApi:
                 'crps': [np.nan],
             })
 
-            _write_skill_metrics_to_api(data, "month")
+            _write_skill_metrics_to_api(data, "month", 2024)
 
             call_args = mock_client.write_skill_metrics.call_args[0][0]
             record = call_args[0]
@@ -1150,7 +1271,7 @@ class TestHorizonTypeToApiMapping:
             'n_pairs': [120],
         })
         with pytest.raises(ValueError, match="Invalid horizon_type"):
-            _write_skill_metrics_to_api(data, "decade")
+            _write_skill_metrics_to_api(data, "decade", 2024)
 
     @patch('src.api_writer.SapphirePostprocessingClient')
     def test_decad_translates_to_decade_in_api_records(
@@ -1181,3 +1302,225 @@ class TestHorizonTypeToApiMapping:
             assert record['horizon_type'] == 'decade'
         finally:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
+
+
+class TestWriteMonthlyEnsembleToApi:
+    """Tests for _write_monthly_ensemble_to_api().
+
+    Writes ensemble forecast rows (EM, Naive Mean, Skilled Mean) to the
+    long_forecasts table via client.write_long_forecasts().
+    """
+
+    @pytest.fixture
+    def ensemble_data(self):
+        """Monthly joint forecasts with ensemble + regular model rows."""
+        return pd.DataFrame({
+            'code': ['15013', '15013', '15013', '15013'],
+            'year': [2024, 2024, 2024, 2024],
+            'month': [6, 6, 6, 6],
+            'month_in_year': [6, 6, 6, 6],
+            'forecasted_discharge': [100.0, 102.5, 101.0, 103.0],
+            'model_short': ['GBT', 'EM', 'Naive Mean', 'Skilled Mean'],
+            'composition': ['', 'GBT, LR_Base', 'GBT, LR_Base',
+                            'GBT, LR_Base'],
+            'q05': [70.0, 72.5, 71.0, 73.0],
+            'q10': [75.0, 77.5, 76.0, 78.0],
+            'q25': [85.0, 87.5, 86.0, 88.0],
+            'q50': [100.0, 102.5, 101.0, 103.0],
+            'q75': [115.0, 117.5, 116.0, 118.0],
+            'q90': [125.0, 127.5, 126.0, 128.0],
+            'q95': [130.0, 132.5, 131.0, 133.0],
+            'valid_from': ['2024-06-01'] * 4,
+            'valid_to': ['2024-06-30'] * 4,
+        })
+
+    @patch('src.api_writer.SapphirePostprocessingClient')
+    def test_filters_to_ensemble_rows_only(
+        self, mock_client_class, ensemble_data
+    ):
+        """Only EM/Naive Mean/Skilled Mean rows sent to API, not GBT."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        os.environ['SAPPHIRE_API_ENABLED'] = 'true'
+        try:
+            mock_client = Mock()
+            mock_client.readiness_check.return_value = True
+            mock_client.write_long_forecasts.return_value = 3
+            mock_client_class.return_value = mock_client
+
+            from src.api_writer import _write_monthly_ensemble_to_api
+            result = _write_monthly_ensemble_to_api(ensemble_data)
+            assert result is True
+
+            records = mock_client.write_long_forecasts.call_args[0][0]
+            assert len(records) == 3
+            model_types = {r['model_type'] for r in records}
+            assert 'GBT' not in model_types
+            assert 'EM' in model_types
+            assert 'Naive Mean' in model_types
+            assert 'Skilled Mean' in model_types
+        finally:
+            os.environ.pop('SAPPHIRE_API_ENABLED', None)
+
+    @patch('src.api_writer.SapphirePostprocessingClient')
+    def test_ensemble_record_format(
+        self, mock_client_class, ensemble_data
+    ):
+        """Verify record has all required LongForecast fields."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        os.environ['SAPPHIRE_API_ENABLED'] = 'true'
+        try:
+            mock_client = Mock()
+            mock_client.readiness_check.return_value = True
+            mock_client.write_long_forecasts.return_value = 3
+            mock_client_class.return_value = mock_client
+
+            from src.api_writer import _write_monthly_ensemble_to_api
+            _write_monthly_ensemble_to_api(ensemble_data)
+
+            records = mock_client.write_long_forecasts.call_args[0][0]
+            em_rec = next(
+                r for r in records if r['model_type'] == 'EM'
+            )
+            assert em_rec['horizon_type'] == 'month'
+            assert em_rec['horizon_value'] == 0
+            assert em_rec['code'] == '15013'
+            assert em_rec['date'] == '2024-06-01'
+            assert em_rec['valid_from'] == '2024-06-01'
+            assert em_rec['valid_to'] == '2024-06-30'
+            assert em_rec['flag'] == 0
+            assert em_rec['q'] == 102.5
+        finally:
+            os.environ.pop('SAPPHIRE_API_ENABLED', None)
+
+    @patch('src.api_writer.SapphirePostprocessingClient')
+    def test_quantile_values_preserved(
+        self, mock_client_class, ensemble_data
+    ):
+        """Input quantile values are exactly preserved in records."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        os.environ['SAPPHIRE_API_ENABLED'] = 'true'
+        try:
+            mock_client = Mock()
+            mock_client.readiness_check.return_value = True
+            mock_client.write_long_forecasts.return_value = 3
+            mock_client_class.return_value = mock_client
+
+            from src.api_writer import _write_monthly_ensemble_to_api
+            _write_monthly_ensemble_to_api(ensemble_data)
+
+            records = mock_client.write_long_forecasts.call_args[0][0]
+            em_rec = next(
+                r for r in records if r['model_type'] == 'EM'
+            )
+            assert em_rec['q05'] == 72.5
+            assert em_rec['q10'] == 77.5
+            assert em_rec['q25'] == 87.5
+            assert em_rec['q50'] == 102.5
+            assert em_rec['q75'] == 117.5
+            assert em_rec['q90'] == 127.5
+            assert em_rec['q95'] == 132.5
+        finally:
+            os.environ.pop('SAPPHIRE_API_ENABLED', None)
+
+    def test_returns_false_when_disabled(self, ensemble_data):
+        """SAPPHIRE_API_ENABLED=false -> returns False."""
+        os.environ['SAPPHIRE_API_ENABLED'] = 'false'
+        try:
+            from src.api_writer import _write_monthly_ensemble_to_api
+            result = _write_monthly_ensemble_to_api(ensemble_data)
+            assert result is False
+        finally:
+            os.environ.pop('SAPPHIRE_API_ENABLED', None)
+
+    @patch('src.api_writer.SapphirePostprocessingClient')
+    def test_returns_false_when_not_ready(
+        self, mock_client_class, ensemble_data
+    ):
+        """readiness_check=False -> returns False."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        os.environ['SAPPHIRE_API_ENABLED'] = 'true'
+        try:
+            mock_client = Mock()
+            mock_client.readiness_check.return_value = False
+            mock_client_class.return_value = mock_client
+
+            from src.api_writer import _write_monthly_ensemble_to_api
+            result = _write_monthly_ensemble_to_api(ensemble_data)
+            assert result is False
+        finally:
+            os.environ.pop('SAPPHIRE_API_ENABLED', None)
+
+    @patch('src.api_writer.SapphirePostprocessingClient')
+    def test_returns_false_on_exception(
+        self, mock_client_class, ensemble_data
+    ):
+        """API raises -> returns False, no crash."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        os.environ['SAPPHIRE_API_ENABLED'] = 'true'
+        try:
+            mock_client = Mock()
+            mock_client.readiness_check.return_value = True
+            mock_client.write_long_forecasts.side_effect = RuntimeError(
+                "Connection refused"
+            )
+            mock_client_class.return_value = mock_client
+
+            from src.api_writer import _write_monthly_ensemble_to_api
+            result = _write_monthly_ensemble_to_api(ensemble_data)
+            assert result is False
+        finally:
+            os.environ.pop('SAPPHIRE_API_ENABLED', None)
+
+    @patch('src.api_writer.SapphirePostprocessingClient')
+    def test_synthesizes_valid_from_valid_to(self, mock_client_class):
+        """valid_from/valid_to synthesized from year+month if missing."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        os.environ['SAPPHIRE_API_ENABLED'] = 'true'
+        try:
+            mock_client = Mock()
+            mock_client.readiness_check.return_value = True
+            mock_client.write_long_forecasts.return_value = 1
+            mock_client_class.return_value = mock_client
+
+            data = pd.DataFrame({
+                'code': ['15013'],
+                'year': [2024],
+                'month': [2],
+                'month_in_year': [2],
+                'forecasted_discharge': [100.0],
+                'model_short': ['EM'],
+            })
+
+            from src.api_writer import _write_monthly_ensemble_to_api
+            _write_monthly_ensemble_to_api(data)
+
+            records = mock_client.write_long_forecasts.call_args[0][0]
+            record = records[0]
+            assert record['valid_from'] == '2024-02-01'
+            assert record['valid_to'] == '2024-02-29'  # 2024 is leap year
+        finally:
+            os.environ.pop('SAPPHIRE_API_ENABLED', None)
+
+    def test_empty_data_returns_false(self):
+        """Empty DataFrame returns False."""
+        from src.api_writer import _write_monthly_ensemble_to_api
+        result = _write_monthly_ensemble_to_api(pd.DataFrame())
+        assert result is False
+
+    def test_none_data_returns_false(self):
+        """None input returns False."""
+        from src.api_writer import _write_monthly_ensemble_to_api
+        result = _write_monthly_ensemble_to_api(None)
+        assert result is False

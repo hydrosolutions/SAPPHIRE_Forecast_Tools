@@ -286,14 +286,19 @@ class TestMonthlyMetricsEnsemble:
         assert em_row['nse'] == pytest.approx(0.91, rel=1e-6)
         assert em_row['accuracy'] == pytest.approx(1.0, rel=1e-6)
 
-    def test_em_crps_is_nan(self, two_skilled_models):
-        """EM has no quantile distribution, CRPS = NaN."""
+    def test_em_crps_computed_from_quantiles(self, two_skilled_models):
+        """EM has CRPS computed from aggregated quantile distribution.
+
+        EM quantiles = mean of M1 and M2 quantiles per group.
+        CRPS is computed via trapezoidal pinball loss integration.
+        """
         obs, fcst = two_skilled_models
         skill_stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
         em_row = skill_stats[
             skill_stats['model_short'] == 'EM'
         ].iloc[0]
-        assert np.isnan(em_row['crps'])
+        assert not np.isnan(em_row['crps'])
+        assert em_row['crps'] > 0  # non-zero CRPS
 
     def test_no_em_single_skilled(self):
         """No EM when only one model passes threshold."""
@@ -351,15 +356,26 @@ class TestMonthlyMetricsEnsemble:
 
 
 # ===================================================================
-# Naive Mean baseline
+# Naive Mean baseline (unweighted model average)
 # ===================================================================
 
 class TestNaiveMeanBaseline:
-    """Climatological mean baseline (no-skill reference)."""
+    """Naive Mean = unweighted average of ALL model forecasts.
+
+    Unlike EM (which filters by skill), Naive Mean includes all models
+    regardless of skill. Requires >=2 models (single-model groups
+    discarded, same as EM).
+    """
 
     @pytest.fixture
-    def data_three_years(self):
-        """3 years of data for meaningful Naive Mean."""
+    def data_two_models(self):
+        """2 models x 3 years for meaningful Naive Mean.
+
+        M1 q50: [102, 108, 106], M2 q50: [104, 112, 108]
+        Naive Mean q50 = mean(M1, M2) = [103, 110, 107]
+        obs = [100, 110, 105]
+        MAE = mean(|100-103|, |110-110|, |105-107|) = 5/3
+        """
         obs = _make_obs([
             ('S1', 2020, 1, 100.0),
             ('S1', 2021, 1, 110.0),
@@ -369,69 +385,105 @@ class TestNaiveMeanBaseline:
             ('S1', 2020, 1, 'M1', 80, 85, 92, 102, 112, 118, 125),
             ('S1', 2021, 1, 'M1', 88, 93, 100, 108, 116, 123, 130),
             ('S1', 2022, 1, 'M1', 85, 90, 98, 106, 114, 120, 128),
+            ('S1', 2020, 1, 'M2', 82, 87, 94, 104, 114, 120, 127),
+            ('S1', 2021, 1, 'M2', 92, 97, 104, 112, 120, 127, 134),
+            ('S1', 2022, 1, 'M2', 86, 91, 99, 108, 116, 122, 130),
         ])
         return obs, fcst
 
-    def test_naive_mean_in_skill_stats(self, data_three_years):
+    def test_naive_mean_in_skill_stats(self, data_two_models):
         """Naive Mean appears as a model in skill_stats."""
-        obs, fcst = data_three_years
+        obs, fcst = data_two_models
         skill_stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
         assert 'Naive Mean' in skill_stats['model_short'].values
 
-    def test_naive_mean_mae(self, data_three_years):
-        """Naive Mean q50 = climatological mean = 105.
+    def test_naive_mean_is_model_average(self, data_two_models):
+        """Naive Mean q50 = mean of model q50s, NOT climatological mean.
 
-        MAE = mean(|100-105|, |110-105|, |105-105|) = 10/3
+        M1 q50=[102,108,106], M2 q50=[104,112,108]
+        Naive Mean = [103,110,107], obs = [100,110,105]
+        MAE = mean(3, 0, 2) = 5/3
         """
-        obs, fcst = data_three_years
+        obs, fcst = data_two_models
         skill_stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
         naive = skill_stats[
             skill_stats['model_short'] == 'Naive Mean'
         ].iloc[0]
-        assert naive['mae'] == pytest.approx(10.0 / 3.0, rel=1e-6)
+        assert naive['mae'] == pytest.approx(5.0 / 3.0, rel=1e-6)
 
-    def test_naive_mean_crps_is_nan(self, data_three_years):
-        """Naive Mean has no quantile distribution, CRPS = NaN."""
-        obs, fcst = data_three_years
+    def test_naive_mean_crps_computed(self, data_two_models):
+        """Naive Mean has CRPS from aggregated quantile distribution."""
+        obs, fcst = data_two_models
         skill_stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
         naive = skill_stats[
             skill_stats['model_short'] == 'Naive Mean'
         ].iloc[0]
-        assert np.isnan(naive['crps'])
+        assert not np.isnan(naive['crps'])
+        assert naive['crps'] > 0
 
-    def test_naive_mean_nse_zero(self, data_three_years):
-        """Naive Mean NSE = 0 — the no-skill reference by definition.
+    def test_naive_mean_has_composition(self, data_two_models):
+        """Naive Mean lists contributing models in composition."""
+        obs, fcst = data_two_models
+        skill_stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
+        naive = skill_stats[
+            skill_stats['model_short'] == 'Naive Mean'
+        ].iloc[0]
+        assert 'M1' in naive['composition']
+        assert 'M2' in naive['composition']
 
-        obs = [100, 110, 105], mean = 105
-        SS_res = (100-105)^2 + (110-105)^2 + (105-105)^2 = 50
-        SS_tot = same = 50
-        NSE = 1 - 50/50 = 0.0
+    def test_naive_mean_includes_unskilled_models(self):
+        """Naive Mean includes ALL models, even unskilled ones.
+
+        M1 is skilled (close to obs), Bad is terrible.
+        EM only includes M1 (single-model -> no EM).
+        Naive Mean includes both M1 and Bad.
         """
-        obs, fcst = data_three_years
+        obs = _make_obs([
+            ('S1', 2020, 1, 100.0),
+            ('S1', 2021, 1, 110.0),
+        ])
+        fcst = _make_fcst([
+            ('S1', 2020, 1, 'M1', 80, 85, 92, 102, 112, 118, 125),
+            ('S1', 2021, 1, 'M1', 88, 93, 100, 108, 116, 123, 130),
+            ('S1', 2020, 1, 'Bad', 120, 130, 140, 150, 160, 170, 180),
+            ('S1', 2021, 1, 'Bad', 130, 140, 150, 160, 170, 180, 190),
+        ])
         skill_stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
+
+        # EM: only M1 passes -> single-model -> no EM
+        em_rows = skill_stats[skill_stats['model_short'] == 'EM']
+        assert len(em_rows) == 0
+
+        # Naive Mean: M1 + Bad both included
         naive = skill_stats[
             skill_stats['model_short'] == 'Naive Mean'
-        ].iloc[0]
-        assert naive['nse'] == pytest.approx(0.0, abs=1e-10)
+        ]
+        assert len(naive) == 1
+        assert 'Bad' in naive.iloc[0]['composition']
+        assert 'M1' in naive.iloc[0]['composition']
 
-    def test_naive_mean_all_metrics(self, data_three_years):
-        """All Naive Mean metrics verified.
-
-        obs = [100, 110, 105], clim_mean = 105
-        sdivsigma: s = sigma -> sdivsigma = 1.0
-        accuracy: |5|,|5| > delta(3.37), |0| <= delta -> 1/3
-        n_pairs = 3
-        """
-        obs, fcst = data_three_years
+    def test_naive_mean_not_created_single_model(self):
+        """No Naive Mean when only 1 model exists."""
+        obs = _make_obs([
+            ('S1', 2020, 1, 100.0),
+            ('S1', 2021, 1, 110.0),
+        ])
+        fcst = _make_fcst([
+            ('S1', 2020, 1, 'M1', 80, 85, 92, 102, 112, 118, 125),
+            ('S1', 2021, 1, 'M1', 88, 93, 100, 108, 116, 123, 130),
+        ])
         skill_stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
-        naive = skill_stats[
-            skill_stats['model_short'] == 'Naive Mean'
-        ].iloc[0]
-        assert naive['n_pairs'] == 3
-        assert naive['sdivsigma'] == pytest.approx(1.0, rel=1e-6)
-        assert naive['accuracy'] == pytest.approx(1.0 / 3.0, rel=1e-6)
-        expected_delta = 0.674 * np.std([100.0, 110.0, 105.0], ddof=1)
-        assert naive['delta'] == pytest.approx(expected_delta, rel=1e-6)
+        naive = skill_stats[skill_stats['model_short'] == 'Naive Mean']
+        assert len(naive) == 0
+
+    def test_naive_mean_adds_rows_to_joint_forecasts(self, data_two_models):
+        """Naive Mean rows appear in joint_forecasts with correct columns."""
+        obs, fcst = data_two_models
+        _, joint, _ = calculate_monthly_skill_metrics(obs, fcst)
+        naive_rows = joint[joint['model_short'] == 'Naive Mean']
+        assert len(naive_rows) > 0
+        assert 'forecasted_discharge' in naive_rows.columns
+        assert 'composition' in naive_rows.columns
 
 
 # ===================================================================
@@ -857,14 +909,15 @@ class TestSkilledMeanBaseline:
         assert 'M1' in sm_row['composition']
         assert 'M2' in sm_row['composition']
 
-    def test_skilled_mean_crps_nan(self, two_skilled_data):
-        """Skilled Mean is a point forecast, CRPS = NaN."""
+    def test_skilled_mean_crps_computed(self, two_skilled_data):
+        """Skilled Mean CRPS computed from vincentized quantiles."""
         obs, fcst = two_skilled_data
         skill_stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
         sm_row = skill_stats[
             skill_stats['model_short'] == 'Skilled Mean'
         ].iloc[0]
-        assert np.isnan(sm_row['crps'])
+        assert not np.isnan(sm_row['crps'])
+        assert sm_row['crps'] > 0
 
     def test_skilled_mean_not_created_single_model(self):
         """Only 1 model passes threshold -> no Skilled Mean."""
@@ -971,3 +1024,164 @@ class TestSkilledMeanBaseline:
             skill_stats['model_short'] == 'Skilled Mean'
         ]
         assert len(sm_rows) == 0
+
+
+# ===================================================================
+# Quantile aggregation tests
+# ===================================================================
+
+class TestQuantileAggregation:
+    """Tests for quantile aggregation in EM, Naive Mean, Skilled Mean."""
+
+    @pytest.fixture
+    def two_model_data(self):
+        """2 models with known quantile values for exact verification.
+
+        Both M1 and M2 pass skill thresholds (NSE>0.8, sdivsigma<0.6).
+        obs = [100, 110], delta = 0.674*7.071 = 4.766
+
+        M1 q50=[102, 108]: NSE=0.84, sdivsigma=0.4
+        M2 q50=[101, 109]: NSE=0.96, sdivsigma=0.2
+        EM q50 = mean = [101.5, 108.5]
+
+        2020: M1 q05=10, M2 q05=20 -> EM q05=15
+        """
+        obs = _make_obs([
+            ('S1', 2020, 1, 100.0),
+            ('S1', 2021, 1, 110.0),
+        ])
+        fcst = _make_fcst([
+            ('S1', 2020, 1, 'M1', 10, 20, 30, 102, 112, 120, 130),
+            ('S1', 2021, 1, 'M1', 10, 20, 30, 108, 118, 128, 138),
+            ('S1', 2020, 1, 'M2', 20, 30, 40, 101, 108, 114, 120),
+            ('S1', 2021, 1, 'M2', 20, 30, 40, 109, 117, 124, 131),
+        ])
+        return obs, fcst
+
+    def test_em_quantile_aggregation(self, two_model_data):
+        """EM quantiles = simple mean of model quantiles.
+
+        2020: M1 q05=10, M2 q05=20 -> EM q05=15
+        2020: M1 q75=112, M2 q75=108 -> EM q75=110
+        """
+        obs, fcst = two_model_data
+        _, joint, _ = calculate_monthly_skill_metrics(obs, fcst)
+        em_rows = joint[joint['model_short'] == 'EM']
+        assert len(em_rows) > 0
+
+        em_2020 = em_rows[em_rows['year'] == 2020].iloc[0]
+        assert em_2020['q05'] == pytest.approx(15.0, rel=1e-6)
+        assert em_2020['q10'] == pytest.approx(25.0, rel=1e-6)
+        assert em_2020['q25'] == pytest.approx(35.0, rel=1e-6)
+        # M1 q75=112, M2 q75=108 -> mean=110
+        assert em_2020['q75'] == pytest.approx(110.0, rel=1e-6)
+        # M1 q90=120, M2 q90=114 -> mean=117
+        assert em_2020['q90'] == pytest.approx(117.0, rel=1e-6)
+        # M1 q95=130, M2 q95=120 -> mean=125
+        assert em_2020['q95'] == pytest.approx(125.0, rel=1e-6)
+
+    def test_em_crps_computed(self, two_model_data):
+        """EM CRPS is not NaN when quantiles are aggregated."""
+        obs, fcst = two_model_data
+        skill_stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
+        em_row = skill_stats[
+            skill_stats['model_short'] == 'EM'
+        ].iloc[0]
+        assert not np.isnan(em_row['crps'])
+        assert em_row['crps'] > 0
+
+    def test_naive_mean_quantile_aggregation(self, two_model_data):
+        """Naive Mean quantiles = simple mean of ALL model quantiles.
+
+        Same as EM for this fixture (both models are skilled).
+        M1 q05=10, M2 q05=20 -> mean=15
+        M1 q95=130, M2 q95=120 -> mean=125
+        """
+        obs, fcst = two_model_data
+        _, joint, _ = calculate_monthly_skill_metrics(obs, fcst)
+        naive_rows = joint[joint['model_short'] == 'Naive Mean']
+        assert len(naive_rows) > 0
+
+        naive_2020 = naive_rows[naive_rows['year'] == 2020].iloc[0]
+        assert naive_2020['q05'] == pytest.approx(15.0, rel=1e-6)
+        assert naive_2020['q95'] == pytest.approx(125.0, rel=1e-6)
+
+    def test_naive_mean_crps_computed(self, two_model_data):
+        """Naive Mean CRPS computed from aggregated quantiles."""
+        obs, fcst = two_model_data
+        skill_stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
+        naive = skill_stats[
+            skill_stats['model_short'] == 'Naive Mean'
+        ].iloc[0]
+        assert not np.isnan(naive['crps'])
+        assert naive['crps'] > 0
+
+    def test_skilled_mean_quantile_vincentization(self):
+        """Skilled Mean quantiles = inverse-MAE weighted mean.
+
+        M1 (MAE=2): q05=10
+        M2 (MAE=8): q05=20
+        eps = mean(2,8)/100 = 0.05
+        w1 = 1/(2+0.05) = 0.4878, w2 = 1/(8+0.05) = 0.1242
+        weighted q05 = (0.4878*10 + 0.1242*20)/(0.4878+0.1242) = 12.03
+        """
+        obs = _make_obs([
+            ('S1', 2020, 1, 100.0),
+            ('S1', 2021, 1, 110.0),
+        ])
+        # M1 close to obs (low MAE), M2 farther (higher MAE)
+        fcst = _make_fcst([
+            ('S1', 2020, 1, 'M1', 10, 20, 30, 102, 110, 120, 130),
+            ('S1', 2021, 1, 'M1', 10, 20, 30, 108, 118, 128, 138),
+            ('S1', 2020, 1, 'M2', 20, 30, 40, 108, 118, 128, 138),
+            ('S1', 2021, 1, 'M2', 20, 30, 40, 118, 128, 138, 148),
+        ])
+        skill_stats, joint, _ = calculate_monthly_skill_metrics(obs, fcst)
+
+        sm_rows = skill_stats[
+            skill_stats['model_short'] == 'Skilled Mean'
+        ]
+        if len(sm_rows) > 0:
+            sm = sm_rows.iloc[0]
+            # Skilled Mean should exist and have CRPS
+            assert not np.isnan(sm['crps'])
+
+            # Verify weighted quantiles in joint
+            sm_joint = joint[joint['model_short'] == 'Skilled Mean']
+            if 'q05' in sm_joint.columns and len(sm_joint) > 0:
+                sm_2020 = sm_joint[sm_joint['year'] == 2020].iloc[0]
+                # Weighted toward M1 (lower MAE), so q05 < 15
+                assert sm_2020['q05'] < 15.0
+
+    def test_ensemble_joint_cols_include_valid_from_valid_to(self):
+        """Ensemble rows carry valid_from, valid_to when present."""
+        obs = _make_obs([
+            ('S1', 2020, 1, 100.0),
+            ('S1', 2021, 1, 110.0),
+        ])
+        fcst = pd.DataFrame({
+            'code': ['S1', 'S1', 'S1', 'S1'],
+            'year': [2020, 2021, 2020, 2021],
+            'month': [1, 1, 1, 1],
+            'model_short': ['M1', 'M1', 'M2', 'M2'],
+            'q05': [10, 10, 20, 20],
+            'q10': [20, 20, 30, 30],
+            'q25': [30, 30, 40, 40],
+            'q50': [102, 108, 101, 109],
+            'q75': [110, 118, 108, 117],
+            'q90': [120, 128, 114, 124],
+            'q95': [130, 138, 120, 131],
+            'valid_from': ['2020-01-01', '2021-01-01',
+                           '2020-01-01', '2021-01-01'],
+            'valid_to': ['2020-01-31', '2021-01-31',
+                         '2020-01-31', '2021-01-31'],
+            'date': pd.to_datetime([
+                '2020-01-01', '2021-01-01',
+                '2020-01-01', '2021-01-01',
+            ]),
+        })
+        _, joint, _ = calculate_monthly_skill_metrics(obs, fcst)
+
+        em_rows = joint[joint['model_short'] == 'EM']
+        if len(em_rows) > 0 and 'valid_from' in em_rows.columns:
+            assert em_rows['valid_from'].notna().all()

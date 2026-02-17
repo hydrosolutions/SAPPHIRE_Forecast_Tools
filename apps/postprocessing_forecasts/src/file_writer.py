@@ -4,6 +4,7 @@ Extracted from forecast_library.py — these functions are exclusively
 used by postprocessing_forecasts.
 """
 
+import datetime as dt_module
 import os
 import logging
 import tempfile
@@ -15,6 +16,13 @@ import forecast_library as fl
 from . import api_writer
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_year(year: int | None) -> int:
+    """Return *year* if provided, otherwise the current calendar year."""
+    if year is None:
+        return dt_module.date.today().year
+    return year
 
 
 # ---------------------------------------------------------------------------
@@ -294,16 +302,18 @@ def save_forecast_data_decade(simulated: pd.DataFrame):
 # Save skill metrics
 # ---------------------------------------------------------------------------
 
-def save_pentadal_skill_metrics(data: pd.DataFrame):
+def save_pentadal_skill_metrics(data: pd.DataFrame, year: int = None):
     """
     Saves pentadal skill metrics to a csv file.
 
     Args:
-    data (pd.DataFrame): The data to be written to a csv file.
+        data: The data to be written to a csv file.
+        year: Target year for API skill metric dates. Each pentad gets
+            the first day of that pentad in this year. Defaults to the
+            current calendar year.
 
     Returns:
-    None
-
+        None
     """
 
     # Round all values to 4 decimal places
@@ -337,7 +347,9 @@ def save_pentadal_skill_metrics(data: pd.DataFrame):
     # Write to SAPPHIRE API
     if api_writer.SAPPHIRE_API_AVAILABLE:
         try:
-            api_writer._write_skill_metrics_to_api(data, "pentad")
+            api_writer._write_skill_metrics_to_api(
+                data, "pentad", _resolve_year(year)
+            )
         except Exception as e:
             fl._handle_api_write_error(e, "pentadal skill metrics")
 
@@ -361,7 +373,7 @@ def save_pentadal_skill_metrics(data: pd.DataFrame):
 
     return None
 
-def save_monthly_skill_metrics(data: pd.DataFrame):
+def save_monthly_skill_metrics(data: pd.DataFrame, year: int = None):
     """Save monthly skill metrics to CSV + API.
 
     Follows the same pattern as save_pentadal/decadal_skill_metrics:
@@ -372,6 +384,9 @@ def save_monthly_skill_metrics(data: pd.DataFrame):
         data: DataFrame with monthly skill metrics. Expected columns:
             month_in_year, code, model_short, sdivsigma, nse, delta,
             accuracy, mae, n_pairs, crps, composition (optional).
+        year: Target year for API skill metric dates. Each month gets
+            the first day of that month in this year. Defaults to the
+            current calendar year.
 
     Returns:
         None
@@ -400,7 +415,9 @@ def save_monthly_skill_metrics(data: pd.DataFrame):
 
     if api_writer.SAPPHIRE_API_AVAILABLE:
         try:
-            api_writer._write_skill_metrics_to_api(data, "month")
+            api_writer._write_skill_metrics_to_api(
+                data, "month", _resolve_year(year)
+            )
         except Exception as e:
             fl._handle_api_write_error(e, "monthly skill metrics")
 
@@ -509,8 +526,17 @@ def save_monthly_forecast_data(simulated: pd.DataFrame):
         )
         raise e
 
-    # No API write — monthly forecasts already in long_forecasts table;
-    # write_long_term_forecasts() client method not yet available.
+    # Write ensemble rows (EM, Naive Mean, Skilled Mean) to API
+    ret = api_writer._write_monthly_ensemble_to_api(simulated)
+    if ret:
+        logger.info(
+            "Monthly ensemble forecasts written to API successfully."
+        )
+    else:
+        logger.warning(
+            "Monthly ensemble forecasts API write returned False "
+            "(disabled, unavailable, or failed)."
+        )
 
     # --- Consistency Check ---
     consistency_check = (
@@ -539,16 +565,18 @@ def save_monthly_forecast_data(simulated: pd.DataFrame):
     return None
 
 
-def save_decadal_skill_metrics(data: pd.DataFrame):
+def save_decadal_skill_metrics(data: pd.DataFrame, year: int = None):
     """
     Saves decadal skill metrics to a csv file.
 
     Args:
-    data (pd.DataFrame): The data to be written to a csv file.
+        data: The data to be written to a csv file.
+        year: Target year for API skill metric dates. Each decad gets
+            the first day of that decad in this year. Defaults to the
+            current calendar year.
 
     Returns:
-    None
-
+        None
     """
 
     # Round all values to 4 decimal places
@@ -582,7 +610,9 @@ def save_decadal_skill_metrics(data: pd.DataFrame):
     # Write to SAPPHIRE API
     if api_writer.SAPPHIRE_API_AVAILABLE:
         try:
-            api_writer._write_skill_metrics_to_api(data, "decad")
+            api_writer._write_skill_metrics_to_api(
+                data, "decad", _resolve_year(year)
+            )
         except Exception as e:
             fl._handle_api_write_error(e, "decadal skill metrics")
 

@@ -1325,7 +1325,7 @@ class TestCrossWorkflowRoundtrip:
         # Step 2: Run recalc — capture skill CSV write
         saved_skills = {}
 
-        def capture_save_skill(df):
+        def capture_save_skill(df, year=None):
             """Intercept save_pentadal_skill_metrics to write CSV."""
             csv_path = os.path.join(
                 str(tmp_path), 'skill_pentad.csv',

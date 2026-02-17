@@ -241,16 +241,20 @@ class TestSaveMonthlySkillMetrics:
     def test_api_write_called_with_month_horizon(
         self, mock_api_write, monthly_skill_data
     ):
-        """API writer is called with horizon_type='month'."""
+        """API writer is called with horizon_type='month' and year."""
         with patch.object(api_writer, 'SAPPHIRE_API_AVAILABLE', True):
             mock_api_write.return_value = True
-            file_writer.save_monthly_skill_metrics(monthly_skill_data)
+            file_writer.save_monthly_skill_metrics(
+                monthly_skill_data, year=2024
+            )
 
         mock_api_write.assert_called_once()
         call_args = mock_api_write.call_args
         assert call_args[0][1] == "month"  # second positional arg
         # First arg is the data DataFrame
         assert len(call_args[0][0]) == 6
+        # Third arg is the year
+        assert call_args[0][2] == 2024
 
     def test_api_not_called_when_unavailable(self, monthly_skill_data):
         """API writer is not called when sapphire-api-client unavailable."""
@@ -430,13 +434,32 @@ class TestSaveMonthlyForecastData:
         saved = pd.read_csv(csv_path, dtype={'code': str})
         assert saved.iloc[0]['code'] == '15013'
 
-    def test_api_not_called(self, monthly_joint_data):
-        """API write is not called (CSV only for now)."""
-        with patch.object(api_writer, 'SAPPHIRE_API_AVAILABLE', True), \
-             patch('src.api_writer._write_combined_forecast_to_api'
-                   ) as mock_api:
+    def test_ensemble_api_write_called(self, monthly_joint_data):
+        """Ensemble API writer is called from save_monthly_forecast_data."""
+        with patch(
+            'src.api_writer._write_monthly_ensemble_to_api',
+            return_value=True,
+        ) as mock_api:
             file_writer.save_monthly_forecast_data(monthly_joint_data)
-            mock_api.assert_not_called()
+            mock_api.assert_called_once()
+            # Verify it receives the full simulated DataFrame
+            call_data = mock_api.call_args[0][0]
+            assert len(call_data) >= len(monthly_joint_data)
+
+    def test_csv_still_written_when_api_fails(self, monthly_joint_data):
+        """CSV still written even when ensemble API write returns False."""
+        with patch(
+            'src.api_writer._write_monthly_ensemble_to_api',
+            return_value=False,
+        ):
+            file_writer.save_monthly_forecast_data(monthly_joint_data)
+
+        csv_path = os.path.join(
+            str(self.tmp_path), 'combined_monthly.csv'
+        )
+        assert os.path.exists(csv_path)
+        saved = pd.read_csv(csv_path)
+        assert len(saved) > 0
 
     def test_empty_df_handled(self):
         """Empty DataFrame does not crash."""

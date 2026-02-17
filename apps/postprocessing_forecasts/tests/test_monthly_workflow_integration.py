@@ -590,12 +590,16 @@ class TestMonthlyRecalcIntegration:
                 f"{model} CRPS values should be finite"
             )
 
-        # EM and baselines should have NaN CRPS
+        # EM and baselines now have CRPS from aggregated quantiles
         for baseline in ['EM', 'Naive Mean', 'Skilled Mean']:
             baseline_rows = skill[skill['model_short'] == baseline]
             if not baseline_rows.empty:
-                assert baseline_rows['crps'].isna().all(), (
-                    f"{baseline} CRPS should be NaN"
+                crps_values = baseline_rows['crps'].dropna()
+                assert len(crps_values) > 0, (
+                    f"{baseline} should have non-NaN CRPS from quantiles"
+                )
+                assert (crps_values >= 0).all(), (
+                    f"{baseline} CRPS values should be non-negative"
                 )
 
 
