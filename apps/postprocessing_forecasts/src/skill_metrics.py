@@ -977,6 +977,9 @@ def calculate_skill_metrics_decade(
             how='inner',
         )
 
+        # Filter out rows where forecasted_discharge is NaN
+        skill_metrics_df_ensemble = skill_metrics_df_ensemble.dropna(subset=['forecasted_discharge']).copy()
+
         # Drop columns with model_short == NE (neural ensemble)
         skill_metrics_df_ensemble = skill_metrics_df_ensemble[skill_metrics_df_ensemble['model_short'] != 'NE'].copy()
 

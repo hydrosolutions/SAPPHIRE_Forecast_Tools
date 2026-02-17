@@ -1188,16 +1188,23 @@ class TestMaintenanceSurplusData:
                     mocks['file_writer'].save_forecast_data_pentad.call_args[0][0]
                 )
                 em_rows = saved_df[saved_df['model_short'] == 'EM']
-                # Only 1 EM from gap-fill (Jan 15), not 3
-                assert len(em_rows) == 1, (
-                    f"Expected 1 gap-fill EM row (Jan 15 only), "
+                # Merged output: 2 existing EM (Jan 5, Jan 10) + 1 new (Jan 15)
+                assert len(em_rows) == 3, (
+                    f"Expected 3 EM rows (2 existing + 1 gap-fill), "
                     f"got {len(em_rows)}"
                 )
-                em_date = pd.to_datetime(
-                    em_rows['date'].iloc[0]
-                ).strftime('%Y-%m-%d')
-                assert em_date == '2024-01-15', (
-                    f"EM should be for gap date Jan 15, got {em_date}"
+                em_dates = sorted(
+                    pd.to_datetime(em_rows['date']).dt.strftime('%Y-%m-%d')
+                )
+                assert '2024-01-15' in em_dates, (
+                    f"Gap-fill EM for Jan 15 missing from {em_dates}"
+                )
+                # Existing EM rows preserved
+                assert '2024-01-05' in em_dates
+                assert '2024-01-10' in em_dates
+                # Total rows should be combined(8) + new EM(1) = 9
+                assert len(saved_df) == 9, (
+                    f"Expected 9 merged rows, got {len(saved_df)}"
                 )
 
 

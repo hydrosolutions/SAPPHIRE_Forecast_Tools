@@ -486,6 +486,84 @@ class TestMaintenanceIntegration:
             "99001 gap at 2026-01-05 should have been filled with EM"
         )
 
+    def test_gap_fill_preserves_existing_data(self, integration_env):
+        """Maintenance gap-fill must not lose non-gap historical rows.
+
+        Regression test: previously, save_func received only the gap-fill
+        rows and overwrote the combined CSV, losing all non-gap data.
+        After the fix, new EM rows are merged into the existing combined
+        data before saving.
+        """
+        tmp_path, data_dir = integration_env
+
+        # Record the original combined CSV state
+        combined_path = os.path.join(
+            data_dir, 'combined_forecasts_pentad.csv'
+        )
+        original = pd.read_csv(combined_path)
+        original_row_count = len(original)
+        # Non-gap rows: exclude the gap (date, code) pairs
+        gap_pairs = {('2026-01-05', '99001'), ('2026-01-10', '99002')}
+        non_gap_mask = ~original.apply(
+            lambda r: (str(r['date']), str(r['code'])) in gap_pairs,
+            axis=1,
+        )
+        non_gap_rows = original[non_gap_mask]
+        # Pick a specific non-gap row to verify survival
+        sample_non_gap = non_gap_rows[
+            (non_gap_rows['code'].astype(str) == '99001') &
+            (non_gap_rows['date'] == '2022-01-05') &
+            (non_gap_rows['model_short'] == 'LR')
+        ]
+        assert len(sample_non_gap) == 1, "Precondition: sample row exists"
+        sample_discharge = sample_non_gap.iloc[0]['forecasted_discharge']
+
+        with patch.dict(os.environ, {
+            'SAPPHIRE_PREDICTION_MODE': 'PENTAD',
+            'POSTPROCESSING_GAPFILL_WINDOW_DAYS': '365',
+        }):
+            with patch.dict(sys.modules, {}):
+                _setup_modules_with_real_io()
+
+                module, spec = _import_maintenance()
+                with patch('os.getcwd', return_value=str(tmp_path)):
+                    spec.loader.exec_module(module)
+
+                    with pytest.raises(SystemExit) as exc_info:
+                        module.postprocessing_maintenance()
+
+                assert exc_info.value.code == 0
+
+        # Re-read the output combined CSV
+        output = pd.read_csv(combined_path)
+
+        # Total rows must be >= original (new EM rows added, nothing lost)
+        assert len(output) >= original_row_count, (
+            f"Combined CSV shrank from {original_row_count} to "
+            f"{len(output)} rows — maintenance lost historical data"
+        )
+
+        # Verify the sample non-gap row survived
+        sample_after = output[
+            (output['code'].astype(str) == '99001') &
+            (output['date'] == '2022-01-05') &
+            (output['model_short'] == 'LR')
+        ]
+        assert len(sample_after) == 1, (
+            "Non-gap row 99001/2022-01-05/LR was lost during gap-fill"
+        )
+        assert sample_after.iloc[0]['forecasted_discharge'] == pytest.approx(
+            sample_discharge, rel=1e-2
+        ), "Non-gap row discharge value changed during gap-fill"
+
+        # New EM rows should exist for the gap dates
+        em_rows = output[output['model_short'] == 'EM']
+        em_99001 = em_rows[
+            (em_rows['code'].astype(str) == '99001') &
+            (em_rows['date'] == '2026-01-05')
+        ]
+        assert len(em_99001) >= 1, "Gap at 99001/2026-01-05 not filled"
+
     def test_no_gaps_produces_no_new_output(self, integration_env):
         """Combined CSV with no gaps -> maintenance exits cleanly."""
         tmp_path, data_dir = integration_env

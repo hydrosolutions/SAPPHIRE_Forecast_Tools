@@ -15,6 +15,8 @@ import datetime as dt
 import logging
 from logging.handlers import TimedRotatingFileHandler
 
+import pandas as pd
+
 # Local libraries
 script_dir = os.path.dirname(os.path.abspath(__file__))
 forecast_dir = os.path.join(script_dir, '..', 'iEasyHydroForecast')
@@ -225,8 +227,31 @@ def _fill_gaps_for_horizon(
             calculate_all_metrics_func=skill_metrics.calculate_all_skill_metrics,
         )
 
+    # Extract only the new EM rows from the gap-fill output
+    new_em_rows = joint[joint['model_short'] == 'EM'].copy()
+
+    if new_em_rows.empty:
+        logger.info(
+            f"No new {label} ensemble rows created. Nothing to save."
+        )
+        return
+
+    # Merge new EM rows into existing combined data to preserve history.
+    # Without this merge, save_func would overwrite the combined CSV with
+    # only the gap-fill rows, losing all non-gap historical data.
+    merged = pd.concat([combined, new_em_rows], ignore_index=True)
+    # Deduplicate on (date, code, model_short) in case of overlap
+    merged = merged.drop_duplicates(
+        subset=['date', 'code', 'model_short'], keep='last'
+    )
+
+    logger.info(
+        f"Merged {len(new_em_rows)} new EM rows into "
+        f"{len(combined)} existing rows -> {len(merged)} total"
+    )
+
     with timer(timing_stats, f'saving {label} gap-fill results'):
-        ret = save_func(joint)
+        ret = save_func(merged)
         if ret is None:
             logger.info(
                 f"{label} gap-fill forecast results saved successfully."
@@ -237,7 +262,7 @@ def _fill_gaps_for_horizon(
             )
             errors.append(f"{label} gap-fill save failed: {ret}")
 
-    log_func(joint)
+    log_func(merged)
 
     # Audit trail
     logger.info(

@@ -186,3 +186,224 @@ class TestCalculateSkillMetricsPentad:
         )
         assert len(ts.sections) > 0
         assert returned is ts
+
+
+# ---------------------------------------------------------------------------
+# Decade-specific fixtures and tests
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def observed_decad():
+    """Sample observed data for decade: 2 stations, 2 decads, 2 years."""
+    return pd.DataFrame({
+        'code': ['123', '123', '123', '123',
+                 '456', '456', '456', '456'],
+        'date': pd.to_datetime([
+            '2022-01-10', '2023-01-10', '2022-01-20', '2023-01-20',
+            '2022-01-10', '2023-01-10', '2022-01-20', '2023-01-20',
+        ]),
+        'discharge_avg': [10.0, 12.0, 10.0, 12.0,
+                          20.0, 22.0, 20.0, 22.0],
+        'model_short': ['Obs'] * 8,
+        'delta': [1.0, 1.0, 1.0, 1.0, 2.0, 2.0, 2.0, 2.0],
+    })
+
+
+@pytest.fixture
+def simulated_decad():
+    """Sample simulated data for decade: 2 models (MA, MB)."""
+    df = pd.DataFrame({
+        'code': (['123'] * 4 + ['456'] * 4) * 2,
+        'date': pd.to_datetime([
+            '2022-01-10', '2023-01-10', '2022-01-20', '2023-01-20',
+            '2022-01-10', '2023-01-10', '2022-01-20', '2023-01-20',
+        ] * 2),
+        'decad_in_month': [1, 1, 2, 2, 1, 1, 2, 2] * 2,
+        'decad_in_year': [1, 1, 2, 2, 1, 1, 2, 2] * 2,
+        'forecasted_discharge': [
+            10.2, 10.3, 9.8, 11.9, 20.2, 22.3, 20.1, 21.7,
+            10.1, 12.1, 10.05, 11.9, 20.1, 22.3, 19.9, 21.7,
+        ],
+        'model_short': ['MA'] * 8 + ['MB'] * 8,
+    })
+    # tl.get_decad_in_month returns strings; match real data format
+    df['decad_in_month'] = df['decad_in_month'].astype(str)
+    df['decad_in_year'] = df['decad_in_year'].astype(str)
+    return df
+
+
+class TestCalculateSkillMetricsDecade:
+    """Tests for calculate_skill_metrics_decade."""
+
+    def test_input_validation(self, observed_decad, simulated_decad):
+        """Missing columns in observed or simulated raise ValueError."""
+        bad_observed = observed_decad.drop(columns=['delta'])
+        with pytest.raises(ValueError):
+            skill_metrics.calculate_skill_metrics_decade(
+                bad_observed, simulated_decad
+            )
+
+        bad_simulated = simulated_decad.drop(columns=['decad_in_year'])
+        with pytest.raises(ValueError):
+            skill_metrics.calculate_skill_metrics_decade(
+                observed_decad, bad_simulated
+            )
+
+    def test_skill_metrics_columns_and_ranges(
+        self, observed_decad, simulated_decad
+    ):
+        """Skill stats have expected columns; values in valid ranges."""
+        skill_stats, _, _ = skill_metrics.calculate_skill_metrics_decade(
+            observed_decad, simulated_decad
+        )
+        expected_columns = [
+            'decad_in_year', 'code', 'model_short',
+            'sdivsigma', 'nse', 'mae', 'n_pairs', 'delta', 'accuracy',
+        ]
+        for col in expected_columns:
+            assert col in skill_stats.columns, f"Missing column: {col}"
+        assert all(skill_stats['accuracy'] >= 0)
+        assert all(skill_stats['accuracy'] <= 1)
+        assert all(skill_stats['sdivsigma'] >= 0)
+        assert all(skill_stats['mae'] >= 0)
+
+    def test_ensemble_creation(
+        self, observed_decad, simulated_decad, monkeypatch
+    ):
+        """Ensemble forecasts created as average of qualifying models."""
+        monkeypatch.setenv('ieasyhydroforecast_efficiency_threshold', '2.0')
+        monkeypatch.setenv('ieasyhydroforecast_accuracy_threshold', '0.0')
+        monkeypatch.setenv('ieasyhydroforecast_nse_threshold', '-1.0')
+
+        _, joint, _ = skill_metrics.calculate_skill_metrics_decade(
+            observed_decad, simulated_decad
+        )
+
+        assert any(joint['model_short'] == 'EM')
+
+        em_rows = joint[joint['model_short'] == 'EM']
+        for _, row in em_rows.iterrows():
+            individual = joint[
+                (joint['date'] == row['date'])
+                & (joint['code'] == row['code'])
+                & (joint['model_short'].isin(['MA', 'MB']))
+            ]['forecasted_discharge']
+            assert row['forecasted_discharge'] == pytest.approx(
+                individual.mean(), abs=1e-5
+            )
+
+    def test_nan_forecasts_excluded_from_decade_ensemble(
+        self, monkeypatch
+    ):
+        """NaN forecasted_discharge must not produce a false multi-model EM.
+
+        Regression test: the decade path was missing a dropna() that the
+        pentad path had.  Without dropna, pandas mean() silently skips
+        NaN but the NaN model still appears in the composition string
+        (via composition_agg), creating a "MA, MB" ensemble when only MA
+        actually contributed a value.  The correct behavior is: when only
+        one model has a valid forecast for a (date, code), no EM row
+        should be created (single-model ensembles are discarded).
+
+        We need 4+ years of data so that MB has enough valid points
+        (>= 2 per group) to pass the skill threshold despite one NaN.
+        With only 2 years, the NaN leaves MB with n=1 for that group,
+        giving NaN skill stats that exclude it from the filter anyway.
+        """
+        monkeypatch.setenv('ieasyhydroforecast_efficiency_threshold', '2.0')
+        monkeypatch.setenv('ieasyhydroforecast_accuracy_threshold', '0.0')
+        monkeypatch.setenv('ieasyhydroforecast_nse_threshold', '-1.0')
+
+        # 4 years x 1 decad x 1 station = 4 rows per model.
+        # All in decad_in_year=1 so skill stats use 4 (or 3) points.
+        dates = pd.to_datetime([
+            '2021-01-10', '2022-01-10', '2023-01-10', '2024-01-10',
+        ])
+        observed = pd.DataFrame({
+            'code': ['123'] * 4,
+            'date': dates,
+            'discharge_avg': [10.0, 12.0, 11.0, 13.0],
+            'model_short': ['Obs'] * 4,
+            'delta': [2.0] * 4,
+        })
+
+        # MA: all valid. MB: NaN on 2021-01-10, rest valid.
+        simulated = pd.DataFrame({
+            'code': ['123'] * 8,
+            'date': list(dates) * 2,
+            'decad_in_month': ['1'] * 8,
+            'decad_in_year': ['1'] * 8,
+            'forecasted_discharge': [
+                10.5, 12.5, 11.5, 13.5,  # MA: all valid
+                np.nan, 12.3, 11.3, 13.3,  # MB: NaN at 2021-01-10
+            ],
+            'model_short': ['MA'] * 4 + ['MB'] * 4,
+        })
+
+        skill_stats, joint, _ = skill_metrics.calculate_skill_metrics_decade(
+            observed, simulated
+        )
+
+        em_rows = joint[joint['model_short'] == 'EM']
+
+        # On 2021-01-10 only MA has a valid forecast.  A single-model
+        # "ensemble" must be discarded, so there should be NO EM row
+        # for that date.
+        em_at_nan_date = em_rows[
+            em_rows['date'] == pd.Timestamp('2021-01-10')
+        ]
+        assert len(em_at_nan_date) == 0, (
+            "EM row created at 2021-01-10 where only one model had a "
+            "valid forecast — NaN model should have been excluded before "
+            "composition_agg"
+        )
+
+        # On dates where both models are valid, EM should exist and
+        # be the true mean of both models
+        for d in dates[1:]:  # skip the NaN date
+            em_at_d = em_rows[em_rows['date'] == d]
+            if not em_at_d.empty:
+                ma_val = joint[
+                    (joint['date'] == d)
+                    & (joint['model_short'] == 'MA')
+                ]['forecasted_discharge'].iloc[0]
+                mb_val = joint[
+                    (joint['date'] == d)
+                    & (joint['model_short'] == 'MB')
+                ]['forecasted_discharge'].iloc[0]
+                expected = (ma_val + mb_val) / 2
+                assert em_at_d.iloc[0]['forecasted_discharge'] == pytest.approx(
+                    expected, abs=1e-5
+                ), f"EM at {d} should be mean of MA+MB"
+
+    def test_nan_forecasts_excluded_from_pentad_ensemble(
+        self, observed, monkeypatch
+    ):
+        """Pentad path also correctly excludes NaN forecasts (parity check)."""
+        monkeypatch.setenv('ieasyhydroforecast_efficiency_threshold', '2.0')
+        monkeypatch.setenv('ieasyhydroforecast_accuracy_threshold', '0.0')
+        monkeypatch.setenv('ieasyhydroforecast_nse_threshold', '-1.0')
+
+        simulated_with_nan = pd.DataFrame({
+            'code': ['123'] * 8,
+            'date': pd.to_datetime([
+                '2022-01-01', '2023-01-01', '2022-01-06', '2023-01-06',
+            ] * 2),
+            'pentad_in_month': ['1', '1', '2', '2'] * 2,
+            'pentad_in_year': ['1', '1', '2', '2'] * 2,
+            'forecasted_discharge': [
+                10.0, 12.0, 10.0, 12.0,  # MA: all valid
+                np.nan, 12.0, 10.0, 12.0,  # MB: NaN at first date
+            ],
+            'model_short': ['MA'] * 4 + ['MB'] * 4,
+        })
+
+        _, joint, _ = skill_metrics.calculate_skill_metrics_pentad(
+            observed, simulated_with_nan
+        )
+
+        em_rows = joint[joint['model_short'] == 'EM']
+        if not em_rows.empty:
+            assert em_rows['forecasted_discharge'].notna().all(), (
+                "NaN forecast leaked into pentad ensemble mean"
+            )

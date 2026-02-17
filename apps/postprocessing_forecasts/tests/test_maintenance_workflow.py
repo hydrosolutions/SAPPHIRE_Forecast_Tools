@@ -70,8 +70,18 @@ def _setup_mocks(mock_data, mock_skill, combined=None, gaps=None):
     mock_gap_detector.detect_missing_ensembles.return_value = gaps
 
     mock_data_reader.read_skill_metrics.return_value = mock_skill
+    # Ensemble result must include EM rows so the merge logic proceeds
+    ensemble_result = pd.concat([
+        mock_data,
+        pd.DataFrame({
+            'code': ['10001'],
+            'date': pd.to_datetime(['2024-01-05']),
+            'forecasted_discharge': [100.0],
+            'model_short': ['EM'],
+        }),
+    ], ignore_index=True)
     mock_ensemble_calc.create_ensemble_forecasts.return_value = (
-        mock_data, mock_skill
+        ensemble_result, mock_skill
     )
 
     mock_file_writer.save_forecast_data_pentad.return_value = None
