@@ -167,21 +167,22 @@ def update_model_select(station_value, selected_pentad, selected_decad):
     print("\nBefore widget update:")
     print(f"  New options to set: {updated_model_dict}")
     print(f"  New values to set: {new_values}")
+    with pn.io.hold(pn.state.curdoc):
 
     # Try updating options first, then values
-    model_checkbox.options = updated_model_dict
-    model_checkbox.param.trigger('options')
+        model_checkbox.options = updated_model_dict
+        # model_checkbox.param.trigger('options')
+        model_checkbox.value = new_values
+        # model_checkbox.param.trigger('value')
 
     print("\nAfter options update:")
     print(f"  Widget options: {model_checkbox.options}")
     print(f"  Widget value: {model_checkbox.value}")
 
-    model_checkbox.value = new_values
-    model_checkbox.param.trigger('value')
-
     print("\nFinal widget state:")
     print(f"  Widget options: {model_checkbox.options}")
     print(f"  Widget value: {model_checkbox.value}")
+    update_active_tab(None)
 
     return updated_model_dict
 
@@ -448,26 +449,26 @@ dashboard_content.param.watch(lambda event: viz.update_sidepane_card_visibility(
 def update_active_tab(event):
     """Render plots only when the tab is first activated for a station."""
     active_tab = dashboard_content.active  # 0: Predictors tab, 1: Forecast tab
-    if active_tab == 0 and dm.should_render_predictors(station.value):
-        daily_hydrograph_plot.object = viz.plot_daily_hydrograph_data(_, dm.hydrograph_day_all, dm.linreg_predictor, station.value, date_picker.value)
-        if display_weather_data == True: 
-            daily_rainfall_plot.object = viz.plot_daily_rainfall_data(_, dm.rain, station.value, date_picker.value, dm.linreg_predictor)
-            daily_temperature_plot.object = viz.plot_daily_temperature_data(_, dm.temp, station.value, date_picker.value, dm.linreg_predictor)
-        if display_snow_data == True:
-            for var in dm.snow_data.keys():
-                if dm.snow_data[var] is not None:
-                    snow_plot_panes[var].object = viz.plot_daily_snow_data(_, dm.snow_data, var, station.value, date_picker.value, dm.linreg_predictor)
-                else: 
-                    snow_plot_panes[var].object = pn.pane.Markdown(_("No snow data from SAPPHIRE Data Gateway available."))
-    elif active_tab == 1 and dm.should_render_forecast(station.value):
-        plot = viz.select_and_plot_data(_, dm.linreg_predictor, station.value, pentad_selector.value, decad_selector.value, SAVE_DIRECTORY)
-        forecast_data_and_plot[:] = plot.objects
-        update_forecast_plots(None)
+    with pn.io.hold(pn.state.curdoc):
+        if active_tab == 0 and dm.should_render_predictors(station.value):
+            daily_hydrograph_plot.object = viz.plot_daily_hydrograph_data(_, dm.hydrograph_day_all, dm.linreg_predictor, station.value, date_picker.value)
+            if display_weather_data == True:
+                daily_rainfall_plot.object = viz.plot_daily_rainfall_data(_, dm.rain, station.value, date_picker.value, dm.linreg_predictor)
+                daily_temperature_plot.object = viz.plot_daily_temperature_data(_, dm.temp, station.value, date_picker.value, dm.linreg_predictor)
+            if display_snow_data == True:
+                for var in dm.snow_data.keys():
+                    if dm.snow_data[var] is not None:
+                        snow_plot_panes[var].object = viz.plot_daily_snow_data(_, dm.snow_data, var, station.value, date_picker.value, dm.linreg_predictor)
+                    else:
+                        snow_plot_panes[var].object = pn.pane.Markdown(_("No snow data from SAPPHIRE Data Gateway available."))
+        elif active_tab == 1 and dm.should_render_forecast(station.value):
+            plot = viz.select_and_plot_data(_, dm.linreg_predictor, station.value, pentad_selector.value, decad_selector.value, SAVE_DIRECTORY)
+            forecast_data_and_plot[:] = plot.objects
+            update_forecast_plots(None)
 
 
 # Attach the callback to the tabs and station
 dashboard_content.param.watch(update_active_tab, 'active')
-station.param.watch(update_active_tab, 'value')
 update_active_tab(None)
 
 

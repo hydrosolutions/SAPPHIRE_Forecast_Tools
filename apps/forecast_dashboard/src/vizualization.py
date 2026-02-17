@@ -14,7 +14,7 @@ import holoviews as hv
 from holoviews import streams
 import panel as pn
 from bokeh.models import Label, Title, HoverTool, FixedTicker, CustomJSTickFormatter, LinearAxis, \
-    NumberFormatter, DateFormatter, CustomJS
+    NumberFormatter, DateFormatter, CustomJS, ColumnDataSource, Line
 from bokeh.models.formatters import DatetimeTickFormatter
 from bokeh.models.widgets.tables import CheckboxEditor, BooleanFormatter
 from scipy import stats
@@ -1757,29 +1757,38 @@ def plot_daily_hydrograph_data(_, hydrograph_day_all, linreg_predictor, station,
 
     vlines = create_cached_vlines(_, for_dates=True)
 
+    def make_hover_bounds(data, date_col, low_col, high_col, color):
+        def add_hover_bounds(plot, element):
+            dates = data[date_col].values
+            # Upper bound
+            source_high = ColumnDataSource(data=dict(x=dates, y=data[high_col].values))
+            glyph_high = Line(x='x', y='y', line_color=color, line_alpha=0.5, line_width=1)
+            renderer_high = plot.state.add_glyph(source_high, glyph_high)
+            # Lower bound
+            source_low = ColumnDataSource(data=dict(x=dates, y=data[low_col].values))
+            glyph_low = Line(x='x', y='y', line_color=color, line_alpha=0.5, line_width=1)
+            renderer_low = plot.state.add_glyph(source_low, glyph_low)
+            # Hover tools
+            hover_high = HoverTool(renderers=[renderer_high], tooltips=[
+                ("Date", "$x{%F}"), (high_col, "$y{0.1f}")
+            ], formatters={"$x": "datetime"})
+            hover_low = HoverTool(renderers=[renderer_low], tooltips=[
+                ("Date", "$x{%F}"), (low_col, "$y{0.1f}")
+            ], formatters={"$x": "datetime"})
+            plot.state.add_tools(hover_high, hover_low)
+        return add_hover_bounds
+
     full_range_area = plot_runoff_range_area(
         data, date_col, min_col, max_col, _("Full range legend entry"),
-        runoff_full_range_color)
-    lower_bound = plot_runoff_range_bound(
-        data, date_col, min_col, runoff_full_range_color)
-    upper_bound = plot_runoff_range_bound(
-        data, date_col, max_col, runoff_full_range_color)
+        runoff_full_range_color).opts(tools=[], hooks=[make_hover_bounds(data, date_col, min_col, max_col, runoff_full_range_color)])
 
     area_05_95 = plot_runoff_range_area(
         data, date_col, q05_col, q95_col,
-        _("90-percentile range legend entry"), runoff_90percentile_range_color)
-    line_05 = plot_runoff_range_bound(
-        data, date_col, q05_col, runoff_90percentile_range_color)
-    line_95 = plot_runoff_range_bound(
-        data, date_col, q95_col, runoff_90percentile_range_color)
+        _("90-percentile range legend entry"), runoff_90percentile_range_color).opts(tools=[], hooks=[make_hover_bounds(data, date_col, q05_col, q95_col, runoff_90percentile_range_color)])
 
     area_25_75 = plot_runoff_range_area(
         data, date_col, q25_col, q75_col,
-        _("50-percentile range legend entry"), runoff_50percentile_range_color)
-    line_25 = plot_runoff_range_bound(
-        data, date_col, q25_col, runoff_50percentile_range_color)
-    line_75 = plot_runoff_range_bound(
-        data, date_col, q75_col, runoff_50percentile_range_color)
+        _("50-percentile range legend entry"), runoff_50percentile_range_color).opts(tools=[], hooks=[make_hover_bounds(data, date_col, q25_col, q75_col, runoff_50percentile_range_color)])
 
     mean = plot_runoff_line(
         data, date_col, mean_col, _('Mean legend entry'), runoff_mean_color)
@@ -1793,9 +1802,9 @@ def plot_daily_hydrograph_data(_, hydrograph_day_all, linreg_predictor, station,
         runoff_current_year_color)
 
     # Overlay the plots
-    daily_hydrograph = full_range_area * lower_bound * upper_bound * \
-                       area_05_95 * line_05 * line_95 * \
-                       area_25_75 * line_25 * line_75 * \
+    daily_hydrograph = full_range_area * \
+                       area_05_95 * \
+                       area_25_75 * \
                        vlines * \
                        last_year * hvspan_forecast * hvspan_predictor * \
                        mean * current_year
