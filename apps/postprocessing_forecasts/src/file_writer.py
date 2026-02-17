@@ -430,6 +430,115 @@ def save_monthly_skill_metrics(data: pd.DataFrame):
     return None
 
 
+def save_monthly_forecast_data(simulated: pd.DataFrame):
+    """Save monthly combined forecasts (joint_forecasts) to CSV.
+
+    Follows save_forecast_data_pentad() pattern but simpler:
+    no API write (monthly forecasts already in long_forecasts table),
+    uses month_in_year as horizon column.
+
+    Args:
+        simulated: DataFrame with monthly joint forecasts. Expected
+            columns include: code, year, month, month_in_year,
+            forecasted_discharge, model_short.
+
+    Returns:
+        None
+    """
+    if simulated is None or simulated.empty:
+        logger.info("No monthly forecast data to save")
+        return None
+
+    filename = os.path.join(
+        os.getenv("ieasyforecast_intermediate_data_path"),
+        os.getenv("ieasyforecast_monthly_combined_forecast_file"))
+
+    # Round all float values to 3 decimal places
+    simulated = simulated.round(3)
+
+    # Ensure code is string without .0
+    if 'code' in simulated.columns:
+        simulated['code'] = (
+            simulated['code'].astype(str)
+            .str.replace(r'\.0$', '', regex=True)
+        )
+
+    # Extract latest forecasts using month_in_year as horizon.
+    # EM/Skilled Mean rows from calculate_monthly_skill_metrics have
+    # no date — synthesize from year+month so get_latest_forecasts works.
+    if 'date' in simulated.columns:
+        simulated = simulated.copy()
+        if simulated['date'].isna().any() and 'year' in simulated.columns:
+            mask = simulated['date'].isna()
+            simulated.loc[mask, 'date'] = (
+                simulated.loc[mask, 'year'].astype(int).astype(str)
+                + '-'
+                + simulated.loc[mask, 'month'].astype(int).astype(str)
+                .str.zfill(2)
+                + '-01'
+            )
+        # Ensure consistent datetime type for the entire column
+        simulated['date'] = pd.to_datetime(
+            simulated['date'], errors='coerce'
+        )
+        simulated_latest = get_latest_forecasts(
+            simulated, horizon_column_name='month_in_year'
+        )
+    else:
+        simulated_latest = simulated.copy()
+
+    # Write the data to csv (atomic to prevent corruption on crash)
+    try:
+        atomic_write_csv(simulated, filename, index=False)
+    except Exception as e:
+        logger.error(
+            f"Could not write monthly forecast data to {filename}."
+        )
+        raise e
+
+    # Edit filename by appending '_latest' to the filename
+    filename_latest = filename.replace('.csv', '_latest.csv')
+
+    # Write the latest data to a csv file (atomic)
+    try:
+        atomic_write_csv(simulated_latest, filename_latest, index=False)
+    except Exception as e:
+        logger.error(
+            f"Could not write latest monthly forecast data to "
+            f"{filename_latest}."
+        )
+        raise e
+
+    # No API write — monthly forecasts already in long_forecasts table;
+    # write_long_term_forecasts() client method not yet available.
+
+    # --- Consistency Check ---
+    consistency_check = (
+        os.getenv("SAPPHIRE_CONSISTENCY_CHECK", "false").lower()
+        == "true"
+    )
+    if consistency_check:
+        logger.info(
+            "SAPPHIRE_CONSISTENCY_CHECK: Verifying write consistency "
+            "for monthly combined forecasts"
+        )
+        is_consistent, message = fl._verify_preprocessing_write_consistency(
+            written_data=simulated_latest,
+            csv_file_path=filename_latest,
+            data_type="combined forecasts monthly",
+            key_columns=[
+                'code', 'month_in_year', 'model_short',
+            ],
+            value_columns=['forecasted_discharge'],
+        )
+        if is_consistent:
+            logger.info("CONSISTENCY CHECK PASSED: %s", message)
+        else:
+            logger.error("CONSISTENCY CHECK FAILED: %s", message)
+
+    return None
+
+
 def save_decadal_skill_metrics(data: pd.DataFrame):
     """
     Saves decadal skill metrics to a csv file.

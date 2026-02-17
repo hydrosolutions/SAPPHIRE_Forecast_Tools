@@ -392,35 +392,44 @@ def _read_daily_runoff_api(
         return pd.DataFrame()
 
     api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
-    client = SapphirePreprocessingClient(base_url=api_url)
 
-    all_records = []
-    start_date = f"{start_year}-01-01"
-    end_date = f"{end_year}-12-31"
+    try:
+        client = SapphirePreprocessingClient(base_url=api_url)
+        if not client.is_ready():
+            logger.warning("Preprocessing API not ready at %s", api_url)
+            return pd.DataFrame()
 
-    for code in codes:
-        skip = 0
-        batch_size = 1000
-        while True:
-            df_batch = client.read_runoff(
-                horizon="day",
-                code=code,
-                start_date=start_date,
-                end_date=end_date,
-                skip=skip,
-                limit=batch_size,
-            )
-            if df_batch is None or df_batch.empty:
-                break
-            all_records.append(df_batch)
-            if len(df_batch) < batch_size:
-                break
-            skip += batch_size
+        all_records = []
+        start_date = f"{start_year}-01-01"
+        end_date = f"{end_year}-12-31"
 
-    if not all_records:
+        for code in codes:
+            skip = 0
+            batch_size = 1000
+            while True:
+                df_batch = client.read_runoff(
+                    horizon="day",
+                    code=code,
+                    start_date=start_date,
+                    end_date=end_date,
+                    skip=skip,
+                    limit=batch_size,
+                )
+                if df_batch is None or df_batch.empty:
+                    break
+                all_records.append(df_batch)
+                if len(df_batch) < batch_size:
+                    break
+                skip += batch_size
+
+        if not all_records:
+            return pd.DataFrame()
+
+        return pd.concat(all_records, ignore_index=True)
+
+    except Exception as e:
+        logger.error("Failed to read daily runoff from API: %s", e)
         return pd.DataFrame()
-
-    return pd.concat(all_records, ignore_index=True)
 
 
 def _aggregate_daily_to_monthly(daily: pd.DataFrame) -> pd.DataFrame:
@@ -533,35 +542,48 @@ def _read_long_forecasts_api(
         return pd.DataFrame()
 
     api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
-    client = SapphirePostprocessingClient(base_url=api_url)
 
-    all_records = []
-    start_date = f"{start_year}-01-01"
-    end_date = f"{end_year}-12-31"
-
-    for code in codes:
-        skip = 0
-        batch_size = 1000
-        while True:
-            df_batch = client.read_long_term_forecasts(
-                horizon_type="month",
-                code=code,
-                start_date=start_date,
-                end_date=end_date,
-                skip=skip,
-                limit=batch_size,
+    try:
+        client = SapphirePostprocessingClient(base_url=api_url)
+        if not client.is_ready():
+            logger.warning(
+                "Postprocessing API not ready at %s", api_url
             )
-            if df_batch is None or df_batch.empty:
-                break
-            all_records.append(df_batch)
-            if len(df_batch) < batch_size:
-                break
-            skip += batch_size
+            return pd.DataFrame()
 
-    if not all_records:
+        all_records = []
+        start_date = f"{start_year}-01-01"
+        end_date = f"{end_year}-12-31"
+
+        for code in codes:
+            skip = 0
+            batch_size = 1000
+            while True:
+                df_batch = client.read_long_term_forecasts(
+                    horizon_type="month",
+                    code=code,
+                    start_date=start_date,
+                    end_date=end_date,
+                    skip=skip,
+                    limit=batch_size,
+                )
+                if df_batch is None or df_batch.empty:
+                    break
+                all_records.append(df_batch)
+                if len(df_batch) < batch_size:
+                    break
+                skip += batch_size
+
+        if not all_records:
+            return pd.DataFrame()
+
+        return pd.concat(all_records, ignore_index=True)
+
+    except Exception as e:
+        logger.error(
+            "Failed to read long-term forecasts from API: %s", e
+        )
         return pd.DataFrame()
-
-    return pd.concat(all_records, ignore_index=True)
 
 
 def _normalize_monthly_forecasts(df: pd.DataFrame) -> pd.DataFrame:

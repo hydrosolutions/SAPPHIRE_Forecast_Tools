@@ -735,6 +735,28 @@ class TestMonthlyMetricsEdgeCases:
         ]
         assert len(s2_m2) == 0
 
+    def test_skilled_mean_excluded_from_em_composition(self):
+        """Skilled Mean baseline is not included in EM composition.
+
+        M1 and M2 pass thresholds. Skilled Mean is added separately
+        and should never appear in EM's composition string.
+        """
+        obs = _make_obs([
+            ('S1', 2020, 1, 100.0),
+            ('S1', 2021, 1, 110.0),
+        ])
+        fcst = _make_fcst([
+            ('S1', 2020, 1, 'M1', 80, 85, 92, 102, 112, 118, 125),
+            ('S1', 2021, 1, 'M1', 88, 93, 100, 108, 116, 123, 130),
+            ('S1', 2020, 1, 'M2', 82, 87, 94, 101, 108, 114, 120),
+            ('S1', 2021, 1, 'M2', 90, 95, 102, 109, 117, 124, 131),
+        ])
+        skill_stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
+        em_rows = skill_stats[skill_stats['model_short'] == 'EM']
+        assert len(em_rows) == 1
+        composition = em_rows.iloc[0]['composition']
+        assert 'Skilled Mean' not in composition
+
     def test_naive_mean_excluded_from_em_composition(self):
         """Naive Mean baseline is not included in EM composition.
 
@@ -758,3 +780,194 @@ class TestMonthlyMetricsEdgeCases:
         assert 'Naive Mean' not in composition
         assert 'M1' in composition
         assert 'M2' in composition
+
+
+# ===================================================================
+# Skilled Mean baseline
+# ===================================================================
+
+class TestSkilledMeanBaseline:
+    """Inverse-MAE-weighted mean baseline."""
+
+    @pytest.fixture
+    def two_skilled_data(self):
+        """Two models M1/M2 both passing thresholds with different MAE.
+
+        obs=[100, 110], delta=4.766
+        M1 q50=[102, 108]: MAE = (|100-102|+|110-108|)/2 = 2.0
+        M2 q50=[101, 109]: MAE = (|100-101|+|110-109|)/2 = 1.0
+        """
+        obs = _make_obs([
+            ('S1', 2020, 1, 100.0),
+            ('S1', 2021, 1, 110.0),
+        ])
+        fcst = _make_fcst([
+            ('S1', 2020, 1, 'M1', 80, 85, 92, 102, 112, 118, 125),
+            ('S1', 2021, 1, 'M1', 88, 93, 100, 108, 116, 123, 130),
+            ('S1', 2020, 1, 'M2', 82, 87, 94, 101, 108, 114, 120),
+            ('S1', 2021, 1, 'M2', 90, 95, 102, 109, 117, 124, 131),
+        ])
+        return obs, fcst
+
+    def test_skilled_mean_appears_in_skill_stats(self, two_skilled_data):
+        """Skilled Mean appears with correct model_short."""
+        obs, fcst = two_skilled_data
+        skill_stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
+        sm_rows = skill_stats[skill_stats['model_short'] == 'Skilled Mean']
+        assert len(sm_rows) == 1
+
+    def test_skilled_mean_weighted_average(self, two_skilled_data):
+        """Hand-calculated weighted discharge.
+
+        M1 MAE=2.0, M2 MAE=1.0
+        eps = mean(2.0, 1.0) / 100 = 0.015
+        w1 = 1/(2.0+0.015) = 0.49628..., w2 = 1/(1.0+0.015) = 0.98522...
+        For year 2020: M1=102, M2=101
+          SM = (102*w1 + 101*w2) / (w1+w2)
+        For year 2021: M1=108, M2=109
+          SM = (108*w1 + 109*w2) / (w1+w2)
+        """
+        obs, fcst = two_skilled_data
+        skill_stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
+        sm_row = skill_stats[
+            skill_stats['model_short'] == 'Skilled Mean'
+        ].iloc[0]
+
+        # Compute expected MAE from the weighted forecasts
+        mae_m1 = 2.0
+        mae_m2 = 1.0
+        eps = (mae_m1 + mae_m2) / 2.0 / 100.0  # 0.015
+        w1 = 1.0 / (mae_m1 + eps)
+        w2 = 1.0 / (mae_m2 + eps)
+
+        sm_2020 = (102 * w1 + 101 * w2) / (w1 + w2)
+        sm_2021 = (108 * w1 + 109 * w2) / (w1 + w2)
+        expected_mae = (abs(100.0 - sm_2020) + abs(110.0 - sm_2021)) / 2.0
+
+        assert sm_row['mae'] == pytest.approx(expected_mae, rel=1e-4)
+
+    def test_skilled_mean_composition(self, two_skilled_data):
+        """Skilled Mean lists contributing models."""
+        obs, fcst = two_skilled_data
+        skill_stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
+        sm_row = skill_stats[
+            skill_stats['model_short'] == 'Skilled Mean'
+        ].iloc[0]
+        assert 'composition' in skill_stats.columns
+        assert 'M1' in sm_row['composition']
+        assert 'M2' in sm_row['composition']
+
+    def test_skilled_mean_crps_nan(self, two_skilled_data):
+        """Skilled Mean is a point forecast, CRPS = NaN."""
+        obs, fcst = two_skilled_data
+        skill_stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
+        sm_row = skill_stats[
+            skill_stats['model_short'] == 'Skilled Mean'
+        ].iloc[0]
+        assert np.isnan(sm_row['crps'])
+
+    def test_skilled_mean_not_created_single_model(self):
+        """Only 1 model passes threshold -> no Skilled Mean."""
+        obs = _make_obs([
+            ('S1', 2020, 1, 100.0),
+            ('S1', 2021, 1, 110.0),
+        ])
+        # M1 passes, Bad fails threshold
+        fcst = _make_fcst([
+            ('S1', 2020, 1, 'M1', 80, 85, 92, 102, 112, 118, 125),
+            ('S1', 2021, 1, 'M1', 88, 93, 100, 108, 116, 123, 130),
+            ('S1', 2020, 1, 'Bad', 120, 130, 140, 150, 160, 170, 180),
+            ('S1', 2021, 1, 'Bad', 130, 140, 150, 160, 170, 180, 190),
+        ])
+        skill_stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
+        sm_rows = skill_stats[
+            skill_stats['model_short'] == 'Skilled Mean'
+        ]
+        assert len(sm_rows) == 0
+
+    def test_skilled_mean_not_created_no_models_pass(self):
+        """All models fail threshold -> no Skilled Mean."""
+        obs = _make_obs([
+            ('S1', 2020, 1, 100.0),
+            ('S1', 2021, 1, 110.0),
+        ])
+        fcst = _make_fcst([
+            ('S1', 2020, 1, 'M1', 120, 130, 140, 150, 160, 170, 180),
+            ('S1', 2021, 1, 'M1', 130, 140, 150, 160, 170, 180, 190),
+            ('S1', 2020, 1, 'M2', 170, 180, 190, 200, 210, 220, 230),
+            ('S1', 2021, 1, 'M2', 180, 190, 200, 210, 220, 230, 240),
+        ])
+        skill_stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
+        sm_rows = skill_stats[
+            skill_stats['model_short'] == 'Skilled Mean'
+        ]
+        assert len(sm_rows) == 0
+
+    def test_skilled_mean_excluded_from_em(self):
+        """EM does not include Skilled Mean in its composition."""
+        obs = _make_obs([
+            ('S1', 2020, 1, 100.0),
+            ('S1', 2021, 1, 110.0),
+        ])
+        fcst = _make_fcst([
+            ('S1', 2020, 1, 'M1', 80, 85, 92, 102, 112, 118, 125),
+            ('S1', 2021, 1, 'M1', 88, 93, 100, 108, 116, 123, 130),
+            ('S1', 2020, 1, 'M2', 82, 87, 94, 101, 108, 114, 120),
+            ('S1', 2021, 1, 'M2', 90, 95, 102, 109, 117, 124, 131),
+        ])
+        skill_stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
+        em_rows = skill_stats[skill_stats['model_short'] == 'EM']
+        assert len(em_rows) == 1
+        assert 'Skilled Mean' not in em_rows.iloc[0]['composition']
+
+    def test_skilled_mean_equal_mae_equals_em(self):
+        """When all models have equal MAE, Skilled Mean ~ EM.
+
+        With equal MAE, weights are equal, so the weighted mean
+        equals the arithmetic mean (EM).
+        """
+        obs = _make_obs([
+            ('S1', 2020, 1, 100.0),
+            ('S1', 2021, 1, 110.0),
+        ])
+        # M1 q50=[102,108], M2 q50=[98,112] -> both MAE=2.0
+        fcst = _make_fcst([
+            ('S1', 2020, 1, 'M1', 80, 85, 92, 102, 112, 118, 125),
+            ('S1', 2021, 1, 'M1', 88, 93, 100, 108, 116, 123, 130),
+            ('S1', 2020, 1, 'M2', 78, 83, 90, 98, 106, 112, 118),
+            ('S1', 2021, 1, 'M2', 92, 97, 104, 112, 120, 127, 134),
+        ])
+        skill_stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
+        em_row = skill_stats[
+            skill_stats['model_short'] == 'EM'
+        ].iloc[0]
+        sm_row = skill_stats[
+            skill_stats['model_short'] == 'Skilled Mean'
+        ].iloc[0]
+        assert sm_row['mae'] == pytest.approx(em_row['mae'], rel=1e-4)
+
+    def test_skilled_mean_nan_mae_excluded(self):
+        """Model with NaN MAE is excluded from weighting.
+
+        When only 1 valid model remains after NaN exclusion,
+        Skilled Mean is not created (single-model check).
+        """
+        obs = _make_obs([
+            ('S1', 2020, 1, 100.0),
+        ])
+        # Single-year: sdivsigma/NSE are NaN but MAE is valid
+        # M1 q50=[102] -> MAE=2, M2 has NaN (will not have skill row
+        # with valid MAE since single year MAE is still computable).
+        # Actually with single year both models get MAE.
+        # Let's use a case where one model has NaN forecast:
+        fcst = _make_fcst([
+            ('S1', 2020, 1, 'M1', 80, 85, 92, 102, 112, 118, 125),
+            ('S1', 2020, 1, 'M2', 80, 85, 92, np.nan, 112, 118, 125),
+        ])
+        skill_stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
+        # M2 has NaN q50 -> forecasted_discharge is NaN -> MAE is NaN
+        # Only M1 has valid MAE -> single model -> no Skilled Mean
+        sm_rows = skill_stats[
+            skill_stats['model_short'] == 'Skilled Mean'
+        ]
+        assert len(sm_rows) == 0

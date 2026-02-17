@@ -107,6 +107,7 @@ def _setup_mocks(mock_data, mock_skill):
     mock_file_writer.save_pentadal_skill_metrics.return_value = None
     mock_file_writer.save_forecast_data_decade.return_value = None
     mock_file_writer.save_decadal_skill_metrics.return_value = None
+    mock_file_writer.save_monthly_forecast_data.return_value = None
     mock_file_writer.save_monthly_skill_metrics.return_value = None
 
     mock_pt_module = MagicMock()

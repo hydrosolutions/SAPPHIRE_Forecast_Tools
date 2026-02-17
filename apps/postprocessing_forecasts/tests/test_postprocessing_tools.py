@@ -13,6 +13,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 from src.postprocessing_tools import (
     log_most_recent_forecasts_pentad,
     log_most_recent_forecasts_decade,
+    log_most_recent_forecasts_monthly,
     forecast_target_date,
 )
 
@@ -410,3 +411,88 @@ class TestForecastTargetDate:
         """Feb 28 2023 (not leap year) -> Mar 1 2023."""
         result = forecast_target_date(dt.date(2023, 2, 28))
         assert result == dt.date(2023, 3, 1)
+
+
+# ===================================================================
+# Monthly logging tests
+# ===================================================================
+
+class TestLogMostRecentForecastsMonthly:
+    """Tests for log_most_recent_forecasts_monthly()."""
+
+    @pytest.fixture
+    def sample_monthly_data(self):
+        """Monthly joint forecast data with 2 stations, 2 models."""
+        return pd.DataFrame({
+            'code': ['15013', '15013', '15014', '15014',
+                     '15013', '15013', '15014', '15014'],
+            'year': [2023, 2023, 2023, 2023,
+                     2024, 2024, 2024, 2024],
+            'month_in_year': [6, 6, 6, 6, 6, 6, 6, 6],
+            'forecasted_discharge': [100.0, 105.0, 200.0, 210.0,
+                                     102.0, 107.0, 202.0, 212.0],
+            'model_short': ['GBT', 'EM', 'GBT', 'EM',
+                            'GBT', 'EM', 'GBT', 'EM'],
+        })
+
+    @patch('os.makedirs')
+    @patch('os.getenv')
+    @patch('pandas.DataFrame.to_csv')
+    def test_happy_path(self, mock_to_csv, mock_getenv,
+                        mock_makedirs, sample_monthly_data):
+        """Returns pivoted DataFrame with correct shape."""
+        mock_getenv.return_value = '/tmp'
+
+        result = log_most_recent_forecasts_monthly(sample_monthly_data)
+
+        assert isinstance(result, pd.DataFrame)
+        assert len(result) == 2  # 2 stations
+        assert 'GBT' in result.columns
+        assert 'EM' in result.columns
+        mock_to_csv.assert_called_once()
+
+    @patch('os.makedirs')
+    @patch('os.getenv')
+    @patch('pandas.DataFrame.to_csv')
+    def test_uses_most_recent_year_month(
+        self, mock_to_csv, mock_getenv, mock_makedirs,
+        sample_monthly_data,
+    ):
+        """Only the most recent (year, month) combination is used."""
+        mock_getenv.return_value = '/tmp'
+
+        result = log_most_recent_forecasts_monthly(sample_monthly_data)
+
+        # Most recent is year=2024, month=6
+        assert all(result['year'] == 2024)
+        assert all(result['month_in_year'] == 6)
+
+    def test_empty_data(self):
+        """Empty DataFrame returns empty DataFrame."""
+        result = log_most_recent_forecasts_monthly(pd.DataFrame())
+        assert result.empty
+
+    def test_none_data(self):
+        """None input returns empty DataFrame."""
+        result = log_most_recent_forecasts_monthly(None)
+        assert result.empty
+
+    @patch('os.makedirs')
+    @patch('os.getenv')
+    @patch('pandas.DataFrame.to_csv')
+    def test_single_model(self, mock_to_csv, mock_getenv,
+                          mock_makedirs):
+        """Single model still produces valid pivot."""
+        mock_getenv.return_value = '/tmp'
+
+        data = pd.DataFrame({
+            'code': ['15013'],
+            'year': [2024],
+            'month_in_year': [3],
+            'forecasted_discharge': [100.0],
+            'model_short': ['GBT'],
+        })
+        result = log_most_recent_forecasts_monthly(data)
+
+        assert len(result) == 1
+        assert result.iloc[0]['GBT'] == pytest.approx(100.0)

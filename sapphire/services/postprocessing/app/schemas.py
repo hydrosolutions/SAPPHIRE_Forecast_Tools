@@ -167,7 +167,7 @@ class SkillMetricBase(BaseModel):
     delta: Optional[float] = None
     accuracy: Optional[float] = None
     mae: Optional[float] = None
-    n_pairs: Optional[float] = None
+    n_pairs: Optional[int] = None
 
 
 class SkillMetricCreate(SkillMetricBase):

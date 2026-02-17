@@ -271,6 +271,23 @@ class TestReadMonthlyObservationsApiFailure:
         assert isinstance(result, pd.DataFrame)
         assert result.empty
 
+    def test_read_monthly_observations_api_not_ready(self):
+        """When preprocessing API is_ready()=False, returns empty."""
+        mock_client = MagicMock()
+        mock_client.is_ready.return_value = False
+
+        with patch("src.data_reader.SAPPHIRE_API_AVAILABLE", True), \
+             patch.dict(os.environ, {"SAPPHIRE_API_ENABLED": "true"}), \
+             patch(
+                 "src.data_reader.SapphirePreprocessingClient",
+                 return_value=mock_client,
+             ):
+            result = read_monthly_observations(["15013"], 2023, 2023)
+
+        assert isinstance(result, pd.DataFrame)
+        assert result.empty
+        mock_client.read_runoff.assert_not_called()
+
 
 # ===================================================================
 # read_monthly_forecasts
@@ -445,3 +462,20 @@ class TestReadMonthlyForecastsApiFailure:
             result = read_monthly_forecasts(["15013"], 2023, 2023)
         assert isinstance(result, pd.DataFrame)
         assert result.empty
+
+    def test_read_monthly_forecasts_api_not_ready(self):
+        """When postprocessing API is_ready()=False, returns empty."""
+        mock_client = MagicMock()
+        mock_client.is_ready.return_value = False
+
+        with patch("src.data_reader.SAPPHIRE_API_AVAILABLE", True), \
+             patch.dict(os.environ, {"SAPPHIRE_API_ENABLED": "true"}), \
+             patch(
+                 "src.data_reader.SapphirePostprocessingClient",
+                 return_value=mock_client,
+             ):
+            result = read_monthly_forecasts(["15013"], 2023, 2023)
+
+        assert isinstance(result, pd.DataFrame)
+        assert result.empty
+        mock_client.read_long_term_forecasts.assert_not_called()

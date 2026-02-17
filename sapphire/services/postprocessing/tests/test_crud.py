@@ -288,6 +288,76 @@ class TestSkillMetricCRUD:
 # Edge cases
 # -------------------------------------------------------------------
 
+class TestMonthlySkillMetricCRUD:
+    """Tests for monthly skill metrics CRUD operations."""
+
+    def test_create_monthly(self, db_session):
+        """Create a monthly skill metric with month horizon."""
+        item = make_skill_metric(
+            horizon_type="month", horizon_in_year=6,
+            model_type="GBT", nse=0.82, accuracy=0.90,
+        )
+        bulk = SkillMetricBulkCreate(data=[item])
+        results = crud.create_skill_metric(db_session, bulk)
+
+        assert len(results) == 1
+        r = results[0]
+        assert r.id is not None
+        assert r.code == "15013"
+        assert r.model_type.value == "GBT"
+        assert r.horizon_type.value == "month"
+        assert r.horizon_in_year == 6
+        assert r.nse == 0.82
+        assert r.accuracy == 0.90
+
+    def test_upsert_monthly(self, db_session):
+        """Update same (month, code, model) record via upsert."""
+        item1 = make_skill_metric(
+            horizon_type="month", horizon_in_year=6,
+            model_type="GBT", nse=0.70,
+        )
+        crud.create_skill_metric(
+            db_session, SkillMetricBulkCreate(data=[item1])
+        )
+
+        item2 = make_skill_metric(
+            horizon_type="month", horizon_in_year=6,
+            model_type="GBT", nse=0.95,
+        )
+        results = crud.create_skill_metric(
+            db_session, SkillMetricBulkCreate(data=[item2])
+        )
+
+        assert len(results) == 1
+        assert results[0].nse == 0.95
+        assert db_session.query(SkillMetric).count() == 1
+
+    def test_filter_by_month_horizon(self, db_session):
+        """get_skill_metric(horizon='month') returns only monthly records."""
+        items = [
+            make_skill_metric(
+                horizon_type="pentad", horizon_in_year=33,
+                model_type="LR",
+            ),
+            make_skill_metric(
+                horizon_type="month", horizon_in_year=6,
+                model_type="GBT",
+            ),
+            make_skill_metric(
+                horizon_type="month", horizon_in_year=7,
+                model_type="GBT", code="15014",
+            ),
+        ]
+        crud.create_skill_metric(
+            db_session, SkillMetricBulkCreate(data=items)
+        )
+
+        results = crud.get_skill_metric(db_session, horizon="month")
+        assert len(results) == 2
+        for r in results:
+            assert r.horizon_type.value == "month"
+
+
 class TestCRUDEdgeCases:
     """Cross-cutting edge case tests."""
 

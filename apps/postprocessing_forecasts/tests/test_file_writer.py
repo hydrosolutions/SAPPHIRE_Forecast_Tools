@@ -324,6 +324,127 @@ class TestSaveMonthlySkillMetrics:
         assert len(em_rows) == 2
         assert all(pd.isna(em_rows['crps']))
 
+    @patch('src.api_writer._write_skill_metrics_to_api')
+    def test_csv_written_when_api_fails(
+        self, mock_api_write, monthly_skill_data
+    ):
+        """CSV is still written to disk when API write raises."""
+        mock_api_write.side_effect = RuntimeError("API connection refused")
+        with patch.object(api_writer, 'SAPPHIRE_API_AVAILABLE', True):
+            file_writer.save_monthly_skill_metrics(monthly_skill_data)
+
+        csv_path = os.path.join(str(self.tmp_path), 'skill_monthly.csv')
+        assert os.path.exists(csv_path)
+        saved = pd.read_csv(csv_path, dtype={'code': str})
+        assert len(saved) == 6
+
+
+class TestSaveMonthlyForecastData:
+    """Tests for save_monthly_forecast_data()."""
+
+    @pytest.fixture(autouse=True)
+    def save_env(self, tmp_path):
+        """Set env vars for monthly forecast data save."""
+        overrides = {
+            'ieasyforecast_intermediate_data_path': str(tmp_path),
+            'ieasyforecast_monthly_combined_forecast_file':
+                'combined_monthly.csv',
+            'SAPPHIRE_API_ENABLED': 'false',
+            'SAPPHIRE_CONSISTENCY_CHECK': 'false',
+            'SAPPHIRE_TEST_ENV': 'True',
+        }
+        with patch.dict(os.environ, overrides):
+            self.tmp_path = tmp_path
+            yield
+
+    @pytest.fixture
+    def monthly_joint_data(self):
+        """Monthly joint forecasts DataFrame."""
+        return pd.DataFrame({
+            'code': ['15013', '15013', '15013', '15013'],
+            'year': [2023, 2023, 2024, 2024],
+            'month': [6, 6, 6, 6],
+            'month_in_year': [6, 6, 6, 6],
+            'date': pd.to_datetime([
+                '2023-06-01', '2023-06-01',
+                '2024-06-01', '2024-06-01',
+            ]),
+            'forecasted_discharge': [100.123456, 105.654321,
+                                     102.111, 107.222],
+            'model_short': ['GBT', 'EM', 'GBT', 'EM'],
+            'composition': ['', 'GBT, LR_Base', '', 'GBT, LR_Base'],
+        })
+
+    def test_csv_written(self, monthly_joint_data):
+        """CSV file is created at the env-var-configured path."""
+        with patch.object(api_writer, 'SAPPHIRE_API_AVAILABLE', False):
+            file_writer.save_monthly_forecast_data(monthly_joint_data)
+
+        csv_path = os.path.join(
+            str(self.tmp_path), 'combined_monthly.csv'
+        )
+        assert os.path.exists(csv_path)
+
+    def test_latest_csv_written(self, monthly_joint_data):
+        """Latest CSV file is also created."""
+        with patch.object(api_writer, 'SAPPHIRE_API_AVAILABLE', False):
+            file_writer.save_monthly_forecast_data(monthly_joint_data)
+
+        latest_path = os.path.join(
+            str(self.tmp_path), 'combined_monthly_latest.csv'
+        )
+        assert os.path.exists(latest_path)
+
+    def test_values_rounded(self, monthly_joint_data):
+        """Float values are rounded to 3 decimal places."""
+        with patch.object(api_writer, 'SAPPHIRE_API_AVAILABLE', False):
+            file_writer.save_monthly_forecast_data(monthly_joint_data)
+
+        csv_path = os.path.join(
+            str(self.tmp_path), 'combined_monthly.csv'
+        )
+        saved = pd.read_csv(csv_path)
+        row = saved[
+            (saved['model_short'] == 'GBT')
+            & (saved['year'] == 2023)
+        ]
+        assert len(row) == 1
+        # 100.123456 -> 100.123
+        assert abs(row.iloc[0]['forecasted_discharge'] - 100.123) < 1e-4
+
+    def test_code_cleaned(self):
+        """Float codes like 15013.0 are cleaned to '15013'."""
+        data = pd.DataFrame({
+            'code': [15013.0],
+            'year': [2023], 'month': [6], 'month_in_year': [6],
+            'date': pd.to_datetime(['2023-06-01']),
+            'forecasted_discharge': [100.0],
+            'model_short': ['GBT'],
+        })
+        with patch.object(api_writer, 'SAPPHIRE_API_AVAILABLE', False):
+            file_writer.save_monthly_forecast_data(data)
+
+        csv_path = os.path.join(
+            str(self.tmp_path), 'combined_monthly.csv'
+        )
+        saved = pd.read_csv(csv_path, dtype={'code': str})
+        assert saved.iloc[0]['code'] == '15013'
+
+    def test_api_not_called(self, monthly_joint_data):
+        """API write is not called (CSV only for now)."""
+        with patch.object(api_writer, 'SAPPHIRE_API_AVAILABLE', True), \
+             patch('src.api_writer._write_combined_forecast_to_api'
+                   ) as mock_api:
+            file_writer.save_monthly_forecast_data(monthly_joint_data)
+            mock_api.assert_not_called()
+
+    def test_empty_df_handled(self):
+        """Empty DataFrame does not crash."""
+        data = pd.DataFrame()
+        with patch.object(api_writer, 'SAPPHIRE_API_AVAILABLE', False):
+            result = file_writer.save_monthly_forecast_data(data)
+        assert result is None
+
 
 class TestSaveForecastDataAtomicWrites:
     """Tests that save_forecast_data_pentad/decade use atomic_write_csv."""

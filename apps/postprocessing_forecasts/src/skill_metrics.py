@@ -558,6 +558,10 @@ def calculate_monthly_skill_metrics(
 
     # --- 4. Ensemble mean (EM) ---
     joint_forecasts = forecasts.copy()
+    # Ensure month_in_year is present (forecasts may only have 'month')
+    if 'month_in_year' not in joint_forecasts.columns:
+        if 'month' in joint_forecasts.columns:
+            joint_forecasts['month_in_year'] = joint_forecasts['month']
     skill_stats_filtered = filter_for_highly_skilled_forecasts(skill_stats)
 
     merge_keys = ['month_in_year', 'code', 'model_short']
@@ -566,9 +570,11 @@ def calculate_monthly_skill_metrics(
         on=merge_keys,
         how='inner',
     )
-    # Exclude existing EM / Naive Mean from ensemble input
+    # Exclude existing EM / baselines from ensemble input
     skilled_merged = skilled_merged[
-        ~skilled_merged['model_short'].isin(['EM', 'Naive Mean'])
+        ~skilled_merged['model_short'].isin(
+            ['EM', 'Naive Mean', 'Skilled Mean']
+        )
     ].copy()
     skilled_merged = skilled_merged.dropna(
         subset=['forecasted_discharge']
@@ -636,6 +642,11 @@ def calculate_monthly_skill_metrics(
                 ignore_index=True,
             )
 
+    # --- 4b. Skilled Mean baseline ---
+    skill_stats, joint_forecasts = _add_skilled_mean(
+        skill_stats, merged, observations, timing_stats, joint_forecasts
+    )
+
     # --- 5. Naive Mean baseline ---
     return _add_naive_mean(
         skill_stats, observations, timing_stats, joint_forecasts
@@ -694,6 +705,146 @@ def _add_naive_mean(
         skill_stats = naive_skill
 
     return skill_stats, joint_forecasts, timing_stats
+
+
+def _add_skilled_mean(
+    skill_stats: pd.DataFrame,
+    merged: pd.DataFrame,
+    observations: pd.DataFrame,
+    timing_stats,
+    joint_forecasts: pd.DataFrame,
+) -> tuple:
+    """Add Skilled Mean (inverse-MAE weighted) to skill_stats.
+
+    Skilled Mean = weighted average of threshold-filtered models'
+    q50 forecasts, where w_i = 1 / (MAE_i + eps).
+    eps = mean(MAE) / 100 to avoid division by zero.
+
+    Only models passing the same threshold filter as EM are included.
+    EM, Naive Mean, and Skilled Mean themselves are excluded from
+    the model pool. Single-model groups are discarded.
+
+    CRPS is NaN (point forecast only, no quantile distribution).
+    """
+    from src.ensemble_calculator import (
+        composition_agg, is_multi_model_composition,
+    )
+
+    if skill_stats.empty or merged.empty:
+        return skill_stats, joint_forecasts
+
+    # 1. Filter for highly skilled models (same pool as EM)
+    filtered = filter_for_highly_skilled_forecasts(skill_stats)
+
+    # 2. Exclude baselines from the model pool
+    excluded = {'EM', 'Naive Mean', 'Skilled Mean'}
+    filtered = filtered[~filtered['model_short'].isin(excluded)].copy()
+    if filtered.empty:
+        return skill_stats, joint_forecasts
+
+    # 3. Extract MAE per (month_in_year, code, model_short)
+    mae_df = filtered[
+        ['month_in_year', 'code', 'model_short', 'mae']
+    ].copy()
+    mae_df = mae_df.dropna(subset=['mae'])
+    if mae_df.empty:
+        return skill_stats, joint_forecasts
+
+    # 4. Compute weights: w_i = 1 / (MAE_i + eps)
+    mean_mae = mae_df['mae'].mean()
+    eps = mean_mae / 100.0 if mean_mae > 0 else 1e-10
+    mae_df['weight'] = 1.0 / (mae_df['mae'] + eps)
+
+    # Get qualifying models per (month_in_year, code)
+    qualifying_keys = mae_df[
+        ['month_in_year', 'code', 'model_short']
+    ].drop_duplicates()
+
+    # Filter merged to qualifying models only
+    sm_merged = merged.merge(
+        qualifying_keys, on=['month_in_year', 'code', 'model_short'],
+        how='inner',
+    )
+    sm_merged = sm_merged.dropna(subset=['forecasted_discharge']).copy()
+    if sm_merged.empty:
+        return skill_stats, joint_forecasts
+
+    # Attach weights from mae_df
+    sm_merged = sm_merged.merge(
+        mae_df[['month_in_year', 'code', 'model_short', 'weight']],
+        on=['month_in_year', 'code', 'model_short'],
+        how='left',
+    )
+
+    # 5. Compute weighted mean per (code, year, month)
+    def _weighted_mean(group):
+        w = group['weight'].to_numpy()
+        d = group['forecasted_discharge'].to_numpy()
+        return np.average(d, weights=w)
+
+    sm_avg = sm_merged.groupby(['year', 'month', 'code']).agg(
+        month_in_year=('month_in_year', 'first'),
+        forecasted_discharge=('forecasted_discharge',
+                              lambda x: _weighted_mean(
+                                  sm_merged.loc[x.index])),
+        model_short=('model_short', composition_agg),
+    ).reset_index()
+    sm_avg = sm_avg.rename(columns={'model_short': 'composition'})
+    sm_avg['model_short'] = 'Skilled Mean'
+
+    # 6. Discard single-model groups
+    sm_avg = sm_avg[
+        sm_avg['composition'].apply(is_multi_model_composition)
+    ].copy()
+
+    if sm_avg.empty:
+        return skill_stats, joint_forecasts
+
+    # 7. Merge with observations, compute point metrics
+    sm_with_obs = pd.merge(
+        sm_avg,
+        observations[['code', 'year', 'month', 'month_in_year',
+                       'discharge_avg', 'delta']],
+        on=['code', 'year', 'month'],
+        how='inner',
+        suffixes=('', '_obs'),
+    )
+    if 'month_in_year_obs' in sm_with_obs.columns:
+        sm_with_obs = sm_with_obs.drop(columns=['month_in_year_obs'])
+
+    sm_skill = sm_with_obs.groupby(
+        ['month_in_year', 'code', 'model_short', 'composition']
+    )[['discharge_avg', 'forecasted_discharge', 'delta']].apply(
+        calculate_all_skill_metrics,
+        observed_col='discharge_avg',
+        simulated_col='forecasted_discharge',
+        delta_col='delta',
+    ).reset_index()
+
+    # 8. CRPS = NaN (point forecast, no quantiles)
+    sm_skill['crps'] = np.nan
+
+    # 9. Append to skill_stats
+    skill_stats = pd.concat(
+        [skill_stats, sm_skill], ignore_index=True
+    )
+
+    # Add Skilled Mean rows to joint_forecasts
+    sm_joint_cols = [
+        c for c in ['code', 'year', 'month', 'month_in_year',
+                     'forecasted_discharge', 'model_short',
+                     'composition']
+        if c in sm_avg.columns
+    ]
+    if 'composition' not in joint_forecasts.columns:
+        joint_forecasts = joint_forecasts.copy()
+        joint_forecasts['composition'] = ''
+    joint_forecasts = pd.concat(
+        [joint_forecasts, sm_avg[sm_joint_cols]],
+        ignore_index=True,
+    )
+
+    return skill_stats, joint_forecasts
 
 
 # ---------------------------------------------------------------------------

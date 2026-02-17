@@ -837,6 +837,13 @@ class TestModelTypeMap:
         assert "SKILLED MEAN" in MODEL_TYPE_MAP
         assert MODEL_TYPE_MAP["SKILLED MEAN"] == "Skilled Mean"
 
+    def test_skilled_mean_model_type_mapping(self):
+        """Skilled Mean maps correctly through MODEL_TYPE_MAP."""
+        # The key is uppercase, the value preserves original casing
+        assert MODEL_TYPE_MAP["SKILLED MEAN"] == "Skilled Mean"
+        # Verify it's distinct from Naive Mean
+        assert MODEL_TYPE_MAP["SKILLED MEAN"] != MODEL_TYPE_MAP["NAIVE MEAN"]
+
 
 class TestWriteMonthlySkillMetricsToApi:
     """Tests for _write_skill_metrics_to_api with horizon_type='month'.

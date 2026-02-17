@@ -259,6 +259,19 @@ def recalculate_skill_metrics():
                 logger.info(
                     "\n\n------ Saving monthly results -------------------"
                 )
+                ret = file_writer.save_monthly_forecast_data(monthly_joint)
+                if ret is None:
+                    logger.info(
+                        "Monthly forecast data saved successfully."
+                    )
+                else:
+                    logger.error(
+                        f"Error saving monthly forecast data: {ret}"
+                    )
+                    errors.append(
+                        f"Monthly forecast data save failed: {ret}"
+                    )
+
                 ret = file_writer.save_monthly_skill_metrics(monthly_skill)
                 if ret is None:
                     logger.info(
@@ -271,6 +284,8 @@ def recalculate_skill_metrics():
                     errors.append(
                         f"Monthly skill metrics save failed: {ret}"
                     )
+
+            pt.log_most_recent_forecasts_monthly(monthly_joint)
 
     # Print timing summary
     summary, total = timing_stats.summary()

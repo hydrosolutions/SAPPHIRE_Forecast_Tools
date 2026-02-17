@@ -212,6 +212,101 @@ def log_most_recent_forecasts_pentad(modelled_data):
 
     return pivoted_forecasts
 
+def log_most_recent_forecasts_monthly(modelled_data):
+    """Extract and log the most recent monthly forecast for each model.
+
+    Creates a CSV file with stations as rows and models as columns,
+    showing the most recent (year, month) combination.
+
+    Args:
+        modelled_data: DataFrame with monthly joint forecast data.
+            Expected columns: code, year, month_in_year, model_short,
+            forecasted_discharge.
+
+    Returns:
+        pd.DataFrame: Pivoted DataFrame with stations as rows and
+        models as columns.
+    """
+    if modelled_data is None or modelled_data.empty:
+        logger.warning("No monthly forecast data available to log")
+        return pd.DataFrame()
+
+    logger.info(
+        "\n\n------ Most Recent Monthly Forecasts by Module -------"
+    )
+
+    # Find most recent (year, month) combination
+    if 'year' not in modelled_data.columns:
+        logger.warning("No 'year' column in monthly forecast data")
+        return pd.DataFrame()
+
+    max_year = int(modelled_data['year'].max())
+    latest_year_data = modelled_data[
+        modelled_data['year'] == max_year
+    ]
+    if latest_year_data.empty:
+        logger.warning("No data for most recent year %d", max_year)
+        return pd.DataFrame()
+
+    max_month = int(latest_year_data['month_in_year'].max())
+    logger.info(
+        "Most recent monthly forecast: year=%d, month=%d",
+        max_year, max_month,
+    )
+
+    # Filter to most recent (year, month)
+    recent = modelled_data[
+        (modelled_data['year'] == max_year)
+        & (modelled_data['month_in_year'] == max_month)
+    ]
+
+    if recent.empty:
+        logger.warning(
+            "No forecasts for year=%d month=%d", max_year, max_month
+        )
+        return pd.DataFrame()
+
+    # Pivot: rows=code, columns=model_short, values=forecasted_discharge
+    # joint_forecasts may have q50 (from API) or forecasted_discharge
+    # (from EM calculation); use whichever is available.
+    value_col = 'forecasted_discharge'
+    if value_col not in recent.columns and 'q50' in recent.columns:
+        recent = recent.copy()
+        recent['forecasted_discharge'] = recent['q50']
+    pivoted = pd.pivot_table(
+        recent,
+        values='forecasted_discharge',
+        index=['code', 'year', 'month_in_year'],
+        columns=['model_short'],
+        aggfunc='first',
+        fill_value=None,
+    )
+    pivoted = pivoted.reset_index()
+
+    # Create directory if it doesn't exist
+    forecast_dir = os.path.join(
+        os.getenv("ieasyforecast_intermediate_data_path"),
+        "forecast_logs"
+    )
+    os.makedirs(forecast_dir, exist_ok=True)
+
+    # Save pivoted data to CSV
+    forecast_file = os.path.join(
+        forecast_dir,
+        f"recent_model_forecasts_monthly_{max_year}{max_month:02d}.csv"
+    )
+    pivoted.to_csv(forecast_file, index=False)
+
+    logger.info(
+        "Recent monthly forecasts saved to: %s", forecast_file
+    )
+    logger.info(
+        "Number of stations with forecasts: %d", len(pivoted)
+    )
+
+    return pivoted
+
+
 def log_most_recent_forecasts_decade(modelled_data):
     """
     Extract and log the most recent forecast for each module (model).
