@@ -11,6 +11,8 @@ import datetime as dt
 
 import pandas as pd
 
+from src.postprocessing_tools import forecast_target_date
+
 logger = logging.getLogger(__name__)
 
 
@@ -185,8 +187,9 @@ def create_ensemble_forecasts(
         )
 
         # Step 7: calculate period_in_month for ensemble rows
-        ensemble_merged[period_in_month_col] = (
-            ensemble_merged['date'] + dt.timedelta(days=1.0)
+        # (production date -> target period start)
+        ensemble_merged[period_in_month_col] = forecast_target_date(
+            ensemble_merged['date']
         ).apply(get_period_in_month_func)
 
         # Step 8: outer join ensemble rows into forecasts

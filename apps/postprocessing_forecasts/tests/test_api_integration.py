@@ -149,14 +149,14 @@ class TestWriteCombinedForecastToApi:
                 'model_short': ['TFT'],
             })
 
-            result = _write_combined_forecast_to_api(data, "decade")
+            result = _write_combined_forecast_to_api(data, "decad")
             assert result is True
 
             # Get the records that were passed
             call_args = mock_client.write_forecasts.call_args[0][0]
             record = call_args[0]
 
-            # Check field mapping
+            # Check field mapping — "decad" translates to "decade" at boundary
             assert record['horizon_type'] == 'decade'
             assert record['code'] == '12345'
             assert record['model_type'] == 'TFT'
@@ -543,14 +543,14 @@ class TestWriteSkillMetricsToApi:
                 'n_pairs': [120],
             })
 
-            result = _write_skill_metrics_to_api(data, "decade")
+            result = _write_skill_metrics_to_api(data, "decad")
             assert result is True
 
             # Get the records that were passed
             call_args = mock_client.write_skill_metrics.call_args[0][0]
             record = call_args[0]
 
-            # Check field mapping
+            # Check field mapping — "decad" translates to "decade" at boundary
             assert record['horizon_type'] == 'decade'
             assert record['code'] == '12345'
             assert record['model_type'] == 'TFT'
@@ -1094,5 +1094,83 @@ class TestWriteMonthlySkillMetricsToApi:
             assert record['mae'] is None
             assert record['n_pairs'] is None
             assert 'crps' not in record
+        finally:
+            os.environ.pop('SAPPHIRE_API_ENABLED', None)
+
+
+class TestHorizonTypeToApiMapping:
+    """Tests for HORIZON_TYPE_TO_API translation layer."""
+
+    def test_horizon_type_to_api_mapping(self):
+        """Constant maps internal names to API enum values."""
+        from src.api_writer import HORIZON_TYPE_TO_API
+        assert HORIZON_TYPE_TO_API == {
+            "pentad": "pentad",
+            "decad": "decade",
+            "month": "month",
+        }
+
+    def test_old_decade_string_raises_combined_forecast(self):
+        """Passing 'decade' (old API name) to combined forecast raises."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        data = pd.DataFrame({
+            'code': [12345],
+            'date': pd.to_datetime(['2024-01-15']),
+            'decad': [2],
+            'decad_in_year': [2],
+            'forecasted_discharge': [150.0],
+            'model_short': ['TFT'],
+        })
+        with pytest.raises(ValueError, match="Invalid horizon_type"):
+            _write_combined_forecast_to_api(data, "decade")
+
+    def test_old_decade_string_raises_skill_metrics(self):
+        """Passing 'decade' (old API name) to skill metrics raises."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        data = pd.DataFrame({
+            'code': [12345],
+            'decad_in_year': [10],
+            'model_short': ['TFT'],
+            'sdivsigma': [0.6],
+            'nse': [0.75],
+            'delta': [0.15],
+            'accuracy': [0.88],
+            'mae': [6.2],
+            'n_pairs': [120],
+        })
+        with pytest.raises(ValueError, match="Invalid horizon_type"):
+            _write_skill_metrics_to_api(data, "decade")
+
+    @patch('src.api_writer.SapphirePostprocessingClient')
+    def test_decad_translates_to_decade_in_api_records(
+        self, mock_client_class
+    ):
+        """Internal 'decad' becomes 'decade' in the API record."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        os.environ['SAPPHIRE_API_ENABLED'] = 'true'
+        try:
+            mock_client = Mock()
+            mock_client.readiness_check.return_value = True
+            mock_client.write_forecasts.return_value = 1
+            mock_client_class.return_value = mock_client
+
+            data = pd.DataFrame({
+                'code': [12345],
+                'date': pd.to_datetime(['2024-01-15']),
+                'decad': [2],
+                'decad_in_year': [2],
+                'forecasted_discharge': [150.0],
+                'model_short': ['TFT'],
+            })
+
+            _write_combined_forecast_to_api(data, "decad")
+            record = mock_client.write_forecasts.call_args[0][0][0]
+            assert record['horizon_type'] == 'decade'
         finally:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)

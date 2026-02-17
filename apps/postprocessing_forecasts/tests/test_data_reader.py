@@ -17,8 +17,11 @@ import numpy as np
 
 from src.data_reader import (
     read_skill_metrics,
+    read_monthly_skill_metrics,
     _read_skill_metrics_csv,
+    _read_monthly_skill_metrics_csv,
     _normalize_api_skill_metrics,
+    _normalize_api_monthly_skill_metrics,
     _aggregate_daily_to_monthly,
     _normalize_monthly_forecasts,
     read_monthly_observations,
@@ -762,3 +765,145 @@ class TestReadMonthlyForecasts:
         assert result.iloc[0]['year'] == 2024
         assert set(result['month']) == {6, 7}
         assert result.iloc[0]['q50'] == 100.0
+
+
+# ===================================================================
+# Monthly skill metrics read-back (Commit 5)
+# ===================================================================
+
+class TestReadMonthlySkillMetricsCsv:
+    """Tests for _read_monthly_skill_metrics_csv."""
+
+    def test_reads_monthly_csv(self, tmp_path):
+        """CSV with correct columns is read and returned."""
+        csv_file = tmp_path / "monthly_skill.csv"
+        pd.DataFrame({
+            'month_in_year': [1, 2],
+            'code': ['10001', '10002'],
+            'model_short': ['LR', 'TFT'],
+            'sdivsigma': [0.3, 0.4],
+            'nse': [0.9, 0.85],
+            'delta': [5.0, 6.0],
+            'accuracy': [0.95, 0.88],
+            'mae': [2.1, 3.2],
+            'n_pairs': [10, 12],
+        }).to_csv(csv_file, index=False)
+
+        with patch.dict(os.environ, {
+            'ieasyforecast_intermediate_data_path': str(tmp_path),
+            'ieasyforecast_monthly_skill_metrics_file': 'monthly_skill.csv',
+        }):
+            result = _read_monthly_skill_metrics_csv()
+            assert result is not None
+            assert len(result) == 2
+            assert result['code'].dtype == object  # string
+            assert result.iloc[0]['code'] == '10001'
+            assert result.iloc[0]['month_in_year'] == 1
+
+    def test_missing_env_vars_returns_none(self):
+        """Returns None when env vars are not set."""
+        with patch.dict(os.environ, {}, clear=True):
+            for key in ['ieasyforecast_intermediate_data_path',
+                        'ieasyforecast_monthly_skill_metrics_file']:
+                os.environ.pop(key, None)
+            result = _read_monthly_skill_metrics_csv()
+            assert result is None
+
+    def test_missing_file_returns_none(self, tmp_path):
+        """Returns None when the CSV file doesn't exist."""
+        with patch.dict(os.environ, {
+            'ieasyforecast_intermediate_data_path': str(tmp_path),
+            'ieasyforecast_monthly_skill_metrics_file': 'nonexistent.csv',
+        }):
+            result = _read_monthly_skill_metrics_csv()
+            assert result is None
+
+
+class TestNormalizeApiMonthlySkillMetrics:
+    """Tests for _normalize_api_monthly_skill_metrics."""
+
+    def test_renames_api_columns_monthly(self):
+        """API column horizon_in_year -> month_in_year."""
+        df = pd.DataFrame({
+            'horizon_in_year': [1, 6],
+            'model_type': ['LR', 'TFT'],
+            'code': ['10001', '10001'],
+            'sdivsigma': [0.3, 0.4],
+        })
+        result = _normalize_api_monthly_skill_metrics(df)
+        assert 'month_in_year' in result.columns
+        assert 'horizon_in_year' not in result.columns
+        assert 'model_short' in result.columns
+        assert 'model_type' not in result.columns
+
+    def test_code_cleaned_to_string(self):
+        """Numeric code is cleaned to string."""
+        df = pd.DataFrame({
+            'horizon_in_year': [1],
+            'model_type': ['LR'],
+            'code': [10001.0],
+        })
+        result = _normalize_api_monthly_skill_metrics(df)
+        assert result.iloc[0]['code'] == '10001'
+
+
+class TestReadMonthlySkillMetricsIntegration:
+    """Integration tests for read_monthly_skill_metrics."""
+
+    def test_csv_preferred_over_api(self, tmp_path):
+        """CSV is used when available; API is not called."""
+        csv_file = tmp_path / "monthly_skill.csv"
+        pd.DataFrame({
+            'month_in_year': [1],
+            'code': ['10001'],
+            'model_short': ['LR'],
+            'sdivsigma': [0.3],
+        }).to_csv(csv_file, index=False)
+
+        with patch.dict(os.environ, {
+            'ieasyforecast_intermediate_data_path': str(tmp_path),
+            'ieasyforecast_monthly_skill_metrics_file': 'monthly_skill.csv',
+        }):
+            with patch(
+                'src.data_reader._read_monthly_skill_metrics_api'
+            ) as mock_api:
+                result = read_monthly_skill_metrics()
+                mock_api.assert_not_called()
+                assert len(result) == 1
+
+    def test_falls_back_to_api_when_csv_empty(self, tmp_path):
+        """When CSV is empty, tries API fallback."""
+        csv_file = tmp_path / "empty.csv"
+        pd.DataFrame().to_csv(csv_file, index=False)
+
+        api_df = pd.DataFrame({
+            'month_in_year': [1],
+            'code': ['10001'],
+            'model_short': ['LR'],
+            'sdivsigma': [0.3],
+        })
+
+        with patch.dict(os.environ, {
+            'ieasyforecast_intermediate_data_path': str(tmp_path),
+            'ieasyforecast_monthly_skill_metrics_file': 'empty.csv',
+        }):
+            with patch(
+                'src.data_reader._read_monthly_skill_metrics_api',
+                return_value=api_df,
+            ):
+                result = read_monthly_skill_metrics()
+                assert len(result) == 1
+
+    def test_returns_empty_when_both_fail(self):
+        """Returns empty DataFrame when CSV and API both return nothing."""
+        with patch(
+            'src.data_reader._read_monthly_skill_metrics_csv',
+            return_value=None,
+        ):
+            with patch(
+                'src.data_reader._read_monthly_skill_metrics_api',
+                return_value=None,
+            ):
+                result = read_monthly_skill_metrics()
+                assert isinstance(result, pd.DataFrame)
+                assert result.empty

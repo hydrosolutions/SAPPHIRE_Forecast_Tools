@@ -41,6 +41,14 @@ MODEL_TYPE_MAP = {
     "SKILLED MEAN": "Skilled Mean",
 }
 
+# Map internal horizon type names to API enum values.
+# Internal code uses "decad"; the PostgreSQL enum uses "decade".
+HORIZON_TYPE_TO_API = {
+    "pentad": "pentad",
+    "decad": "decade",
+    "month": "month",
+}
+
 # ---------------------------------------------------------------------------
 # API client availability
 # ---------------------------------------------------------------------------
@@ -94,12 +102,12 @@ def _write_combined_forecast_to_api(data: pd.DataFrame, horizon_type: str) -> bo
         data: DataFrame with forecast data. Expected columns:
             - code: station code
             - date: forecast date
-            - pentad_in_month/decad_in_month: horizon value (renamed to decad for decade)
+            - pentad_in_month/decad: horizon value
             - pentad_in_year/decad_in_year: horizon in year
             - forecasted_discharge: the forecast value
             - model_short: model identifier (LR, TFT, TIDE, TSMIXER, EM, NE)
             - composition (optional): for ensemble models, which models compose it
-        horizon_type: Either "pentad" or "decade"
+        horizon_type: "pentad" or "decad" (translated to API enum at boundary)
 
     Returns:
         bool: True if successful, False otherwise
@@ -129,16 +137,27 @@ def _write_combined_forecast_to_api(data: pd.DataFrame, horizon_type: str) -> bo
 
     data = data.copy()
 
+    # Translate internal horizon name to API enum value
+    api_horizon_type = HORIZON_TYPE_TO_API.get(horizon_type)
+    if api_horizon_type is None:
+        raise ValueError(
+            f"Invalid horizon_type: {horizon_type}. "
+            f"Must be one of {list(HORIZON_TYPE_TO_API.keys())}."
+        )
+
     # Determine column names based on horizon_type
     if horizon_type == "pentad":
         horizon_value_col = "pentad_in_month"
         horizon_in_year_col = "pentad_in_year"
-    elif horizon_type == "decade":
+    elif horizon_type == "decad":
         # Note: save_forecast_data_decade renames decad_in_month to decad
         horizon_value_col = "decad"
         horizon_in_year_col = "decad_in_year"
     else:
-        raise ValueError(f"Invalid horizon_type: {horizon_type}. Must be 'pentad' or 'decade'.")
+        raise ValueError(
+            f"Invalid horizon_type: {horizon_type}. "
+            "Must be 'pentad' or 'decad'."
+        )
 
     # Compute missing horizon values from dates before iterating.
     # Virtual station outer merges and ML API reads can produce rows
@@ -147,7 +166,7 @@ def _write_combined_forecast_to_api(data: pd.DataFrame, horizon_type: str) -> bo
     if horizon_type == "pentad":
         get_period_func = tl.get_pentad
         get_period_in_year_func = tl.get_pentad_in_year
-    else:  # decade
+    else:  # decad
         get_period_func = tl.get_decad_in_month
         get_period_in_year_func = tl.get_decad_in_year
 
@@ -233,7 +252,7 @@ def _write_combined_forecast_to_api(data: pd.DataFrame, horizon_type: str) -> bo
             )
 
         records_df = pd.DataFrame({
-            'horizon_type': horizon_type,
+            'horizon_type': api_horizon_type,
             'code': df_rec['code'].astype(str),
             'model_type': df_rec['model_type'],
             'date': df_rec['date_str'],
@@ -282,7 +301,7 @@ def _write_skill_metrics_to_api(data: pd.DataFrame, horizon_type: str) -> bool:
     Args:
         data: DataFrame with skill metrics. Expected columns:
             - code: station code
-            - pentad_in_year/decad_in_year: horizon in year
+            - pentad_in_year/decad_in_year/month_in_year: horizon in year
             - model_short: model identifier (LR, TFT, TIDE, TSMIXER, EM, NE)
             - sdivsigma: s/sigma metric
             - nse: Nash-Sutcliffe Efficiency
@@ -291,7 +310,8 @@ def _write_skill_metrics_to_api(data: pd.DataFrame, horizon_type: str) -> bool:
             - mae: Mean Absolute Error
             - n_pairs: number of data pairs
             - composition (optional): for ensemble models, which models compose it
-        horizon_type: Either "pentad" or "decade"
+        horizon_type: "pentad", "decad", or "month"
+            (translated to API enum at boundary)
 
     Returns:
         bool: True if successful, False otherwise
@@ -321,17 +341,25 @@ def _write_skill_metrics_to_api(data: pd.DataFrame, horizon_type: str) -> bool:
 
     data = data.copy()
 
+    # Translate internal horizon name to API enum value
+    api_horizon_type = HORIZON_TYPE_TO_API.get(horizon_type)
+    if api_horizon_type is None:
+        raise ValueError(
+            f"Invalid horizon_type: {horizon_type}. "
+            f"Must be one of {list(HORIZON_TYPE_TO_API.keys())}."
+        )
+
     # Determine column names based on horizon_type
     if horizon_type == "pentad":
         horizon_in_year_col = "pentad_in_year"
-    elif horizon_type == "decade":
+    elif horizon_type == "decad":
         horizon_in_year_col = "decad_in_year"
     elif horizon_type == "month":
         horizon_in_year_col = "month_in_year"
     else:
         raise ValueError(
             f"Invalid horizon_type: {horizon_type}. "
-            "Must be 'pentad', 'decade', or 'month'."
+            "Must be 'pentad', 'decad', or 'month'."
         )
 
     # Use today's date for the skill metrics (they are calculated on run day)
@@ -394,7 +422,7 @@ def _write_skill_metrics_to_api(data: pd.DataFrame, horizon_type: str) -> bool:
         n_pairs_col = df_rec['n_pairs'].where(df_rec['n_pairs'].notna()) if 'n_pairs' in df_rec.columns else None
 
         records_df = pd.DataFrame({
-            'horizon_type': horizon_type,
+            'horizon_type': api_horizon_type,
             'code': df_rec['code'].astype(str),
             'model_type': df_rec['model_type'],
             'date': today,

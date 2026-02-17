@@ -14,6 +14,8 @@ import pandas as pd
 
 import tag_library as tl
 
+from src.postprocessing_tools import forecast_target_date
+
 logger = logging.getLogger(__name__)
 
 
@@ -206,8 +208,16 @@ def forecast_accuracy_hydromet(data: pd.DataFrame, observed_col: str, simulated_
         # Calculate accuracy using vectorized operations
         accuracy = np.mean(abs_diff <= delta_values)
 
-        # Get the last delta value (they are all the same)
-        delta = delta_values[-1]
+        # Delta is constant per (code, period_in_year) by design.
+        # Use first value; warn if they vary unexpectedly.
+        delta = delta_values[0]
+        delta_range = np.ptp(delta_values)
+        if delta_range > 1e-6:
+            logger.warning(
+                "Delta values vary within group: range=%.6f, "
+                "min=%.6f, max=%.6f (using first value %.6f)",
+                delta_range, delta_values.min(), delta_values.max(), delta,
+            )
 
         # Sanity checks
         if not (0 <= accuracy <= 1) or not (0 <= delta < np.inf):
@@ -344,7 +354,17 @@ def calculate_all_skill_metrics(
     # --- Accuracy + delta (need >= 1 point) ---
     try:
         accuracy = float(np.mean(abs_diff <= deltas))
-        delta = float(deltas[-1])
+        # Delta is constant per (code, period_in_year) by design.
+        # Use first value; warn if they vary unexpectedly.
+        delta = float(deltas[0])
+        delta_range = float(np.ptp(deltas))
+        if delta_range > 1e-6:
+            logger.warning(
+                "Delta values vary within group: range=%.6f, "
+                "min=%.6f, max=%.6f (using first value %.6f)",
+                delta_range, float(np.min(deltas)),
+                float(np.max(deltas)), delta,
+            )
         if not (0 <= accuracy <= 1) or not (0 <= delta < np.inf):
             accuracy = np.nan
             delta = np.nan
@@ -863,8 +883,8 @@ def calculate_skill_metrics_pentad(
             # Append the ensemble skill metrics to the skill metrics
             skill_stats = pd.concat([skill_stats, ensemble_skill_stats], ignore_index=True)
 
-            # Calculate pentad in month (add 1 day to date)
-            ensemble_skill_metrics_df['pentad_in_month'] = (ensemble_skill_metrics_df['date']+dt.timedelta(days=1.0)).apply(tl.get_pentad)
+            # Calculate pentad in month (production date -> target period)
+            ensemble_skill_metrics_df['pentad_in_month'] = forecast_target_date(ensemble_skill_metrics_df['date']).apply(tl.get_pentad)
 
             # Ensure simulated has composition column for the outer merge
             if 'composition' not in simulated.columns:
@@ -1024,8 +1044,8 @@ def calculate_skill_metrics_decade(
             # Append the ensemble skill metrics to the skill metrics
             skill_stats = pd.concat([skill_stats, ensemble_skill_stats], ignore_index=True)
 
-            # Calculate decad in month (add 1 day to date)
-            ensemble_skill_metrics_df['decad_in_month'] = (ensemble_skill_metrics_df['date']+dt.timedelta(days=1.0)).apply(tl.get_decad_in_month)
+            # Calculate decad in month (production date -> target period)
+            ensemble_skill_metrics_df['decad_in_month'] = forecast_target_date(ensemble_skill_metrics_df['date']).apply(tl.get_decad_in_month)
 
             # Ensure simulated has composition column for the outer merge
             if 'composition' not in simulated.columns:

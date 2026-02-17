@@ -71,17 +71,18 @@ def postprocessing_operational():
             sl.load_environment()
 
         prediction_mode = os.getenv('SAPPHIRE_PREDICTION_MODE', 'BOTH')
-        if prediction_mode not in ['PENTAD', 'DECAD', 'BOTH']:
+        valid_modes = ['PENTAD', 'DECAD', 'BOTH', 'MONTHLY', 'ALL']
+        if prediction_mode not in valid_modes:
             logger.error(
                 f"Invalid SAPPHIRE_PREDICTION_MODE: {prediction_mode}. "
-                f"Expected 'PENTAD', 'DECAD', or 'BOTH'."
+                f"Expected one of {valid_modes}."
             )
             sys.exit(1)
         logger.info(
             f"Running operational postprocessing for mode: {prediction_mode}"
         )
 
-        if prediction_mode in ['PENTAD', 'BOTH']:
+        if prediction_mode in ['PENTAD', 'BOTH', 'ALL']:
             with timer(timing_stats, 'reading pentadal data'):
                 logger.info(
                     "\n\n------ Reading pentadal observed and modelled "
@@ -140,7 +141,7 @@ def postprocessing_operational():
 
             pt.log_most_recent_forecasts_pentad(modelled)
 
-        if prediction_mode in ['DECAD', 'BOTH']:
+        if prediction_mode in ['DECAD', 'BOTH', 'ALL']:
             with timer(timing_stats, 'reading decadal data'):
                 logger.info(
                     "\n\n------ Reading decadal observed and modelled "
@@ -198,6 +199,27 @@ def postprocessing_operational():
                     errors.append(f"Decade forecast save failed: {ret}")
 
             pt.log_most_recent_forecasts_decade(modelled_decade)
+
+        if prediction_mode in ['MONTHLY', 'ALL']:
+            with timer(timing_stats, 'reading monthly skill metrics'):
+                logger.info(
+                    "\n\n------ Reading pre-calculated monthly skill "
+                    "metrics -----"
+                )
+                skill_metrics_monthly = (
+                    data_reader.read_monthly_skill_metrics()
+                )
+
+            if skill_metrics_monthly.empty:
+                logger.warning(
+                    "No monthly skill metrics available. "
+                    "Run recalculate_skill_metrics.py first."
+                )
+            else:
+                logger.info(
+                    "Monthly skill metrics available: %d rows",
+                    len(skill_metrics_monthly),
+                )
 
     # Print timing summary
     summary, total = timing_stats.summary()

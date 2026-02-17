@@ -323,3 +323,182 @@ class TestSaveMonthlySkillMetrics:
         em_rows = saved[saved['model_short'] == 'EM']
         assert len(em_rows) == 2
         assert all(pd.isna(em_rows['crps']))
+
+
+class TestSaveForecastDataAtomicWrites:
+    """Tests that save_forecast_data_pentad/decade use atomic_write_csv."""
+
+    @pytest.fixture(autouse=True)
+    def save_env(self, tmp_path):
+        """Set env vars so save functions can resolve paths."""
+        overrides = {
+            'ieasyforecast_intermediate_data_path': str(tmp_path),
+            'ieasyforecast_combined_forecast_pentad_file': 'combined_pentad.csv',
+            'ieasyforecast_combined_forecast_decad_file': 'combined_decad.csv',
+            'SAPPHIRE_API_ENABLED': 'false',
+            'SAPPHIRE_CONSISTENCY_CHECK': 'false',
+            'SAPPHIRE_TEST_ENV': 'True',
+        }
+        with patch.dict(os.environ, overrides):
+            self.tmp_path = tmp_path
+            yield
+
+    @pytest.fixture
+    def pentad_data(self):
+        return pd.DataFrame({
+            'code': ['10001', '10001'],
+            'date': pd.to_datetime(['2024-01-06', '2024-01-11']),
+            'pentad_in_month': [2, 3],
+            'pentad_in_year': [2, 3],
+            'forecasted_discharge': [100.0, 110.0],
+            'model_short': ['LR', 'LR'],
+        })
+
+    @pytest.fixture
+    def decade_data(self):
+        return pd.DataFrame({
+            'code': ['10001', '10001'],
+            'date': pd.to_datetime(['2024-01-15', '2024-01-25']),
+            'decad_in_month': [2, 3],
+            'decad_in_year': [2, 3],
+            'forecasted_discharge': [150.0, 160.0],
+            'model_short': ['TFT', 'TFT'],
+        })
+
+    @patch('src.file_writer.atomic_write_csv')
+    def test_pentad_uses_atomic_write(self, mock_atomic, pentad_data):
+        """save_forecast_data_pentad calls atomic_write_csv twice."""
+        with patch.object(api_writer, 'SAPPHIRE_API_AVAILABLE', False):
+            file_writer.save_forecast_data_pentad(pentad_data)
+        assert mock_atomic.call_count == 2
+
+    @patch('src.file_writer.atomic_write_csv')
+    def test_pentad_atomic_write_failure_raises(
+        self, mock_atomic, pentad_data
+    ):
+        """IOError from atomic_write_csv propagates."""
+        mock_atomic.side_effect = IOError("disk full")
+        with patch.object(api_writer, 'SAPPHIRE_API_AVAILABLE', False):
+            with pytest.raises(IOError, match="disk full"):
+                file_writer.save_forecast_data_pentad(pentad_data)
+
+    @patch('src.file_writer.atomic_write_csv')
+    def test_decade_uses_atomic_write(self, mock_atomic, decade_data):
+        """save_forecast_data_decade calls atomic_write_csv twice."""
+        with patch.object(api_writer, 'SAPPHIRE_API_AVAILABLE', False):
+            file_writer.save_forecast_data_decade(decade_data)
+        assert mock_atomic.call_count == 2
+
+    @patch('src.file_writer.atomic_write_csv')
+    def test_decade_atomic_write_failure_raises(
+        self, mock_atomic, decade_data
+    ):
+        """IOError from atomic_write_csv propagates."""
+        mock_atomic.side_effect = IOError("disk full")
+        with patch.object(api_writer, 'SAPPHIRE_API_AVAILABLE', False):
+            with pytest.raises(IOError, match="disk full"):
+                file_writer.save_forecast_data_decade(decade_data)
+
+
+class TestDateStringRoundTrip:
+    """Tests that get_latest_forecasts receives datetime dates, not strings."""
+
+    @pytest.fixture(autouse=True)
+    def save_env(self, tmp_path):
+        overrides = {
+            'ieasyforecast_intermediate_data_path': str(tmp_path),
+            'ieasyforecast_combined_forecast_pentad_file': 'combined_pentad.csv',
+            'ieasyforecast_combined_forecast_decad_file': 'combined_decad.csv',
+            'SAPPHIRE_API_ENABLED': 'false',
+            'SAPPHIRE_CONSISTENCY_CHECK': 'false',
+            'SAPPHIRE_TEST_ENV': 'True',
+        }
+        with patch.dict(os.environ, overrides):
+            self.tmp_path = tmp_path
+            yield
+
+    def test_get_latest_forecasts_receives_datetime_pentad(self):
+        """get_latest_forecasts receives datetime dates, not strings.
+
+        We wrap get_latest_forecasts to capture the date dtype at call
+        time (before the caller mutates the DataFrame to string dates).
+        """
+        captured_dtypes = {}
+
+        original_glf = file_writer.get_latest_forecasts
+
+        def spy_glf(df, **kwargs):
+            captured_dtypes['date'] = df['date'].dtype
+            return original_glf(df, **kwargs)
+
+        data = pd.DataFrame({
+            'code': ['10001', '10001'],
+            'date': pd.to_datetime(['2024-01-06', '2024-01-11']),
+            'pentad_in_month': [2, 3],
+            'pentad_in_year': [2, 3],
+            'forecasted_discharge': [100.0, 110.0],
+            'model_short': ['LR', 'LR'],
+        })
+        with patch.object(api_writer, 'SAPPHIRE_API_AVAILABLE', False), \
+             patch('src.file_writer.get_latest_forecasts', side_effect=spy_glf):
+            file_writer.save_forecast_data_pentad(data)
+
+        assert pd.api.types.is_datetime64_any_dtype(captured_dtypes['date'])
+
+    def test_get_latest_forecasts_receives_datetime_decade(self):
+        """Decade: get_latest_forecasts receives datetime dates."""
+        captured_dtypes = {}
+
+        original_glf = file_writer.get_latest_forecasts
+
+        def spy_glf(df, **kwargs):
+            captured_dtypes['date'] = df['date'].dtype
+            return original_glf(df, **kwargs)
+
+        data = pd.DataFrame({
+            'code': ['10001', '10001'],
+            'date': pd.to_datetime(['2024-01-15', '2024-01-25']),
+            'decad_in_month': [2, 3],
+            'decad_in_year': [2, 3],
+            'forecasted_discharge': [150.0, 160.0],
+            'model_short': ['TFT', 'TFT'],
+        })
+        with patch.object(api_writer, 'SAPPHIRE_API_AVAILABLE', False), \
+             patch('src.file_writer.get_latest_forecasts', side_effect=spy_glf):
+            file_writer.save_forecast_data_decade(data)
+
+        assert pd.api.types.is_datetime64_any_dtype(captured_dtypes['date'])
+
+    def test_csv_output_has_string_dates_pentad(self):
+        """Written CSV has %Y-%m-%d formatted date strings."""
+        data = pd.DataFrame({
+            'code': ['10001'],
+            'date': pd.to_datetime(['2024-01-06']),
+            'pentad_in_month': [2],
+            'pentad_in_year': [2],
+            'forecasted_discharge': [100.0],
+            'model_short': ['LR'],
+        })
+        with patch.object(api_writer, 'SAPPHIRE_API_AVAILABLE', False):
+            file_writer.save_forecast_data_pentad(data)
+
+        csv_path = os.path.join(str(self.tmp_path), 'combined_pentad.csv')
+        saved = pd.read_csv(csv_path)
+        assert saved.iloc[0]['date'] == '2024-01-06'
+
+    def test_csv_output_has_string_dates_decade(self):
+        """Written decade CSV has %Y-%m-%d formatted date strings."""
+        data = pd.DataFrame({
+            'code': ['10001'],
+            'date': pd.to_datetime(['2024-01-15']),
+            'decad_in_month': [2],
+            'decad_in_year': [2],
+            'forecasted_discharge': [150.0],
+            'model_short': ['TFT'],
+        })
+        with patch.object(api_writer, 'SAPPHIRE_API_AVAILABLE', False):
+            file_writer.save_forecast_data_decade(data)
+
+        csv_path = os.path.join(str(self.tmp_path), 'combined_decad.csv')
+        saved = pd.read_csv(csv_path)
+        assert saved.iloc[0]['date'] == '2024-01-15'

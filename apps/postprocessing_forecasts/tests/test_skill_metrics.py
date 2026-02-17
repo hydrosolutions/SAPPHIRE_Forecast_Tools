@@ -407,3 +407,98 @@ class TestCalculateSkillMetricsDecade:
             assert em_rows['forecasted_discharge'].notna().all(), (
                 "NaN forecast leaked into pentad ensemble mean"
             )
+
+
+# ===================================================================
+# Delta validation tests (Commit 4)
+# ===================================================================
+
+class TestDeltaValidation:
+    """Tests for delta handling in forecast_accuracy_hydromet and
+    calculate_all_skill_metrics — verify they use first value and
+    warn on variation."""
+
+    def _make_df(self, deltas):
+        """Helper: build a minimal DataFrame with given delta values."""
+        n = len(deltas)
+        return pd.DataFrame({
+            'observed': np.arange(1.0, n + 1),
+            'simulated': np.arange(1.0, n + 1) + 0.1,
+            'delta': deltas,
+        })
+
+    # --- forecast_accuracy_hydromet ---
+
+    def test_constant_delta_returns_first_value(self):
+        """When all deltas are identical, result uses that value."""
+        df = self._make_df([5.0, 5.0, 5.0])
+        result = skill_metrics.forecast_accuracy_hydromet(
+            df, 'observed', 'simulated', 'delta'
+        )
+        assert result['delta'] == 5.0
+
+    def test_varying_delta_logs_warning(self, caplog):
+        """When deltas vary, a warning is logged."""
+        import logging
+        df = self._make_df([5.0, 5.0, 5.1])
+        with caplog.at_level(logging.WARNING):
+            skill_metrics.forecast_accuracy_hydromet(
+                df, 'observed', 'simulated', 'delta'
+            )
+        assert any("Delta values vary" in msg for msg in caplog.messages)
+
+    def test_single_point_delta_no_warning(self, caplog):
+        """Single data point — no variation possible, no warning."""
+        import logging
+        df = self._make_df([5.0])
+        with caplog.at_level(logging.WARNING):
+            skill_metrics.forecast_accuracy_hydromet(
+                df, 'observed', 'simulated', 'delta'
+            )
+        assert not any("Delta values vary" in msg for msg in caplog.messages)
+
+    def test_delta_uses_first_not_last(self):
+        """Regression: result is first delta, not last."""
+        df = self._make_df([5.0, 6.0])
+        result = skill_metrics.forecast_accuracy_hydromet(
+            df, 'observed', 'simulated', 'delta'
+        )
+        assert result['delta'] == 5.0
+
+    # --- calculate_all_skill_metrics ---
+
+    def test_all_metrics_constant_delta_returns_first(self):
+        """calculate_all_skill_metrics uses first delta when constant."""
+        df = self._make_df([5.0, 5.0, 5.0])
+        result = skill_metrics.calculate_all_skill_metrics(
+            df, 'observed', 'simulated', 'delta'
+        )
+        assert result['delta'] == 5.0
+
+    def test_all_metrics_varying_delta_logs_warning(self, caplog):
+        """calculate_all_skill_metrics warns on varying deltas."""
+        import logging
+        df = self._make_df([5.0, 5.0, 5.1])
+        with caplog.at_level(logging.WARNING):
+            skill_metrics.calculate_all_skill_metrics(
+                df, 'observed', 'simulated', 'delta'
+            )
+        assert any("Delta values vary" in msg for msg in caplog.messages)
+
+    def test_all_metrics_delta_uses_first_not_last(self):
+        """Regression: calculate_all_skill_metrics uses first delta."""
+        df = self._make_df([5.0, 6.0])
+        result = skill_metrics.calculate_all_skill_metrics(
+            df, 'observed', 'simulated', 'delta'
+        )
+        assert result['delta'] == 5.0
+
+    def test_all_metrics_single_point_no_warning(self, caplog):
+        """Single point — no variation, no warning in all-metrics path."""
+        import logging
+        df = self._make_df([5.0])
+        with caplog.at_level(logging.WARNING):
+            skill_metrics.calculate_all_skill_metrics(
+                df, 'observed', 'simulated', 'delta'
+            )
+        assert not any("Delta values vary" in msg for msg in caplog.messages)

@@ -156,21 +156,33 @@ def save_forecast_data_pentad(simulated: pd.DataFrame):
     # Ensure code is string without .0
     if 'code' in simulated.columns:
         simulated['code'] = simulated['code'].astype(str).str.replace(r'\.0$', '', regex=True)
-    # Ensure date is in %Y-%m-%d format
+
+    # Extract latest forecasts BEFORE converting dates to strings,
+    # so get_latest_forecasts receives native datetime dates.
+    simulated_latest = get_latest_forecasts(simulated, horizon_column_name='pentad_in_year')
+
+    # Format dates as strings for CSV output
     if 'date' in simulated.columns:
         simulated['date'] = pd.to_datetime(simulated['date'], errors='coerce').dt.strftime('%Y-%m-%d')
+    if 'date' in simulated_latest.columns:
+        simulated_latest['date'] = pd.to_datetime(simulated_latest['date'], errors='coerce').dt.strftime('%Y-%m-%d')
 
-    # write the data to csv
-    ret = simulated.to_csv(filename, index=False)
-
-    # Select forecast of the latest date for each code, pentad_in_year, and model_short
-    simulated_latest = get_latest_forecasts(simulated, horizon_column_name='pentad_in_year')
+    # Write the data to csv (atomic to prevent corruption on crash)
+    try:
+        atomic_write_csv(simulated, filename, index=False)
+    except Exception as e:
+        logger.error(f"Could not write forecast data to {filename}.")
+        raise e
 
     # Edit filename by appending '_latest' to the filename
     filename_latest = filename.replace('.csv', '_latest.csv')
 
-    # Write the latest data to a csv file
-    ret = simulated_latest.to_csv(filename_latest, index=False)
+    # Write the latest data to a csv file (atomic)
+    try:
+        atomic_write_csv(simulated_latest, filename_latest, index=False)
+    except Exception as e:
+        logger.error(f"Could not write latest forecast data to {filename_latest}.")
+        raise e
 
     # Write to SAPPHIRE API (latest forecasts only)
     if api_writer.SAPPHIRE_API_AVAILABLE:
@@ -197,7 +209,7 @@ def save_forecast_data_pentad(simulated: pd.DataFrame):
         else:
             logger.error("CONSISTENCY CHECK FAILED: %s", message)
 
-    return ret
+    return None
 
 def save_forecast_data_decade(simulated: pd.DataFrame):
     """
@@ -219,29 +231,41 @@ def save_forecast_data_decade(simulated: pd.DataFrame):
     # Ensure code is string without .0
     if 'code' in simulated.columns:
         simulated['code'] = simulated['code'].astype(str).str.replace(r'\.0$', '', regex=True)
-    # Ensure date is in %Y-%m-%d format
-    if 'date' in simulated.columns:
-        simulated['date'] = pd.to_datetime(simulated['date'], errors='coerce').dt.strftime('%Y-%m-%d')
 
     # Rename the column decad_in_month to decad
     simulated = simulated.rename(columns={'decad_in_month': 'decad'})
 
-    # write the data to csv
-    ret = simulated.to_csv(filename, index=False)
-
-    # Select forecast of the latest date for each code, decad_in_year, and model_short
+    # Extract latest forecasts BEFORE converting dates to strings,
+    # so get_latest_forecasts receives native datetime dates.
     simulated_latest = get_latest_forecasts(simulated, horizon_column_name='decad_in_year')
+
+    # Format dates as strings for CSV output
+    if 'date' in simulated.columns:
+        simulated['date'] = pd.to_datetime(simulated['date'], errors='coerce').dt.strftime('%Y-%m-%d')
+    if 'date' in simulated_latest.columns:
+        simulated_latest['date'] = pd.to_datetime(simulated_latest['date'], errors='coerce').dt.strftime('%Y-%m-%d')
+
+    # Write the data to csv (atomic to prevent corruption on crash)
+    try:
+        atomic_write_csv(simulated, filename, index=False)
+    except Exception as e:
+        logger.error(f"Could not write forecast data to {filename}.")
+        raise e
 
     # Edit filename by appending '_latest' to the filename
     filename_latest = filename.replace('.csv', '_latest.csv')
 
-    # Write the latest data to a csv file
-    ret = simulated_latest.to_csv(filename_latest, index=False)
+    # Write the latest data to a csv file (atomic)
+    try:
+        atomic_write_csv(simulated_latest, filename_latest, index=False)
+    except Exception as e:
+        logger.error(f"Could not write latest forecast data to {filename_latest}.")
+        raise e
 
     # Write to SAPPHIRE API (latest forecasts only)
     if api_writer.SAPPHIRE_API_AVAILABLE:
         try:
-            api_writer._write_combined_forecast_to_api(simulated_latest, "decade")
+            api_writer._write_combined_forecast_to_api(simulated_latest, "decad")
         except Exception as e:
             fl._handle_api_write_error(e, "decadal combined forecasts")
 
@@ -263,7 +287,7 @@ def save_forecast_data_decade(simulated: pd.DataFrame):
         else:
             logger.error("CONSISTENCY CHECK FAILED: %s", message)
 
-    return ret
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -449,7 +473,7 @@ def save_decadal_skill_metrics(data: pd.DataFrame):
     # Write to SAPPHIRE API
     if api_writer.SAPPHIRE_API_AVAILABLE:
         try:
-            api_writer._write_skill_metrics_to_api(data, "decade")
+            api_writer._write_skill_metrics_to_api(data, "decad")
         except Exception as e:
             fl._handle_api_write_error(e, "decadal skill metrics")
 

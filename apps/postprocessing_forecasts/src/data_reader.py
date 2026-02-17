@@ -184,6 +184,154 @@ def _normalize_api_skill_metrics(
 
 
 # ===================================================================
+# Monthly skill metrics
+# ===================================================================
+
+
+def read_monthly_skill_metrics() -> pd.DataFrame:
+    """Read pre-calculated monthly skill metrics from CSV or API.
+
+    Returns:
+        DataFrame with columns: [month_in_year, code, model_short,
+        sdivsigma, nse, delta, accuracy, mae, n_pairs]
+    """
+    df = _read_monthly_skill_metrics_csv()
+    if df is not None and not df.empty:
+        logger.info(
+            "Read %d monthly skill metric rows from CSV", len(df)
+        )
+        return df
+
+    logger.info(
+        "CSV monthly skill metrics empty or missing, trying API"
+    )
+    df = _read_monthly_skill_metrics_api()
+    if df is not None and not df.empty:
+        logger.info(
+            "Read %d monthly skill metric rows from API", len(df)
+        )
+        return df
+
+    logger.warning("No monthly skill metrics available")
+    return pd.DataFrame()
+
+
+def _read_monthly_skill_metrics_csv() -> pd.DataFrame | None:
+    """Read monthly skill metrics from CSV file.
+
+    Returns None if the file doesn't exist or can't be read.
+    """
+    intermediate_path = os.getenv(
+        "ieasyforecast_intermediate_data_path", ""
+    )
+    filename = os.getenv(
+        "ieasyforecast_monthly_skill_metrics_file", ""
+    )
+
+    if not intermediate_path or not filename:
+        logger.debug(
+            "Monthly skill metrics env vars not set"
+        )
+        return None
+
+    filepath = os.path.join(intermediate_path, filename)
+    if not os.path.exists(filepath):
+        logger.debug(
+            "Monthly skill metrics CSV not found: %s", filepath
+        )
+        return None
+
+    try:
+        df = pd.read_csv(filepath)
+        if "code" in df.columns:
+            df["code"] = df["code"].astype(str).str.replace(
+                r"\.0$", "", regex=True
+            )
+        return df
+    except Exception as e:
+        logger.error(
+            "Failed to read monthly skill metrics CSV %s: %s",
+            filepath, e,
+        )
+        return None
+
+
+def _read_monthly_skill_metrics_api() -> pd.DataFrame | None:
+    """Read monthly skill metrics from SAPPHIRE postprocessing API.
+
+    Returns None if the API is unavailable or returns no data.
+    """
+    if not SAPPHIRE_API_AVAILABLE:
+        logger.debug(
+            "sapphire-api-client not installed, skipping API read"
+        )
+        return None
+
+    api_enabled = os.getenv("SAPPHIRE_API_ENABLED", "true").lower()
+    if api_enabled == "false":
+        logger.debug("SAPPHIRE_API_ENABLED=false, skipping API read")
+        return None
+
+    api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
+
+    try:
+        client = SapphirePostprocessingClient(base_url=api_url)
+        if not client.is_ready():
+            logger.warning(
+                "Postprocessing API not ready at %s", api_url
+            )
+            return None
+
+        all_records = []
+        skip = 0
+        batch_size = 1000
+        while True:
+            df_batch = client.read_skill_metrics(
+                horizon="month", skip=skip, limit=batch_size
+            )
+            if df_batch is None or df_batch.empty:
+                break
+            all_records.append(df_batch)
+            if len(df_batch) < batch_size:
+                break
+            skip += batch_size
+
+        if not all_records:
+            return None
+
+        df = pd.concat(all_records, ignore_index=True)
+        return _normalize_api_monthly_skill_metrics(df)
+
+    except Exception as e:
+        logger.error(
+            "Failed to read monthly skill metrics from API: %s", e
+        )
+        return None
+
+
+def _normalize_api_monthly_skill_metrics(
+    df: pd.DataFrame,
+) -> pd.DataFrame:
+    """Convert API column names to CSV-compatible names for monthly.
+
+    API returns: horizon_in_year, model_type, code, ...
+    CSV expects: month_in_year, model_short, code, ...
+    """
+    rename_map = {
+        "horizon_in_year": "month_in_year",
+        "model_type": "model_short",
+    }
+    df = df.rename(columns=rename_map)
+
+    if "code" in df.columns:
+        df["code"] = df["code"].astype(str).str.replace(
+            r"\.0$", "", regex=True
+        )
+
+    return df
+
+
+# ===================================================================
 # Monthly observations (daily runoff → monthly mean)
 # ===================================================================
 

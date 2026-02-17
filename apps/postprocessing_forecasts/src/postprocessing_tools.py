@@ -1,3 +1,5 @@
+import datetime as dt
+
 import pandas as pd
 import os
 import time
@@ -5,6 +7,25 @@ import logging
 from contextlib import contextmanager
 
 logger = logging.getLogger(__name__)
+
+
+def forecast_target_date(forecast_date):
+    """Map forecast production date to target period start date.
+
+    Short-term forecasts store `date` as the production date (last day
+    of the previous period). The target period starts on `date + 1`.
+
+    Note: Long-term forecasts use `valid_from` / `valid_to` directly
+    and do not need this mapping.
+
+    Args:
+        forecast_date: A datetime.date, datetime.datetime, or
+            pandas Series of datetimes.
+
+    Returns:
+        Same type as input, shifted forward by one day.
+    """
+    return forecast_date + dt.timedelta(days=1)
 
 
 class TimingStats:

@@ -10,7 +10,11 @@ from unittest.mock import patch, MagicMock, mock_open
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # Import the functions to test
-from src.postprocessing_tools import log_most_recent_forecasts_pentad, log_most_recent_forecasts_decade
+from src.postprocessing_tools import (
+    log_most_recent_forecasts_pentad,
+    log_most_recent_forecasts_decade,
+    forecast_target_date,
+)
 
 # Fixture to create sample test data
 @pytest.fixture
@@ -366,3 +370,43 @@ def test_log_most_recent_forecasts_decade_nat_dates(mock_to_csv, mock_getenv, mo
     assert result.iloc[0]['LR'] == pytest.approx(125.4)
     assert result.iloc[0]['TFT'] == pytest.approx(130.2)
     assert result.iloc[0]['EM'] == pytest.approx(129.1)
+
+
+# ===================================================================
+# forecast_target_date tests (Commit 6)
+# ===================================================================
+
+class TestForecastTargetDate:
+    """Tests for forecast_target_date helper.
+
+    Convention: short-term forecast `date` = production date (last day
+    of previous period); `date + 1` = first day of target period.
+    Long-term forecasts use valid_from/valid_to instead.
+    """
+
+    def test_scalar_date(self):
+        """Single date: Jan 5 -> Jan 6."""
+        result = forecast_target_date(dt.date(2024, 1, 5))
+        assert result == dt.date(2024, 1, 6)
+
+    def test_series_dates(self):
+        """pandas Series input produces +1 day output."""
+        dates = pd.Series(pd.to_datetime(['2024-01-05', '2024-01-10']))
+        result = forecast_target_date(dates)
+        expected = pd.Series(pd.to_datetime(['2024-01-06', '2024-01-11']))
+        pd.testing.assert_series_equal(result, expected)
+
+    def test_year_boundary(self):
+        """Dec 31 -> Jan 1 next year."""
+        result = forecast_target_date(dt.date(2024, 12, 31))
+        assert result == dt.date(2025, 1, 1)
+
+    def test_leap_year_feb28(self):
+        """Feb 28 2024 (leap year) -> Feb 29 2024."""
+        result = forecast_target_date(dt.date(2024, 2, 28))
+        assert result == dt.date(2024, 2, 29)
+
+    def test_non_leap_year_feb28(self):
+        """Feb 28 2023 (not leap year) -> Mar 1 2023."""
+        result = forecast_target_date(dt.date(2023, 2, 28))
+        assert result == dt.date(2023, 3, 1)

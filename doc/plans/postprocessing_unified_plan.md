@@ -1486,6 +1486,65 @@ class PredictorDates:
 
 ---
 
+## Phase 6: Horizon Type Parameterization — NOT STARTED
+
+### Problem
+
+Significant code duplication between pentad and decade code paths:
+
+| File | Duplicated lines | Functions |
+|------|-----------------|-----------|
+| `src/skill_metrics.py` | ~200 | `calculate_skill_metrics_pentad()` vs `calculate_skill_metrics_decade()` |
+| `src/file_writer.py` | ~130 | `save_forecast_data_pentad()` vs `save_forecast_data_decade()`, `save_pentadal_skill_metrics()` vs `save_decadal_skill_metrics()` |
+| `src/postprocessing_tools.py` | ~160 | `log_most_recent_forecasts_pentad()` vs `log_most_recent_forecasts_decade()` |
+| `src/ensemble_calculator.py` | 0 | Already parameterized via `period_col` / `get_period_in_month_func` |
+
+These pairs differ only in column names (`pentad_in_year` vs `decad_in_year`, `pentad_in_month` vs `decad_in_month`), env var names, and the period-computation function (`get_pentad` vs `get_decad_in_month`).
+
+### Solution
+
+Introduce a `HorizonConfig` dataclass that encapsulates all horizon-specific parameters:
+
+```python
+@dataclass(frozen=True)
+class HorizonConfig:
+    name: str                    # "pentad", "decad", "month"
+    period_col: str              # "pentad_in_year", "decad_in_year", ...
+    period_in_month_col: str     # "pentad_in_month", "decad_in_month", ...
+    get_period_func: Callable    # tl.get_pentad, tl.get_decad_in_month, ...
+    combined_csv_env: str        # env var for combined forecast CSV
+    latest_csv_env: str          # env var for latest forecast CSV
+    skill_csv_env: str           # env var for skill metrics CSV
+    horizon_column_name: str     # column used for get_latest_forecasts()
+```
+
+Then collapse each pair into a single parameterized function:
+
+- `calculate_skill_metrics(config: HorizonConfig, ...)`
+- `save_forecast_data(config: HorizonConfig, ...)`
+- `save_skill_metrics(config: HorizonConfig, ...)`
+- `log_most_recent_forecasts(config: HorizonConfig, ...)`
+
+### Affected files
+
+| File | Change |
+|------|--------|
+| `src/skill_metrics.py` | Merge pentad/decade `calculate_skill_metrics_*()` into one |
+| `src/file_writer.py` | Merge pentad/decade `save_forecast_data_*()` and `save_*_skill_metrics()` into one each |
+| `src/postprocessing_tools.py` | Merge pentad/decade `log_most_recent_forecasts_*()` into one |
+| `postprocessing_operational.py` | Pass `HorizonConfig` instead of branching on mode |
+| `postprocessing_maintenance.py` | Same |
+| `recalculate_skill_metrics.py` | Same |
+| All test files | Update to use parameterized functions with config objects |
+
+### Prerequisites
+
+- All 8 issues from the pipeline inconsistency PR (atomic writes, date round-trip, decad naming, delta validation, monthly read-back, forecast_target_date helper)
+- Phase 4a monthly skill metrics pipeline
+- `ensemble_calculator.py` already parameterized (serves as the reference pattern)
+
+---
+
 ## Related Documents
 
 | Document | Status |
@@ -1531,3 +1590,4 @@ The following plans are **superseded** by this unified plan (moved to `archive/`
 | 2026-02-16 | Bea/Claude | Phase 4 refinement — 5 decisions recorded: (1) **INFRA-005 revised**: instead of consolidating model-name dicts into a registry, **remove `model_long` from apps modules entirely**. Apps use `model_short` only; `model_type_description` stays server-side for API consumers. This eliminates the 5 scattered mapping dicts rather than consolidating them. Must be done before Phase 4a. (2) **Delta/accuracy for monthly**: compute `delta = 0.674 * std(monthly_obs)` on-the-fly per (station, month); accuracy metric supported at all resolutions (Central Asian hydromet standard). (3) **Metrics registry before Phase 4a**: restructure `calculate_all_skill_metrics()` into `METRIC_REGISTRY` pattern as a separate pre-requisite task, so CRPS is added as a registry entry. (4) **Skilled Mean / Naive Mean**: computed in postprocessing as reference baselines (not produced by `long_term_forecasting`). Naive Mean = climatological mean, Skilled Mean = skill-weighted model average. (5) **SAPPHIRE_PREDICTION_MODE**: `BOTH` stays pentad+decad (backward compat), add `MONTHLY` and `ALL` (= everything). Recalculate entry point supports all modes; operational/maintenance for monthly is an open question. Updated: Phase 4 key design decisions (added #6–#8), pre-requisite ordering section, Phase 4a checklist (3 pre-reqs + env var + baselines), prediction mode semantics table. |
 | 2026-02-16 | Bea/Claude | **Metrics registry refactoring complete** (commit `f70b29f`). Added `METRIC_REGISTRY`, `METRIC_ORDER`, `THRESHOLD_METRICS` to `skill_metrics.py` as single source of truth for metric metadata (`min_points`, `higher_is_better`, `env_var`, `default_threshold`). `calculate_all_skill_metrics()` return index now uses `METRIC_ORDER`. Consolidated 3 copies of `filter_for_highly_skilled_forecasts()` into one module-level function driven by `THRESHOLD_METRICS`; `ensemble_calculator.py` version now a thin wrapper. Deleted 4 dead `model_long`-era functions (`extract_first_parentheses_content`, `model_long_agg`, `model_short_agg`, `_is_multi_model_ensemble`) and `re` import from `ensemble_calculator.py`. Cleaned up 3 test files: deleted `TestHelpers` class (16 tests), 4 characterization tests, `_LEGACY_MODEL_LONG_NAMES`, dead imports. Added `TestMetricRegistry` (4 tests). Test count: 405→392 (net -16: removed 20 dead, added 4 registry). All Phase 4a pre-requisites except `sapphire-api-client` long-forecast endpoints are now complete. **Next up:** Phase 4a monthly skill metrics implementation (pending `sapphire-api-client` `read_long_forecasts()`/`write_long_forecasts()` endpoints). |
 | 2026-02-17 | Bea/Claude | **Phases 4c/4d/4e added** — additional skill metrics based on operational hydrologist review. **Phase 4c (Tier 1):** PBIAS, KGElf, NSE_log — all temporal scales, yearly calculation, registered in `METRIC_REGISTRY`. Rationale: volume bias (PBIAS) and low-flow evaluation (KGElf, NSE_log) address critical gaps for irrigation regions (Central Asia) and flood regions (Nepal, Switzerland). KGE(1/Q) chosen over KGE(log Q) per Santos et al. (2018). **Phase 4d (Tier 2):** FHV (peak flow bias, top 2% FDC), FLV (low-flow bias, bottom 30% FDC), F1/CSI for 2yr/5yr return periods only (higher return periods lack sufficient events), low-flow contingency (CSI for Q90/Q95). Daily/sub-daily only. Separate `ThresholdSkillMetric` table for parameterized metrics. GEV fit for return period thresholds, minimum 15 years data. **Phase 4e (Tier 3, deferred):** drought event verification, SSI, BSS — revisit after Tiers 1-2 proven useful. **FD-002 dashboard issue created:** `gi_draft_dashboard_skill_metrics_visualization.md` — plain-language interpretation templates for each metric (e.g., "The model overestimates total runoff by 12%"), quality categories (Very good/Good/Fair/Poor), i18n support (Russian). Blocked by 4c/4d. Updated: status summary (6 new items), skill metrics appendix table (13 metrics), related documents. |
+| 2026-02-17 | Bea/Claude | **Pipeline inconsistency fixes** (8 issues from code review). (1) Atomic CSV writes: `save_forecast_data_pentad/decade()` now use `atomic_write_csv()` with try/except, removed dead `ret =` code. (2) Date string round-trip: moved `get_latest_forecasts()` before date-to-string conversion. (3) Standardized "decad" naming: added `HORIZON_TYPE_TO_API` translation layer in `api_writer.py`, internal code uses "decad" everywhere, translated to "decade" at API boundary. (4) Delta validation: `deltas[-1]` → `deltas[0]` with `np.ptp()` warning in both `forecast_accuracy_hydromet()` and `calculate_all_skill_metrics()`. (5) Monthly skill metrics read-back: added `read_monthly_skill_metrics()` to `data_reader.py` (CSV primary, API fallback), extended `SAPPHIRE_PREDICTION_MODE` to accept MONTHLY and ALL. (6) Extracted `forecast_target_date()` helper in `postprocessing_tools.py`, replaced inline `+ dt.timedelta(days=1.0)` in 3 locations. (7) **Phase 6 added**: Horizon Type Parameterization plan — `HorizonConfig` dataclass to eliminate ~490 lines of pentad/decade duplication. Test count: 598→613. |

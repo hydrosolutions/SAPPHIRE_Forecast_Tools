@@ -1053,8 +1053,8 @@ class TestDeltaEdgeCases:
         )
         assert result['n_pairs'] == 2
         assert result['accuracy'] == 0.5
-        # delta is the last row's value
-        assert result['delta'] == 20.0
+        # delta uses first row's value (constant per group by design)
+        assert result['delta'] == 5.0
         # MAE = mean(8, 10) = 9.0
         assert result['mae'] == 9.0
 
