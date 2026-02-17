@@ -95,6 +95,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | ID | Title | Priority | Status | File | Blocked By |
 |----|-------|----------|--------|------|------------|
 | **FD-001** | Dashboard crashes when current year data missing | **Low** | Draft | [`gi_draft_dashboard_missing_current_year_data.md`](issues/gi_draft_dashboard_missing_current_year_data.md) | — |
+| **FD-002** | Add new skill metrics visualization with plain-language interpretation | **Medium** | Draft | [`gi_draft_dashboard_skill_metrics_visualization.md`](issues/gi_draft_dashboard_skill_metrics_visualization.md) | Phase 4c/4d |
 
 ### iEasyHydro HF Migration
 

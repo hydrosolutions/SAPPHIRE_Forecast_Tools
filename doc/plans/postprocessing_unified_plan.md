@@ -12,7 +12,7 @@
 3. [Phase 1: Bug Fixes](#phase-1-bug-fixes-merge-main)
 4. [Phase 2: Module Separation (Operational / Nightly / Yearly)](#phase-2-module-separation)
 5. [Phase 3: Performance Improvements](#phase-3-performance-improvements)
-6. [Phase 4: Monthly, Quarterly & Seasonal Skill Metrics](#phase-4-monthly-quarterly--seasonal-skill-metrics)
+6. [Phase 4: Monthly, Quarterly, Seasonal & Additional Skill Metrics](#phase-4-monthly-quarterly--seasonal-skill-metrics)
 7. [Phase 5: Testing Strategy](#phase-5-testing-strategy)
 8. [Implementation Checklist](#implementation-checklist)
 9. [Files Affected](#files-affected)
@@ -41,6 +41,10 @@
 | Metrics registry refactoring | **DONE** — `METRIC_REGISTRY`, `METRIC_ORDER`, `THRESHOLD_METRICS` in `skill_metrics.py`. Consolidated 3 copies of `filter_for_highly_skilled_forecasts()`. Deleted 4 dead `model_long`-era functions from `ensemble_calculator.py`. 392 postprocessing tests pass, 0 skips. Commit `f70b29f`. |
 | Monthly skill metrics (Phase 4a) | **IN PROGRESS** — pre-req done (sapphire-api-client LT support). **Next:** bump pinned hash + `uv sync`, then Steps 1–7. Detailed plan in [`postprocessing_unified_plan_detailMonthlyForecasts.md`](postprocessing_unified_plan_detailMonthlyForecasts.md) |
 | Quarterly + seasonal skill metrics (Phase 4b) | TODO — deferred, depends on 4a |
+| Tier 1 additional metrics: PBIAS, KGElf, NSE_log (Phase 4c) | TODO — depends on 4a (metrics registry + monthly pipeline) |
+| Tier 2 additional metrics: FHV, FLV, F1/CSI, low-flow contingency (Phase 4d) | TODO — depends on 4c, daily/sub-daily only, yearly calculation |
+| Tier 3 deferred metrics: drought events, SSI, BSS (Phase 4e) | DEFERRED — revisit after Tiers 1–2 are operational |
+| Dashboard metrics visualization (FD-002) | TODO — depends on 4c/4d. See [`gi_draft_dashboard_skill_metrics_visualization.md`](issues/gi_draft_dashboard_skill_metrics_visualization.md) |
 | Bug 6: Single-model ensemble filter only rejects LR | **DONE** — `_is_multi_model_ensemble()` helper replaces hardcoded check |
 | Comprehensive test suite (50+ unit, 12+ integration) | **DONE** — 392 postprocessing tests, 0 skips (all 49 API tests now pass via module venv). CRUD service: 86 tests. |
 | Bulk-read API endpoints (for `long_term_forecasting`) | Planned — see `doc/plans/bulk_read_endpoints_instructions.md` |
@@ -401,7 +405,7 @@ All Phase 3 items are complete. The extracted `src/` modules in `postprocessing_
 
 ---
 
-## Phase 4: Monthly, Quarterly & Seasonal Skill Metrics
+## Phase 4: Monthly, Quarterly, Seasonal & Additional Skill Metrics
 
 ### Pre-requisite Ordering (decided 2026-02-16)
 
@@ -417,13 +421,14 @@ Phase 4a has two pre-requisites that must be completed **before** implementation
 
 Extend `postprocessing_forecasts` to calculate skill metrics for all temporal resolutions produced by the forecast system:
 
-| Resolution | Forecasts produced by | Point metrics | CRPS |
-|------------|----------------------|---------------|------|
-| Pentadal (5-day) | `linear_regression`, `machine_learning` | **Done** | Blocked — quantile columns not yet populated |
-| Decadal (10-day) | `linear_regression`, `machine_learning` | **Done** | Blocked — quantile columns not yet populated |
-| Monthly | `long_term_forecasting` | **TODO** | **TODO** — quantiles available |
-| Quarterly | Aggregated from monthly, or direct from `long_term_forecasting` | **TODO** | **TODO** — quantiles available |
-| Seasonal | Aggregated from monthly, or direct from `long_term_forecasting` | **TODO** | **TODO** — quantiles available |
+| Resolution | Forecasts produced by | Point metrics | CRPS | Tier 1 (PBIAS, KGElf, NSE_log) | Tier 2 (FHV, FLV, F1/CSI, low-flow CSI) |
+|------------|----------------------|---------------|------|-------------------------------|------------------------------------------|
+| Daily | `linear_regression`, `machine_learning` | **Done** | Blocked — quantile columns not yet populated | **TODO** (Phase 4c) | **TODO** (Phase 4d) |
+| Pentadal (5-day) | `linear_regression`, `machine_learning` | **Done** | Blocked — quantile columns not yet populated | **TODO** (Phase 4c) | N/A — insufficient temporal resolution |
+| Decadal (10-day) | `linear_regression`, `machine_learning` | **Done** | Blocked — quantile columns not yet populated | **TODO** (Phase 4c) | N/A — insufficient temporal resolution |
+| Monthly | `long_term_forecasting` | **TODO** (Phase 4a) | **TODO** (Phase 4a) — quantiles available | **TODO** (Phase 4c) | N/A — insufficient temporal resolution |
+| Quarterly | Aggregated from monthly, or direct from `long_term_forecasting` | **TODO** (Phase 4b) | **TODO** (Phase 4b) — quantiles available | **TODO** (Phase 4c) | N/A — insufficient temporal resolution |
+| Seasonal | Aggregated from monthly, or direct from `long_term_forecasting` | **TODO** (Phase 4b) | **TODO** (Phase 4b) — quantiles available | **TODO** (Phase 4c) | N/A — insufficient temporal resolution |
 
 ### Key Design Decisions
 
@@ -958,7 +963,7 @@ The assertion was already a clean `assert saved_df.empty` when reviewed — no `
 - [x] ~~Replace multiple `.isin()` with merge~~ — ensemble filtering in pentad + decad (commit `eae7158`)
 - [x] ~~Implement API client singleton~~ — `_get_preprocessing_client()` + `_get_postprocessing_client()` + `_reset_api_clients()` (commit `eae7158`)
 
-### Phase 4: Monthly, Quarterly & Seasonal Skill Metrics
+### Phase 4: Monthly, Quarterly, Seasonal & Additional Skill Metrics
 
 Split into sub-phases: **4a (monthly)** is fully planned, **4b (quarterly + seasonal)** deferred.
 
@@ -995,6 +1000,192 @@ Split into sub-phases: **4a (monthly)** is fully planned, **4b (quarterly + seas
 - [ ] Seasonal config in `postprocessing_forecasts/config.yaml` (`start_month`, `end_month`)
 - [ ] Env vars for quarterly/seasonal output file paths
 - [ ] Extend `recalculate_skill_metrics.py` for quarterly/seasonal
+
+#### Phase 4c: Tier 1 Additional Metrics — PBIAS, KGElf, NSE_log (all scales, yearly calculation)
+
+> **Decided 2026-02-17:** Based on operational hydrologist review. These metrics are calculated yearly via `recalculate_skill_metrics.py` and available via API. Dashboard visualization is planned separately (FD-002) but deferred until metrics are operational.
+
+**Rationale:** The current metrics (NSE, accuracy, s/sigma, MAE, CRPS) evaluate overall forecast quality but miss two critical dimensions: (1) **volume bias** — does the model systematically over/underestimate? and (2) **low-flow performance** — is the model reliable during irrigation-critical baseflow periods?
+
+**Metrics:**
+
+| Metric | Formula | Interpretation | Perfect | Thresholds (Moriasi et al.) |
+|--------|---------|----------------|---------|----------------------------|
+| `pbias` | `100 * SUM(obs - sim) / SUM(obs)` | Percent volume bias. Positive = underestimation. | 0 | V.Good: <10%, Good: <15%, Fair: <25% |
+| `kgelf` | `[KGE(Q) + KGE(1/Q)] / 2` | Composite KGE emphasizing low flows. Garcia et al. (2017). | 1.0 | V.Good: >0.75, Good: >0.50, Fair: >0.00 |
+| `nse_log` | `NSE(log(obs+eps), log(sim+eps))` | NSE on log-transformed flows. Reduces high-flow dominance. | 1.0 | V.Good: >0.75, Good: >0.65, Fair: >0.50 |
+
+**Why KGE(1/Q) instead of KGE(log Q)?** Santos et al. (2018) showed three critical pitfalls of log-transformed KGE: (1) instability when mean(log Q) approaches zero, (2) loss of unit invariance, (3) erratic sensitivity to epsilon. The inverse transformation avoids all three. NSE_log does not have these pitfalls because NSE uses additive residuals, not multiplicative ratios.
+
+**Epsilon handling for zero flows:** `eps = mean(obs) / 100` (Pushpalatha et al., 2012).
+
+**Implementation:**
+
+- [ ] **`src/skill_metrics.py`**: Add `pbias()`, `kge()`, `kge_lf()`, `nse_log()` functions
+- [ ] **`src/skill_metrics.py`**: Register in `METRIC_REGISTRY` (no threshold filtering — these are informational, not used for ensemble selection)
+  ```python
+  METRIC_REGISTRY['pbias'] = {
+      'min_points': 2,
+      'higher_is_better': None,  # closer to 0 is better (signed metric)
+      'env_var': None,
+      'default_threshold': None,
+  }
+  METRIC_REGISTRY['kgelf'] = {
+      'min_points': 10,  # KGE needs meaningful correlation
+      'higher_is_better': True,
+      'env_var': None,
+      'default_threshold': None,
+  }
+  METRIC_REGISTRY['nse_log'] = {
+      'min_points': 2,
+      'higher_is_better': True,
+      'env_var': None,
+      'default_threshold': None,
+  }
+  ```
+- [ ] **`src/skill_metrics.py`**: Extend `calculate_all_skill_metrics()` to include the three new metrics in its return Series
+- [ ] **DB migration**: Add `pbias`, `kgelf`, `nse_log` columns to `SkillMetric` table in `sapphire/services/postprocessing/app/models.py`
+- [ ] **API schema**: Add fields to `SkillMetricBase` in `sapphire/services/postprocessing/app/schemas.py`
+- [ ] **`src/api_writer.py`**: Include new fields in skill metric API writes
+- [ ] **`src/file_writer.py`**: Include new columns in CSV output
+- [ ] **Tests**: Unit tests (happy path + edge cases for each metric), integration tests (full pipeline with new metrics), API write tests
+
+**Edge cases to test:**
+- All-zero observed flows (PBIAS: division by zero → NaN)
+- Constant observed flow (KGE correlation undefined → NaN)
+- Mixed NaN/valid pairs (metrics computed on valid pairs only)
+- Single data point (below `min_points` → NaN)
+
+**References:**
+- Moriasi et al. (2007, 2015) — PBIAS performance thresholds
+- Garcia et al. (2017) — KGElf composite criterion
+- Santos et al. (2018) — Pitfalls of log-transformed KGE
+- Pushpalatha et al. (2012) — Epsilon for zero-flow handling
+
+#### Phase 4d: Tier 2 Additional Metrics — FHV, FLV, F1/CSI, Low-Flow Contingency (daily/sub-daily, yearly calculation)
+
+> **Decided 2026-02-17:** Calculated yearly, API access only. Dashboard visualization deferred (FD-002). F1/CSI limited to 2-year and 5-year return periods based on operational hydrologist recommendation — higher return periods lack sufficient events for meaningful statistics.
+
+**Rationale:** These metrics answer "How well does this model detect floods and droughts?" — a model evaluation concern for annual review and model selection, not daily operations.
+
+**Metrics:**
+
+| Metric | Formula | What it evaluates | Temporal scale |
+|--------|---------|-------------------|----------------|
+| `fhv` | `100 * SUM(sim_high - obs_high) / SUM(obs_high)` | Peak flow bias (top 2% of FDC) | Daily/sub-daily |
+| `flv` | Log-FDC bias on bottom 30% of flows | Low-flow volume bias | Daily/sub-daily |
+| `f1_2yr` | F1 score for 2-year return period exceedance | Flood detection (frequent events) | Daily/sub-daily |
+| `f1_5yr` | F1 score for 5-year return period exceedance | Flood detection (moderate events) | Daily/sub-daily |
+| `precision_2yr`, `recall_2yr` | Components of F1 | False alarm ratio / detection rate | Daily/sub-daily |
+| `precision_5yr`, `recall_5yr` | Components of F1 | False alarm ratio / detection rate | Daily/sub-daily |
+| `csi_2yr`, `csi_5yr` | `TP / (TP + FP + FN)` | Critical Success Index (= Threat Score) | Daily/sub-daily |
+| `lowflow_csi_q90` | CSI for flows below Q90 | Drought condition detection | Daily/sub-daily |
+| `lowflow_csi_q95` | CSI for flows below Q95 | Severe low-flow detection | Daily/sub-daily |
+
+**F1 and CSI relationship:** F1 = 2*CSI / (1 + CSI). They are monotonically equivalent — rankings are identical. Both are computed and stored because F1 is the standard ML term and CSI/Threat Score is the standard hydrology term (Waller et al., 2024).
+
+**Return period threshold estimation:**
+
+```python
+from scipy.stats import genextreme
+
+def estimate_return_period_thresholds(
+    annual_maxima: np.ndarray,
+    return_periods: list[int] = [2, 5],
+) -> dict[int, float]:
+    """Fit GEV to annual maxima, return discharge thresholds."""
+    shape, loc, scale = genextreme.fit(annual_maxima)
+    return {
+        T: genextreme.ppf(1.0 - 1.0 / T, shape, loc, scale)
+        for T in return_periods
+    }
+```
+
+- Requires annual maximum series per station from historical observations
+- Minimum 15 years recommended for reliable GEV fit; flag stations with < 15 years
+- Thresholds are re-estimated each yearly recalculation as more data accumulates
+
+**Data requirements:** These metrics need daily forecast-observation pairs. They apply to models that produce daily or sub-daily forecasts. They do **not** apply to pentadal, decadal, or monthly aggregated metrics (insufficient temporal resolution for FDC percentiles and event detection).
+
+**Schema: Separate table for threshold-based metrics**
+
+Threshold-based metrics are parameterized (by return period or flow quantile), so they need a separate table rather than additional columns on `SkillMetric`:
+
+```python
+class ThresholdSkillMetric(Base):
+    __tablename__ = "threshold_skill_metrics"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    code = Column(String(50))           # Station code
+    model_type = Column(Enum(ModelType))
+    horizon_type = Column(Enum(HorizonType))  # 'day' for daily
+    threshold_type = Column(String(30)) # 'flood_2yr', 'flood_5yr', 'lowflow_q90', 'lowflow_q95'
+    threshold_value = Column(Float)     # Actual discharge threshold (m3/s)
+    date = Column(Date)                 # Recalculation date
+    f1 = Column(Float)
+    precision = Column(Float)           # = 1 - FAR (False Alarm Ratio)
+    recall = Column(Float)              # = POD (Probability of Detection)
+    csi = Column(Float)                 # = Threat Score
+    tp = Column(Integer)
+    fp = Column(Integer)
+    fn = Column(Integer)
+    tn = Column(Integer)
+    n_years = Column(Integer)           # Years of data used (data sufficiency flag)
+```
+
+FHV and FLV are scalar metrics (not parameterized by threshold), so they go in the existing `SkillMetric` table alongside PBIAS/KGElf/NSE_log:
+
+```python
+# Additional columns in SkillMetric (only populated for daily horizon_type)
+fhv = Column(Float)   # Peak flow bias (%), top 2% of FDC
+flv = Column(Float)   # Low-flow volume bias (%), bottom 30% of FDC
+```
+
+**Implementation:**
+
+- [ ] **`src/skill_metrics.py`**: Add `fdc_fhv()`, `fdc_flv()` functions (from Yilmaz et al., 2008)
+- [ ] **`src/skill_metrics.py`**: Add `estimate_return_period_thresholds()` (GEV fit via scipy)
+- [ ] **`src/skill_metrics.py`**: Add `evaluate_threshold_exceedance()` — binary classification + F1/CSI/precision/recall
+- [ ] **`src/skill_metrics.py`**: Add `evaluate_lowflow_contingency()` — same framework for below-threshold events
+- [ ] **`src/skill_metrics.py`**: Register `fhv`, `flv` in `METRIC_REGISTRY`
+- [ ] **DB migration**: Add `fhv`, `flv` columns to `SkillMetric` table
+- [ ] **DB migration**: Create `ThresholdSkillMetric` table
+- [ ] **API schema**: Add `ThresholdSkillMetricBase` schema + CRUD endpoints
+- [ ] **`src/api_writer.py`**: Write threshold metrics to API
+- [ ] **`recalculate_skill_metrics.py`**: Add daily threshold metric calculation block
+- [ ] **Tests**: Unit tests for GEV fitting, binary classification, FDC metrics; integration tests for full pipeline; edge cases (insufficient years for GEV, no exceedance events, all-below-threshold)
+
+**Data sufficiency rules:**
+- GEV fit: require >= 15 annual maxima. Stations with fewer years get `n_years` flag and threshold metrics set to NaN
+- F1/CSI for 2-year: require >= 5 observed exceedance events (TP + FN >= 5)
+- F1/CSI for 5-year: require >= 3 observed exceedance events (TP + FN >= 3). Flag as "limited data" if < 5
+- Low-flow contingency: require >= 30 below-threshold observations
+
+**Why only 2-year and 5-year return periods?** (decided 2026-02-17)
+- A 10-year flood occurs ~2 times in 20 years of data — the contingency table is too sparse for meaningful F1
+- The 2-year threshold (~bankfull discharge) is the most operationally relevant for flood warning
+- The 5-year threshold covers moderate floods relevant for infrastructure protection
+- Higher return periods can be added later if data records grow sufficiently
+
+**References:**
+- Yilmaz et al. (2008) — FHV, FLV (flow duration curve metrics)
+- Waller et al. (2024) — F1 = CSI monotonic equivalence
+- NeuralHydrology — Reference Python implementations
+- NOAA hydrotools — Hit window approach for temporal alignment
+
+#### Phase 4e: Tier 3 Metrics — DEFERRED
+
+> **Decided 2026-02-17:** Deferred until Tiers 1–2 are operational and proven useful. Low-flow contingency (Tier 2) covers 80% of the drought detection ground more simply.
+
+The following metrics are **not planned** for near-term implementation but documented here for future reference:
+
+| Metric | Category | Why deferred |
+|--------|----------|--------------|
+| Drought event verification (duration/deficit bias) | Event-based | High implementation complexity; event-matching is subjective. Low-flow contingency covers most practical needs. |
+| Standardized Streamflow Index (SSI) | Drought index | Not yet part of operational practice in Central Asian hydromet services. Requires distribution fitting per station/month. |
+| Brier Skill Score for drought | Probabilistic | Depends on SSI + probabilistic drought forecasts. Three layers of dependency before it becomes useful. |
+
+**Revisit criteria:** Consider implementing when (1) Tier 1/2 metrics are actively used by hydromet services, (2) seasonal drought forecasting becomes an operational priority, (3) probabilistic forecast infrastructure (CRPS) is proven for all temporal scales.
 
 ### Phase 5: Testing
 
@@ -1136,7 +1327,9 @@ Each phase can be rolled back independently:
 - **Phase 1 (Bug 5):** Revert to `"warn"` mode (default) — no data impact.
 - **Phase 2 (Module separation):** Legacy `postprocessing_forecasts.py` is preserved. To rollback: repoint the Luigi task / Docker CMD back to the legacy script. No schema changes involved. The nightly gap-fill can be disabled independently by commenting out its cron entry — no impact on operational or yearly recalculation. The yearly script is run manually, so there's nothing to disable.
 - **Phase 3 (Batch upsert):** The new CRUD endpoint is additive. To rollback: revert the API server code; the client-side changes (vectorization) are independent and harmless.
-- **Phase 4 (Monthly/quarterly/seasonal skill metrics):** Entirely additive — new skill metric records in existing tables, new functions. Rollback = remove the new records from `skill_metrics` table (filter by `horizon_type IN ('month', 'quarter', 'season')`) and revert code.
+- **Phase 4a/4b (Monthly/quarterly/seasonal skill metrics):** Entirely additive — new skill metric records in existing tables, new functions. Rollback = remove the new records from `skill_metrics` table (filter by `horizon_type IN ('month', 'quarter', 'season')`) and revert code.
+- **Phase 4c (Tier 1 metrics: PBIAS, KGElf, NSE_log):** Additive columns on `SkillMetric` table. Rollback = set new columns to NULL via `UPDATE skill_metrics SET pbias=NULL, kgelf=NULL, nse_log=NULL` and revert code. Old columns unaffected.
+- **Phase 4d (Tier 2 metrics: FHV, FLV, F1/CSI, low-flow CSI):** New `ThresholdSkillMetric` table + additive columns (`fhv`, `flv`) on `SkillMetric`. Rollback = drop `threshold_skill_metrics` table, set `fhv=NULL, flv=NULL`, revert code.
 
 For database-level issues: PostgreSQL WAL-based point-in-time recovery can restore to any moment before a bad write.
 
@@ -1154,13 +1347,21 @@ Skill metrics are calculated **per model, per station, per pentad/decad of the y
 
 **Example:** 72 pentads × 50 stations × 4 models = **14,400 skill metric records**
 
-| Metric | Function | Description | Threshold for ensemble |
-|--------|----------|-------------|----------------------|
-| sdivsigma | `sdivsigma_nse()` | RMSE / StdDev of observations | < 0.6 (lower is better) |
-| NSE | `sdivsigma_nse()` | Nash-Sutcliffe Efficiency | > 0.8 (higher is better) |
-| MAE | `mae()` | Mean Absolute Error | (no threshold) |
-| accuracy | `forecast_accuracy_hydromet()` | Fraction within ±delta | > 0.8 (higher is better) |
-| n_pairs | — | Number of forecast-observation pairs | — |
+| Metric | Function | Description | Threshold for ensemble | Phase |
+|--------|----------|-------------|----------------------|-------|
+| sdivsigma | `sdivsigma_nse()` | RMSE / StdDev of observations | < 0.6 (lower is better) | Done |
+| NSE | `sdivsigma_nse()` | Nash-Sutcliffe Efficiency | > 0.8 (higher is better) | Done |
+| MAE | `mae()` | Mean Absolute Error | (no threshold) | Done |
+| accuracy | `forecast_accuracy_hydromet()` | Fraction within ±delta | > 0.8 (higher is better) | Done |
+| n_pairs | — | Number of forecast-observation pairs | — | Done |
+| CRPS | `calculate_crps()` | Continuous Ranked Probability Score | (no threshold) | 4a |
+| **pbias** | `pbias()` | Percent volume bias (0 = perfect) | (no threshold — informational) | **4c** |
+| **kgelf** | `kge_lf()` | KGE composite for low flows: [KGE(Q) + KGE(1/Q)] / 2 | (no threshold — informational) | **4c** |
+| **nse_log** | `nse_log()` | NSE on log-transformed flows | (no threshold — informational) | **4c** |
+| **fhv** | `fdc_fhv()` | Peak flow bias (top 2% of FDC). Daily only. | (no threshold — informational) | **4d** |
+| **flv** | `fdc_flv()` | Low-flow volume bias (bottom 30% FDC). Daily only. | (no threshold — informational) | **4d** |
+| **f1/csi** | `evaluate_threshold_exceedance()` | Flood detection for 2yr/5yr return periods. Daily only. Separate table. | (no threshold — informational) | **4d** |
+| **lowflow_csi** | `evaluate_lowflow_contingency()` | Drought detection for Q90/Q95. Daily only. Separate table. | (no threshold — informational) | **4d** |
 
 ### Why Different Skills per Pentad/Decad?
 
@@ -1295,6 +1496,7 @@ class PredictorDates:
 | `doc/plans/issues/gi_duplicate_skill_metrics_ensemble_composition.md` | RESOLVED |
 | `doc/plans/issues/gi_draft_prepg_yearly_norm_recalculation.md` | NOT STARTED |
 | `doc/plans/bulk_read_endpoints_instructions.md` | READY for implementation |
+| [`doc/plans/issues/gi_draft_dashboard_skill_metrics_visualization.md`](issues/gi_draft_dashboard_skill_metrics_visualization.md) | Draft — FD-002: Dashboard visualization of new skill metrics with plain-language interpretation. Blocked by Phases 4c/4d. |
 
 ## Superseded Documents
 
@@ -1328,3 +1530,4 @@ The following plans are **superseded** by this unified plan (moved to `archive/`
 | 2026-02-16 | Bea/Claude | **INFRA-005 complete** (commit `2c52d2a`). Removed `model_long` from entire app pipeline in 7 steps: (1) characterization tests, (2) `composition_agg`/`is_multi_model_composition` helpers, (3) `ensemble_calculator.py` refactored to `model_short`+`composition`, (4) `skill_metrics.py` refactored, (5) `data_reader.py`/`api_writer.py` cleaned, (6) `setup_library.py` ~18 assignments removed across ~14 functions, (7) all test data/fixtures/CSVs cleaned. 405 postprocessing + 161 iEasyHydroForecast tests pass. Residuals: `forecast_dashboard/` (separate cleanup), 4 deprecated `model_long=None` params in `setup_library.py`. Test coverage review identified 4 gaps to address: ensemble skill metric value assertions, decade ensemble via `calculate_skill_metrics_decade`, API writer composition in combined forecasts, setup_library deprecated param coverage. Updated status summary, Phase 4 pre-requisites, grouping keys appendix, test count (375→405). |
 | 2026-02-16 | Bea/Claude | Phase 4 refinement — 5 decisions recorded: (1) **INFRA-005 revised**: instead of consolidating model-name dicts into a registry, **remove `model_long` from apps modules entirely**. Apps use `model_short` only; `model_type_description` stays server-side for API consumers. This eliminates the 5 scattered mapping dicts rather than consolidating them. Must be done before Phase 4a. (2) **Delta/accuracy for monthly**: compute `delta = 0.674 * std(monthly_obs)` on-the-fly per (station, month); accuracy metric supported at all resolutions (Central Asian hydromet standard). (3) **Metrics registry before Phase 4a**: restructure `calculate_all_skill_metrics()` into `METRIC_REGISTRY` pattern as a separate pre-requisite task, so CRPS is added as a registry entry. (4) **Skilled Mean / Naive Mean**: computed in postprocessing as reference baselines (not produced by `long_term_forecasting`). Naive Mean = climatological mean, Skilled Mean = skill-weighted model average. (5) **SAPPHIRE_PREDICTION_MODE**: `BOTH` stays pentad+decad (backward compat), add `MONTHLY` and `ALL` (= everything). Recalculate entry point supports all modes; operational/maintenance for monthly is an open question. Updated: Phase 4 key design decisions (added #6–#8), pre-requisite ordering section, Phase 4a checklist (3 pre-reqs + env var + baselines), prediction mode semantics table. |
 | 2026-02-16 | Bea/Claude | **Metrics registry refactoring complete** (commit `f70b29f`). Added `METRIC_REGISTRY`, `METRIC_ORDER`, `THRESHOLD_METRICS` to `skill_metrics.py` as single source of truth for metric metadata (`min_points`, `higher_is_better`, `env_var`, `default_threshold`). `calculate_all_skill_metrics()` return index now uses `METRIC_ORDER`. Consolidated 3 copies of `filter_for_highly_skilled_forecasts()` into one module-level function driven by `THRESHOLD_METRICS`; `ensemble_calculator.py` version now a thin wrapper. Deleted 4 dead `model_long`-era functions (`extract_first_parentheses_content`, `model_long_agg`, `model_short_agg`, `_is_multi_model_ensemble`) and `re` import from `ensemble_calculator.py`. Cleaned up 3 test files: deleted `TestHelpers` class (16 tests), 4 characterization tests, `_LEGACY_MODEL_LONG_NAMES`, dead imports. Added `TestMetricRegistry` (4 tests). Test count: 405→392 (net -16: removed 20 dead, added 4 registry). All Phase 4a pre-requisites except `sapphire-api-client` long-forecast endpoints are now complete. **Next up:** Phase 4a monthly skill metrics implementation (pending `sapphire-api-client` `read_long_forecasts()`/`write_long_forecasts()` endpoints). |
+| 2026-02-17 | Bea/Claude | **Phases 4c/4d/4e added** — additional skill metrics based on operational hydrologist review. **Phase 4c (Tier 1):** PBIAS, KGElf, NSE_log — all temporal scales, yearly calculation, registered in `METRIC_REGISTRY`. Rationale: volume bias (PBIAS) and low-flow evaluation (KGElf, NSE_log) address critical gaps for irrigation regions (Central Asia) and flood regions (Nepal, Switzerland). KGE(1/Q) chosen over KGE(log Q) per Santos et al. (2018). **Phase 4d (Tier 2):** FHV (peak flow bias, top 2% FDC), FLV (low-flow bias, bottom 30% FDC), F1/CSI for 2yr/5yr return periods only (higher return periods lack sufficient events), low-flow contingency (CSI for Q90/Q95). Daily/sub-daily only. Separate `ThresholdSkillMetric` table for parameterized metrics. GEV fit for return period thresholds, minimum 15 years data. **Phase 4e (Tier 3, deferred):** drought event verification, SSI, BSS — revisit after Tiers 1-2 proven useful. **FD-002 dashboard issue created:** `gi_draft_dashboard_skill_metrics_visualization.md` — plain-language interpretation templates for each metric (e.g., "The model overestimates total runoff by 12%"), quality categories (Very good/Good/Fair/Poor), i18n support (Russian). Blocked by 4c/4d. Updated: status summary (6 new items), skill metrics appendix table (13 metrics), related documents. |
