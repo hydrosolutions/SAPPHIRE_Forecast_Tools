@@ -1,9 +1,54 @@
 import os
 import sys
+from dataclasses import dataclass
+from types import ModuleType
 from src.gettext_config import _
 import src.processing as processing
 from src.environment import load_configuration
 import src.gettext_config as localize
+
+
+@dataclass(frozen=True)
+class DashboardConfig:
+    """Immutable container for all dashboard-level configuration."""
+    env_file_path: str
+    in_docker: bool
+    icon_path: str
+    save_directory: str
+    viz: ModuleType
+    horizon: str
+    horizon_in_year: str
+    dashboard_title: str
+    display_weather_data: bool
+    display_snow_data: bool
+
+
+def init_dashboard(pn) -> DashboardConfig:
+    """Run every configuration step and return a single config object.
+
+    This replaces the six separate calls that used to live at the top of
+    ``forecast_dashboard.py``.
+    """
+    setup_panel(pn)
+
+    env_file_path, in_docker, icon_path = load_env_and_icons()
+    save_directory = setup_directories()
+    viz = setup_localization(pn)
+    horizon, horizon_in_year, dashboard_title = get_horizon()
+    display_weather, display_snow = display_weather_and_snow_data()
+
+    return DashboardConfig(
+        env_file_path=env_file_path,
+        in_docker=in_docker,
+        icon_path=icon_path,
+        save_directory=save_directory,
+        viz=viz,
+        horizon=horizon,
+        horizon_in_year=horizon_in_year,
+        dashboard_title=dashboard_title,
+        display_weather_data=display_weather,
+        display_snow_data=display_snow,
+    )
 
 
 def import_tag_library():

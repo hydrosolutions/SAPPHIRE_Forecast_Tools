@@ -19,7 +19,6 @@ from concurrent.futures import ThreadPoolExecutor
 # Third-party imports
 # =========================
 import panel as pn
-import pandas as pd
 import holoviews as hv
 
 # =========================
@@ -30,13 +29,11 @@ import src.processing as processing
 from src.site import SapphireSite as Site
 from src.bulletins import write_to_excel
 import src.layout as layout
-from src import db
 
 from dashboard.logger import setup_logger
 from dashboard import widgets
 from dashboard.bulletin_manager import load_bulletin_from_csv, add_current_selection_to_bulletin, remove_selected_from_bulletin, handle_bulletin_write, create_bulletin_table
 from dashboard import config
-from dashboard import utils
 from dashboard.data_manager import DataManager
 
 
@@ -45,13 +42,7 @@ logger = setup_logger()
 # =====================================================================
 # 1. Configuration & environment
 # =====================================================================
-config.setup_panel(pn)
-env_file_path, in_docker_flag, icon_path = config.load_env_and_icons()
-SAVE_DIRECTORY = config.setup_directories()
-viz = config.setup_localization(pn)
-horizon, horizon_in_year, dashboard_title = config.get_horizon()
-downloader, bulletin_download_panel = widgets.create_downloader_and_panel(horizon)
-display_weather_data, display_snow_data = config.display_weather_and_snow_data()
+cfg = config.init_dashboard(pn)
 
 # =====================================================================
 # 2. Station metadata & DataManager initialisation
@@ -62,14 +53,15 @@ all_stations, station_dict = processing.get_all_stations_from_file(valid_codes)
 dm = DataManager(
     all_stations=all_stations,
     valid_codes=valid_codes,
-    horizon=horizon,
-    horizon_in_year=horizon_in_year,
+    horizon=cfg.horizon,
+    horizon_in_year=cfg.horizon_in_year,
 )
 dm.load_station('15189')
 
 # =====================================================================
 # 3. Widgets
 # =====================================================================
+downloader, bulletin_download_panel = widgets.create_downloader_and_panel(cfg.horizon)
 
 # Widget for date selection, always visible
 date_picker = widgets.create_date_picker(dm.forecasts_all)
@@ -77,7 +69,7 @@ date_picker = widgets.create_date_picker(dm.forecasts_all)
 last_date, forecast_horizon_for_saving_bulletin, forecast_year_for_saving_bulletin = dm.get_bulletin_metadata()
 
 # Get information for bulletin headers into a dataframe that can be passed to the bulletin writer.
-bulletin_header_info = processing.get_bulletin_header_info(last_date, horizon)
+bulletin_header_info = processing.get_bulletin_header_info(last_date, cfg.horizon)
 
 pentad_selector = widgets.create_pentad_selector(last_date)
 decad_selector = widgets.create_decad_selector(last_date)
@@ -120,10 +112,10 @@ def update_add_to_bulletin_button(event):
     add_to_bulletin_button.disabled = event.new
 
 # Watch for changes in pipeline_running and update the add_to_bulletin_button
-viz.app_state.param.watch(update_add_to_bulletin_button, 'pipeline_running')
+cfg.viz.app_state.param.watch(update_add_to_bulletin_button, 'pipeline_running')
 
 # Set the initial state of the button based on whether the pipeline is running
-add_to_bulletin_button.disabled = viz.app_state.pipeline_running
+add_to_bulletin_button.disabled = cfg.viz.app_state.pipeline_running
 
 
 @pn.depends(station, pentad_selector, decad_selector, watch=True)
@@ -190,7 +182,7 @@ def update_model_select(station_value, selected_pentad, selected_decad):
 # 6. Bulletin management
 # =====================================================================
 add_to_bulletin_popup = widgets.create_add_to_bulletin_popup()
-bulletin_sites = load_bulletin_from_csv(forecast_year_for_saving_bulletin, forecast_horizon_for_saving_bulletin, SAVE_DIRECTORY, dm.sites_list)
+bulletin_sites = load_bulletin_from_csv(forecast_year_for_saving_bulletin, forecast_horizon_for_saving_bulletin, cfg.save_directory, dm.sites_list)
 
 # Function to update the bulletin table
 def update_bulletin_table(event=None):
@@ -204,7 +196,7 @@ select_basin_widget.param.watch(update_bulletin_table, 'value')
 add_to_bulletin_button.on_click(
     partial(
         add_current_selection_to_bulletin,
-        viz=viz,
+        viz=cfg.viz,
         forecast_tabulator=forecast_tabulator,
         station=station,
         sites_list=dm.sites_list,
@@ -212,7 +204,7 @@ add_to_bulletin_button.on_click(
         bulletin_sites=bulletin_sites,
         forecast_year_for_saving_bulletin=forecast_year_for_saving_bulletin,
         forecast_horizon_for_saving_bulletin=forecast_horizon_for_saving_bulletin,
-        save_directory=SAVE_DIRECTORY,
+        save_directory=cfg.save_directory,
         update_bulletin_table=update_bulletin_table
     )
 )
@@ -226,7 +218,7 @@ remove_bulletin_button.on_click(
         add_to_bulletin_popup=add_to_bulletin_popup,
         forecast_year_for_saving_bulletin=forecast_year_for_saving_bulletin,
         forecast_horizon_for_saving_bulletin=forecast_horizon_for_saving_bulletin,
-        save_directory=SAVE_DIRECTORY,
+        save_directory=cfg.save_directory,
         update_bulletin_table=update_bulletin_table
     )
 )
@@ -270,11 +262,11 @@ def _build_forecast_hydrograph():
         range_visibility=show_range_button.value,
     )
     if show_daily_data_widget.value == _('Yes'):
-        return viz.plot_pentad_forecast_hydrograph_data(
+        return cfg.viz.plot_pentad_forecast_hydrograph_data(
             _, hydrograph_pentad_all=dm.hydrograph_pentad_all, **common,
         )
     else:
-        return viz.plot_pentad_forecast_hydrograph_data_v2(
+        return cfg.viz.plot_pentad_forecast_hydrograph_data_v2(
             _,
             hydrograph_day_all=dm.hydrograph_day_all,
             linreg_predictor=dm.linreg_predictor,
@@ -287,7 +279,7 @@ def _build_forecast_hydrograph():
 def update_forecast_plots(event):
     """Updates 2nd, 3rd and 4th plots on Forecast tab"""
     pentad_forecast_plot.object = _build_forecast_hydrograph()
-    eff, acc = viz.plot_forecast_skill(
+    eff, acc = cfg.viz.plot_forecast_skill(
         _,
         dm.hydrograph_pentad_all,
         dm.forecasts_all,
@@ -306,7 +298,7 @@ def update_forecast_plots(event):
 update_forecast_button.on_click(update_forecast_plots)
 
 skill_table = pn.panel(
-    viz.create_skill_table(_, dm.forecast_stats),
+    cfg.viz.create_skill_table(_, dm.forecast_stats),
     sizing_mode='stretch_width')
 
 skill_metrics_download_filename, skill_metrics_download_button = skill_table.download_menu(
@@ -316,7 +308,7 @@ skill_metrics_download_filename, skill_metrics_download_button = skill_table.dow
 
 
 def _update_forecast_tabulator():
-    viz.create_forecast_summary_tabulator(
+    cfg.viz.create_forecast_summary_tabulator(
         _, dm.forecasts_all, station, date_picker,
         model_checkbox, allowable_range_selection, manual_range,
         forecast_tabulator
@@ -353,13 +345,13 @@ def _update_visualizations():
         range_visibility=show_range_button.value,
     )
     #print('---   ---plot_pentad_forecast_hydrograph_data---   ---')
-    viz.plot_pentad_forecast_hydrograph_data(
+    cfg.viz.plot_pentad_forecast_hydrograph_data(
         _, hydrograph_pentad_all=dm.hydrograph_pentad_all, **common,
     )
     #print('---   ---done with plot_pentad_forecast_hydrograph_data---   ---')
 
     #print('---   ---plot_pentad_forecast_hydrograph_data_v2---   ---')
-    viz.plot_pentad_forecast_hydrograph_data_v2(
+    cfg.viz.plot_pentad_forecast_hydrograph_data_v2(
         _, hydrograph_day_all=dm.hydrograph_day_all,
         linreg_predictor=dm.linreg_predictor,
         rram_forecast=dm.rram_forecast,
@@ -404,7 +396,7 @@ write_bulletin_button.on_click(
         write_to_excel=write_to_excel,
         sites_list=dm.sites_list,
         bulletin_header_info=bulletin_header_info,
-        env_file_path=env_file_path,
+        env_file_path=cfg.env_file_path,
         downloader=downloader
     )
 )
@@ -413,14 +405,14 @@ write_bulletin_button.on_click(
 # 10. Layout
 # =====================================================================
 # Define the disclaimer of the dashboard
-disclaimer = layout.define_disclaimer(_, in_docker_flag)
+disclaimer = layout.define_disclaimer(_, cfg.in_docker)
 
 
 # Update the widgets conditional on the active tab
-allowable_range_selection.param.watch(lambda event: viz.update_range_slider_visibility(
+allowable_range_selection.param.watch(lambda event: cfg.viz.update_range_slider_visibility(
     _, manual_range, event), 'value')
 
-reload_card = viz.create_reload_button()
+reload_card = cfg.viz.create_reload_button()
 
 # We don't need to update tabs or UI components dynamically since the page reloads
 
@@ -443,7 +435,7 @@ dashboard_content = layout.define_tabs_2(_, predictors_warning, forecast_warning
     add_to_bulletin_button, add_to_bulletin_popup, show_daily_data_widget,
     skill_table, skill_metrics_download_filename, skill_metrics_download_button
 )
-dashboard_content.param.watch(lambda event: viz.update_sidepane_card_visibility(dashboard_content, station_card, forecast_card, basin_card, pentad_card, reload_card, event), 'active')
+dashboard_content.param.watch(lambda event: cfg.viz.update_sidepane_card_visibility(dashboard_content, station_card, forecast_card, basin_card, pentad_card, reload_card, event), 'active')
 
 
 def update_active_tab(event):
@@ -451,18 +443,18 @@ def update_active_tab(event):
     active_tab = dashboard_content.active  # 0: Predictors tab, 1: Forecast tab
     with pn.io.hold(pn.state.curdoc):
         if active_tab == 0 and dm.should_render_predictors(station.value):
-            daily_hydrograph_plot.object = viz.plot_daily_hydrograph_data(_, dm.hydrograph_day_all, dm.linreg_predictor, station.value, date_picker.value)
-            if display_weather_data == True:
-                daily_rainfall_plot.object = viz.plot_daily_rainfall_data(_, dm.rain, station.value, date_picker.value, dm.linreg_predictor)
-                daily_temperature_plot.object = viz.plot_daily_temperature_data(_, dm.temp, station.value, date_picker.value, dm.linreg_predictor)
-            if display_snow_data == True:
+            daily_hydrograph_plot.object = cfg.viz.plot_daily_hydrograph_data(_, dm.hydrograph_day_all, dm.linreg_predictor, station.value, date_picker.value)
+            if cfg.display_weather_data == True:
+                daily_rainfall_plot.object = cfg.viz.plot_daily_rainfall_data(_, dm.rain, station.value, date_picker.value, dm.linreg_predictor)
+                daily_temperature_plot.object = cfg.viz.plot_daily_temperature_data(_, dm.temp, station.value, date_picker.value, dm.linreg_predictor)
+            if cfg.display_snow_data == True:
                 for var in dm.snow_data.keys():
                     if dm.snow_data[var] is not None:
-                        snow_plot_panes[var].object = viz.plot_daily_snow_data(_, dm.snow_data, var, station.value, date_picker.value, dm.linreg_predictor)
+                        snow_plot_panes[var].object = cfg.viz.plot_daily_snow_data(_, dm.snow_data, var, station.value, date_picker.value, dm.linreg_predictor)
                     else:
                         snow_plot_panes[var].object = pn.pane.Markdown(_("No snow data from SAPPHIRE Data Gateway available."))
         elif active_tab == 1 and dm.should_render_forecast(station.value):
-            plot = viz.select_and_plot_data(_, dm.linreg_predictor, station.value, pentad_selector.value, decad_selector.value, SAVE_DIRECTORY)
+            plot = cfg.viz.select_and_plot_data(_, dm.linreg_predictor, station.value, pentad_selector.value, decad_selector.value, cfg.save_directory)
             forecast_data_and_plot[:] = plot.objects
             update_forecast_plots(None)
 
@@ -507,8 +499,8 @@ auth.track_widgets([
 
 # --- Build the template (use auth's widgets) ---
 dashboard = pn.template.BootstrapTemplate(
-    title=dashboard_title,
-    logo=icon_path,
+    title=cfg.dashboard_title,
+    logo=cfg.icon_path,
     header=[pn.Row(
         pn.layout.HSpacer(),
         language_buttons,
@@ -518,7 +510,7 @@ dashboard = pn.template.BootstrapTemplate(
     sidebar=pn.Column(sidebar_content),
     collapsed_sidebar=False,
     main=pn.Column(auth._js_pane, auth.login_form, dashboard_content),
-    favicon=icon_path
+    favicon=cfg.icon_path
 )
 
 # --- Initialize auth (sets visibility, restores session) ---
