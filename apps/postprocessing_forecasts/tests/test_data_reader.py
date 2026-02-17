@@ -13,10 +13,16 @@ sys.path.insert(
     0, os.path.join(os.path.dirname(__file__), '..')
 )
 
+import numpy as np
+
 from src.data_reader import (
     read_skill_metrics,
     _read_skill_metrics_csv,
     _normalize_api_skill_metrics,
+    _aggregate_daily_to_monthly,
+    _normalize_monthly_forecasts,
+    read_monthly_observations,
+    read_monthly_forecasts,
 )
 
 
@@ -409,3 +415,350 @@ class TestDataReaderMissingColumns:
         # model_type → model_short rename still works
         assert 'model_short' in result.columns
         assert result.iloc[0]['model_short'] == 'LR'
+
+
+# ===================================================================
+# Monthly data readers
+# ===================================================================
+
+class TestAggregateDailyToMonthly:
+    """Tests for _aggregate_daily_to_monthly — 50% coverage filter,
+    delta computation, and edge cases with incomplete data."""
+
+    def _make_daily(self, code, year, month, values):
+        """Build daily DataFrame for a single station-month.
+
+        Args:
+            code: Station code.
+            year: Year.
+            month: Month number (1-12).
+            values: List of discharge values (one per day). Length
+                determines how many days have data.
+        """
+        import calendar
+        n_days = len(values)
+        start = pd.Timestamp(year, month, 1)
+        dates = pd.date_range(start, periods=n_days, freq='D')
+        return pd.DataFrame({
+            'code': [str(code)] * n_days,
+            'date': dates,
+            'discharge_avg': values,
+        })
+
+    def test_full_month_produces_correct_mean(self):
+        """Full month (31 days) produces correct monthly mean.
+
+        January 2020: 31 days, all with value 100.0.
+        Expected mean = 100.0, delta = 0 (single year).
+        """
+        daily = self._make_daily('S1', 2020, 1, [100.0] * 31)
+        result = _aggregate_daily_to_monthly(daily)
+
+        assert len(result) == 1
+        row = result.iloc[0]
+        assert row['code'] == 'S1'
+        assert row['year'] == 2020
+        assert row['month'] == 1
+        assert row['month_in_year'] == 1
+        assert row['discharge_avg'] == pytest.approx(100.0)
+        # Single year -> std is NaN -> delta = 0
+        assert row['delta'] == pytest.approx(0.0, abs=1e-10)
+
+    def test_50_percent_coverage_filter_passes(self):
+        """Month with exactly 50% coverage passes the filter.
+
+        February 2020 (leap year): 29 days. 15 days is ~52% -> passes.
+        """
+        # 15 days = 15/29 = 51.7% > 50%
+        daily = self._make_daily('S1', 2020, 2, [80.0] * 15)
+        result = _aggregate_daily_to_monthly(daily)
+        assert len(result) == 1
+        assert result.iloc[0]['discharge_avg'] == pytest.approx(80.0)
+
+    def test_below_50_percent_coverage_filtered_out(self):
+        """Month with fewer than 50% non-missing days is dropped.
+
+        January 2020: 31 days. 15 days = 48.4% < 50% -> filtered out.
+        """
+        daily = self._make_daily('S1', 2020, 1, [80.0] * 15)
+        result = _aggregate_daily_to_monthly(daily)
+        assert len(result) == 0
+
+    def test_nan_values_count_as_missing(self):
+        """NaN daily values don't count toward non_missing_days.
+
+        January 2020: 31 daily rows, but 20 are NaN.
+        11 valid / 31 = 35.5% < 50% -> filtered out.
+        """
+        values = [100.0] * 11 + [np.nan] * 20
+        daily = self._make_daily('S1', 2020, 1, values)
+        result = _aggregate_daily_to_monthly(daily)
+        assert len(result) == 0
+
+    def test_nan_mixed_with_valid_computes_mean_of_valid(self):
+        """Monthly mean uses only non-NaN values.
+
+        January 2020: 31 days, 16 valid (mean=100), 15 NaN.
+        16/31 = 51.6% > 50% -> passes. Mean of valid = 100.
+        """
+        values = [100.0] * 16 + [np.nan] * 15
+        daily = self._make_daily('S1', 2020, 1, values)
+        result = _aggregate_daily_to_monthly(daily)
+        assert len(result) == 1
+        assert result.iloc[0]['discharge_avg'] == pytest.approx(100.0)
+
+    def test_delta_computed_across_years(self):
+        """Delta = 0.674 * std(discharge_avg) across years per month.
+
+        S1 month 1: year 2020 mean=100, year 2021 mean=110.
+        std([100, 110], ddof=1) = 7.071
+        delta = 0.674 * 7.071 = 4.766
+        """
+        daily_2020 = self._make_daily('S1', 2020, 1, [100.0] * 31)
+        daily_2021 = self._make_daily('S1', 2021, 1, [110.0] * 31)
+        daily = pd.concat([daily_2020, daily_2021], ignore_index=True)
+
+        result = _aggregate_daily_to_monthly(daily)
+        assert len(result) == 2
+
+        expected_delta = 0.674 * np.std([100.0, 110.0], ddof=1)
+        assert result.iloc[0]['delta'] == pytest.approx(
+            expected_delta, rel=1e-6
+        )
+        assert result.iloc[1]['delta'] == pytest.approx(
+            expected_delta, rel=1e-6
+        )
+
+    def test_multi_station_independent_delta(self):
+        """Stations compute delta independently.
+
+        S1 month 1: means [100, 110] -> delta = 0.674 * std
+        S2 month 1: means [200, 220] -> different delta
+        """
+        daily = pd.concat([
+            self._make_daily('S1', 2020, 1, [100.0] * 31),
+            self._make_daily('S1', 2021, 1, [110.0] * 31),
+            self._make_daily('S2', 2020, 1, [200.0] * 31),
+            self._make_daily('S2', 2021, 1, [220.0] * 31),
+        ], ignore_index=True)
+
+        result = _aggregate_daily_to_monthly(daily)
+        s1 = result[result['code'] == 'S1']
+        s2 = result[result['code'] == 'S2']
+
+        delta_s1 = 0.674 * np.std([100.0, 110.0], ddof=1)
+        delta_s2 = 0.674 * np.std([200.0, 220.0], ddof=1)
+        assert s1.iloc[0]['delta'] == pytest.approx(delta_s1, rel=1e-6)
+        assert s2.iloc[0]['delta'] == pytest.approx(delta_s2, rel=1e-6)
+        assert delta_s1 != pytest.approx(delta_s2)
+
+    def test_empty_daily_returns_empty(self):
+        """Empty daily DataFrame returns empty result with correct cols."""
+        daily = pd.DataFrame(columns=['code', 'date', 'discharge_avg'])
+        result = _aggregate_daily_to_monthly(daily)
+        assert result.empty
+        for col in ['code', 'year', 'month', 'month_in_year',
+                     'discharge_avg', 'delta']:
+            assert col in result.columns
+
+    def test_single_year_delta_is_zero(self):
+        """Single year of data: std is NaN -> delta = 0."""
+        daily = self._make_daily('S1', 2020, 6, [50.0] * 30)
+        result = _aggregate_daily_to_monthly(daily)
+        assert len(result) == 1
+        assert result.iloc[0]['delta'] == pytest.approx(0.0, abs=1e-10)
+
+    def test_multiple_months_separate(self):
+        """Data for two months produces two output rows.
+
+        S1 Jan=100, S1 Feb=80.
+        """
+        daily = pd.concat([
+            self._make_daily('S1', 2020, 1, [100.0] * 31),
+            self._make_daily('S1', 2020, 2, [80.0] * 29),
+        ], ignore_index=True)
+        result = _aggregate_daily_to_monthly(daily)
+        assert len(result) == 2
+        jan = result[result['month'] == 1].iloc[0]
+        feb = result[result['month'] == 2].iloc[0]
+        assert jan['discharge_avg'] == pytest.approx(100.0)
+        assert feb['discharge_avg'] == pytest.approx(80.0)
+
+
+class TestNormalizeMonthlyForecasts:
+    """Tests for _normalize_monthly_forecasts — API response to internal
+    DataFrame format."""
+
+    def test_extracts_year_month_from_valid_from(self):
+        """year and month derived from valid_from date."""
+        df = pd.DataFrame({
+            'code': ['10001'],
+            'valid_from': ['2024-06-01'],
+            'valid_to': ['2024-06-30'],
+            'model_type': ['GBT'],
+            'q50': [100.0],
+        })
+        result = _normalize_monthly_forecasts(df)
+        assert result.iloc[0]['year'] == 2024
+        assert result.iloc[0]['month'] == 6
+
+    def test_model_type_renamed_to_model_short(self):
+        """model_type column is renamed to model_short."""
+        df = pd.DataFrame({
+            'code': ['10001'],
+            'valid_from': ['2024-06-01'],
+            'model_type': ['GBT'],
+        })
+        result = _normalize_monthly_forecasts(df)
+        assert 'model_short' in result.columns
+        assert 'model_type' not in result.columns
+        assert result.iloc[0]['model_short'] == 'GBT'
+
+    def test_code_cleaned_to_string(self):
+        """Numeric code (15001.0) is cleaned to '15001'."""
+        df = pd.DataFrame({
+            'code': [15001.0],
+            'valid_from': ['2024-06-01'],
+            'model_type': ['LR_Base'],
+        })
+        result = _normalize_monthly_forecasts(df)
+        assert result.iloc[0]['code'] == '15001'
+
+    def test_multiple_models_and_months(self):
+        """Multiple models and months are all normalized."""
+        df = pd.DataFrame({
+            'code': ['10001', '10001', '10001'],
+            'valid_from': ['2024-06-01', '2024-07-01', '2024-06-01'],
+            'model_type': ['GBT', 'GBT', 'LR_Base'],
+            'q50': [100.0, 110.0, 102.0],
+        })
+        result = _normalize_monthly_forecasts(df)
+        assert len(result) == 3
+        assert set(result['model_short']) == {'GBT', 'LR_Base'}
+        assert set(result['month']) == {6, 7}
+
+    def test_preserves_quantile_columns(self):
+        """Quantile columns (q05-q95) survive normalization."""
+        df = pd.DataFrame({
+            'code': ['10001'],
+            'valid_from': ['2024-06-01'],
+            'model_type': ['GBT'],
+            'q05': [80.0], 'q10': [85.0], 'q25': [92.0],
+            'q50': [100.0],
+            'q75': [108.0], 'q90': [115.0], 'q95': [120.0],
+        })
+        result = _normalize_monthly_forecasts(df)
+        for col in ['q05', 'q10', 'q25', 'q50', 'q75', 'q90', 'q95']:
+            assert col in result.columns
+        assert result.iloc[0]['q50'] == 100.0
+
+    def test_no_model_type_column_survives(self):
+        """If model_type is missing, no rename happens, no crash."""
+        df = pd.DataFrame({
+            'code': ['10001'],
+            'valid_from': ['2024-06-01'],
+            'q50': [100.0],
+        })
+        result = _normalize_monthly_forecasts(df)
+        assert 'model_short' not in result.columns
+        assert 'model_type' not in result.columns
+        assert result.iloc[0]['year'] == 2024
+
+
+class TestReadMonthlyObservations:
+    """Tests for read_monthly_observations entry point."""
+
+    @patch('src.data_reader._read_daily_runoff_api')
+    def test_api_failure_returns_empty(self, mock_api):
+        """API exception returns empty DataFrame, not crash."""
+        mock_api.side_effect = RuntimeError("connection refused")
+        result = read_monthly_observations(['10001'], 2020, 2024)
+        assert isinstance(result, pd.DataFrame)
+        assert result.empty
+        for col in ['code', 'year', 'month', 'discharge_avg', 'delta']:
+            assert col in result.columns
+
+    @patch('src.data_reader._read_daily_runoff_api')
+    def test_empty_api_returns_empty(self, mock_api):
+        """No daily data returns empty DataFrame."""
+        mock_api.return_value = pd.DataFrame()
+        result = read_monthly_observations(['10001'], 2020, 2024)
+        assert result.empty
+
+    @patch('src.data_reader._read_daily_runoff_api')
+    def test_aggregation_through_full_pipeline(self, mock_api):
+        """Full pipeline: daily API data -> monthly aggregation.
+
+        January 2020: 31 days at 100.0 -> mean 100.
+        January 2021: 31 days at 110.0 -> mean 110.
+        delta = 0.674 * std([100, 110], ddof=1)
+        """
+        daily = pd.concat([
+            pd.DataFrame({
+                'code': ['10001'] * 31,
+                'date': pd.date_range('2020-01-01', periods=31),
+                'discharge_avg': [100.0] * 31,
+            }),
+            pd.DataFrame({
+                'code': ['10001'] * 31,
+                'date': pd.date_range('2021-01-01', periods=31),
+                'discharge_avg': [110.0] * 31,
+            }),
+        ], ignore_index=True)
+        mock_api.return_value = daily
+
+        result = read_monthly_observations(['10001'], 2020, 2021)
+        assert len(result) == 2
+
+        row_2020 = result[result['year'] == 2020].iloc[0]
+        assert row_2020['discharge_avg'] == pytest.approx(100.0)
+        assert row_2020['month'] == 1
+        assert row_2020['code'] == '10001'
+
+        expected_delta = 0.674 * np.std([100.0, 110.0], ddof=1)
+        assert row_2020['delta'] == pytest.approx(expected_delta, rel=1e-6)
+
+
+class TestReadMonthlyForecasts:
+    """Tests for read_monthly_forecasts entry point."""
+
+    @patch('src.data_reader._read_long_forecasts_api')
+    def test_api_failure_returns_empty(self, mock_api):
+        """API exception returns empty DataFrame, not crash."""
+        mock_api.side_effect = RuntimeError("connection refused")
+        result = read_monthly_forecasts(['10001'], 2020, 2024)
+        assert isinstance(result, pd.DataFrame)
+        assert result.empty
+
+    @patch('src.data_reader._read_long_forecasts_api')
+    def test_empty_api_returns_empty(self, mock_api):
+        """No forecast data returns empty DataFrame."""
+        mock_api.return_value = pd.DataFrame()
+        result = read_monthly_forecasts(['10001'], 2020, 2024)
+        assert result.empty
+
+    @patch('src.data_reader._read_long_forecasts_api')
+    def test_normalization_through_full_pipeline(self, mock_api):
+        """Full pipeline: raw API data -> normalized forecasts."""
+        raw = pd.DataFrame({
+            'code': [10001.0, 10001.0],
+            'valid_from': ['2024-06-01', '2024-07-01'],
+            'valid_to': ['2024-06-30', '2024-07-31'],
+            'model_type': ['GBT', 'GBT'],
+            'q50': [100.0, 110.0],
+            'q05': [80.0, 88.0],
+            'q10': [85.0, 93.0],
+            'q25': [92.0, 100.0],
+            'q75': [108.0, 120.0],
+            'q90': [115.0, 130.0],
+            'q95': [120.0, 140.0],
+        })
+        mock_api.return_value = raw
+
+        result = read_monthly_forecasts(['10001'], 2024, 2024)
+        assert len(result) == 2
+        assert result.iloc[0]['code'] == '10001'
+        assert result.iloc[0]['model_short'] == 'GBT'
+        assert result.iloc[0]['year'] == 2024
+        assert set(result['month']) == {6, 7}
+        assert result.iloc[0]['q50'] == 100.0

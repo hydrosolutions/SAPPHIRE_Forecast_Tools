@@ -584,3 +584,177 @@ class TestMonthlyMetricsEdgeCases:
         assert row['sdivsigma'] == pytest.approx(0.4, rel=1e-6)
         assert row['nse'] == pytest.approx(0.84, rel=1e-6)
         assert np.isnan(row['crps'])
+
+    def test_nan_discharge_avg_excluded_from_metrics(self):
+        """NaN discharge_avg rows are dropped by the inner merge.
+
+        Observations with NaN discharge_avg should not contribute to
+        metrics. Here S1 month 1 has 3 years but one has NaN obs.
+        Only 2 valid pairs should be used.
+
+        obs valid = [100, 110], q50 = [102, 108], MAE = 2.0
+        """
+        obs = _make_obs([
+            ('S1', 2020, 1, 100.0),
+            ('S1', 2021, 1, 110.0),
+            ('S1', 2022, 1, np.nan),
+        ])
+        fcst = _make_fcst([
+            ('S1', 2020, 1, 'M1', 80, 85, 92, 102, 112, 118, 125),
+            ('S1', 2021, 1, 'M1', 88, 93, 100, 108, 116, 123, 130),
+            ('S1', 2022, 1, 'M1', 85, 90, 98, 105, 113, 120, 127),
+        ])
+        skill_stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
+        row = skill_stats[skill_stats['model_short'] == 'M1'].iloc[0]
+        # NaN obs merged in but produce NaN forecasted_discharge diff
+        # calculate_all_skill_metrics masks NaN pairs internally
+        # n_pairs should reflect valid pairs only
+        assert row['n_pairs'] >= 2
+        assert row['mae'] == pytest.approx(2.0, rel=1e-6)
+
+    def test_duplicate_obs_rows_inflate_metrics(self):
+        """Duplicate (code, year, month) in observations inflates n_pairs.
+
+        This test documents current behavior: the inner merge produces
+        one forecast row per observation duplicate, so n_pairs increases.
+        If this is ever guarded against, this test should be updated.
+
+        S1 month 1: obs has 2020 duplicated. Merge produces 3 rows
+        for M1 (2020 appears twice, 2021 once) instead of 2.
+        """
+        obs = _make_obs([
+            ('S1', 2020, 1, 100.0),
+            ('S1', 2020, 1, 100.0),  # duplicate
+            ('S1', 2021, 1, 110.0),
+        ])
+        fcst = _make_fcst([
+            ('S1', 2020, 1, 'M1', 80, 85, 92, 102, 112, 118, 125),
+            ('S1', 2021, 1, 'M1', 88, 93, 100, 108, 116, 123, 130),
+        ])
+        skill_stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
+        row = skill_stats[skill_stats['model_short'] == 'M1'].iloc[0]
+        # 2020 forecast joined twice (one per obs dup) + 2021 = 3
+        assert row['n_pairs'] == 3
+
+    def test_duplicate_forecast_rows_inflate_metrics(self):
+        """Duplicate (code, year, month, model_short) in forecasts
+        inflates n_pairs via merge. Documents current behavior.
+        """
+        obs = _make_obs([
+            ('S1', 2020, 1, 100.0),
+            ('S1', 2021, 1, 110.0),
+        ])
+        fcst = _make_fcst([
+            ('S1', 2020, 1, 'M1', 80, 85, 92, 102, 112, 118, 125),
+            ('S1', 2020, 1, 'M1', 80, 85, 92, 102, 112, 118, 125),
+            ('S1', 2021, 1, 'M1', 88, 93, 100, 108, 116, 123, 130),
+        ])
+        skill_stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
+        row = skill_stats[skill_stats['model_short'] == 'M1'].iloc[0]
+        # 2020 obs joined twice (one per fcst dup) + 2021 = 3
+        assert row['n_pairs'] == 3
+
+    def test_em_joint_forecasts_values_correct(self):
+        """EM rows in joint_forecasts have correct discharge values.
+
+        M1 q50=[102, 108], M2 q50=[101, 109]
+        EM = mean of q50 = [101.5, 108.5] per (year, code).
+        """
+        obs = _make_obs([
+            ('S1', 2020, 1, 100.0),
+            ('S1', 2021, 1, 110.0),
+        ])
+        fcst = _make_fcst([
+            ('S1', 2020, 1, 'M1', 80, 85, 92, 102, 112, 118, 125),
+            ('S1', 2021, 1, 'M1', 88, 93, 100, 108, 116, 123, 130),
+            ('S1', 2020, 1, 'M2', 82, 87, 94, 101, 108, 114, 120),
+            ('S1', 2021, 1, 'M2', 90, 95, 102, 109, 117, 124, 131),
+        ])
+        _, joint, _ = calculate_monthly_skill_metrics(obs, fcst)
+        em_rows = joint[joint['model_short'] == 'EM']
+        assert len(em_rows) == 2
+
+        em_2020 = em_rows[em_rows['year'] == 2020].iloc[0]
+        assert em_2020['forecasted_discharge'] == pytest.approx(
+            101.5, rel=1e-6
+        )
+
+        em_2021 = em_rows[em_rows['year'] == 2021].iloc[0]
+        assert em_2021['forecasted_discharge'] == pytest.approx(
+            108.5, rel=1e-6
+        )
+
+    def test_partial_station_month_coverage(self):
+        """Stations with different month coverage get independent metrics.
+
+        S1 has data for months 1 and 2.
+        S2 has data for month 1 only.
+        Both should get metrics for their respective months.
+        """
+        obs = _make_obs([
+            ('S1', 2020, 1, 100.0),
+            ('S1', 2021, 1, 110.0),
+            ('S1', 2020, 2, 80.0),
+            ('S1', 2021, 2, 85.0),
+            ('S2', 2020, 1, 200.0),
+            ('S2', 2021, 1, 220.0),
+        ])
+        fcst = _make_fcst([
+            ('S1', 2020, 1, 'M1', 80, 85, 92, 102, 112, 118, 125),
+            ('S1', 2021, 1, 'M1', 88, 93, 100, 108, 116, 123, 130),
+            ('S1', 2020, 2, 'M1', 65, 68, 75, 82, 89, 94, 98),
+            ('S1', 2021, 2, 'M1', 67, 70, 76, 83, 90, 95, 100),
+            ('S2', 2020, 1, 'M1', 160, 170, 185, 205, 215, 225, 235),
+            ('S2', 2021, 1, 'M1', 180, 190, 205, 218, 230, 240, 250),
+        ])
+        skill_stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
+        model_rows = skill_stats[skill_stats['model_short'] == 'M1']
+
+        # S1: 2 months, S2: 1 month = 3 rows total
+        assert len(model_rows) == 3
+
+        # S1 month 1 and S2 month 1 both present
+        s1_m1 = model_rows[
+            (model_rows['code'] == 'S1')
+            & (model_rows['month_in_year'] == 1)
+        ]
+        assert len(s1_m1) == 1
+        assert s1_m1.iloc[0]['mae'] == pytest.approx(2.0, rel=1e-6)
+
+        s2_m1 = model_rows[
+            (model_rows['code'] == 'S2')
+            & (model_rows['month_in_year'] == 1)
+        ]
+        assert len(s2_m1) == 1
+        assert s2_m1.iloc[0]['mae'] == pytest.approx(3.5, rel=1e-6)
+
+        # S2 has no month 2
+        s2_m2 = model_rows[
+            (model_rows['code'] == 'S2')
+            & (model_rows['month_in_year'] == 2)
+        ]
+        assert len(s2_m2) == 0
+
+    def test_naive_mean_excluded_from_em_composition(self):
+        """Naive Mean baseline is not included in EM composition.
+
+        M1 and M2 pass thresholds. Naive Mean is added separately
+        and should never appear in EM's composition string.
+        """
+        obs = _make_obs([
+            ('S1', 2020, 1, 100.0),
+            ('S1', 2021, 1, 110.0),
+        ])
+        fcst = _make_fcst([
+            ('S1', 2020, 1, 'M1', 80, 85, 92, 102, 112, 118, 125),
+            ('S1', 2021, 1, 'M1', 88, 93, 100, 108, 116, 123, 130),
+            ('S1', 2020, 1, 'M2', 82, 87, 94, 101, 108, 114, 120),
+            ('S1', 2021, 1, 'M2', 90, 95, 102, 109, 117, 124, 131),
+        ])
+        skill_stats, _, _ = calculate_monthly_skill_metrics(obs, fcst)
+        em_rows = skill_stats[skill_stats['model_short'] == 'EM']
+        assert len(em_rows) == 1
+        composition = em_rows.iloc[0]['composition']
+        assert 'Naive Mean' not in composition
+        assert 'M1' in composition
+        assert 'M2' in composition

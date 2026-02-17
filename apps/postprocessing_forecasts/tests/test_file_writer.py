@@ -258,3 +258,68 @@ class TestSaveMonthlySkillMetrics:
              patch('src.api_writer._write_skill_metrics_to_api') as mock_api:
             file_writer.save_monthly_skill_metrics(monthly_skill_data)
             mock_api.assert_not_called()
+
+    def test_composition_column_preserved_in_csv(self):
+        """Composition column survives CSV round-trip."""
+        data = pd.DataFrame({
+            'month_in_year': [6, 6],
+            'code': ['15013', '15013'],
+            'model_short': ['GBT', 'EM'],
+            'composition': ['', 'GBT, LR_Base'],
+            'sdivsigma': [0.3, 0.2],
+            'nse': [0.9, 0.95],
+            'delta': [12.5, 12.5],
+            'accuracy': [0.9, 0.95],
+            'mae': [2.0, 1.5],
+            'n_pairs': [10, 10],
+            'crps': [15.0, np.nan],
+        })
+        with patch.object(api_writer, 'SAPPHIRE_API_AVAILABLE', False):
+            file_writer.save_monthly_skill_metrics(data)
+
+        csv_path = os.path.join(str(self.tmp_path), 'skill_monthly.csv')
+        saved = pd.read_csv(csv_path, dtype={'code': str})
+        assert 'composition' in saved.columns
+        em_row = saved[saved['model_short'] == 'EM'].iloc[0]
+        assert em_row['composition'] == 'GBT, LR_Base'
+
+    def test_empty_dataframe_handled(self):
+        """Empty DataFrame doesn't crash save_monthly_skill_metrics.
+
+        An empty DataFrame with correct columns should produce a valid
+        (empty) CSV file without raising on .astype(int).
+        """
+        data = pd.DataFrame({
+            'month_in_year': pd.Series([], dtype=float),
+            'code': pd.Series([], dtype=str),
+            'model_short': pd.Series([], dtype=str),
+            'sdivsigma': pd.Series([], dtype=float),
+            'nse': pd.Series([], dtype=float),
+            'delta': pd.Series([], dtype=float),
+            'accuracy': pd.Series([], dtype=float),
+            'mae': pd.Series([], dtype=float),
+            'n_pairs': pd.Series([], dtype=float),
+            'crps': pd.Series([], dtype=float),
+        })
+        with patch.object(api_writer, 'SAPPHIRE_API_AVAILABLE', False):
+            file_writer.save_monthly_skill_metrics(data)
+
+        csv_path = os.path.join(str(self.tmp_path), 'skill_monthly.csv')
+        assert os.path.exists(csv_path)
+        saved = pd.read_csv(csv_path)
+        assert len(saved) == 0
+
+    def test_crps_nan_written_to_csv(self, monthly_skill_data):
+        """NaN CRPS values (from EM/Naive Mean) are written to CSV.
+
+        EM and Naive Mean have no quantile distribution so CRPS is NaN.
+        The CSV should contain these NaN values without dropping rows.
+        """
+        with patch.object(api_writer, 'SAPPHIRE_API_AVAILABLE', False):
+            file_writer.save_monthly_skill_metrics(monthly_skill_data)
+
+        csv_path = os.path.join(str(self.tmp_path), 'skill_monthly.csv')
+        saved = pd.read_csv(csv_path, dtype={'code': str})
+        em_rows = saved[saved['model_short'] == 'EM']
+        assert len(em_rows) == 2
+        assert all(pd.isna(em_rows['crps']))

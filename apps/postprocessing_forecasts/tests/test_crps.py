@@ -310,3 +310,33 @@ class TestCrpsEdgeCases:
         ], dtype=float)
         result = calculate_crps(observed, quantile_forecasts, QUANTILE_LEVELS)
         assert np.isnan(result)
+
+    def test_nan_in_quantile_forecasts_returns_nan(self):
+        """NaN in quantile forecasts propagates to NaN CRPS.
+
+        When some quantile values are NaN (e.g., model only produces q50
+        but not q05-q95), the pinball loss is NaN for those quantiles,
+        and trapezoidal integration propagates NaN to the final result.
+        Callers (calculate_monthly_skill_metrics) rely on this behavior
+        to detect incomplete quantile distributions.
+        """
+        observed = np.array([100.0])
+        quantile_forecasts = np.array(
+            [[np.nan, np.nan, np.nan, 100.0, np.nan, np.nan, np.nan]]
+        )
+        result = calculate_crps(observed, quantile_forecasts, QUANTILE_LEVELS)
+        assert np.isnan(result)
+
+    def test_negative_values(self):
+        """CRPS works with negative observed and forecasted values.
+
+        While discharge can't be negative, the function is a generic
+        scoring rule and should handle any real-valued inputs.
+        """
+        observed = np.array([-10.0])
+        quantile_forecasts = np.array(
+            [[-20.0, -15.0, -12.0, -10.0, -8.0, -5.0, 0.0]]
+        )
+        result = calculate_crps(observed, quantile_forecasts, QUANTILE_LEVELS)
+        assert np.isfinite(result)
+        assert result >= 0.0
