@@ -337,6 +337,75 @@ def save_pentadal_skill_metrics(data: pd.DataFrame):
 
     return None
 
+def save_monthly_skill_metrics(data: pd.DataFrame):
+    """Save monthly skill metrics to CSV + API.
+
+    Follows the same pattern as save_pentadal/decadal_skill_metrics:
+    round, clean codes, convert month_in_year to int, sort, atomic
+    CSV write, then API write.
+
+    Args:
+        data: DataFrame with monthly skill metrics. Expected columns:
+            month_in_year, code, model_short, sdivsigma, nse, delta,
+            accuracy, mae, n_pairs, crps, composition (optional).
+
+    Returns:
+        None
+    """
+    data = data.round(4)
+
+    if 'code' in data.columns:
+        data['code'] = (
+            data['code'].astype(str).str.replace(r'\.0$', '', regex=True)
+        )
+
+    data['month_in_year'] = data['month_in_year'].astype(int)
+
+    data = data.sort_values(by=['month_in_year', 'code', 'model_short'])
+
+    filepath = os.path.join(
+        os.getenv("ieasyforecast_intermediate_data_path"),
+        os.getenv("ieasyforecast_monthly_skill_metrics_file"))
+
+    try:
+        atomic_write_csv(data, filepath, index=False)
+        logger.info(f"Data written to {filepath}.")
+    except Exception as e:
+        logger.error(f"Could not write the data to {filepath}.")
+        raise e
+
+    if api_writer.SAPPHIRE_API_AVAILABLE:
+        try:
+            api_writer._write_skill_metrics_to_api(data, "month")
+        except Exception as e:
+            fl._handle_api_write_error(e, "monthly skill metrics")
+
+    consistency_check = (
+        os.getenv("SAPPHIRE_CONSISTENCY_CHECK", "false").lower() == "true"
+    )
+    if consistency_check:
+        logger.info(
+            "SAPPHIRE_CONSISTENCY_CHECK: Verifying write consistency "
+            "for monthly skill metrics"
+        )
+        is_consistent, message = fl._verify_preprocessing_write_consistency(
+            written_data=data,
+            csv_file_path=filepath,
+            data_type="skill metrics month",
+            key_columns=['code', 'month_in_year', 'model_short'],
+            value_columns=[
+                'sdivsigma', 'nse', 'delta', 'accuracy', 'mae',
+                'n_pairs', 'crps',
+            ],
+        )
+        if is_consistent:
+            logger.info("CONSISTENCY CHECK PASSED: %s", message)
+        else:
+            logger.error("CONSISTENCY CHECK FAILED: %s", message)
+
+    return None
+
+
 def save_decadal_skill_metrics(data: pd.DataFrame):
     """
     Saves decadal skill metrics to a csv file.

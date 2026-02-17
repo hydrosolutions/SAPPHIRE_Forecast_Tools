@@ -25,6 +25,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'iEasyHyd
 from src.api_writer import (
     _write_combined_forecast_to_api,
     _write_skill_metrics_to_api,
+    MODEL_TYPE_MAP,
     SAPPHIRE_API_AVAILABLE,
 )
 
@@ -754,6 +755,26 @@ class TestWriteSkillMetricsToApi:
         finally:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 
+    def test_invalid_horizon_type_raises_value_error(self):
+        """Invalid horizon_type raises ValueError with descriptive message."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        data = pd.DataFrame({
+            'code': [12345],
+            'pentad_in_year': [1],
+            'model_short': ['LR'],
+            'sdivsigma': [0.5],
+            'nse': [0.8],
+            'delta': [0.1],
+            'accuracy': [0.9],
+            'mae': [5.0],
+            'n_pairs': [100],
+        })
+
+        with pytest.raises(ValueError, match="Invalid horizon_type"):
+            _write_skill_metrics_to_api(data, "weekly")
+
     @patch('src.api_writer.SapphirePostprocessingClient')
     def test_skill_metrics_empty_data_returns_false(
         self, mock_client_class
@@ -777,5 +798,301 @@ class TestWriteSkillMetricsToApi:
             assert result is False
             mock_client.write_skill_metrics.assert_not_called()
 
+        finally:
+            os.environ.pop('SAPPHIRE_API_ENABLED', None)
+
+
+class TestModelTypeMap:
+    """Tests for MODEL_TYPE_MAP completeness and correctness."""
+
+    def test_short_term_models_present(self):
+        """All short-term model types are in the map."""
+        for key in ["LR", "TFT", "TIDE", "TSMIXER", "EM", "NE", "RRAM"]:
+            assert key in MODEL_TYPE_MAP, f"Missing short-term model: {key}"
+
+    def test_long_term_models_present(self):
+        """All long-term model types are in the map."""
+        lt_models = {
+            "GBT": "GBT",
+            "LR_BASE": "LR_Base",
+            "LR_SM": "LR_SM",
+            "LR_SM_DT": "LR_SM_DT",
+            "LR_SM_ROF": "LR_SM_ROF",
+            "MC_ALD": "MC_ALD",
+            "SM_GBT": "SM_GBT",
+            "SM_GBT_LR": "SM_GBT_LR",
+            "SM_GBT_NORM": "SM_GBT_Norm",
+        }
+        for key, expected_value in lt_models.items():
+            assert key in MODEL_TYPE_MAP, f"Missing LT model: {key}"
+            assert MODEL_TYPE_MAP[key] == expected_value, (
+                f"MODEL_TYPE_MAP['{key}'] = '{MODEL_TYPE_MAP[key]}', "
+                f"expected '{expected_value}'"
+            )
+
+    def test_baseline_models_present(self):
+        """Naive Mean and Skilled Mean baselines are in the map."""
+        assert "NAIVE MEAN" in MODEL_TYPE_MAP
+        assert MODEL_TYPE_MAP["NAIVE MEAN"] == "Naive Mean"
+        assert "SKILLED MEAN" in MODEL_TYPE_MAP
+        assert MODEL_TYPE_MAP["SKILLED MEAN"] == "Skilled Mean"
+
+
+class TestWriteMonthlySkillMetricsToApi:
+    """Tests for _write_skill_metrics_to_api with horizon_type='month'.
+
+    Monthly skill metrics come from calculate_monthly_skill_metrics() and
+    have month_in_year (1-12) instead of pentad_in_year or decad_in_year.
+    """
+
+    @patch('src.api_writer.SapphirePostprocessingClient')
+    def test_monthly_skill_metrics_correct_fields(self, mock_client_class):
+        """Monthly skill metrics produce records with horizon_type='month'."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        os.environ['SAPPHIRE_API_ENABLED'] = 'true'
+        try:
+            mock_client = Mock()
+            mock_client.readiness_check.return_value = True
+            mock_client.write_skill_metrics.return_value = 1
+            mock_client_class.return_value = mock_client
+
+            data = pd.DataFrame({
+                'code': ['15013'],
+                'month_in_year': [6],
+                'model_short': ['GBT'],
+                'sdivsigma': [0.45],
+                'nse': [0.82],
+                'delta': [12.5],
+                'accuracy': [0.75],
+                'mae': [8.3],
+                'n_pairs': [10],
+                'crps': [15.2],
+            })
+
+            result = _write_skill_metrics_to_api(data, "month")
+            assert result is True
+
+            mock_client.write_skill_metrics.assert_called_once()
+            call_args = mock_client.write_skill_metrics.call_args[0][0]
+            assert len(call_args) == 1
+            record = call_args[0]
+
+            assert record['horizon_type'] == 'month'
+            assert record['code'] == '15013'
+            assert record['model_type'] == 'GBT'
+            assert record['horizon_in_year'] == 6
+            assert record['sdivsigma'] == 0.45
+            assert record['nse'] == 0.82
+            assert record['mae'] == 8.3
+            assert record['n_pairs'] == 10
+        finally:
+            os.environ.pop('SAPPHIRE_API_ENABLED', None)
+
+    @patch('src.api_writer.SapphirePostprocessingClient')
+    def test_crps_not_sent_to_api(self, mock_client_class):
+        """CRPS column is not included in API records (schema doesn't support it yet)."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        os.environ['SAPPHIRE_API_ENABLED'] = 'true'
+        try:
+            mock_client = Mock()
+            mock_client.readiness_check.return_value = True
+            mock_client.write_skill_metrics.return_value = 1
+            mock_client_class.return_value = mock_client
+
+            data = pd.DataFrame({
+                'code': ['15013'],
+                'month_in_year': [3],
+                'model_short': ['GBT'],
+                'sdivsigma': [0.5],
+                'nse': [0.8],
+                'delta': [10.0],
+                'accuracy': [0.85],
+                'mae': [6.0],
+                'n_pairs': [8],
+                'crps': [12.0],
+            })
+
+            _write_skill_metrics_to_api(data, "month")
+
+            call_args = mock_client.write_skill_metrics.call_args[0][0]
+            record = call_args[0]
+            assert 'crps' not in record
+        finally:
+            os.environ.pop('SAPPHIRE_API_ENABLED', None)
+
+    @patch('src.api_writer.SapphirePostprocessingClient')
+    def test_lt_model_type_mapping(self, mock_client_class):
+        """Long-term model types are mapped correctly to API format."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        os.environ['SAPPHIRE_API_ENABLED'] = 'true'
+        try:
+            mock_client = Mock()
+            mock_client.readiness_check.return_value = True
+            mock_client.write_skill_metrics.return_value = 5
+            mock_client_class.return_value = mock_client
+
+            data = pd.DataFrame({
+                'code': ['15013'] * 5,
+                'month_in_year': [6] * 5,
+                'model_short': [
+                    'GBT', 'LR_Base', 'SM_GBT', 'MC_ALD', 'SM_GBT_Norm',
+                ],
+                'sdivsigma': [0.5] * 5,
+                'nse': [0.8] * 5,
+                'delta': [10.0] * 5,
+                'accuracy': [0.85] * 5,
+                'mae': [6.0] * 5,
+                'n_pairs': [10] * 5,
+            })
+
+            _write_skill_metrics_to_api(data, "month")
+
+            call_args = mock_client.write_skill_metrics.call_args[0][0]
+            model_types = {r['model_type'] for r in call_args}
+
+            assert 'GBT' in model_types
+            assert 'LR_Base' in model_types
+            assert 'SM_GBT' in model_types
+            assert 'MC_ALD' in model_types
+            assert 'SM_GBT_Norm' in model_types
+        finally:
+            os.environ.pop('SAPPHIRE_API_ENABLED', None)
+
+    @patch('src.api_writer.SapphirePostprocessingClient')
+    def test_naive_mean_model_type_mapping(self, mock_client_class):
+        """Naive Mean model maps correctly despite space in name."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        os.environ['SAPPHIRE_API_ENABLED'] = 'true'
+        try:
+            mock_client = Mock()
+            mock_client.readiness_check.return_value = True
+            mock_client.write_skill_metrics.return_value = 1
+            mock_client_class.return_value = mock_client
+
+            data = pd.DataFrame({
+                'code': ['15013'],
+                'month_in_year': [6],
+                'model_short': ['Naive Mean'],
+                'sdivsigma': [0.7],
+                'nse': [0.3],
+                'delta': [10.0],
+                'accuracy': [0.5],
+                'mae': [15.0],
+                'n_pairs': [10],
+            })
+
+            _write_skill_metrics_to_api(data, "month")
+
+            call_args = mock_client.write_skill_metrics.call_args[0][0]
+            record = call_args[0]
+            assert record['model_type'] == 'Naive Mean'
+        finally:
+            os.environ.pop('SAPPHIRE_API_ENABLED', None)
+
+    @patch('src.api_writer.SapphirePostprocessingClient')
+    def test_em_ensemble_with_composition(self, mock_client_class):
+        """Monthly EM ensemble passes composition to API."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        os.environ['SAPPHIRE_API_ENABLED'] = 'true'
+        try:
+            mock_client = Mock()
+            mock_client.readiness_check.return_value = True
+            mock_client.write_skill_metrics.return_value = 2
+            mock_client_class.return_value = mock_client
+
+            data = pd.DataFrame({
+                'code': ['15013', '15013'],
+                'month_in_year': [6, 6],
+                'model_short': ['GBT', 'EM'],
+                'composition': [None, 'GBT, LR_Base, SM_GBT'],
+                'sdivsigma': [0.5, 0.4],
+                'nse': [0.8, 0.85],
+                'delta': [10.0, 9.0],
+                'accuracy': [0.85, 0.90],
+                'mae': [6.0, 5.5],
+                'n_pairs': [10, 10],
+            })
+
+            _write_skill_metrics_to_api(data, "month")
+
+            call_args = mock_client.write_skill_metrics.call_args[0][0]
+
+            em_rec = next(r for r in call_args if r['model_type'] == 'EM')
+            assert em_rec['composition'] == 'GBT, LR_Base, SM_GBT'
+
+            gbt_rec = next(r for r in call_args if r['model_type'] == 'GBT')
+            assert gbt_rec['composition'] is None
+        finally:
+            os.environ.pop('SAPPHIRE_API_ENABLED', None)
+
+    @patch('src.api_writer.SapphirePostprocessingClient')
+    def test_monthly_empty_data_returns_false(self, mock_client_class):
+        """Empty monthly DataFrame returns False."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        os.environ['SAPPHIRE_API_ENABLED'] = 'true'
+        try:
+            mock_client = Mock()
+            mock_client.readiness_check.return_value = True
+            mock_client_class.return_value = mock_client
+
+            data = pd.DataFrame(columns=[
+                'code', 'month_in_year', 'model_short',
+                'sdivsigma', 'nse', 'delta', 'accuracy', 'mae', 'n_pairs',
+            ])
+
+            result = _write_skill_metrics_to_api(data, "month")
+            assert result is False
+            mock_client.write_skill_metrics.assert_not_called()
+        finally:
+            os.environ.pop('SAPPHIRE_API_ENABLED', None)
+
+    @patch('src.api_writer.SapphirePostprocessingClient')
+    def test_monthly_nan_metrics_converted_to_none(self, mock_client_class):
+        """NaN metric values in monthly data are converted to None for API."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        os.environ['SAPPHIRE_API_ENABLED'] = 'true'
+        try:
+            mock_client = Mock()
+            mock_client.readiness_check.return_value = True
+            mock_client.write_skill_metrics.return_value = 1
+            mock_client_class.return_value = mock_client
+
+            data = pd.DataFrame({
+                'code': ['15013'],
+                'month_in_year': [1],
+                'model_short': ['GBT'],
+                'sdivsigma': [np.nan],
+                'nse': [np.nan],
+                'delta': [np.nan],
+                'accuracy': [np.nan],
+                'mae': [np.nan],
+                'n_pairs': [np.nan],
+                'crps': [np.nan],
+            })
+
+            _write_skill_metrics_to_api(data, "month")
+
+            call_args = mock_client.write_skill_metrics.call_args[0][0]
+            record = call_args[0]
+
+            assert record['sdivsigma'] is None
+            assert record['nse'] is None
+            assert record['mae'] is None
+            assert record['n_pairs'] is None
+            assert 'crps' not in record
         finally:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)

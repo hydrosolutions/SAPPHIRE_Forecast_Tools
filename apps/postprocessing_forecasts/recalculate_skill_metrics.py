@@ -7,9 +7,17 @@
 # Usage:
 #   ieasyhydroforecast_env_file_path=/path/to/.env \
 #   SAPPHIRE_PREDICTION_MODE=BOTH python recalculate_skill_metrics.py
+#
+# Prediction modes:
+#   PENTAD  — pentadal skill metrics only
+#   DECAD   — decadal skill metrics only
+#   BOTH    — pentad + decad (backward compatible)
+#   MONTHLY — monthly skill metrics only (long-term forecasts)
+#   ALL     — pentad + decad + monthly
 
 import os
 import sys
+import json
 import datetime as dt
 import logging
 from logging.handlers import TimedRotatingFileHandler
@@ -24,6 +32,7 @@ import setup_library as sl
 from src import postprocessing_tools as pt
 from src.postprocessing_tools import TimingStats, timer
 from src import skill_metrics
+from src import data_reader
 from src import file_writer
 
 # region Logging
@@ -49,6 +58,25 @@ logger.addHandler(console_handler)
 
 timing_stats = TimingStats()
 
+VALID_MODES = ['PENTAD', 'DECAD', 'BOTH', 'MONTHLY', 'ALL']
+
+
+def _read_station_codes():
+    """Read station codes from the station selection config file.
+
+    Returns:
+        list[str]: Station codes for which to recalculate metrics.
+    """
+    config_path = os.path.join(
+        os.getenv("ieasyforecast_configuration_path", ""),
+        os.getenv("ieasyforecast_config_file_station_selection", ""),
+    )
+    with open(config_path, "r") as f:
+        config = json.load(f)
+    codes = [str(c) for c in config.get("stationsID", [])]
+    logger.info("Read %d station codes for monthly recalculation", len(codes))
+    return codes
+
 
 def recalculate_skill_metrics():
     global timing_stats
@@ -69,10 +97,10 @@ def recalculate_skill_metrics():
             sl.load_environment()
 
         prediction_mode = os.getenv('SAPPHIRE_PREDICTION_MODE', 'BOTH')
-        if prediction_mode not in ['PENTAD', 'DECAD', 'BOTH']:
+        if prediction_mode not in VALID_MODES:
             logger.error(
                 f"Invalid SAPPHIRE_PREDICTION_MODE: {prediction_mode}. "
-                f"Expected 'PENTAD', 'DECAD', or 'BOTH'."
+                f"Expected one of {VALID_MODES}."
             )
             sys.exit(1)
         logger.info(
@@ -80,7 +108,7 @@ def recalculate_skill_metrics():
             f"{prediction_mode}"
         )
 
-        if prediction_mode in ['PENTAD', 'BOTH']:
+        if prediction_mode in ['PENTAD', 'BOTH', 'ALL']:
             with timer(timing_stats, 'reading pentadal data'):
                 logger.info(
                     "\n\n------ Reading pentadal observed and modelled "
@@ -135,7 +163,7 @@ def recalculate_skill_metrics():
 
             pt.log_most_recent_forecasts_pentad(modelled)
 
-        if prediction_mode in ['DECAD', 'BOTH']:
+        if prediction_mode in ['DECAD', 'BOTH', 'ALL']:
             with timer(timing_stats, 'reading decadal data'):
                 logger.info(
                     "\n\n------ Reading decadal observed and modelled "
@@ -189,6 +217,60 @@ def recalculate_skill_metrics():
                     )
 
             pt.log_most_recent_forecasts_decade(modelled_decade)
+
+        if prediction_mode in ['MONTHLY', 'ALL']:
+            current_year = dt.date.today().year
+            start_year = int(os.getenv(
+                'SAPPHIRE_RECALC_START_YEAR', current_year - 10
+            ))
+            end_year = int(os.getenv(
+                'SAPPHIRE_RECALC_END_YEAR', current_year
+            ))
+            codes = _read_station_codes()
+
+            with timer(timing_stats, 'reading monthly data'):
+                logger.info(
+                    "\n\n------ Reading monthly observed and forecast "
+                    "data -------"
+                )
+                monthly_obs = data_reader.read_monthly_observations(
+                    codes, start_year, end_year
+                )
+                monthly_fc = data_reader.read_monthly_forecasts(
+                    codes, start_year, end_year
+                )
+
+            with timer(timing_stats, 'calculating skill metrics monthly'):
+                logger.info(
+                    "\n\n------ Calculating skill metrics monthly --------"
+                )
+                original_timing_stats = timing_stats
+                monthly_skill, monthly_joint, returned_timing_stats = (
+                    skill_metrics.calculate_monthly_skill_metrics(
+                        monthly_obs, monthly_fc, timing_stats
+                    )
+                )
+                if returned_timing_stats is not None:
+                    timing_stats = returned_timing_stats
+                else:
+                    timing_stats = original_timing_stats
+
+            with timer(timing_stats, 'saving monthly results'):
+                logger.info(
+                    "\n\n------ Saving monthly results -------------------"
+                )
+                ret = file_writer.save_monthly_skill_metrics(monthly_skill)
+                if ret is None:
+                    logger.info(
+                        "Monthly skill metrics saved successfully."
+                    )
+                else:
+                    logger.error(
+                        f"Error saving monthly skill metrics: {ret}"
+                    )
+                    errors.append(
+                        f"Monthly skill metrics save failed: {ret}"
+                    )
 
     # Print timing summary
     summary, total = timing_stats.summary()

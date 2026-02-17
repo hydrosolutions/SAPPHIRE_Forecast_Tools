@@ -39,14 +39,14 @@
 | Skill metrics single-pass optimization | **DONE** — `calculate_all_skill_metrics()` replaces triple groupby+merge (commit `eae7158`) |
 | Remove `model_long` from apps (INFRA-005, revised) | **DONE** — `model_long` removed from `postprocessing_forecasts/src/`, `setup_library.py`, and all test data. Apps use `model_short` + `composition` column. 405 postprocessing tests pass, 161 iEasyHydroForecast tests pass. Commit `2c52d2a`. |
 | Metrics registry refactoring | **DONE** — `METRIC_REGISTRY`, `METRIC_ORDER`, `THRESHOLD_METRICS` in `skill_metrics.py`. Consolidated 3 copies of `filter_for_highly_skilled_forecasts()`. Deleted 4 dead `model_long`-era functions from `ensemble_calculator.py`. 392 postprocessing tests pass, 0 skips. Commit `f70b29f`. |
-| Monthly skill metrics (Phase 4a) | **IN PROGRESS** — pre-req done (sapphire-api-client LT support). **Next:** bump pinned hash + `uv sync`, then Steps 1–7. Detailed plan in [`postprocessing_unified_plan_detailMonthlyForecasts.md`](postprocessing_unified_plan_detailMonthlyForecasts.md) |
+| Monthly skill metrics (Phase 4a) | **DONE** — all 10 steps complete. Monthly readers, CRPS, calculate_monthly_skill_metrics, API writer (month horizon + LT model types), file writer, recalculate entry point (MONTHLY/ALL modes). 539 postprocessing tests, 0 skips. See [`postprocessing_unified_plan_detailMonthlyForecasts.md`](postprocessing_unified_plan_detailMonthlyForecasts.md) for details. |
 | Quarterly + seasonal skill metrics (Phase 4b) | TODO — deferred, depends on 4a |
 | Tier 1 additional metrics: PBIAS, KGElf, NSE_log (Phase 4c) | TODO — depends on 4a (metrics registry + monthly pipeline) |
 | Tier 2 additional metrics: FHV, FLV, F1/CSI, low-flow contingency (Phase 4d) | TODO — depends on 4c, daily/sub-daily only, yearly calculation |
 | Tier 3 deferred metrics: drought events, SSI, BSS (Phase 4e) | DEFERRED — revisit after Tiers 1–2 are operational |
 | Dashboard metrics visualization (FD-002) | TODO — depends on 4c/4d. See [`gi_draft_dashboard_skill_metrics_visualization.md`](issues/gi_draft_dashboard_skill_metrics_visualization.md) |
 | Bug 6: Single-model ensemble filter only rejects LR | **DONE** — `_is_multi_model_ensemble()` helper replaces hardcoded check |
-| Comprehensive test suite (50+ unit, 12+ integration) | **DONE** — 392 postprocessing tests, 0 skips (all 49 API tests now pass via module venv). CRUD service: 86 tests. |
+| Comprehensive test suite (50+ unit, 12+ integration) | **DONE** — 539 postprocessing tests, 0 skips (all API tests pass via module venv). CRUD service: 86 tests. |
 | Bulk-read API endpoints (for `long_term_forecasting`) | Planned — see `doc/plans/bulk_read_endpoints_instructions.md` |
 | API integration | **DONE** — see `doc/plans/sapphire_api_integration_plan.md` |
 | Duplicate skill metrics / ensemble composition issue | **RESOLVED** — see `doc/plans/issues/gi_duplicate_skill_metrics_ensemble_composition.md` |
@@ -980,16 +980,16 @@ Split into sub-phases: **4a (monthly)** is fully planned, **4b (quarterly + seas
 >
 > **Note:** The detail plan needs updating to reflect decisions made 2026-02-16: delta computed on-the-fly, `Skilled Mean`/`Naive Mean` computed in postprocessing, metrics registry as pre-requisite.
 
-- [ ] `src/data_reader.py`: `read_monthly_observations()` — daily→monthly aggregation (≥50% coverage), also compute `delta = 0.674 * std` per (station, month)
-- [ ] `src/data_reader.py`: `read_monthly_forecasts()` — read from `long_forecasts` table via API
-- [ ] `src/skill_metrics.py`: `calculate_crps()` — quantile-based CRPS (registered in `METRIC_REGISTRY`)
-- [ ] `src/skill_metrics.py`: `calculate_monthly_skill_metrics()` — point (Q50→NSE/MAE/accuracy/sdivsigma) + CRPS
-- [ ] `src/skill_metrics.py`: compute `Naive Mean` (climatological mean) and `Skilled Mean` (skill-weighted model average) baselines
-- [ ] `src/api_writer.py`: extend horizon_type mapping to "month" (LT model types come from model registry)
-- [ ] `src/file_writer.py`: `save_monthly_skill_metrics()` (env var: `ieasyforecast_monthly_skill_metrics_file`)
-- [ ] `apps/config/.env`: add `ieasyforecast_monthly_skill_metrics_file` env var
-- [ ] `recalculate_skill_metrics.py`: add monthly block (`SAPPHIRE_PREDICTION_MODE=MONTHLY|ALL`)
-- [ ] Tests: unit + edge case + integration + API failure (see detailed plan)
+- [x] `src/data_reader.py`: `read_monthly_observations()` — daily→monthly aggregation (≥50% coverage), also compute `delta = 0.674 * std` per (station, month)
+- [x] `src/data_reader.py`: `read_monthly_forecasts()` — read from `long_forecasts` table via API
+- [x] `src/skill_metrics.py`: `calculate_crps()` — quantile-based CRPS (registered in `METRIC_REGISTRY`)
+- [x] `src/skill_metrics.py`: `calculate_monthly_skill_metrics()` — point (Q50→NSE/MAE/accuracy/sdivsigma) + CRPS
+- [x] `src/skill_metrics.py`: compute `Naive Mean` (climatological mean) and `Skilled Mean` (skill-weighted model average) baselines
+- [x] `src/api_writer.py`: extend horizon_type mapping to "month" (LT model types come from model registry)
+- [x] `src/file_writer.py`: `save_monthly_skill_metrics()` (env var: `ieasyforecast_monthly_skill_metrics_file`)
+- [x] `apps/config/.env`: add `ieasyforecast_monthly_skill_metrics_file` env var
+- [x] `recalculate_skill_metrics.py`: add monthly block (`SAPPHIRE_PREDICTION_MODE=MONTHLY|ALL`)
+- [x] Tests: unit + edge case + integration + API failure (539 postprocessing tests, 0 skips)
 
 #### Phase 4b: Quarterly & Seasonal Skill Metrics (deferred)
 

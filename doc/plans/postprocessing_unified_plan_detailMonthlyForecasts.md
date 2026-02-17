@@ -659,9 +659,9 @@ Extend `SAPPHIRE_PREDICTION_MODE`: add `MONTHLY` and `ALL`. `BOTH` stays = penta
 3. ~~`data_reader.py`: `read_monthly_observations()` + `read_monthly_forecasts()` + tests~~ — **DONE** (25 unit + 35 edge case + 17 integration tests)
 4. ~~`skill_metrics.py`: `calculate_crps()` + tests~~ — **DONE** (17 tests: basic, hand-calculated, edge cases)
 5. ~~`skill_metrics.py`: `calculate_monthly_skill_metrics()` + tests~~ — **DONE** (21 tests: basic, multi-model, ensemble, Naive Mean, edge cases)
-6. `api_writer.py`: extend horizon/model mappings + tests ← **NEXT**
-7. `file_writer.py`: `save_monthly_skill_metrics()` + tests
-8. `recalculate_skill_metrics.py`: monthly block + integration tests
+6. ~~`api_writer.py`: extend horizon/model mappings + tests~~ — **DONE** (MODEL_TYPE_MAP +12 LT/baseline entries, month horizon branch, 10 new tests: 3 map + 7 monthly)
+7. ~~`file_writer.py`: `save_monthly_skill_metrics()` + tests~~ — **DONE** (atomic CSV write + API write with month horizon, env var `ieasyforecast_monthly_skill_metrics_file`, 8 new tests)
+8. ~~`recalculate_skill_metrics.py`: monthly block + integration tests~~ — **DONE** (MONTHLY/ALL modes, _read_station_codes(), SAPPHIRE_RECALC_START/END_YEAR env vars, 6 new tests)
 9. Full test suite — zero skips
 10. Update Phase 4 checklist in `postprocessing_unified_plan.md`
 
@@ -688,3 +688,6 @@ Zero skips except `SAPPHIRE_API_AVAILABLE` guards.
 | 2026-02-16 | Marked Step 1 (sapphire-api-client LT support) as DONE. Next: Step 2 (bump pinned hash + uv sync). |
 | 2026-02-16 | Marked Steps 3–4 as DONE. Step 3: monthly readers (77 tests). Step 4: CRPS (17 tests). Next: Step 5. |
 | 2026-02-16 | Marked Step 5 as DONE. calculate_monthly_skill_metrics: point metrics + CRPS + EM ensemble + Naive Mean baseline (21 tests). |
+| 2026-02-17 | Marked Step 6 as DONE. api_writer.py: MODEL_TYPE_MAP extended with 12 LT/baseline entries, month horizon branch added to _write_skill_metrics_to_api(), CRPS excluded from API records (schema not yet extended). 10 new tests (3 map completeness + 7 monthly write). 525 total postprocessing tests pass. Next: Step 7 (file_writer.py). |
+| 2026-02-17 | Marked Step 7 as DONE. file_writer.py: save_monthly_skill_metrics() with atomic CSV + API write, env var ieasyforecast_monthly_skill_metrics_file added to config/.env. 8 new tests. 533 total postprocessing tests pass. Next: Step 8 (recalculate_skill_metrics.py). |
+| 2026-02-17 | Marked Step 8 as DONE. recalculate_skill_metrics.py: MONTHLY and ALL prediction modes, _read_station_codes() helper, SAPPHIRE_RECALC_START/END_YEAR env vars. ALL = pentad + decad + monthly, BOTH stays backward-compat (pentad + decad only). 6 new tests. 539 total postprocessing tests pass. |

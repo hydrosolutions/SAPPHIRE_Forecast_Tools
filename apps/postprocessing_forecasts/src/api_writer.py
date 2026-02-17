@@ -15,8 +15,10 @@ import tag_library as tl
 
 logger = logging.getLogger(__name__)
 
-# Map uppercased model_short to API model_type format
+# Map uppercased model_short to API model_type format.
+# Short-term models (pentad/decad) and long-term models (monthly+).
 MODEL_TYPE_MAP = {
+    # Short-term forecasting models
     "LR": "LR",
     "TFT": "TFT",
     "TIDE": "TiDE",
@@ -24,6 +26,19 @@ MODEL_TYPE_MAP = {
     "EM": "EM",
     "NE": "NE",
     "RRAM": "RRAM",
+    # Long-term forecasting models
+    "GBT": "GBT",
+    "LR_BASE": "LR_Base",
+    "LR_SM": "LR_SM",
+    "LR_SM_DT": "LR_SM_DT",
+    "LR_SM_ROF": "LR_SM_ROF",
+    "MC_ALD": "MC_ALD",
+    "SM_GBT": "SM_GBT",
+    "SM_GBT_LR": "SM_GBT_LR",
+    "SM_GBT_NORM": "SM_GBT_Norm",
+    # Baseline models (computed in postprocessing)
+    "NAIVE MEAN": "Naive Mean",
+    "SKILLED MEAN": "Skilled Mean",
 }
 
 # ---------------------------------------------------------------------------
@@ -311,8 +326,13 @@ def _write_skill_metrics_to_api(data: pd.DataFrame, horizon_type: str) -> bool:
         horizon_in_year_col = "pentad_in_year"
     elif horizon_type == "decade":
         horizon_in_year_col = "decad_in_year"
+    elif horizon_type == "month":
+        horizon_in_year_col = "month_in_year"
     else:
-        raise ValueError(f"Invalid horizon_type: {horizon_type}. Must be 'pentad' or 'decade'.")
+        raise ValueError(
+            f"Invalid horizon_type: {horizon_type}. "
+            "Must be 'pentad', 'decade', or 'month'."
+        )
 
     # Use today's date for the skill metrics (they are calculated on run day)
     today = pd.Timestamp.today().normalize().strftime('%Y-%m-%d')

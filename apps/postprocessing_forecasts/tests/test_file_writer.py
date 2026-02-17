@@ -8,6 +8,7 @@ import sys
 import shutil
 import tempfile
 
+import numpy as np
 import pandas as pd
 import pytest
 from unittest.mock import patch
@@ -19,6 +20,7 @@ sys.path.insert(
 )
 
 from src import file_writer
+from src import api_writer
 
 
 class TestAtomicWriteCSV:
@@ -103,3 +105,156 @@ class TestAtomicWriteCSV:
         files = os.listdir(self.test_dir)
         assert len(files) == 1
         assert files[0] == "test_output.csv"
+
+
+class TestSaveMonthlySkillMetrics:
+    """Tests for save_monthly_skill_metrics().
+
+    Follows the same pattern as save_pentadal/decadal_skill_metrics:
+    round, clean codes, convert horizon to int, sort, atomic CSV, API write.
+    """
+
+    @pytest.fixture(autouse=True)
+    def save_env(self, tmp_path):
+        """Set env vars so save_monthly_skill_metrics can resolve paths."""
+        overrides = {
+            'ieasyforecast_intermediate_data_path': str(tmp_path),
+            'ieasyforecast_monthly_skill_metrics_file': 'skill_monthly.csv',
+            'SAPPHIRE_API_ENABLED': 'true',
+            'SAPPHIRE_CONSISTENCY_CHECK': 'false',
+            'SAPPHIRE_TEST_ENV': 'True',
+        }
+        with patch.dict(os.environ, overrides):
+            self.tmp_path = tmp_path
+            yield tmp_path
+
+    @pytest.fixture
+    def monthly_skill_data(self):
+        """Representative monthly skill metrics DataFrame."""
+        return pd.DataFrame({
+            'month_in_year': [6, 6, 6, 3, 3, 3],
+            'code': ['15013', '15013', '15013',
+                     '15014', '15014', '15014'],
+            'model_short': ['GBT', 'LR_Base', 'EM',
+                            'GBT', 'LR_Base', 'EM'],
+            'composition': [
+                '', '', 'GBT, LR_Base',
+                '', '', 'GBT, LR_Base',
+            ],
+            'sdivsigma': [0.34567, 0.41234, 0.29876,
+                          0.50123, 0.36789, 0.32345],
+            'nse': [0.92345, 0.88765, 0.94567,
+                    0.81234, 0.90123, 0.86789],
+            'delta': [12.5, 12.5, 12.5, 8.3, 8.3, 8.3],
+            'accuracy': [0.92, 0.88, 0.95, 0.85, 0.91, 0.89],
+            'mae': [2.12345, 3.45678, 1.89012,
+                    4.56789, 2.34567, 3.01234],
+            'n_pairs': [10, 10, 10, 8, 8, 8],
+            'crps': [15.234, 18.567, np.nan,
+                     12.345, 14.678, np.nan],
+        })
+
+    def test_csv_written_to_correct_path(self, monthly_skill_data):
+        """CSV file is created at the env-var-configured path."""
+        with patch.object(api_writer, 'SAPPHIRE_API_AVAILABLE', False):
+            file_writer.save_monthly_skill_metrics(monthly_skill_data)
+
+        csv_path = os.path.join(str(self.tmp_path), 'skill_monthly.csv')
+        assert os.path.exists(csv_path)
+
+    def test_csv_columns_present(self, monthly_skill_data):
+        """CSV has all required columns including crps."""
+        with patch.object(api_writer, 'SAPPHIRE_API_AVAILABLE', False):
+            file_writer.save_monthly_skill_metrics(monthly_skill_data)
+
+        csv_path = os.path.join(str(self.tmp_path), 'skill_monthly.csv')
+        saved = pd.read_csv(csv_path)
+
+        for col in ['month_in_year', 'code', 'model_short',
+                     'sdivsigma', 'nse', 'delta', 'accuracy',
+                     'mae', 'n_pairs', 'crps']:
+            assert col in saved.columns, f"Missing column: {col}"
+
+    def test_csv_sorted_by_month_code_model(self, monthly_skill_data):
+        """CSV is sorted by (month_in_year, code, model_short)."""
+        with patch.object(api_writer, 'SAPPHIRE_API_AVAILABLE', False):
+            file_writer.save_monthly_skill_metrics(monthly_skill_data)
+
+        csv_path = os.path.join(str(self.tmp_path), 'skill_monthly.csv')
+        saved = pd.read_csv(csv_path)
+
+        # month_in_year should be ascending: 3 before 6
+        assert saved.iloc[0]['month_in_year'] == 3
+        assert saved.iloc[-1]['month_in_year'] == 6
+
+        # Within each month, model_short should be sorted
+        m3 = saved[saved['month_in_year'] == 3]
+        model_shorts = list(m3['model_short'])
+        assert model_shorts == sorted(model_shorts)
+
+    def test_values_rounded_to_4_decimals(self, monthly_skill_data):
+        """Float values are rounded to 4 decimal places."""
+        with patch.object(api_writer, 'SAPPHIRE_API_AVAILABLE', False):
+            file_writer.save_monthly_skill_metrics(monthly_skill_data)
+
+        csv_path = os.path.join(str(self.tmp_path), 'skill_monthly.csv')
+        saved = pd.read_csv(csv_path, dtype={'code': str})
+
+        row = saved[
+            (saved['code'] == '15013') &
+            (saved['model_short'] == 'GBT') &
+            (saved['month_in_year'] == 6)
+        ]
+        assert len(row) == 1
+        # 0.34567 -> 0.3457
+        assert abs(row.iloc[0]['sdivsigma'] - 0.3457) < 1e-5
+        # 2.12345 -> 2.1234 (banker's rounding: 4 is even, rounds down)
+        assert abs(row.iloc[0]['mae'] - 2.1234) < 1e-5
+
+    def test_code_cleaned_no_dot_zero(self):
+        """Code values like '15013.0' are cleaned to '15013'."""
+        data = pd.DataFrame({
+            'month_in_year': [1],
+            'code': [15013.0],  # float code
+            'model_short': ['GBT'],
+            'sdivsigma': [0.3], 'nse': [0.9], 'delta': [5.0],
+            'accuracy': [0.9], 'mae': [2.0], 'n_pairs': [10],
+            'crps': [12.0],
+        })
+        with patch.object(api_writer, 'SAPPHIRE_API_AVAILABLE', False):
+            file_writer.save_monthly_skill_metrics(data)
+
+        csv_path = os.path.join(str(self.tmp_path), 'skill_monthly.csv')
+        saved = pd.read_csv(csv_path, dtype={'code': str})
+        assert saved.iloc[0]['code'] == '15013'
+
+    def test_month_in_year_is_int(self, monthly_skill_data):
+        """month_in_year column is written as integer."""
+        with patch.object(api_writer, 'SAPPHIRE_API_AVAILABLE', False):
+            file_writer.save_monthly_skill_metrics(monthly_skill_data)
+
+        csv_path = os.path.join(str(self.tmp_path), 'skill_monthly.csv')
+        saved = pd.read_csv(csv_path)
+        assert saved['month_in_year'].dtype in (np.int64, np.int32, int)
+
+    @patch('src.api_writer._write_skill_metrics_to_api')
+    def test_api_write_called_with_month_horizon(
+        self, mock_api_write, monthly_skill_data
+    ):
+        """API writer is called with horizon_type='month'."""
+        with patch.object(api_writer, 'SAPPHIRE_API_AVAILABLE', True):
+            mock_api_write.return_value = True
+            file_writer.save_monthly_skill_metrics(monthly_skill_data)
+
+        mock_api_write.assert_called_once()
+        call_args = mock_api_write.call_args
+        assert call_args[0][1] == "month"  # second positional arg
+        # First arg is the data DataFrame
+        assert len(call_args[0][0]) == 6
+
+    def test_api_not_called_when_unavailable(self, monthly_skill_data):
+        """API writer is not called when sapphire-api-client unavailable."""
+        with patch.object(api_writer, 'SAPPHIRE_API_AVAILABLE', False), \
+             patch('src.api_writer._write_skill_metrics_to_api') as mock_api:
+            file_writer.save_monthly_skill_metrics(monthly_skill_data)
+            mock_api.assert_not_called()
