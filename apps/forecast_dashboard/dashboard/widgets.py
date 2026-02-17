@@ -290,6 +290,32 @@ def get_pane_alert(msg):
         sizing_mode="stretch_width"
     )
 
+def create_predictors_warning(station, data):
+    col = pn.Column()
+    warning = get_predictors_warning(station, data)
+    if warning:
+        col.append(warning)
+    return col
+
+def create_forecast_warning(station, data, date_value):
+    col = pn.Column()
+    warning = get_forecast_warning(station, data, date_value)
+    if warning:
+        col.append(warning)
+    return col
+
+def refresh_predictors_warning(warning_col, station, data):
+    warning_col.objects = []
+    warning = get_predictors_warning(station, data)
+    if warning:
+        warning_col.append(warning)
+
+def refresh_forecast_warning(warning_col, station, data, date_value):
+    warning_col.objects = []
+    warning = get_forecast_warning(station, data, date_value)
+    if warning:
+        warning_col.append(warning)
+
 # ============================== Widgets for Predictors Tab ==============================
 
 def get_predictors_warning(station, data):

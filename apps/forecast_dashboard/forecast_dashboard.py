@@ -97,6 +97,9 @@ basin_card = widgets.create_basin_card(select_basin_widget, station)
 add_to_bulletin_button = widgets.create_add_to_bulletin_button()
 bulletin_tabulator = widgets.create_bulletin_tabulator()
 
+predictors_warning = widgets.create_predictors_warning(station, dm._data)
+forecast_warning = widgets.create_forecast_warning(station, dm._data, date_picker.value)
+
 # =====================================================================
 # 4. Initial site attribute computation
 # =====================================================================
@@ -126,15 +129,8 @@ def update_model_select(station_value, selected_pentad, selected_decad):
     dm.update_sites_for_pentad(_, selected_pentad, selected_decad)
     dm.invalidate_render_cache()
 
-    predictors_warning.objects = []  # clear old content
-    warning = widgets.get_predictors_warning(station, dm._data)
-    if warning:
-        predictors_warning.append(warning)
-
-    forecast_warning.objects = []  # clear old content
-    warning = widgets.get_forecast_warning(station, dm._data, date_picker.value)
-    if warning:
-        forecast_warning.append(warning)
+    widgets.refresh_predictors_warning(predictors_warning, station, dm._data)
+    widgets.refresh_forecast_warning(forecast_warning, station, dm._data, date_picker.value)
     print("\n=== Starting Model Select Update ===")
     print(f"Initial widget state:")
     print(f"  Options: {model_checkbox.options}")
@@ -415,16 +411,6 @@ allowable_range_selection.param.watch(lambda event: cfg.viz.update_range_slider_
 reload_card = cfg.viz.create_reload_button()
 
 # We don't need to update tabs or UI components dynamically since the page reloads
-
-predictors_warning = pn.Column()
-warning = widgets.get_predictors_warning(station, dm._data)
-if warning:
-    predictors_warning.append(warning)
-
-forecast_warning = pn.Column()
-warning = widgets.get_forecast_warning(station, dm._data, date_picker.value)
-if warning:
-    forecast_warning.append(warning)
 
 # Create a placeholder for the dashboard content
 dashboard_content = layout.define_tabs_2(_, predictors_warning, forecast_warning,
