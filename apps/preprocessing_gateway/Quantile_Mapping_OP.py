@@ -134,6 +134,7 @@ logger = logging.getLogger()
 logger.handlers = []
 logger.addHandler(file_handler)
 logger.addHandler(console_handler)
+logger.setLevel(logging.INFO)
 
 
 def transform_data_file_ensemble_member(data_file: pd.DataFrame, HRU_CODE: str) -> pd.DataFrame:
@@ -330,48 +331,76 @@ def _write_meteo_to_api(data: pd.DataFrame, meteo_type: str, hru_code: str) -> b
         return False
 
 
-def _check_meteo_consistency(csv_data: pd.DataFrame, meteo_type: str, hru_code: str) -> bool:
+def _check_meteo_consistency(
+    csv_data: pd.DataFrame, meteo_type: str, hru_code: str
+) -> bool:
     """
     Check consistency between CSV data and API data for meteo.
 
-    Reads back from the API and compares with the CSV data that was written.
-    Enabled via SAPPHIRE_CONSISTENCY_CHECK=true environment variable.
+    Reads back from the API and compares with the CSV data that was
+    written. Enabled via SAPPHIRE_CONSISTENCY_CHECK=true environment
+    variable.
 
     Args:
         csv_data: DataFrame that was written to CSV
-        meteo_type: Type of meteo data (T for temperature, P for precipitation)
+        meteo_type: Type of meteo data (T for temperature, P for
+            precipitation)
         hru_code: HRU code for logging purposes
 
     Returns:
-        True if consistent (or check disabled), False if inconsistencies found
+        True if consistent (or check disabled), False if
+        inconsistencies found
     """
-    # Check if consistency check is enabled
-    consistency_check = os.getenv("SAPPHIRE_CONSISTENCY_CHECK", "false").lower() == "true"
+    tag = f"CONSISTENCY_CHECK [{meteo_type}, HRU {hru_code}]"
+
+    consistency_check = os.getenv(
+        "SAPPHIRE_CONSISTENCY_CHECK", "false"
+    ).lower() == "true"
     if not consistency_check:
         return True
 
     if not SAPPHIRE_API_AVAILABLE:
-        logger.warning("sapphire-api-client not installed, skipping consistency check")
+        logger.warning(
+            "%s: sapphire-api-client not installed, skipping", tag
+        )
         return True
 
     api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
     client = SapphirePreprocessingClient(base_url=api_url)
 
-    logger.info(f"SAPPHIRE_CONSISTENCY_CHECK: Comparing API and CSV data for meteo ({meteo_type}, HRU {hru_code})...")
-
-    # Track whether any inconsistencies are found
-    is_consistent = True
-
     # Get the date range from CSV data
     csv_data = csv_data.copy()
     csv_data['date'] = pd.to_datetime(csv_data['date'])
 
-    # For operational mode, we only wrote the latest date
-    latest_date = csv_data['date'].max()
-    csv_latest = csv_data[csv_data['date'] == latest_date].copy()
+    # The write function filters to today; use the same date
+    today = pd.Timestamp.today().normalize()
+    csv_today = csv_data[csv_data['date'] == today].copy()
 
-    # Get unique codes
-    codes = csv_latest['code'].unique()
+    if csv_today.empty:
+        logger.warning(
+            "%s: No CSV rows for today (%s), nothing to verify. "
+            "CSV date range: %s to %s",
+            tag, today.date(),
+            csv_data['date'].min().date(),
+            csv_data['date'].max().date()
+        )
+        return True
+
+    codes = csv_today['code'].unique()
+    csv_val_col = meteo_type if meteo_type in csv_today.columns else None
+    logger.info(
+        "%s: Verifying API data for date=%s, codes=%s, api_url=%s",
+        tag, today.date(), list(codes), api_url
+    )
+    if csv_val_col:
+        for code in codes:
+            csv_vals = csv_today.loc[
+                csv_today['code'] == code, csv_val_col
+            ].tolist()
+            logger.info(
+                "%s: CSV values for code=%s: %s",
+                tag, code, csv_vals
+            )
 
     # Read from API for each code
     all_api_data = []
@@ -380,36 +409,95 @@ def _check_meteo_consistency(csv_data: pd.DataFrame, meteo_type: str, hru_code: 
             api_df = client.read_meteo(
                 meteo_type=meteo_type.upper(),
                 code=str(code),
-                start_date=latest_date.strftime('%Y-%m-%d'),
-                end_date=latest_date.strftime('%Y-%m-%d'),
+                start_date=today.strftime('%Y-%m-%d'),
+                end_date=today.strftime('%Y-%m-%d'),
                 limit=1000
             )
-            if not api_df.empty:
+            if api_df.empty:
+                logger.warning(
+                    "%s: API returned 0 rows for code=%s, date=%s",
+                    tag, code, today.date()
+                )
+            else:
+                val_col = 'value' if 'value' in api_df.columns else None
+                if val_col:
+                    vals = api_df[val_col].tolist()
+                    logger.info(
+                        "%s: API returned %d rows for code=%s, "
+                        "values=%s",
+                        tag, len(api_df), code, vals
+                    )
+                else:
+                    logger.info(
+                        "%s: API returned %d rows for code=%s, "
+                        "columns=%s",
+                        tag, len(api_df), code,
+                        list(api_df.columns)
+                    )
                 all_api_data.append(api_df)
         except Exception as e:
-            logger.error(f"Error reading meteo data from API for code {code}: {e}")
+            logger.error(
+                "%s: Error reading from API for code=%s: %s",
+                tag, code, e
+            )
             return False
 
     if not all_api_data:
-        logger.warning(f"SAPPHIRE_CONSISTENCY_CHECK: No data returned from API for {meteo_type}, HRU {hru_code}")
+        # Diagnostic: try reading without date filter to see if ANY
+        # data exists for this meteo_type
+        try:
+            any_data = client.read_meteo(
+                meteo_type=meteo_type.upper(),
+                limit=5
+            )
+            if any_data.empty:
+                logger.warning(
+                    "%s: FAILED - No data returned from API. "
+                    "Diagnostic: API has NO %s data at all. "
+                    "The write may have succeeded (count was returned) "
+                    "but data may not be persisted. "
+                    "Check the preprocessing API logs.",
+                    tag, meteo_type.upper()
+                )
+            else:
+                dates_in_api = sorted(
+                    pd.to_datetime(any_data['date']).dt.date.unique()
+                )
+                codes_in_api = list(any_data['code'].unique())
+                logger.warning(
+                    "%s: FAILED - No data for today (%s) but API "
+                    "has %s data for other dates: %s, codes: %s. "
+                    "Possible date mismatch or write did not persist "
+                    "today's records.",
+                    tag, today.date(), meteo_type.upper(),
+                    dates_in_api[:5], codes_in_api[:5]
+                )
+        except Exception as e:
+            logger.warning(
+                "%s: FAILED - No data returned and diagnostic "
+                "read also failed: %s",
+                tag, e
+            )
         return False
 
+    # Merge and compare
     api_data = pd.concat(all_api_data, ignore_index=True)
     api_data['date'] = pd.to_datetime(api_data['date'])
     api_data['code'] = api_data['code'].astype(str)
-    csv_latest['code'] = csv_latest['code'].astype(str)
+    csv_today['code'] = csv_today['code'].astype(str)
+
+    is_consistent = True
 
     # Compare row counts
-    if len(api_data) != len(csv_latest):
+    if len(api_data) != len(csv_today):
         logger.warning(
-            f"SAPPHIRE_CONSISTENCY_CHECK: Row count mismatch for {meteo_type}, HRU {hru_code} - "
-            f"API: {len(api_data)}, CSV: {len(csv_latest)}"
+            "%s: Row count mismatch - API: %d, CSV: %d",
+            tag, len(api_data), len(csv_today)
         )
         is_consistent = False
 
-    # Compare values
     # Merge on code and date
-    merged = csv_latest.merge(
+    merged = csv_today.merge(
         api_data,
         on=['code', 'date'],
         how='outer',
@@ -417,53 +505,60 @@ def _check_meteo_consistency(csv_data: pd.DataFrame, meteo_type: str, hru_code: 
         indicator=True
     )
 
-    # Check for rows only in one source
     only_csv = merged[merged['_merge'] == 'left_only']
     only_api = merged[merged['_merge'] == 'right_only']
 
     if len(only_csv) > 0:
         logger.warning(
-            f"SAPPHIRE_CONSISTENCY_CHECK: {len(only_csv)} rows in CSV but not in API for {meteo_type}, HRU {hru_code}"
+            "%s: %d rows in CSV but not in API",
+            tag, len(only_csv)
         )
         is_consistent = False
 
     if len(only_api) > 0:
         logger.warning(
-            f"SAPPHIRE_CONSISTENCY_CHECK: {len(only_api)} rows in API but not in CSV for {meteo_type}, HRU {hru_code}"
+            "%s: %d rows in API but not in CSV",
+            tag, len(only_api)
         )
         is_consistent = False
 
     # Compare value column
     both = merged[merged['_merge'] == 'both']
     if len(both) > 0:
-        # The CSV has the value in a column named by meteo_type (e.g., 'T', 'P')
-        # The API returns it as 'value'
-        csv_val_col = meteo_type if meteo_type in csv_latest.columns else None
-
+        csv_val_col = (
+            meteo_type if meteo_type in csv_today.columns else None
+        )
         if csv_val_col and 'value' in api_data.columns:
-            csv_values = both[f'{csv_val_col}_csv'] if f'{csv_val_col}_csv' in both.columns else both.get(csv_val_col)
-            api_values = both['value_api'] if 'value_api' in both.columns else both.get('value')
+            csv_values = both.get(
+                f'{csv_val_col}_csv', both.get(csv_val_col)
+            )
+            api_values = both.get('value_api', both.get('value'))
 
             if csv_values is not None and api_values is not None:
-                # Convert to numeric
                 csv_values = pd.to_numeric(csv_values, errors='coerce')
                 api_values = pd.to_numeric(api_values, errors='coerce')
-
-                # Check for value mismatches (tolerance 0.01 for rounding)
                 diff = (csv_values - api_values).abs()
                 mismatches = diff[diff > 0.01]
 
                 if len(mismatches) > 0:
                     logger.warning(
-                        f"SAPPHIRE_CONSISTENCY_CHECK: {len(mismatches)} value mismatches for {meteo_type}, HRU {hru_code} "
-                        f"(max diff: {diff.max():.4f})"
+                        "%s: %d value mismatches (max diff: %.4f)",
+                        tag, len(mismatches), diff.max()
                     )
                     is_consistent = False
 
     if is_consistent:
-        logger.info(f"SAPPHIRE_CONSISTENCY_CHECK: PASSED for {meteo_type}, HRU {hru_code} - API matches CSV")
+        logger.info("%s: PASSED - API matches CSV", tag)
+        print(
+            f"CONSISTENCY_CHECK: PASSED "
+            f"({meteo_type}, HRU {hru_code})"
+        )
     else:
-        logger.error(f"SAPPHIRE_CONSISTENCY_CHECK: FAILED for {meteo_type}, HRU {hru_code} - inconsistencies found")
+        logger.error("%s: FAILED - inconsistencies found", tag)
+        print(
+            f"CONSISTENCY_CHECK: FAILED "
+            f"({meteo_type}, HRU {hru_code}) - see log for details"
+        )
 
     return is_consistent
 
@@ -542,21 +637,17 @@ def main():
     CONTROL_MEMBER_HRUS = os.getenv('ieasyhydroforecast_HRU_CONTROL_MEMBER')
     ENSEMBLE_HRUS = os.getenv('ieasyhydroforecast_HRU_ENSEMBLE')
 
-    logger.debug(f"Q_MAP_PARAM_PATH: {Q_MAP_PARAM_PATH}")
-    logger.debug(f"CONTROL_MEMBER_HRUS: {CONTROL_MEMBER_HRUS}")
-    logger.debug(f"ENSEMBLE_HRUS: {ENSEMBLE_HRUS}")
+    logger.info("Meteo data configuration:")
+    logger.info("  Q_MAP_PARAM_PATH: %s", Q_MAP_PARAM_PATH)
+    logger.info("  Control member HRUs: %s", CONTROL_MEMBER_HRUS)
+    logger.info("  Ensemble HRUs: %s", ENSEMBLE_HRUS)
+    logger.info("  Quantile mapping: %s", perform_qmapping)
 
-
-
-
-    #initialize the client
-    client = sapphire_dg_client.client.SapphireDGClient(api_key= API_KEY)
-    #get the codes for the HRU's
+    # Initialize the client
+    client = sapphire_dg_client.client.SapphireDGClient(api_key=API_KEY)
+    # Get the codes for the HRU's
     control_member_hrus = [str(x) for x in CONTROL_MEMBER_HRUS.split(',')]
-
     hru_ensemble_forecast = [str(x) for x in ENSEMBLE_HRUS.split(',')]
-
-
 
     today = datetime.today().strftime('%Y-%m-%d')
     start_date = datetime.today() - timedelta(days=365)
@@ -564,7 +655,10 @@ def main():
     yesterday = datetime.today() - timedelta(days=1)
     yesterday = yesterday.strftime('%Y-%m-%d')
 
-    logger.debug(f"Today: {today}, start_date: {start_date}, yesterday: {yesterday}")
+    logger.info(
+        "Date range: %s to %s (yesterday: %s)",
+        start_date, today, yesterday
+    )
 
 
     # Read configuration for mapping gateway station codes to hydromet station
@@ -589,11 +683,16 @@ def main():
     #--------------------------------------------------------------------
     # CONTROL MEMBER MAPPING
     #--------------------------------------------------------------------
-    logger.debug("Current working directory: %s", os.getcwd())
-    logger.debug(f"Iterating over the control member HRUs: {control_member_hrus}")
-    for c_m_hru in control_member_hrus:
-        #download the control member data
-        logger.info(f"Processing control member for HRU: {c_m_hru}")
+    logger.info(
+        "=== Control member processing: %d HRUs ===",
+        len(control_member_hrus)
+    )
+    for cm_idx, c_m_hru in enumerate(control_member_hrus, 1):
+        logger.info(
+            "--- [%d/%d] Control member HRU %s ---",
+            cm_idx, len(control_member_hrus), c_m_hru
+        )
+        print(f"Processing control member: HRU {c_m_hru}")
         # Initialize control_member_era5 to None
         control_member_era5 = None
         try:
@@ -660,15 +759,19 @@ def main():
 
         # Write meteo data to SAPPHIRE API (operational mode - latest date only)
         try:
-            _write_meteo_to_api(P_data, 'P', c_m_hru)
-            _check_meteo_consistency(P_data, 'P', c_m_hru)
+            written = _write_meteo_to_api(P_data, 'P', c_m_hru)
+            # Run consistency check only if data was actually written
+            if written:
+                _check_meteo_consistency(P_data, 'P', c_m_hru)
         except Exception as e:
             logger.error(f"Failed to write P data to SAPPHIRE API for HRU {c_m_hru}: {e}")
             # Don't fail the entire process - CSV was already written
 
         try:
-            _write_meteo_to_api(T_data, 'T', c_m_hru)
-            _check_meteo_consistency(T_data, 'T', c_m_hru)
+            written = _write_meteo_to_api(T_data, 'T', c_m_hru)
+            # Run consistency check only if data was actually written
+            if written:
+                _check_meteo_consistency(T_data, 'T', c_m_hru)
         except Exception as e:
             logger.error(f"Failed to write T data to SAPPHIRE API for HRU {c_m_hru}: {e}")
             # Don't fail the entire process - CSV was already written
@@ -679,8 +782,15 @@ def main():
     #--------------------------------------------------------------------
     # ENSEMBLE  MAPPING
     #--------------------------------------------------------------------
-    for code_ens in hru_ensemble_forecast:
-
+    logger.info(
+        "=== Ensemble processing: %d HRUs ===",
+        len(hru_ensemble_forecast)
+    )
+    for ens_idx, code_ens in enumerate(hru_ensemble_forecast, 1):
+        logger.info(
+            "--- [%d/%d] Ensemble HRU %s ---",
+            ens_idx, len(hru_ensemble_forecast), code_ens
+        )
         print(f"Processing HRU Ensemble: {code_ens} (gateway code)")
         print(f"Storing files downloaded to {OUTPUT_PATH_DG}")
         if ENSEMBLE_HRUS == 'None':

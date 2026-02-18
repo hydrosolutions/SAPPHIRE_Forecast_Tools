@@ -76,6 +76,7 @@ logger = logging.getLogger()
 logger.handlers = []
 logger.addHandler(file_handler)
 logger.addHandler(console_handler)
+logger.setLevel(logging.INFO)
 
 
 def main():
