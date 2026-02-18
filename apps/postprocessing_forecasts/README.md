@@ -18,7 +18,6 @@ This module post-processes hydrological forecasts from all forecast modules to g
 - **TFT** - Temporal Fusion Transformer
 - **TSMIXER** - Time Series Mixer
 - **ARIMA** - AutoRegressive Integrated Moving Average
-- **RRMAMBA** - Random Forest Mamba
 - **CM** - Consensus Model
 - **STATS** - Statistical Model
 

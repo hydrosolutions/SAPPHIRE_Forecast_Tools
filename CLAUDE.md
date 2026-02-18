@@ -103,9 +103,6 @@ When refactoring a module:
   from the API response field `model_type_description`, not from local dicts
 - See `doc/plans/issues/gi_draft_infra_model_registry.md` for the per-module checklist
 
-Note: `RRMAMBA` (Rainfall-Runoff Mamba, ML model) and `RRAM` (Rainfall runoff assimilation
-model, conceptual model) are **different models** — do not treat them as aliases.
-
 ### API Patterns
 
 FastAPI services follow these patterns:

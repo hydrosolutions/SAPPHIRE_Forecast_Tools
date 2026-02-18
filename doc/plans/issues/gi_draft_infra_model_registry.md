@@ -31,7 +31,7 @@ Three approaches were evaluated:
 
 | # | Location | Form | Models covered |
 |---|----------|------|----------------|
-| 1 | `postprocessing_forecasts/src/data_reader.py:14-27` | `MODEL_SHORT_TO_LONG` dict | 9 (LR, TFT, TiDE, TSMixer, ARIMA, RRMAMBA, RRAM, EM, NE) |
+| 1 | `postprocessing_forecasts/src/data_reader.py:14-27` | `MODEL_SHORT_TO_LONG` dict | 8 (LR, TFT, TiDE, TSMixer, ARIMA, RRAM, EM, NE) |
 | 2 | `postprocessing_forecasts/src/data_reader.py:30-38` | `API_MODEL_TYPE_TO_SHORT` dict | 7 (unused in production) |
 | 3 | `postprocessing_forecasts/src/api_writer.py:118-126` | `model_type_map` dict | 7 (duplicate of #4) |
 | 4 | `postprocessing_forecasts/src/api_writer.py:318-326` | `model_type_map` dict | 7 (duplicate of #3) |
@@ -51,7 +51,7 @@ Three approaches were evaluated:
 |-----|-----------------|---------|
 | RRAM mislabeled in `data_reader.py` | "Rainfall-Runoff Mamba (RRAM)" | "Rainfall runoff assimilation model (RRAM)" |
 | TFT hyphenated in dashboard `processing.py` | "Temporal-Fusion Transformer (TFT)" | "Temporal Fusion Transformer (TFT)" |
-| RRMAMBA/RRAM conflated as aliases | Treated as same model | Different models: RRMAMBA = Rainfall-Runoff Mamba (ML), RRAM = Rainfall runoff assimilation model (conceptual) |
+| RRAM mislabeled as Rainfall-Runoff Mamba | See RRAM row above | RRMAMBA removed; RRAM = Rainfall runoff assimilation model (conceptual) |
 
 ---
 
@@ -120,7 +120,6 @@ Each entry is addressed when that module is next refactored. Check off items as 
 
 - [ ] Add long-term model descriptions (GBT, LR_Base, LR_SM, LR_SM_DT, LR_SM_ROF, MC_ALD, SM_GBT, SM_GBT_LR, SM_GBT_Norm, Skilled Mean, Naive Mean)
 - [ ] Fix RRAM description: add "(RRAM)" suffix for consistency
-- [ ] Add RRMAMBA as separate ModelType if ML model needs to be stored in API
 - [ ] Fix TiDE description: currently "(TIDE)" should be "(TiDE)"
 - [ ] Verify Obs model has a ModelType entry
 

@@ -1232,7 +1232,6 @@ def _read_ml_forecasts_from_api(
         'TIDE': 'TiDE',
         'TSMIXER': 'TSMixer',
         'ARIMA': 'ARIMA',
-        'RRMAMBA': 'RRMAMBA',
     }
 
     model_upper = model.upper()
@@ -3491,13 +3490,7 @@ def read_observed_and_modelled_data_pentade():
             logger.debug("No ARIMA results to be read. Skipping ARIMA.")
         else: 
             arima = read_machine_learning_forecasts_pentad(model='ARIMA')
-        
-        # Read RRMAMBA results
-        if not 'RRMAMBA' in available_ml_models:
-            logger.debug("No RRMAMBA results to be read. Skipping RRMAMBA.")
-        else: 
-            rrmamba = read_machine_learning_forecasts_pentad(model='RRMAMBA')
-    
+
     else:
         logger.warning("Environment variable ieasyhydroforecast_run_ML_models is set to an invalid value. Assuming no ML forecasts to be read.")
         
@@ -3646,13 +3639,7 @@ def read_observed_and_modelled_data_decade():
             logger.debug("No ARIMA results to be read. Skipping ARIMA.")
         else: 
             arima = read_machine_learning_forecasts_decade(model='ARIMA')
-        
-        # Read RRMAMBA results
-        if not 'RRMAMBA' in available_ml_models:
-            logger.debug("No RRMAMBA results to be read. Skipping RRMAMBA.")
-        else: 
-            rrmamba = read_machine_learning_forecasts_decade(model='RRMAMBA')
-    
+
     else:
         logger.warning("Environment variable ieasyhydroforecast_run_ML_models is set to an invalid value. Assuming no ML forecasts to be read.")
         
