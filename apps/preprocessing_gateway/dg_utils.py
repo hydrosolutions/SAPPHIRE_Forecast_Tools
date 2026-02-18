@@ -61,6 +61,7 @@ logger = logging.getLogger()
 logger.handlers = []
 logger.addHandler(file_handler)
 logger.addHandler(console_handler)
+logger.setLevel(logging.INFO)
 
 
 # --------------------------------------------------------------------
@@ -226,14 +227,29 @@ def transform_snow_data(df, var_name):
 
     for col in df.columns:
         if col != 'date' and col != 'Source':
-            #split by "_"
-            new_col = col.split("_")
-            if len(new_col) > 1:
-                code = int(new_col[0])
-                elevation_band = int(new_col[1])
-                new_var_name = f"{var_name}_{elevation_band}"
+            # Separate station code from elevation band suffix.
+            # Convention: <code>_<band> where band is a small int
+            # (1-14). Use rsplit to handle codes that contain
+            # underscores (e.g., "KGZ_500_1" → code="KGZ_500",
+            # band=1).
+            parts = col.rsplit("_", 1)
+            if len(parts) == 2:
+                try:
+                    band = int(parts[1])
+                except ValueError:
+                    band = None
+                if band is not None and 1 <= band <= 14:
+                    code = str(parts[0])
+                    elevation_band = band
+                    new_var_name = f"{var_name}_{elevation_band}"
+                else:
+                    # Suffix is not a valid elevation band;
+                    # treat the whole column name as the code
+                    code = str(col)
+                    elevation_band = None
+                    new_var_name = var_name
             else:
-                code = int(new_col[0])
+                code = str(col)
                 elevation_band = None
                 new_var_name = var_name
 
@@ -243,6 +259,21 @@ def transform_snow_data(df, var_name):
                 code_dict[code] = {'date': dates, new_var_name: values}
             else:
                 code_dict[code][new_var_name] = values
+
+    # If the DG CSV has only elevation band columns (e.g., 15013_3,
+    # 15013_6) but no base/mean column (e.g., bare 15013), compute the
+    # base variable as the mean across all elevation bands for that code.
+    for code, data in code_dict.items():
+        if var_name not in data:
+            band_keys = [
+                k for k in data
+                if k.startswith(f"{var_name}_") and k != 'date'
+            ]
+            if band_keys:
+                band_df = pd.DataFrame(
+                    {k: data[k] for k in band_keys}
+                )
+                data[var_name] = band_df.mean(axis=1)
 
     new_df = pd.DataFrame()
     for code, data in code_dict.items():
