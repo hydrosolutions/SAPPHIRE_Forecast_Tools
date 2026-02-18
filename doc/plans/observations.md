@@ -14,6 +14,46 @@ Periodically review and triage into formal issues in `module_issues.md` or GitHu
 
 ---
 
+## 2026-02-18
+
+### Long-Term Forecasting: `code` Column Forced to int Breaks Alphanumeric Codes
+
+**Source**: Investigation of KGZ500 snow data returning None in preprocessing_gateway
+**Date**: 2026-02-18
+
+`long_term_forecasting/data_interface.py:580` (CSV-based `load_snow_data`) has:
+```python
+df["code"] = df["code"].astype(int)
+```
+This crashes with `ValueError` for any HRU whose station codes are alphanumeric (e.g., KGZ500). The API-based version (line ~204) does NOT have this issue.
+
+**Convention**: Station codes must always be strings throughout the pipeline. Numeric codes like `12345` should be stored as `"12345"`, not as integers. This is consistent with the API writer (`"code": str(row['code'])`) and the consistency checks (both sides cast to `str`).
+
+**Fix needed**: Change `.astype(int)` to `.astype(str)` at line 580. Also audit any other `.astype(int)` on `code` columns in the module.
+
+**Assessment**: Will break KGZ500 snow data ingestion in long_term_forecasting. Colleague may need to address.
+**Status**: Needs fix
+
+---
+
+### Preprocessing Gateway: KGZ500 Snow Data Returns None Despite Code Fixes
+
+**Source**: Running `snow_data_operational.py` with HRU KGZ500
+**Date**: 2026-02-18
+
+After fixing three bugs in `dg_utils.transform_snow_data` (station code `int()` conversion, elevation band `int()` conversion, and naive `split("_")` logic), HRU KGZ500 still returns None values while HRU 00003 works fine.
+
+**Fixes applied** (in `dg_utils.py`):
+1. `int(new_col[0])` → `str(new_col[0])` for station codes
+2. Replaced `split("_")` + `int(new_col[1])` with robust `rsplit("_", 1)` + validation (suffix must be 1-14 to be treated as elevation band)
+
+**What remains**: The Data Gateway itself may not return valid data for KGZ500, or the CSV format from the DG differs from what `transform_snow_data` expects (e.g., different number of header rows, different column naming convention). Without access to the actual DG response for KGZ500, this cannot be diagnosed further from code alone.
+
+**Next step**: Run with verbose logging and inspect the raw DG CSV file for KGZ500 (saved in `OUTPUT_PATH_DG`) to see the actual column format and data content.
+**Status**: Needs investigation with real DG data
+
+---
+
 ## 2026-02-16
 
 ### Pipeline: Decadal Forecasts Not Run by run_locally.sh
@@ -387,4 +427,4 @@ FileNotFoundError: [Errno 2] No such file or directory:
 
 ---
 
-*Last updated: 2026-02-16 (Decadal forecasts not run by run_locally.sh)*
+*Last updated: 2026-02-18 (KGZ500 snow data issues, code-as-string convention)*
