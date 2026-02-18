@@ -26,11 +26,12 @@
 #
 #   bash apps/run_locally.sh maintenance:linear_regression
 #   bash apps/run_locally.sh maintenance:postprocessing_forecasts
+#   bash apps/run_locally.sh maintenance:postprocessing_long_term
 #   bash apps/run_locally.sh recalculate_skill_metrics
 #   bash apps/run_locally.sh calibrate_long_term
 #
 # Combined targets:
-#   daily                                Full daily run (PENTAD + DECAD + maintenance)
+#   daily                                Short-term daily run (PENTAD + DECAD + maintenance)
 #
 # Operational targets:
 #   short-term                          Short-term forecast pipeline
@@ -45,6 +46,7 @@
 #   maintenance:linear_regression            Linear regression hindcast
 #   maintenance:machine_learning             ML NaN recalc + gap-fill + new stations
 #   maintenance:postprocessing_forecasts     Fill missing ensemble forecasts
+#   maintenance:postprocessing_long_term     Fill missing monthly ensemble forecasts
 #   calibrate_long_term                      Calibrate and hindcast long-term models
 #   recalculate_skill_metrics                Full skill metrics rebuild (yearly)
 #
@@ -73,10 +75,16 @@ LOG_FILE="${LOG_DIR}/run_locally_${TIMESTAMP}.log"
 CONTINUE_ON_ERROR=false
 DRY_RUN=false
 
+# Error capture
+ERROR_TAIL_LINES=30
+ERROR_DIR="$(mktemp -d)"
+trap 'rm -rf "$ERROR_DIR"' EXIT
+
 # Tracking arrays
 declare -a RESULTS_MODULE=()
 declare -a RESULTS_STATUS=()
 declare -a RESULTS_TIME=()
+declare -a RESULTS_ERROR_LOG=()
 
 # Short-term pipeline modules (in dependency order)
 SHORT_TERM_MODULES=(
@@ -182,9 +190,11 @@ record_result() {
     local module="$1"
     local status="$2"
     local elapsed="$3"
+    local error_log="${4:-}"
     RESULTS_MODULE+=("$module")
     RESULTS_STATUS+=("$status")
     RESULTS_TIME+=("$elapsed")
+    RESULTS_ERROR_LOG+=("$error_log")
 }
 
 check_venv() {
@@ -246,11 +256,17 @@ run_in_venv() {
         env_cmd+=("$ev")
     done
 
+    # Build tee targets: always the main log, plus per-module log if set
+    local tee_targets=("$LOG_FILE")
+    if [ -n "${CURRENT_MODULE_LOG:-}" ]; then
+        tee_targets+=("$CURRENT_MODULE_LOG")
+    fi
+
     # Run in subshell from the module directory
     (
         cd "$module_dir"
         "${env_cmd[@]}" "$python_path" "$script" "${script_args[@]}" 2>&1
-    ) | tee -a "$LOG_FILE"
+    ) | tee -a "${tee_targets[@]}"
 
     return "${PIPESTATUS[0]}"
 }
@@ -264,16 +280,18 @@ run_preprocessing_runoff() {
     local start
     start=$(get_timestamp)
 
+    CURRENT_MODULE_LOG="${ERROR_DIR}/preprocessing_runoff.log"
+    > "$CURRENT_MODULE_LOG"
     run_in_venv preprocessing_runoff preprocessing_runoff.py
     local rc=$?
 
     local elapsed=$(( $(get_timestamp) - start ))
     if [ $rc -eq 0 ]; then
         log OK "preprocessing_runoff completed in $(format_duration $elapsed)"
-        record_result "preprocessing_runoff" "PASS" "$elapsed"
+        record_result "preprocessing_runoff" "PASS" "$elapsed" "$CURRENT_MODULE_LOG"
     else
         log ERROR "preprocessing_runoff failed (exit $rc) after $(format_duration $elapsed)"
-        record_result "preprocessing_runoff" "FAIL" "$elapsed"
+        record_result "preprocessing_runoff" "FAIL" "$elapsed" "$CURRENT_MODULE_LOG"
     fi
     return $rc
 }
@@ -284,6 +302,8 @@ run_preprocessing_gateway() {
     start=$(get_timestamp)
     local rc=0
 
+    CURRENT_MODULE_LOG="${ERROR_DIR}/preprocessing_gateway.log"
+    > "$CURRENT_MODULE_LOG"
     for script in Quantile_Mapping_OP.py extend_era5_reanalysis.py snow_data_operational.py; do
         run_in_venv preprocessing_gateway "$script" || { rc=$?; break; }
     done
@@ -291,10 +311,10 @@ run_preprocessing_gateway() {
     local elapsed=$(( $(get_timestamp) - start ))
     if [ $rc -eq 0 ]; then
         log OK "preprocessing_gateway completed in $(format_duration $elapsed)"
-        record_result "preprocessing_gateway" "PASS" "$elapsed"
+        record_result "preprocessing_gateway" "PASS" "$elapsed" "$CURRENT_MODULE_LOG"
     else
         log ERROR "preprocessing_gateway failed (exit $rc) after $(format_duration $elapsed)"
-        record_result "preprocessing_gateway" "FAIL" "$elapsed"
+        record_result "preprocessing_gateway" "FAIL" "$elapsed" "$CURRENT_MODULE_LOG"
     fi
     return $rc
 }
@@ -304,16 +324,18 @@ run_linear_regression() {
     local start
     start=$(get_timestamp)
 
+    CURRENT_MODULE_LOG="${ERROR_DIR}/linear_regression.log"
+    > "$CURRENT_MODULE_LOG"
     run_in_venv linear_regression linear_regression.py
     local rc=$?
 
     local elapsed=$(( $(get_timestamp) - start ))
     if [ $rc -eq 0 ]; then
         log OK "linear_regression completed in $(format_duration $elapsed)"
-        record_result "linear_regression" "PASS" "$elapsed"
+        record_result "linear_regression" "PASS" "$elapsed" "$CURRENT_MODULE_LOG"
     else
         log ERROR "linear_regression failed (exit $rc) after $(format_duration $elapsed)"
-        record_result "linear_regression" "FAIL" "$elapsed"
+        record_result "linear_regression" "FAIL" "$elapsed" "$CURRENT_MODULE_LOG"
     fi
     return $rc
 }
@@ -324,6 +346,8 @@ run_machine_learning() {
     start=$(get_timestamp)
     local rc=0
 
+    CURRENT_MODULE_LOG="${ERROR_DIR}/machine_learning.log"
+    > "$CURRENT_MODULE_LOG"
     for model in "${ML_MODELS[@]}"; do
         log INFO "  Model: ${model}"
         for script in "${ML_SCRIPTS[@]}"; do
@@ -337,10 +361,10 @@ run_machine_learning() {
     local elapsed=$(( $(get_timestamp) - start ))
     if [ $rc -eq 0 ]; then
         log OK "machine_learning completed in $(format_duration $elapsed)"
-        record_result "machine_learning" "PASS" "$elapsed"
+        record_result "machine_learning" "PASS" "$elapsed" "$CURRENT_MODULE_LOG"
     else
         log ERROR "machine_learning failed (exit $rc) after $(format_duration $elapsed)"
-        record_result "machine_learning" "FAIL" "$elapsed"
+        record_result "machine_learning" "FAIL" "$elapsed" "$CURRENT_MODULE_LOG"
     fi
     return $rc
 }
@@ -350,16 +374,18 @@ run_postprocessing_forecasts() {
     local start
     start=$(get_timestamp)
 
+    CURRENT_MODULE_LOG="${ERROR_DIR}/postprocessing_forecasts.log"
+    > "$CURRENT_MODULE_LOG"
     run_in_venv postprocessing_forecasts postprocessing_operational.py
     local rc=$?
 
     local elapsed=$(( $(get_timestamp) - start ))
     if [ $rc -eq 0 ]; then
         log OK "postprocessing_forecasts completed in $(format_duration $elapsed)"
-        record_result "postprocessing_forecasts" "PASS" "$elapsed"
+        record_result "postprocessing_forecasts" "PASS" "$elapsed" "$CURRENT_MODULE_LOG"
     else
         log ERROR "postprocessing_forecasts failed (exit $rc) after $(format_duration $elapsed)"
-        record_result "postprocessing_forecasts" "FAIL" "$elapsed"
+        record_result "postprocessing_forecasts" "FAIL" "$elapsed" "$CURRENT_MODULE_LOG"
     fi
     return $rc
 }
@@ -371,6 +397,8 @@ run_long_term_forecasting() {
     local rc=0
     local any_failed=false
 
+    CURRENT_MODULE_LOG="${ERROR_DIR}/long_term_forecasting.log"
+    > "$CURRENT_MODULE_LOG"
     # If lt_forecast_mode is set, run just that month
     if [ -n "${lt_forecast_mode:-}" ]; then
         log INFO "  Running single mode: ${lt_forecast_mode}"
@@ -397,10 +425,10 @@ run_long_term_forecasting() {
     local elapsed=$(( $(get_timestamp) - start ))
     if [ $rc -eq 0 ]; then
         log OK "long_term_forecasting completed in $(format_duration $elapsed)"
-        record_result "long_term_forecasting" "PASS" "$elapsed"
+        record_result "long_term_forecasting" "PASS" "$elapsed" "$CURRENT_MODULE_LOG"
     else
         log ERROR "long_term_forecasting had failures after $(format_duration $elapsed)"
-        record_result "long_term_forecasting" "FAIL" "$elapsed"
+        record_result "long_term_forecasting" "FAIL" "$elapsed" "$CURRENT_MODULE_LOG"
     fi
     return $rc
 }
@@ -414,16 +442,18 @@ run_maintenance_preprocessing_runoff() {
     local start
     start=$(get_timestamp)
 
+    CURRENT_MODULE_LOG="${ERROR_DIR}/preprocessing_runoff_maintenance.log"
+    > "$CURRENT_MODULE_LOG"
     run_in_venv preprocessing_runoff preprocessing_runoff.py -- --maintenance
     local rc=$?
 
     local elapsed=$(( $(get_timestamp) - start ))
     if [ $rc -eq 0 ]; then
         log OK "preprocessing_runoff maintenance completed in $(format_duration $elapsed)"
-        record_result "preprocessing_runoff (maintenance)" "PASS" "$elapsed"
+        record_result "preprocessing_runoff (maintenance)" "PASS" "$elapsed" "$CURRENT_MODULE_LOG"
     else
         log ERROR "preprocessing_runoff maintenance failed (exit $rc) after $(format_duration $elapsed)"
-        record_result "preprocessing_runoff (maintenance)" "FAIL" "$elapsed"
+        record_result "preprocessing_runoff (maintenance)" "FAIL" "$elapsed" "$CURRENT_MODULE_LOG"
     fi
     return $rc
 }
@@ -433,16 +463,18 @@ run_maintenance_preprocessing_gateway() {
     local start
     start=$(get_timestamp)
 
+    CURRENT_MODULE_LOG="${ERROR_DIR}/preprocessing_gateway_maintenance.log"
+    > "$CURRENT_MODULE_LOG"
     run_in_venv preprocessing_gateway extend_era5_reanalysis.py
     local rc=$?
 
     local elapsed=$(( $(get_timestamp) - start ))
     if [ $rc -eq 0 ]; then
         log OK "preprocessing_gateway maintenance completed in $(format_duration $elapsed)"
-        record_result "preprocessing_gateway (maintenance)" "PASS" "$elapsed"
+        record_result "preprocessing_gateway (maintenance)" "PASS" "$elapsed" "$CURRENT_MODULE_LOG"
     else
         log ERROR "preprocessing_gateway maintenance failed (exit $rc) after $(format_duration $elapsed)"
-        record_result "preprocessing_gateway (maintenance)" "FAIL" "$elapsed"
+        record_result "preprocessing_gateway (maintenance)" "FAIL" "$elapsed" "$CURRENT_MODULE_LOG"
     fi
     return $rc
 }
@@ -452,16 +484,18 @@ run_maintenance_linear_regression() {
     local start
     start=$(get_timestamp)
 
+    CURRENT_MODULE_LOG="${ERROR_DIR}/linear_regression_hindcast.log"
+    > "$CURRENT_MODULE_LOG"
     run_in_venv linear_regression linear_regression.py -- --hindcast
     local rc=$?
 
     local elapsed=$(( $(get_timestamp) - start ))
     if [ $rc -eq 0 ]; then
         log OK "linear_regression hindcast completed in $(format_duration $elapsed)"
-        record_result "linear_regression (hindcast)" "PASS" "$elapsed"
+        record_result "linear_regression (hindcast)" "PASS" "$elapsed" "$CURRENT_MODULE_LOG"
     else
         log ERROR "linear_regression hindcast failed (exit $rc) after $(format_duration $elapsed)"
-        record_result "linear_regression (hindcast)" "FAIL" "$elapsed"
+        record_result "linear_regression (hindcast)" "FAIL" "$elapsed" "$CURRENT_MODULE_LOG"
     fi
     return $rc
 }
@@ -472,6 +506,8 @@ run_maintenance_machine_learning() {
     start=$(get_timestamp)
     local rc=0
 
+    CURRENT_MODULE_LOG="${ERROR_DIR}/machine_learning_maintenance.log"
+    > "$CURRENT_MODULE_LOG"
     for model in "${ML_MODELS[@]}"; do
         log INFO "  Model: ${model}"
         for script in "${ML_MAINTENANCE_SCRIPTS[@]}"; do
@@ -485,10 +521,10 @@ run_maintenance_machine_learning() {
     local elapsed=$(( $(get_timestamp) - start ))
     if [ $rc -eq 0 ]; then
         log OK "machine_learning maintenance completed in $(format_duration $elapsed)"
-        record_result "machine_learning (maintenance)" "PASS" "$elapsed"
+        record_result "machine_learning (maintenance)" "PASS" "$elapsed" "$CURRENT_MODULE_LOG"
     else
         log ERROR "machine_learning maintenance failed (exit $rc) after $(format_duration $elapsed)"
-        record_result "machine_learning (maintenance)" "FAIL" "$elapsed"
+        record_result "machine_learning (maintenance)" "FAIL" "$elapsed" "$CURRENT_MODULE_LOG"
     fi
     return $rc
 }
@@ -498,6 +534,8 @@ run_maintenance_postprocessing_forecasts() {
     local start
     start=$(get_timestamp)
 
+    CURRENT_MODULE_LOG="${ERROR_DIR}/postprocessing_forecasts_maintenance.log"
+    > "$CURRENT_MODULE_LOG"
     run_in_venv postprocessing_forecasts postprocessing_maintenance.py \
         "POSTPROCESSING_GAPFILL_WINDOW_DAYS=${POSTPROCESSING_GAPFILL_WINDOW_DAYS:-7}"
     local rc=$?
@@ -505,10 +543,10 @@ run_maintenance_postprocessing_forecasts() {
     local elapsed=$(( $(get_timestamp) - start ))
     if [ $rc -eq 0 ]; then
         log OK "postprocessing_forecasts maintenance completed in $(format_duration $elapsed)"
-        record_result "postprocessing_forecasts (maintenance)" "PASS" "$elapsed"
+        record_result "postprocessing_forecasts (maintenance)" "PASS" "$elapsed" "$CURRENT_MODULE_LOG"
     else
         log ERROR "postprocessing_forecasts maintenance failed (exit $rc) after $(format_duration $elapsed)"
-        record_result "postprocessing_forecasts (maintenance)" "FAIL" "$elapsed"
+        record_result "postprocessing_forecasts (maintenance)" "FAIL" "$elapsed" "$CURRENT_MODULE_LOG"
     fi
     return $rc
 }
@@ -518,16 +556,18 @@ run_recalculate_skill_metrics() {
     local start
     start=$(get_timestamp)
 
+    CURRENT_MODULE_LOG="${ERROR_DIR}/postprocessing_forecasts_recalculate.log"
+    > "$CURRENT_MODULE_LOG"
     run_in_venv postprocessing_forecasts recalculate_skill_metrics.py
     local rc=$?
 
     local elapsed=$(( $(get_timestamp) - start ))
     if [ $rc -eq 0 ]; then
         log OK "skill metrics recalculation completed in $(format_duration $elapsed)"
-        record_result "postprocessing_forecasts (recalculate)" "PASS" "$elapsed"
+        record_result "postprocessing_forecasts (recalculate)" "PASS" "$elapsed" "$CURRENT_MODULE_LOG"
     else
         log ERROR "skill metrics recalculation failed (exit $rc) after $(format_duration $elapsed)"
-        record_result "postprocessing_forecasts (recalculate)" "FAIL" "$elapsed"
+        record_result "postprocessing_forecasts (recalculate)" "FAIL" "$elapsed" "$CURRENT_MODULE_LOG"
     fi
     return $rc
 }
@@ -537,6 +577,8 @@ run_calibrate_long_term() {
     local start
     start=$(get_timestamp)
 
+    CURRENT_MODULE_LOG="${ERROR_DIR}/long_term_forecasting_calibrate.log"
+    > "$CURRENT_MODULE_LOG"
     run_in_venv long_term_forecasting calibrate_and_hindcast.py \
         "lt_forecast_mode=${lt_forecast_mode:-monthly}" \
         -- --all
@@ -545,10 +587,53 @@ run_calibrate_long_term() {
     local elapsed=$(( $(get_timestamp) - start ))
     if [ $rc -eq 0 ]; then
         log OK "long_term calibration completed in $(format_duration $elapsed)"
-        record_result "long_term_forecasting (calibrate)" "PASS" "$elapsed"
+        record_result "long_term_forecasting (calibrate)" "PASS" "$elapsed" "$CURRENT_MODULE_LOG"
     else
         log ERROR "long_term calibration failed (exit $rc) after $(format_duration $elapsed)"
-        record_result "long_term_forecasting (calibrate)" "FAIL" "$elapsed"
+        record_result "long_term_forecasting (calibrate)" "FAIL" "$elapsed" "$CURRENT_MODULE_LOG"
+    fi
+    return $rc
+}
+
+run_postprocessing_long_term() {
+    banner "Module: postprocessing_forecasts (long-term operational)"
+    local start
+    start=$(get_timestamp)
+
+    CURRENT_MODULE_LOG="${ERROR_DIR}/postprocessing_forecasts_long_term_operational.log"
+    > "$CURRENT_MODULE_LOG"
+    run_in_venv postprocessing_forecasts postprocessing_operational_long_term.py
+    local rc=$?
+
+    local elapsed=$(( $(get_timestamp) - start ))
+    if [ $rc -eq 0 ]; then
+        log OK "postprocessing long-term operational completed in $(format_duration $elapsed)"
+        record_result "postprocessing_forecasts (long-term operational)" "PASS" "$elapsed" "$CURRENT_MODULE_LOG"
+    else
+        log ERROR "postprocessing long-term operational failed (exit $rc) after $(format_duration $elapsed)"
+        record_result "postprocessing_forecasts (long-term operational)" "FAIL" "$elapsed" "$CURRENT_MODULE_LOG"
+    fi
+    return $rc
+}
+
+run_maintenance_postprocessing_long_term() {
+    banner "Maintenance: postprocessing_forecasts (long-term gap-fill)"
+    local start
+    start=$(get_timestamp)
+
+    CURRENT_MODULE_LOG="${ERROR_DIR}/postprocessing_forecasts_long_term_maintenance.log"
+    > "$CURRENT_MODULE_LOG"
+    run_in_venv postprocessing_forecasts postprocessing_maintenance_long_term.py \
+        "POSTPROCESSING_GAPFILL_WINDOW_MONTHS=${POSTPROCESSING_GAPFILL_WINDOW_MONTHS:-3}"
+    local rc=$?
+
+    local elapsed=$(( $(get_timestamp) - start ))
+    if [ $rc -eq 0 ]; then
+        log OK "postprocessing long-term maintenance completed in $(format_duration $elapsed)"
+        record_result "postprocessing_forecasts (long-term maintenance)" "PASS" "$elapsed" "$CURRENT_MODULE_LOG"
+    else
+        log ERROR "postprocessing long-term maintenance failed (exit $rc) after $(format_duration $elapsed)"
+        record_result "postprocessing_forecasts (long-term maintenance)" "FAIL" "$elapsed" "$CURRENT_MODULE_LOG"
     fi
     return $rc
 }
@@ -584,8 +669,8 @@ run_short_term_pipeline() {
         export SAPPHIRE_PREDICTION_MODE="$mode"
         log INFO "Running forecasting for mode: ${mode}"
 
-        run_linear_regression || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
         run_machine_learning || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+        run_linear_regression || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
         run_postprocessing_forecasts || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
     done
 
@@ -595,7 +680,8 @@ run_short_term_pipeline() {
 
 run_long_term_pipeline() {
     banner "LONG-TERM FORECAST PIPELINE"
-    run_long_term_forecasting
+    run_long_term_forecasting || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+    run_postprocessing_long_term || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
 }
 
 run_all() {
@@ -636,51 +722,49 @@ run_maintenance_pipeline() {
         export SAPPHIRE_PREDICTION_MODE="$mode"
         log INFO "Running maintenance for mode: ${mode}"
 
-        run_maintenance_linear_regression || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
         run_maintenance_machine_learning || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+        run_maintenance_linear_regression || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
         run_maintenance_postprocessing_forecasts || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
     done
+
+    # Long-term maintenance (mode-independent, runs once)
+    log INFO "Running long-term postprocessing maintenance"
+    run_maintenance_postprocessing_long_term || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
 
     export SAPPHIRE_PREDICTION_MODE="$original_mode"
 }
 
 run_daily_pipeline() {
-    banner "DAILY PIPELINE (PENTAD + DECAD + maintenance)"
+    banner "DAILY PIPELINE (short-term: PENTAD + DECAD + maintenance)"
 
     local original_mode="${SAPPHIRE_PREDICTION_MODE:-}"
 
-    # --- Phase 1: Operational preprocessing (runs once) ---
+    # --- Phase 1: Preprocessing (runs once) ---
     log INFO "Phase 1: Preprocessing (shared across all horizons)"
     run_preprocessing_runoff || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
     run_preprocessing_gateway || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
 
-    # --- Phase 2: ML forecasting (runs once — produces 10-day forecasts) ---
-    log INFO "Phase 2: Machine learning forecasts (horizon-independent)"
-    run_machine_learning || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+    # --- Phase 2: Maintenance preprocessing (runs once) ---
+    log INFO "Phase 2: Maintenance preprocessing"
+    run_maintenance_preprocessing_runoff || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+    run_maintenance_preprocessing_gateway || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
 
-    # --- Phase 3: LR + postprocessing per horizon ---
+    # --- Phase 3: Forecasting + postprocessing per horizon ---
     for mode in PENTAD DECAD; do
         export SAPPHIRE_PREDICTION_MODE="$mode"
-        log INFO "Phase 3: Linear regression + postprocessing (${mode})"
+        log INFO "Phase 3: ML + linear regression + postprocessing (${mode})"
 
+        run_machine_learning || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
         run_linear_regression || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
         run_postprocessing_forecasts || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
     done
 
-    # --- Phase 4: Maintenance preprocessing (runs once) ---
-    log INFO "Phase 4: Maintenance preprocessing"
-    run_maintenance_preprocessing_runoff || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
-    run_maintenance_preprocessing_gateway || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
-
-    # --- Phase 5: ML maintenance (runs once — horizon-independent) ---
-    log INFO "Phase 5: ML maintenance (horizon-independent)"
-    run_maintenance_machine_learning || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
-
-    # --- Phase 6: LR + postprocessing maintenance per horizon ---
+    # --- Phase 4: Maintenance per horizon ---
     for mode in PENTAD DECAD; do
         export SAPPHIRE_PREDICTION_MODE="$mode"
-        log INFO "Phase 6: LR + postprocessing maintenance (${mode})"
+        log INFO "Phase 4: ML + LR + postprocessing maintenance (${mode})"
 
+        run_maintenance_machine_learning || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
         run_maintenance_linear_regression || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
         run_maintenance_postprocessing_forecasts || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
     done
@@ -723,16 +807,20 @@ validate_env() {
         daily)
             log OK "Prediction mode: PENTAD + DECAD (daily)"
             ;;
+        long-term|calibrate_long_term|maintenance:postprocessing_long_term)
+            # These targets don't depend on SAPPHIRE_PREDICTION_MODE
+            ;;
     esac
 
     # Determine which modules to validate
     local modules_to_check=()
     case "$target" in
         short-term)                      modules_to_check=("${SHORT_TERM_MODULES[@]}") ;;
-        long-term)                       modules_to_check=(long_term_forecasting) ;;
+        long-term)                       modules_to_check=(long_term_forecasting postprocessing_forecasts) ;;
         all)                             modules_to_check=("${ALL_MODULES[@]}") ;;
-        daily)                           modules_to_check=("${SHORT_TERM_MODULES[@]}") ;;
-        maintenance)                     modules_to_check=("${MAINTENANCE_MODULES[@]}") ;;
+        daily)                           modules_to_check=("${SHORT_TERM_MODULES[@]}" long_term_forecasting) ;;
+        maintenance)                     modules_to_check=("${MAINTENANCE_MODULES[@]}" long_term_forecasting) ;;
+        maintenance:postprocessing_long_term) modules_to_check=(postprocessing_forecasts) ;;
         maintenance:*)                   modules_to_check=("${target#maintenance:}") ;;
         calibrate_long_term)             modules_to_check=(long_term_forecasting) ;;
         recalculate_skill_metrics)       modules_to_check=(postprocessing_forecasts) ;;
@@ -790,7 +878,39 @@ print_summary() {
     log INFO "Total: ${pass_count} passed, ${fail_count} failed, $(format_duration "$total_time") elapsed"
     log INFO "Log file: ${LOG_FILE}"
 
+    # Show error snippets for failed modules
     if [ $fail_count -gt 0 ]; then
+        echo ""
+        echo "" >> "$LOG_FILE"
+        local sep="$(printf '=%.0s' {1..60})"
+        echo -e "${RED}${sep}${NC}"
+        echo "$sep" >> "$LOG_FILE"
+        echo -e "${RED}ERROR DETAILS (last ${ERROR_TAIL_LINES} lines per failed module)${NC}"
+        echo "ERROR DETAILS (last ${ERROR_TAIL_LINES} lines per failed module)" >> "$LOG_FILE"
+        echo -e "${RED}${sep}${NC}"
+        echo "$sep" >> "$LOG_FILE"
+
+        for i in "${!RESULTS_MODULE[@]}"; do
+            if [ "${RESULTS_STATUS[$i]}" = "FAIL" ]; then
+                local err_log="${RESULTS_ERROR_LOG[$i]:-}"
+                echo ""
+                echo "" >> "$LOG_FILE"
+                echo -e "${BOLD}--- ${RESULTS_MODULE[$i]} ---${NC}"
+                echo "--- ${RESULTS_MODULE[$i]} ---" >> "$LOG_FILE"
+                if [ -n "$err_log" ] && [ -s "$err_log" ]; then
+                    tail -"${ERROR_TAIL_LINES}" "$err_log" | while IFS= read -r line; do
+                        echo "  $line"
+                        echo "  $line" >> "$LOG_FILE"
+                    done
+                else
+                    echo "  (no output captured)"
+                    echo "  (no output captured)" >> "$LOG_FILE"
+                fi
+            fi
+        done
+
+        echo ""
+        echo "" >> "$LOG_FILE"
         return 1
     fi
     return 0
@@ -805,8 +925,8 @@ print_usage() {
 Usage: bash apps/run_locally.sh [FLAGS] TARGET
 
 Combined targets:
-  daily                   Full daily run: PENTAD + DECAD + maintenance
-                          (preprocessing runs once, shared across horizons)
+  daily                   Short-term daily run: PENTAD + DECAD + maintenance
+                          (does not include long-term forecasting)
 
 Operational targets:
   short-term              Run the short-term forecast pipeline
@@ -821,6 +941,7 @@ Maintenance targets:
   maintenance:linear_regression       Linear regression hindcast
   maintenance:machine_learning        ML NaN recalc + gap-fill + new stations
   maintenance:postprocessing_forecasts  Fill missing ensemble forecasts
+  maintenance:postprocessing_long_term  Fill missing monthly ensemble forecasts
   calibrate_long_term     Calibrate and hindcast long-term models
   recalculate_skill_metrics  Full skill metrics rebuild (run yearly)
 
@@ -841,6 +962,7 @@ Environment variables:
   ieasyhydroforecast_env_file_path   Path to .env config file (required)
   SAPPHIRE_PREDICTION_MODE           PENTAD, DECAD, or BOTH (short-term/maintenance)
   lt_forecast_mode                   Specific month for long-term (e.g. month_3)
+  POSTPROCESSING_GAPFILL_WINDOW_MONTHS  Lookback for long-term gap-fill (default: 3)
 
 Examples:
   # Full daily run (PENTAD + DECAD + maintenance)
@@ -875,6 +997,10 @@ Examples:
   # Long-term calibration
   ieasyhydroforecast_env_file_path=~/config/.env \
     bash apps/run_locally.sh calibrate_long_term
+
+  # Long-term postprocessing gap-fill
+  ieasyhydroforecast_env_file_path=~/config/.env \
+    bash apps/run_locally.sh maintenance:postprocessing_long_term
 
   # Dry run
   bash apps/run_locally.sh --dry-run maintenance
@@ -919,7 +1045,7 @@ main() {
     fi
 
     # Validate target
-    local valid_targets="daily short-term long-term all maintenance calibrate_long_term recalculate_skill_metrics"
+    local valid_targets="daily short-term long-term all maintenance calibrate_long_term recalculate_skill_metrics maintenance:postprocessing_long_term"
     local is_valid=false
     for t in $valid_targets; do
         [ "$target" = "$t" ] && is_valid=true
@@ -1000,6 +1126,9 @@ main() {
             ;;
         maintenance:postprocessing_forecasts)
             run_maintenance_postprocessing_forecasts || exit_code=$?
+            ;;
+        maintenance:postprocessing_long_term)
+            run_maintenance_postprocessing_long_term || exit_code=$?
             ;;
         recalculate_skill_metrics)
             run_recalculate_skill_metrics || exit_code=$?
