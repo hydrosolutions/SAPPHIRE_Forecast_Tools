@@ -6,7 +6,6 @@ import calendar
 
 from src.file_downloader import FileDownloader
 from src.gettext_config import _
-from src.auth_utils import log_user_activity, check_current_user
 from dashboard.config import import_tag_library
 
 

@@ -8,10 +8,6 @@
 # =========================
 # Standard library imports
 # =========================
-import os
-import sys
-import datetime as dt
-from datetime import datetime, timedelta
 from functools import partial
 from concurrent.futures import ThreadPoolExecutor
 
@@ -31,6 +27,7 @@ from src.bulletins import write_to_excel
 import src.layout as layout
 
 from dashboard.logger import setup_logger
+from dashboard.widget_manager import WidgetManager
 from dashboard import widgets
 from dashboard.bulletin_manager import load_bulletin_from_csv, add_current_selection_to_bulletin, remove_selected_from_bulletin, handle_bulletin_write, create_bulletin_table
 from dashboard import config
@@ -61,161 +58,72 @@ dm.load_station('15189')
 # =====================================================================
 # 3. Widgets
 # =====================================================================
-downloader, bulletin_download_panel = widgets.create_downloader_and_panel(cfg.horizon)
-
-# Widget for date selection, always visible
-date_picker = widgets.create_date_picker(dm.forecasts_all)
-
-last_date, forecast_horizon_for_saving_bulletin, forecast_year_for_saving_bulletin = dm.get_bulletin_metadata()
-
-# Get information for bulletin headers into a dataframe that can be passed to the bulletin writer.
-bulletin_header_info = processing.get_bulletin_header_info(last_date, cfg.horizon)
-
-pentad_selector = widgets.create_pentad_selector(last_date)
-decad_selector = widgets.create_decad_selector(last_date)
-station = widgets.create_station(station_dict)
-
-# --- Model checkbox with initial pre-selection ---
-model_dict = dm.get_filtered_model_dict(station.value, date_picker.value)
-model_checkbox = widgets.create_model_checkbox(model_dict)
-
-preselected = dm.get_preselected_models(station.value, pentad_selector.value, decad_selector.value)
-model_checkbox.value = dm.resolve_model_values(model_dict, preselected)
-
-allowable_range_selection, manual_range, show_range_button = widgets.create_range_widgets()
-show_daily_data_widget = widgets.create_show_daily_data_widget()
-remove_bulletin_button, write_bulletin_button = widgets.create_bulletin_buttons()
-language_buttons = widgets.create_language_buttons()
-forecast_tabulator = widgets.create_forecast_tabulator()
-select_basin_widget = widgets.create_select_basin_widget(station_dict)
-update_forecast_button = widgets.create_update_forecast_button()
-
-forecast_card = widgets.create_forecast_card(allowable_range_selection, manual_range, model_checkbox, show_range_button, update_forecast_button, station)
-pentad_card = widgets.create_pentad_card(pentad_selector, station)
-station_card = widgets.create_station_card(station)
-basin_card = widgets.create_basin_card(select_basin_widget, station)
-add_to_bulletin_button = widgets.create_add_to_bulletin_button()
-bulletin_tabulator = widgets.create_bulletin_tabulator()
-
-predictors_warning = widgets.create_predictors_warning(station, dm._data)
-forecast_warning = widgets.create_forecast_warning(station, dm._data, date_picker.value)
+wm = WidgetManager(dm, cfg, station_dict)
 
 # =====================================================================
 # 4. Initial site attribute computation
 # =====================================================================
-dm.update_sites_for_pentad(_, pentad_selector.value, decad_selector.value)
+dm.update_sites_for_pentad(_, wm.pentad_selector.value, wm.decad_selector.value)
 
 # =====================================================================
 # 5. Callbacks
 # =====================================================================
-
-# Adding the watcher logic for disabling the "Add to Bulletin" button
-def update_add_to_bulletin_button(event):
-    """Update the state of 'Add to Bulletin' button based on pipeline_running status."""
-    add_to_bulletin_button.disabled = event.new
-
 # Watch for changes in pipeline_running and update the add_to_bulletin_button
-cfg.viz.app_state.param.watch(update_add_to_bulletin_button, 'pipeline_running')
+cfg.viz.app_state.param.watch(wm.sync_add_button_to_pipeline, 'pipeline_running')
 
 # Set the initial state of the button based on whether the pipeline is running
-add_to_bulletin_button.disabled = cfg.viz.app_state.pipeline_running
+wm.add_to_bulletin_button.disabled = cfg.viz.app_state.pipeline_running
 
 
-@pn.depends(station, pentad_selector, decad_selector, watch=True)
-def update_model_select(station_value, selected_pentad, selected_decad):
+@pn.depends(wm.station, wm.pentad_selector, wm.decad_selector, watch=True)
+def on_station_or_period_changed(station_value, selected_pentad, selected_decad):
     """Reload data for the new station and refresh the model checkbox."""
-    station_code = station_value.split()[0]
-    dm.load_station(station_code)
+    dm.load_station(station_value.split()[0]) # Pass the station code
     dm.update_sites_for_pentad(_, selected_pentad, selected_decad)
     dm.invalidate_render_cache()
 
-    widgets.refresh_predictors_warning(predictors_warning, station, dm._data)
-    widgets.refresh_forecast_warning(forecast_warning, station, dm._data, date_picker.value)
-    print("\n=== Starting Model Select Update ===")
-    print(f"Initial widget state:")
-    print(f"  Options: {model_checkbox.options}")
-    print(f"  Current value: {model_checkbox.value}")
+    wm.refresh_warnings()
+    wm.refresh_model_checkbox()
 
-    # First get the updated model dictionary
-    print(station_value, type(station_value))
-    updated_model_dict = dm.get_filtered_model_dict(station_value, date_picker.value)
-
-    print("\nAfter update_model_dict:")
-    print(f"  Updated model dict: {updated_model_dict}")
-
-    # Get pre-selected models
-    updated_preselected = dm.get_preselected_models(station_value, selected_pentad, selected_decad)
-
-    print("\nAfter get_best_models:")
-    print(f"  Pre-selected models: {updated_preselected}")
-
-    # Create new values list
-    new_values = dm.resolve_model_values(updated_model_dict, updated_preselected)
-
-    print("\nBefore widget update:")
-    print(f"  New options to set: {updated_model_dict}")
-    print(f"  New values to set: {new_values}")
-    with pn.io.hold(pn.state.curdoc):
-
-    # Try updating options first, then values
-        model_checkbox.options = updated_model_dict
-        # model_checkbox.param.trigger('options')
-        model_checkbox.value = new_values
-        # model_checkbox.param.trigger('value')
-
-    print("\nAfter options update:")
-    print(f"  Widget options: {model_checkbox.options}")
-    print(f"  Widget value: {model_checkbox.value}")
-
-    print("\nFinal widget state:")
-    print(f"  Widget options: {model_checkbox.options}")
-    print(f"  Widget value: {model_checkbox.value}")
     update_active_tab(None)
 
-    return updated_model_dict
 
 # =====================================================================
 # 6. Bulletin management
 # =====================================================================
-add_to_bulletin_popup = widgets.create_add_to_bulletin_popup()
-bulletin_sites = load_bulletin_from_csv(forecast_year_for_saving_bulletin, forecast_horizon_for_saving_bulletin, cfg.save_directory, dm.sites_list)
+bulletin_sites = load_bulletin_from_csv(wm.forecast_year, wm.forecast_horizon, cfg.save_directory, dm.sites_list)
 
-# Function to update the bulletin table
-def update_bulletin_table(event=None):
-    create_bulletin_table(bulletin_sites, select_basin_widget, bulletin_tabulator)
+_update_bulletin = partial(wm.update_bulletin_table, bulletin_sites)
+_update_bulletin()
+wm.select_basin.param.watch(lambda event: _update_bulletin(), 'value')
 
-bulletin_table = widgets.create_bulletin_table(bulletin_tabulator, remove_bulletin_button, add_to_bulletin_popup)
-update_bulletin_table()
-select_basin_widget.param.watch(update_bulletin_table, 'value')
-
-# add_to_bulletin_button.on_click(add_current_selection_to_bulletin)
-add_to_bulletin_button.on_click(
+wm.add_to_bulletin_button.on_click(
     partial(
         add_current_selection_to_bulletin,
         viz=cfg.viz,
-        forecast_tabulator=forecast_tabulator,
-        station=station,
+        forecast_tabulator=wm.forecast_tabulator,
+        station=wm.station,
         sites_list=dm.sites_list,
-        add_to_bulletin_popup=add_to_bulletin_popup,
+        add_to_bulletin_popup=wm.add_to_bulletin_popup,
         bulletin_sites=bulletin_sites,
-        forecast_year_for_saving_bulletin=forecast_year_for_saving_bulletin,
-        forecast_horizon_for_saving_bulletin=forecast_horizon_for_saving_bulletin,
+        forecast_year_for_saving_bulletin=wm.forecast_year,
+        forecast_horizon_for_saving_bulletin=wm.forecast_horizon,
         save_directory=cfg.save_directory,
-        update_bulletin_table=update_bulletin_table
+        update_bulletin_table=_update_bulletin
     )
 )
 
 # Attach the remove function to the remove button click event
-remove_bulletin_button.on_click(
+wm.remove_bulletin_button.on_click(
     partial(
         remove_selected_from_bulletin,
-        bulletin_tabulator=bulletin_tabulator,
+        bulletin_tabulator=wm.bulletin_tabulator,
         bulletin_sites=bulletin_sites,
-        add_to_bulletin_popup=add_to_bulletin_popup,
-        forecast_year_for_saving_bulletin=forecast_year_for_saving_bulletin,
-        forecast_horizon_for_saving_bulletin=forecast_horizon_for_saving_bulletin,
+        add_to_bulletin_popup=wm.add_to_bulletin_popup,
+        forecast_year_for_saving_bulletin=wm.forecast_year,
+        forecast_horizon_for_saving_bulletin=wm.forecast_horizon,
         save_directory=cfg.save_directory,
-        update_bulletin_table=update_bulletin_table
+        update_bulletin_table=_update_bulletin
     )
 )
 
@@ -235,9 +143,8 @@ if dm.snow_data is None:
     snow_plot_panes = pn.pane.Markdown(_("No snow data from SAPPHIRE Data Gateway available."))
 else:
     snow_plot_panes = {
-        'SWE': pn.pane.HoloViews(hv.Curve([]), sizing_mode="stretch_width"),
-        'HS': pn.pane.HoloViews(hv.Curve([]), sizing_mode="stretch_width"),
-        'RoF': pn.pane.HoloViews(hv.Curve([]), sizing_mode="stretch_width")
+        k: pn.pane.HoloViews(hv.Curve([]), sizing_mode="stretch_width")
+        for k in ('SWE', 'HS', 'RoF')
     }
 
 forecast_data_and_plot = pn.Column(sizing_mode="stretch_both")
@@ -246,20 +153,24 @@ effectiveness_plot = pn.pane.HoloViews(hv.Curve([]), sizing_mode="stretch_both")
 accuracy_plot = pn.pane.HoloViews(hv.Curve([]), sizing_mode="stretch_both")
 forecast_skill_plot = pn.Column(effectiveness_plot, accuracy_plot)
 
+def _common_plot_kwargs() -> dict:
+    """Shared keyword bundle consumed by most viz helpers."""
+    return dict(
+        forecasts_all=dm.forecasts_all,
+        station=wm.station.value,
+        title_date=wm.date_picker.value,
+        model_selection=wm.model_checkbox.value,
+        range_type=wm.range_selection.value,
+        range_slider=wm.manual_range.value,
+        range_visibility=wm.show_range_button.value,
+    )
+
 def _build_forecast_hydrograph():
     """Build the forecast hydrograph based on current widget state."""
-    common = dict(
-        forecasts_all=dm.forecasts_all,
-        station=station.value,
-        title_date=date_picker.value,
-        model_selection=model_checkbox.value,
-        range_type=allowable_range_selection.value,
-        range_slider=manual_range.value,
-        range_visibility=show_range_button.value,
-    )
-    if show_daily_data_widget.value == _('Yes'):
+    kw = _common_plot_kwargs()
+    if wm.show_daily_data.value == _('Yes'):
         return cfg.viz.plot_pentad_forecast_hydrograph_data(
-            _, hydrograph_pentad_all=dm.hydrograph_pentad_all, **common,
+            _, hydrograph_pentad_all=dm.hydrograph_pentad_all, **kw,
         )
     else:
         return cfg.viz.plot_pentad_forecast_hydrograph_data_v2(
@@ -268,7 +179,7 @@ def _build_forecast_hydrograph():
             linreg_predictor=dm.linreg_predictor,
             rram_forecast=dm.rram_forecast,
             ml_forecast=dm.ml_forecast,
-            **common,
+            **kw,
         )
 
 
@@ -279,20 +190,21 @@ def update_forecast_plots(event):
         _,
         dm.hydrograph_pentad_all,
         dm.forecasts_all,
-        station_widget=station.value,
-        date_picker=date_picker.value,
-        model_checkbox=model_checkbox.value,
-        range_selection_widget=allowable_range_selection.value,
-        manual_range_widget=manual_range.value,
-        show_range_button=show_range_button.value
+        station_widget=wm.station.value,
+        date_picker=wm.date_picker.value,
+        model_checkbox=wm.model_checkbox.value,
+        range_selection_widget=wm.range_selection.value,
+        manual_range_widget=wm.manual_range.value,
+        show_range_button=wm.show_range_button.value
     )
     effectiveness_plot.object = eff.object
     accuracy_plot.object = acc.object
 
     _update_forecast_tabulator()
 
-update_forecast_button.on_click(update_forecast_plots)
+wm.update_forecast_button.on_click(update_forecast_plots)
 
+# --- Skill table ---
 skill_table = pn.panel(
     cfg.viz.create_skill_table(_, dm.forecast_stats),
     sizing_mode='stretch_width')
@@ -305,25 +217,23 @@ skill_metrics_download_filename, skill_metrics_download_button = skill_table.dow
 
 def _update_forecast_tabulator():
     cfg.viz.create_forecast_summary_tabulator(
-        _, dm.forecasts_all, station, date_picker,
-        model_checkbox, allowable_range_selection, manual_range,
-        forecast_tabulator
+        _, dm.forecasts_all, wm.station, wm.date_picker,
+        wm.model_checkbox, wm.range_selection, wm.manual_range,
+        wm.forecast_tabulator
     )
 
-# Initial update
+# --- Initial tabulator fill ---
 _update_forecast_tabulator()
-
-# Same Tabulator in both tabs
-forecast_summary_table = widgets.create_forecast_summary_table(forecast_tabulator)
 
 # Update the site object based on site and forecast selection
 #print(f"DEBUG: forecast_dashboard.py: forecast_tabulator: {forecast_summary_tabulator}")
+# --- Site object binding ---
 update_site_object = pn.bind(
     Site.get_site_attributes_from_selected_forecast,
     _=_,
     sites=dm.sites_list,
-    site_selection=station,
-    tabulator=forecast_summary_table)
+    site_selection=wm.station,
+    tabulator=wm.forecast_tabulator)
 
 # =====================================================================
 # 8. Data reload watcher
@@ -331,18 +241,10 @@ update_site_object = pn.bind(
 
 def _update_visualizations():
     # Re-bind the plots to use the updated data
-    common = dict(
-        forecasts_all=dm.forecasts_all,
-        station=station.value,
-        title_date=date_picker.value,
-        model_selection=model_checkbox.value,
-        range_type=allowable_range_selection.value,
-        range_slider=manual_range.value,
-        range_visibility=show_range_button.value,
-    )
+    kw = _common_plot_kwargs()
     #print('---   ---plot_pentad_forecast_hydrograph_data---   ---')
     cfg.viz.plot_pentad_forecast_hydrograph_data(
-        _, hydrograph_pentad_all=dm.hydrograph_pentad_all, **common,
+        _, hydrograph_pentad_all=dm.hydrograph_pentad_all, **kw,
     )
     #print('---   ---done with plot_pentad_forecast_hydrograph_data---   ---')
 
@@ -351,7 +253,7 @@ def _update_visualizations():
         _, hydrograph_day_all=dm.hydrograph_day_all,
         linreg_predictor=dm.linreg_predictor,
         rram_forecast=dm.rram_forecast,
-        ml_forecast=dm.ml_forecast, **common,
+        ml_forecast=dm.ml_forecast, **kw,
     )
     #print('---   ---done with plot_pentad_forecast_hydrograph_data_v2---   ---')
 
@@ -384,16 +286,19 @@ if not hasattr(processing.data_reloader, 'watcher_attached'):
 # =====================================================================
 # 9. Bulletin writer
 # =====================================================================
-write_bulletin_button.on_click(
+# Get information for bulletin headers into a dataframe that can be passed to the bulletin writer.
+last_date, forecast_horizon, forecast_year = dm.get_bulletin_metadata()
+bulletin_header_info = processing.get_bulletin_header_info(last_date, cfg.horizon)
+wm.write_bulletin_button.on_click(
     partial(
         handle_bulletin_write,
         bulletin_sites=bulletin_sites,
-        select_basin_widget=select_basin_widget,
+        select_basin_widget=wm.select_basin,
         write_to_excel=write_to_excel,
         sites_list=dm.sites_list,
         bulletin_header_info=bulletin_header_info,
         env_file_path=cfg.env_file_path,
-        downloader=downloader
+        downloader=wm.downloader
     )
 )
 
@@ -405,42 +310,38 @@ disclaimer = layout.define_disclaimer(_, cfg.in_docker)
 
 
 # Update the widgets conditional on the active tab
-allowable_range_selection.param.watch(lambda event: cfg.viz.update_range_slider_visibility(
-    _, manual_range, event), 'value')
-
-reload_card = cfg.viz.create_reload_button()
-
-# We don't need to update tabs or UI components dynamically since the page reloads
+wm.range_selection.param.watch(lambda event: cfg.viz.update_range_slider_visibility(
+    _, wm.manual_range, event), 'value')
 
 # Create a placeholder for the dashboard content
-dashboard_content = layout.define_tabs_2(_, predictors_warning, forecast_warning,
+dashboard_content = layout.define_tabs_2(_, wm.predictors_warning, wm.forecast_warning,
     daily_hydrograph_plot, daily_rainfall_plot, daily_temperature_plot, snow_plot_panes,
     forecast_data_and_plot,  
-    forecast_summary_table, pentad_forecast_plot, forecast_skill_plot,
-    bulletin_table, write_bulletin_button, bulletin_download_panel, disclaimer,
-    add_to_bulletin_button, add_to_bulletin_popup, show_daily_data_widget,
+    wm.forecast_summary_table, pentad_forecast_plot, forecast_skill_plot,
+    wm.bulletin_table, wm.write_bulletin_button, wm.bulletin_download_panel, disclaimer,
+    wm.add_to_bulletin_button, wm.add_to_bulletin_popup, wm.show_daily_data,
     skill_table, skill_metrics_download_filename, skill_metrics_download_button
 )
-dashboard_content.param.watch(lambda event: cfg.viz.update_sidepane_card_visibility(dashboard_content, station_card, forecast_card, basin_card, pentad_card, reload_card, event), 'active')
+dashboard_content.param.watch(lambda event: cfg.viz.update_sidepane_card_visibility(dashboard_content, wm.station_card, wm.forecast_card, wm.basin_card, wm.pentad_card, wm.reload_card, event), 'active')
 
 
 def update_active_tab(event):
     """Render plots only when the tab is first activated for a station."""
     active_tab = dashboard_content.active  # 0: Predictors tab, 1: Forecast tab
     with pn.io.hold(pn.state.curdoc):
-        if active_tab == 0 and dm.should_render_predictors(station.value):
-            daily_hydrograph_plot.object = cfg.viz.plot_daily_hydrograph_data(_, dm.hydrograph_day_all, dm.linreg_predictor, station.value, date_picker.value)
+        if active_tab == 0 and dm.should_render_predictors(wm.station.value):
+            daily_hydrograph_plot.object = cfg.viz.plot_daily_hydrograph_data(_, dm.hydrograph_day_all, dm.linreg_predictor, wm.station.value, wm.date_picker.value)
             if cfg.display_weather_data == True:
-                daily_rainfall_plot.object = cfg.viz.plot_daily_rainfall_data(_, dm.rain, station.value, date_picker.value, dm.linreg_predictor)
-                daily_temperature_plot.object = cfg.viz.plot_daily_temperature_data(_, dm.temp, station.value, date_picker.value, dm.linreg_predictor)
+                daily_rainfall_plot.object = cfg.viz.plot_daily_rainfall_data(_, dm.rain, wm.station.value, wm.date_picker.value, dm.linreg_predictor)
+                daily_temperature_plot.object = cfg.viz.plot_daily_temperature_data(_, dm.temp, wm.station.value, wm.date_picker.value, dm.linreg_predictor)
             if cfg.display_snow_data == True:
                 for var in dm.snow_data.keys():
                     if dm.snow_data[var] is not None:
-                        snow_plot_panes[var].object = cfg.viz.plot_daily_snow_data(_, dm.snow_data, var, station.value, date_picker.value, dm.linreg_predictor)
+                        snow_plot_panes[var].object = cfg.viz.plot_daily_snow_data(_, dm.snow_data, var, wm.station.value, wm.date_picker.value, dm.linreg_predictor)
                     else:
                         snow_plot_panes[var].object = pn.pane.Markdown(_("No snow data from SAPPHIRE Data Gateway available."))
-        elif active_tab == 1 and dm.should_render_forecast(station.value):
-            plot = cfg.viz.select_and_plot_data(_, dm.linreg_predictor, station.value, pentad_selector.value, decad_selector.value, cfg.save_directory)
+        elif active_tab == 1 and dm.should_render_forecast(wm.station.value):
+            plot = cfg.viz.select_and_plot_data(_, dm.linreg_predictor, wm.station.value, wm.pentad_selector.value, wm.decad_selector.value, cfg.save_directory)
             forecast_data_and_plot[:] = plot.objects
             update_forecast_plots(None)
 
@@ -450,9 +351,9 @@ dashboard_content.param.watch(update_active_tab, 'active')
 update_active_tab(None)
 
 
-message_pane = widgets.create_message_pane(dm._data)
-sidebar_content=layout.define_sidebar(_, station_card, forecast_card, basin_card,
-                                  message_pane, reload_card)
+# message_pane = widgets.create_message_pane(dm._data)
+sidebar_content=layout.define_sidebar(_, wm.station_card, wm.forecast_card, wm.basin_card,
+                                  wm.message_pane, wm.reload_card)
 
 # =====================================================================
 # 11. Authentication
@@ -466,22 +367,11 @@ auth = AuthManager()
 auth.register_panels(
     dashboard_content=dashboard_content,
     sidebar_content=sidebar_content,
-    language_buttons=language_buttons,
+    language_buttons=wm.language_buttons,
 )
 
 # --- Track widgets for inactivity reset ---
-auth.track_widgets([
-    (station, "value"),
-    (model_checkbox, "value"),
-    (allowable_range_selection, "value"),
-    (show_range_button, "value"),
-    (show_daily_data_widget, "value"),
-    (select_basin_widget, "value"),
-    (add_to_bulletin_button, "clicks"),
-    (write_bulletin_button, "clicks"),
-    (remove_bulletin_button, "clicks"),
-    (forecast_tabulator, "selection"),
-])
+auth.track_widgets(wm.trackable_widgets())
 
 # --- Build the template (use auth's widgets) ---
 dashboard = pn.template.BootstrapTemplate(
@@ -489,7 +379,7 @@ dashboard = pn.template.BootstrapTemplate(
     logo=cfg.icon_path,
     header=[pn.Row(
         pn.layout.HSpacer(),
-        language_buttons,
+        wm.language_buttons,
         auth.logout_button,
         auth.logout_panel
     )],
@@ -515,8 +405,8 @@ def on_stations_loaded(fut):
         # print(type(new_all_stations))
         if new_all_stations is not None:
             # print("Stations: ", new_all_stations)
-            dm.replace_stations(new_all_stations, new_station_dict, station,
-                                _, pentad_selector.value, decad_selector.value)
+            dm.replace_stations(new_all_stations, new_station_dict, wm.station,
+                                _, wm.pentad_selector.value, wm.decad_selector.value)
     except Exception as e:
         print(f"Failed to load stations: {e}")
 
