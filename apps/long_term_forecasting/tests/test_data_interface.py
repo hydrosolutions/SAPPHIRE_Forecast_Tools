@@ -1,17 +1,48 @@
 """
 Tests for the DataInterface class
+
+Note: These tests require environment variables to be set (via .env file).
+Without proper configuration, tests will be skipped with a warning.
+Run with: ieasyhydroforecast_env_file_path="path/to/.env" python -m pytest tests/test_data_interface.py
 """
+import os
+import warnings
 import pytest
 import pandas as pd
-import os
-import sys
-
-# Add parent directory to path to import data_interface
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
-from data_interface import DataInterface
 
 
+# Check if required environment is available before importing DataInterface
+def _check_environment_available():
+    """Check if required environment variables are set or can be loaded."""
+    # If env file path is provided, we can try to load it
+    if os.getenv("ieasyhydroforecast_env_file_path"):
+        return True
+    # If organization is already set, environment is available
+    if os.getenv("ieasyhydroforecast_organization"):
+        return True
+    return False
+
+
+# Determine if tests should be skipped
+ENV_AVAILABLE = _check_environment_available()
+SKIP_REASON = (
+    "Environment not configured. Set ieasyhydroforecast_env_file_path or "
+    "ieasyhydroforecast_organization to run these tests."
+)
+
+if not ENV_AVAILABLE:
+    warnings.warn(
+        f"DataInterface tests skipped: {SKIP_REASON}",
+        UserWarning
+    )
+
+
+# Conditionally import DataInterface to avoid initialization errors
+if ENV_AVAILABLE:
+    from data_interface import DataInterface
+
+
+@pytest.mark.skipif(not ENV_AVAILABLE, reason=SKIP_REASON)
 class TestDataInterface:
     """Test suite for DataInterface class"""
 

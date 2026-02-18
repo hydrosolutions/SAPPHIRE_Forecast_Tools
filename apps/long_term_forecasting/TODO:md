@@ -2,8 +2,7 @@
 - [ ] Update Documentation
   - [x] How to run most important bits
   - [ ] how to re-configure a model
-- [ ] Data Base migration of different Snowmapper HRU's.
-- [ ] Recalibration of Models using correct HRU.
-- [ ] ENV Linking
+- [x] Data Base migration of different Snowmapper HRU's.
+- [ ] Recalibration of Models using correct HRU. (pending)
 - [ ] Testing
 - [ ] Commiting

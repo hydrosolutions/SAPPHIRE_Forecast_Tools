@@ -31,8 +31,8 @@ Each forecast gets statistics computed from all other years only.
 import pandas as pd
 import numpy as np
 from scipy import stats
-from config_forecast import ForecastConfig
 from __init__ import LT_FORECAST_BASE_COLUMNS
+from config_forecast import ForecastConfig
 from lt_utils import infer_q_columns
 
 
