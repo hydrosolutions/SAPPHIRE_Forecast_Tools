@@ -1,9 +1,93 @@
-### 
-# RUN FORECAST FOR PAST DATES FOR SIMULATION PURPOSES
+"""Simulate long-term forecasts for past dates.
 
-# How to run:
-# ieasyhydroforecast_env_file_path="path_to_env" lt_forecast_mode=month_1 python dev_code/simulate_forecasts.py --years 2024 2025 --all
-###
+Re-runs the forecast pipeline as if "today" were a historical date,
+using the same code path as production (run_forecast). Useful for:
+- Validating model output after code changes
+- Comparing results against a known-good baseline
+- Diagnosing whether issues come from code, data, or model config
+
+Run from the long_term_forecasting/ directory.
+
+Environment variables (required):
+    ieasyhydroforecast_env_file_path  Path to the .env config file
+        (in the external data repo, e.g. kyg_data_forecast_tools/config/)
+    lt_forecast_mode                  Which forecast mode to run.
+        Valid values come from ieasyhydroforecast_ml_long_term_supported_modes
+        in the .env file, typically: month_1, month_2, ... month_9
+        (one JSON config per mode under the LT config directory).
+
+Examples:
+    # Run all models for Jan-Dec 2024, mode month_1:
+    ieasyhydroforecast_env_file_path=~/path/to/.env \\
+      lt_forecast_mode=month_1 \\
+      python dev_code/simulate_forecasts.py --years 2024 --all
+
+    # Run only the base linear regression for 2024-2025, first 3 months:
+    ieasyhydroforecast_env_file_path=~/path/to/.env \\
+      lt_forecast_mode=month_1 \\
+      python dev_code/simulate_forecasts.py --years 2024 2025 \\
+        --models LR_Base --num_months 3
+
+    # Run stacking model and its dependency:
+    ieasyhydroforecast_env_file_path=~/path/to/.env \\
+      lt_forecast_mode=month_1 \\
+      python dev_code/simulate_forecasts.py --years 2024 \\
+        --models LR_Base SM_GBT
+
+Valid --models names (defined per mode in the JSON config under
+models_to_use; these are the names known at time of writing):
+    Model types (model_type in general_config.json):
+        linear_regression   -> LinearRegressionModel
+        sciregressor         -> SciRegressor (gradient-boosted stacking)
+        UncertaintyMixture   -> UncertaintyMixtureModel (MC_ALD)
+
+    Typical model names (folder names under the model directory):
+        LR_Base       Base linear regression
+        LR_SM         Linear regression with snowmelt features
+        LR_SM_DT      Linear regression with snowmelt + detrending
+        LR_SM_ROF     Linear regression with snowmelt + runoff features
+        SM_GBT        Stacking GBT (depends on base LR models)
+        SM_GBT_LR     Stacking GBT variant with LR base
+        SM_GBT_Norm   Stacking GBT with normalization
+        MC_ALD        Monte Carlo Asymmetric Laplace (uncertainty model)
+        GBT           Standalone gradient-boosted trees
+
+    The actual set of available models depends on which model folders
+    exist for the chosen forecast mode. With --all, the config's
+    models_to_use dict is read and models are run in dependency order.
+
+    When using --models, dependencies are NOT auto-included. If SM_GBT
+    depends on LR_Base, you must list both: --models LR_Base SM_GBT
+    (they will be sorted into the correct execution order).
+
+Data requirement — discharge must cover the simulated date:
+    The simulated "today" is set to day_of_forecast (from config) of each
+    requested month. SciRegressor models (GBT, SM_GBT, etc.) extract
+    rolling-window features (e.g. 3-day, 7-day means) from discharge data
+    at that date. If discharge observations do not extend to the simulated
+    "today", short-window features will be NaN. With the default
+    allowable_missing_value_operational=0, even one NaN feature causes
+    every basin to be skipped, producing "No prediction data available for
+    any basin."
+
+    This means simulate_forecasts only works reliably for dates where
+    discharge data already exists in the database. For example, if today
+    is 2026-02-18 and discharge data is current through that date:
+      --years 2025 --num_months 12   # OK: all 2025 dates are in the past
+      --years 2026 --num_months 1    # OK: Jan 25 is before Feb 18
+      --years 2026 --num_months 2    # FAILS: Feb 25 is after Feb 18
+
+    LinearRegression models are less affected because they handle missing
+    features differently, but SciRegressor models will fail for any
+    simulated date beyond the latest available discharge observation.
+
+Output:
+    Forecast CSVs are written to the path defined by
+    ieasyhydroforecast_ml_long_term_output_path (relative to
+    ieasyforecast_intermediate_data_path) as {model_name}_forecast.csv
+    and {model_name}_hindcast.csv. If the SAPPHIRE API is available,
+    forecasts are also written to the database.
+"""
 import argparse
 import logging
 import os
@@ -93,7 +177,20 @@ def simulate_forecasts(
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Simulate long-term forecasts for past dates.")
+    parser = argparse.ArgumentParser(
+        description="Simulate long-term forecasts for past dates.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Valid model names (typical, depends on config):\n"
+            "  LR_Base, LR_SM, LR_SM_DT, LR_SM_ROF,\n"
+            "  SM_GBT, SM_GBT_LR, SM_GBT_Norm,\n"
+            "  MC_ALD, GBT\n\n"
+            "Use --all to run every model in the config's "
+            "models_to_use dict.\n"
+            "With --models, list dependencies explicitly "
+            "(e.g. --models LR_Base SM_GBT)."
+        ),
+    )
     parser.add_argument(
         "--years",
         type=int,
@@ -111,14 +208,17 @@ if __name__ == "__main__":
         type=str,
         nargs="*",
         default=[],
-        help="List of specific models to run (e.g., --models LR SciRegressor). If empty, all models will be run.",
+        help="Model names to run, e.g. --models LR_Base SM_GBT. "
+             "Must match folder names in the mode's model directory. "
+             "Include dependencies explicitly. Mutually exclusive with --all.",
     )
 
     parser.add_argument(
         "--num_months",
         type=int,
         default=12,
-        help="Number of months to simulate.",
+        help="Number of months to simulate per year (1-12, default: 12). "
+             "Months 1..num_months are iterated for each year.",
     )
 
     # all and models are mutually exclusive
