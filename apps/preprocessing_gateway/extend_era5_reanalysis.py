@@ -325,6 +325,111 @@ def _check_meteo_consistency(csv_data: pd.DataFrame, meteo_type: str) -> bool:
     return is_consistent
 
 
+def select_stable_operational_data(
+    operational_data: pd.DataFrame, stability_days: int = 195
+) -> pd.DataFrame:
+    """Filter operational data to the stable period.
+
+    Returns rows with date strictly before (max_date - stability_days).
+
+    Args:
+        operational_data: DataFrame with a 'date' column (datetime).
+        stability_days: Number of days before max date considered
+            unstable. Default 195 (approx 6 months + 15 day forecast).
+
+    Returns:
+        Filtered DataFrame containing only stable rows.
+    """
+    max_date = operational_data['date'].max()
+    threshold = max_date - timedelta(days=stability_days)
+    return operational_data[operational_data['date'] < threshold].copy()
+
+
+def extend_reanalysis_with_operational(
+    reanalysis: pd.DataFrame, operational_stable: pd.DataFrame
+) -> pd.DataFrame:
+    """Append stable operational data to reanalysis, dedup, and sort.
+
+    On date+code overlap the operational row wins (keep='last').
+
+    Args:
+        reanalysis: ERA5 reanalysis DataFrame with [date, code, ...].
+        operational_stable: Stable operational DataFrame (same schema).
+
+    Returns:
+        Combined DataFrame sorted by (date, code).
+    """
+    combined = pd.concat(
+        [reanalysis, operational_stable], ignore_index=True
+    )
+    combined = combined.drop_duplicates(
+        subset=['date', 'code'], keep='last'
+    )
+    combined = combined.sort_values(by=['date', 'code'])
+    return combined
+
+
+def calculate_daily_norm(
+    reanalysis: pd.DataFrame,
+    operational: pd.DataFrame,
+    value_col: str,
+    current_year: int,
+) -> pd.DataFrame:
+    """Calculate daily climatological norm and merge with operational.
+
+    Groups reanalysis by (code, dayofyear) to compute the mean,
+    creates dates for the current year, and left-merges operational
+    data so the dashboard can show both norm and current-year values.
+
+    Args:
+        reanalysis: Extended reanalysis DataFrame with [date, code,
+            <value_col>].
+        operational: Current-year operational DataFrame with [date,
+            code, <value_col>].
+        value_col: Name of the value column ('P' or 'T').
+        current_year: Year to map dayofyear onto (determines leap
+            year handling).
+
+    Returns:
+        Dashboard-ready DataFrame with columns:
+        [code, <value_col>_norm, date, <value_col>] where the last
+        column comes from the operational merge (NaN where no match).
+    """
+    reanalysis = reanalysis.copy()
+    reanalysis['dayofyear'] = reanalysis['date'].dt.dayofyear
+
+    daily_norm = (
+        reanalysis
+        .groupby(['code', 'dayofyear'])[value_col]
+        .mean()
+        .round(2)
+        .reset_index()
+    )
+
+    # Remove day 366 for non-leap years. Use explicit filter instead
+    # of iloc[:-1] which breaks with multiple codes or when no leap
+    # years exist in the historical data.
+    if not is_leap_year(current_year):
+        daily_norm = daily_norm[daily_norm['dayofyear'] <= 365]
+
+    daily_norm['date'] = (
+        pd.Timestamp(str(current_year))
+        + pd.to_timedelta(daily_norm['dayofyear'] - 1, unit='D')
+    )
+
+    daily_norm = daily_norm.drop(columns=['dayofyear'])
+    daily_norm = daily_norm.rename(
+        columns={value_col: f'{value_col}_norm'}
+    )
+
+    # Merge current-year operational data
+    daily_norm = pd.merge(
+        daily_norm, operational, on=['code', 'date'], how='left'
+    )
+
+    return daily_norm
+
+
 def main():
     #--------------------------------------------------------------------
     # SETUP ENVIRONMENT
@@ -389,68 +494,33 @@ def main():
         era5_reanalysis_T['date'] = pd.to_datetime(era5_reanalysis_T['date'])
 
         #--------------------------------------------------------------------
-        max_operational_date = operational_P['date'].max()
-
-        date_threshold = max_operational_date - timedelta(days=195) # -6 months and - 15 days forecast
-
-        # Get the stable part of the operational data into the 'reanalysis' data
-        operational_P_stable = operational_P[operational_P['date'] < date_threshold].copy()
-        operational_T_stable = operational_T[operational_T['date'] < date_threshold].copy()
+        # FILTER TO STABLE OPERATIONAL DATA
+        #--------------------------------------------------------------------
+        operational_P_stable = select_stable_operational_data(operational_P)
+        operational_T_stable = select_stable_operational_data(operational_T)
 
         #--------------------------------------------------------------------
         # APPEND THE STABLE OPERATIONAL DATA TO THE ERA5 REANALYSIS DATA
         #--------------------------------------------------------------------
         logger.debug('Appending the Operational Data to the ERA5 Reanalysis Data')
-        era5_reanalysis_P = pd.concat([era5_reanalysis_P, operational_P_stable], ignore_index=True)
-        era5_reanalysis_T = pd.concat([era5_reanalysis_T, operational_T_stable], ignore_index=True)
-
-        # DROP DUPLICATES ON DATE AND CODE and keep the last one
-        era5_reanalysis_P = era5_reanalysis_P.drop_duplicates(subset=['date', 'code'], keep='last')
-        era5_reanalysis_T = era5_reanalysis_T.drop_duplicates(subset=['date', 'code'], keep='last')
-
-        # sort by date and code
-        era5_reanalysis_P = era5_reanalysis_P.sort_values(by=['date', 'code'])
-        era5_reanalysis_T = era5_reanalysis_T.sort_values(by=['date', 'code'])
+        era5_reanalysis_P = extend_reanalysis_with_operational(
+            era5_reanalysis_P, operational_P_stable
+        )
+        era5_reanalysis_T = extend_reanalysis_with_operational(
+            era5_reanalysis_T, operational_T_stable
+        )
 
         #--------------------------------------------------------------------
         # CALCULATE DAILY NORM VALUES
         #--------------------------------------------------------------------
         logger.debug('Calculating Daily Norm Values for later display in dashboard')
-        era5_reanalysis_P['dayofyear'] = era5_reanalysis_P['date'].dt.dayofyear
-        era5_reanalysis_T['dayofyear'] = era5_reanalysis_T['date'].dt.dayofyear
-
-        # Group by code and dayofyear and calculate the mean
-        daily_norm_P = era5_reanalysis_P.groupby(['code', 'dayofyear'])['P'].mean().round(2).reset_index()
-        daily_norm_T = era5_reanalysis_T.groupby(['code', 'dayofyear'])['T'].mean().round(2).reset_index()
-
-        # Create date from current year and dayofyear
-        # Test if we have a leap year and ditch the last value of the data frame
-        # if not.
         current_year = datetime.now().year
-        if is_leap_year(current_year):
-            daily_norm_P['date'] = pd.Timestamp(str(current_year)) + pd.to_timedelta(daily_norm_P['dayofyear'] - 1, unit='D')
-            daily_norm_T['date'] = pd.Timestamp(str(current_year)) + pd.to_timedelta(daily_norm_T['dayofyear'] - 1, unit='D')
-        else:
-            daily_norm_P = daily_norm_P.iloc[:-1]
-            daily_norm_T = daily_norm_T.iloc[:-1]
-            daily_norm_P['date'] = pd.Timestamp(str(current_year)) + pd.to_timedelta(daily_norm_P['dayofyear'] - 1, unit='D')
-            daily_norm_T['date'] = pd.Timestamp(str(current_year)) + pd.to_timedelta(daily_norm_T['dayofyear'] - 1, unit='D')
-
-        # Remove column dayofyear
-        daily_norm_P = daily_norm_P.drop(columns=['dayofyear'])
-        daily_norm_T = daily_norm_T.drop(columns=['dayofyear'])
-
-        # Rename P to P_norm and T to T_norm
-        daily_norm_P = daily_norm_P.rename(columns={'P': 'P_norm'})
-        daily_norm_T = daily_norm_T.rename(columns={'T': 'T_norm'})
-
-        # Merge the data of the current year from operational_P to daily_norm_P
-        daily_norm_P = pd.merge(daily_norm_P, operational_P, on=['code', 'date'], how='left')
-        daily_norm_T = pd.merge(daily_norm_T, operational_T, on=['code', 'date'], how='left')
-
-        # Debugging prints
-        #logger.debug(f'daily_norm_P\n{daily_norm_P.head}\n{daily_norm_P.tail}')
-        #logger.debug(f'operational_P\n{operational_P.head}\n{operational_P.tail}')
+        daily_norm_P = calculate_daily_norm(
+            era5_reanalysis_P, operational_P, 'P', current_year
+        )
+        daily_norm_T = calculate_daily_norm(
+            era5_reanalysis_T, operational_T, 'T', current_year
+        )
 
         #--------------------------------------------------------------------
         # SAVE THE APPENDED DATA
@@ -470,17 +540,19 @@ def main():
         # WRITE TO SAPPHIRE API
         #--------------------------------------------------------------------
         try:
-            _write_meteo_to_api(daily_norm_P, 'P')
-            # Run consistency check if enabled
-            _check_meteo_consistency(daily_norm_P, 'P')
+            written = _write_meteo_to_api(daily_norm_P, 'P')
+            # Run consistency check only if data was actually written
+            if written:
+                _check_meteo_consistency(daily_norm_P, 'P')
         except SapphireAPIError as e:
             logger.error(f"Error writing precipitation data to API: {e}")
             # Continue - CSV write succeeded, API failure is not fatal
 
         try:
-            _write_meteo_to_api(daily_norm_T, 'T')
-            # Run consistency check if enabled
-            _check_meteo_consistency(daily_norm_T, 'T')
+            written = _write_meteo_to_api(daily_norm_T, 'T')
+            # Run consistency check only if data was actually written
+            if written:
+                _check_meteo_consistency(daily_norm_T, 'T')
         except SapphireAPIError as e:
             logger.error(f"Error writing temperature data to API: {e}")
             # Continue - CSV write succeeded, API failure is not fatal

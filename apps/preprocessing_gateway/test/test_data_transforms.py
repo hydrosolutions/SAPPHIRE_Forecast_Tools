@@ -551,3 +551,117 @@ class TestTransformSnowData:
         result = dg_utils.transform_snow_data(df, 'SWE')
         # 3 data rows remain
         assert len(result) == 3
+
+
+# =====================================================================
+# End-to-end transform → API record structure verification
+# =====================================================================
+
+class TestEndToEndTransformToApiRecords:
+    """Verifies that transform functions produce DataFrames with
+    correct dtypes, schemas, and values ready for API consumption."""
+
+    def test_control_member_transform_schema_and_values(self):
+        """Build 7-header-row DG fixture with known P/T values.
+        After transform: correct dtypes and exact values."""
+        header_rows = [['h'] * 3] * 7
+        data_rows = [
+            ['01/01/2024', '12.3', '5.2'],
+        ]
+        all_rows = header_rows + data_rows
+        df = pd.DataFrame(
+            all_rows, columns=['Station', '12104', '12104.1']
+        )
+
+        result = dg_utils.transform_data_file_control_member(df)
+
+        # Schema check
+        assert list(result.columns) == ['date', 'T', 'P', 'code']
+        assert pd.api.types.is_datetime64_any_dtype(result['date'])
+        assert result['P'].dtype == np.float64
+        assert result['T'].dtype == np.float64
+        assert result['code'].dtype == object
+
+        # Value check
+        assert result['P'].iloc[0] == 5.2
+        assert result['T'].iloc[0] == 12.3
+        assert result['code'].iloc[0] == '12104'
+        assert result['date'].iloc[0] == pd.Timestamp('2024-01-01')
+
+    def test_snow_transform_schema_and_values(self):
+        """Build 4-header-row snow fixture with known SWE value.
+        After transform: correct dtypes and exact values.
+        Single band column (suffix 1-14) → code extracted, base
+        variable computed as mean of bands."""
+        header_rows = [['h', 'h']] * 4
+        data_rows = [
+            ['01/01/2024', '15.5'],
+        ]
+        all_rows = header_rows + data_rows
+        # Use band suffix 1 (valid 1-14 range)
+        df = pd.DataFrame(
+            all_rows, columns=['Timestamp', '12104_1']
+        )
+
+        result = dg_utils.transform_snow_data(df, 'SWE')
+
+        assert 'date' in result.columns
+        assert 'SWE' in result.columns
+        assert 'code' in result.columns
+        assert pd.api.types.is_datetime64_any_dtype(result['date'])
+        assert result['code'].iloc[0] == '12104'
+        assert result['date'].iloc[0] == pd.Timestamp('2024-01-01')
+        # Single band → base variable computed as mean (= band value)
+        assert abs(result['SWE'].iloc[0] - 15.5) < 0.01
+
+    def test_snow_transform_elevation_bands_produce_correct_values(
+        self,
+    ):
+        """Snow with 3 elevation bands: value1=10, value2=20,
+        value3=30, mean=20."""
+        header_rows = [['h', 'h', 'h', 'h']] * 4
+        data_rows = [
+            ['01/01/2024', '10.0', '20.0', '30.0'],
+        ]
+        all_rows = header_rows + data_rows
+        df = pd.DataFrame(
+            all_rows,
+            columns=[
+                'Timestamp', '12104_1', '12104_2', '12104_3'
+            ],
+        )
+
+        result = dg_utils.transform_snow_data(df, 'SWE')
+
+        assert len(result) == 1
+        assert result['SWE_1'].iloc[0] == 10.0
+        assert result['SWE_2'].iloc[0] == 20.0
+        assert result['SWE_3'].iloc[0] == 30.0
+        # No base column → mean computed
+        expected_mean = (10.0 + 20.0 + 30.0) / 3
+        assert abs(result['SWE'].iloc[0] - expected_mean) < 0.01
+
+    def test_control_member_transform_preserves_all_dates(self):
+        """10-day DG fixture for 2 codes → exactly 10 rows per code,
+        all 10 dates present."""
+        header_rows = [['h'] * 5] * 7
+        dates = [f'{d:02d}/01/2024' for d in range(1, 11)]
+        data_rows = [
+            [d, str(i + 1.0), str(i + 10.0),
+             str(i + 1.0), str(i + 10.0)]
+            for i, d in enumerate(dates)
+        ]
+        all_rows = header_rows + data_rows
+        df = pd.DataFrame(
+            all_rows,
+            columns=['Station', 'AAA', 'AAA.1', 'BBB', 'BBB.1'],
+        )
+
+        result = dg_utils.transform_data_file_control_member(df)
+
+        # 2 codes x 10 dates = 20 rows
+        assert len(result) == 20
+        for code in ['AAA', 'BBB']:
+            code_rows = result[result['code'] == code]
+            assert len(code_rows) == 10
+            assert code_rows['date'].nunique() == 10
