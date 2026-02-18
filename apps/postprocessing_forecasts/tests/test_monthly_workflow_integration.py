@@ -163,6 +163,24 @@ def _import_operational():
     return module, spec
 
 
+def _import_operational_lt():
+    spec = importlib.util.spec_from_file_location(
+        'postprocessing_operational_long_term_module',
+        os.path.join(SCRIPT_DIR, 'postprocessing_operational_long_term.py'),
+    )
+    module = importlib.util.module_from_spec(spec)
+    return module, spec
+
+
+def _import_maintenance_lt():
+    spec = importlib.util.spec_from_file_location(
+        'postprocessing_maintenance_long_term_module',
+        os.path.join(SCRIPT_DIR, 'postprocessing_maintenance_long_term.py'),
+    )
+    module = importlib.util.module_from_spec(spec)
+    return module, spec
+
+
 def _setup_modules_with_real_io():
     """Import real modules and patch only load_environment as no-op."""
     import setup_library as real_sl
@@ -1115,3 +1133,732 @@ class TestMonthlyEdgeCases:
                     f"With 2-year range, n_pairs should be <= 2, "
                     f"got {row['n_pairs']}"
                 )
+
+
+# ---------------------------------------------------------------------------
+# Helpers for operational/maintenance long-term tests
+# ---------------------------------------------------------------------------
+
+def _make_normalized_monthly_forecasts(year, month, stations=None):
+    """Build a normalized monthly forecast DataFrame (post-API format).
+
+    Returns forecasts with model_short (not model_type), year, month,
+    month_in_year, and forecasted_discharge columns — as returned by
+    data_reader.read_latest_monthly_forecasts() or
+    data_reader.read_monthly_forecasts() after normalization.
+    """
+    if stations is None:
+        stations = STATIONS
+    rows = []
+    for station in stations:
+        for model in MODELS:
+            q50 = _fc(station, year, model)
+            rows.append({
+                'code': station, 'year': year, 'month': month,
+                'month_in_year': month, 'model_short': model,
+                'forecasted_discharge': q50,
+                'q05': round(q50 * 0.70, 3),
+                'q10': round(q50 * 0.75, 3),
+                'q25': round(q50 * 0.85, 3),
+                'q50': q50,
+                'q75': round(q50 * 1.15, 3),
+                'q90': round(q50 * 1.25, 3),
+                'q95': round(q50 * 1.30, 3),
+                'valid_from': f'{year}-{month:02d}-01',
+                'valid_to': f'{year}-{month:02d}-28',
+                'date': f'{year}-{month:02d}-01',
+                'flag': 0,
+            })
+    return pd.DataFrame(rows)
+
+
+def _make_monthly_combined_csv(
+    data_dir, year_months, include_em_months=None,
+):
+    """Write a monthly combined forecasts CSV to data_dir.
+
+    Args:
+        data_dir: Path to write the CSV.
+        year_months: List of (year, month) tuples to include.
+        include_em_months: List of (year, month) tuples that should
+            have EM/Naive Mean/Skilled Mean rows. Default: none.
+
+    Returns:
+        The written DataFrame.
+    """
+    if include_em_months is None:
+        include_em_months = []
+    all_rows = []
+    for year, month in year_months:
+        for station in STATIONS:
+            for model in MODELS:
+                q50 = _fc(station, year, model)
+                all_rows.append({
+                    'code': station, 'year': year, 'month': month,
+                    'month_in_year': month, 'model_short': model,
+                    'forecasted_discharge': q50,
+                    'q50': q50,
+                    'valid_from': f'{year}-{month:02d}-01',
+                    'valid_to': f'{year}-{month:02d}-28',
+                    'date': f'{year}-{month:02d}-01',
+                    'flag': 0,
+                })
+        if (year, month) in include_em_months:
+            for station in STATIONS:
+                fc_vals = [_fc(station, year, m) for m in MODELS]
+                all_rows.append({
+                    'code': station, 'year': year, 'month': month,
+                    'month_in_year': month, 'model_short': 'EM',
+                    'forecasted_discharge': round(np.mean(fc_vals), 3),
+                    'q50': round(np.mean(fc_vals), 3),
+                    'valid_from': f'{year}-{month:02d}-01',
+                    'valid_to': f'{year}-{month:02d}-28',
+                    'date': f'{year}-{month:02d}-01',
+                    'flag': 0,
+                    'composition': ', '.join(sorted(MODELS)),
+                })
+    df = pd.DataFrame(all_rows)
+    df.to_csv(
+        os.path.join(data_dir, 'combined_forecasts_monthly.csv'),
+        index=False,
+    )
+    return df
+
+
+def _seed_monthly_skill_csv(data_dir):
+    """Write a monthly skill metrics CSV with the 3-station skill profile.
+
+    99001: all 3 pass, 99002: GBT+LR_Base pass, 99003: only LR_Base.
+    """
+    rows = []
+    for month in range(1, 13):
+        for code, passing in [
+            ('99001', {'GBT', 'LR_Base', 'MC_ALD'}),
+            ('99002', {'GBT', 'LR_Base'}),
+            ('99003', {'LR_Base'}),
+        ]:
+            for model in MODELS:
+                if model in passing:
+                    rows.append({
+                        'month_in_year': month, 'code': code,
+                        'model_short': model,
+                        'sdivsigma': 0.1, 'nse': 0.95,
+                        'delta': 5.0, 'accuracy': 1.0,
+                        'mae': 1.0 + MODELS.index(model) * 0.5,
+                        'n_pairs': 5,
+                    })
+                else:
+                    rows.append({
+                        'month_in_year': month, 'code': code,
+                        'model_short': model,
+                        'sdivsigma': 0.9, 'nse': 0.3,
+                        'delta': 5.0, 'accuracy': 0.2,
+                        'mae': 40.0, 'n_pairs': 5,
+                    })
+    df = pd.DataFrame(rows)
+    df.to_csv(
+        os.path.join(data_dir, 'skill_metrics_monthly.csv'),
+        index=False,
+    )
+    return df
+
+
+# ===================================================================
+# TestOperationalLongTermIntegration
+# ===================================================================
+class TestOperationalLongTermIntegration:
+    """postprocessing_operational_long_term.py with real CSV I/O.
+
+    Mock boundary: read_latest_monthly_forecasts (API read).
+    Real: skill metrics CSV read, ensemble creation, CSV write.
+    """
+
+    def test_happy_path_three_station_skill_profile(
+        self, monthly_integration_env,
+    ):
+        """99001: 3-model EM, 99002: 2-model EM, 99003: no EM."""
+        tmp_path, data_dir = monthly_integration_env
+
+        _seed_monthly_skill_csv(data_dir)
+        forecasts = _make_normalized_monthly_forecasts(2026, 1)
+
+        with patch.dict(sys.modules, {}):
+            _setup_modules_with_real_io()
+
+            from src import data_reader as dr
+            with patch.object(
+                dr, 'read_latest_monthly_forecasts',
+                return_value=forecasts,
+            ):
+                module, spec = _import_operational_lt()
+                with patch('os.getcwd', return_value=str(tmp_path)):
+                    spec.loader.exec_module(module)
+
+                    with pytest.raises(SystemExit) as exc_info:
+                        module.postprocessing_operational_long_term()
+
+                assert exc_info.value.code == 0
+
+        output = _read_output_csv(
+            data_dir, 'combined_forecasts_monthly.csv'
+        )
+        assert not output.empty, "Output CSV should not be empty"
+
+        em = output[output['model_short'] == 'EM']
+        em_codes = set(em['code'].astype(str))
+        assert '99001' in em_codes, (
+            "99001 should have EM (3 models pass)"
+        )
+        assert '99002' in em_codes, (
+            "99002 should have EM (GBT+LR_Base pass)"
+        )
+        assert '99003' not in em_codes, (
+            "99003 should NOT have EM (only LR_Base)"
+        )
+
+        # Spot-check EM discharge for 99001
+        em_99001 = em[em['code'].astype(str) == '99001']
+        assert len(em_99001) == 1
+        expected_em = np.mean([
+            _fc('99001', 2026, m) for m in MODELS
+        ])
+        actual = em_99001['forecasted_discharge'].iloc[0]
+        assert actual == pytest.approx(expected_em, abs=0.01), (
+            f"99001 EM: expected {expected_em}, got {actual}"
+        )
+
+        # Spot-check EM for 99002: mean(GBT, LR_Base) only
+        em_99002 = em[em['code'].astype(str) == '99002']
+        assert len(em_99002) == 1
+        expected_em_2 = np.mean([
+            _fc('99002', 2026, 'GBT'),
+            _fc('99002', 2026, 'LR_Base'),
+        ])
+        actual_2 = em_99002['forecasted_discharge'].iloc[0]
+        assert actual_2 == pytest.approx(expected_em_2, abs=0.01), (
+            f"99002 EM: expected {expected_em_2}, got {actual_2}"
+        )
+
+    def test_quantile_columns_in_em_rows(
+        self, monthly_integration_env,
+    ):
+        """EM rows have q05-q95 columns with correct averaged values."""
+        tmp_path, data_dir = monthly_integration_env
+
+        _seed_monthly_skill_csv(data_dir)
+        forecasts = _make_normalized_monthly_forecasts(2026, 1)
+
+        with patch.dict(sys.modules, {}):
+            _setup_modules_with_real_io()
+            from src import data_reader as dr
+            with patch.object(
+                dr, 'read_latest_monthly_forecasts',
+                return_value=forecasts,
+            ):
+                module, spec = _import_operational_lt()
+                with patch('os.getcwd', return_value=str(tmp_path)):
+                    spec.loader.exec_module(module)
+
+                    with pytest.raises(SystemExit) as exc_info:
+                        module.postprocessing_operational_long_term()
+
+                assert exc_info.value.code == 0
+
+        output = _read_output_csv(
+            data_dir, 'combined_forecasts_monthly.csv'
+        )
+        em_99001 = output[
+            (output['model_short'] == 'EM')
+            & (output['code'].astype(str) == '99001')
+        ]
+        assert len(em_99001) == 1
+
+        q_cols = ['q05', 'q10', 'q25', 'q50', 'q75', 'q90', 'q95']
+        for qcol in q_cols:
+            assert qcol in em_99001.columns, f"{qcol} missing"
+            assert pd.notna(em_99001[qcol].iloc[0]), (
+                f"{qcol} should not be NaN"
+            )
+
+        # q50 for 99001 EM = mean of 3 models' q50
+        expected_q50 = np.mean([
+            _fc('99001', 2026, m) for m in MODELS
+        ])
+        assert em_99001['q50'].iloc[0] == pytest.approx(
+            expected_q50, abs=0.01,
+        )
+
+    def test_naive_mean_and_skilled_mean_created(
+        self, monthly_integration_env,
+    ):
+        """Naive Mean and Skilled Mean rows created alongside EM."""
+        tmp_path, data_dir = monthly_integration_env
+
+        _seed_monthly_skill_csv(data_dir)
+        forecasts = _make_normalized_monthly_forecasts(2026, 1)
+
+        with patch.dict(sys.modules, {}):
+            _setup_modules_with_real_io()
+            from src import data_reader as dr
+            with patch.object(
+                dr, 'read_latest_monthly_forecasts',
+                return_value=forecasts,
+            ):
+                module, spec = _import_operational_lt()
+                with patch('os.getcwd', return_value=str(tmp_path)):
+                    spec.loader.exec_module(module)
+
+                    with pytest.raises(SystemExit) as exc_info:
+                        module.postprocessing_operational_long_term()
+
+                assert exc_info.value.code == 0
+
+        output = _read_output_csv(
+            data_dir, 'combined_forecasts_monthly.csv'
+        )
+
+        # Naive Mean for 99001: all 3 models equally weighted
+        naive = output[
+            (output['model_short'] == 'Naive Mean')
+            & (output['code'].astype(str) == '99001')
+        ]
+        assert len(naive) == 1
+        expected_naive = np.mean([
+            _fc('99001', 2026, m) for m in MODELS
+        ])
+        assert naive['forecasted_discharge'].iloc[0] == pytest.approx(
+            expected_naive, abs=0.01,
+        )
+
+        # Skilled Mean for 99001: 1/MAE weighted
+        skilled = output[
+            (output['model_short'] == 'Skilled Mean')
+            & (output['code'].astype(str) == '99001')
+        ]
+        assert len(skilled) == 1
+        # Skilled Mean > 0 (non-trivial check)
+        assert skilled['forecasted_discharge'].iloc[0] > 0
+
+    def test_empty_skill_metrics_exits_zero(
+        self, monthly_integration_env,
+    ):
+        """Empty skill metrics CSV → exit 0, no output CSV."""
+        tmp_path, data_dir = monthly_integration_env
+
+        # Overwrite with empty skill CSV
+        pd.DataFrame(columns=[
+            'month_in_year', 'code', 'model_short',
+            'sdivsigma', 'nse', 'delta', 'accuracy', 'mae', 'n_pairs',
+        ]).to_csv(
+            os.path.join(data_dir, 'skill_metrics_monthly.csv'),
+            index=False,
+        )
+
+        with patch.dict(sys.modules, {}):
+            _setup_modules_with_real_io()
+            from src import data_reader as dr
+            with patch.object(
+                dr, 'read_latest_monthly_forecasts',
+                return_value=pd.DataFrame(),
+            ):
+                module, spec = _import_operational_lt()
+                with patch('os.getcwd', return_value=str(tmp_path)):
+                    spec.loader.exec_module(module)
+
+                    with pytest.raises(SystemExit) as exc_info:
+                        module.postprocessing_operational_long_term()
+
+                assert exc_info.value.code == 0
+
+    def test_empty_forecasts_exits_zero(
+        self, monthly_integration_env,
+    ):
+        """Non-empty skill CSV + empty forecasts → exit 0."""
+        tmp_path, data_dir = monthly_integration_env
+
+        _seed_monthly_skill_csv(data_dir)
+
+        with patch.dict(sys.modules, {}):
+            _setup_modules_with_real_io()
+            from src import data_reader as dr
+            with patch.object(
+                dr, 'read_latest_monthly_forecasts',
+                return_value=pd.DataFrame(),
+            ):
+                module, spec = _import_operational_lt()
+                with patch('os.getcwd', return_value=str(tmp_path)):
+                    spec.loader.exec_module(module)
+
+                    with pytest.raises(SystemExit) as exc_info:
+                        module.postprocessing_operational_long_term()
+
+                assert exc_info.value.code == 0
+
+    def test_latest_csv_also_written(
+        self, monthly_integration_env,
+    ):
+        """Both combined and _latest CSVs are written."""
+        tmp_path, data_dir = monthly_integration_env
+
+        _seed_monthly_skill_csv(data_dir)
+        forecasts = _make_normalized_monthly_forecasts(2026, 1)
+
+        with patch.dict(sys.modules, {}):
+            _setup_modules_with_real_io()
+            from src import data_reader as dr
+            with patch.object(
+                dr, 'read_latest_monthly_forecasts',
+                return_value=forecasts,
+            ):
+                module, spec = _import_operational_lt()
+                with patch('os.getcwd', return_value=str(tmp_path)):
+                    spec.loader.exec_module(module)
+
+                    with pytest.raises(SystemExit) as exc_info:
+                        module.postprocessing_operational_long_term()
+
+                assert exc_info.value.code == 0
+
+        combined_path = os.path.join(
+            data_dir, 'combined_forecasts_monthly.csv'
+        )
+        latest_path = combined_path.replace('.csv', '_latest.csv')
+        assert os.path.exists(combined_path)
+        assert os.path.exists(latest_path)
+
+        latest = pd.read_csv(latest_path)
+        assert not latest.empty
+
+    def test_individual_model_rows_preserved(
+        self, monthly_integration_env,
+    ):
+        """Original model rows survive alongside new ensemble rows."""
+        tmp_path, data_dir = monthly_integration_env
+
+        _seed_monthly_skill_csv(data_dir)
+        forecasts = _make_normalized_monthly_forecasts(2026, 1)
+
+        with patch.dict(sys.modules, {}):
+            _setup_modules_with_real_io()
+            from src import data_reader as dr
+            with patch.object(
+                dr, 'read_latest_monthly_forecasts',
+                return_value=forecasts,
+            ):
+                module, spec = _import_operational_lt()
+                with patch('os.getcwd', return_value=str(tmp_path)):
+                    spec.loader.exec_module(module)
+
+                    with pytest.raises(SystemExit) as exc_info:
+                        module.postprocessing_operational_long_term()
+
+                assert exc_info.value.code == 0
+
+        output = _read_output_csv(
+            data_dir, 'combined_forecasts_monthly.csv'
+        )
+
+        for model in MODELS:
+            for station in STATIONS:
+                rows = output[
+                    (output['model_short'] == model)
+                    & (output['code'].astype(str) == station)
+                ]
+                assert len(rows) == 1, (
+                    f"{model}/{station} should have exactly 1 row"
+                )
+                expected_q = _fc(station, 2026, model)
+                assert rows['forecasted_discharge'].iloc[0] == pytest.approx(
+                    expected_q, abs=0.01,
+                )
+
+
+# ===================================================================
+# TestMaintenanceLongTermIntegration
+# ===================================================================
+class TestMaintenanceLongTermIntegration:
+    """postprocessing_maintenance_long_term.py with real CSV I/O.
+
+    Mock boundary: read_monthly_forecasts (API read).
+    Real: combined CSV read, gap detection, skill CSV read, ensemble
+    creation, merge, CSV write.
+    """
+
+    def test_gaps_detected_and_filled(
+        self, monthly_integration_env,
+    ):
+        """Month 1/2026 has models but no EM → gap-fill creates EM."""
+        tmp_path, data_dir = monthly_integration_env
+
+        _seed_monthly_skill_csv(data_dir)
+
+        # Combined CSV: month 12/2025 WITH EM, month 1/2026 WITHOUT
+        _make_monthly_combined_csv(
+            data_dir,
+            year_months=[(2025, 12), (2026, 1)],
+            include_em_months=[(2025, 12)],
+        )
+
+        gap_forecasts = _make_normalized_monthly_forecasts(2026, 1)
+
+        with patch.dict(
+            os.environ,
+            {'POSTPROCESSING_GAPFILL_WINDOW_MONTHS': '3'},
+        ):
+            with patch.dict(sys.modules, {}):
+                _setup_modules_with_real_io()
+                from src import data_reader as dr
+                with patch.object(
+                    dr, 'read_monthly_forecasts',
+                    return_value=gap_forecasts,
+                ):
+                    module, spec = _import_maintenance_lt()
+                    with patch('os.getcwd', return_value=str(tmp_path)):
+                        spec.loader.exec_module(module)
+
+                        with pytest.raises(SystemExit) as exc_info:
+                            module.postprocessing_maintenance_long_term()
+
+                    assert exc_info.value.code == 0
+
+        output = _read_output_csv(
+            data_dir, 'combined_forecasts_monthly.csv'
+        )
+        assert not output.empty
+
+        # EM now exists for month 1/2026
+        em_m1 = output[
+            (output['model_short'] == 'EM')
+            & (output['month'].astype(int) == 1)
+            & (output['year'].astype(int) == 2026)
+        ]
+        em_m1_codes = set(em_m1['code'].astype(str))
+        assert '99001' in em_m1_codes, (
+            "99001 should get EM after gap-fill"
+        )
+        assert '99002' in em_m1_codes, (
+            "99002 should get EM after gap-fill"
+        )
+
+        # Spot-check EM discharge
+        em_99001 = em_m1[em_m1['code'].astype(str) == '99001']
+        assert len(em_99001) == 1
+        expected = np.mean([_fc('99001', 2026, m) for m in MODELS])
+        assert em_99001['forecasted_discharge'].iloc[0] == pytest.approx(
+            expected, abs=0.01,
+        )
+
+    def test_no_gaps_exits_cleanly(
+        self, monthly_integration_env,
+    ):
+        """All recent months have EM → no gaps, exits 0."""
+        tmp_path, data_dir = monthly_integration_env
+
+        _seed_monthly_skill_csv(data_dir)
+        _make_monthly_combined_csv(
+            data_dir,
+            year_months=[(2025, 12), (2026, 1)],
+            include_em_months=[(2025, 12), (2026, 1)],
+        )
+
+        with patch.dict(
+            os.environ,
+            {'POSTPROCESSING_GAPFILL_WINDOW_MONTHS': '3'},
+        ):
+            with patch.dict(sys.modules, {}):
+                _setup_modules_with_real_io()
+                from src import data_reader as dr
+                with patch.object(
+                    dr, 'read_monthly_forecasts',
+                    return_value=pd.DataFrame(),
+                ):
+                    module, spec = _import_maintenance_lt()
+                    with patch('os.getcwd', return_value=str(tmp_path)):
+                        spec.loader.exec_module(module)
+
+                        with pytest.raises(SystemExit) as exc_info:
+                            module.postprocessing_maintenance_long_term()
+
+                    assert exc_info.value.code == 0
+
+    def test_missing_combined_csv_exits_cleanly(
+        self, monthly_integration_env,
+    ):
+        """No combined CSV file → exits 0 gracefully."""
+        tmp_path, data_dir = monthly_integration_env
+
+        with patch.dict(sys.modules, {}):
+            _setup_modules_with_real_io()
+            module, spec = _import_maintenance_lt()
+            with patch('os.getcwd', return_value=str(tmp_path)):
+                spec.loader.exec_module(module)
+
+                with pytest.raises(SystemExit) as exc_info:
+                    module.postprocessing_maintenance_long_term()
+
+            assert exc_info.value.code == 0
+
+    def test_history_preserved_after_gap_fill(
+        self, monthly_integration_env,
+    ):
+        """Existing rows (models + old EM) survive the merge."""
+        tmp_path, data_dir = monthly_integration_env
+
+        _seed_monthly_skill_csv(data_dir)
+        _make_monthly_combined_csv(
+            data_dir,
+            year_months=[(2025, 11), (2025, 12), (2026, 1)],
+            include_em_months=[(2025, 11), (2025, 12)],
+        )
+
+        gap_forecasts = _make_normalized_monthly_forecasts(2026, 1)
+
+        with patch.dict(
+            os.environ,
+            {'POSTPROCESSING_GAPFILL_WINDOW_MONTHS': '3'},
+        ):
+            with patch.dict(sys.modules, {}):
+                _setup_modules_with_real_io()
+                from src import data_reader as dr
+                with patch.object(
+                    dr, 'read_monthly_forecasts',
+                    return_value=gap_forecasts,
+                ):
+                    module, spec = _import_maintenance_lt()
+                    with patch('os.getcwd', return_value=str(tmp_path)):
+                        spec.loader.exec_module(module)
+
+                        with pytest.raises(SystemExit) as exc_info:
+                            module.postprocessing_maintenance_long_term()
+
+                    assert exc_info.value.code == 0
+
+        output = _read_output_csv(
+            data_dir, 'combined_forecasts_monthly.csv'
+        )
+
+        # Nov 2025 model rows preserved (3 stations × 3 models = 9)
+        m11_models = output[
+            (output['year'].astype(int) == 2025)
+            & (output['month'].astype(int) == 11)
+            & (~output['model_short'].isin([
+                'EM', 'Naive Mean', 'Skilled Mean',
+            ]))
+        ]
+        assert len(m11_models) == 9, (
+            f"9 model rows for Nov 2025, got {len(m11_models)}"
+        )
+
+        # Dec 2025 EM rows preserved (3 stations)
+        em_m12 = output[
+            (output['model_short'] == 'EM')
+            & (output['year'].astype(int) == 2025)
+            & (output['month'].astype(int) == 12)
+        ]
+        assert len(em_m12) == 3, (
+            f"3 EM rows for Dec 2025, got {len(em_m12)}"
+        )
+
+    def test_partial_em_coverage_fills_only_missing(
+        self, monthly_integration_env,
+    ):
+        """99001 already has EM (not refilled); 99002 gets new EM.
+
+        Gap detector only flags (year, month, code) tuples where EM
+        is completely absent. Existing EM rows are preserved as-is.
+        """
+        tmp_path, data_dir = monthly_integration_env
+
+        _seed_monthly_skill_csv(data_dir)
+
+        # Combined CSV: 99001 has EM, 99002/99003 don't
+        rows = []
+        for station in STATIONS:
+            for model in MODELS:
+                q50 = _fc(station, 2026, model)
+                rows.append({
+                    'code': station, 'year': 2026, 'month': 1,
+                    'month_in_year': 1, 'model_short': model,
+                    'forecasted_discharge': q50, 'q50': q50,
+                    'valid_from': '2026-01-01',
+                    'valid_to': '2026-01-28',
+                    'date': '2026-01-01', 'flag': 0,
+                })
+        # EM exists only for 99001
+        rows.append({
+            'code': '99001', 'year': 2026, 'month': 1,
+            'month_in_year': 1, 'model_short': 'EM',
+            'forecasted_discharge': 42.0, 'q50': 42.0,
+            'valid_from': '2026-01-01',
+            'valid_to': '2026-01-28',
+            'date': '2026-01-01', 'flag': 0,
+            'composition': 'GBT, LR_Base, MC_ALD',
+        })
+        pd.DataFrame(rows).to_csv(
+            os.path.join(data_dir, 'combined_forecasts_monthly.csv'),
+            index=False,
+        )
+
+        gap_forecasts = _make_normalized_monthly_forecasts(2026, 1)
+
+        with patch.dict(
+            os.environ,
+            {'POSTPROCESSING_GAPFILL_WINDOW_MONTHS': '3'},
+        ):
+            with patch.dict(sys.modules, {}):
+                _setup_modules_with_real_io()
+                from src import data_reader as dr
+                with patch.object(
+                    dr, 'read_monthly_forecasts',
+                    return_value=gap_forecasts,
+                ):
+                    module, spec = _import_maintenance_lt()
+                    with patch('os.getcwd', return_value=str(tmp_path)):
+                        spec.loader.exec_module(module)
+
+                        with pytest.raises(SystemExit) as exc_info:
+                            module.postprocessing_maintenance_long_term()
+
+                    assert exc_info.value.code == 0
+
+        output = _read_output_csv(
+            data_dir, 'combined_forecasts_monthly.csv'
+        )
+
+        # 99001 EM preserved (value=42.0, not recalculated)
+        em_99001 = output[
+            (output['model_short'] == 'EM')
+            & (output['code'].astype(str) == '99001')
+            & (output['year'].astype(int) == 2026)
+        ]
+        assert len(em_99001) == 1
+        assert em_99001['forecasted_discharge'].iloc[0] == pytest.approx(
+            42.0, abs=0.01,
+        ), "99001 EM should be preserved (not refilled)"
+
+        # 99002 now has EM (gap was filled)
+        em_99002 = output[
+            (output['model_short'] == 'EM')
+            & (output['code'].astype(str) == '99002')
+            & (output['year'].astype(int) == 2026)
+        ]
+        assert len(em_99002) == 1, (
+            "99002 should get EM after gap-fill"
+        )
+        expected_99002 = np.mean([
+            _fc('99002', 2026, 'GBT'),
+            _fc('99002', 2026, 'LR_Base'),
+        ])
+        assert em_99002['forecasted_discharge'].iloc[0] == pytest.approx(
+            expected_99002, abs=0.01,
+        )
+
+        # 99003 still no EM (only 1 model passes → single-model discard)
+        em_99003 = output[
+            (output['model_short'] == 'EM')
+            & (output['code'].astype(str) == '99003')
+            & (output['year'].astype(int) == 2026)
+        ]
+        assert len(em_99003) == 0, (
+            "99003 should NOT have EM (only LR_Base passes)"
+        )

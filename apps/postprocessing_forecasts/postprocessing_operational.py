@@ -201,25 +201,11 @@ def postprocessing_operational():
             pt.log_most_recent_forecasts_decade(modelled_decade)
 
         if prediction_mode in ['MONTHLY', 'ALL']:
-            with timer(timing_stats, 'reading monthly skill metrics'):
-                logger.info(
-                    "\n\n------ Reading pre-calculated monthly skill "
-                    "metrics -----"
-                )
-                skill_metrics_monthly = (
-                    data_reader.read_monthly_skill_metrics()
-                )
-
-            if skill_metrics_monthly.empty:
-                logger.warning(
-                    "No monthly skill metrics available. "
-                    "Run recalculate_skill_metrics.py first."
-                )
-            else:
-                logger.info(
-                    "Monthly skill metrics available: %d rows",
-                    len(skill_metrics_monthly),
-                )
+            logger.info(
+                "Monthly postprocessing is handled by "
+                "postprocessing_operational_long_term.py. "
+                "Skipping monthly in operational mode."
+            )
 
     # Print timing summary
     summary, total = timing_stats.summary()

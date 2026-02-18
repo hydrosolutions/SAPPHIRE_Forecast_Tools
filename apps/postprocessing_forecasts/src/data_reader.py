@@ -5,6 +5,7 @@ recalculating skill metrics from scratch, and by the yearly
 recalculation entry point to read monthly observations and forecasts.
 """
 
+import datetime as dt
 import os
 import logging
 
@@ -38,10 +39,14 @@ def read_skill_metrics(horizon_type: str) -> pd.DataFrame:
     Raises:
         ValueError: If horizon_type is invalid.
     """
-    if horizon_type not in ("pentad", "decad"):
+    if horizon_type not in ("pentad", "decad", "month"):
         raise ValueError(
-            f"horizon_type must be 'pentad' or 'decad', got: {horizon_type}"
+            f"horizon_type must be 'pentad', 'decad', or 'month', "
+            f"got: {horizon_type}"
         )
+
+    if horizon_type == "month":
+        return read_monthly_skill_metrics()
 
     df = _read_skill_metrics_csv(horizon_type)
     if df is not None and not df.empty:
@@ -610,3 +615,115 @@ def _normalize_monthly_forecasts(df: pd.DataFrame) -> pd.DataFrame:
         )
 
     return df
+
+
+# ===================================================================
+# Operational/maintenance monthly forecast readers
+# ===================================================================
+
+
+def read_latest_monthly_forecasts(
+    codes: list[str],
+    forecast_date: dt.date | None = None,
+) -> pd.DataFrame:
+    """Read the most recent month's long-term forecasts from API.
+
+    Reads forecasts with issue dates in the last 60 days,
+    then filters to the single most recent target (year, month).
+
+    Args:
+        codes: Station codes to read.
+        forecast_date: Reference date for lookback window.
+            Defaults to today if not provided.
+
+    Returns:
+        DataFrame with columns: code, year, month, month_in_year,
+        model_short, forecasted_discharge (=q50), q05-q95,
+        valid_from, valid_to, date, flag.
+        Empty DataFrame if no data.
+    """
+    today = forecast_date if forecast_date is not None else dt.date.today()
+    start_date = today - dt.timedelta(days=60)
+    start_year = start_date.year
+    end_year = today.year
+
+    raw = _read_long_forecasts_api(codes, start_year, end_year)
+    if raw is None or raw.empty:
+        logger.warning("No recent monthly forecast data available")
+        return pd.DataFrame()
+
+    df = _normalize_monthly_forecasts(raw)
+    if df.empty:
+        return df
+
+    # Add month_in_year
+    if "month_in_year" not in df.columns and "month" in df.columns:
+        df["month_in_year"] = df["month"]
+
+    # Add forecasted_discharge from q50 if missing
+    if "forecasted_discharge" not in df.columns and "q50" in df.columns:
+        df["forecasted_discharge"] = df["q50"].astype(float)
+
+    # Filter to the latest (year, month) based on valid_from
+    vf = pd.to_datetime(df["valid_from"], errors="coerce")
+    if vf.notna().any():
+        latest_vf = vf.max()
+        latest_year = latest_vf.year
+        latest_month = latest_vf.month
+    else:
+        latest_year = int(df["year"].max())
+        latest_month = int(
+            df[df["year"] == latest_year]["month"].max()
+        )
+
+    df = df[
+        (df["year"] == latest_year) & (df["month"] == latest_month)
+    ].copy()
+
+    logger.info(
+        "Read %d latest monthly forecasts for %d-%02d",
+        len(df), latest_year, latest_month,
+    )
+    return df
+
+
+def read_monthly_combined_forecasts() -> pd.DataFrame:
+    """Read monthly combined forecasts CSV for gap detection.
+
+    Returns:
+        DataFrame with combined forecasts (all models + ensembles),
+        or empty DataFrame if file not found.
+    """
+    intermediate_path = os.getenv(
+        "ieasyforecast_intermediate_data_path", ""
+    )
+    filename = os.getenv(
+        "ieasyforecast_monthly_combined_forecast_file", ""
+    )
+
+    if not intermediate_path or not filename:
+        logger.debug(
+            "Monthly combined forecast env vars not set"
+        )
+        return pd.DataFrame()
+
+    filepath = os.path.join(intermediate_path, filename)
+    if not os.path.exists(filepath):
+        logger.debug(
+            "Monthly combined forecasts CSV not found: %s", filepath
+        )
+        return pd.DataFrame()
+
+    try:
+        df = pd.read_csv(filepath)
+        if "code" in df.columns:
+            df["code"] = df["code"].astype(str).str.replace(
+                r"\.0$", "", regex=True
+            )
+        return df
+    except Exception as e:
+        logger.error(
+            "Failed to read monthly combined forecasts CSV %s: %s",
+            filepath, e,
+        )
+        return pd.DataFrame()

@@ -9,6 +9,7 @@ import os
 import logging
 import datetime as dt
 
+import numpy as np
 import pandas as pd
 
 from src.postprocessing_tools import forecast_target_date
@@ -212,6 +213,270 @@ def create_ensemble_forecasts(
         skill_stats_out = skill_stats.copy()
 
     return joint_forecasts, skill_stats_out
+
+
+def create_monthly_ensemble_forecasts(
+    forecasts: pd.DataFrame,
+    skill_stats: pd.DataFrame,
+) -> pd.DataFrame:
+    """Create EM, Skilled Mean, Naive Mean for monthly forecasts.
+
+    Uses pre-calculated skill metrics to determine highly skilled
+    models, then averages their forecasts (point + quantiles).
+    Does NOT require observations — skill metrics are pre-calculated.
+
+    Horizon-type filtering: This function receives ONLY monthly
+    forecasts (pre-filtered by the data reader). It never mixes
+    forecasts from different horizon types (pentad, decad, etc.).
+
+    Args:
+        forecasts: Monthly forecasts with columns:
+            code, year, month, month_in_year, model_short,
+            forecasted_discharge, q05-q95, valid_from, valid_to,
+            date, flag.
+            Must contain only monthly-horizon forecasts.
+        skill_stats: Pre-calculated monthly skill metrics with:
+            month_in_year, code, model_short, sdivsigma, nse,
+            delta, accuracy, mae, n_pairs.
+
+    Returns:
+        DataFrame with ensemble rows appended to input forecasts.
+        Ensemble rows have model_short in {'EM', 'Skilled Mean',
+        'Naive Mean'} and a 'composition' column.
+    """
+    from src.skill_metrics import (
+        _append_to_joint,
+        _QUANTILE_COLS,
+        filter_for_highly_skilled_forecasts,
+    )
+
+    if forecasts.empty:
+        return pd.DataFrame()
+
+    if skill_stats.empty:
+        logger.warning(
+            "Empty skill metrics — returning forecasts without ensembles"
+        )
+        return forecasts.copy()
+
+    # Ensure month_in_year exists
+    if 'month_in_year' not in forecasts.columns:
+        if 'month' in forecasts.columns:
+            forecasts = forecasts.copy()
+            forecasts['month_in_year'] = forecasts['month']
+
+    # Ensure forecasted_discharge exists (may be q50 from API)
+    if 'forecasted_discharge' not in forecasts.columns:
+        if 'q50' in forecasts.columns:
+            forecasts = forecasts.copy()
+            forecasts['forecasted_discharge'] = (
+                forecasts['q50'].astype(float)
+            )
+
+    joint = forecasts.copy()
+    baselines = {'EM', 'Naive Mean', 'Skilled Mean'}
+
+    # --- EM (threshold-filtered average) ---
+    skill_filtered = filter_for_highly_skilled_forecasts(skill_stats)
+    merge_keys = ['month_in_year', 'code', 'model_short']
+
+    # Normalize types for merge
+    for df in (joint, skill_filtered):
+        if 'month_in_year' in df.columns:
+            df['month_in_year'] = pd.to_numeric(
+                df['month_in_year'], errors='coerce'
+            )
+        if 'code' in df.columns:
+            df['code'] = df['code'].astype(str)
+
+    qualifying = joint.merge(
+        skill_filtered[merge_keys].drop_duplicates(),
+        on=merge_keys, how='inner',
+    )
+    qualifying = qualifying[
+        ~qualifying['model_short'].isin(baselines)
+    ].copy()
+    qualifying = qualifying.dropna(
+        subset=['forecasted_discharge']
+    ).copy()
+
+    n_models = joint[
+        ~joint['model_short'].isin(baselines)
+    ]['model_short'].nunique()
+
+    if n_models > 1 and not qualifying.empty:
+        em_agg = {
+            'month_in_year': 'first',
+            'forecasted_discharge': 'mean',
+            'model_short': composition_agg,
+        }
+        for qcol in _QUANTILE_COLS:
+            if qcol in qualifying.columns:
+                em_agg[qcol] = 'mean'
+        for dcol in ('valid_from', 'valid_to', 'date'):
+            if dcol in qualifying.columns:
+                em_agg[dcol] = 'first'
+
+        em_avg = qualifying.groupby(
+            ['year', 'month', 'code']
+        ).agg(em_agg).reset_index()
+        em_avg = em_avg.rename(columns={'model_short': 'composition'})
+        em_avg['model_short'] = 'EM'
+
+        # Discard single-model ensembles
+        em_avg = em_avg[
+            em_avg['composition'].apply(is_multi_model_composition)
+        ].copy()
+
+        if not em_avg.empty:
+            em_avg['flag'] = 0
+            joint = _append_to_joint(joint, em_avg)
+
+    # --- Skilled Mean (1/MAE weighted average) ---
+    joint = _add_skilled_mean_monthly(
+        joint, skill_filtered, baselines, _QUANTILE_COLS,
+    )
+
+    # --- Naive Mean (unweighted all-model average) ---
+    joint = _add_naive_mean_monthly(
+        joint, baselines, _QUANTILE_COLS,
+    )
+
+    return joint
+
+
+def _add_skilled_mean_monthly(
+    joint: pd.DataFrame,
+    skill_filtered: pd.DataFrame,
+    baselines: set,
+    quantile_cols: list,
+) -> pd.DataFrame:
+    """Add Skilled Mean rows (1/MAE weighted) to joint forecasts.
+
+    Uses the same threshold-filtered model pool as EM.
+    """
+    from src.skill_metrics import _append_to_joint
+
+    filtered = skill_filtered[
+        ~skill_filtered['model_short'].isin(baselines)
+    ].copy()
+    if filtered.empty:
+        return joint
+
+    mae_df = filtered[
+        ['month_in_year', 'code', 'model_short', 'mae']
+    ].copy()
+    mae_df = mae_df.dropna(subset=['mae'])
+    if mae_df.empty:
+        return joint
+
+    # Compute weights: w_i = 1 / (MAE_i + eps)
+    mean_mae = mae_df['mae'].mean()
+    eps = mean_mae / 100.0 if mean_mae > 0 else 1e-10
+    mae_df['weight'] = 1.0 / (mae_df['mae'] + eps)
+
+    qualifying_keys = mae_df[
+        ['month_in_year', 'code', 'model_short']
+    ].drop_duplicates()
+
+    # Filter joint (non-baseline) to qualifying models
+    pool = joint[~joint['model_short'].isin(baselines)].copy()
+    pool = pool.merge(
+        qualifying_keys, on=['month_in_year', 'code', 'model_short'],
+        how='inner',
+    )
+    pool = pool.dropna(subset=['forecasted_discharge']).copy()
+    if pool.empty:
+        return joint
+
+    # Attach weights
+    pool = pool.merge(
+        mae_df[['month_in_year', 'code', 'model_short', 'weight']],
+        on=['month_in_year', 'code', 'model_short'],
+        how='left',
+    )
+
+    def _weighted_mean(group, col):
+        w = pool.loc[group.index, 'weight'].to_numpy()
+        d = group.to_numpy()
+        return np.average(d, weights=w)
+
+    sm_agg = {
+        'month_in_year': ('month_in_year', 'first'),
+        'forecasted_discharge': (
+            'forecasted_discharge',
+            lambda x: _weighted_mean(x, 'forecasted_discharge'),
+        ),
+        'composition': ('model_short', composition_agg),
+    }
+    for qcol in quantile_cols:
+        if qcol in pool.columns:
+            sm_agg[qcol] = (
+                qcol,
+                lambda x, _c=qcol: _weighted_mean(x, _c),
+            )
+    for dcol in ('valid_from', 'valid_to', 'date'):
+        if dcol in pool.columns:
+            sm_agg[dcol] = (dcol, 'first')
+
+    sm_avg = pool.groupby(['year', 'month', 'code']).agg(
+        **sm_agg,
+    ).reset_index()
+    sm_avg['model_short'] = 'Skilled Mean'
+
+    # Discard single-model groups
+    sm_avg = sm_avg[
+        sm_avg['composition'].apply(is_multi_model_composition)
+    ].copy()
+
+    if not sm_avg.empty:
+        sm_avg['flag'] = 0
+        joint = _append_to_joint(joint, sm_avg)
+
+    return joint
+
+
+def _add_naive_mean_monthly(
+    joint: pd.DataFrame,
+    baselines: set,
+    quantile_cols: list,
+) -> pd.DataFrame:
+    """Add Naive Mean rows (unweighted all-model average) to joint."""
+    from src.skill_metrics import _append_to_joint
+
+    pool = joint[~joint['model_short'].isin(baselines)].copy()
+    pool = pool.dropna(subset=['forecasted_discharge']).copy()
+    if pool.empty:
+        return joint
+
+    naive_agg = {
+        'month_in_year': 'first',
+        'forecasted_discharge': 'mean',
+        'model_short': composition_agg,
+    }
+    for qcol in quantile_cols:
+        if qcol in pool.columns:
+            naive_agg[qcol] = 'mean'
+    for dcol in ('valid_from', 'valid_to', 'date'):
+        if dcol in pool.columns:
+            naive_agg[dcol] = 'first'
+
+    naive_avg = pool.groupby(
+        ['year', 'month', 'code']
+    ).agg(naive_agg).reset_index()
+    naive_avg = naive_avg.rename(columns={'model_short': 'composition'})
+    naive_avg['model_short'] = 'Naive Mean'
+
+    # Discard single-model groups
+    naive_avg = naive_avg[
+        naive_avg['composition'].apply(is_multi_model_composition)
+    ].copy()
+
+    if not naive_avg.empty:
+        naive_avg['flag'] = 0
+        joint = _append_to_joint(joint, naive_avg)
+
+    return joint
 
 
 def _calculate_ensemble_skill(

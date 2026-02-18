@@ -176,10 +176,32 @@ def _fill_gaps_for_horizon(
         return
 
     with timer(timing_stats, f'detecting {label} gaps'):
-        gaps = gap_detector.detect_missing_ensembles(combined, lookback)
+        gaps = gap_detector.detect_missing_ensembles(
+            combined, lookback, ensemble_models={'EM', 'NE'},
+        )
 
     if gaps.empty:
         logger.info(f"No {label} ensemble gaps found. Nothing to fill.")
+        return
+
+    # NE gaps are created by the operational pipeline and cannot be
+    # filled by maintenance — warn and keep only EM gaps.
+    ne_gaps = gaps[gaps['model_short'] == 'NE']
+    if not ne_gaps.empty:
+        logger.warning(
+            "Found %d NE gaps (created by operational pipeline, "
+            "not fillable by maintenance): %s",
+            len(ne_gaps),
+            ne_gaps[['date', 'code']].drop_duplicates()
+            .to_dict('records')[:10],
+        )
+    gaps = gaps[gaps['model_short'] == 'EM'].reset_index(drop=True)
+
+    if gaps.empty:
+        logger.info(
+            f"No fillable {label} EM gaps after filtering. "
+            f"Nothing to fill."
+        )
         return
 
     logger.info(

@@ -554,7 +554,7 @@ def _write_monthly_ensemble_to_api(data: pd.DataFrame) -> bool:
 
             record = {
                 "horizon_type": "month",
-                "horizon_value": 0,
+                "horizon_value": month,
                 "code": code,
                 "date": valid_from,
                 "model_type": model_type,

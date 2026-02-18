@@ -139,7 +139,7 @@ class TestEmptyAndSingleRowData:
         df = pd.DataFrame(columns=['date', 'code', 'model_short'])
         result = detect_missing_ensembles(df, lookback_days=7)
         assert result.empty
-        assert list(result.columns) == ['date', 'code']
+        assert list(result.columns) == ['date', 'code', 'model_short']
 
 
 # ---------------------------------------------------------------------------

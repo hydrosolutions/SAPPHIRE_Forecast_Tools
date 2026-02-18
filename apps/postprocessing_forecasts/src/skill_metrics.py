@@ -1101,10 +1101,12 @@ def calculate_skill_metrics_pentad(
 
 
     with timer(timing_stats, 'calculate_skill_metrics_pentad - Filter data'):
-        # We calculate skill metrics only on forecasts after 2010
-        # Filter observed and simulated DataFrames for dates after 2010
-        observed = observed[observed['date'].dt.year >= 2010]
-        simulated = simulated[simulated['date'].dt.year >= 2010]
+        _default_start = dt.date.today().year - 20
+        min_year = int(os.getenv(
+            'SAPPHIRE_SKILL_METRICS_START_YEAR', _default_start
+        ))
+        observed = observed[observed['date'].dt.year >= min_year]
+        simulated = simulated[simulated['date'].dt.year >= min_year]
 
     # Merge the observed and simulated DataFrames
     with timer(timing_stats, 'calculate_skill_metrics_pentad - Initially merge data'):
@@ -1265,10 +1267,12 @@ def calculate_skill_metrics_decade(
             logger.debug("No tuples found after the merge.")
 
     with timer(timing_stats, 'calculate_skill_metrics_decade - Filter data'):
-        # We calculate skill metrics only on forecasts after 2010
-        # Filter observed and simulated DataFrames for dates after 2010
-        observed = observed[observed['date'].dt.year >= 2010]
-        simulated = simulated[simulated['date'].dt.year >= 2010]
+        _default_start = dt.date.today().year - 20
+        min_year = int(os.getenv(
+            'SAPPHIRE_SKILL_METRICS_START_YEAR', _default_start
+        ))
+        observed = observed[observed['date'].dt.year >= min_year]
+        simulated = simulated[simulated['date'].dt.year >= min_year]
 
     # Merge the observed and simulated DataFrames
     with timer(timing_stats, 'calculate_skill_metrics_decade - Initially merge data'):

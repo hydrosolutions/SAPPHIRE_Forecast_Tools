@@ -64,7 +64,7 @@ def _setup_mocks(mock_data, mock_skill, combined=None, gaps=None):
     if combined is None:
         combined = pd.DataFrame()
     if gaps is None:
-        gaps = pd.DataFrame(columns=['date', 'code'])
+        gaps = pd.DataFrame(columns=['date', 'code', 'model_short'])
 
     mock_gap_detector.read_combined_forecasts.return_value = combined
     mock_gap_detector.detect_missing_ensembles.return_value = gaps
@@ -133,7 +133,7 @@ class TestMaintenanceWorkflow:
                 mocks = _setup_mocks(
                     mock_data, mock_skill,
                     combined=combined,
-                    gaps=pd.DataFrame(columns=['date', 'code']),
+                    gaps=pd.DataFrame(columns=['date', 'code', 'model_short']),
                 )
 
                 module, spec = import_maintenance_module()
@@ -157,6 +157,7 @@ class TestMaintenanceWorkflow:
         gaps = pd.DataFrame({
             'date': pd.to_datetime(['2024-01-05']),
             'code': ['10001'],
+            'model_short': ['EM'],
         })
         with patch.dict(os.environ, {'SAPPHIRE_PREDICTION_MODE': 'PENTAD'}):
             with patch.dict(sys.modules, {}):
@@ -190,7 +191,7 @@ class TestMaintenanceWorkflow:
                 mocks = _setup_mocks(
                     mock_data, mock_skill,
                     combined=combined,
-                    gaps=pd.DataFrame(columns=['date', 'code']),
+                    gaps=pd.DataFrame(columns=['date', 'code', 'model_short']),
                 )
 
                 module, spec = import_maintenance_module()
@@ -304,6 +305,7 @@ class TestMaintenanceWorkflow:
         gaps = pd.DataFrame({
             'date': pd.to_datetime(['2024-01-05']),
             'code': ['10001'],
+            'model_short': ['EM'],
         })
         with patch.dict(os.environ, {'SAPPHIRE_PREDICTION_MODE': 'PENTAD'}):
             with patch.dict(sys.modules, {}):
@@ -337,6 +339,7 @@ class TestMaintenanceConcurrentErrors:
         gaps = pd.DataFrame({
             'date': pd.to_datetime(['2024-01-05']),
             'code': ['10001'],
+            'model_short': ['EM'],
         })
         return _setup_mocks(
             mock_data, mock_skill,
@@ -413,6 +416,7 @@ class TestMaintenanceEdgeCases:
         gaps = pd.DataFrame({
             'date': pd.to_datetime(['2024-01-10']),
             'code': ['10001'],
+            'model_short': ['EM'],
         })
         with patch.dict(os.environ, {'SAPPHIRE_PREDICTION_MODE': 'PENTAD'}):
             with patch.dict(sys.modules, {}):
@@ -444,6 +448,7 @@ class TestMaintenanceEdgeCases:
         gaps = pd.DataFrame({
             'date': pd.to_datetime(['2024-01-05']),
             'code': ['10001'],
+            'model_short': ['EM'],
         })
         with patch.dict(os.environ, {'SAPPHIRE_PREDICTION_MODE': 'PENTAD'}):
             with patch.dict(sys.modules, {}):
@@ -476,6 +481,7 @@ class TestMaintenanceEdgeCases:
         gaps = pd.DataFrame({
             'date': pd.to_datetime(['2024-01-05']),
             'code': ['10001'],
+            'model_short': ['EM'],
         })
         with patch.dict(os.environ, {'SAPPHIRE_PREDICTION_MODE': 'PENTAD'}):
             with patch.dict(sys.modules, {}):

@@ -1386,7 +1386,7 @@ class TestWriteMonthlyEnsembleToApi:
                 r for r in records if r['model_type'] == 'EM'
             )
             assert em_rec['horizon_type'] == 'month'
-            assert em_rec['horizon_value'] == 0
+            assert em_rec['horizon_value'] == 6
             assert em_rec['code'] == '15013'
             assert em_rec['date'] == '2024-06-01'
             assert em_rec['valid_from'] == '2024-06-01'

@@ -502,3 +502,122 @@ class TestDeltaValidation:
                 df, 'observed', 'simulated', 'delta'
             )
         assert not any("Delta values vary" in msg for msg in caplog.messages)
+
+
+class TestConfigurableYearFilter:
+    """Tests for SAPPHIRE_SKILL_METRICS_START_YEAR env var in pentad/decad."""
+
+    @pytest.fixture
+    def _observed_multi_year(self):
+        """Observed data: 1 station, 1 pentad, years 2005-2025."""
+        years = list(range(2005, 2026))
+        dates = pd.to_datetime([f'{y}-01-01' for y in years])
+        return pd.DataFrame({
+            'code': ['123'] * len(years),
+            'date': dates,
+            'discharge_avg': [10.0 + i * 0.1 for i in range(len(years))],
+            'model_short': ['Obs'] * len(years),
+            'delta': [1.0] * len(years),
+        })
+
+    @pytest.fixture
+    def _simulated_multi_year(self):
+        """Simulated data: 2 models (MA, MB), 1 station, years 2005-2025."""
+        years = list(range(2005, 2026))
+        dates = pd.to_datetime([f'{y}-01-01' for y in years])
+        n = len(years)
+        return pd.DataFrame({
+            'code': ['123'] * n * 2,
+            'date': list(dates) * 2,
+            'pentad_in_year': ['1'] * n * 2,
+            'pentad_in_month': ['1'] * n * 2,
+            'forecasted_discharge': (
+                [10.0 + i * 0.1 for i in range(n)]
+                + [10.0 + i * 0.15 for i in range(n)]
+            ),
+            'model_short': ['MA'] * n + ['MB'] * n,
+        })
+
+    def test_env_var_filters_pentad_data(
+        self, _observed_multi_year, _simulated_multi_year
+    ):
+        """SAPPHIRE_SKILL_METRICS_START_YEAR=2020 excludes pre-2020 data."""
+        os.environ['SAPPHIRE_SKILL_METRICS_START_YEAR'] = '2020'
+        try:
+            stats, joint, _ = skill_metrics.calculate_skill_metrics_pentad(
+                _observed_multi_year, _simulated_multi_year,
+            )
+            # All pairs should be from 2020 onwards
+            assert joint['date'].min().year >= 2020
+        finally:
+            del os.environ['SAPPHIRE_SKILL_METRICS_START_YEAR']
+
+    def test_default_uses_rolling_window(
+        self, _observed_multi_year, _simulated_multi_year
+    ):
+        """Without env var, uses current_year - 20 as default."""
+        os.environ.pop('SAPPHIRE_SKILL_METRICS_START_YEAR', None)
+        stats, joint, _ = skill_metrics.calculate_skill_metrics_pentad(
+            _observed_multi_year, _simulated_multi_year,
+        )
+        # Default: current_year - 20 = 2006
+        # Data starts 2005, so 2005 should be excluded
+        assert joint['date'].min().year >= 2006
+        assert not joint.empty
+
+    @pytest.fixture
+    def _observed_decad_multi_year(self):
+        """Observed data for decad: 1 station, years 2005-2025."""
+        years = list(range(2005, 2026))
+        dates = pd.to_datetime([f'{y}-01-01' for y in years])
+        return pd.DataFrame({
+            'code': ['123'] * len(years),
+            'date': dates,
+            'discharge_avg': [10.0 + i * 0.1 for i in range(len(years))],
+            'model_short': ['Obs'] * len(years),
+            'delta': [1.0] * len(years),
+        })
+
+    @pytest.fixture
+    def _simulated_decad_multi_year(self):
+        """Simulated decad data: 2 models, 1 station, years 2005-2025."""
+        years = list(range(2005, 2026))
+        dates = pd.to_datetime([f'{y}-01-01' for y in years])
+        n = len(years)
+        return pd.DataFrame({
+            'code': ['123'] * n * 2,
+            'date': list(dates) * 2,
+            'decad_in_year': ['1'] * n * 2,
+            'decad_in_month': ['1'] * n * 2,
+            'forecasted_discharge': (
+                [10.0 + i * 0.1 for i in range(n)]
+                + [10.0 + i * 0.15 for i in range(n)]
+            ),
+            'model_short': ['MA'] * n + ['MB'] * n,
+        })
+
+    def test_env_var_filters_decad_data(
+        self, _observed_decad_multi_year, _simulated_decad_multi_year,
+    ):
+        """SAPPHIRE_SKILL_METRICS_START_YEAR=2020 excludes pre-2020 decad."""
+        os.environ['SAPPHIRE_SKILL_METRICS_START_YEAR'] = '2020'
+        try:
+            stats, joint, _ = skill_metrics.calculate_skill_metrics_decade(
+                _observed_decad_multi_year,
+                _simulated_decad_multi_year,
+            )
+            assert joint['date'].min().year >= 2020
+        finally:
+            del os.environ['SAPPHIRE_SKILL_METRICS_START_YEAR']
+
+    def test_decad_default_uses_rolling_window(
+        self, _observed_decad_multi_year, _simulated_decad_multi_year,
+    ):
+        """Decad without env var uses current_year - 20 as default."""
+        os.environ.pop('SAPPHIRE_SKILL_METRICS_START_YEAR', None)
+        stats, joint, _ = skill_metrics.calculate_skill_metrics_decade(
+            _observed_decad_multi_year,
+            _simulated_decad_multi_year,
+        )
+        assert joint['date'].min().year >= 2006
+        assert not joint.empty

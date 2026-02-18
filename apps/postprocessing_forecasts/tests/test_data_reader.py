@@ -18,6 +18,8 @@ import numpy as np
 from src.data_reader import (
     read_skill_metrics,
     read_monthly_skill_metrics,
+    read_latest_monthly_forecasts,
+    read_monthly_combined_forecasts,
     _read_skill_metrics_csv,
     _read_monthly_skill_metrics_csv,
     _normalize_api_skill_metrics,
@@ -185,8 +187,23 @@ class TestReadSkillMetricsIntegration:
 
     def test_invalid_horizon_type_raises(self):
         """Invalid horizon_type raises ValueError."""
-        with pytest.raises(ValueError, match="'pentad' or 'decad'"):
+        with pytest.raises(ValueError, match="'pentad', 'decad', or 'month'"):
             read_skill_metrics('weekly')
+
+    def test_month_delegates_to_monthly_reader(self):
+        """read_skill_metrics('month') delegates to read_monthly_skill_metrics."""
+        with patch(
+            'src.data_reader.read_monthly_skill_metrics',
+        ) as mock_monthly:
+            mock_monthly.return_value = pd.DataFrame({
+                'month_in_year': [1],
+                'code': ['10001'],
+                'model_short': ['LR'],
+            })
+            result = read_skill_metrics('month')
+            mock_monthly.assert_called_once()
+            assert len(result) == 1
+            assert result.iloc[0]['month_in_year'] == 1
 
     def test_csv_preferred_over_api(self, tmp_path):
         """CSV is used when available; API is not called."""
@@ -907,3 +924,165 @@ class TestReadMonthlySkillMetricsIntegration:
                 result = read_monthly_skill_metrics()
                 assert isinstance(result, pd.DataFrame)
                 assert result.empty
+
+
+# ===================================================================
+# read_latest_monthly_forecasts
+# ===================================================================
+
+class TestReadLatestMonthlyForecasts:
+    """Tests for read_latest_monthly_forecasts."""
+
+    @patch('src.data_reader._read_long_forecasts_api')
+    def test_returns_latest_month_only(self, mock_api):
+        """Filters to the single most recent (year, month)."""
+        raw = pd.DataFrame({
+            'code': ['10001'] * 3,
+            'valid_from': ['2024-06-01', '2024-07-01', '2024-07-01'],
+            'valid_to': ['2024-06-30', '2024-07-31', '2024-07-31'],
+            'model_type': ['GBT', 'GBT', 'LR_Base'],
+            'q50': [100.0, 110.0, 105.0],
+        })
+        mock_api.return_value = raw
+
+        result = read_latest_monthly_forecasts(['10001'])
+        # Only July rows should remain
+        assert len(result) == 2
+        assert all(result['month'] == 7)
+        assert all(result['year'] == 2024)
+        assert 'month_in_year' in result.columns
+        assert 'forecasted_discharge' in result.columns
+
+    @patch('src.data_reader._read_long_forecasts_api')
+    def test_empty_api_returns_empty(self, mock_api):
+        """No data from API returns empty DataFrame."""
+        mock_api.return_value = pd.DataFrame()
+        result = read_latest_monthly_forecasts(['10001'])
+        assert result.empty
+
+    @patch('src.data_reader._read_long_forecasts_api')
+    def test_adds_forecasted_discharge_from_q50(self, mock_api):
+        """forecasted_discharge is created from q50."""
+        raw = pd.DataFrame({
+            'code': ['10001'],
+            'valid_from': ['2024-06-01'],
+            'valid_to': ['2024-06-30'],
+            'model_type': ['GBT'],
+            'q50': [100.0],
+        })
+        mock_api.return_value = raw
+
+        result = read_latest_monthly_forecasts(['10001'])
+        assert result.iloc[0]['forecasted_discharge'] == 100.0
+
+    @patch('src.data_reader._read_long_forecasts_api')
+    def test_api_exception_propagates(self, mock_api):
+        """API exception propagates to caller (entry point handles it)."""
+        mock_api.side_effect = RuntimeError("connection refused")
+        with pytest.raises(RuntimeError, match="connection refused"):
+            read_latest_monthly_forecasts(['10001'])
+
+    @patch('src.data_reader._read_long_forecasts_api')
+    def test_api_returns_none(self, mock_api):
+        """API returning None returns empty DataFrame."""
+        mock_api.return_value = None
+        result = read_latest_monthly_forecasts(['10001'])
+        assert isinstance(result, pd.DataFrame)
+        assert result.empty
+
+    @patch('src.data_reader._read_long_forecasts_api')
+    def test_uses_explicit_forecast_date(self, mock_api):
+        """Explicit forecast_date controls the API year range."""
+        from datetime import date
+        mock_api.return_value = pd.DataFrame()
+
+        read_latest_monthly_forecasts(
+            ['10001'], forecast_date=date(2025, 6, 15),
+        )
+        # 60 days back from June 15 = April 16 -> start_year=2025
+        call_args = mock_api.call_args
+        assert call_args[0][1] == 2025  # start_year
+        assert call_args[0][2] == 2025  # end_year
+
+    @patch('src.data_reader._read_long_forecasts_api')
+    def test_year_boundary_forecast_date(self, mock_api):
+        """forecast_date near year boundary spans two years."""
+        from datetime import date
+        mock_api.return_value = pd.DataFrame()
+
+        read_latest_monthly_forecasts(
+            ['10001'], forecast_date=date(2025, 1, 15),
+        )
+        # 60 days back from Jan 15 = Nov 16, 2024 -> start_year=2024
+        call_args = mock_api.call_args
+        assert call_args[0][1] == 2024  # start_year
+        assert call_args[0][2] == 2025  # end_year
+
+    @patch('src.data_reader._read_long_forecasts_api')
+    def test_multi_station_filters_to_latest(self, mock_api):
+        """Multiple stations, multiple months; only latest month returned."""
+        raw = pd.DataFrame({
+            'code': ['10001', '10001', '10002', '10002'],
+            'valid_from': [
+                '2024-05-01', '2024-06-01', '2024-05-01', '2024-06-01',
+            ],
+            'valid_to': [
+                '2024-05-31', '2024-06-30', '2024-05-31', '2024-06-30',
+            ],
+            'model_type': ['GBT', 'GBT', 'LR_Base', 'LR_Base'],
+            'q50': [90.0, 100.0, 180.0, 200.0],
+        })
+        mock_api.return_value = raw
+
+        result = read_latest_monthly_forecasts(['10001', '10002'])
+        # Only June (latest month) should remain
+        assert len(result) == 2
+        assert all(result['month'] == 6)
+        assert set(result['code'].astype(str)) == {'10001', '10002'}
+
+
+# ===================================================================
+# read_monthly_combined_forecasts
+# ===================================================================
+
+class TestReadMonthlyCombinedForecasts:
+    """Tests for read_monthly_combined_forecasts."""
+
+    def test_reads_csv_file(self, tmp_path):
+        """Reads monthly combined forecasts CSV."""
+        csv_file = tmp_path / "combined_monthly.csv"
+        pd.DataFrame({
+            'year': [2024, 2024],
+            'month': [6, 6],
+            'code': [10001, 10001],
+            'model_short': ['LR', 'TFT'],
+            'forecasted_discharge': [100.0, 105.0],
+        }).to_csv(csv_file, index=False)
+
+        with patch.dict(os.environ, {
+            'ieasyforecast_intermediate_data_path': str(tmp_path),
+            'ieasyforecast_monthly_combined_forecast_file':
+                'combined_monthly.csv',
+        }):
+            result = read_monthly_combined_forecasts()
+            assert len(result) == 2
+            assert result['code'].iloc[0] == '10001'
+
+    def test_missing_file_returns_empty(self, tmp_path):
+        """Missing file returns empty DataFrame."""
+        with patch.dict(os.environ, {
+            'ieasyforecast_intermediate_data_path': str(tmp_path),
+            'ieasyforecast_monthly_combined_forecast_file':
+                'nonexistent.csv',
+        }):
+            result = read_monthly_combined_forecasts()
+            assert result.empty
+
+    def test_missing_env_vars_returns_empty(self):
+        """Unset env vars returns empty DataFrame."""
+        with patch.dict(os.environ, {}, clear=True):
+            for key in ['ieasyforecast_intermediate_data_path',
+                        'ieasyforecast_monthly_combined_forecast_file']:
+                os.environ.pop(key, None)
+            result = read_monthly_combined_forecasts()
+            assert result.empty

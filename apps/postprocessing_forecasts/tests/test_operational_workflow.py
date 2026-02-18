@@ -184,16 +184,13 @@ class TestOperationalWorkflow:
                 assert exc_info.value.code == 0
                 mocks['ensemble_calc'].create_ensemble_forecasts.assert_not_called()
 
-    def test_monthly_mode_reads_monthly_skill_metrics(
+    def test_monthly_mode_redirects_to_long_term(
         self, mock_data, mock_skill
     ):
-        """MONTHLY mode reads monthly skill metrics and exits cleanly."""
+        """MONTHLY mode logs redirect and exits cleanly (no processing)."""
         with patch.dict(os.environ, {'SAPPHIRE_PREDICTION_MODE': 'MONTHLY'}):
             with patch.dict(sys.modules, {}):
                 mocks = _setup_mocks('MONTHLY', mock_data, mock_skill)
-                mocks['data_reader'].read_monthly_skill_metrics.return_value = (
-                    mock_skill
-                )
 
                 module, spec = import_operational_module()
                 spec.loader.exec_module(module)
@@ -202,20 +199,17 @@ class TestOperationalWorkflow:
                     module.postprocessing_operational()
 
                 assert exc_info.value.code == 0
-                # Monthly skill metrics were read
-                mocks['data_reader'].read_monthly_skill_metrics.assert_called_once()
+                # Monthly is now handled by the long-term entry point
+                mocks['data_reader'].read_monthly_skill_metrics.assert_not_called()
                 # Pentad/decad data NOT processed
                 mocks['sl'].read_observed_and_modelled_data_pentade.assert_not_called()
                 mocks['sl'].read_observed_and_modelled_data_decade.assert_not_called()
 
-    def test_all_mode_processes_everything(self, mock_data, mock_skill):
-        """ALL mode processes pentad, decad, and monthly."""
+    def test_all_mode_processes_pentad_and_decad(self, mock_data, mock_skill):
+        """ALL mode processes pentad and decad; monthly redirects to long-term."""
         with patch.dict(os.environ, {'SAPPHIRE_PREDICTION_MODE': 'ALL'}):
             with patch.dict(sys.modules, {}):
                 mocks = _setup_mocks('ALL', mock_data, mock_skill)
-                mocks['data_reader'].read_monthly_skill_metrics.return_value = (
-                    mock_skill
-                )
 
                 module, spec = import_operational_module()
                 spec.loader.exec_module(module)
@@ -226,7 +220,8 @@ class TestOperationalWorkflow:
                 assert exc_info.value.code == 0
                 mocks['sl'].read_observed_and_modelled_data_pentade.assert_called_once()
                 mocks['sl'].read_observed_and_modelled_data_decade.assert_called_once()
-                mocks['data_reader'].read_monthly_skill_metrics.assert_called_once()
+                # Monthly is now handled by the long-term entry point
+                mocks['data_reader'].read_monthly_skill_metrics.assert_not_called()
 
     def test_invalid_mode_exits_with_error(self, mock_data, mock_skill):
         """Invalid SAPPHIRE_PREDICTION_MODE exits with code 1."""

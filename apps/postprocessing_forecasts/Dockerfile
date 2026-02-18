@@ -31,6 +31,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # Default: daily operational mode (fast, reads pre-calculated skill metrics)
 # Override for other entry points:
 #   docker run <image> uv run postprocessing_maintenance.py
+#   docker run <image> uv run postprocessing_operational_long_term.py
+#   docker run <image> uv run postprocessing_maintenance_long_term.py
 #   docker run <image> uv run recalculate_skill_metrics.py
 #   docker run <image> uv run postprocessing_forecasts.py  # legacy (deprecated)
 CMD ["uv", "run", "postprocessing_operational.py"]

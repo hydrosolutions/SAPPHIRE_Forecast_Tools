@@ -232,7 +232,8 @@ def recalculate_skill_metrics():
         if prediction_mode in ['MONTHLY', 'ALL']:
             current_year = dt.date.today().year
             start_year = int(os.getenv(
-                'SAPPHIRE_RECALC_START_YEAR', current_year - 10
+                'SAPPHIRE_SKILL_METRICS_START_YEAR',
+                os.getenv('SAPPHIRE_RECALC_START_YEAR', current_year - 20),
             ))
             end_year = int(os.getenv(
                 'SAPPHIRE_RECALC_END_YEAR', current_year
