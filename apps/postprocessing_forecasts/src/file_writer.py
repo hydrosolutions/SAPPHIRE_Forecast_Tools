@@ -363,7 +363,10 @@ def save_pentadal_skill_metrics(data: pd.DataFrame, year: int = None):
             csv_file_path=filepath,
             data_type="skill metrics pentad",
             key_columns=['code', 'pentad_in_year', 'model_short'],
-            value_columns=['sdivsigma', 'nse', 'delta', 'accuracy', 'mae', 'n_pairs'],
+            value_columns=[
+                'sdivsigma', 'nse', 'delta', 'accuracy', 'mae',
+                'n_pairs', 'pbias', 'kgelf', 'nse_log',
+            ],
         )
 
         if is_consistent:
@@ -436,7 +439,7 @@ def save_monthly_skill_metrics(data: pd.DataFrame, year: int = None):
             key_columns=['code', 'month_in_year', 'model_short'],
             value_columns=[
                 'sdivsigma', 'nse', 'delta', 'accuracy', 'mae',
-                'n_pairs', 'crps',
+                'n_pairs', 'crps', 'pbias', 'kgelf', 'nse_log',
             ],
         )
         if is_consistent:
@@ -626,7 +629,10 @@ def save_decadal_skill_metrics(data: pd.DataFrame, year: int = None):
             csv_file_path=filepath,
             data_type="skill metrics decade",
             key_columns=['code', 'decad_in_year', 'model_short'],
-            value_columns=['sdivsigma', 'nse', 'delta', 'accuracy', 'mae', 'n_pairs'],
+            value_columns=[
+                'sdivsigma', 'nse', 'delta', 'accuracy', 'mae',
+                'n_pairs', 'pbias', 'kgelf', 'nse_log',
+            ],
         )
 
         if is_consistent:

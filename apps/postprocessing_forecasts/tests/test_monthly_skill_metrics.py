@@ -25,6 +25,7 @@ QUANTILE_LEVELS = np.array([0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95])
 EXPECTED_METRIC_COLS = {
     'month_in_year', 'code', 'model_short',
     'sdivsigma', 'nse', 'delta', 'accuracy', 'mae', 'n_pairs', 'crps',
+    'pbias', 'kgelf', 'nse_log',
 }
 
 
@@ -481,7 +482,9 @@ class TestNaiveMeanBaseline:
         obs, fcst = data_two_models
         _, joint, _ = calculate_monthly_skill_metrics(obs, fcst)
         naive_rows = joint[joint['model_short'] == 'Naive Mean']
-        assert len(naive_rows) > 0
+        assert len(naive_rows) == 3, (
+            f"Expected 3 Naive Mean rows (1 station x 3 years), got {len(naive_rows)}"
+        )
         assert 'forecasted_discharge' in naive_rows.columns
         assert 'composition' in naive_rows.columns
 
@@ -1067,7 +1070,9 @@ class TestQuantileAggregation:
         obs, fcst = two_model_data
         _, joint, _ = calculate_monthly_skill_metrics(obs, fcst)
         em_rows = joint[joint['model_short'] == 'EM']
-        assert len(em_rows) > 0
+        assert len(em_rows) == 2, (
+            f"Expected 2 EM rows (1 station x 2 years), got {len(em_rows)}"
+        )
 
         em_2020 = em_rows[em_rows['year'] == 2020].iloc[0]
         assert em_2020['q05'] == pytest.approx(15.0, rel=1e-6)
@@ -1100,7 +1105,9 @@ class TestQuantileAggregation:
         obs, fcst = two_model_data
         _, joint, _ = calculate_monthly_skill_metrics(obs, fcst)
         naive_rows = joint[joint['model_short'] == 'Naive Mean']
-        assert len(naive_rows) > 0
+        assert len(naive_rows) == 2, (
+            f"Expected 2 Naive Mean rows (1 station x 2 years), got {len(naive_rows)}"
+        )
 
         naive_2020 = naive_rows[naive_rows['year'] == 2020].iloc[0]
         assert naive_2020['q05'] == pytest.approx(15.0, rel=1e-6)

@@ -60,6 +60,24 @@ METRIC_REGISTRY = {
         'env_var': 'ieasyhydroforecast_accuracy_threshold',
         'default_threshold': 0.8,
     },
+    'pbias': {
+        'min_points': 2,
+        'higher_is_better': None,  # informational (closer to 0 is better)
+        'env_var': None,
+        'default_threshold': None,
+    },
+    'kgelf': {
+        'min_points': 10,
+        'higher_is_better': True,
+        'env_var': None,
+        'default_threshold': None,
+    },
+    'nse_log': {
+        'min_points': 2,
+        'higher_is_better': True,
+        'env_var': None,
+        'default_threshold': None,
+    },
 }
 
 METRIC_ORDER = list(METRIC_REGISTRY.keys())
@@ -282,6 +300,120 @@ def mae(data: pd.DataFrame, observed_col: str, simulated_col: str):
         return pd.Series([np.nan, 0], index=['mae', 'n_pairs'])
 
 
+def pbias(obs: np.ndarray, sim: np.ndarray) -> float:
+    """Percent Bias: 100 * SUM(obs - sim) / SUM(obs).
+
+    Positive PBIAS indicates model underestimation (sim < obs),
+    negative indicates overestimation (sim > obs).
+
+    Args:
+        obs: Observed values (NaN-free).
+        sim: Simulated values (NaN-free).
+
+    Returns:
+        PBIAS as a percentage. NaN if < 2 points or SUM(obs) near zero.
+    """
+    if len(obs) < 2:
+        return np.nan
+    sum_obs = np.sum(obs)
+    if abs(sum_obs) < 1e-10:
+        return np.nan
+    return 100.0 * np.sum(obs - sim) / sum_obs
+
+
+def _kge(obs: np.ndarray, sim: np.ndarray) -> float:
+    """Kling-Gupta Efficiency: 1 - sqrt((r-1)^2 + (a-1)^2 + (b-1)^2).
+
+    Internal helper for kge_lf(). Not registered in METRIC_REGISTRY.
+
+    Uses sample standard deviation (ddof=1) rather than the population
+    std (ddof=0) in Gupta et al. (2009).  The difference is negligible
+    for n >= 10 (kge_lf's minimum).
+
+    Args:
+        obs: Observed values (NaN-free, >= 2 points).
+        sim: Simulated values (NaN-free, same length as obs).
+
+    Returns:
+        KGE value. NaN if std(obs) or mean(obs) near zero.
+    """
+    if len(obs) < 2:
+        return np.nan
+    obs_mean = np.mean(obs)
+    sim_mean = np.mean(sim)
+    obs_std = np.std(obs, ddof=1)
+    sim_std = np.std(sim, ddof=1)
+    if obs_std < 1e-10 or abs(obs_mean) < 1e-10:
+        return np.nan
+    # Pearson correlation
+    r = np.corrcoef(obs, sim)[0, 1]
+    if not np.isfinite(r):
+        return np.nan
+    alpha = sim_std / obs_std
+    beta = sim_mean / obs_mean
+    return 1.0 - np.sqrt((r - 1) ** 2 + (alpha - 1) ** 2 + (beta - 1) ** 2)
+
+
+def kge_lf(obs: np.ndarray, sim: np.ndarray) -> float:
+    """Low-flow KGE: average of KGE(Q) and KGE(1/(Q+eps)).
+
+    Epsilon = mean(obs) / 100 prevents division by zero in the
+    inverse transformation, giving extra weight to low flows.
+
+    Args:
+        obs: Observed values (NaN-free).
+        sim: Simulated values (NaN-free).
+
+    Returns:
+        KGElf value. NaN if < 10 points or mean(obs) near zero.
+    """
+    if len(obs) < 10:
+        return np.nan
+    obs_mean = np.mean(obs)
+    if abs(obs_mean) < 1e-10:
+        return np.nan
+    eps = obs_mean / 100.0
+    if np.any((obs + eps) <= 0) or np.any((sim + eps) <= 0):
+        return np.nan
+    kge_direct = _kge(obs, sim)
+    kge_inv = _kge(1.0 / (obs + eps), 1.0 / (sim + eps))
+    if np.isnan(kge_direct) or np.isnan(kge_inv):
+        return np.nan
+    return (kge_direct + kge_inv) / 2.0
+
+
+def nse_log(obs: np.ndarray, sim: np.ndarray) -> float:
+    """NSE on log-transformed flows: NSE(log(obs+eps), log(sim+eps)).
+
+    Epsilon = mean(obs) / 100 prevents log(0). Gives extra weight
+    to low-flow performance compared to standard NSE.
+
+    Args:
+        obs: Observed values (NaN-free).
+        sim: Simulated values (NaN-free).
+
+    Returns:
+        NSE_log value. NaN if < 2 points, mean(obs) near zero,
+        or constant log(obs).
+    """
+    if len(obs) < 2:
+        return np.nan
+    obs_mean = np.mean(obs)
+    if abs(obs_mean) < 1e-10:
+        return np.nan
+    eps = obs_mean / 100.0
+    if np.any((obs + eps) <= 0) or np.any((sim + eps) <= 0):
+        return np.nan
+    log_obs = np.log(obs + eps)
+    log_sim = np.log(sim + eps)
+    log_obs_mean = np.mean(log_obs)
+    denom = np.sum((log_obs - log_obs_mean) ** 2)
+    if denom < 1e-10:
+        return np.nan
+    numer = np.sum((log_obs - log_sim) ** 2)
+    return 1.0 - numer / denom
+
+
 # ---------------------------------------------------------------------------
 # Combined single-pass metric calculation
 # ---------------------------------------------------------------------------
@@ -292,10 +424,11 @@ def calculate_all_skill_metrics(
     simulated_col: str,
     delta_col: str,
 ) -> pd.Series:
-    """Calculate all 6 skill metrics in a single pass over the data.
+    """Calculate all skill metrics in a single pass over the data.
 
-    Combines sdivsigma_nse(), mae(), and forecast_accuracy_hydromet()
-    into one function to avoid repeated groupby/merge overhead.
+    Combines sdivsigma_nse(), mae(), forecast_accuracy_hydromet(),
+    and the informational metrics (pbias, kgelf, nse_log) into one
+    function to avoid repeated groupby/merge overhead.
 
     Args:
         data: DataFrame containing observed, simulated, and delta columns.
@@ -305,7 +438,8 @@ def calculate_all_skill_metrics(
 
     Returns:
         pd.Series with keys:
-            sdivsigma, nse, mae, n_pairs, delta, accuracy
+            sdivsigma, nse, mae, n_pairs, delta, accuracy,
+            pbias, kgelf, nse_log
     """
     nan_result = pd.Series(
         [0 if name == 'n_pairs' else np.nan for name in METRIC_ORDER],
@@ -375,7 +509,8 @@ def calculate_all_skill_metrics(
     # --- sdivsigma + NSE (need >= 2 points for std) ---
     if n < 2:
         return pd.Series(
-            [np.nan, np.nan, mae_value, n, delta, accuracy],
+            [np.nan, np.nan, mae_value, n, delta, accuracy,
+             np.nan, np.nan, np.nan],
             index=METRIC_ORDER,
         )
 
@@ -401,8 +536,25 @@ def calculate_all_skill_metrics(
         sdivsigma = np.nan
         nse_value = np.nan
 
+    # --- Informational metrics (pbias, kgelf, nse_log) ---
+    try:
+        pbias_value = pbias(obs, sim)
+    except (RuntimeWarning, FloatingPointError):
+        pbias_value = np.nan
+
+    try:
+        kgelf_value = kge_lf(obs, sim)
+    except (RuntimeWarning, FloatingPointError):
+        kgelf_value = np.nan
+
+    try:
+        nse_log_value = nse_log(obs, sim)
+    except (RuntimeWarning, FloatingPointError):
+        nse_log_value = np.nan
+
     return pd.Series(
-        [sdivsigma, nse_value, mae_value, n, delta, accuracy],
+        [sdivsigma, nse_value, mae_value, n, delta, accuracy,
+         pbias_value, kgelf_value, nse_log_value],
         index=METRIC_ORDER,
     )
 

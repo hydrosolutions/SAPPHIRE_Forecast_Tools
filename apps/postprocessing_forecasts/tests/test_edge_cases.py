@@ -47,7 +47,8 @@ def _make_ensemble_pentad(forecasts, skill_stats, observed):
 
 def _make_skill_row(code, pentad, model_short, sdivsigma=0.3,
                      nse=0.95, accuracy=0.95, delta=5.0,
-                     mae=2.0, n_pairs=10):
+                     mae=2.0, n_pairs=10,
+                     pbias=None, kgelf=None, nse_log=None):
     """Build a single skill stats row."""
     return {
         'pentad_in_year': pentad,
@@ -59,6 +60,9 @@ def _make_skill_row(code, pentad, model_short, sdivsigma=0.3,
         'accuracy': accuracy,
         'mae': mae,
         'n_pairs': n_pairs,
+        'pbias': pbias,
+        'kgelf': kgelf,
+        'nse_log': nse_log,
     }
 
 
@@ -86,6 +90,7 @@ class TestEmptyAndSingleRowData:
         empty = pd.DataFrame(columns=[
             'pentad_in_year', 'code', 'model_short',
             'sdivsigma', 'nse', 'delta', 'accuracy', 'mae', 'n_pairs',
+            'pbias', 'kgelf', 'nse_log',
         ])
         result = filter_for_highly_skilled_forecasts(
             empty, threshold_sdivsigma=0.6,
@@ -606,6 +611,93 @@ class TestDuplicateHandling:
         gaps = detect_missing_ensembles(df, lookback_days=7)
         # Only 1 unique (date, code) pair, and it has no EM
         assert len(gaps) == 1
+
+    def test_duplicate_observed_pentad_inflates_n_pairs(self):
+        """Duplicate (code, date) in observed inflates n_pairs via merge.
+
+        Documents current behavior: the inner merge produces one simulated
+        row per observation duplicate, so n_pairs increases.
+        pentad 1 dates: 2024-01-01..05. We use 3 dates, plus 1 duplicate.
+        """
+        observed = pd.DataFrame({
+            'code': ['10001'] * 4,
+            'date': pd.to_datetime([
+                '2024-01-01', '2024-01-02', '2024-01-03',
+                '2024-01-01',  # duplicate
+            ]),
+            'discharge_avg': [100.0, 110.0, 120.0, 100.0],
+            'model_short': [''] * 4,
+            'delta': [5.0] * 4,
+        })
+        simulated = pd.DataFrame({
+            'code': ['10001'] * 6,
+            'date': pd.to_datetime([
+                '2024-01-01', '2024-01-02', '2024-01-03',
+                '2024-01-01', '2024-01-02', '2024-01-03',
+            ]),
+            'pentad_in_year': ['1'] * 6,
+            'pentad_in_month': ['1'] * 6,
+            'forecasted_discharge': [
+                102.0, 112.0, 118.0,
+                104.0, 114.0, 122.0,
+            ],
+            'model_short': ['LR'] * 3 + ['TFT'] * 3,
+        })
+        with patch.dict(os.environ, {
+            'SAPPHIRE_SKILL_METRICS_START_YEAR': '2020',
+        }):
+            skill_stats, _, _ = skill_metrics.calculate_skill_metrics_pentad(
+                observed, simulated
+            )
+        lr = skill_stats[skill_stats['model_short'] == 'LR']
+        assert len(lr) == 1
+        # Merge produces 4 rows (Jan-01 sim x 2 obs + Jan-02 + Jan-03)
+        assert lr.iloc[0]['n_pairs'] == 4
+
+    def test_duplicate_simulated_pentad_inflates_n_pairs(self):
+        """Duplicate (code, date, model) in simulated inflates n_pairs.
+
+        Documents current behavior: merge cross-products inflate count.
+        Need 2+ models so the ensemble path doesn't hit an empty merge.
+        """
+        observed = pd.DataFrame({
+            'code': ['10001'] * 3,
+            'date': pd.to_datetime([
+                '2024-01-01', '2024-01-02', '2024-01-03',
+            ]),
+            'discharge_avg': [100.0, 110.0, 120.0],
+            'model_short': [''] * 3,
+            'delta': [5.0] * 3,
+        })
+        simulated = pd.DataFrame({
+            'code': ['10001'] * 7,
+            'date': pd.to_datetime([
+                '2024-01-01', '2024-01-01',  # LR duplicate
+                '2024-01-02', '2024-01-03',
+                '2024-01-01', '2024-01-02', '2024-01-03',
+            ]),
+            'pentad_in_year': ['1'] * 7,
+            'pentad_in_month': ['1'] * 7,
+            'forecasted_discharge': [
+                102.0, 108.0, 112.0, 118.0,  # LR (4 rows, 1st dup)
+                104.0, 114.0, 122.0,          # TFT (3 rows)
+            ],
+            'model_short': ['LR'] * 4 + ['TFT'] * 3,
+        })
+        with patch.dict(os.environ, {
+            'SAPPHIRE_SKILL_METRICS_START_YEAR': '2020',
+        }):
+            skill_stats, _, _ = skill_metrics.calculate_skill_metrics_pentad(
+                observed, simulated
+            )
+        lr = skill_stats[skill_stats['model_short'] == 'LR']
+        assert len(lr) == 1
+        # LR: Jan-01 obs x 2 sim + Jan-02 + Jan-03 = 4
+        assert lr.iloc[0]['n_pairs'] == 4
+        # TFT: normal 3 pairs, no duplicates
+        tft = skill_stats[skill_stats['model_short'] == 'TFT']
+        assert len(tft) == 1
+        assert tft.iloc[0]['n_pairs'] == 3
 
 
 # ---------------------------------------------------------------------------

@@ -168,6 +168,10 @@ class SkillMetricBase(BaseModel):
     accuracy: Optional[float] = None
     mae: Optional[float] = None
     n_pairs: Optional[int] = None
+    crps: Optional[float] = None
+    pbias: Optional[float] = None
+    kgelf: Optional[float] = None
+    nse_log: Optional[float] = None
 
 
 class SkillMetricCreate(SkillMetricBase):

@@ -250,33 +250,37 @@ class TestOperationalIntegration:
             (em['code'].astype(str) == '99001') &
             (em['date'] == '2026-01-05')
         ]
-        if not em_99001_latest.empty:
-            expected_em = round(np.mean([
-                _fc('99001', 2026, 'LR'),
-                _fc('99001', 2026, 'TFT'),
-                _fc('99001', 2026, 'TiDE'),
-            ]), 3)
-            actual = em_99001_latest['forecasted_discharge'].iloc[0]
-            assert actual == pytest.approx(expected_em, abs=0.01), (
-                f"99001 EM at 2026-01-05: expected {expected_em}, "
-                f"got {actual}"
-            )
+        assert not em_99001_latest.empty, (
+            "99001 should have EM row at 2026-01-05"
+        )
+        expected_em = round(np.mean([
+            _fc('99001', 2026, 'LR'),
+            _fc('99001', 2026, 'TFT'),
+            _fc('99001', 2026, 'TiDE'),
+        ]), 3)
+        actual = em_99001_latest['forecasted_discharge'].iloc[0]
+        assert actual == pytest.approx(expected_em, abs=0.01), (
+            f"99001 EM at 2026-01-05: expected {expected_em}, "
+            f"got {actual}"
+        )
 
         # Spot-check EM for 99002 — should be mean(LR, TFT) only
         em_99002_latest = em[
             (em['code'].astype(str) == '99002') &
             (em['date'] == '2026-01-05')
         ]
-        if not em_99002_latest.empty:
-            expected_em = round(np.mean([
-                _fc('99002', 2026, 'LR'),
-                _fc('99002', 2026, 'TFT'),
-            ]), 3)
-            actual = em_99002_latest['forecasted_discharge'].iloc[0]
-            assert actual == pytest.approx(expected_em, abs=0.01), (
-                f"99002 EM at 2026-01-05: expected {expected_em}, "
-                f"got {actual}"
-            )
+        assert not em_99002_latest.empty, (
+            "99002 should have EM row at 2026-01-05"
+        )
+        expected_em = round(np.mean([
+            _fc('99002', 2026, 'LR'),
+            _fc('99002', 2026, 'TFT'),
+        ]), 3)
+        actual = em_99002_latest['forecasted_discharge'].iloc[0]
+        assert actual == pytest.approx(expected_em, abs=0.01), (
+            f"99002 EM at 2026-01-05: expected {expected_em}, "
+            f"got {actual}"
+        )
 
     def test_decad_multi_station_ensemble_with_csv_roundtrip(
         self, integration_env
@@ -408,14 +412,15 @@ class TestOperationalIntegration:
         latest = pd.read_csv(latest_path)
 
         # Latest should filter to current year and prior year only
-        if not latest.empty and 'date' in latest.columns:
-            dates = pd.to_datetime(latest['date'])
-            years = set(dates.dt.year)
-            # Should only contain recent years, not 2022
-            assert 2022 not in years, (
-                f"Latest CSV should not contain 2022 data, "
-                f"got years: {years}"
-            )
+        assert not latest.empty, "Latest CSV should not be empty"
+        assert 'date' in latest.columns, "Latest CSV should have 'date' column"
+        dates = pd.to_datetime(latest['date'])
+        years = set(dates.dt.year)
+        # Should only contain recent years, not 2022
+        assert 2022 not in years, (
+            f"Latest CSV should not contain 2022 data, "
+            f"got years: {years}"
+        )
 
     def test_exit_code_zero_on_success(self, integration_env):
         """Verify sys.exit(0) after successful run."""
@@ -1020,12 +1025,15 @@ class TestEdgeCases:
 
         # NE should NOT be in any EM composition
         em = output[output['model_short'] == 'EM']
-        if not em.empty and 'composition' in em.columns:
-            for _, row in em.iterrows():
-                composition = str(row.get('composition', ''))
-                assert 'NE' not in composition, (
-                    f"NE should not be in EM composition: {composition}"
-                )
+        assert not em.empty, "EM rows should exist in output"
+        assert 'composition' in em.columns, (
+            "EM rows should have 'composition' column"
+        )
+        for _, row in em.iterrows():
+            composition = str(row.get('composition', ''))
+            assert 'NE' not in composition, (
+                f"NE should not be in EM composition: {composition}"
+            )
 
     def test_zero_discharge_values_processed_correctly(
         self, integration_env

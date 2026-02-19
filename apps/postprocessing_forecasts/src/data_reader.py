@@ -164,9 +164,11 @@ def _normalize_api_skill_metrics(
     """Convert API column names to CSV-compatible column names.
 
     API returns: horizon_in_year, model_type, code, sdivsigma, nse,
-                 delta, accuracy, mae, n_pairs
+                 delta, accuracy, mae, n_pairs, crps, pbias, kgelf,
+                 nse_log
     CSV expects: pentad_in_year|decad_in_year, model_short,
-                 code, sdivsigma, nse, delta, accuracy, mae, n_pairs
+                 code, sdivsigma, nse, delta, accuracy, mae, n_pairs,
+                 pbias, kgelf, nse_log
     """
     period_col = (
         "pentad_in_year" if horizon_type == "pentad" else "decad_in_year"
@@ -319,8 +321,12 @@ def _normalize_api_monthly_skill_metrics(
 ) -> pd.DataFrame:
     """Convert API column names to CSV-compatible names for monthly.
 
-    API returns: horizon_in_year, model_type, code, ...
-    CSV expects: month_in_year, model_short, code, ...
+    API returns: horizon_in_year, model_type, code, sdivsigma, nse,
+                 delta, accuracy, mae, n_pairs, crps, pbias, kgelf,
+                 nse_log
+    CSV expects: month_in_year, model_short, code, sdivsigma, nse,
+                 delta, accuracy, mae, n_pairs, crps, pbias, kgelf,
+                 nse_log
     """
     rename_map = {
         "horizon_in_year": "month_in_year",

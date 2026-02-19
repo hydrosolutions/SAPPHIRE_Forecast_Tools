@@ -25,6 +25,7 @@ from src.data_reader import (
     read_monthly_forecasts,
     _read_daily_runoff_api,
     _read_long_forecasts_api,
+    SAPPHIRE_API_AVAILABLE,
 )
 
 
@@ -96,6 +97,8 @@ class TestReadDailyRunoffApiIntegration:
         Pagination continues only when len(batch) == batch_size (1000).
         Create a 1000-row first page to trigger page 2 fetch.
         """
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
         # Page 1: exactly 1000 rows -> triggers next page
         dates_p1 = pd.date_range("2020-01-01", periods=1000, freq="D")
         page1 = pd.DataFrame({
@@ -125,6 +128,8 @@ class TestReadDailyRunoffApiIntegration:
 
         With < 1000 rows per code, each code makes exactly one API call.
         """
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
         daily_a = _make_daily_runoff("15013", "2023-06-01", "2023-06-30", 100)
         daily_b = _make_daily_runoff("15020", "2023-06-01", "2023-06-30", 200)
 
@@ -153,6 +158,8 @@ class TestReadDailyRunoffApiIntegration:
 
     def test_date_range_passed_to_client(self):
         """Start and end dates are correctly formatted and passed."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
         mock_client = MagicMock()
         mock_client.read_runoff.return_value = pd.DataFrame()
 
@@ -182,6 +189,8 @@ class TestReadLongForecastsApiIntegration:
 
     def test_calls_read_long_term_forecasts(self):
         """Verify the client method is called with correct params."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
         mock_client = MagicMock()
         mock_client.read_long_term_forecasts.return_value = pd.DataFrame()
 
@@ -204,6 +213,8 @@ class TestReadLongForecastsApiIntegration:
 
         Pagination continues only when len(batch) == batch_size (1000).
         """
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
         # Build a 1000-row first page by repeating records
         base = _make_long_forecast_records("15013", 2023, [1])
         page1 = pd.concat([base] * 1000, ignore_index=True)
@@ -228,6 +239,8 @@ class TestReadLongForecastsApiIntegration:
 
         With < 1000 rows per code, each code makes one API call.
         """
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
         fc_a = _make_long_forecast_records("15013", 2023, [1])
         fc_b = _make_long_forecast_records("15020", 2023, [1])
 

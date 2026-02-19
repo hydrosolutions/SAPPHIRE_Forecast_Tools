@@ -96,6 +96,10 @@ def make_skill_metric(**overrides):
         "accuracy": 0.85,
         "mae": 10.5,
         "n_pairs": 50,
+        "crps": None,
+        "pbias": None,
+        "kgelf": None,
+        "nse_log": None,
     }
     defaults.update(overrides)
     return SkillMetricCreate(**defaults)

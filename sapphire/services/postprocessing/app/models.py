@@ -184,6 +184,10 @@ class SkillMetric(Base):
     accuracy = Column(Float)
     mae = Column(Float)
     n_pairs = Column(Integer)
+    crps = Column(Float)
+    pbias = Column(Float)
+    kgelf = Column(Float)
+    nse_log = Column(Float)
 
     # Composite index for filtering and ordering, plus unique constraint
     __table_args__ = (

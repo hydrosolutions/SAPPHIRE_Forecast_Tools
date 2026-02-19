@@ -21,6 +21,7 @@ sys.path.insert(
 from src.data_reader import (
     read_monthly_observations,
     read_monthly_forecasts,
+    SAPPHIRE_API_AVAILABLE,
 )
 
 
@@ -273,6 +274,8 @@ class TestReadMonthlyObservationsApiFailure:
 
     def test_read_monthly_observations_api_not_ready(self):
         """When preprocessing API is_ready()=False, returns empty."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
         mock_client = MagicMock()
         mock_client.is_ready.return_value = False
 
@@ -465,6 +468,8 @@ class TestReadMonthlyForecastsApiFailure:
 
     def test_read_monthly_forecasts_api_not_ready(self):
         """When postprocessing API is_ready()=False, returns empty."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
         mock_client = MagicMock()
         mock_client.is_ready.return_value = False
 

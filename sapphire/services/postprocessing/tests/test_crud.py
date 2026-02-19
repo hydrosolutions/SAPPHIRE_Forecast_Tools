@@ -283,6 +283,34 @@ class TestSkillMetricCRUD:
         results = crud.get_skill_metric(db_session, code="NONEXISTENT")
         assert results == []
 
+    def test_new_metric_fields_round_trip(self, db_session):
+        """New fields (crps, pbias, kgelf, nse_log) survive round-trip."""
+        item = make_skill_metric(
+            crps=12.5, pbias=-3.2, kgelf=0.65, nse_log=0.72,
+        )
+        bulk = SkillMetricBulkCreate(data=[item])
+        results = crud.create_skill_metric(db_session, bulk)
+
+        assert len(results) == 1
+        r = results[0]
+        assert r.crps == 12.5
+        assert r.pbias == -3.2
+        assert r.kgelf == 0.65
+        assert r.nse_log == 0.72
+
+    def test_new_metric_fields_default_none(self, db_session):
+        """New fields default to None when not provided."""
+        item = make_skill_metric()
+        bulk = SkillMetricBulkCreate(data=[item])
+        results = crud.create_skill_metric(db_session, bulk)
+
+        assert len(results) == 1
+        r = results[0]
+        assert r.crps is None
+        assert r.pbias is None
+        assert r.kgelf is None
+        assert r.nse_log is None
+
 
 # -------------------------------------------------------------------
 # Edge cases

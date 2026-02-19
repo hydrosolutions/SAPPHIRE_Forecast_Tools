@@ -346,6 +346,47 @@ class TestSkillMetricEndpoints:
         desc = resp.json()[0]["model_type_description"]
         assert desc == "Ens. Mean with LR, TFT, TIDE (EM)"
 
+    def test_post_with_new_metric_fields(self, client):
+        """POST with crps/pbias/kgelf/nse_log, verify in GET response."""
+        payload = {"data": [{
+            "horizon_type": "pentad",
+            "code": "15013",
+            "model_type": "LR",
+            "date": "2024-06-15",
+            "horizon_in_year": 33,
+            "nse": 0.75,
+            "crps": 12.5,
+            "pbias": -3.2,
+            "kgelf": 0.65,
+            "nse_log": 0.72,
+        }]}
+        resp = client.post("/skill-metric/", json=payload)
+        assert resp.status_code == 201
+        data = resp.json()
+        assert len(data) == 1
+        assert data[0]["crps"] == 12.5
+        assert data[0]["pbias"] == -3.2
+        assert data[0]["kgelf"] == 0.65
+        assert data[0]["nse_log"] == 0.72
+
+    def test_post_without_new_fields_returns_null(self, client):
+        """POST without new fields returns null for each."""
+        payload = {"data": [{
+            "horizon_type": "pentad",
+            "code": "15013",
+            "model_type": "LR",
+            "date": "2024-06-15",
+            "horizon_in_year": 34,
+            "nse": 0.80,
+        }]}
+        resp = client.post("/skill-metric/", json=payload)
+        assert resp.status_code == 201
+        data = resp.json()
+        assert data[0]["crps"] is None
+        assert data[0]["pbias"] is None
+        assert data[0]["kgelf"] is None
+        assert data[0]["nse_log"] is None
+
 
 # -------------------------------------------------------------------
 # Endpoint edge cases

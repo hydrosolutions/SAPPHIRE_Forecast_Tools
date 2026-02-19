@@ -443,7 +443,11 @@ class SkillMetricDataMigrator(DataMigrator):
                 "delta": float(row['delta']) if pd.notna(row['delta']) else None,
                 "accuracy": float(row['accuracy']) if pd.notna(row['accuracy']) else None,
                 "mae": float(row['mae']) if pd.notna(row['mae']) else None,
-                "n_pairs": float(row['n_pairs']) if pd.notna(row['n_pairs']) else None
+                "n_pairs": float(row['n_pairs']) if pd.notna(row['n_pairs']) else None,
+                "crps": float(row['crps']) if 'crps' in row and pd.notna(row['crps']) else None,
+                "pbias": float(row['pbias']) if 'pbias' in row and pd.notna(row['pbias']) else None,
+                "kgelf": float(row['kgelf']) if 'kgelf' in row and pd.notna(row['kgelf']) else None,
+                "nse_log": float(row['nse_log']) if 'nse_log' in row and pd.notna(row['nse_log']) else None
             }
             records.append(record)
 
@@ -516,7 +520,11 @@ class SkillMetricDataMigrator(DataMigrator):
                 "delta": float(row['delta']) if pd.notna(row['delta']) else None,
                 "accuracy": float(row['accuracy']) if pd.notna(row['accuracy']) else None,
                 "mae": float(row['mae']) if pd.notna(row['mae']) else None,
-                "n_pairs": float(row['n_pairs']) if pd.notna(row['n_pairs']) else None
+                "n_pairs": float(row['n_pairs']) if pd.notna(row['n_pairs']) else None,
+                "crps": float(row['crps']) if 'crps' in row and pd.notna(row['crps']) else None,
+                "pbias": float(row['pbias']) if 'pbias' in row and pd.notna(row['pbias']) else None,
+                "kgelf": float(row['kgelf']) if 'kgelf' in row and pd.notna(row['kgelf']) else None,
+                "nse_log": float(row['nse_log']) if 'nse_log' in row and pd.notna(row['nse_log']) else None
             }
             records.append(record)
 

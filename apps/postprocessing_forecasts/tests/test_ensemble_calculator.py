@@ -338,10 +338,12 @@ class TestCreateEnsembleForecasts:
                 forecasts_pentad, skill_stats_pentad, observed_pentad
             )
             em_rows = joint[joint['model_short'] == 'EM']
-            if not em_rows.empty:
-                composition = em_rows.iloc[0]['composition']
-                assert 'LR' in composition
-                assert 'TFT' in composition
+            assert not em_rows.empty, (
+                "EM rows should exist — LR and TFT both pass thresholds"
+            )
+            composition = em_rows.iloc[0]['composition']
+            assert 'LR' in composition
+            assert 'TFT' in composition
 
     def test_single_tft_ensemble_discarded(self, observed_pentad):
         """Ensemble with only TFT (single model) is discarded."""

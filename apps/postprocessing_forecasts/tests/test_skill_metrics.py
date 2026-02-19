@@ -121,6 +121,7 @@ class TestCalculateSkillMetricsPentad:
         expected_columns = [
             'pentad_in_year', 'code', 'model_short',
             'sdivsigma', 'nse', 'mae', 'n_pairs', 'delta', 'accuracy',
+            'pbias', 'kgelf', 'nse_log',
         ]
         for col in expected_columns:
             assert col in skill_stats.columns, (
@@ -184,7 +185,12 @@ class TestCalculateSkillMetricsPentad:
         _, _, returned = skill_metrics.calculate_skill_metrics_pentad(
             observed, simulated, ts
         )
-        assert len(ts.sections) > 0
+        assert any(s.startswith('start_') for s in ts.sections), (
+            "timing_stats.start() should be called at least once"
+        )
+        assert any(s.startswith('end_') for s in ts.sections), (
+            "timing_stats.end() should be called at least once"
+        )
         assert returned is ts
 
 
@@ -259,6 +265,7 @@ class TestCalculateSkillMetricsDecade:
         expected_columns = [
             'decad_in_year', 'code', 'model_short',
             'sdivsigma', 'nse', 'mae', 'n_pairs', 'delta', 'accuracy',
+            'pbias', 'kgelf', 'nse_log',
         ]
         for col in expected_columns:
             assert col in skill_stats.columns, f"Missing column: {col}"
@@ -362,6 +369,9 @@ class TestCalculateSkillMetricsDecade:
         # be the true mean of both models
         for d in dates[1:]:  # skip the NaN date
             em_at_d = em_rows[em_rows['date'] == d]
+            assert not em_at_d.empty, (
+                f"EM row missing at {d} where both models are valid"
+            )
             if not em_at_d.empty:
                 ma_val = joint[
                     (joint['date'] == d)
@@ -403,10 +413,12 @@ class TestCalculateSkillMetricsDecade:
         )
 
         em_rows = joint[joint['model_short'] == 'EM']
-        if not em_rows.empty:
-            assert em_rows['forecasted_discharge'].notna().all(), (
-                "NaN forecast leaked into pentad ensemble mean"
-            )
+        assert not em_rows.empty, (
+            "EM rows should exist — at least some dates have 2 valid models"
+        )
+        assert em_rows['forecasted_discharge'].notna().all(), (
+            "NaN forecast leaked into pentad ensemble mean"
+        )
 
 
 # ===================================================================

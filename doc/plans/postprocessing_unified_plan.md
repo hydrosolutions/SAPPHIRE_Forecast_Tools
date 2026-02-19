@@ -41,17 +41,19 @@
 | Metrics registry refactoring | **DONE** — `METRIC_REGISTRY`, `METRIC_ORDER`, `THRESHOLD_METRICS` in `skill_metrics.py`. Consolidated 3 copies of `filter_for_highly_skilled_forecasts()`. Deleted 4 dead `model_long`-era functions from `ensemble_calculator.py`. 392 postprocessing tests pass, 0 skips. Commit `f70b29f`. |
 | Monthly skill metrics (Phase 4a) | **DONE** — all 10 steps complete. Monthly readers, CRPS, calculate_monthly_skill_metrics, Skilled Mean (inverse-MAE weighted), Naive Mean, EM baselines, API writer (month horizon + LT model types), file writer, save + log monthly forecasts, recalculate entry point (MONTHLY/ALL modes). 638 postprocessing tests, 0 skips. See [`postprocessing_unified_plan_detailMonthlyForecasts.md`](postprocessing_unified_plan_detailMonthlyForecasts.md) for details. |
 | Quarterly + seasonal skill metrics (Phase 4b) | TODO — deferred, depends on 4a |
-| Tier 1 additional metrics: PBIAS, KGElf, NSE_log (Phase 4c) | TODO — depends on 4a (metrics registry + monthly pipeline) |
-| Tier 2 additional metrics: FHV, FLV, F1/CSI, low-flow contingency (Phase 4d) | TODO — depends on 4c, daily/sub-daily only, yearly calculation |
+| Tier 1 additional metrics: PBIAS, KGElf, NSE_log (Phase 4c) | **DONE** — 3 informational metrics implemented in `skill_metrics.py`, integrated through full pipeline (API writer, file writer, DB schema). 47 new unit tests in `test_tier1_metrics.py`. DB columns added (`crps`, `pbias`, `kgelf`, `nse_log`) to `SkillMetric` model/schema. CRPS DB column bundled with this phase as planned. 818 postprocessing tests, 93 CRUD tests, 0 skips. |
+| Tier 2 additional metrics: FHV, FLV, F1/CSI, low-flow contingency (Phase 4d) | TODO — depends on 4c (now complete), daily/sub-daily only, yearly calculation |
 | Tier 3 deferred metrics: drought events, SSI, BSS (Phase 4e) | DEFERRED — revisit after Tiers 1–2 are operational |
-| Dashboard metrics visualization (FD-002) | TODO — depends on 4c/4d. See [`gi_draft_dashboard_skill_metrics_visualization.md`](issues/gi_draft_dashboard_skill_metrics_visualization.md) |
+| Dashboard metrics visualization (FD-002) | TODO — depends on 4d (4c now complete). See [`gi_draft_dashboard_skill_metrics_visualization.md`](issues/gi_draft_dashboard_skill_metrics_visualization.md) |
 | Bug 6: Single-model ensemble filter only rejects LR | **DONE** — `_is_multi_model_ensemble()` helper replaces hardcoded check |
-| Comprehensive test suite (50+ unit, 12+ integration) | **DONE** — 638 postprocessing tests, 0 skips (all API tests pass via module venv). CRUD service: 89 tests. |
+| Comprehensive test suite (50+ unit, 12+ integration) | **DONE** — 818 postprocessing tests, 0 skips (all API tests pass via module venv). CRUD service: 93 tests. |
 | Bulk-read API endpoints (for `long_term_forecasting`) | Planned — see `doc/plans/bulk_read_endpoints_instructions.md` |
 | API integration | **DONE** — see `doc/plans/sapphire_api_integration_plan.md` |
 | Duplicate skill metrics / ensemble composition issue | **RESOLVED** — see `doc/plans/issues/gi_duplicate_skill_metrics_ensemble_composition.md` |
 | Debug `print()` cleanup | **DONE** — all `print()` in `src/` replaced with `logger.debug()` or removed (commit `41d782e`) |
 | API data-loss warnings | **DONE** — `api_writer.py` `dropna` warnings now log dropped codes/dates for operator investigation (commit `41d782e`) |
+| Test quality refactoring | **DONE** — 12 test files refactored: mock-heavy tests replaced with real file I/O (`test_file_writer.py`, `test_postprocessing_tools.py`, `test_api_integration.py`), weak `if not df.empty` checks replaced with `assert not df.empty`, `os.environ` management replaced with `monkeypatch` |
+| Unified validation script | **DONE** — `apps/run_validation.sh` orchestrates all 3 validation stages (unit tests → local pipeline → Docker smoke tests) with flags (`--skip-docker`, `--skip-pipeline`, `--dry-run`). Documented in `doc/dev/testing_workflow.md` |
 
 ### Pre-requisites (all completed)
 
@@ -100,6 +102,7 @@ apps/postprocessing_forecasts/
 │   ├── test_recalc_workflow.py        # 8 tests (yearly recalc entry point)
 │   ├── test_model_long_removal.py     # 26 tests (INFRA-005 characterization + target tests)
 │   ├── test_skill_metrics.py          # 7 tests (pentad calculation, ensemble creation)
+│   ├── test_tier1_metrics.py          # 47 tests (PBIAS, KGE, KGElf, NSE_log: unit + registry + pipeline)
 │   ├── test_wiring_integration.py     # 23 tests (entry point wiring with real internals)
 │   ├── test_workflow_integration.py   # 16 tests (full E2E with real CSV I/O)
 │   ├── generate_test_data.py          # Test data generator (realistic biases)
@@ -423,12 +426,12 @@ Extend `postprocessing_forecasts` to calculate skill metrics for all temporal re
 
 | Resolution | Forecasts produced by | Point metrics | CRPS | Tier 1 (PBIAS, KGElf, NSE_log) | Tier 2 (FHV, FLV, F1/CSI, low-flow CSI) |
 |------------|----------------------|---------------|------|-------------------------------|------------------------------------------|
-| Daily | `linear_regression`, `machine_learning` | **Done** | Blocked — quantile columns not yet populated | **TODO** (Phase 4c) | **TODO** (Phase 4d) |
-| Pentadal (5-day) | `linear_regression`, `machine_learning` | **Done** | Blocked — quantile columns not yet populated | **TODO** (Phase 4c) | N/A — insufficient temporal resolution |
-| Decadal (10-day) | `linear_regression`, `machine_learning` | **Done** | Blocked — quantile columns not yet populated | **TODO** (Phase 4c) | N/A — insufficient temporal resolution |
-| Monthly | `long_term_forecasting` | **Done** (Phase 4a) | **Done** (Phase 4a) — quantiles available | **TODO** (Phase 4c) | N/A — insufficient temporal resolution |
-| Quarterly | Aggregated from monthly, or direct from `long_term_forecasting` | **TODO** (Phase 4b) | **TODO** (Phase 4b) — quantiles available | **TODO** (Phase 4c) | N/A — insufficient temporal resolution |
-| Seasonal | Aggregated from monthly, or direct from `long_term_forecasting` | **TODO** (Phase 4b) | **TODO** (Phase 4b) — quantiles available | **TODO** (Phase 4c) | N/A — insufficient temporal resolution |
+| Daily | `linear_regression`, `machine_learning` | **Done** | Blocked — quantile columns not yet populated | **Done** (Phase 4c) | **TODO** (Phase 4d) |
+| Pentadal (5-day) | `linear_regression`, `machine_learning` | **Done** | Blocked — quantile columns not yet populated | **Done** (Phase 4c) | N/A — insufficient temporal resolution |
+| Decadal (10-day) | `linear_regression`, `machine_learning` | **Done** | Blocked — quantile columns not yet populated | **Done** (Phase 4c) | N/A — insufficient temporal resolution |
+| Monthly | `long_term_forecasting` | **Done** (Phase 4a) | **Done** (Phase 4a) — quantiles available | **Done** (Phase 4c) | N/A — insufficient temporal resolution |
+| Quarterly | Aggregated from monthly, or direct from `long_term_forecasting` | **TODO** (Phase 4b) | **TODO** (Phase 4b) — quantiles available | **Done** (Phase 4c) — computed if data available | N/A — insufficient temporal resolution |
+| Seasonal | Aggregated from monthly, or direct from `long_term_forecasting` | **TODO** (Phase 4b) | **TODO** (Phase 4b) — quantiles available | **Done** (Phase 4c) — computed if data available | N/A — insufficient temporal resolution |
 
 ### Key Design Decisions
 
@@ -659,7 +662,7 @@ seasonal:
 
 ## Phase 5: Testing Strategy
 
-### Current Tests (375 postprocessing + 76 iEasyHydroForecast + 86 CRUD service, all passing, 0 skips)
+### Current Tests (818 postprocessing + 76 iEasyHydroForecast + 93 CRUD service, all passing, 0 skips)
 
 | File | Tests | Covers |
 |------|-------|--------|
@@ -679,10 +682,12 @@ seasonal:
 | `postprocessing_forecasts/tests/test_calculate_all_skill_metrics.py` | 18 | Unit tests for `calculate_all_skill_metrics()`: happy path (hand-calculated), single point, all-NaN, missing column, constant observations, inf values, return type |
 | `postprocessing_forecasts/tests/test_wiring_integration.py` | 23 | Wiring integration: real internal modules, mocked external boundaries. Operational (4), maintenance (4), exception propagation (2), mismatched shapes (2), recalculate (4), surplus data gap-fill (1), NE exclusion (1), cross-workflow roundtrip (1), varying delta accuracy (1), log_most_recent_forecasts no-crash (3) |
 | `postprocessing_forecasts/tests/test_workflow_integration.py` | 16 | Full E2E with real CSV I/O: operational (6), maintenance (6), recalculate (6 incl. cross-workflow), edge cases (5). Uses committed test_data/ with 3 stations × 4 models. Only `load_environment()` mocked. |
+| `postprocessing_forecasts/tests/test_tier1_metrics.py` | 47 | Phase 4c: PBIAS (10), KGE (7), KGElf (10), NSE_log (9), registry (5), pipeline (6). Hand-calculated verification + edge cases |
 | `postprocessing_forecasts/tests/test_performance.py` | 6 | Benchmarks: triple-groupby vs single-pass, isin vs merge, iterrows vs vectorized |
 | `postprocessing_forecasts/tests/test_constants.py` | — | Shared constants (model names, thresholds, delta) |
 | `iEasyHydroForecast/tests/test_forecast_library.py` | 76 | Includes sdivsigma_nse, MAE, accuracy, atomic write, API failure mode, API client singleton tests |
-| `sapphire/services/postprocessing/tests/test_crud.py` | 86 | CRUD: Forecast, LongForecast, LRForecast, SkillMetric, edge cases, _fallback_upsert direct, combined filters, large batch |
+| `sapphire/services/postprocessing/tests/test_crud.py` | 91 | CRUD: Forecast, LongForecast, LRForecast, SkillMetric, edge cases, _fallback_upsert direct, combined filters, large batch, new metric fields round-trip |
+| `sapphire/services/postprocessing/tests/test_endpoints.py` | — | Endpoint tests including Tier 1 metric POST/GET round-trip |
 
 ### Integration Test Data Flow Coverage Audit
 
@@ -911,7 +916,7 @@ The assertion was already a clean `assert saved_df.empty` when reviewed — no `
 | Gap | Priority | Notes |
 |-----|----------|-------|
 | `src/api_writer.py` tests | **DONE** | Extracted; API tests in `test_api_integration.py` |
-| `src/skill_metrics.py` tests | **DONE** | `test_skill_metrics.py` (7 tests) + `test_calculate_all_skill_metrics.py` (18 tests) |
+| `src/skill_metrics.py` tests | **DONE** | `test_skill_metrics.py` (7 tests) + `test_calculate_all_skill_metrics.py` (18 tests) + `test_tier1_metrics.py` (47 tests) |
 | `src/file_writer.py` tests | **DONE** | `test_file_writer.py` (6 tests) |
 
 #### Performance Benchmarks
@@ -992,7 +997,7 @@ Split into sub-phases: **4a (monthly)** is fully planned, **4b (quarterly + seas
 - [x] `src/file_writer.py`: `save_monthly_forecast_data()` (env var: `ieasyforecast_monthly_combined_forecast_file`) — CSV only, no API write (monthly forecasts already in `long_forecasts` table)
 - [x] `src/postprocessing_tools.py`: `log_most_recent_forecasts_monthly()` — pivot by (year, month), save to forecast_logs/
 - [x] `src/data_reader.py`: readiness checks in `_read_daily_runoff_api()` and `_read_long_forecasts_api()`
-- [x] Tests: unit + edge case + integration + API failure (638 postprocessing tests, 89 CRUD tests, 0 skips)
+- [x] Tests: unit + edge case + integration + API failure (818 postprocessing tests, 93 CRUD tests, 0 skips)
 
 #### Phase 4b: Quarterly & Seasonal Skill Metrics (deferred)
 
@@ -1004,11 +1009,11 @@ Split into sub-phases: **4a (monthly)** is fully planned, **4b (quarterly + seas
 - [ ] Env vars for quarterly/seasonal output file paths
 - [ ] Extend `recalculate_skill_metrics.py` for quarterly/seasonal
 
-#### Phase 4c: Tier 1 Additional Metrics — PBIAS, KGElf, NSE_log (all scales, yearly calculation)
+#### Phase 4c: Tier 1 Additional Metrics — PBIAS, KGElf, NSE_log (all scales, yearly calculation) — DONE
 
 > **Decided 2026-02-17:** Based on operational hydrologist review. These metrics are calculated yearly via `recalculate_skill_metrics.py` and available via API. Dashboard visualization is planned separately (FD-002) but deferred until metrics are operational.
 >
-> **Note:** CRPS DB column migration (adding `crps` to the `SkillMetric` table in PostgreSQL) is bundled with this phase's DB migration, since Phase 4c already requires an `ALTER TABLE` for PBIAS/KGElf/NSE_log. Until then, CRPS is stored in CSV only and set to `NaN` for the API path.
+> **CRPS DB column** bundled with this phase's migration as planned — `crps`, `pbias`, `kgelf`, `nse_log` all added to `SkillMetric` model and schema in one change.
 
 **Rationale:** The current metrics (NSE, accuracy, s/sigma, MAE, CRPS) evaluate overall forecast quality but miss two critical dimensions: (1) **volume bias** — does the model systematically over/underestimate? and (2) **low-flow performance** — is the model reliable during irrigation-critical baseflow periods?
 
@@ -1026,40 +1031,24 @@ Split into sub-phases: **4a (monthly)** is fully planned, **4b (quarterly + seas
 
 **Implementation:**
 
-- [ ] **`src/skill_metrics.py`**: Add `pbias()`, `kge()`, `kge_lf()`, `nse_log()` functions
-- [ ] **`src/skill_metrics.py`**: Register in `METRIC_REGISTRY` (no threshold filtering — these are informational, not used for ensemble selection)
-  ```python
-  METRIC_REGISTRY['pbias'] = {
-      'min_points': 2,
-      'higher_is_better': None,  # closer to 0 is better (signed metric)
-      'env_var': None,
-      'default_threshold': None,
-  }
-  METRIC_REGISTRY['kgelf'] = {
-      'min_points': 10,  # KGE needs meaningful correlation
-      'higher_is_better': True,
-      'env_var': None,
-      'default_threshold': None,
-  }
-  METRIC_REGISTRY['nse_log'] = {
-      'min_points': 2,
-      'higher_is_better': True,
-      'env_var': None,
-      'default_threshold': None,
-  }
-  ```
-- [ ] **`src/skill_metrics.py`**: Extend `calculate_all_skill_metrics()` to include the three new metrics in its return Series
-- [ ] **DB migration**: Add `pbias`, `kgelf`, `nse_log` columns to `SkillMetric` table in `sapphire/services/postprocessing/app/models.py`
-- [ ] **API schema**: Add fields to `SkillMetricBase` in `sapphire/services/postprocessing/app/schemas.py`
-- [ ] **`src/api_writer.py`**: Include new fields in skill metric API writes
-- [ ] **`src/file_writer.py`**: Include new columns in CSV output
-- [ ] **Tests**: Unit tests (happy path + edge cases for each metric), integration tests (full pipeline with new metrics), API write tests
+- [x] **`src/skill_metrics.py`**: Add `pbias()`, `_kge()`, `kge_lf()`, `nse_log()` functions — DONE. `_kge()` is internal helper (not registered). Epsilon = `mean(obs)/100` for inverse transform and log transform.
+- [x] **`src/skill_metrics.py`**: Register in `METRIC_REGISTRY` — DONE. `METRIC_ORDER` now has 9 metrics. All three are informational (`higher_is_better=None` for pbias, `True` for kgelf/nse_log; no `env_var` or `default_threshold`).
+- [x] **`src/skill_metrics.py`**: Extend `calculate_all_skill_metrics()` — DONE. Single-pass calculation includes all 9 metrics.
+- [x] **DB migration**: Add `crps`, `pbias`, `kgelf`, `nse_log` columns to `SkillMetric` table — DONE (`models.py`, all `Float`, nullable).
+- [x] **API schema**: Add fields to `SkillMetricBase` — DONE (`schemas.py`, all `Optional[float]`).
+- [x] **`src/api_writer.py`**: Include new fields in skill metric API writes — DONE. `_write_skill_metrics_to_api()` handles nullable float columns for all 4 new fields.
+- [x] **`src/file_writer.py`**: Include new columns in CSV output — DONE. `save_pentadal_skill_metrics()`, `save_decadal_skill_metrics()`, `save_monthly_skill_metrics()` all include `pbias`, `kgelf`, `nse_log`.
+- [x] **Data migrator**: Updated `_load_skill_metrics_from_csv()` and `_load_monthly_skill_metrics_from_csv()` — DONE. Graceful fallback for legacy CSVs without new columns (`if 'crps' in row and pd.notna(row['crps'])`).
+- [x] **Tests**: 47 new tests in `test_tier1_metrics.py` — DONE. 5 test classes: `TestPbias` (10), `TestKge` (7), `TestKgeLf` (10), `TestNseLog` (9), `TestNewMetricsInRegistry` (5), `TestCalculateAllWithNewMetrics` (6). Hand-calculated verification for each metric. Edge cases: zero obs, constant obs/sim, negative sim, single point, empty array, min_points boundary. Plus 4 CRUD service tests (`test_crud.py`, `test_endpoints.py`).
 
-**Edge cases to test:**
-- All-zero observed flows (PBIAS: division by zero → NaN)
-- Constant observed flow (KGE correlation undefined → NaN)
-- Mixed NaN/valid pairs (metrics computed on valid pairs only)
-- Single data point (below `min_points` → NaN)
+**Edge cases tested** (all in `test_tier1_metrics.py`):
+- [x] All-zero observed flows (PBIAS: division by zero → NaN)
+- [x] Constant observed flow (KGE correlation undefined → NaN)
+- [x] Negative sim values (ML model edge case — PBIAS/NSE_log handle gracefully)
+- [x] Single data point (below `min_points` → NaN)
+- [x] Empty array (→ NaN)
+- [x] Min_points boundary (kgelf: 9 points → NaN, 10 points → computes)
+- [x] Hand-calculated verification for each metric (known inputs → exact expected output)
 
 **References:**
 - Moriasi et al. (2007, 2015) — PBIAS performance thresholds
@@ -1243,7 +1232,7 @@ The following metrics are **not planned** for near-term implementation but docum
 
 #### Lower Priority — Infrastructure + CRUD (#22–#28)
 
-- [ ] Migrate 60+ API tests from os.environ/try-finally to patch.dict
+- [x] ~~Migrate API tests from os.environ/try-finally to monkeypatch~~ — DONE. `test_api_integration.py` fully refactored to use `monkeypatch` fixture + autouse env setup. `test_postprocessing_tools.py` converted to `tmp_path` + `monkeypatch`. Other test files converted from `if not df.empty` to explicit `assert`.
 - [x] ~~`_bulk_upsert` tests~~ (tested via `_fallback_upsert` path in SQLite; 15 new tests in `test_crud.py`: `TestFallbackUpsertDirect` (6), `TestCombinedFilters` (6), `TestLargeBatch` (2), plus pre-existing edge cases)
 - [x] ~~`_fallback_upsert` tests~~ (`TestFallbackUpsertDirect`: insert-only, update-only, mixed, empty, cross-model SkillMetric, refresh verification)
 - [x] ~~CRUD get with filter combinations~~ (`TestCombinedFilters`: code+date+model, target=null, horizon+code, skill metric combined, LR date range, LongForecast combined)
@@ -1359,10 +1348,10 @@ Skill metrics are calculated **per model, per station, per pentad/decad of the y
 | MAE | `mae()` | Mean Absolute Error | (no threshold) | Done |
 | accuracy | `forecast_accuracy_hydromet()` | Fraction within ±delta | > 0.8 (higher is better) | Done |
 | n_pairs | — | Number of forecast-observation pairs | — | Done |
-| CRPS | `calculate_crps()` | Continuous Ranked Probability Score | (no threshold) | 4a |
-| **pbias** | `pbias()` | Percent volume bias (0 = perfect) | (no threshold — informational) | **4c** |
-| **kgelf** | `kge_lf()` | KGE composite for low flows: [KGE(Q) + KGE(1/Q)] / 2 | (no threshold — informational) | **4c** |
-| **nse_log** | `nse_log()` | NSE on log-transformed flows | (no threshold — informational) | **4c** |
+| CRPS | `calculate_crps()` | Continuous Ranked Probability Score | (no threshold) | Done (4a calc, 4c DB column) |
+| pbias | `pbias()` | Percent volume bias (0 = perfect) | (no threshold — informational) | Done (4c) |
+| kgelf | `kge_lf()` | KGE composite for low flows: [KGE(Q) + KGE(1/Q)] / 2 | (no threshold — informational) | Done (4c) |
+| nse_log | `nse_log()` | NSE on log-transformed flows | (no threshold — informational) | Done (4c) |
 | **fhv** | `fdc_fhv()` | Peak flow bias (top 2% of FDC). Daily only. | (no threshold — informational) | **4d** |
 | **flv** | `fdc_flv()` | Low-flow volume bias (bottom 30% FDC). Daily only. | (no threshold — informational) | **4d** |
 | **f1/csi** | `evaluate_threshold_exceedance()` | Flood detection for 2yr/5yr return periods. Daily only. Separate table. | (no threshold — informational) | **4d** |
@@ -1597,3 +1586,4 @@ The following plans are **superseded** by this unified plan (moved to `archive/`
 | 2026-02-17 | Bea/Claude | **Phases 4c/4d/4e added** — additional skill metrics based on operational hydrologist review. **Phase 4c (Tier 1):** PBIAS, KGElf, NSE_log — all temporal scales, yearly calculation, registered in `METRIC_REGISTRY`. Rationale: volume bias (PBIAS) and low-flow evaluation (KGElf, NSE_log) address critical gaps for irrigation regions (Central Asia) and flood regions (Nepal, Switzerland). KGE(1/Q) chosen over KGE(log Q) per Santos et al. (2018). **Phase 4d (Tier 2):** FHV (peak flow bias, top 2% FDC), FLV (low-flow bias, bottom 30% FDC), F1/CSI for 2yr/5yr return periods only (higher return periods lack sufficient events), low-flow contingency (CSI for Q90/Q95). Daily/sub-daily only. Separate `ThresholdSkillMetric` table for parameterized metrics. GEV fit for return period thresholds, minimum 15 years data. **Phase 4e (Tier 3, deferred):** drought event verification, SSI, BSS — revisit after Tiers 1-2 proven useful. **FD-002 dashboard issue created:** `gi_draft_dashboard_skill_metrics_visualization.md` — plain-language interpretation templates for each metric (e.g., "The model overestimates total runoff by 12%"), quality categories (Very good/Good/Fair/Poor), i18n support (Russian). Blocked by 4c/4d. Updated: status summary (6 new items), skill metrics appendix table (13 metrics), related documents. |
 | 2026-02-17 | Bea/Claude | **Monthly pipeline completion: Skilled Mean + cleanup.** (A) Implemented `_add_skilled_mean()` in `skill_metrics.py` — inverse-MAE weighted ensemble baseline (`w_i = 1/(MAE_i + eps)`, same threshold-filtered pool as EM). Added to EM exclusion list and call site between EM and Naive Mean. (B) Cleanup: readiness checks in `data_reader.py` (`_read_daily_runoff_api`, `_read_long_forecasts_api`), `n_pairs` type fix (`float→int` in `schemas.py`), `save_monthly_forecast_data()` in `file_writer.py` (CSV-only, monthly forecasts already in `long_forecasts` table), `log_most_recent_forecasts_monthly()` in `postprocessing_tools.py`, monthly CRUD tests in service test_crud.py, CSV-fallback-on-API-failure test. Test count: 613→638 postprocessing (+25), 86→89 CRUD (+3). CRPS DB column deferred to Phase 4c migration. |
 | 2026-02-17 | Bea/Claude | **Pipeline inconsistency fixes** (8 issues from code review). (1) Atomic CSV writes: `save_forecast_data_pentad/decade()` now use `atomic_write_csv()` with try/except, removed dead `ret =` code. (2) Date string round-trip: moved `get_latest_forecasts()` before date-to-string conversion. (3) Standardized "decad" naming: added `HORIZON_TYPE_TO_API` translation layer in `api_writer.py`, internal code uses "decad" everywhere, translated to "decade" at API boundary. (4) Delta validation: `deltas[-1]` → `deltas[0]` with `np.ptp()` warning in both `forecast_accuracy_hydromet()` and `calculate_all_skill_metrics()`. (5) Monthly skill metrics read-back: added `read_monthly_skill_metrics()` to `data_reader.py` (CSV primary, API fallback), extended `SAPPHIRE_PREDICTION_MODE` to accept MONTHLY and ALL. (6) Extracted `forecast_target_date()` helper in `postprocessing_tools.py`, replaced inline `+ dt.timedelta(days=1.0)` in 3 locations. (7) **Phase 6 added**: Horizon Type Parameterization plan — `HorizonConfig` dataclass to eliminate ~490 lines of pentad/decade duplication. Test count: 598→613. |
+| 2026-02-19 | Bea/Claude | **Phase 4c complete: Tier 1 informational metrics (PBIAS, KGElf, NSE_log).** (A) **Metric implementation** in `skill_metrics.py`: `pbias()` (percent volume bias, positive=underestimation), `_kge()` (internal Kling-Gupta helper), `kge_lf()` (average of KGE(Q) and KGE(1/(Q+eps)), per Garcia et al. 2017), `nse_log()` (NSE on log-transformed flows with eps=mean(obs)/100). All 3 registered in `METRIC_REGISTRY` as informational (no thresholds, not used for ensemble selection). `METRIC_ORDER` now 9 metrics. (B) **Full pipeline integration**: `api_writer.py` handles nullable float columns for crps/pbias/kgelf/nse_log; `file_writer.py` includes 3 new columns in pentadal/decadal/monthly CSV output; `data_reader.py` docstrings updated. (C) **DB schema**: `crps`, `pbias`, `kgelf`, `nse_log` columns added to `SkillMetric` model + `SkillMetricBase` schema (all `Optional[float]`). CRPS DB column bundled here as planned. Data migrator updated with graceful fallback for legacy CSVs. (D) **47 new tests** in `test_tier1_metrics.py`: `TestPbias` (10), `TestKge` (7), `TestKgeLf` (10), `TestNseLog` (9), `TestNewMetricsInRegistry` (5), `TestCalculateAllWithNewMetrics` (6). Hand-calculated verification for each metric. Edge cases: zero obs, constant obs/sim, negative sim, min_points boundary. 4 new CRUD service tests (metric fields round-trip + null defaults). (E) **Test quality refactoring** across 12 test files: mock-heavy tests replaced with real file I/O (`test_file_writer.py` now checks actual CSV content, `test_postprocessing_tools.py` uses `tmp_path` fixture, `test_api_integration.py` uses `monkeypatch`); weak `if not df.empty` checks replaced with `assert not df.empty`; `os.environ` try/finally replaced with `monkeypatch.setenv()`. (F) **Unified validation script** `apps/run_validation.sh` (529 lines): orchestrates run_tests.sh → run_locally.sh → run_docker_tests.sh with flags (`--skip-docker`, `--skip-pipeline`, `--dry-run`), timestamped logging, color output. Documented in `doc/dev/testing_workflow.md`. Test count: 638→818 postprocessing (+180), 89→93 CRUD (+4). |

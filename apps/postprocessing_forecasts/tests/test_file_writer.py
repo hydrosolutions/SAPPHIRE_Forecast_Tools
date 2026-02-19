@@ -459,7 +459,9 @@ class TestSaveMonthlyForecastData:
         )
         assert os.path.exists(csv_path)
         saved = pd.read_csv(csv_path)
-        assert len(saved) > 0
+        assert len(saved) == 4, (
+            f"Expected 4 rows from monthly_joint_data, got {len(saved)}"
+        )
 
     def test_empty_df_handled(self):
         """Empty DataFrame does not crash."""
@@ -470,7 +472,7 @@ class TestSaveMonthlyForecastData:
 
 
 class TestSaveForecastDataAtomicWrites:
-    """Tests that save_forecast_data_pentad/decade use atomic_write_csv."""
+    """Tests that save_forecast_data_pentad/decade write correct output files."""
 
     @pytest.fixture(autouse=True)
     def save_env(self, tmp_path):
@@ -509,12 +511,24 @@ class TestSaveForecastDataAtomicWrites:
             'model_short': ['TFT', 'TFT'],
         })
 
-    @patch('src.file_writer.atomic_write_csv')
-    def test_pentad_uses_atomic_write(self, mock_atomic, pentad_data):
-        """save_forecast_data_pentad calls atomic_write_csv twice."""
+    def test_pentad_writes_two_files(self, pentad_data):
+        """save_forecast_data_pentad writes combined + latest CSVs."""
         with patch.object(api_writer, 'SAPPHIRE_API_AVAILABLE', False):
             file_writer.save_forecast_data_pentad(pentad_data)
-        assert mock_atomic.call_count == 2
+
+        full_csv = self.tmp_path / 'combined_pentad.csv'
+        latest_csv = self.tmp_path / 'combined_pentad_latest.csv'
+        assert full_csv.exists(), "combined_pentad.csv not written"
+        assert latest_csv.exists(), "combined_pentad_latest.csv not written"
+
+        full = pd.read_csv(full_csv)
+        assert len(full) == 2
+        assert set(full['model_short']) == {'LR'}
+        assert list(full['forecasted_discharge']) == [100.0, 110.0]
+
+        latest = pd.read_csv(latest_csv)
+        assert len(latest) >= 1
+        assert 'forecasted_discharge' in latest.columns
 
     @patch('src.file_writer.atomic_write_csv')
     def test_pentad_atomic_write_failure_raises(
@@ -526,12 +540,24 @@ class TestSaveForecastDataAtomicWrites:
             with pytest.raises(IOError, match="disk full"):
                 file_writer.save_forecast_data_pentad(pentad_data)
 
-    @patch('src.file_writer.atomic_write_csv')
-    def test_decade_uses_atomic_write(self, mock_atomic, decade_data):
-        """save_forecast_data_decade calls atomic_write_csv twice."""
+    def test_decade_writes_two_files(self, decade_data):
+        """save_forecast_data_decade writes combined + latest CSVs."""
         with patch.object(api_writer, 'SAPPHIRE_API_AVAILABLE', False):
             file_writer.save_forecast_data_decade(decade_data)
-        assert mock_atomic.call_count == 2
+
+        full_csv = self.tmp_path / 'combined_decad.csv'
+        latest_csv = self.tmp_path / 'combined_decad_latest.csv'
+        assert full_csv.exists(), "combined_decad.csv not written"
+        assert latest_csv.exists(), "combined_decad_latest.csv not written"
+
+        full = pd.read_csv(full_csv)
+        assert len(full) == 2
+        assert set(full['model_short']) == {'TFT'}
+        assert list(full['forecasted_discharge']) == [150.0, 160.0]
+
+        latest = pd.read_csv(latest_csv)
+        assert len(latest) >= 1
+        assert 'forecasted_discharge' in latest.columns
 
     @patch('src.file_writer.atomic_write_csv')
     def test_decade_atomic_write_failure_raises(

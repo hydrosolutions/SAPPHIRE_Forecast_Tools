@@ -332,6 +332,7 @@ class TestCalculateAllSkillMetricsReturnType:
         assert isinstance(result, pd.Series)
         expected_index = [
             'sdivsigma', 'nse', 'mae', 'n_pairs', 'delta', 'accuracy',
+            'pbias', 'kgelf', 'nse_log',
         ]
         assert list(result.index) == expected_index
 
@@ -352,6 +353,7 @@ class TestMetricRegistry:
         """Index order must match legacy for backward compat."""
         assert METRIC_ORDER == [
             'sdivsigma', 'nse', 'mae', 'n_pairs', 'delta', 'accuracy',
+            'pbias', 'kgelf', 'nse_log',
         ]
 
     def test_all_metrics_have_required_keys(self):

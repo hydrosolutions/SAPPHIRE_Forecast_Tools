@@ -431,7 +431,8 @@ def _write_skill_metrics_to_api(
 
         # Build nullable float columns
         metric_cols = {}
-        for col in ('sdivsigma', 'nse', 'delta', 'accuracy', 'mae'):
+        for col in ('sdivsigma', 'nse', 'delta', 'accuracy', 'mae',
+                    'crps', 'pbias', 'kgelf', 'nse_log'):
             if col in df_rec.columns:
                 metric_cols[col] = df_rec[col].where(df_rec[col].notna())
             else:

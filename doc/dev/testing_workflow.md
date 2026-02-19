@@ -48,6 +48,10 @@ Stage 1 ──> Stage 1b ──> Stage 2a ──> Stage 2b ──> Stage 3 ─�
 
 All stages must pass before changes are considered production-ready.
 
+> **Quick start**: `bash apps/run_validation.sh` runs Stage 1 (unit tests).
+> `bash apps/run_validation.sh full` runs Stages 1 + 1b + 2a in sequence.
+> See [Quick Reference](#unified-validation-recommended) for all options.
+
 > **Don't have server access?** Stages 1 + 1b + 2a + 3 (CI) provide sufficient
 > pre-merge validation. Stage 2b and 4 require server infrastructure.
 
@@ -548,6 +552,18 @@ docker build -f ./apps/<module>/Dockerfile . 2>&1 | tee build.log
 ---
 
 ## Quick Reference
+
+### Unified Validation (recommended)
+
+| Action | Command |
+|--------|---------|
+| **Quick validation (tests only)** | `bash apps/run_validation.sh` |
+| **Full validation (all stages)** | `ieasyhydroforecast_env_file_path=<path> bash apps/run_validation.sh full` |
+| Full, skip pipeline | `bash apps/run_validation.sh full --skip-pipeline --skip-ml` |
+| Full, skip Docker | `ieasyhydroforecast_env_file_path=<path> bash apps/run_validation.sh full --skip-docker` |
+| Dry-run check | `bash apps/run_validation.sh full --dry-run` |
+
+`run_validation.sh` orchestrates `run_tests.sh` (Stage 1), `run_locally.sh` (Stage 1b), and `run_docker_tests.sh` (Stage 2a) in sequence. Use `--continue-on-error` to run all stages even if an earlier one fails. Logs are saved to `apps/logs/validation_*.log`.
 
 ### Test Commands
 

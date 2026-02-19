@@ -396,26 +396,32 @@ class TestMonthlyRecalcIntegration:
         combined = _read_output_csv(
             data_dir, 'combined_forecasts_monthly.csv'
         )
-        if not combined.empty:
-            em_combined = combined[
-                (combined['model_short'] == 'EM')
-                & (combined['code'].astype(str) == '99001')
-            ]
-            if not em_combined.empty:
-                # EM should be mean of 3 models' q50
-                sample_year = 2023
-                sample = em_combined[
-                    em_combined['year'] == sample_year
-                ]
-                if not sample.empty:
-                    expected = np.mean([
-                        _fc('99001', sample_year, m) for m in MODELS
-                    ])
-                    actual = sample.iloc[0]['forecasted_discharge']
-                    assert actual == pytest.approx(expected, abs=0.1), (
-                        f"99001 EM discharge: expected {expected}, "
-                        f"got {actual}"
-                    )
+        assert not combined.empty, (
+            "combined_forecasts_monthly.csv should not be empty"
+        )
+        em_combined = combined[
+            (combined['model_short'] == 'EM')
+            & (combined['code'].astype(str) == '99001')
+        ]
+        assert not em_combined.empty, (
+            "99001 should have EM rows in combined monthly output"
+        )
+        # EM should be mean of 3 models' q50
+        sample_year = 2023
+        sample = em_combined[
+            em_combined['year'] == sample_year
+        ]
+        assert not sample.empty, (
+            f"99001 EM should have a row for year {sample_year}"
+        )
+        expected = np.mean([
+            _fc('99001', sample_year, m) for m in MODELS
+        ])
+        actual = sample.iloc[0]['forecasted_discharge']
+        assert actual == pytest.approx(expected, abs=0.1), (
+            f"99001 EM discharge: expected {expected}, "
+            f"got {actual}"
+        )
 
     def test_monthly_skill_csv_column_schema(
         self, monthly_integration_env
@@ -611,14 +617,16 @@ class TestMonthlyRecalcIntegration:
         # EM and baselines now have CRPS from aggregated quantiles
         for baseline in ['EM', 'Naive Mean', 'Skilled Mean']:
             baseline_rows = skill[skill['model_short'] == baseline]
-            if not baseline_rows.empty:
-                crps_values = baseline_rows['crps'].dropna()
-                assert len(crps_values) > 0, (
-                    f"{baseline} should have non-NaN CRPS from quantiles"
-                )
-                assert (crps_values >= 0).all(), (
-                    f"{baseline} CRPS values should be non-negative"
-                )
+            assert not baseline_rows.empty, (
+                f"{baseline} should have rows in skill metrics"
+            )
+            crps_values = baseline_rows['crps'].dropna()
+            assert len(crps_values) > 0, (
+                f"{baseline} should have non-NaN CRPS from quantiles"
+            )
+            assert (crps_values >= 0).all(), (
+                f"{baseline} CRPS values should be non-negative"
+            )
 
 
 # ===================================================================
