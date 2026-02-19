@@ -33,9 +33,6 @@ class MockForecastConfig:
         """Return the operational month lead time."""
         return self._operational_month_lead_time
 
-    def get_operational_month_lead_time(self) -> int:
-        return self.operational_month_lead_time
-
 
 def generate_discharge_data(codes: list, start_year: int, end_year: int,
                             base_values: dict = None, seed: int = 42) -> pd.DataFrame:
