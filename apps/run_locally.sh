@@ -19,6 +19,11 @@
 #   ieasyhydroforecast_env_file_path=/path/to/.env \
 #     bash apps/run_locally.sh long-term
 #
+#   # Long-term with specific years/months:
+#   LT_SIMULATE_YEARS="2024 2025" LT_SIMULATE_NUM_MONTHS=3 \
+#     ieasyhydroforecast_env_file_path=/path/to/.env \
+#     bash apps/run_locally.sh long-term
+#
 # Maintenance usage (gap-fill, hindcast, recalculation):
 #   SAPPHIRE_PREDICTION_MODE=BOTH \
 #     ieasyhydroforecast_env_file_path=/path/to/.env \
@@ -391,28 +396,34 @@ run_postprocessing_forecasts() {
 }
 
 run_long_term_forecasting() {
-    banner "Module: long_term_forecasting"
+    banner "Module: long_term_forecasting (simulate)"
     local start
     start=$(get_timestamp)
     local rc=0
     local any_failed=false
 
+    # Operational run_forecast.py only works on predefined forecast dates,
+    # so we use simulate_forecasts.py instead — it sets a historical "today"
+    # and exercises the same code path.
+    local sim_years="${LT_SIMULATE_YEARS:-2024}"
+    local sim_num_months="${LT_SIMULATE_NUM_MONTHS:-2}"
+
     CURRENT_MODULE_LOG="${ERROR_DIR}/long_term_forecasting.log"
     > "$CURRENT_MODULE_LOG"
-    # If lt_forecast_mode is set, run just that month
+    # If lt_forecast_mode is set, run just that mode
     if [ -n "${lt_forecast_mode:-}" ]; then
-        log INFO "  Running single mode: ${lt_forecast_mode}"
-        run_in_venv long_term_forecasting run_forecast.py \
+        log INFO "  Running single mode: ${lt_forecast_mode} (years=${sim_years}, num_months=${sim_num_months})"
+        run_in_venv long_term_forecasting dev_code/simulate_forecasts.py \
             "lt_forecast_mode=${lt_forecast_mode}" \
-            -- --all \
+            -- --years ${sim_years} --all --num_months "${sim_num_months}" \
             || rc=$?
     else
         # Run all months 0-9; continue even if one fails
         for month in 0 1 2 3 4 5 6 7 8 9; do
-            log INFO "  Month: ${month}"
-            if ! run_in_venv long_term_forecasting run_forecast.py \
+            log INFO "  Month: ${month} (years=${sim_years}, num_months=${sim_num_months})"
+            if ! run_in_venv long_term_forecasting dev_code/simulate_forecasts.py \
                 "lt_forecast_mode=month_${month}" \
-                -- --all; then
+                -- --years ${sim_years} --all --num_months "${sim_num_months}"; then
                 log WARN "  month_${month} failed, continuing with next month"
                 any_failed=true
             fi
@@ -962,6 +973,8 @@ Environment variables:
   ieasyhydroforecast_env_file_path   Path to .env config file (required)
   SAPPHIRE_PREDICTION_MODE           PENTAD, DECAD, or BOTH (short-term/maintenance)
   lt_forecast_mode                   Specific month for long-term (e.g. month_3)
+  LT_SIMULATE_YEARS                  Space-separated years to simulate (default: 2024)
+  LT_SIMULATE_NUM_MONTHS             Months to simulate per year (default: 2)
   POSTPROCESSING_GAPFILL_WINDOW_MONTHS  Lookback for long-term gap-fill (default: 3)
 
 Examples:
