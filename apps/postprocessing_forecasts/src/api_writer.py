@@ -48,6 +48,7 @@ HORIZON_TYPE_TO_API = {
     "pentad": "pentad",
     "decad": "decade",
     "month": "month",
+    "day": "day",
 }
 
 # ---------------------------------------------------------------------------
@@ -362,10 +363,12 @@ def _write_skill_metrics_to_api(
         horizon_in_year_col = "decad_in_year"
     elif horizon_type == "month":
         horizon_in_year_col = "month_in_year"
+    elif horizon_type == "day":
+        horizon_in_year_col = "day_in_year"
     else:
         raise ValueError(
             f"Invalid horizon_type: {horizon_type}. "
-            "Must be 'pentad', 'decad', or 'month'."
+            "Must be 'pentad', 'decad', 'month', or 'day'."
         )
 
     # Prepare records for API (vectorized)
@@ -424,6 +427,13 @@ def _write_skill_metrics_to_api(
             df_rec['_date'] = df_rec[horizon_in_year_col].astype(int).apply(
                 lambda d: tl.get_date_for_decad(d, year)
             )
+        elif horizon_type == "day":
+            df_rec['_date'] = df_rec[horizon_in_year_col].astype(int).apply(
+                lambda doy: (
+                    dt_module.date(year, 1, 1)
+                    + dt_module.timedelta(days=doy - 1)
+                ).strftime('%Y-%m-%d')
+            )
         else:  # month
             df_rec['_date'] = df_rec[horizon_in_year_col].astype(int).apply(
                 lambda m: dt_module.date(year, m, 1).strftime('%Y-%m-%d')
@@ -432,7 +442,7 @@ def _write_skill_metrics_to_api(
         # Build nullable float columns
         metric_cols = {}
         for col in ('sdivsigma', 'nse', 'delta', 'accuracy', 'mae',
-                    'crps', 'pbias', 'kgelf', 'nse_log'):
+                    'crps', 'pbias', 'kgelf', 'nse_log', 'fhv', 'flv'):
             if col in df_rec.columns:
                 metric_cols[col] = df_rec[col].where(df_rec[col].notna())
             else:
@@ -468,6 +478,149 @@ def _write_skill_metrics_to_api(
         return True
     else:
         logger.info(f"No skill metric records to write to API ({horizon_type})")
+        return False
+
+
+def _write_threshold_skill_metrics_to_api(
+    data: pd.DataFrame, year: int
+) -> bool:
+    """Write threshold-based skill metrics to SAPPHIRE API.
+
+    Writes F1/CSI/precision/recall for flood and low-flow thresholds
+    to the ThresholdSkillMetric endpoint.
+
+    Args:
+        data: DataFrame with columns: code, model_short,
+            threshold_type, threshold_value, f1, precision, recall,
+            csi, tp, fp, fn, tn, n_years.
+        year: Target year for the skill metric date.
+
+    Returns:
+        True if successful, False otherwise (never raises).
+    """
+    if data is None or data.empty:
+        logger.info("No threshold skill metrics to write to API")
+        return False
+
+    if not SAPPHIRE_API_AVAILABLE:
+        logger.warning(
+            "sapphire-api-client not installed, skipping "
+            "threshold skill metrics API write"
+        )
+        return False
+
+    api_enabled = (
+        os.getenv("SAPPHIRE_API_ENABLED", "true").lower() == "true"
+    )
+    if not api_enabled:
+        logger.info(
+            "SAPPHIRE API writing disabled via "
+            "SAPPHIRE_API_ENABLED=false"
+        )
+        return False
+
+    client = _get_postprocessing_client()
+    if client is None:
+        return False
+
+    api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
+    if not client.readiness_check():
+        logger.warning(
+            "SAPPHIRE API at %s is not ready, skipping "
+            "threshold skill metrics write", api_url,
+        )
+        return False
+
+    try:
+        df = data.copy()
+
+        # Map model_short to API model_type
+        df['model_type'] = (
+            df['model_short'].astype(str).str.upper()
+            .map(MODEL_TYPE_MAP)
+            .fillna(df['model_short'].astype(str))
+        )
+
+        # Build date from year (use Jan 1 as reference date)
+        date_str = dt_module.date(year, 1, 1).strftime('%Y-%m-%d')
+
+        records = []
+        for _, row in df.iterrows():
+            record = {
+                'code': str(row['code']),
+                'model_type': row['model_type'],
+                'horizon_type': 'day',
+                'threshold_type': str(row['threshold_type']),
+                'threshold_value': (
+                    float(row['threshold_value'])
+                    if pd.notna(row.get('threshold_value'))
+                    else None
+                ),
+                'date': date_str,
+                'n_years': (
+                    int(row['n_years'])
+                    if pd.notna(row.get('n_years'))
+                    else None
+                ),
+            }
+            # Add contingency metrics (nullable)
+            for col in ('f1', 'precision', 'recall', 'csi'):
+                val = row.get(col)
+                record[col] = (
+                    float(val) if pd.notna(val) else None
+                )
+            # Rename 'precision' to avoid SQL keyword conflict
+            if 'precision' in record:
+                record['precision_score'] = record.pop('precision')
+            for col in ('tp', 'fp', 'fn', 'tn'):
+                val = row.get(col)
+                record[col] = (
+                    int(val) if pd.notna(val) else None
+                )
+            records.append(record)
+
+        if not records:
+            logger.info("No threshold skill metric records to write")
+            return False
+
+        logger.debug(
+            "Sample threshold skill metric record: %s", records[0]
+        )
+        # Use write_threshold_skill_metrics if client supports it;
+        # gracefully no-op if endpoint doesn't exist yet (Stage 2).
+        try:
+            count = client.write_threshold_skill_metrics(records)
+            logger.info(
+                "Successfully wrote %d threshold skill metric "
+                "records to API", count,
+            )
+            print(
+                f"SAPPHIRE API: Successfully wrote {count} "
+                f"threshold skill metric records"
+            )
+            return True
+        except AttributeError:
+            logger.info(
+                "Postprocessing client does not support "
+                "write_threshold_skill_metrics yet (Stage 2 pending)"
+            )
+            return False
+        except Exception as e:
+            # If the endpoint returns 404 (not deployed yet), log and
+            # continue — this is expected before Stage 2 is deployed.
+            err_str = str(e)
+            if "404" in err_str or "Not Found" in err_str:
+                logger.info(
+                    "ThresholdSkillMetric endpoint not deployed yet "
+                    "(Stage 2 pending): %s", err_str,
+                )
+                return False
+            raise
+
+    except Exception as e:
+        logger.error(
+            "Failed to write threshold skill metrics to API: %s", e
+        )
         return False
 
 

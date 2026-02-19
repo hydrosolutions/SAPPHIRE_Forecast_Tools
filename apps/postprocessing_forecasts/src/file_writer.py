@@ -568,6 +568,66 @@ def save_monthly_forecast_data(simulated: pd.DataFrame):
     return None
 
 
+def save_daily_skill_metrics(
+    fdc_metrics: pd.DataFrame,
+    threshold_metrics: pd.DataFrame,
+    year: int = None,
+) -> None:
+    """Save daily (Tier 2) skill metrics to API.
+
+    FHV/FLV are written via the existing skill metrics endpoint
+    (horizon_type="day"). Threshold metrics (F1/CSI) are written
+    via the threshold skill metrics endpoint.
+
+    No CSV output — Tier 2 metrics are API-only.
+
+    Args:
+        fdc_metrics: DataFrame with [code, model_short, fhv, flv].
+        threshold_metrics: DataFrame with [code, model_short,
+            threshold_type, threshold_value, f1, precision, recall,
+            csi, tp, fp, fn, tn, n_years].
+        year: Target year for API dates. Defaults to current year.
+
+    Returns:
+        None
+    """
+    resolved_year = _resolve_year(year)
+
+    # Write FHV/FLV via skill metrics API (horizon_type="day")
+    if fdc_metrics is not None and not fdc_metrics.empty:
+        fdc_data = fdc_metrics.copy()
+        # Add required columns for _write_skill_metrics_to_api
+        fdc_data['day_in_year'] = 1  # placeholder — daily metrics
+        # are aggregated across all days, not per-day
+        if api_writer.SAPPHIRE_API_AVAILABLE:
+            try:
+                api_writer._write_skill_metrics_to_api(
+                    fdc_data, "day", resolved_year
+                )
+            except Exception as e:
+                fl._handle_api_write_error(
+                    e, "daily FDC skill metrics"
+                )
+    else:
+        logger.info("No daily FDC metrics to save")
+
+    # Write threshold metrics via threshold skill metrics API
+    if threshold_metrics is not None and not threshold_metrics.empty:
+        if api_writer.SAPPHIRE_API_AVAILABLE:
+            try:
+                api_writer._write_threshold_skill_metrics_to_api(
+                    threshold_metrics, resolved_year
+                )
+            except Exception as e:
+                fl._handle_api_write_error(
+                    e, "daily threshold skill metrics"
+                )
+    else:
+        logger.info("No daily threshold metrics to save")
+
+    return None
+
+
 def save_decadal_skill_metrics(data: pd.DataFrame, year: int = None):
     """
     Saves decadal skill metrics to a csv file.

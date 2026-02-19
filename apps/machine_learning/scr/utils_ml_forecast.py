@@ -563,6 +563,116 @@ def _write_ml_forecast_to_api(data: pd.DataFrame, horizon_type: str, model_type:
         return False
 
 
+def _write_ml_daily_forecast_to_api(
+    data: pd.DataFrame, model_type: str
+) -> bool:
+    """Write daily-resolution forecasts to API with horizon_type='day'.
+
+    Used by the decad pipeline to write 11 daily predictions as
+    day-level records for Tier 2 skill metric computation.
+
+    Args:
+        data: DataFrame with ML forecast data. Expected columns:
+            code, date (target date), forecast_date, flag,
+            Q5, Q25, Q50, Q75, Q95.
+        model_type: ML model name (TFT, TIDE, TSMIXER).
+
+    Returns:
+        True if successful, False otherwise.
+    """
+    if not SAPPHIRE_API_AVAILABLE:
+        logger.warning(
+            "sapphire-api-client not installed, skipping "
+            "ML daily forecast API write"
+        )
+        return False
+
+    api_enabled = (
+        os.getenv("SAPPHIRE_API_ENABLED", "true").lower() == "true"
+    )
+    if not api_enabled:
+        logger.info(
+            "SAPPHIRE API writing disabled via "
+            "SAPPHIRE_API_ENABLED=false"
+        )
+        return False
+
+    api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
+    client = SapphirePostprocessingClient(base_url=api_url)
+
+    if not client.readiness_check():
+        logger.warning(
+            "SAPPHIRE API at %s is not ready, skipping "
+            "ML daily forecast write", api_url,
+        )
+        return False
+
+    model_type_map = {
+        "TFT": "TFT",
+        "TIDE": "TiDE",
+        "TSMIXER": "TSMixer",
+    }
+    api_model_type = model_type_map.get(
+        model_type.upper(), model_type
+    )
+
+    records = []
+    for _, row in data.iterrows():
+        target_date = pd.to_datetime(row['date'])
+        forecast_date = pd.to_datetime(row['forecast_date'])
+        day_of_year = target_date.timetuple().tm_yday
+
+        record = {
+            "horizon_type": "day",
+            "code": str(int(row['code'])),
+            "model_type": api_model_type,
+            "date": forecast_date.strftime('%Y-%m-%d'),
+            "target": target_date.strftime('%Y-%m-%d'),
+            "flag": (
+                int(row['flag'])
+                if pd.notna(row.get('flag')) else None
+            ),
+            "horizon_value": day_of_year,
+            "horizon_in_year": day_of_year,
+            "q05": (
+                float(row['Q5'])
+                if pd.notna(row.get('Q5')) else None
+            ),
+            "q25": (
+                float(row['Q25'])
+                if pd.notna(row.get('Q25')) else None
+            ),
+            "q50": (
+                float(row['Q50'])
+                if pd.notna(row.get('Q50')) else None
+            ),
+            "q75": (
+                float(row['Q75'])
+                if pd.notna(row.get('Q75')) else None
+            ),
+            "q95": (
+                float(row['Q95'])
+                if pd.notna(row.get('Q95')) else None
+            ),
+            "forecasted_discharge": (
+                float(row['Q50'])
+                if pd.notna(row.get('Q50')) else None
+            ),
+        }
+        records.append(record)
+
+    if records:
+        count = client.write_forecasts(records)
+        logger.info(
+            "Successfully wrote %d ML daily forecast records "
+            "to SAPPHIRE API (%s)", count, model_type,
+        )
+        return True
+    else:
+        logger.info("No ML daily forecast records to write to API")
+        return False
+
+
 def _check_ml_forecast_consistency(csv_data: pd.DataFrame, horizon_type: str, model_type: str) -> bool:
     """
     Check consistency between ML forecast data in CSV and API.

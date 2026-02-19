@@ -343,6 +343,177 @@ def _normalize_api_monthly_skill_metrics(
 
 
 # ===================================================================
+# Daily observations and forecasts (for Tier 2 skill metrics)
+# ===================================================================
+
+
+def read_daily_observations(
+    codes: list[str],
+    start_year: int,
+    end_year: int,
+) -> pd.DataFrame:
+    """Read daily runoff observations from preprocessing API.
+
+    Thin wrapper around _read_daily_runoff_api() — no aggregation,
+    returns raw daily data for Tier 2 skill metric calculations.
+
+    Args:
+        codes: Station codes to read.
+        start_year: First year (inclusive).
+        end_year: Last year (inclusive).
+
+    Returns:
+        DataFrame with columns: [code, date, discharge_avg].
+        Empty DataFrame if no data available.
+    """
+    empty = pd.DataFrame(
+        columns=["code", "date", "discharge_avg"]
+    )
+
+    try:
+        daily = _read_daily_runoff_api(codes, start_year, end_year)
+    except Exception as e:
+        logger.error("Failed to read daily observations: %s", e)
+        return empty
+
+    if daily is None or daily.empty:
+        logger.warning("No daily observation data available")
+        return empty
+
+    # Normalize columns
+    df = daily.copy()
+    if "date" in df.columns:
+        df["date"] = pd.to_datetime(df["date"])
+    if "code" in df.columns:
+        df["code"] = df["code"].astype(str).str.replace(
+            r"\.0$", "", regex=True
+        )
+
+    # Keep only needed columns
+    cols = ["code", "date", "discharge_avg"]
+    available = [c for c in cols if c in df.columns]
+    return df[available]
+
+
+def read_daily_forecasts(
+    codes: list[str],
+    start_year: int,
+    end_year: int,
+) -> pd.DataFrame:
+    """Read ML forecasts with horizon_type='day' from postprocessing API.
+
+    Deduplicates: keeps the latest forecast_date per
+    (code, target date, model_short).
+
+    Args:
+        codes: Station codes to read.
+        start_year: First year (inclusive).
+        end_year: Last year (inclusive).
+
+    Returns:
+        DataFrame with columns: [code, date, model_short,
+        forecasted_discharge]. Empty DataFrame if no data.
+    """
+    empty = pd.DataFrame(
+        columns=["code", "date", "model_short",
+                 "forecasted_discharge"]
+    )
+
+    if not SAPPHIRE_API_AVAILABLE:
+        logger.debug("sapphire-api-client not installed, skipping")
+        return empty
+
+    api_enabled = os.getenv("SAPPHIRE_API_ENABLED", "true").lower()
+    if api_enabled == "false":
+        logger.debug("SAPPHIRE_API_ENABLED=false, skipping")
+        return empty
+
+    api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
+
+    try:
+        client = SapphirePostprocessingClient(base_url=api_url)
+        if not client.is_ready():
+            logger.warning(
+                "Postprocessing API not ready at %s", api_url
+            )
+            return empty
+
+        all_records = []
+        start_date = f"{start_year}-01-01"
+        end_date = f"{end_year}-12-31"
+
+        for code in codes:
+            skip = 0
+            batch_size = 1000
+            while True:
+                df_batch = client.read_forecasts(
+                    horizon_type="day",
+                    code=code,
+                    start_date=start_date,
+                    end_date=end_date,
+                    skip=skip,
+                    limit=batch_size,
+                )
+                if df_batch is None or df_batch.empty:
+                    break
+                all_records.append(df_batch)
+                if len(df_batch) < batch_size:
+                    break
+                skip += batch_size
+
+        if not all_records:
+            return empty
+
+        df = pd.concat(all_records, ignore_index=True)
+        return _normalize_daily_forecasts(df)
+
+    except Exception as e:
+        logger.error(
+            "Failed to read daily forecasts from API: %s", e
+        )
+        return empty
+
+
+def _normalize_daily_forecasts(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize API daily forecast response and deduplicate.
+
+    Keeps latest forecast_date per (code, target, model).
+
+    Returns DataFrame with: [code, date, model_short,
+    forecasted_discharge].
+    """
+    df = df.copy()
+
+    # Rename API columns
+    if "model_type" in df.columns:
+        df = df.rename(columns={"model_type": "model_short"})
+    if "target" in df.columns:
+        df = df.rename(columns={"target": "date"})
+
+    # Ensure types
+    if "code" in df.columns:
+        df["code"] = df["code"].astype(str).str.replace(
+            r"\.0$", "", regex=True
+        )
+    if "date" in df.columns:
+        df["date"] = pd.to_datetime(df["date"])
+
+    # Deduplicate: keep latest forecast_date per (code, date, model)
+    date_col = "forecast_date" if "forecast_date" in df.columns else "date"
+    if "forecast_date" in df.columns:
+        df["forecast_date"] = pd.to_datetime(df["forecast_date"])
+        df = df.sort_values("forecast_date", ascending=False)
+        df = df.drop_duplicates(
+            subset=["code", "date", "model_short"], keep="first"
+        )
+
+    # Keep only needed columns
+    cols = ["code", "date", "model_short", "forecasted_discharge"]
+    available = [c for c in cols if c in df.columns]
+    return df[available].reset_index(drop=True)
+
+
+# ===================================================================
 # Monthly observations (daily runoff → monthly mean)
 # ===================================================================
 

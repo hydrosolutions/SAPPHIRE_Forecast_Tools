@@ -1119,6 +1119,7 @@ class TestHorizonTypeToApiMapping:
             "pentad": "pentad",
             "decad": "decade",
             "month": "month",
+            "day": "day",
         }
 
     def test_old_decade_string_raises_combined_forecast(self):

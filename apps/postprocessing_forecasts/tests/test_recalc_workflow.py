@@ -324,7 +324,7 @@ class TestRecalcMonthly:
         self, mock_data, mock_skill, mock_monthly_obs, mock_monthly_forecasts,
         mock_monthly_skill,
     ):
-        """ALL mode runs pentad + decad + monthly."""
+        """ALL mode runs pentad + decad + monthly + daily."""
         with patch.dict(os.environ, {'SAPPHIRE_PREDICTION_MODE': 'ALL'}):
             with patch.dict(sys.modules, {}):
                 mocks = _setup_mocks(mock_data, mock_skill)
@@ -339,6 +339,22 @@ class TestRecalcMonthly:
                     mock_monthly_skill, pd.DataFrame(), None
                 )
 
+                # Daily mocks
+                mocks['data_reader'].read_daily_observations.return_value = (
+                    pd.DataFrame(
+                        columns=['code', 'date', 'discharge_avg']
+                    )
+                )
+                mocks['data_reader'].read_daily_forecasts.return_value = (
+                    pd.DataFrame(
+                        columns=['code', 'date', 'model_short',
+                                 'forecasted_discharge']
+                    )
+                )
+                mocks['skill_metrics'].calculate_daily_skill_metrics.return_value = (
+                    pd.DataFrame(), pd.DataFrame()
+                )
+
                 module, spec = import_recalc_module()
                 spec.loader.exec_module(module)
 
@@ -351,10 +367,11 @@ class TestRecalcMonthly:
 
                 assert exc_info.value.code == 0
 
-                # All three pipelines called
+                # All four pipelines called
                 mocks['skill_metrics'].calculate_skill_metrics_pentad.assert_called_once()
                 mocks['skill_metrics'].calculate_skill_metrics_decade.assert_called_once()
                 mocks['skill_metrics'].calculate_monthly_skill_metrics.assert_called_once()
+                mocks['skill_metrics'].calculate_daily_skill_metrics.assert_called_once()
                 mocks['file_writer'].save_pentadal_skill_metrics.assert_called_once()
                 mocks['file_writer'].save_decadal_skill_metrics.assert_called_once()
                 mocks['file_writer'].save_monthly_skill_metrics.assert_called_once()

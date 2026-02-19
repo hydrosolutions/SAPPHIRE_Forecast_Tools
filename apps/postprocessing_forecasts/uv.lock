@@ -364,6 +364,7 @@ dependencies = [
     { name = "pytz" },
     { name = "requests" },
     { name = "sapphire-api-client" },
+    { name = "scipy" },
 ]
 
 [package.optional-dependencies]
@@ -384,6 +385,7 @@ requires-dist = [
     { name = "pytz", specifier = ">=2024.1" },
     { name = "requests", specifier = ">=2.32.0" },
     { name = "sapphire-api-client", git = "https://github.com/hydrosolutions/sapphire-api-client.git?rev=a457728fae1a270ae7b6932227c3bdb90a635900" },
+    { name = "scipy", specifier = ">=1.11.0" },
 ]
 provides-extras = ["dev"]
 

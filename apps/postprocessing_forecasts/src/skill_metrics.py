@@ -80,6 +80,20 @@ METRIC_REGISTRY = {
     },
 }
 
+# Tier 2 daily metrics — computed by calculate_daily_skill_metrics(),
+# NOT by calculate_all_skill_metrics().  Separate registry because
+# these are per-(code, model) across all days, not per-period.
+DAILY_METRIC_REGISTRY = {
+    'fhv': {
+        'min_points': 50,
+        'higher_is_better': None,  # informational (closer to 0 is better)
+    },
+    'flv': {
+        'min_points': 10,
+        'higher_is_better': None,  # informational (closer to 0 is better)
+    },
+}
+
 METRIC_ORDER = list(METRIC_REGISTRY.keys())
 
 THRESHOLD_METRICS = {
@@ -412,6 +426,345 @@ def nse_log(obs: np.ndarray, sim: np.ndarray) -> float:
         return np.nan
     numer = np.sum((log_obs - log_sim) ** 2)
     return 1.0 - numer / denom
+
+
+# ---------------------------------------------------------------------------
+# Tier 2: FDC-based and threshold-based daily metrics
+# ---------------------------------------------------------------------------
+
+
+def fdc_fhv(obs: np.ndarray, sim: np.ndarray) -> float:
+    """FDC High Volume bias (%). Top 2% of sorted discharge.
+
+    Measures how well the model reproduces high-flow volume.
+    Positive = overestimation, negative = underestimation.
+    Yilmaz et al. (2008), Eq. 2.
+
+    Args:
+        obs: Observed daily discharge (NaN-free).
+        sim: Simulated daily discharge (NaN-free, same length).
+
+    Returns:
+        FHV as a percentage. NaN if <50 points or sum(obs_high) near 0.
+    """
+    if len(obs) < 50:
+        return np.nan
+    n = len(obs)
+    # Top 2% threshold index (at least 1 point)
+    k = max(int(np.ceil(n * 0.02)), 1)
+    obs_sorted = np.sort(obs)[::-1]  # descending
+    sim_sorted = np.sort(sim)[::-1]
+    obs_high = obs_sorted[:k]
+    sim_high = sim_sorted[:k]
+    sum_obs_high = np.sum(obs_high)
+    if abs(sum_obs_high) < 1e-10:
+        return np.nan
+    return 100.0 * (np.sum(sim_high) - sum_obs_high) / sum_obs_high
+
+
+def fdc_flv(obs: np.ndarray, sim: np.ndarray) -> float:
+    """FDC Low Volume bias (%). Bottom 30% of log-FDC.
+
+    Measures how well the model reproduces low-flow volume using
+    the log-transformed flow duration curve.
+    Positive = overestimation, negative = underestimation.
+    Yilmaz et al. (2008), Eq. 4.
+
+    Args:
+        obs: Observed daily discharge (NaN-free).
+        sim: Simulated daily discharge (NaN-free, same length).
+
+    Returns:
+        FLV as a percentage. NaN if <10 points, or any low-flow <= 0.
+    """
+    if len(obs) < 10:
+        return np.nan
+    n = len(obs)
+    # Bottom 30% threshold index (at least 1 point)
+    k = max(int(np.floor(n * 0.3)), 1)
+    obs_sorted = np.sort(obs)[::-1]  # descending
+    sim_sorted = np.sort(sim)[::-1]
+    # Bottom 30% = last k elements of descending sort
+    obs_low = obs_sorted[-k:]
+    sim_low = sim_sorted[-k:]
+    if np.any(obs_low <= 0) or np.any(sim_low <= 0):
+        return np.nan
+    log_obs_low = np.log(obs_low)
+    log_sim_low = np.log(sim_low)
+    sum_log_obs = np.sum(log_obs_low)
+    if abs(sum_log_obs) < 1e-10:
+        return np.nan
+    return 100.0 * (np.sum(log_sim_low) - sum_log_obs) / sum_log_obs
+
+
+def estimate_return_period_thresholds(
+    annual_maxima: np.ndarray,
+    return_periods: tuple[int, ...] = (2, 5),
+) -> dict[int, float]:
+    """GEV fit to annual maxima → return-period thresholds.
+
+    Uses scipy.stats.genextreme to fit a Generalized Extreme Value
+    distribution and compute discharge thresholds for given return
+    periods.
+
+    Args:
+        annual_maxima: Array of annual maximum discharge values.
+        return_periods: Tuple of return periods in years.
+
+    Returns:
+        Dict mapping return period → threshold discharge.
+        Empty dict if <15 years of data or fit fails.
+    """
+    from scipy.stats import genextreme
+
+    if len(annual_maxima) < 15:
+        return {}
+    # Remove NaN
+    am = annual_maxima[~np.isnan(annual_maxima)]
+    if len(am) < 15:
+        return {}
+    # Check for constant data (GEV fit would fail)
+    if np.ptp(am) < 1e-10:
+        return {}
+    try:
+        shape, loc, scale = genextreme.fit(am)
+        result = {}
+        for rp in return_periods:
+            # Exceedance probability = 1/rp
+            # CDF quantile = 1 - 1/rp
+            result[rp] = float(genextreme.ppf(1.0 - 1.0 / rp, shape,
+                                              loc=loc, scale=scale))
+        return result
+    except Exception:
+        logger.debug("GEV fit failed for annual maxima", exc_info=True)
+        return {}
+
+
+def binary_contingency(
+    obs: np.ndarray,
+    sim: np.ndarray,
+    threshold: float,
+    above: bool = True,
+) -> dict:
+    """Binary contingency table + F1/precision/recall/CSI.
+
+    Classifies each (obs, sim) pair as exceedance or non-exceedance
+    relative to *threshold*, then computes the contingency table.
+
+    Args:
+        obs: Observed values (NaN-free).
+        sim: Simulated values (NaN-free, same length).
+        threshold: Discharge threshold for event definition.
+        above: If True, event = value >= threshold (floods).
+               If False, event = value <= threshold (low-flow).
+
+    Returns:
+        Dict with keys: tp, fp, fn, tn, f1, precision, recall, csi.
+        Metrics are NaN when undefined (e.g., no observed events).
+    """
+    if above:
+        obs_event = obs >= threshold
+        sim_event = sim >= threshold
+    else:
+        obs_event = obs <= threshold
+        sim_event = sim <= threshold
+
+    tp = int(np.sum(obs_event & sim_event))
+    fp = int(np.sum(~obs_event & sim_event))
+    fn = int(np.sum(obs_event & ~sim_event))
+    tn = int(np.sum(~obs_event & ~sim_event))
+
+    precision = tp / (tp + fp) if (tp + fp) > 0 else np.nan
+    recall = tp / (tp + fn) if (tp + fn) > 0 else np.nan
+    if np.isnan(precision) or np.isnan(recall) or (precision + recall) == 0:
+        f1 = np.nan
+    else:
+        f1 = 2.0 * precision * recall / (precision + recall)
+    csi = tp / (tp + fp + fn) if (tp + fp + fn) > 0 else np.nan
+
+    return {
+        'tp': tp, 'fp': fp, 'fn': fn, 'tn': tn,
+        'f1': f1, 'precision': precision, 'recall': recall, 'csi': csi,
+    }
+
+
+def lowflow_quantiles(obs: np.ndarray) -> dict[str, float]:
+    """Q90 (10th percentile) and Q95 (5th percentile) of daily flow.
+
+    In hydrology, Q90 means the flow exceeded 90% of the time, i.e.,
+    the 10th percentile. Similarly Q95 = 5th percentile.
+
+    Args:
+        obs: Observed daily discharge (NaN-free).
+
+    Returns:
+        Dict with 'q90' and 'q95' keys. Empty dict if <365 points.
+    """
+    if len(obs) < 365:
+        return {}
+    return {
+        'q90': float(np.percentile(obs, 10)),
+        'q95': float(np.percentile(obs, 5)),
+    }
+
+
+def calculate_daily_skill_metrics(
+    obs_df: pd.DataFrame,
+    sim_df: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Calculate all Tier 2 daily skill metrics per (code, model_short).
+
+    Joins observations and simulations on (code, date), then computes:
+    - FDC metrics: FHV, FLV
+    - Threshold metrics: GEV-based return period F1/CSI, low-flow F1/CSI
+
+    Args:
+        obs_df: DataFrame with columns [code, date, discharge_avg].
+        sim_df: DataFrame with columns [code, date, model_short,
+                forecasted_discharge].
+
+    Returns:
+        Tuple of (fdc_metrics_df, threshold_metrics_df).
+
+        fdc_metrics_df columns: [code, model_short, fhv, flv]
+        threshold_metrics_df columns: [code, model_short, threshold_type,
+            threshold_value, f1, precision, recall, csi, tp, fp, fn, tn,
+            n_years]
+    """
+    fdc_records = []
+    threshold_records = []
+
+    empty_fdc = pd.DataFrame(
+        columns=['code', 'model_short', 'fhv', 'flv']
+    )
+    empty_threshold = pd.DataFrame(
+        columns=['code', 'model_short', 'threshold_type',
+                 'threshold_value', 'f1', 'precision', 'recall', 'csi',
+                 'tp', 'fp', 'fn', 'tn', 'n_years']
+    )
+
+    if obs_df.empty or sim_df.empty:
+        return empty_fdc, empty_threshold
+
+    # Ensure date columns are datetime
+    obs = obs_df.copy()
+    sim = sim_df.copy()
+    obs['date'] = pd.to_datetime(obs['date'])
+    sim['date'] = pd.to_datetime(sim['date'])
+
+    # Merge on (code, date) — inner join
+    merged = pd.merge(
+        sim[['code', 'date', 'model_short', 'forecasted_discharge']],
+        obs[['code', 'date', 'discharge_avg']],
+        on=['code', 'date'],
+        how='inner',
+    )
+
+    if merged.empty:
+        return empty_fdc, empty_threshold
+
+    # Pre-compute GEV thresholds and low-flow quantiles per code
+    # (based on observations only)
+    gev_cache = {}  # code -> {2: threshold, 5: threshold}
+    lowflow_cache = {}  # code -> {'q90': val, 'q95': val}
+    for code, grp in obs.groupby('code'):
+        obs_vals = grp['discharge_avg'].dropna().to_numpy(
+            dtype=np.float64
+        )
+        # Annual maxima for GEV
+        years = grp.set_index('date')['discharge_avg'].dropna()
+        if not years.empty:
+            annual_max = years.resample('YE').max().dropna().to_numpy(
+                dtype=np.float64
+            )
+            gev_cache[code] = estimate_return_period_thresholds(
+                annual_max
+            )
+        else:
+            gev_cache[code] = {}
+        lowflow_cache[code] = lowflow_quantiles(obs_vals)
+
+    # Compute metrics per (code, model_short)
+    for (code, model), grp in merged.groupby(['code', 'model_short']):
+        # Drop NaN pairs
+        valid = grp.dropna(
+            subset=['discharge_avg', 'forecasted_discharge']
+        )
+        if valid.empty:
+            continue
+
+        obs_arr = valid['discharge_avg'].to_numpy(dtype=np.float64)
+        sim_arr = valid['forecasted_discharge'].to_numpy(dtype=np.float64)
+
+        # FDC metrics
+        fhv_val = fdc_fhv(obs_arr, sim_arr)
+        flv_val = fdc_flv(obs_arr, sim_arr)
+        fdc_records.append({
+            'code': code,
+            'model_short': model,
+            'fhv': fhv_val,
+            'flv': flv_val,
+        })
+
+        # GEV-based flood thresholds
+        gev_thresholds = gev_cache.get(code, {})
+        n_years = len(
+            obs[obs['code'] == code].set_index('date')
+            ['discharge_avg'].dropna().resample('YE').max().dropna()
+        )
+        min_events = {2: 5, 5: 3}
+        for rp, thresh in gev_thresholds.items():
+            cont = binary_contingency(obs_arr, sim_arr, thresh,
+                                      above=True)
+            # Check minimum observed exceedance events
+            n_obs_events = cont['tp'] + cont['fn']
+            min_req = min_events.get(rp, 3)
+            if n_obs_events < min_req:
+                cont = {k: (np.nan if k in ('f1', 'precision',
+                            'recall', 'csi') else v)
+                        for k, v in cont.items()}
+            threshold_records.append({
+                'code': code,
+                'model_short': model,
+                'threshold_type': f'flood_{rp}yr',
+                'threshold_value': thresh,
+                'n_years': n_years,
+                **cont,
+            })
+
+        # Low-flow thresholds
+        lf = lowflow_cache.get(code, {})
+        for lf_name, lf_thresh in [('q90', lf.get('q90')),
+                                    ('q95', lf.get('q95'))]:
+            if lf_thresh is None:
+                continue
+            cont = binary_contingency(obs_arr, sim_arr, lf_thresh,
+                                      above=False)
+            # Minimum 30 below-threshold observations
+            n_below = cont['tp'] + cont['fn']
+            if n_below < 30:
+                cont = {k: (np.nan if k in ('f1', 'precision',
+                            'recall', 'csi') else v)
+                        for k, v in cont.items()}
+            threshold_records.append({
+                'code': code,
+                'model_short': model,
+                'threshold_type': f'lowflow_{lf_name}',
+                'threshold_value': lf_thresh,
+                'n_years': n_years,
+                **cont,
+            })
+
+    fdc_df = (
+        pd.DataFrame(fdc_records) if fdc_records else empty_fdc
+    )
+    threshold_df = (
+        pd.DataFrame(threshold_records)
+        if threshold_records
+        else empty_threshold
+    )
+
+    return fdc_df, threshold_df
 
 
 # ---------------------------------------------------------------------------

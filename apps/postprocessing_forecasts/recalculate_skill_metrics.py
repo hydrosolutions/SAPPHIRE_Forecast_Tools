@@ -58,7 +58,7 @@ logger.addHandler(console_handler)
 
 timing_stats = TimingStats()
 
-VALID_MODES = ['PENTAD', 'DECAD', 'BOTH', 'MONTHLY', 'ALL']
+VALID_MODES = ['PENTAD', 'DECAD', 'BOTH', 'MONTHLY', 'DAILY', 'ALL']
 
 
 def _read_station_codes():
@@ -300,6 +300,73 @@ def recalculate_skill_metrics():
                     )
 
             pt.log_most_recent_forecasts_monthly(monthly_joint)
+
+        if prediction_mode in ['DAILY', 'ALL']:
+            current_year = dt.date.today().year
+            start_year = int(os.getenv(
+                'SAPPHIRE_SKILL_METRICS_START_YEAR',
+                os.getenv('SAPPHIRE_RECALC_START_YEAR', current_year - 20),
+            ))
+            end_year = int(os.getenv(
+                'SAPPHIRE_RECALC_END_YEAR', current_year
+            ))
+            codes = _read_station_codes()
+
+            with timer(timing_stats, 'reading daily data'):
+                logger.info(
+                    "\n\n------ Reading daily observed and forecast "
+                    "data -------"
+                )
+                daily_obs = data_reader.read_daily_observations(
+                    codes, start_year, end_year
+                )
+                daily_fc = data_reader.read_daily_forecasts(
+                    codes, start_year, end_year
+                )
+
+            with timer(timing_stats, 'calculating daily skill metrics'):
+                logger.info(
+                    "\n\n------ Calculating daily skill metrics ---------"
+                )
+                try:
+                    fdc_metrics, threshold_metrics = (
+                        skill_metrics.calculate_daily_skill_metrics(
+                            daily_obs, daily_fc
+                        )
+                    )
+                    logger.info(
+                        "Daily metrics: %d FDC rows, %d threshold rows",
+                        len(fdc_metrics), len(threshold_metrics),
+                    )
+                except Exception as e:
+                    logger.error(
+                        "Failed to calculate daily skill metrics: %s", e
+                    )
+                    errors.append(
+                        f"Daily skill metrics calculation failed: {e}"
+                    )
+                    fdc_metrics = None
+                    threshold_metrics = None
+
+            with timer(timing_stats, 'saving daily results'):
+                logger.info(
+                    "\n\n------ Saving daily results --------------------"
+                )
+                try:
+                    file_writer.save_daily_skill_metrics(
+                        fdc_metrics, threshold_metrics,
+                        year=skill_metrics_year,
+                    )
+                    logger.info(
+                        "Daily skill metrics saved successfully."
+                    )
+                except Exception as e:
+                    logger.error(
+                        "Error saving daily skill metrics: %s", e
+                    )
+                    errors.append(
+                        f"Daily skill metrics save failed: {e}"
+                    )
 
     # Print timing summary
     summary, total = timing_stats.summary()

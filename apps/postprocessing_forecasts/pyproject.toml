@@ -21,6 +21,8 @@ dependencies = [
     "python-dotenv>=1.0.1",
     # HTTP requests
     "requests>=2.32.0",
+    # Scientific computing (GEV distribution for return period thresholds)
+    "scipy>=1.11.0",
     # SAPPHIRE API client for database-backed I/O
     "sapphire-api-client @ git+https://github.com/hydrosolutions/sapphire-api-client.git@a457728fae1a270ae7b6932227c3bdb90a635900",
     # Local library dependency
