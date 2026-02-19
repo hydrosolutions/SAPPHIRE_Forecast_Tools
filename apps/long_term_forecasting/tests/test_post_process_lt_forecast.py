@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 from unittest.mock import MagicMock
 
 # Add parent directory to path
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+#sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from post_process_lt_forecast import (
     infer_q_columns,
@@ -27,7 +27,11 @@ from post_process_lt_forecast import (
 class MockForecastConfig:
     """Mock ForecastConfig for testing without environment dependencies."""
     def __init__(self, operational_month_lead_time: int = 2):
-        self.operational_month_lead_time = operational_month_lead_time
+        self._operational_month_lead_time = operational_month_lead_time
+
+    def get_operational_month_lead_time(self) -> int:
+        """Return the operational month lead time."""
+        return self._operational_month_lead_time
 
     def get_operational_month_lead_time(self) -> int:
         return self.operational_month_lead_time
@@ -516,14 +520,25 @@ class TestPostProcessLtForecastOperational:
             assert (result[q_col].dropna() >= 0).all()
 
     def test_operational_uses_all_historical_years(self, operational_setup):
-        """Test that operational mode uses all historical years except prediction year."""
+        """Test that operational mode uses all historical years except prediction year.
+
+        Note: The final output doesn't include internal statistics columns.
+        We verify this indirectly by testing calculate_lt_statistics_fc_period.
+        """
         config, discharge_data, forecast_data = operational_setup
 
-        # The prediction year is 2024, so all years 2010-2023 should be used
-        result = post_process_lt_forecast(config, discharge_data, forecast_data)
+        # Test using the internal function directly
+        fc_period_stats = calculate_lt_statistics_fc_period(
+            discharge_data=discharge_data,
+            prediction_data=forecast_data
+        )
 
-        # fc_period_lt_n should be 14 (2010-2023)
-        assert (result['fc_period_lt_n'] == 14).all()
+        # fc_period_lt_n should be 14 (2010-2023, excluding 2024)
+        assert (fc_period_stats['fc_period_lt_n'] == 14).all()
+
+        # Also verify main function runs successfully
+        result = post_process_lt_forecast(config, discharge_data, forecast_data)
+        assert len(result) == 2  # 2 codes
 
 
 class TestPostProcessLtForecastHindcast:
@@ -565,20 +580,45 @@ class TestPostProcessLtForecastHindcast:
             assert q_col in result.columns
 
     def test_hindcast_leave_one_out(self, hindcast_setup):
-        """Test that each hindcast year excludes only its own year."""
+        """Test that each hindcast year excludes only its own year.
+
+        Note: The final output doesn't include internal statistics columns.
+        We verify this indirectly by testing the internal functions.
+        """
         config, discharge_data, forecast_data = hindcast_setup
 
-        result = post_process_lt_forecast(config, discharge_data, forecast_data)
+        # Test using the internal function directly for fc_period stats
+        fc_period_stats = calculate_lt_statistics_fc_period(
+            discharge_data=discharge_data,
+            prediction_data=forecast_data
+        )
 
         # Each forecast should have N = 10 (11 years - 1 excluded)
         # 2018 forecast: uses 2010-2017, 2019-2020 (10 years)
         # 2019 forecast: uses 2010-2018, 2020 (10 years)
         # 2020 forecast: uses 2010-2019 (10 years)
-        assert (result['fc_period_lt_n'] == 10).all()
-        assert (result['calendar_month_lt_n'] == 10).all()
+        assert (fc_period_stats['fc_period_lt_n'] == 10).all()
+
+        # Test calendar month stats
+        prediction_years = [2018, 2019, 2020]
+        calendar_month_stats = calculate_lt_statistics_calendar_month(
+            discharge_data=discharge_data,
+            prediction_years=prediction_years
+        )
+        # For June (target month from April + 2), each year should have N=10
+        june_stats = calendar_month_stats[calendar_month_stats['month'] == 6]
+        assert (june_stats['calendar_month_lt_n'] == 10).all()
+
+        # Also verify main function runs successfully
+        result = post_process_lt_forecast(config, discharge_data, forecast_data)
+        assert len(result) == 3  # 3 years
 
     def test_hindcast_no_data_leakage(self, hindcast_setup):
-        """Test that prediction year data is not used in statistics."""
+        """Test that prediction year data is not used in statistics.
+
+        Note: The final output doesn't include internal statistics columns.
+        We verify this by testing the internal functions directly.
+        """
         config, discharge_data, forecast_data = hindcast_setup
 
         # Modify discharge for 2020 to be very different
@@ -586,25 +626,35 @@ class TestPostProcessLtForecastHindcast:
         mask_2020 = discharge_data_modified['date'].dt.year == 2020
         discharge_data_modified.loc[mask_2020, 'discharge'] *= 10  # 10x higher
 
-        result = post_process_lt_forecast(config, discharge_data_modified, forecast_data)
+        # Test using the internal function directly
+        fc_period_stats = calculate_lt_statistics_fc_period(
+            discharge_data=discharge_data_modified,
+            prediction_data=forecast_data
+        )
 
-        # Get the 2020 forecast result
-        result['forecast_year'] = pd.to_datetime(result['date']).dt.year
-        result_2020 = result[result['forecast_year'] == 2020]
+        # Add forecast year to stats for filtering
+        fc_period_stats['forecast_year'] = pd.to_datetime(
+            fc_period_stats['valid_from']
+        ).dt.year
 
-        # The fc_period_lt_mean for 2020 should NOT include the modified 2020 data
-        # It should be similar to other years' fc_period_lt_mean
-        result_2019 = result[result['forecast_year'] == 2019]
+        # Get stats for 2020 forecast (which should exclude 2020 data)
+        stats_2020 = fc_period_stats[fc_period_stats['year'] == 2020]
+        # Get stats for 2019 forecast (which should exclude 2019 data)
+        stats_2019 = fc_period_stats[fc_period_stats['year'] == 2019]
 
         # The means should be similar (within reasonable range)
         # since 2020 data is excluded from 2020's statistics
         mean_diff_ratio = abs(
-            result_2020['fc_period_lt_mean'].values[0] -
-            result_2019['fc_period_lt_mean'].values[0]
-        ) / result_2019['fc_period_lt_mean'].values[0]
+            stats_2020['fc_period_lt_mean'].values[0] -
+            stats_2019['fc_period_lt_mean'].values[0]
+        ) / stats_2019['fc_period_lt_mean'].values[0]
 
         # Difference should be small (< 50%) if no leakage
         assert mean_diff_ratio < 0.5
+
+        # Also verify main function runs without error
+        result = post_process_lt_forecast(config, discharge_data_modified, forecast_data)
+        assert len(result) == 3
 
 
 class TestEdgeCases:
@@ -640,18 +690,30 @@ class TestEdgeCases:
         assert 'Q50' in result.columns
 
     def test_single_year_historical_data(self):
-        """Test with only one year of historical data."""
+        """Test with only one year of historical data.
+
+        Note: The final output doesn't include internal statistics columns.
+        We verify this by testing the internal functions directly.
+        """
         codes = ['BASIN_A']
         discharge_data = generate_discharge_data(codes, 2020, 2020)
         forecast_data = generate_forecast_data(codes, ['2021-04-25'])
         config = MockForecastConfig(operational_month_lead_time=2)
 
-        result = post_process_lt_forecast(config, discharge_data, forecast_data)
+        # Test using the internal function directly
+        fc_period_stats = calculate_lt_statistics_fc_period(
+            discharge_data=discharge_data,
+            prediction_data=forecast_data
+        )
 
         # Should have N=1 for statistics
-        assert len(result) == 1
+        assert fc_period_stats['fc_period_lt_n'].values[0] == 1
         # With only 1 year, std should be NaN
-        assert pd.isna(result['fc_period_lt_std'].values[0])
+        assert pd.isna(fc_period_stats['fc_period_lt_std'].values[0])
+
+        # Also verify main function runs successfully
+        result = post_process_lt_forecast(config, discharge_data, forecast_data)
+        assert len(result) == 1
 
 
 # Run tests with pytest

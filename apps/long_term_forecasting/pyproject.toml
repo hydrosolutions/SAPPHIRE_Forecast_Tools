@@ -50,7 +50,7 @@ dependencies = [
     "aiohttp>=3.13.0",
     # External libraries
     "lt-forecasting @ git+https://github.com/hydrosolutions/long-term-forecasting.git@4cb768213c093d6b3defa5a719dcb5495ac504ee",
-    "ieasyhydro-sdk",
+    "ieasyhydro-sdk @ git+https://github.com/hydrosolutions/ieasyhydro-python-sdk",
     "sapphire-api-client @ git+https://github.com/hydrosolutions/sapphire-api-client.git@a457728fae1a270ae7b6932227c3bdb90a635900",
     # Local library dependency
     "iEasyHydroForecast @ file:///${PROJECT_ROOT}/../iEasyHydroForecast",
@@ -75,7 +75,13 @@ override-dependencies = [
 iEasyHydroForecast = { path = "../iEasyHydroForecast", editable = true }
 
 [tool.pytest.ini_options]
+pythonpath = ["."]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+
+[dependency-groups]
+dev = [
+    "pytest==9.0.0",
+]

@@ -31,7 +31,6 @@ sys.path.append(forecast_dir)
 import setup_library as sl
 
 
-
 class DataInterfaceDB:
     """SQL-based data interface using PostgreSQL."""
     
@@ -184,20 +183,33 @@ class DataInterfaceDB:
             params["end_date"] = end_date
 
         where_clause = " AND ".join(conditions)
+        
         query = f"""
-            SELECT date, code, value as {variable_caps}
+            SELECT date, code, 
+            value as {variable_caps},
+            value1   AS {variable_caps}_1,
+            value2   AS {variable_caps}_2,
+            value3   AS {variable_caps}_3,
+            value4   AS {variable_caps}_4,
+            value5   AS {variable_caps}_5,
+            value6   AS {variable_caps}_6,
+            value7   AS {variable_caps}_7,
+            value8   AS {variable_caps}_8,
+            value9   AS {variable_caps}_9,
+            value10  AS {variable_caps}_10,
+            value11  AS {variable_caps}_11,
+            value12  AS {variable_caps}_12,
+            value13  AS {variable_caps}_13,
+            value14  AS {variable_caps}_14
             FROM snow
             WHERE {where_clause}
             ORDER BY code, date
         """
 
         df = self._execute_query(query, params)
+        
         df['date'] = pd.to_datetime(df['date'])
         df['code'] = df['code'].astype(int)
-
-        # Normalize column name
-        if "RoF" in df.columns:
-            df.rename(columns={"RoF": "ROF"}, inplace=True)
 
         return df
 
@@ -220,14 +232,27 @@ class DataInterfaceDB:
         # HRU is just used for validation, similar to CSV version where HRU is part of filename
         df = self.get_snow_data(variable=variable)
 
-        # Normalize column names to uppercase
+        # Normalize column names to uppercase , we expect columns to be SWE, SWE_1, SWE_2 etc, ensure swe_1 is renamed to SWE_1 etc
         var_upper = variable.upper()
-        if var_upper not in df.columns:
-            var_col = [col for col in df.columns if col.upper() == var_upper]
-            if len(var_col) == 1:
-                df.rename(columns={var_col[0]: var_upper}, inplace=True)
+
+        for col in df.columns:
+            # split col by "_" and check if first part matches variable (case-insensitive)
+            splitted_col = col.split("_")
+            if len(splitted_col) == 1:
+                if splitted_col[0].lower() == variable.lower():
+                    df.rename(columns={col: var_upper}, inplace=True)
             else:
-                raise ValueError(f"{var_upper} column not found or ambiguous in snow data.")
+                if splitted_col[0].lower() == variable.lower():
+                    new_col_name = var_upper + "_" + "_".join(splitted_col[1:])
+                    df.rename(columns={col: new_col_name}, inplace=True)
+
+
+        has_elevation_bands = os.getenv(f'ieasyhydroforecast_{HRU}_has_elevation_bands', 'False').lower() == 'true'
+        if not has_elevation_bands:
+            print(f"HRU {HRU} does not have elevation bands, keeping only main variable column.")
+            columns_expected = ['date', 'code', var_upper]
+            df = df[columns_expected]
+
 
         max_date = df["date"].max()
 
@@ -916,68 +941,81 @@ if __name__ == "__main__":
     # print("Testing DataInterfaceDB")
     # print("=" * 60)
     
-    # # Test meteo data
-    # print("\n1. Testing get_meteo_data (Precipitation)...")
-    # t0 = time()
-    # rain = di.get_meteo_data(meteo_type="P")
-    # print(f"   Loaded {len(rain)} rows in {time()-t0:.3f}s")
-    # print(rain.head())
+    # Test meteo data
+    print("\n1. Testing get_meteo_data (Precipitation)...")
+    t0 = time()
+    rain = di.get_meteo_data(meteo_type="P")
+    print(f"   Loaded {len(rain)} rows in {time()-t0:.3f}s")
+    print(rain.head())
     
-    # # Test temperature
-    # print("\n2. Testing get_meteo_data (Temperature)...")
-    # t0 = time()
-    # temp = di.get_meteo_data(meteo_type="T")
-    # print(f"   Loaded {len(temp)} rows in {time()-t0:.3f}s")
-    # print(temp.head())
+    # Test temperature
+    print("\n2. Testing get_meteo_data (Temperature)...")
+    t0 = time()
+    temp = di.get_meteo_data(meteo_type="T")
+    print(f"   Loaded {len(temp)} rows in {time()-t0:.3f}s")
+    print(temp.head())
     
-    # # Test runoff
-    # print("\n3. Testing get_runoff_data...")
-    # t0 = time()
-    # runoff = di.get_runoff_data()
-    # print(f"   Loaded {len(runoff)} rows in {time()-t0:.3f}s")
-    # print(runoff.head())
+    # Test runoff
+    print("\n3. Testing get_runoff_data...")
+    t0 = time()
+    runoff = di.get_runoff_data()
+    print(f"   Loaded {len(runoff)} rows in {time()-t0:.3f}s")
+    print(runoff.head())
     
-    # # Test forcing data
-    # print("\n4. Testing _load_forcing_data...")
-    # t0 = time()
-    # forcing = di._load_forcing_data(HRU="00003")
-    # print(f"   Loaded {len(forcing)} rows in {time()-t0:.3f}s")
-    # print(forcing.head())
+    # Test forcing data
+    print("\n4. Testing _load_forcing_data...")
+    t0 = time()
+    forcing = di._load_forcing_data(HRU="00003")
+    print(f"   Loaded {len(forcing)} rows in {time()-t0:.3f}s")
+    print(forcing.head())
     
-    # # Test full base data
-    # print("\n5. Testing get_base_data...")
-    # t0 = time()
-    # base_data = di.get_base_data(forcing_HRU="00003")
-    # print(f"   Loaded in {time()-t0:.3f}s")
-    # print(f"   Temporal shape: {base_data['temporal_data'].shape}")
-    # print(f"   Static shape: {base_data['static_data'].shape}")
-    # print(f"   Offset base: {base_data['offset_date_base']}")
-    # print(f"   Offset discharge: {base_data['offset_date_discharge']}")
+    # Test full base data
+    print("\n5. Testing get_base_data...")
+    t0 = time()
+    base_data = di.get_base_data(forcing_HRU="00003")
+    print(f"   Loaded in {time()-t0:.3f}s")
+    print(f"   Temporal shape: {base_data['temporal_data'].shape}")
+    print(f"   Static shape: {base_data['static_data'].shape}")
+    print(f"   Offset base: {base_data['offset_date_base']}")
+    print(f"   Offset discharge: {base_data['offset_date_discharge']}")
 
-    # # Test extending with snow data
-    # print("\n6. Testing extend_base_data_with_snow...")
-    # t0 = time()
-    # extended_data = di.extend_base_data_with_snow(
-    #     base_data=base_data['temporal_data'],
-    #     HRUs_snow=["00003"],
-    #     snow_variables=["SWE"]
-    # )
+    # Test extending with snow data
+    print("\n6. Testing extend_base_data_with_snow...")
+    t0 = time()
+    extended_data = di.extend_base_data_with_snow(
+        base_data=base_data['temporal_data'],
+        HRUs_snow=["00003"],
+        snow_variables=["RoF"]
+    )
 
-    # print(f"   Loaded in {time()-t0:.3f}s")
-    # print(f"   Extended temporal shape: {extended_data['temporal_data'].shape}")
-    # print(f" Head of extended data:")
-    # print(extended_data['temporal_data'].head())
+    print(f"   Loaded in {time()-t0:.3f}s")
+    print(f"   Extended temporal shape: {extended_data['temporal_data'].shape}")
+    print(f" Head of extended data:")
+    print(extended_data['temporal_data'].head())
 
-    # # Just test different snow variable
-    # print("\n7. Testing extend_base_data_with_snow with different variable...")
-    # t0 = time()
-    # swe = di.get_snow_data(
-    #     variable="SWE"
-    # )
-    # print(f"   Loaded in {time()-t0:.3f}s")
-    # print(f"   SWE shape: {swe.shape}")
-    # print(swe.head())
-    # print("Swe columns: ", swe.columns)
+    print("\n7. Testing extend_base_data_with_snow and elevation bands...")
+    t0 = time()
+    extended_data = di.extend_base_data_with_snow(
+        base_data=base_data['temporal_data'],
+        HRUs_snow=["KGZ500m"],
+        snow_variables=["RoF"]
+    )
+
+    print(f"   Loaded in {time()-t0:.3f}s")
+    print(f"   Extended temporal shape: {extended_data['temporal_data'].shape}")
+    print(f" Head of extended data:")
+    print(extended_data['temporal_data'].head())
+
+    # Just test different snow variable
+    print("\n8. Testing extend_base_data_with_snow with different variable...")
+    t0 = time()
+    swe = di.get_snow_data(
+        variable="RoF",
+    )
+    print(f"   Loaded in {time()-t0:.3f}s")
+    print(f"   SWE shape: {swe.shape}")
+    print(swe.head())
+    print("Swe columns: ", swe.columns)
 
     # ─────────────────────────────────────────────────────────────────
     # Testing BasePredictorDataInterface (Database Loading)
