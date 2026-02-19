@@ -28,6 +28,7 @@ import src.layout as layout
 from dashboard.logger import setup_logger
 from dashboard.widget_manager import WidgetManager
 from dashboard.bulletin_manager import BulletinManager
+from dashboard.plot_manager import PlotManager
 from dashboard import config
 from dashboard.data_manager import DataManager
 
@@ -64,7 +65,15 @@ wm = WidgetManager(dm, cfg, station_dict)
 dm.update_sites_for_pentad(_, wm.pentad_selector.value, wm.decad_selector.value)
 
 # =====================================================================
-# 5. Callbacks
+# 5. Plot manager
+# =====================================================================
+pm = PlotManager(dm, wm, cfg, gettext=_)
+
+# Initial tabulator fill
+pm.update_forecast_tabulator()
+
+# =====================================================================
+# 6. Callbacks
 # =====================================================================
 @pn.depends(wm.station, wm.pentad_selector, wm.decad_selector, watch=True)
 def on_station_or_period_changed(station_value, selected_pentad, selected_decad):
@@ -76,11 +85,23 @@ def on_station_or_period_changed(station_value, selected_pentad, selected_decad)
     wm.refresh_warnings()
     wm.refresh_model_checkbox()
 
-    update_active_tab(None)
+    # update_active_tab(None)
+    pm.render_active_tab(dashboard_content)
+
+wm.update_forecast_button.on_click(pm.update_forecast_plots)
+
+# Update the site object based on site and forecast selection
+# --- Site object binding ---
+update_site_object = pn.bind(
+    Site.get_site_attributes_from_selected_forecast,
+    _=_,
+    sites=dm.sites_list,
+    site_selection=wm.station,
+    tabulator=wm.forecast_tabulator)
 
 
 # =====================================================================
-# 6. Bulletin management
+# 7. Bulletin management
 # =====================================================================
 bulletin = BulletinManager(
     wm=wm,
@@ -91,140 +112,8 @@ bulletin = BulletinManager(
 )
 
 # =====================================================================
-# 7. Plot panes & forecast update logic
-# =====================================================================
-
-# Initial setup: populate the main area with the initial selection
-daily_hydrograph_plot = pn.pane.HoloViews(hv.Curve([]), sizing_mode="stretch_both")
-if dm.rain is None: 
-    daily_rainfall_plot = pn.pane.Markdown(_("No precipitation data from SAPPHIRE Data Gateway available."))
-    daily_temperature_plot = pn.pane.Markdown(_("No temperature data from SAPPHIRE Data Gatway available."))
-else: 
-    daily_rainfall_plot = pn.pane.HoloViews(hv.Curve([]), sizing_mode="stretch_width") 
-    daily_temperature_plot = pn.pane.HoloViews(hv.Curve([]), sizing_mode="stretch_width") 
-if dm.snow_data is None:
-    snow_plot_panes = pn.pane.Markdown(_("No snow data from SAPPHIRE Data Gateway available."))
-else:
-    snow_plot_panes = {
-        k: pn.pane.HoloViews(hv.Curve([]), sizing_mode="stretch_width")
-        for k in ('SWE', 'HS', 'RoF')
-    }
-
-forecast_data_and_plot = pn.Column(sizing_mode="stretch_both")
-pentad_forecast_plot = pn.pane.HoloViews(hv.Curve([]), sizing_mode="stretch_both")
-effectiveness_plot = pn.pane.HoloViews(hv.Curve([]), sizing_mode="stretch_both")
-accuracy_plot = pn.pane.HoloViews(hv.Curve([]), sizing_mode="stretch_both")
-forecast_skill_plot = pn.Column(effectiveness_plot, accuracy_plot)
-
-def _common_plot_kwargs() -> dict:
-    """Shared keyword bundle consumed by most viz helpers."""
-    return dict(
-        forecasts_all=dm.forecasts_all,
-        station=wm.station.value,
-        title_date=wm.date_picker.value,
-        model_selection=wm.model_checkbox.value,
-        range_type=wm.range_selection.value,
-        range_slider=wm.manual_range.value,
-        range_visibility=wm.show_range_button.value,
-    )
-
-def _build_forecast_hydrograph():
-    """Build the forecast hydrograph based on current widget state."""
-    kw = _common_plot_kwargs()
-    if wm.show_daily_data.value == _('Yes'):
-        return cfg.viz.plot_pentad_forecast_hydrograph_data(
-            _, hydrograph_pentad_all=dm.hydrograph_pentad_all, **kw,
-        )
-    else:
-        return cfg.viz.plot_pentad_forecast_hydrograph_data_v2(
-            _,
-            hydrograph_day_all=dm.hydrograph_day_all,
-            linreg_predictor=dm.linreg_predictor,
-            rram_forecast=dm.rram_forecast,
-            ml_forecast=dm.ml_forecast,
-            **kw,
-        )
-
-
-def update_forecast_plots(event):
-    """Updates 2nd, 3rd and 4th plots on Forecast tab"""
-    pentad_forecast_plot.object = _build_forecast_hydrograph()
-    eff, acc = cfg.viz.plot_forecast_skill(
-        _,
-        dm.hydrograph_pentad_all,
-        dm.forecasts_all,
-        station_widget=wm.station.value,
-        date_picker=wm.date_picker.value,
-        model_checkbox=wm.model_checkbox.value,
-        range_selection_widget=wm.range_selection.value,
-        manual_range_widget=wm.manual_range.value,
-        show_range_button=wm.show_range_button.value
-    )
-    effectiveness_plot.object = eff.object
-    accuracy_plot.object = acc.object
-
-    _update_forecast_tabulator()
-
-wm.update_forecast_button.on_click(update_forecast_plots)
-
-# --- Skill table ---
-skill_table = pn.panel(
-    cfg.viz.create_skill_table(_, dm.forecast_stats),
-    sizing_mode='stretch_width')
-
-skill_metrics_download_filename, skill_metrics_download_button = skill_table.download_menu(
-    text_kwargs={'name': _('Enter filename:'), 'value': 'forecast_skill_metrics.csv'},
-    button_kwargs={'name': _('Download currently visible table')}
-)
-
-
-def _update_forecast_tabulator():
-    cfg.viz.create_forecast_summary_tabulator(
-        _, dm.forecasts_all, wm.station, wm.date_picker,
-        wm.model_checkbox, wm.range_selection, wm.manual_range,
-        wm.forecast_tabulator
-    )
-
-# --- Initial tabulator fill ---
-_update_forecast_tabulator()
-
-# Update the site object based on site and forecast selection
-#print(f"DEBUG: forecast_dashboard.py: forecast_tabulator: {forecast_summary_tabulator}")
-# --- Site object binding ---
-update_site_object = pn.bind(
-    Site.get_site_attributes_from_selected_forecast,
-    _=_,
-    sites=dm.sites_list,
-    site_selection=wm.station,
-    tabulator=wm.forecast_tabulator)
-
-# =====================================================================
 # 8. Data reload watcher
 # =====================================================================
-
-def _update_visualizations():
-    # Re-bind the plots to use the updated data
-    kw = _common_plot_kwargs()
-    #print('---   ---plot_pentad_forecast_hydrograph_data---   ---')
-    cfg.viz.plot_pentad_forecast_hydrograph_data(
-        _, hydrograph_pentad_all=dm.hydrograph_pentad_all, **kw,
-    )
-    #print('---   ---done with plot_pentad_forecast_hydrograph_data---   ---')
-
-    #print('---   ---plot_pentad_forecast_hydrograph_data_v2---   ---')
-    cfg.viz.plot_pentad_forecast_hydrograph_data_v2(
-        _, hydrograph_day_all=dm.hydrograph_day_all,
-        linreg_predictor=dm.linreg_predictor,
-        rram_forecast=dm.rram_forecast,
-        ml_forecast=dm.ml_forecast, **kw,
-    )
-    #print('---   ---done with plot_pentad_forecast_hydrograph_data_v2---   ---')
-
-    #print('---   ---update_forecast_tabulator---   ---')
-    _update_forecast_tabulator()
-    #print('---   ---done with update_forecast_tabulator---   ---')
-
-
 def on_data_needs_reload_changed(event):
     if event.new:
         print("Triggered rerunning of forecasts.")
@@ -233,7 +122,7 @@ def on_data_needs_reload_changed(event):
             # load_data()
             #print("---data loaded---")
             #print("---updating viz---")
-            _update_visualizations()
+            pm.refresh_all_visualizations()
             #print("---viz updated---")
             #print("Forecasts produced and visualizations updated successfully.")
         except Exception as e:
@@ -259,40 +148,24 @@ wm.range_selection.param.watch(lambda event: cfg.viz.update_range_slider_visibil
 
 # Create a placeholder for the dashboard content
 dashboard_content = layout.define_tabs_2(_, wm.predictors_warning, wm.forecast_warning,
-    daily_hydrograph_plot, daily_rainfall_plot, daily_temperature_plot, snow_plot_panes,
-    forecast_data_and_plot,  
-    wm.forecast_summary_table, pentad_forecast_plot, forecast_skill_plot,
+    pm.daily_hydrograph, pm.daily_rainfall, pm.daily_temperature, pm.snow_plots,
+    pm.forecast_data_and_plot,  
+    wm.forecast_summary_table, pm.pentad_forecast, pm.forecast_skill,
     wm.bulletin_table, wm.write_bulletin_button, wm.bulletin_download_panel, disclaimer,
     wm.add_to_bulletin_button, wm.add_to_bulletin_popup, wm.show_daily_data,
-    skill_table, skill_metrics_download_filename, skill_metrics_download_button
+    pm.skill_table, pm.skill_download_filename, pm.skill_download_button
 )
-dashboard_content.param.watch(lambda event: cfg.viz.update_sidepane_card_visibility(dashboard_content, wm.station_card, wm.forecast_card, wm.basin_card, wm.pentad_card, wm.reload_card, event), 'active')
+dashboard_content.param.watch(lambda event: cfg.viz.update_sidepane_card_visibility(
+    dashboard_content, wm.station_card, wm.forecast_card, wm.basin_card, wm.pentad_card, wm.reload_card, event), 'active')
 
-
-def update_active_tab(event):
-    """Render plots only when the tab is first activated for a station."""
-    active_tab = dashboard_content.active  # 0: Predictors tab, 1: Forecast tab
-    with pn.io.hold(pn.state.curdoc):
-        if active_tab == 0 and dm.should_render_predictors(wm.station.value):
-            daily_hydrograph_plot.object = cfg.viz.plot_daily_hydrograph_data(_, dm.hydrograph_day_all, dm.linreg_predictor, wm.station.value, wm.date_picker.value)
-            if cfg.display_weather_data == True:
-                daily_rainfall_plot.object = cfg.viz.plot_daily_rainfall_data(_, dm.rain, wm.station.value, wm.date_picker.value, dm.linreg_predictor)
-                daily_temperature_plot.object = cfg.viz.plot_daily_temperature_data(_, dm.temp, wm.station.value, wm.date_picker.value, dm.linreg_predictor)
-            if cfg.display_snow_data == True:
-                for var in dm.snow_data.keys():
-                    if dm.snow_data[var] is not None:
-                        snow_plot_panes[var].object = cfg.viz.plot_daily_snow_data(_, dm.snow_data, var, wm.station.value, wm.date_picker.value, dm.linreg_predictor)
-                    else:
-                        snow_plot_panes[var].object = pn.pane.Markdown(_("No snow data from SAPPHIRE Data Gateway available."))
-        elif active_tab == 1 and dm.should_render_forecast(wm.station.value):
-            plot = cfg.viz.select_and_plot_data(_, dm.linreg_predictor, wm.station.value, wm.pentad_selector.value, wm.decad_selector.value, cfg.save_directory)
-            forecast_data_and_plot[:] = plot.objects
-            update_forecast_plots(None)
-
+pm.render_active_tab(dashboard_content)
 
 # Attach the callback to the tabs and station
-dashboard_content.param.watch(update_active_tab, 'active')
-update_active_tab(None)
+# Attach tab-activation renderer & do the first render
+dashboard_content.param.watch(
+    lambda event: pm.render_active_tab(dashboard_content, event),
+    'active',
+)
 
 
 sidebar_content=layout.define_sidebar(_, wm.station_card, wm.forecast_card, wm.basin_card,
