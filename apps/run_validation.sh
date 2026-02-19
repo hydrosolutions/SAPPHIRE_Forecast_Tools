@@ -15,6 +15,10 @@
 #   ieasyhydroforecast_env_file_path=/path/to/.env \
 #     bash apps/run_validation.sh full
 #
+# Note: Stage 1 (unit tests) always runs with SAPPHIRE_TEST_ENV=True and
+# unsets ieasyhydroforecast_env_file_path so that tests use the test .env
+# file, not the real config.
+#
 # Full mode with skips:
 #   bash apps/run_validation.sh full --skip-pipeline --skip-ml
 #   bash apps/run_validation.sh full --skip-docker
@@ -150,6 +154,10 @@ run_stage_tests() {
     local rc=0
     (
         cd "$SCRIPT_DIR"
+        # Unset pipeline env vars so they don't leak into tests.
+        # SAPPHIRE_TEST_ENV causes setup_library to use the test .env file.
+        unset ieasyhydroforecast_env_file_path
+        unset SAPPHIRE_OPDEV_ENV
         SAPPHIRE_TEST_ENV=True bash run_tests.sh
     ) 2>&1 | tee -a "$LOG_FILE" || rc=${PIPESTATUS[0]:-$?}
 
