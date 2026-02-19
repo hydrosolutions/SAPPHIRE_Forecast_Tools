@@ -8,7 +8,6 @@
 # =========================
 # Standard library imports
 # =========================
-from functools import partial
 from concurrent.futures import ThreadPoolExecutor
 
 # =========================
@@ -28,8 +27,7 @@ import src.layout as layout
 
 from dashboard.logger import setup_logger
 from dashboard.widget_manager import WidgetManager
-from dashboard import widgets
-from dashboard.bulletin_manager import load_bulletin_from_csv, add_current_selection_to_bulletin, remove_selected_from_bulletin, handle_bulletin_write, create_bulletin_table
+from dashboard.bulletin_manager import BulletinManager
 from dashboard import config
 from dashboard.data_manager import DataManager
 
@@ -91,40 +89,12 @@ def on_station_or_period_changed(station_value, selected_pentad, selected_decad)
 # =====================================================================
 # 6. Bulletin management
 # =====================================================================
-bulletin_sites = load_bulletin_from_csv(wm.forecast_year, wm.forecast_horizon, cfg.save_directory, dm.sites_list)
-
-_update_bulletin = partial(wm.update_bulletin_table, bulletin_sites)
-_update_bulletin()
-wm.select_basin.param.watch(lambda event: _update_bulletin(), 'value')
-
-wm.add_to_bulletin_button.on_click(
-    partial(
-        add_current_selection_to_bulletin,
-        viz=cfg.viz,
-        forecast_tabulator=wm.forecast_tabulator,
-        station=wm.station,
-        sites_list=dm.sites_list,
-        add_to_bulletin_popup=wm.add_to_bulletin_popup,
-        bulletin_sites=bulletin_sites,
-        forecast_year_for_saving_bulletin=wm.forecast_year,
-        forecast_horizon_for_saving_bulletin=wm.forecast_horizon,
-        save_directory=cfg.save_directory,
-        update_bulletin_table=_update_bulletin
-    )
-)
-
-# Attach the remove function to the remove button click event
-wm.remove_bulletin_button.on_click(
-    partial(
-        remove_selected_from_bulletin,
-        bulletin_tabulator=wm.bulletin_tabulator,
-        bulletin_sites=bulletin_sites,
-        add_to_bulletin_popup=wm.add_to_bulletin_popup,
-        forecast_year_for_saving_bulletin=wm.forecast_year,
-        forecast_horizon_for_saving_bulletin=wm.forecast_horizon,
-        save_directory=cfg.save_directory,
-        update_bulletin_table=_update_bulletin
-    )
+bulletin = BulletinManager(
+    wm=wm,
+    cfg=cfg,
+    dm=dm,
+    processing=processing,
+    write_to_excel=write_to_excel,
 )
 
 # =====================================================================
@@ -284,26 +254,7 @@ if not hasattr(processing.data_reloader, 'watcher_attached'):
     processing.data_reloader.watcher_attached = True
 
 # =====================================================================
-# 9. Bulletin writer
-# =====================================================================
-# Get information for bulletin headers into a dataframe that can be passed to the bulletin writer.
-last_date, forecast_horizon, forecast_year = dm.get_bulletin_metadata()
-bulletin_header_info = processing.get_bulletin_header_info(last_date, cfg.horizon)
-wm.write_bulletin_button.on_click(
-    partial(
-        handle_bulletin_write,
-        bulletin_sites=bulletin_sites,
-        select_basin_widget=wm.select_basin,
-        write_to_excel=write_to_excel,
-        sites_list=dm.sites_list,
-        bulletin_header_info=bulletin_header_info,
-        env_file_path=cfg.env_file_path,
-        downloader=wm.downloader
-    )
-)
-
-# =====================================================================
-# 10. Layout
+# 9. Layout
 # =====================================================================
 # Define the disclaimer of the dashboard
 disclaimer = layout.define_disclaimer(_, cfg.in_docker)
@@ -351,12 +302,11 @@ dashboard_content.param.watch(update_active_tab, 'active')
 update_active_tab(None)
 
 
-# message_pane = widgets.create_message_pane(dm._data)
 sidebar_content=layout.define_sidebar(_, wm.station_card, wm.forecast_card, wm.basin_card,
                                   wm.message_pane, wm.reload_card)
 
 # =====================================================================
-# 11. Authentication
+# 10. Authentication
 # =====================================================================
 from dashboard.auth_manager import AuthManager
 
@@ -396,7 +346,7 @@ auth.initialize()
 dashboard.servable()
 
 # =====================================================================
-# 12. Background station loading
+# 11. Background station loading
 # =====================================================================
 def on_stations_loaded(fut):
     try:
