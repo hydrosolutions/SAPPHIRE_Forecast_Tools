@@ -22,7 +22,6 @@ from typing import TYPE_CHECKING
 import panel as pn
 
 from dashboard import widgets
-from dashboard.bulletin_manager import create_bulletin_table
 
 if TYPE_CHECKING:
     from dashboard.config import DashboardConfig
@@ -187,18 +186,6 @@ class WidgetManager:
             self._dm._data,
             self.date_picker.value,
         )
-
-    def update_bulletin_table(self, bulletin_sites, event=None) -> None:
-        # Function to update the bulletin table
-        create_bulletin_table(
-            bulletin_sites, self.select_basin, self.bulletin_tabulator
-        )
-    
-    # Adding the watcher logic for disabling the "Add to Bulletin" button
-    def sync_add_button_to_pipeline(self, event) -> None:
-        """Disable 'Add to Bulletin' while the pipeline is running."""
-        # Update the state of 'Add to Bulletin' button based on pipeline_running status.
-        self.add_to_bulletin_button.disabled = event.new
 
     # ------------------------------------------------------------------
     # Convenience: all widgets auth needs to track for inactivity

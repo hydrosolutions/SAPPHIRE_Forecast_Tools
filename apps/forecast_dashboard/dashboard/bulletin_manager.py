@@ -129,6 +129,12 @@ class BulletinManager:
             cfg.save_directory, dm.sites_list,
         )
 
+        # --- Disable "Add to Bulletin" while pipeline runs ---
+        # Set the initial state of the button based on whether the pipeline is running
+        wm.add_to_bulletin_button.disabled = cfg.viz.app_state.pipeline_running
+        # Watch for changes in pipeline_running and update the add_to_bulletin_button
+        cfg.viz.app_state.param.watch(self._sync_add_button_to_pipeline, 'pipeline_running')
+
         # --- Initial table render & basin filter watcher ---
         self._update_bulletin_table()
         wm.select_basin.param.watch(lambda event: self._update_bulletin_table(), 'value')
@@ -148,7 +154,16 @@ class BulletinManager:
         )
     
     def _update_bulletin_table(self):
-        self.wm.update_bulletin_table(self.bulletin_sites)
+        # Function to update the bulletin table
+        create_bulletin_table(
+            self.bulletin_sites, self.wm.select_basin, self.wm.bulletin_tabulator
+        )
+    
+    # Adding the watcher logic for disabling the "Add to Bulletin" button
+    def _sync_add_button_to_pipeline(self, event) -> None:
+        """Disable 'Add to Bulletin' while the pipeline is running."""
+        # Update the state of 'Add to Bulletin' button based on pipeline_running status.
+        self.wm.add_to_bulletin_button.disabled = event.new
     
     # ------------------------------------------------------------------
     # Button handlers

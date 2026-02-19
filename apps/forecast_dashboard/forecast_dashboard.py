@@ -66,13 +66,6 @@ dm.update_sites_for_pentad(_, wm.pentad_selector.value, wm.decad_selector.value)
 # =====================================================================
 # 5. Callbacks
 # =====================================================================
-# Watch for changes in pipeline_running and update the add_to_bulletin_button
-cfg.viz.app_state.param.watch(wm.sync_add_button_to_pipeline, 'pipeline_running')
-
-# Set the initial state of the button based on whether the pipeline is running
-wm.add_to_bulletin_button.disabled = cfg.viz.app_state.pipeline_running
-
-
 @pn.depends(wm.station, wm.pentad_selector, wm.decad_selector, watch=True)
 def on_station_or_period_changed(station_value, selected_pentad, selected_decad):
     """Reload data for the new station and refresh the model checkbox."""
