@@ -269,3 +269,39 @@ class DataManager(param.Parameterized):
     # def linreg_datatable(self):
     #     """Shifted linreg_predictor for display (1-day shift)."""
     #     return processing.shift_date_by_n_days(self.linreg_predictor, 1)
+
+
+def extract_valid_codes(horizon_in_year: str) -> list[str]:
+    """
+    Query all forecasts for the current year, find the latest
+    pentad/decad, and return the unique station codes present.
+    """
+    import pandas as pd
+
+    # Fetch forecasts for all stations
+    forecasts_all = db.get_forecasts_all()
+
+    # Find the latest year in the data
+    latest_year = forecasts_all['date'].dt.year.max()
+    # print('latest_year:', latest_year)
+
+    # Filter the DataFrame to include only the latest year
+    forecasts_latest_year = forecasts_all[forecasts_all['date'].dt.year == latest_year]
+
+    # Find the maximum pentad_in_year or decad_in_year value in the latest year
+    latest_horizon_in_year = forecasts_latest_year[horizon_in_year].max()
+    # print('latest_horizon_in_year:', latest_horizon_in_year)
+
+    # Filter the DataFrame to include only the latest pentad/decad in the latest year
+    forecasts_current = forecasts_latest_year[forecasts_latest_year[horizon_in_year] == latest_horizon_in_year]
+    # print('forecasts_current:\n', forecasts_current)
+
+    # Get valid codes and normalize to string integers reliably
+    valid_codes = (
+        pd.to_numeric(forecasts_current['code'], errors='coerce')
+          .dropna()
+          .astype('int64')
+          .astype(str)
+          .tolist()
+    )
+    return valid_codes
