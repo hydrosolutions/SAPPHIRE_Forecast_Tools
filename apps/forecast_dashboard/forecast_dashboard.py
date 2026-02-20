@@ -31,7 +31,7 @@ from dashboard.widget_manager import WidgetManager
 from dashboard.bulletin_manager import BulletinManager
 from dashboard.plot_manager import PlotManager
 from dashboard import config
-from dashboard.data_manager import DataManager, extract_valid_codes
+from dashboard.data_manager import DataManager
 
 
 # 0. Setup logger
@@ -41,12 +41,10 @@ logger = setup_logger()
 cfg = config.init_dashboard(pn)
 
 # 2. Station metadata & DataManager initialisation
-valid_codes = extract_valid_codes(cfg.horizon_in_year)
-all_stations, station_dict = processing.get_all_stations_from_file(valid_codes)
+all_stations, station_dict = processing.get_all_stations_from_file()
 
 dm = DataManager(
     all_stations=all_stations,
-    valid_codes=valid_codes,
     horizon=cfg.horizon,
     horizon_in_year=cfg.horizon_in_year,
 )
@@ -203,5 +201,5 @@ def on_stations_loaded(fut):
         print(f"Failed to load stations: {e}")
 
 executor = ThreadPoolExecutor(max_workers=1)
-future = executor.submit(processing.get_all_stations_from_iehhf, valid_codes)
+future = executor.submit(processing.get_all_stations_from_iehhf)
 future.add_done_callback(on_stations_loaded)

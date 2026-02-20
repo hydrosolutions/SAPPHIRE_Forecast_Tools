@@ -26,7 +26,7 @@ class DataManager(param.Parameterized):
     with a cohesive, observable object.
 
     Usage:
-        dm = DataManager(all_stations=..., valid_codes=..., ...)
+        dm = DataManager(all_stations=..., ...)
         dm.load_station('15189')
         forecasts = dm.forecasts_all
     """
@@ -35,13 +35,12 @@ class DataManager(param.Parameterized):
     current_station = param.String(default='', doc="Currently selected station code")
     data_version = param.Integer(default=0, doc="Incremented on every data reload to notify dependents")
 
-    def __init__(self, all_stations, valid_codes, horizon, horizon_in_year, **kwargs):
+    def __init__(self, all_stations, horizon, horizon_in_year, **kwargs):
         super().__init__(**kwargs)
 
         # Immutable configuration
         self._horizon = horizon
         self._horizon_in_year = horizon_in_year
-        self._valid_codes = valid_codes
 
         # Station metadata (may be replaced by async iehhf load)
         self._all_stations = all_stations
@@ -262,46 +261,10 @@ class DataManager(param.Parameterized):
         forecast_horizon = int(
             self.linreg_predictor[self._horizon_in_year].tail(1).values[0]
         ) + 1
-        # return last_date, forecast_horizon, last_date.year
-        return last_date, 9, last_date.year
+        return last_date, forecast_horizon, last_date.year
+        # return last_date, 9, last_date.year
 
     # @property
     # def linreg_datatable(self):
     #     """Shifted linreg_predictor for display (1-day shift)."""
     #     return processing.shift_date_by_n_days(self.linreg_predictor, 1)
-
-
-def extract_valid_codes(horizon_in_year: str) -> list[str]:
-    """
-    Query all forecasts for the current year, find the latest
-    pentad/decad, and return the unique station codes present.
-    """
-    import pandas as pd
-
-    # Fetch forecasts for all stations
-    forecasts_all = db.get_forecasts_all()
-
-    # Find the latest year in the data
-    latest_year = forecasts_all['date'].dt.year.max()
-    # print('latest_year:', latest_year)
-
-    # Filter the DataFrame to include only the latest year
-    forecasts_latest_year = forecasts_all[forecasts_all['date'].dt.year == latest_year]
-
-    # Find the maximum pentad_in_year or decad_in_year value in the latest year
-    latest_horizon_in_year = forecasts_latest_year[horizon_in_year].max()
-    # print('latest_horizon_in_year:', latest_horizon_in_year)
-
-    # Filter the DataFrame to include only the latest pentad/decad in the latest year
-    forecasts_current = forecasts_latest_year[forecasts_latest_year[horizon_in_year] == latest_horizon_in_year]
-    # print('forecasts_current:\n', forecasts_current)
-
-    # Get valid codes and normalize to string integers reliably
-    valid_codes = (
-        pd.to_numeric(forecasts_current['code'], errors='coerce')
-          .dropna()
-          .astype('int64')
-          .astype(str)
-          .tolist()
-    )
-    return valid_codes

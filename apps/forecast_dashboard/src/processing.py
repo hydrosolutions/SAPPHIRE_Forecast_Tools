@@ -927,7 +927,7 @@ def save_stations_to_file(stations, filename):
         pickle.dump(stations, f)
 
 
-def get_all_stations_from_iehhf(valid_codes):
+def get_all_stations_from_iehhf():
     all_stations_file = os.path.join(
         os.getenv("ieasyforecast_intermediate_data_path"),
         os.getenv("ieasyforecast_all_stations", "all_stations.pkl")
@@ -985,19 +985,14 @@ def get_all_stations_from_iehhf(valid_codes):
 
     new_station_dict = {}
     for basin, stations in station_dict.items():
-        # Only filter if we have valid_codes; otherwise keep prior stations
-        if len(valid_codes) > 0:
-            new_stations = [s for s in stations if any(code in s for code in valid_codes)]  # Corrected line
-        else:
-            new_stations = stations
-        if new_stations:  # Only add the basin if there are valid stations
-            new_station_dict[basin] = new_stations
+        if stations:  # Only add the basin if there are valid stations
+            new_station_dict[basin] = stations
     station_dict = new_station_dict
 
     return all_stations, station_dict
 
 
-def get_all_stations_from_file(valid_codes):
+def get_all_stations_from_file():
     all_stations_file = os.path.join(
         os.getenv("ieasyforecast_intermediate_data_path"),
         os.getenv("ieasyforecast_all_stations", "all_stations.pkl")
@@ -1038,13 +1033,8 @@ def get_all_stations_from_file(valid_codes):
 
     new_station_dict = {}
     for basin, stations in station_dict.items():
-        # Only filter if we have valid_codes; otherwise keep prior stations
-        if len(valid_codes) > 0:
-            new_stations = [s for s in stations if any(code in s for code in valid_codes)]  # Corrected line
-        else:
-            new_stations = stations
-        if new_stations:  # Only add the basin if there are valid stations
-            new_station_dict[basin] = new_stations
+        if stations:  # Only add the basin if there are valid stations
+            new_station_dict[basin] = stations
     station_dict = new_station_dict
 
     return all_stations, station_dict
