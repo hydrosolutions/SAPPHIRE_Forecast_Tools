@@ -310,17 +310,19 @@ def get_linreg_predictor(station):
     # print("??????????????????????: linreg_predictor columns", linreg_predictor.columns)
     return convert_na_to_nan(linreg_predictor)
 
-def get_forecasts_all(station):
-    if not isinstance(station, str):
-        station = station.value.split()[0]
+def get_forecasts_all(station=None):
+    code = None
+    if station is not None:
+        code = station if isinstance(station, str) else station.value.split()[0]
     params = {
         "horizon": horizon, 
-        "code": station, 
         "start_date": "2025-12-20",
         "end_date": "2026-12-31",
         "target": "null",
         "limit": 1000
     }
+    if code is not None:
+        params["code"] = code
     start_time = time.time()
     forecasts_all = read_data("postprocessing", "forecast", params)
     end_time = time.time()
