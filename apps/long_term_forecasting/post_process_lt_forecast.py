@@ -37,6 +37,168 @@ from lt_utils import infer_q_columns
 
 
 
+def adjust_forecast_dates_only(
+    raw_forecast: pd.DataFrame,
+    target_start_month: int,
+    target_end_month: int
+) -> pd.DataFrame:
+    """
+    Adjust valid_from/valid_to to calendar month boundaries without Q adjustment.
+
+    For multi-month seasonal forecasts (e.g., April-September) where the model
+    output already represents the target period average and no ratio-based
+    scaling is needed.
+
+    Parameters
+    ----------
+    raw_forecast : pd.DataFrame
+        Raw forecast data with Q columns and metadata (date, code, valid_from,
+        valid_to, flag, Q columns)
+    target_start_month : int
+        Fixed start month (1-12) for the forecast period
+    target_end_month : int
+        Fixed end month (1-12) for the forecast period
+
+    Returns
+    -------
+    pd.DataFrame
+        Forecast with adjusted valid_from/valid_to dates. Q values unchanged.
+
+    Raises
+    ------
+    ValueError
+        If target_start_month or target_end_month is None or outside 1-12
+    """
+    # Validation
+    if target_start_month is None:
+        raise ValueError(
+            "target_start_month is required when calendar_month_adjustment=False"
+        )
+    if target_end_month is None:
+        raise ValueError(
+            "target_end_month is required when calendar_month_adjustment=False"
+        )
+    if not (1 <= target_start_month <= 12):
+        raise ValueError(
+            f"target_start_month must be 1-12, got {target_start_month}"
+        )
+    if not (1 <= target_end_month <= 12):
+        raise ValueError(
+            f"target_end_month must be 1-12, got {target_end_month}"
+        )
+
+    if raw_forecast.empty:
+        return raw_forecast.copy()
+
+    adjusted = raw_forecast.copy()
+    adjusted['date'] = pd.to_datetime(adjusted['date'])
+
+    # Target year = issue year (confirmed requirement)
+    issue_year = adjusted['date'].dt.year
+    start_year = issue_year
+
+    # Handle year boundary: if target_end_month < target_start_month,
+    # the period spans into the next year (e.g., Nov-Feb)
+    if target_end_month < target_start_month:
+        end_year = start_year + 1
+    else:
+        end_year = start_year
+
+    # Set valid_from = first day of target_start_month
+    adjusted['valid_from'] = pd.to_datetime({
+        'year': start_year,
+        'month': target_start_month,
+        'day': 1
+    })
+
+    # Set valid_to = last day of target_end_month
+    # Create first day of target_end_month, then add MonthEnd(0)
+    adjusted['valid_to'] = pd.to_datetime({
+        'year': end_year,
+        'month': target_end_month,
+        'day': 1
+    }) + pd.offsets.MonthEnd(0)
+
+    # Infer and retain Q columns along with base columns
+    q_columns = infer_q_columns(raw_forecast)
+    columns_to_retain = LT_FORECAST_BASE_COLUMNS + q_columns
+    adjusted = adjusted[columns_to_retain]
+
+    return adjusted
+
+
+def adjust_forecast_dates_dynamic(
+    raw_forecast: pd.DataFrame,
+    lead_time: int,
+    horizon_length: int
+) -> pd.DataFrame:
+    """
+    Adjust valid_from/valid_to dynamically based on issue date and horizon.
+
+    For each row, calculates target period from issue_date + lead_time
+    spanning horizon_length months.
+
+    Example: issue=March 25, lead_time=1, horizon_length=3
+    -> valid_from = April 1, valid_to = June 30
+
+    Parameters
+    ----------
+    raw_forecast : pd.DataFrame
+        Raw forecast data with Q columns and metadata (date, code, valid_from,
+        valid_to, flag, Q columns)
+    lead_time : int
+        Number of months ahead for the forecast start
+    horizon_length : int
+        Number of months the forecast spans
+
+    Returns
+    -------
+    pd.DataFrame
+        Forecast with adjusted valid_from/valid_to dates. Q values unchanged.
+    """
+    if raw_forecast.empty:
+        return raw_forecast.copy()
+
+    adjusted = raw_forecast.copy()
+    adjusted['date'] = pd.to_datetime(adjusted['date'])
+
+    issue_month = adjusted['date'].dt.month
+    issue_year = adjusted['date'].dt.year
+
+    # Target start month (same formula as monthly mode)
+    target_start_month = (issue_month + lead_time - 1) % 12 + 1
+
+    # Target end month (add horizon_length - 1 more months)
+    target_end_month = (target_start_month + horizon_length - 2) % 12 + 1
+
+    # Start year: if target_start < issue_month, crossed into next year
+    start_year = issue_year + (target_start_month < issue_month).astype(int)
+
+    # End year: if target_end < target_start, spans into next year
+    end_year = start_year + (target_end_month < target_start_month).astype(int)
+
+    # Set valid_from = first day of target_start_month
+    adjusted['valid_from'] = pd.to_datetime({
+        'year': start_year,
+        'month': target_start_month,
+        'day': 1
+    })
+
+    # Set valid_to = last day of target_end_month
+    adjusted['valid_to'] = pd.to_datetime({
+        'year': end_year,
+        'month': target_end_month,
+        'day': 1
+    }) + pd.offsets.MonthEnd(0)
+
+    # Retain base columns + Q columns
+    q_columns = infer_q_columns(raw_forecast)
+    columns_to_retain = LT_FORECAST_BASE_COLUMNS + q_columns
+    adjusted = adjusted[columns_to_retain]
+
+    return adjusted
+
+
 def calculate_lt_statistics_fc_period(discharge_data: pd.DataFrame,
                                        prediction_data: pd.DataFrame) -> pd.DataFrame:
     """
@@ -469,6 +631,37 @@ def post_process_lt_forecast(forecast_config: ForecastConfig,
     # Handle empty forecast data
     if raw_forecast.empty:
         return raw_forecast.copy()
+
+    # Check if calendar month adjustment is disabled (multi-month seasonal mode)
+    calendar_month_adjustment = forecast_config.get_calendar_month_adjustment()
+
+    if not calendar_month_adjustment:
+        target_start_month = forecast_config.get_target_start_month()
+
+        if target_start_month is not None:
+            # Fixed multi-month seasonal mode (existing behavior)
+            target_end_month = forecast_config.get_target_end_month()
+            return adjust_forecast_dates_only(
+                raw_forecast=raw_forecast,
+                target_start_month=target_start_month,
+                target_end_month=target_end_month
+            )
+        else:
+            # Dynamic multi-month mode
+            lead_time = forecast_config.get_operational_month_lead_time()
+            horizon_months = forecast_config.get_forecast_horizon_months()
+
+            if horizon_months is None or horizon_months < 1:
+                raise ValueError(
+                    "calendar_month_adjustment=False without target_start_month "
+                    "requires forecast_horizon_months >= 1"
+                )
+
+            return adjust_forecast_dates_dynamic(
+                raw_forecast=raw_forecast,
+                lead_time=lead_time,
+                horizon_length=horizon_months
+            )
 
     # Access the necessary parameters from the forecast_config
     operational_month_lead_time = forecast_config.get_operational_month_lead_time()

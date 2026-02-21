@@ -20,18 +20,47 @@ from post_process_lt_forecast import (
     calculate_lt_statistics_calendar_month,
     map_forecasted_period_to_calendar_month,
     adjust_forecast_to_calendar_month,
+    adjust_forecast_dates_only,
+    adjust_forecast_dates_dynamic,
     post_process_lt_forecast
 )
 
 
 class MockForecastConfig:
     """Mock ForecastConfig for testing without environment dependencies."""
-    def __init__(self, operational_month_lead_time: int = 2):
+    def __init__(
+        self,
+        operational_month_lead_time: int = 2,
+        calendar_month_adjustment: bool = True,
+        target_start_month: int | None = None,
+        target_end_month: int | None = None,
+        forecast_horizon_months: int | None = None
+    ):
         self._operational_month_lead_time = operational_month_lead_time
+        self._calendar_month_adjustment = calendar_month_adjustment
+        self._target_start_month = target_start_month
+        self._target_end_month = target_end_month
+        self._forecast_horizon_months = forecast_horizon_months
 
     def get_operational_month_lead_time(self) -> int:
         """Return the operational month lead time."""
         return self._operational_month_lead_time
+
+    def get_calendar_month_adjustment(self) -> bool:
+        """Return whether to apply ratio-based calendar month adjustment."""
+        return self._calendar_month_adjustment
+
+    def get_target_start_month(self) -> int | None:
+        """Return the fixed target start month for seasonal forecasts."""
+        return self._target_start_month
+
+    def get_target_end_month(self) -> int | None:
+        """Return the fixed target end month for seasonal forecasts."""
+        return self._target_end_month
+
+    def get_forecast_horizon_months(self) -> int | None:
+        """Return the forecast horizon in months for dynamic multi-month mode."""
+        return self._forecast_horizon_months
 
 
 def generate_discharge_data(codes: list, start_year: int, end_year: int,
@@ -711,6 +740,448 @@ class TestEdgeCases:
         # Also verify main function runs successfully
         result = post_process_lt_forecast(config, discharge_data, forecast_data)
         assert len(result) == 1
+
+
+class TestAdjustForecastDatesOnly:
+    """Tests for adjust_forecast_dates_only function (multi-month seasonal mode)."""
+
+    def test_adjust_dates_only_same_year(self):
+        """Test Apr-Sep case where period stays within same year."""
+        forecast_data = pd.DataFrame({
+            'date': pd.to_datetime(['2024-03-25']),
+            'code': ['BASIN_A'],
+            'valid_from': pd.to_datetime(['2024-04-24']),  # Raw model period
+            'valid_to': pd.to_datetime(['2024-05-23']),
+            'flag': [0],
+            'Q5': [70.0],
+            'Q50': [100.0],
+            'Q95': [130.0]
+        })
+
+        result = adjust_forecast_dates_only(
+            raw_forecast=forecast_data,
+            target_start_month=4,
+            target_end_month=9
+        )
+
+        # Check dates adjusted to calendar month boundaries
+        assert result['valid_from'].values[0] == pd.Timestamp('2024-04-01')
+        assert result['valid_to'].values[0] == pd.Timestamp('2024-09-30')
+
+        # Check Q values unchanged
+        assert result['Q5'].values[0] == 70.0
+        assert result['Q50'].values[0] == 100.0
+        assert result['Q95'].values[0] == 130.0
+
+    def test_adjust_dates_only_year_boundary(self):
+        """Test Nov-Feb case where period spans year boundary."""
+        forecast_data = pd.DataFrame({
+            'date': pd.to_datetime(['2024-10-25']),
+            'code': ['BASIN_A'],
+            'valid_from': pd.to_datetime(['2024-11-24']),
+            'valid_to': pd.to_datetime(['2024-12-23']),
+            'flag': [0],
+            'Q50': [100.0]
+        })
+
+        result = adjust_forecast_dates_only(
+            raw_forecast=forecast_data,
+            target_start_month=11,
+            target_end_month=2
+        )
+
+        # Check dates: starts in 2024, ends in 2025
+        assert result['valid_from'].values[0] == pd.Timestamp('2024-11-01')
+        assert result['valid_to'].values[0] == pd.Timestamp('2025-02-28')
+
+        # Q values unchanged
+        assert result['Q50'].values[0] == 100.0
+
+    def test_adjust_dates_only_single_month(self):
+        """Test single month case (e.g., June only)."""
+        forecast_data = pd.DataFrame({
+            'date': pd.to_datetime(['2024-05-15']),
+            'code': ['BASIN_A'],
+            'valid_from': pd.to_datetime(['2024-06-14']),
+            'valid_to': pd.to_datetime(['2024-07-13']),
+            'flag': [0],
+            'Q50': [100.0]
+        })
+
+        result = adjust_forecast_dates_only(
+            raw_forecast=forecast_data,
+            target_start_month=6,
+            target_end_month=6
+        )
+
+        # Check dates adjusted to June 1-30
+        assert result['valid_from'].values[0] == pd.Timestamp('2024-06-01')
+        assert result['valid_to'].values[0] == pd.Timestamp('2024-06-30')
+
+    def test_adjust_dates_only_leap_year(self):
+        """Test that leap year February is handled correctly."""
+        forecast_data = pd.DataFrame({
+            'date': pd.to_datetime(['2024-01-15']),  # 2024 is a leap year
+            'code': ['BASIN_A'],
+            'valid_from': pd.to_datetime(['2024-02-14']),
+            'valid_to': pd.to_datetime(['2024-03-14']),
+            'flag': [0],
+            'Q50': [100.0]
+        })
+
+        result = adjust_forecast_dates_only(
+            raw_forecast=forecast_data,
+            target_start_month=2,
+            target_end_month=2
+        )
+
+        # Check February 2024 (leap year) ends on 29th
+        assert result['valid_from'].values[0] == pd.Timestamp('2024-02-01')
+        assert result['valid_to'].values[0] == pd.Timestamp('2024-02-29')
+
+    def test_missing_target_start_month_raises_error(self):
+        """Test that missing target_start_month raises ValueError."""
+        forecast_data = pd.DataFrame({
+            'date': pd.to_datetime(['2024-03-25']),
+            'code': ['BASIN_A'],
+            'valid_from': pd.to_datetime(['2024-04-24']),
+            'valid_to': pd.to_datetime(['2024-05-23']),
+            'flag': [0],
+            'Q50': [100.0]
+        })
+
+        with pytest.raises(ValueError, match="target_start_month is required"):
+            adjust_forecast_dates_only(
+                raw_forecast=forecast_data,
+                target_start_month=None,
+                target_end_month=9
+            )
+
+    def test_missing_target_end_month_raises_error(self):
+        """Test that missing target_end_month raises ValueError."""
+        forecast_data = pd.DataFrame({
+            'date': pd.to_datetime(['2024-03-25']),
+            'code': ['BASIN_A'],
+            'valid_from': pd.to_datetime(['2024-04-24']),
+            'valid_to': pd.to_datetime(['2024-05-23']),
+            'flag': [0],
+            'Q50': [100.0]
+        })
+
+        with pytest.raises(ValueError, match="target_end_month is required"):
+            adjust_forecast_dates_only(
+                raw_forecast=forecast_data,
+                target_start_month=4,
+                target_end_month=None
+            )
+
+    def test_invalid_month_raises_error(self):
+        """Test that invalid month values raise ValueError."""
+        forecast_data = pd.DataFrame({
+            'date': pd.to_datetime(['2024-03-25']),
+            'code': ['BASIN_A'],
+            'valid_from': pd.to_datetime(['2024-04-24']),
+            'valid_to': pd.to_datetime(['2024-05-23']),
+            'flag': [0],
+            'Q50': [100.0]
+        })
+
+        with pytest.raises(ValueError, match="target_start_month must be 1-12"):
+            adjust_forecast_dates_only(
+                raw_forecast=forecast_data,
+                target_start_month=0,
+                target_end_month=9
+            )
+
+        with pytest.raises(ValueError, match="target_end_month must be 1-12"):
+            adjust_forecast_dates_only(
+                raw_forecast=forecast_data,
+                target_start_month=4,
+                target_end_month=13
+            )
+
+    def test_empty_forecast_returns_empty(self):
+        """Test that empty forecast returns empty DataFrame."""
+        forecast_data = pd.DataFrame(columns=[
+            'date', 'code', 'valid_from', 'valid_to', 'flag', 'Q50'
+        ])
+
+        result = adjust_forecast_dates_only(
+            raw_forecast=forecast_data,
+            target_start_month=4,
+            target_end_month=9
+        )
+
+        assert len(result) == 0
+
+    def test_multiple_forecasts(self):
+        """Test that multiple forecasts are handled correctly."""
+        forecast_data = pd.DataFrame({
+            'date': pd.to_datetime(['2024-03-25', '2025-03-25']),
+            'code': ['BASIN_A', 'BASIN_B'],
+            'valid_from': pd.to_datetime(['2024-04-24', '2025-04-24']),
+            'valid_to': pd.to_datetime(['2024-05-23', '2025-05-23']),
+            'flag': [0, 0],
+            'Q50': [100.0, 150.0]
+        })
+
+        result = adjust_forecast_dates_only(
+            raw_forecast=forecast_data,
+            target_start_month=4,
+            target_end_month=9
+        )
+
+        assert len(result) == 2
+        assert result['valid_from'].values[0] == pd.Timestamp('2024-04-01')
+        assert result['valid_to'].values[0] == pd.Timestamp('2024-09-30')
+        assert result['valid_from'].values[1] == pd.Timestamp('2025-04-01')
+        assert result['valid_to'].values[1] == pd.Timestamp('2025-09-30')
+
+
+class TestCalendarMonthAdjustmentIntegration:
+    """Integration tests for calendar_month_adjustment flag."""
+
+    @pytest.fixture
+    def setup_data(self):
+        """Set up test data."""
+        codes = ['BASIN_A']
+        discharge_data = generate_discharge_data(codes, 2010, 2020)
+        forecast_data = generate_forecast_data(
+            codes, ['2020-03-25'],
+            valid_from_offset=36,
+            valid_to_offset=65
+        )
+        return discharge_data, forecast_data
+
+    def test_calendar_month_adjustment_false_skips_ratio(self, setup_data):
+        """Verify Q values unchanged when calendar_month_adjustment=False."""
+        discharge_data, forecast_data = setup_data
+
+        # Store original Q values
+        original_q50 = forecast_data['Q50'].values[0]
+
+        config = MockForecastConfig(
+            operational_month_lead_time=2,
+            calendar_month_adjustment=False,
+            target_start_month=4,
+            target_end_month=9
+        )
+
+        result = post_process_lt_forecast(config, discharge_data, forecast_data)
+
+        # Q values should be unchanged
+        assert result['Q50'].values[0] == original_q50
+
+        # Dates should be adjusted
+        assert result['valid_from'].values[0] == pd.Timestamp('2020-04-01')
+        assert result['valid_to'].values[0] == pd.Timestamp('2020-09-30')
+
+    def test_calendar_month_adjustment_true_uses_ratio(self, setup_data):
+        """Verify existing ratio adjustment behavior when flag is True (default)."""
+        discharge_data, forecast_data = setup_data
+
+        config = MockForecastConfig(
+            operational_month_lead_time=2,
+            calendar_month_adjustment=True  # Default behavior
+        )
+
+        result = post_process_lt_forecast(config, discharge_data, forecast_data)
+
+        # Q values should be adjusted (not same as original in most cases)
+        # The exact value depends on climatology ratios, so we just check
+        # that the result is valid and non-negative
+        assert 'Q50' in result.columns
+        assert result['Q50'].values[0] >= 0
+
+        # Valid_from should be adjusted to calendar month (single month mode)
+        # Issue March + lead_time 2 = May
+        valid_from = pd.to_datetime(result['valid_from'].values[0])
+        assert valid_from.month == 5
+
+    def test_default_calendar_month_adjustment_is_true(self, setup_data):
+        """Verify default behavior uses ratio adjustment."""
+        discharge_data, forecast_data = setup_data
+
+        # Config without specifying calendar_month_adjustment
+        config = MockForecastConfig(operational_month_lead_time=2)
+
+        result = post_process_lt_forecast(config, discharge_data, forecast_data)
+
+        # Should complete successfully with ratio adjustment
+        assert len(result) == 1
+        assert 'Q50' in result.columns
+        # Valid_from should be calendar month adjusted (May for March+2)
+        valid_from = pd.to_datetime(result['valid_from'].values[0])
+        assert valid_from.month == 5
+
+
+class TestAdjustForecastDatesDynamic:
+    """Tests for dynamic multi-month mode."""
+
+    def test_three_month_forecast(self):
+        """Issue March 25, lead_time=1, horizon=3 -> Apr 1 to Jun 30."""
+        raw_forecast = pd.DataFrame({
+            'date': [pd.Timestamp('2024-03-25')],
+            'code': ['A'],
+            'valid_from': [pd.Timestamp('2024-04-01')],
+            'valid_to': [pd.Timestamp('2024-04-30')],
+            'flag': ['O'],
+            'Q50': [100.0]
+        })
+
+        result = adjust_forecast_dates_dynamic(raw_forecast, lead_time=1, horizon_length=3)
+
+        assert result['valid_from'].iloc[0] == pd.Timestamp('2024-04-01')
+        assert result['valid_to'].iloc[0] == pd.Timestamp('2024-06-30')
+        assert result['Q50'].iloc[0] == 100.0  # Q unchanged
+
+    def test_year_boundary_crossing(self):
+        """Issue Nov 25, lead_time=1, horizon=3 -> Dec 1 to Feb 28."""
+        raw_forecast = pd.DataFrame({
+            'date': [pd.Timestamp('2024-11-25')],
+            'code': ['A'],
+            'valid_from': [pd.Timestamp('2024-12-01')],
+            'valid_to': [pd.Timestamp('2024-12-31')],
+            'flag': ['O'],
+            'Q50': [100.0]
+        })
+
+        result = adjust_forecast_dates_dynamic(raw_forecast, lead_time=1, horizon_length=3)
+
+        assert result['valid_from'].iloc[0] == pd.Timestamp('2024-12-01')
+        assert result['valid_to'].iloc[0] == pd.Timestamp('2025-02-28')
+
+    def test_single_month_horizon(self):
+        """Issue March 25, lead_time=2, horizon=1 -> May 1 to May 31."""
+        raw_forecast = pd.DataFrame({
+            'date': [pd.Timestamp('2024-03-25')],
+            'code': ['A'],
+            'valid_from': [pd.Timestamp('2024-05-01')],
+            'valid_to': [pd.Timestamp('2024-05-30')],
+            'flag': ['O'],
+            'Q50': [100.0]
+        })
+
+        result = adjust_forecast_dates_dynamic(raw_forecast, lead_time=2, horizon_length=1)
+
+        assert result['valid_from'].iloc[0] == pd.Timestamp('2024-05-01')
+        assert result['valid_to'].iloc[0] == pd.Timestamp('2024-05-31')
+
+    def test_six_month_horizon(self):
+        """Issue March 25, lead_time=1, horizon=6 -> Apr 1 to Sep 30."""
+        raw_forecast = pd.DataFrame({
+            'date': [pd.Timestamp('2024-03-25')],
+            'code': ['A'],
+            'valid_from': [pd.Timestamp('2024-04-01')],
+            'valid_to': [pd.Timestamp('2024-04-30')],
+            'flag': ['O'],
+            'Q50': [100.0]
+        })
+
+        result = adjust_forecast_dates_dynamic(raw_forecast, lead_time=1, horizon_length=6)
+
+        assert result['valid_from'].iloc[0] == pd.Timestamp('2024-04-01')
+        assert result['valid_to'].iloc[0] == pd.Timestamp('2024-09-30')
+
+    def test_empty_forecast(self):
+        """Test that empty forecast returns empty DataFrame."""
+        raw_forecast = pd.DataFrame(columns=[
+            'date', 'code', 'valid_from', 'valid_to', 'flag', 'Q50'
+        ])
+
+        result = adjust_forecast_dates_dynamic(raw_forecast, lead_time=1, horizon_length=3)
+
+        assert len(result) == 0
+
+    def test_multiple_forecasts(self):
+        """Test that multiple forecasts are handled correctly."""
+        raw_forecast = pd.DataFrame({
+            'date': [pd.Timestamp('2024-03-25'), pd.Timestamp('2024-04-25')],
+            'code': ['A', 'B'],
+            'valid_from': [pd.Timestamp('2024-04-01'), pd.Timestamp('2024-05-01')],
+            'valid_to': [pd.Timestamp('2024-04-30'), pd.Timestamp('2024-05-31')],
+            'flag': ['O', 'O'],
+            'Q50': [100.0, 150.0]
+        })
+
+        result = adjust_forecast_dates_dynamic(raw_forecast, lead_time=1, horizon_length=3)
+
+        assert len(result) == 2
+        # March issue -> Apr 1 to Jun 30
+        assert result['valid_from'].iloc[0] == pd.Timestamp('2024-04-01')
+        assert result['valid_to'].iloc[0] == pd.Timestamp('2024-06-30')
+        # April issue -> May 1 to Jul 31
+        assert result['valid_from'].iloc[1] == pd.Timestamp('2024-05-01')
+        assert result['valid_to'].iloc[1] == pd.Timestamp('2024-07-31')
+
+
+class TestDynamicMultiMonthIntegration:
+    """Integration tests for dynamic multi-month mode via post_process_lt_forecast."""
+
+    @pytest.fixture
+    def setup_data(self):
+        """Set up test data."""
+        codes = ['BASIN_A']
+        discharge_data = generate_discharge_data(codes, 2010, 2020)
+        forecast_data = generate_forecast_data(
+            codes, ['2020-03-25'],
+            valid_from_offset=36,
+            valid_to_offset=65
+        )
+        return discharge_data, forecast_data
+
+    def test_dynamic_mode_three_month_forecast(self, setup_data):
+        """Test dynamic mode with 3-month horizon."""
+        discharge_data, forecast_data = setup_data
+
+        # Store original Q values
+        original_q50 = forecast_data['Q50'].values[0]
+
+        config = MockForecastConfig(
+            operational_month_lead_time=1,
+            calendar_month_adjustment=False,
+            target_start_month=None,  # Trigger dynamic mode
+            forecast_horizon_months=3
+        )
+
+        result = post_process_lt_forecast(config, discharge_data, forecast_data)
+
+        # Q values should be unchanged
+        assert result['Q50'].values[0] == original_q50
+
+        # Dates should be dynamically calculated
+        # Issue March + lead_time 1 = April start
+        # horizon 3 = April, May, June
+        assert result['valid_from'].values[0] == pd.Timestamp('2020-04-01')
+        assert result['valid_to'].values[0] == pd.Timestamp('2020-06-30')
+
+    def test_dynamic_mode_raises_error_without_horizon(self, setup_data):
+        """Test that missing forecast_horizon_months raises ValueError."""
+        discharge_data, forecast_data = setup_data
+
+        config = MockForecastConfig(
+            operational_month_lead_time=1,
+            calendar_month_adjustment=False,
+            target_start_month=None,  # Trigger dynamic mode
+            forecast_horizon_months=None  # Missing!
+        )
+
+        with pytest.raises(ValueError, match="requires forecast_horizon_months"):
+            post_process_lt_forecast(config, discharge_data, forecast_data)
+
+    def test_dynamic_mode_raises_error_with_zero_horizon(self, setup_data):
+        """Test that horizon_months < 1 raises ValueError."""
+        discharge_data, forecast_data = setup_data
+
+        config = MockForecastConfig(
+            operational_month_lead_time=1,
+            calendar_month_adjustment=False,
+            target_start_month=None,
+            forecast_horizon_months=0  # Invalid!
+        )
+
+        with pytest.raises(ValueError, match="requires forecast_horizon_months"):
+            post_process_lt_forecast(config, discharge_data, forecast_data)
 
 
 # Run tests with pytest

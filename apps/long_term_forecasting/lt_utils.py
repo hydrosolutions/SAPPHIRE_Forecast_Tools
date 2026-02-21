@@ -8,6 +8,7 @@ import os
 import pandas as pd
 import requests
 from typing import List, Dict, Any
+import calendar
 
 # Import forecast models
 from lt_forecasting.forecast_models.LINEAR_REGRESSION import LinearRegressionModel
@@ -126,6 +127,23 @@ def infer_q_columns(df: pd.DataFrame) -> list:
     return q_columns
 
 
+def nearest_scheduled_issue_date(today: pd.Timestamp, issue_day: int) -> pd.Timestamp:
+    """Find the closest scheduled issue date (current, previous, or next month)."""
+    candidates = []
+    for month_delta in (-1, 0, 1):
+        year = today.year
+        month = today.month + month_delta
+        if month < 1:
+            month += 12
+            year -= 1
+        elif month > 12:
+            month -= 12
+            year += 1
+        # Clamp to last valid day of that month (e.g. issue_day=31 in Feb -> 28/29)
+        max_day = calendar.monthrange(year, month)[1]
+        candidates.append(pd.Timestamp(year, month, min(issue_day, max_day)))
+
+    return min(candidates, key=lambda d: abs((today - d).days))
 # ─────────────────────────────────────────────────────────────────
 # DATABASE WRITING FUNCTIONS FOR LONG-TERM FORECASTS
 # ─────────────────────────────────────────────────────────────────

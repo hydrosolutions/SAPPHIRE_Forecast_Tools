@@ -487,3 +487,151 @@ forecast = post_process_lt_forecast(
     raw_forecast=forecast,
 )
 ```
+
+### Multi-Month Forecast Modes
+
+The post-processing module supports three modes for adjusting forecast periods. The mode is determined by configuration parameters.
+
+#### Configuration Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `calendar_month_adjustment` | bool | `true` | If `true`: apply ratio-based scaling to single month. If `false`: date-only adjustment (no Q scaling) |
+| `operational_month_lead_time` | int | - | Months ahead from issue date to target period start |
+| `target_start_month` | int | `null` | Fixed start month (1-12) for seasonal mode |
+| `target_end_month` | int | `null` | Fixed end month (1-12) for seasonal mode |
+| `forecast_horizon_months` | int | `null` | Number of months for dynamic multi-month mode |
+
+#### Mode Selection Logic
+
+```
+if calendar_month_adjustment == true:
+    → Monthly Mode (ratio adjustment to single calendar month)
+elif target_start_month is set:
+    → Fixed Seasonal Mode (fixed date range, no Q adjustment)
+else:
+    → Dynamic Multi-Month Mode (calculated date range based on lead_time + horizon)
+```
+
+---
+
+#### Mode 1: Monthly Mode (Default)
+
+Adjusts forecasts to a **single calendar month** using ratio-based scaling with long-term climatology.
+
+**When to use:** Standard monthly forecasts where the forecast period doesn't align with calendar months.
+
+**Configuration:**
+```json
+{
+  "prediction_horizon": 30,
+  "offset": 35,
+  "operational_issue_day": 25,
+  "operational_month_lead_time": 2,
+  "calendar_month_adjustment": true
+}
+```
+
+**Behavior:**
+- Target month = issue_month + lead_time (e.g., issue March + lead 2 → May)
+- Applies ratio-based scaling: `Q_adjusted = calendar_mean * (Q_raw / fc_period_mean)`
+- Clipping bounds prevent extreme adjustments
+
+**Example:**
+| Issue Date | Lead Time | valid_from | valid_to | Q Adjustment |
+|------------|-----------|------------|----------|--------------|
+| 2024-03-25 | 2 | 2024-05-01 | 2024-05-31 | Ratio-scaled |
+| 2024-11-25 | 2 | 2025-01-01 | 2025-01-31 | Ratio-scaled |
+
+---
+
+#### Mode 2: Fixed Seasonal Mode
+
+Adjusts forecasts to a **fixed multi-month period** (e.g., April-September every year). Q values remain unchanged.
+
+**When to use:** Seasonal forecasts where the model output already represents the target period average.
+
+**Configuration:**
+```json
+{
+  "prediction_horizon": 183,
+  "offset": 183,
+  "operational_issue_day": 25,
+  "calendar_month_adjustment": false,
+  "target_start_month": 4,
+  "target_end_month": 9
+}
+```
+
+**Behavior:**
+- `valid_from` = first day of `target_start_month` in issue year
+- `valid_to` = last day of `target_end_month` (spans into next year if end < start)
+- Q values unchanged (no ratio scaling)
+
+**Example:**
+| Issue Date | Start Month | End Month | valid_from | valid_to |
+|------------|-------------|-----------|------------|----------|
+| 2024-03-25 | 4 | 9 | 2024-04-01 | 2024-09-30 |
+| 2024-10-25 | 11 | 2 | 2024-11-01 | 2025-02-28 |
+| 2024-05-15 | 6 | 6 | 2024-06-01 | 2024-06-30 |
+
+---
+
+#### Mode 3: Dynamic Multi-Month Mode
+
+Calculates a **variable multi-month period** based on issue date, lead time, and horizon length. Q values remain unchanged.
+
+**When to use:** Multi-month forecasts where the target period changes based on when the forecast is issued (e.g., "forecast the next 3 months starting next month").
+
+**Configuration:**
+```json
+{
+  "prediction_horizon": 90,
+  "offset": 90,
+  "operational_issue_day": 25,
+  "operational_month_lead_time": 1,
+  "calendar_month_adjustment": false,
+  "forecast_horizon_months": 3
+}
+```
+
+**Behavior:**
+- Target start month = issue_month + lead_time
+- Target end month = start_month + horizon_months - 1
+- `valid_from` = first day of target start month
+- `valid_to` = last day of target end month
+- Q values unchanged (no ratio scaling)
+
+**Calculation Formula:**
+```
+target_start = (issue_month + lead_time - 1) % 12 + 1
+target_end = (target_start + horizon_months - 2) % 12 + 1
+```
+
+**Example (lead_time=1, horizon_months=3):**
+| Issue Date | Target Start | Target End | valid_from | valid_to |
+|------------|--------------|------------|------------|----------|
+| 2024-03-25 | April | June | 2024-04-01 | 2024-06-30 |
+| 2024-04-25 | May | July | 2024-05-01 | 2024-07-31 |
+| 2024-11-25 | December | February | 2024-12-01 | 2025-02-28 |
+| 2024-10-25 | November | January | 2024-11-01 | 2025-01-31 |
+
+**Error Handling:**
+- Raises `ValueError` if `calendar_month_adjustment=false`, `target_start_month=null`, and `forecast_horizon_months` is missing or < 1
+
+---
+
+#### Mode Comparison Summary
+
+| Mode | Config Trigger | Date Range | Q Adjustment | Use Case |
+|------|----------------|------------|--------------|----------|
+| Monthly | `calendar_month_adjustment=true` | Single calendar month | Ratio-scaled | Standard monthly forecasts |
+| Fixed Seasonal | `calendar_month_adjustment=false` + `target_start_month` set | Fixed range (e.g., Apr-Sep) | None | Same seasonal period every year |
+| Dynamic Multi-Month | `calendar_month_adjustment=false` + `forecast_horizon_months` set | Calculated from issue date | None | Rolling multi-month forecasts |
+
+#### Backward Compatibility
+
+- `calendar_month_adjustment` defaults to `true` → existing configurations work unchanged
+- `target_start_month` and `target_end_month` are only required for Fixed Seasonal Mode
+- `forecast_horizon_months` is only required for Dynamic Multi-Month Mode
+- No changes to existing ratio adjustment logic when using default settings

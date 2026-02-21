@@ -35,7 +35,7 @@ from __init__ import logger, initialize_today, get_today, LT_FORECAST_BASE_COLUM
 from data_interface import DataInterface, DataInterfaceDB, BasePredictorDataInterface
 from config_forecast import ForecastConfig
 from post_process_lt_forecast import post_process_lt_forecast
-from lt_utils import create_model_instance, save_forecast
+from lt_utils import create_model_instance, save_forecast, nearest_scheduled_issue_date
 
 
 # set lt_forecasting logger level
@@ -167,6 +167,44 @@ def run_single_model(data_interface: Union[DataInterface, DataInterfaceDB],
 
     logger.info(f"Head of temporal data after processing dependencies for model {model_name}:\n{temporal_data.head()}")
 
+    # get the actual date - now - not the one in the init
+    now_date = pd.Timestamp.now()   
+    now_date = now_date.normalize()  # only keep date part
+    today = get_today()
+
+    # Simple constraint: today can't be after now - we can not issue forecasts for a date in the future
+    assert today <= now_date, f"Forecast can not be issued for a future date. Forecast Issue Date: {today}, Now Date: {now_date}"
+    
+    # Compare when the forecast is issued and when it should be issued
+    forecast_issue_day = forecast_configs.get_operational_issue_day()
+    scheduled_issue_date = nearest_scheduled_issue_date(today, forecast_issue_day)
+    day_offset = (today - scheduled_issue_date).days  # negative = early, positive = late
+
+    # If more than 5 days off, don't run
+    if abs(day_offset) > 5:
+        raise ValueError(
+            f"Forecast for model {model_name} is {abs(day_offset)} days from the "
+            f"scheduled issue date ({scheduled_issue_date.date()}). Refusing to run."
+        )
+
+    # If late, snap back to the scheduled issue date
+    if day_offset > 0:
+        logger.info(
+            f"Adjusting forecast issue date from {today.date()} to "
+            f"scheduled issue date {scheduled_issue_date.date()} for model {model_name}"
+        )
+        today = scheduled_issue_date
+
+    if day_offset != 0:
+        direction = "before" if day_offset < 0 else "after"
+        days = abs(day_offset)
+        unit = "day" if days == 1 else "days"
+        logger.warning(
+            f"Forecast for model {model_name} issued {days} {unit} {direction} the scheduled issue date "
+            f"({scheduled_issue_date.date()}). Forecasts are normalized to calendar monthly values; "
+            f"off-schedule runs may lead to degradation in forecast quality."
+        )
+
     logger.info(f"Can model {model_name} be run? {'Yes' if can_be_run else 'No'}")
 
     if can_be_run:
@@ -197,20 +235,6 @@ def run_single_model(data_interface: Union[DataInterface, DataInterfaceDB],
         success = False
  
     logger.info(f"Forecast head before post-processing for model {model_name}:\n{forecast.head()}")
-    # Compare when the forecast is issued and when it should be issued
-    forecast_issue_day = forecast_configs.get_operational_issue_day()
-    today = get_today()
-    day_offset = today.day - forecast_issue_day
-
-    if day_offset != 0:
-        direction = "before" if day_offset < 0 else "after"
-        days = abs(day_offset)
-        unit = "day" if days == 1 else "days"
-        logger.warning(
-            f"Forecast for model {model_name} issued {days} {unit} {direction} the scheduled issue day "
-            f"({forecast_issue_day}). Forecasts are normalized to calendar monthly values; "
-            f"off-schedule runs may lead to degradation in forecast quality."
-        )
     # Postprocess the forecasts to calendar months.
     forecast = post_process_lt_forecast(
         forecast_config=forecast_configs,
@@ -227,13 +251,14 @@ def run_single_model(data_interface: Union[DataInterface, DataInterfaceDB],
     #################################################
     output_path = forecast_configs.get_output_path(model_name=model_name)
     horizon_value = forecast_configs.get_operational_month_lead_time()
+    horizon_type = forecast_configs.get_horizon_type()
 
     # Save forecast (DB + CSV parallel track)
     save_success = save_forecast(
         forecast_df=forecast,
         model_name=model_name,
         output_path=output_path,
-        horizon_type="month",
+        horizon_type=horizon_type,
         horizon_value=horizon_value,
         is_hindcast=False
     )
