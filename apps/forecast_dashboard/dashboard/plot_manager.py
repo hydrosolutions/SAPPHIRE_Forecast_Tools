@@ -1,6 +1,9 @@
 
 # dashboard/plot_manager.py
-"""Centralises all plot pane creation, update, and tab-rendering logic."""
+"""
+Centralises all plot pane creation, update, tab-rendering logic,
+and rendering-related callback wiring.
+"""
 
 import panel as pn
 import holoviews as hv
@@ -27,7 +30,39 @@ class PlotManager:
         self._init_snow_panes()
         self._init_forecast_panes()
         self._init_skill_table()
-    
+
+    # ------------------------------------------------------------------
+    # Callback wiring — call once after layout exists
+    # ------------------------------------------------------------------
+    def wire(self, dashboard_tabs) -> None:
+        """Register all rendering-related callbacks."""
+        self._dashboard_tabs = dashboard_tabs
+
+        self._wire_forecast_update_button()
+        self._wire_tab_activation()
+        self._wire_sidepane_visibility()
+
+    def _wire_forecast_update_button(self) -> None:
+        self._wm.update_forecast_button.on_click(self.update_forecast_plots)
+
+    def _wire_tab_activation(self) -> None:
+        # Attach the callback to the tabs and station
+        self._dashboard_tabs.param.watch(
+            lambda event: self.render_active_tab(self._dashboard_tabs, event),
+            "active",
+        )
+
+    def _wire_sidepane_visibility(self) -> None:
+        wm = self._wm
+        self._dashboard_tabs.param.watch(
+            lambda event: self._cfg.viz.update_sidepane_card_visibility(
+                self._dashboard_tabs,
+                wm.station_card, wm.forecast_card, wm.basin_card,
+                wm.pentad_card, wm.reload_card, event,
+            ),
+            "active",
+        )
+
     # ------------------------------------------------------------------
     # Pane initialisation helpers
     # ------------------------------------------------------------------
@@ -95,7 +130,7 @@ class PlotManager:
                 "name": self._("Download currently visible table"),
             },
         )
-    
+
     # ------------------------------------------------------------------
     # Shared helpers
     # ------------------------------------------------------------------
@@ -111,7 +146,7 @@ class PlotManager:
             range_slider=wm.manual_range.value,
             range_visibility=wm.show_range_button.value,
         )
-    
+
     def _build_forecast_hydrograph(self):
         """Build the forecast hydrograph based on current widget state."""
         kw = self._common_plot_kwargs()
@@ -129,11 +164,12 @@ class PlotManager:
             ml_forecast=self._dm.ml_forecast,
             **kw,
         )
-    
+
     # ------------------------------------------------------------------
     # Forecast tabulator
     # ------------------------------------------------------------------
     def update_forecast_tabulator(self):
+        # Initial tabulator fill
         self._cfg.viz.create_forecast_summary_tabulator(
             self._,
             self._dm.forecasts_all,

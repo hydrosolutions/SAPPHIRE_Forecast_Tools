@@ -1,27 +1,17 @@
 # forecast_dashboard.py
-#
-# This script creates a dashboard for the pentadal forecast.
-#
-# Run with the following command:
-# ieasyhydroforecast_data_root_dir=/absolute/path/to ieasyhydroforecast_env_file_path=/absolute/path/to/sensitive_data_forecast_tools/config/.env_develop_kghm sapphire_forecast_horizon=pentad SAPPHIRE_OPDEV_ENV=True panel serve forecast_dashboard.py --show --autoreload --port 5055
+"""
+Forecast dashboard — assembly script.
 
-# =========================
-# Standard library imports
-# =========================
-from concurrent.futures import ThreadPoolExecutor
+Every concern lives in its own manager; this file only creates the
+objects, wires them together, and makes the result servable.
 
-# =========================
-# Third-party imports
-# =========================
+Run:
+    ieasyhydroforecast_data_root_dir=/absolute/path/to ieasyhydroforecast_env_file_path=/absolute/path/to/sensitive_data_forecast_tools/config/.env_develop_kghm sapphire_forecast_horizon=pentad SAPPHIRE_OPDEV_ENV=True panel serve forecast_dashboard.py --show --autoreload --port 5055
+"""
 import panel as pn
-import holoviews as hv
 
-# =========================
-# Local application imports
-# =========================
 from src.gettext_config import _
 import src.processing as processing
-from src.site import SapphireSite as Site
 from src.bulletins import write_to_excel
 import src.layout as layout
 
@@ -34,13 +24,12 @@ from dashboard import config
 from dashboard.data_manager import DataManager
 
 
-# 0. Setup logger
 logger = setup_logger()
 
-# 1. Configuration & environment
+# ─── 1. Configuration & environment ─────────────────────────────────
 cfg = config.init_dashboard(pn)
 
-# 2. Station metadata & DataManager initialisation
+# ─── 2. Station metadata & DataManager ──────────────────────────────
 all_stations, station_dict = processing.get_all_stations_from_file()
 
 dm = DataManager(
@@ -49,86 +38,25 @@ dm = DataManager(
     horizon_in_year=cfg.horizon_in_year,
 )
 dm.load_station('15189')
-# 3. Widgets
+# ─── 3. Widgets ─────────────────────────────────────────────────────
 wm = WidgetManager(dm, cfg, station_dict)
-
-# 4. Initial site attribute computation
 dm.update_sites_for_pentad(_, wm.pentad_selector.value, wm.decad_selector.value)
 
-# 5. Plot manager
+# ─── 4. Plot manager ────────────────────────────────────────────────
 pm = PlotManager(dm, wm, cfg, gettext=_)
-
-# Initial tabulator fill
 pm.update_forecast_tabulator()
 
-# 6. Callbacks
-@pn.depends(wm.station, wm.pentad_selector, wm.decad_selector, watch=True)
-def on_station_or_period_changed(station_value, selected_pentad, selected_decad):
-    """Reload data for the new station and refresh the model checkbox."""
-    dm.load_station(station_value.split()[0]) # Pass the station code
-    dm.update_sites_for_pentad(_, selected_pentad, selected_decad)
-    dm.invalidate_render_cache()
-
-    wm.refresh_warnings()
-    wm.refresh_model_checkbox()
-
-    # update_active_tab(None)
-    pm.render_active_tab(dashboard_content)
-
-wm.update_forecast_button.on_click(pm.update_forecast_plots)
-
-# Update the site object based on site and forecast selection
-# --- Site object binding ---
-update_site_object = pn.bind(
-    Site.get_site_attributes_from_selected_forecast,
-    _=_,
-    sites=dm.sites_list,
-    site_selection=wm.station,
-    tabulator=wm.forecast_tabulator)
-
-
-# 7. Bulletin management
+# ─── 5. Bulletin management ─────────────────────────────────────────
 bulletin = BulletinManager(
-    wm=wm,
-    cfg=cfg,
-    dm=dm,
+    wm=wm, cfg=cfg, dm=dm,
     processing=processing,
     write_to_excel=write_to_excel,
 )
 
-# 8. Data reload watcher
-def on_data_needs_reload_changed(event):
-    if event.new:
-        print("Triggered rerunning of forecasts.")
-        try:
-            #print("---loading data---")
-            # load_data()
-            #print("---data loaded---")
-            #print("---updating viz---")
-            pm.refresh_all_visualizations()
-            #print("---viz updated---")
-            #print("Forecasts produced and visualizations updated successfully.")
-        except Exception as e:
-            print(f"Error during forecast rerun: {e}")
-        finally:
-            processing.data_reloader.data_needs_reload = False  # Reset the flag
-
-# Attach watcher only once
-if not hasattr(processing.data_reloader, 'watcher_attached'):
-    processing.data_reloader.param.watch(on_data_needs_reload_changed, 'data_needs_reload')
-    processing.data_reloader.watcher_attached = True
-
-# 9. Layout
-# Define the disclaimer of the dashboard
+# ─── 6. Layout ──────────────────────────────────────────────────────
 disclaimer = layout.define_disclaimer(_, cfg.in_docker)
 
-
-# Update the widgets conditional on the active tab
-wm.range_selection.param.watch(lambda event: cfg.viz.update_range_slider_visibility(
-    _, wm.manual_range, event), 'value')
-
-# Create a placeholder for the dashboard content
-dashboard_content = layout.define_tabs_2(_, wm.predictors_warning, wm.forecast_warning,
+dashboard_tabs = layout.define_tabs_2(_, wm.predictors_warning, wm.forecast_warning,
     pm.daily_hydrograph, pm.daily_rainfall, pm.daily_temperature, pm.snow_plots,
     pm.forecast_data_and_plot,  
     wm.forecast_summary_table, pm.pentad_forecast, pm.forecast_skill,
@@ -136,36 +64,27 @@ dashboard_content = layout.define_tabs_2(_, wm.predictors_warning, wm.forecast_w
     wm.add_to_bulletin_button, wm.add_to_bulletin_popup, wm.show_daily_data,
     pm.skill_table, pm.skill_download_filename, pm.skill_download_button
 )
-dashboard_content.param.watch(lambda event: cfg.viz.update_sidepane_card_visibility(
-    dashboard_content, wm.station_card, wm.forecast_card, wm.basin_card, wm.pentad_card, wm.reload_card, event), 'active')
 
-pm.render_active_tab(dashboard_content)
+sidebar_content=layout.define_sidebar(_, wm.station_card, wm.forecast_card, wm.basin_card, wm.message_pane, wm.reload_card)
 
-# Attach the callback to the tabs and station
-# Attach tab-activation renderer & do the first render
-dashboard_content.param.watch(
-    lambda event: pm.render_active_tab(dashboard_content, event),
-    'active',
-)
+# ─── 7. Wire all callbacks ──────────────────────────────────────────
+wm.wire(dm, pm, dashboard_tabs, gettext=_)
+pm.wire(dashboard_tabs)
+dm.wire_data_reload(pm)
 
+# First render of the active tab
+pm.render_active_tab(dashboard_tabs)
 
-sidebar_content=layout.define_sidebar(_, wm.station_card, wm.forecast_card, wm.basin_card,
-                                  wm.message_pane, wm.reload_card)
-
-# 10. Authentication
+# ─── 8. Authentication ──────────────────────────────────────────────
 auth = AuthManager()
-
-# --- Register panels whose visibility auth controls ---
 auth.register_panels(
-    dashboard_content=dashboard_content,
+    dashboard_content=dashboard_tabs,
     sidebar_content=sidebar_content,
     language_buttons=wm.language_buttons,
 )
-
-# --- Track widgets for inactivity reset ---
 auth.track_widgets(wm.trackable_widgets())
 
-# --- Build the template (use auth's widgets) ---
+# ─── 9. Template ────────────────────────────────────────────────────
 dashboard = pn.template.BootstrapTemplate(
     title=cfg.dashboard_title,
     logo=cfg.icon_path,
@@ -177,29 +96,12 @@ dashboard = pn.template.BootstrapTemplate(
     )],
     sidebar=pn.Column(sidebar_content),
     collapsed_sidebar=False,
-    main=pn.Column(auth._js_pane, auth.login_form, dashboard_content),
+    main=pn.Column(auth._js_pane, auth.login_form, dashboard_tabs),
     favicon=cfg.icon_path
 )
 
-# --- Initialize auth (sets visibility, restores session) ---
 auth.initialize()
-
-# Make the dashboard servable
 dashboard.servable()
 
-# 11. Background station loading
-def on_stations_loaded(fut):
-    try:
-        new_all_stations, new_station_dict = fut.result()
-        print(f"Stations loaded from iehhf: {len(new_all_stations) if new_all_stations is not None else 0}")
-        # print(type(new_all_stations))
-        if new_all_stations is not None:
-            # print("Stations: ", new_all_stations)
-            dm.replace_stations(new_all_stations, new_station_dict, wm.station,
-                                _, wm.pentad_selector.value, wm.decad_selector.value)
-    except Exception as e:
-        print(f"Failed to load stations: {e}")
-
-executor = ThreadPoolExecutor(max_workers=1)
-future = executor.submit(processing.get_all_stations_from_iehhf)
-future.add_done_callback(on_stations_loaded)
+# ─── 10. Background station loading ─────────────────────────────────
+dm.start_background_station_load(wm, gettext=_)

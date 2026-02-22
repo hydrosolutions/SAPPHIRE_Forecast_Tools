@@ -2,17 +2,27 @@
 Centralized data management for the forecast dashboard.
 
 Encapsulates all mutable data state, provides controlled access,
-and handles reloading/refreshing logic in one place.
+handles reloading/refreshing logic, and owns background data lifecycle
+(station loading from iehhf, pipeline-reload watcher).
 """
 
-import param
+from __future__ import annotations
+
 import datetime as dt
+from concurrent.futures import ThreadPoolExecutor
+from typing import TYPE_CHECKING
+
+import param
 
 from src.site import SapphireSite as Site
 from src import db
 import src.processing as processing
 from dashboard import utils
 from dashboard.logger import setup_logger
+
+if TYPE_CHECKING:
+    from dashboard.plot_manager import PlotManager
+    from dashboard.widget_manager import WidgetManager
 
 logger = setup_logger()
 
@@ -56,6 +66,9 @@ class DataManager(param.Parameterized):
         # Track what's already been rendered to avoid redundant plot updates
         self._last_rendered_predictors_station: str | None = None
         self._last_rendered_forecast_station: str | None = None
+
+        # Background executor (kept alive to prevent GC)
+        self._executor: ThreadPoolExecutor | None = None
     
     # ------------------------------------------------------------------
     # Properties – read-only access to internal state
@@ -75,7 +88,7 @@ class DataManager(param.Parameterized):
     @property
     def model_dict_all(self) -> dict:
         return dict(self._model_dict_all)
-    
+
     # --- Convenience accessors for common data keys ---
 
     @property
@@ -117,7 +130,7 @@ class DataManager(param.Parameterized):
     def get(self, key, default=None):
         """Generic access for less-common keys."""
         return self._data.get(key, default)
-    
+
     # ------------------------------------------------------------------
     # Data loading
     # ------------------------------------------------------------------
@@ -146,7 +159,7 @@ class DataManager(param.Parameterized):
             .set_index('model_long')['model_short']
             .to_dict()
         )
-    
+
     # ------------------------------------------------------------------
     # Model filtering helpers
     # ------------------------------------------------------------------
@@ -194,6 +207,7 @@ class DataManager(param.Parameterized):
 
     def update_sites_for_pentad(self, _, pentad, decad) -> None:
         """Refresh hydrograph statistics + linear regression predictor on sites."""
+        # Initial site attribute computation
         self._sites_list = utils.update_site_attributes_with_hydrograph_statistics_for_selected_pentad(
             _=_, sites=self._sites_list,
             df=self.hydrograph_pentad_all,
@@ -268,3 +282,54 @@ class DataManager(param.Parameterized):
     # def linreg_datatable(self):
     #     """Shifted linreg_predictor for display (1-day shift)."""
     #     return processing.shift_date_by_n_days(self.linreg_predictor, 1)
+
+    # ------------------------------------------------------------------
+    # Data lifecycle: reload watcher + background station loading
+    # ------------------------------------------------------------------
+
+    def wire_data_reload(self, pm: PlotManager) -> None:
+        """Watch the data_reloader flag and refresh plots when it fires."""
+        def _on_data_needs_reload(event):
+            if not event.new:
+                return
+            print("Triggered rerunning of forecasts.")
+            logger.info("Data reload triggered — refreshing visualisations.")
+            try:
+                # here dm.load_station
+                #print("---data loaded---")
+                pm.refresh_all_visualizations()
+                #print("Forecasts produced and visualizations updated successfully.")
+            except Exception as e:
+                logger.error("Error during forecast rerun: %s", e)
+                print(f"Error during forecast rerun: {e}")
+            finally:
+                processing.data_reloader.data_needs_reload = False
+
+        # Attach watcher only once
+        if not getattr(processing.data_reloader, "watcher_attached", False):
+            processing.data_reloader.param.watch(
+                _on_data_needs_reload, "data_needs_reload"
+            )
+            processing.data_reloader.watcher_attached = True
+
+    # Background station loading
+    def start_background_station_load(self, wm: WidgetManager, gettext) -> None:
+        """Kick off the async iehhf station fetch (fire-and-forget)."""
+        def _on_done(future):
+            try:
+                new_all_stations, new_station_dict = future.result()
+                count = len(new_all_stations) if new_all_stations is not None else 0
+                logger.info("Stations loaded from iehhf: %d", count)
+                # print(type(new_all_stations))
+                if new_all_stations is not None:
+                    # print("Stations: ", new_all_stations)
+                    self.replace_stations(
+                        new_all_stations, new_station_dict, wm.station,
+                        gettext, wm.pentad_selector.value, wm.decad_selector.value,
+                    )
+            except Exception as e:
+                logger.error("Failed to load stations: %s", e)
+
+        self._executor = ThreadPoolExecutor(max_workers=1)
+        future = self._executor.submit(processing.get_all_stations_from_iehhf)
+        future.add_done_callback(_on_done)

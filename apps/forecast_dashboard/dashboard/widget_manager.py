@@ -7,11 +7,13 @@ Responsibilities
 ────────────────
 • Create all widgets once, with correct initial values.
 • Expose thin helpers that callbacks use to refresh widget state.
+• Wire widget-triggered callbacks (station change, range slider, etc.).
 • Keep zero business-logic — that stays in DataManager / config.viz.
 
 Usage in forecast_dashboard.py
 ──────────────────────────────
     wm = WidgetManager(dm, cfg, station_dict)
+    wm.wire(dm, pm, dashboard_tabs, gettext=_)
     # wm.station, wm.model_checkbox, … are ready to use.
 """
 
@@ -22,12 +24,15 @@ from typing import TYPE_CHECKING
 import panel as pn
 
 from dashboard import widgets
+from src.site import SapphireSite as Site
 
 if TYPE_CHECKING:
     from dashboard.config import DashboardConfig
     from dashboard.data_manager import DataManager
+    from dashboard.plot_manager import PlotManager
 
 from dashboard.logger import setup_logger
+
 logger = setup_logger()
 
 
@@ -37,7 +42,7 @@ class WidgetManager:
     # ------------------------------------------------------------------
     # Construction
     # ------------------------------------------------------------------
-    def __init__(self, dm: DataManager, cfg: DashboardConfig, station_dict: dict,) -> None:
+    def __init__(self, dm: DataManager, cfg: DashboardConfig, station_dict: dict) -> None:
         self._dm = dm
         self._cfg = cfg
 
@@ -119,7 +124,56 @@ class WidgetManager:
         self.language_buttons = widgets.create_language_buttons()
         self.message_pane = widgets.create_message_pane(dm._data)
         self.reload_card = cfg.viz.create_reload_button()
-    
+
+    # ------------------------------------------------------------------
+    # Callback wiring — call once after PlotManager & layout exist
+    # ------------------------------------------------------------------
+    def wire(self, dm: DataManager, pm: PlotManager, dashboard_tabs, *, gettext) -> None:
+        """Register all widget-triggered callbacks."""
+        self._pm = pm
+        self._gettext = gettext
+        self._dashboard_tabs = dashboard_tabs
+
+        self._wire_station_period_change(dm, pm)
+        self._wire_range_slider_visibility()
+        self._wire_site_object_binding(dm)
+
+    def _wire_station_period_change(self, dm: DataManager, pm: PlotManager) -> None:
+        @pn.depends(self.station, self.pentad_selector, self.decad_selector, watch=True)
+        def _on_change(station_value, selected_pentad, selected_decad):
+            """Reload data for the new station and refresh the model checkbox."""
+            _ = self._gettext
+            dm.load_station(station_value.split()[0])
+            dm.update_sites_for_pentad(_, selected_pentad, selected_decad)
+            dm.invalidate_render_cache()
+
+            self.refresh_warnings()
+            self.refresh_model_checkbox()
+            pm.render_active_tab(self._dashboard_tabs)
+
+        # prevent GC
+        self._on_station_or_period_changed = _on_change
+
+    def _wire_range_slider_visibility(self) -> None:
+        # Update the widgets conditional on the active tab
+        self.range_selection.param.watch(
+            lambda event: self._cfg.viz.update_range_slider_visibility(
+                self._gettext, self.manual_range, event,
+            ),
+            "value",
+        )
+
+    def _wire_site_object_binding(self, dm: DataManager) -> None:
+        # Update the site object based on site and forecast selection
+        # --- Site object binding ---
+        self._site_binding = pn.bind(
+            Site.get_site_attributes_from_selected_forecast,
+            _=self._gettext,
+            sites=dm.sites_list,
+            site_selection=self.station,
+            tabulator=self.forecast_tabulator,
+        )
+
     # ------------------------------------------------------------------
     # Public helpers called by callbacks
     # ------------------------------------------------------------------
