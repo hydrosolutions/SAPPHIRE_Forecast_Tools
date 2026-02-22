@@ -36,81 +36,56 @@ class PlotManager:
     # ------------------------------------------------------------------
     def wire(self, dashboard_tabs) -> None:
         """Register all rendering-related callbacks."""
-        self._dashboard_tabs = dashboard_tabs
-
-        self._wire_forecast_update_button()
-        self._wire_tab_activation()
-        self._wire_sidepane_visibility()
-
-    def _wire_forecast_update_button(self) -> None:
         self._wm.update_forecast_button.on_click(self.update_forecast_plots)
 
-    def _wire_tab_activation(self) -> None:
         # Attach the callback to the tabs and station
-        self._dashboard_tabs.param.watch(
-            lambda event: self.render_active_tab(self._dashboard_tabs, event),
+        dashboard_tabs.param.watch(
+            lambda event: self.render_active_tab(dashboard_tabs, event),
             "active",
         )
-
-    def _wire_sidepane_visibility(self) -> None:
-        wm = self._wm
-        self._dashboard_tabs.param.watch(
+        dashboard_tabs.param.watch(
             lambda event: self._cfg.viz.update_sidepane_card_visibility(
-                self._dashboard_tabs,
-                wm.station_card, wm.forecast_card, wm.basin_card,
-                wm.pentad_card, wm.reload_card, event,
+                dashboard_tabs,
+                self._wm.station_card, self._wm.forecast_card, self._wm.basin_card,
+                self._wm.pentad_card, self._wm.reload_card, event,
             ),
             "active",
         )
 
     # ------------------------------------------------------------------
-    # Pane initialisation helpers
+    # Pane factories and initilisation helpers
     # ------------------------------------------------------------------
+    @staticmethod
+    def _empty_curve():
+        return pn.pane.HoloViews(hv.Curve([]), sizing_mode="stretch_both")
+    
+    def _markdown(self, text):
+        return pn.pane.Markdown(self._(text))
+    
+    _NO_PRECIP = "No precipitation data from SAPPHIRE Data Gateway available."
+    _NO_TEMP = "No temperature data from SAPPHIRE Data Gateway available."
+    _NO_SNOW = "No snow data from SAPPHIRE Data Gateway available."
+
     def _init_daily_panes(self):
-        self.daily_hydrograph = pn.pane.HoloViews(
-            hv.Curve([]), sizing_mode="stretch_both"
-        )
+        self.daily_hydrograph = self._empty_curve()
         if self._dm.rain is None:
-            self.daily_rainfall = pn.pane.Markdown(
-                self._(
-                    "No precipitation data from SAPPHIRE Data Gateway available."
-                )
-            )
-            self.daily_temperature = pn.pane.Markdown(
-                self._(
-                    "No temperature data from SAPPHIRE Data Gatway available."
-                )
-            )
+            self.daily_rainfall = self._markdown(self._NO_PRECIP)
+            self.daily_temperature = self._markdown(self._NO_TEMP)
         else:
-            self.daily_rainfall = pn.pane.HoloViews(
-                hv.Curve([]), sizing_mode="stretch_width"
-            )
-            self.daily_temperature = pn.pane.HoloViews(
-                hv.Curve([]), sizing_mode="stretch_width"
-            )
+            self.daily_rainfall = self._empty_curve()
+            self.daily_temperature = self._empty_curve()
 
     def _init_snow_panes(self):
         if self._dm.snow_data is None:
-            self.snow_plots = pn.pane.Markdown(
-                self._("No snow data from SAPPHIRE Data Gateway available.")
-            )
+            self.snow_plots = self._markdown(self._NO_SNOW)
         else:
-            self.snow_plots = {
-                k: pn.pane.HoloViews(hv.Curve([]), sizing_mode="stretch_width")
-                for k in ("SWE", "HS", "RoF")
-            }
+            self.snow_plots = {k: self._empty_curve() for k in ("SWE", "HS", "RoF")}
 
     def _init_forecast_panes(self):
         self.forecast_data_and_plot = pn.Column(sizing_mode="stretch_both")
-        self.pentad_forecast = pn.pane.HoloViews(
-            hv.Curve([]), sizing_mode="stretch_both"
-        )
-        self.effectiveness = pn.pane.HoloViews(
-            hv.Curve([]), sizing_mode="stretch_both"
-        )
-        self.accuracy = pn.pane.HoloViews(
-            hv.Curve([]), sizing_mode="stretch_both"
-        )
+        self.pentad_forecast = self._empty_curve()
+        self.effectiveness = self._empty_curve()
+        self.accuracy = self._empty_curve()
         self.forecast_skill = pn.Column(self.effectiveness, self.accuracy)
 
     def _init_skill_table(self):
