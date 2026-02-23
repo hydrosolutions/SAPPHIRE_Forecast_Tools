@@ -111,31 +111,27 @@ elif observed_runoff_palette == "black":
 
 
 # Update visibility of sidepane widgets
-def update_sidepane_card_visibility(tabs, station_card, forecast_card, basin_card, pentad_card, reload_card, event):
+def update_sidepane_card_visibility(tabs, station_card, forecast_card, basin_card, reload_card, event):
     active_tab = tabs.active
     # Assuming tabs are ordered as ['Predictors', 'Forecast', 'Bulletin', 'Disclaimer']
     if active_tab == 0:  # 'Predictors' tab
         station_card.visible = True
         forecast_card.visible = False
-        pentad_card.visible = False
         basin_card.visible = False
         reload_card.visible = True
     elif active_tab == 1:  # 'Forecast' tab
         station_card.visible = True
         forecast_card.visible = True
-        pentad_card.visible = False
         basin_card.visible = False
         reload_card.visible = True
     elif active_tab == 2:  # 'Bulletin' tab
         station_card.visible = False
         forecast_card.visible = False
-        pentad_card.visible = False
         basin_card.visible = True
         reload_card.visible = True
     else:  # 'Disclaimer' tab
         station_card.visible = False
         forecast_card.visible = False
-        pentad_card.visible = False
         basin_card.visible = False
         reload_card.visible = False
 

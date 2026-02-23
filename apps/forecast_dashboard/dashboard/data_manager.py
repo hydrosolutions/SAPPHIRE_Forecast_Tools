@@ -42,15 +42,15 @@ class DataManager(param.Parameterized):
     """
 
     # --- Observable parameters (widgets can watch these) ---
-    current_station = param.String(default='', doc="Currently selected station code")
-    data_version = param.Integer(default=0, doc="Incremented on every data reload to notify dependents")
+    # current_station = param.String(default='', doc="Currently selected station code")
+    # data_version = param.Integer(default=0, doc="Incremented on every data reload to notify dependents")
 
-    def __init__(self, all_stations, horizon, horizon_in_year, **kwargs):
+    def __init__(self, all_stations, cfg, **kwargs):
         super().__init__(**kwargs)
 
         # Immutable configuration
-        self._horizon = horizon
-        self._horizon_in_year = horizon_in_year
+        self._horizon = cfg.horizon
+        self._horizon_in_year = cfg.horizon_in_year
 
         # Station metadata (may be replaced by async iehhf load)
         self._all_stations = all_stations
@@ -60,7 +60,7 @@ class DataManager(param.Parameterized):
         self._data: dict = {}
 
         # Derived / cached values
-        self._model_dict_all: dict = {}
+        self._all_models: dict = {}
         self._rram_forecast = None
 
         # Track what's already been rendered to avoid redundant plot updates
@@ -85,9 +85,9 @@ class DataManager(param.Parameterized):
     def rram_forecast(self):
         return self._rram_forecast
 
-    @property
-    def model_dict_all(self) -> dict:
-        return dict(self._model_dict_all)
+    # @property
+    # def all_models(self) -> dict:
+    #     return dict(self._all_models)
 
     # --- Convenience accessors for common data keys ---
 
@@ -142,18 +142,18 @@ class DataManager(param.Parameterized):
         """
         logger.info(f"Loading data for station {station_code}")
         self._data = db.get_data(station_code, self._all_stations)
-        self.current_station = station_code
+        # self.current_station = station_code
         self._rebuild_model_dict()
-        self.data_version += 1  # notify watchers
+        # self.data_version += 1  # notify watchers
 
     def _rebuild_model_dict(self) -> None:
         """Rebuild the full model dictionary from freshly loaded forecasts."""
         df = self.forecasts_all
         if df is None or df.empty:
-            self._model_dict_all = {}
+            self._all_models = {}
             return
         # Create a dictionary of the model names and the corresponding model labels
-        self._model_dict_all = (
+        self._all_models = (
             df[['model_short', 'model_long']]
             .drop_duplicates()
             .set_index('model_long')['model_short']
@@ -164,22 +164,22 @@ class DataManager(param.Parameterized):
     # Model filtering helpers
     # ------------------------------------------------------------------
 
-    def get_filtered_model_dict(self, station_code: str, selected_date) -> dict:
+    def get_available_models(self, station_code: str, selected_date) -> dict:
         """Return models available for a given station + date."""
         # Update the model_dict with the models we have results for for the selected station
         # Model dict can be empty if no forecasts at all are available for the selected station
         return processing.update_model_dict_date(
-            self._model_dict_all, self.forecasts_all,
+            self._all_models, self.forecasts_all,
             station_code, selected_date,
         )
 
-    def get_preselected_models(self, station_code: str, pentad, decad) -> list:
+    def get_best_models(self, station_code: str, pentad, decad) -> list:
         """Return the best models for a station/pentad combination."""
         return processing.get_best_models_for_station_and_pentad(
             self.forecasts_all, station_code, pentad, decad,
         )
 
-    def resolve_model_values(self, model_dict: dict, preselected: list) -> list:
+    def resolve_model_values(self, available_models: dict, preselected: list) -> list:
         """
         Map pre-selected model keys to widget values, handling
         ensemble name mismatches gracefully.
@@ -187,12 +187,12 @@ class DataManager(param.Parameterized):
         # Add models to value list safely
         values = []
         for model in preselected:
-            if model in model_dict:
-                values.append(model_dict[model])
+            if model in available_models:
+                values.append(available_models[model])
             elif "Ens. Mean" in model:
                 # Find any Neural Ensemble model in the dictionary
                 match = next(
-                    (model_dict[k] for k in model_dict if "Ens. Mean" in k),
+                    (available_models[k] for k in available_models if "Ens. Mean" in k),
                     None,
                 )
                 if match:
@@ -276,7 +276,6 @@ class DataManager(param.Parameterized):
             self.linreg_predictor[self._horizon_in_year].tail(1).values[0]
         ) + 1
         return last_date, forecast_horizon, last_date.year
-        # return last_date, 9, last_date.year
 
     # @property
     # def linreg_datatable(self):
@@ -324,7 +323,7 @@ class DataManager(param.Parameterized):
                 if new_all_stations is not None:
                     # print("Stations: ", new_all_stations)
                     self.replace_stations(
-                        new_all_stations, new_station_dict, wm.station,
+                        new_all_stations, new_station_dict, wm.station_selector,
                         gettext, wm.pentad_selector.value, wm.decad_selector.value,
                     )
             except Exception as e:

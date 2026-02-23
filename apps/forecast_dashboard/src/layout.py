@@ -46,6 +46,15 @@ def define_sidebar(_, station_card, forecast_card, basin_card, message_pane,
         #            width_policy='fit', width=station.width)),
     )
 
+def define_sidebar_2(_, wm):
+    return pn.Column(
+        pn.Row(wm.station_card),
+        pn.Row(wm.forecast_card),
+        pn.Row(wm.basin_card),
+        pn.Row(wm.message_pane),
+        pn.Row(wm.reload_card),
+    )
+
 def get_logos(in_docker_flag):
     # overwrite in_docker_flag
     in_docker_flag = "False"
@@ -299,47 +308,35 @@ def define_tabs(_, predictors_warning, forecast_warning,
     return tabs
 
 
-def define_tabs_2(_, predictors_warning, forecast_warning,
-                daily_hydrograph_plot, rainfall_plot, temperature_plot, daily_snow_plot,
-                forecast_data_and_plot,forecast_summary_table, pentad_forecast_plot, effectiveness_plot,
+def define_tabs_2(_, wm, pm,
+                pentad_forecast_plot, effectiveness_plot,
                 bulletin_table, write_bulletin_button, bulletin_download_panel, disclaimer,
-                add_to_bulletin_button, add_to_bulletin_popup, show_daily_data_widget,
+                show_daily_data_widget,
                 skill_table, skill_metrics_download_filename, skill_metrics_download_button):
     tabs = pn.Tabs(
         (_('Predictors'),
             pn.Column(
-                predictors_warning,
+                wm.predictors_warning,
                 pn.Row(
-                    pn.Card(daily_hydrograph_plot, title=_("Hydrograph")),
-                    sizing_mode='stretch_width',
-                    # min_height=400,
-                    min_height=400 if daily_hydrograph_plot.object is not None else 0,
+                    pn.Card(pm.daily_hydrograph, title=_("Hydrograph")), sizing_mode='stretch_width',
+                    min_height=400 if pm.daily_hydrograph.object is not None else 0,
                 ),
                 pn.Row(
-                    pn.Card(rainfall_plot, title=_("Precipitation")),
-                    sizing_mode='stretch_width',
-                    # min_height=400 if not daily_hydrograph_plot.object.data.empty else 0,
-                    min_height=400 if rainfall_plot.object is not None else 0,
+                    pn.Card(pm.daily_rainfall, title=_("Precipitation")), sizing_mode='stretch_width',
+                    min_height=400 if pm.daily_rainfall.object is not None else 0,
                 ),  
                 pn.Row(
-                    pn.Card(temperature_plot, title=_("Temperature")),
-                    sizing_mode='stretch_width',
-                    # min_height=400 if not daily_hydrograph_plot.object.data.empty else 0,
-                    min_height=400 if temperature_plot.object is not None else 0,
+                    pn.Card(pm.daily_temperature, title=_("Temperature")), sizing_mode='stretch_width',
+                    min_height=400 if pm.daily_temperature.object is not None else 0,
                 ), 
-                pn.Row(
-                    _create_snow_card(_, daily_snow_plot), 
-                    sizing_mode='stretch_both',
-                )
+                pn.Row(_create_snow_card(_, pm.snow_plots), sizing_mode='stretch_both')
             ),
         ),
         (_('Forecast'),
             pn.Column(
-                forecast_warning,
+                wm.forecast_warning,
                 pn.Card(
-                    pn.Row(
-                        forecast_data_and_plot
-                    ),
+                    pn.Row(pm.forecast_data_and_plot),
                     title=_('Linear regression'),
                     sizing_mode='stretch_width',
                     collapsible=True,
@@ -349,12 +346,12 @@ def define_tabs_2(_, predictors_warning, forecast_warning,
                 ),
                 pn.Card(
                     pn.Row(
-                        add_to_bulletin_button, add_to_bulletin_popup
+                        wm.add_to_bulletin_button, wm.add_to_bulletin_popup
                     ),
-                    forecast_summary_table,
+                    wm.forecast_summary_table,
                     title=_('Summary table'),
                     sizing_mode='stretch_both',
-                    min_height=500 if len(forecast_summary_table.value) > 1 else 240,
+                    min_height=500 if len(wm.forecast_summary_table.value) > 1 else 240,
                 ),
                 pn.Card(
                     pn.Column(

@@ -14,7 +14,7 @@ Usage in forecast_dashboard.py
 ──────────────────────────────
     wm = WidgetManager(dm, cfg, station_dict)
     wm.wire(dm, pm, dashboard_tabs, gettext=_)
-    # wm.station, wm.model_checkbox, … are ready to use.
+    # wm.station_selector, wm.model_checkbox, … are ready to use.
 """
 
 from __future__ import annotations
@@ -46,7 +46,8 @@ class WidgetManager:
         self._dm = dm
         self._cfg = cfg
 
-        # ── Date / period selectors ──────────────────────────────────
+        # === SIDEBAR WIDGETS ===
+        # ── Invisible ───────────────────────────────────────────────────────
         self.date_picker = widgets.create_date_picker(dm.forecasts_all)
 
         last_date, self.forecast_horizon, self.forecast_year = (
@@ -55,57 +56,67 @@ class WidgetManager:
         self.pentad_selector = widgets.create_pentad_selector(last_date)
         self.decad_selector = widgets.create_decad_selector(last_date)
 
-        # ── Station & basin ──────────────────────────────────────────
-        self.station = widgets.create_station(station_dict)
-        self.station_card = widgets.create_station_card(self.station)
-        self.select_basin = widgets.create_select_basin_widget(station_dict)
-        self.basin_card = widgets.create_basin_card(self.select_basin, self.station)
+        # ── Hydropost ───────────────────────────────────────────────────────
+        self.station_selector = widgets.create_station_selector(station_dict)
+        width = self.station_selector.width
+        self.station_card = widgets.create_station_card(self.station_selector)
 
-        # ── Model selection ──────────────────────────────────────────
-        model_dict = dm.get_filtered_model_dict(
-            self.station.value, self.date_picker.value
+        # ── Forecast configuration ──────────────────────────────────────────
+        available_models = dm.get_available_models(
+            self.station_selector.value, self.date_picker.value
         )
-        self.model_checkbox = widgets.create_model_checkbox(model_dict)
-        self._apply_preselected_models()
+        self.model_checkbox = widgets.create_model_checkbox(available_models)
+        self._apply_best_models()
 
-        # ── Range / display controls ─────────────────────────────────
         (
-            self.range_selection,
-            self.manual_range,
-            self.show_range_button,
+            self.range_selector,
+            self.range_slider,
+            self.range_radiobutton,
         ) = widgets.create_range_widgets()
-        self.show_daily_data = widgets.create_show_daily_data_widget()
-        self.update_forecast_button = widgets.create_update_forecast_button()
 
-        # ── Forecast card (sidebar) ──────────────────────────────────
+        self.apply_changes_button = widgets.create_apply_changes_button()
+
         self.forecast_card = widgets.create_forecast_card(
-            self.range_selection,
-            self.manual_range,
+            self.range_selector,
+            self.range_slider,
             self.model_checkbox,
-            self.show_range_button,
-            self.update_forecast_button,
-            self.station,
-        )
-        self.pentad_card = widgets.create_pentad_card(
-            self.pentad_selector, self.station
+            self.range_radiobutton,
+            self.apply_changes_button,
+            width,
         )
 
-        # ── Forecast summary table ───────────────────────────────────
+        # ── Message ─────────────────────────────────────────────────────────
+        self.message_pane = widgets.create_message_pane(dm._data)
+
+        # ── Basin ───────────────────────────────────────────────────────────
+        self.basin_selector = widgets.create_basin_selector(station_dict)
+        self.basin_card = widgets.create_basin_card(self.basin_selector, width)
+
+        # ── Manual re-run of latest forecasts ───────────────────────────────
+        self.reload_card = cfg.viz.create_reload_button()
+
+        # === PREDICTORS TAB WIDGETS ===
+        # ── Warning ─────────────────────────────────────────────────────────
+        self.predictors_warning = widgets.create_predictors_warning(
+            self.station_selector, dm._data
+        )
+
+        # === FORECAST TAB WIDGETS ===
+        # ── Warning ─────────────────────────────────────────────────────────
+        self.forecast_warning = widgets.create_forecast_warning(
+            self.station_selector, dm._data, self.date_picker.value
+        )
+
+        # ── Summary table ───────────────────────────────────────────────────
+        self.add_to_bulletin_button = widgets.create_add_to_bulletin_button()
         self.forecast_tabulator = widgets.create_forecast_tabulator()
         self.forecast_summary_table = widgets.create_forecast_summary_table(
             self.forecast_tabulator
         )
 
-        # ── Warnings ─────────────────────────────────────────────────
-        self.predictors_warning = widgets.create_predictors_warning(
-            self.station, dm._data
-        )
-        self.forecast_warning = widgets.create_forecast_warning(
-            self.station, dm._data, self.date_picker.value
-        )
+        self.aggregate_radiobutton = widgets.create_aggregate_radiobutton()
 
         # ── Bulletin widgets ─────────────────────────────────────────
-        self.add_to_bulletin_button = widgets.create_add_to_bulletin_button()
         self.remove_bulletin_button, self.write_bulletin_button = (
             widgets.create_bulletin_buttons()
         )
@@ -122,8 +133,6 @@ class WidgetManager:
             widgets.create_downloader_and_panel(cfg.horizon)
         )
         self.language_buttons = widgets.create_language_buttons()
-        self.message_pane = widgets.create_message_pane(dm._data)
-        self.reload_card = cfg.viz.create_reload_button()
 
     # ------------------------------------------------------------------
     # Callback wiring — call once after PlotManager & layout exist
@@ -139,7 +148,7 @@ class WidgetManager:
         self._wire_site_object_binding(dm)
 
     def _wire_station_period_change(self, dm: DataManager, pm: PlotManager) -> None:
-        @pn.depends(self.station, self.pentad_selector, self.decad_selector, watch=True)
+        @pn.depends(self.station_selector, self.pentad_selector, self.decad_selector, watch=True)
         def _on_change(station_value, selected_pentad, selected_decad):
             """Reload data for the new station and refresh the model checkbox."""
             _ = self._gettext
@@ -156,9 +165,9 @@ class WidgetManager:
 
     def _wire_range_slider_visibility(self) -> None:
         # Update the widgets conditional on the active tab
-        self.range_selection.param.watch(
+        self.range_selector.param.watch(
             lambda event: self._cfg.viz.update_range_slider_visibility(
-                self._gettext, self.manual_range, event,
+                self._gettext, self.range_slider, event,
             ),
             "value",
         )
@@ -170,7 +179,7 @@ class WidgetManager:
             Site.get_site_attributes_from_selected_forecast,
             _=self._gettext,
             sites=dm.sites_list,
-            site_selection=self.station,
+            site_selection=self.station_selector,
             tabulator=self.forecast_tabulator,
         )
 
@@ -185,31 +194,31 @@ class WidgetManager:
         print(f"  Current value: {self.model_checkbox.value}")
         
         # First get the updated model dictionary
-        model_dict = self._dm.get_filtered_model_dict(
-            self.station.value, self.date_picker.value
+        available_models = self._dm.get_available_models(
+            self.station_selector.value, self.date_picker.value
         )
         print("\nAfter update_model_dict:")
-        print(f"  Updated model dict: {model_dict}")
+        print(f"  Updated model dict: {available_models}")
 
         # Get pre-selected models
-        preselected = self._dm.get_preselected_models(
-            self.station.value,
+        best_models = self._dm.get_best_models(
+            self.station_selector.value,
             self.pentad_selector.value,
             self.decad_selector.value,
         )
         print("\nAfter get_best_models:")
-        print(f"  Pre-selected models: {preselected}")
+        print(f"  Pre-selected models: {best_models}")
 
         # Create new values list        
-        new_values = self._dm.resolve_model_values(model_dict, preselected)
+        new_values = self._dm.resolve_model_values(available_models, best_models)
 
         print("\nBefore widget update:")
-        print(f"  New options to set: {model_dict}")
+        print(f"  New options to set: {available_models}")
         print(f"  New values to set: {new_values}")
 
         with pn.io.hold(pn.state.curdoc):
             # Try updating options first, then values
-            self.model_checkbox.options = model_dict
+            self.model_checkbox.options = available_models
             self.model_checkbox.value = new_values
             # model_checkbox.param.trigger('options')
             # model_checkbox.param.trigger('value')
@@ -224,19 +233,19 @@ class WidgetManager:
 
         logger.debug(
             "Model checkbox refreshed — options=%s, values=%s",
-            list(model_dict.keys()),
+            list(available_models.keys()),
             new_values,
         )
-        return model_dict
+        return available_models
 
     def refresh_warnings(self) -> None:
         """Re-evaluate predictor & forecast warnings for the active station."""
         widgets.refresh_predictors_warning(
-            self.predictors_warning, self.station, self._dm._data
+            self.predictors_warning, self.station_selector, self._dm._data
         )
         widgets.refresh_forecast_warning(
             self.forecast_warning,
-            self.station,
+            self.station_selector,
             self._dm._data,
             self.date_picker.value,
         )
@@ -246,12 +255,12 @@ class WidgetManager:
     # ------------------------------------------------------------------
     def trackable_widgets(self) -> list[tuple]:
         return [
-            (self.station, "value"),
+            (self.station_selector, "value"),
             (self.model_checkbox, "value"),
-            (self.range_selection, "value"),
-            (self.show_range_button, "value"),
-            (self.show_daily_data, "value"),
-            (self.select_basin, "value"),
+            (self.range_selector, "value"),
+            (self.range_radiobutton, "value"),
+            (self.aggregate_radiobutton, "value"),
+            (self.basin_selector, "value"),
             (self.add_to_bulletin_button, "clicks"),
             (self.write_bulletin_button, "clicks"),
             (self.remove_bulletin_button, "clicks"),
@@ -261,13 +270,13 @@ class WidgetManager:
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
-    def _apply_preselected_models(self) -> None:
-        preselected = self._dm.get_preselected_models(
-            self.station.value,
+    def _apply_best_models(self) -> None:
+        best_models = self._dm.get_best_models(
+            self.station_selector.value,
             self.pentad_selector.value,
             self.decad_selector.value,
         )
-        model_dict = self.model_checkbox.options
+        available_models = self.model_checkbox.options
         self.model_checkbox.value = self._dm.resolve_model_values(
-            model_dict, preselected
+            available_models, best_models
         )

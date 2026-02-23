@@ -36,7 +36,7 @@ class PlotManager:
     # ------------------------------------------------------------------
     def wire(self, dashboard_tabs) -> None:
         """Register all rendering-related callbacks."""
-        self._wm.update_forecast_button.on_click(self.update_forecast_plots)
+        self._wm.apply_changes_button.on_click(self.update_forecast_plots)
 
         # Attach the callback to the tabs and station
         dashboard_tabs.param.watch(
@@ -47,7 +47,7 @@ class PlotManager:
             lambda event: self._cfg.viz.update_sidepane_card_visibility(
                 dashboard_tabs,
                 self._wm.station_card, self._wm.forecast_card, self._wm.basin_card,
-                self._wm.pentad_card, self._wm.reload_card, event,
+                self._wm.reload_card, event,
             ),
             "active",
         )
@@ -82,7 +82,9 @@ class PlotManager:
             self.snow_plots = {k: self._empty_curve() for k in ("SWE", "HS", "RoF")}
 
     def _init_forecast_panes(self):
+        # Linear regression
         self.forecast_data_and_plot = pn.Column(sizing_mode="stretch_both")
+
         self.pentad_forecast = self._empty_curve()
         self.effectiveness = self._empty_curve()
         self.accuracy = self._empty_curve()
@@ -114,18 +116,18 @@ class PlotManager:
         wm = self._wm
         return dict(
             forecasts_all=self._dm.forecasts_all,
-            station=wm.station.value,
+            station=wm.station_selector.value,
             title_date=wm.date_picker.value,
             model_selection=wm.model_checkbox.value,
-            range_type=wm.range_selection.value,
-            range_slider=wm.manual_range.value,
-            range_visibility=wm.show_range_button.value,
+            range_type=wm.range_selector.value,
+            range_slider=wm.range_slider.value,
+            range_visibility=wm.range_radiobutton.value,
         )
 
     def _build_forecast_hydrograph(self):
         """Build the forecast hydrograph based on current widget state."""
         kw = self._common_plot_kwargs()
-        if self._wm.show_daily_data.value == self._("Yes"):
+        if self._wm.aggregate_radiobutton.value == self._("Yes"):
             return self._cfg.viz.plot_pentad_forecast_hydrograph_data(
                 self._,
                 hydrograph_pentad_all=self._dm.hydrograph_pentad_all,
@@ -148,11 +150,11 @@ class PlotManager:
         self._cfg.viz.create_forecast_summary_tabulator(
             self._,
             self._dm.forecasts_all,
-            self._wm.station,
+            self._wm.station_selector,
             self._wm.date_picker,
             self._wm.model_checkbox,
-            self._wm.range_selection,
-            self._wm.manual_range,
+            self._wm.range_selector,
+            self._wm.range_slider,
             self._wm.forecast_tabulator,
         )
 
@@ -168,12 +170,12 @@ class PlotManager:
             self._,
             self._dm.hydrograph_pentad_all,
             self._dm.forecasts_all,
-            station_widget=self._wm.station.value,
+            station_widget=self._wm.station_selector.value,
             date_picker=self._wm.date_picker.value,
             model_checkbox=self._wm.model_checkbox.value,
-            range_selection_widget=self._wm.range_selection.value,
-            manual_range_widget=self._wm.manual_range.value,
-            show_range_button=self._wm.show_range_button.value,
+            range_selection_widget=self._wm.range_selector.value,
+            manual_range_widget=self._wm.range_slider.value,
+            show_range_button=self._wm.range_radiobutton.value,
         )
         self.effectiveness.object = eff.object
         self.accuracy.object = acc.object
@@ -218,30 +220,30 @@ class PlotManager:
         wm, dm, viz = self._wm, self._dm, self._cfg.viz
 
         with pn.io.hold(pn.state.curdoc):
-            if active == 0 and dm.should_render_predictors(wm.station.value):
+            if active == 0 and dm.should_render_predictors(wm.station_selector.value):
                 self._render_predictors_tab(viz, dm, wm)
-            elif active == 1 and dm.should_render_forecast(wm.station.value):
+            elif active == 1 and dm.should_render_forecast(wm.station_selector.value):
                 self._render_forecast_tab(viz, dm, wm)
 
     def _render_predictors_tab(self, viz, dm, wm):
         self.daily_hydrograph.object = viz.plot_daily_hydrograph_data(
             self._, dm.hydrograph_day_all, dm.linreg_predictor,
-            wm.station.value, wm.date_picker.value,
+            wm.station_selector.value, wm.date_picker.value,
         )
         if self._cfg.display_weather_data:
             self.daily_rainfall.object = viz.plot_daily_rainfall_data(
-                self._, dm.rain, wm.station.value,
+                self._, dm.rain, wm.station_selector.value,
                 wm.date_picker.value, dm.linreg_predictor,
             )
             self.daily_temperature.object = viz.plot_daily_temperature_data(
-                self._, dm.temp, wm.station.value,
+                self._, dm.temp, wm.station_selector.value,
                 wm.date_picker.value, dm.linreg_predictor,
             )
         if self._cfg.display_snow_data:
             for var in dm.snow_data.keys():
                 if dm.snow_data[var] is not None:
                     self.snow_plots[var].object = viz.plot_daily_snow_data(
-                        self._, dm.snow_data, var, wm.station.value,
+                        self._, dm.snow_data, var, wm.station_selector.value,
                         wm.date_picker.value, dm.linreg_predictor,
                     )
                 else:
@@ -253,7 +255,7 @@ class PlotManager:
 
     def _render_forecast_tab(self, viz, dm, wm):
         plot = viz.select_and_plot_data(
-            self._, dm.linreg_predictor, wm.station.value,
+            self._, dm.linreg_predictor, wm.station_selector.value,
             wm.pentad_selector.value, wm.decad_selector.value,
             self._cfg.save_directory,
         )

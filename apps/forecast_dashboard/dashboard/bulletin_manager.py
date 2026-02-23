@@ -137,7 +137,7 @@ class BulletinManager:
 
         # --- Initial table render & basin filter watcher ---
         self._update_bulletin_table()
-        wm.select_basin.param.watch(lambda event: self._update_bulletin_table(), 'value')
+        wm.basin_selector.param.watch(lambda event: self._update_bulletin_table(), 'value')
 
         # --- Button callbacks ---
         wm.add_to_bulletin_button.on_click(self._on_add)
@@ -156,7 +156,7 @@ class BulletinManager:
     def _update_bulletin_table(self):
         # Function to update the bulletin table
         create_bulletin_table(
-            self.bulletin_sites, self.wm.select_basin, self.wm.bulletin_tabulator
+            self.bulletin_sites, self.wm.basin_selector, self.wm.bulletin_tabulator
         )
     
     # Adding the watcher logic for disabling the "Add to Bulletin" button
@@ -186,7 +186,7 @@ class BulletinManager:
             selected_indices = [0]
 
         selected_rows = forecast_df.iloc[selected_indices]
-        selected_station = self.wm.station.value
+        selected_station = self.wm.station_selector.value
         selected_site = next(
             (s for s in self.dm.sites_list if s.station_label == selected_station),
             None,
@@ -274,7 +274,7 @@ class BulletinManager:
                 print("DEBUG: No sites in bulletin to write.")
                 return
 
-            selected_basin = self.wm.select_basin.value
+            selected_basin = self.wm.basin_selector.value
             if selected_basin == _("All basins"):
                 filtered = self.bulletin_sites.copy()
             else:

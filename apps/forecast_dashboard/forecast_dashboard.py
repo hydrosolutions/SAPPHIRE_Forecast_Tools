@@ -32,12 +32,10 @@ cfg = config.init_dashboard(pn)
 # ─── 2. Station metadata & DataManager ──────────────────────────────
 all_stations, station_dict = processing.get_all_stations_from_file()
 
-dm = DataManager(
-    all_stations=all_stations,
-    horizon=cfg.horizon,
-    horizon_in_year=cfg.horizon_in_year,
-)
+dm = DataManager(all_stations=all_stations, cfg=cfg)
+station_code = station_dict[next(iter(station_dict))][0].split()[0]
 dm.load_station('15189')
+
 # ─── 3. Widgets ─────────────────────────────────────────────────────
 wm = WidgetManager(dm, cfg, station_dict)
 dm.update_sites_for_pentad(_, wm.pentad_selector.value, wm.decad_selector.value)
@@ -56,16 +54,14 @@ bulletin = BulletinManager(
 # ─── 6. Layout ──────────────────────────────────────────────────────
 disclaimer = layout.define_disclaimer(_, cfg.in_docker)
 
-dashboard_tabs = layout.define_tabs_2(_, wm.predictors_warning, wm.forecast_warning,
-    pm.daily_hydrograph, pm.daily_rainfall, pm.daily_temperature, pm.snow_plots,
-    pm.forecast_data_and_plot,  
-    wm.forecast_summary_table, pm.pentad_forecast, pm.forecast_skill,
+dashboard_tabs = layout.define_tabs_2(_, wm, pm,
+    pm.pentad_forecast, pm.forecast_skill,
     wm.bulletin_table, wm.write_bulletin_button, wm.bulletin_download_panel, disclaimer,
-    wm.add_to_bulletin_button, wm.add_to_bulletin_popup, wm.show_daily_data,
+    wm.aggregate_radiobutton,
     pm.skill_table, pm.skill_download_filename, pm.skill_download_button
 )
 
-sidebar_content=layout.define_sidebar(_, wm.station_card, wm.forecast_card, wm.basin_card, wm.message_pane, wm.reload_card)
+sidebar_content=layout.define_sidebar_2(_, wm)
 
 # ─── 7. Wire all callbacks ──────────────────────────────────────────
 wm.wire(dm, pm, dashboard_tabs, gettext=_)
