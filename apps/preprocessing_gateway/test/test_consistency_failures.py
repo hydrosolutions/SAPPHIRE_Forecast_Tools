@@ -30,6 +30,7 @@ import snow_data_operational as sdo
 import snow_data_renalysis as sdr
 import extend_era5_reanalysis as eer
 import Quantile_Mapping_OP as qm
+import dg_utils
 
 
 # =====================================================================
@@ -205,10 +206,13 @@ class TestSnowWriteReadParameterContract:
     return 'No data returned from API' for all snow types.
     """
 
+    @patch('dg_utils.SapphirePreprocessingClient')
     @patch('snow_data_operational.SapphirePreprocessingClient')
-    def test_swe_write_type_matches_read_type(self, mock_client_class):
+    def test_swe_write_type_matches_read_type(
+        self, mock_sdo_client_class, mock_dg_client_class
+    ):
         """SWE write snow_type matches read snow_type query."""
-        if not sdo.SAPPHIRE_API_AVAILABLE:
+        if not dg_utils.SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
 
         os.environ['SAPPHIRE_API_ENABLED'] = 'true'
@@ -223,7 +227,8 @@ class TestSnowWriteReadParameterContract:
                 'snow_type': ['SWE'],
                 'value': [100.0],
             })
-            mock_client_class.return_value = mock_client
+            mock_sdo_client_class.return_value = mock_client
+            mock_dg_client_class.return_value = mock_client
 
             today = pd.Timestamp.today().normalize()
             data = pd.DataFrame({
@@ -233,7 +238,7 @@ class TestSnowWriteReadParameterContract:
             })
 
             # Write then check consistency
-            sdo._write_snow_to_api(data, "SWE", "test_hru")
+            dg_utils.write_snow_to_api(data, "SWE", "test_hru")
             sdo._check_snow_consistency(data, "SWE", "test_hru")
 
             # Verify write and read both use 'SWE' (uppercase)
@@ -246,10 +251,13 @@ class TestSnowWriteReadParameterContract:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
             os.environ.pop('SAPPHIRE_CONSISTENCY_CHECK', None)
 
+    @patch('dg_utils.SapphirePreprocessingClient')
     @patch('snow_data_operational.SapphirePreprocessingClient')
-    def test_hs_write_type_matches_read_type(self, mock_client_class):
+    def test_hs_write_type_matches_read_type(
+        self, mock_sdo_client_class, mock_dg_client_class
+    ):
         """HS write snow_type matches read snow_type query."""
-        if not sdo.SAPPHIRE_API_AVAILABLE:
+        if not dg_utils.SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
 
         os.environ['SAPPHIRE_API_ENABLED'] = 'true'
@@ -264,7 +272,8 @@ class TestSnowWriteReadParameterContract:
                 'snow_type': ['HS'],
                 'value': [50.0],
             })
-            mock_client_class.return_value = mock_client
+            mock_sdo_client_class.return_value = mock_client
+            mock_dg_client_class.return_value = mock_client
 
             today = pd.Timestamp.today().normalize()
             data = pd.DataFrame({
@@ -273,7 +282,7 @@ class TestSnowWriteReadParameterContract:
                 'HS': [50.0],
             })
 
-            sdo._write_snow_to_api(data, "HS", "test_hru")
+            dg_utils.write_snow_to_api(data, "HS", "test_hru")
             sdo._check_snow_consistency(data, "HS", "test_hru")
 
             write_records = mock_client.write_snow.call_args[0][0]
@@ -285,10 +294,13 @@ class TestSnowWriteReadParameterContract:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
             os.environ.pop('SAPPHIRE_CONSISTENCY_CHECK', None)
 
+    @patch('dg_utils.SapphirePreprocessingClient')
     @patch('snow_data_operational.SapphirePreprocessingClient')
-    def test_rof_write_type_matches_read_type(self, mock_client_class):
+    def test_rof_write_type_matches_read_type(
+        self, mock_sdo_client_class, mock_dg_client_class
+    ):
         """RoF write snow_type matches read snow_type query."""
-        if not sdo.SAPPHIRE_API_AVAILABLE:
+        if not dg_utils.SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
 
         os.environ['SAPPHIRE_API_ENABLED'] = 'true'
@@ -303,7 +315,8 @@ class TestSnowWriteReadParameterContract:
                 'snow_type': ['ROF'],
                 'value': [25.0],
             })
-            mock_client_class.return_value = mock_client
+            mock_sdo_client_class.return_value = mock_client
+            mock_dg_client_class.return_value = mock_client
 
             today = pd.Timestamp.today().normalize()
             data = pd.DataFrame({
@@ -312,7 +325,7 @@ class TestSnowWriteReadParameterContract:
                 'RoF': [25.0],
             })
 
-            sdo._write_snow_to_api(data, "RoF", "test_hru")
+            dg_utils.write_snow_to_api(data, "RoF", "test_hru")
             sdo._check_snow_consistency(data, "RoF", "test_hru")
 
             write_records = mock_client.write_snow.call_args[0][0]
@@ -324,10 +337,13 @@ class TestSnowWriteReadParameterContract:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
             os.environ.pop('SAPPHIRE_CONSISTENCY_CHECK', None)
 
+    @patch('dg_utils.SapphirePreprocessingClient')
     @patch('snow_data_operational.SapphirePreprocessingClient')
-    def test_code_is_string_in_both_write_and_read(self, mock_client_class):
+    def test_code_is_string_in_both_write_and_read(
+        self, mock_sdo_client_class, mock_dg_client_class
+    ):
         """Station code is str in both write records and read query."""
-        if not sdo.SAPPHIRE_API_AVAILABLE:
+        if not dg_utils.SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
 
         os.environ['SAPPHIRE_API_ENABLED'] = 'true'
@@ -342,7 +358,8 @@ class TestSnowWriteReadParameterContract:
                 'snow_type': ['SWE'],
                 'value': [100.0],
             })
-            mock_client_class.return_value = mock_client
+            mock_sdo_client_class.return_value = mock_client
+            mock_dg_client_class.return_value = mock_client
 
             today = pd.Timestamp.today().normalize()
             data = pd.DataFrame({
@@ -351,7 +368,7 @@ class TestSnowWriteReadParameterContract:
                 'SWE': [100.0],
             })
 
-            sdo._write_snow_to_api(data, "SWE", "test_hru")
+            dg_utils.write_snow_to_api(data, "SWE", "test_hru")
             sdo._check_snow_consistency(data, "SWE", "test_hru")
 
             write_records = mock_client.write_snow.call_args[0][0]
@@ -377,10 +394,13 @@ class TestSnowConsistencyDateMismatch:
     never written.
     """
 
+    @patch('dg_utils.SapphirePreprocessingClient')
     @patch('snow_data_operational.SapphirePreprocessingClient')
-    def test_csv_max_date_is_today_passes(self, mock_client_class):
+    def test_csv_max_date_is_today_passes(
+        self, mock_sdo_client_class, mock_dg_client_class
+    ):
         """When CSV max date == today, write + check should both succeed."""
-        if not sdo.SAPPHIRE_API_AVAILABLE:
+        if not dg_utils.SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
 
         os.environ['SAPPHIRE_API_ENABLED'] = 'true'
@@ -400,7 +420,8 @@ class TestSnowConsistencyDateMismatch:
                 'snow_type': ['SWE', 'SWE'],
                 'value': [90.0, 100.0],
             })
-            mock_client_class.return_value = mock_client
+            mock_sdo_client_class.return_value = mock_client
+            mock_dg_client_class.return_value = mock_client
 
             data = pd.DataFrame({
                 'date': [yesterday, today],
@@ -408,7 +429,7 @@ class TestSnowConsistencyDateMismatch:
                 'SWE': [90.0, 100.0],
             })
 
-            write_result = sdo._write_snow_to_api(data, "SWE", "test_hru")
+            write_result = dg_utils.write_snow_to_api(data, "SWE", "test_hru")
             assert write_result is True
 
             check_result = sdo._check_snow_consistency(data, "SWE", "test_hru")
@@ -417,9 +438,10 @@ class TestSnowConsistencyDateMismatch:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
             os.environ.pop('SAPPHIRE_CONSISTENCY_CHECK', None)
 
+    @patch('dg_utils.SapphirePreprocessingClient')
     @patch('snow_data_operational.SapphirePreprocessingClient')
     def test_csv_max_date_is_yesterday_write_succeeds(
-        self, mock_client_class
+        self, mock_sdo_client_class, mock_dg_client_class
     ):
         """When CSV has only yesterday's data, write succeeds because
         the 2-day window (yesterday+today) includes yesterday.
@@ -427,7 +449,7 @@ class TestSnowConsistencyDateMismatch:
         This guards against SnowMapper data lag — yesterday's data is
         still valuable even if today's isn't available yet.
         """
-        if not sdo.SAPPHIRE_API_AVAILABLE:
+        if not dg_utils.SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
 
         os.environ['SAPPHIRE_API_ENABLED'] = 'true'
@@ -436,7 +458,8 @@ class TestSnowConsistencyDateMismatch:
             mock_client = Mock()
             mock_client.readiness_check.return_value = True
             mock_client.write_snow.return_value = 1
-            mock_client_class.return_value = mock_client
+            mock_sdo_client_class.return_value = mock_client
+            mock_dg_client_class.return_value = mock_client
 
             yesterday = pd.Timestamp.today().normalize() - pd.Timedelta(days=1)
             # API returns yesterday's data to match what was written
@@ -454,7 +477,7 @@ class TestSnowConsistencyDateMismatch:
             })
 
             # Write succeeds — yesterday is within the 2-day window
-            write_result = sdo._write_snow_to_api(data, "SWE", "test_hru")
+            write_result = dg_utils.write_snow_to_api(data, "SWE", "test_hru")
             assert write_result is True
 
             # Consistency check verifies yesterday's data
@@ -466,42 +489,47 @@ class TestSnowConsistencyDateMismatch:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
             os.environ.pop('SAPPHIRE_CONSISTENCY_CHECK', None)
 
+    @patch('dg_utils.SapphirePreprocessingClient')
     @patch('snow_data_operational.SapphirePreprocessingClient')
-    def test_csv_max_date_is_future_write_returns_false(
-        self, mock_client_class
+    def test_csv_with_only_forecast_data_is_written(
+        self, mock_sdo_client_class, mock_dg_client_class
     ):
         """When CSV has only future-dated forecasts (beyond today),
-        write returns False — no data in the 2-day window.
+        write succeeds because operational mode includes forecast dates.
 
-        Consistency check filters to yesterday+today, finds no CSV
-        rows, so it returns True (nothing to verify).
+        Consistency check verifies the forecast data against the API.
         """
-        if not sdo.SAPPHIRE_API_AVAILABLE:
+        if not dg_utils.SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
 
         os.environ['SAPPHIRE_API_ENABLED'] = 'true'
         os.environ['SAPPHIRE_CONSISTENCY_CHECK'] = 'true'
         try:
-            mock_client = Mock()
-            mock_client.readiness_check.return_value = True
-            mock_client.read_snow.return_value = pd.DataFrame()
-            mock_client_class.return_value = mock_client
-
-            # Data is tomorrow — outside the yesterday+today window
             future = (
                 pd.Timestamp.today().normalize() + pd.Timedelta(days=1)
             )
+
+            mock_client = Mock()
+            mock_client.readiness_check.return_value = True
+            mock_client.write_snow.return_value = 1
+            mock_client.read_snow.return_value = pd.DataFrame({
+                'date': pd.to_datetime([future]),
+                'code': ['12345'],
+                'snow_type': ['SWE'],
+                'value': [100.0],
+            })
+            mock_sdo_client_class.return_value = mock_client
+            mock_dg_client_class.return_value = mock_client
+
             data = pd.DataFrame({
                 'date': [future],
                 'code': [12345],
                 'SWE': [100.0],
             })
 
-            write_result = sdo._write_snow_to_api(data, "SWE", "test_hru")
-            assert write_result is False
+            write_result = dg_utils.write_snow_to_api(data, "SWE", "test_hru")
+            assert write_result is True
 
-            # Consistency check filters to yesterday+today, finds no
-            # CSV rows, returns True (nothing to verify)
             check_result = sdo._check_snow_consistency(
                 data, "SWE", "test_hru"
             )

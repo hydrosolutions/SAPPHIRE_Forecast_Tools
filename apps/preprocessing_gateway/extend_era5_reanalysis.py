@@ -23,6 +23,9 @@ from datetime import datetime, timedelta
 import logging
 from logging.handlers import TimedRotatingFileHandler
 
+# Custom Script for Data Gateway
+import dg_utils
+
 
 # Local libraries
 # Local libraries, installed with pip install -e ./iEasyHydroForecast
@@ -78,11 +81,8 @@ logger.addHandler(file_handler)
 logger.addHandler(console_handler)
 logger.setLevel(logging.INFO)
 
-def is_leap_year(year):
-    if (year % 4 == 0 and year % 100 != 0) or (year % 400 == 0):
-        return True
-    else:
-        return False
+# Re-export for backward compatibility — canonical definition in dg_utils
+is_leap_year = dg_utils.is_leap_year
 
 
 def _write_meteo_to_api(data: pd.DataFrame, meteo_type: str) -> bool:

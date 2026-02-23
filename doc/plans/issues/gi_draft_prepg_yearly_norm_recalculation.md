@@ -1,6 +1,6 @@
 # Yearly Snow Norm Recalculation
 
-**Status**: Draft
+**Status**: Implemented (pending PR)
 **Module**: preprocessing_gateway
 **Priority**: Medium
 **Labels**: `enhancement`, `cron`, `snow-data`, `maintenance`

@@ -860,7 +860,12 @@ class TestCrossScriptDataFlow:
                  'snow_data_operational.SapphirePreprocessingClient',
                  return_value=mock_api_client,
              ), \
-             patch.object(sdo, 'SAPPHIRE_API_AVAILABLE', True):
+             patch(
+                 'dg_utils.SapphirePreprocessingClient',
+                 return_value=mock_api_client,
+             ), \
+             patch.object(sdo, 'SAPPHIRE_API_AVAILABLE', True), \
+             patch.object(dg_utils, 'SAPPHIRE_API_AVAILABLE', True):
             sdo.main()
 
         # Verify final state
@@ -1150,7 +1155,12 @@ class TestSnowPipelineIntegration:
                  'snow_data_operational.SapphirePreprocessingClient',
                  return_value=mock_api_client,
              ), \
-             patch.object(sdo, 'SAPPHIRE_API_AVAILABLE', True):
+             patch(
+                 'dg_utils.SapphirePreprocessingClient',
+                 return_value=mock_api_client,
+             ), \
+             patch.object(sdo, 'SAPPHIRE_API_AVAILABLE', True), \
+             patch.object(dg_utils, 'SAPPHIRE_API_AVAILABLE', True):
             sdo.main()
 
         # Check SWE CSV
@@ -1192,7 +1202,12 @@ class TestSnowPipelineIntegration:
                  'snow_data_operational.SapphirePreprocessingClient',
                  return_value=mock_api_client,
              ), \
-             patch.object(sdo, 'SAPPHIRE_API_AVAILABLE', True):
+             patch(
+                 'dg_utils.SapphirePreprocessingClient',
+                 return_value=mock_api_client,
+             ), \
+             patch.object(sdo, 'SAPPHIRE_API_AVAILABLE', True), \
+             patch.object(dg_utils, 'SAPPHIRE_API_AVAILABLE', True):
             sdo.main()
 
         all_snow = []
@@ -1245,7 +1260,12 @@ class TestSnowPipelineIntegration:
                  'snow_data_operational.SapphirePreprocessingClient',
                  return_value=mock_api_client,
              ), \
-             patch.object(sdo, 'SAPPHIRE_API_AVAILABLE', True):
+             patch(
+                 'dg_utils.SapphirePreprocessingClient',
+                 return_value=mock_api_client,
+             ), \
+             patch.object(sdo, 'SAPPHIRE_API_AVAILABLE', True), \
+             patch.object(dg_utils, 'SAPPHIRE_API_AVAILABLE', True):
             sdo.main()
 
         # Both HRUs should have SWE CSVs
@@ -1257,7 +1277,8 @@ class TestSnowPipelineIntegration:
     def test_snow_operational_vs_maintenance_filtering(
         self, gateway_env, mock_api_client
     ):
-        """Operational writes yesterday+today; maintenance writes 30 days."""
+        """Operational writes yesterday onward (including forecast);
+        maintenance writes 30 days."""
         env = gateway_env
         today = datetime.today()
         dates = [
@@ -1281,14 +1302,20 @@ class TestSnowPipelineIntegration:
                  'snow_data_operational.SapphirePreprocessingClient',
                  return_value=mock_api_client,
              ), \
-             patch.object(sdo, 'SAPPHIRE_API_AVAILABLE', True):
+             patch(
+                 'dg_utils.SapphirePreprocessingClient',
+                 return_value=mock_api_client,
+             ), \
+             patch.object(sdo, 'SAPPHIRE_API_AVAILABLE', True), \
+             patch.object(dg_utils, 'SAPPHIRE_API_AVAILABLE', True):
             sdo.main()
 
         operational_snow = []
         for call_records in mock_api_client._snow_writes:
             operational_snow.extend(call_records)
 
-        # Operational: records should be yesterday and/or today only
+        # Operational with past-only data: records should be
+        # yesterday and/or today (no forecast dates in test data)
         today = pd.Timestamp.today().normalize()
         yesterday = today - pd.Timedelta(days=1)
         allowed = {
@@ -1297,8 +1324,8 @@ class TestSnowPipelineIntegration:
         }
         for record in operational_snow:
             assert record['date'] in allowed, (
-                f"Operational should only write yesterday+today, "
-                f"got {record['date']}"
+                f"With past-only data, operational should write "
+                f"yesterday+today, got {record['date']}"
             )
 
         # Clear and run maintenance
@@ -1332,7 +1359,12 @@ class TestSnowPipelineIntegration:
                  'snow_data_operational.SapphirePreprocessingClient',
                  return_value=mock_api_client,
              ), \
-             patch.object(sdo, 'SAPPHIRE_API_AVAILABLE', True):
+             patch(
+                 'dg_utils.SapphirePreprocessingClient',
+                 return_value=mock_api_client,
+             ), \
+             patch.object(sdo, 'SAPPHIRE_API_AVAILABLE', True), \
+             patch.object(dg_utils, 'SAPPHIRE_API_AVAILABLE', True):
             sdo.main()
 
         maintenance_snow = []

@@ -82,203 +82,6 @@ logger.addHandler(console_handler)
 logger.setLevel(logging.INFO)
 
 
-def _write_snow_to_api(
-    data: pd.DataFrame, snow_type: str, hru_code: str,
-    mode: str | None = None,
-) -> bool:
-    """
-    Write snow data to SAPPHIRE preprocessing API.
-
-    Supports different sync modes:
-    - operational (default): write yesterday's and today's data
-      (2-day window guards against SnowMapper data lag)
-    - maintenance: write the last 30 days of data
-    - initial: write all data in the DataFrame
-
-    Args:
-        data: DataFrame with snow data. Expected columns:
-            - date: date
-            - code: station code
-            - {snow_type}: value (e.g., SWE, HS, RoF)
-            - {snow_type}_1, {snow_type}_2, ... : optional elevation
-              band values
-        snow_type: Type of snow data (SWE, HS, RoF)
-        hru_code: HRU code for logging context
-        mode: Sync mode override. If None, reads SAPPHIRE_SYNC_MODE
-            env var, defaulting to 'operational'.
-
-    Returns:
-        True if successful, False otherwise
-    """
-    if not SAPPHIRE_API_AVAILABLE:
-        logger.warning(
-            "sapphire-api-client not installed, skipping snow API write"
-        )
-        return False
-
-    # Check if API writing is enabled (default: enabled)
-    api_enabled = os.getenv(
-        "SAPPHIRE_API_ENABLED", "true"
-    ).lower() == "true"
-    if not api_enabled:
-        logger.info(
-            "SAPPHIRE API writing disabled via SAPPHIRE_API_ENABLED=false"
-        )
-        return False
-
-    api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
-    client = SapphirePreprocessingClient(base_url=api_url)
-
-    # Health check - non-blocking, skip if API unavailable
-    if not client.readiness_check():
-        logger.warning(
-            "SAPPHIRE API at %s is not ready, skipping snow write "
-            "(HRU %s, %s)", api_url, hru_code, snow_type
-        )
-        return False
-
-    if data.empty:
-        logger.info(
-            "No snow data to write to API (%s, HRU %s)",
-            snow_type, hru_code
-        )
-        return False
-
-    # Ensure date column is datetime
-    data = data.copy()
-    data['date'] = pd.to_datetime(data['date'])
-
-    # Filter data based on sync mode (parameter > env var > default)
-    if mode is not None:
-        sync_mode = mode.lower()
-    else:
-        sync_mode = os.getenv(
-            "SAPPHIRE_SYNC_MODE", "operational"
-        ).lower()
-    logger.info(
-        "Snow API sync mode: %s (%s, HRU %s)",
-        sync_mode, snow_type, hru_code,
-    )
-
-    today = pd.Timestamp.today().normalize()
-    yesterday = today - pd.Timedelta(days=1)
-    if sync_mode == "operational":
-        data_to_write = data[
-            (data['date'] >= yesterday) & (data['date'] <= today)
-        ]
-    elif sync_mode == "maintenance":
-        cutoff = today - pd.Timedelta(days=30)
-        data_to_write = data[data['date'] >= cutoff]
-    elif sync_mode == "initial":
-        data_to_write = data
-    else:
-        logger.warning(
-            "Unknown sync mode '%s', defaulting to operational",
-            sync_mode,
-        )
-        data_to_write = data[
-            (data['date'] >= yesterday) & (data['date'] <= today)
-        ]
-
-    if data_to_write.empty:
-        if sync_mode == "operational":
-            date_range = (
-                f"{data['date'].min().date()} to "
-                f"{data['date'].max().date()}"
-            )
-            logger.warning(
-                "No snow data for %s to %s (%s, HRU %s). "
-                "CSV date range: %s. Data gateway may not have "
-                "returned recent data yet.",
-                yesterday.date(), today.date(),
-                snow_type, hru_code, date_range
-            )
-        else:
-            logger.info(
-                "No snow data to write after %s filtering "
-                "(%s, HRU %s)", sync_mode, snow_type, hru_code,
-            )
-        return False
-
-    codes = data_to_write['code'].unique()
-    logger.info(
-        "%s mode: writing %d snow records (HRU %s, %s, codes: %s)",
-        sync_mode, len(data_to_write), hru_code, snow_type,
-        list(codes),
-    )
-
-    # Identify elevation band columns (e.g., SWE_1, SWE_2, ...)
-    value_columns = {}
-    main_value_col = (
-        snow_type if snow_type in data_to_write.columns else None
-    )
-    for col in data_to_write.columns:
-        if col.startswith(f"{snow_type}_") and col != snow_type:
-            try:
-                band_num = int(col.split("_")[-1])
-                value_columns[band_num] = col
-            except ValueError:
-                pass
-
-    # Prepare records for API
-    records = []
-    for _, row in data_to_write.iterrows():
-        date_obj = (
-            pd.to_datetime(row['date'])
-            if pd.notna(row.get('date')) else None
-        )
-        if date_obj is None:
-            logger.warning(
-                "Skipping snow row with missing date: %s",
-                row.to_dict()
-            )
-            continue
-
-        record = {
-            "snow_type": snow_type.upper(),
-            "code": str(row['code']),
-            "date": date_obj.strftime('%Y-%m-%d'),
-            "value": (
-                round(float(row[main_value_col]), 3)
-                if main_value_col and pd.notna(row.get(main_value_col))
-                else None
-            ),
-            "norm": (
-                round(float(row['norm']), 3)
-                if 'norm' in row and pd.notna(row.get('norm'))
-                else None
-            ),
-        }
-
-        # Add elevation band values (value1-value14)
-        for band_num, col_name in value_columns.items():
-            if band_num <= 14:
-                record[f"value{band_num}"] = (
-                    round(float(row[col_name]), 3)
-                    if pd.notna(row.get(col_name)) else None
-                )
-
-        records.append(record)
-
-    # Write to API
-    if records:
-        count = client.write_snow(records)
-        logger.info(
-            "SAPPHIRE API: Wrote %d snow records (%s, HRU %s)",
-            count, snow_type, hru_code
-        )
-        print(
-            f"SAPPHIRE API: Successfully wrote {count} snow records "
-            f"({snow_type}, HRU {hru_code})"
-        )
-        return True
-    else:
-        logger.info(
-            "No snow records to write to API (%s, HRU %s)",
-            snow_type, hru_code
-        )
-        return False
-
 
 def _check_snow_consistency(
     csv_data: pd.DataFrame, snow_type: str, hru_code: str
@@ -320,12 +123,11 @@ def _check_snow_consistency(
     csv_data = csv_data.copy()
     csv_data['date'] = pd.to_datetime(csv_data['date'])
 
-    # The write function filters to yesterday+today; use the same window
+    # The write function filters to yesterday onward (including forecast);
+    # use the same window
     today = pd.Timestamp.today().normalize()
     yesterday = today - pd.Timedelta(days=1)
-    csv_recent = csv_data[
-        (csv_data['date'] >= yesterday) & (csv_data['date'] <= today)
-    ].copy()
+    csv_recent = csv_data[csv_data['date'] >= yesterday].copy()
 
     if csv_recent.empty:
         logger.warning(
@@ -358,11 +160,12 @@ def _check_snow_consistency(
     all_api_data = []
     for code in codes:
         try:
+            end_date = csv_recent['date'].max()
             api_df = client.read_snow(
                 snow_type=snow_type.upper(),
                 code=str(code),
                 start_date=yesterday.strftime('%Y-%m-%d'),
-                end_date=today.strftime('%Y-%m-%d'),
+                end_date=end_date.strftime('%Y-%m-%d'),
                 limit=1000
             )
             if api_df.empty:
@@ -624,7 +427,7 @@ def get_snow_data_operational(client, hru, variable, date, dg_path,
 
     # Write to SAPPHIRE API (if enabled)
     try:
-        written = _write_snow_to_api(df_combined, variable, hru)
+        written = dg_utils.write_snow_to_api(df_combined, variable, hru)
         # Run consistency check only if data was actually written
         if written:
             _check_snow_consistency(df_combined, variable, hru)

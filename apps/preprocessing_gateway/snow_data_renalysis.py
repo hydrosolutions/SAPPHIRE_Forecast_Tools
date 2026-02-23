@@ -92,153 +92,6 @@ logger.addHandler(console_handler)
 logger.setLevel(logging.INFO)
 
 
-def _write_snow_to_api(
-    data: pd.DataFrame, snow_type: str, hru_code: str
-) -> bool:
-    """
-    Write snow data to SAPPHIRE preprocessing API.
-
-    This function writes the last 30 days of data (maintenance mode
-    behavior). The snow_data_reanalysis module processes historical
-    data which should be synced in maintenance batches.
-
-    Args:
-        data: DataFrame with snow data. Expected columns:
-            - date: date
-            - code: station code
-            - {snow_type}: value (e.g., SWE, HS, RoF)
-            - {snow_type}_1, {snow_type}_2, ... : optional elevation
-              band values
-        snow_type: Type of snow data (SWE, HS, RoF)
-        hru_code: HRU code for logging context
-
-    Returns:
-        True if successful, False otherwise
-    """
-    if not SAPPHIRE_API_AVAILABLE:
-        logger.warning(
-            "sapphire-api-client not installed, skipping snow API write"
-        )
-        return False
-
-    api_enabled = os.getenv(
-        "SAPPHIRE_API_ENABLED", "true"
-    ).lower() == "true"
-    if not api_enabled:
-        logger.info(
-            "SAPPHIRE API writing disabled via SAPPHIRE_API_ENABLED=false"
-        )
-        return False
-
-    api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
-    client = SapphirePreprocessingClient(base_url=api_url)
-
-    if not client.readiness_check():
-        logger.warning(
-            "SAPPHIRE API at %s is not ready, skipping snow write "
-            "(HRU %s, %s)", api_url, hru_code, snow_type
-        )
-        return False
-
-    if data.empty:
-        logger.info(
-            "No snow data to write to API (%s, HRU %s)",
-            snow_type, hru_code
-        )
-        return False
-
-    data = data.copy()
-    data['date'] = pd.to_datetime(data['date'])
-
-    # Maintenance mode: write the last 30 days of data relative to the
-    # data's own timeframe (reanalysis data is historical, not today)
-    latest_date = data['date'].max()
-    cutoff_date = latest_date - pd.Timedelta(days=30)
-    data_to_write = data[data['date'] >= cutoff_date]
-
-    if data_to_write.empty:
-        logger.info(
-            "No snow data in last 30 days (%s, HRU %s)",
-            snow_type, hru_code
-        )
-        return False
-
-    codes = data_to_write['code'].unique()
-    logger.info(
-        "Writing %d snow records for %s to %s (%s, HRU %s, codes: %s)",
-        len(data_to_write), cutoff_date.date(), latest_date.date(),
-        snow_type, hru_code, list(codes)
-    )
-
-    # Identify elevation band columns (e.g., SWE_1, SWE_2, ...)
-    value_columns = {}
-    main_value_col = (
-        snow_type if snow_type in data_to_write.columns else None
-    )
-    for col in data_to_write.columns:
-        if col.startswith(f"{snow_type}_") and col != snow_type:
-            try:
-                band_num = int(col.split("_")[-1])
-                value_columns[band_num] = col
-            except ValueError:
-                pass
-
-    records = []
-    for _, row in data_to_write.iterrows():
-        date_obj = (
-            pd.to_datetime(row['date'])
-            if pd.notna(row.get('date')) else None
-        )
-        if date_obj is None:
-            logger.warning(
-                "Skipping snow row with missing date: %s",
-                row.to_dict()
-            )
-            continue
-
-        record = {
-            "snow_type": snow_type.upper(),
-            "code": str(row['code']),
-            "date": date_obj.strftime('%Y-%m-%d'),
-            "value": (
-                float(row[main_value_col])
-                if main_value_col and pd.notna(row.get(main_value_col))
-                else None
-            ),
-            "norm": (
-                float(row['norm'])
-                if 'norm' in row and pd.notna(row.get('norm'))
-                else None
-            ),
-        }
-
-        for band_num, col_name in value_columns.items():
-            if band_num <= 14:
-                record[f"value{band_num}"] = (
-                    float(row[col_name])
-                    if pd.notna(row.get(col_name)) else None
-                )
-
-        records.append(record)
-
-    if records:
-        count = client.write_snow(records)
-        logger.info(
-            "SAPPHIRE API: Wrote %d snow records (%s, HRU %s)",
-            count, snow_type, hru_code
-        )
-        print(
-            f"SAPPHIRE API: Successfully wrote {count} snow records "
-            f"({snow_type}, HRU {hru_code})"
-        )
-        return True
-    else:
-        logger.info(
-            "No snow records to write to API (%s, HRU %s)",
-            snow_type, hru_code
-        )
-        return False
-
 
 def _check_snow_consistency(
     csv_data: pd.DataFrame, snow_type: str, hru_code: str
@@ -554,7 +407,11 @@ def get_snow_data_reanalysis(client, hru, variable, start_date,
     # Write to SAPPHIRE API (if enabled) - maintenance mode: last 30
     # days
     try:
-        written = _write_snow_to_api(df_combined, variable, hru)
+        written = dg_utils.write_snow_to_api(
+            df_combined, variable, hru,
+            mode="maintenance",
+            reference_date=df_combined['date'].max(),
+        )
         if written:
             _check_snow_consistency(df_combined, variable, hru)
     except Exception as e:

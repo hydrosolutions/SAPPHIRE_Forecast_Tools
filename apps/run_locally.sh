@@ -33,6 +33,7 @@
 #   bash apps/run_locally.sh maintenance:postprocessing_forecasts
 #   bash apps/run_locally.sh maintenance:postprocessing_long_term
 #   bash apps/run_locally.sh recalculate_skill_metrics
+#   bash apps/run_locally.sh recalculate_snow_norms
 #   bash apps/run_locally.sh calibrate_long_term
 #
 # Combined targets:
@@ -54,6 +55,8 @@
 #   maintenance:postprocessing_long_term     Fill missing monthly ensemble forecasts
 #   calibrate_long_term                      Calibrate and hindcast long-term models
 #   recalculate_skill_metrics                Full skill metrics rebuild (yearly)
+#   recalculate_snow_norms                   Yearly snow norm recalculation
+#   yearly                                   All yearly tasks (snow norms + skill metrics)
 #
 # Flags:
 #   --continue-on-error   Don't abort on first module failure
@@ -583,6 +586,27 @@ run_recalculate_skill_metrics() {
     return $rc
 }
 
+run_recalculate_snow_norms() {
+    banner "Recalculate: preprocessing_gateway (yearly snow norms)"
+    local start
+    start=$(get_timestamp)
+
+    CURRENT_MODULE_LOG="${ERROR_DIR}/preprocessing_gateway_snow_norms.log"
+    > "$CURRENT_MODULE_LOG"
+    run_in_venv preprocessing_gateway recalculate_snow_norms.py
+    local rc=$?
+
+    local elapsed=$(( $(get_timestamp) - start ))
+    if [ $rc -eq 0 ]; then
+        log OK "snow norm recalculation completed in $(format_duration $elapsed)"
+        record_result "preprocessing_gateway (snow norms)" "PASS" "$elapsed" "$CURRENT_MODULE_LOG"
+    else
+        log ERROR "snow norm recalculation failed (exit $rc) after $(format_duration $elapsed)"
+        record_result "preprocessing_gateway (snow norms)" "FAIL" "$elapsed" "$CURRENT_MODULE_LOG"
+    fi
+    return $rc
+}
+
 run_calibrate_long_term() {
     banner "Calibrate: long_term_forecasting"
     local start
@@ -784,6 +808,12 @@ run_daily_pipeline() {
     export SAPPHIRE_PREDICTION_MODE="$original_mode"
 }
 
+run_yearly_pipeline() {
+    banner "YEARLY PIPELINE (snow norms + skill metrics)"
+    run_recalculate_snow_norms || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+    run_recalculate_skill_metrics || { [ "$CONTINUE_ON_ERROR" = false ] && return 1; }
+}
+
 # ---------------------------------------------------------------------------
 # Validation
 # ---------------------------------------------------------------------------
@@ -818,7 +848,7 @@ validate_env() {
         daily)
             log OK "Prediction mode: PENTAD + DECAD (daily)"
             ;;
-        long-term|calibrate_long_term|maintenance:postprocessing_long_term)
+        long-term|calibrate_long_term|recalculate_snow_norms|yearly|maintenance:postprocessing_long_term)
             # These targets don't depend on SAPPHIRE_PREDICTION_MODE
             ;;
     esac
@@ -835,6 +865,8 @@ validate_env() {
         maintenance:*)                   modules_to_check=("${target#maintenance:}") ;;
         calibrate_long_term)             modules_to_check=(long_term_forecasting) ;;
         recalculate_skill_metrics)       modules_to_check=(postprocessing_forecasts) ;;
+        recalculate_snow_norms)          modules_to_check=(preprocessing_gateway) ;;
+        yearly)                          modules_to_check=(preprocessing_gateway postprocessing_forecasts) ;;
         *)                               modules_to_check=("$target") ;;
     esac
 
@@ -955,6 +987,8 @@ Maintenance targets:
   maintenance:postprocessing_long_term  Fill missing monthly ensemble forecasts
   calibrate_long_term     Calibrate and hindcast long-term models
   recalculate_skill_metrics  Full skill metrics rebuild (run yearly)
+  recalculate_snow_norms  Yearly snow norm recalculation
+  yearly                  All yearly tasks (snow norms + skill metrics)
 
 Modules (for single-module operational runs):
   preprocessing_runoff    Process runoff data
@@ -1007,6 +1041,10 @@ Examples:
     ieasyhydroforecast_env_file_path=~/config/.env \
     bash apps/run_locally.sh recalculate_skill_metrics
 
+  # All yearly tasks (snow norms + skill metrics)
+  ieasyhydroforecast_env_file_path=~/config/.env \
+    bash apps/run_locally.sh yearly
+
   # Long-term calibration
   ieasyhydroforecast_env_file_path=~/config/.env \
     bash apps/run_locally.sh calibrate_long_term
@@ -1058,7 +1096,7 @@ main() {
     fi
 
     # Validate target
-    local valid_targets="daily short-term long-term all maintenance calibrate_long_term recalculate_skill_metrics maintenance:postprocessing_long_term"
+    local valid_targets="daily short-term long-term all maintenance calibrate_long_term recalculate_skill_metrics recalculate_snow_norms yearly maintenance:postprocessing_long_term"
     local is_valid=false
     for t in $valid_targets; do
         [ "$target" = "$t" ] && is_valid=true
@@ -1145,6 +1183,12 @@ main() {
             ;;
         recalculate_skill_metrics)
             run_recalculate_skill_metrics || exit_code=$?
+            ;;
+        recalculate_snow_norms)
+            run_recalculate_snow_norms || exit_code=$?
+            ;;
+        yearly)
+            run_yearly_pipeline || exit_code=$?
             ;;
         calibrate_long_term)
             run_calibrate_long_term || exit_code=$?

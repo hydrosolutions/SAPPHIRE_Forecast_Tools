@@ -39,6 +39,7 @@ from extend_era5_reanalysis import (
 )
 import Quantile_Mapping_OP as qm
 import snow_data_operational as sdo
+import dg_utils
 
 
 # =====================================================================
@@ -422,61 +423,67 @@ class TestForecastContamination:
 
 
 # =====================================================================
-# 5. Snow: yesterday+today operational write
+# 5. Snow: yesterday + today + forecast operational write
 # =====================================================================
 
 class TestSnowWriteCoverage:
-    """snow_data_operational._write_snow_to_api filters to yesterday+today
-    (2-day window to guard against SnowMapper data lag). Historical snow
-    data is NOT accumulated in the API by the operational pipeline."""
+    """dg_utils.write_snow_to_api filters to yesterday onward in
+    operational mode. This includes yesterday, today, and any forecast
+    dates from the data gateway. Historical data older than yesterday
+    is NOT accumulated in the API by the operational pipeline."""
 
-    def test_snow_writes_yesterday_and_today(self):
-        """Even though the CSV accumulates all historical data, only
-        yesterday+today are sent to the API."""
-        if not sdo.SAPPHIRE_API_AVAILABLE:
+    def test_snow_writes_yesterday_today_and_forecast(self):
+        """CSV accumulates all historical + forecast data; operational
+        mode writes yesterday onward (including forecast dates)."""
+        if not dg_utils.SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
 
         today = pd.Timestamp.today().normalize()
         yesterday = today - pd.Timedelta(days=1)
-        # CSV has 365 days of accumulated data
+        forecast_end = today + pd.Timedelta(days=8)
+        # CSV has 365 days of history + 8 days of forecast
+        dates = pd.date_range(
+            today - timedelta(days=364), forecast_end, freq='D'
+        )
         snow_data = pd.DataFrame({
-            'date': pd.date_range(
-                today - timedelta(days=364), today, freq='D'
-            ),
+            'date': dates,
             'code': '00003',
-            'SWE': np.random.uniform(0, 100, 365),
+            'SWE': np.random.uniform(0, 100, len(dates)),
         })
 
         mock_client = MagicMock()
         mock_client.readiness_check.return_value = True
-        mock_client.write_snow.return_value = 2
+        mock_client.write_snow.return_value = 10
+        mock_client.read_snow.return_value = pd.DataFrame()
 
-        with patch.object(sdo, 'SapphirePreprocessingClient',
+        with patch.object(dg_utils, 'SapphirePreprocessingClient',
                           return_value=mock_client), \
              patch.dict(os.environ, {
                  'SAPPHIRE_API_ENABLED': 'true',
                  'SAPPHIRE_API_URL': 'http://test:8000',
              }):
-            result = sdo._write_snow_to_api(snow_data, 'SWE', '00003')
+            result = dg_utils.write_snow_to_api(snow_data, 'SWE', '00003')
 
         assert result is True
         records = mock_client.write_snow.call_args[0][0]
-        assert len(records) == 2, (
-            f"Snow operational write should be 2 records "
-            f"(yesterday+today), got {len(records)}"
+        # yesterday + today + 8 forecast days = 10
+        assert len(records) == 10, (
+            f"Snow operational write should include yesterday+today+"
+            f"forecast, got {len(records)}"
         )
-        dates = {r['date'] for r in records}
-        assert dates == {
-            yesterday.strftime('%Y-%m-%d'),
-            today.strftime('%Y-%m-%d'),
-        }
+        written_dates = {r['date'] for r in records}
+        assert yesterday.strftime('%Y-%m-%d') in written_dates
+        assert today.strftime('%Y-%m-%d') in written_dates
+        assert forecast_end.strftime('%Y-%m-%d') in written_dates
 
-    def test_snow_csv_has_full_history_but_api_gets_two_days(self):
-        """Quantify the gap: CSV accumulates 365+ days, API gets 2."""
-        if not sdo.SAPPHIRE_API_AVAILABLE:
+    def test_snow_excludes_history_older_than_yesterday(self):
+        """Operational mode excludes data older than yesterday."""
+        if not dg_utils.SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
 
         today = pd.Timestamp.today().normalize()
+        yesterday = today - pd.Timedelta(days=1)
+        two_days_ago = today - pd.Timedelta(days=2)
         n_days = 365
         snow_data = pd.DataFrame({
             'date': pd.date_range(
@@ -489,20 +496,23 @@ class TestSnowWriteCoverage:
         mock_client = MagicMock()
         mock_client.readiness_check.return_value = True
         mock_client.write_snow.return_value = 2
+        mock_client.read_snow.return_value = pd.DataFrame()
 
-        with patch.object(sdo, 'SapphirePreprocessingClient',
+        with patch.object(dg_utils, 'SapphirePreprocessingClient',
                           return_value=mock_client), \
              patch.dict(os.environ, {
                  'SAPPHIRE_API_ENABLED': 'true',
                  'SAPPHIRE_API_URL': 'http://test:8000',
              }):
-            sdo._write_snow_to_api(snow_data, 'SWE', '00003')
+            dg_utils.write_snow_to_api(snow_data, 'SWE', '00003')
 
         records = mock_client.write_snow.call_args[0][0]
-        gap = n_days - len(records)
-        assert gap == 363, (
-            f"Snow API gap: {gap} of {n_days} CSV days NOT written"
+        assert len(records) == 2, (
+            f"Past-only data should yield 2 records "
+            f"(yesterday+today), got {len(records)}"
         )
+        written_dates = {r['date'] for r in records}
+        assert two_days_ago.strftime('%Y-%m-%d') not in written_dates
 
 
 # =====================================================================
@@ -578,8 +588,8 @@ class TestGapInventory:
         qm_api_records = 2
         # extend: 365 records (full year dashboard)
         extend_api_records = len(dashboard)
-        # snow: 2 records per variable per HRU (yesterday + today)
-        snow_api_records = 2
+        # snow: yesterday + today + ~8 forecast days per variable per HRU
+        snow_api_records = 10
 
         # Gaps
         reanalysis_not_in_api = csv_reanalysis_rows - extend_api_records
@@ -612,8 +622,8 @@ class TestGapInventory:
         )
 
         # Gap 4: Snow accumulation gap
-        # CSV accumulates ~365 days, API gets 2 (yesterday + today)
-        assert snow_api_records == 2, (
+        # CSV accumulates ~365 days, API gets ~10 (yesterday+today+forecast)
+        assert snow_api_records == 10, (
             f"GAP 4: Snow API has {snow_api_records} records vs. "
             f"~365 in CSV. Historical snow requires maintenance script."
         )

@@ -665,3 +665,214 @@ class TestEndToEndTransformToApiRecords:
             code_rows = result[result['code'] == code]
             assert len(code_rows) == 10
             assert code_rows['date'].nunique() == 10
+
+
+# =====================================================================
+# calculate_snow_norms
+# =====================================================================
+
+class TestCalculateSnowNorms:
+    """Tests for dg_utils.calculate_snow_norms."""
+
+    def _write_snow_csv(self, tmp_path, variable, hru, df):
+        """Helper: write a snow CSV into the expected directory layout."""
+        var_dir = tmp_path / variable
+        var_dir.mkdir(parents=True, exist_ok=True)
+        csv_path = var_dir / f"{hru}_{variable}.csv"
+        df.to_csv(csv_path, index=False)
+        return csv_path
+
+    def test_basic_mean_single_hru(self, tmp_path):
+        """Mean across 3 years for a single HRU, single variable."""
+        dates = (
+            pd.date_range('2020-01-01', '2020-12-31')
+            .append(pd.date_range('2021-01-01', '2021-12-31'))
+            .append(pd.date_range('2022-01-01', '2022-12-31'))
+        )
+        df = pd.DataFrame({
+            'date': dates,
+            'SWE': range(len(dates)),
+            'code': '15013',
+        })
+        self._write_snow_csv(tmp_path, 'SWE', 'HRU01', df)
+
+        result = dg_utils.calculate_snow_norms(
+            str(tmp_path), ['SWE'], ['HRU01']
+        )
+
+        assert set(result.columns) == {
+            'snow_type', 'code', 'dayofyear', 'norm',
+        }
+        assert len(result) > 0
+        assert (result['snow_type'] == 'SWE').all()
+        assert (result['code'] == '15013').all()
+        # Day 1 should have a computed mean
+        day1 = result[result['dayofyear'] == 1]
+        assert len(day1) == 1
+        assert pd.notna(day1['norm'].iloc[0])
+
+    def test_multiple_hrus_and_variables(self, tmp_path):
+        """Multiple HRUs and variables each produce rows."""
+        dates = pd.date_range('2020-01-01', '2020-01-10')
+        for var in ['SWE', 'HS']:
+            for hru in ['HRU01', 'HRU02']:
+                df = pd.DataFrame({
+                    'date': dates,
+                    var: [10.0] * len(dates),
+                    'code': 'CODE1',
+                })
+                self._write_snow_csv(tmp_path, var, hru, df)
+
+        result = dg_utils.calculate_snow_norms(
+            str(tmp_path), ['SWE', 'HS'], ['HRU01', 'HRU02']
+        )
+
+        # Should have rows for both SWE and HS
+        assert set(result['snow_type'].unique()) == {'SWE', 'HS'}
+
+    def test_missing_csv_skipped_gracefully(self, tmp_path):
+        """Missing CSV file produces no rows (no crash)."""
+        result = dg_utils.calculate_snow_norms(
+            str(tmp_path), ['SWE'], ['MISSING_HRU']
+        )
+
+        assert len(result) == 0
+        assert set(result.columns) == {
+            'snow_type', 'code', 'dayofyear', 'norm',
+        }
+
+    def test_missing_variable_column_skipped(self, tmp_path):
+        """CSV without the expected variable column is skipped."""
+        dates = pd.date_range('2020-01-01', '2020-01-05')
+        df = pd.DataFrame({
+            'date': dates,
+            'OTHER': [1.0] * len(dates),
+            'code': '15013',
+        })
+        self._write_snow_csv(tmp_path, 'SWE', 'HRU01', df)
+
+        result = dg_utils.calculate_snow_norms(
+            str(tmp_path), ['SWE'], ['HRU01']
+        )
+
+        assert len(result) == 0
+
+    def test_empty_csv_skipped(self, tmp_path):
+        """Empty CSV file produces no rows."""
+        df = pd.DataFrame(columns=['date', 'SWE', 'code'])
+        self._write_snow_csv(tmp_path, 'SWE', 'HRU01', df)
+
+        result = dg_utils.calculate_snow_norms(
+            str(tmp_path), ['SWE'], ['HRU01']
+        )
+
+        assert len(result) == 0
+
+    def test_leap_year_day_366(self, tmp_path):
+        """Day 366 (Dec 31 of leap year) appears in output."""
+        # Use 2020 (leap year) and 2024 (leap year)
+        dates_2020 = pd.date_range('2020-01-01', '2020-12-31')
+        dates_2024 = pd.date_range('2024-01-01', '2024-12-31')
+        dates = dates_2020.append(dates_2024)
+        df = pd.DataFrame({
+            'date': dates,
+            'SWE': [50.0] * len(dates),
+            'code': '15013',
+        })
+        self._write_snow_csv(tmp_path, 'SWE', 'HRU01', df)
+
+        result = dg_utils.calculate_snow_norms(
+            str(tmp_path), ['SWE'], ['HRU01']
+        )
+
+        assert 366 in result['dayofyear'].values
+
+    def test_nan_values_excluded_from_mean(self, tmp_path):
+        """NaN values are excluded from norm computation."""
+        dates = pd.date_range('2020-01-01', '2020-01-03')
+        df = pd.DataFrame({
+            'date': list(dates) + list(dates),
+            'SWE': [10.0, np.nan, 30.0, 20.0, 40.0, np.nan],
+            'code': ['15013'] * 6,
+        })
+        self._write_snow_csv(tmp_path, 'SWE', 'HRU01', df)
+
+        result = dg_utils.calculate_snow_norms(
+            str(tmp_path), ['SWE'], ['HRU01']
+        )
+
+        # Day 1: mean(10.0, 20.0) = 15.0
+        day1 = result[result['dayofyear'] == 1]
+        assert abs(day1['norm'].iloc[0] - 15.0) < 0.01
+
+        # Day 2: mean(40.0) = 40.0 (NaN excluded)
+        day2 = result[result['dayofyear'] == 2]
+        assert abs(day2['norm'].iloc[0] - 40.0) < 0.01
+
+        # Day 3: mean(30.0) = 30.0 (NaN excluded)
+        day3 = result[result['dayofyear'] == 3]
+        assert abs(day3['norm'].iloc[0] - 30.0) < 0.01
+
+    def test_single_year_produces_norms(self, tmp_path):
+        """A single year of data is sufficient to compute norms."""
+        dates = pd.date_range('2023-01-01', '2023-01-10')
+        df = pd.DataFrame({
+            'date': dates,
+            'SWE': [float(i) for i in range(10)],
+            'code': '15013',
+        })
+        self._write_snow_csv(tmp_path, 'SWE', 'HRU01', df)
+
+        result = dg_utils.calculate_snow_norms(
+            str(tmp_path), ['SWE'], ['HRU01']
+        )
+
+        assert len(result) == 10
+        # Day 1 (Jan 1) → value 0.0
+        day1 = result[result['dayofyear'] == 1]
+        assert abs(day1['norm'].iloc[0] - 0.0) < 0.01
+
+    def test_output_format_columns_and_types(self, tmp_path):
+        """Output has exactly 4 columns with correct dtypes."""
+        dates = pd.date_range('2020-01-01', '2020-01-05')
+        df = pd.DataFrame({
+            'date': dates,
+            'SWE': [10.0] * 5,
+            'code': '15013',
+        })
+        self._write_snow_csv(tmp_path, 'SWE', 'HRU01', df)
+
+        result = dg_utils.calculate_snow_norms(
+            str(tmp_path), ['SWE'], ['HRU01']
+        )
+
+        assert list(result.columns) == [
+            'snow_type', 'code', 'dayofyear', 'norm',
+        ]
+        assert result['snow_type'].dtype == object
+        assert result['code'].dtype == object
+        assert result['norm'].dtype == np.float64
+
+    def test_multiple_codes_in_same_csv(self, tmp_path):
+        """Multiple codes within one CSV are each normed separately."""
+        dates = pd.date_range('2020-01-01', '2020-01-03')
+        df = pd.DataFrame({
+            'date': list(dates) * 2,
+            'SWE': [10.0, 20.0, 30.0, 100.0, 200.0, 300.0],
+            'code': ['A'] * 3 + ['B'] * 3,
+        })
+        self._write_snow_csv(tmp_path, 'SWE', 'HRU01', df)
+
+        result = dg_utils.calculate_snow_norms(
+            str(tmp_path), ['SWE'], ['HRU01']
+        )
+
+        assert set(result['code'].unique()) == {'A', 'B'}
+        a_day1 = result[
+            (result['code'] == 'A') & (result['dayofyear'] == 1)
+        ]
+        assert abs(a_day1['norm'].iloc[0] - 10.0) < 0.01
+        b_day1 = result[
+            (result['code'] == 'B') & (result['dayofyear'] == 1)
+        ]
+        assert abs(b_day1['norm'].iloc[0] - 100.0) < 0.01

@@ -1667,19 +1667,19 @@ def calculate_skill_metrics_pentad(
             )
         ].copy()
 
-        # Now recalculate the skill metrics for the ensemble
-        ensemble_skill_metrics_df = pd.merge(
-            skill_metrics_df_ensemble_avg,
-            observed[['code', 'date', 'discharge_avg', 'delta']],
-            on=['code', 'date'])
-        logger.debug(
-            "Pentad ensemble skill metrics columns: %s",
-            ensemble_skill_metrics_df.columns.tolist(),
-        )
-
         number_of_models = simulated['model_short'].nunique()
         logger.debug("Pentad number_of_models: %d", number_of_models)
-        if number_of_models > 1:
+        if number_of_models > 1 and not skill_metrics_df_ensemble_avg.empty:
+            # Now recalculate the skill metrics for the ensemble
+            ensemble_skill_metrics_df = pd.merge(
+                skill_metrics_df_ensemble_avg,
+                observed[['code', 'date', 'discharge_avg', 'delta']],
+                on=['code', 'date'])
+            logger.debug(
+                "Pentad ensemble skill metrics columns: %s",
+                ensemble_skill_metrics_df.columns.tolist(),
+            )
+
             # Single-pass ensemble skill metrics
             ensemble_skill_stats = ensemble_skill_metrics_df. \
                 groupby(['pentad_in_year', 'code', 'model_short', 'composition'])[['discharge_avg', 'forecasted_discharge', 'delta']]. \
@@ -1834,15 +1834,15 @@ def calculate_skill_metrics_decade(
             )
         ].copy()
 
-        # Now recalculate the skill metrics for the ensemble
-        ensemble_skill_metrics_df = pd.merge(
-            skill_metrics_df_ensemble_avg,
-            observed[['code', 'date', 'discharge_avg', 'delta']],
-            on=['code', 'date'])
-
         number_of_models = simulated['model_short'].nunique()
         logger.debug("Decad number_of_models: %d", number_of_models)
-        if number_of_models > 1:
+        if number_of_models > 1 and not skill_metrics_df_ensemble_avg.empty:
+            # Now recalculate the skill metrics for the ensemble
+            ensemble_skill_metrics_df = pd.merge(
+                skill_metrics_df_ensemble_avg,
+                observed[['code', 'date', 'discharge_avg', 'delta']],
+                on=['code', 'date'])
+
             # Single-pass ensemble skill metrics
             ensemble_skill_stats = ensemble_skill_metrics_df. \
                 groupby(['decad_in_year', 'code', 'model_short', 'composition'])[['discharge_avg', 'forecasted_discharge', 'delta']]. \
