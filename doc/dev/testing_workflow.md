@@ -102,6 +102,7 @@ bash run_tests.sh service:postprocessing
 |--------|---------------|----------------|-------|
 | iEasyHydroForecast | unittest | `tests/` | Core library |
 | preprocessing_runoff | pytest | `test/` | Data processing |
+| preprocessing_gateway | pytest | `test/` | DG transforms, API integration, pipeline integration |
 | postprocessing_forecasts | pytest | `tests/` | Output formatting |
 | pipeline | pytest | `tests/` | Container orchestration |
 | forecast_dashboard | pytest + Playwright | `tests/` | Integration tests disabled by default |

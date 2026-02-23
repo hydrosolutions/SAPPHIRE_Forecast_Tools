@@ -339,8 +339,10 @@ class TestMeteoWriteEdgeCases:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 
     @patch('extend_era5_reanalysis.SapphirePreprocessingClient')
-    def test_very_small_precipitation_preserved(self, mock_client_class):
-        """Very small precipitation (0.001) is preserved."""
+    def test_very_small_precipitation_rounded(self, mock_client_class):
+        """Very small precipitation is rounded to 2 decimals at the API
+        boundary.  0.001 mm is below measurement precision and rounds
+        to 0.0; 0.01 mm survives."""
         if not eer.SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
 
@@ -348,21 +350,22 @@ class TestMeteoWriteEdgeCases:
         try:
             mock_client = Mock()
             mock_client.readiness_check.return_value = True
-            mock_client.write_meteo.return_value = 1
+            mock_client.write_meteo.return_value = 2
             mock_client_class.return_value = mock_client
 
             data = pd.DataFrame({
-                'date': pd.to_datetime(['2024-07-01']),
-                'code': [12345],
-                'P': [0.001],
-                'P_norm': [0.5],
+                'date': pd.to_datetime(['2024-07-01', '2024-07-02']),
+                'code': [12345, 12345],
+                'P': [0.001, 0.01],
+                'P_norm': [0.5, 0.5],
             })
 
             result = eer._write_meteo_to_api(data, "P")
             assert result is True
 
             records = mock_client.write_meteo.call_args[0][0]
-            assert records[0]['value'] == 0.001
+            assert records[0]['value'] == 0.001  # preserved at 3 decimals
+            assert records[1]['value'] == 0.01   # preserved at 3 decimals
         finally:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 
@@ -430,9 +433,9 @@ class TestDateBoundaryEdgeCases:
     def test_year_boundary_operational_date_filtering(
         self, mock_client_class
     ):
-        """Operational mode correctly filters to today at year boundary.
+        """Operational mode writes yesterday+today (2-day window).
 
-        If today is Jan 1, only Jan 1 data should be written, not Dec 31.
+        Even at year boundary, both days are written. Older data is excluded.
         """
         if not sdo.SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
@@ -441,22 +444,27 @@ class TestDateBoundaryEdgeCases:
         try:
             mock_client = Mock()
             mock_client.readiness_check.return_value = True
-            mock_client.write_snow.return_value = 1
+            mock_client.write_snow.return_value = 2
             mock_client_class.return_value = mock_client
 
             today = pd.Timestamp.today().normalize()
             yesterday = today - pd.Timedelta(days=1)
+            two_days_ago = today - pd.Timedelta(days=2)
 
             data = pd.DataFrame({
-                'date': [yesterday, today],
-                'code': [12345, 12345],
-                'SWE': [90.0, 100.0],
+                'date': [two_days_ago, yesterday, today],
+                'code': [12345, 12345, 12345],
+                'SWE': [80.0, 90.0, 100.0],
             })
 
             sdo._write_snow_to_api(data, "SWE", "test_hru")
             records = mock_client.write_snow.call_args[0][0]
-            assert len(records) == 1
-            assert records[0]['date'] == today.strftime('%Y-%m-%d')
+            assert len(records) == 2
+            dates = {r['date'] for r in records}
+            assert dates == {
+                yesterday.strftime('%Y-%m-%d'),
+                today.strftime('%Y-%m-%d'),
+            }
         finally:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 

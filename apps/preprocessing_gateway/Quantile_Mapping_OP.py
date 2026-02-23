@@ -241,13 +241,18 @@ def merge_ensemble_forecast(files_downloaded: list) -> pd.DataFrame:
     return combined_df
 
 
-def _write_meteo_to_api(data: pd.DataFrame, meteo_type: str, hru_code: str) -> bool:
+def _write_meteo_to_api(
+    data: pd.DataFrame, meteo_type: str, hru_code: str,
+    mode: str | None = None,
+) -> bool:
     """
     Write meteorological data to SAPPHIRE preprocessing API.
 
-    This function writes only the latest date's data (operational mode behavior).
-    The Quantile_Mapping_OP module produces operational forecast data which should
-    be synced incrementally.
+    Supports different sync modes:
+    - operational (default): write yesterday's and today's data
+      (2-day window guards against DG data lag)
+    - maintenance: write the last 30 days of data
+    - initial: write all data
 
     Args:
         data: DataFrame with meteo data. Expected columns:
@@ -256,6 +261,8 @@ def _write_meteo_to_api(data: pd.DataFrame, meteo_type: str, hru_code: str) -> b
             - code: station code
         meteo_type: Type of meteo data (T for temperature, P for precipitation)
         hru_code: HRU code for logging purposes
+        mode: Sync mode override. If None, reads SAPPHIRE_SYNC_MODE
+            env var, defaulting to 'operational'.
 
     Returns:
         True if successful, False otherwise
@@ -289,13 +296,46 @@ def _write_meteo_to_api(data: pd.DataFrame, meteo_type: str, hru_code: str) -> b
     data = data.copy()
     data['date'] = pd.to_datetime(data['date'])
 
-    # Operational mode: write only today's data
+    # Filter data based on sync mode (parameter > env var > default)
+    if mode is not None:
+        sync_mode = mode.lower()
+    else:
+        sync_mode = os.getenv("SAPPHIRE_SYNC_MODE", "operational").lower()
+    logger.info(
+        "QM meteo API sync mode: %s (%s, HRU %s)",
+        sync_mode, meteo_type, hru_code,
+    )
+
     today = pd.Timestamp.today().normalize()
-    data_to_write = data[data['date'] == today]
-    logger.info(f"Writing {len(data_to_write)} meteo records for date {today} ({meteo_type}, HRU {hru_code})")
+    yesterday = today - pd.Timedelta(days=1)
+    if sync_mode == "operational":
+        data_to_write = data[
+            (data['date'] >= yesterday) & (data['date'] <= today)
+        ]
+    elif sync_mode == "maintenance":
+        cutoff = today - pd.Timedelta(days=30)
+        data_to_write = data[data['date'] >= cutoff]
+    elif sync_mode == "initial":
+        data_to_write = data
+    else:
+        logger.warning(
+            "Unknown sync mode '%s', defaulting to operational",
+            sync_mode,
+        )
+        data_to_write = data[
+            (data['date'] >= yesterday) & (data['date'] <= today)
+        ]
+
+    logger.info(
+        "%s mode: %d meteo records to write (%s, HRU %s)",
+        sync_mode, len(data_to_write), meteo_type, hru_code,
+    )
 
     if data_to_write.empty:
-        logger.info(f"No meteo data to write ({meteo_type}) for HRU {hru_code}")
+        logger.info(
+            "No meteo data to write after %s filtering "
+            "(%s, HRU %s)", sync_mode, meteo_type, hru_code,
+        )
         return False
 
     # Determine column names for value
@@ -314,7 +354,7 @@ def _write_meteo_to_api(data: pd.DataFrame, meteo_type: str, hru_code: str) -> b
             "meteo_type": meteo_type.upper(),  # API expects uppercase
             "code": str(row['code']),
             "date": date_obj.strftime('%Y-%m-%d'),
-            "value": float(row[value_col]) if value_col in row and pd.notna(row.get(value_col)) else None,
+            "value": round(float(row[value_col]), 3) if value_col in row and pd.notna(row.get(value_col)) else None,
             "norm": None,  # Control member data doesn't have norm values
             "day_of_year": date_obj.dayofyear,
         }
@@ -372,30 +412,34 @@ def _check_meteo_consistency(
     csv_data = csv_data.copy()
     csv_data['date'] = pd.to_datetime(csv_data['date'])
 
-    # The write function filters to today; use the same date
+    # The write function filters to yesterday+today; use the same window
     today = pd.Timestamp.today().normalize()
-    csv_today = csv_data[csv_data['date'] == today].copy()
+    yesterday = today - pd.Timedelta(days=1)
+    csv_recent = csv_data[
+        (csv_data['date'] >= yesterday) & (csv_data['date'] <= today)
+    ].copy()
 
-    if csv_today.empty:
+    if csv_recent.empty:
         logger.warning(
-            "%s: No CSV rows for today (%s), nothing to verify. "
+            "%s: No CSV rows for %s to %s, nothing to verify. "
             "CSV date range: %s to %s",
-            tag, today.date(),
+            tag, yesterday.date(), today.date(),
             csv_data['date'].min().date(),
             csv_data['date'].max().date()
         )
         return True
 
-    codes = csv_today['code'].unique()
-    csv_val_col = meteo_type if meteo_type in csv_today.columns else None
+    codes = csv_recent['code'].unique()
+    csv_val_col = meteo_type if meteo_type in csv_recent.columns else None
     logger.info(
-        "%s: Verifying API data for date=%s, codes=%s, api_url=%s",
-        tag, today.date(), list(codes), api_url
+        "%s: Verifying API data for dates %s to %s, codes=%s, "
+        "api_url=%s",
+        tag, yesterday.date(), today.date(), list(codes), api_url
     )
     if csv_val_col:
         for code in codes:
-            csv_vals = csv_today.loc[
-                csv_today['code'] == code, csv_val_col
+            csv_vals = csv_recent.loc[
+                csv_recent['code'] == code, csv_val_col
             ].tolist()
             logger.info(
                 "%s: CSV values for code=%s: %s",
@@ -409,7 +453,7 @@ def _check_meteo_consistency(
             api_df = client.read_meteo(
                 meteo_type=meteo_type.upper(),
                 code=str(code),
-                start_date=today.strftime('%Y-%m-%d'),
+                start_date=yesterday.strftime('%Y-%m-%d'),
                 end_date=today.strftime('%Y-%m-%d'),
                 limit=1000
             )
@@ -465,11 +509,12 @@ def _check_meteo_consistency(
                 )
                 codes_in_api = list(any_data['code'].unique())
                 logger.warning(
-                    "%s: FAILED - No data for today (%s) but API "
+                    "%s: FAILED - No data for %s to %s but API "
                     "has %s data for other dates: %s, codes: %s. "
                     "Possible date mismatch or write did not persist "
-                    "today's records.",
-                    tag, today.date(), meteo_type.upper(),
+                    "recent records.",
+                    tag, yesterday.date(), today.date(),
+                    meteo_type.upper(),
                     dates_in_api[:5], codes_in_api[:5]
                 )
         except Exception as e:
@@ -484,20 +529,20 @@ def _check_meteo_consistency(
     api_data = pd.concat(all_api_data, ignore_index=True)
     api_data['date'] = pd.to_datetime(api_data['date'])
     api_data['code'] = api_data['code'].astype(str)
-    csv_today['code'] = csv_today['code'].astype(str)
+    csv_recent['code'] = csv_recent['code'].astype(str)
 
     is_consistent = True
 
     # Compare row counts
-    if len(api_data) != len(csv_today):
+    if len(api_data) != len(csv_recent):
         logger.warning(
             "%s: Row count mismatch - API: %d, CSV: %d",
-            tag, len(api_data), len(csv_today)
+            tag, len(api_data), len(csv_recent)
         )
         is_consistent = False
 
     # Merge on code and date
-    merged = csv_today.merge(
+    merged = csv_recent.merge(
         api_data,
         on=['code', 'date'],
         how='outer',
@@ -526,7 +571,7 @@ def _check_meteo_consistency(
     both = merged[merged['_merge'] == 'both']
     if len(both) > 0:
         csv_val_col = (
-            meteo_type if meteo_type in csv_today.columns else None
+            meteo_type if meteo_type in csv_recent.columns else None
         )
         if csv_val_col and 'value' in api_data.columns:
             csv_values = both.get(

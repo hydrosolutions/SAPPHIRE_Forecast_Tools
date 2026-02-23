@@ -87,11 +87,10 @@ def is_leap_year(year):
 
 def _write_meteo_to_api(data: pd.DataFrame, meteo_type: str) -> bool:
     """
-    Write meteorological data to SAPPHIRE preprocessing API.
+    Write dashboard meteorological data to SAPPHIRE preprocessing API.
 
-    This function writes all data passed to it. The extend_era5_reanalysis module
-    extends historical data with operational data, so the caller determines what
-    data to write.
+    Writes all data passed to it (dashboard records with norm + value).
+    The caller determines what data to include.
 
     Args:
         data: DataFrame with meteo data. Expected columns:
@@ -155,8 +154,8 @@ def _write_meteo_to_api(data: pd.DataFrame, meteo_type: str) -> bool:
             "meteo_type": meteo_type.upper(),  # API expects uppercase
             "code": str(row['code']),
             "date": date_obj.strftime('%Y-%m-%d'),
-            "value": float(row[value_col]) if value_col in row and pd.notna(row.get(value_col)) else None,
-            "norm": float(row[norm_col]) if norm_col in row and pd.notna(row.get(norm_col)) else None,
+            "value": round(float(row[value_col]), 3) if value_col in row and pd.notna(row.get(value_col)) else None,
+            "norm": round(float(row[norm_col]), 3) if norm_col in row and pd.notna(row.get(norm_col)) else None,
             "day_of_year": int(row['dayofyear']) if 'dayofyear' in row and pd.notna(row.get('dayofyear')) else date_obj.dayofyear,
         }
         records.append(record)
@@ -170,6 +169,135 @@ def _write_meteo_to_api(data: pd.DataFrame, meteo_type: str) -> bool:
     else:
         logger.info(f"No meteo records to write to API ({meteo_type})")
         return False
+
+
+def _write_reanalysis_to_api(
+    data: pd.DataFrame, meteo_type: str, mode: str | None = None,
+) -> bool:
+    """Write raw reanalysis data to SAPPHIRE preprocessing API.
+
+    Unlike ``_write_meteo_to_api`` (which writes dashboard records with
+    norms), this writes the raw extended reanalysis time series.
+
+    Supports sync modes:
+    - operational (default): no-op (reanalysis is not written daily)
+    - maintenance: write last 365 days of reanalysis
+    - initial: write all reanalysis data
+
+    Args:
+        data: Extended reanalysis DataFrame with columns
+            [date, code, <meteo_type>].
+        meteo_type: 'T' or 'P'.
+        mode: Sync mode override. If None, reads SAPPHIRE_SYNC_MODE
+            env var, defaulting to 'operational'.
+
+    Returns:
+        True if successful, False otherwise.
+    """
+    # Resolve sync mode: parameter > env var > default
+    if mode is not None:
+        sync_mode = mode.lower()
+    else:
+        sync_mode = os.getenv("SAPPHIRE_SYNC_MODE", "operational").lower()
+
+    if sync_mode == "operational":
+        logger.debug(
+            "Reanalysis API write skipped in operational mode (%s)",
+            meteo_type,
+        )
+        return False
+
+    if not SAPPHIRE_API_AVAILABLE:
+        logger.warning(
+            "sapphire-api-client not installed, skipping reanalysis "
+            "API write"
+        )
+        return False
+
+    api_enabled = os.getenv(
+        "SAPPHIRE_API_ENABLED", "true"
+    ).lower() == "true"
+    if not api_enabled:
+        logger.info(
+            "SAPPHIRE API writing disabled via SAPPHIRE_API_ENABLED=false"
+        )
+        return False
+
+    api_url = os.getenv("SAPPHIRE_API_URL", "http://localhost:8000")
+    client = SapphirePreprocessingClient(base_url=api_url)
+
+    if not client.readiness_check():
+        logger.warning(
+            "SAPPHIRE API at %s is not ready, skipping reanalysis write",
+            api_url,
+        )
+        return False
+
+    if data.empty:
+        logger.info(
+            "No reanalysis data to write to API (%s)", meteo_type
+        )
+        return False
+
+    data = data.copy()
+    data['date'] = pd.to_datetime(data['date'])
+
+    # Filter by sync mode
+    if sync_mode == "maintenance":
+        cutoff = pd.Timestamp.today().normalize() - pd.Timedelta(days=365)
+        data_to_write = data[data['date'] >= cutoff]
+    elif sync_mode == "initial":
+        data_to_write = data
+    else:
+        logger.warning(
+            "Unknown sync mode '%s', defaulting to operational "
+            "(no reanalysis write)", sync_mode,
+        )
+        return False
+
+    if data_to_write.empty:
+        logger.info(
+            "No reanalysis data to write after %s filtering (%s)",
+            sync_mode, meteo_type,
+        )
+        return False
+
+    logger.info(
+        "%s mode: writing %d reanalysis records (%s)",
+        sync_mode, len(data_to_write), meteo_type,
+    )
+
+    value_col = meteo_type  # 'T' or 'P'
+    records = []
+    for _, row in data_to_write.iterrows():
+        date_obj = pd.to_datetime(row['date'])
+        if pd.isna(date_obj):
+            continue
+        records.append({
+            "meteo_type": meteo_type.upper(),
+            "code": str(row['code']),
+            "date": date_obj.strftime('%Y-%m-%d'),
+            "value": (
+                round(float(row[value_col]), 3)
+                if value_col in row and pd.notna(row.get(value_col))
+                else None
+            ),
+            "norm": None,
+            "day_of_year": date_obj.dayofyear,
+        })
+
+    if not records:
+        logger.info(
+            "No reanalysis records to write to API (%s)", meteo_type
+        )
+        return False
+
+    count = client.write_meteo(records)
+    logger.info(
+        "Successfully wrote %d reanalysis records to SAPPHIRE API "
+        "(%s, %s mode)", count, meteo_type, sync_mode,
+    )
+    return True
 
 
 def _check_meteo_consistency(csv_data: pd.DataFrame, meteo_type: str) -> bool:
@@ -539,6 +667,7 @@ def main():
         #--------------------------------------------------------------------
         # WRITE TO SAPPHIRE API
         #--------------------------------------------------------------------
+        # Dashboard data (norms + current-year values) — always written
         try:
             written = _write_meteo_to_api(daily_norm_P, 'P')
             # Run consistency check only if data was actually written
@@ -556,6 +685,21 @@ def main():
         except SapphireAPIError as e:
             logger.error(f"Error writing temperature data to API: {e}")
             # Continue - CSV write succeeded, API failure is not fatal
+
+        # Reanalysis data — only in maintenance/initial mode
+        try:
+            _write_reanalysis_to_api(era5_reanalysis_P, 'P')
+        except SapphireAPIError as e:
+            logger.error(
+                "Error writing reanalysis P data to API: %s", e
+            )
+
+        try:
+            _write_reanalysis_to_api(era5_reanalysis_T, 'T')
+        except SapphireAPIError as e:
+            logger.error(
+                "Error writing reanalysis T data to API: %s", e
+            )
 
     #--------------------------------------------------------------------
     # LOGGING

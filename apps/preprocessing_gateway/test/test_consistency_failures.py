@@ -391,16 +391,19 @@ class TestSnowConsistencyDateMismatch:
             mock_client.write_snow.return_value = 1
 
             today = pd.Timestamp.today().normalize()
+            yesterday = today - pd.Timedelta(days=1)
+            # API mock returns both yesterday+today to match the 2-day
+            # window that write and consistency check now use
             mock_client.read_snow.return_value = pd.DataFrame({
-                'date': pd.to_datetime([today]),
-                'code': ['12345'],
-                'snow_type': ['SWE'],
-                'value': [100.0],
+                'date': pd.to_datetime([yesterday, today]),
+                'code': ['12345', '12345'],
+                'snow_type': ['SWE', 'SWE'],
+                'value': [90.0, 100.0],
             })
             mock_client_class.return_value = mock_client
 
             data = pd.DataFrame({
-                'date': [today - pd.Timedelta(days=1), today],
+                'date': [yesterday, today],
                 'code': [12345, 12345],
                 'SWE': [90.0, 100.0],
             })
@@ -415,13 +418,14 @@ class TestSnowConsistencyDateMismatch:
             os.environ.pop('SAPPHIRE_CONSISTENCY_CHECK', None)
 
     @patch('snow_data_operational.SapphirePreprocessingClient')
-    def test_csv_max_date_is_yesterday_write_returns_false(
+    def test_csv_max_date_is_yesterday_write_succeeds(
         self, mock_client_class
     ):
-        """When CSV has no today data, write returns False (nothing to write).
+        """When CSV has only yesterday's data, write succeeds because
+        the 2-day window (yesterday+today) includes yesterday.
 
-        The consistency check now filters to today and finds no CSV rows,
-        so it returns True (nothing to verify).
+        This guards against SnowMapper data lag — yesterday's data is
+        still valuable even if today's isn't available yet.
         """
         if not sdo.SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
@@ -431,23 +435,29 @@ class TestSnowConsistencyDateMismatch:
         try:
             mock_client = Mock()
             mock_client.readiness_check.return_value = True
-            # API returns empty because nothing was written for yesterday
-            mock_client.read_snow.return_value = pd.DataFrame()
+            mock_client.write_snow.return_value = 1
             mock_client_class.return_value = mock_client
 
             yesterday = pd.Timestamp.today().normalize() - pd.Timedelta(days=1)
+            # API returns yesterday's data to match what was written
+            mock_client.read_snow.return_value = pd.DataFrame({
+                'date': pd.to_datetime([yesterday]),
+                'code': ['12345'],
+                'snow_type': ['SWE'],
+                'value': [100.0],
+            })
+
             data = pd.DataFrame({
                 'date': [yesterday],
                 'code': [12345],
                 'SWE': [100.0],
             })
 
-            # Write returns False — no today data to write
+            # Write succeeds — yesterday is within the 2-day window
             write_result = sdo._write_snow_to_api(data, "SWE", "test_hru")
-            assert write_result is False
+            assert write_result is True
 
-            # Consistency check filters to today, finds no CSV rows,
-            # returns True (nothing to verify)
+            # Consistency check verifies yesterday's data
             check_result = sdo._check_snow_consistency(
                 data, "SWE", "test_hru"
             )
@@ -460,10 +470,11 @@ class TestSnowConsistencyDateMismatch:
     def test_csv_max_date_is_future_write_returns_false(
         self, mock_client_class
     ):
-        """When CSV has future-dated forecasts, write returns False.
+        """When CSV has only future-dated forecasts (beyond today),
+        write returns False — no data in the 2-day window.
 
-        Consistency check filters to today and finds no CSV rows,
-        so it returns True (nothing to verify).
+        Consistency check filters to yesterday+today, finds no CSV
+        rows, so it returns True (nothing to verify).
         """
         if not sdo.SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
@@ -476,9 +487,12 @@ class TestSnowConsistencyDateMismatch:
             mock_client.read_snow.return_value = pd.DataFrame()
             mock_client_class.return_value = mock_client
 
-            tomorrow = pd.Timestamp.today().normalize() + pd.Timedelta(days=1)
+            # Data is tomorrow — outside the yesterday+today window
+            future = (
+                pd.Timestamp.today().normalize() + pd.Timedelta(days=1)
+            )
             data = pd.DataFrame({
-                'date': [tomorrow],
+                'date': [future],
                 'code': [12345],
                 'SWE': [100.0],
             })
@@ -486,8 +500,8 @@ class TestSnowConsistencyDateMismatch:
             write_result = sdo._write_snow_to_api(data, "SWE", "test_hru")
             assert write_result is False
 
-            # Consistency check filters to today, finds no CSV rows,
-            # returns True (nothing to verify)
+            # Consistency check filters to yesterday+today, finds no
+            # CSV rows, returns True (nothing to verify)
             check_result = sdo._check_snow_consistency(
                 data, "SWE", "test_hru"
             )

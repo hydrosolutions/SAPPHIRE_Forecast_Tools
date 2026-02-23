@@ -30,4 +30,14 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 # Run the application using uv run (activates the virtual environment automatically)
 # Runs three scripts sequentially: quantile mapping, ERA5 extension, and snow data processing
+#
+# Sync modes (controlled via SAPPHIRE_SYNC_MODE env var):
+#   operational (default) - writes yesterday's + today's data
+#   maintenance           - writes recent history (30 days snow, 365 days reanalysis)
+#   initial               - writes all data
+#
+# Examples:
+#   docker run preprocessing-gateway                                      # operational (default)
+#   docker run -e SAPPHIRE_SYNC_MODE=maintenance preprocessing-gateway    # maintenance
+#   docker run preprocessing-gateway uv run backfill_new_stations.py      # backfill
 CMD ["sh", "-c", "uv run Quantile_Mapping_OP.py && uv run extend_era5_reanalysis.py && uv run snow_data_operational.py"]

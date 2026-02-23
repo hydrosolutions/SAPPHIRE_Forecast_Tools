@@ -2,10 +2,10 @@
 Tests for SAPPHIRE API integration in preprocessing_gateway modules.
 
 Tests the snow and meteo data API integration:
-- _write_snow_to_api function in snow_data_operational.py (writes latest only - operational)
+- _write_snow_to_api function in snow_data_operational.py (writes yesterday+today - operational)
 - _write_snow_to_api function in snow_data_renalysis.py (writes last 30 days - maintenance)
 - _write_meteo_to_api function in extend_era5_reanalysis.py (writes all data)
-- _write_meteo_to_api function in Quantile_Mapping_OP.py (writes latest only - operational)
+- _write_meteo_to_api function in Quantile_Mapping_OP.py (writes yesterday+today - operational)
 """
 import os
 import pandas as pd
@@ -37,7 +37,7 @@ import Quantile_Mapping_OP as qm
 class TestWriteSnowToApi:
     """Tests for the _write_snow_to_api function in snow_data_operational.py
 
-    This function always writes only the latest date's data (operational mode).
+    This function always writes yesterday+today (operational mode, 2-day window).
     """
 
     def test_api_disabled_via_env_var(self):
@@ -78,8 +78,8 @@ class TestWriteSnowToApi:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 
     @patch('snow_data_operational.SapphirePreprocessingClient')
-    def test_writes_today_only(self, mock_client_class):
-        """Only today's data should be written (operational behavior)."""
+    def test_writes_recent_days_only(self, mock_client_class):
+        """Only yesterday+today should be written (operational behavior)."""
         if not sdo.SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
 
@@ -87,7 +87,7 @@ class TestWriteSnowToApi:
         try:
             mock_client = Mock()
             mock_client.readiness_check.return_value = True
-            mock_client.write_snow.return_value = 1
+            mock_client.write_snow.return_value = 2
             mock_client_class.return_value = mock_client
 
             today = pd.Timestamp.today().normalize()
@@ -107,9 +107,13 @@ class TestWriteSnowToApi:
             mock_client.write_snow.assert_called_once()
             # Get the records that were passed
             call_args = mock_client.write_snow.call_args[0][0]
-            # Should only have 1 record (today's date)
-            assert len(call_args) == 1
-            assert call_args[0]['date'] == today.strftime('%Y-%m-%d')
+            # Should have 2 records (yesterday + today)
+            assert len(call_args) == 2
+            dates = {r['date'] for r in call_args}
+            assert dates == {
+                yesterday.strftime('%Y-%m-%d'),
+                today.strftime('%Y-%m-%d'),
+            }
         finally:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 
@@ -982,7 +986,7 @@ class TestMeteoConsistencyCheck:
 class TestQuantileMappingWriteMeteoToApi:
     """Tests for the _write_meteo_to_api function in Quantile_Mapping_OP.py
 
-    This function writes only the latest date's data (operational mode).
+    This function writes yesterday+today (operational mode, 2-day window).
     Unlike extend_era5_reanalysis.py which writes all data.
     """
 
@@ -1024,8 +1028,8 @@ class TestQuantileMappingWriteMeteoToApi:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 
     @patch('Quantile_Mapping_OP.SapphirePreprocessingClient')
-    def test_writes_today_only(self, mock_client_class):
-        """Only today's data should be written (operational behavior)."""
+    def test_writes_recent_days_only(self, mock_client_class):
+        """Only yesterday+today should be written (operational behavior)."""
         if not qm.SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
 
@@ -1033,14 +1037,14 @@ class TestQuantileMappingWriteMeteoToApi:
         try:
             mock_client = Mock()
             mock_client.readiness_check.return_value = True
-            mock_client.write_meteo.return_value = 1
+            mock_client.write_meteo.return_value = 2
             mock_client_class.return_value = mock_client
 
             today = pd.Timestamp.today().normalize()
             yesterday = today - pd.Timedelta(days=1)
             two_days_ago = today - pd.Timedelta(days=2)
 
-            # Data spanning multiple dates - only today matches
+            # Data spanning multiple dates - yesterday+today match
             data = pd.DataFrame({
                 'date': [two_days_ago, yesterday, today],
                 'code': [12345, 12345, 12345],
@@ -1054,10 +1058,13 @@ class TestQuantileMappingWriteMeteoToApi:
             mock_client.write_meteo.assert_called_once()
             # Get the records that were passed
             call_args = mock_client.write_meteo.call_args[0][0]
-            # Should only have 1 record (today's date)
-            assert len(call_args) == 1
-            assert call_args[0]['date'] == today.strftime('%Y-%m-%d')
-            assert call_args[0]['value'] == 20.0
+            # Should have 2 records (yesterday + today)
+            assert len(call_args) == 2
+            dates = {r['date'] for r in call_args}
+            assert dates == {
+                yesterday.strftime('%Y-%m-%d'),
+                today.strftime('%Y-%m-%d'),
+            }
         finally:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 
@@ -1590,3 +1597,436 @@ class TestQuantileMappingConsistencyCheckFailures:
         finally:
             os.environ.pop('SAPPHIRE_CONSISTENCY_CHECK', None)
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
+
+
+# =============================================================================
+# Tests for SAPPHIRE_SYNC_MODE in snow_data_operational._write_snow_to_api
+# =============================================================================
+
+class TestSnowSyncMode:
+    """Tests for sync mode support in snow_data_operational._write_snow_to_api."""
+
+    @patch('snow_data_operational.SapphirePreprocessingClient')
+    def test_operational_mode_writes_yesterday_and_today(
+        self, mock_client_class
+    ):
+        """Operational mode should write yesterday+today (2-day window)."""
+        if not sdo.SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        os.environ['SAPPHIRE_API_ENABLED'] = 'true'
+        os.environ.pop('SAPPHIRE_SYNC_MODE', None)
+        try:
+            mock_client = Mock()
+            mock_client.readiness_check.return_value = True
+            mock_client.write_snow.return_value = 2
+            mock_client_class.return_value = mock_client
+
+            today = pd.Timestamp.today().normalize()
+            yesterday = today - pd.Timedelta(days=1)
+            two_days_ago = today - pd.Timedelta(days=2)
+
+            data = pd.DataFrame({
+                'date': [two_days_ago, yesterday, today],
+                'code': [12345, 12345, 12345],
+                'SWE': [50.0, 100.0, 200.0],
+            })
+
+            result = sdo._write_snow_to_api(
+                data, "SWE", "HRU01", mode="operational"
+            )
+            assert result is True
+
+            records = mock_client.write_snow.call_args[0][0]
+            assert len(records) == 2
+            dates = {r['date'] for r in records}
+            assert dates == {
+                yesterday.strftime('%Y-%m-%d'),
+                today.strftime('%Y-%m-%d'),
+            }
+        finally:
+            os.environ.pop('SAPPHIRE_API_ENABLED', None)
+
+    @patch('snow_data_operational.SapphirePreprocessingClient')
+    def test_maintenance_mode_writes_last_30_days(self, mock_client_class):
+        """Maintenance mode should write the last 30 days."""
+        if not sdo.SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        os.environ['SAPPHIRE_API_ENABLED'] = 'true'
+        try:
+            mock_client = Mock()
+            mock_client.readiness_check.return_value = True
+            mock_client.write_snow.return_value = 31
+            mock_client_class.return_value = mock_client
+
+            today = pd.Timestamp.today().normalize()
+            dates = pd.date_range(
+                end=today, periods=60, freq='D'
+            )
+            data = pd.DataFrame({
+                'date': dates,
+                'code': [12345] * 60,
+                'SWE': range(60),
+            })
+
+            result = sdo._write_snow_to_api(
+                data, "SWE", "HRU01", mode="maintenance"
+            )
+            assert result is True
+
+            records = mock_client.write_snow.call_args[0][0]
+            assert len(records) == 31  # last 30 days + cutoff day
+        finally:
+            os.environ.pop('SAPPHIRE_API_ENABLED', None)
+
+    @patch('snow_data_operational.SapphirePreprocessingClient')
+    def test_initial_mode_writes_all_data(self, mock_client_class):
+        """Initial mode should write all data."""
+        if not sdo.SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        os.environ['SAPPHIRE_API_ENABLED'] = 'true'
+        try:
+            mock_client = Mock()
+            mock_client.readiness_check.return_value = True
+            mock_client.write_snow.return_value = 100
+            mock_client_class.return_value = mock_client
+
+            dates = pd.date_range(start='2023-01-01', periods=100, freq='D')
+            data = pd.DataFrame({
+                'date': dates,
+                'code': [12345] * 100,
+                'SWE': range(100),
+            })
+
+            result = sdo._write_snow_to_api(
+                data, "SWE", "HRU01", mode="initial"
+            )
+            assert result is True
+
+            records = mock_client.write_snow.call_args[0][0]
+            assert len(records) == 100
+        finally:
+            os.environ.pop('SAPPHIRE_API_ENABLED', None)
+
+    @patch('snow_data_operational.SapphirePreprocessingClient')
+    def test_env_var_fallback(self, mock_client_class):
+        """When no mode parameter, should read SAPPHIRE_SYNC_MODE env var."""
+        if not sdo.SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        os.environ['SAPPHIRE_API_ENABLED'] = 'true'
+        os.environ['SAPPHIRE_SYNC_MODE'] = 'initial'
+        try:
+            mock_client = Mock()
+            mock_client.readiness_check.return_value = True
+            mock_client.write_snow.return_value = 5
+            mock_client_class.return_value = mock_client
+
+            dates = pd.date_range(start='2023-06-01', periods=5, freq='D')
+            data = pd.DataFrame({
+                'date': dates,
+                'code': [12345] * 5,
+                'SWE': range(5),
+            })
+
+            # No mode parameter — should use env var
+            result = sdo._write_snow_to_api(data, "SWE", "HRU01")
+            assert result is True
+
+            records = mock_client.write_snow.call_args[0][0]
+            assert len(records) == 5
+        finally:
+            os.environ.pop('SAPPHIRE_API_ENABLED', None)
+            os.environ.pop('SAPPHIRE_SYNC_MODE', None)
+
+    @patch('snow_data_operational.SapphirePreprocessingClient')
+    def test_mode_param_overrides_env_var(self, mock_client_class):
+        """Mode parameter should override SAPPHIRE_SYNC_MODE env var."""
+        if not sdo.SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        os.environ['SAPPHIRE_API_ENABLED'] = 'true'
+        os.environ['SAPPHIRE_SYNC_MODE'] = 'initial'
+        try:
+            mock_client = Mock()
+            mock_client.readiness_check.return_value = True
+            mock_client.write_snow.return_value = 2
+            mock_client_class.return_value = mock_client
+
+            today = pd.Timestamp.today().normalize()
+            yesterday = today - pd.Timedelta(days=1)
+            dates = pd.date_range(start='2023-01-01', periods=100, freq='D')
+            # Add yesterday+today so operational finds them
+            dates = dates.append(pd.DatetimeIndex([yesterday, today]))
+            data = pd.DataFrame({
+                'date': dates,
+                'code': [12345] * len(dates),
+                'SWE': range(len(dates)),
+            })
+
+            # mode="operational" overrides env var "initial"
+            result = sdo._write_snow_to_api(
+                data, "SWE", "HRU01", mode="operational"
+            )
+            assert result is True
+
+            records = mock_client.write_snow.call_args[0][0]
+            assert len(records) == 2  # Only yesterday + today
+        finally:
+            os.environ.pop('SAPPHIRE_API_ENABLED', None)
+            os.environ.pop('SAPPHIRE_SYNC_MODE', None)
+
+    @patch('snow_data_operational.SapphirePreprocessingClient')
+    def test_unknown_mode_defaults_to_operational(self, mock_client_class):
+        """Unknown sync mode should default to operational (yesterday+today)."""
+        if not sdo.SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        os.environ['SAPPHIRE_API_ENABLED'] = 'true'
+        try:
+            mock_client = Mock()
+            mock_client.readiness_check.return_value = True
+            mock_client.write_snow.return_value = 2
+            mock_client_class.return_value = mock_client
+
+            today = pd.Timestamp.today().normalize()
+            yesterday = today - pd.Timedelta(days=1)
+            two_days_ago = today - pd.Timedelta(days=2)
+            data = pd.DataFrame({
+                'date': [two_days_ago, yesterday, today],
+                'code': [12345, 12345, 12345],
+                'SWE': [50.0, 100.0, 200.0],
+            })
+
+            result = sdo._write_snow_to_api(
+                data, "SWE", "HRU01", mode="bogus_mode"
+            )
+            assert result is True
+
+            records = mock_client.write_snow.call_args[0][0]
+            assert len(records) == 2  # yesterday + today
+        finally:
+            os.environ.pop('SAPPHIRE_API_ENABLED', None)
+
+
+# =============================================================================
+# Tests for SAPPHIRE_SYNC_MODE in Quantile_Mapping_OP._write_meteo_to_api
+# =============================================================================
+
+class TestQMMeteoSyncMode:
+    """Tests for sync mode support in QM _write_meteo_to_api."""
+
+    @patch('Quantile_Mapping_OP.SapphirePreprocessingClient')
+    def test_operational_mode_writes_yesterday_and_today(
+        self, mock_client_class
+    ):
+        """Operational mode should write yesterday+today (2-day window)."""
+        if not qm.SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        os.environ['SAPPHIRE_API_ENABLED'] = 'true'
+        try:
+            mock_client = Mock()
+            mock_client.readiness_check.return_value = True
+            mock_client.write_meteo.return_value = 2
+            mock_client_class.return_value = mock_client
+
+            today = pd.Timestamp.today().normalize()
+            yesterday = today - pd.Timedelta(days=1)
+            two_days_ago = today - pd.Timedelta(days=2)
+            data = pd.DataFrame({
+                'date': [two_days_ago, yesterday, today],
+                'code': [12345, 12345, 12345],
+                'T': [5.0, 10.0, 15.0],
+            })
+
+            result = qm._write_meteo_to_api(
+                data, "T", "HRU01", mode="operational"
+            )
+            assert result is True
+
+            records = mock_client.write_meteo.call_args[0][0]
+            assert len(records) == 2
+            dates = {r['date'] for r in records}
+            assert dates == {
+                yesterday.strftime('%Y-%m-%d'),
+                today.strftime('%Y-%m-%d'),
+            }
+        finally:
+            os.environ.pop('SAPPHIRE_API_ENABLED', None)
+
+    @patch('Quantile_Mapping_OP.SapphirePreprocessingClient')
+    def test_maintenance_mode_writes_last_30_days(self, mock_client_class):
+        """Maintenance mode should write the last 30 days."""
+        if not qm.SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        os.environ['SAPPHIRE_API_ENABLED'] = 'true'
+        try:
+            mock_client = Mock()
+            mock_client.readiness_check.return_value = True
+            mock_client.write_meteo.return_value = 31
+            mock_client_class.return_value = mock_client
+
+            today = pd.Timestamp.today().normalize()
+            dates = pd.date_range(end=today, periods=60, freq='D')
+            data = pd.DataFrame({
+                'date': dates,
+                'code': [12345] * 60,
+                'P': np.random.uniform(0, 20, 60),
+            })
+
+            result = qm._write_meteo_to_api(
+                data, "P", "HRU01", mode="maintenance"
+            )
+            assert result is True
+
+            records = mock_client.write_meteo.call_args[0][0]
+            assert len(records) == 31
+        finally:
+            os.environ.pop('SAPPHIRE_API_ENABLED', None)
+
+    @patch('Quantile_Mapping_OP.SapphirePreprocessingClient')
+    def test_initial_mode_writes_all_data(self, mock_client_class):
+        """Initial mode should write all data."""
+        if not qm.SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        os.environ['SAPPHIRE_API_ENABLED'] = 'true'
+        try:
+            mock_client = Mock()
+            mock_client.readiness_check.return_value = True
+            mock_client.write_meteo.return_value = 50
+            mock_client_class.return_value = mock_client
+
+            dates = pd.date_range(start='2023-01-01', periods=50, freq='D')
+            data = pd.DataFrame({
+                'date': dates,
+                'code': [12345] * 50,
+                'T': range(50),
+            })
+
+            result = qm._write_meteo_to_api(
+                data, "T", "HRU01", mode="initial"
+            )
+            assert result is True
+
+            records = mock_client.write_meteo.call_args[0][0]
+            assert len(records) == 50
+        finally:
+            os.environ.pop('SAPPHIRE_API_ENABLED', None)
+
+
+# =============================================================================
+# Tests for _write_reanalysis_to_api in extend_era5_reanalysis
+# =============================================================================
+
+class TestWriteReanalysisToApi:
+    """Tests for _write_reanalysis_to_api in extend_era5_reanalysis.py."""
+
+    def test_operational_mode_is_noop(self):
+        """Operational mode should skip reanalysis write."""
+        data = pd.DataFrame({
+            'date': pd.to_datetime(['2024-01-01']),
+            'code': [12345],
+            'T': [10.0],
+        })
+        result = eer._write_reanalysis_to_api(
+            data, "T", mode="operational"
+        )
+        assert result is False
+
+    @patch('extend_era5_reanalysis.SapphirePreprocessingClient')
+    def test_maintenance_mode_writes_last_365_days(
+        self, mock_client_class
+    ):
+        """Maintenance mode should write last 365 days of reanalysis."""
+        if not eer.SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        os.environ['SAPPHIRE_API_ENABLED'] = 'true'
+        try:
+            mock_client = Mock()
+            mock_client.readiness_check.return_value = True
+            mock_client.write_meteo.return_value = 366
+            mock_client_class.return_value = mock_client
+
+            today = pd.Timestamp.today().normalize()
+            # 500 days of data, only last 365+ should be written
+            dates = pd.date_range(end=today, periods=500, freq='D')
+            data = pd.DataFrame({
+                'date': dates,
+                'code': [12345] * 500,
+                'P': np.random.uniform(0, 20, 500),
+            })
+
+            result = eer._write_reanalysis_to_api(
+                data, "P", mode="maintenance"
+            )
+            assert result is True
+
+            records = mock_client.write_meteo.call_args[0][0]
+            assert len(records) == 366  # 365 days + cutoff day
+            # All records should have norm=None (raw reanalysis)
+            assert all(r['norm'] is None for r in records)
+        finally:
+            os.environ.pop('SAPPHIRE_API_ENABLED', None)
+
+    @patch('extend_era5_reanalysis.SapphirePreprocessingClient')
+    def test_initial_mode_writes_all_data(self, mock_client_class):
+        """Initial mode should write all reanalysis data."""
+        if not eer.SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        os.environ['SAPPHIRE_API_ENABLED'] = 'true'
+        try:
+            mock_client = Mock()
+            mock_client.readiness_check.return_value = True
+            mock_client.write_meteo.return_value = 100
+            mock_client_class.return_value = mock_client
+
+            dates = pd.date_range(start='2020-01-01', periods=100, freq='D')
+            data = pd.DataFrame({
+                'date': dates,
+                'code': [12345] * 100,
+                'T': range(100),
+            })
+
+            result = eer._write_reanalysis_to_api(
+                data, "T", mode="initial"
+            )
+            assert result is True
+
+            records = mock_client.write_meteo.call_args[0][0]
+            assert len(records) == 100
+        finally:
+            os.environ.pop('SAPPHIRE_API_ENABLED', None)
+
+    def test_api_disabled_returns_false(self):
+        """When API disabled, reanalysis write should return False."""
+        os.environ['SAPPHIRE_API_ENABLED'] = 'false'
+        try:
+            data = pd.DataFrame({
+                'date': pd.to_datetime(['2024-01-01']),
+                'code': [12345],
+                'T': [10.0],
+            })
+            result = eer._write_reanalysis_to_api(
+                data, "T", mode="maintenance"
+            )
+            assert result is False
+        finally:
+            os.environ.pop('SAPPHIRE_API_ENABLED', None)
+
+    def test_env_var_defaults_to_operational(self):
+        """Without mode param or env var, defaults to operational (no-op)."""
+        os.environ.pop('SAPPHIRE_SYNC_MODE', None)
+        data = pd.DataFrame({
+            'date': pd.to_datetime(['2024-01-01']),
+            'code': [12345],
+            'P': [5.0],
+        })
+        result = eer._write_reanalysis_to_api(data, "P")
+        assert result is False
