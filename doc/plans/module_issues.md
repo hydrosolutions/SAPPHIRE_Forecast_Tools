@@ -73,7 +73,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 
 | ID | Title | Priority | Status | File | Blocked By |
 |----|-------|----------|--------|------|------------|
-| **PREPG-001** | Yearly norm recalculation for snow and meteo data | **Medium** | Draft | [`gi_draft_prepg_yearly_norm_recalculation.md`](issues/gi_draft_prepg_yearly_norm_recalculation.md) | Verify API snow endpoints exist |
+| **PREPG-001** | Yearly snow norm recalculation | **Medium** | Draft | [`gi_draft_prepg_yearly_norm_recalculation.md`](issues/gi_draft_prepg_yearly_norm_recalculation.md) | Historical snow CSVs must exist |
 
 ### Preprocessing Runoff (`prepq`)
 
