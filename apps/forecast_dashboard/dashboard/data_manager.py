@@ -92,28 +92,12 @@ class DataManager(param.Parameterized):
     # --- Convenience accessors for common data keys ---
 
     @property
-    def forecasts_all(self):
-        return self._data.get("forecasts_all")
-
-    @property
     def hydrograph_day_all(self):
         return self._data.get("hydrograph_day_all")
 
     @property
     def hydrograph_pentad_all(self):
         return self._data.get("hydrograph_pentad_all")
-
-    @property
-    def linreg_predictor(self):
-        return self._data.get("linreg_predictor")
-
-    @property
-    def forecast_stats(self):
-        return self._data.get("forecast_stats")
-
-    @property
-    def ml_forecast(self):
-        return self._data.get("ml_forecast")
 
     @property
     def rain(self):
@@ -126,6 +110,22 @@ class DataManager(param.Parameterized):
     @property
     def snow_data(self):
         return self._data.get("snow_data")
+
+    @property
+    def ml_forecast(self):
+        return self._data.get("ml_forecast")
+
+    @property
+    def linreg_predictor(self):
+        return self._data.get("linreg_predictor")
+
+    @property
+    def forecasts_all(self):
+        return self._data.get("forecasts_all")
+
+    @property
+    def forecast_stats(self):
+        return self._data.get("forecast_stats")
 
     def get(self, key, default=None):
         """Generic access for less-common keys."""

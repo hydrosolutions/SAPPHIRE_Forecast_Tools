@@ -312,17 +312,20 @@ def define_tabs_2(_, predictors_warning, forecast_warning,
                 pn.Row(
                     pn.Card(daily_hydrograph_plot, title=_("Hydrograph")),
                     sizing_mode='stretch_width',
-                    min_height=400,
+                    # min_height=400,
+                    min_height=400 if daily_hydrograph_plot.object is not None else 0,
                 ),
                 pn.Row(
                     pn.Card(rainfall_plot, title=_("Precipitation")),
                     sizing_mode='stretch_width',
-                    min_height=400 if not daily_hydrograph_plot.object.data.empty else 0,
+                    # min_height=400 if not daily_hydrograph_plot.object.data.empty else 0,
+                    min_height=400 if rainfall_plot.object is not None else 0,
                 ),  
                 pn.Row(
                     pn.Card(temperature_plot, title=_("Temperature")),
                     sizing_mode='stretch_width',
-                    min_height=400 if not daily_hydrograph_plot.object.data.empty else 0,
+                    # min_height=400 if not daily_hydrograph_plot.object.data.empty else 0,
+                    min_height=400 if temperature_plot.object is not None else 0,
                 ), 
                 pn.Row(
                     _create_snow_card(_, daily_snow_plot), 
