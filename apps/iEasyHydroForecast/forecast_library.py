@@ -1275,13 +1275,14 @@ def split_name(name: str):
 
 def perform_linear_regression(
         data_df: pd.DataFrame, station_col: str, horizon_col: str, predictor_col: str,
-        discharge_avg_col: str, forecast_horizon_int: int) -> pd.DataFrame:
+        discharge_avg_col: str, forecast_horizon_int: int,
+        forecast_date=None) -> pd.DataFrame:
     '''
     Perform a linear regression for each station & forecast horizon in a DataFrame.
 
     Details:
     The linear regression is performed for the forecast pentad of the year
-    (value between 1 and 72) or for the forecast decad of the year (value 
+    (value between 1 and 72) or for the forecast decad of the year (value
     between 1 and 36).
 
     Args:
@@ -1294,10 +1295,13 @@ def perform_linear_regression(
             predictor values.
         discharge_avg_col (str): The name of the column containing the discharge
             average values.
-        forecast_horizon_int(int): The pentad or decad of the year to perform 
-            the linear regression for. Must be a value between 1 and 72 for 
-            pentadal forecast horizons or a value between 1 and 36 for decadal 
+        forecast_horizon_int(int): The pentad or decad of the year to perform
+            the linear regression for. Must be a value between 1 and 72 for
+            pentadal forecast horizons or a value between 1 and 36 for decadal
             forecast horizons.
+        forecast_date: The date the forecast is being produced for. Used to
+            determine the year for date calculations. If None, falls back to
+            datetime.now().year (backward compatibility).
 
     Returns:
         pd.DataFrame: A DataFrame containing the columns of the input data frame
@@ -1349,18 +1353,29 @@ def perform_linear_regression(
     if missing_columns:
         raise ValueError(f"DataFrame is missing one or more required columns: {missing_columns}")
 
+    # Derive the year from forecast_date if provided, else fall back to now()
+    if forecast_date is not None:
+        if hasattr(forecast_date, 'year'):
+            _year = forecast_date.year
+        else:
+            _year = pd.Timestamp(forecast_date).year
+    else:
+        _year = dt.datetime.now().year
+
     # Do we have string 'pentad' in horizon_col?
     if 'pentad' in horizon_col:
         logger.info(f"-- Performing linear regression for penatadal forecasting --")
         horizon_flag = 'pentad'
         forecast_horizon_max = 72
-        forecast_date = tl.get_date_for_last_day_in_pentad(forecast_horizon_int)
+        forecast_date_str = tl.get_date_for_last_day_in_pentad(
+            forecast_horizon_int, year=_year)
 
     elif 'decad' in horizon_col:
         logger.info(f"-- Performing linear regression for decad forecasting --")
         horizon_flag = 'decad'
         forecast_horizon_max = 36
-        forecast_date = tl.get_date_for_last_day_in_decad(forecast_horizon_int)
+        forecast_date_str = tl.get_date_for_last_day_in_decad(
+            forecast_horizon_int, year=_year)
         
     else: 
         raise ValueError(f'horizon_col must contain the string "pentad" or "decad"')
@@ -1449,8 +1464,8 @@ def perform_linear_regression(
             logger.debug(f"forecast_horizon_int: {forecast_horizon_int}")
             #logger.debug(f"columns of station_data: {station_data.columns}")
             #logger.debug(f"station_data: {station_data}")
-            first_day_of_forecast_horizon = pd.to_datetime(forecast_date).date() + pd.DateOffset(days=1)
-            logger.debug(f"forecast_date: {forecast_date}")
+            first_day_of_forecast_horizon = pd.to_datetime(forecast_date_str).date() + pd.DateOffset(days=1)
+            logger.debug(f"forecast_date_str: {forecast_date_str}")
             if horizon_flag == 'pentad':
                 pentad_in_month = tl.get_pentad(first_day_of_forecast_horizon)
                 logger.debug(f"pentad_in_month: {pentad_in_month}")
@@ -3304,7 +3319,9 @@ def _write_runoff_to_api(
         return None
 
 
-def write_linreg_pentad_forecast_data(data: pd.DataFrame, api_data: pd.DataFrame = None):
+def write_linreg_pentad_forecast_data(
+        data: pd.DataFrame, api_data: pd.DataFrame = None,
+        forecast_date=None):
     """
     Writes the data to a csv file for later reading into the forecast dashboard.
     Checks for duplicates by date and code, keeping only the most recent entry.
@@ -3313,6 +3330,9 @@ def write_linreg_pentad_forecast_data(data: pd.DataFrame, api_data: pd.DataFrame
         data (pd.DataFrame): The data to be written to a csv file.
         api_data (pd.DataFrame, optional): Data to write to API. If None, uses
             last_line (newest data per station). If empty DataFrame, skips API write.
+        forecast_date: The expected forecast date. When provided, validates that
+            data contains current-year records and sets the date explicitly.
+            If None, uses legacy year-derivation logic (backward compatibility).
 
     Returns:
         None
@@ -3348,38 +3368,63 @@ def write_linreg_pentad_forecast_data(data: pd.DataFrame, api_data: pd.DataFrame
     # For each code, extract the last row (most recent data in current batch)
     last_line = data.groupby('code', as_index=False).apply(lambda g: g.tail(1)).reset_index(drop=True)
 
-    # Get the max year of the last_line dates
-    year = last_line['date'].dt.year.max()
-    logger.debug(f'current year: {year}')
-
     # Print the last_line DataFrame for debugging
     logger.debug(f'last_line before edits: \n{last_line}')
 
-    # Standardize to current batch year with a 5-day grace window before Jan 1
-    jan1  = pd.Timestamp(year=int(year), month=1, day=1)
-    allow_start = jan1 - pd.Timedelta(days=5)
-    prev_year_grace = (last_line['date'] >= allow_start) & (last_line['date'] < jan1)
-    out_of_year = (last_line['date'].dt.year != year) & (~prev_year_grace)
-    last_line.loc[out_of_year, 'predictor'] = np.nan
-    last_line.loc[out_of_year, 'discharge_avg'] = np.nan
-    last_line.loc[out_of_year, 'forecasted_discharge'] = np.nan
-
-    # intermediate debug prints
-    logger.debug(f'last_line after year edits: \n{last_line}')
-
-    # Iterate over last_line dates. Determine the most frequently occuring date.
-    # If the other dates are shifted by 1 day, set the date to the most frequently
-    # occuring date.
-    for code in last_line['code'].unique():
-        date_counts = last_line[last_line['code'] == code]['date'].value_counts()
-        if len(date_counts) > 1:
-            most_common_date = date_counts.idxmax()
-            # Warn if we need to reconcile dates for this code
+    if forecast_date is not None:
+        # Explicit forecast_date path: validate data is current, set date
+        fd = pd.Timestamp(forecast_date)
+        has_current_year = (last_line['date'].dt.year == fd.year).any()
+        if not has_current_year:
             logger.warning(
-                f"Reconciling shifted dates for code {code}: candidates={list(date_counts.index.sort_values())}, chosen={most_common_date}")
-            for date in date_counts.index:
-                if date != most_common_date:
-                    last_line.loc[(last_line['code'] == code) & (last_line['date'] == date), 'date'] = most_common_date
+                "Skipping LR pentad write: no data for forecast year %d "
+                "(last_line date_max=%s). Daily discharge data may be "
+                "missing.",
+                fd.year, last_line['date'].max(),
+            )
+            return
+        # Set the date to the actual forecast date for all rows
+        last_line['date'] = fd
+    else:
+        # Legacy path: derive year from data, standardize dates
+        year = last_line['date'].dt.year.max()
+        logger.debug(f'current year: {year}')
+
+        # Standardize to current batch year with 5-day grace window
+        jan1 = pd.Timestamp(year=int(year), month=1, day=1)
+        allow_start = jan1 - pd.Timedelta(days=5)
+        prev_year_grace = (
+            (last_line['date'] >= allow_start)
+            & (last_line['date'] < jan1)
+        )
+        out_of_year = (
+            (last_line['date'].dt.year != year) & (~prev_year_grace)
+        )
+        last_line.loc[out_of_year, 'predictor'] = np.nan
+        last_line.loc[out_of_year, 'discharge_avg'] = np.nan
+        last_line.loc[out_of_year, 'forecasted_discharge'] = np.nan
+
+        logger.debug(f'last_line after year edits: \n{last_line}')
+
+        # Reconcile shifted dates (pick most common date per code)
+        for code in last_line['code'].unique():
+            date_counts = last_line[
+                last_line['code'] == code
+            ]['date'].value_counts()
+            if len(date_counts) > 1:
+                most_common_date = date_counts.idxmax()
+                logger.warning(
+                    f"Reconciling shifted dates for code {code}: "
+                    f"candidates="
+                    f"{list(date_counts.index.sort_values())}, "
+                    f"chosen={most_common_date}")
+                for date in date_counts.index:
+                    if date != most_common_date:
+                        last_line.loc[
+                            (last_line['code'] == code)
+                            & (last_line['date'] == date),
+                            'date'
+                        ] = most_common_date
 
     # Print the last_line DataFrame after date adjustments
     logger.debug(f'last_line after date adjustments: \n{last_line}')
@@ -3615,7 +3660,9 @@ def write_linreg_pentad_forecast_data_deprecating(data: pd.DataFrame):
 
     return ret
 
-def write_linreg_decad_forecast_data(data: pd.DataFrame, api_data: pd.DataFrame = None):
+def write_linreg_decad_forecast_data(
+        data: pd.DataFrame, api_data: pd.DataFrame = None,
+        forecast_date=None):
     """
     Writes the data to a csv file for later reading into the forecast dashboard.
     Checks for duplicates by date and code, keeping only the most recent entry.
@@ -3624,6 +3671,9 @@ def write_linreg_decad_forecast_data(data: pd.DataFrame, api_data: pd.DataFrame 
         data (pd.DataFrame): The data to be written to a csv file.
         api_data (pd.DataFrame, optional): Data to write to API. If None, uses
             last_line (newest data per station). If empty DataFrame, skips API write.
+        forecast_date: The expected forecast date. When provided, validates that
+            data contains current-year records and sets the date explicitly.
+            If None, uses legacy year-derivation logic (backward compatibility).
 
     Returns:
         None
@@ -3659,31 +3709,58 @@ def write_linreg_decad_forecast_data(data: pd.DataFrame, api_data: pd.DataFrame 
     # For each code, extract the last row (most recent data in current batch)
     last_line = data.groupby('code').tail(1)
 
-    # Get the max year of the last_line dates
-    year = last_line['date'].dt.year.max()
-    logger.debug(f'mode of year: {year}')
-
-    # Standardize to current batch year with a 5-day grace window before Jan 1
-    jan1 = pd.Timestamp(year=int(year), month=1, day=1)
-    allow_start = jan1 - pd.Timedelta(days=5)
-    prev_year_grace = (last_line['date'] >= allow_start) & (last_line['date'] < jan1)
-    out_of_year = (last_line['date'].dt.year != year) & (~prev_year_grace)
-    last_line.loc[out_of_year, 'predictor'] = np.nan
-    last_line.loc[out_of_year, 'discharge_avg'] = np.nan
-    last_line.loc[out_of_year, 'forecasted_discharge'] = np.nan
-
-    # Iterate over last_line dates. Determine the most frequently occuring date.
-    # If the other dates are shifted by 1 day, set the date to the most frequently
-    # occuring date.
-    for code in last_line['code'].unique():
-        date_counts = last_line[last_line['code'] == code]['date'].value_counts()
-        if len(date_counts) > 1:
-            most_common_date = date_counts.idxmax()
+    if forecast_date is not None:
+        # Explicit forecast_date path: validate data is current, set date
+        fd = pd.Timestamp(forecast_date)
+        has_current_year = (last_line['date'].dt.year == fd.year).any()
+        if not has_current_year:
             logger.warning(
-                f"Reconciling shifted dates for code {code}: candidates={list(date_counts.index.sort_values())}, chosen={most_common_date}")
-            for date in date_counts.index:
-                if date != most_common_date:
-                    last_line.loc[(last_line['code'] == code) & (last_line['date'] == date), 'date'] = most_common_date
+                "Skipping LR decad write: no data for forecast year %d "
+                "(last_line date_max=%s). Daily discharge data may be "
+                "missing.",
+                fd.year, last_line['date'].max(),
+            )
+            return
+        # Set the date to the actual forecast date for all rows
+        last_line['date'] = fd
+    else:
+        # Legacy path: derive year from data, standardize dates
+        year = last_line['date'].dt.year.max()
+        logger.debug(f'mode of year: {year}')
+
+        # Standardize to current batch year with 5-day grace window
+        jan1 = pd.Timestamp(year=int(year), month=1, day=1)
+        allow_start = jan1 - pd.Timedelta(days=5)
+        prev_year_grace = (
+            (last_line['date'] >= allow_start)
+            & (last_line['date'] < jan1)
+        )
+        out_of_year = (
+            (last_line['date'].dt.year != year) & (~prev_year_grace)
+        )
+        last_line.loc[out_of_year, 'predictor'] = np.nan
+        last_line.loc[out_of_year, 'discharge_avg'] = np.nan
+        last_line.loc[out_of_year, 'forecasted_discharge'] = np.nan
+
+        # Reconcile shifted dates (pick most common date per code)
+        for code in last_line['code'].unique():
+            date_counts = last_line[
+                last_line['code'] == code
+            ]['date'].value_counts()
+            if len(date_counts) > 1:
+                most_common_date = date_counts.idxmax()
+                logger.warning(
+                    f"Reconciling shifted dates for code {code}: "
+                    f"candidates="
+                    f"{list(date_counts.index.sort_values())}, "
+                    f"chosen={most_common_date}")
+                for date in date_counts.index:
+                    if date != most_common_date:
+                        last_line.loc[
+                            (last_line['code'] == code)
+                            & (last_line['date'] == date),
+                            'date'
+                        ] = most_common_date
 
     # --- API Write (before CSV) ---
     # Determine what data to send to API

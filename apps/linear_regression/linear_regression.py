@@ -518,8 +518,8 @@ def main():
     # Configuration
     sl.load_environment()
 
-    # Check the prediction mode from environment
-    prediction_mode = os.getenv('SAPPHIRE_PREDICTION_MODE', 'BOTH')
+    # Check the prediction mode from environment (treat empty string as unset)
+    prediction_mode = os.getenv('SAPPHIRE_PREDICTION_MODE', '') or 'BOTH'
     logger.info(f"Running in {prediction_mode} prediction mode")
 
     # Log hindcast mode if enabled
@@ -741,7 +741,8 @@ def main():
                 horizon_col='pentad_in_year',
                 predictor_col='discharge_sum',
                 discharge_avg_col='discharge_avg',
-                forecast_horizon_int=int(forecast_pentad_of_year))
+                forecast_horizon_int=int(forecast_pentad_of_year),
+                forecast_date=current_day)
 
             #logger.debug(f"linreg_pentad.head: {linreg_pentad.head()}")
             logger.debug(f"linreg_pentad.tail (linreg): {linreg_pentad.tail()}")
@@ -778,7 +779,8 @@ def main():
             except Exception as _e:
                 logger.warning(f"[linreg] diagnostics before write failed: {_e}")
 
-            fl.write_linreg_pentad_forecast_data(linreg_pentad)
+            fl.write_linreg_pentad_forecast_data(
+                linreg_pentad, forecast_date=current_day)
 
         else:
             logger.info(f'No pentadal forecast for {current_day}.')
@@ -819,7 +821,8 @@ def main():
                 horizon_col='decad_in_year',
                 predictor_col='predictor',
                 discharge_avg_col='discharge_avg',
-                forecast_horizon_int=int(forecast_decad_of_year))
+                forecast_horizon_int=int(forecast_decad_of_year),
+                forecast_date=current_day)
 
             #logger.debug(f"Linear regression for decad: {linreg_decad.head()}")
 
@@ -832,7 +835,8 @@ def main():
                 group_col='decad_in_year')
 
             # Write output files for the current forecast horizon
-            fl.write_linreg_decad_forecast_data(linreg_decad)
+            fl.write_linreg_decad_forecast_data(
+                linreg_decad, forecast_date=current_day)
 
         else:
             logger.info(f'No decadal forecast for {current_day}.')
