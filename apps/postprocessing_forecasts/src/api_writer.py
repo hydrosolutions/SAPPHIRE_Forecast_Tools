@@ -114,6 +114,14 @@ def _write_combined_forecast_to_api(data: pd.DataFrame, horizon_type: str) -> bo
     Returns:
         bool: True if successful, False otherwise
     """
+    # Validate inputs before any I/O
+    api_horizon_type = HORIZON_TYPE_TO_API.get(horizon_type)
+    if api_horizon_type is None:
+        raise ValueError(
+            f"Invalid horizon_type: {horizon_type}. "
+            f"Must be one of {list(HORIZON_TYPE_TO_API.keys())}."
+        )
+
     if not SAPPHIRE_API_AVAILABLE:
         logger.warning("sapphire-api-client not installed, skipping combined forecast API write")
         return False
@@ -138,14 +146,6 @@ def _write_combined_forecast_to_api(data: pd.DataFrame, horizon_type: str) -> bo
         return False
 
     data = data.copy()
-
-    # Translate internal horizon name to API enum value
-    api_horizon_type = HORIZON_TYPE_TO_API.get(horizon_type)
-    if api_horizon_type is None:
-        raise ValueError(
-            f"Invalid horizon_type: {horizon_type}. "
-            f"Must be one of {list(HORIZON_TYPE_TO_API.keys())}."
-        )
 
     # Determine column names based on horizon_type
     if horizon_type == "pentad":
@@ -323,6 +323,14 @@ def _write_skill_metrics_to_api(
     Returns:
         bool: True if successful, False otherwise
     """
+    # Validate inputs before any I/O
+    api_horizon_type = HORIZON_TYPE_TO_API.get(horizon_type)
+    if api_horizon_type is None:
+        raise ValueError(
+            f"Invalid horizon_type: {horizon_type}. "
+            f"Must be one of {list(HORIZON_TYPE_TO_API.keys())}."
+        )
+
     if not SAPPHIRE_API_AVAILABLE:
         logger.warning("sapphire-api-client not installed, skipping skill metrics API write")
         return False
@@ -347,14 +355,6 @@ def _write_skill_metrics_to_api(
         return False
 
     data = data.copy()
-
-    # Translate internal horizon name to API enum value
-    api_horizon_type = HORIZON_TYPE_TO_API.get(horizon_type)
-    if api_horizon_type is None:
-        raise ValueError(
-            f"Invalid horizon_type: {horizon_type}. "
-            f"Must be one of {list(HORIZON_TYPE_TO_API.keys())}."
-        )
 
     # Determine column names based on horizon_type
     if horizon_type == "pentad":
