@@ -120,7 +120,6 @@ logger.debug('Debug message for logger level 10')
 from scr import utils_ml_forecast
 from scr.utils_ml_forecast import (
     _write_ml_forecast_to_api,
-    _write_ml_daily_forecast_to_api,
     _check_ml_forecast_consistency,
     SAPPHIRE_API_AVAILABLE
 )
@@ -236,6 +235,8 @@ def write_decad_forecast(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, forecast_decad, ap
     forecast_decad.to_csv(os.path.join(OUTPUT_PATH_DISCHARGE, f'decad_{MODEL_TO_USE}_forecast.csv'), index=False)
 
     # Write to SAPPHIRE API (operational mode: write only today's data)
+    # _write_ml_forecast_to_api now always writes horizon_type="day",
+    # so the separate _write_ml_daily_forecast_to_api call is no longer needed.
     if SAPPHIRE_API_AVAILABLE:
         try:
             # Use api_data if provided, otherwise use forecast_decad
@@ -246,13 +247,6 @@ def write_decad_forecast(OUTPUT_PATH_DISCHARGE, MODEL_TO_USE, forecast_decad, ap
         except Exception as e:
             logger.error(f"Failed to write decad forecast to API: {e}")
             # Don't fail the whole process - CSV was already saved
-
-        # Also write daily-resolution records for Tier 2 skill metrics
-        try:
-            data_for_daily = api_data if api_data is not None else forecast_decad
-            _write_ml_daily_forecast_to_api(data_for_daily, MODEL_TO_USE)
-        except Exception as e:
-            logger.error(f"Failed to write daily forecast to API: {e}")
 
 
 

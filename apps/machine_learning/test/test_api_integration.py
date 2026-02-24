@@ -237,8 +237,8 @@ class TestWriteMLForecastToApi:
             assert len(call_args) == 1
             record = call_args[0]
 
-            # Check field mapping
-            assert record['horizon_type'] == 'pentad'
+            # Check field mapping — always writes horizon_type="day"
+            assert record['horizon_type'] == 'day'
             assert record['code'] == '12345'
             assert record['model_type'] == 'TFT'
             assert record['date'] == '2024-01-01'  # forecast_date
@@ -289,8 +289,9 @@ class TestWriteMLForecastToApi:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)
 
     @patch('scr.utils_ml_forecast.SapphirePostprocessingClient')
-    def test_decade_horizon_values(self, mock_client_class):
-        """Test that decade horizon values are calculated correctly."""
+    def test_horizon_values_are_day_of_year(self, mock_client_class):
+        """Horizon values should always be day-of-year regardless of
+        the caller's horizon_type parameter."""
         if not SAPPHIRE_API_AVAILABLE:
             pytest.skip("sapphire-api-client not installed")
 
@@ -303,20 +304,21 @@ class TestWriteMLForecastToApi:
 
             data = pd.DataFrame({
                 'code': [12345],
-                'date': pd.to_datetime(['2024-01-15']),  # Target date in decad 2
+                'date': pd.to_datetime(['2024-01-15']),  # Target date: day 15
                 'forecast_date': pd.to_datetime(['2024-01-10']),
                 'flag': [0],
                 'Q50': [100.0],
             })
 
+            # Even when caller says "decade", records use horizon_type="day"
             _write_ml_forecast_to_api(data, "decade", "TFT")
 
             call_args = mock_client.write_forecasts.call_args[0][0]
             record = call_args[0]
 
-            assert record['horizon_type'] == 'decade'
-            assert record['horizon_value'] == 2  # Days 11-20 = decad 2
-            assert record['horizon_in_year'] == 2  # January decad 2
+            assert record['horizon_type'] == 'day'
+            assert record['horizon_value'] == 15   # Jan 15 = day 15
+            assert record['horizon_in_year'] == 15  # same
 
         finally:
             os.environ.pop('SAPPHIRE_API_ENABLED', None)

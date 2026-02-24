@@ -474,6 +474,12 @@ def _write_ml_forecast_to_api(data: pd.DataFrame, horizon_type: str, model_type:
     """
     Write ML forecasts to SAPPHIRE postprocessing API.
 
+    All daily forecasts are stored with horizon_type="day" regardless of
+    the caller's horizon_type. The horizon_type parameter is retained for
+    backward compatibility but is informational only — it indicates whether
+    the caller is producing pentad or decade forecasts, but storage always
+    uses "day" with day-of-year horizon values.
+
     Args:
         data: DataFrame with ML forecast data. Expected columns:
             - code: station code
@@ -481,7 +487,8 @@ def _write_ml_forecast_to_api(data: pd.DataFrame, horizon_type: str, model_type:
             - forecast_date: when the forecast was made
             - flag: quality flag (0=ok, 1=NaN, 2=error)
             - Q5, Q25, Q50, Q75, Q95: quantile predictions
-        horizon_type: Either "pentad" or "decade"
+        horizon_type: Informational only. Indicates whether the caller is
+            producing pentad or decade forecasts. Storage always uses "day".
         model_type: ML model name (TFT, TIDE, TSMIXER)
 
     Returns:
@@ -518,31 +525,26 @@ def _write_ml_forecast_to_api(data: pd.DataFrame, horizon_type: str, model_type:
     }
     api_model_type = model_type_map.get(model_type.upper(), model_type)
 
-    # Prepare records for API
+    # Prepare records for API — always stored as horizon_type="day"
     records = []
     for _, row in data.iterrows():
         # Get dates
         target_date = pd.to_datetime(row['date'])
         forecast_date = pd.to_datetime(row['forecast_date'])
 
-        # Calculate horizon values from target date
-        if horizon_type == "pentad":
-            horizon_value, horizon_in_year = calculate_pentad_from_date(target_date)
-        elif horizon_type == "decade":
-            horizon_value, horizon_in_year = calculate_decad_from_date(target_date)
-        else:
-            raise ValueError(f"Invalid horizon_type: {horizon_type}. Must be 'pentad' or 'decade'.")
+        # Day-of-year for horizon values (1-366)
+        day_of_year = target_date.timetuple().tm_yday
 
         # Map quantile columns (ML uses Q5, Q25, etc.; API uses q05, q25, etc.)
         record = {
-            "horizon_type": horizon_type,
+            "horizon_type": "day",
             "code": str(int(row['code'])),
             "model_type": api_model_type,
             "date": forecast_date.strftime('%Y-%m-%d'),
             "target": target_date.strftime('%Y-%m-%d'),
             "flag": int(row['flag']) if pd.notna(row.get('flag')) else None,
-            "horizon_value": horizon_value,
-            "horizon_in_year": horizon_in_year,
+            "horizon_value": day_of_year,
+            "horizon_in_year": day_of_year,
             "q05": float(row['Q5']) if pd.notna(row.get('Q5')) else None,
             "q25": float(row['Q25']) if pd.notna(row.get('Q25')) else None,
             "q50": float(row['Q50']) if pd.notna(row.get('Q50')) else None,

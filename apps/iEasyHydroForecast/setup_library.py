@@ -1255,50 +1255,75 @@ def _read_ml_forecasts_from_api(
 
     logger.info(f"Reading {model} forecasts ({horizon_type}) from SAPPHIRE API at {api_url}")
 
-    # Collect all data with pagination
-    all_data = []
+    # Pagination settings
     page_size = 10000
 
     # If site_codes provided, query per code for efficiency
     codes_to_query = site_codes if site_codes else [None]
 
-    for code in codes_to_query:
-        skip = 0
-        while True:
-            df_page = client.read_short_term_forecasts(
-                horizon=horizon_type,
-                code=code,
-                model=model_upper,
-                start_date=start_date,
-                end_date=end_date,
-                skip=skip,
-                limit=page_size,
-            )
+    # Try "day" horizon first (target architecture), fall back to
+    # pentad/decade (legacy) if no day-level records exist yet.
+    horizons_to_try = ["day"]
+    if horizon_type != "day":
+        horizons_to_try.append(horizon_type)
 
-            # Store original page length before filtering for pagination check
-            original_page_len = len(df_page)
-
-            if df_page.empty:
-                break
-
-            # Defensive client-side model filter (server already filtered,
-            # but guard against API versions that don't support model param)
-            if 'model_type' in df_page.columns:
-                df_page = df_page[df_page['model_type'].str.upper() == model_upper]
-
-            if not df_page.empty:
-                all_data.append(df_page)
-                logger.debug(
-                    f"Read {len(df_page)} {model} forecast records for horizon={horizon_type}, code={code} (skip={skip})"
+    for query_horizon in horizons_to_try:
+        all_data = []
+        for code in codes_to_query:
+            skip = 0
+            while True:
+                df_page = client.read_short_term_forecasts(
+                    horizon=query_horizon,
+                    code=code,
+                    model=model_upper,
+                    start_date=start_date,
+                    end_date=end_date,
+                    skip=skip,
+                    limit=page_size,
                 )
 
-            if original_page_len < page_size:
-                break
+                # Store original page length before filtering for pagination
+                original_page_len = len(df_page)
 
-            skip += page_size
+                if df_page.empty:
+                    break
+
+                # Defensive client-side model filter (server already filtered,
+                # but guard against API versions that don't support model param)
+                if 'model_type' in df_page.columns:
+                    df_page = df_page[
+                        df_page['model_type'].str.upper() == model_upper
+                    ]
+
+                if not df_page.empty:
+                    all_data.append(df_page)
+                    logger.debug(
+                        f"Read {len(df_page)} {model} forecast records "
+                        f"for horizon={query_horizon}, code={code} "
+                        f"(skip={skip})"
+                    )
+
+                if original_page_len < page_size:
+                    break
+
+                skip += page_size
+
+        if all_data:
+            logger.info(
+                f"Found {model} forecast data using "
+                f"horizon={query_horizon}"
+            )
+            break
+    else:
+        logger.warning(
+            f"No {model} forecast data ({horizon_type}) returned from API"
+        )
+        return pd.DataFrame()
 
     if not all_data:
-        logger.warning(f"No {model} forecast data ({horizon_type}) returned from API")
+        logger.warning(
+            f"No {model} forecast data ({horizon_type}) returned from API"
+        )
         return pd.DataFrame()
 
     # Combine all pages (drop all-NA columns from each frame to avoid FutureWarning)
