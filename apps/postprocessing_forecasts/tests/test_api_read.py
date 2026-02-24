@@ -59,14 +59,59 @@ def create_mock_lr_forecast_data():
 
 
 def create_mock_ml_forecast_data():
-    """Create sample ML forecast data that matches API response structure."""
+    """Create sample ML forecast data matching current API DB state.
+
+    The ML model produces a 10-day daily forecast. The current ML writer
+    (_write_ml_forecast_to_api) stores one record per daily target with
+    horizon_type="pentad" or "decade". This mock reflects that state:
+    10 daily rows per (code, date).
+
+    Column conventions:
+        date   = forecast issue date (when the forecast was produced)
+        target = individual daily target date (current ML writer behavior;
+                 in the target architecture, target should hold the first
+                 day of the target horizon — see Phase 2 of the fix plan)
+
+    Station 12345: base_q50=100, daily values 101..110, mean=105.5
+    Station 12346: base_q50=150, daily values 151..160, mean=155.5
+    """
+    rows = []
+    for i, code in enumerate(['12345', '12346']):
+        base_q50 = 100.0 + i * 50  # 100 for 12345, 150 for 12346
+        for day in range(1, 11):  # 10 daily targets
+            rows.append({
+                'id': len(rows) + 1,
+                'horizon_type': 'pentad',
+                'code': code,
+                'model_type': 'TFT',
+                'date': pd.Timestamp('2024-01-05'),  # forecast issue date
+                'target': pd.Timestamp(f'2024-01-{day:02d}'),  # daily target
+                'horizon_value': 1,
+                'horizon_in_year': 1,
+                'forecasted_discharge': base_q50 + day,
+                'q05': base_q50 - 20 + day,
+                'q25': base_q50 - 10 + day,
+                'q50': base_q50 + day,
+                'q75': base_q50 + 10 + day,
+                'q95': base_q50 + 20 + day,
+                'flag': 0,
+            })
+    return pd.DataFrame(rows)
+
+
+def create_mock_ml_forecast_data_single_target():
+    """Create minimal ML forecast data (1 row per station).
+
+    Useful for tests that don't need to verify aggregation behavior.
+    Uses the correct target convention: first day of the target horizon.
+    """
     return pd.DataFrame({
         'id': [1, 2],
         'horizon_type': ['pentad', 'pentad'],
         'code': ['12345', '12346'],
+        'model_type': ['TFT', 'TFT'],
         'date': pd.to_datetime(['2024-01-05', '2024-01-05']),
-        'target': pd.to_datetime(['2024-01-06', '2024-01-06']),
-        'model': ['TFT', 'TFT'],
+        'target': pd.to_datetime(['2024-01-01', '2024-01-01']),
         'horizon_value': [1, 1],
         'horizon_in_year': [1, 1],
         'forecasted_discharge': [100.5, 150.2],
@@ -369,7 +414,7 @@ class TestReadMLForecastsFromApi:
 
         mock_client = Mock()
         mock_client.readiness_check.return_value = True
-        mock_client.read_forecasts.side_effect = [
+        mock_client.read_short_term_forecasts.side_effect = [
             create_mock_ml_forecast_data(),
             pd.DataFrame()  # End of pagination
         ]
@@ -388,11 +433,11 @@ class TestReadMLForecastsFromApi:
             pytest.skip("sapphire-api-client not installed")
 
         mock_data = create_mock_ml_forecast_data()
-        mock_data['model'] = 'TIDE'
+        mock_data['model_type'] = 'TIDE'
 
         mock_client = Mock()
         mock_client.readiness_check.return_value = True
-        mock_client.read_forecasts.side_effect = [mock_data, pd.DataFrame()]
+        mock_client.read_short_term_forecasts.side_effect = [mock_data, pd.DataFrame()]
         mock_client_class.return_value = mock_client
 
         result = sl._read_ml_forecasts_from_api(model="TIDE", horizon_type="pentad")
@@ -406,11 +451,11 @@ class TestReadMLForecastsFromApi:
             pytest.skip("sapphire-api-client not installed")
 
         mock_data = create_mock_ml_forecast_data()
-        mock_data['model'] = 'TSMIXER'
+        mock_data['model_type'] = 'TSMIXER'
 
         mock_client = Mock()
         mock_client.readiness_check.return_value = True
-        mock_client.read_forecasts.side_effect = [mock_data, pd.DataFrame()]
+        mock_client.read_short_term_forecasts.side_effect = [mock_data, pd.DataFrame()]
         mock_client_class.return_value = mock_client
 
         result = sl._read_ml_forecasts_from_api(model="TSMIXER", horizon_type="pentad")
@@ -424,11 +469,11 @@ class TestReadMLForecastsFromApi:
             pytest.skip("sapphire-api-client not installed")
 
         mock_data = create_mock_ml_forecast_data()
-        mock_data['model'] = 'ARIMA'
+        mock_data['model_type'] = 'ARIMA'
 
         mock_client = Mock()
         mock_client.readiness_check.return_value = True
-        mock_client.read_forecasts.side_effect = [mock_data, pd.DataFrame()]
+        mock_client.read_short_term_forecasts.side_effect = [mock_data, pd.DataFrame()]
         mock_client_class.return_value = mock_client
 
         result = sl._read_ml_forecasts_from_api(model="ARIMA", horizon_type="pentad")
@@ -446,7 +491,7 @@ class TestReadMLForecastsFromApi:
 
         mock_client = Mock()
         mock_client.readiness_check.return_value = True
-        mock_client.read_forecasts.side_effect = [mock_data, pd.DataFrame()]
+        mock_client.read_short_term_forecasts.side_effect = [mock_data, pd.DataFrame()]
         mock_client_class.return_value = mock_client
 
         result = sl._read_ml_forecasts_from_api(model="TFT", horizon_type="decade")
@@ -462,13 +507,257 @@ class TestReadMLForecastsFromApi:
 
         mock_client = Mock()
         mock_client.readiness_check.return_value = True
-        mock_client.read_forecasts.return_value = pd.DataFrame()
+        mock_client.read_short_term_forecasts.return_value = pd.DataFrame()
         mock_client_class.return_value = mock_client
 
         result = sl._read_ml_forecasts_from_api(model="TFT", horizon_type="pentad")
 
         assert isinstance(result, pd.DataFrame)
         assert len(result) == 0
+
+
+# =============================================================================
+# Tests for ML daily-to-pentad/decad aggregation
+# =============================================================================
+
+class TestMLAggregation:
+    """Tests for daily-to-pentad/decad aggregation in _read_ml_forecasts_from_api.
+
+    The ML writer stores one row per daily target. The reader must aggregate
+    these into one row per (code, date) with averaged quantile values.
+    """
+
+    def _setup_mock(self, mock_client_class, mock_data):
+        """Helper to set up the mock client for aggregation tests."""
+        mock_client = Mock()
+        mock_client.readiness_check.return_value = True
+        mock_client.read_short_term_forecasts.side_effect = [
+            mock_data, pd.DataFrame()
+        ]
+        mock_client_class.return_value = mock_client
+        return mock_client
+
+    @patch('setup_library.SapphirePostprocessingClient')
+    def test_pentad_aggregation_averages_quantiles(self, mock_client_class):
+        """10 daily targets per (code, date) should produce 1 row with mean
+        values.
+
+        Station 12345: daily q50 = 101..110, mean = 105.5
+        Station 12346: daily q50 = 151..160, mean = 155.5
+        """
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        self._setup_mock(mock_client_class, create_mock_ml_forecast_data())
+
+        result = sl._read_ml_forecasts_from_api(
+            model="TFT", horizon_type="pentad"
+        )
+
+        assert len(result) == 2  # one row per station
+
+        row_12345 = result[result['code'] == '12345'].iloc[0]
+        row_12346 = result[result['code'] == '12346'].iloc[0]
+
+        # mean of 101,102,...,110 = 105.5
+        assert row_12345['q50'] == pytest.approx(105.5)
+        assert row_12345['forecasted_discharge'] == pytest.approx(105.5)
+        assert row_12345['q05'] == pytest.approx(85.5)   # mean(81..90)
+        assert row_12345['q25'] == pytest.approx(95.5)    # mean(91..100)
+        assert row_12345['q75'] == pytest.approx(115.5)   # mean(111..120)
+        assert row_12345['q95'] == pytest.approx(125.5)   # mean(121..130)
+
+        # mean of 151,152,...,160 = 155.5
+        assert row_12346['q50'] == pytest.approx(155.5)
+        assert row_12346['forecasted_discharge'] == pytest.approx(155.5)
+
+    @patch('setup_library.SapphirePostprocessingClient')
+    def test_aggregation_flag_takes_worst(self, mock_client_class):
+        """flag should be max (worst) across daily targets, not mean."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        mock_data = create_mock_ml_forecast_data()
+        # Set most flags to 0, but one to 1 for station 12345
+        mock_data.loc[mock_data['code'] == '12345', 'flag'] = 0
+        mask = (mock_data['code'] == '12345') & (
+            mock_data['target'] == pd.Timestamp('2024-01-03')
+        )
+        mock_data.loc[mask, 'flag'] = 1
+
+        self._setup_mock(mock_client_class, mock_data)
+
+        result = sl._read_ml_forecasts_from_api(
+            model="TFT", horizon_type="pentad"
+        )
+
+        row_12345 = result[result['code'] == '12345'].iloc[0]
+        row_12346 = result[result['code'] == '12346'].iloc[0]
+
+        assert row_12345['flag'] == 1   # max of [0,0,1,0,0,0,0,0,0,0]
+        assert row_12346['flag'] == 0   # all zeros
+
+    @patch('setup_library.SapphirePostprocessingClient')
+    def test_aggregation_preserves_horizon_columns(self, mock_client_class):
+        """horizon_value and horizon_in_year should survive aggregation."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        self._setup_mock(mock_client_class, create_mock_ml_forecast_data())
+
+        result = sl._read_ml_forecasts_from_api(
+            model="TFT", horizon_type="pentad"
+        )
+
+        assert 'horizon_value' in result.columns
+        assert 'horizon_in_year' in result.columns
+        assert result['horizon_value'].iloc[0] == 1
+        assert result['horizon_in_year'].iloc[0] == 1
+
+    @patch('setup_library.SapphirePostprocessingClient')
+    def test_target_column_not_in_output(self, mock_client_class):
+        """The raw 'target' column (daily dates) should not be in output
+        after groupby aggregation."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        self._setup_mock(mock_client_class, create_mock_ml_forecast_data())
+
+        result = sl._read_ml_forecasts_from_api(
+            model="TFT", horizon_type="pentad"
+        )
+
+        assert 'target' not in result.columns
+
+    @patch('setup_library.SapphirePostprocessingClient')
+    def test_api_metadata_columns_not_in_output(self, mock_client_class):
+        """API metadata columns (id, model_type, horizon_type) should not
+        leak into output."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        self._setup_mock(mock_client_class, create_mock_ml_forecast_data())
+
+        result = sl._read_ml_forecasts_from_api(
+            model="TFT", horizon_type="pentad"
+        )
+
+        for col in ['id', 'model_type', 'horizon_type', 'model_type_description',
+                     'composition']:
+            assert col not in result.columns, (
+                f"API metadata column '{col}' leaked into output"
+            )
+
+    @patch('setup_library.SapphirePostprocessingClient')
+    def test_multiple_pentads_multiple_stations(self, mock_client_class):
+        """2 stations x 2 pentads x 10 targets = 40 rows -> 4 aggregated
+        rows."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        # Build mock data with 2 pentads per station
+        rows = []
+        for code in ['12345', '12346']:
+            for pentad_date in ['2024-01-05', '2024-01-10']:
+                for day in range(1, 11):
+                    rows.append({
+                        'id': len(rows) + 1,
+                        'horizon_type': 'pentad',
+                        'code': code,
+                        'model_type': 'TFT',
+                        'date': pd.Timestamp(pentad_date),
+                        'target': pd.Timestamp(f'2024-01-{day:02d}'),
+                        'horizon_value': 1,
+                        'horizon_in_year': 1,
+                        'forecasted_discharge': 100.0 + day,
+                        'q05': 80.0 + day,
+                        'q25': 90.0 + day,
+                        'q50': 100.0 + day,
+                        'q75': 110.0 + day,
+                        'q95': 120.0 + day,
+                        'flag': 0,
+                    })
+        mock_data = pd.DataFrame(rows)
+
+        self._setup_mock(mock_client_class, mock_data)
+
+        result = sl._read_ml_forecasts_from_api(
+            model="TFT", horizon_type="pentad"
+        )
+
+        assert len(result) == 4  # 2 stations x 2 pentads
+        # Each station should have 2 rows (one per pentad date)
+        assert len(result[result['code'] == '12345']) == 2
+        assert len(result[result['code'] == '12346']) == 2
+
+    @patch('setup_library.SapphirePostprocessingClient')
+    def test_decade_aggregation_with_decad_columns(self, mock_client_class):
+        """Decade horizon should produce decad_in_month and decad_in_year
+        columns instead of pentad columns."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        mock_data = create_mock_ml_forecast_data()
+        mock_data['horizon_type'] = 'decade'
+
+        self._setup_mock(mock_client_class, mock_data)
+
+        result = sl._read_ml_forecasts_from_api(
+            model="TFT", horizon_type="decade"
+        )
+
+        assert len(result) == 2  # aggregated to 1 row per station
+        assert 'decad_in_month' in result.columns
+        assert 'decad_in_year' in result.columns
+        # Pentad columns should NOT be present for decade horizon
+        assert 'pentad_in_month' not in result.columns
+        assert 'pentad_in_year' not in result.columns
+
+    @patch('setup_library.SapphirePostprocessingClient')
+    def test_pentad_in_month_computed_after_aggregation(
+        self, mock_client_class
+    ):
+        """pentad_in_month and pentad_in_year should be computed from the
+        aggregated date column."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        self._setup_mock(mock_client_class, create_mock_ml_forecast_data())
+
+        result = sl._read_ml_forecasts_from_api(
+            model="TFT", horizon_type="pentad"
+        )
+
+        assert 'pentad_in_month' in result.columns
+        assert 'pentad_in_year' in result.columns
+        # Values should be in valid ranges (may be str or int)
+        pim = result['pentad_in_month'].astype(int)
+        piy = result['pentad_in_year'].astype(int)
+        assert all(1 <= v <= 6 for v in pim)
+        assert all(1 <= v <= 73 for v in piy)
+
+    @patch('setup_library.SapphirePostprocessingClient')
+    def test_output_has_required_downstream_columns(self, mock_client_class):
+        """API reader output must contain columns expected by downstream
+        postprocessing code."""
+        if not SAPPHIRE_API_AVAILABLE:
+            pytest.skip("sapphire-api-client not installed")
+
+        self._setup_mock(mock_client_class, create_mock_ml_forecast_data())
+
+        result = sl._read_ml_forecasts_from_api(
+            model="TFT", horizon_type="pentad"
+        )
+
+        required_cols = [
+            'code', 'date', 'forecasted_discharge', 'model_short',
+            'q05', 'q25', 'q50', 'q75', 'q95',
+            'pentad_in_month', 'pentad_in_year',
+        ]
+        for col in required_cols:
+            assert col in result.columns, (
+                f"Required column '{col}' missing from API reader output"
+            )
 
 
 # =============================================================================
@@ -713,8 +1002,9 @@ class TestReadMLForecastsApiIntegration:
 
         os.environ['SAPPHIRE_API_ENABLED'] = 'true'
         try:
-            mock_api_data = create_mock_ml_forecast_data()
-            # model_long removed (INFRA-005)
+            # Use single-target data: mock is at the reader output level
+            # (aggregation already happened inside _read_ml_forecasts_from_api)
+            mock_api_data = create_mock_ml_forecast_data_single_target()
             mock_api_data['model_short'] = 'TFT'
             mock_api_read.return_value = mock_api_data
 
@@ -735,9 +1025,9 @@ class TestReadMLForecastsApiIntegration:
 
         os.environ['SAPPHIRE_API_ENABLED'] = 'true'
         try:
-            mock_api_data = create_mock_ml_forecast_data()
+            # Use single-target data: mock is at the reader output level
+            mock_api_data = create_mock_ml_forecast_data_single_target()
             mock_api_data['horizon_type'] = 'decade'
-            # model_long removed (INFRA-005)
             mock_api_data['model_short'] = 'TFT'
             mock_api_read.return_value = mock_api_data
 
@@ -1160,13 +1450,13 @@ class TestEdgeCases:
         mock_data = create_mock_ml_forecast_data()
         # Add records for different models
         other_model_data = mock_data.copy()
-        other_model_data['model'] = 'TIDE'
-        other_model_data['id'] = [3, 4]
+        other_model_data['model_type'] = 'TIDE'
+        other_model_data['id'] = range(len(mock_data) + 1, 2 * len(mock_data) + 1)
         combined_data = pd.concat([mock_data, other_model_data], ignore_index=True)
 
         mock_client = Mock()
         mock_client.readiness_check.return_value = True
-        mock_client.read_forecasts.side_effect = [combined_data, pd.DataFrame()]
+        mock_client.read_short_term_forecasts.side_effect = [combined_data, pd.DataFrame()]
         mock_client_class.return_value = mock_client
 
         result = sl._read_ml_forecasts_from_api(model="TFT", horizon_type="pentad")

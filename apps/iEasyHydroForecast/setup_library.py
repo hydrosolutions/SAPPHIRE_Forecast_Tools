@@ -1265,9 +1265,10 @@ def _read_ml_forecasts_from_api(
     for code in codes_to_query:
         skip = 0
         while True:
-            df_page = client.read_forecasts(
+            df_page = client.read_short_term_forecasts(
                 horizon=horizon_type,
                 code=code,
+                model=model_upper,
                 start_date=start_date,
                 end_date=end_date,
                 skip=skip,
@@ -1280,8 +1281,8 @@ def _read_ml_forecasts_from_api(
             if df_page.empty:
                 break
 
-            # Filter by model type if the API returns multiple models
-            # (Note: The API may or may not support model filtering directly)
+            # Defensive client-side model filter (server already filtered,
+            # but guard against API versions that don't support model param)
             if 'model_type' in df_page.columns:
                 df_page = df_page[df_page['model_type'].str.upper() == model_upper]
 
@@ -1308,13 +1309,34 @@ def _read_ml_forecasts_from_api(
         return pd.DataFrame()
     forecast_data = pd.concat(all_data, ignore_index=True)
 
-    # Remove duplicates (defensive)
-    forecast_data = forecast_data.drop_duplicates(subset=['code', 'date'], keep='last')
-
-    # Convert types
+    # Convert types before aggregation
     if 'date' in forecast_data.columns:
         forecast_data['date'] = fl.parse_dates_robust(forecast_data['date'], 'date')
-    forecast_data['code'] = forecast_data['code'].astype(str).str.replace(r'\.0$', '', regex=True)
+    forecast_data['code'] = (
+        forecast_data['code'].astype(str).str.replace(r'\.0$', '', regex=True)
+    )
+
+    # --- Aggregate daily targets to pentad/decad level ---
+    # The API stores one row per daily target within each forecast run.
+    # Downstream code expects one row per (code, pentad/decad_boundary)
+    # with averaged quantile values across daily targets.
+    numeric_cols = ['q05', 'q25', 'q50', 'q75', 'q95', 'forecasted_discharge']
+    agg_dict = {}
+    for col in numeric_cols:
+        if col in forecast_data.columns:
+            agg_dict[col] = 'mean'
+    if 'flag' in forecast_data.columns:
+        agg_dict['flag'] = 'max'  # worst quality flag
+    for col in ['horizon_value', 'horizon_in_year']:
+        if col in forecast_data.columns:
+            agg_dict[col] = 'first'  # identical within group
+
+    if agg_dict:
+        forecast_data = (
+            forecast_data
+            .groupby(['code', 'date'], as_index=False)
+            .agg(agg_dict)
+        )
 
     # Add model column
     forecast_data["model_short"] = model_short
