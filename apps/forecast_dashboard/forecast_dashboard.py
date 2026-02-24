@@ -34,7 +34,7 @@ all_stations, station_dict = processing.get_all_stations_from_file()
 
 dm = DataManager(all_stations=all_stations, cfg=cfg)
 station_code = station_dict[next(iter(station_dict))][0].split()[0]
-dm.load_station('15189')
+dm.load_station(station_code)
 
 # ─── 3. Widgets ─────────────────────────────────────────────────────
 wm = WidgetManager(dm, cfg, station_dict)

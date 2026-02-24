@@ -88,7 +88,7 @@ def create_station_selector(station_dict):
     _default_station_value = None
     if station_dict:
         try:
-            _default_station_value = "15189 - Аламедин  -  у.р.Чункурчак" #station_dict[next(iter(station_dict))][0]
+            _default_station_value = station_dict[next(iter(station_dict))][0] # "15189 - Аламедин  -  у.р.Чункурчак"
         except Exception:
             _default_station_value = None
 
