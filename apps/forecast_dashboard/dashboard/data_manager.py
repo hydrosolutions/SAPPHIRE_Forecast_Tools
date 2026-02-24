@@ -143,10 +143,10 @@ class DataManager(param.Parameterized):
         logger.info(f"Loading data for station {station_code}")
         self._data = db.get_data(station_code, self._all_stations)
         # self.current_station = station_code
-        self._rebuild_model_dict()
+        self._rebuild_all_models()
         # self.data_version += 1  # notify watchers
 
-    def _rebuild_model_dict(self) -> None:
+    def _rebuild_all_models(self) -> None:
         """Rebuild the full model dictionary from freshly loaded forecasts."""
         df = self.forecasts_all
         if df is None or df.empty:

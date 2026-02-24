@@ -114,9 +114,11 @@ class WidgetManager:
             self.forecast_tabulator
         )
 
+        # ── Hydrograph ──────────────────────────────────────────────────────
         self.aggregate_radiobutton = widgets.create_aggregate_radiobutton()
 
-        # ── Bulletin widgets ─────────────────────────────────────────
+        # === BULLETIN TAB WIDGETS ===
+        # ── Forecast bulletin ───────────────────────────────────────────────
         self.remove_bulletin_button, self.write_bulletin_button = (
             widgets.create_bulletin_buttons()
         )
@@ -128,10 +130,12 @@ class WidgetManager:
             self.add_to_bulletin_popup,
         )
 
-        # ── Download / language / misc ───────────────────────────────
+        # ── Download bulletin ───────────────────────────────────────────────
         self.downloader, self.bulletin_download_panel = (
             widgets.create_downloader_and_panel(cfg.horizon)
         )
+
+        # === NAVBAR WIDGETS ===
         self.language_buttons = widgets.create_language_buttons()
 
     # ------------------------------------------------------------------

@@ -85,7 +85,10 @@ class PlotManager:
         # Linear regression
         self.forecast_data_and_plot = pn.Column(sizing_mode="stretch_both")
 
+        # Hydrograph
         self.pentad_forecast = self._empty_curve()
+
+        # Forecast skill metrics
         self.effectiveness = self._empty_curve()
         self.accuracy = self._empty_curve()
         self.forecast_skill = pn.Column(self.effectiveness, self.accuracy)

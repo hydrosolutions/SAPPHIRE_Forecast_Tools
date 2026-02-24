@@ -308,11 +308,7 @@ def define_tabs(_, predictors_warning, forecast_warning,
     return tabs
 
 
-def define_tabs_2(_, wm, pm,
-                pentad_forecast_plot, effectiveness_plot,
-                bulletin_table, write_bulletin_button, bulletin_download_panel, disclaimer,
-                show_daily_data_widget,
-                skill_table, skill_metrics_download_filename, skill_metrics_download_button):
+def define_tabs_2(_, wm, pm, disclaimer):
     tabs = pn.Tabs(
         (_('Predictors'),
             pn.Column(
@@ -357,9 +353,9 @@ def define_tabs_2(_, wm, pm,
                     pn.Column(
                         pn.Row(
                             pn.pane.Markdown(_("Show forecasts aggregated to pentadal values:")),
-                            show_daily_data_widget
+                            wm.aggregate_radiobutton
                         ),
-                        pentad_forecast_plot,
+                        pm.pentad_forecast,
                     ),
                     title=_('Hydrograph'),
                     height=600,
@@ -369,7 +365,7 @@ def define_tabs_2(_, wm, pm,
                 ),
                 pn.Card(
                     pn.Row(
-                        effectiveness_plot,
+                        pm.forecast_skill,
                     ),
                     title=_("Forecast skill metrics"),
                     height=800,
@@ -377,9 +373,9 @@ def define_tabs_2(_, wm, pm,
                 ),
                 pn.Card(
                     pn.Column(
-                        skill_table,
-                        skill_metrics_download_filename,
-                        skill_metrics_download_button,
+                        pm.skill_table,
+                        pm.skill_download_filename,
+                        pm.skill_download_button,
                     ),
                     title=_("Table of forecast skill metrics"),
                     height=600 ,
@@ -392,15 +388,15 @@ def define_tabs_2(_, wm, pm,
             pn.Column(
                 pn.Card(
                     pn.Column(
-                        bulletin_table,
-                        write_bulletin_button,
+                        wm.bulletin_table,
+                        wm.write_bulletin_button,
                     ),
                     title=_('Forecast bulletin'),
                     sizing_mode='stretch_width',
                 ),
                 pn.Card(
                     pn.Row(
-                        bulletin_download_panel,
+                        wm.bulletin_download_panel,
                     ),
                     title=_('Download bulletin'),
                     sizing_mode='stretch_width',
