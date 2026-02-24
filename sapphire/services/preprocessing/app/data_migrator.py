@@ -371,8 +371,8 @@ class MeteoDataMigrator(DataMigrator):
             norm_column = f"{self.meteo_type}_norm"  # 'T_norm' or 'P_norm'
 
             # Select only needed columns from dashboard
-            df_norm = df_dashboard[['code', 'date', norm_column]].copy()
-            df_norm.rename(columns={norm_column: 'norm'}, inplace=True)
+            df_norm = df_dashboard[['code', 'date', norm_column, self.meteo_type]].copy()
+            df_norm.rename(columns={norm_column: 'norm', self.meteo_type: f"{self.meteo_type}1"}, inplace=True)
 
             # Merge reanalysis with norm values
             df_merged = pd.merge(
@@ -403,6 +403,7 @@ class MeteoDataMigrator(DataMigrator):
         """
         records = []
         value_column = self.meteo_type  # 'T' or 'P'
+        value1_column = f"{self.meteo_type}1"  # Value from dashboard file (if available)
 
         for _, row in df.iterrows():
             date_obj = pd.to_datetime(row['date'])
@@ -410,7 +411,10 @@ class MeteoDataMigrator(DataMigrator):
                 "meteo_type": self.meteo_type,
                 "code": str(row['code']),
                 "date": row['date'],
-                "value": round(float(row[value_column]), 2) if pd.notna(row[value_column]) else None,
+                # "value": round(float(row[value_column]), 2) if pd.notna(row[value_column]) else None,
+                "value": round(float(row[value1_column]), 2) if pd.notna(row.get(value1_column)) else (
+                            round(float(row[value_column]), 2) if pd.notna(row.get(value_column)) else None
+                        ),
                 "norm": float(row['norm']) if pd.notna(row.get('norm')) else None,
                 "day_of_year": date_obj.dayofyear
             }
