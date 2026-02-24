@@ -793,20 +793,20 @@ quantiles       ──map──►      q05..q95                   kept for MC_A
 
 ## Verification Checklist
 
-### Phase 1
-- [ ] `_read_ml_forecasts_from_api` aggregates daily targets (groupby mean, not drop_duplicates)
-- [ ] Output `date` column = pentad/decad boundary date (issue date from API)
-- [ ] Output has no `target`, `id`, `model_type`, `horizon_type` columns
-- [ ] `flag` uses max aggregation (worst quality flag)
-- [ ] `horizon_value`, `horizon_in_year` preserved through aggregation
-- [ ] pentad_in_month / pentad_in_year computed correctly after aggregation
-- [ ] Server-side model filtering via `model` parameter
-- [ ] Uses `read_short_term_forecasts` (not deprecated `read_forecasts`)
-- [ ] Mock data uses `model_type` (not `model`) to match real API response
-- [ ] Mock data has multiple daily targets per (code, date) to test aggregation
-- [ ] All existing tests updated and passing
-- [ ] New aggregation tests added (8+ tests)
-- [ ] Full test suite: `SAPPHIRE_TEST_ENV=True bash run_tests.sh` passes with 0 skips
+### Phase 1 — DONE (commit 8b52d3c)
+- [x] `_read_ml_forecasts_from_api` aggregates daily targets (groupby mean, not drop_duplicates)
+- [x] Output `date` column = pentad/decad boundary date (issue date from API)
+- [x] Output has no `target`, `id`, `model_type`, `horizon_type` columns
+- [x] `flag` uses max aggregation (worst quality flag)
+- [x] `horizon_value`, `horizon_in_year` preserved through aggregation
+- [x] pentad_in_month / pentad_in_year computed correctly after aggregation
+- [x] Server-side model filtering via `model` parameter
+- [x] Uses `read_short_term_forecasts` (not deprecated `read_forecasts`)
+- [x] Mock data uses `model_type` (not `model`) to match real API response
+- [x] Mock data has multiple daily targets per (code, date) to test aggregation
+- [x] All existing tests updated and passing
+- [x] New aggregation tests added (9 tests in TestMLAggregation)
+- [x] Full test suite: `SAPPHIRE_TEST_ENV=True bash run_tests.sh` passes with 0 skips
 
 ### Phase 2b (data_migrator.py — REQUIRES COORDINATION)
 
