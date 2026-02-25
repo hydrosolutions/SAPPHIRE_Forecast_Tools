@@ -4,8 +4,10 @@ This document describes how data flows through the SAPPHIRE short-term forecast
 pipeline (pentad and decade modes). It covers the three workflow types:
 operational (daily), maintenance, and annual recalculation.
 
-All I/O goes through the SAPPHIRE services (PostgreSQL). CSV files are backup
-only and will be deprecated.
+The codebase is transitioning from CSV-based I/O to API-first with PostgreSQL
+backends (SAPPHIRE services). Some read paths still use CSV as primary with API
+fallback (e.g., skill metrics in `data_reader.py`). The target state is
+API-primary with CSV as backup, eventually deprecating CSV entirely.
 
 ## External Data Sources
 
@@ -52,7 +54,7 @@ flowchart TD
             LR["linear_regression<br/>─────────────────<br/>Pentad/decade forecasts<br/>Writes hydrograph"]
         end
         subgraph Phase2ML[" "]
-            ML["machine_learning<br/>─────────────────<br/>TFT, TiDE, TSMixer<br/>Daily forecasts (10–11 days ahead)"]
+            ML["machine_learning<br/>─────────────────<br/>TFT, TiDE, TSMixer<br/>Daily forecasts (10–11 days ahead)<br/>(ARIMA, RRAM deprecated)"]
         end
         CM["conceptual_model<br/>─────────────────<br/>R-based, CSV only<br/>(candidate for retirement)"]
     end
@@ -102,7 +104,7 @@ flowchart TD
 
     %% Postprocessing reads from forecasts + lr_forecasts + skill_metrics
     FT -- "ML: day records" --> AGG
-    LRT -- "LR: pentad/decade" --> AGG
+    LRT -- "LR: pentad/decade" --> WR
     SMT --> SK
 
     %% Ensemble creation
@@ -132,13 +134,18 @@ flowchart TD
 | `machine_learning` | discharge, meteo, snow tables | forecasts table (`horizon_type=day`) | TFT, TiDE, TSMixer; 10–11 daily targets per station |
 | `conceptual_model` | CSV files | CSV files | R-based, not yet migrated to DB; candidate for retirement |
 
+> **Note:** The ML module code also contains references to ARIMA and RRAM (RR-Mamba) models. These are deprecated and no longer supported in the operational pipeline.
+
 ### Phase 3: Postprocessing
 
-1. **Read and aggregate**: Read ML daily forecasts from forecasts table,
-   aggregate to pentad/decade (period-aware: only targets within the period
-   boundary). Read LR forecasts from lr_forecasts table (already at
-   pentad/decade level).
-2. **Create NE**: Average TFT + TiDE + TSMixer (no skill threshold).
+1. **Read and aggregate**: The postprocessing module's data reading phase
+   (via `setup_library.py`) reads ML daily forecasts from the forecasts
+   table and aggregates them to pentad/decade (period-aware: only targets
+   within the period boundary). LR forecasts are read from lr_forecasts
+   table (already at pentad/decade level).
+2. **Create NE**: During data reading, `setup_library.py` averages
+   TFT + TiDE + TSMixer (no skill threshold). Consider moving this method
+   to the postprocessing module where it is exclusively used.
 3. **Create EM**: Read yearly skill metrics from skill_metrics table, filter
    models by threshold (sdivsigma, accuracy), average qualifying models
    (≥ 2 required).
@@ -159,8 +166,12 @@ flowchart TD
         M_PP["postprocessing_forecasts<br/>──────────<br/>Fill missing EM/NE<br/>for gap-filled dates"]
     end
 
-    M_PR --> M_PG --> M_ML --> M_LR --> M_PP
+    M_PR -.-> M_PG -.-> M_ML -.-> M_LR -.-> M_PP
 ```
+
+> **Note:** These are currently individual scripts, not a single orchestrated
+> pipeline. The diagram shows logical dependency order. Future work may
+> collect them into a unified maintenance pipeline.
 
 | Task | Module | Purpose |
 |------|--------|---------|
@@ -181,14 +192,13 @@ historical data.
 flowchart TD
     subgraph SkillMetrics["Skill Metrics Recalculation"]
         SM_READ["Read ALL historical<br/>forecasts + observations<br/>from DB tables"]
-        SM_CALC["Calculate skill metrics<br/>──────────<br/>sdivsigma, nse, accuracy,<br/>mae, delta per<br/>(pentad/decade, code, model)"]
-        SM_WRITE["Write to skill_metrics table"]
+        SM_CALC["Calculate skill metrics<br/>──────────<br/>sdivsigma, nse, accuracy,<br/>mae, delta, crps, pbias,<br/>kgelf, nse_log per<br/>(pentad/decade, code, model)"]
+        SM_WRITE["Write to skill_metrics table<br/>+ EM/NE to forecasts table"]
     end
 
     SM_READ --> SM_CALC --> SM_WRITE
 
     subgraph Norms["Norms Recalculation"]
-        N_RUNOFF["Recalculate runoff norms<br/>──────────<br/>Pentad/decade normals<br/>from historical discharge"]
         N_SNOW["Recalculate snow norms<br/>──────────<br/>SWE, HS normals<br/>from historical snow data"]
     end
 ```
@@ -202,11 +212,9 @@ boundary date for the target year), not the date the calculation was run.
 
 ### Norms
 
-Entry points:
-- **Runoff norms**: `preprocessing_runoff` recalculates pentad/decade discharge
-  normals from the full historical discharge record.
-- **Snow norms**: `preprocessing_gateway` recalculates SWE/HS normals from the
-  full historical snow record.
+Entry point:
+- **Snow norms**: `preprocessing_gateway/recalculate_snow_norms.py` recalculates
+  SWE/HS normals from the full historical snow record.
 
 ## Key Data Transformations
 

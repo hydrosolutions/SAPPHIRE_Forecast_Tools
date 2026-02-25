@@ -1539,6 +1539,32 @@ Then collapse each pair into a single parameterized function:
 
 ---
 
+## API Transition Gaps (CSV → API)
+
+The postprocessing module is transitioning from CSV-based I/O to API-first
+with CSV as fallback, eventually deprecating CSV entirely. The following
+read/write paths still use CSV as primary or CSV-only:
+
+| Path | Current State | File | Target State |
+|------|--------------|------|--------------|
+| Skill metrics read (pentad/decad) | CSV primary, API fallback | `data_reader.py` `read_pentadal_skill_metrics()` | API primary, CSV fallback |
+| Skill metrics read (monthly) | CSV primary, API fallback | `data_reader.py` `read_monthly_skill_metrics()` | API primary, CSV fallback |
+| Gap detection (pentad/decad) | CSV-only (`combined_forecasts` loaded from CSV) | `gap_detector.py` `detect_missing_ensembles()` | Read from API |
+| Gap detection (monthly) | CSV-only (`combined_forecasts` loaded from CSV) | `gap_detector.py` `detect_missing_monthly_ensembles()` | Read from API |
+| Maintenance gap-fill read | Reads combined forecasts from CSV | `postprocessing_maintenance.py`, `postprocessing_maintenance_long_term.py` | Read from API |
+| Combined forecast CSV output | Dual-write (CSV + API) | `file_writer.py` | API-only (drop CSV) |
+
+**Priority**: The gap detection and maintenance read paths are the most
+critical — they cannot fall back to API when CSV is removed. The skill
+metrics read paths already have API fallback but should be inverted to
+API-primary.
+
+**Dependency**: Removing CSV entirely (Phase 6 of
+`sapphire_api_integration_plan.md`) requires all paths above to be
+API-primary first.
+
+---
+
 ## Related Documents
 
 | Document | Status |
