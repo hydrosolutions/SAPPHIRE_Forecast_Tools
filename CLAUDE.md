@@ -46,6 +46,13 @@ The `apps/` modules interact with `sapphire/services/` via REST API. The codebas
 
 CSV I/O will be removed once API integration is fully tested.
 
+### Pipeline Data Flow
+
+For detailed data flow diagrams (Mermaid) showing how data moves through the
+operational, maintenance, and annual recalculation pipelines, see:
+
+- **Short-term** (pentad/decade): [`doc/data_flow_short_term.md`](doc/data_flow_short_term.md)
+
 ---
 
 ## Code Style Conventions
