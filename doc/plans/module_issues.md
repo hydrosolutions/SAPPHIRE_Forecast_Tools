@@ -36,6 +36,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 
 | ID | Title | Module | Priority | Status | File |
 |----|-------|--------|----------|--------|------|
+| **INFRA-006** | Fix postprocessing boundary day guard, LR sentinel, and validation queries | infra | **High** | Draft | [`gi_draft_infra_date_mismatch_and_sentinel.md`](issues/gi_draft_infra_date_mismatch_and_sentinel.md) |
 | **ML-001** | Maintenance mode hindcast failure not handled, causes FileNotFoundError | ml | **High** | Draft | [`gi_draft_ml_maintenance_hindcast_file_not_found.md`](issues/gi_draft_ml_maintenance_hindcast_file_not_found.md) |
 | **ML-002** | Investigate hindcast subprocess root cause (why hindcast_ML_models.py fails) | ml | **High** | Open | — (requires investigation with Sandro; likely CSV→API migration gap) |
 | **SEC-005** | Verify bokeh>=3.8.2 compatibility post-merge | fd | **High** | Open | See `sapphire_v2_planning.md` post-merge checklist |
@@ -219,4 +220,4 @@ These documents contain context and specifications referenced by issues above.
 
 ---
 
-*Last updated: 2026-02-16*
+*Last updated: 2026-02-25*
