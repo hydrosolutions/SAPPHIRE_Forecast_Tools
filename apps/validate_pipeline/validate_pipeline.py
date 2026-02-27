@@ -21,12 +21,12 @@ Exit codes:
 
 import argparse
 import calendar
+import contextlib
 import logging
 import os
 import sys
 from dataclasses import dataclass, field
 from datetime import date, timedelta
-from typing import Callable, Dict, List, Optional
 
 import pandas as pd
 
@@ -36,11 +36,11 @@ logger = logging.getLogger(__name__)
 # API client availability
 # ---------------------------------------------------------------------------
 try:
-    from sapphire_api_client.preprocessing import (
-        SapphirePreprocessingClient,
-    )
     from sapphire_api_client.postprocessing import (
         SapphirePostprocessingClient,
+    )
+    from sapphire_api_client.preprocessing import (
+        SapphirePreprocessingClient,
     )
 
     SAPPHIRE_API_AVAILABLE = True
@@ -55,7 +55,7 @@ except ImportError:
 # ---------------------------------------------------------------------------
 
 # Map SAPPHIRE_PREDICTION_MODE values to API horizon strings.
-MODE_TO_HORIZONS: Dict[str, List[str]] = {
+MODE_TO_HORIZONS: dict[str, list[str]] = {
     "PENTAD": ["pentad"],
     "DECAD": ["decade"],
     "BOTH": ["pentad", "decade"],
@@ -65,13 +65,14 @@ MODE_TO_HORIZONS: Dict[str, List[str]] = {
 SHORT_TERM_MODELS = ["LR", "TFT", "TiDE", "TSMixer", "EM", "NE"]
 
 # Quantile columns in ML forecasts.
-QUANTILE_COLS = ["q05", "q25", "q50", "q75", "q95"]
+# q50 is stored as forecasted_discharge in short-term Forecast records.
+QUANTILE_COLS = ["q05", "q25", "q75", "q95"]
 
 # High limit for API reads so we get enough records for validation.
 READ_LIMIT = 5000
 
 # Map single-module names to their default validation target.
-MODULE_DEFAULT_TARGET: Dict[str, str] = {
+MODULE_DEFAULT_TARGET: dict[str, str] = {
     "preprocessing_runoff": "short-term",
     "preprocessing_gateway": "short-term",
     "linear_regression": "short-term",
@@ -82,7 +83,9 @@ MODULE_DEFAULT_TARGET: Dict[str, str] = {
 
 # Modules that only produce data on forecast days (not daily).
 FORECAST_DAY_MODULES = {
-    "linear_regression", "machine_learning", "postprocessing_forecasts",
+    "linear_regression",
+    "machine_learning",
+    "postprocessing_forecasts",
 }
 
 
@@ -136,7 +139,7 @@ class CheckResult:
     detail: str = ""
     record_count: int = 0
     module: str = ""  # Source pipeline module, e.g. "preprocessing_runoff"
-    data: Optional[pd.DataFrame] = field(default=None, repr=False)
+    data: pd.DataFrame | None = field(default=None, repr=False)
 
 
 def _status_tag(status: str) -> str:
@@ -190,9 +193,7 @@ def check_presence(
 
     if df is None or df.empty:
         status = "WARN" if warn_if_empty else "FAIL"
-        detail = "no records" + (
-            " (may not be configured)" if warn_if_empty else ""
-        )
+        detail = "no records" + (" (may not be configured)" if warn_if_empty else "")
         return CheckResult(
             name=check_name,
             status=status,
@@ -216,14 +217,14 @@ def run_tier1_short_term(
     post_client,
     forecast_date: date,
     horizon: str,
-) -> List[CheckResult]:
+) -> list[CheckResult]:
     """Run Tier 1 presence checks for a short-term horizon.
 
     Note: preprocessing_runoff only writes horizon_type="day" for both
     runoff and hydrograph. There are no pentad/decade horizon records
     in the preprocessing API, so we only check the "day" horizon.
     """
-    results: List[CheckResult] = []
+    results: list[CheckResult] = []
     fd = str(forecast_date)
 
     # Compute the most recent boundary date for forecast queries.
@@ -241,37 +242,57 @@ def run_tier1_short_term(
     # (always query today's date since preprocessing runs daily)
     results.append(
         check_presence(
-            pre_client, "read_runoff", "Runoff (day)",
+            pre_client,
+            "read_runoff",
+            "Runoff (day)",
             module="preprocessing_runoff",
-            horizon="day", start_date=fd, end_date=fd,
+            horizon="day",
+            start_date=fd,
+            end_date=fd,
         )
     )
     results.append(
         check_presence(
-            pre_client, "read_hydrograph", "Hydrograph (day)",
+            pre_client,
+            "read_hydrograph",
+            "Hydrograph (day)",
             module="preprocessing_runoff",
-            horizon="day", start_date=fd, end_date=fd,
+            horizon="day",
+            start_date=fd,
+            end_date=fd,
         )
     )
     results.append(
         check_presence(
-            pre_client, "read_meteo", "Meteo (T)",
+            pre_client,
+            "read_meteo",
+            "Meteo (T)",
             module="preprocessing_gateway",
-            meteo_type="T", start_date=fd, end_date=fd,
+            meteo_type="T",
+            start_date=fd,
+            end_date=fd,
         )
     )
     results.append(
         check_presence(
-            pre_client, "read_meteo", "Meteo (P)",
+            pre_client,
+            "read_meteo",
+            "Meteo (P)",
             module="preprocessing_gateway",
-            meteo_type="P", start_date=fd, end_date=fd,
+            meteo_type="P",
+            start_date=fd,
+            end_date=fd,
         )
     )
     results.append(
         check_presence(
-            pre_client, "read_snow", "Snow (SWE)",
+            pre_client,
+            "read_snow",
+            "Snow (SWE)",
             module="preprocessing_gateway",
-            snow_type="SWE", start_date=fd, end_date=fd,
+            snow_type="SWE",
+            start_date=fd,
+            end_date=fd,
             warn_if_empty=True,
         )
     )
@@ -290,28 +311,35 @@ def run_tier1_short_term(
     for model in SHORT_TERM_MODELS:
         results.append(
             check_presence(
-                post_client, "read_short_term_forecasts",
+                post_client,
+                "read_short_term_forecasts",
                 f"Forecasts ({model}, {horizon})",
                 module=model_modules.get(model, ""),
-                horizon=horizon, model=model,
-                start_date=bd, end_date=fd,
+                horizon=horizon,
+                model=model,
+                start_date=bd,
+                end_date=fd,
             )
         )
 
     # LR details — query from boundary to today
     results.append(
         check_presence(
-            post_client, "read_lr_forecasts",
+            post_client,
+            "read_lr_forecasts",
             f"LR details ({horizon})",
             module="linear_regression",
-            horizon=horizon, start_date=bd, end_date=fd,
+            horizon=horizon,
+            start_date=bd,
+            end_date=fd,
         )
     )
 
     # Skill metrics (not date-filtered — covers all historical periods)
     results.append(
         check_presence(
-            post_client, "read_skill_metrics",
+            post_client,
+            "read_skill_metrics",
             f"Skill metrics ({horizon})",
             module="postprocessing_forecasts",
             horizon=horizon,
@@ -324,22 +352,26 @@ def run_tier1_short_term(
 def run_tier1_long_term(
     post_client,
     forecast_date: date,
-) -> List[CheckResult]:
+) -> list[CheckResult]:
     """Run Tier 1 presence checks for long-term forecasts."""
-    results: List[CheckResult] = []
+    results: list[CheckResult] = []
     fd = str(forecast_date)
 
     results.append(
         check_presence(
-            post_client, "read_long_term_forecasts",
+            post_client,
+            "read_long_term_forecasts",
             "Long-term forecasts (month)",
             module="long_term_forecasting",
-            horizon_type="month", start_date=fd, end_date=fd,
+            horizon_type="month",
+            start_date=fd,
+            end_date=fd,
         )
     )
     results.append(
         check_presence(
-            post_client, "read_skill_metrics",
+            post_client,
+            "read_skill_metrics",
             "Monthly skill metrics",
             module="postprocessing_forecasts",
             horizon="month",
@@ -354,11 +386,11 @@ def run_tier1_long_term(
 # ---------------------------------------------------------------------------
 
 
-def check_discharge_non_negative(results: List[CheckResult]) -> CheckResult:
+def check_discharge_non_negative(results: list[CheckResult]) -> CheckResult:
     """Verify that discharge / forecasted_discharge values are >= 0."""
     bad_count = 0
     total = 0
-    sources: List[str] = []
+    sources: list[str] = []
 
     for r in results:
         if r.data is None or r.data.empty:
@@ -372,10 +404,7 @@ def check_discharge_non_negative(results: List[CheckResult]) -> CheckResult:
                 total += int(negatives.count())
                 if n_bad > 0:
                     neg_vals = series.dropna()[negatives].tolist()
-                    sources.append(
-                        f"{r.name}.{col}: {n_bad} neg "
-                        f"(vals: {neg_vals[:5]})"
-                    )
+                    sources.append(f"{r.name}.{col}: {n_bad} neg (vals: {neg_vals[:5]})")
 
     if total == 0:
         return CheckResult(
@@ -399,7 +428,7 @@ def check_discharge_non_negative(results: List[CheckResult]) -> CheckResult:
     )
 
 
-def check_no_nan_in_forecasts(results: List[CheckResult]) -> CheckResult:
+def check_no_nan_in_forecasts(results: list[CheckResult]) -> CheckResult:
     """Check that forecasted_discharge is not NaN in forecast records."""
     nan_count = 0
     total = 0
@@ -432,8 +461,8 @@ def check_no_nan_in_forecasts(results: List[CheckResult]) -> CheckResult:
     )
 
 
-def check_quantile_ordering(results: List[CheckResult]) -> CheckResult:
-    """Verify q05 <= q25 <= q50 <= q75 <= q95 row-wise."""
+def check_quantile_ordering(results: list[CheckResult]) -> CheckResult:
+    """Verify q05 <= q25 <= q75 <= q95 row-wise."""
     bad_count = 0
     total = 0
 
@@ -444,9 +473,7 @@ def check_quantile_ordering(results: List[CheckResult]) -> CheckResult:
         if len(cols_present) < 2:
             continue
 
-        df_q = r.data[cols_present].apply(
-            pd.to_numeric, errors="coerce"
-        )
+        df_q = r.data[cols_present].apply(pd.to_numeric, errors="coerce")
         # Drop rows where all quantiles are NaN
         df_q = df_q.dropna(how="all")
         total += len(df_q)
@@ -478,7 +505,7 @@ def check_quantile_ordering(results: List[CheckResult]) -> CheckResult:
 
 
 def check_expected_models(
-    results: List[CheckResult],
+    results: list[CheckResult],
     horizon: str,
 ) -> CheckResult:
     """Check that all expected short-term models are present.
@@ -519,15 +546,15 @@ def check_expected_models(
     )
 
 
-def check_skill_metric_ranges(results: List[CheckResult]) -> CheckResult:
+def check_skill_metric_ranges(results: list[CheckResult]) -> CheckResult:
     """Verify skill metric values are within reasonable ranges.
 
     NSE > 1.0 and accuracy outside [0, 100] are hard FAILs.
     n_pairs <= 0 is a WARN — new stations legitimately have 0 pairs
     until enough historical data accumulates.
     """
-    fail_issues: List[str] = []
-    warn_issues: List[str] = []
+    fail_issues: list[str] = []
+    warn_issues: list[str] = []
     checked = 0
 
     for r in results:
@@ -544,25 +571,18 @@ def check_skill_metric_ranges(results: List[CheckResult]) -> CheckResult:
                 fail_issues.append(f"{bad_nse} records with NSE > 1.0")
 
         if "accuracy" in r.data.columns:
-            acc = pd.to_numeric(
-                r.data["accuracy"], errors="coerce"
-            ).dropna()
+            acc = pd.to_numeric(r.data["accuracy"], errors="coerce").dropna()
             bad_lo = (acc < 0).sum()
             bad_hi = (acc > 100).sum()
             if bad_lo + bad_hi > 0:
-                fail_issues.append(
-                    f"{bad_lo + bad_hi} records with accuracy outside [0, 100]"
-                )
+                fail_issues.append(f"{bad_lo + bad_hi} records with accuracy outside [0, 100]")
 
         if "n_pairs" in r.data.columns:
-            np_ = pd.to_numeric(
-                r.data["n_pairs"], errors="coerce"
-            ).dropna()
+            np_ = pd.to_numeric(r.data["n_pairs"], errors="coerce").dropna()
             bad_np = (np_ <= 0).sum()
             if bad_np > 0:
                 warn_issues.append(
-                    f"{bad_np} records with n_pairs <= 0 "
-                    "(new stations may lack historical data)"
+                    f"{bad_np} records with n_pairs <= 0 (new stations may lack historical data)"
                 )
 
     if checked == 0:
@@ -596,10 +616,10 @@ def check_skill_metric_ranges(results: List[CheckResult]) -> CheckResult:
 
 
 def run_tier2(
-    tier1_results: List[CheckResult],
+    tier1_results: list[CheckResult],
     horizon: str,
-    module_filter: Optional[str] = None,
-) -> List[CheckResult]:
+    module_filter: str | None = None,
+) -> list[CheckResult]:
     """Run Tier 2 correctness checks reusing Tier 1 DataFrames.
 
     Args:
@@ -608,7 +628,7 @@ def run_tier2(
         module_filter: If set, skip cross-module checks like "all models
             present" — same rationale as Tier 3.
     """
-    results: List[CheckResult] = []
+    results: list[CheckResult] = []
 
     results.append(check_discharge_non_negative(tier1_results))
     results.append(check_no_nan_in_forecasts(tier1_results))
@@ -617,15 +637,11 @@ def run_tier2(
     # "All models present" is a cross-module check — skip when
     # validating a single module (same rationale as Tier 3).
     if not module_filter:
-        forecast_results = [
-            r for r in tier1_results if r.name.startswith("Forecasts (")
-        ]
+        forecast_results = [r for r in tier1_results if r.name.startswith("Forecasts (")]
         results.append(check_expected_models(forecast_results, horizon))
 
     # Skill metric checks
-    skill_results = [
-        r for r in tier1_results if "skill" in r.name.lower()
-    ]
+    skill_results = [r for r in tier1_results if "skill" in r.name.lower()]
     results.append(check_skill_metric_ranges(skill_results))
 
     return results
@@ -637,7 +653,7 @@ def run_tier2(
 
 
 def check_station_codes_match(
-    tier1_results: List[CheckResult],
+    tier1_results: list[CheckResult],
 ) -> CheckResult:
     """Verify forecast station codes are a subset of runoff station codes."""
     runoff_codes = set()
@@ -666,10 +682,7 @@ def check_station_codes_match(
         return CheckResult(
             name="Station codes match",
             status="WARN",
-            detail=(
-                f"{len(extra)} forecast codes not in runoff: "
-                f"{', '.join(sorted(extra)[:5])}"
-            ),
+            detail=(f"{len(extra)} forecast codes not in runoff: {', '.join(sorted(extra)[:5])}"),
         )
     return CheckResult(
         name="Station codes match",
@@ -679,10 +692,10 @@ def check_station_codes_match(
 
 
 def check_dates_consistent(
-    tier1_results: List[CheckResult],
+    tier1_results: list[CheckResult],
 ) -> CheckResult:
     """Check all models have forecasts for the same (code, date) tuples."""
-    model_tuples: Dict[str, set] = {}
+    model_tuples: dict[str, set] = {}
 
     for r in tier1_results:
         if not r.name.startswith("Forecasts ("):
@@ -697,6 +710,7 @@ def check_dates_consistent(
             zip(
                 r.data["code"].astype(str),
                 r.data["date"].astype(str),
+                strict=False,
             )
         )
         model_tuples[model_name] = tuples
@@ -728,7 +742,7 @@ def check_dates_consistent(
     )
 
 
-def run_tier3(tier1_results: List[CheckResult]) -> List[CheckResult]:
+def run_tier3(tier1_results: list[CheckResult]) -> list[CheckResult]:
     """Run Tier 3 cross-module consistency checks."""
     return [
         check_station_codes_match(tier1_results),
@@ -743,7 +757,7 @@ def run_tier3(tier1_results: List[CheckResult]) -> List[CheckResult]:
 
 def print_results(
     section: str,
-    results: List[CheckResult],
+    results: list[CheckResult],
 ) -> None:
     """Print results in run_locally.sh log style."""
     print(f"\n--- {section} ---")
@@ -754,7 +768,7 @@ def print_results(
         print(f"{tag} {r.name}{detail}{module}")
 
 
-def print_summary(all_results: List[CheckResult]) -> int:
+def print_summary(all_results: list[CheckResult]) -> int:
     """Print summary counts and return exit code."""
     counts = {"PASS": 0, "FAIL": 0, "WARN": 0, "SKIP": 0}
     for r in all_results:
@@ -776,7 +790,7 @@ def print_summary(all_results: List[CheckResult]) -> int:
 # ---------------------------------------------------------------------------
 
 
-def resolve_horizons(horizon_arg: Optional[str]) -> List[str]:
+def resolve_horizons(horizon_arg: str | None) -> list[str]:
     """Resolve horizon argument into a list of API horizon strings.
 
     Falls back to SAPPHIRE_PREDICTION_MODE env var, then defaults to
@@ -790,7 +804,7 @@ def resolve_horizons(horizon_arg: Optional[str]) -> List[str]:
 
 
 def _apply_non_forecast_day_skip(
-    results: List[CheckResult],
+    results: list[CheckResult],
     forecast_date: date,
     horizon: str,
 ) -> None:
@@ -818,11 +832,7 @@ def _apply_non_forecast_day_skip(
         return
 
     for r in results:
-        if (
-            r.status == "FAIL"
-            and r.record_count == 0
-            and r.module in FORECAST_DAY_MODULES
-        ):
+        if r.status == "FAIL" and r.record_count == 0 and r.module in FORECAST_DAY_MODULES:
             r.status = "SKIP"
             r.detail = f"not a {horizon} forecast day"
 
@@ -830,8 +840,8 @@ def _apply_non_forecast_day_skip(
 def validate(
     target: str,
     forecast_date: date,
-    horizons: List[str],
-    module_filter: Optional[str] = None,
+    horizons: list[str],
+    module_filter: str | None = None,
 ) -> int:
     """Run all validation tiers and return exit code.
 
@@ -849,13 +859,11 @@ def validate(
     post_client = SapphirePostprocessingClient(base_url=api_url)
 
     # --- Readiness checks ---
-    all_results: List[CheckResult] = []
+    all_results: list[CheckResult] = []
 
     pre_ready = False
-    try:
+    with contextlib.suppress(Exception):
         pre_ready = pre_client.readiness_check()
-    except Exception:
-        pass
     if not pre_ready:
         all_results.append(
             CheckResult(
@@ -866,10 +874,8 @@ def validate(
         )
 
     post_ready = False
-    try:
+    with contextlib.suppress(Exception):
         post_ready = post_client.readiness_check()
-    except Exception:
-        pass
     if not post_ready:
         all_results.append(
             CheckResult(
@@ -880,18 +886,24 @@ def validate(
         )
 
     # --- Tier 1: Data Presence ---
-    tier1_results: List[CheckResult] = []
+    tier1_results: list[CheckResult] = []
 
     if target in ("short-term", "daily", "all"):
         for horizon in horizons:
             if pre_ready and post_ready:
                 t1 = run_tier1_short_term(
-                    pre_client, post_client, forecast_date, horizon,
+                    pre_client,
+                    post_client,
+                    forecast_date,
+                    horizon,
                 )
             elif post_ready:
                 # Can still check postprocessing
                 t1 = run_tier1_short_term(
-                    None, post_client, forecast_date, horizon,
+                    None,
+                    post_client,
+                    forecast_date,
+                    horizon,
                 )
             else:
                 t1 = []
@@ -914,7 +926,9 @@ def validate(
         # Long-term forecasts only run on specific dates per month;
         # treat empty postprocessing results as SKIP if we have no data.
         _apply_non_forecast_day_skip(
-            t1_lt, forecast_date, "long-term",
+            t1_lt,
+            forecast_date,
+            "long-term",
         )
         print_results("Tier 1: Data Presence (long-term)", t1_lt)
         tier1_results.extend(t1_lt)
@@ -925,9 +939,12 @@ def validate(
     if tier1_results:
         for horizon in horizons:
             horizon_results = [
-                r for r in tier1_results
-                if horizon in r.name or "day" in r.name.lower()
-                or "Meteo" in r.name or "Snow" in r.name
+                r
+                for r in tier1_results
+                if horizon in r.name
+                or "day" in r.name.lower()
+                or "Meteo" in r.name
+                or "Snow" in r.name
                 or "skill" in r.name.lower()
             ]
             t2 = run_tier2(horizon_results, horizon, module_filter)
@@ -944,7 +961,7 @@ def validate(
     return print_summary(all_results)
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     """CLI entry point.
 
     Returns:
@@ -1006,8 +1023,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if args.module:
         print(
-            f"Validating {args.module} data for "
-            f"{forecast_date} (horizons: {', '.join(horizons)})"
+            f"Validating {args.module} data for {forecast_date} (horizons: {', '.join(horizons)})"
         )
     else:
         print(
