@@ -173,13 +173,13 @@ class CombinedForecastDataMigrator(DataMigrator):
                     "code": str(row['code']),
                     "model_type": str(row['model_short']),
                     "date": row['date'],
-                    "target": None,
+                    "target": (pd.to_datetime(row['date']) + pd.Timedelta(days=1)).strftime('%Y-%m-%d'),
                     "flag": int(row['flag']) if pd.notna(row['flag']) else None,
                     "horizon_value": int(row['pentad_in_month']),
                     "horizon_in_year": int(row['pentad_in_year']),
                     "q05": float(row['q05']) if pd.notna(row['q05']) else None,
                     "q25": float(row['q25']) if pd.notna(row['q25']) else None,
-                    "q50": None,
+                    # "q50": None,
                     "q75": float(row['q75']) if pd.notna(row['q75']) else None,
                     "q95": float(row['q95']) if pd.notna(row['q95']) else None,
                     "forecasted_discharge": float(row['forecasted_discharge']) if pd.notna(row['forecasted_discharge']) else None
@@ -203,13 +203,13 @@ class CombinedForecastDataMigrator(DataMigrator):
                     "code": str(row['code']),
                     "model_type": str(row['model_short']),
                     "date": row['date'],
-                    "target": None,
+                    "target": (pd.to_datetime(row['date']) + pd.Timedelta(days=1)).strftime('%Y-%m-%d'),
                     "flag": int(row['flag']) if pd.notna(row['flag']) else None,
                     "horizon_value": int(row['decad']),
                     "horizon_in_year": int(row['decad_in_year']),
                     "q05": float(row['q05']) if pd.notna(row['q05']) else None,
                     "q25": float(row['q25']) if pd.notna(row['q25']) else None,
-                    "q50": None,
+                    # "q50": None,
                     "q75": float(row['q75']) if pd.notna(row['q75']) else None,
                     "q95": float(row['q95']) if pd.notna(row['q95']) else None,
                     "forecasted_discharge": float(row['forecasted_discharge']) if pd.notna(row['forecasted_discharge']) else None
@@ -274,6 +274,7 @@ class ForecastDataMigrator(DataMigrator):
     """Handles migration of prediction data from CSV to API"""
 
     def prepare_pentad_data(self, df: pd.DataFrame) -> List[Dict]:
+        # it won't run since we are only migrating decade forecasts for now
         records = []
         for _, row in df.iterrows():
             record = {
@@ -287,10 +288,9 @@ class ForecastDataMigrator(DataMigrator):
                 "horizon_in_year": 0,
                 "q05": float(row['Q5']) if pd.notna(row['Q5']) else None,
                 "q25": float(row['Q25']) if pd.notna(row['Q25']) else None,
-                "q50": float(row['Q50']) if pd.notna(row['Q50']) else None,
                 "q75": float(row['Q75']) if pd.notna(row['Q75']) else None,
                 "q95": float(row['Q95']) if pd.notna(row['Q95']) else None,
-                "forecasted_discharge": None
+                "forecasted_discharge": float(row['Q50']) if pd.notna(row['Q50']) else None,
             }
             records.append(record)
         return records
@@ -299,7 +299,7 @@ class ForecastDataMigrator(DataMigrator):
         records = []
         for _, row in df.iterrows():
             record = {
-                "horizon_type": "decade",
+                "horizon_type": "day",
                 "code": str(row['code']),
                 "model_type": self.model_type,
                 "date": row['forecast_date'],
@@ -309,10 +309,9 @@ class ForecastDataMigrator(DataMigrator):
                 "horizon_in_year": 0,
                 "q05": float(row['Q5']) if pd.notna(row['Q5']) else None,
                 "q25": float(row['Q25']) if pd.notna(row['Q25']) else None,
-                "q50": float(row['Q50']) if pd.notna(row['Q50']) else None,
                 "q75": float(row['Q75']) if pd.notna(row['Q75']) else None,
                 "q95": float(row['Q95']) if pd.notna(row['Q95']) else None,
-                "forecasted_discharge": None
+                "forecasted_discharge": float(row['Q50']) if pd.notna(row['Q50']) else None,
             }
             records.append(record)
         return records
@@ -614,11 +613,13 @@ def main():
 
     if args.type in ['forecast', 'all']:
         horizons = {
-            "pentad": {
-                "TFT": "predictions/TFT/pentad_TFT_forecast_latest.csv",
-                "TiDE": "predictions/TIDE/pentad_TIDE_forecast_latest.csv",
-                "TSMixer": "predictions/TSMIXER/pentad_TSMIXER_forecast_latest.csv"
-            },
+            # since it is subset of decade, we will only migrate decade forecasts for now to avoid duplicates and confusion
+            # "pentad": {
+            #     "TFT": "predictions/TFT/pentad_TFT_forecast_latest.csv",
+            #     "TiDE": "predictions/TIDE/pentad_TIDE_forecast_latest.csv",
+            #     "TSMixer": "predictions/TSMIXER/pentad_TSMIXER_forecast_latest.csv"
+            # },
+            # the horizon would be 'day', 'pentad' and 'decade' values come from combined forecast csv files
             "decade": {
                 "TFT": "predictions/TFT/decad_TFT_forecast_latest.csv",
                 "TiDE": "predictions/TIDE/decad_TIDE_forecast_latest.csv",
