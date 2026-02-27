@@ -49,8 +49,8 @@ These are blocking decisions — work downstream cannot advance until they are r
 
 | ID | Title | Module | Priority | Status | File | Blocked By |
 |----|-------|--------|----------|--------|------|------------|
-| **API-001** | Add bulk-read endpoints to preprocessing/postprocessing services | infra | **High** | Draft | [`gi_draft_api_bulk_read_endpoints.md`](issues/gi_draft_api_bulk_read_endpoints.md) | — |
-| **API-002** | Add missing params to sapphire-api-client (model, target, dates) | infra | **High** | Draft | [`gi_draft_api_client_missing_params.md`](issues/gi_draft_api_client_missing_params.md) | — |
+| **API-001** | Add bulk-read endpoints to preprocessing/postprocessing services | infra | **High** | Draft | [`gi_draft_api_bulk_read_endpoints.md`](issues/gi_draft_api_bulk_read_endpoints.md) | Colleague (sapphire/services/) |
+| **API-002** | Add missing params to sapphire-api-client (model, target, dates) | infra | **High** | Draft | [`gi_draft_api_client_missing_params.md`](issues/gi_draft_api_client_missing_params.md) | External repo (sapphire-api-client) |
 | **API-003** | Define CSV removal acceptance criteria per module | infra | **Medium** | Open | — (needs D-002 decision) | D-002 |
 | **API-004** | Migrate forecast_dashboard to use sapphire-api-client | fd | **Medium** | Open | — | API-002 |
 | **API-005** | Migrate long_term_forecasting from direct SQL to API client | infra | **Medium** | Open | — | API-001 |
@@ -102,7 +102,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | **PP-007** | Maintenance should read from API, not CSV | **High** | Review | See `postprocessing_forecasts/README.md` PP-007 | — |
 | **PP-008** | No audit trail for gap-filled rows | **Low** | Open | See `postprocessing_forecasts/README.md` PP-008 | API schema (colleague) |
 | **PP-009** | Stop calculating EM skill metrics on the fly in operational mode | **Medium** | Review | See `postprocessing_forecasts/README.md` PP-009 | — |
-| **PP-010** | Pentad/decad reads should use API (operational + recalculation) | **Medium** | Open | See `postprocessing_forecasts/README.md` PP-010 | INFRA-007 |
+| ~~**PP-010**~~ | ~~Pentad/decad reads should use API (operational + recalculation)~~ | | Complete | Migrated to `data_reader.read_observed_and_modelled_data()` | — |
 | **PP-011** | Skill metrics API unique key should include date | **Medium** | Open | See `postprocessing_forecasts/README.md` PP-011 | API schema (colleague) |
 | **PP-012** | Daily ensemble creation | **Medium** | Open | See `postprocessing_forecasts/README.md` PP-012 | — |
 | **PP-013** | Monthly maintenance uses CSV-first gap detection | **High** | Review | See `postprocessing_forecasts/README.md` PP-013 | — |
@@ -184,6 +184,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | PP-003 | Implement batch upsert in postprocessing CRUD | 2026-02-15 | See `postprocessing_unified_plan.md` Phase 3 |
 | PP-004 | Replace iterrows() with vectorized operations | 2026-02-15 | See `postprocessing_unified_plan.md` Phase 3 |
 | PP-005 | Create operational/maintenance entry point split | 2026-02-15 | See `postprocessing_unified_plan.md` Phase 2 |
+| PP-010 | Pentad/decad reads should use API (operational + recalculation) | 2026-02-27 | Migrated to `data_reader.read_observed_and_modelled_data()` |
 | PP-014 | Skill metrics read priority inverted (CSV-first, should be API-first) | 2026-02-27 | [`archive/gi_draft_pp_skill_metrics_read_priority.md`](issues/archive/gi_draft_pp_skill_metrics_read_priority.md) |
 
 ### Pipeline (`p`)
@@ -191,7 +192,7 @@ These are blocking decisions — work downstream cannot advance until they are r
 | ID | Title | Resolved | File |
 |----|-------|----------|------|
 | P-002 | Gateway double-run | 2026-02-03 | [`archive/gi_P-002_gateway_double_run_RESOLVED_2026-02-03.md`](../archive/gi_P-002_gateway_double_run_RESOLVED_2026-02-03.md) |
-| P-003 | Consolidate maintenance scripts into Luigi pipeline | In Progress | See plan: `ethereal-dazzling-zebra.md` |
+| P-003 | Consolidate maintenance scripts into Luigi pipeline | 2026-02-27 | See plan: `ethereal-dazzling-zebra.md` |
 
 ---
 
@@ -241,4 +242,4 @@ These documents contain context and specifications referenced by issues above.
 
 ---
 
-*Last updated: 2026-02-27 (P-003: maintenance Luigi consolidation in progress; INFRA-007 → Review: Phases 1/2/2b/2c done, Phase 3 pending deployment)*
+*Last updated: 2026-02-27 (INFRA-004/INFRA-001 plans rewritten with verified line numbers; API-001/API-002 marked as external dependencies; PP-010 complete; P-003 complete; INFRA-007 → Review)*

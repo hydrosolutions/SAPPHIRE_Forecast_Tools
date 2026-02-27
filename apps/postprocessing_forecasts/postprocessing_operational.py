@@ -96,7 +96,9 @@ def postprocessing_operational():
             else:
                 with timer(timing_stats, "reading pentadal data"):
                     logger.info("\n\n------ Reading pentadal observed and modelled data -------")
-                    observed, modelled = sl.read_observed_and_modelled_data_pentade()
+                    _, modelled = data_reader.read_observed_and_modelled_data("pentad")
+                    modelled = sl.calculate_virtual_stations_data(modelled)
+                    modelled = sl.calculate_neural_ensemble_forecast(modelled)
 
                 with timer(timing_stats, "reading pentadal skill metrics"):
                     logger.info("\n\n------ Reading pre-calculated pentadal skill metrics ----")
@@ -142,7 +144,9 @@ def postprocessing_operational():
             else:
                 with timer(timing_stats, "reading decadal data"):
                     logger.info("\n\n------ Reading decadal observed and modelled data -------")
-                    observed_decade, modelled_decade = sl.read_observed_and_modelled_data_decade()
+                    _, modelled_decade = data_reader.read_observed_and_modelled_data("decad")
+                    modelled_decade = sl.calculate_virtual_stations_data(modelled_decade)
+                    modelled_decade = sl.calculate_neural_ensemble_forecast_decade(modelled_decade)
 
                 with timer(timing_stats, "reading decadal skill metrics"):
                     logger.info("\n\n------ Reading pre-calculated decadal skill metrics ----")

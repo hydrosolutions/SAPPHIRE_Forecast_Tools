@@ -15,35 +15,32 @@
 #   MONTHLY — monthly skill metrics only (long-term forecasts)
 #   ALL     — pentad + decad + monthly
 
+import datetime as dt
+import json
+import logging
 import os
 import sys
-import json
-import datetime as dt
-import logging
 from logging.handlers import TimedRotatingFileHandler
 
 # Local libraries
 script_dir = os.path.dirname(os.path.abspath(__file__))
-forecast_dir = os.path.join(script_dir, '..', 'iEasyHydroForecast')
+forecast_dir = os.path.join(script_dir, "..", "iEasyHydroForecast")
 sys.path.append(forecast_dir)
 
 import setup_library as sl
-
+from src import data_reader, file_writer, skill_metrics
 from src import postprocessing_tools as pt
 from src.postprocessing_tools import TimingStats, timer
-from src import skill_metrics
-from src import data_reader
-from src import file_writer
 
 # region Logging
 logging.basicConfig(level=logging.DEBUG)
-formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
 
-if not os.path.exists('logs'):
-    os.makedirs('logs')
+if not os.path.exists("logs"):
+    os.makedirs("logs")
 
 file_handler = TimedRotatingFileHandler(
-    'logs/log_recalc', when='midnight', interval=1, backupCount=30
+    "logs/log_recalc", when="midnight", interval=1, backupCount=30
 )
 file_handler.setFormatter(formatter)
 
@@ -58,7 +55,7 @@ logger.addHandler(console_handler)
 
 timing_stats = TimingStats()
 
-VALID_MODES = ['PENTAD', 'DECAD', 'BOTH', 'MONTHLY', 'DAILY', 'ALL']
+VALID_MODES = ["PENTAD", "DECAD", "BOTH", "MONTHLY", "DAILY", "ALL"]
 
 
 def _read_station_codes():
@@ -71,7 +68,7 @@ def _read_station_codes():
         os.getenv("ieasyforecast_configuration_path", ""),
         os.getenv("ieasyforecast_config_file_station_selection", ""),
     )
-    with open(config_path, "r") as f:
+    with open(config_path) as f:
         config = json.load(f)
     codes = [str(c) for c in config.get("stationsID", [])]
     logger.info("Read %d station codes for monthly recalculation", len(codes))
@@ -81,111 +78,77 @@ def _read_station_codes():
 def recalculate_skill_metrics():
     global timing_stats
 
-    logger.info(
-        "\n\n====== Recalculating ALL skill metrics ========================="
-    )
+    logger.info("\n\n====== Recalculating ALL skill metrics =========================")
     logger.debug(f"Script started at {dt.datetime.now()}.")
 
     errors = []
 
-    with timer(timing_stats, 'total execution'):
-
-        with timer(timing_stats, 'setup'):
-            logger.info(
-                "\n\n------ Setting up --------------------------------"
-            )
+    with timer(timing_stats, "total execution"):
+        with timer(timing_stats, "setup"):
+            logger.info("\n\n------ Setting up --------------------------------")
             sl.load_environment()
 
-        prediction_mode = os.getenv('SAPPHIRE_PREDICTION_MODE', '') or 'BOTH'
+        prediction_mode = os.getenv("SAPPHIRE_PREDICTION_MODE", "") or "BOTH"
         if prediction_mode not in VALID_MODES:
             logger.error(
                 f"Invalid SAPPHIRE_PREDICTION_MODE: {prediction_mode}. "
                 f"Expected one of {VALID_MODES}."
             )
             sys.exit(1)
-        logger.info(
-            f"Running skill metrics recalculation for mode: "
-            f"{prediction_mode}"
-        )
+        logger.info(f"Running skill metrics recalculation for mode: {prediction_mode}")
 
-        skill_metrics_year = int(os.getenv(
-            'SAPPHIRE_SKILL_METRICS_YEAR', dt.date.today().year
-        ))
-        logger.info(
-            f"Skill metrics target year: {skill_metrics_year}"
-        )
+        skill_metrics_year = int(os.getenv("SAPPHIRE_SKILL_METRICS_YEAR", dt.date.today().year))
+        logger.info(f"Skill metrics target year: {skill_metrics_year}")
 
-        if prediction_mode in ['PENTAD', 'BOTH', 'ALL']:
-            with timer(timing_stats, 'reading pentadal data'):
-                logger.info(
-                    "\n\n------ Reading pentadal observed and modelled "
-                    "data -------"
-                )
-                observed, modelled = (
-                    sl.read_observed_and_modelled_data_pentade()
-                )
+        if prediction_mode in ["PENTAD", "BOTH", "ALL"]:
+            with timer(timing_stats, "reading pentadal data"):
+                logger.info("\n\n------ Reading pentadal observed and modelled data -------")
+                observed, modelled = data_reader.read_observed_and_modelled_data("pentad")
+                modelled = sl.calculate_virtual_stations_data(modelled)
+                modelled = sl.calculate_neural_ensemble_forecast(modelled)
 
-            with timer(timing_stats, 'calculating skill metrics pentads'):
-                logger.info(
-                    "\n\n------ Calculating skill metrics pentads --------"
-                )
+            with timer(timing_stats, "calculating skill metrics pentads"):
+                logger.info("\n\n------ Calculating skill metrics pentads --------")
                 original_timing_stats = timing_stats
                 skill_metrics_result, modelled, returned_timing_stats = (
-                    skill_metrics.calculate_skill_metrics_pentad(
-                        observed, modelled, timing_stats
-                    )
+                    skill_metrics.calculate_skill_metrics_pentad(observed, modelled, timing_stats)
                 )
                 if returned_timing_stats is not None:
                     timing_stats = returned_timing_stats
                 else:
                     timing_stats = original_timing_stats
 
-            with timer(timing_stats, 'saving pentad results'):
-                logger.info(
-                    "\n\n------ Saving pentad results --------------------"
-                )
+            with timer(timing_stats, "saving pentad results"):
+                logger.info("\n\n------ Saving pentad results --------------------")
                 ret = file_writer.save_forecast_data_pentad(modelled)
                 if ret is None:
-                    logger.info(
-                        "Pentadal forecast results saved successfully."
-                    )
+                    logger.info("Pentadal forecast results saved successfully.")
                 else:
-                    logger.error(
-                        f"Error saving pentadal forecast results: {ret}"
-                    )
+                    logger.error(f"Error saving pentadal forecast results: {ret}")
                     errors.append(f"Pentad forecast save failed: {ret}")
 
                 ret = file_writer.save_pentadal_skill_metrics(
                     skill_metrics_result, year=skill_metrics_year
                 )
                 if ret is None:
-                    logger.info(
-                        "Pentadal skill metrics saved successfully."
-                    )
+                    logger.info("Pentadal skill metrics saved successfully.")
                 else:
-                    logger.error(
-                        f"Error saving pentadal skill metrics: {ret}"
-                    )
-                    errors.append(
-                        f"Pentad skill metrics save failed: {ret}"
-                    )
+                    logger.error(f"Error saving pentadal skill metrics: {ret}")
+                    errors.append(f"Pentad skill metrics save failed: {ret}")
 
             pt.log_most_recent_forecasts_pentad(modelled)
 
-        if prediction_mode in ['DECAD', 'BOTH', 'ALL']:
-            with timer(timing_stats, 'reading decadal data'):
-                logger.info(
-                    "\n\n------ Reading decadal observed and modelled "
-                    "data -------"
+        if prediction_mode in ["DECAD", "BOTH", "ALL"]:
+            with timer(timing_stats, "reading decadal data"):
+                logger.info("\n\n------ Reading decadal observed and modelled data -------")
+                observed_decade, modelled_decade = data_reader.read_observed_and_modelled_data(
+                    "decad"
                 )
-                observed_decade, modelled_decade = (
-                    sl.read_observed_and_modelled_data_decade()
-                )
+                modelled_decade = sl.calculate_virtual_stations_data(modelled_decade)
+                modelled_decade = sl.calculate_neural_ensemble_forecast_decade(modelled_decade)
 
-            with timer(timing_stats, 'calculating skill metrics decads'):
-                logger.info(
-                    "\n\n------ Calculating skill metrics decads ---------"
-                )
+            with timer(timing_stats, "calculating skill metrics decads"):
+                logger.info("\n\n------ Calculating skill metrics decads ---------")
                 original_timing_stats = timing_stats
                 skill_metrics_decade, modelled_decade, returned_timing_stats = (
                     skill_metrics.calculate_skill_metrics_decade(
@@ -197,65 +160,44 @@ def recalculate_skill_metrics():
                 else:
                     timing_stats = original_timing_stats
 
-            with timer(timing_stats, 'saving decade results'):
-                logger.info(
-                    "\n\n------ Saving decade results --------------------"
-                )
+            with timer(timing_stats, "saving decade results"):
+                logger.info("\n\n------ Saving decade results --------------------")
                 ret = file_writer.save_forecast_data_decade(modelled_decade)
                 if ret is None:
-                    logger.info(
-                        "Decadal forecast results saved successfully."
-                    )
+                    logger.info("Decadal forecast results saved successfully.")
                 else:
-                    logger.error(
-                        f"Error saving decadal forecast results: {ret}"
-                    )
+                    logger.error(f"Error saving decadal forecast results: {ret}")
                     errors.append(f"Decade forecast save failed: {ret}")
 
                 ret = file_writer.save_decadal_skill_metrics(
                     skill_metrics_decade, year=skill_metrics_year
                 )
                 if ret is None:
-                    logger.info(
-                        "Decadal skill metrics saved successfully."
-                    )
+                    logger.info("Decadal skill metrics saved successfully.")
                 else:
-                    logger.error(
-                        f"Error saving decadal skill metrics: {ret}"
-                    )
-                    errors.append(
-                        f"Decade skill metrics save failed: {ret}"
-                    )
+                    logger.error(f"Error saving decadal skill metrics: {ret}")
+                    errors.append(f"Decade skill metrics save failed: {ret}")
 
             pt.log_most_recent_forecasts_decade(modelled_decade)
 
-        if prediction_mode in ['MONTHLY', 'ALL']:
+        if prediction_mode in ["MONTHLY", "ALL"]:
             current_year = dt.date.today().year
-            start_year = int(os.getenv(
-                'SAPPHIRE_SKILL_METRICS_START_YEAR',
-                os.getenv('SAPPHIRE_RECALC_START_YEAR', current_year - 20),
-            ))
-            end_year = int(os.getenv(
-                'SAPPHIRE_RECALC_END_YEAR', current_year
-            ))
+            start_year = int(
+                os.getenv(
+                    "SAPPHIRE_SKILL_METRICS_START_YEAR",
+                    os.getenv("SAPPHIRE_RECALC_START_YEAR", current_year - 20),
+                )
+            )
+            end_year = int(os.getenv("SAPPHIRE_RECALC_END_YEAR", current_year))
             codes = _read_station_codes()
 
-            with timer(timing_stats, 'reading monthly data'):
-                logger.info(
-                    "\n\n------ Reading monthly observed and forecast "
-                    "data -------"
-                )
-                monthly_obs = data_reader.read_monthly_observations(
-                    codes, start_year, end_year
-                )
-                monthly_fc = data_reader.read_monthly_forecasts(
-                    codes, start_year, end_year
-                )
+            with timer(timing_stats, "reading monthly data"):
+                logger.info("\n\n------ Reading monthly observed and forecast data -------")
+                monthly_obs = data_reader.read_monthly_observations(codes, start_year, end_year)
+                monthly_fc = data_reader.read_monthly_forecasts(codes, start_year, end_year)
 
-            with timer(timing_stats, 'calculating skill metrics monthly'):
-                logger.info(
-                    "\n\n------ Calculating skill metrics monthly --------"
-                )
+            with timer(timing_stats, "calculating skill metrics monthly"):
+                logger.info("\n\n------ Calculating skill metrics monthly --------")
                 original_timing_stats = timing_stats
                 monthly_skill, monthly_joint, returned_timing_stats = (
                     skill_metrics.calculate_monthly_skill_metrics(
@@ -267,122 +209,80 @@ def recalculate_skill_metrics():
                 else:
                     timing_stats = original_timing_stats
 
-            with timer(timing_stats, 'saving monthly results'):
-                logger.info(
-                    "\n\n------ Saving monthly results -------------------"
-                )
+            with timer(timing_stats, "saving monthly results"):
+                logger.info("\n\n------ Saving monthly results -------------------")
                 ret = file_writer.save_monthly_forecast_data(monthly_joint)
                 if ret is None:
-                    logger.info(
-                        "Monthly forecast data saved successfully."
-                    )
+                    logger.info("Monthly forecast data saved successfully.")
                 else:
-                    logger.error(
-                        f"Error saving monthly forecast data: {ret}"
-                    )
-                    errors.append(
-                        f"Monthly forecast data save failed: {ret}"
-                    )
+                    logger.error(f"Error saving monthly forecast data: {ret}")
+                    errors.append(f"Monthly forecast data save failed: {ret}")
 
-                ret = file_writer.save_monthly_skill_metrics(
-                    monthly_skill, year=skill_metrics_year
-                )
+                ret = file_writer.save_monthly_skill_metrics(monthly_skill, year=skill_metrics_year)
                 if ret is None:
-                    logger.info(
-                        "Monthly skill metrics saved successfully."
-                    )
+                    logger.info("Monthly skill metrics saved successfully.")
                 else:
-                    logger.error(
-                        f"Error saving monthly skill metrics: {ret}"
-                    )
-                    errors.append(
-                        f"Monthly skill metrics save failed: {ret}"
-                    )
+                    logger.error(f"Error saving monthly skill metrics: {ret}")
+                    errors.append(f"Monthly skill metrics save failed: {ret}")
 
             pt.log_most_recent_forecasts_monthly(monthly_joint)
 
-        if prediction_mode in ['DAILY', 'ALL']:
+        if prediction_mode in ["DAILY", "ALL"]:
             current_year = dt.date.today().year
-            start_year = int(os.getenv(
-                'SAPPHIRE_SKILL_METRICS_START_YEAR',
-                os.getenv('SAPPHIRE_RECALC_START_YEAR', current_year - 20),
-            ))
-            end_year = int(os.getenv(
-                'SAPPHIRE_RECALC_END_YEAR', current_year
-            ))
+            start_year = int(
+                os.getenv(
+                    "SAPPHIRE_SKILL_METRICS_START_YEAR",
+                    os.getenv("SAPPHIRE_RECALC_START_YEAR", current_year - 20),
+                )
+            )
+            end_year = int(os.getenv("SAPPHIRE_RECALC_END_YEAR", current_year))
             codes = _read_station_codes()
 
-            with timer(timing_stats, 'reading daily data'):
-                logger.info(
-                    "\n\n------ Reading daily observed and forecast "
-                    "data -------"
-                )
-                daily_obs = data_reader.read_daily_observations(
-                    codes, start_year, end_year
-                )
-                daily_fc = data_reader.read_daily_forecasts(
-                    codes, start_year, end_year
-                )
+            with timer(timing_stats, "reading daily data"):
+                logger.info("\n\n------ Reading daily observed and forecast data -------")
+                daily_obs = data_reader.read_daily_observations(codes, start_year, end_year)
+                daily_fc = data_reader.read_daily_forecasts(codes, start_year, end_year)
 
-            with timer(timing_stats, 'calculating daily skill metrics'):
-                logger.info(
-                    "\n\n------ Calculating daily skill metrics ---------"
-                )
+            with timer(timing_stats, "calculating daily skill metrics"):
+                logger.info("\n\n------ Calculating daily skill metrics ---------")
                 try:
-                    fdc_metrics, threshold_metrics = (
-                        skill_metrics.calculate_daily_skill_metrics(
-                            daily_obs, daily_fc
-                        )
+                    fdc_metrics, threshold_metrics = skill_metrics.calculate_daily_skill_metrics(
+                        daily_obs, daily_fc
                     )
                     logger.info(
                         "Daily metrics: %d FDC rows, %d threshold rows",
-                        len(fdc_metrics), len(threshold_metrics),
+                        len(fdc_metrics),
+                        len(threshold_metrics),
                     )
                 except Exception as e:
-                    logger.error(
-                        "Failed to calculate daily skill metrics: %s", e
-                    )
-                    errors.append(
-                        f"Daily skill metrics calculation failed: {e}"
-                    )
+                    logger.error("Failed to calculate daily skill metrics: %s", e)
+                    errors.append(f"Daily skill metrics calculation failed: {e}")
                     fdc_metrics = None
                     threshold_metrics = None
 
-            with timer(timing_stats, 'saving daily results'):
-                logger.info(
-                    "\n\n------ Saving daily results --------------------"
-                )
+            with timer(timing_stats, "saving daily results"):
+                logger.info("\n\n------ Saving daily results --------------------")
                 try:
                     file_writer.save_daily_skill_metrics(
-                        fdc_metrics, threshold_metrics,
+                        fdc_metrics,
+                        threshold_metrics,
                         year=skill_metrics_year,
                     )
-                    logger.info(
-                        "Daily skill metrics saved successfully."
-                    )
+                    logger.info("Daily skill metrics saved successfully.")
                 except Exception as e:
-                    logger.error(
-                        "Error saving daily skill metrics: %s", e
-                    )
-                    errors.append(
-                        f"Daily skill metrics save failed: {e}"
-                    )
+                    logger.error("Error saving daily skill metrics: %s", e)
+                    errors.append(f"Daily skill metrics save failed: {e}")
 
     # Print timing summary
     summary, total = timing_stats.summary()
     logger.info("\n\n")
     logger.info("Timing summary for recalculate_skill_metrics:")
-    logger.info("Total execution time: {:.2f} seconds".format(total))
+    logger.info(f"Total execution time: {total:.2f} seconds")
     logger.info("Breakdown by section:")
     for entry in summary:
         logger.info(f"{entry['section']}:")
-        logger.info(
-            f"  Total time: {entry['total_time']:.2f} seconds "
-            f"({entry['percentage']:.1f}%)"
-        )
-        logger.info(
-            f"  Average time per call: {entry['avg_time']:.2f} seconds"
-        )
+        logger.info(f"  Total time: {entry['total_time']:.2f} seconds ({entry['percentage']:.1f}%)")
+        logger.info(f"  Average time per call: {entry['avg_time']:.2f} seconds")
         logger.info(f"  Number of calls: {entry['calls']}")
 
     if errors:
@@ -391,9 +291,7 @@ def recalculate_skill_metrics():
             logger.error(f"  - {error}")
         sys.exit(1)
     else:
-        logger.info(
-            f"Script finished successfully at {dt.datetime.now()}."
-        )
+        logger.info(f"Script finished successfully at {dt.datetime.now()}.")
         sys.exit(0)
 
 

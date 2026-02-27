@@ -9,9 +9,8 @@ API-first I/O via the SAPPHIRE postprocessing API. The target state is:
 - **Reads:** API as primary source, CSV as deprecated fallback only.
 - **Writes:** API as primary destination, CSV as deprecated backup only.
 
-CSV I/O will be removed once API integration is fully validated. See open
-issue PP-010 for the remaining read migration gap (pentad/decad operational
-reads). PP-007 and PP-013 have been resolved.
+CSV I/O will be removed once API integration is fully validated.
+PP-007, PP-010, PP-013, and PP-014 have been resolved.
 
 ## Forecast Horizons
 
@@ -77,9 +76,9 @@ otherwise.
 1. **Boundary check** -- Is today a pentad/decad boundary day?
 2. **Read current forecasts** -- Today's observed + modelled data.
    - **Target state:** Read from API as the primary source.
-   - **Current state (pentad/decad):** Read via `setup_library` (CSV-based).
-     **This must be migrated to API-first reads.** See PP-010.
-   - **Current state (monthly):** Already reads from API. Correct.
+   - **Current state (pentad/decad):** Read from API via
+     `data_reader.read_observed_and_modelled_data()`, with CSV fallback.
+   - **Current state (monthly):** Read from API. Correct.
 3. **Read pre-calculated skill metrics** -- via `data_reader.read_skill_metrics`.
    - API is the primary source, CSV is a deprecated fallback only.
 4. **Create ensemble forecasts** -- Separately for each horizon:
@@ -204,7 +203,7 @@ recalculation logic. Use `recalculate_skill_metrics.py` instead.
 
 | Horizon | Operational reads | Recalculation reads | Status |
 |---------|------------------|--------------------|-|
-| Pentad/decad forecasts | `setup_library` (CSV) | `setup_library` (CSV) | **Must migrate to API** (PP-010, INFRA-007) |
+| Pentad/decad forecasts | API-first, CSV-fallback | API-first, CSV-fallback | Correct (PP-010 resolved) |
 | Pentad/decad skill metrics | API-first, CSV-fallback | N/A (produces them) | Correct |
 | Monthly | API (with CSV fallback) | API (with CSV fallback) | Correct |
 | Daily | API | API | Correct |
@@ -213,9 +212,9 @@ recalculation logic. Use `recalculate_skill_metrics.py` instead.
 |---------|--------|--------|
 | All | API (upsert) + CSV (atomic write) | CSV to be deprecated after validation |
 
-The monthly (long-term) path is the most API-integrated part of the module.
-Pentad/decad historical data still flows through `setup_library` which reads
-CSVs -- this is the largest remaining migration gap.
+All read paths now use the API as primary source with CSV as deprecated
+fallback. NE and virtual station calculations remain in `setup_library`
+but these compute derived values, not raw data reads.
 
 ## Skill Metrics
 
@@ -423,21 +422,13 @@ recalculation instead.
 **Affects:** `ensemble_calculator.create_ensemble_forecasts()`,
 `postprocessing_operational.py`
 
-### PP-010: Pentad/decad reads should use API (operational + recalculation)
+### ~~PP-010: Pentad/decad reads should use API (operational + recalculation)~~
 
-**Current:** Pentad/decad data (both operational and recalculation) is read via
-`setup_library` (CSV). Monthly and daily already read from the API.
-
-**Target:** Migrate pentad/decad reads to the API, consistent with the monthly
-path. This covers both the operational entry point
-(`postprocessing_operational.py`) and the recalculation entry point
-(`recalculate_skill_metrics.py`).
-
-**Related:** INFRA-007 (fix ML forecast API reader) addresses the underlying
-write/read architecture that this migration depends on.
-
-**Affects:** `postprocessing_operational.py`, `recalculate_skill_metrics.py`,
-`setup_library`
+**Status: Complete.** Pentad/decad reads migrated to API-first via
+`data_reader.read_observed_and_modelled_data()`. All three entry points
+(operational, recalculation, maintenance) now use the new readers.
+NE and virtual station calculations remain in `setup_library`, called
+explicitly from entry points.
 
 ### PP-011: Skill metrics API unique key should include date
 

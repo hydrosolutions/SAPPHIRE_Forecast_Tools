@@ -18,23 +18,21 @@ import importlib.util
 import os
 import shutil
 import sys
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pandas as pd
 import pytest
-from unittest.mock import patch, MagicMock
 
 # ---------------------------------------------------------------------------
 # Path setup — same pattern as test_wiring_integration.py
 # ---------------------------------------------------------------------------
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-sys.path.insert(
-    0, os.path.join(os.path.dirname(__file__), '..', '..', 'iEasyHydroForecast')
-)
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "iEasyHydroForecast"))
 sys.path.insert(0, os.path.dirname(__file__))
 
-SCRIPT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-TEST_DATA_DIR = os.path.join(os.path.dirname(__file__), 'test_data')
+SCRIPT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+TEST_DATA_DIR = os.path.join(os.path.dirname(__file__), "test_data")
 
 
 # ---------------------------------------------------------------------------
@@ -78,50 +76,44 @@ def integration_env(tmp_path):
     """
     # 1. Copy test_data/ -> tmp_path/data/
     src = TEST_DATA_DIR
-    dst = str(tmp_path / 'data')
+    dst = str(tmp_path / "data")
     shutil.copytree(src, dst)
 
     # 2. Create logs dir (entry points create this at CWD)
-    (tmp_path / 'logs').mkdir(exist_ok=True)
+    (tmp_path / "logs").mkdir(exist_ok=True)
 
     # 3. Create forecast_logs dir for postprocessing_tools
-    os.makedirs(os.path.join(dst, 'forecast_logs'), exist_ok=True)
+    os.makedirs(os.path.join(dst, "forecast_logs"), exist_ok=True)
 
     # 4. Set all env vars pointing to tmp_path/data/
     env_overrides = {
-        'ieasyforecast_intermediate_data_path': dst,
-        'ieasyforecast_pentad_discharge_file': 'runoff_pentad.csv',
-        'ieasyforecast_decad_discharge_file': 'runoff_decad.csv',
-        'ieasyforecast_analysis_pentad_file': 'forecast_pentad_linreg.csv',
-        'ieasyforecast_analysis_decad_file': 'forecast_decad_linreg.csv',
-        'ieasyhydroforecast_OUTPUT_PATH_DISCHARGE': 'predictions',
-        'ieasyforecast_combined_forecast_pentad_file':
-            'combined_forecasts_pentad.csv',
-        'ieasyforecast_combined_forecast_decad_file':
-            'combined_forecasts_decad.csv',
-        'ieasyforecast_pentadal_skill_metrics_file':
-            'skill_metrics_pentad.csv',
-        'ieasyforecast_decadal_skill_metrics_file':
-            'skill_metrics_decad.csv',
-        'ieasyforecast_configuration_path': os.path.join(dst, 'config'),
-        'ieasyforecast_config_file_all_stations':
-            'config_all_stations_library.json',
-        'ieasyforecast_config_file_station_selection':
-            'config_station_selection.json',
-        'ieasyforecast_config_file_output': 'config_output.json',
-        'ieasyhydroforecast_run_ML_models': 'True',
-        'ieasyhydroforecast_available_ML_models': 'TFT,TIDE,TSMIXER',
-        'ieasyhydroforecast_run_CM_models': 'False',
-        'ieasyhydroforecast_organization': 'demo',
-        'SAPPHIRE_API_ENABLED': 'false',
-        'SAPPHIRE_CONSISTENCY_CHECK': 'false',
-        'SAPPHIRE_TEST_ENV': 'True',
-        'ieasyhydroforecast_efficiency_threshold': '0.6',
-        'ieasyhydroforecast_accuracy_threshold': '0.8',
-        'ieasyhydroforecast_nse_threshold': '0.8',
-        'ieasyforecast_daily_discharge_path': dst,
-        'ieasyforecast_hydrograph_pentad_file': 'hydrograph_pentad.csv',
-        'ieasyforecast_hydrograph_day_file': 'hydrograph_day.csv',
+        "ieasyforecast_intermediate_data_path": dst,
+        "ieasyforecast_pentad_discharge_file": "runoff_pentad.csv",
+        "ieasyforecast_decad_discharge_file": "runoff_decad.csv",
+        "ieasyforecast_analysis_pentad_file": "forecast_pentad_linreg.csv",
+        "ieasyforecast_analysis_decad_file": "forecast_decad_linreg.csv",
+        "ieasyhydroforecast_OUTPUT_PATH_DISCHARGE": "predictions",
+        "ieasyforecast_combined_forecast_pentad_file": "combined_forecasts_pentad.csv",
+        "ieasyforecast_combined_forecast_decad_file": "combined_forecasts_decad.csv",
+        "ieasyforecast_pentadal_skill_metrics_file": "skill_metrics_pentad.csv",
+        "ieasyforecast_decadal_skill_metrics_file": "skill_metrics_decad.csv",
+        "ieasyforecast_configuration_path": os.path.join(dst, "config"),
+        "ieasyforecast_config_file_all_stations": "config_all_stations_library.json",
+        "ieasyforecast_config_file_station_selection": "config_station_selection.json",
+        "ieasyforecast_config_file_output": "config_output.json",
+        "ieasyhydroforecast_run_ML_models": "True",
+        "ieasyhydroforecast_available_ML_models": "TFT,TIDE,TSMIXER",
+        "ieasyhydroforecast_run_CM_models": "False",
+        "ieasyhydroforecast_organization": "demo",
+        "SAPPHIRE_API_ENABLED": "false",
+        "SAPPHIRE_CONSISTENCY_CHECK": "false",
+        "SAPPHIRE_TEST_ENV": "True",
+        "ieasyhydroforecast_efficiency_threshold": "0.6",
+        "ieasyhydroforecast_accuracy_threshold": "0.8",
+        "ieasyhydroforecast_nse_threshold": "0.8",
+        "ieasyforecast_daily_discharge_path": dst,
+        "ieasyforecast_hydrograph_pentad_file": "hydrograph_pentad.csv",
+        "ieasyforecast_hydrograph_day_file": "hydrograph_day.csv",
     }
     with patch.dict(os.environ, env_overrides):
         yield tmp_path, dst
@@ -132,20 +124,46 @@ def _setup_modules_with_real_io():
 
     Returns the real setup_library module (with load_environment patched)
     so tests can restore it after.
+
+    data_reader.read_observed_and_modelled_data is patched to delegate
+    to the old sl.read_observed_and_modelled_data_pentade/decade which
+    know how to read the test CSV data layout.
     """
     import setup_library as real_sl
     import tag_library as real_tl
     from src import (
-        data_reader, ensemble_calculator, gap_detector,
-        skill_metrics, file_writer, postprocessing_tools, api_writer,
+        api_writer,
+        data_reader,
+        ensemble_calculator,
+        file_writer,
+        gap_detector,
+        postprocessing_tools,
+        skill_metrics,
     )
 
     # Patch only load_environment — everything else in sl is real
     real_sl.load_environment = MagicMock(return_value=None)
 
+    # Patch data_reader.read_observed_and_modelled_data to delegate to
+    # the old sl reader functions.  The test data CSVs match the layout
+    # that sl.read_observed_and_modelled_data_pentade/decade expects.
+    _original_read = (
+        getattr(data_reader, "_original_read_observed_and_modelled_data", None)
+        or data_reader.read_observed_and_modelled_data
+    )
+
+    def _delegating_read(horizon_type, **kwargs):
+        if horizon_type == "pentad":
+            return real_sl.read_observed_and_modelled_data_pentade()
+        else:
+            return real_sl.read_observed_and_modelled_data_decade()
+
+    data_reader._original_read_observed_and_modelled_data = _original_read
+    data_reader.read_observed_and_modelled_data = _delegating_read
+
     # Inject into sys.modules so entry-point imports find them
-    sys.modules['setup_library'] = real_sl
-    sys.modules['tag_library'] = real_tl
+    sys.modules["setup_library"] = real_sl
+    sys.modules["tag_library"] = real_tl
 
     real_src = MagicMock()
     real_src.postprocessing_tools = postprocessing_tools
@@ -156,14 +174,14 @@ def _setup_modules_with_real_io():
     real_src.file_writer = file_writer
     real_src.api_writer = api_writer
 
-    sys.modules['src'] = real_src
-    sys.modules['src.postprocessing_tools'] = postprocessing_tools
-    sys.modules['src.data_reader'] = data_reader
-    sys.modules['src.ensemble_calculator'] = ensemble_calculator
-    sys.modules['src.gap_detector'] = gap_detector
-    sys.modules['src.skill_metrics'] = skill_metrics
-    sys.modules['src.file_writer'] = file_writer
-    sys.modules['src.api_writer'] = api_writer
+    sys.modules["src"] = real_src
+    sys.modules["src.postprocessing_tools"] = postprocessing_tools
+    sys.modules["src.data_reader"] = data_reader
+    sys.modules["src.ensemble_calculator"] = ensemble_calculator
+    sys.modules["src.gap_detector"] = gap_detector
+    sys.modules["src.skill_metrics"] = skill_metrics
+    sys.modules["src.file_writer"] = file_writer
+    sys.modules["src.api_writer"] = api_writer
 
     return real_sl
 
@@ -179,12 +197,12 @@ def _read_output_csv(data_dir, filename):
 # ---------------------------------------------------------------------------
 # Discharge calculation helpers (matching generate_test_data.py)
 # ---------------------------------------------------------------------------
-OBS_BASE = {'99001': 10.0, '99002': 50.0, '99003': 100.0}
+OBS_BASE = {"99001": 10.0, "99002": 50.0, "99003": 100.0}
 BIASES = {
-    'LR': {'99001': 0.5, '99002': 1.0, '99003': 2.0},
-    'TFT': {'99001': -0.3, '99002': -0.5, '99003': 40.0},
-    'TiDE': {'99001': 0.8, '99002': 25.0, '99003': 50.0},
-    'TSMixer': {'99001': -0.2, '99002': 20.0, '99003': 35.0},
+    "LR": {"99001": 0.5, "99002": 1.0, "99003": 2.0},
+    "TFT": {"99001": -0.3, "99002": -0.5, "99003": 40.0},
+    "TiDE": {"99001": 0.8, "99002": 25.0, "99003": 50.0},
+    "TSMixer": {"99001": -0.2, "99002": 20.0, "99003": 35.0},
 }
 
 
@@ -205,9 +223,7 @@ def _fc(station, year, model):
 class TestOperationalIntegration:
     """Operational entry point with real file I/O throughout."""
 
-    def test_pentad_multi_station_ensemble_with_csv_roundtrip(
-        self, integration_env
-    ):
+    def test_pentad_multi_station_ensemble_with_csv_roundtrip(self, integration_env):
         """Three stations with different skill profiles produce correct EM.
 
         99001: 3-model EM (LR+TFT+TiDE)
@@ -216,14 +232,12 @@ class TestOperationalIntegration:
         """
         tmp_path, data_dir = integration_env
 
-        with patch.dict(
-            os.environ, {'SAPPHIRE_PREDICTION_MODE': 'PENTAD'}
-        ):
+        with patch.dict(os.environ, {"SAPPHIRE_PREDICTION_MODE": "PENTAD"}):
             with patch.dict(sys.modules, {}):
                 _setup_modules_with_real_io()
 
                 module, spec = _import_operational()
-                with patch('os.getcwd', return_value=str(tmp_path)):
+                with patch("os.getcwd", return_value=str(tmp_path)):
                     spec.loader.exec_module(module)
                     module.is_pentad_boundary = lambda d: True
 
@@ -233,70 +247,62 @@ class TestOperationalIntegration:
                 assert exc_info.value.code == 0
 
         # Re-read the output CSV
-        output = _read_output_csv(data_dir, 'combined_forecasts_pentad.csv')
+        output = _read_output_csv(data_dir, "combined_forecasts_pentad.csv")
         assert not output.empty, "Output CSV should not be empty"
 
         # Check EM rows exist for 99001 and 99002 but not 99003
-        em = output[output['model_short'] == 'EM']
-        em_stations = set(em['code'].astype(str))
-        assert '99001' in em_stations, "99001 should have EM (3 models pass)"
-        assert '99002' in em_stations, "99002 should have EM (2 models pass)"
-        assert '99003' not in em_stations, (
-            "99003 should NOT have EM (only 1 model passes)"
-        )
+        em = output[output["model_short"] == "EM"]
+        em_stations = set(em["code"].astype(str))
+        assert "99001" in em_stations, "99001 should have EM (3 models pass)"
+        assert "99002" in em_stations, "99002 should have EM (2 models pass)"
+        assert "99003" not in em_stations, "99003 should NOT have EM (only 1 model passes)"
 
         # Spot-check EM discharge for 99001 at 2026-01-05
         # EM = mean(LR, TFT, TiDE) = mean(fc(99001,2026,LR), ...)
-        em_99001_latest = em[
-            (em['code'].astype(str) == '99001') &
-            (em['date'] == '2026-01-05')
-        ]
-        assert not em_99001_latest.empty, (
-            "99001 should have EM row at 2026-01-05"
+        em_99001_latest = em[(em["code"].astype(str) == "99001") & (em["date"] == "2026-01-05")]
+        assert not em_99001_latest.empty, "99001 should have EM row at 2026-01-05"
+        expected_em = round(
+            np.mean(
+                [
+                    _fc("99001", 2026, "LR"),
+                    _fc("99001", 2026, "TFT"),
+                    _fc("99001", 2026, "TiDE"),
+                ]
+            ),
+            3,
         )
-        expected_em = round(np.mean([
-            _fc('99001', 2026, 'LR'),
-            _fc('99001', 2026, 'TFT'),
-            _fc('99001', 2026, 'TiDE'),
-        ]), 3)
-        actual = em_99001_latest['forecasted_discharge'].iloc[0]
+        actual = em_99001_latest["forecasted_discharge"].iloc[0]
         assert actual == pytest.approx(expected_em, abs=0.01), (
-            f"99001 EM at 2026-01-05: expected {expected_em}, "
-            f"got {actual}"
+            f"99001 EM at 2026-01-05: expected {expected_em}, got {actual}"
         )
 
         # Spot-check EM for 99002 — should be mean(LR, TFT) only
-        em_99002_latest = em[
-            (em['code'].astype(str) == '99002') &
-            (em['date'] == '2026-01-05')
-        ]
-        assert not em_99002_latest.empty, (
-            "99002 should have EM row at 2026-01-05"
+        em_99002_latest = em[(em["code"].astype(str) == "99002") & (em["date"] == "2026-01-05")]
+        assert not em_99002_latest.empty, "99002 should have EM row at 2026-01-05"
+        expected_em = round(
+            np.mean(
+                [
+                    _fc("99002", 2026, "LR"),
+                    _fc("99002", 2026, "TFT"),
+                ]
+            ),
+            3,
         )
-        expected_em = round(np.mean([
-            _fc('99002', 2026, 'LR'),
-            _fc('99002', 2026, 'TFT'),
-        ]), 3)
-        actual = em_99002_latest['forecasted_discharge'].iloc[0]
+        actual = em_99002_latest["forecasted_discharge"].iloc[0]
         assert actual == pytest.approx(expected_em, abs=0.01), (
-            f"99002 EM at 2026-01-05: expected {expected_em}, "
-            f"got {actual}"
+            f"99002 EM at 2026-01-05: expected {expected_em}, got {actual}"
         )
 
-    def test_decad_multi_station_ensemble_with_csv_roundtrip(
-        self, integration_env
-    ):
+    def test_decad_multi_station_ensemble_with_csv_roundtrip(self, integration_env):
         """Decad mode produces correct EM for stations with passing models."""
         tmp_path, data_dir = integration_env
 
-        with patch.dict(
-            os.environ, {'SAPPHIRE_PREDICTION_MODE': 'DECAD'}
-        ):
+        with patch.dict(os.environ, {"SAPPHIRE_PREDICTION_MODE": "DECAD"}):
             with patch.dict(sys.modules, {}):
                 _setup_modules_with_real_io()
 
                 module, spec = _import_operational()
-                with patch('os.getcwd', return_value=str(tmp_path)):
+                with patch("os.getcwd", return_value=str(tmp_path)):
                     spec.loader.exec_module(module)
                     # Override boundary check so decad processes
                     module.is_decad_boundary = lambda d: True
@@ -306,29 +312,25 @@ class TestOperationalIntegration:
 
                 assert exc_info.value.code == 0
 
-        output = _read_output_csv(data_dir, 'combined_forecasts_decad.csv')
+        output = _read_output_csv(data_dir, "combined_forecasts_decad.csv")
         assert not output.empty
 
-        em = output[output['model_short'] == 'EM']
-        em_stations = set(em['code'].astype(str))
-        assert '99001' in em_stations
-        assert '99002' in em_stations
-        assert '99003' not in em_stations
+        em = output[output["model_short"] == "EM"]
+        em_stations = set(em["code"].astype(str))
+        assert "99001" in em_stations
+        assert "99002" in em_stations
+        assert "99003" not in em_stations
 
-    def test_both_mode_produces_pentad_and_decad_output_csvs(
-        self, integration_env
-    ):
+    def test_both_mode_produces_pentad_and_decad_output_csvs(self, integration_env):
         """BOTH mode writes output CSVs for both horizons."""
         tmp_path, data_dir = integration_env
 
-        with patch.dict(
-            os.environ, {'SAPPHIRE_PREDICTION_MODE': 'BOTH'}
-        ):
+        with patch.dict(os.environ, {"SAPPHIRE_PREDICTION_MODE": "BOTH"}):
             with patch.dict(sys.modules, {}):
                 _setup_modules_with_real_io()
 
                 module, spec = _import_operational()
-                with patch('os.getcwd', return_value=str(tmp_path)):
+                with patch("os.getcwd", return_value=str(tmp_path)):
                     spec.loader.exec_module(module)
                     # Override boundary checks so both horizons process
                     module.is_pentad_boundary = lambda d: True
@@ -340,42 +342,43 @@ class TestOperationalIntegration:
                 assert exc_info.value.code == 0
 
         # Check all 4 output files exist
-        pentad_path = os.path.join(
-            data_dir, 'combined_forecasts_pentad.csv'
-        )
-        decad_path = os.path.join(
-            data_dir, 'combined_forecasts_decad.csv'
-        )
-        pentad_latest = pentad_path.replace('.csv', '_latest.csv')
-        decad_latest = decad_path.replace('.csv', '_latest.csv')
+        pentad_path = os.path.join(data_dir, "combined_forecasts_pentad.csv")
+        decad_path = os.path.join(data_dir, "combined_forecasts_decad.csv")
+        pentad_latest = pentad_path.replace(".csv", "_latest.csv")
+        decad_latest = decad_path.replace(".csv", "_latest.csv")
 
         assert os.path.exists(pentad_path), "Pentad combined CSV missing"
         assert os.path.exists(decad_path), "Decad combined CSV missing"
         assert os.path.exists(pentad_latest), "Pentad latest CSV missing"
         assert os.path.exists(decad_latest), "Decad latest CSV missing"
 
-    def test_empty_skill_metrics_csv_produces_no_ensemble(
-        self, integration_env
-    ):
+    def test_empty_skill_metrics_csv_produces_no_ensemble(self, integration_env):
         """Empty skill CSV -> no EM rows in output."""
         tmp_path, data_dir = integration_env
 
         # Replace skill CSV with header-only
-        skill_path = os.path.join(data_dir, 'skill_metrics_pentad.csv')
-        empty_skill = pd.DataFrame(columns=[
-            'pentad_in_year', 'code', 'model_short',
-            'sdivsigma', 'nse', 'delta', 'accuracy', 'mae', 'n_pairs',
-        ])
+        skill_path = os.path.join(data_dir, "skill_metrics_pentad.csv")
+        empty_skill = pd.DataFrame(
+            columns=[
+                "pentad_in_year",
+                "code",
+                "model_short",
+                "sdivsigma",
+                "nse",
+                "delta",
+                "accuracy",
+                "mae",
+                "n_pairs",
+            ]
+        )
         empty_skill.to_csv(skill_path, index=False)
 
-        with patch.dict(
-            os.environ, {'SAPPHIRE_PREDICTION_MODE': 'PENTAD'}
-        ):
+        with patch.dict(os.environ, {"SAPPHIRE_PREDICTION_MODE": "PENTAD"}):
             with patch.dict(sys.modules, {}):
                 _setup_modules_with_real_io()
 
                 module, spec = _import_operational()
-                with patch('os.getcwd', return_value=str(tmp_path)):
+                with patch("os.getcwd", return_value=str(tmp_path)):
                     spec.loader.exec_module(module)
                     module.is_pentad_boundary = lambda d: True
 
@@ -384,26 +387,20 @@ class TestOperationalIntegration:
 
                 assert exc_info.value.code == 0
 
-        output = _read_output_csv(data_dir, 'combined_forecasts_pentad.csv')
-        em = output[output['model_short'] == 'EM']
-        assert len(em) == 0, (
-            f"Empty skill CSV should produce 0 EM rows, got {len(em)}"
-        )
+        output = _read_output_csv(data_dir, "combined_forecasts_pentad.csv")
+        em = output[output["model_short"] == "EM"]
+        assert len(em) == 0, f"Empty skill CSV should produce 0 EM rows, got {len(em)}"
 
-    def test_latest_csv_has_most_recent_date_only(
-        self, integration_env
-    ):
+    def test_latest_csv_has_most_recent_date_only(self, integration_env):
         """_latest.csv should contain only recent dates, not all history."""
         tmp_path, data_dir = integration_env
 
-        with patch.dict(
-            os.environ, {'SAPPHIRE_PREDICTION_MODE': 'PENTAD'}
-        ):
+        with patch.dict(os.environ, {"SAPPHIRE_PREDICTION_MODE": "PENTAD"}):
             with patch.dict(sys.modules, {}):
                 _setup_modules_with_real_io()
 
                 module, spec = _import_operational()
-                with patch('os.getcwd', return_value=str(tmp_path)):
+                with patch("os.getcwd", return_value=str(tmp_path)):
                     spec.loader.exec_module(module)
                     module.is_pentad_boundary = lambda d: True
 
@@ -414,34 +411,29 @@ class TestOperationalIntegration:
 
         latest_path = os.path.join(
             data_dir,
-            'combined_forecasts_pentad_latest.csv',
+            "combined_forecasts_pentad_latest.csv",
         )
         assert os.path.exists(latest_path), "Latest CSV should exist"
         latest = pd.read_csv(latest_path)
 
         # Latest should filter to current year and prior year only
         assert not latest.empty, "Latest CSV should not be empty"
-        assert 'date' in latest.columns, "Latest CSV should have 'date' column"
-        dates = pd.to_datetime(latest['date'])
+        assert "date" in latest.columns, "Latest CSV should have 'date' column"
+        dates = pd.to_datetime(latest["date"])
         years = set(dates.dt.year)
         # Should only contain recent years, not 2022
-        assert 2022 not in years, (
-            f"Latest CSV should not contain 2022 data, "
-            f"got years: {years}"
-        )
+        assert 2022 not in years, f"Latest CSV should not contain 2022 data, got years: {years}"
 
     def test_exit_code_zero_on_success(self, integration_env):
         """Verify sys.exit(0) after successful run."""
         tmp_path, data_dir = integration_env
 
-        with patch.dict(
-            os.environ, {'SAPPHIRE_PREDICTION_MODE': 'PENTAD'}
-        ):
+        with patch.dict(os.environ, {"SAPPHIRE_PREDICTION_MODE": "PENTAD"}):
             with patch.dict(sys.modules, {}):
                 _setup_modules_with_real_io()
 
                 module, spec = _import_operational()
-                with patch('os.getcwd', return_value=str(tmp_path)):
+                with patch("os.getcwd", return_value=str(tmp_path)):
                     spec.loader.exec_module(module)
                     module.is_pentad_boundary = lambda d: True
 
@@ -457,9 +449,7 @@ class TestOperationalIntegration:
 class TestMaintenanceIntegration:
     """Maintenance entry point with real gap detection and file I/O."""
 
-    def test_pentad_gap_detected_and_filled_in_csv(
-        self, integration_env
-    ):
+    def test_pentad_gap_detected_and_filled_in_csv(self, integration_env):
         """Gap in combined CSV detected and filled with EM.
 
         Test data has gaps:
@@ -469,15 +459,18 @@ class TestMaintenanceIntegration:
         """
         tmp_path, data_dir = integration_env
 
-        with patch.dict(os.environ, {
-            'SAPPHIRE_PREDICTION_MODE': 'PENTAD',
-            'POSTPROCESSING_GAPFILL_WINDOW_DAYS': '365',
-        }):
+        with patch.dict(
+            os.environ,
+            {
+                "SAPPHIRE_PREDICTION_MODE": "PENTAD",
+                "POSTPROCESSING_GAPFILL_WINDOW_DAYS": "365",
+            },
+        ):
             with patch.dict(sys.modules, {}):
                 _setup_modules_with_real_io()
 
                 module, spec = _import_maintenance()
-                with patch('os.getcwd', return_value=str(tmp_path)):
+                with patch("os.getcwd", return_value=str(tmp_path)):
                     spec.loader.exec_module(module)
 
                     with pytest.raises(SystemExit) as exc_info:
@@ -486,19 +479,12 @@ class TestMaintenanceIntegration:
                 assert exc_info.value.code == 0
 
         # Re-read the output combined CSV
-        output = _read_output_csv(
-            data_dir, 'combined_forecasts_pentad.csv'
-        )
-        em = output[output['model_short'] == 'EM']
+        output = _read_output_csv(data_dir, "combined_forecasts_pentad.csv")
+        em = output[output["model_short"] == "EM"]
 
         # Check that gap at 99001/2026-01-05 was filled
-        em_99001_gap = em[
-            (em['code'].astype(str) == '99001') &
-            (em['date'] == '2026-01-05')
-        ]
-        assert len(em_99001_gap) >= 1, (
-            "99001 gap at 2026-01-05 should have been filled with EM"
-        )
+        em_99001_gap = em[(em["code"].astype(str) == "99001") & (em["date"] == "2026-01-05")]
+        assert len(em_99001_gap) >= 1, "99001 gap at 2026-01-05 should have been filled with EM"
 
     def test_gap_fill_preserves_existing_data(self, integration_env):
         """Maintenance gap-fill must not lose non-gap historical rows.
@@ -511,36 +497,37 @@ class TestMaintenanceIntegration:
         tmp_path, data_dir = integration_env
 
         # Record the original combined CSV state
-        combined_path = os.path.join(
-            data_dir, 'combined_forecasts_pentad.csv'
-        )
+        combined_path = os.path.join(data_dir, "combined_forecasts_pentad.csv")
         original = pd.read_csv(combined_path)
         original_row_count = len(original)
         # Non-gap rows: exclude the gap (date, code) pairs
-        gap_pairs = {('2026-01-05', '99001'), ('2026-01-10', '99002')}
+        gap_pairs = {("2026-01-05", "99001"), ("2026-01-10", "99002")}
         non_gap_mask = ~original.apply(
-            lambda r: (str(r['date']), str(r['code'])) in gap_pairs,
+            lambda r: (str(r["date"]), str(r["code"])) in gap_pairs,
             axis=1,
         )
         non_gap_rows = original[non_gap_mask]
         # Pick a specific non-gap row to verify survival
         sample_non_gap = non_gap_rows[
-            (non_gap_rows['code'].astype(str) == '99001') &
-            (non_gap_rows['date'] == '2022-01-05') &
-            (non_gap_rows['model_short'] == 'LR')
+            (non_gap_rows["code"].astype(str) == "99001")
+            & (non_gap_rows["date"] == "2022-01-05")
+            & (non_gap_rows["model_short"] == "LR")
         ]
         assert len(sample_non_gap) == 1, "Precondition: sample row exists"
-        sample_discharge = sample_non_gap.iloc[0]['forecasted_discharge']
+        sample_discharge = sample_non_gap.iloc[0]["forecasted_discharge"]
 
-        with patch.dict(os.environ, {
-            'SAPPHIRE_PREDICTION_MODE': 'PENTAD',
-            'POSTPROCESSING_GAPFILL_WINDOW_DAYS': '365',
-        }):
+        with patch.dict(
+            os.environ,
+            {
+                "SAPPHIRE_PREDICTION_MODE": "PENTAD",
+                "POSTPROCESSING_GAPFILL_WINDOW_DAYS": "365",
+            },
+        ):
             with patch.dict(sys.modules, {}):
                 _setup_modules_with_real_io()
 
                 module, spec = _import_maintenance()
-                with patch('os.getcwd', return_value=str(tmp_path)):
+                with patch("os.getcwd", return_value=str(tmp_path)):
                     spec.loader.exec_module(module)
 
                     with pytest.raises(SystemExit) as exc_info:
@@ -559,22 +546,19 @@ class TestMaintenanceIntegration:
 
         # Verify the sample non-gap row survived
         sample_after = output[
-            (output['code'].astype(str) == '99001') &
-            (output['date'] == '2022-01-05') &
-            (output['model_short'] == 'LR')
+            (output["code"].astype(str) == "99001")
+            & (output["date"] == "2022-01-05")
+            & (output["model_short"] == "LR")
         ]
-        assert len(sample_after) == 1, (
-            "Non-gap row 99001/2022-01-05/LR was lost during gap-fill"
-        )
-        assert sample_after.iloc[0]['forecasted_discharge'] == pytest.approx(
+        assert len(sample_after) == 1, "Non-gap row 99001/2022-01-05/LR was lost during gap-fill"
+        assert sample_after.iloc[0]["forecasted_discharge"] == pytest.approx(
             sample_discharge, rel=1e-2
         ), "Non-gap row discharge value changed during gap-fill"
 
         # New EM rows should exist for the gap dates
-        em_rows = output[output['model_short'] == 'EM']
+        em_rows = output[output["model_short"] == "EM"]
         em_99001 = em_rows[
-            (em_rows['code'].astype(str) == '99001') &
-            (em_rows['date'] == '2026-01-05')
+            (em_rows["code"].astype(str) == "99001") & (em_rows["date"] == "2026-01-05")
         ]
         assert len(em_99001) >= 1, "Gap at 99001/2026-01-05 not filled"
 
@@ -583,41 +567,39 @@ class TestMaintenanceIntegration:
         tmp_path, data_dir = integration_env
 
         # Remove the gaps by adding EM rows for the gap entries
-        combined_path = os.path.join(
-            data_dir, 'combined_forecasts_pentad.csv'
-        )
+        combined_path = os.path.join(data_dir, "combined_forecasts_pentad.csv")
         df = pd.read_csv(combined_path)
 
         # Add EM rows for the gap dates
         gap_rows = []
-        for station, datestr in [('99001', '2026-01-05'),
-                                 ('99002', '2026-01-10')]:
+        for station, datestr in [("99001", "2026-01-05"), ("99002", "2026-01-10")]:
             existing = df[
-                (df['code'].astype(str) == station) &
-                (df['date'] == datestr) &
-                (df['model_short'] != 'EM')
+                (df["code"].astype(str) == station)
+                & (df["date"] == datestr)
+                & (df["model_short"] != "EM")
             ]
             if not existing.empty:
                 em_row = existing.iloc[0].copy()
-                em_row['model_short'] = 'EM'
-                em_row['composition'] = 'LR, TFT'
-                em_row['forecasted_discharge'] = 100.0
+                em_row["model_short"] = "EM"
+                em_row["composition"] = "LR, TFT"
+                em_row["forecasted_discharge"] = 100.0
                 gap_rows.append(em_row)
         if gap_rows:
-            df = pd.concat(
-                [df, pd.DataFrame(gap_rows)], ignore_index=True
-            )
+            df = pd.concat([df, pd.DataFrame(gap_rows)], ignore_index=True)
             df.to_csv(combined_path, index=False)
 
-        with patch.dict(os.environ, {
-            'SAPPHIRE_PREDICTION_MODE': 'PENTAD',
-            'POSTPROCESSING_GAPFILL_WINDOW_DAYS': '365',
-        }):
+        with patch.dict(
+            os.environ,
+            {
+                "SAPPHIRE_PREDICTION_MODE": "PENTAD",
+                "POSTPROCESSING_GAPFILL_WINDOW_DAYS": "365",
+            },
+        ):
             with patch.dict(sys.modules, {}):
                 _setup_modules_with_real_io()
 
                 module, spec = _import_maintenance()
-                with patch('os.getcwd', return_value=str(tmp_path)):
+                with patch("os.getcwd", return_value=str(tmp_path)):
                     spec.loader.exec_module(module)
 
                     with pytest.raises(SystemExit) as exc_info:
@@ -629,15 +611,18 @@ class TestMaintenanceIntegration:
         """Decad gap at 99001/2026-01-10 is detected and filled."""
         tmp_path, data_dir = integration_env
 
-        with patch.dict(os.environ, {
-            'SAPPHIRE_PREDICTION_MODE': 'DECAD',
-            'POSTPROCESSING_GAPFILL_WINDOW_DAYS': '365',
-        }):
+        with patch.dict(
+            os.environ,
+            {
+                "SAPPHIRE_PREDICTION_MODE": "DECAD",
+                "POSTPROCESSING_GAPFILL_WINDOW_DAYS": "365",
+            },
+        ):
             with patch.dict(sys.modules, {}):
                 _setup_modules_with_real_io()
 
                 module, spec = _import_maintenance()
-                with patch('os.getcwd', return_value=str(tmp_path)):
+                with patch("os.getcwd", return_value=str(tmp_path)):
                     spec.loader.exec_module(module)
 
                     with pytest.raises(SystemExit) as exc_info:
@@ -645,35 +630,29 @@ class TestMaintenanceIntegration:
 
                 assert exc_info.value.code == 0
 
-        output = _read_output_csv(
-            data_dir, 'combined_forecasts_decad.csv'
-        )
-        em = output[output['model_short'] == 'EM']
+        output = _read_output_csv(data_dir, "combined_forecasts_decad.csv")
+        em = output[output["model_short"] == "EM"]
 
         # Check 99001 gap at 2026-01-10 was filled
-        em_99001_gap = em[
-            (em['code'].astype(str) == '99001') &
-            (em['date'] == '2026-01-10')
-        ]
-        assert len(em_99001_gap) >= 1, (
-            "99001 decad gap at 2026-01-10 should have been filled"
-        )
+        em_99001_gap = em[(em["code"].astype(str) == "99001") & (em["date"] == "2026-01-10")]
+        assert len(em_99001_gap) >= 1, "99001 decad gap at 2026-01-10 should have been filled"
 
-    def test_both_mode_fills_pentad_and_decad_gaps(
-        self, integration_env
-    ):
+    def test_both_mode_fills_pentad_and_decad_gaps(self, integration_env):
         """BOTH mode fills gaps in both horizon types."""
         tmp_path, data_dir = integration_env
 
-        with patch.dict(os.environ, {
-            'SAPPHIRE_PREDICTION_MODE': 'BOTH',
-            'POSTPROCESSING_GAPFILL_WINDOW_DAYS': '365',
-        }):
+        with patch.dict(
+            os.environ,
+            {
+                "SAPPHIRE_PREDICTION_MODE": "BOTH",
+                "POSTPROCESSING_GAPFILL_WINDOW_DAYS": "365",
+            },
+        ):
             with patch.dict(sys.modules, {}):
                 _setup_modules_with_real_io()
 
                 module, spec = _import_maintenance()
-                with patch('os.getcwd', return_value=str(tmp_path)):
+                with patch("os.getcwd", return_value=str(tmp_path)):
                     spec.loader.exec_module(module)
 
                     with pytest.raises(SystemExit) as exc_info:
@@ -682,42 +661,37 @@ class TestMaintenanceIntegration:
                 assert exc_info.value.code == 0
 
         # Pentad gap filled
-        pentad = _read_output_csv(
-            data_dir, 'combined_forecasts_pentad.csv'
-        )
-        pentad_em = pentad[pentad['model_short'] == 'EM']
+        pentad = _read_output_csv(data_dir, "combined_forecasts_pentad.csv")
+        pentad_em = pentad[pentad["model_short"] == "EM"]
         assert any(
-            (pentad_em['code'].astype(str) == '99001') &
-            (pentad_em['date'] == '2026-01-05')
+            (pentad_em["code"].astype(str) == "99001") & (pentad_em["date"] == "2026-01-05")
         ), "Pentad gap at 99001/2026-01-05 should be filled"
 
         # Decad gap filled
-        decad = _read_output_csv(
-            data_dir, 'combined_forecasts_decad.csv'
-        )
-        decad_em = decad[decad['model_short'] == 'EM']
+        decad = _read_output_csv(data_dir, "combined_forecasts_decad.csv")
+        decad_em = decad[decad["model_short"] == "EM"]
         assert any(
-            (decad_em['code'].astype(str) == '99001') &
-            (decad_em['date'] == '2026-01-10')
+            (decad_em["code"].astype(str) == "99001") & (decad_em["date"] == "2026-01-10")
         ), "Decad gap at 99001/2026-01-10 should be filled"
 
-    def test_gap_outside_lookback_window_ignored(
-        self, integration_env
-    ):
+    def test_gap_outside_lookback_window_ignored(self, integration_env):
         """Gap older than lookback window is not filled."""
         tmp_path, data_dir = integration_env
 
         # Use a 1-day lookback — gaps from 2026-01-05 and 2026-01-10
         # are far in the past (test runs "today"), so should be ignored
-        with patch.dict(os.environ, {
-            'SAPPHIRE_PREDICTION_MODE': 'PENTAD',
-            'POSTPROCESSING_GAPFILL_WINDOW_DAYS': '1',
-        }):
+        with patch.dict(
+            os.environ,
+            {
+                "SAPPHIRE_PREDICTION_MODE": "PENTAD",
+                "POSTPROCESSING_GAPFILL_WINDOW_DAYS": "1",
+            },
+        ):
             with patch.dict(sys.modules, {}):
                 _setup_modules_with_real_io()
 
                 module, spec = _import_maintenance()
-                with patch('os.getcwd', return_value=str(tmp_path)):
+                with patch("os.getcwd", return_value=str(tmp_path)):
                     spec.loader.exec_module(module)
 
                     with pytest.raises(SystemExit) as exc_info:
@@ -725,26 +699,25 @@ class TestMaintenanceIntegration:
 
                 assert exc_info.value.code == 0
 
-    def test_empty_combined_csv_skips_gracefully(
-        self, integration_env
-    ):
+    def test_empty_combined_csv_skips_gracefully(self, integration_env):
         """Empty combined CSV -> exit 0, no crash."""
         tmp_path, data_dir = integration_env
 
         # Replace combined CSV with empty
-        combined_path = os.path.join(
-            data_dir, 'combined_forecasts_pentad.csv'
-        )
+        combined_path = os.path.join(data_dir, "combined_forecasts_pentad.csv")
         pd.DataFrame().to_csv(combined_path, index=False)
 
-        with patch.dict(os.environ, {
-            'SAPPHIRE_PREDICTION_MODE': 'PENTAD',
-        }):
+        with patch.dict(
+            os.environ,
+            {
+                "SAPPHIRE_PREDICTION_MODE": "PENTAD",
+            },
+        ):
             with patch.dict(sys.modules, {}):
                 _setup_modules_with_real_io()
 
                 module, spec = _import_maintenance()
-                with patch('os.getcwd', return_value=str(tmp_path)):
+                with patch("os.getcwd", return_value=str(tmp_path)):
                     spec.loader.exec_module(module)
 
                     with pytest.raises(SystemExit) as exc_info:
@@ -759,9 +732,7 @@ class TestMaintenanceIntegration:
 class TestRecalcIntegration:
     """Recalculate skill metrics entry point with real file I/O."""
 
-    def test_pentad_metrics_calculated_and_saved_to_csv(
-        self, integration_env
-    ):
+    def test_pentad_metrics_calculated_and_saved_to_csv(self, integration_env):
         """Full pipeline: read observed+modelled -> calculate metrics -> CSV.
 
         Verifies that skill metrics are computed and saved with correct
@@ -769,14 +740,12 @@ class TestRecalcIntegration:
         """
         tmp_path, data_dir = integration_env
 
-        with patch.dict(
-            os.environ, {'SAPPHIRE_PREDICTION_MODE': 'PENTAD'}
-        ):
+        with patch.dict(os.environ, {"SAPPHIRE_PREDICTION_MODE": "PENTAD"}):
             with patch.dict(sys.modules, {}):
                 _setup_modules_with_real_io()
 
                 module, spec = _import_recalc()
-                with patch('os.getcwd', return_value=str(tmp_path)):
+                with patch("os.getcwd", return_value=str(tmp_path)):
                     spec.loader.exec_module(module)
 
                     with pytest.raises(SystemExit) as exc_info:
@@ -785,40 +754,31 @@ class TestRecalcIntegration:
                 assert exc_info.value.code == 0
 
         # Read the output skill metrics CSV
-        skill = _read_output_csv(data_dir, 'skill_metrics_pentad.csv')
+        skill = _read_output_csv(data_dir, "skill_metrics_pentad.csv")
         assert not skill.empty, "Skill metrics CSV should not be empty"
 
         # Check required columns
-        for col in ['pentad_in_year', 'code', 'model_short',
-                     'sdivsigma', 'nse', 'mae', 'n_pairs']:
-            assert col in skill.columns, (
-                f"Skill metrics missing column: {col}"
-            )
+        for col in ["pentad_in_year", "code", "model_short", "sdivsigma", "nse", "mae", "n_pairs"]:
+            assert col in skill.columns, f"Skill metrics missing column: {col}"
 
         # LR should have skill rows for all stations
-        lr_rows = skill[skill['model_short'] == 'LR']
+        lr_rows = skill[skill["model_short"] == "LR"]
         assert len(lr_rows) > 0, "LR should have skill metric rows"
 
         # Check n_pairs >= 2 (need at least 2 points for valid metrics)
         for _, row in lr_rows.iterrows():
-            assert row['n_pairs'] >= 2, (
-                f"Expected n_pairs >= 2, got {row['n_pairs']}"
-            )
+            assert row["n_pairs"] >= 2, f"Expected n_pairs >= 2, got {row['n_pairs']}"
 
-    def test_decad_metrics_calculated_and_saved_to_csv(
-        self, integration_env
-    ):
+    def test_decad_metrics_calculated_and_saved_to_csv(self, integration_env):
         """Decad skill metrics computed and saved."""
         tmp_path, data_dir = integration_env
 
-        with patch.dict(
-            os.environ, {'SAPPHIRE_PREDICTION_MODE': 'DECAD'}
-        ):
+        with patch.dict(os.environ, {"SAPPHIRE_PREDICTION_MODE": "DECAD"}):
             with patch.dict(sys.modules, {}):
                 _setup_modules_with_real_io()
 
                 module, spec = _import_recalc()
-                with patch('os.getcwd', return_value=str(tmp_path)):
+                with patch("os.getcwd", return_value=str(tmp_path)):
                     spec.loader.exec_module(module)
 
                     with pytest.raises(SystemExit) as exc_info:
@@ -826,27 +786,22 @@ class TestRecalcIntegration:
 
                 assert exc_info.value.code == 0
 
-        skill = _read_output_csv(data_dir, 'skill_metrics_decad.csv')
+        skill = _read_output_csv(data_dir, "skill_metrics_decad.csv")
         assert not skill.empty, "Decad skill metrics should not be empty"
 
-        for col in ['decad_in_year', 'code', 'model_short',
-                     'sdivsigma', 'nse', 'mae', 'n_pairs']:
+        for col in ["decad_in_year", "code", "model_short", "sdivsigma", "nse", "mae", "n_pairs"]:
             assert col in skill.columns
 
-    def test_both_mode_produces_four_output_csvs(
-        self, integration_env
-    ):
+    def test_both_mode_produces_four_output_csvs(self, integration_env):
         """BOTH mode produces pentad+decad forecasts and skill CSVs."""
         tmp_path, data_dir = integration_env
 
-        with patch.dict(
-            os.environ, {'SAPPHIRE_PREDICTION_MODE': 'BOTH'}
-        ):
+        with patch.dict(os.environ, {"SAPPHIRE_PREDICTION_MODE": "BOTH"}):
             with patch.dict(sys.modules, {}):
                 _setup_modules_with_real_io()
 
                 module, spec = _import_recalc()
-                with patch('os.getcwd', return_value=str(tmp_path)):
+                with patch("os.getcwd", return_value=str(tmp_path)):
                     spec.loader.exec_module(module)
 
                     with pytest.raises(SystemExit) as exc_info:
@@ -855,22 +810,12 @@ class TestRecalcIntegration:
                 assert exc_info.value.code == 0
 
         # All 4 output files should exist
-        assert os.path.exists(
-            os.path.join(data_dir, 'combined_forecasts_pentad.csv')
-        )
-        assert os.path.exists(
-            os.path.join(data_dir, 'skill_metrics_pentad.csv')
-        )
-        assert os.path.exists(
-            os.path.join(data_dir, 'combined_forecasts_decad.csv')
-        )
-        assert os.path.exists(
-            os.path.join(data_dir, 'skill_metrics_decad.csv')
-        )
+        assert os.path.exists(os.path.join(data_dir, "combined_forecasts_pentad.csv"))
+        assert os.path.exists(os.path.join(data_dir, "skill_metrics_pentad.csv"))
+        assert os.path.exists(os.path.join(data_dir, "combined_forecasts_decad.csv"))
+        assert os.path.exists(os.path.join(data_dir, "skill_metrics_decad.csv"))
 
-    def test_em_rows_in_output_with_correct_discharge(
-        self, integration_env
-    ):
+    def test_em_rows_in_output_with_correct_discharge(self, integration_env):
         """EM discharge = mean of qualified models per station.
 
         99001: mean(LR, TFT, TiDE)
@@ -879,14 +824,12 @@ class TestRecalcIntegration:
         """
         tmp_path, data_dir = integration_env
 
-        with patch.dict(
-            os.environ, {'SAPPHIRE_PREDICTION_MODE': 'PENTAD'}
-        ):
+        with patch.dict(os.environ, {"SAPPHIRE_PREDICTION_MODE": "PENTAD"}):
             with patch.dict(sys.modules, {}):
                 _setup_modules_with_real_io()
 
                 module, spec = _import_recalc()
-                with patch('os.getcwd', return_value=str(tmp_path)):
+                with patch("os.getcwd", return_value=str(tmp_path)):
                     spec.loader.exec_module(module)
 
                     with pytest.raises(SystemExit) as exc_info:
@@ -894,21 +837,15 @@ class TestRecalcIntegration:
 
                 assert exc_info.value.code == 0
 
-        output = _read_output_csv(
-            data_dir, 'combined_forecasts_pentad.csv'
-        )
-        em = output[output['model_short'] == 'EM']
-        em_stations = set(em['code'].astype(str))
+        output = _read_output_csv(data_dir, "combined_forecasts_pentad.csv")
+        em = output[output["model_short"] == "EM"]
+        em_stations = set(em["code"].astype(str))
 
-        assert '99001' in em_stations, "99001 should have EM rows"
-        assert '99002' in em_stations, "99002 should have EM rows"
-        assert '99003' not in em_stations, (
-            "99003 should NOT have EM (single model)"
-        )
+        assert "99001" in em_stations, "99001 should have EM rows"
+        assert "99002" in em_stations, "99002 should have EM rows"
+        assert "99003" not in em_stations, "99003 should NOT have EM (single model)"
 
-    def test_cross_workflow_recalc_then_operational(
-        self, integration_env
-    ):
+    def test_cross_workflow_recalc_then_operational(self, integration_env):
         """Run recalc -> writes skill CSV -> run operational -> creates EM.
 
         Verifies the full lifecycle across two entry points.
@@ -916,14 +853,12 @@ class TestRecalcIntegration:
         tmp_path, data_dir = integration_env
 
         # Step 1: Run recalc to produce fresh skill metrics
-        with patch.dict(
-            os.environ, {'SAPPHIRE_PREDICTION_MODE': 'PENTAD'}
-        ):
+        with patch.dict(os.environ, {"SAPPHIRE_PREDICTION_MODE": "PENTAD"}):
             with patch.dict(sys.modules, {}):
                 _setup_modules_with_real_io()
 
                 module, spec = _import_recalc()
-                with patch('os.getcwd', return_value=str(tmp_path)):
+                with patch("os.getcwd", return_value=str(tmp_path)):
                     spec.loader.exec_module(module)
 
                     with pytest.raises(SystemExit) as exc_info:
@@ -932,20 +867,16 @@ class TestRecalcIntegration:
                 assert exc_info.value.code == 0
 
         # Verify skill CSV was written
-        skill = _read_output_csv(data_dir, 'skill_metrics_pentad.csv')
-        assert not skill.empty, (
-            "Recalc should have written skill metrics CSV"
-        )
+        skill = _read_output_csv(data_dir, "skill_metrics_pentad.csv")
+        assert not skill.empty, "Recalc should have written skill metrics CSV"
 
         # Step 2: Run operational using the recalc-produced skill CSV
-        with patch.dict(
-            os.environ, {'SAPPHIRE_PREDICTION_MODE': 'PENTAD'}
-        ):
+        with patch.dict(os.environ, {"SAPPHIRE_PREDICTION_MODE": "PENTAD"}):
             with patch.dict(sys.modules, {}):
                 _setup_modules_with_real_io()
 
                 module, spec = _import_operational()
-                with patch('os.getcwd', return_value=str(tmp_path)):
+                with patch("os.getcwd", return_value=str(tmp_path)):
                     spec.loader.exec_module(module)
                     module.is_pentad_boundary = lambda d: True
 
@@ -955,28 +886,20 @@ class TestRecalcIntegration:
                 assert exc_info.value.code == 0
 
         # Verify EM rows in operational output
-        output = _read_output_csv(
-            data_dir, 'combined_forecasts_pentad.csv'
-        )
-        em = output[output['model_short'] == 'EM']
-        assert len(em) > 0, (
-            "Operational should create EM rows using recalc skill CSV"
-        )
+        output = _read_output_csv(data_dir, "combined_forecasts_pentad.csv")
+        em = output[output["model_short"] == "EM"]
+        assert len(em) > 0, "Operational should create EM rows using recalc skill CSV"
 
-    def test_skill_csv_column_schema_matches_production(
-        self, integration_env
-    ):
+    def test_skill_csv_column_schema_matches_production(self, integration_env):
         """Output skill CSV has exact columns matching production format."""
         tmp_path, data_dir = integration_env
 
-        with patch.dict(
-            os.environ, {'SAPPHIRE_PREDICTION_MODE': 'PENTAD'}
-        ):
+        with patch.dict(os.environ, {"SAPPHIRE_PREDICTION_MODE": "PENTAD"}):
             with patch.dict(sys.modules, {}):
                 _setup_modules_with_real_io()
 
                 module, spec = _import_recalc()
-                with patch('os.getcwd', return_value=str(tmp_path)):
+                with patch("os.getcwd", return_value=str(tmp_path)):
                     spec.loader.exec_module(module)
 
                     with pytest.raises(SystemExit) as exc_info:
@@ -984,10 +907,17 @@ class TestRecalcIntegration:
 
                 assert exc_info.value.code == 0
 
-        skill = _read_output_csv(data_dir, 'skill_metrics_pentad.csv')
+        skill = _read_output_csv(data_dir, "skill_metrics_pentad.csv")
         expected_cols = {
-            'pentad_in_year', 'code', 'model_short',
-            'sdivsigma', 'nse', 'delta', 'accuracy', 'mae', 'n_pairs',
+            "pentad_in_year",
+            "code",
+            "model_short",
+            "sdivsigma",
+            "nse",
+            "delta",
+            "accuracy",
+            "mae",
+            "n_pairs",
         }
         actual_cols = set(skill.columns)
         assert expected_cols.issubset(actual_cols), (
@@ -1001,23 +931,19 @@ class TestRecalcIntegration:
 class TestEdgeCases:
     """Edge cases and boundary conditions."""
 
-    def test_ne_rows_created_from_neural_models(
-        self, integration_env
-    ):
+    def test_ne_rows_created_from_neural_models(self, integration_env):
         """NE (Neural Ensemble) rows created from TFT+TiDE+TSMixer.
 
         NE should NOT appear in EM composition — it's a separate model.
         """
         tmp_path, data_dir = integration_env
 
-        with patch.dict(
-            os.environ, {'SAPPHIRE_PREDICTION_MODE': 'PENTAD'}
-        ):
+        with patch.dict(os.environ, {"SAPPHIRE_PREDICTION_MODE": "PENTAD"}):
             with patch.dict(sys.modules, {}):
                 _setup_modules_with_real_io()
 
                 module, spec = _import_operational()
-                with patch('os.getcwd', return_value=str(tmp_path)):
+                with patch("os.getcwd", return_value=str(tmp_path)):
                     spec.loader.exec_module(module)
                     module.is_pentad_boundary = lambda d: True
 
@@ -1026,48 +952,34 @@ class TestEdgeCases:
 
                 assert exc_info.value.code == 0
 
-        output = _read_output_csv(
-            data_dir, 'combined_forecasts_pentad.csv'
-        )
-        ne = output[output['model_short'] == 'NE']
-        assert len(ne) > 0, (
-            "NE rows should be created from neural models"
-        )
+        output = _read_output_csv(data_dir, "combined_forecasts_pentad.csv")
+        ne = output[output["model_short"] == "NE"]
+        assert len(ne) > 0, "NE rows should be created from neural models"
 
         # NE should NOT be in any EM composition
-        em = output[output['model_short'] == 'EM']
+        em = output[output["model_short"] == "EM"]
         assert not em.empty, "EM rows should exist in output"
-        assert 'composition' in em.columns, (
-            "EM rows should have 'composition' column"
-        )
+        assert "composition" in em.columns, "EM rows should have 'composition' column"
         for _, row in em.iterrows():
-            composition = str(row.get('composition', ''))
-            assert 'NE' not in composition, (
-                f"NE should not be in EM composition: {composition}"
-            )
+            composition = str(row.get("composition", ""))
+            assert "NE" not in composition, f"NE should not be in EM composition: {composition}"
 
-    def test_zero_discharge_values_processed_correctly(
-        self, integration_env
-    ):
+    def test_zero_discharge_values_processed_correctly(self, integration_env):
         """Zero discharge values don't cause division errors."""
         tmp_path, data_dir = integration_env
 
         # Modify runoff CSV to have zero discharge for one station
-        runoff_path = os.path.join(data_dir, 'runoff_pentad.csv')
+        runoff_path = os.path.join(data_dir, "runoff_pentad.csv")
         runoff = pd.read_csv(runoff_path)
-        runoff.loc[
-            runoff['code'].astype(str) == '99001', 'discharge_avg'
-        ] = 0.0
+        runoff.loc[runoff["code"].astype(str) == "99001", "discharge_avg"] = 0.0
         runoff.to_csv(runoff_path, index=False)
 
-        with patch.dict(
-            os.environ, {'SAPPHIRE_PREDICTION_MODE': 'PENTAD'}
-        ):
+        with patch.dict(os.environ, {"SAPPHIRE_PREDICTION_MODE": "PENTAD"}):
             with patch.dict(sys.modules, {}):
                 _setup_modules_with_real_io()
 
                 module, spec = _import_recalc()
-                with patch('os.getcwd', return_value=str(tmp_path)):
+                with patch("os.getcwd", return_value=str(tmp_path)):
                     spec.loader.exec_module(module)
 
                     with pytest.raises(SystemExit) as exc_info:
@@ -1075,13 +987,10 @@ class TestEdgeCases:
 
                 # Should not crash (exit 0 or 1 is acceptable)
                 assert exc_info.value.code in (0, 1), (
-                    f"Zero discharge should not crash, "
-                    f"got exit code {exc_info.value.code}"
+                    f"Zero discharge should not crash, got exit code {exc_info.value.code}"
                 )
 
-    def test_single_model_qualifies_no_ensemble_created(
-        self, integration_env
-    ):
+    def test_single_model_qualifies_no_ensemble_created(self, integration_env):
         """Skill CSV where only LR passes -> no EM (single-model ensemble).
 
         Replace skill CSV so that only LR passes thresholds for all
@@ -1090,23 +999,21 @@ class TestEdgeCases:
         tmp_path, data_dir = integration_env
 
         # Rewrite skill CSV: only LR passes, TFT + TiDE fail
-        skill_path = os.path.join(data_dir, 'skill_metrics_pentad.csv')
+        skill_path = os.path.join(data_dir, "skill_metrics_pentad.csv")
         skill = pd.read_csv(skill_path)
         # Set TFT and TiDE to failing metrics
-        mask_fail = skill['model_short'].isin(['TFT', 'TiDE'])
-        skill.loc[mask_fail, 'sdivsigma'] = 0.9  # > 0.6 → fail
-        skill.loc[mask_fail, 'nse'] = 0.3  # < 0.8 → fail
-        skill.loc[mask_fail, 'accuracy'] = 0.3  # < 0.8 → fail
+        mask_fail = skill["model_short"].isin(["TFT", "TiDE"])
+        skill.loc[mask_fail, "sdivsigma"] = 0.9  # > 0.6 → fail
+        skill.loc[mask_fail, "nse"] = 0.3  # < 0.8 → fail
+        skill.loc[mask_fail, "accuracy"] = 0.3  # < 0.8 → fail
         skill.to_csv(skill_path, index=False)
 
-        with patch.dict(
-            os.environ, {'SAPPHIRE_PREDICTION_MODE': 'PENTAD'}
-        ):
+        with patch.dict(os.environ, {"SAPPHIRE_PREDICTION_MODE": "PENTAD"}):
             with patch.dict(sys.modules, {}):
                 _setup_modules_with_real_io()
 
                 module, spec = _import_operational()
-                with patch('os.getcwd', return_value=str(tmp_path)):
+                with patch("os.getcwd", return_value=str(tmp_path)):
                     spec.loader.exec_module(module)
                     module.is_pentad_boundary = lambda d: True
 
@@ -1115,18 +1022,11 @@ class TestEdgeCases:
 
                 assert exc_info.value.code == 0
 
-        output = _read_output_csv(
-            data_dir, 'combined_forecasts_pentad.csv'
-        )
-        em = output[output['model_short'] == 'EM']
-        assert len(em) == 0, (
-            f"Single-model skill should produce 0 EM rows, "
-            f"got {len(em)}"
-        )
+        output = _read_output_csv(data_dir, "combined_forecasts_pentad.csv")
+        em = output[output["model_short"] == "EM"]
+        assert len(em) == 0, f"Single-model skill should produce 0 EM rows, got {len(em)}"
 
-    def test_multi_station_gaps_filled_independently(
-        self, integration_env
-    ):
+    def test_multi_station_gaps_filled_independently(self, integration_env):
         """99001 has a gap, 99002 doesn't -> only 99001 gets EM fill.
 
         Modify combined CSV so 99002's gap at 2026-01-10 is pre-filled
@@ -1135,34 +1035,33 @@ class TestEdgeCases:
         tmp_path, data_dir = integration_env
 
         # Fill the 99002 gap so only 99001 has a gap
-        combined_path = os.path.join(
-            data_dir, 'combined_forecasts_pentad.csv'
-        )
+        combined_path = os.path.join(data_dir, "combined_forecasts_pentad.csv")
         df = pd.read_csv(combined_path)
         # Find 99002 at 2026-01-10 and add an EM row
         existing = df[
-            (df['code'].astype(str) == '99002') &
-            (df['date'] == '2026-01-10') &
-            (df['model_short'] == 'LR')
+            (df["code"].astype(str) == "99002")
+            & (df["date"] == "2026-01-10")
+            & (df["model_short"] == "LR")
         ]
         if not existing.empty:
             em_row = existing.iloc[0].copy()
-            em_row['model_short'] = 'EM'
-            em_row['composition'] = 'LR, TFT'
-            df = pd.concat(
-                [df, pd.DataFrame([em_row])], ignore_index=True
-            )
+            em_row["model_short"] = "EM"
+            em_row["composition"] = "LR, TFT"
+            df = pd.concat([df, pd.DataFrame([em_row])], ignore_index=True)
             df.to_csv(combined_path, index=False)
 
-        with patch.dict(os.environ, {
-            'SAPPHIRE_PREDICTION_MODE': 'PENTAD',
-            'POSTPROCESSING_GAPFILL_WINDOW_DAYS': '365',
-        }):
+        with patch.dict(
+            os.environ,
+            {
+                "SAPPHIRE_PREDICTION_MODE": "PENTAD",
+                "POSTPROCESSING_GAPFILL_WINDOW_DAYS": "365",
+            },
+        ):
             with patch.dict(sys.modules, {}):
                 _setup_modules_with_real_io()
 
                 module, spec = _import_maintenance()
-                with patch('os.getcwd', return_value=str(tmp_path)):
+                with patch("os.getcwd", return_value=str(tmp_path)):
                     spec.loader.exec_module(module)
 
                     with pytest.raises(SystemExit) as exc_info:
@@ -1172,23 +1071,14 @@ class TestEdgeCases:
 
         # The output is the gap-fill result only (not the full combined)
         # Check that gap-fill wrote EM for 99001 but not for 99002
-        output = _read_output_csv(
-            data_dir, 'combined_forecasts_pentad.csv'
-        )
-        em = output[output['model_short'] == 'EM']
+        output = _read_output_csv(data_dir, "combined_forecasts_pentad.csv")
+        em = output[output["model_short"] == "EM"]
 
         # 99001 should have gap-fill EM at 2026-01-05
-        em_99001 = em[
-            (em['code'].astype(str) == '99001') &
-            (em['date'] == '2026-01-05')
-        ]
-        assert len(em_99001) >= 1, (
-            "99001 gap at 2026-01-05 should be filled"
-        )
+        em_99001 = em[(em["code"].astype(str) == "99001") & (em["date"] == "2026-01-05")]
+        assert len(em_99001) >= 1, "99001 gap at 2026-01-05 should be filled"
 
-    def test_nan_discharge_in_modelled_excluded_from_ensemble(
-        self, integration_env
-    ):
+    def test_nan_discharge_in_modelled_excluded_from_ensemble(self, integration_env):
         """NaN discharge in one model is handled gracefully.
 
         Set TiDE forecast discharge to NaN for station 99001.
@@ -1198,23 +1088,17 @@ class TestEdgeCases:
         tmp_path, data_dir = integration_env
 
         # Modify TiDE forecast CSV to have NaN for 99001
-        tide_path = os.path.join(
-            data_dir, 'predictions', 'TIDE', 'pentad_TIDE_forecast.csv'
-        )
+        tide_path = os.path.join(data_dir, "predictions", "TIDE", "pentad_TIDE_forecast.csv")
         tide = pd.read_csv(tide_path)
-        tide.loc[
-            tide['code'].astype(str) == '99001', 'Q50'
-        ] = np.nan
+        tide.loc[tide["code"].astype(str) == "99001", "Q50"] = np.nan
         tide.to_csv(tide_path, index=False)
 
-        with patch.dict(
-            os.environ, {'SAPPHIRE_PREDICTION_MODE': 'PENTAD'}
-        ):
+        with patch.dict(os.environ, {"SAPPHIRE_PREDICTION_MODE": "PENTAD"}):
             with patch.dict(sys.modules, {}):
                 _setup_modules_with_real_io()
 
                 module, spec = _import_recalc()
-                with patch('os.getcwd', return_value=str(tmp_path)):
+                with patch("os.getcwd", return_value=str(tmp_path)):
                     spec.loader.exec_module(module)
 
                     with pytest.raises(SystemExit) as exc_info:
@@ -1222,6 +1106,5 @@ class TestEdgeCases:
 
                 # Should not crash
                 assert exc_info.value.code in (0, 1), (
-                    f"NaN discharge should not crash, "
-                    f"got exit code {exc_info.value.code}"
+                    f"NaN discharge should not crash, got exit code {exc_info.value.code}"
                 )

@@ -2945,7 +2945,7 @@ class TestRecalculateSkillMetricsIntegration:
         with (
             patch("setup_library.load_environment") as mock_load,
             patch(
-                "setup_library.read_observed_and_modelled_data_pentade",
+                "src.data_reader.read_observed_and_modelled_data",
                 return_value=(
                     pd.DataFrame(
                         columns=[
@@ -2967,6 +2967,14 @@ class TestRecalculateSkillMetricsIntegration:
                     ),
                 ),
             ) as mock_read,
+            patch(
+                "setup_library.calculate_virtual_stations_data",
+                side_effect=lambda x: x,
+            ),
+            patch(
+                "setup_library.calculate_neural_ensemble_forecast",
+                side_effect=lambda x: x,
+            ),
             patch(
                 "src.skill_metrics.calculate_skill_metrics_pentad",
                 return_value=(
@@ -3010,7 +3018,7 @@ class TestRecalculateSkillMetricsIntegration:
         with (
             patch("setup_library.load_environment"),
             patch(
-                "setup_library.read_observed_and_modelled_data_pentade",
+                "src.data_reader.read_observed_and_modelled_data",
                 return_value=(
                     pd.DataFrame(
                         columns=[
@@ -3031,6 +3039,14 @@ class TestRecalculateSkillMetricsIntegration:
                         ]
                     ),
                 ),
+            ),
+            patch(
+                "setup_library.calculate_virtual_stations_data",
+                side_effect=lambda x: x,
+            ),
+            patch(
+                "setup_library.calculate_neural_ensemble_forecast",
+                side_effect=lambda x: x,
             ),
             patch(
                 "src.skill_metrics.calculate_skill_metrics_pentad",

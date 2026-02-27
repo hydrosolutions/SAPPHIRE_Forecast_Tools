@@ -79,7 +79,6 @@ def postprocessing_maintenance():
         if prediction_mode in ["PENTAD", "BOTH"]:
             _fill_gaps_for_horizon(
                 horizon_type="pentad",
-                read_data_func=sl.read_observed_and_modelled_data_pentade,
                 save_func=file_writer.save_forecast_data_pentad,
                 log_func=pt.log_most_recent_forecasts_pentad,
                 period_col="pentad_in_year",
@@ -92,7 +91,6 @@ def postprocessing_maintenance():
         if prediction_mode in ["DECAD", "BOTH"]:
             _fill_gaps_for_horizon(
                 horizon_type="decad",
-                read_data_func=sl.read_observed_and_modelled_data_decade,
                 save_func=file_writer.save_forecast_data_decade,
                 log_func=pt.log_most_recent_forecasts_decade,
                 period_col="decad_in_year",
@@ -126,7 +124,6 @@ def postprocessing_maintenance():
 
 def _fill_gaps_for_horizon(
     horizon_type,
-    read_data_func,
     save_func,
     log_func,
     period_col,
@@ -178,7 +175,12 @@ def _fill_gaps_for_horizon(
 
     with timer(timing_stats, f"reading {label} data for gap-fill"):
         logger.info(f"\n\n------ Reading {label} observed and modelled data ----")
-        _, modelled = read_data_func()
+        _, modelled = data_reader.read_observed_and_modelled_data(horizon_type)
+        modelled = sl.calculate_virtual_stations_data(modelled)
+        if horizon_type == "pentad":
+            modelled = sl.calculate_neural_ensemble_forecast(modelled)
+        else:
+            modelled = sl.calculate_neural_ensemble_forecast_decade(modelled)
 
     # Filter modelled to gap dates only
     gap_dates = set(gaps["date"].unique())

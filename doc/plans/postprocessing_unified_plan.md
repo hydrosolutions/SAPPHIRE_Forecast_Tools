@@ -54,6 +54,7 @@
 | API data-loss warnings | **DONE** — `api_writer.py` `dropna` warnings now log dropped codes/dates for operator investigation (commit `41d782e`) |
 | Test quality refactoring | **DONE** — 12 test files refactored: mock-heavy tests replaced with real file I/O (`test_file_writer.py`, `test_postprocessing_tools.py`, `test_api_integration.py`), weak `if not df.empty` checks replaced with `assert not df.empty`, `os.environ` management replaced with `monkeypatch` |
 | Unified validation script | **DONE** — `apps/run_validation.sh` orchestrates all 3 validation stages (unit tests → local pipeline → Docker smoke tests) with flags (`--skip-docker`, `--skip-pipeline`, `--dry-run`). Documented in `doc/dev/testing_workflow.md` |
+| PP-010: Pentad/decad reads should use API | **DONE** — `data_reader.read_observed_and_modelled_data()` reads observations from preprocessing API and LR/ML forecasts from postprocessing API (API-first, CSV fallback). All 3 entry points (operational, maintenance, recalculation) use the new readers. NE and virtual station calculations remain in `setup_library`, called explicitly from entry points. 960 postprocessing tests, 0 skips. |
 
 ### Pre-requisites (all completed)
 
@@ -1545,23 +1546,19 @@ The postprocessing module is transitioning from CSV-based I/O to API-first
 with CSV as fallback, eventually deprecating CSV entirely. The following
 read/write paths still use CSV as primary or CSV-only:
 
-| Path | Current State | File | Target State |
-|------|--------------|------|--------------|
-| Skill metrics read (pentad/decad) | CSV primary, API fallback | `data_reader.py` `read_pentadal_skill_metrics()` | API primary, CSV fallback |
-| Skill metrics read (monthly) | CSV primary, API fallback | `data_reader.py` `read_monthly_skill_metrics()` | API primary, CSV fallback |
-| Gap detection (pentad/decad) | CSV-only (`combined_forecasts` loaded from CSV) | `gap_detector.py` `detect_missing_ensembles()` | Read from API |
-| Gap detection (monthly) | CSV-only (`combined_forecasts` loaded from CSV) | `gap_detector.py` `detect_missing_monthly_ensembles()` | Read from API |
-| Maintenance gap-fill read | Reads combined forecasts from CSV | `postprocessing_maintenance.py`, `postprocessing_maintenance_long_term.py` | Read from API |
-| Combined forecast CSV output | Dual-write (CSV + API) | `file_writer.py` | API-only (drop CSV) |
+| Path | Current State | File | Resolved |
+|------|--------------|------|----------|
+| Skill metrics read (pentad/decad) | **API primary, CSV fallback** | `data_reader.py` `read_skill_metrics()` | PP-014 |
+| Skill metrics read (monthly) | **API primary, CSV fallback** | `data_reader.py` `read_monthly_skill_metrics()` | PP-014 |
+| Gap detection (pentad/decad) | **API primary, CSV fallback** | `data_reader.py` `read_combined_forecasts()` | PP-007 |
+| Gap detection (monthly) | **API primary, CSV fallback** | `data_reader.py` `read_monthly_combined_forecasts()` | PP-013 |
+| Maintenance gap-fill read | **API primary, CSV fallback** | `data_reader.py` via `read_combined_forecasts()` / `read_monthly_combined_forecasts()` | PP-007, PP-013 |
+| Observed + modelled data read (pentad/decad) | **API primary, CSV fallback** | `data_reader.py` `read_observed_and_modelled_data()` | PP-010 |
+| Combined forecast CSV output | Dual-write (CSV + API) | `file_writer.py` | — (pending) |
 
-**Priority**: The gap detection and maintenance read paths are the most
-critical — they cannot fall back to API when CSV is removed. The skill
-metrics read paths already have API fallback but should be inverted to
-API-primary.
-
-**Dependency**: Removing CSV entirely (Phase 6 of
-`sapphire_api_integration_plan.md`) requires all paths above to be
-API-primary first.
+**All read paths are now API-primary.** The only remaining CSV dependency
+is the dual-write output path, which will be removed in Phase 6 of
+`sapphire_api_integration_plan.md` once API integration is fully validated.
 
 ---
 
@@ -1613,3 +1610,4 @@ The following plans are **superseded** by this unified plan (moved to `archive/`
 | 2026-02-17 | Bea/Claude | **Monthly pipeline completion: Skilled Mean + cleanup.** (A) Implemented `_add_skilled_mean()` in `skill_metrics.py` — inverse-MAE weighted ensemble baseline (`w_i = 1/(MAE_i + eps)`, same threshold-filtered pool as EM). Added to EM exclusion list and call site between EM and Naive Mean. (B) Cleanup: readiness checks in `data_reader.py` (`_read_daily_runoff_api`, `_read_long_forecasts_api`), `n_pairs` type fix (`float→int` in `schemas.py`), `save_monthly_forecast_data()` in `file_writer.py` (CSV-only, monthly forecasts already in `long_forecasts` table), `log_most_recent_forecasts_monthly()` in `postprocessing_tools.py`, monthly CRUD tests in service test_crud.py, CSV-fallback-on-API-failure test. Test count: 613→638 postprocessing (+25), 86→89 CRUD (+3). CRPS DB column deferred to Phase 4c migration. |
 | 2026-02-17 | Bea/Claude | **Pipeline inconsistency fixes** (8 issues from code review). (1) Atomic CSV writes: `save_forecast_data_pentad/decade()` now use `atomic_write_csv()` with try/except, removed dead `ret =` code. (2) Date string round-trip: moved `get_latest_forecasts()` before date-to-string conversion. (3) Standardized "decad" naming: added `HORIZON_TYPE_TO_API` translation layer in `api_writer.py`, internal code uses "decad" everywhere, translated to "decade" at API boundary. (4) Delta validation: `deltas[-1]` → `deltas[0]` with `np.ptp()` warning in both `forecast_accuracy_hydromet()` and `calculate_all_skill_metrics()`. (5) Monthly skill metrics read-back: added `read_monthly_skill_metrics()` to `data_reader.py` (CSV primary, API fallback), extended `SAPPHIRE_PREDICTION_MODE` to accept MONTHLY and ALL. (6) Extracted `forecast_target_date()` helper in `postprocessing_tools.py`, replaced inline `+ dt.timedelta(days=1.0)` in 3 locations. (7) **Phase 6 added**: Horizon Type Parameterization plan — `HorizonConfig` dataclass to eliminate ~490 lines of pentad/decade duplication. Test count: 598→613. |
 | 2026-02-19 | Bea/Claude | **Phase 4c complete: Tier 1 informational metrics (PBIAS, KGElf, NSE_log).** (A) **Metric implementation** in `skill_metrics.py`: `pbias()` (percent volume bias, positive=underestimation), `_kge()` (internal Kling-Gupta helper), `kge_lf()` (average of KGE(Q) and KGE(1/(Q+eps)), per Garcia et al. 2017), `nse_log()` (NSE on log-transformed flows with eps=mean(obs)/100). All 3 registered in `METRIC_REGISTRY` as informational (no thresholds, not used for ensemble selection). `METRIC_ORDER` now 9 metrics. (B) **Full pipeline integration**: `api_writer.py` handles nullable float columns for crps/pbias/kgelf/nse_log; `file_writer.py` includes 3 new columns in pentadal/decadal/monthly CSV output; `data_reader.py` docstrings updated. (C) **DB schema**: `crps`, `pbias`, `kgelf`, `nse_log` columns added to `SkillMetric` model + `SkillMetricBase` schema (all `Optional[float]`). CRPS DB column bundled here as planned. Data migrator updated with graceful fallback for legacy CSVs. (D) **47 new tests** in `test_tier1_metrics.py`: `TestPbias` (10), `TestKge` (7), `TestKgeLf` (10), `TestNseLog` (9), `TestNewMetricsInRegistry` (5), `TestCalculateAllWithNewMetrics` (6). Hand-calculated verification for each metric. Edge cases: zero obs, constant obs/sim, negative sim, min_points boundary. 4 new CRUD service tests (metric fields round-trip + null defaults). (E) **Test quality refactoring** across 12 test files: mock-heavy tests replaced with real file I/O (`test_file_writer.py` now checks actual CSV content, `test_postprocessing_tools.py` uses `tmp_path` fixture, `test_api_integration.py` uses `monkeypatch`); weak `if not df.empty` checks replaced with `assert not df.empty`; `os.environ` try/finally replaced with `monkeypatch.setenv()`. (F) **Unified validation script** `apps/run_validation.sh` (529 lines): orchestrates run_tests.sh → run_locally.sh → run_docker_tests.sh with flags (`--skip-docker`, `--skip-pipeline`, `--dry-run`), timestamped logging, color output. Documented in `doc/dev/testing_workflow.md`. Test count: 638→818 postprocessing (+180), 89→93 CRUD (+4). |
+| 2026-02-27 | Bea/Claude | **PP-010 complete: Pentad/decad reads migrated to API-first.** `data_reader.read_observed_and_modelled_data()` composes `read_short_term_observations()` (preprocessing API) + `read_individual_model_forecasts()` (postprocessing API for LR + env-gated ML models). All 3 entry points (operational, maintenance, recalculation) now use the new readers. NE and virtual station calculations remain in `setup_library`, called explicitly from entry points. API Transition Gaps table updated: **all read paths are now API-primary** — only dual-write output path remains as the last CSV dependency. 960 postprocessing tests, 0 skips. |
