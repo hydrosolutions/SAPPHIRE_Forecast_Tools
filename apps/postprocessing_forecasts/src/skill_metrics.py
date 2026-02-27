@@ -1649,8 +1649,11 @@ def calculate_skill_metrics_pentad(
         skill_metrics_df_ensemble = skill_metrics_df_ensemble[skill_metrics_df_ensemble['model_short'] != 'NE'].copy()
 
         # Perform the aggregations and keep only the unique combinations
-        skill_metrics_df_ensemble_avg = skill_metrics_df_ensemble.groupby(['date', 'code']).agg({
-            'pentad_in_year': 'first',
+        # Group by period + date + code so forecasts from different periods
+        # are never averaged together.
+        skill_metrics_df_ensemble_avg = skill_metrics_df_ensemble.groupby(
+            ['pentad_in_year', 'date', 'code']
+        ).agg({
             'forecasted_discharge': 'mean',
             'model_short': composition_agg,
         }).reset_index()
@@ -1816,8 +1819,11 @@ def calculate_skill_metrics_decade(
         skill_metrics_df_ensemble = skill_metrics_df_ensemble[skill_metrics_df_ensemble['model_short'] != 'NE'].copy()
 
         # Perform the aggregations and keep only the unique combinations
-        skill_metrics_df_ensemble_avg = skill_metrics_df_ensemble.groupby(['date', 'code']).agg({
-            'decad_in_year': 'first',
+        # Group by period + date + code so forecasts from different periods
+        # are never averaged together.
+        skill_metrics_df_ensemble_avg = skill_metrics_df_ensemble.groupby(
+            ['decad_in_year', 'date', 'code']
+        ).agg({
             'forecasted_discharge': 'mean',
             'model_short': composition_agg,
         }).reset_index()

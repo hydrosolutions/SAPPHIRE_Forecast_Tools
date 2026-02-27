@@ -7,6 +7,7 @@
 #   ieasyhydroforecast_env_file_path=/path/to/.env \
 #   SAPPHIRE_PREDICTION_MODE=PENTAD python postprocessing_operational.py
 
+import calendar
 import os
 import sys
 import datetime as dt
@@ -52,6 +53,18 @@ logger.addHandler(console_handler)
 timing_stats = TimingStats()
 
 
+def is_pentad_boundary(d: dt.date) -> bool:
+    """Return True if *d* is a pentad boundary (5/10/15/20/25/last)."""
+    last_day = calendar.monthrange(d.year, d.month)[1]
+    return d.day in (5, 10, 15, 20, 25, last_day)
+
+
+def is_decad_boundary(d: dt.date) -> bool:
+    """Return True if *d* is a decad boundary (10/20/last)."""
+    last_day = calendar.monthrange(d.year, d.month)[1]
+    return d.day in (10, 20, last_day)
+
+
 def postprocessing_operational():
     global timing_stats
 
@@ -70,7 +83,7 @@ def postprocessing_operational():
             )
             sl.load_environment()
 
-        prediction_mode = os.getenv('SAPPHIRE_PREDICTION_MODE', 'BOTH')
+        prediction_mode = os.getenv('SAPPHIRE_PREDICTION_MODE', '') or 'BOTH'
         valid_modes = ['PENTAD', 'DECAD', 'BOTH', 'MONTHLY', 'ALL']
         if prediction_mode not in valid_modes:
             logger.error(
@@ -82,123 +95,161 @@ def postprocessing_operational():
             f"Running operational postprocessing for mode: {prediction_mode}"
         )
 
+        today = dt.date.today()
+
         if prediction_mode in ['PENTAD', 'BOTH', 'ALL']:
-            with timer(timing_stats, 'reading pentadal data'):
+            if not is_pentad_boundary(today):
                 logger.info(
-                    "\n\n------ Reading pentadal observed and modelled "
-                    "data -------"
-                )
-                observed, modelled = (
-                    sl.read_observed_and_modelled_data_pentade()
-                )
-
-            with timer(timing_stats, 'reading pentadal skill metrics'):
-                logger.info(
-                    "\n\n------ Reading pre-calculated pentadal skill "
-                    "metrics ----"
-                )
-                skill_stats_pentad = data_reader.read_skill_metrics('pentad')
-
-            if skill_stats_pentad.empty:
-                logger.warning(
-                    "No pentadal skill metrics available. "
-                    "Skipping ensemble creation. "
-                    "Run recalculate_skill_metrics.py first."
+                    "Skipping pentad postprocessing: %s is not a pentad "
+                    "boundary day (boundaries: 5/10/15/20/25/last)",
+                    today,
                 )
             else:
-                with timer(timing_stats, 'creating pentadal ensembles'):
+                with timer(timing_stats, 'reading pentadal data'):
                     logger.info(
-                        "\n\n------ Creating pentadal ensemble forecasts ----"
+                        "\n\n------ Reading pentadal observed and modelled "
+                        "data -------"
                     )
-                    modelled, skill_stats_pentad = (
-                        ensemble_calculator.create_ensemble_forecasts(
-                            forecasts=modelled,
-                            skill_stats=skill_stats_pentad,
-                            observed=observed,
-                            period_col='pentad_in_year',
-                            period_in_month_col='pentad_in_month',
-                            get_period_in_month_func=tl.get_pentad,
-                            calculate_all_metrics_func=(
-                                skill_metrics.calculate_all_skill_metrics
-                            ),
-                        )
+                    observed, modelled = (
+                        sl.read_observed_and_modelled_data_pentade()
                     )
 
-            with timer(timing_stats, 'saving pentad results'):
-                logger.info(
-                    "\n\n------ Saving pentad results --------------------"
-                )
-                ret = file_writer.save_forecast_data_pentad(modelled)
-                if ret is None:
+                with timer(timing_stats, 'reading pentadal skill metrics'):
                     logger.info(
-                        "Pentadal forecast results saved successfully."
+                        "\n\n------ Reading pre-calculated pentadal skill "
+                        "metrics ----"
+                    )
+                    skill_stats_pentad = data_reader.read_skill_metrics(
+                        'pentad'
+                    )
+
+                if skill_stats_pentad.empty:
+                    logger.warning(
+                        "No pentadal skill metrics available. "
+                        "Skipping ensemble creation. "
+                        "Run recalculate_skill_metrics.py first."
                     )
                 else:
-                    logger.error(
-                        f"Error saving pentadal forecast results: {ret}"
-                    )
-                    errors.append(f"Pentad forecast save failed: {ret}")
+                    with timer(
+                        timing_stats, 'creating pentadal ensembles'
+                    ):
+                        logger.info(
+                            "\n\n------ Creating pentadal ensemble "
+                            "forecasts ----"
+                        )
+                        modelled, skill_stats_pentad = (
+                            ensemble_calculator.create_ensemble_forecasts(
+                                forecasts=modelled,
+                                skill_stats=skill_stats_pentad,
+                                observed=observed,
+                                period_col='pentad_in_year',
+                                period_in_month_col='pentad_in_month',
+                                get_period_in_month_func=tl.get_pentad,
+                                calculate_all_metrics_func=(
+                                    skill_metrics
+                                    .calculate_all_skill_metrics
+                                ),
+                            )
+                        )
 
-            pt.log_most_recent_forecasts_pentad(modelled)
+                with timer(timing_stats, 'saving pentad results'):
+                    logger.info(
+                        "\n\n------ Saving pentad results ----------------"
+                    )
+                    ret = file_writer.save_forecast_data_pentad(modelled)
+                    if ret is None:
+                        logger.info(
+                            "Pentadal forecast results saved successfully."
+                        )
+                    else:
+                        logger.error(
+                            "Error saving pentadal forecast results: "
+                            f"{ret}"
+                        )
+                        errors.append(
+                            f"Pentad forecast save failed: {ret}"
+                        )
+
+                pt.log_most_recent_forecasts_pentad(modelled)
 
         if prediction_mode in ['DECAD', 'BOTH', 'ALL']:
-            with timer(timing_stats, 'reading decadal data'):
+            if not is_decad_boundary(today):
                 logger.info(
-                    "\n\n------ Reading decadal observed and modelled "
-                    "data -------"
-                )
-                observed_decade, modelled_decade = (
-                    sl.read_observed_and_modelled_data_decade()
-                )
-
-            with timer(timing_stats, 'reading decadal skill metrics'):
-                logger.info(
-                    "\n\n------ Reading pre-calculated decadal skill "
-                    "metrics ----"
-                )
-                skill_metrics_decade = data_reader.read_skill_metrics('decad')
-
-            if skill_metrics_decade.empty:
-                logger.warning(
-                    "No decadal skill metrics available. "
-                    "Skipping ensemble creation. "
-                    "Run recalculate_skill_metrics.py first."
+                    "Skipping decad postprocessing: %s is not a decad "
+                    "boundary day (boundaries: 10/20/last)",
+                    today,
                 )
             else:
-                with timer(timing_stats, 'creating decadal ensembles'):
+                with timer(timing_stats, 'reading decadal data'):
                     logger.info(
-                        "\n\n------ Creating decadal ensemble forecasts -----"
+                        "\n\n------ Reading decadal observed and modelled "
+                        "data -------"
                     )
-                    modelled_decade, skill_metrics_decade = (
-                        ensemble_calculator.create_ensemble_forecasts(
-                            forecasts=modelled_decade,
-                            skill_stats=skill_metrics_decade,
-                            observed=observed_decade,
-                            period_col='decad_in_year',
-                            period_in_month_col='decad_in_month',
-                            get_period_in_month_func=tl.get_decad_in_month,
-                            calculate_all_metrics_func=(
-                                skill_metrics.calculate_all_skill_metrics
-                            ),
-                        )
+                    observed_decade, modelled_decade = (
+                        sl.read_observed_and_modelled_data_decade()
                     )
 
-            with timer(timing_stats, 'saving decade results'):
-                logger.info(
-                    "\n\n------ Saving decade results --------------------"
-                )
-                ret = file_writer.save_forecast_data_decade(modelled_decade)
-                if ret is None:
+                with timer(timing_stats, 'reading decadal skill metrics'):
                     logger.info(
-                        "Decadal forecast results saved successfully."
+                        "\n\n------ Reading pre-calculated decadal skill "
+                        "metrics ----"
+                    )
+                    skill_metrics_decade = data_reader.read_skill_metrics(
+                        'decad'
+                    )
+
+                if skill_metrics_decade.empty:
+                    logger.warning(
+                        "No decadal skill metrics available. "
+                        "Skipping ensemble creation. "
+                        "Run recalculate_skill_metrics.py first."
                     )
                 else:
-                    logger.error(
-                        f"Error saving decadal forecast results: {ret}"
-                    )
-                    errors.append(f"Decade forecast save failed: {ret}")
+                    with timer(
+                        timing_stats, 'creating decadal ensembles'
+                    ):
+                        logger.info(
+                            "\n\n------ Creating decadal ensemble "
+                            "forecasts -----"
+                        )
+                        modelled_decade, skill_metrics_decade = (
+                            ensemble_calculator.create_ensemble_forecasts(
+                                forecasts=modelled_decade,
+                                skill_stats=skill_metrics_decade,
+                                observed=observed_decade,
+                                period_col='decad_in_year',
+                                period_in_month_col='decad_in_month',
+                                get_period_in_month_func=(
+                                    tl.get_decad_in_month
+                                ),
+                                calculate_all_metrics_func=(
+                                    skill_metrics
+                                    .calculate_all_skill_metrics
+                                ),
+                            )
+                        )
 
-            pt.log_most_recent_forecasts_decade(modelled_decade)
+                with timer(timing_stats, 'saving decade results'):
+                    logger.info(
+                        "\n\n------ Saving decade results ----------------"
+                    )
+                    ret = file_writer.save_forecast_data_decade(
+                        modelled_decade
+                    )
+                    if ret is None:
+                        logger.info(
+                            "Decadal forecast results saved successfully."
+                        )
+                    else:
+                        logger.error(
+                            "Error saving decadal forecast results: "
+                            f"{ret}"
+                        )
+                        errors.append(
+                            f"Decade forecast save failed: {ret}"
+                        )
+
+                pt.log_most_recent_forecasts_decade(modelled_decade)
 
         if prediction_mode in ['MONTHLY', 'ALL']:
             logger.info(

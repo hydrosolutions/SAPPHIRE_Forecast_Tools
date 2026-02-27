@@ -225,6 +225,7 @@ class TestOperationalIntegration:
                 module, spec = _import_operational()
                 with patch('os.getcwd', return_value=str(tmp_path)):
                     spec.loader.exec_module(module)
+                    module.is_pentad_boundary = lambda d: True
 
                     with pytest.raises(SystemExit) as exc_info:
                         module.postprocessing_operational()
@@ -297,6 +298,8 @@ class TestOperationalIntegration:
                 module, spec = _import_operational()
                 with patch('os.getcwd', return_value=str(tmp_path)):
                     spec.loader.exec_module(module)
+                    # Override boundary check so decad processes
+                    module.is_decad_boundary = lambda d: True
 
                     with pytest.raises(SystemExit) as exc_info:
                         module.postprocessing_operational()
@@ -327,6 +330,9 @@ class TestOperationalIntegration:
                 module, spec = _import_operational()
                 with patch('os.getcwd', return_value=str(tmp_path)):
                     spec.loader.exec_module(module)
+                    # Override boundary checks so both horizons process
+                    module.is_pentad_boundary = lambda d: True
+                    module.is_decad_boundary = lambda d: True
 
                     with pytest.raises(SystemExit) as exc_info:
                         module.postprocessing_operational()
@@ -371,6 +377,7 @@ class TestOperationalIntegration:
                 module, spec = _import_operational()
                 with patch('os.getcwd', return_value=str(tmp_path)):
                     spec.loader.exec_module(module)
+                    module.is_pentad_boundary = lambda d: True
 
                     with pytest.raises(SystemExit) as exc_info:
                         module.postprocessing_operational()
@@ -398,6 +405,7 @@ class TestOperationalIntegration:
                 module, spec = _import_operational()
                 with patch('os.getcwd', return_value=str(tmp_path)):
                     spec.loader.exec_module(module)
+                    module.is_pentad_boundary = lambda d: True
 
                     with pytest.raises(SystemExit) as exc_info:
                         module.postprocessing_operational()
@@ -435,6 +443,7 @@ class TestOperationalIntegration:
                 module, spec = _import_operational()
                 with patch('os.getcwd', return_value=str(tmp_path)):
                     spec.loader.exec_module(module)
+                    module.is_pentad_boundary = lambda d: True
 
                     with pytest.raises(SystemExit) as exc_info:
                         module.postprocessing_operational()
@@ -938,6 +947,7 @@ class TestRecalcIntegration:
                 module, spec = _import_operational()
                 with patch('os.getcwd', return_value=str(tmp_path)):
                     spec.loader.exec_module(module)
+                    module.is_pentad_boundary = lambda d: True
 
                     with pytest.raises(SystemExit) as exc_info:
                         module.postprocessing_operational()
@@ -1009,6 +1019,7 @@ class TestEdgeCases:
                 module, spec = _import_operational()
                 with patch('os.getcwd', return_value=str(tmp_path)):
                     spec.loader.exec_module(module)
+                    module.is_pentad_boundary = lambda d: True
 
                     with pytest.raises(SystemExit) as exc_info:
                         module.postprocessing_operational()
@@ -1097,6 +1108,7 @@ class TestEdgeCases:
                 module, spec = _import_operational()
                 with patch('os.getcwd', return_value=str(tmp_path)):
                     spec.loader.exec_module(module)
+                    module.is_pentad_boundary = lambda d: True
 
                     with pytest.raises(SystemExit) as exc_info:
                         module.postprocessing_operational()

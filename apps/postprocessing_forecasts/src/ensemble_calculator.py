@@ -148,9 +148,10 @@ def create_ensemble_forecasts(
         logger.info("No qualifying forecasts for ensemble creation")
         return forecasts.copy(), skill_stats.copy()
 
-    # Step 4: group by [date, code], compute mean forecasted_discharge
-    ensemble_avg = qualifying.groupby(['date', 'code']).agg({
-        period_col: 'first',
+    # Step 4: group by [period, date, code], compute mean forecasted_discharge
+    ensemble_avg = qualifying.groupby(
+        [period_col, 'date', 'code']
+    ).agg({
         'forecasted_discharge': 'mean',
         'model_short': composition_agg,
     }).reset_index()

@@ -107,6 +107,7 @@ class TestOperationalWorkflow:
 
                 module, spec = import_operational_module()
                 spec.loader.exec_module(module)
+                module.is_pentad_boundary = lambda d: True
 
                 with pytest.raises(SystemExit) as exc_info:
                     module.postprocessing_operational()
@@ -125,6 +126,7 @@ class TestOperationalWorkflow:
 
                 module, spec = import_operational_module()
                 spec.loader.exec_module(module)
+                module.is_decad_boundary = lambda d: True
 
                 with pytest.raises(SystemExit) as exc_info:
                     module.postprocessing_operational()
@@ -133,13 +135,16 @@ class TestOperationalWorkflow:
                 mocks['sl'].read_observed_and_modelled_data_pentade.assert_not_called()
 
     def test_both_mode_processes_both(self, mock_data, mock_skill):
-        """BOTH mode processes pentad and decad."""
+        """BOTH mode processes pentad and decad on a boundary day."""
         with patch.dict(os.environ, {'SAPPHIRE_PREDICTION_MODE': 'BOTH'}):
             with patch.dict(sys.modules, {}):
                 mocks = _setup_mocks('BOTH', mock_data, mock_skill)
 
                 module, spec = import_operational_module()
                 spec.loader.exec_module(module)
+                # Override boundary checks so both horizons process
+                module.is_pentad_boundary = lambda d: True
+                module.is_decad_boundary = lambda d: True
 
                 with pytest.raises(SystemExit) as exc_info:
                     module.postprocessing_operational()
@@ -159,6 +164,7 @@ class TestOperationalWorkflow:
 
                 module, spec = import_operational_module()
                 spec.loader.exec_module(module)
+                module.is_pentad_boundary = lambda d: True
 
                 with pytest.raises(SystemExit) as exc_info:
                     module.postprocessing_operational()
@@ -177,6 +183,7 @@ class TestOperationalWorkflow:
 
                 module, spec = import_operational_module()
                 spec.loader.exec_module(module)
+                module.is_pentad_boundary = lambda d: True
 
                 with pytest.raises(SystemExit) as exc_info:
                     module.postprocessing_operational()
@@ -194,6 +201,8 @@ class TestOperationalWorkflow:
 
                 module, spec = import_operational_module()
                 spec.loader.exec_module(module)
+                module.is_pentad_boundary = lambda d: True
+                module.is_decad_boundary = lambda d: True
 
                 with pytest.raises(SystemExit) as exc_info:
                     module.postprocessing_operational()
@@ -206,13 +215,16 @@ class TestOperationalWorkflow:
                 mocks['sl'].read_observed_and_modelled_data_decade.assert_not_called()
 
     def test_all_mode_processes_pentad_and_decad(self, mock_data, mock_skill):
-        """ALL mode processes pentad and decad; monthly redirects to long-term."""
+        """ALL mode processes pentad and decad on a boundary day."""
         with patch.dict(os.environ, {'SAPPHIRE_PREDICTION_MODE': 'ALL'}):
             with patch.dict(sys.modules, {}):
                 mocks = _setup_mocks('ALL', mock_data, mock_skill)
 
                 module, spec = import_operational_module()
                 spec.loader.exec_module(module)
+                # Override boundary checks so both horizons process
+                module.is_pentad_boundary = lambda d: True
+                module.is_decad_boundary = lambda d: True
 
                 with pytest.raises(SystemExit) as exc_info:
                     module.postprocessing_operational()
@@ -231,6 +243,8 @@ class TestOperationalWorkflow:
 
                 module, spec = import_operational_module()
                 spec.loader.exec_module(module)
+                module.is_pentad_boundary = lambda d: True
+                module.is_decad_boundary = lambda d: True
 
                 with pytest.raises(SystemExit) as exc_info:
                     module.postprocessing_operational()
@@ -258,6 +272,8 @@ class TestOperationalConcurrentErrors:
 
                 module, spec = import_operational_module()
                 spec.loader.exec_module(module)
+                module.is_pentad_boundary = lambda d: True
+                module.is_decad_boundary = lambda d: True
 
                 with pytest.raises(SystemExit) as exc_info:
                     module.postprocessing_operational()
@@ -278,6 +294,8 @@ class TestOperationalConcurrentErrors:
 
                 module, spec = import_operational_module()
                 spec.loader.exec_module(module)
+                module.is_pentad_boundary = lambda d: True
+                module.is_decad_boundary = lambda d: True
 
                 with pytest.raises(SystemExit) as exc_info:
                     module.postprocessing_operational()
@@ -298,6 +316,8 @@ class TestOperationalConcurrentErrors:
 
                 module, spec = import_operational_module()
                 spec.loader.exec_module(module)
+                module.is_pentad_boundary = lambda d: True
+                module.is_decad_boundary = lambda d: True
 
                 with pytest.raises(SystemExit) as exc_info:
                     module.postprocessing_operational()
@@ -319,6 +339,7 @@ class TestOperationalEdgeCases:
 
                 module, spec = import_operational_module()
                 spec.loader.exec_module(module)
+                module.is_pentad_boundary = lambda d: True
 
                 with pytest.raises(FileNotFoundError, match="missing .env"):
                     module.postprocessing_operational()
@@ -335,6 +356,7 @@ class TestOperationalEdgeCases:
 
                 module, spec = import_operational_module()
                 spec.loader.exec_module(module)
+                module.is_pentad_boundary = lambda d: True
 
                 with pytest.raises(SystemExit) as exc_info:
                     module.postprocessing_operational()
@@ -351,9 +373,126 @@ class TestOperationalEdgeCases:
 
                 module, spec = import_operational_module()
                 spec.loader.exec_module(module)
+                module.is_pentad_boundary = lambda d: True
 
                 with pytest.raises(SystemExit) as exc_info:
                     module.postprocessing_operational()
 
                 assert exc_info.value.code == 0
                 mocks['file_writer'].save_forecast_data_pentad.assert_called_once()
+
+
+class TestBoundaryDaySkipBehavior:
+    """Phase 2 (INFRA-006): Operational entry point skips processing
+    when the current day is not a boundary day for the given horizon.
+
+    Boundary days:
+    - Pentad: 5, 10, 15, 20, 25, last day of month
+    - Decad: 10, 20, last day of month
+    """
+
+    def test_pentad_skips_on_non_pentad_day(self, mock_data, mock_skill):
+        """PENTAD mode on a non-pentad day (e.g., day 7) skips processing."""
+        with patch.dict(os.environ, {'SAPPHIRE_PREDICTION_MODE': 'PENTAD'}):
+            with patch.dict(sys.modules, {}):
+                mocks = _setup_mocks('PENTAD', mock_data, mock_skill)
+
+                module, spec = import_operational_module()
+                spec.loader.exec_module(module)
+                # Force non-pentad day
+                module.is_pentad_boundary = lambda d: False
+
+                with pytest.raises(SystemExit) as exc_info:
+                    module.postprocessing_operational()
+
+                assert exc_info.value.code == 0
+                # No data reading or writing should occur
+                mocks['sl'].read_observed_and_modelled_data_pentade.assert_not_called()
+                mocks['file_writer'].save_forecast_data_pentad.assert_not_called()
+                mocks['data_reader'].read_skill_metrics.assert_not_called()
+
+    def test_decad_skips_on_non_decad_day(self, mock_data, mock_skill):
+        """DECAD mode on a non-decad day skips processing."""
+        with patch.dict(os.environ, {'SAPPHIRE_PREDICTION_MODE': 'DECAD'}):
+            with patch.dict(sys.modules, {}):
+                mocks = _setup_mocks('DECAD', mock_data, mock_skill)
+
+                module, spec = import_operational_module()
+                spec.loader.exec_module(module)
+                module.is_decad_boundary = lambda d: False
+
+                with pytest.raises(SystemExit) as exc_info:
+                    module.postprocessing_operational()
+
+                assert exc_info.value.code == 0
+                mocks['sl'].read_observed_and_modelled_data_decade.assert_not_called()
+                mocks['file_writer'].save_forecast_data_decade.assert_not_called()
+
+    def test_both_mode_skips_both_on_non_boundary_day(
+        self, mock_data, mock_skill,
+    ):
+        """BOTH mode when today is neither pentad nor decad boundary."""
+        with patch.dict(os.environ, {'SAPPHIRE_PREDICTION_MODE': 'BOTH'}):
+            with patch.dict(sys.modules, {}):
+                mocks = _setup_mocks('BOTH', mock_data, mock_skill)
+
+                module, spec = import_operational_module()
+                spec.loader.exec_module(module)
+                module.is_pentad_boundary = lambda d: False
+                module.is_decad_boundary = lambda d: False
+
+                with pytest.raises(SystemExit) as exc_info:
+                    module.postprocessing_operational()
+
+                assert exc_info.value.code == 0
+                mocks['sl'].read_observed_and_modelled_data_pentade.assert_not_called()
+                mocks['sl'].read_observed_and_modelled_data_decade.assert_not_called()
+                mocks['file_writer'].save_forecast_data_pentad.assert_not_called()
+                mocks['file_writer'].save_forecast_data_decade.assert_not_called()
+
+    def test_both_mode_pentad_only_on_pentad_boundary(
+        self, mock_data, mock_skill,
+    ):
+        """BOTH mode on day 25 (pentad boundary, NOT decad boundary).
+
+        Only pentad processing should run.
+        """
+        with patch.dict(os.environ, {'SAPPHIRE_PREDICTION_MODE': 'BOTH'}):
+            with patch.dict(sys.modules, {}):
+                mocks = _setup_mocks('BOTH', mock_data, mock_skill)
+
+                module, spec = import_operational_module()
+                spec.loader.exec_module(module)
+                module.is_pentad_boundary = lambda d: True
+                module.is_decad_boundary = lambda d: False
+
+                with pytest.raises(SystemExit) as exc_info:
+                    module.postprocessing_operational()
+
+                assert exc_info.value.code == 0
+                mocks['sl'].read_observed_and_modelled_data_pentade.assert_called_once()
+                mocks['sl'].read_observed_and_modelled_data_decade.assert_not_called()
+
+    def test_both_mode_decad_only_on_decad_boundary(
+        self, mock_data, mock_skill,
+    ):
+        """BOTH mode on day 10 (both pentad and decad boundary).
+
+        Both should run since 10 is both a pentad and decad boundary.
+        But if we force pentad=False, only decad should run.
+        """
+        with patch.dict(os.environ, {'SAPPHIRE_PREDICTION_MODE': 'BOTH'}):
+            with patch.dict(sys.modules, {}):
+                mocks = _setup_mocks('BOTH', mock_data, mock_skill)
+
+                module, spec = import_operational_module()
+                spec.loader.exec_module(module)
+                module.is_pentad_boundary = lambda d: False
+                module.is_decad_boundary = lambda d: True
+
+                with pytest.raises(SystemExit) as exc_info:
+                    module.postprocessing_operational()
+
+                assert exc_info.value.code == 0
+                mocks['sl'].read_observed_and_modelled_data_pentade.assert_not_called()
+                mocks['sl'].read_observed_and_modelled_data_decade.assert_called_once()
