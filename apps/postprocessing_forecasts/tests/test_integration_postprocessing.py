@@ -462,7 +462,7 @@ class TestOperationalDataRouting:
         self, pentad_skill_csv, pentad_forecasts, pentad_observed,
         env_setup,
     ):
-        """All API records have 'target' == 'date', both dates present."""
+        """target = date + 1 (first day of forecast period)."""
         skill_stats = data_reader.read_skill_metrics('pentad')
         joint, _ = _make_ensemble(
             pentad_forecasts, skill_stats, pentad_observed
@@ -481,9 +481,21 @@ class TestOperationalDataRouting:
             file_writer.save_forecast_data_pentad(joint)
 
         records = mock_client.write_forecasts.call_args[0][0]
+        # target = date + 1 day (first day of forecast period)
+        # date=2026-01-05 → target=2026-01-06
+        # date=2026-01-10 → target=2026-01-11
+        expected_targets = {
+            '2026-01-05': '2026-01-06',
+            '2026-01-10': '2026-01-11',
+        }
         for r in records:
             assert 'target' in r
-            assert r['target'] == r['date']
+            assert 'date' in r
+            date_str = str(r['date'])[:10]
+            assert r['target'] == expected_targets[date_str], (
+                f"For date={date_str}, expected target="
+                f"{expected_targets[date_str]}, got {r['target']}"
+            )
 
         # Both input dates appear in API records
         api_dates = {str(r['date'])[:10] for r in records}
@@ -1342,21 +1354,27 @@ class TestMultiStationMultiGapMaintenance:
 # TestSkillMetricsFallback
 # ---------------------------------------------------------------------------
 class TestSkillMetricsFallback:
-    """Validates CSV-primary / API-fallback in data_reader."""
+    """Validates API-primary / CSV-fallback in data_reader."""
 
-    def test_csv_used_when_available(self, pentad_skill_csv, env_setup):
-        """CSV file exists -> CSV data returned, API never called."""
+    def test_api_used_when_available(self, pentad_skill_csv, env_setup):
+        """API returns data -> API data returned, CSV never called."""
+        api_df = pentad_skill_csv.copy()
+
         with patch.object(
-            data_reader, '_read_skill_metrics_api'
-        ) as mock_api:
-            df = data_reader.read_skill_metrics('pentad')
-            mock_api.assert_not_called()
+            data_reader, '_read_skill_metrics_api',
+            return_value=api_df,
+        ):
+            with patch.object(
+                data_reader, '_read_skill_metrics_csv'
+            ) as mock_csv:
+                df = data_reader.read_skill_metrics('pentad')
+                mock_csv.assert_not_called()
 
         assert not df.empty
         assert len(df) == len(pentad_skill_csv)
 
-    def test_api_fallback_when_csv_missing(self, env_setup):
-        """No CSV -> API client called, returns normalized columns."""
+    def test_api_primary_returns_normalized_columns(self, env_setup):
+        """API is primary source, returns normalized columns."""
         # env_setup points to tmp_path where no skill CSV exists
         # (pentad_skill_csv fixture intentionally NOT used)
         api_response = pd.DataFrame({
@@ -1391,11 +1409,11 @@ class TestSkillMetricsFallback:
         assert 'model_short' in df.columns
         assert df.iloc[0]['model_short'] == 'LR'
 
-    def test_api_fallback_produces_correct_ensemble(self, env_setup):
-        """No CSV -> API data -> normalize -> ensemble pipeline produces EM.
+    def test_api_primary_produces_correct_ensemble(self, env_setup):
+        """API data -> normalize -> ensemble pipeline produces EM.
 
         This end-to-end test verifies that when skill metrics come from the
-        API (not CSV), the column normalization (horizon_in_year -> pentad_in_year,
+        API, the column normalization (horizon_in_year -> pentad_in_year,
         model_type -> model_short) produces data that the
         ensemble_calculator can merge correctly with forecasts.
 
@@ -3346,4 +3364,110 @@ class TestDecadalRecalculateWithRealisticData:
         saved_fc = pd.read_csv(forecast_csv)
         assert 'EM' in saved_fc['model_short'].values, (
             "EM rows should be in saved forecast CSV"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 (INFRA-006): Period-aware groupby in ensemble creation
+# ---------------------------------------------------------------------------
+class TestPeriodAwareEnsemble:
+    """Verify that ensemble creation groups by the period column.
+
+    Before the fix, create_ensemble_forecasts grouped only by
+    ['date', 'code'], which averaged forecasts from different pentads
+    together when they shared the same date and station code.
+    After the fix, groupby is [period_col, 'date', 'code'].
+    """
+
+    def test_different_periods_same_date_not_averaged(self, env_setup):
+        """Forecasts with same (date, code) but different pentad_in_year
+        must produce separate EM rows, NOT be averaged together.
+
+        Uses two different dates so the observed merge produces unique
+        (code, date) pairs. The key assertion: EM values differ by pentad.
+        """
+        # Two pentads on different dates for the same station
+        forecasts = pd.DataFrame({
+            'code': ['15001'] * 4,
+            'date': pd.to_datetime(
+                ['2026-01-05', '2026-01-05', '2026-01-10', '2026-01-10']
+            ),
+            'pentad_in_year': [1, 1, 2, 2],
+            'pentad_in_month': ['1', '1', '2', '2'],
+            'forecasted_discharge': [100.0, 110.0, 200.0, 210.0],
+            'model_short': ['LR', 'TFT', 'LR', 'TFT'],
+        })
+        # Skill stats: both LR and TFT pass thresholds for both pentads
+        skill_stats = pd.DataFrame({
+            'pentad_in_year': [1, 1, 2, 2],
+            'code': ['15001'] * 4,
+            'model_short': ['LR', 'TFT', 'LR', 'TFT'],
+            'sdivsigma': [0.3, 0.4, 0.3, 0.4],
+            'nse': [0.95, 0.9, 0.95, 0.9],
+            'accuracy': [0.95, 0.88, 0.95, 0.88],
+            'mae': [2.0, 3.0, 2.0, 3.0],
+            'n_pairs': [10, 10, 10, 10],
+        })
+        observed = pd.DataFrame({
+            'code': ['15001', '15001'],
+            'date': pd.to_datetime(['2026-01-05', '2026-01-10']),
+            'discharge_avg': [105.0, 205.0],
+            'delta': [5.0, 5.0],
+        })
+
+        joint, _ = _make_ensemble(forecasts, skill_stats, observed)
+
+        em_rows = joint[joint['model_short'] == 'EM']
+        assert len(em_rows) == 2, (
+            f"Expected 2 EM rows (one per pentad), got {len(em_rows)}"
+        )
+
+        # The two EM values should be different (not averaged together)
+        em_values = sorted(em_rows['forecasted_discharge'].tolist())
+        expected_p1 = (100.0 + 110.0) / 2  # 105.0
+        expected_p2 = (200.0 + 210.0) / 2  # 205.0
+        assert abs(em_values[0] - expected_p1) < 0.01, (
+            f"Pentad 1 EM should be {expected_p1}, got {em_values[0]}"
+        )
+        assert abs(em_values[1] - expected_p2) < 0.01, (
+            f"Pentad 2 EM should be {expected_p2}, got {em_values[1]}"
+        )
+
+    def test_same_period_same_date_averaged_correctly(self, env_setup):
+        """Forecasts with same (period, date, code) are correctly averaged."""
+        forecasts = pd.DataFrame({
+            'code': ['15001'] * 2,
+            'date': pd.to_datetime(['2026-01-05'] * 2),
+            'pentad_in_year': [1, 1],
+            'pentad_in_month': ['1', '1'],
+            'forecasted_discharge': [100.0, 120.0],
+            'model_short': ['LR', 'TFT'],
+        })
+        skill_stats = pd.DataFrame({
+            'pentad_in_year': [1, 1],
+            'code': ['15001'] * 2,
+            'model_short': ['LR', 'TFT'],
+            'sdivsigma': [0.3, 0.4],
+            'nse': [0.95, 0.9],
+            'accuracy': [0.95, 0.88],
+            'mae': [2.0, 3.0],
+            'n_pairs': [10, 10],
+        })
+        observed = pd.DataFrame({
+            'code': ['15001'],
+            'date': pd.to_datetime(['2026-01-05']),
+            'discharge_avg': [110.0],
+            'delta': [5.0],
+        })
+
+        joint, _ = _make_ensemble(forecasts, skill_stats, observed)
+
+        em_rows = joint[joint['model_short'] == 'EM']
+        assert len(em_rows) == 1, (
+            f"Expected exactly 1 EM row, got {len(em_rows)}"
+        )
+        expected_avg = (100.0 + 120.0) / 2  # 110.0
+        assert abs(em_rows.iloc[0]['forecasted_discharge'] - expected_avg) < 0.01, (
+            f"EM forecast should be {expected_avg}, got "
+            f"{em_rows.iloc[0]['forecasted_discharge']}"
         )

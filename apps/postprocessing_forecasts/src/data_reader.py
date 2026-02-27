@@ -1,4 +1,5 @@
-"""Read pre-calculated skill metrics and monthly data from CSV or API.
+"""Read pre-calculated skill metrics and monthly data from API or CSV
+(deprecated fallback).
 
 Used by the operational and maintenance entry points to avoid
 recalculating skill metrics from scratch, and by the yearly
@@ -27,10 +28,10 @@ except ImportError:
 
 
 def read_skill_metrics(horizon_type: str) -> pd.DataFrame:
-    """Read pre-calculated skill metrics from CSV (primary) or API (fallback).
+    """Read pre-calculated skill metrics from API (primary) or CSV (fallback).
 
     Args:
-        horizon_type: 'pentad' or 'decad'
+        horizon_type: 'pentad', 'decad', or 'month'
 
     Returns:
         DataFrame with columns: [pentad_in_year|decad_in_year, code,
@@ -48,21 +49,25 @@ def read_skill_metrics(horizon_type: str) -> pd.DataFrame:
     if horizon_type == "month":
         return read_monthly_skill_metrics()
 
-    df = _read_skill_metrics_csv(horizon_type)
-    if df is not None and not df.empty:
-        logger.info(
-            "Read %d skill metric rows from CSV (%s)", len(df), horizon_type
-        )
-        return df
-
-    logger.info(
-        "CSV skill metrics empty or missing for %s, trying API",
-        horizon_type,
-    )
+    # API-first: try the authoritative source
     df = _read_skill_metrics_api(horizon_type)
     if df is not None and not df.empty:
         logger.info(
-            "Read %d skill metric rows from API (%s)", len(df), horizon_type
+            "Read %d skill metric rows from API (%s)",
+            len(df), horizon_type,
+        )
+        return df
+
+    # CSV fallback (deprecated): only used when API is unavailable
+    logger.info(
+        "API skill metrics unavailable for %s, falling back to CSV",
+        horizon_type,
+    )
+    df = _read_skill_metrics_csv(horizon_type)
+    if df is not None and not df.empty:
+        logger.info(
+            "Read %d skill metric rows from CSV (%s)",
+            len(df), horizon_type,
         )
         return df
 
@@ -128,9 +133,13 @@ def _read_skill_metrics_api(horizon_type: str) -> pd.DataFrame | None:
 
     try:
         client = SapphirePostprocessingClient(base_url=api_url)
-        if not client.is_ready():
+        if not client.readiness_check():
             logger.warning("Postprocessing API not ready at %s", api_url)
             return None
+
+        # Map internal horizon names to API horizon names
+        # Internal uses 'decad', API expects 'decade'
+        api_horizon = "decade" if horizon_type == "decad" else horizon_type
 
         # Read all skill metrics for this horizon; paginate if needed
         all_records = []
@@ -138,7 +147,7 @@ def _read_skill_metrics_api(horizon_type: str) -> pd.DataFrame | None:
         batch_size = 1000
         while True:
             df_batch = client.read_skill_metrics(
-                horizon=horizon_type, skip=skip, limit=batch_size
+                horizon=api_horizon, skip=skip, limit=batch_size
             )
             if df_batch is None or df_batch.empty:
                 break
@@ -196,26 +205,28 @@ def _normalize_api_skill_metrics(
 
 
 def read_monthly_skill_metrics() -> pd.DataFrame:
-    """Read pre-calculated monthly skill metrics from CSV or API.
+    """Read pre-calculated monthly skill metrics from API or CSV.
 
     Returns:
         DataFrame with columns: [month_in_year, code, model_short,
         sdivsigma, nse, delta, accuracy, mae, n_pairs]
     """
-    df = _read_monthly_skill_metrics_csv()
-    if df is not None and not df.empty:
-        logger.info(
-            "Read %d monthly skill metric rows from CSV", len(df)
-        )
-        return df
-
-    logger.info(
-        "CSV monthly skill metrics empty or missing, trying API"
-    )
+    # API-first: try the authoritative source
     df = _read_monthly_skill_metrics_api()
     if df is not None and not df.empty:
         logger.info(
             "Read %d monthly skill metric rows from API", len(df)
+        )
+        return df
+
+    # CSV fallback (deprecated)
+    logger.info(
+        "API monthly skill metrics unavailable, falling back to CSV"
+    )
+    df = _read_monthly_skill_metrics_csv()
+    if df is not None and not df.empty:
+        logger.info(
+            "Read %d monthly skill metric rows from CSV", len(df)
         )
         return df
 
@@ -283,7 +294,7 @@ def _read_monthly_skill_metrics_api() -> pd.DataFrame | None:
 
     try:
         client = SapphirePostprocessingClient(base_url=api_url)
-        if not client.is_ready():
+        if not client.readiness_check():
             logger.warning(
                 "Postprocessing API not ready at %s", api_url
             )
@@ -432,7 +443,7 @@ def read_daily_forecasts(
 
     try:
         client = SapphirePostprocessingClient(base_url=api_url)
-        if not client.is_ready():
+        if not client.readiness_check():
             logger.warning(
                 "Postprocessing API not ready at %s", api_url
             )
@@ -577,7 +588,7 @@ def _read_daily_runoff_api(
 
     try:
         client = SapphirePreprocessingClient(base_url=api_url)
-        if not client.is_ready():
+        if not client.readiness_check():
             logger.warning("Preprocessing API not ready at %s", api_url)
             return pd.DataFrame()
 
@@ -727,7 +738,7 @@ def _read_long_forecasts_api(
 
     try:
         client = SapphirePostprocessingClient(base_url=api_url)
-        if not client.is_ready():
+        if not client.readiness_check():
             logger.warning(
                 "Postprocessing API not ready at %s", api_url
             )

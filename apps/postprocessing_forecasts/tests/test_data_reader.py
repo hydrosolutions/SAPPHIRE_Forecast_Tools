@@ -21,6 +21,7 @@ from src.data_reader import (
     read_latest_monthly_forecasts,
     read_monthly_combined_forecasts,
     _read_skill_metrics_csv,
+    _read_skill_metrics_api,
     _read_monthly_skill_metrics_csv,
     _normalize_api_skill_metrics,
     _normalize_api_monthly_skill_metrics,
@@ -182,6 +183,49 @@ class TestNormalizeApiSkillMetrics:
         assert 'model_long' not in result.columns
 
 
+class TestReadSkillMetricsApi:
+    """Tests for _read_skill_metrics_api horizon mapping."""
+
+    def test_decad_maps_to_decade_in_api_call(self):
+        """Internal 'decad' is sent as 'decade' to the API client."""
+        mock_client = MagicMock()
+        mock_client.readiness_check.return_value = True
+        # Return empty on first call to stop pagination
+        mock_client.read_skill_metrics.return_value = pd.DataFrame()
+
+        with patch('src.data_reader.SAPPHIRE_API_AVAILABLE', True), \
+             patch.dict(os.environ, {'SAPPHIRE_API_ENABLED': 'true'}), \
+             patch(
+                 'src.data_reader.SapphirePostprocessingClient',
+                 create=True,
+                 return_value=mock_client,
+             ):
+            _read_skill_metrics_api('decad')
+
+        mock_client.read_skill_metrics.assert_called_once_with(
+            horizon='decade', skip=0, limit=1000
+        )
+
+    def test_pentad_passes_through_unchanged(self):
+        """Internal 'pentad' is sent as 'pentad' to the API client."""
+        mock_client = MagicMock()
+        mock_client.readiness_check.return_value = True
+        mock_client.read_skill_metrics.return_value = pd.DataFrame()
+
+        with patch('src.data_reader.SAPPHIRE_API_AVAILABLE', True), \
+             patch.dict(os.environ, {'SAPPHIRE_API_ENABLED': 'true'}), \
+             patch(
+                 'src.data_reader.SapphirePostprocessingClient',
+                 create=True,
+                 return_value=mock_client,
+             ):
+            _read_skill_metrics_api('pentad')
+
+        mock_client.read_skill_metrics.assert_called_once_with(
+            horizon='pentad', skip=0, limit=1000
+        )
+
+
 class TestReadSkillMetricsIntegration:
     """Integration tests for the main read_skill_metrics function."""
 
@@ -205,8 +249,30 @@ class TestReadSkillMetricsIntegration:
             assert len(result) == 1
             assert result.iloc[0]['month_in_year'] == 1
 
-    def test_csv_preferred_over_api(self, tmp_path):
-        """CSV is used when available; API is not called."""
+    def test_api_preferred_over_csv(self):
+        """API is used when available; CSV is not called."""
+        api_df = pd.DataFrame({
+            'pentad_in_year': [1],
+            'code': ['10001'],
+            'model_short': ['LR'],
+            'sdivsigma': [0.3],
+        })
+
+        with patch(
+            'src.data_reader._read_skill_metrics_api',
+            return_value=api_df,
+        ):
+            with patch(
+                'src.data_reader._read_skill_metrics_csv'
+            ) as mock_csv:
+                result = read_skill_metrics('pentad')
+                mock_csv.assert_not_called()
+                assert len(result) == 1
+                assert result.iloc[0]['code'] == '10001'
+                assert result.iloc[0]['sdivsigma'] == 0.3
+
+    def test_falls_back_to_csv_when_api_unavailable(self, tmp_path):
+        """When API returns None (unavailable), CSV is used."""
         csv_file = tmp_path / "pentad_skill.csv"
         pd.DataFrame({
             'pentad_in_year': [1],
@@ -220,56 +286,74 @@ class TestReadSkillMetricsIntegration:
             'ieasyforecast_pentadal_skill_metrics_file': 'pentad_skill.csv',
         }):
             with patch(
-                'src.data_reader._read_skill_metrics_api'
-            ) as mock_api:
+                'src.data_reader._read_skill_metrics_api',
+                return_value=None,
+            ):
                 result = read_skill_metrics('pentad')
-                mock_api.assert_not_called()
                 assert len(result) == 1
+                assert result.iloc[0]['code'] == '10001'
 
-    def test_falls_back_to_api_when_csv_empty(self, tmp_path):
-        """When CSV is empty, tries API fallback."""
-        csv_file = tmp_path / "empty.csv"
-        pd.DataFrame().to_csv(csv_file, index=False)
-
-        api_df = pd.DataFrame({
+    def test_falls_back_to_csv_when_api_returns_empty(self, tmp_path):
+        """When API returns empty DataFrame, CSV is used."""
+        csv_file = tmp_path / "pentad_skill.csv"
+        pd.DataFrame({
             'pentad_in_year': [1],
             'code': ['10001'],
             'model_short': ['LR'],
             'sdivsigma': [0.3],
-        })
+        }).to_csv(csv_file, index=False)
 
         with patch.dict(os.environ, {
             'ieasyforecast_intermediate_data_path': str(tmp_path),
-            'ieasyforecast_pentadal_skill_metrics_file': 'empty.csv',
+            'ieasyforecast_pentadal_skill_metrics_file': 'pentad_skill.csv',
         }):
             with patch(
                 'src.data_reader._read_skill_metrics_api',
-                return_value=api_df,
+                return_value=pd.DataFrame(),
             ):
                 result = read_skill_metrics('pentad')
                 assert len(result) == 1
+                assert result.iloc[0]['code'] == '10001'
 
     def test_returns_empty_when_both_fail(self):
-        """Returns empty DataFrame when CSV and API both return nothing."""
+        """Returns empty DataFrame when API and CSV both return nothing."""
         with patch(
-            'src.data_reader._read_skill_metrics_csv', return_value=None
+            'src.data_reader._read_skill_metrics_api', return_value=None
         ):
             with patch(
-                'src.data_reader._read_skill_metrics_api', return_value=None
+                'src.data_reader._read_skill_metrics_csv', return_value=None
             ):
                 result = read_skill_metrics('pentad')
                 assert isinstance(result, pd.DataFrame)
                 assert result.empty
 
-    def test_corrupted_csv_falls_back_to_api(self, tmp_path):
-        """CSV exists but contains garbled/binary content -> falls back to API.
+    def test_api_unavailable_corrupted_csv_returns_empty(self, tmp_path):
+        """API unavailable + corrupted CSV -> returns empty DataFrame.
 
-        Operational scenario: disk corruption or partial write during crash.
+        Operational scenario: API down and disk corruption.
         """
         csv_file = tmp_path / "pentad_skill.csv"
         csv_file.write_bytes(b'\x00\x01\x02\xff\xfe garbled content')
 
-        api_df = pd.DataFrame({
+        with patch.dict(os.environ, {
+            'ieasyforecast_intermediate_data_path': str(tmp_path),
+            'ieasyforecast_pentadal_skill_metrics_file': 'pentad_skill.csv',
+        }):
+            with patch(
+                'src.data_reader._read_skill_metrics_api',
+                return_value=None,
+            ):
+                result = read_skill_metrics('pentad')
+                assert isinstance(result, pd.DataFrame)
+                assert result.empty
+
+    def test_api_unavailable_valid_csv_used(self, tmp_path):
+        """API unavailable + valid CSV -> CSV data returned.
+
+        Operational scenario: API down but CSV has good data.
+        """
+        csv_file = tmp_path / "pentad_skill.csv"
+        pd.DataFrame({
             'pentad_in_year': [1, 2],
             'code': ['10001', '10002'],
             'model_short': ['LR', 'TFT'],
@@ -279,7 +363,7 @@ class TestReadSkillMetricsIntegration:
             'accuracy': [0.95, 0.88],
             'mae': [2.1, 3.2],
             'n_pairs': [10, 12],
-        })
+        }).to_csv(csv_file, index=False)
 
         with patch.dict(os.environ, {
             'ieasyforecast_intermediate_data_path': str(tmp_path),
@@ -287,40 +371,12 @@ class TestReadSkillMetricsIntegration:
         }):
             with patch(
                 'src.data_reader._read_skill_metrics_api',
-                return_value=api_df,
-            ) as mock_api:
+                return_value=None,
+            ):
                 result = read_skill_metrics('pentad')
-                # CSV read fails -> API fallback called
-                mock_api.assert_called_once()
                 assert len(result) == 2
                 assert result.iloc[0]['code'] == '10001'
                 assert result.iloc[0]['sdivsigma'] == 0.3
-
-    def test_truncated_csv_with_partial_rows_falls_back(self, tmp_path):
-        """CSV with headers + truncated row (no newline) -> exception -> API.
-
-        Operational scenario: process killed mid-write.
-        """
-        csv_file = tmp_path / "pentad_skill.csv"
-        # Write a valid header but a truncated data row
-        csv_file.write_text(
-            "pentad_in_year,code,model_short,sdivsigma\n"
-            "1,10001,LR,0.3\n"
-        )
-
-        # This CSV is actually valid (1 row), so CSV read succeeds
-        with patch.dict(os.environ, {
-            'ieasyforecast_intermediate_data_path': str(tmp_path),
-            'ieasyforecast_pentadal_skill_metrics_file': 'pentad_skill.csv',
-        }):
-            with patch(
-                'src.data_reader._read_skill_metrics_api'
-            ) as mock_api:
-                result = read_skill_metrics('pentad')
-                # CSV was valid so API should NOT be called
-                mock_api.assert_not_called()
-                assert len(result) == 1
-                assert result.iloc[0]['code'] == '10001'
 
 
 class TestDataReaderMissingColumns:
@@ -867,8 +923,30 @@ class TestNormalizeApiMonthlySkillMetrics:
 class TestReadMonthlySkillMetricsIntegration:
     """Integration tests for read_monthly_skill_metrics."""
 
-    def test_csv_preferred_over_api(self, tmp_path):
-        """CSV is used when available; API is not called."""
+    def test_api_preferred_over_csv(self):
+        """API is used when available; CSV is not called."""
+        api_df = pd.DataFrame({
+            'month_in_year': [1],
+            'code': ['10001'],
+            'model_short': ['LR'],
+            'sdivsigma': [0.3],
+        })
+
+        with patch(
+            'src.data_reader._read_monthly_skill_metrics_api',
+            return_value=api_df,
+        ):
+            with patch(
+                'src.data_reader._read_monthly_skill_metrics_csv'
+            ) as mock_csv:
+                result = read_monthly_skill_metrics()
+                mock_csv.assert_not_called()
+                assert len(result) == 1
+                assert result.iloc[0]['code'] == '10001'
+                assert result.iloc[0]['sdivsigma'] == 0.3
+
+    def test_falls_back_to_csv_when_api_unavailable(self, tmp_path):
+        """When API returns None (unavailable), CSV is used."""
         csv_file = tmp_path / "monthly_skill.csv"
         pd.DataFrame({
             'month_in_year': [1],
@@ -882,43 +960,43 @@ class TestReadMonthlySkillMetricsIntegration:
             'ieasyforecast_monthly_skill_metrics_file': 'monthly_skill.csv',
         }):
             with patch(
-                'src.data_reader._read_monthly_skill_metrics_api'
-            ) as mock_api:
+                'src.data_reader._read_monthly_skill_metrics_api',
+                return_value=None,
+            ):
                 result = read_monthly_skill_metrics()
-                mock_api.assert_not_called()
                 assert len(result) == 1
+                assert result.iloc[0]['code'] == '10001'
 
-    def test_falls_back_to_api_when_csv_empty(self, tmp_path):
-        """When CSV is empty, tries API fallback."""
-        csv_file = tmp_path / "empty.csv"
-        pd.DataFrame().to_csv(csv_file, index=False)
-
-        api_df = pd.DataFrame({
+    def test_falls_back_to_csv_when_api_returns_empty(self, tmp_path):
+        """When API returns empty DataFrame, CSV is used."""
+        csv_file = tmp_path / "monthly_skill.csv"
+        pd.DataFrame({
             'month_in_year': [1],
             'code': ['10001'],
             'model_short': ['LR'],
             'sdivsigma': [0.3],
-        })
+        }).to_csv(csv_file, index=False)
 
         with patch.dict(os.environ, {
             'ieasyforecast_intermediate_data_path': str(tmp_path),
-            'ieasyforecast_monthly_skill_metrics_file': 'empty.csv',
+            'ieasyforecast_monthly_skill_metrics_file': 'monthly_skill.csv',
         }):
             with patch(
                 'src.data_reader._read_monthly_skill_metrics_api',
-                return_value=api_df,
+                return_value=pd.DataFrame(),
             ):
                 result = read_monthly_skill_metrics()
                 assert len(result) == 1
+                assert result.iloc[0]['code'] == '10001'
 
     def test_returns_empty_when_both_fail(self):
-        """Returns empty DataFrame when CSV and API both return nothing."""
+        """Returns empty DataFrame when API and CSV both return nothing."""
         with patch(
-            'src.data_reader._read_monthly_skill_metrics_csv',
+            'src.data_reader._read_monthly_skill_metrics_api',
             return_value=None,
         ):
             with patch(
-                'src.data_reader._read_monthly_skill_metrics_api',
+                'src.data_reader._read_monthly_skill_metrics_csv',
                 return_value=None,
             ):
                 result = read_monthly_skill_metrics()

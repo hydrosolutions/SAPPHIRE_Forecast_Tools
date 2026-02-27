@@ -10,7 +10,7 @@ API-first I/O via the SAPPHIRE postprocessing API. The target state is:
 - **Writes:** API as primary destination, CSV as deprecated backup only.
 
 CSV I/O will be removed once API integration is fully validated. See open
-issues PP-007, PP-010, PP-013, PP-014 for remaining migration gaps.
+issues PP-007, PP-010, PP-013 for remaining migration gaps.
 
 ## Forecast Horizons
 
@@ -80,10 +80,7 @@ otherwise.
      **This must be migrated to API-first reads.** See PP-010.
    - **Current state (monthly):** Already reads from API. Correct.
 3. **Read pre-calculated skill metrics** -- via `data_reader.read_skill_metrics`.
-   - **Target state:** Read from API as the primary source, CSV as
-     deprecated backup only.
-   - **Current state:** CSV-first, API-fallback. **The priority is
-     inverted -- API should be primary.** See PP-014.
+   - API is the primary source, CSV is a deprecated fallback only.
 4. **Create ensemble forecasts** -- Separately for each horizon:
    - Filter skill metrics for highly skilled models (sdivsigma < 0.6,
      NSE > 0.8, accuracy > 0.8)
@@ -207,7 +204,7 @@ recalculation logic. Use `recalculate_skill_metrics.py` instead.
 | Horizon | Operational reads | Recalculation reads | Status |
 |---------|------------------|--------------------|-|
 | Pentad/decad forecasts | `setup_library` (CSV) | `setup_library` (CSV) | **Must migrate to API** (PP-010, INFRA-007) |
-| Pentad/decad skill metrics | CSV-first, API-fallback | N/A (produces them) | **Invert to API-first** (PP-014) |
+| Pentad/decad skill metrics | API-first, CSV-fallback | N/A (produces them) | Correct |
 | Monthly | API (with CSV fallback) | API (with CSV fallback) | Correct |
 | Daily | API | API | Correct |
 
@@ -487,20 +484,6 @@ already API-integrated.
 **Target:** Same as PP-007 -- migrate gap detection to API-first reads.
 
 **Affects:** `gap_detector.py`, `postprocessing_maintenance_long_term.py`
-
-### PP-014: Skill metrics read priority is inverted (CSV-first, should be API-first)
-
-**Status:** Draft plan in `doc/plans/issues/gi_draft_pp_skill_metrics_read_priority.md`.
-
-**Current:** `data_reader.read_skill_metrics()` tries CSV first, falls back to
-API only if CSV is empty or missing. This makes CSV the de facto primary source.
-
-**Target:** API should be the primary read source. CSV should be a deprecated
-backup only, to be removed once API integration is fully validated. Invert the
-read order: try API first, fall back to CSV if API is unavailable.
-
-**Affects:** `data_reader.py` (`read_skill_metrics`, `_read_skill_metrics_csv`,
-`_read_skill_metrics_api`)
 
 ### PP-015: Move NE creation from setup_library to postprocessing_forecasts
 
