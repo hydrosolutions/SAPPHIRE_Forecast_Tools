@@ -218,7 +218,7 @@ These documents contain context and specifications referenced by issues above.
 | `architecture_review_claude.md` | 10-dimension architecture assessment | Reference |
 | `architecture_review_copilot.md` | 10-step modernization roadmap | Reference |
 | `observations.md` | Running log of production issues | Active — triage weekly |
-| `Makefile.planned` | Makefile template | Template — ready for INFRA-001 |
+| ~~`Makefile.planned`~~ | ~~Makefile template~~ | Deleted — superseded by rewritten INFRA-001 plan |
 
 ---
 
